@@ -167,6 +167,27 @@ place, acquaintances), but they are not run by the simulation: the player writes
 from outside (trades, deliveries, fights) and the world reacts as it would to anyone. Nothing waits
 for them, but people near them notice them: they speak to them, offer them work, and remember them.
 
+## Personal aircraft: paint and markings
+
+Owning an aircraft includes making it one's own, more freely than Sky Barons allows:
+- **Paint by part**: every part of an aircraft's low-poly model (fuselage, each wing, floats or
+  hull, struts, cowling, tail, rudder) takes its own color, or a simple two-color gradient or
+  stripe pattern along it.
+- **Decals**: numbers, letters, roundels, flags, stars, animals, stripes and a few period motifs,
+  plus shapes of one's own (circles, bands, chevrons). Placed at the usual spots (rudder, fuselage
+  sides, wing tops and bottoms, cowling) with a snap, or anywhere at any size and angle,
+  projected onto the surface where they are put.
+- **Where**: at a paint shop or a mechanic's workshop, for a price and a little time (the
+  aircraft is in the shop meanwhile, and people notice a new livery). Liveries are saved with
+  the aircraft, and other pilots' aircraft carry their own (generated from the same tools), so
+  a pilot can be recognized by their colors at a distance.
+
+## Sandbox settings
+
+A settings page for playing more freely, each a separate switch: paint any time anywhere, any
+aircraft at any time, unlimited money, no damage, no fuel, and the like. The simulation keeps
+running as usual; the switches only lift the player's own constraints.
+
 ## The first milestone
 
 A small, complete living archipelago:
