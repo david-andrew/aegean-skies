@@ -76,62 +76,108 @@ closes harbors in its path, grounds cautious pilots, delays ships and shifts pri
 
 ## How people decide
 
-Every few game minutes each person who is free re-plans:
+Three layers, in order; a lower one only fills time the one above leaves free.
 
-1. Score candidate **activities** for them: work at their trade, trade a price difference they
-   know of, take a posted job, rest at home, visit a friend, repay a debt, raid (pirates), patrol
-   (police), go somewhere they have heard of an opportunity.
-2. Each score = drive pressure x how well the activity relieves it x odds of success (from their
-   skills, aircraft, weather, danger they know of) x trait modifiers (an honest person scores
-   theft near zero, a desperate one a little higher).
-3. Take the best, with a little randomness so people are not clockwork.
+1. **Obligations** come first. Each person keeps a short list of things that fall due: a debt
+   payment, a promised delivery, a passenger waiting, the mechanic's bill, a shift at the harbor
+   office. When one is due they act on it whatever else they would rather do. Lateness is
+   remembered by whoever was owed (most drama is lateness). Debts carry interest, so an unpaid
+   one grows.
+2. **The day's routine** by occupation: fishermen at sea from dawn and at the fish market by mid
+   morning; merchants at their stalls; pilots at the dock or in the air; everyone at the inn or the
+   quay in the evening and home at night. A routine is a schedule, not a drive, so the quay is
+   busy when it should be.
+3. **Choices** fill the rest: the activities a person could take (work their trade, trade a price
+   difference they believe in, take a posted job, repay early, visit a friend, raid, patrol...),
+   scored by **adding** what each does for their pressures (money, duty, rest, company), plus
+   trait leanings and a little noise. Scores add, so a bold, greedy person can prefer a risky raid
+   to a safe catch; odds lower a score but do not zero it.
+4. **Thresholds and vices.** Under pressure past a line (cash below what is owed and due soon,
+   aircraft unrepairable) a person switches to their vice, if they have one: smuggling, gambling the
+   fuel money, joining the pirates, refusing to fly. It is one visible switch, not a blend, so a
+   player who sees it once understands that person.
 
-The same machinery serves everyone: a fisherman's "work" is to fish and sell, a merchant's is to
-buy cheap and sell dear, a courier's is to take jobs, a pirate's is to raid. No activity exists
-only for the player's benefit.
+**Commitment.** A trip, once begun, is flown to its end. Only damage, fuel, weather past the
+pilot's nerve, or an attack interrupts a leg. People reconsider at docks, not in mid-air.
 
-## Where opportunities come from
+**Acquaintance.** People know: their household, their workmates, everyone in their own village,
+and anyone they have traded with, flown for, fought or met at an inn. Relationships (affinity,
+trust) exist only between acquaintances, each justified by a few remembered events (capped by
+salience: the gravest are kept).
 
-Opportunities are posted by people with needs, and the player sees the same postings that NPC
-pilots do (they compete for them):
+## The economy (one theory)
 
-- **Delivery**: a merchant has stock where it is cheap and knows a price where it is dear; the
-  margin pays a courier. Urgency (a shortage) raises the pay and sets a deadline.
-- **Passenger / mail**: people want to travel; mail piles up at harbors.
-- **Bounty**: posted by the authority (and by victims) when a pirate's raids pass a threshold.
-- **Escort**: a merchant who has heard of raids on their route.
-- **Repair, rescue, search**: a downed pilot, a missing boat.
-- **Smuggling**: contraband is dear where it is banned; a smuggler needs a pilot who will not ask.
-- **Races**: settlements host them now and then, with a purse and entrants.
+- Each settlement's market holds stocks. Its **prices follow its stock** against what the place
+  wants; that is the true price, and trades happen at it.
+- People act on **what they believe** prices are elsewhere (seen on their last visit, or heard),
+  which may be stale: that is where a merchant's mistake or a courier's windfall comes from.
+- Production and consumption: a settlement's background population consumes at a steady rate
+  (with the hour and day); the **named people produce** (a fisherman's catch is what lands on the
+  market). Named work matters.
+- **Shocks keep it from settling**: the catch varies with the season and the fishing grounds;
+  storms close harbors and delay supplies; engines fail; a festival or a wedding wants wine; a
+  ship from outside brings goods or doesn't come. These are nature and the outside world, not a
+  story director.
+- Money flows are listed and tested: sources (sales to the background population, the outside
+  world's buyers, wages paid by factions, bounties), sinks (purchases from outside, fuel, repairs,
+  rent, fines, interest), transfers (trade, theft, debt). A test runs many seeds for thirty days and
+  checks the books balance and that nothing is stuck or out of bounds; it does not ask for calm.
 
-What the player does feeds back into the same state: delivering relieves a shortage and lowers a
-price; robbing a merchant gives them a grievance, makes them poorer (they may borrow, then fall
-behind), raises the fear in their town and pushes the authority to patrol.
+## News, speech and reputation
 
-## Memory and reputation
+- **Events** (a delivery, a theft, a raid, a rescue, a late payment) are recorded with who, whom,
+  where, when, who saw, and a **weight** (harm done, money involved, surprise).
+- Each place keeps its **news**: the few weightiest recent events it has heard of, each with how
+  many retellings it took to arrive (and so how sure people are). News travels with people: a pilot
+  who lands carries what they know.
+- **Reputation is numbers that move when news arrives**: each place's regard for each person
+  (and for factions), changed when the news of what they did gets there, by how much it matters to
+  that place. A clerk and the townsfolk read the same number, so they agree.
+- **Speech**: people say things unprompted when one walks by (a line from the place's news or their
+  own circumstances: "He should have been back before the wind turned"); a poster offers a job to
+  whoever is in front of them; the harbor board lists the day's notices by name ("Marta Galli pays
+  40 lire for oil to Mikra by dusk") and, each morning, three lines of yesterday's news.
 
-- An **event** (a delivery, a theft, a fight, a rescue, a broken promise) is recorded with who did
-  it, to whom, where and when, and who saw it.
-- Those involved remember it and change their relationship; witnesses remember it as fact; others
-  hear it later as a rumor (a little less trusted, sometimes distorted).
-- **Reputation** is not a number the game keeps: it is what the people of a place know about you.
-  A town where many people know you helped them treats you well; one where you are only known
-  from rumor of piracy is wary.
+## Near and far
+
+Away from the player a trip is a departure and an arrival, and what happens on it is decided by
+rules (weather, pirates on the route, the aircraft's state) when it happens, and its **aftermath is
+placed in the world** (a wreck on a beach, an aircraft towed to the workshop, a merchant short of
+goods, news at the next harbor). Near the player, aircraft are flown by the flight model and the
+outcome is what happens. There is no attempt to make a die and a flight model agree: the player
+sees consequences either way.
+
+## People are not killed (at first)
+
+A pilot shot down ditches and is picked up, injured for some days, and their aircraft is wrecked
+or salvageable. People can leave the archipelago (ruined, or rich), and newcomers arrive now and
+then, so the cast can change without death.
+
+## The start
+
+The world starts out of balance, with its situations already under way: one island short of
+something, a pilot whose debt falls due tonight, a pirate crew low on money and fuel, a merchant
+whose courier is overdue, and the player with a little money, an old aircraft and a mooring fee
+owed. These are starting conditions; what happens next is the simulation's.
 
 ## The player
 
-The player is a person in the same tables: money, an aircraft, debts, relationships. They can do
-whatever any person can (with their own hands on the controls). Nothing waits for them.
+The player has the same kinds of records as anyone (money, an aircraft, debts, regard in each
+place, acquaintances), but they are not run by the simulation: the player writes into the world
+from outside (trades, deliveries, fights) and the world reacts as it would to anyone. Nothing waits
+for them, but people near them notice them: they speak to them, offer them work, and remember them.
 
 ## The first milestone
 
 A small, complete living archipelago:
 - three or four settlements on different islands, a hotel on an islet, a pirate cove
-- about forty named persons: fishermen, merchants, two or three courier pilots, a mechanic or two,
-  an innkeeper, harbor police, a pirate crew of four
+- about twenty-five named persons, most on the start island and its neighbor: fishermen,
+  merchants, three courier pilots, a mechanic, an innkeeper, harbor police, a pirate crew of four
 - working seaplanes for the player and the NPC pilots: take off from water, fly, land, taxi, moor
 - getting out at a dock and walking along the quay, talking to people
 - a market and a job board at each harbor; fuel and repairs
 - rumors at the inn; pirates who raid when they are short of money, and a bounty that follows
-- a headless test that runs thirty game days and reports the economy's health (no runaway
-  prices, no one stuck, money conserved apart from known sources and sinks)
+- unprompted speech on the quay, the job board with names, yesterday's news each morning
+- headless tests over many seeds: within two game hours of the start, someone is in the air on a
+  route that crosses the start harbor's lane for a reason someone can say; in thirty days the
+  books balance and nothing is stuck; the pirates raid at least once and are answered
