@@ -7,12 +7,15 @@ use 'living_boats.jo'
 obligation_live = (state: ObligationState) -> bool: state == .open or state == .blocked or state == .breached
 
 pay_obligation = (w: mut World, id: int, max_cents: int) -> int:
-    if not (id in w.obligations) or not obligation_live(w.obligations[id].state): return 0
+    if not (id in w.obligations): return 0
+    if not obligation_live(w.obligations[id].state) and w.obligations[id].state != .defaulted: return 0
     debtor = w.obligations[id].debtor
     if w.obligations[id].kind != .debt and w.obligations[id].kind != .rent: return 0
     amount = min(max(0,max_cents),min(w.obligations[id].amount_cents,w.accounts[w.people[debtor].account].cents))
     if amount <= 0: return 0
     if not transfer(w,w.people[debtor].account,w.obligations[id].creditor_account,amount,if w.obligations[id].kind == .debt: MoneyKind.debt else: MoneyKind.rent,id): return 0
+    if w.obligations[id].creditor_account == w.outside_creditor_account and w.outside_creditor_account >= 0:
+        assert(transfer(w,w.outside_creditor_account,-1,amount,.outside_credit,id))
     if w.obligations[id].kind == .debt:
         interest = min(amount,w.obligations[id].interest_cents)
         w.obligations[id].interest_cents -= interest
@@ -78,7 +81,7 @@ work_window = (occupation: Occupation, minute_of_day: int) -> bool:
         else: false
 
 labor_minute = (w: mut World, person: int):
-    if w.people[person].local_work_escrow >= 0: return
+    if w.people[person].local_work_escrow >= 0 or passenger_craft(w,person) >= 0: return
     occ = w.people[person].occupation
     if not work_role(occ): return
     home = w.people[person].home
@@ -145,14 +148,17 @@ start_repair = (w: mut World, obligation: int) -> bool:
     escrow = fund_escrow(w,w.people[owner].account,cost+labor,"repair-{obligation}")
     if escrow < 0: return false
     assert(reserve(w.places[place].market.inventory,5,parts))
+    w.people[owner].last_recovery_action_minute = w.minute
     w.obligations[obligation].labor_escrow = escrow
     w.obligations[obligation].reserved_parts = parts
     w.obligations[obligation].amount_cents = cost+labor
+    w.obligations[obligation].reason.amount_cents = cost+labor
     w.obligations[obligation].repair_started_minute = w.minute
     w.obligations[obligation].mechanic = mechanic
     w.obligations[obligation].work_minutes = 0
     w.obligations[obligation].reserved_until_minute = w.minute+120
     w.obligations[obligation].state = .open
+    w.aircraft[c].revision += 1
     w.aircraft[c].repair_obligation = obligation; w.aircraft[c].state = .workshop
     true
 
@@ -189,7 +195,9 @@ advance_repairs = (w: mut World):
         w.places[place].market.inventory.qty[5] -= parts; record_consumption(w,5,parts)
         if cost > 0: assert(transfer(w,escrow,w.places[place].market.account,cost,.repair,id))
         if labor > 0: assert(transfer(w,escrow,w.people[p].account,labor,.repair,id))
-        w.aircraft[c].engine = min(1000,w.aircraft[c].engine+w.obligations[id].quantity)
+        if w.obligations[id].repair_hull: w.aircraft[c].hull = min(1000,w.aircraft[c].hull+w.obligations[id].quantity)
+        else: w.aircraft[c].engine = min(1000,w.aircraft[c].engine+w.obligations[id].quantity)
+        w.aircraft[c].revision += 1
         w.aircraft[c].state = .moored; w.aircraft[c].repair_obligation = -1
         w.obligations[id].state = .fulfilled; w.obligations[id].repair_started_minute = -1; w.obligations[id].reserved_parts = 0
         emit_event(w,.repair,place,w.obligations[id].debtor,p,w.obligations[id].reason,w.obligations[id].amount_cents)
@@ -210,3 +218,16 @@ update_people = (w: mut World):
             if w.people[p].action.progress_minutes >= 30: w.people[p].alone_minutes = 0
         if w.people[p].state == .injured and w.minute >= w.people[p].injured_until:
             w.people[p].state = .idle; w.people[p].next_decision_minute = w.minute
+
+request_repair = (w: mut World, owner: int) -> int:
+    if owner < 0 or owner >= w.people.len(): return -1
+    c = w.people[owner].craft; place = w.people[owner].place
+    if c < 0 or place < 0 or w.aircraft[c].place != place or not w.places[place].has_workshop: return -1
+    loop id in w.open_obligations:
+        if w.obligations[id].kind == .repair and w.obligations[id].craft == c and obligation_live(w.obligations[id].state): return id
+    hull = w.aircraft[c].engine >= 800
+    points = max(0,800-(if hull: w.aircraft[c].hull else: w.aircraft[c].engine))
+    if points == 0: return -1
+    id = seed_obligation(w,"service-{c}-{w.next_obligation}",owner,-1,.repair,w.minute,w.minute+2880,points*800/200,place)
+    w.obligations[id].craft = c; w.obligations[id].quantity = points; w.obligations[id].repair_hull = hull
+    id

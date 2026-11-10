@@ -1,0 +1,177 @@
+# Paid ferry/tow service uses one public boat per home harbor; it sails home empty after delivery.
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_events.jo'
+use 'living_geometry.jo'
+use 'living_duties.jo'
+use 'living_market.jo'
+
+public_boat_busy = (w: World, origin: int, except_trip: int = -1) -> bool:
+    loop task in w.public_boats:
+        if task.origin == origin and task.trip != except_trip and task.state == 1: return true
+    loop rescue in w.rescues:
+        if rescue.place == origin and rescue.state == 1: return true
+    false
+
+request_service = (w: mut World, person: int, destination: int, craft: int = -1) -> int:
+    if person < 0 or person >= w.people.len() or destination < 0 or destination >= 6 or w.people[person].trip >= 0 or passenger_craft(w,person) >= 0: return -1
+    origin = w.people[person].place
+    if origin < 0: return -1
+    aftermath = -1
+    if craft >= 0:
+        if craft >= w.aircraft.len() or w.aircraft[craft].owner != person or (w.aircraft[craft].state != .ditched and w.aircraft[craft].engine >= 350 and w.aircraft[craft].hull >= 350) or w.aircraft[craft].trip >= 0 or w.aircraft[craft].move_owner == .scene: return -1
+        loop id, a in w.aftermath:
+            if a.craft == craft and a.kind == .beach_wreck: aftermath = id; origin = a.place
+        if not w.places[destination].has_workshop or w.aircraft[craft].repair_obligation >= 0: return -1
+        if aftermath < 0:
+            if w.aircraft[craft].place < 0: return -1
+            origin = w.aircraft[craft].place
+    else if destination == origin: return -1
+    loop task in w.public_boats:
+        if task.person == person and task.state < 2: return -1
+    forward: vec3[]
+    pickup = if aftermath >= 0: w.aftermath[aftermath].pos else: if craft >= 0: w.aircraft[craft].pose.pos else: w.harbors[origin].buoy
+    if origin == destination: forward = [w.harbors[origin].buoy,pickup,w.harbors[destination].buoy]
+    else:
+        key = origin*6+destination
+        if not (key in w.sea_routes): return -1
+        forward = w.sea_routes[key]
+        if craft >= 0: forward.insert(1,pickup)
+    fare = if craft >= 0: 2000 else: min(2000,max(400,route_minutes(path_length(forward),8)*4))
+    if w.accounts[w.people[person].account].cents < fare: return -1
+    id = w.next_trip
+    account = new_account(w,"harbor-boat-{id}")
+    assert(transfer(w,w.people[person].account,account,fare,.departure,id))
+    w.next_trip += 1
+    route = forward
+    if origin != destination:
+        loop i in 0..forward.len()-1: route.push(forward[forward.len()-2-i])
+    reason = Reason(purpose=if craft >= 0: Purpose.repair else: Purpose.return_home,actor=person,origin=origin,destination=destination,amount_cents=fare)
+    w.trips[id] = Trip(id=id,actor=person,craft=craft,mode=if craft >= 0: TripMode.tow else: TripMode.ferry,state=.preparing,origin=origin,destination=destination,reason=reason,route=route,cruise_mm_per_sec=if craft >= 0: 6000 else: 8000,departed_tick=w.tick,last_tick=w.tick,eta_tick=w.tick)
+    w.public_boats.push(PublicBoatTask(trip=id,person=person,craft=craft,aftermath=aftermath,origin=origin,destination=destination,dispatch_minute=w.minute+90,delivery_segment=forward.len()-1,account=account,fare=fare,pose=Pose(pos=route[0])))
+    id
+
+request_ferry = (w: mut World, person: int, destination: int) -> int: request_service(w,person,destination)
+request_tow = (w: mut World, person: int, craft: int, workshop: int) -> int: request_service(w,person,workshop,craft)
+
+advance_public_boats = (w: mut World):
+    loop i in 0..w.public_boats.len():
+        if w.public_boats[i].state >= 2: continue
+        id = w.public_boats[i].trip; p = w.public_boats[i].person
+        origin = w.public_boats[i].origin; dest = w.public_boats[i].destination
+        if w.public_boats[i].state == 0:
+            if w.minute < w.public_boats[i].dispatch_minute: continue
+            if w.places[origin].harbor_closed or public_boat_busy(w,origin,id):
+                w.public_boats[i].dispatch_minute = w.minute+30
+                continue
+            if w.public_boats[i].craft < 0 and (w.people[p].place != origin or passenger_craft(w,p) >= 0):
+                assert(transfer(w,w.public_boats[i].account,w.people[p].account,w.public_boats[i].fare,.refund,id))
+                w.public_boats[i].state = 3; w.trips[id].state = .failed; w.trips[id].terminal_minute = w.minute
+                continue
+            w.public_boats[i].state = 1; w.trips[id].state = .active
+            w.trips[id].departed_tick = w.tick; w.trips[id].last_tick = w.tick
+            total = 0
+            loop s in 0..w.trips[id].route.len()-1:
+                duration = max(1,int(ceil(f64(length(w.trips[id].route[s+1]-w.trips[id].route[s]))*60000.0/f64(w.trips[id].cruise_mm_per_sec))))
+                w.trips[id].segment_ticks.push(duration); total += duration
+            w.trips[id].eta_tick = w.tick+total
+            w.active_trips.push(id)
+            if w.public_boats[i].craft < 0:
+                w.places[origin].residents.remove(p)
+                w.people[p].trip = id; w.people[p].place = -1; w.people[p].state = .traveling
+            else:
+                craft = w.public_boats[i].craft
+                w.aircraft[craft].trip = id; w.aircraft[craft].place = -1; w.aircraft[craft].dock = -1
+            emit_event(w,.departed,origin,p,-1,w.trips[id].reason)
+        remaining = w.tick-w.trips[id].last_tick; w.trips[id].last_tick = w.tick
+        loop remaining > 0 and w.trips[id].segment < w.trips[id].route.len()-1:
+            s = w.trips[id].segment; duration = w.trips[id].segment_ticks[s]
+            dt = min(remaining,duration-w.trips[id].segment_elapsed_ticks)
+            w.trips[id].segment_elapsed_ticks += dt; remaining -= dt
+            pose = Pose(pos=lerp(w.trips[id].route[s],w.trips[id].route[s+1],f32(f64(w.trips[id].segment_elapsed_ticks)/f64(duration))))
+            w.public_boats[i].pose = pose
+            if not w.public_boats[i].delivered:
+                if w.public_boats[i].craft < 0: w.people[p].pose = pose
+                else: w.aircraft[w.public_boats[i].craft].pose = pose
+            if w.trips[id].segment_elapsed_ticks >= duration:
+                w.trips[id].segment += 1; w.trips[id].segment_elapsed_ticks = 0
+            if not w.public_boats[i].delivered and w.trips[id].segment >= w.public_boats[i].delivery_segment:
+                w.public_boats[i].delivered = true
+                craft = w.public_boats[i].craft
+                if craft < 0:
+                    w.people[p].place = dest; w.people[p].trip = -1; w.people[p].state = .idle
+                    living_costs(w,p)
+                    w.people[p].pose.pos = w.harbors[dest].center+vec3(0,1.2,0)
+                    w.people[p].action = Action(activity=.wait,purpose=.return_home,end_minute=w.minute)
+                    w.people[p].next_decision_minute = w.minute
+                    if not (p in w.places[dest].residents): w.places[dest].residents.push(p)
+                else:
+                    w.aircraft[craft].place = dest; w.aircraft[craft].trip = -1; w.aircraft[craft].dock = -1
+                    w.aircraft[craft].state = if w.aircraft[craft].hull >= 350 and w.aircraft[craft].engine >= 350: CraftState.moored else: CraftState.workshop
+                    a = w.public_boats[i].aftermath
+                    if a >= 0:
+                        w.aftermath[a].kind = .workshop_plane; w.aftermath[a].place = dest; w.aftermath[a].pos = w.harbors[dest].buoy
+                    loop obligation in w.open_obligations:
+                        if w.obligations[obligation].craft == craft and w.obligations[obligation].kind == .repair:
+                            w.obligations[obligation].place = dest; w.obligations[obligation].reason.destination = dest
+                    w.trips[id].craft = -1
+                emit_event(w,.arrived,dest,p,-1,w.trips[id].reason)
+        if w.tick >= w.trips[id].eta_tick:
+            w.trips[id].state = .arrived; w.trips[id].terminal_minute = w.minute
+            w.public_boats[i].state = 2; w.public_boats[i].return_minute = w.minute
+
+    # A missed boarded promise offers a real funded return passage, not deletion or teleport.
+    loop p in 1..w.people.len():
+        if not w.people[p].return_passage_needed or w.people[p].trip >= 0 or w.people[p].place < 0 or passenger_craft(w,p) >= 0: continue
+        if w.people[p].place == w.people[p].home: w.people[p].return_passage_needed = false; continue
+        pending = false
+        loop task in w.public_boats:
+            if task.person == p and task.state < 2: pending = true
+        if not pending and request_ferry(w,p,w.people[p].home) >= 0: w.people[p].return_passage_needed = false
+
+# Known service failures prompt funded progress well before the 48-hour loss detector.
+service_recovery = (w: mut World):
+    loop p in 1..w.people.len():
+        craft = w.people[p].craft
+        if craft < 0: continue
+        broken = w.aircraft[craft].hull < 350 or w.aircraft[craft].engine < 350 or w.aircraft[craft].state == .ditched
+        if not broken:
+            w.people[p].service_blocked_since = -1
+            continue
+        if w.people[p].service_blocked_since < 0: w.people[p].service_blocked_since = w.minute
+        if w.minute-w.people[p].service_blocked_since < 2160 or w.people[p].trip >= 0 or w.people[p].place < 0 or w.people[p].injured_until > w.minute: continue
+        if w.aircraft[craft].repair_obligation >= 0 or w.people[p].local_work_escrow >= 0: continue
+        pending = false
+        loop task in w.public_boats:
+            if task.person == p and task.state < 2: pending = true
+        if pending: continue
+        place = w.people[p].place
+        mechanic = false
+        loop person in w.people:
+            if person.occupation == .mechanic and person.place == place and person.injured_until <= w.minute: mechanic = true
+        if w.aircraft[craft].place == place and w.places[place].has_workshop and mechanic:
+            repair = request_repair(w,p)
+            if repair >= 0 and start_repair(w,repair): continue
+        else:
+            workshop = if w.places[place].has_workshop and mechanic: place else: -1
+            distance = 1e30
+            if workshop < 0:
+                loop target in [0,2,5]:
+                    if target == place or (target == 5 and w.people[p].faction != 3): continue
+                    d = f64(length(w.harbors[place].center-w.harbors[target].center))
+                    if d < distance: workshop = target; distance = d
+            if workshop >= 0:
+                trip = if workshop != place: request_ferry(w,p,workshop) else: request_tow(w,p,craft,workshop)
+                if trip >= 0:
+                    w.people[p].last_recovery_action_minute = w.minute
+                    continue
+        # One funded emergency labor reservation per week, drawn from the real authority purse.
+        # Cove crews use their already-funded outside salvage work instead.
+        if place == 5 or day_index(w.minute)-w.people[p].last_recovery_work_day < 7 or w.minute-w.people[p].last_recovery_action_minute < 2880: continue
+        escrow = fund_escrow(w,w.factions[0].account,1200,"recovery-labor-{p}-{day_index(w.minute)}")
+        if escrow >= 0:
+            w.people[p].last_recovery_work_day = day_index(w.minute)
+            w.people[p].last_recovery_action_minute = w.minute
+            w.people[p].local_work_escrow = escrow
+            w.people[p].action = Action(activity=.work,purpose=.trade,reason=Reason(purpose=.repair,actor=p,destination=place,amount_cents=1200),end_minute=w.minute+60)
+            w.people[p].next_decision_minute = w.minute+60

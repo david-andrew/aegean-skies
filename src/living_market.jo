@@ -77,6 +77,7 @@ hourly_demand = (w: mut World):
                 w.quote_residual[key] = raw_price%1000
                 w.places[p].market.inventory.qty[g] -= qty
                 record_consumption(w,g,qty)
+            w.places[p].market.unmet_demand_milli[g] += wanted-qty
             if qty < wanted:
                 w.places[p].market.shortage_hours[g] += 1
                 if w.places[p].market.shortage_hours[g] == 6:
@@ -113,6 +114,27 @@ spoil_fish = (w: mut World):
         lost = raw/24; w.quote_residual[key] = raw%24
         w.people[p].pocket.qty[0] -= lost; record_consumption(w,0,lost)
 
+spoil_salvage = (w: mut World):
+    ids = w.aftermath.keys()
+    loop id in ids:
+        qty = w.aftermath[id].inventory.qty[0]
+        key = "spoil-salvage:{id}"
+        raw = qty+w.quote_residual.get(key,0)
+        lost = raw/24; w.quote_residual[key] = raw%24
+        reserved_loss = max(0,lost-available(w.aftermath[id].inventory,0))
+        w.aftermath[id].inventory.qty[0] -= lost
+        w.aftermath[id].inventory.reserved[0] -= reserved_loss
+        record_consumption(w,0,lost)
+    properties = w.lost_property.keys()
+    loop id in properties:
+        qty = w.lost_property[id].qty[0]
+        key = "spoil-salvage:{id}"
+        raw = qty+w.quote_residual.get(key,0)
+        lost = raw/24; w.quote_residual[key] = raw%24
+        reserved_loss = max(0,lost-available(w.lost_property[id],0))
+        w.lost_property[id].qty[0] -= lost; w.lost_property[id].reserved[0] -= reserved_loss
+        record_consumption(w,0,lost)
+
 outside_exports = (w: mut World):
     loop p in 0..6:
         if p == 5 or w.places[p].harbor_closed: continue
@@ -123,12 +145,25 @@ outside_exports = (w: mut World):
             if cents > 0: assert(transfer(w,-1,w.places[p].market.account,cents,.outside_export))
             w.places[p].market.inventory.qty[g] -= qty; record_consumption(w,g,qty)
 
-living_costs = (w: mut World):
-    day = day_index(w.minute)
+living_costs = (w: mut World, only_person: int = -1):
+    day = day_index(w.minute)-(if local_minute(w.minute) < 1320: 1 else: 0)
+    if day < 0: return
     loop person in 1..w.people.len():
+        if only_person >= 0 and only_person != person: continue
         place = w.people[person].place
-        if place < 0 or w.people[person].living_day == day: continue
+        if place < 0 or w.people[person].living_day >= day: continue
         w.people[person].living_day = day
+        if w.people[person].injured_until > w.minute and day-w.people[person].last_care_grant_day >= 7:
+            days = max(1,min(3,(w.people[person].injured_until-w.minute+1439)/1440))
+            daily = 500+(w.places[place].market.price_cents[0]+w.places[place].market.price_cents[3])/2
+            grant = max(0,days*daily-w.accounts[w.people[person].account].cents)
+            if grant > 0:
+                authority = w.factions[0].account
+                if w.accounts[authority].cents >= grant: assert(transfer(w,authority,w.people[person].account,grant,.subsidy,person))
+                else:
+                    assert(transfer(w,-1,w.people[person].account,grant,.subsidy,person))
+                    w.emergency_subsidies += 1
+                w.people[person].last_care_grant_day = day
         loop g in [0,3]:
             qty = min(500,available(w.places[place].market.inventory,g))
             if qty > 0 and trade(w,person,place,g,qty,true):
@@ -156,12 +191,41 @@ market_day = (w: mut World):
 
 market_minute = (w: mut World):
     clock = local_minute(w.minute)
+    if w.places[4].banquet_day < 0 or clock == 360: plan_banquet(w)
     if w.last_ship_day < 0 or clock == 360: prepare_shipments(w)
+    if clock == 1140: serve_banquet(w)
     advance_shipments(w)
     if clock%60 == 0:
         hourly_demand(w)
         spoil_fish(w)
+        spoil_salvage(w)
         update_prices(w)
     if clock == 0: market_day(w)
     if clock == 1020: outside_exports(w)
     if clock == 1320: living_costs(w)
+
+plan_banquet = (w: mut World):
+    day = day_index(w.minute)
+    if w.places[4].banquet_day == day: return
+    w.places[4].banquet_day = day
+    w.places[4].banquet_planned = draw1000000(w.seed,30,4,day,99) < 200000
+    if not w.places[4].banquet_planned: return
+    w.places[4].market.target[1] += 3000
+    due = day*1440-570+1140
+    obligation = seed_obligation(w,"selene-banquet-{day}",20,20,.supply,due,due+120,0,4,1,3000)
+    w.places[4].banquet_obligation = obligation
+
+serve_banquet = (w: mut World):
+    if not w.places[4].banquet_planned: return
+    # Outside guests pay only for wine actually served from Lucia's physical cellar.
+    qty = min(3000,available(w.people[20].pocket,1))
+    if qty > 0:
+        cents = qty*(w.places[4].market.price_cents[1]+200)/1000
+        assert(transfer(w,-1,w.people[20].account,cents,.household_sale))
+        w.people[20].pocket.qty[1] -= qty; record_consumption(w,1,qty)
+    w.places[4].market.target[1] -= 3000
+    w.places[4].banquet_planned = false
+    id = w.places[4].banquet_obligation
+    if id >= 0:
+        w.obligations[id].state = if qty >= 3000: ObligationState.fulfilled else: ObligationState.breached
+        if qty < 3000: emit_event(w,.shortage,4,20,-1,w.obligations[id].reason)

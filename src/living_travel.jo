@@ -6,6 +6,7 @@ use 'living_delivery.jo'
 use 'living_news.jo'
 use 'living_conditions.jo'
 use 'living_contraband.jo'
+use 'living_market.jo'
 import 'world.jo' as terrain
 
 free_dock = (w: World, place: int, craft: int = -1) -> int:
@@ -42,14 +43,20 @@ route_fuel = (route: vec3[], kind: Airframe) -> int:
     # Departure taxi 20 s; approach is airborne. Round once across the route.
     (1200 * 20 + max(0,ticks-1200) * spec.burn_ml_sec + 59) / 60
 
-travel_feasible = (w: World, actor: int, destination: int) -> bool:
+travel_ready = (w: World, actor: int, destination: int) -> bool:
     if actor < 0 or actor >= w.people.len() or destination < 0 or destination >= w.places.len(): return false
     c = w.people[actor].craft; origin = w.people[actor].place
     if c < 0 or origin < 0 or origin == destination or w.people[actor].trip >= 0: return false
+    if w.aircraft[c].place != origin: return false
     if w.places[origin].harbor_closed or w.places[destination].harbor_closed: return false
     if w.aircraft[c].trip >= 0 or w.aircraft[c].state == .workshop or w.aircraft[c].state == .ditched or w.aircraft[c].state == .wrecked: return false
     if w.aircraft[c].hull < 350 or w.aircraft[c].engine < 350 or w.people[actor].injured_until > w.minute: return false
     if weather_severity(w,w.aircraft[c].pose.pos) > pilot_nerve(w,actor,c): return false
+    true
+
+travel_feasible = (w: World, actor: int, destination: int) -> bool:
+    if not travel_ready(w,actor,destination): return false
+    c = w.people[actor].craft; origin = w.people[actor].place
     route = route_geometry(w,origin,destination,w.aircraft[c].pose.pos)
     fuel = route_fuel(route,w.aircraft[c].kind)
     w.aircraft[c].fuel_ml >= fuel + max(5000,fuel/5)
@@ -88,9 +95,11 @@ launch_route = (w: mut World, actor: int, destination: int, route: vec3[], reaso
     configure_trip_timing(w,id)
     schedule_incident(w,id)
     w.active_trips.push(id)
+    observe_prices(w,actor,origin)
     w.places[origin].residents.remove(actor)
     w.people[actor].place = -1; w.people[actor].trip = id; w.people[actor].state = .traveling
     w.people[actor].action = Action(activity=.travel,purpose=reason.purpose,reason=reason,end_minute=(w.trips[id].eta_tick+119)/120)
+    w.aircraft[c].operator = actor
     w.aircraft[c].place = -1; w.aircraft[c].dock = -1; w.aircraft[c].trip = id; w.aircraft[c].state = .taxi
     w.aircraft[c].revision += 1
     loop p in w.aircraft[c].passengers:
@@ -116,10 +125,16 @@ commit_arrival = (w: mut World, trip: int, place: int, dock: int, revision: int)
         w.aircraft[c].place = place; w.aircraft[c].dock = dock; w.aircraft[c].trip = -1; w.aircraft[c].state = .moored
         w.aircraft[c].pose.pos = if dock >= 0: w.harbors[place].docks[dock] else: w.harbors[place].buoy
         w.aircraft[c].pose.vel = vec3(0,0,0)
+        w.aircraft[c].pose.throttle = 0
         w.aircraft[c].revision += 1
     w.trips[trip].state = .arrived; w.trips[trip].terminal_minute = w.minute
     w.people[actor].place = place; w.people[actor].trip = -1; w.people[actor].state = .idle
-    w.people[actor].pose.pos = w.harbors[place].center + vec3(0,1.2,0)
+    if c >= 0 and dock >= 0:
+        tangent = vec3(-w.harbors[place].out.z,0,w.harbors[place].out.x)
+        foot = w.harbors[place].docks[dock]+tangent*(if dock == 0: 9.0 else: -9.0)
+        w.people[actor].pose.pos = vec3(foot.x,1.2,foot.z)
+        if actor != w.player: w.aircraft[c].operator = -1
+    else: w.people[actor].pose.pos = w.harbors[place].center + vec3(0,1.2,0)
     w.people[actor].next_decision_minute = w.minute
     w.people[actor].action = Action(activity=.wait,purpose=w.trips[trip].reason.purpose,reason=w.trips[trip].reason,end_minute=w.minute)
     if w.trips[trip].reason.purpose == .visit:
@@ -132,14 +147,16 @@ commit_arrival = (w: mut World, trip: int, place: int, dock: int, revision: int)
     emit_event(w,.arrived,place,actor,w.trips[trip].reason.beneficiary,w.trips[trip].reason)
     arrival_search(w,trip)
     unload_at_harbor(w,actor)
+    disembark_failed_passengers(w,actor,place)
     arrival_exchange(w,actor,place)
+    living_costs(w,actor)
     true
 
 advance_trips = (w: mut World, target_tick: int):
     loop id in w.active_trips:
         if w.trips[id].state == .arrived or w.trips[id].state == .failed: continue
         c = w.trips[id].craft
-        if c < 0 or w.aircraft[c].move_owner == .scene: continue
+        if c < 0 or w.trips[id].mode != .aircraft or w.aircraft[c].move_owner == .scene: continue
         if w.trips[id].segment_ticks.len() == 0: configure_trip_timing(w,id,false)
         if w.trips[id].encounter >= 0 and not w.encounters[w.trips[id].encounter].resolved:
             w.trips[id].last_tick = target_tick
@@ -171,6 +188,8 @@ advance_trips = (w: mut World, target_tick: int):
             w.trips[id].segment_mm = progressed
             w.aircraft[c].pose.pos = lerp(a,b,f32(f64(w.trips[id].segment_elapsed_ticks)/f64(duration)))
             w.aircraft[c].pose.vel = (b-a)*f32(60.0/f64(duration))
+            w.aircraft[c].pose.rot = facing(b-a)
+            w.aircraft[c].pose.throttle = if s == 0 and w.trips[id].departed_tick >= 0: 250 else: if s == w.trips[id].route.len()-2: 200 else: 650
             w.aircraft[c].state = if s == 0 and w.trips[id].departed_tick >= 0: CraftState.taxi else: if s == w.trips[id].route.len()-2: CraftState.approach else: CraftState.airborne
             if w.trips[id].segment_elapsed_ticks == duration:
                 w.trips[id].segment += 1; w.trips[id].segment_mm = 0; w.trips[id].segment_elapsed_ticks = 0
@@ -189,6 +208,7 @@ advance_trips = (w: mut World, target_tick: int):
             if dock < 0: dock = free_dock(w,dest,c)
             if w.places[dest].harbor_closed or (dock < 0 and w.trips[id].hold_until_minute == 0):
                 w.trips[id].state = .holding
+                w.aircraft[c].pose.vel = vec3(0,0,0); w.aircraft[c].pose.throttle = 0
                 if w.trips[id].hold_until_minute == 0: w.trips[id].hold_until_minute = w.minute+30
             if not w.places[dest].harbor_closed and (dock >= 0 or w.minute >= w.trips[id].hold_until_minute):
                 target = if dock >= 0: w.harbors[dest].docks[dock] else: w.harbors[dest].buoy
@@ -236,12 +256,16 @@ struct AirborneTrip:
     segment_mm: int
     incident_at_mm: int
     incident_resolved: bool
+    origin_dock_index: int
+    destination_dock_index: int
+    trip_state: TripState
+    hold_until_minute: int
 
 query_airborne = (w: World) -> AirborneTrip[]:
     result: AirborneTrip[]
     loop id in w.active_trips:
         c = w.trips[id].craft
-        if c < 0: continue
+        if c < 0 or w.trips[id].mode != .aircraft: continue
         t = w.trips[id]
-        result.push(AirborneTrip(id,t.actor,c,t.origin,t.destination,if t.origin_dock >= 0: w.harbors[t.origin].docks[t.origin_dock] else: w.harbors[t.origin].buoy,if t.claimed_dock >= 0: w.harbors[t.destination].docks[t.claimed_dock] else: w.harbors[t.destination].buoy,t.reason,w.aircraft[c].kind,int(w.aircraft[c].kind),t.actor%6,w.aircraft[c].pose,w.aircraft[c].move_owner,w.aircraft[c].revision,t.route,t.encounter,t.eta_tick,w.aircraft[c].fuel_ml,w.aircraft[c].hull,w.aircraft[c].engine,w.aircraft[c].state,t.segment,t.segment_mm,t.incident_at_mm,t.incident_resolved))
+        result.push(AirborneTrip(id,t.actor,c,t.origin,t.destination,if t.origin_dock >= 0: w.harbors[t.origin].docks[t.origin_dock] else: w.harbors[t.origin].buoy,if t.claimed_dock >= 0: w.harbors[t.destination].docks[t.claimed_dock] else: w.harbors[t.destination].buoy,t.reason,w.aircraft[c].kind,if w.aircraft[c].model_index >= 0: w.aircraft[c].model_index else: int(w.aircraft[c].kind),if w.aircraft[c].livery_index >= 0: w.aircraft[c].livery_index else: w.aircraft[c].owner%6,w.aircraft[c].pose,w.aircraft[c].move_owner,w.aircraft[c].revision,t.route,t.encounter,t.eta_tick,w.aircraft[c].fuel_ml,w.aircraft[c].hull,w.aircraft[c].engine,w.aircraft[c].state,t.segment,t.segment_mm,t.incident_at_mm,t.incident_resolved,t.origin_dock,t.claimed_dock,t.state,t.hold_until_minute))
     result
