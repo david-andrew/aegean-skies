@@ -1,51 +1,60 @@
-# Wakes: the white trail an aircraft leaves on the water as it taxis, runs for a takeoff or settles
-# after a landing. Each craft keeps the points it passed; they widen and fade as they age, drawn as
-# one ribbon of broken foam over the sea.
+# Wakes: what an aircraft leaves on the sea. Each craft keeps the points it passed; drawn from
+# them is a strip of mesh a little above the water, shaped and shaded as a wake: two raised
+# ridges spreading out from the track at the Kelvin angle (they go on spreading as the wake ages),
+# breaking into foam lines where they are steepest, faint transverse waves between them, and a
+# churned center that fades. Skimming fast just over the water, the downwash churns a fainter
+# track of its own.
 
 use 'look.jo'
 
-const WAKE_EVERY = 0.2              # seconds between points
-const WAKE_LIFE = 26.0              # seconds a point lasts
+const WAKE_EVERY = 0.15             # seconds between points
+const WAKE_LIFE = 40.0              # seconds a point lasts
+const KELVIN = 0.354                # tan 19.47 degrees: how fast the arms open behind the hull
 
 struct WakePoint:
     pos: vec2
     side: vec2                      # unit, across the track
     born: f64
-    width: f32                      # how wide the hull or floats made it
-    strength: f32                   # how hard it was churned (speed)
+    width: f32                      # how wide the hull or floats are
+    strength: f32                   # how hard it was churned (0..1)
+    speed: f32                      # how fast it was going then (sets how fast the arms spread)
+    skim: f32                       # 0: the floats in the water; 1: only the downwash touching it
 
 struct WakeTrail:
     pts: WakePoint[]
     last = -1.0
     broken = true                   # (the next point starts a new stretch)
 
-# a craft on the water at pos with velocity vel: add to its trail now and then
-wake_step = (w: mut WakeTrail, pos: vec3, vel: vec3, on_water: bool, width: f64, t: f64):
+# a craft at pos with velocity vel: on the water (or skimming just above it, `skim` 0..1)
+wake_step = (w: mut WakeTrail, pos: vec3, vel: vec3, on_water: bool, width: f64, t: f64, skim: f64 = 0.0):
     loop w.pts.len() > 0 and t - w.pts[0].born > WAKE_LIFE: w.pts.remove_at(0)
     v = vec2(vel.x, vel.z)
     sp = f64(length(v))
-    if not on_water or sp < 1.2:
+    touching = on_water or skim > 0.02
+    if not touching or sp < 1.0:
         w.broken = true
         return
     if t - w.last < WAKE_EVERY: return
     w.last = t
     d = v / f32(sp)
-    strength = f32(clamp(sp / 25.0, 0.15, 1.0))
+    strength = f32(clamp(sp / 22.0, 0.12, 1.0) * (if on_water: 1.0 else: skim * 0.6))
+    sk = f32(if on_water: 0.0 else: skim)
     if w.broken and w.pts.len() > 0:
-        # a gap: a point of no strength, so the ribbon does not join the old stretch to the new
+        # a gap: points of no strength, so the strip does not join the old stretch to the new
         p = w.pts[w.pts.len() - 1]
-        w.pts.push(WakePoint(p.pos, p.side, p.born, p.width, 0.0))
-        w.pts.push(WakePoint(vec2(pos.x, pos.z), vec2(-d.y, d.x), t, f32(width), 0.0))
+        w.pts.push(WakePoint(p.pos, p.side, p.born, p.width, 0.0, p.speed, p.skim))
+        w.pts.push(WakePoint(vec2(pos.x, pos.z), vec2(-d.y, d.x), t, f32(width), 0.0, f32(sp), sk))
     w.broken = false
-    w.pts.push(WakePoint(vec2(pos.x, pos.z), vec2(-d.y, d.x), t, f32(width), strength))
+    w.pts.push(WakePoint(vec2(pos.x, pos.z), vec2(-d.y, d.x), t, f32(width), strength, f32(sp), sk))
 
-struct WakeVertex:
-    pos: vec3
-    data: vec4                      # x across (-1..1), y age (s), z strength, w along (m)
+# (a wake's vertices are the engine's own Vertex3D: uv carries x across (-1.3..1.3: the arms at
+# +-1) and the age (s); color, whose parts are kept between 0 and 1, the strength, whether it is a
+# skimming wake, and the arms' half-width over 64 m)
 
 struct WakeParams:
     view_proj: mat4
     cam: vec3
+    sun_dir: vec3
     sun: vec3
     sky: vec3
     haze: vec3
@@ -55,23 +64,41 @@ struct WakeParams:
 struct WakeOut:
     pos: vec4
     world: vec3
+    normal: vec3
     data: vec4
 
-wake_vs = (v: WakeVertex, u: WakeParams) -> WakeOut: WakeOut(u.view_proj * vec4(v.pos, 1), v.pos, v.data)
+# (four floats per vertex beyond position and normal: a fifth varying did not arrive)
+wake_vs = (v: Vertex3D, u: WakeParams) -> WakeOut: WakeOut(u.view_proj * vec4(v.pos, 1), v.pos, v.normal, vec4(v.uv.x, v.uv.y, if v.color.y > 0.5: -v.color.x else: v.color.x, v.color.z * 64.0))
 
 wake_fs = (i: WakeOut, u: WakeParams) -> vec4:
-    across = abs(i.data.x)
+    x = i.data.x
+    ax = abs(x)
     age = i.data.y
-    fade = (1.0 - smoothstep(0.0, WAKE_LIFE, age)) * i.data.z
-    # churned white along the middle when fresh, two spreading lines along the edges after
-    core = (1.0 - smoothstep(0.0, 0.45, across)) * (1.0 - smoothstep(0.0, 6.0, age))
-    edge = smoothstep(0.55, 0.85, across) * (1.0 - smoothstep(0.9, 1.0, across))
-    n = vnoise(vec2(i.data.w * 0.6, i.data.x * 3.0 + age * 0.3)) * 0.7 + vnoise(i.world.xz * 0.9) * 0.3
-    foam = clamp((core * 1.2 + edge * 0.8) * smoothstep(0.25, 0.65, n + core * 0.3), 0.0, 1.0)
-    a = foam * fade
+    s = abs(i.data.z)
+    life = 1.0 - smoothstep(0.0, WAKE_LIFE, age)
+    skim: f32 = if i.data.z < 0.0: 1.0 else: 0.0
+    meters = ax * i.data.w
+    along = dot(i.world.xz, vec2(0.7, 0.7))
+    arms = 1.0 - skim
+    # the arms: a foam line on each ridge, broken here and there, thinning with age
+    ridge = exp(-((ax - 1.0) / 0.07) * ((ax - 1.0) / 0.07))
+    breakup = smoothstep(0.25, 0.7, vnoise(vec2(along * 0.35, x * 4.0 + age * 0.2)) + 0.35 * exp(-age / 6.0))
+    foam = ridge * breakup * exp(-age / 14.0) * arms
+    # faint transverse waves between the arms
+    tw = sin(along * 0.9 - age * 1.6) * 0.5 + 0.5
+    trans = smoothstep(0.85, 1.0, tw) * (1.0 - smoothstep(0.75, 0.95, ax)) * smoothstep(0.2, 0.5, ax) * exp(-age / 8.0) * arms
+    # the churned water behind each float (or the hull): broken foam in two lanes, brief
+    lane = abs(meters - 1.55 * (1.0 - skim))
+    lw = 0.7 + age * 0.4 + 1.5 * skim
+    fl = vnoise(vec2(along * 1.4, meters * 2.2 + age * 0.7)) * 0.6 + vnoise(vec2(along * 3.1, meters * 5.0)) * 0.4
+    churn = (1.0 - smoothstep(lw * 0.5, lw, lane)) * exp(-age / (2.0 + 3.0 * skim)) * smoothstep(0.42, 0.62, fl)
+    a = clamp(foam * 0.9 + trans * 0.15 + churn * 0.75, 0.0, 1.0) * s * life
     if a < 0.01: discard()
-    c = vec3(0.96, 0.98, 1.0) * (u.sun * 0.75 + u.sky * 0.35)
-    vec4(aerial(c, i.world, u.cam, u.haze, u.fog), a * 0.85)
+    # lit as raised water: the ridge's sunward face brighter
+    n = normalize(i.normal)
+    lit = 0.8 + 0.3 * clamp(dot(n, normalize(u.sun_dir)), -1.0, 1.0)
+    c = vec3(0.96, 0.98, 1.0) * (u.sun * 0.8 + u.sky * 0.35) * lit
+    vec4(aerial(c, i.world, u.cam, u.haze, u.fog), a * 0.9)
 
 wake_sh: Shader
 wake_mesh: Mesh
@@ -80,12 +107,23 @@ wake_ready = false
 init_wake = ():
     global wake_sh, wake_mesh, wake_ready
     wake_sh = make_shader(shader(wake_vs, wake_fs))
-    wake_mesh = mesh([WakeVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), WakeVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), WakeVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0))])
+    z = Vertex3D(vec3(0, 0, 0), vec3(0, 1, 0), vec2(0, 0), vec4(0, 0, 0, 0))
+    wake_mesh = mesh([z, z, z])
     wake_ready = true
+
+# the strip's cross-section: where the columns sit (in arm widths), denser at the ridges
+COLS: f32[11] = [-1.3, -1.1, -1.0, -0.9, -0.5, 0.0, 0.5, 0.9, 1.0, 1.1, 1.3]
+
+# how high the wake stands at x across (in arm widths), for a point of this age and strength
+_profile = (x: f32, age: f64, s: f32, skim: f32) -> f32:
+    ax = abs(x)
+    ridge = exp(-((ax - 1.0) / 0.12) * ((ax - 1.0) / 0.12)) * (1.0 - skim)
+    mid = (1.0 - smoothstep(0.0, 0.5, ax)) * 0.4
+    (ridge * 0.35 + mid * 0.12) * s * f32(exp(-age / 9.0))
 
 draw_wakes = (trails: WakeTrail[], L: Light, t: f64):
     if not wake_ready: return
-    vs: WakeVertex[]
+    vs: Vertex3D[]
     loop w in trails:
         along = 0.0
         loop k in 0..w.pts.len() - 1:
@@ -94,19 +132,27 @@ draw_wakes = (trails: WakeTrail[], L: Light, t: f64):
             if a.strength <= 0.0 and b.strength <= 0.0: continue
             la = t - a.born
             lb = t - b.born
-            wa = f64(a.width) + la * 0.55
-            wb = f64(b.width) + lb * 0.55
+            # (the arms open behind the hull at the Kelvin angle while it runs, then spread slowly)
+            oa = f64(a.width) + min(la * f64(a.speed) * KELVIN, 25.0) + la * 0.25
+            ob = f64(b.width) + min(lb * f64(b.speed) * KELVIN, 25.0) + lb * 0.25
             seg = f64(length(b.pos - a.pos))
-            pa0 = a.pos - a.side * f32(wa); pa1 = a.pos + a.side * f32(wa)
-            pb0 = b.pos - b.side * f32(wb); pb1 = b.pos + b.side * f32(wb)
-            y: f32 = 0.06
-            va0 = WakeVertex(vec3(pa0.x, y, pa0.y), vec4(-1, f32(la), a.strength, f32(along)))
-            va1 = WakeVertex(vec3(pa1.x, y, pa1.y), vec4(1, f32(la), a.strength, f32(along)))
-            vb0 = WakeVertex(vec3(pb0.x, y, pb0.y), vec4(-1, f32(lb), b.strength, f32(along + seg)))
-            vb1 = WakeVertex(vec3(pb1.x, y, pb1.y), vec4(1, f32(lb), b.strength, f32(along + seg)))
-            vs.push(va0); vs.push(vb0); vs.push(va1)
-            vs.push(va1); vs.push(vb0); vs.push(vb1)
+            loop c in 0..COLS.len() - 1:
+                x0 = COLS[c]
+                x1 = COLS[c + 1]
+                mk = (p: WakePoint, life: f64, o: f64, x: f32, al: f64) -> Vertex3D:
+                    hgt = _profile(x, life, p.strength, p.skim)
+                    q = p.pos + p.side * f32(f64(x) * o)
+                    # (the slope across, for the light: from the profile's change)
+                    dx = (_profile(x + 0.05, life, p.strength, p.skim) - _profile(x - 0.05, life, p.strength, p.skim)) / f32(0.1 * o)
+                    n = normalize(vec3(0, 1, 0) - vec3(p.side.x, 0, p.side.y) * dx)
+                    Vertex3D(vec3(q.x, 0.05 + hgt, q.y), n, vec2(x, f32(life)), vec4(p.strength, if p.skim > 0.5: 1.0 else: 0.0, f32(min(o / 64.0, 1.0)), 1))
+                a0 = mk(a, la, oa, x0, along)
+                a1 = mk(a, la, oa, x1, along)
+                b0 = mk(b, lb, ob, x0, along + seg)
+                b1 = mk(b, lb, ob, x1, along + seg)
+                vs.push(a0); vs.push(b0); vs.push(a1)
+                vs.push(a1); vs.push(b0); vs.push(b1)
             along += seg
     if vs.len() < 3: return
     update_mesh(wake_mesh, vs)
-    draw(wake_sh, wake_mesh, WakeParams(scene_view_proj(), scene_camera(), L.sun, L.sky_top, L.haze, f32(L.fog_density), f32(t)))
+    draw(wake_sh, wake_mesh, WakeParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.haze, f32(L.fog_density), f32(t)))
