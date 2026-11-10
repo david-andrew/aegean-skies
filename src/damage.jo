@@ -1,0 +1,155 @@
+# Contact work, attachments and short-lived rigid debris. No clock, devices or random input.
+# Flight supplies the ACTUAL impulse it applies, in world space, and contact-relative velocity.
+# Strength is energy (J), not a speed gate. Loads below the elastic allowance leave no damage;
+# above it, work accumulates across contacts/substeps. Static buoyancy cannot eat an airframe.
+use 'planes.jo'
+from 'objects.jo' import obj_sh, obj_params
+from 'look.jo' import Light
+
+enum ImpactKind: splash, crunch, tear, scrape
+
+struct ImpactEvent:
+    position: vec3
+    normal: vec3
+    strength: f64                   # J: contact work; tear = failed attachment capacity
+    kind: ImpactKind
+    part: PartId
+    impulse: vec3                   # N s, world frame; camera / sound can use magnitude too
+
+struct PartHealth:
+    health = 1.0
+    attached = true
+
+struct Debris:
+    part: PartId
+    position: vec3                 # attachment pivot in world space
+    orientation: vec4
+    velocity: vec3
+    angular_velocity: vec3         # world rad/s
+    mass: f64
+    buoyancy: f64
+    age = 0.0
+    lifetime = 25.0
+    wet = false
+
+struct DamageState:
+    parts: PartHealth[7] = [PartHealth(), PartHealth(), PartHealth(), PartHealth(), PartHealth(), PartHealth(), PartHealth()]
+    events: ImpactEvent[]           # reset at the beginning of each public flight.step
+    debris: Debris[]                # at most six pieces (the body stays the wreck's core)
+    smoke = 0.0                     # 0..1 emission rate at the engine; caller supplies particles
+
+part_health = (d: DamageState, id: PartId) -> f64:
+    p = d.parts[int(id)]
+    if p.attached: p.health else: 0.0
+
+mass_fraction = (parts: PartSpec[], d: DamageState) -> f64:
+    total = 0.0
+    loop i in 0..parts.len():
+        if d.parts[i].attached: total += parts[i].mass_share
+    max(total, 0.1)
+
+wing_lift = (d: DamageState, id: PartId) -> f64:
+    p = d.parts[int(id)]
+    if p.attached: 0.3 + 0.7 * p.health else: 0.0
+
+# Merge substep events by part/kind; bounded to 28 per step without losing their energy.
+# Position and normal are energy-weighted, useful for one large splash rather than 30 wisps.
+impact_event = (d: mut DamageState, event: ImpactEvent):
+    if event.strength < 0.01: return
+    loop i in 0..d.events.len():
+        if d.events[i].part == event.part and d.events[i].kind == event.kind:
+            old = d.events[i].strength
+            total = old + event.strength
+            d.events[i].position = (d.events[i].position * f32(old) + event.position * f32(event.strength)) / f32(total)
+            n = d.events[i].normal * f32(old) + event.normal * f32(event.strength)
+            if length(n) > 0.001: d.events[i].normal = normalize(n)
+            d.events[i].strength = total
+            d.events[i].impulse += event.impulse
+            return
+    d.events.push(event)
+
+# Separation inherits the contact's rigid-body velocity and spin: no random explosion impulse.
+# Public also for a future aircraft-aircraft collision solver / deterministic scenario setup.
+detach_part = (d: mut DamageState, parts: PartSpec[], id: PartId, mass: f64, position: vec3, orientation: vec4, velocity: vec3, omega: vec3):
+    i = int(id)
+    if not d.parts[i].attached: return
+    d.parts[i].health = 0.0
+    if id == .body:
+        # The crushed central frame remains the simulated wreck. Its failed attachment
+        # structure releases the supported parts; it cannot keep flying with healthy wings.
+        loop child in [PartId.engine, .left_wing, .right_wing, .left_float, .right_float, .tail]:
+            detach_part(d, parts, child, mass, position, orientation, velocity, omega)
+        return
+    d.parts[i].attached = false
+    arm = quat_rotate(orientation, parts[i].attachment)
+    spin = quat_rotate(orientation, omega)
+    d.debris.push(Debris(id, position + arm, orientation, velocity + cross(spin, arm), spin, mass * parts[i].mass_share, parts[i].buoyancy))
+    impact_event(d, ImpactEvent(position + arm, quat_rotate(orientation, vec3(0, 1, 0)), parts[i].strength, .tear, id, vec3(0, 0, 0)))
+    # Heron's wingtip float is supported by its wing; twin pontoons attach to the fuselage.
+    if id == .left_wing or id == .right_wing:
+        child = if id == .left_wing: PartId.left_float else: PartId.right_float
+        if abs(parts[int(child)].attachment.x) > 3:
+            detach_part(d, parts, child, mass, position, orientation, velocity, omega)
+
+# elastic_speed describes the contact material/direction, not the aircraft's world speed.
+# dot(-impulse, relative velocity) is the work removed during this small integration interval.
+# Multiplying by 1/2 makes a conservative work estimate for a resolved stopping impulse.
+contact_damage = (d: mut DamageState, parts: PartSpec[], id: PartId, position: vec3, normal: vec3, relative: vec3, impulse: vec3,
+                  elastic_speed: f64, kind: ImpactKind, mass: f64, craft_position: vec3, orientation: vec4, velocity: vec3, omega: vec3):
+    i = int(id)
+    if not d.parts[i].attached: return
+    j = f64(length(impulse))
+    if j < 0.00001: return
+    closing = max(0.0, -f64(dot(impulse, relative)) / j)
+    work = 0.5 * j * closing
+    if work > 10.0: impact_event(d, ImpactEvent(position, normal, work, kind, id, impulse))
+    destructive = work * max(0.0, 1.0 - elastic_speed * elastic_speed / max(closing * closing, 0.001))
+    d.parts[i].health = max(0.0, d.parts[i].health - destructive / parts[i].strength)
+    if d.parts[i].health <= 0.0: detach_part(d, parts, id, mass, craft_position, orientation, velocity, omega)
+
+# One debris tick. Surface sampled at the piece's pivot by flight; wings/floats bob, engines
+# sink. Terrain friction and damping make settled debris quiet without freezing airborne wrecks.
+debris_step = (d: mut DamageState, index: int, height: f64, normal: vec3, surface_velocity: vec3, ground: f64, dt: f64):
+    b = d.debris[index]
+    b.age += dt
+    b.velocity.y -= f32(9.81 * dt)
+    b.velocity *= f32(1.0 / (1.0 + 0.08 * dt))
+    depth = height + 0.15 - f64(b.position.y)
+    wet = depth > 0 and ground < height
+    if wet:
+        rel = b.velocity - surface_velocity
+        vn = f64(dot(rel, normal))
+        support = max(0.0, 9.81 * b.buoyancy * clamp(depth / 0.5, 0.0, 1.0) - vn * 3.0)
+        drag = rel * f32(-min(3.0 * dt, 0.5))
+        impulse = (normal * f32(support * dt) + drag) * f32(b.mass)
+        if not b.wet:
+            work = max(0.0, -0.5 * f64(dot(impulse, rel)))
+            impact_event(d, ImpactEvent(b.position, normal, work, .splash, b.part, impulse))
+        b.velocity += impulse / f32(b.mass)
+        b.angular_velocity *= f32(1.0 / (1.0 + 1.8 * dt))
+    b.wet = wet
+    if ground >= height and f64(b.position.y) < ground + 0.2:
+        b.position.y = f32(ground + 0.2)
+        if b.velocity.y < 0: b.velocity.y *= -0.12
+        b.velocity.x *= f32(1.0 / (1.0 + 5.0 * dt)); b.velocity.z *= f32(1.0 / (1.0 + 5.0 * dt))
+        b.angular_velocity *= f32(1.0 / (1.0 + 6.0 * dt))
+    spin = f64(length(b.angular_velocity))
+    if spin > 0.00001: b.orientation = normalize(quat_mul(quat_axis_angle(b.angular_velocity, spin * dt), b.orientation))
+    b.position += b.velocity * f32(dt)
+    d.debris[index] = b
+
+# Call within draw_custom, replacing both body and prop calls. Full craft-space vertices and
+# flex preserve the original intact look. No graphics context is used until these helpers run.
+draw_craft_parts = (model: CraftModel, d: DamageState, at: mat4, L: Light, t: f64, prop_angle: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0)):
+    loop i in 0..model.parts.len():
+        if d.parts[i].attached: draw(obj_sh, model.parts[i].mesh, obj_params(L, t, at * model.parts[i].frame, flex = flex))
+    if d.parts[int(PartId.engine)].attached:
+        draw(obj_sh, model.prop, obj_params(L, t, at * translation(model.prop_at) * rotation_z(prop_angle)))
+
+draw_debris = (model: CraftModel, d: DamageState, L: Light, t: f64):
+    loop b in d.debris:
+        p = model.parts[int(b.part)]
+        at = translation(b.position) * quat_to_mat4(b.orientation) * translation(-p.spec.attachment)
+        draw(obj_sh, p.mesh, obj_params(L, t, at * p.frame))
+        if b.part == .engine:
+            draw(obj_sh, model.prop, obj_params(L, t, at * translation(model.prop_at)))

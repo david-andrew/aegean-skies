@@ -1,0 +1,213 @@
+# Headless deterministic contact-work, breakup and consequence contracts.
+# env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1 sloppy test tests/damage_test.jo
+import '../src/flight.jo' as fl
+import '../src/planes.jo' as planes
+import '../src/damage.jo' as dm
+
+_kinds = [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]
+_spec = (kind: planes.Craft) -> fl.CraftSpec:
+    m = planes.build_craft(kind, planes.LIVERIES[0])
+    fl.craft_spec(kind, m.contacts)
+_air = (k: fl.CraftSpec, height: f64, velocity: vec3) -> fl.CraftState:
+    fl.CraftState(position = vec3(0, height, 0), velocity = velocity, fuel = k.fuel_capacity)
+_finite = (s: fl.CraftState):
+    assert(abs(f64(s.position.y)) < 1e6 and length(s.velocity) < 300)
+    assert(abs(f64(length(s.orientation)) - 1) < 0.0001)
+    loop p in s.damage.parts: assert(p.health >= 0 and p.health <= 1)
+_energy = (s: fl.CraftState) -> f64:
+    total = 0.0
+    loop e in s.damage.events: total += e.strength
+    total
+_report = (name: str, kind: planes.Craft, s: fl.CraftState, energy: f64):
+    print("{name} {kind}: health={s.damage.parts.map((p): p.health)} debris={s.damage.debris.len()} work={energy:.0}J spin={length(s.angular_velocity):.2}rad/s speed={length(s.velocity):.2}m/s y={s.position.y:.2} crash={s.crashed} capsize={s.capsized}")
+
+test "part split preserves original geometry and contact ownership":
+    loop kind in _kinds:
+        m = planes.build_craft(kind, planes.LIVERIES[0])
+        assert(m.parts.len() == 7)
+        mass = 0.0; count = 0; contacts = 0; tips = 0
+        loop i in 0..7:
+            p = m.parts[i]
+            assert(int(p.spec.id) == i and p.spec.strength > 0 and p.mesh.count > 0)
+            mass += p.spec.mass_share; count += p.mesh.count
+            contacts += p.spec.contacts.len(); tips += p.spec.wing_contacts.len()
+            loop pt in p.spec.contacts: assert(planes.contact_part(kind, pt) == i)
+            loop pt in p.spec.wing_contacts: assert(planes.contact_part(kind, pt, true) == i)
+        print("mesh {kind}: parts={m.parts.len()} vertices={count}/{m.body.count} mass={mass:.3} contacts={contacts} tips={tips}")
+        assert(abs(mass - 1) < 0.000001 and count == m.body.count)
+        assert(contacts == m.contacts.len() and tips == planes.craft_wing_contacts(kind).len())
+
+test "gentle and firm vertical landings":
+    loop kind in _kinds:
+        k = _spec(kind)
+        loop sink in [2.0, 6.5]:
+            bottom = 0.0
+            loop p in k.contacts: bottom = min(bottom, f64(p.y))
+            s = _air(k, -bottom + 0.05, vec3(0, -sink, 0))
+            energy = 0.0
+            loop i in 0..120:
+                fl.step(k, s, fl.Controls(assist = 0.0), fl.FlightEnv(), 1.0 / 120.0)
+                energy += _energy(s)
+            _report(if sink < 3: "gentle" else: "firm", kind, s, energy)
+            _finite(s)
+            if sink < 3: assert(s.hull_damage == 0 and not s.crashed and s.damage.debris.len() == 0)
+            else: assert(s.hull_damage > 0 and s.hull_damage < 0.15 and s.damage.debris.len() == 0)
+
+test "forty meter per second sideslip touchdown":
+    loop kind in _kinds:
+        k = _spec(kind)
+        s = _air(k, k.float_height + 0.05, vec3(40, -2, -20))
+        energy = 0.0
+        loop i in 0..60:
+            fl.step(k, s, fl.Controls(assist = 0.0), fl.FlightEnv(), 1.0 / 120.0)
+            energy += _energy(s)
+        _report("sideslip", kind, s, energy)
+        _finite(s)
+        if kind != .heron: assert(not s.damage.parts[4].attached or not s.damage.parts[5].attached)
+        else: assert(s.damage.parts[0].health < 0.9)
+
+test "wingtip catches a wave and cartwheels":
+    loop kind in _kinds:
+        k = _spec(kind)
+        # A smooth 1.3m crest catches the low right panel during a banked skim.
+        orientation = quat_euler(0, 0, -0.35)
+        tip = quat_rotate(orientation, k.wing_contacts[1])
+        crest = f64(tip.x)
+        e = fl.FlightEnv(has_swell = true, swell = (x: f64, z: f64) -> vec3:
+            h = 1.3 * exp(-((x - crest) / 1.5)^2)
+            vec3(h, -2.0 * (x - crest) / 2.25 * h, 0))
+        s = _air(k, -f64(tip.y) + 0.8, vec3(0, -2, -50))
+        s.orientation = orientation
+        energy = 0.0; spin = 0.0
+        loop i in 0..240:
+            fl.step(k, s, fl.Controls(assist = 0.0), e, 1.0 / 120.0)
+            energy += _energy(s); spin = max(spin, f64(length(s.angular_velocity)))
+        _report("wave wing", kind, s, energy)
+        print("  peak spin={spin:.2}")
+        _finite(s)
+        assert(not s.damage.parts[3].attached and spin > 1.0 and s.capsized)
+
+test "nose in dive is a moving wreck":
+    loop kind in _kinds:
+        k = _spec(kind)
+        s = _air(k, 4.0, vec3(0, -30, -45))
+        s.orientation = quat_euler(-0.85, 0, 0)
+        energy = 0.0
+        loop i in 0..240:
+            fl.step(k, s, fl.Controls(assist = 0.0), fl.FlightEnv(), 1.0 / 120.0)
+            energy += _energy(s)
+        _report("dive", kind, s, energy)
+        _finite(s)
+        assert(s.crashed and s.damage.debris.len() > 0)
+
+test "terrain strike resolves impulse without freezing the wreck":
+    loop kind in _kinds:
+        k = _spec(kind)
+        e = fl.FlightEnv(ground = (x: f64, z: f64) -> f64: 0.2)
+        s = _air(k, k.float_height, vec3(0, -8, -40))
+        energy = 0.0; crunch = false; scrape = false
+        loop i in 0..120:
+            fl.step(k, s, fl.Controls(assist = 0.0), e, 1.0 / 120.0)
+            energy += _energy(s)
+            loop ev in s.damage.events:
+                if ev.kind == .crunch: crunch = true
+                if ev.kind == .scrape: scrape = true
+        _report("terrain", kind, s, energy)
+        _finite(s)
+        assert(s.hull_damage > 0 and crunch and scrape)
+        assert(length(s.position.xz) > 5)
+
+test "missing wing rolls toward loss and missing float lists":
+    loop kind in _kinds:
+        k = _spec(kind)
+        s = _air(k, 300, vec3(0, 0, -k.cruise_speed))
+        dm.detach_part(s.damage, k.parts, .left_wing, k.mass, s.position, s.orientation, s.velocity, s.angular_velocity)
+        loop i in 0..60: fl.step(k, s, fl.Controls(assist = 0.0), fl.FlightEnv(), 1.0 / 120.0)
+        right = quat_rotate(s.orientation, vec3(1, 0, 0))
+        print("lost wing {kind}: right.y={right.y:.3} roll rate={s.angular_velocity.z:.3} mass={dm.mass_fraction(k.parts, s.damage):.3}")
+        assert(right.y > 0.15 and s.angular_velocity.z > 0.5)
+        if kind == .heron: continue   # its main support is the hull; auxiliary float acts when rolled
+        s = fl.water_start(k, vec3(0, 0, 0))
+        dm.detach_part(s.damage, k.parts, .left_float, k.mass, s.position, s.orientation, s.velocity, s.angular_velocity)
+        loop i in 0..120: fl.step(k, s, fl.Controls(assist = 0.0), fl.FlightEnv(), 1.0 / 120.0)
+        right = quat_rotate(s.orientation, vec3(1, 0, 0))
+        print("lost float {kind}: right.y={right.y:.3} roll rate={s.angular_velocity.z:.3} y={s.position.y:.2}")
+        assert(right.y > 0.1)
+
+test "part damage affects power tail response and hull displacement":
+    loop kind in _kinds:
+        k = _spec(kind)
+        good = _air(k, 300, vec3(0, 0, -k.cruise_speed)); good.throttle = 1.0
+        engine = good; engine.damage.parts[1].health = 0.4
+        tail = good; tail.damage.parts[6].health = 0.2
+        c = fl.Controls(throttle = 1.0, pitch = 0.25, assist = 0.0)
+        loop i in 0..120:
+            fl.step(k, good, c, fl.FlightEnv(), 1.0 / 120.0)
+            fl.step(k, engine, c, fl.FlightEnv(), 1.0 / 120.0)
+            fl.step(k, tail, c, fl.FlightEnv(), 1.0 / 120.0)
+        print("consequences {kind}: power={engine.throttle:.3} smoke={engine.damage.smoke:.3} speed={length(engine.velocity):.2}/{length(good.velocity):.2} tail_pitch={fl.forward(tail).y:.3}/{fl.forward(good).y:.3}")
+        assert(engine.throttle <= 0.4 and engine.damage.smoke > 0.2)
+        assert(length(engine.velocity) < length(good.velocity) - 1)
+        assert(abs(f64(fl.forward(tail).y - fl.forward(good).y)) > 0.03)
+    k = _spec(.heron)
+    hull = fl.water_start(k, vec3(0, 0, 0)); hull.damage.parts[0].health = 0.5
+    loop i in 0..1200: fl.step(k, hull, fl.Controls(), fl.FlightEnv(), 1.0 / 120.0)
+    print("holed hull: height={hull.position.y:.3} intact={k.float_height:.3}")
+    assert(hull.position.y < k.float_height - 0.1)
+
+test "debris inherits spin splashes floats sinks and expires":
+    k = _spec(.gull)
+    s = _air(k, 10, vec3(0, 0, -10))
+    s.angular_velocity = vec3(0.5, 0.2, 0.3)
+    loop part in [planes.PartId.left_float, planes.PartId.engine]:
+        dm.detach_part(s.damage, k.parts, part, k.mass, s.position, s.orientation, s.velocity, s.angular_velocity)
+    dm.detach_part(s.damage, k.parts, .engine, k.mass, s.position, s.orientation, s.velocity, s.angular_velocity)
+    assert(s.damage.debris.len() == 2 and s.damage.events.len() == 2)
+    assert(s.damage.debris[0].angular_velocity == s.angular_velocity)
+    # Moor the source so that only these two pieces move; debris is independent of the craft.
+    fl.moor(s, s.position, 0)
+    splash = false
+    loop i in 0..120 * 12:
+        fl.step(k, s, fl.Controls(), fl.FlightEnv(), 1.0 / 120.0)
+        loop ev in s.damage.events:
+            if ev.kind == .splash: splash = true
+    print("debris: float_y={s.damage.debris[0].position.y:.3} engine_y={s.damage.debris[1].position.y:.3} age={s.damage.debris[0].age:.1}")
+    assert(splash and s.damage.debris.len() == 2)
+    assert(abs(s.damage.debris[0].position.y) < 0.5 and s.damage.debris[1].position.y < -2)
+    loop i in 0..120 * 14: fl.step(k, s, fl.Controls(), fl.FlightEnv(), 1.0 / 120.0)
+    assert(s.damage.debris.len() == 0)
+    fl.step(k, s, fl.Controls(), fl.FlightEnv(), 0.0)
+    assert(s.damage.events.len() == 0)
+
+test "relative current and flat fast landing do not masquerade as impacts":
+    k = _spec(.gull)
+    s = fl.water_start(k, vec3(0, 0, 0)); s.velocity = vec3(40, 0, 0)
+    e = fl.FlightEnv(current = vec3(40, 0, 0), wind = vec3(40, 0, 0))
+    loop i in 0..120: fl.step(k, s, fl.Controls(), e, 1.0 / 120.0)
+    print("current carried: damage={s.hull_damage:.6} relative={length(s.velocity - e.current):.6} velocity={s.velocity} pos={s.position}")
+    assert(s.hull_damage == 0 and length(s.velocity - e.current) < 0.1)
+    # High forward speed with a flat, gentle entry is not destructive just for being fast.
+    s = _air(k, k.float_height + 0.2, vec3(0, -1, -65))
+    loop i in 0..60: fl.step(k, s, fl.Controls(assist = 0.0), fl.FlightEnv(), 1.0 / 120.0)
+    print("flat 65m/s: damage={s.hull_damage:.4} speed={length(s.velocity):.2}")
+    assert(s.hull_damage == 0 and s.damage.debris.len() == 0)
+
+test "destructive replay agrees at thirty and sixty Hz":
+    k = _spec(.gull)
+    a = _air(k, k.float_height + 0.05, vec3(40, -2, -20)); b = a
+    c = fl.Controls(assist = 0.0); e = fl.FlightEnv(wave_height = 0.15)
+    tears_a = 0; tears_b = 0; energy_a = 0.0; energy_b = 0.0
+    loop i in 0..60:
+        fl.step(k, a, c, e, 1.0 / 30.0)
+        energy_a += _energy(a)
+        loop ev in a.damage.events:
+            if ev.kind == .tear: tears_a += 1
+        loop j in 0..2:
+            fl.step(k, b, c, e, 1.0 / 60.0)
+            energy_b += _energy(b)
+            loop ev in b.damage.events:
+                if ev.kind == .tear: tears_b += 1
+    # Events cover one caller step; compare their integrated energy separately from state.
+    a.damage.events.clear(); b.damage.events.clear()
+    print("replay: equal={a == b} tears={tears_a}/{tears_b} energy={energy_a:.3}/{energy_b:.3}")
+    assert(a == b and tears_a == tears_b and tears_a >= 2 and abs(energy_a - energy_b) < 0.01)

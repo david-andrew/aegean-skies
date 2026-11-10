@@ -1,0 +1,145 @@
+# Headless watched-route gate using the actual physical adapter and shared harbor geometry.
+import '../src/living_world.jo' as living
+import '../src/living_scene.jo' as scene
+import '../src/traffic.jo' as air
+import '../src/planes.jo' as planes
+import '../src/flight.jo' as flight
+
+_models = () -> planes.CraftModel[]:
+    [planes.build_craft(.gull, planes.LIVERIES[0]), planes.build_craft(.heron, planes.LIVERIES[5]), planes.build_craft(.corsair, planes.LIVERIES[3]), planes.build_craft(.falco, planes.LIVERIES[1]),
+    planes.build_craft(.gull, planes.LIVERIES[1]), planes.build_craft(.gull, planes.LIVERIES[2]), planes.build_craft(.heron, planes.LIVERIES[4]), planes.build_craft(.gull, planes.LIVERIES[4]),
+    planes.build_craft(.heron, planes.LIVERIES[2]), planes.build_craft(.gull, planes.LIVERIES[5]), planes.build_craft(.falco, planes.LIVERIES[3]), planes.build_craft(.corsair, planes.LIVERIES[4])]
+
+test "watched living pilots fly world trips and commit actual harbor arrivals":
+    w = living.build_world(); models = _models()
+    traffic = air.make_living_traffic(w, models)
+    adapter = scene.SceneAdapter(observer = w.harbors[0].center)
+    observer = w.harbors[0].center
+    assert(traffic.len() == 7)
+    loop k in 0..60 * 600:
+        air.update_traffic(traffic, w, adapter, observer, f64(k) / 60.0, 1.0 / 60.0)
+        if k % (60 * 10) == 0 and env("AEGEAN_TRACE") != none:
+            print("living minute {w.minute}")
+            loop tr in traffic: print("{tr.name} craft={tr.craft} trip={tr.trip} {if tr.materialized: str(tr.plan.phase) else: str(w.aircraft[tr.craft].state)} pos={tr.state.position} fuel={w.aircraft[tr.craft].fuel_ml} why={tr.why}")
+        if k % (60 * 10) == 0:
+            errors = living.invariant_errors(w)
+            if errors.len() > 0: print(errors)
+            assert(errors.len() == 0)
+    loop id, t in w.trips:
+        if t.state == .arrived: print("committed arrival {id}: {w.people[t.actor].name} at {t.destination}")
+    print("Trip0 {w.trips[0].state}; Job0 {w.jobs[0].state}, paid {w.jobs[0].paid_cents}; minute={w.minute}")
+    assert(w.minute == 300)
+    assert(w.trips[0].state == .arrived and w.jobs[0].paid_cents > 0)
+    assert("Job0:" in living.board_lines(w, 2).join(" ") and "; delivered." in living.board_lines(w, 2).join(" "))
+    assert(air.traffic_for_craft(traffic, 1)!.person == 2)
+    assert(living.invariant_errors(w).len() == 0)
+
+import '../src/pilot.jo' as pilot
+import '../src/living_types.jo' as data
+
+test "player Flyer shares world identity fuel trip and a validated physical arrival":
+    w = living.build_world(); models = _models()
+    traffic = air.make_living_traffic(w, models); adapter = scene.SceneAdapter()
+    player = pilot.make_flyer(.gull, 0, models[0].contacts, w.harbors[0].docks[0], 0.0)
+    air.bind_living_player(player, w, adapter)
+    assert(player.state.fuel == 24.0 and scene.scene_bound(adapter, 0))
+    flight.unmoor(player.state)
+    air.update_traffic(traffic, w, adapter, player.state.position, 0.0, 1.0 / 60.0, player.state)
+    id = w.people[0].trip
+    assert(id >= 0 and w.aircraft[0].trip == id and w.aircraft[0].dock == -1)
+    dock = w.harbors[1].docks[1] + vec3(0, f32(player.spec.float_height), 0)
+    player.state.position = dock; player.state.velocity = vec3(0, 0, 0)
+    flight.moor(player.state, dock, 0.0)
+    air.update_traffic(traffic, w, adapter, dock, 1.0 / 60.0, 1.0 / 60.0, player.state)
+    assert(w.trips[id].state == .arrived and w.trips[id].destination == 1)
+    assert(w.aircraft[0].place == 1 and w.aircraft[0].dock == 1 and w.people[0].place == 1)
+    assert(living.invariant_errors(w).len() == 0)
+
+test "save fold restores exact physical integrator and controller without a stale origin snap":
+    a = living.build_world(); models = _models()
+    ta = air.make_living_traffic(a, models); sa = scene.SceneAdapter()
+    observer = a.harbors[0].center
+    air.update_traffic(ta, a, sa, observer, 0.0, 1.0 / 60.0)
+    assert(scene.scene_bound(sa, 1))
+    b = a; tb = ta; sb = sa
+    air.fold_traffic_for_save(tb, b, sb)
+    assert(not scene.scene_bound(sb, 1) and b.aircraft[1].scene_extension != "")
+    raw = to_text(b)
+    parsed = from_text[data.World](raw)
+    assert(parsed is data.World)
+    b = parsed
+    air.update_traffic(ta, a, sa, observer, 1.0 / 60.0, 1.0 / 60.0)
+    air.update_traffic(tb, b, sb, observer, 1.0 / 60.0, 1.0 / 60.0)
+    assert(air.traffic_for_craft(ta, 1)!.state == air.traffic_for_craft(tb, 1)!.state)
+    assert(a.aircraft[1].fuel_ml == b.aircraft[1].fuel_ml)
+    assert(living.invariant_errors(b).len() == 0)
+
+test "occupied berth waits at the buoy then taxis to a genuinely free dock":
+    w = living.build_world(); models = _models()
+    traffic = air.make_living_traffic(w, models); adapter = scene.SceneAdapter()
+    observer = w.harbors[0].center
+    air.update_traffic(traffic, w, adapter, observer, 0.0, 1.0 / 60.0)
+    # The player and patrol occupy docks 0/1; Dario takes the courier's former claim at 2.
+    w.aircraft[2].dock = 2; w.aircraft[2].pose.pos = w.harbors[0].docks[2]
+    tr = traffic[0]
+    tr.state.position = w.harbors[0].buoy + vec3(0, f32(tr.spec.float_height), 0)
+    tr.state.velocity = vec3(0, 0, 0); tr.state.on_water = true
+    flight.moor(tr.state, tr.state.position, 0.0); tr.plan.phase = .done
+    traffic[0] = tr
+    air.update_traffic(traffic, w, adapter, observer, 1.0 / 60.0, 1.0 / 60.0)
+    assert(w.trips[0].state == .holding and w.aircraft[1].trip == 0 and traffic[0].dock == -1)
+    assert(length(traffic[0].plan.taxi_target - w.harbors[0].buoy) < 0.1)
+    w.aircraft[4].dock = -1; w.aircraft[4].pose.pos = w.harbors[0].buoy
+    before = traffic[0].state.position
+    air.update_traffic(traffic, w, adapter, observer, 2.0 / 60.0, 1.0 / 60.0)
+    assert(w.trips[0].claimed_dock == 1 and traffic[0].plan.phase == .taxi)
+    assert(length(traffic[0].state.position - before) < 1)
+    assert(length(traffic[0].plan.taxi_target - w.harbors[0].docks[1]) < 0.1)
+    assert(living.invariant_errors(w).len() == 0)
+
+test "frame accumulator bounds stalls pauses both clocks and runs one minute per two seconds":
+    w = living.build_world(); models = _models()
+    traffic = air.make_living_traffic(w, models); adapter = scene.SceneAdapter()
+    observer = vec3(100000, 0, 100000)
+    air.update_traffic(traffic, w, adapter, observer, 0.0, 5.0)
+    assert(w.tick == 15 and w.minute == 0)
+    pose = w.aircraft[1].pose; fuel = w.aircraft[1].fuel_ml
+    air.update_traffic(traffic, w, adapter, observer, 0.25, 0.0)
+    assert(w.tick == 15 and w.aircraft[1].pose == pose and w.aircraft[1].fuel_ml == fuel)
+    loop i in 0..7: air.update_traffic(traffic, w, adapter, observer, 0.25 + f64(i) * 0.25, 0.25)
+    assert(w.tick == 120 and w.minute == 1 and adapter.accumulator < 1e-8)
+    assert(living.invariant_errors(w).len() == 0)
+
+test "whole scene save synchronizes the player and resumes its one lease":
+    w = living.build_world(); models = _models()
+    traffic = air.make_living_traffic(w, models); adapter = scene.SceneAdapter()
+    player = pilot.make_flyer(.gull, 0, models[0].contacts, w.harbors[0].docks[0], 0.0)
+    air.bind_living_player(player, w, adapter)
+    air.update_traffic(traffic, w, adapter, player.state.position, 0.0, 1.0 / 60.0, player.state)
+    air.fold_living_scene_for_save(traffic, player, w, adapter)
+    loop c in w.aircraft: assert(c.move_owner == .abstract_world)
+    assert(adapter.bodies.len() == 0 and w.aircraft[0].scene_extension != "")
+    parsed = from_text[data.World](to_text(w))
+    assert(parsed is data.World)
+    w = parsed
+    restored = pilot.make_flyer(.gull, 0, models[0].contacts, vec3(0, 0, 0), 0.0)
+    air.bind_living_player(restored, w, adapter)
+    assert(restored.state == player.state)
+    air.update_traffic(traffic, w, adapter, restored.state.position, 1.0 / 60.0, 1.0 / 60.0, restored.state)
+    assert(scene.scene_bound(adapter, 0) and w.aircraft[0].last_scene_tick == w.tick)
+    assert(living.invariant_errors(w).len() == 0)
+
+test "abstract structural harm preserves the scene engine and explicit repairs reach parts":
+    w = living.build_world(); models = _models()
+    traffic = air.make_living_traffic(w, models); adapter = scene.SceneAdapter()
+    observer = w.harbors[0].center
+    air.update_traffic(traffic, w, adapter, observer, 0.0, 1.0 / 60.0)
+    engine = w.aircraft[1].engine
+    w.aircraft[1].hull -= 100
+    air.update_traffic(traffic, w, adapter, observer, 1.0 / 60.0, 1.0 / 60.0)
+    assert(w.aircraft[1].engine == engine)
+    assert(abs(traffic[0].state.damage.parts[int(planes.PartId.engine)].health - f64(engine) / 1000.0) < 0.001)
+    w.aircraft[1].engine += 50; w.aircraft[1].hull += 50
+    air.update_traffic(traffic, w, adapter, observer, 2.0 / 60.0, 1.0 / 60.0)
+    assert(w.aircraft[1].engine == engine + 50)
+    assert(w.aircraft[1].hull >= 799)

@@ -36,6 +36,84 @@ struct CraftModel:
     cockpit: vec3                   # the pilot's head
     exit: vec3                      # where one steps off (onto a float, or the hull's deck)
     shade: vec3[] = []              # flat parts for its shadow on the sea: center, half size, by pairs
+    parts: CraftPart[] = []         # stable PartId order; legacy body remains the whole mesh
+
+# Stable indices shared by model, physics, damage and drawing. Left is local -X.
+enum PartId: body, engine, left_wing, right_wing, left_float, right_float, tail
+
+struct PartSpec:
+    id: PartId
+    name: str
+    attachment: vec3                # pivot in craft space, axes parallel to the craft
+    mass_share: f64
+    strength: f64                   # joules of destructive contact work before separation
+    buoyancy: f64                   # debris displaced volume / mass, relative to water
+    contacts: vec3[]                # original buoyancy contacts, in craft space
+    wing_contacts: vec3[]
+    strikes: vec3[]                 # hull / engine / tail collision probes
+
+struct CraftPart:
+    spec: PartSpec
+    mesh: Mesh                     # craft-space vertices: preserves obj_vs flex exactly
+    frame: mat4 = mat4()            # mesh -> craft (identity); attachment is the tumble pivot
+
+contact_part = (kind: Craft, p: vec3, wing: bool = false) -> int:
+    if wing: return if p.x < 0: int(PartId.left_wing) else: int(PartId.right_wing)
+    if kind == .heron and abs(p.x) < 3: return if p.z >= 3.5: int(PartId.tail) else: int(PartId.body)
+    if p.x < 0: int(PartId.left_float) else: int(PartId.right_float)
+
+craft_wing_contacts = (kind: Craft) -> vec3[]: match kind:
+    .gull: [vec3(-4.7, -0.31, -0.3), vec3(4.7, -0.31, -0.3), vec3(-5.5, 1.55, -0.55), vec3(5.5, 1.55, -0.55)]
+    .heron: [vec3(-8.25, 2.3, -1.4), vec3(8.25, 2.3, -1.4)]
+    .corsair: [vec3(-4.2, -0.39, -0.4), vec3(4.2, -0.39, -0.4), vec3(-4.8, 1.5, -0.6), vec3(4.8, 1.5, -0.6)]
+    .falco: [vec3(-4.6, -0.07, -0.6), vec3(4.6, -0.07, -0.6)]
+
+# CPU-only: craft_spec can use the same attachment/contact data without building GPU meshes.
+craft_parts = (kind: Craft, contacts: vec3[]) -> PartSpec[]:
+    scale = if kind == .heron: 3200.0 / 1400.0 else: (if kind == .corsair: 1700.0 / 1400.0 else: (if kind == .falco: 1200.0 / 1400.0 else: 1.0))
+    nose = if kind == .heron: vec3(0, 3.35, -2.0) else: (if kind == .falco: vec3(0, 0, -3.5) else: vec3(0, 0, -3.3))
+    tail = if kind == .heron: vec3(0, 1.2, 5.6) else: (if kind == .corsair: vec3(0, 0.3, 3.5) else: vec3(0, 0.25, 4.0))
+    fx = if kind == .heron: 6.6 else: (if kind == .corsair: 1.45 else: (if kind == .falco: 1.3 else: 1.55))
+    fy = if kind == .heron: 1.0 else: -2.0
+    wy = if kind == .heron: 2.3 else: 0.5
+    ps = [PartSpec(.body, if kind == .heron: "hull" else: "fuselage", vec3(0, 0, 0), 0.42, 100000, 1.15),
+          PartSpec(.engine, "engine", nose, 0.18, 45000, 0.15),
+          PartSpec(.left_wing, "left wing", vec3(-0.6, wy, -0.6), 0.10, 32000, 2.0),
+          PartSpec(.right_wing, "right wing", vec3(0.6, wy, -0.6), 0.10, 32000, 2.0),
+          PartSpec(.left_float, "left float", vec3(-fx, fy, -0.4), 0.065, 16000, 2.8),
+          PartSpec(.right_float, "right float", vec3(fx, fy, -0.4), 0.065, 16000, 2.8),
+          PartSpec(.tail, "tail", tail, 0.07, 22000, 1.6)]
+    if kind == .heron:
+        ps[0].mass_share = 0.50
+        ps[2].mass_share = 0.11; ps[3].mass_share = 0.11
+        ps[4].mass_share = 0.015; ps[5].mass_share = 0.015
+        ps[4].strength = 6000; ps[5].strength = 6000
+    loop i in 0..ps.len(): ps[i].strength *= scale
+    loop p in contacts: ps[contact_part(kind, p)].contacts.push(p)
+    loop p in craft_wing_contacts(kind): ps[contact_part(kind, p, true)].wing_contacts.push(p)
+    ps[0].strikes = if kind == .heron: [vec3(0, 0, -5.6), vec3(-1, -0.5, 0), vec3(1, -0.5, 0), vec3(0, 1, 0)] else: [vec3(-0.55, -0.6, 0), vec3(0.55, -0.6, 0), vec3(0, 0.7, 0)]
+    ps[1].strikes = [nose + vec3(0, 0, -0.9), nose + vec3(0, -0.45, 0)]
+    ps[6].strikes = [tail + vec3(-1.5, 0, 0), tail + vec3(1.5, 0, 0), tail + vec3(0, 0.7, 0.4)]
+    ps
+
+# Copy emitted triangles unchanged into their owner's mesh. No tessellation, added caps or
+# vertex translations: the union is byte-for-byte the original colored/normed triangle soup.
+_part_range = (bins: mut Vertex3D[][], vs: Vertex3D[], start: int, owner: int, kind: Craft):
+    loop tri in start / 3..vs.len() / 3:
+        i = tri * 3
+        id = owner
+        if owner == -1: id = if vs[i].pos.x + vs[i + 1].pos.x + vs[i + 2].pos.x < 0: 2 else: 3
+        if owner == 0:
+            aft = if kind == .heron: 3.5 else: (if kind == .corsair: 2.4 else: (if kind == .falco: 3.2 else: 2.6))
+            if min(vs[i].pos.z, min(vs[i + 1].pos.z, vs[i + 2].pos.z)) >= aft: id = 6
+            if kind == .falco and max(vs[i].pos.z, max(vs[i + 1].pos.z, vs[i + 2].pos.z)) <= -2.0: id = 1
+        bins[id].extend(vs[i..i + 3])
+
+_finish_craft = (model: CraftModel, bins: Vertex3D[][], kind: Craft) -> CraftModel:
+    m = model
+    specs = craft_parts(kind, m.contacts)
+    loop i in 0..7: m.parts.push(CraftPart(specs[i], custom_mesh(bins[i])))
+    m
 
 # ---------------- flat-shaded parts ----------------
 
@@ -133,102 +211,231 @@ build_prop = (radius: f64, blades: int) -> Mesh:
 
 build_craft = (kind: Craft, lv: Livery) -> CraftModel:
     vs: Vertex3D[]
+    bins: Vertex3D[][] = [[], [], [], [], [], [], []]
     dark = rgb(0.14, 0.13, 0.13)
     metal = rgb(0.55, 0.55, 0.56)
     under = vec4(lv.body.x * 0.8, lv.body.y * 0.8, lv.body.z * 0.8, 1)
     match kind:
         .gull:
+            mark = vs.len()
             loft(vs, [Section(-3.5, 0.5, 0.5, 0.5), Section(-2.9, 0.58, 0.6, 0.58), Section(-1.2, 0.6, 0.68, 0.62),
                       Section(0.6, 0.55, 0.6, 0.58), Section(2.6, 0.32, 0.45, 0.38), Section(4.5, 0.08, 0.32, 0.08)], vec3(0, 0, 0), lv.body, under)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.62, 0.35), vec3(0.42, 0.05, 0.55), dark)                       # the cockpit
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.78, -0.25), vec3(0.4, 0.14, 0.02), rgba(0.7, 0.85, 0.9, 1))     # its windscreen
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.0, -0.6), vec3(0.61, 0.08, 0.9), lv.trim)                     # a band along the side
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _wing(vs, vec3(0, 1.55, -0.55), 11.0, 1.55, 0.16, lv.wing, lv.trim)
+            _part_range(bins, vs, mark, -1, kind)
+            mark = vs.len()
             _wing(vs, vec3(0, -0.5, -0.3), 9.4, 1.4, 0.14, lv.wing, lv.trim, 0.04)
+            _part_range(bins, vs, mark, -1, kind)
             loop side in [-1.0, 1.0]:
                 x = f32(side * 3.3)
+                mark = vs.len()
                 _strut(vs, vec3(x, -0.38, -0.85), vec3(x * 1.05, 1.45, -1.1), 0.05, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
+                mark = vs.len()
                 _strut(vs, vec3(x, -0.38, 0.25), vec3(x * 1.05, 1.45, 0.0), 0.05, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
+                mark = vs.len()
                 _strut(vs, vec3(f32(side * 0.35), 0.5, -0.9), vec3(f32(side * 0.5), 1.45, -0.9), 0.04, metal)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
+                mark = vs.len()
                 _strut(vs, vec3(f32(side * 0.35), 0.5, -0.1), vec3(f32(side * 0.5), 1.45, -0.2), 0.04, metal)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
                 fx = f32(side * 1.55)
+                mark = vs.len()
                 _float(vs, vec3(fx, -2.05, -0.4), 6.4, 0.42, lv.body, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.75, -1.3), vec3(f32(side * 0.45), -0.55, -1.2), 0.05, metal)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.75, 0.5), vec3(f32(side * 0.45), -0.55, 0.4), 0.05, metal)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.75, -0.4), vec3(fx * 0.9, -0.55, -0.4), 0.04, metal)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.25, 4.0), vec3(1.7, 0.05, 0.45), lv.wing)                      # the tailplane
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.9, 4.15), vec3(0.05, 0.75, 0.42), lv.body)                     # the fin
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.95, 4.42), vec3(0.06, 0.6, 0.12), lv.accent)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _engine(vs, vec3(0, 0, -3.6), 0.62, 0.45, metal)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             _spinner(vs, vec3(0, 0, -3.85), 0.16, lv.accent)
+            _part_range(bins, vs, mark, 1, kind)
             contacts = [vec3(-1.55, -2.45, -3.2), vec3(1.55, -2.45, -3.2), vec3(-1.55, -2.55, -0.4), vec3(1.55, -2.55, -0.4), vec3(-1.55, -2.35, 2.6), vec3(1.55, -2.35, 2.6)]
-            return CraftModel(custom_mesh(vs), build_prop(1.25, 2), vec3(0, 0, -3.95), contacts, vec3(0, 1.0, 0.35), vec3(1.55, -1.7, -0.4), [vec3(0, 0, 0.5), vec3(0.55, 0.6, 4.0), vec3(0, 1.55, -0.55), vec3(5.5, 0.08, 0.78), vec3(0, -0.5, -0.3), vec3(4.7, 0.07, 0.7), vec3(-1.55, -2.05, -0.4), vec3(0.42, 0.3, 3.2), vec3(1.55, -2.05, -0.4), vec3(0.42, 0.3, 3.2), vec3(0, 0.25, 4.0), vec3(1.7, 0.05, 0.45)])
+            return _finish_craft(CraftModel(custom_mesh(vs), build_prop(1.25, 2), vec3(0, 0, -3.95), contacts, vec3(0, 1.0, 0.35), vec3(1.55, -1.7, -0.4), [vec3(0, 0, 0.5), vec3(0.55, 0.6, 4.0), vec3(0, 1.55, -0.55), vec3(5.5, 0.08, 0.78), vec3(0, -0.5, -0.3), vec3(4.7, 0.07, 0.7), vec3(-1.55, -2.05, -0.4), vec3(0.42, 0.3, 3.2), vec3(1.55, -2.05, -0.4), vec3(0.42, 0.3, 3.2), vec3(0, 0.25, 4.0), vec3(1.7, 0.05, 0.45)]), bins, kind)
         .heron:
+            mark = vs.len()
             loft(vs, [Section(-5.6, 0.25, 0.3, 0.3, 0.1), Section(-5.0, 0.8, 0.75, 0.6, 0.35), Section(-3.0, 1.0, 1.0, 0.8, 0.45),
                       Section(0.4, 1.0, 1.0, 0.8, 0.45), Section(0.5, 0.95, 0.98, 0.55, 0.25), Section(3.5, 0.6, 0.85, 0.3, 0.1),
                       Section(6.2, 0.15, 0.6, 0.05)], vec3(0, 0, 0), lv.body, lv.trim)
+            _part_range(bins, vs, mark, 0, kind)
             loop k in 0..4:
+                mark = vs.len()
                 _box(vs, vec3(-1.01, 0.45, f32(-2.4 + f64(k) * 0.9)), vec3(0.02, 0.2, 0.25), rgba(0.2, 0.25, 0.3, 1))
+                _part_range(bins, vs, mark, 0, kind)
+                mark = vs.len()
                 _box(vs, vec3(1.01, 0.45, f32(-2.4 + f64(k) * 0.9)), vec3(0.02, 0.2, 0.25), rgba(0.2, 0.25, 0.3, 1))
+                _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 1.02, -3.4), vec3(0.6, 0.06, 0.5), dark)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _wing(vs, vec3(0, 2.3, -1.4), 16.5, 2.2, 0.2, lv.wing, lv.accent)
+            _part_range(bins, vs, mark, -1, kind)
             loop side in [-1.0, 1.0]:
+                mark = vs.len()
                 _strut(vs, vec3(f32(side * 0.8), 0.9, -2.2), vec3(f32(side * 2.4), 2.2, -2.0), 0.06, metal)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
+                mark = vs.len()
                 _strut(vs, vec3(f32(side * 0.8), 0.9, -0.6), vec3(f32(side * 2.4), 2.2, -0.8), 0.06, metal)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
+                mark = vs.len()
                 _strut(vs, vec3(f32(side * 1.0), 0.0, -1.4), vec3(f32(side * 4.6), 2.2, -1.4), 0.06, metal)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
                 fx = f32(side * 6.6)
+                mark = vs.len()
                 _float(vs, vec3(fx, 1.0, -1.3), 2.0, 0.22, lv.body, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, 1.2, -1.3), vec3(fx, 2.2, -1.3), 0.05, metal)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
             # the engine on its pylon above the wing
+            mark = vs.len()
             _strut(vs, vec3(0, 2.35, -1.8), vec3(0, 3.1, -1.6), 0.12, lv.trim)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             _strut(vs, vec3(-0.4, 2.35, -1.0), vec3(0, 3.1, -1.6), 0.06, metal)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             _strut(vs, vec3(0.4, 2.35, -1.0), vec3(0, 3.1, -1.6), 0.06, metal)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             loft(vs, [Section(-2.8, 0.42, 0.42, 0.42), Section(-2.2, 0.48, 0.48, 0.48), Section(-0.4, 0.4, 0.4, 0.4), Section(0.3, 0.12, 0.12, 0.12)], vec3(0, 3.35, -0.6), lv.trim, lv.trim)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             _spinner(vs, vec3(0, 3.35, -3.5), 0.2, lv.accent)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 1.2, 5.6), vec3(2.3, 0.06, 0.55), lv.wing)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 1.9, 5.7), vec3(0.06, 1.0, 0.55), lv.body)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 2.0, 6.05), vec3(0.07, 0.8, 0.14), lv.accent)
+            _part_range(bins, vs, mark, 6, kind)
             contacts = [vec3(0, -1.2, -4.6), vec3(-0.9, -0.85, -3.0), vec3(0.9, -0.85, -3.0), vec3(0, -1.25, 0.3), vec3(-0.9, -0.8, 0.3), vec3(0.9, -0.8, 0.3), vec3(0, -0.4, 4.5), vec3(-6.6, 0.75, -1.3), vec3(6.6, 0.75, -1.3)]
-            return CraftModel(custom_mesh(vs), build_prop(1.4, 3), vec3(0, 3.35, -3.65), contacts, vec3(0, 1.4, -3.4), vec3(0, 1.05, -1.0), [vec3(0, 0, 0.3), vec3(1.0, 0.8, 5.9), vec3(0, 2.3, -1.4), vec3(8.25, 0.1, 1.1), vec3(0, 1.2, 5.6), vec3(2.3, 0.06, 0.55), vec3(0, 3.35, -1.2), vec3(0.45, 0.45, 1.5)])
+            return _finish_craft(CraftModel(custom_mesh(vs), build_prop(1.4, 3), vec3(0, 3.35, -3.65), contacts, vec3(0, 1.4, -3.4), vec3(0, 1.05, -1.0), [vec3(0, 0, 0.3), vec3(1.0, 0.8, 5.9), vec3(0, 2.3, -1.4), vec3(8.25, 0.1, 1.1), vec3(0, 1.2, 5.6), vec3(2.3, 0.06, 0.55), vec3(0, 3.35, -1.2), vec3(0.45, 0.45, 1.5)]), bins, kind)
         .corsair:
+            mark = vs.len()
             loft(vs, [Section(-3.2, 0.65, 0.62, 0.62), Section(-2.6, 0.7, 0.7, 0.7), Section(-0.8, 0.68, 0.75, 0.7),
                       Section(0.8, 0.6, 0.65, 0.62), Section(2.4, 0.35, 0.48, 0.4), Section(3.9, 0.1, 0.36, 0.08)], vec3(0, 0, 0), lv.body, under)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.72, 0.4), vec3(0.46, 0.06, 0.55), dark)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _wing(vs, vec3(0, 1.5, -0.6), 9.6, 1.5, 0.18, lv.wing, lv.accent)
+            _part_range(bins, vs, mark, -1, kind)
+            mark = vs.len()
             _wing(vs, vec3(0, -0.6, -0.4), 8.4, 1.35, 0.16, lv.wing, lv.accent, 0.05)
+            _part_range(bins, vs, mark, -1, kind)
             # guns on the upper wing
             loop side in [-1.0, 1.0]:
+                mark = vs.len()
                 _box(vs, vec3(f32(side * 0.6), 1.72, -1.2), vec3(0.06, 0.06, 0.7), dark)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
             loop side in [-1.0, 1.0]:
                 x = f32(side * 2.9)
+                mark = vs.len()
                 _strut(vs, vec3(x, -0.48, -0.9), vec3(x, 1.4, -1.0), 0.06, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
+                mark = vs.len()
                 _strut(vs, vec3(x, -0.48, 0.2), vec3(x, 1.4, 0.0), 0.06, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 2 else: 3, kind)
                 fx = f32(side * 1.45)
+                mark = vs.len()
                 _float(vs, vec3(fx, -2.1, -0.3), 5.8, 0.44, lv.trim, dark)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.8, -1.2), vec3(f32(side * 0.5), -0.6, -1.0), 0.06, metal)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.8, 0.5), vec3(f32(side * 0.5), -0.6, 0.4), 0.06, metal)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.3, 3.5), vec3(1.6, 0.05, 0.45), lv.wing)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.95, 3.6), vec3(0.06, 0.75, 0.45), lv.body)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 1.0, 3.9), vec3(0.07, 0.6, 0.14), lv.accent)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _engine(vs, vec3(0, 0, -3.3), 0.78, 0.55, lv.accent)
+            _part_range(bins, vs, mark, 1, kind)
+            mark = vs.len()
             _spinner(vs, vec3(0, 0, -3.6), 0.2, metal)
+            _part_range(bins, vs, mark, 1, kind)
             contacts = [vec3(-1.45, -2.5, -3.0), vec3(1.45, -2.5, -3.0), vec3(-1.45, -2.6, -0.3), vec3(1.45, -2.6, -0.3), vec3(-1.45, -2.4, 2.4), vec3(1.45, -2.4, 2.4)]
-            return CraftModel(custom_mesh(vs), build_prop(1.3, 3), vec3(0, 0, -3.7), contacts, vec3(0, 1.1, 0.4), vec3(1.45, -1.75, -0.3), [vec3(0, 0, 0.3), vec3(0.65, 0.65, 3.6), vec3(0, 1.5, -0.6), vec3(4.8, 0.09, 0.75), vec3(0, -0.6, -0.4), vec3(4.2, 0.08, 0.68), vec3(-1.45, -2.1, -0.3), vec3(0.44, 0.3, 2.9), vec3(1.45, -2.1, -0.3), vec3(0.44, 0.3, 2.9), vec3(0, 0.3, 3.5), vec3(1.6, 0.05, 0.45)])
+            return _finish_craft(CraftModel(custom_mesh(vs), build_prop(1.3, 3), vec3(0, 0, -3.7), contacts, vec3(0, 1.1, 0.4), vec3(1.45, -1.75, -0.3), [vec3(0, 0, 0.3), vec3(0.65, 0.65, 3.6), vec3(0, 1.5, -0.6), vec3(4.8, 0.09, 0.75), vec3(0, -0.6, -0.4), vec3(4.2, 0.08, 0.68), vec3(-1.45, -2.1, -0.3), vec3(0.44, 0.3, 2.9), vec3(1.45, -2.1, -0.3), vec3(0.44, 0.3, 2.9), vec3(0, 0.3, 3.5), vec3(1.6, 0.05, 0.45)]), bins, kind)
         .falco:
+            mark = vs.len()
             loft(vs, [Section(-4.4, 0.18, 0.2, 0.2), Section(-4.0, 0.45, 0.45, 0.42), Section(-2.0, 0.55, 0.55, 0.5),
                       Section(0.4, 0.52, 0.62, 0.48), Section(1.2, 0.45, 0.5, 0.42), Section(3.2, 0.22, 0.32, 0.22), Section(4.6, 0.06, 0.26, 0.06)], vec3(0, 0, 0), lv.body, under)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.58, 0.55), vec3(0.34, 0.05, 0.45), dark)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.7, 0.05), vec3(0.32, 0.12, 0.02), rgba(0.7, 0.85, 0.9, 1))
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.3, -2.0), vec3(0.56, 0.05, 1.6), lv.accent)
+            _part_range(bins, vs, mark, 0, kind)
+            mark = vs.len()
             _wing(vs, vec3(0, -0.35, -0.6), 9.2, 1.45, 0.14, lv.wing, lv.trim, 0.06)
+            _part_range(bins, vs, mark, -1, kind)
             loop side in [-1.0, 1.0]:
                 fx = f32(side * 1.3)
+                mark = vs.len()
                 _float(vs, vec3(fx, -2.0, -0.7), 6.6, 0.36, lv.body, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.75, -1.7), vec3(f32(side * 0.9), -0.4, -1.1), 0.05, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+                mark = vs.len()
                 _strut(vs, vec3(fx, -1.75, 0.2), vec3(f32(side * 0.9), -0.4, -0.1), 0.05, lv.trim)
+                _part_range(bins, vs, mark, if side < 0: 4 else: 5, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.1, 4.1), vec3(1.5, 0.04, 0.4), lv.wing)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.75, 4.15), vec3(0.05, 0.7, 0.42), lv.body)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _box(vs, vec3(0, 0.8, 4.45), vec3(0.06, 0.55, 0.12), lv.trim)
+            _part_range(bins, vs, mark, 6, kind)
+            mark = vs.len()
             _spinner(vs, vec3(0, 0, -4.55), 0.18, lv.trim)
+            _part_range(bins, vs, mark, 1, kind)
             contacts = [vec3(-1.3, -2.35, -3.6), vec3(1.3, -2.35, -3.6), vec3(-1.3, -2.45, -0.7), vec3(1.3, -2.45, -0.7), vec3(-1.3, -2.3, 2.4), vec3(1.3, -2.3, 2.4)]
-            return CraftModel(custom_mesh(vs), build_prop(1.15, 2), vec3(0, 0, -4.7), contacts, vec3(0, 0.9, 0.55), vec3(1.3, -1.65, -0.7), [vec3(0, 0, 0.0), vec3(0.5, 0.5, 4.5), vec3(0, -0.35, -0.6), vec3(4.6, 0.07, 0.72), vec3(-1.3, -2.0, -0.7), vec3(0.36, 0.3, 3.3), vec3(1.3, -2.0, -0.7), vec3(0.36, 0.3, 3.3), vec3(0, 0.1, 4.1), vec3(1.5, 0.04, 0.4)])
+            return _finish_craft(CraftModel(custom_mesh(vs), build_prop(1.15, 2), vec3(0, 0, -4.7), contacts, vec3(0, 0.9, 0.55), vec3(1.3, -1.65, -0.7), [vec3(0, 0, 0.0), vec3(0.5, 0.5, 4.5), vec3(0, -0.35, -0.6), vec3(4.6, 0.07, 0.72), vec3(-1.3, -2.0, -0.7), vec3(0.36, 0.3, 3.3), vec3(1.3, -2.0, -0.7), vec3(0.36, 0.3, 3.3), vec3(0, 0.1, 4.1), vec3(1.5, 0.04, 0.4)]), bins, kind)

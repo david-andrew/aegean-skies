@@ -1,0 +1,148 @@
+use '../src/living_types.jo'
+use '../src/living_seed.jo'
+use '../src/living_scene.jo'
+import '../src/living_world.jo' as living
+import '../src/living_sim.jo' as clock
+import '../src/living_travel.jo' as flights
+import '../src/living_pirates.jo' as raids
+
+# This module deliberately has no graphics imports: ownership can be tested with mock bodies.
+test "one hundred LOD switches preserve actual pose fuel identity and stale handles":
+    w = build_world(); adapter = SceneAdapter()
+    c = 1; start = w.aircraft[c].pose.pos
+    w.trips[0].route = [start, start + vec3(10000, 0, 0)]
+    w.trips[0].segment = 0; w.trips[0].segment_elapsed_ticks = 0
+    w.aircraft[c].pose.vel = vec3(60, 0, 0)
+    last = Handle()
+    loop n in 0..100:
+        assert(acquire_scene(w, adapter, c))
+        assert(not acquire_scene(w, adapter, c) and not adapter.bodies.has(last))
+        last = scene_handle(adapter, c)
+        before = w.aircraft[c].pose.pos; fuel = w.aircraft[c].fuel_ml
+        scene_clock_begin(w)
+        p = w.aircraft[c].pose; p.pos += vec3(1, 0, 0)
+        old_revision = w.aircraft[c].revision
+        revision = scene_motion(w, c, old_revision, p, fuel - 1, w.aircraft[c].hull, w.aircraft[c].engine, .airborne)
+        assert(revision >= 0)
+        assert(scene_motion(w, c, old_revision, p, fuel - 2, 800, 800, .airborne) == -1)
+        scene_clock_end(w)
+        assert(w.aircraft[c].pose.pos == before + vec3(1, 0, 0) and w.aircraft[c].fuel_ml == fuel - 1)
+        assert(release_scene(w, adapter, c) and not adapter.bodies.has(last))
+        assert(w.trips[0].route[0] == p.pos and w.trips[0].last_tick == w.tick)
+        assert(w.aircraft[c].move_owner == .abstract_world and w.aircraft[c].trip == 0)
+    assert(w.aircraft[c].pose.pos == start + vec3(100, 0, 0))
+    assert(adapter.bodies.len() == 0 and adapter.handles.len() == 0)
+    assert(living.invariant_errors(w).len() == 0)
+
+test "swept entry exit hysteresis and active contact prevent premature folding":
+    w = build_world(); adapter = SceneAdapter(); c = 1
+    pos = w.aircraft[c].pose.pos
+    assert(scene_candidate(w, c, pos + vec3(6200, 0, 0), vec3(-200, 0, 0)))
+    assert(not scene_candidate(w, c, pos + vec3(20000, 0, 0), vec3(0, 0, 0)))
+    assert(acquire_scene(w, adapter, c))
+    adapter.observer = pos + vec3(7000, 0, 0)
+    loop n in 0..599: assert(not scene_should_fold(w, adapter, c, true))
+    assert(scene_should_fold(w, adapter, c, true))
+    assert(not scene_should_fold(w, adapter, c, false))
+    w.encounters[0] = Encounter(id = 0, raider_trip = 0, victim_trip = 0)
+    w.trips[0].encounter = 0
+    assert(not scene_should_fold(w, adapter, c, true))
+    adapter.observer = pos
+    assert(not scene_should_fold(w, adapter, c, true))
+    assert(adapter.bodies[scene_handle(adapter, c)].outside_ticks == 0)
+
+test "folding airborne route never replays departure taxi or spends scene fuel twice":
+    w = build_world(); adapter = SceneAdapter(); c = 1
+    assert(acquire_scene(w, adapter, c))
+    before = w.aircraft[c].fuel_ml
+    scene_clock_begin(w)
+    p = w.aircraft[c].pose
+    assert(scene_motion(w, c, w.aircraft[c].revision, p, before - 1, 850, 850, .airborne) >= 0)
+    scene_clock_end(w)
+    assert(release_scene(w, adapter, c))
+    assert(not w.trips[0].departure_taxi)
+    ticks = w.trips[0].segment_ticks[0]
+    start = w.aircraft[c].pose.pos
+    clock.advance_ticks(w, 60)
+    expected = lerp(start, w.trips[0].route[1], f32(60.0 / f64(ticks)))
+    assert(length(w.aircraft[c].pose.pos - expected) < 0.1)
+    assert(w.aircraft[c].fuel_ml == before - 61)
+
+test "mixed scene encounter resolves abstractly and cannot duplicate its outcome":
+    w = build_world(); adapter = SceneAdapter()
+    point = w.aircraft[1].pose.pos
+    w.trips[1] = Trip(id = 1, actor = 22, craft = 6, mode = .aircraft, state = .active, origin = 5, destination = 5, reason = Reason(purpose = .raid, actor = 22, counterparty = 2, origin = 5, destination = 5), route = [point, point + vec3(1000, 0, 0)], cruise_mm_per_sec = 65000, last_tick = 0)
+    w.aircraft[6].trip = 1; w.aircraft[6].place = -1; w.aircraft[6].dock = -1
+    w.aircraft[6].pose = Pose(pos = point); w.aircraft[6].previous_pos = point
+    w.aircraft[1].previous_pos = point
+    w.active_trips.push(1); w.next_trip = 2; w.factions[3].raid_trip = 1
+    assert(acquire_scene(w, adapter, 1))
+    raids.begin_encounters(w)
+    assert(w.next_encounter == 1)
+    w.tick = 1200; w.minute = 10
+    raids.advance_encounters(w)
+    assert(w.encounters[0].resolved)
+    event = w.encounters[0].outcome_event
+    raids.begin_encounters(w); raids.advance_encounters(w)
+    assert(w.next_encounter == 1 and w.encounters[0].outcome_event == event)
+
+test "actual player cast off registers one trip even without NPC departure permission":
+    w = build_world()
+    w.aircraft[0].move_owner = .scene
+    w.places[0].harbor_closed = true
+    w.aircraft[0].engine = 200
+    id = scene_player_departure(w)
+    assert(id >= 0 and w.aircraft[0].trip == id and w.people[0].trip == id)
+    assert(w.aircraft[0].place == -1 and w.aircraft[0].dock == -1 and w.people[0].place == -1)
+    assert(scene_player_departure(w) == -1)
+    w.places[0].harbor_closed = false
+    scene_clock_begin(w)
+    pose = Pose(pos = w.harbors[0].docks[0])
+    assert(scene_motion(w, 0, w.aircraft[0].revision, pose, w.aircraft[0].fuel_ml, 650, 200, .moored) >= 0)
+    assert(scene_player_arrival(w, 0, 0))
+    assert(not scene_player_arrival(w, 0, 0))
+    assert(w.people[0].place == 0 and w.aircraft[0].trip == -1)
+    assert(living.invariant_errors(w).len() == 0)
+
+test "encounter fuel drains only each owner's elapsed ticks and duplicate drains are inert":
+    w = build_world()
+    point = w.aircraft[1].pose.pos
+    w.trips[1] = Trip(id = 1, actor = 22, craft = 6, mode = .aircraft, state = .active, origin = 5, destination = 5, reason = Reason(purpose = .raid, actor = 22), route = [point, point + vec3(1000, 0, 0)], cruise_mm_per_sec = 65000)
+    w.encounters[0] = Encounter(id = 0, raider_trip = 1, victim_trip = 0, started_tick = 30, deadline_tick = 1230)
+    w.next_encounter = 1; w.next_trip = 2
+    w.aircraft[1].move_owner = .scene
+    raider_fuel = w.aircraft[6].fuel_ml; victim_fuel = w.aircraft[1].fuel_ml
+    w.tick = 60; w.minute = 0
+    raids.advance_encounters(w)
+    assert(w.aircraft[6].fuel_ml == raider_fuel - 40 and w.aircraft[1].fuel_ml == victim_fuel)
+    raids.advance_encounters(w)
+    assert(w.aircraft[6].fuel_ml == raider_fuel - 40)
+    w.aircraft[6].move_owner = .scene
+    w.tick = 120; w.minute = 1
+    raids.advance_encounters(w)
+    assert(w.aircraft[6].fuel_ml == raider_fuel - 40 and w.aircraft[1].fuel_ml == victim_fuel)
+    w.aircraft[6].move_owner = .abstract_world
+    w.tick = 150; w.minute = 1
+    raids.advance_encounters(w)
+    assert(w.aircraft[6].fuel_ml == raider_fuel - 80 and w.aircraft[1].fuel_ml == victim_fuel)
+
+test "both visible encounter members commit one seeded outcome without duplicate damage":
+    w = build_world(); adapter = SceneAdapter()
+    point = w.aircraft[1].pose.pos
+    w.trips[1] = Trip(id = 1, actor = 22, craft = 6, mode = .aircraft, state = .active, origin = 5, destination = 5, reason = Reason(purpose = .raid, actor = 22, counterparty = 2, origin = 5, destination = 5), route = [point, point + vec3(1000, 0, 0)], cruise_mm_per_sec = 65000, encounter = 0)
+    w.aircraft[6].trip = 1; w.aircraft[6].place = -1; w.aircraft[6].dock = -1
+    w.aircraft[6].pose.pos = point
+    w.trips[0].encounter = 0
+    w.encounters[0] = Encounter(id = 0, raider_trip = 1, victim_trip = 0, started_tick = 0, deadline_tick = 1200)
+    w.next_trip = 2; w.next_encounter = 1
+    assert(acquire_scene(w, adapter, 1) and acquire_scene(w, adapter, 6))
+    w.tick = 1200; w.minute = 10
+    loop c in [1, 6]:
+        pose = w.aircraft[c].pose
+        assert(scene_motion(w, c, w.aircraft[c].revision, pose, w.aircraft[c].fuel_ml - 10, w.aircraft[c].hull, w.aircraft[c].engine, .airborne) >= 0)
+    scene_encounters(w)
+    assert(w.encounters[0].resolved and w.encounters[0].outcome_event >= 0)
+    assert(w.aircraft[1].hull == 850 and w.aircraft[6].hull == 750)
+    event = w.encounters[0].outcome_event
+    scene_encounters(w)
+    assert(w.encounters[0].outcome_event == event and w.next_encounter == 1)

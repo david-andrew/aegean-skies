@@ -1,0 +1,174 @@
+# Pure scene leases and handoff transactions. No mesh, window or flight dependency.
+# The stable craft ID binds to a generational Pool handle; Traffic is its UI projection.
+use 'living_types.jo'
+import 'living_commands.jo' as commands
+import 'living_travel.jo' as travel
+import 'living_sim.jo' as sim
+import 'living_pirates.jo' as pirates
+import 'living_weather.jo' as weather
+import 'world.jo' as terrain
+
+struct SceneLease:
+    craft: int
+    outside_ticks = 0
+
+struct SceneAdapter:
+    bodies: Pool[SceneLease]
+    handles: {int: Handle}
+    accumulator = 0.0
+    observer: vec3
+    observer_velocity: vec3
+
+scene_handle = (scene: SceneAdapter, craft: int) -> Handle: scene.handles.get(craft, Handle())
+
+scene_bound = (scene: SceneAdapter, craft: int) -> bool: scene.bodies.has(scene_handle(scene, craft))
+
+scene_candidate = (w: World, craft: int, observer: vec3, velocity: vec3) -> bool:
+    c = w.aircraft[craft]
+    if c.trip < 0 or c.state == .ditched or c.state == .wrecked or c.state == .workshop: return false
+    # Sweep two physical seconds, including the observer's approach. Called every fixed tick.
+    if pirates.swept_separation(c.pose.pos, c.pose.pos + c.pose.vel * 2.0, observer, observer + velocity * 2.0) <= 6000.0: return true
+    t = w.trips[c.trip]
+    loop p in [t.origin, t.destination]:
+        if length(observer - w.harbors[p].center) <= 6000 and length(c.pose.pos - w.harbors[p].center) <= 1800: return true
+    false
+
+acquire_scene = (w: mut World, scene: mut SceneAdapter, craft: int) -> bool:
+    if craft < 0 or craft >= w.aircraft.len() or scene_bound(scene, craft) or w.aircraft[craft].move_owner != .abstract_world: return false
+    c = w.aircraft[craft]
+    if c.trip < 0 or not commands.pose_valid(c.pose): return false
+    # A bad baked route is an error, never a reason to teleport to the departure harbor.
+    if terrain.height(c.pose.pos.x, c.pose.pos.z) > max(0.0, f64(c.pose.pos.y)):
+        print("scene blocked: craft {craft} intersects terrain at {c.pose.pos}")
+        return false
+    scene.handles[craft] = scene.bodies.add(SceneLease(craft))
+    w.aircraft[craft].move_owner = .scene
+    w.aircraft[craft].revision += 1
+    true
+
+encounter_active = (w: World, craft: int) -> bool:
+    id = w.aircraft[craft].trip
+    if id < 0: return false
+    encounter = w.trips[id].encounter
+    encounter >= 0 and not w.encounters[encounter].resolved
+
+# Advance confirmed semantic waypoints only forwards. Actual distance drives scheduled incidents.
+scene_progress = (w: mut World, craft: int, before: vec3):
+    id = w.aircraft[craft].trip
+    if id < 0: return
+    pos = w.aircraft[craft].pose.pos
+    w.trips[id].traveled_mm += int(round(f64(length(pos - before)) * 1000.0))
+    loop w.trips[id].segment < w.trips[id].route.len() - 2:
+        s = w.trips[id].segment
+        a = w.trips[id].route[s]; b = w.trips[id].route[s + 1]
+        lane = b - a
+        fraction = f64(dot(pos - a, lane)) / max(1.0, f64(dot(lane, lane)))
+        if length(pos - b) > 250 and not (fraction >= 1.0 and length(pos - (a + lane * f32(fraction))) < 400): break
+        w.trips[id].segment += 1
+    w.trips[id].last_tick = w.tick
+
+# Fold from the actual pose onto the remaining forward route, never nominal elapsed time.
+release_scene = (w: mut World, scene: mut SceneAdapter, craft: int, physical_remainder: vec3[] = []) -> bool:
+    h = scene_handle(scene, craft)
+    if not scene.bodies.has(h) or w.aircraft[craft].move_owner != .scene: return false
+    id = w.aircraft[craft].trip
+    if id >= 0:
+        t = w.trips[id]
+        remaining = physical_remainder
+        if remaining.len() == 0:
+            remaining.push(w.aircraft[craft].pose.pos)
+            loop s in t.segment + 1..t.route.len(): remaining.push(t.route[s])
+        if remaining.len() < 2: remaining.push(t.route[t.route.len() - 1])
+        w.trips[id].route = remaining
+        w.trips[id].segment = 0; w.trips[id].segment_mm = 0; w.trips[id].segment_elapsed_ticks = 0
+        w.trips[id].last_tick = w.tick
+        travel.configure_trip_timing(w, id, false)
+        if w.aircraft[craft].state == .taxi or w.aircraft[craft].state == .approach:
+            # Water motion remains taxi-speed, including a short one-segment final remainder.
+            if w.aircraft[craft].pose.pos.y < 8:
+                ticks = max(1, int(ceil(f64(length(remaining[1] - remaining[0])) / 5.0 * 60.0)))
+                w.trips[id].eta_tick += ticks - w.trips[id].segment_ticks[0]
+                w.trips[id].segment_ticks[0] = ticks
+    w.aircraft[craft].move_owner = .abstract_world
+    w.aircraft[craft].revision += 1
+    scene.bodies.remove(h); scene.handles.remove(craft)
+    true
+
+scene_should_fold = (w: World, scene: mut SceneAdapter, craft: int, safe: bool) -> bool:
+    h = scene_handle(scene, craft)
+    if not scene.bodies.has(h): return false
+    if length(w.aircraft[craft].pose.pos - scene.observer) > 6500: scene.bodies[h].outside_ticks += 1
+    else: scene.bodies[h].outside_ticks = 0
+    safe and not encounter_active(w, craft) and scene.bodies[h].outside_ticks >= 600
+
+# Called once after physical integration and before any minute rules. No abstract owner burns
+# a scene body's fuel. Motion precedes arrivals and encounter resolution at the same tick.
+scene_clock_begin = (w: mut World):
+    w.tick += 1
+    w.minute = w.tick / TICKS_PER_MINUTE
+
+scene_clock_end = (w: mut World):
+    if w.tick % TICKS_PER_MINUTE == 0: sim.minute_rules(w)
+    else: travel.advance_trips(w, w.tick)
+    pirates.advance_encounters(w)
+
+scene_motion = (w: mut World, craft: int, revision: int, pose: Pose, fuel_ml: int, hull: int, engine: int, phase: CraftState) -> int:
+    if craft < 0 or craft >= w.aircraft.len(): return -1
+    before = w.aircraft[craft].pose.pos
+    result = commands.commit_scene_motion(w, craft, revision, w.tick, pose, fuel_ml, hull, engine)
+    if result < 0: return result
+    w.aircraft[craft].previous_pos = before
+    if w.aircraft[craft].trip >= 0:
+        w.aircraft[craft].state = phase
+        scene_progress(w, craft, before)
+        id = w.aircraft[craft].trip
+        if w.trips[id].incident_at_mm >= 0 and not w.trips[id].incident_resolved and w.trips[id].traveled_mm >= w.trips[id].incident_at_mm:
+            w.trips[id].incident_resolved = true
+            w.aircraft[craft].engine = min(300, w.aircraft[craft].engine)
+            weather.ditch(w, craft, w.trips[id].reason)
+    w.aircraft[craft].revision
+
+# Player movement comes from the human controls, never the NPC planner. A loaded manifest
+# supplies the declared destination; otherwise this is an uncontracted flight from home.
+scene_player_departure = (w: mut World) -> int:
+    actor = w.player; c = w.people[actor].craft
+    if c < 0 or w.aircraft[c].trip >= 0 or w.people[actor].place < 0: return -1
+    origin = w.people[actor].place; destination = origin
+    reason = Reason(purpose = .visit, actor = actor, origin = origin, destination = origin)
+    loop id in w.aircraft[c].job_manifests:
+        if w.jobs[id].loaded and w.jobs[id].state == .claimed:
+            destination = w.jobs[id].destination; reason = w.jobs[id].cause
+            break
+    route = travel.route_geometry(w, origin, destination, w.aircraft[c].pose.pos)
+    travel.launch_route(w, actor, destination, route, reason, true)
+
+scene_player_arrival = (w: mut World, place: int, dock: int) -> bool:
+    c = w.people[w.player].craft
+    if c < 0 or w.aircraft[c].trip < 0: return false
+    id = w.aircraft[c].trip
+    # The actual pilot chooses where to land. Do not pay a destination's jobs at another port.
+    old = w.trips[id].destination
+    w.trips[id].destination = place
+    if travel.commit_arrival(w, id, place, dock, w.aircraft[c].revision):
+        w.trips[id].claimed_dock = dock
+        if w.trips[id].reason.purpose == .visit: w.trips[id].reason.destination = place
+        return true
+    w.trips[id].destination = old
+    false
+
+# Combat is deliberately deferred: both visible aircraft register their committed poses, then
+# use the same seeded surrender/escape choice after ten game minutes. No invented gun damage.
+# Mixed/offscreen contacts use pirates.advance_encounters; player proximity does not reroll it.
+# Later combat supplies surrender, weapons damage, pursuit and player choice through this API.
+scene_encounters = (w: mut World):
+    pirates.begin_encounters(w)
+    ids = w.encounters.keys(); ids.sort()
+    loop id in ids:
+        e = w.encounters[id]
+        if e.resolved or w.tick < e.deadline_tick: continue
+        r = w.trips[e.raider_trip].craft; v = w.trips[e.victim_trip].craft
+        if w.aircraft[r].move_owner != .scene or w.aircraft[v].move_owner != .scene: continue
+        patrol = w.factions[0].patrol_until >= w.minute and length(w.factions[0].patrol_pos - w.aircraft[r].pose.pos) <= 2000
+        probability = clamp(0.55 + 0.20 * (f64(w.people[w.trips[e.raider_trip].actor].traits.boldness) / 1000.0 - 0.5) + 0.15 * f64(w.aircraft[r].engine - w.aircraft[v].engine) / 1000.0 - (if patrol: 0.25 else: 0.0), 0.15, 0.80)
+        surrendered = f64(draw1000000(w.seed, 60, id, e.started_tick / 120)) / 1000000.0 < probability
+        assert(pirates.commit_encounter(w, id, w.aircraft[r].revision, w.aircraft[v].revision, surrendered))

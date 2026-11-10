@@ -1,8 +1,4 @@
-# Other pilots in the air: each with an aircraft, flying the autopilot from one harbor to another,
-# landing out in front of it into the wind, taxiing in and mooring at a free dock, waiting a while,
-# then off again. (Where they go and why will be the world's people's own business; for now, a
-# harbor at random.)
-
+# Living-world aircraft. Identity and intent belong to World; only leased craft run physics.
 use 'world.jo'
 use 'look.jo'
 use 'planes.jo'
@@ -10,93 +6,385 @@ use 'flight.jo'
 use 'objects.jo'
 use 'pilot.jo'
 use 'sea.jo'
+import 'living_world.jo' as living
+import 'living_types.jo' as data
+import 'living_scene.jo' as scene
+import 'living_travel.jo' as travel
+import 'living_weather.jo' as weather
 
 struct Traffic:
+    craft: int                     # persistent aircraft ID; never an array/Pool index
+    person: int
     name: str
+    why: str
+    reason: living.Reason
     kind: Craft
     model: int
     spec: CraftSpec
     state: CraftState
     plan: FlightPlan
-    town: int                       # where it is, or is going
+    town: int
     dock: int
-    waiting = 0.0                   # seconds left at the dock
+    trip = -1
     flying = false
+    materialized = false
+    visible = true
     prop_angle = 0.0
-    seed: int
+    waypoint = 1
+    route_key: u64 = u64(0)
+    why_minute = -1
 
-# which docks are taken (town, dock), by the player's craft and the others
-_dock_taken = (traffic: Traffic[], player: vec3, towns: Town[], ti: int, k: int) -> bool:
-    d = towns[ti].docks[k]
-    if length(vec2(player.x - d.x, player.z - d.z)) < 14.0: return true
+# Original model indices 0..7 stay stable; the four extra seed liveries are appended in aegean.
+traffic_model = (craft: int) -> int: [0, 5, 8, 9, 2, 10, 11, 9][craft]
+
+harbors_from_towns = (towns: Town[]) -> living.HarborGeometry[]:
+    result: living.HarborGeometry[]
+    loop p in 0..towns.len():
+        tw = towns[p]
+        center = vec3(tw.center.x, 0, tw.center.z)
+        out = vec3(tw.out.x, 0, tw.out.y)
+        safe = center + out * 300.0
+        result.push(data.HarborGeometry(p, center, out, tw.docks, center + out * 200.0, safe, safe))
+    result
+
+# The flight model's part health is authoritative while present. Seed coarse world wear into
+# attached parts only when constructing a body; snapshots retain actual individual damage.
+_seed_condition = (state: mut CraftState, spec: CraftSpec, hull: int, engine: int):
+    engine_id = int(PartId.engine)
+    engine_share = spec.parts[engine_id].mass_share
+    structural = clamp((f64(hull) / 1000.0 - engine_share * f64(engine) / 1000.0) / max(0.01, 1.0 - engine_share), 0.0, 1.0)
+    loop i in 0..spec.parts.len():
+        state.damage.parts[i].health = if i == engine_id: f64(engine) / 1000.0 else: structural
+    state.hull_damage = 1.0 - f64(hull) / 1000.0; state.engine_damage = 1.0 - f64(engine) / 1000.0
+
+_impose_condition = (state: mut CraftState, spec: CraftSpec, hull: int, engine: int):
+    engine_id = int(PartId.engine)
+    engine_share = spec.parts[engine_id].mass_share
+    old_engine = state.damage.parts[engine_id].health
+    current = (1.0 - state.hull_damage - engine_share * old_engine) / max(0.01, 1.0 - engine_share)
+    target = clamp((f64(hull) / 1000.0 - engine_share * f64(engine) / 1000.0) / max(0.01, 1.0 - engine_share), 0.0, 1.0)
+    # Coarse structural loss must not manufacture a second engine hit. Conversely an explicit
+    # world repair may improve condition; ordinary motion commits cannot grant that increase.
+    if abs(f64(engine) / 1000.0 - old_engine) > 0.001: state.damage.parts[engine_id].health = f64(engine) / 1000.0
+    if target + 0.001 < current:
+        ratio = target / max(0.001, current)
+        loop i in 0..spec.parts.len():
+            if i != engine_id: state.damage.parts[i].health *= ratio
+    else if target > current + 0.001:
+        loop i in 0..spec.parts.len():
+            if i != engine_id: state.damage.parts[i].health = max(state.damage.parts[i].health, target)
+
+_restore_common = (tr: mut Traffic, w: living.World):
+    c = w.aircraft[tr.craft]
+    wet = c.state == .moored or c.state == .workshop or (c.pose.pos.y < 5 and (c.state == .taxi or c.state == .approach))
+    # The abstract water anchor is at sea level; the physical model's origin is its CG.
+    pos = c.pose.pos
+    if wet and pos.y == 0: pos.y = f32(tr.spec.float_height)
+    tr.state = CraftState(position = pos, velocity = c.pose.vel, orientation = c.pose.rot,
+        throttle = f64(c.pose.throttle) / 1000.0, fuel = f64(c.fuel_ml) / 1000.0,
+        hull_damage = 1.0 - f64(c.hull) / 1000.0, engine_damage = 1.0 - f64(c.engine) / 1000.0,
+        on_water = wet, water_age = if wet: 0.0 else: 1.0)
+    _seed_condition(tr.state, tr.spec, c.hull, c.engine)
+    if c.state == .moored or c.state == .workshop: moor(tr.state, pos, heading(tr.state))
+
+traffic_projection = (tr: mut Traffic, w: living.World):
+    c = w.aircraft[tr.craft]
+    person = if c.operator >= 0: c.operator else: c.owner
+    if tr.why_minute != w.minute or tr.trip != c.trip or tr.person != person:
+        tr.person = person; tr.name = w.people[person].name
+        tr.reason = if c.trip >= 0: w.trips[c.trip].reason else: w.people[person].action.reason
+        if tr.reason.actor < 0: tr.reason = data.Reason(purpose = .visit, actor = person, origin = c.place, destination = c.place)
+        tr.why = living.say_reason(w, tr.reason)
+        tr.why_minute = w.minute
+    tr.trip = c.trip; tr.flying = c.trip >= 0
+    tr.town = if c.trip >= 0: w.trips[c.trip].destination else: max(0, c.place)
+    tr.dock = if c.trip >= 0: w.trips[c.trip].claimed_dock else: c.dock
+    tr.visible = c.state != .ditched and c.state != .wrecked
+    tr.materialized = c.move_owner == .scene
+    if not tr.materialized: _restore_common(tr, w)
+
+make_living_traffic = (w: mut living.World, models: CraftModel[]) -> Traffic[]:
+    result: Traffic[]
+    loop c in w.aircraft:
+        if c.owner == w.player: continue
+        model = traffic_model(c.id)
+        kind = Craft(int(c.kind))
+        spec = craft_spec(kind, models[model].contacts)
+        # One fuel unit is a litre in the adapter; use the shared economy burn/tank constants.
+        spec.fuel_capacity = f64(data.AIRFRAMES[int(c.kind)].tank_ml) / 1000.0
+        spec.fuel_burn = f64(data.AIRFRAMES[int(c.kind)].burn_ml_sec) / 1000.0
+        tr = Traffic(craft = c.id, person = c.owner, name = w.people[c.owner].name, kind = kind, model = model, spec = spec)
+        traffic_projection(tr, w)
+        result.push(tr)
+    loop tr in result: w.aircraft[tr.craft].model_index = tr.model
+    result
+
+# The existing Flyer is the player's one body. Bind it to the same registry and units; it
+# stays under human controls, including when it becomes a pirate encounter's victim.
+bind_living_player = (player: mut Flyer, w: mut living.World, adapter: mut scene.SceneAdapter):
+    c = w.people[w.player].craft
+    record = w.aircraft[c]
+    player.state.position = record.pose.pos
+    if record.pose.pos.y == 0 and record.state == .moored: player.state.position.y = f32(player.spec.float_height)
+    player.state.velocity = record.pose.vel; player.state.orientation = record.pose.rot
+    if record.scene_extension_tick == w.tick and record.scene_extension != "":
+        snapshot = from_text[CraftState](record.scene_extension)
+        if snapshot is CraftState: player.state = snapshot
+    player.spec.fuel_capacity = f64(data.AIRFRAMES[int(w.aircraft[c].kind)].tank_ml) / 1000.0
+    player.spec.fuel_burn = f64(data.AIRFRAMES[int(w.aircraft[c].kind)].burn_ml_sec) / 1000.0
+    player.state.fuel = f64(w.aircraft[c].fuel_ml) / 1000.0
+    player.state.hull_damage = 1.0 - f64(w.aircraft[c].hull) / 1000.0
+    player.state.engine_damage = 1.0 - f64(w.aircraft[c].engine) / 1000.0
+    if record.scene_extension_tick != w.tick or record.scene_extension == "": _seed_condition(player.state, player.spec, record.hull, record.engine)
+    w.aircraft[c].pose = data.Pose(pos = player.state.position, vel = player.state.velocity, rot = player.state.orientation)
+    if w.aircraft[c].move_owner != .scene: w.aircraft[c].revision += 1
+    w.aircraft[c].move_owner = .scene
+    if not scene.scene_bound(adapter, c): adapter.handles[c] = adapter.bodies.add(scene.SceneLease(c))
+
+sync_living_player = (player: mut Flyer, w: living.World):
+    c = w.aircraft[w.people[w.player].craft]
+    if abs(player.state.fuel * 1000.0 - f64(c.fuel_ml)) > 1: player.state.fuel = f64(c.fuel_ml) / 1000.0
+    _impose_condition(player.state, player.spec, c.hull, c.engine)
+    if abs(player.state.hull_damage - (1.0 - f64(c.hull) / 1000.0)) > 0.001: player.state.hull_damage = 1.0 - f64(c.hull) / 1000.0
+    if abs(player.state.engine_damage - (1.0 - f64(c.engine) / 1000.0)) > 0.001: player.state.engine_damage = 1.0 - f64(c.engine) / 1000.0
+
+_player_motion = (w: mut living.World, state: CraftState, before: data.Pose, before_fuel: int, alpha: f64):
+    c = w.people[w.player].craft
+    if w.aircraft[c].move_owner != .scene: return
+    rotation = if dot(before.rot, state.orientation) < 0: -state.orientation else: state.orientation
+    pose = data.Pose(pos = lerp(before.pos, state.position, f32(alpha)), vel = lerp(before.vel, state.velocity, f32(alpha)),
+        rot = normalize(lerp(before.rot, rotation, f32(alpha))), throttle = int(round(state.throttle * 1000.0)))
+    fuel = min(w.aircraft[c].fuel_ml, max(0, int(round(lerp(f64(before_fuel), state.fuel * 1000.0, alpha)))))
+    phase: data.CraftState = if state.moored: data.CraftState.moored else: if state.on_water: data.CraftState.taxi else: data.CraftState.airborne
+    hull = min(w.aircraft[c].hull, max(0, int(round((1.0 - state.hull_damage) * 1000.0))))
+    engine = min(w.aircraft[c].engine, max(0, int(round((1.0 - state.engine_damage) * 1000.0))))
+    assert(scene.scene_motion(w, c, w.aircraft[c].revision, pose, fuel, hull, engine, phase) >= 0)
+    if state.moored and alpha >= 1.0 and w.aircraft[c].trip >= 0:
+        loop p in 0..w.harbors.len():
+            loop d in 0..w.harbors[p].docks.len():
+                if length(pose.pos - w.harbors[p].docks[d]) < 20:
+                    scene.scene_player_arrival(w, p, d)
+                    return
+
+# Saved only at an explicit save boundary. The world remains graphics-independent.
+struct SceneFlightSnapshot:
+    state: CraftState
+    plan: FlightPlan
+    waypoint: int
+    route_key: u64
+    trip: int
+
+_start_plan = (tr: mut Traffic, w: living.World):
+    t = w.trips[tr.trip]; h = w.harbors[t.destination]
+    out_heading = atan2(f64(w.harbors[t.origin].out.x), -f64(w.harbors[t.origin].out.z))
+    target = if t.claimed_dock >= 0: h.docks[t.claimed_dock] else: h.buoy
+    tr.plan = FlightPlan(target = h.center + h.out * 420.0, taxi_target = target,
+        altitude = 240.0, speed = f64(data.AIRFRAMES[int(w.aircraft[tr.craft].kind)].cruise_mps),
+        takeoff_heading = out_heading, landing_heading = atan2(-f64(h.out.x), f64(h.out.z)))
+    tr.waypoint = max(t.segment + 1, if tr.state.on_water: 2 else: 1)
+    # A folded final taxi resumes taxiing, rather than taking off again.
+    if tr.state.on_water and length(tr.state.position - h.center) < 1000 and (t.origin != t.destination or t.segment >= t.route.len() - 2):
+        tr.waypoint = t.route.len() - 2; tr.plan.phase = .taxi
+    else if not tr.state.on_water:
+        tr.plan.phase = .cruise
+        # Preserve an already aligned descent across an abstract/scene handoff.
+        inward = -h.out
+        delta = tr.plan.target - tr.state.position; delta.y = 0
+        along = f64(dot(delta, inward))
+        cross_track = length(delta - inward * f32(along))
+        v = tr.state.velocity; v.y = 0
+        approach_distance = max(1800.0, tr.plan.altitude / 0.065 + 500.0)
+        if along > 0 and along < approach_distance and cross_track < 200 and tr.state.position.y < 280 and length(v) > 1 and dot(normalize(v), inward) > 0.85:
+            tr.waypoint = t.route.len() - 2; tr.plan.phase = .descend
+    tr.route_key = hash(t.route)
+
+_acquire_traffic = (tr: mut Traffic, w: mut living.World, adapter: mut scene.SceneAdapter):
+    if not scene.acquire_scene(w, adapter, tr.craft): return
+    _restore_common(tr, w)
+    tr.materialized = true; tr.trip = w.aircraft[tr.craft].trip
+    tr.why_minute = -1
+    tr.town = w.trips[tr.trip].destination; tr.dock = w.trips[tr.trip].claimed_dock
+    _start_plan(tr, w)
+    c = w.aircraft[tr.craft]
+    if c.scene_extension_tick == w.tick and c.scene_extension != "":
+        snapshot = from_text[SceneFlightSnapshot](c.scene_extension)
+        if snapshot is SceneFlightSnapshot and snapshot.trip == tr.trip:
+            tr.state = snapshot.state; tr.plan = snapshot.plan
+            tr.waypoint = snapshot.waypoint; tr.route_key = snapshot.route_key
+    w.aircraft[tr.craft].scene_extension = ""; w.aircraft[tr.craft].scene_extension_tick = -1
+
+# Include the controller's real outer approach fix when folding. Otherwise an abstract craft
+# flies straight back toward the dock, re-enters the scene, and repeats the approach forever.
+_physical_remainder = (tr: Traffic, w: living.World) -> vec3[]:
+    t = w.trips[tr.trip]
+    points = [tr.state.position]
+    last = t.route.len() - 2
+    if tr.waypoint < last:
+        loop k in tr.waypoint..last: points.push(t.route[k])
+    if tr.plan.phase == .takeoff or tr.plan.phase == .climb or tr.plan.phase == .cruise:
+        hdir = heading_vector(tr.plan.landing_heading ?? tr.plan.takeoff_heading)
+        distance = max(1800.0, tr.plan.altitude / 0.065 + 500.0)
+        fix = tr.plan.target - hdir * f32(distance); fix.y = f32(tr.plan.altitude)
+        points.push(fix)
+    if tr.plan.phase != .taxi and tr.plan.phase != .done: points.push(tr.plan.target)
+    points.push(tr.plan.taxi_target)
+    points
+
+# Feed semantic cruise waypoints through the existing autopilot. Its virtual landing fix is
+# the next waypoint; only the final harbor approach is allowed to descend, land and taxi.
+_traffic_controls = (tr: mut Traffic, w: living.World, e: FlightEnv) -> Controls:
+    t = w.trips[tr.trip]
+    if tr.route_key != hash(t.route): _start_plan(tr, w)
+    last = t.route.len() - 2
+    if tr.waypoint < last and tr.plan.phase != .taxi:
+        p = t.route[tr.waypoint]
+        if length(tr.state.position - p) < 260:
+            tr.waypoint += 1
+            if tr.waypoint >= last:
+                # Rebuild the real harbor approach after the last cruise waypoint.
+                saved = tr.waypoint; _start_plan(tr, w); tr.waypoint = saved
+                tr.plan.phase = .cruise
+                return autopilot(tr.spec, tr.state, tr.plan, e)
+            p = t.route[tr.waypoint]
+        dir = p - tr.state.position; dir.y = 0
+        h = if length(dir) > 1: atan2(f64(dir.x), -f64(dir.z)) else: heading(tr.state)
+        altitude = max(300.0, f64(p.y))
+        distance = max(1800.0, altitude / 0.065 + 500.0)
+        guide = FlightPlan(target = p + heading_vector(h) * f32(distance), altitude = altitude,
+            speed = tr.plan.speed, takeoff_heading = tr.plan.takeoff_heading, landing_heading = h,
+            phase = if tr.plan.phase == .takeoff: FlightPhase.takeoff else: FlightPhase.cruise,
+            initialized = true, approach_heading = h, approach_distance = distance, clearance_altitude = altitude)
+        controls = autopilot(tr.spec, tr.state, guide, e)
+        if guide.phase != .takeoff: tr.plan.phase = .cruise
+        return controls
+    autopilot(tr.spec, tr.state, tr.plan, e)
+
+# Berths can change while the plane is approaching (notably when the player docks).
+# Wait physically at the safe buoy, then taxi to a newly reserved berth; never snap or share.
+_traffic_berth = (tr: mut Traffic, w: mut living.World):
+    id = tr.trip; place = w.trips[id].destination
+    dock = w.trips[id].claimed_dock
+    available = dock >= 0
+    if available:
+        loop c in w.aircraft:
+            if c.id != tr.craft and c.place == place and c.dock == dock: available = false
+    if not available: dock = travel.free_dock(w, place, tr.craft)
+    if w.places[place].harbor_closed: dock = -1
+    if dock < 0:
+        w.trips[id].state = .holding
+        if w.trips[id].hold_until_minute == 0: w.trips[id].hold_until_minute = w.minute + 30
+    else if w.trips[id].state == .holding: w.trips[id].state = .active
+    target = if dock >= 0: w.harbors[place].docks[dock] else: w.harbors[place].buoy
+    if length(target - tr.plan.taxi_target) > 0.1:
+        tr.plan.taxi_target = target
+        if tr.plan.phase == .done:
+            unmoor(tr.state); tr.plan.phase = .taxi
+    tr.town = place; tr.dock = dock
+    w.trips[id].claimed_dock = dock
+
+_step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv):
+    c = w.aircraft[tr.craft]
+    if c.trip < 0: return
+    # Mixed abstract encounters can damage/resolve this body at a minute boundary.
+    if c.fuel_ml + 1 < int(round(tr.state.fuel * 1000.0)): tr.state.fuel = f64(c.fuel_ml) / 1000.0
+    _impose_condition(tr.state, tr.spec, c.hull, c.engine)
+    tr.state.hull_damage = max(tr.state.hull_damage, 1.0 - f64(c.hull) / 1000.0)
+    tr.state.engine_damage = max(tr.state.engine_damage, 1.0 - f64(c.engine) / 1000.0)
+    _traffic_berth(tr, w)
+    controls = _traffic_controls(tr, w, e)
+    step(tr.spec, tr.state, controls, e, 1.0 / 60.0)
+    tr.prop_angle += (8.0 + 70.0 * tr.state.throttle) / 60.0
+    phase: data.CraftState = if tr.state.on_water: (if tr.plan.phase == .takeoff: data.CraftState.taxi else: data.CraftState.approach) else: data.CraftState.airborne
+    fuel = min(c.fuel_ml, max(0, int(round(tr.state.fuel * 1000.0))))
+    hull = min(c.hull, max(0, int(round((1.0 - tr.state.hull_damage) * 1000.0))))
+    engine = min(c.engine, max(0, int(round((1.0 - tr.state.engine_damage) * 1000.0))))
+    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position, vel = tr.state.velocity, rot = tr.state.orientation, throttle = int(round(tr.state.throttle * 1000.0))), fuel, hull, engine, phase)
+    assert(revision >= 0)
+    if w.aircraft[tr.craft].trip < 0: return
+    if tr.state.crashed or tr.state.beached or tr.plan.phase == .failed:
+        # Explicit recovery/aftermath, never the old traffic's free tow-and-repair teleport.
+        weather.ditch(w, tr.craft, w.trips[tr.trip].reason)
+    else if tr.plan.phase == .done:
+        if not scene.encounter_active(w, tr.craft) and (tr.dock >= 0 or w.minute >= w.trips[tr.trip].hold_until_minute):
+            living.commit_arrival(w, tr.trip, tr.town, tr.dock, revision)
+
+update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none):
+    accepted = clamp(dt, 0.0, 0.25)
+    velocity = (observer - adapter.observer) / f32(max(accepted, 1.0 / 60.0))
+    if length(velocity) > 200: velocity = normalize(velocity) * 200.0
+    adapter.observer = observer; adapter.observer_velocity = velocity
+    adapter.accumulator += accepted
+    player_craft = w.people[w.player].craft
+    # Saving folds all owners. The same human body claims its lease before the next step.
+    if player != none and not scene.scene_bound(adapter, player_craft):
+        w.aircraft[player_craft].move_owner = .scene; w.aircraft[player_craft].revision += 1
+        adapter.handles[player_craft] = adapter.bodies.add(scene.SceneLease(player_craft))
+    player_before = w.aircraft[player_craft].pose
+    player_fuel = w.aircraft[player_craft].fuel_ml
+    steps = max(1, int(floor((adapter.accumulator + 1e-9) * 60.0)))
+    stepped = 0
+    loop adapter.accumulator + 1e-9 >= 1.0 / 60.0:
+        adapter.accumulator = max(0.0, adapter.accumulator - 1.0 / 60.0)
+        # Ownership is fixed before this whole step. New trips become eligible next step.
+        loop i in 0..traffic.len():
+            tr = traffic[i]
+            if not scene.scene_bound(adapter, tr.craft) and scene.scene_candidate(w, tr.craft, observer, velocity): _acquire_traffic(tr, w, adapter)
+            traffic[i] = tr
+        if let body = player:
+            if not body.moored and w.aircraft[player_craft].trip < 0: scene.scene_player_departure(w)
+        scene.scene_clock_begin(w)
+        stepped += 1
+        if let body = player: _player_motion(w, body, player_before, player_fuel, f64(stepped) / f64(steps))
+        e = flight_env(f64(w.tick) / 60.0)
+        loop i in 0..traffic.len():
+            tr = traffic[i]
+            if scene.scene_bound(adapter, tr.craft): _step_traffic(tr, w, e)
+            traffic[i] = tr
+        scene.scene_encounters(w)
+        scene.scene_clock_end(w)
+        loop mut tr in traffic:
+            if scene.scene_bound(adapter, tr.craft):
+                c = w.aircraft[tr.craft]
+                safe = not tr.state.stalled and not tr.state.beached and not tr.state.crashed and not tr.state.on_water
+                terminal = c.trip < 0
+                if terminal or scene.scene_should_fold(w, adapter, tr.craft, safe):
+                    scene.release_scene(w, adapter, tr.craft, if terminal: [] else: _physical_remainder(tr, w))
+                    tr.materialized = false
+        # Abstract poses already interpolate at fixed ticks, rather than jumping by minutes.
+    loop mut tr in traffic: traffic_projection(tr, w)
+
+# Synchronize NPCs at a completed fixed tick. Use fold_living_scene_for_save for a bound player.
+# On reload only an exact matching tick restores hidden state; abstract motion invalidates it.
+fold_traffic_for_save = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter):
+    loop mut tr in traffic:
+        if not scene.scene_bound(adapter, tr.craft): continue
+        state = SceneFlightSnapshot(tr.state, tr.plan, tr.waypoint, tr.route_key, tr.trip)
+        guiding = tr.waypoint < w.trips[tr.trip].route.len() - 2
+        scene.release_scene(w, adapter, tr.craft, _physical_remainder(tr, w))
+        state.waypoint = if guiding: 1 else: w.trips[tr.trip].route.len() - 2
+        state.route_key = hash(w.trips[tr.trip].route)
+        w.aircraft[tr.craft].scene_extension = to_text(state)
+        w.aircraft[tr.craft].scene_extension_tick = w.tick
+        tr.materialized = false
+
+fold_living_scene_for_save = (traffic: mut Traffic[], player: Flyer, w: mut living.World, adapter: mut scene.SceneAdapter):
+    fold_traffic_for_save(traffic, w, adapter)
+    c = w.people[w.player].craft
+    if not scene.scene_bound(adapter, c): return
+    scene.release_scene(w, adapter, c)
+    w.aircraft[c].scene_extension = to_text(player.state)
+    w.aircraft[c].scene_extension_tick = w.tick
+
+# Stable UI lookup; callers may read .person/.name/.why/.reason/.state.position directly.
+traffic_for_craft = (traffic: Traffic[], craft: int) -> Traffic?:
     loop tr in traffic:
-        if tr.town == ti and tr.dock == k: return true
-    false
-
-_out_heading = (tw: Town) -> f64: atan2(f64(tw.out.x), -f64(tw.out.y))
-
-# a pilot moored at a town's dock, about to wait there a while
-make_traffic = (name: str, kind: Craft, model: int, contacts: vec3[], towns: Town[], town: int, dock: int, seed: int) -> Traffic:
-    spec = craft_spec(kind, contacts)
-    tw = towns[town]
-    st = water_start(spec, tw.docks[dock], _out_heading(tw))
-    moor(st, st.position, _out_heading(tw))
-    Traffic(name, kind, model, spec, st, FlightPlan(), town, dock, waiting = 20.0 + f64(seed % 7) * 15.0, seed = seed)
-
-# off to another harbor: the plan, the dock it will moor at
-_depart = (tr: mut Traffic, towns: Town[], others: Traffic[], player: vec3):
-    seed_random(tr.seed * 7919 + int(tr.state.time))
-    loop tries in 0..12:
-        to = random_int(0, towns.len() - 1)
-        if to == tr.town or towns[to].docks.len() == 0: continue
-        tw = towns[to]
-        free = -1
-        loop k in 0..tw.docks.len():
-            if free < 0 and not _dock_taken(others, player, towns, to, k): free = k
-        if free < 0: continue
-        from = towns[tr.town]
-        # touch down out in front of the harbor, taxi in to the dock
-        land = tw.docks[free] + vec3(tw.out.x, 0, tw.out.y) * 420.0
-        dist = f64(length(land - tr.state.position))
-        tr.plan = FlightPlan(target = land, taxi_target = tw.docks[free] + vec3(tw.out.x, 0, tw.out.y) * 6.0,
-            altitude = clamp(dist * 0.03, 110.0, 240.0) + random(0.0, 40.0), takeoff_heading = _out_heading(from),
-            landing_heading = _out_heading(tw) + PI)
-        tr.town = to
-        tr.dock = free
-        unmoor(tr.state)
-        tr.flying = true
-        return
-    tr.waiting = 30.0
-
-update_traffic = (traffic: mut Traffic[], towns: Town[], player: vec3, t: f64, dt: f64):
-    env = flight_env(t)
-    loop i in 0..traffic.len():
-        if traffic[i].flying:
-            c = autopilot(traffic[i].spec, traffic[i].state, traffic[i].plan, env)
-            step(traffic[i].spec, traffic[i].state, c, env, dt)
-            traffic[i].prop_angle += dt * (8.0 + 70.0 * traffic[i].state.throttle)
-            ph = traffic[i].plan.phase
-            if ph == .done or ph == .failed or traffic[i].state.crashed or traffic[i].state.beached:
-                # moored (or, having failed, towed in: the world will say so one day)
-                tw = towns[traffic[i].town]
-                d = tw.docks[traffic[i].dock]
-                h = _out_heading(tw)
-                traffic[i].state = water_start(traffic[i].spec, d, h)
-                moor(traffic[i].state, traffic[i].state.position, h)
-                traffic[i].flying = false
-                traffic[i].waiting = 40.0 + f64((traffic[i].seed * 31 + int(t)) % 9) * 15.0
-        else:
-            traffic[i].waiting -= dt
-            if traffic[i].waiting <= 0.0:
-                let others = traffic
-                one = traffic[i]
-                _depart(one, towns, others, player)
-                traffic[i] = one
+        if tr.craft == craft: return tr
+    none
 
 draw_traffic = (traffic: Traffic[], models: CraftModel[], L: Light, t: f64):
     cam = scene_camera()
     loop tr in traffic:
-        if length(tr.state.position - cam) > 9000.0: continue
+        if not tr.visible or length(tr.state.position - cam) > 9000.0: continue
         m = models[tr.model]
         at = translation(tr.state.position) * quat_to_mat4(tr.state.orientation)
         if tr.state.moored: at = afloat(tr.state.position, t) * at

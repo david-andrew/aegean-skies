@@ -2,7 +2,8 @@
 # Sky Barons sim.jo fly_air/steer inspired the rate controls, low-speed authority floor,
 # stall nose drop, bank coordination and pull drag. Forces replace its velocity steering:
 # lift does no work, gravity trades height for speed, water dissipates energy.
-from 'planes.jo' import Craft
+from 'planes.jo' import Craft, PartId, PartSpec, craft_parts, craft_wing_contacts, contact_part
+use 'damage.jo'
 
 const FLIGHT_G = 9.81
 
@@ -28,6 +29,7 @@ struct CraftSpec:
     yaw_rate = 0.45
     response = 6.0                  # angular-rate response / second
     grip = 1.6                      # side-slip damping / second
+    parts: PartSpec[]
     contacts: vec3[]
     wing_contacts = [vec3(-4.7, -0.31, -0.3), vec3(4.7, -0.31, -0.3), vec3(-5.5, 1.55, -0.55), vec3(5.5, 1.55, -0.55)]
     volumes: f64[]                   # displaced m³ at 1 m immersion, per contact
@@ -64,7 +66,8 @@ struct CraftState:
     angular_velocity = vec3(0, 0, 0) # body axes, rad/s
     throttle = 0.0
     fuel = 180.0
-    hull_damage = 0.0
+    damage: DamageState = DamageState()
+    hull_damage = 0.0               # compatibility telemetry: mass-weighted structural damage
     engine_damage = 0.0
     on_water = false
     planing = false
@@ -82,7 +85,7 @@ struct CraftState:
 
 struct FlightEnv:
     wind = vec3(0, 0, 0)            # air velocity in world frame, m/s
-    current = vec3(0, 0, 0)         # water velocity; y ignored by drag
+    current = vec3(0, 0, 0)         # water velocity; sea vertical_speed is added to its y
     wave_height = 0.0               # amplitude in m (0..1.5 supported)
     wave_length = 35.0
     wave_time = 0.0                 # shared world time offset; keep fixed during a step
@@ -167,6 +170,8 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         depth = -s.float_height - f64(p.y)
         share = if p.z < 0: front_share / max(nf, 1) else: (1.0 - front_share) / max(na, 1)
         s.volumes.push(if depth > 0.04: s.mass / 1000.0 * share / depth else: s.mass / 1000.0 * 0.08)
+    s.wing_contacts = craft_wing_contacts(kind)
+    s.parts = craft_parts(kind, s.contacts)
     s
 
 forward = (s: CraftState) -> vec3: quat_rotate(s.orientation, vec3(0, 0, -1))
@@ -201,19 +206,80 @@ unmoor = (state: mut CraftState): state.moored = false
 # Public step accepts 0 < dt <= 0.25 s and consumes all of it; larger pauses are clamped.
 # Identical 120 Hz substeps at 30/60 Hz. Do not advance env.wave_time as well as state.time.
 step = (spec: CraftSpec, state: mut CraftState, ctl: Controls, env: FlightEnv, dt: f64):
+    state.damage.events.clear()
     if dt <= 0: return
     n = max(1, int(ceil(min(dt, 0.25) * 120.0)))
     h = min(dt, 0.25) / f64(n)
-    loop i in 0..n: _substep(spec, state, ctl, env, h)
+    loop i in 0..n:
+        first_piece = state.damage.debris.len()
+        _substep(spec, state, ctl, env, h)
+        # Separation occurs at the end of the resolving substep: a new piece inherits the
+        # velocity/spin AFTER its impulse, so it tumbles with the strike, not the pre-hit pose.
+        loop j in first_piece..state.damage.debris.len():
+            id = int(state.damage.debris[j].part)
+            arm = quat_rotate(state.orientation, spec.parts[id].attachment)
+            spin = quat_rotate(state.orientation, state.angular_velocity)
+            state.damage.debris[j].position = state.position + arm
+            state.damage.debris[j].orientation = state.orientation
+            state.damage.debris[j].velocity = state.velocity + cross(spin, arm)
+            state.damage.debris[j].angular_velocity = spin
+        _damage_summary(spec, state)
+        loop j in 0..state.damage.debris.len():
+            b = state.damage.debris[j]
+            sea = sea_surface(env, f64(b.position.x), f64(b.position.z), state.time)
+            debris_step(state.damage, j, sea.height, sea.normal, env.current + vec3(0, sea.vertical_speed, 0), env.ground(f64(b.position.x), f64(b.position.z)), h)
+        j = state.damage.debris.len() - 1
+        loop j >= 0:
+            if state.damage.debris[j].age >= state.damage.debris[j].lifetime: state.damage.debris.remove_at(j)
+            j -= 1
+
+# Scalar fields remain available to the HUD/pilot/autopilot, but never decide impact damage.
+_damage_summary = (k: CraftSpec, s: mut CraftState):
+    total = 0.0
+    loop i in 0..k.parts.len(): total += k.parts[i].mass_share * (1.0 - s.damage.parts[i].health)
+    s.hull_damage = clamp(total, 0.0, 1.0)
+    s.engine_damage = 1.0 - part_health(s.damage, .engine)
+    s.damage.smoke = if s.damage.parts[1].attached: s.engine_damage * (0.25 + 0.75 * s.throttle) else: 0.0
+    if s.damage.parts[0].health < 0.15 or not s.damage.parts[2].attached or not s.damage.parts[3].attached: s.crashed = true
+
+_contact_mass = (k: CraftSpec, s: CraftState, arm: vec3, direction: vec3) -> f64:
+    n = if length(direction) > 0.001: normalize(direction) else: vec3(0, 1, 0)
+    lever = quat_rotate(quat_inverse(s.orientation), cross(arm, n))
+    ratio = mass_fraction(k.parts, s.damage)
+    1.0 / (1.0 / (k.mass * ratio) + f64(lever.x * lever.x) / (k.inertia.x * ratio) + f64(lever.y * lever.y) / (k.inertia.y * ratio) + f64(lever.z * lever.z) / (k.inertia.z * ratio))
+
+_contact_load = (k: CraftSpec, s: mut CraftState, id: int, point: vec3, normal: vec3, relative: vec3, impulse: vec3, elastic: f64, kind: ImpactKind):
+    contact_damage(s.damage, k.parts, k.parts[id].id, point, normal, relative, impulse, elastic, kind, k.mass, s.position, s.orientation, s.velocity, s.angular_velocity)
+
+_terrain_contact = (k: CraftSpec, s: mut CraftState, e: FlightEnv, id: int, arm: vec3, point: vec3, height: f64, force: mut vec3, torque: mut vec3, dt: f64):
+    x = f64(point.x); z = f64(point.z)
+    n = normalize(vec3(e.ground(x - 0.25, z) - e.ground(x + 0.25, z), 0.5, e.ground(x, z - 0.25) - e.ground(x, z + 0.25)))
+    relative = s.velocity + cross(quat_rotate(s.orientation, s.angular_velocity), arm)
+    vn = f64(dot(relative, n))
+    effective = _contact_mass(k, s, arm, n)
+    # A finite spring stroke plus velocity damping, never an instantaneous whole-craft stop.
+    load = effective * max(0.0, min(height - f64(point.y), 0.5) * 900.0 - vn * 35.0)
+    normal_j = n * f32(load * dt)
+    tangent = relative - n * f32(vn)
+    friction = vec3(0, 0, 0)
+    if length(tangent) > 0.001:
+        friction = -normalize(tangent) * f32(min(load * dt * 0.65, f64(length(tangent)) * _contact_mass(k, s, arm, tangent) * 0.4))
+    b = (normal_j + friction) / f32(dt)
+    force += b
+    torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b))
+    _contact_load(k, s, id, point, n, relative, normal_j, 3.0, .crunch)
+    _contact_load(k, s, id, point, n, relative, friction, 3.0, .scrape)
 
 # whether every float, hull point and wing tip is at least `margin` clear of the sea and the land
 _clear_of_water = (k: CraftSpec, s: CraftState, e: FlightEnv, margin: f64) -> bool:
     if s.on_water and s.water_age < 0.12: return false
-    loop group in [k.contacts, k.wing_contacts]:
-        loop pt in group:
-            p = s.position + quat_rotate(s.orientation, pt)
-            sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
-            if f64(p.y) < max(sea.height, e.ground(f64(p.x), f64(p.z))) + margin: return false
+    loop i in 0..k.parts.len():
+        if not s.damage.parts[i].attached: continue
+        loop group in [k.parts[i].contacts, k.parts[i].wing_contacts, k.parts[i].strikes]:
+            loop pt in group:
+                p = s.position + quat_rotate(s.orientation, pt)
+                sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
+                if f64(p.y) < max(sea.height, e.ground(f64(p.x), f64(p.z))) + margin: return false
     true
 
 # Flight in the air, Sky Barons' fly_air as it is (sim.jo): the stick turns the aircraft at its
@@ -223,21 +289,36 @@ _clear_of_water = (k: CraftSpec, s: CraftState, e: FlightEnv, margin: f64) -> bo
 # (hardly at all when stalled); what the wings do not hold up falls. Wind carries it along.
 _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
     s.on_water = false
+    s.beached = false
     s.planing = false
     s.water_age += dt
-    s.angular_velocity = vec3(0, 0, 0)
-    engine = if s.fuel > 0 and not s.crashed: (1.0 - s.engine_damage) else: 0.0
+    mass = mass_fraction(k.parts, s.damage)
+    left = wing_lift(s.damage, .left_wing); right = wing_lift(s.damage, .right_wing)
+    wings = (left + right) * 0.5
+    tail = part_health(s.damage, .tail)
+    engine = if s.fuel > 0 and not s.capsized: part_health(s.damage, .engine) else: 0.0
     s.throttle = move_toward(s.throttle, clamp(c.throttle, 0.0, 1.0) * engine, dt / k.spool_time)
+    s.throttle = min(s.throttle, engine)
     s.fuel = max(0.0, s.fuel - k.fuel_burn * s.throttle * dt)
     wind = e.wind
     air = s.velocity - wind
     speed = f64(length(air))
     s.airspeed = speed
-    auth = clamp(speed / (k.stall_speed * 1.45), 0.25, 1.0) * (1.0 - 0.4 * s.hull_damage)
+    auth = clamp(speed / (k.stall_speed * 1.45), 0.25, 1.0) * (0.25 + 0.75 * wings)
     # (the propeller's wash over the tail keeps the rudder and elevator working when slow, with
     # the throttle open: a hammerhead's pivot at the top)
-    wash = max(auth, 0.7 * s.throttle)
+    wash = max(auth, 0.7 * s.throttle) * (0.15 + 0.85 * tail)
     q = s.orientation
+    # Asymmetric lift and torn skin act even with the stick centered. Keep impact momentum
+    # through the arcade/contact boundary; only an intact airframe follows the original rates.
+    if s.hull_damage > 0.000001:
+        imbalance = right - left
+        a = clamp(speed / k.stall_speed, 0.0, 3.0)
+        loss_torque = vec3((1.0 - tail) * sin(s.time * 5.0) * a, imbalance * 0.45 * a, imbalance * 4.0 * a)
+        s.angular_velocity = (s.angular_velocity + loss_torque * f32(dt)) / f32(1.0 + 0.7 * dt)
+        spin = f64(length(s.angular_velocity))
+        if spin > 0.00001: q = quat_mul(q, quat_axis_angle(s.angular_velocity, spin * dt))
+    else: s.angular_velocity = vec3(0, 0, 0)
     # rough air: gusts and the eddies off the sea and the cliffs knock it about, more fast and low
     hgt = f64(s.position.y) - max(e.ground(f64(s.position.x), f64(s.position.z)), 0.0)
     rough = (0.12 + f64(length(e.wind)) / 14.0) * (0.35 + 0.65 * (1.0 - f64(smoothstep(10.0, 150.0, hgt)))) * f64(smoothstep(10.0, 70.0, speed))
@@ -256,8 +337,8 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     below = sea_surface(e, f64(s.position.x), f64(s.position.z), s.time).height
     gap = f64(s.position.y) - k.float_height - max(below, e.ground(f64(s.position.x), f64(s.position.z)))
     ge = 1.0 - f64(smoothstep(0.0, k.span * 0.8, gap))
-    stall = k.stall_speed * (1.0 - 0.3 * ge)
-    lift = f64(smoothstep(stall * 0.75, stall * 1.15, speed))
+    stall = k.stall_speed * sqrt(mass / max(wings, 0.12)) * (1.0 - 0.3 * ge)
+    lift = f64(smoothstep(stall * 0.75, stall * 1.15, speed)) * wings
     s.stalled = lift < 0.999
     if lift < 1.0:
         axis = cross(fwd, normalize(vdir + vec3(0, -0.7, 0)))
@@ -281,15 +362,15 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     v_ref = max(sqrt(k.arc_thrust * max(s.throttle, 0.0) / k.arc_drag), k.stall_speed * 1.35)
     path = f64(vdir.y)
     trim = clamp((speed / v_ref - 1.0) * 0.25 - path * 0.6, -0.25, 0.45) * lift * upright
-    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), trim * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), trim * tail * dt))
     s.orientation = normalize(q)
     fwd = quat_rotate(s.orientation, vec3(0, 0, -1))
     up = quat_rotate(s.orientation, vec3(0, 1, 0))
     s.aoa = asin(clamp(f64(dot(cross(vdir, fwd), quat_rotate(s.orientation, vec3(1, 0, 0)))), -1.0, 1.0))
     thin = clamp((2400.0 - f64(s.position.y)) / 800.0, 0.0, 1.0)
     pull = abs(clamp(c.pitch, -1.0, 1.0)) * auth
-    drag = k.arc_drag * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0)) * (1.0 + 0.5 * s.hull_damage)
-    acc = k.arc_thrust * s.throttle * thin - drag * speed * speed * (1.0 + 0.9 * pull) - FLIGHT_G * f64(vdir.y)
+    drag = k.arc_drag * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0)) * (1.0 + 0.5 * s.hull_damage + 1.6 * abs(left - right)) / mass
+    acc = k.arc_thrust * s.throttle * thin / mass - drag * speed * speed * (1.0 + 0.9 * pull) - FLIGHT_G * f64(vdir.y)
     speed = max(speed + acc * dt, 0.0)
     t = min(k.arc_grip * lift * dt, 1.0)
     vdir = normalize(vdir + (fwd - vdir) * f32(t))
@@ -300,12 +381,6 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     air.y += f32((noise(tt * 3.3, 41.0) - 0.5) * rough * 6.0 * dt)
     s.velocity = air + wind
     s.position += s.velocity * f32(dt)
-    # (into the land: wrecked)
-    g = e.ground(f64(s.position.x), f64(s.position.z))
-    if g > 0.0 and f64(s.position.y) - 1.0 < g:
-        s.crashed = true; s.hull_damage = 1; s.engine_damage = 1
-        s.beached = true; s.position.y = f32(g + 1.0)
-        s.velocity = vec3(0, 0, 0); s.throttle = 0
 
 # Sky Barons' steer (sim.jo): stick and rudder that turn the aircraft toward a direction: far off,
 # rolled toward it and pulled; nearly there (or a little below), small corrections with the wings
@@ -346,33 +421,35 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         s.position = s.mooring_point; s.orientation = s.mooring_orientation
         s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
         return
-    if s.beached:
-        s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
-        return
-    if _clear_of_water(k, s, e, 0.6):
+    if _clear_of_water(k, s, e, max(0.6, f64(length(s.velocity)) * dt + f64(length(s.angular_velocity)) * k.span * dt)):
         _fly_air(k, s, c, e, dt)
         return
+    mass_ratio = mass_fraction(k.parts, s.damage)
+    mass = k.mass * mass_ratio
+    left = wing_lift(s.damage, .left_wing); right = wing_lift(s.damage, .right_wing)
+    wings = (left + right) * 0.5
+    tail = part_health(s.damage, .tail)
     f = forward(s); u = quat_rotate(s.orientation, vec3(0, 1, 0)); r = quat_rotate(s.orientation, vec3(1, 0, 0))
     air = s.velocity - e.wind
     speed = f64(length(air)); vf = f64(dot(air, f)); vu = f64(dot(air, u)); vr = f64(dot(air, r))
     s.airspeed = speed
     s.aoa = atan2(-vu, max(vf, 0.1))
     s.stalled = speed < k.stall_speed or abs(s.aoa) > k.stall_angle or vf < 0
-    engine = if s.fuel > 0 and not s.crashed: (1.0 - s.engine_damage) else: 0.0
+    engine = if s.fuel > 0 and not s.capsized: part_health(s.damage, .engine) else: 0.0
     target_throttle = clamp(c.throttle, 0.0, 1.0) * engine
-    s.throttle = move_toward(s.throttle, target_throttle, dt / k.spool_time)
+    s.throttle = min(engine, move_toward(s.throttle, target_throttle, dt / k.spool_time))
     s.fuel = max(0.0, s.fuel - k.fuel_burn * s.throttle * dt)
     rho = max(e.density, 0.05)
     q = 0.5 * rho * speed * speed
-    cl = lift_coefficient(k, s.aoa) * (1.0 - 0.65 * s.hull_damage)
+    cl = lift_coefficient(k, s.aoa) * wings
     if vf < 0: cl = 0
     separation = smoothstep(k.stall_angle, k.stall_angle + 0.3, abs(s.aoa))
-    cd = k.cd0 * (1.0 + 4.0 * clamp(c.airbrake, 0.0, 1.0)) + k.induced_drag * cl * cl + 0.7 * f64(separation) + k.cd0 * 0.9 * abs(clamp(c.pitch, -1.0, 1.0))
+    cd = k.cd0 * (1.0 + 4.0 * clamp(c.airbrake, 0.0, 1.0) + 3.0 * abs(left - right)) + k.induced_drag * cl * cl + 0.7 * f64(separation) + k.cd0 * 0.9 * abs(clamp(c.pitch, -1.0, 1.0))
     adir = if speed > 0.01: air / f32(speed) else: f
     lift_dir = cross(r, adir)
     if length(lift_dir) > 0.001: lift_dir = normalize(lift_dir)
     else: lift_dir = u
-    force = lift_dir * f32(q * k.wing_area * cl) - adir * f32(q * k.wing_area * cd) + vec3(0, -k.mass * FLIGHT_G, 0)
+    force = lift_dir * f32(q * k.wing_area * cl) - adir * f32(q * k.wing_area * cd) + vec3(0, -mass * FLIGHT_G, 0)
     thin = clamp(1.0 - max(f64(s.position.y), 0.0) / 10000.0, 0.25, 1.0)
     force += f * f32(k.max_thrust * s.throttle * thin / (1.0 + (speed / k.thrust_speed)^2))
     grip = f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.25, speed)) * (1.0 - 0.75 * f64(separation))
@@ -394,97 +471,120 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         # Recoverable nose drop, not an artificial speed boost; unloading restores the wing.
         stall = max(1.0 - f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.1, speed)), f64(separation))
         pr -= stall * clamp(s.aoa + 0.15, 0.0, 0.7) * 1.7
-    torque = vec3(0, 0, 0)
-    wet = 0.0; sink = 0.0; ground_penetration = 0.0; ground_hit = false
+    pr *= 0.15 + 0.85 * tail; yr *= 0.15 + 0.85 * tail; rr *= 0.2 + 0.8 * wings
+    torque = vec3((1.0 - tail) * sin(s.time * 5.0) * k.inertia.x, (right - left) * q * k.wing_area * 0.04, (right - left) * q * k.wing_area * k.span * 0.12)
+    wet = 0.0; ground_hit = false
     water_velocity = s.velocity - e.current
-    flat_f = normalize(vec3(f.x, 0, f.z)); flat_r = vec3(-flat_f.z, 0, flat_f.x)
+    flat_f = vec3(f.x, 0, f.z)
+    if length(flat_f) < 0.001: flat_f = vec3(0, 0, -1)
+    else: flat_f = normalize(flat_f)
+    flat_r = vec3(-flat_f.z, 0, flat_f.x)
     water_speed = f64(dot(water_velocity, flat_f))
     plane = f64(smoothstep(k.stall_speed * 0.35, k.stall_speed * 0.95, abs(water_speed)))
     omega_world = quat_rotate(s.orientation, s.angular_velocity)
+    # Each buoyant point carries its own normal, lateral and digging load. Removing a float
+    # removes its support and drag. Undamaged forward planing retains the calibrated old force.
+    hump = 1.0 + 0.8 * exp(-((abs(water_speed) - 9.0) / 5.0)^2)
+    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane)
+    drag += clamp(c.water_brake, 0.0, 1.0) * water_speed * 0.65
     loop i in 0..k.contacts.len():
+        id = contact_part(k.kind, k.contacts[i])
+        if not s.damage.parts[id].attached: continue
         arm = quat_rotate(s.orientation, k.contacts[i])
         p = s.position + arm
         sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
         land = e.ground(f64(p.x), f64(p.z))
         if land >= sea.height - 0.05 and f64(p.y) < land:
-            ground_hit = true; ground_penetration = max(ground_penetration, land - f64(p.y))
+            _terrain_contact(k, s, e, id, arm, p, land, force, torque, dt)
+            ground_hit = true
         depth = sea.height - f64(p.y)
         if depth > 0 and land < sea.height - 0.05:
-            contact_v = s.velocity + cross(omega_world, arm) - vec3(0, sea.vertical_speed, 0)
+            contact_v = s.velocity + cross(omega_world, arm) - e.current - vec3(0, sea.vertical_speed, 0)
             vn = f64(dot(contact_v, sea.normal))
-            sink = max(sink, -vn)
-            stiffness = 1000.0 * FLIGHT_G * k.volumes[i] * (1.0 - 0.65 * s.hull_damage)
-            damper = 1.3 * sqrt(stiffness * k.mass / f64(k.contacts.len()))
-            buoyancy = clamp(stiffness * min(depth, 1.5) - damper * vn, 0.0, k.mass * FLIGHT_G * 3.0)
+            health = s.damage.parts[id].health
+            stiffness = 1000.0 * FLIGHT_G * k.volumes[i] * (0.15 + 0.85 * health)
+            damper = 1.3 * sqrt(stiffness * mass / f64(k.contacts.len()))
+            buoyancy = clamp(stiffness * min(depth, 1.5) - damper * vn, 0.0, mass * FLIGHT_G * 3.0)
             b = sea.normal * f32(buoyancy)
-            force += b
-            torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b))
-            wet += clamp(depth / 0.16, 0.0, 1.0) / f64(k.contacts.len())
-    # Wings can strike water even when only the model's central hull was supplied.
-    loop wing in k.wing_contacts:
-        arm = quat_rotate(s.orientation, wing)
-        p = s.position + arm
-        sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
-        land = e.ground(f64(p.x), f64(p.z))
-        if land >= sea.height - 0.05 and f64(p.y) < land:
-            ground_hit = true; ground_penetration = max(ground_penetration, land - f64(p.y))
-        if f64(p.y) < sea.height and land < sea.height - 0.05:
-            tip_force = clamp((sea.height - f64(p.y)) * k.mass * 12.0 - f64((s.velocity + cross(omega_world, arm)).y) * k.mass * 0.5, 0.0, k.mass * 20.0)
-            b = vec3(0, tip_force, 0)
-            force += b; torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b))
-            if speed > k.stall_speed * 0.65: s.hull_damage = min(1.0, s.hull_damage + dt * speed * 0.025)
+            share = clamp(depth / 0.16, 0.0, 1.0) / f64(k.contacts.len())
+            # The normal spring's work, not all support force, determines crushing damage.
+            _contact_load(k, s, id, p, sea.normal, contact_v, b * f32(dt), 5.5, .splash)
+            local_side = f64(dot(contact_v, flat_r))
+            shear = -flat_r * f32(k.mass * local_side * (3.0 + 0.10 * abs(water_speed)) * share)
+            _contact_load(k, s, id, p, sea.normal, contact_v, shear * f32(dt), 8.0, .splash)
+            # A bow/keel presented across the flow digs in. Level high-speed planing does not.
+            across = max(0.0, abs(f64(dot(contact_v, u))) - 5.5)
+            dig = -contact_v * f32(min(k.mass * across * 0.12 * share, mass / dt * share))
+            _contact_load(k, s, id, p, sea.normal, contact_v, dig * f32(dt), 5.5, .splash)
+            force += b + shear + dig - flat_f * f32(k.mass * drag * share)
+            # Keep the original intact, low-slip taxi balance. Only the excess shear and
+            # digging load transmit overturning moments, representing the keel catching.
+            catch = clamp((abs(local_side) - 8.0) / 12.0, 0.0, 1.0)
+            torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b + shear * f32(catch) + dig))
+            wet += share
+    # Wing tips and exposed engine/body/tail also resolve actual contact impulses.
+    loop id in 0..k.parts.len():
+        if not s.damage.parts[id].attached: continue
+        loop group in [k.parts[id].wing_contacts, k.parts[id].strikes]:
+            loop point in group:
+                if not s.damage.parts[id].attached: break
+                arm = quat_rotate(s.orientation, point)
+                p = s.position + arm
+                sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
+                land = e.ground(f64(p.x), f64(p.z))
+                if land >= sea.height - 0.05 and f64(p.y) < land:
+                    _terrain_contact(k, s, e, id, arm, p, land, force, torque, dt)
+                    ground_hit = true
+                if f64(p.y) < sea.height and land < sea.height - 0.05:
+                    relative = s.velocity + cross(omega_world, arm) - e.current - vec3(0, sea.vertical_speed, 0)
+                    vn = f64(dot(relative, sea.normal))
+                    depth = sea.height - f64(p.y)
+                    normal_load = clamp(depth * mass * 12.0 - vn * mass * 0.5, 0.0, mass * 25.0)
+                    # Broad panel / cowl in water: quadratic drag, capped at the contact's
+                    # effective stopping impulse. Its lever arm supplies the cartwheel.
+                    drag_load = min(180.0 * f64(length(relative)) * min(depth, 0.6), _contact_mass(k, s, arm, relative) / dt * 0.6)
+                    b = sea.normal * f32(normal_load) - relative * f32(drag_load)
+                    force += b
+                    torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b))
+                    _contact_load(k, s, id, p, sea.normal, relative, b * f32(dt), 4.0, .splash)
+                    wet += 0.03
+    wet = min(wet, 1.0)
     if wet > 0:
-        # Only new impacts cause impact damage: spring damping itself must not re-trigger it.
-        if s.water_age > 0.15:
-            # (a seaplane forgives a firm landing: damage grows with the sink rate past 6 m/s,
-            # a dive into the sea at speed noses it over, and it is a wreck only when the hull
-            # has had all it can take)
-            severity = max(0.0, (sink - 6.0) / 9.0)
-            if pitch < -0.4 and abs(water_speed) > 22: severity = max(severity, 0.6); s.capsized = true
-            if abs(water_speed) > k.stall_speed * 2.3: severity = max(severity, (abs(water_speed) / k.stall_speed - 2.3) * 0.5)
-            s.hull_damage = clamp(s.hull_damage + severity, 0.0, 1.0)
-            s.engine_damage = clamp(s.engine_damage + severity * 0.5, 0.0, 1.0)
-            if s.hull_damage >= 0.999 or (s.capsized and severity > 0.5): s.crashed = true
         s.water_age = 0
-        lateral = f64(dot(water_velocity, flat_r))
-        hump = 1.0 + 0.8 * exp(-((abs(water_speed) - 9.0) / 5.0)^2)
-        drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane)
-        drag += clamp(c.water_brake, 0.0, 1.0) * water_speed * 0.65
-        force -= flat_f * f32(k.mass * drag * wet)
-        force -= flat_r * f32(k.mass * lateral * (3.0 + 0.10 * abs(water_speed)) * wet)
         force += vec3(0, k.mass * FLIGHT_G * 0.45 * plane * wet, 0)
         # Air pushes the exposed hull; small leeway, strong keel resistance, weathercock yaw.
         force += (e.wind - s.velocity) * f32(k.mass * 0.012 * wet)
         yr = -clamp(c.yaw, -1.0, 1.0) * 0.5 * clamp(abs(water_speed) / 3.0 + s.throttle * 0.4, 0.0, 1.0)
-        wind_side = f64(dot(e.wind, flat_r))
+        wind_side = f64(dot(e.wind - e.current, flat_r))
         yr += wind_side * 0.008 * wet
         # Water attitude damping stops porpoising; rate controls cannot roll a resting hull.
         pr *= plane * 0.6; rr *= 0.12
         pr -= pitch * 1.7 * wet
-        rr += bank * 2.0 * wet
+        support = min(part_health(s.damage, .left_float), part_health(s.damage, .right_float))
+        rr += bank * 2.0 * wet * support
     else: s.water_age += dt
     s.on_water = wet > 0 or (s.on_water and s.water_age < 0.12)
     s.planing = wet > 0 and plane > 0.5
     if wet > 0 and u.y < 0.0:
-        s.capsized = true; s.crashed = true; s.hull_damage = max(s.hull_damage, 0.85)
+        s.capsized = true; s.crashed = true
     if s.capsized:
-        pr = -0.5; rr = 0; yr = 0
-    if ground_hit:
-        if length(s.velocity) > 12 or s.velocity.y < -5: s.crashed = true; s.hull_damage = 1; s.engine_damage = 1
-        s.beached = true; s.position.y += f32(ground_penetration)
+        pr = 0; rr = 0; yr = 0
+    # Low-energy beaching settles; a moving wreck keeps its momentum and can tumble/slide.
+    s.beached = ground_hit
+    if ground_hit and length(s.velocity) < 2.5 and length(s.angular_velocity) < 0.5:
         s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
         return
     # Bounded contact torques and implicit rate damping: stable even at asymmetric contact.
-    response = k.response + wet * 5.0
+    integrity = min(wings, min(tail, min(part_health(s.damage, .left_float), part_health(s.damage, .right_float))))
+    response = (k.response + wet * 5.0) * (0.12 + 0.88 * integrity)
     desired = vec3(pr, yr, rr)
-    angular_accel = vec3(torque.x / k.inertia.x, torque.y / k.inertia.y, torque.z / k.inertia.z)
-    angular_accel = clamp(angular_accel, -12.0, 12.0)
+    angular_accel = vec3(torque.x / (k.inertia.x * mass_ratio), torque.y / (k.inertia.y * mass_ratio), torque.z / (k.inertia.z * mass_ratio))
+    angular_accel = clamp(angular_accel, -60.0, 60.0)
     s.angular_velocity = (s.angular_velocity + (desired * f32(response) + angular_accel) * f32(dt)) / f32(1.0 + response * dt)
-    if s.crashed and not s.capsized: s.angular_velocity *= f32(1.0 / (1.0 + 2.0 * dt))
     rotation = length(s.angular_velocity)
     if rotation > 0.00001:
         s.orientation = normalize(quat_mul(s.orientation, quat_axis_angle(s.angular_velocity, f64(rotation) * dt)))
-    s.velocity += force * f32(dt / k.mass)
+    s.velocity += force * f32(dt / mass)
     s.position += s.velocity * f32(dt)
 
 # Plan is the autopilot's only mutable memory; state is read-only. Call once per game tick,
