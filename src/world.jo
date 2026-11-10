@@ -1,4 +1,6 @@
 # The archipelago: islands, their shapes, and the height of the world at any point.
+use 'erosion.jo'
+
 # Coordinates: meters, y up, x east, z south (so north is -z). Sea level is y = 0.
 
 const WORLD_SIZE = 16000.0          # the playable square, centered on the origin
@@ -19,19 +21,22 @@ struct Island:
     seed: f64
     stretch: vec2 = vec2(1, 1)      # long islands
     turn: f64 = 0.0                 # their heading
+    erosion: f64 = 1.0              # how worn by water
+    index: int = 0                  # (its place in ISLANDS)
 
 ISLANDS: Island[] = [
-    Island("Kalamos", vec2(0, 0), 1500.0, 260.0, .hills, 1.7, vec2(1.3, 0.8), 0.4),
+    Island("Kalamos", vec2(0, 0), 1500.0, 260.0, .hills, 1.7, vec2(1.3, 0.8), 0.4, 0.7),
     Island("Thera Minor", vec2(-4200, -2600), 1200.0, 330.0, .cliffs, 4.2, vec2(1.0, 0.7), -0.6),
     Island("Skopelos Rock", vec2(-1800, 3200), 280.0, 110.0, .rock, 9.1),
     Island("Agios Nikolaos", vec2(4600, -3400), 1700.0, 420.0, .cliffs, 2.9, vec2(1.2, 0.9), 1.1),
     Island("Leuke", vec2(3800, 3600), 600.0, 18.0, .cay, 6.6, vec2(1.5, 0.7), 0.2),
-    Island("Mikra", vec2(-5200, 3800), 900.0, 190.0, .hills, 7.3, vec2(0.9, 1.2), 0.9),
-    Island("Porto Vecchio", vec2(-600, -6000), 2000.0, 380.0, .hills, 3.3, vec2(1.4, 0.8), -0.2),
+    Island("Mikra", vec2(-5200, 3800), 900.0, 190.0, .hills, 7.3, vec2(0.9, 1.2), 0.9, 0.7),
+    Island("Porto Vecchio", vec2(-600, -6000), 2000.0, 380.0, .hills, 3.3, vec2(1.4, 0.8), -0.2, 0.75),
     Island("The Teeth", vec2(6400, 1200), 220.0, 85.0, .rock, 5.5),
     Island("Kryfo", vec2(-6600, -400), 700.0, 240.0, .cliffs, 8.8, vec2(1.0, 1.0), 0.0),
     Island("Selene", vec2(2300, -2500), 120.0, 16.0, .cliffs, 2.2),
 ]
+loop k in 0..ISLANDS.len(): ISLANDS[k].index = k
 
 # (the shape of one island, in its own frame: d is the distance from its center over its radius,
 # after the coastline's wobble; the result is meters above sea level)
@@ -91,10 +96,149 @@ _island_d = (isl: Island, x: f64, z: f64) -> (f64, f64, f64):
 # how far out an island's influence reaches (in its own radii): beyond it, open sea floor
 const REACH = 1.9
 
-island_height = (isl: Island, x: f64, z: f64) -> f64:
+# the island's shape before the weather has worn it
+island_base = (isl: Island, x: f64, z: f64) -> f64:
     d, lx, lz = _island_d(isl, x, z)
     if d > REACH: return SEA_FLOOR
     max(_profile(isl, d, lx, lz), SEA_FLOOR)
+
+# (the land is eroded in units of this many meters: the filter's scale and strength are in them)
+const ERODE_UNIT = 1000.0
+ERODE = ErosionParams(scale = 0.13, strength = 0.2)
+
+# the island's height, worn by water: gullies down its slopes, sharper ridges between them
+# (and the ridge map: -1 in creases, 1 on ridges, for the ground's colors)
+island_height_ridge = (isl: Island, x: f64, z: f64) -> (f64, f64):
+    h = island_base(isl, x, z)
+    if h < 1.0: return (h, 0.0)
+    e = 4.0
+    gx = (island_base(isl, x + e, z) - island_base(isl, x - e, z)) / (2.0 * e)
+    gz = (island_base(isl, x, z + e) - island_base(isl, x, z - e)) / (2.0 * e)
+    fade = clamp(h / isl.peak * 2.0 - 1.0, -1.0, 1.0)
+    er = erode(x / ERODE_UNIT, z / ERODE_UNIT, h / ERODE_UNIT, gx, gz, fade, ERODE, int(isl.seed * 100.0))
+    # kept off the beaches and the coast, so the islands keep their outlines
+    mask = smoothstep(1.0, 22.0, h) * isl.erosion
+    dh = (er.dh - 0.5 * er.magnitude) * ERODE_UNIT * mask
+    (max(h + dh, min(h, 1.5)), er.ridge * mask)
+
+# ---------------- the baked land ----------------
+# Eroding is slow (some 15 us a point), so the land's heights are worked out once (tools/bake.jo)
+# on a grid TILE meters apart over each island's land, kept in assets/terrain.bin, and read back
+# from it; between grid points they are interpolated. Without the file (or with one made for
+# other islands) they are worked out as they are asked for.
+
+const TILE = 8.0
+
+struct LandTile:
+    x0: f64
+    z0: f64
+    nx: int
+    nz: int
+    h: f32[]
+    ridge: f32[]
+
+land_tiles: LandTile[]              # by island; empty until loaded
+
+terrain_key = () -> int: int((hash(ISLANDS) xor hash(ERODE) xor u64(TILE * 1000.0)) & u64(0x7FFFFFFFFFFFFFFF))
+
+# the grid one island's land is baked on: its corner and size (where the shape before erosion is
+# above the water, and a margin)
+land_extent = (isl: Island) -> (f64, f64, int, int):
+    ext = isl.radius * REACH * f64(max(isl.stretch.x, isl.stretch.y)) * 1.05
+    x0 = 1e9
+    z0 = 1e9
+    x1 = -1e9
+    z1 = -1e9
+    step = 16.0
+    x = f64(isl.center.x) - ext
+    loop x < f64(isl.center.x) + ext:
+        z = f64(isl.center.y) - ext
+        loop z < f64(isl.center.y) + ext:
+            if island_base(isl, x, z) > -1.0:
+                x0 = min(x0, x); z0 = min(z0, z); x1 = max(x1, x); z1 = max(z1, z)
+            z += step
+        x += step
+    if x1 < x0: return (f64(isl.center.x), f64(isl.center.y), 0, 0)
+    x0 = floor((x0 - 48.0) / TILE) * TILE
+    z0 = floor((z0 - 48.0) / TILE) * TILE
+    (x0, z0, int((x1 + 48.0 - x0) / TILE) + 2, int((z1 + 48.0 - z0) / TILE) + 2)
+
+# bake one island's land (in parallel over its rows)
+bake_tile = (k: int) -> LandTile:
+    isl = ISLANDS[k]
+    x0, z0, nx, nz = land_extent(isl)
+    rows = parallel_map([0..nz), (j: int) -> (f32, f32)[]:
+        row: (f32, f32)[]
+        loop i in 0..nx:
+            hh, rr = island_height_ridge(isl, x0 + f64(i) * TILE, z0 + f64(j) * TILE)
+            row.push((f32(hh), f32(rr)))
+        row
+    )
+    h: f32[]
+    r: f32[]
+    loop row in rows:
+        loop c in row:
+            h.push(c.0)
+            r.push(c.1)
+    LandTile(x0, z0, nx, nz, h, r)
+
+encode_tiles = (tiles: LandTile[]) -> u8[]:
+    b: u8[] = [c'A', c'E', c'G', c'T']
+    append_le(b, terrain_key(), 8)
+    append_le(b, tiles.len(), 4)
+    loop t in tiles:
+        append_le(b, int(t.x0), 4); append_le(b, int(t.z0), 4); append_le(b, t.nx, 4); append_le(b, t.nz, 4)
+        loop v in t.h: append_le(b, int(round(f64(v) * 10.0)), 2)
+        loop v in t.ridge: append_le(b, int(round(f64(v) * 127.0)), 1)
+    b
+
+# read the baked land; false (and nothing loaded) when it was made for other islands
+load_land = (b: u8[]) -> bool:
+    global land_tiles
+    if b.len() < 16 or b[0] != c'A' or b[3] != c'T': return false
+    if get_le_signed(b, 4, 8) != terrain_key(): return false
+    n = get_le(b, 12, 4)
+    if n != ISLANDS.len(): return false
+    at = 16
+    tiles: LandTile[]
+    loop k in 0..n:
+        x0 = f64(get_le_signed(b, at, 4)); z0 = f64(get_le_signed(b, at + 4, 4))
+        nx = get_le(b, at + 8, 4); nz = get_le(b, at + 12, 4)
+        at += 16
+        h = [loop i in 0..nx * nz: f32(f64(get_le_signed(b, at + i * 2, 2)) * 0.1)]
+        at += nx * nz * 2
+        r = [loop i in 0..nx * nz: f32(f64(get_le_signed(b, at + i, 1)) / 127.0)]
+        at += nx * nz
+        tiles.push(LandTile(x0, z0, nx, nz, h, r))
+    land_tiles = tiles
+    true
+
+# the baked value at a point of a tile, between its grid points (none outside it)
+_tile_at = (t: LandTile, x: f64, z: f64, ridge: bool) -> f64?:
+    fx = (x - t.x0) / TILE
+    fz = (z - t.z0) / TILE
+    if fx < 0.0 or fz < 0.0 or fx >= f64(t.nx - 1) or fz >= f64(t.nz - 1): return none
+    i = int(fx)
+    j = int(fz)
+    u = fx - f64(i)
+    v = fz - f64(j)
+    a = j * t.nx + i
+    vs = if ridge: t.ridge else: t.h
+    f64(vs[a]) * (1.0 - u) * (1.0 - v) + f64(vs[a + 1]) * u * (1.0 - v) + f64(vs[a + t.nx]) * (1.0 - u) * v + f64(vs[a + t.nx + 1]) * u * v
+
+island_height = (isl: Island, x: f64, z: f64) -> f64:
+    if land_tiles.len() > 0:
+        k = isl.index
+        if let h = _tile_at(land_tiles[k], x, z, false): return h
+        return island_base(isl, x, z)
+    h, _ = island_height_ridge(isl, x, z)
+    h
+
+# the ridge map (-1 creases, 1 ridges) at a point, from the baked land
+ridge_at = (x: f64, z: f64) -> f64:
+    loop t in land_tiles:
+        if let r = _tile_at(t, x, z, true): return r
+    0.0
 
 # the ground (or sea floor) height anywhere in the world
 height = (x: f64, z: f64) -> f64:

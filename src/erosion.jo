@@ -1,0 +1,130 @@
+# An erosion filter: gullies and ridges carved into a height function, worked out at each point on
+# its own (no simulation), after Rune Skovbo Johansen's "Advanced Terrain Erosion Filter" and his
+# Phacelle noise. Stripes run down the slope in each cell of a jittered grid and are blended across
+# cells; octave after octave they are faded toward ridges and creases, so the result keeps the
+# shape of the land under it and looks worn by water.
+#
+# Advanced Terrain Erosion Filter and Phacelle Noise copyright (c) 2025 Rune Skovbo Johansen,
+# https://www.shadertoy.com/view/wXcfWn; this file is a port of them (by way of Luke Mitchell's C#,
+# https://github.com/lpmitchell/AdvancedTerrainErosion), adapted.
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of
+# the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+struct ErosionParams:
+    scale = 0.15                    # the size of the first octave's cells, in the land's units
+    strength = 0.22                 # how deep (times scale)
+    gully_weight = 0.5
+    detail = 1.5
+    rounding: f64[4] = [0.1, 0.0, 0.1, 2.0]      # ridges, creases, of the input, per octave
+    onset: f64[4] = [1.25, 1.25, 2.8, 1.5]
+    assumed_slope: f64[2] = [0.7, 1.0]
+    cell_scale = 0.7
+    octaves = 5
+    gain = 0.5
+    lacunarity = 2.0
+    normalization = 0.5
+
+struct Eroded:
+    dh: f64                         # the height to add
+    dx: f64                         # and to the slope
+    dz: f64
+    ridge: f64                      # -1 in creases, 1 on ridges
+    magnitude: f64
+
+_hash2 = (x: f64, y: f64, seed: int) -> (f64, f64):
+    kx = 1.0 / PI
+    ky = exp(-1.0)
+    ax = (x + f64(seed) * 0.06711056) * kx + ky
+    ay = (y + f64(seed) * 0.00583715) * ky + kx
+    t = ax * ay * (ax + ay)
+    t = t - floor(t)
+    ix = 16.0 * kx * t
+    iy = 16.0 * ky * t
+    (-1.0 + 2.0 * (ix - floor(ix)), -1.0 + 2.0 * (iy - floor(iy)))
+
+# Phacelle noise: stripes along dir (normalized), interpolated over a 4 x 4 block of cells.
+# Gives the normalized cosine and sine of the stripes' phase, and the side vector (the sine times
+# it is the cosine's derivative).
+phacelle = (px: f64, py: f64, dirx: f64, diry: f64, freq: f64, offset: f64, normalization: f64, seed: int) -> (f64, f64, f64, f64):
+    sx = -diry * freq * TAU
+    sy = dirx * freq * TAU
+    off = offset * TAU
+    ix = floor(px)
+    iy = floor(py)
+    fx = px - ix
+    fy = py - iy
+    cx = 0.0
+    cy = 0.0
+    wsum = 0.0
+    loop i in -1..3:
+        loop j in -1..3:
+            rx, ry = _hash2(ix + f64(i), iy + f64(j), seed)
+            vx = fx - f64(i) - rx * 0.5
+            vy = fy - f64(j) - ry * 0.5
+            w = max(0.0, exp(-(vx * vx + vy * vy) * 2.0) - 0.01111)
+            wsum += w
+            a = vx * sx + vy * sy + off
+            cx += cos(a) * w
+            cy += sin(a) * w
+    cx /= wsum
+    cy /= wsum
+    mag = max(1.0 - normalization, sqrt(cx * cx + cy * cy))
+    (cx / mag, cy / mag, sx, sy)
+
+_ease_out = (t: f64) -> f64:
+    v = 1.0 - clamp(t, 0.0, 1.0)
+    1.0 - v * v
+
+_smooth_start = (t: f64, s: f64) -> f64: if t >= s: t - 0.5 * s else: 0.5 * t * t / max(s, 1e-9)
+
+_pow_inv = (t: f64, p: f64) -> f64: 1.0 - pow(1.0 - clamp(t, 0.0, 1.0), p)
+
+# the filter at (px, py), given the land's height there and its slope (in the same units as p),
+# and the fade target: -1 in valleys, 1 on peaks (from the altitude, say)
+erode = (px: f64, py: f64, h: f64, gx: f64, gz: f64, fade_target: f64, e: ErosionParams, seed: int) -> Eroded:
+    strength = e.strength * e.scale
+    fade = clamp(fade_target, -1.0, 1.0)
+    hx = h
+    sx = gx
+    sz = gz
+    freq = 1.0 / (e.scale * e.cell_scale)
+    slope_len = max(sqrt(gx * gx + gz * gz), 1e-10)
+    magnitude = 0.0
+    round_mult = 1.0
+    r_input = lerp(e.rounding[1], e.rounding[0], clamp(fade + 0.5, 0.0, 1.0)) * e.rounding[2]
+    combi = _ease_out(_smooth_start(slope_len * e.onset[0], r_input * e.onset[0]))
+    ridge_mask = _ease_out(slope_len * e.onset[2])
+    ridge_target = fade
+    # the slope the gullies follow: the land's, pretended to be of a typical steepness
+    gsx = lerp(gx, gx / slope_len * e.assumed_slope[0], e.assumed_slope[1])
+    gsz = lerp(gz, gz / slope_len * e.assumed_slope[0], e.assumed_slope[1])
+    loop k in 0..e.octaves:
+        gl = max(sqrt(gsx * gsx + gsz * gsz), 1e-10)
+        c, s, dx, dz = phacelle(px * freq, py * freq, gsx / gl, gsz / gl, e.cell_scale, 0.25, e.normalization, seed)
+        dx = dx * -freq
+        dz = dz * -freq
+        sloping = abs(s)
+        sg = if s < 0.0: -1.0 else: 1.0
+        gsx += sg * dx * strength * e.gully_weight
+        gsz += sg * dz * strength * e.gully_weight
+        # the gullies: height in x, slope after
+        gh = c
+        gdx = s * dx
+        gdz = s * dz
+        fh = lerp(fade, gh * e.gully_weight, combi)
+        fdx = lerp(0.0, gdx * e.gully_weight, combi)
+        fdz = lerp(0.0, gdz * e.gully_weight, combi)
+        hx += fh * strength
+        sx += fdx * strength
+        sz += fdz * strength
+        magnitude += strength
+        fade = fh
+        r_oct = lerp(e.rounding[1], e.rounding[0], clamp(c + 0.5, 0.0, 1.0)) * round_mult
+        new_mask = _ease_out(_smooth_start(sloping * e.onset[1], r_oct * e.onset[1]))
+        combi = _pow_inv(combi, e.detail) * new_mask
+        ridge_target = lerp(ridge_target, gh, ridge_mask)
+        ridge_mask *= _ease_out(sloping * e.onset[3])
+        strength *= e.gain
+        freq *= e.lacunarity
+        round_mult *= e.rounding[3]
+    Eroded(hx - h, sx - gx, sz - gz, ridge_target * (1.0 - ridge_mask), magnitude)

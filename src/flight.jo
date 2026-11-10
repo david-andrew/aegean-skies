@@ -1,0 +1,458 @@
+# Deterministic, SI-unit seaplane simulation. No graphics, devices, clock, or random input.
+# Sky Barons sim.jo fly_air/steer inspired the rate controls, low-speed authority floor,
+# stall nose drop, bank coordination and pull drag. Forces replace its velocity steering:
+# lift does no work, gravity trades height for speed, water dissipates energy.
+from 'planes.jo' import Craft
+
+const FLIGHT_G = 9.81
+
+struct CraftSpec:
+    kind: Craft
+    mass = 1400.0
+    inertia = vec3(5200, 7500, 4200)   # body x=pitch, y=yaw, z=roll; kg m²
+    wing_area = 30.0
+    span = 12.8
+    stall_speed = 24.0
+    cruise_speed = 50.0
+    max_speed = 62.0
+    cl0 = 0.3
+    lift_slope = 4.8                 # per radian
+    cl_max = 1.4
+    stall_angle = 0.24
+    cd0 = 0.045
+    induced_drag = 0.07
+    max_thrust = 7000.0              # N, sea-level static
+    thrust_speed = 50.0              # thrust = static / (1 + (airspeed / this)^2)
+    pitch_rate = 0.75                # rad/s, full authority
+    roll_rate = 1.3
+    yaw_rate = 0.45
+    response = 6.0                  # angular-rate response / second
+    grip = 1.6                      # side-slip damping / second
+    contacts: vec3[]
+    volumes: f64[]                   # displaced m³ at 1 m immersion, per contact
+    float_height = 2.0               # calm-water equilibrium CG height
+    fuel_capacity = 180.0           # kg; mass above includes nominal load (fuel not re-weighed)
+    fuel_burn = 0.025                # kg/s at full throttle
+    spool_time = 1.5
+
+# Positive pitch = nose up (+body x). Positive roll = right wing down (-body z).
+# Positive yaw = nose right (-body y). Heading 0 is north/-z, +PI/2 east/+x.
+# assist 0 disables horizon trim/level; 1 gives a mild keyboard assist. trim is radians.
+# water_brake is hydrodynamic braking (0..1); anchor requests mooring only when slow/wet.
+struct Controls:
+    pitch = 0.0
+    roll = 0.0
+    yaw = 0.0
+    throttle = 0.0
+    assist = 1.0
+    trim = 0.0
+    water_brake = 0.0
+    anchor = false
+
+struct CraftState:
+    position = vec3(0, 3, 0)
+    velocity = vec3(0, 0, 0)
+    orientation = vec4(0, 0, 0, 1)
+    angular_velocity = vec3(0, 0, 0) # body axes, rad/s
+    throttle = 0.0
+    fuel = 180.0
+    hull_damage = 0.0
+    engine_damage = 0.0
+    on_water = false
+    planing = false
+    beached = false
+    crashed = false
+    capsized = false
+    moored = false
+    mooring_point = vec3(0, 0, 0)    # CG anchor, not waterline
+    mooring_orientation = vec4(0, 0, 0, 1)
+    time = 0.0                     # local simulation clock, wave phase = time + env.wave_time
+    aoa = 0.0                      # telemetry, radians
+    airspeed = 0.0
+    stalled = false
+    water_age = 0.0                 # time since last wet contact, for impact hysteresis
+
+struct FlightEnv:
+    wind = vec3(0, 0, 0)            # air velocity in world frame, m/s
+    current = vec3(0, 0, 0)         # water velocity; y ignored by drag
+    wave_height = 0.0               # amplitude in m (0..1.5 supported)
+    wave_length = 35.0
+    wave_time = 0.0                 # shared world time offset; keep fixed during a step
+    density = 1.225
+    ground: (f64, f64) -> f64 = (x: f64, z: f64) -> f64: -1000.0
+
+struct SeaSample:
+    height: f64
+    normal: vec3
+    vertical_speed: f64
+
+sea_surface = (env: FlightEnv, x: f64, z: f64, t: f64) -> SeaSample:
+    a = clamp(env.wave_height, 0.0, 1.5)
+    if a == 0.0: return SeaSample(0.0, vec3(0, 1, 0), 0.0)
+    k = 2.0 * PI / max(env.wave_length, 8.0)
+    w = sqrt(FLIGHT_G * k)
+    p = k * (x * 0.8 + z * 0.6) - w * (t + env.wave_time)
+    q = k * (x * -0.6 + z * 0.8) * 1.7 - w * 1.3 * (t + env.wave_time)
+    dx = a * k * (0.8 * cos(p) - 0.306 * cos(q))
+    dz = a * k * (0.6 * cos(p) + 0.408 * cos(q))
+    SeaSample(a * (sin(p) + 0.3 * sin(q)), normalize(vec3(-dx, 1, -dz)), -a * w * (cos(p) + 0.39 * cos(q)))
+
+craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
+    s = CraftSpec(kind = kind, contacts = contacts)
+    match kind:
+        .gull: pass
+        .heron:
+            s.mass = 3200; s.inertia = vec3(20000, 31000, 25000)
+            s.wing_area = 52; s.span = 15.4; s.stall_speed = 26; s.cruise_speed = 48; s.max_speed = 58
+            s.cd0 = 0.057; s.pitch_rate = 0.5; s.roll_rate = 0.65; s.yaw_rate = 0.3; s.response = 4
+            s.fuel_capacity = 400; s.fuel_burn = 0.052
+        .corsair:
+            s.mass = 1700; s.inertia = vec3(5600, 8000, 4500)
+            s.wing_area = 29; s.span = 11.8; s.stall_speed = 27; s.cruise_speed = 57; s.max_speed = 72
+            s.cd0 = 0.043; s.pitch_rate = 1.0; s.roll_rate = 1.9; s.yaw_rate = 0.6; s.response = 7
+            s.fuel_capacity = 230; s.fuel_burn = 0.038
+        .falco:
+            s.mass = 1200; s.inertia = vec3(3800, 6000, 3000)
+            s.wing_area = 16; s.span = 9.6; s.stall_speed = 34; s.cruise_speed = 76; s.max_speed = 95
+            s.cd0 = 0.028; s.induced_drag = 0.055; s.pitch_rate = 1.25; s.roll_rate = 2.25; s.yaw_rate = 0.55; s.response = 9
+            s.fuel_capacity = 160; s.fuel_burn = 0.034
+    s.cl0 = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.cruise_speed * s.cruise_speed)
+    s.cl_max = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.stall_speed * s.stall_speed)
+    s.stall_angle = (s.cl_max - s.cl0) / s.lift_slope
+    s.thrust_speed = s.max_speed * 0.85
+    qmax = 0.5 * 1.225 * s.max_speed * s.max_speed * s.wing_area
+    cl = s.mass * FLIGHT_G / qmax
+    s.max_thrust = qmax * (s.cd0 + s.induced_drag * cl * cl) * (1.0 + (s.max_speed / s.thrust_speed)^2)
+    # Calibrate load shares to the supplied geometry, with zero static fore/aft moment.
+    # High auxiliary floats engage only when rolled. Empty contacts get a small safe hull.
+    if s.contacts.len() == 0:
+        s.contacts = [vec3(-1, -1, -2), vec3(1, -1, -2), vec3(-1, -1, 2), vec3(1, -1, 2)]
+    bottom = 0.0
+    loop p in s.contacts: bottom = min(bottom, f64(p.y))
+    s.float_height = -bottom - (if kind == .heron: 0.55 else: 0.35)
+    nf = 0; na = 0; zf = 0.0; za = 0.0
+    loop p in s.contacts:
+        if -s.float_height - f64(p.y) > 0.04:
+            if p.z < 0: nf += 1; zf += f64(p.z)
+            else: na += 1; za += f64(p.z)
+    zf /= max(nf, 1); za /= max(na, 1)
+    front_share = if nf > 0 and na > 0: za / max(za - zf, 0.1) else: 0.5
+    loop p in s.contacts:
+        depth = -s.float_height - f64(p.y)
+        share = if p.z < 0: front_share / max(nf, 1) else: (1.0 - front_share) / max(na, 1)
+        s.volumes.push(if depth > 0.04: s.mass / 1000.0 * share / depth else: s.mass / 1000.0 * 0.08)
+    s
+
+forward = (s: CraftState) -> vec3: quat_rotate(s.orientation, vec3(0, 0, -1))
+heading = (s: CraftState) -> f64:
+    f = forward(s)
+    atan2(f64(f.x), -f64(f.z))
+heading_vector = (h: f64) -> vec3: vec3(sin(h), 0, -cos(h))
+angle_delta = (a: f64, b: f64) -> f64: atan2(sin(a - b), cos(a - b))
+water_start = (spec: CraftSpec, at: vec3, h: f64 = 0.0) -> CraftState:
+    CraftState(position = vec3(at.x, at.y + f32(spec.float_height), at.z), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, on_water = true)
+
+trim_aoa = (spec: CraftSpec, speed: f64, density: f64 = 1.225) -> f64:
+    cl = spec.mass * FLIGHT_G / max(0.5 * density * spec.wing_area * speed * speed, 1.0)
+    clamp((cl - spec.cl0) / spec.lift_slope, -0.08, spec.stall_angle * 0.92)
+lift_coefficient = (spec: CraftSpec, aoa: f64) -> f64:
+    cl = spec.cl0 + spec.lift_slope * aoa
+    peak = if cl >= 0: spec.cl_max else: spec.cl_max * 0.8
+    if abs(cl) <= peak: return cl
+    # Continuous break: separated flow retains some lift, and substantial drag.
+    sign(cl) * peak * max(0.18, 1.0 - (abs(cl) - peak) / (peak * 1.4))
+cruise_throttle = (spec: CraftSpec, speed: f64, density: f64 = 1.225) -> f64:
+    q = max(0.5 * density * speed * speed * spec.wing_area, 1.0)
+    cl = spec.mass * FLIGHT_G / q
+    clamp(q * (spec.cd0 + spec.induced_drag * cl * cl) * (1.0 + (speed / spec.thrust_speed)^2) / spec.max_thrust, 0.0, 1.0)
+
+moor = (state: mut CraftState, point: vec3, h: f64):
+    state.moored = true; state.mooring_point = point; state.mooring_orientation = quat_euler(0, -h, 0)
+    state.position = point; state.orientation = state.mooring_orientation
+    state.velocity = vec3(0, 0, 0); state.angular_velocity = vec3(0, 0, 0); state.throttle = 0
+unmoor = (state: mut CraftState): state.moored = false
+
+# Public step accepts 0 < dt <= 0.25 s and consumes all of it; larger pauses are clamped.
+# Identical 120 Hz substeps at 30/60 Hz. Do not advance env.wave_time as well as state.time.
+step = (spec: CraftSpec, state: mut CraftState, ctl: Controls, env: FlightEnv, dt: f64):
+    if dt <= 0: return
+    n = max(1, int(ceil(min(dt, 0.25) * 120.0)))
+    h = min(dt, 0.25) / f64(n)
+    loop i in 0..n: _substep(spec, state, ctl, env, h)
+
+_substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
+    s.time += dt
+    if c.anchor and s.on_water and length(s.velocity) < 0.8 and not s.crashed: moor(s, s.position, heading(s))
+    if s.moored:
+        s.position = s.mooring_point; s.orientation = s.mooring_orientation
+        s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
+        return
+    if s.beached:
+        s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
+        return
+    f = forward(s); u = quat_rotate(s.orientation, vec3(0, 1, 0)); r = quat_rotate(s.orientation, vec3(1, 0, 0))
+    air = s.velocity - e.wind
+    speed = f64(length(air)); vf = f64(dot(air, f)); vu = f64(dot(air, u)); vr = f64(dot(air, r))
+    s.airspeed = speed
+    s.aoa = atan2(-vu, max(vf, 0.1))
+    s.stalled = speed < k.stall_speed or abs(s.aoa) > k.stall_angle or vf < 0
+    engine = if s.fuel > 0 and not s.crashed: (1.0 - s.engine_damage) else: 0.0
+    target_throttle = clamp(c.throttle, 0.0, 1.0) * engine
+    s.throttle = move_toward(s.throttle, target_throttle, dt / k.spool_time)
+    s.fuel = max(0.0, s.fuel - k.fuel_burn * s.throttle * dt)
+    rho = max(e.density, 0.05)
+    q = 0.5 * rho * speed * speed
+    cl = lift_coefficient(k, s.aoa) * (1.0 - 0.65 * s.hull_damage)
+    if vf < 0: cl = 0
+    separation = smoothstep(k.stall_angle, k.stall_angle + 0.3, abs(s.aoa))
+    cd = k.cd0 + k.induced_drag * cl * cl + 0.7 * f64(separation) + k.cd0 * 0.9 * abs(clamp(c.pitch, -1.0, 1.0))
+    adir = if speed > 0.01: air / f32(speed) else: f
+    lift_dir = cross(r, adir)
+    if length(lift_dir) > 0.001: lift_dir = normalize(lift_dir)
+    else: lift_dir = u
+    force = lift_dir * f32(q * k.wing_area * cl) - adir * f32(q * k.wing_area * cd) + vec3(0, -k.mass * FLIGHT_G, 0)
+    thin = clamp(1.0 - max(f64(s.position.y), 0.0) / 10000.0, 0.25, 1.0)
+    force += f * f32(k.max_thrust * s.throttle * thin / (1.0 + (speed / k.thrust_speed)^2))
+    grip = f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.25, speed)) * (1.0 - 0.75 * f64(separation))
+    force -= r * f32(vr * k.mass * k.grip * grip)
+    auth = clamp(speed / (k.stall_speed * 1.45), 0.2, 1.0)
+    bank = atan2(-f64(r.y), f64(u.y))
+    pitch = asin(clamp(f64(f.y), -1.0, 1.0))
+    pr = clamp(c.pitch, -1.0, 1.0) * k.pitch_rate * auth
+    rr = -clamp(c.roll, -1.0, 1.0) * k.roll_rate * auth
+    yr = -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * auth
+    if not s.on_water:
+        # Coordinated bank turn matches the sideways component of wing lift.
+        yr -= FLIGHT_G / max(speed, k.stall_speed) * clamp(tan(bank), -2.0, 2.0) * grip
+        yr += clamp(vr / max(speed, 1.0), -0.6, 0.6) * 0.65
+        assist = clamp(c.assist, 0.0, 1.0)
+        if abs(c.pitch) < 0.02:
+            pr += clamp((trim_aoa(k, speed, rho) + c.trim - pitch) * 0.9 - f64(s.velocity.y) * 0.018, -0.22, 0.22) * assist
+        if abs(c.roll) < 0.02: rr += clamp(bank * 0.8, -0.45, 0.45) * assist
+        # Recoverable nose drop, not an artificial speed boost; unloading restores the wing.
+        stall = max(1.0 - f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.1, speed)), f64(separation))
+        pr -= stall * clamp(s.aoa + 0.15, 0.0, 0.7) * 1.7
+    torque = vec3(0, 0, 0)
+    wet = 0.0; deepest = 0.0; sink = 0.0; ground_penetration = 0.0; ground_hit = false
+    water_velocity = s.velocity - e.current
+    flat_f = normalize(vec3(f.x, 0, f.z)); flat_r = vec3(-flat_f.z, 0, flat_f.x)
+    water_speed = f64(dot(water_velocity, flat_f))
+    plane = f64(smoothstep(k.stall_speed * 0.35, k.stall_speed * 0.95, abs(water_speed)))
+    omega_world = quat_rotate(s.orientation, s.angular_velocity)
+    loop i in 0..k.contacts.len():
+        arm = quat_rotate(s.orientation, k.contacts[i])
+        p = s.position + arm
+        sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
+        land = e.ground(f64(p.x), f64(p.z))
+        if land >= sea.height - 0.05 and f64(p.y) < land:
+            ground_hit = true; ground_penetration = max(ground_penetration, land - f64(p.y))
+        depth = sea.height - f64(p.y)
+        if depth > 0 and land < sea.height - 0.05:
+            deepest = max(deepest, depth)
+            contact_v = s.velocity + cross(omega_world, arm) - vec3(0, sea.vertical_speed, 0)
+            vn = f64(dot(contact_v, sea.normal))
+            sink = max(sink, -vn)
+            stiffness = 1000.0 * FLIGHT_G * k.volumes[i] * (1.0 - 0.65 * s.hull_damage)
+            damper = 1.3 * sqrt(stiffness * k.mass / f64(k.contacts.len()))
+            buoyancy = clamp(stiffness * min(depth, 1.5) - damper * vn, 0.0, k.mass * FLIGHT_G * 3.0)
+            b = sea.normal * f32(buoyancy)
+            force += b
+            torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b))
+            wet += clamp(depth / 0.16, 0.0, 1.0) / f64(k.contacts.len())
+    # Wings can strike water even when only the model's central hull was supplied.
+    loop side in [-1.0, 1.0]:
+        arm = quat_rotate(s.orientation, vec3(side * k.span * 0.5, 0.8, 0))
+        p = s.position + arm
+        sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
+        if f64(p.y) < sea.height and e.ground(f64(p.x), f64(p.z)) < sea.height:
+            tip_force = clamp((sea.height - f64(p.y)) * k.mass * 12.0 - f64((s.velocity + cross(omega_world, arm)).y) * k.mass * 0.5, 0.0, k.mass * 20.0)
+            b = vec3(0, tip_force, 0)
+            force += b; torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b))
+            if speed > k.stall_speed * 0.65: s.hull_damage = min(1.0, s.hull_damage + dt * speed * 0.025)
+    if wet > 0:
+        # Only new impacts cause impact damage: spring damping itself must not re-trigger it.
+        if s.water_age > 0.15:
+            severity = max(0.0, (sink - 4.5) / 7.0)
+            if pitch < -0.22 and abs(water_speed) > 12: severity = max(severity, 0.85); s.capsized = true
+            if abs(water_speed) > k.stall_speed * 1.8: severity = max(severity, (abs(water_speed) / k.stall_speed - 1.8) * 0.7)
+            s.hull_damage = clamp(s.hull_damage + severity, 0.0, 1.0)
+            s.engine_damage = clamp(s.engine_damage + severity * 0.7, 0.0, 1.0)
+            if severity > 0.7: s.crashed = true
+        s.water_age = 0
+        lateral = f64(dot(water_velocity, flat_r))
+        hump = 1.0 + 0.8 * exp(-((abs(water_speed) - 9.0) / 5.0)^2)
+        drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane)
+        drag += clamp(c.water_brake, 0.0, 1.0) * water_speed * 0.65
+        force -= flat_f * f32(k.mass * drag * wet)
+        force -= flat_r * f32(k.mass * lateral * (3.0 + 0.10 * abs(water_speed)) * wet)
+        force += vec3(0, k.mass * FLIGHT_G * 0.45 * plane * wet, 0)
+        # Air pushes the exposed hull; small leeway, strong keel resistance, weathercock yaw.
+        force += (e.wind - s.velocity) * f32(k.mass * 0.012 * wet)
+        yr = -clamp(c.yaw, -1.0, 1.0) * 0.5 * clamp(abs(water_speed) / 3.0 + s.throttle * 0.4, 0.0, 1.0)
+        wind_side = f64(dot(e.wind, flat_r))
+        yr += wind_side * 0.008 * wet
+        # Water attitude damping stops porpoising; rate controls cannot roll a resting hull.
+        pr *= plane * 0.6; rr *= 0.12
+        pr -= pitch * 1.7 * wet
+        rr += bank * 2.0 * wet
+    else: s.water_age += dt
+    s.on_water = wet > 0 or (s.on_water and s.water_age < 0.12)
+    s.planing = wet > 0 and plane > 0.5
+    if wet > 0 and u.y < 0.25:
+        s.capsized = true; s.crashed = true; s.hull_damage = max(s.hull_damage, 0.85)
+    if s.capsized:
+        pr = -0.5; rr = 0; yr = 0
+    if ground_hit:
+        if length(s.velocity) > 7 or s.velocity.y < -3: s.crashed = true; s.hull_damage = 1; s.engine_damage = 1
+        s.beached = true; s.position.y += f32(ground_penetration)
+        s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
+        return
+    # Bounded contact torques and implicit rate damping: stable even at asymmetric contact.
+    response = k.response + wet * 5.0
+    desired = vec3(pr, yr, rr)
+    angular_accel = vec3(torque.x / k.inertia.x, torque.y / k.inertia.y, torque.z / k.inertia.z)
+    angular_accel = clamp(angular_accel, -12.0, 12.0)
+    s.angular_velocity = (s.angular_velocity + (desired * f32(response) + angular_accel) * f32(dt)) / f32(1.0 + response * dt)
+    if s.crashed and not s.capsized: s.angular_velocity *= f32(1.0 / (1.0 + 2.0 * dt))
+    rotation = length(s.angular_velocity)
+    if rotation > 0.00001:
+        s.orientation = normalize(quat_mul(s.orientation, quat_axis_angle(s.angular_velocity, f64(rotation) * dt)))
+    s.velocity += force * f32(dt / k.mass)
+    s.position += s.velocity * f32(dt)
+
+# Plan is the autopilot's only mutable memory; state is read-only. Call once per game tick,
+# then step with the returned controls. A new FlightPlan starts a new trip.
+enum FlightPhase: takeoff, climb, cruise, descend, land, taxi, done, failed
+struct FlightPlan:
+    target = vec3(0, 0, -5000)        # desired water touchdown x/z (y ignored)
+    taxi_target = vec3(0, 0, -5100)   # dock approach point x/z
+    altitude = 180.0                 # MSL cruise altitude
+    speed = 0.0                     # 0 = craft's cruise speed
+    takeoff_heading = 0.0
+    landing_heading: f64? = none     # none = into wind; calm = takeoff heading
+    phase: FlightPhase = .takeoff
+    initialized = false
+    approach_heading = 0.0           # captured at departure, stable in gusts
+    approach_distance = 1800.0
+    clearance_altitude = 0.0        # highest terrain on departure-to-destination corridor
+    go_arounds = 0
+    touchdown = vec3(0, 0, 0)        # recorded first landing contact
+
+_air_controls = (k: CraftSpec, s: CraftState, e: FlightEnv, direction: vec3, altitude: f64, speed: f64) -> Controls:
+    airspeed = f64(length(s.velocity - e.wind))
+    f = forward(s); r = quat_rotate(s.orientation, vec3(1, 0, 0)); u = quat_rotate(s.orientation, vec3(0, 1, 0))
+    h = atan2(f64(direction.x), -f64(direction.z))
+    # Crab into the crosswind while following the desired ground track.
+    side = vec3(-direction.z, 0, direction.x)
+    h -= asin(clamp(f64(dot(e.wind, side)) / max(airspeed, k.stall_speed), -0.45, 0.45))
+    err = angle_delta(h, heading(s))
+    bank = atan2(-f64(r.y), f64(u.y))
+    wanted_bank = clamp(err * 1.1, -0.48, 0.48)
+    vy = clamp((altitude - f64(s.position.y)) * 0.22, -7.0, 5.0)
+    wanted_pitch = trim_aoa(k, airspeed, e.density) + asin(clamp(vy / max(airspeed, 10.0), -0.25, 0.25))
+    wanted_pitch += clamp((vy - f64(s.velocity.y)) * 0.018, -0.10, 0.10)
+    if airspeed < k.stall_speed * 1.18: wanted_pitch = min(wanted_pitch, 0.06)
+    auth = clamp(airspeed / (k.stall_speed * 1.45), 0.2, 1.0)
+    c = Controls(assist = 0.0)
+    c.pitch = clamp((wanted_pitch - asin(clamp(f64(f.y), -1.0, 1.0))) * 2.0 / (k.pitch_rate * auth), -0.65, 0.65)
+    c.roll = clamp((wanted_bank - bank) * 2.2 / (k.roll_rate * auth), -0.8, 0.8)
+    c.yaw = clamp(err * 0.25 / (k.yaw_rate * auth), -0.35, 0.35)
+    c.throttle = clamp(cruise_throttle(k, speed, e.density) + (speed - airspeed) * 0.065 + max(vy, 0.0) * 0.06, 0.0, 1.0)
+    c
+
+_terrain_altitude = (s: CraftState, dir: vec3, e: FlightEnv, desired: f64) -> f64:
+    alt = desired
+    # Look well beyond braking distance. Includes the present point and both wing corridors.
+    loop i in 0..17:
+        d = f64(i) * 100.0
+        p = s.position + dir * f32(d)
+        side = vec3(-dir.z, 0, dir.x)
+        loop j in [-1.0, 0.0, 1.0]:
+            q = p + side * f32(j * 30.0)
+            ground = e.ground(f64(q.x), f64(q.z))
+            if ground > 0: alt = max(alt, ground + 90.0)
+    alt
+
+autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, env: FlightEnv) -> Controls:
+    if state.crashed or state.beached or state.fuel <= 0:
+        plan.phase = .failed
+        return Controls(throttle = 0.0, water_brake = 1.0)
+    if not plan.initialized:
+        wind = vec3(env.wind.x, 0, env.wind.z)
+        plan.approach_heading = plan.landing_heading ?? (if length(wind) > 1.0: atan2(-f64(wind.x), f64(wind.z)) else: plan.takeoff_heading)
+        plan.approach_distance = max(1800.0, plan.altitude / 0.065 + 500.0)
+        plan.clearance_altitude = plan.altitude
+        route = plan.target - state.position
+        route.y = 0
+        samples = max(1, int(ceil(f64(length(route)) / 100.0)))
+        loop i in 0..samples + 1:
+            p = state.position + route * f32(f64(i) / f64(samples))
+            ground = env.ground(f64(p.x), f64(p.z))
+            if ground > 0: plan.clearance_altitude = max(plan.clearance_altitude, ground + 100.0)
+        plan.initialized = true
+    p = state.position
+    speed = f64(length(state.velocity - env.wind))
+    hdir = heading_vector(plan.approach_heading)
+    fix = plan.target - hdir * f32(plan.approach_distance)
+    cruise_speed = if plan.speed > 0: max(plan.speed, spec.stall_speed * 1.35) else: spec.cruise_speed
+    if plan.phase == .takeoff:
+        if not state.on_water and p.y > spec.float_height + 8: plan.phase = .climb
+        else:
+            c = Controls(throttle = 1.0, assist = 0.0)
+            c.yaw = clamp(angle_delta(plan.takeoff_heading, heading(state)) * 2.0, -1.0, 1.0)
+            pitch = asin(clamp(f64(forward(state).y), -1.0, 1.0))
+            c.pitch = clamp(((if speed > spec.stall_speed * 0.9: 0.16 else: 0.025) - pitch) * 3.0 / spec.pitch_rate, -0.5, 0.6)
+            return c
+    if plan.phase == .climb or plan.phase == .cruise:
+        if plan.phase == .climb and plan.clearance_altitude > plan.altitude + 10 and p.y < plan.clearance_altitude - 10:
+            # Climb in a compact departure circle before committing to a high ridge.
+            dir = heading_vector(heading(state) + 0.7)
+            return _air_controls(spec, state, env, dir, plan.clearance_altitude, spec.stall_speed * 1.4)
+        delta = vec3(fix.x - p.x, 0, fix.z - p.z)
+        d = f64(length(delta))
+        dir = if d > 1: delta / f32(d) else: hdir
+        alt = _terrain_altitude(state, dir, env, plan.altitude)
+        if plan.phase == .climb and p.y > plan.altitude - 15: plan.phase = .cruise
+        if d < 220 and abs(angle_delta(plan.approach_heading, heading(state))) < 0.65:
+            plan.phase = .descend
+        return _air_controls(spec, state, env, dir, alt, cruise_speed)
+    if plan.phase == .descend or plan.phase == .land:
+        delta = plan.target - p
+        along = f64(dot(delta, hdir))
+        side = vec3(-hdir.z, 0, hdir.x)
+        cross_track = f64(dot(delta, side))
+        aim = hdir * 350.0 + side * f32(clamp(cross_track, -200.0, 200.0))
+        dir = normalize(aim)
+        alt = spec.float_height + max(0.0, along - 100.0) * 0.065
+        terrain_alt = _terrain_altitude(state, dir, env, alt)
+        if along < -350 or (along < 400 and abs(cross_track) > 250) or (along < 450 and terrain_alt > alt + 30):
+            plan.go_arounds += 1
+            plan.phase = if plan.go_arounds > 3: .failed else: .climb
+            return _air_controls(spec, state, env, dir, max(terrain_alt, plan.altitude), cruise_speed)
+        if along < 450: plan.phase = .land
+        c = _air_controls(spec, state, env, dir, terrain_alt, spec.stall_speed * 1.30)
+        if plan.phase == .land:
+            # Flare toward a shallow descent, then idle; do not re-trim up off the water.
+            f = forward(state)
+            wanted_pitch = clamp(trim_aoa(spec, speed, env.density) - 0.04, 0.02, 0.14)
+            c.pitch = clamp((wanted_pitch - asin(clamp(f64(f.y), -1.0, 1.0))) * 2.5 / spec.pitch_rate, -0.5, 0.5)
+            c.throttle = 0
+            c.roll *= 0.7
+        if state.on_water:
+            plan.touchdown = state.position; plan.phase = .taxi
+        return c
+    if plan.phase == .taxi:
+        delta = vec3(plan.taxi_target.x - p.x, 0, plan.taxi_target.z - p.z)
+        d = f64(length(delta)); v = f64(length(vec3(state.velocity.x, 0, state.velocity.z)))
+        if d < 4 and v < 0.65:
+            plan.phase = .done
+            return Controls(water_brake = 1.0, anchor = true)
+        h = atan2(f64(delta.x), -f64(delta.z)); err = angle_delta(h, heading(state))
+        want = min(5.0, sqrt(max(d - 1.0, 0.0) * 1.2))
+        if abs(err) > 0.7: want = min(want, 1.8)
+        c = Controls(assist = 0.0)
+        c.yaw = clamp(err * 2.0, -1.0, 1.0)
+        c.throttle = clamp((want - v) * 0.12 + 0.08, 0.0, 0.25)
+        c.water_brake = if v > want + 0.2: 1.0 else: 0.0
+        return c
+    Controls(throttle = 0.0, water_brake = 1.0, anchor = plan.phase == .done)
