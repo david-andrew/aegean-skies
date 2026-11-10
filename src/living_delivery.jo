@@ -1,0 +1,79 @@
+# Arrival transactions shared by abstract routes and future scene docking commands.
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_events.jo'
+
+job_terminal = (state: JobState) -> bool: state == .delivered or state == .failed or state == .expired or state == .cancelled
+
+refund_job = (w: mut World, id: int):
+    escrow = w.jobs[id].escrow_account
+    amount = w.accounts[escrow].cents
+    if amount > 0: assert(transfer(w,escrow,w.people[w.jobs[id].poster].account,amount,.refund,id))
+
+fulfill_supplies = (w: mut World, job: int):
+    loop id in w.open_obligations:
+        if w.obligations[id].job == job and w.obligations[id].kind == .supply:
+            if w.jobs[job].delivered_quantity >= w.jobs[job].quantity:
+                w.obligations[id].state = .fulfilled
+
+# A verified docking can unload the surviving earmarked goods once. Partial losses are final.
+deliver_job = (w: mut World, id: int, carrier: int) -> bool:
+    if not (id in w.jobs) or w.jobs[id].state != .claimed or not w.jobs[id].loaded: return false
+    if w.jobs[id].carrier != carrier or w.people[carrier].place != w.jobs[id].destination: return false
+    c = w.people[carrier].craft
+    if c < 0 or w.aircraft[c].place != w.jobs[id].destination or w.aircraft[c].trip >= 0: return false
+    g = w.jobs[id].good
+    amount = w.jobs[id].loaded_quantity - w.jobs[id].delivered_quantity - w.jobs[id].lost_quantity - w.jobs[id].returned_quantity
+    if w.jobs[id].cargo_mode == .commodity:
+        if amount > w.aircraft[c].cargo.reserved[g] or amount > w.aircraft[c].cargo.qty[g]: return false
+        if amount > 0:
+            assert(move_stock(w.aircraft[c].cargo,w.places[w.jobs[id].destination].market.inventory,g,amount,true))
+            w.jobs[id].delivered_quantity += amount
+    else:
+        if w.jobs[id].purpose == .passenger:
+            p = w.jobs[id].passenger
+            if p < 0 or not (p in w.aircraft[c].passengers): return false
+            w.aircraft[c].passengers.remove(p)
+            w.people[p].place = w.jobs[id].destination
+            w.people[p].trip = -1; w.people[p].state = .idle
+            w.places[w.people[p].place].residents.push(p)
+        w.jobs[id].delivered_quantity = w.jobs[id].quantity
+    late = w.minute > w.jobs[id].due_minute
+    gross = w.jobs[id].reward_cents * w.jobs[id].delivered_quantity * (if late: 75 else: 100) / (max(w.jobs[id].quantity,1)*100)
+    owed = gross - w.jobs[id].paid_cents
+    if owed > 0:
+        assert(transfer(w,w.jobs[id].escrow_account,w.people[carrier].account,owed,.reward,id))
+        w.jobs[id].paid_cents += owed
+    terminal = w.jobs[id].delivered_quantity >= w.jobs[id].quantity or w.jobs[id].lost_quantity > 0
+    if terminal:
+        w.jobs[id].state = if w.jobs[id].lost_quantity > 0: JobState.failed else: JobState.delivered
+        w.jobs[id].status_minute = w.minute
+        refund_job(w,id)
+        o = w.jobs[id].obligation
+        if o >= 0: w.obligations[o].state = if w.jobs[id].state == .delivered: ObligationState.fulfilled else: ObligationState.breached
+        w.aircraft[c].job_manifests.remove(id)
+        fulfill_supplies(w,id)
+    emit_event(w,.delivery,w.people[carrier].place,carrier,w.jobs[id].poster,w.jobs[id].cause,w.jobs[id].lost_quantity * (if g >= 0: w.goods[g].base_cents else: 0) / 1000)
+    true
+
+unload_at_harbor = (w: mut World, carrier: int):
+    c = w.people[carrier].craft
+    if c < 0: return
+    # Snapshot only the bounded ID list; callbacks remove completed manifests.
+    ids = w.aircraft[c].job_manifests
+    loop id in ids:
+        if job_terminal(w.jobs[id].state): return_job_cargo(w,id,carrier)
+        else if w.jobs[id].destination == w.people[carrier].place: deliver_job(w,id,carrier)
+
+# Terminal cargo still has its poster's title, until physically returned in the same harbor.
+return_job_cargo = (w: mut World, id: int, carrier: int) -> bool:
+    if not (id in w.jobs) or not job_terminal(w.jobs[id].state) or not w.jobs[id].loaded or w.jobs[id].carrier != carrier: return false
+    c = w.people[carrier].craft; poster = w.jobs[id].poster
+    if c < 0 or w.aircraft[c].place < 0 or w.people[poster].place != w.aircraft[c].place: return false
+    qty = w.jobs[id].loaded_quantity-w.jobs[id].delivered_quantity-w.jobs[id].lost_quantity-w.jobs[id].returned_quantity
+    if qty <= 0: return false
+    if w.jobs[id].cargo_mode == .commodity:
+        if not move_stock(w.aircraft[c].cargo,w.people[poster].pocket,w.jobs[id].good,qty,true): return false
+    w.jobs[id].returned_quantity += qty
+    w.aircraft[c].job_manifests.remove(id)
+    true

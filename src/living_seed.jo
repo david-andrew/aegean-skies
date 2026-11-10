@@ -1,0 +1,179 @@
+use 'living_types.jo'
+use 'living_content.jo'
+use 'living_money.jo'
+use 'living_geometry.jo'
+use 'living_events.jo'
+
+initial_price = (base: int, stock: int, target: int) -> int:
+    ratio = clamp(f64(stock) / f64(max(target,1000)),0.0,3.0)
+    int(round(f64(base) * clamp(1.0 + 0.8 * (1.0-ratio),0.45,1.8)))
+
+seed_obligation = (w: mut World, key: str, debtor: int, creditor: int, kind: ObligationKind, due: int, deadline: int, amount: int = 0, place: int = -1, good: int = -1, quantity: int = 0) -> int:
+    id = w.next_obligation
+    w.next_obligation += 1
+    ca = if creditor >= 0: w.people[creditor].account else: w.factions[0].account
+    p = if place >= 0: place else: w.people[debtor].home
+    reason = Reason(purpose=if kind == .repair: Purpose.repair else: if kind == .debt or kind == .rent: Purpose.settle else: Purpose.delivery,actor=debtor,beneficiary=creditor,destination=p,good=good,quantity=quantity,due_minute=due,obligation=id,amount_cents=amount)
+    w.obligations[id] = Obligation(id=id,kind=kind,debtor=debtor,creditor=creditor,creditor_account=ca,place=p,due_minute=due,deadline_minute=deadline,amount_cents=amount,reason=reason,good=good,quantity=quantity)
+    if kind == .debt:
+        w.obligations[id].original_cents = amount
+        w.obligations[id].principal_cents = amount
+    w.obligation_keys[key] = id
+    w.open_obligations.push(id)
+    w.people[debtor].obligations.push(id)
+    id
+
+seed_relationship = (w: mut World, a: int, b: int, work: bool = false):
+    loop pair in [(a,b),(b,a)]:
+        key = RelationshipKey(pair.0,pair.1)
+        if key in w.relationship_index:
+            if work:
+                w.relationships[w.relationship_index[key]].affinity = 150
+                w.relationships[w.relationship_index[key]].trust = 650
+            continue
+        id = w.relationships.len()
+        w.relationship_index[key] = id
+        w.relationships.push(Relationship(id=id,observer=pair.0,other=pair.1,affinity=if work: 150 else: 0,trust=if work: 650 else: 500,last_contact_minute=-60))
+        w.people[pair.0].relationship_ids.push(id)
+
+seed_job = (w: mut World, poster: int, origin: int, destination: int, mode: CargoMode, good: int, qty: int, due: int, expiry: int, reward: int, carrier: int, obligation_key: str) -> int:
+    id = w.next_job
+    w.next_job += 1
+    escrow = fund_escrow(w,w.people[poster].account,reward,"job-{id}")
+    assert(escrow >= 0)
+    o = if obligation_key == "": -1 else: w.obligation_keys[obligation_key]
+    cause = Reason(purpose=.delivery,actor=carrier,beneficiary=poster,origin=origin,destination=destination,good=good,quantity=qty,due_minute=due,job=id,obligation=o,amount_cents=reward)
+    w.jobs[id] = Job(id=id,poster=poster,origin=origin,destination=destination,purpose=.delivery,cargo_mode=mode,good=good,quantity=qty,created_minute=0,npc_claim_after=90,due_minute=due,expire_minute=expiry,reward_cents=reward,escrow_account=escrow,state=if carrier >= 0: JobState.claimed else: JobState.open,carrier=carrier,obligation=o,source_inventory_kind=0,source_inventory_id=origin,loaded=carrier >= 0,loaded_quantity=if carrier >= 0: qty else: 0,sealed_grams=if mode == .sealed: 5000 else: 0,cause=cause)
+    w.active_jobs.push(id)
+    if o >= 0: w.obligations[o].job = id
+    if carrier >= 0:
+        c = w.people[carrier].craft
+        w.aircraft[c].job_manifests.push(id)
+        if good >= 0:
+            w.aircraft[c].cargo.qty[good] += qty
+            w.aircraft[c].cargo.reserved[good] += qty
+    else:
+        # Poster purchases title now; physical goods remain reserved at the origin.
+        cost = qty * w.places[origin].market.price_cents[good] / 1000
+        assert(transfer(w,w.people[poster].account,w.places[origin].market.account,cost,.trade,id))
+        assert(reserve(w.places[origin].market.inventory,good,qty))
+    id
+
+build_world = (seed: u64 = u64(0), harbors: HarborGeometry[] = []) -> World:
+    w = World(seed=seed,harbors=if harbors.len() == 0: build_harbors() else: harbors,goods=GOOD_DATA)
+    assert(w.harbors.len() == 6)
+    loop a in 0..6:
+        loop b in 0..6:
+            if a != b: w.route_cache[a*6+b] = bake_route(w,a,b,w.harbors[a].docks[0])
+    loop row in PERSON_SEEDS:
+        a = new_account(w,"person-{row.id}",row.money_lire * 100)
+        w.people.push(Person(id=row.id,name=row.name,age=row.age,home=row.home,occupation=row.job,appearance_seed=row.id * 7919 + 17,account=a,craft=row.aircraft,place=row.home,traits=row.traits,vice=row.vice,pose=Pose(pos=w.harbors[row.home].center + vec3(f32(row.id % 4)*3,1.2,0))))
+    owners = [1,13,17,19,20,25]
+    populations = [80,36,20,24,12,8]
+    loop p in 0..6:
+        m = Market(account=new_account(w,"market-{PLACE_KEYS[p]}",if p == 5: 12000 else: 40000),next_import_minute=30)
+        loop g in 0..GOOD_COUNT:
+            m.inventory.qty[g] = STOCK[p][g] * 1000
+            m.target[g] = TARGET[p][g] * 1000
+            m.demand_per_day[g] = DEMAND[p][g] * 1000
+            m.price_cents[g] = initial_price(w.goods[g].base_cents,m.inventory.qty[g],m.target[g])
+        w.places.push(SettlementRecord(id=p,key=PLACE_KEYS[p],population=populations[p],market_owner=owners[p],faction=if p == 5: 3 else: 0,has_workshop=p == 0 or p == 2 or p == 5,market=m))
+    members: int[][] = [[5,9,10],[1,2,3,8,11],[7,12,13,14,18,19],[22,23,24,25]]
+    names = ["authority","company","fishermen","pirates"]
+    cash = [150000,200000,50000,4000]
+    leaders = [5,1,12,22]
+    loop f in 0..4:
+        a = new_account(w,"faction-{names[f]}",cash[f])
+        w.factions.push(Faction(id=f,key=names[f],account=a,home=if f == 3: 5 else: if f == 2: 1 else: 0,leader=leaders[f],members=members[f]))
+        loop id in members[f]: w.people[id].faction = f
+    craft_owners = [0,2,8,11,9,21,22,23]
+    kinds: Airframe[] = [.gull,.gull,.heron,.gull,.corsair,.falco,.corsair,.gull]
+    fuel = [24000,38000,70000,45000,55000,35000,30000,10000]
+    hull = [650,850,800,900,900,900,750,650]
+    engines = [550,850,700,850,900,850,750,300]
+    docks = [0,-1,-1,0,1,0,0,-1]
+    loop c in 0..8:
+        p = w.people[craft_owners[c]].home
+        position = if docks[c] >= 0: w.harbors[p].docks[docks[c]] else: w.harbors[p].buoy
+        w.aircraft.push(AircraftRecord(id=c,kind=kinds[c],owner=craft_owners[c],operator=craft_owners[c],fuel_ml=fuel[c],hull=hull[c],engine=engines[c],place=p,dock=docks[c],pose=Pose(pos=position),state=if c == 7: CraftState.workshop else: CraftState.moored))
+    seed_obligation(w,"player_mooring",0,-1,.rent,480,600,1200)
+    seed_obligation(w,"dispatch_bag",2,10,.delivery,60,180,0,0)
+    seed_obligation(w,"nikos_engine_bill",2,4,.debt,600,1800,7000)
+    seed_obligation(w,"marta_grain",3,3,.supply,-30,90,0,0,3,3000)
+    seed_obligation(w,"marta_grain_delivery",8,3,.delivery,-30,90,1600,0,3,3000)
+    service = seed_obligation(w,"dario_service",8,4,.repair,180,420,400)
+    w.obligations[service].craft = 2
+    w.obligations[service].quantity = 100
+    seed_obligation(w,"paolo_shift",4,4,.shift,390,390)
+    seed_obligation(w,"yannis_shift",5,-1,.shift,390,390)
+    seed_obligation(w,"leila_shift",10,-1,.shift,390,390)
+    seed_obligation(w,"salvatore_shift",9,-1,.shift,390,390)
+    seed_obligation(w,"agios_medicine",1,16,.supply,480,600,0,2,6,2000)
+    seed_obligation(w,"clinic_supply",16,16,.supply,480,600,0,2,6,2000)
+    seed_obligation(w,"mikra_medicine",1,19,.supply,480,600,0,3,6,5000)
+    seed_obligation(w,"mikra_clinic_supply",19,19,.supply,480,600,0,3,6,5000)
+    seed_obligation(w,"inn_wine",6,6,.supply,630,750,0,0,1,2000)
+    seed_obligation(w,"petros_rent",7,-1,.rent,1890,3330,800)
+    rent = seed_obligation(w,"kostas_rent",12,12,.rent,1890,3330,800)
+    w.obligations[rent].creditor_account = w.factions[2].account
+    seed_obligation(w,"dimitris_rent",18,19,.rent,450,1890,2000)
+    seed_obligation(w,"oil_work",13,12,.shift,90,90)
+    seed_obligation(w,"grain_work",14,12,.shift,90,90)
+    seed_obligation(w,"irene_shift",15,12,.shift,150,150)
+    seed_obligation(w,"maria_shift",16,-1,.shift,150,150)
+    seed_obligation(w,"andreas_shift",17,12,.shift,150,150)
+    seed_obligation(w,"hotel_wine",20,20,.supply,570,690,0,4,1,3000)
+    seed_obligation(w,"hotel_wine_delivery",11,20,.delivery,570,690,2000,4,1,3000)
+    seed_obligation(w,"enzo_mooring",21,20,.rent,510,630,1000)
+    seed_obligation(w,"crew_supply",22,25,.supply,180,900,12000,5)
+    seed_obligation(w,"crew_fuel",25,25,.supply,180,900,0,5,4,3000)
+    repair = seed_obligation(w,"rocco_repair",23,24,.repair,1440,2880,2000,5)
+    w.obligations[repair].craft = 7
+    w.obligations[repair].quantity = 500
+    # Counterpart references the same service identity, never a second bill.
+    w.obligation_keys["rocco_service"] = repair
+    w.people[24].obligations.push(repair)
+    seed_job(w,10,2,0,.sealed,-1,1,60,180,1200,2,"dispatch_bag")
+    seed_job(w,3,3,0,.commodity,3,3000,-30,90,1600,8,"marta_grain_delivery")
+    seed_job(w,20,1,4,.commodity,1,3000,570,690,2000,11,"hotel_wine_delivery")
+    seed_job(w,1,0,2,.commodity,6,2000,480,600,4000,-1,"")
+    seed_job(w,1,0,3,.commodity,6,5000,480,600,2800,-1,"")
+    w.jobs[3].cause.beneficiary = 16
+    w.jobs[4].cause.beneficiary = 19
+    w.obligations[w.obligation_keys["marta_grain"]].job = 1
+    w.obligations[w.obligation_keys["hotel_wine"]].job = 2
+    w.factions[3].supply_obligations = [w.obligation_keys["crew_supply"],w.obligation_keys["crew_fuel"]]
+    w.obligations[w.obligation_keys["agios_medicine"]].job = 3
+    w.obligations[w.obligation_keys["clinic_supply"]].job = 3
+    w.obligations[w.obligation_keys["mikra_medicine"]].job = 4
+    w.obligations[w.obligation_keys["mikra_clinic_supply"]].job = 4
+    gate = porto_gate(w.harbors[0])
+    route = gate + [w.harbors[0].center + w.harbors[0].out * 250.0 + vec3(0,150,0),w.harbors[0].docks[2]]
+    w.trips[0] = Trip(id=0,actor=2,craft=1,mode=.aircraft,state=.active,origin=2,destination=0,origin_dock=0,claimed_dock=2,reason=w.jobs[0].cause,route=route,cruise_mm_per_sec=60000,departed_tick=-1200,last_tick=0,eta_tick=2400)
+    w.active_trips.push(0); w.next_trip = 1
+    w.aircraft[1].place = -1; w.aircraft[1].dock = -1; w.aircraft[1].state = .airborne
+    w.aircraft[1].trip = 0; w.aircraft[1].pose = Pose(pos=route[0],vel=normalize(route[1]-route[0])*60.0)
+    w.people[2].place = -1; w.people[2].trip = 0; w.people[2].state = .traveling
+    w.people[2].action = Action(activity=.travel,purpose=.delivery,reason=w.jobs[0].cause,end_minute=20)
+    w.people[8].action = Action(activity=.fulfill,purpose=.delivery,reason=w.jobs[1].cause,end_minute=15,failure_code="customs release at +10; unload +5")
+    w.people[11].action = Action(activity=.fulfill,purpose=.delivery,reason=w.jobs[2].cause,end_minute=5)
+    loop p in 0..26:
+        if w.people[p].place >= 0: w.places[w.people[p].place].residents.push(p)
+        loop q in p+1..26:
+            if w.people[p].home == w.people[q].home: seed_relationship(w,p,q)
+        loop g in 0..GOOD_COUNT:
+            home = w.people[p].home
+            w.people[p].prices.push(PriceBelief(home,g,w.places[home].market.price_cents[g],0,0))
+    loop courier in [2,8,11]:
+        loop friend in [1,4,10]: seed_relationship(w,courier,friend,true)
+    loop pair in [(11,20),(8,3),(8,19),(2,16),(9,22),(25,1),(25,6),(18,25)]: seed_relationship(w,pair.0,pair.1,true)
+    rid = w.relationship_index[RelationshipKey(2,4)]
+    w.relationships[rid].trust = 600
+    w.relationships[rid].memories.push(Memory(event=-1,kind=.late,minute=-60,severity=180,reason=w.obligations[w.obligation_keys["nikos_engine_bill"]].reason))
+    # Forecast evidence is carried knowledge, not a future claim or a global target lookup.
+    w.people[22].news.push(NewsItem(event=-1,kind=.departed,occurred_minute=-600,learned_minute=-600,origin=0,source_person=25,hops=1,confidence=850,severity=100,reason=Reason(purpose=.delivery,actor=8,beneficiary=19,origin=0,destination=3,good=6,quantity=5000,due_minute=95,job=4)))
+    late = emit_event(w,.late,0,8,3,w.jobs[1].cause)
+    w.obligations[w.obligation_keys["marta_grain_delivery"]].late_event = late
+    w.goods_ledger.opening = stock_totals(w)
+    assert(money_balances(w) and goods_balance(w))
+    w

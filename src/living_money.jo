@@ -1,0 +1,157 @@
+use 'living_types.jo'
+
+account_valid = (w: World, id: int) -> bool: id >= 0 and id < w.accounts.len()
+
+new_account = (w: mut World, key: str, cents: int = 0) -> int:
+    assert(cents >= 0)
+    id = w.accounts.len()
+    stable_key = key
+    loop account in w.accounts:
+        if account.key == key: stable_key = "{key}@{id}"
+    w.accounts.push(Account(id,stable_key,cents))
+    w.ledger.opening_cents += cents
+    id
+
+outside_kind = (kind: MoneyKind) -> bool:
+    kind == .outside_import or kind == .household_sale or kind == .outside_export or kind == .subsidy
+
+# Sole cash mutation path after construction. Checks finish before either wallet changes.
+transfer = (w: mut World, payer: int, recipient: int, cents: int, kind: MoneyKind, cause: int = -1) -> bool:
+    if cents <= 0 or payer == recipient: return false
+    if payer < -1 or recipient < -1: return false
+    if payer == -1 or recipient == -1:
+        if not outside_kind(kind): return false
+    if payer >= 0 and (not account_valid(w,payer) or w.accounts[payer].cents < cents): return false
+    if recipient >= 0 and not account_valid(w,recipient): return false
+    if payer >= 0: w.accounts[payer].cents -= cents
+    else: w.ledger.external_in_cents += cents
+    if recipient >= 0: w.accounts[recipient].cents += cents
+    else: w.ledger.external_out_cents += cents
+    w.ledger.recent.push(MoneyEntry(w.ledger.sequence,w.tick,payer,recipient,cents,kind,cause))
+    w.ledger.sequence += 1
+    if w.ledger.recent.len() > 2048: w.ledger.recent.remove_at(0)
+    if payer == -1: w.ledger.day_in[int(kind)] += cents
+    if recipient == -1: w.ledger.day_out[int(kind)] += cents
+    true
+
+money_balances = (w: World) -> bool:
+    total = 0
+    loop a in w.accounts:
+        if a.cents < 0: return false
+        total += a.cents
+    total == w.ledger.opening_cents + w.ledger.external_in_cents - w.ledger.external_out_cents
+
+available = (inv: Inventory, good: int) -> int: inv.qty[good] - inv.reserved[good]
+
+inventory_valid = (inv: Inventory) -> bool:
+    loop g in 0..GOOD_COUNT:
+        if inv.qty[g] < 0 or inv.reserved[g] < 0 or inv.reserved[g] > inv.qty[g]: return false
+    true
+
+reserve = (inv: mut Inventory, good: int, qty: int) -> bool:
+    if good < 0 or good >= GOOD_COUNT or qty <= 0 or available(inv,good) < qty: return false
+    inv.reserved[good] += qty
+    true
+
+release = (inv: mut Inventory, good: int, qty: int) -> bool:
+    if good < 0 or good >= GOOD_COUNT or qty <= 0 or inv.reserved[good] < qty: return false
+    inv.reserved[good] -= qty
+    true
+
+move_stock = (source: mut Inventory, dest: mut Inventory, good: int, qty: int, reserved: bool = false) -> bool:
+    if good < 0 or good >= GOOD_COUNT or qty <= 0: return false
+    if (if reserved: source.reserved[good] else: available(source,good)) < qty: return false
+    if reserved: source.reserved[good] -= qty
+    source.qty[good] -= qty
+    dest.qty[good] += qty
+    true
+
+inventory_grams = (w: World, inv: Inventory) -> int:
+    mass = 0
+    loop g in 0..GOOD_COUNT: mass += inv.qty[g] * w.goods[g].package_grams / 1000
+    mass
+
+craft_grams = (w: World, craft: int) -> int:
+    mass = inventory_grams(w,w.aircraft[craft].cargo) + w.aircraft[craft].passengers.len() * 75000
+    loop id in w.aircraft[craft].job_manifests:
+        if id in w.jobs and w.jobs[id].loaded and w.jobs[id].cargo_mode == .sealed and w.jobs[id].delivered_quantity+w.jobs[id].lost_quantity+w.jobs[id].returned_quantity < w.jobs[id].quantity:
+            mass += w.jobs[id].sealed_grams
+    mass
+
+stock_totals = (w: World) -> int[GOOD_COUNT]:
+    total: int[GOOD_COUNT]
+    loop p in w.places:
+        loop g in 0..GOOD_COUNT: total[g] += p.market.inventory.qty[g] * 10
+    loop p in w.people:
+        loop g in 0..GOOD_COUNT: total[g] += p.pocket.qty[g] * 10
+    loop c in w.aircraft:
+        loop g in 0..GOOD_COUNT: total[g] += c.cargo.qty[g] * 10
+        total[int(GoodKind.fuel)] += c.fuel_ml
+    loop _, inv in w.lost_property:
+        loop g in 0..GOOD_COUNT: total[g] += inv.qty[g] * 10
+    loop _, a in w.aftermath:
+        loop g in 0..GOOD_COUNT: total[g] += a.inventory.qty[g] * 10
+    total
+
+goods_balance = (w: World) -> bool:
+    total = stock_totals(w)
+    loop g in 0..GOOD_COUNT:
+        if total[g] != w.goods_ledger.opening[g] + w.goods_ledger.created[g] - w.goods_ledger.consumed[g]: return false
+    true
+
+# Never adjust stocks to repair a mismatch. Only explicit production/import and consumption.
+record_creation = (w: mut World, good: int, qty: int): w.goods_ledger.created[good] += qty * 10
+record_consumption = (w: mut World, good: int, qty: int): w.goods_ledger.consumed[good] += qty * 10
+
+burn_fuel = (w: mut World, craft: int, ml: int) -> int:
+    used = min(max(ml,0),w.aircraft[craft].fuel_ml)
+    w.aircraft[craft].fuel_ml -= used
+    w.goods_ledger.consumed[int(GoodKind.fuel)] += used
+    used
+
+# Fuel conversion is exactly 1000 milli-packages -> 10000 ml; no per-frame rounding.
+fill_from_cargo = (w: mut World, craft: int, milli: int) -> bool:
+    g = int(GoodKind.fuel)
+    if craft < 0 or craft >= w.aircraft.len() or milli <= 0: return false
+    if available(w.aircraft[craft].cargo,g) < milli: return false
+    if w.aircraft[craft].fuel_ml + milli * 10 > AIRFRAMES[int(w.aircraft[craft].kind)].tank_ml: return false
+    w.aircraft[craft].cargo.qty[g] -= milli
+    w.aircraft[craft].fuel_ml += milli * 10
+    true
+
+# Shared current quote, including a carried sub-cent remainder. Tax always costs the trader.
+trade = (w: mut World, person: int, place: int, good: int, qty: int, buying: bool, craft: int = -1) -> bool:
+    if person < 0 or person >= w.people.len() or place < 0 or place >= w.places.len(): return false
+    if good < 0 or good >= GOOD_COUNT or qty <= 0: return false
+    if w.people[person].place != place or w.people[person].trip >= 0: return false
+    if w.goods[good].illegal and place != 5: return false
+    if person != w.player and qty > 10000: return false
+    if craft >= 0:
+        if craft >= w.aircraft.len() or w.aircraft[craft].owner != person or w.aircraft[craft].place != place: return false
+        if buying and craft_grams(w,craft) + qty * w.goods[good].package_grams / 1000 > AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams: return false
+    key = "{person}:{place}:{good}:{buying}"
+    raw = qty * w.places[place].market.price_cents[good] + w.quote_residual.get(key,0)
+    cents = raw / 1000
+    tax = if place == 5 or cents == 0: 0 else: max(1,cents * 2 / 100)
+    a = w.people[person].account
+    m = w.places[place].market.account
+    if buying:
+        if available(w.places[place].market.inventory,good) < qty or w.accounts[a].cents < cents + tax: return false
+    else:
+        free = if craft >= 0: available(w.aircraft[craft].cargo,good) else: available(w.people[person].pocket,good)
+        if free < qty or w.accounts[m].cents < cents or w.accounts[a].cents + cents < tax: return false
+    if cents > 0:
+        if not transfer(w,if buying: a else: m,if buying: m else: a,cents,.trade): return false
+    if tax > 0: assert(transfer(w,a,w.factions[0].account,tax,.fine))
+    w.quote_residual[key] = raw % 1000
+    delta = if buying: qty else: -qty
+    w.places[place].market.inventory.qty[good] -= delta
+    if craft >= 0: w.aircraft[craft].cargo.qty[good] += delta
+    else: w.people[person].pocket.qty[good] += delta
+    true
+
+fund_escrow = (w: mut World, poster: int, reward: int, key: str) -> int:
+    if not account_valid(w,poster) or reward <= 0 or w.accounts[poster].cents < reward: return -1
+    id = new_account(w,key)
+    assert(transfer(w,poster,id,reward,.escrow))
+    id

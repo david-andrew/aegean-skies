@@ -1,0 +1,74 @@
+# Exclusive claim/load core. Public postings and expiry policy live in living_jobs.
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_travel.jo'
+use 'living_seed.jo'
+use 'living_delivery.jo'
+
+claim_feasible = (w: World, job: int, actor: int, include_tender: bool = true) -> bool:
+    if not (job in w.jobs) or actor < 0 or actor >= w.people.len() or w.jobs[job].state != .open: return false
+    if include_tender and actor != w.player and w.minute < w.jobs[job].npc_claim_after: return false
+    if w.people[actor].place != w.jobs[job].origin or w.people[actor].trip >= 0 or w.minute >= w.jobs[job].expire_minute: return false
+    c = w.people[actor].craft
+    if c < 0 or w.aircraft[c].trip >= 0 or w.people[actor].fatigue > 850: return false
+    mass = if w.jobs[job].cargo_mode == .sealed: w.jobs[job].sealed_grams else: if w.jobs[job].purpose == .passenger: 75000 else: w.jobs[job].quantity*w.goods[w.jobs[job].good].package_grams/1000
+    if craft_grams(w,c)+mass > AIRFRAMES[int(w.aircraft[c].kind)].cargo_grams: return false
+    if w.jobs[job].purpose == .passenger and w.aircraft[c].passengers.len() >= AIRFRAMES[int(w.aircraft[c].kind)].seats: return false
+    if not travel_feasible(w,actor,w.jobs[job].destination): return false
+    route = route_geometry(w,w.people[actor].place,w.jobs[job].destination,w.aircraft[c].pose.pos)
+    eta = w.minute+5+(route_duration(route,AIRFRAMES[int(w.aircraft[c].kind)].cruise_mps*1000)+119)/120
+    eta <= w.jobs[job].expire_minute
+
+take_job = (w: mut World, job: int, actor: int) -> bool:
+    if not claim_feasible(w,job,actor): return false
+    # A loaded/preparing promise holds craft, passenger seats and capacity exclusively.
+    c = w.people[actor].craft
+    loop id in w.aircraft[c].job_manifests:
+        if w.jobs[id].state == .claimed: return false
+    o = seed_obligation(w,"job-{job}-carrier",actor,w.jobs[job].poster,if w.jobs[job].purpose == .passenger: ObligationKind.passenger else: ObligationKind.delivery,w.jobs[job].due_minute,w.jobs[job].expire_minute,0,w.jobs[job].destination,w.jobs[job].good,w.jobs[job].quantity)
+    w.obligations[o].job = job; w.obligations[o].craft = c
+    w.jobs[job].carrier = actor; w.jobs[job].state = .claimed; w.jobs[job].status_minute = w.minute
+    w.jobs[job].obligation = o; w.jobs[job].load_until_minute = w.minute+5
+    w.jobs[job].cause.actor = actor; w.jobs[job].cause.obligation = o
+    w.aircraft[c].job_manifests.push(job)
+    w.people[actor].action = Action(activity=.fulfill,purpose=w.jobs[job].purpose,reason=w.jobs[job].cause,end_minute=w.minute+5)
+    w.people[actor].next_decision_minute = w.minute+5
+    true
+
+load_job = (w: mut World, job: int) -> bool:
+    if not (job in w.jobs) or w.jobs[job].state != .claimed or w.jobs[job].loaded or w.minute < w.jobs[job].load_until_minute: return false
+    actor = w.jobs[job].carrier; c = w.people[actor].craft
+    if w.people[actor].place != w.jobs[job].origin or w.aircraft[c].place != w.jobs[job].origin or w.aircraft[c].trip >= 0: return false
+    if w.jobs[job].purpose == .passenger:
+        p = w.jobs[job].passenger
+        if p < 0 or w.people[p].place != w.jobs[job].origin or w.people[p].trip >= 0 or w.aircraft[c].passengers.len() >= AIRFRAMES[int(w.aircraft[c].kind)].seats: return false
+        w.aircraft[c].passengers.push(p)
+    else if w.jobs[job].cargo_mode == .commodity:
+        g = w.jobs[job].good; qty = w.jobs[job].quantity-w.jobs[job].lost_quantity
+        if w.jobs[job].source_inventory_kind != 0: return false
+        if not move_stock(w.places[w.jobs[job].origin].market.inventory,w.aircraft[c].cargo,g,qty,true): return false
+        w.aircraft[c].cargo.reserved[g] += qty
+    w.jobs[job].loaded = true; w.jobs[job].loaded_quantity = w.jobs[job].quantity
+    true
+
+advance_loads = (w: mut World):
+    loop job in w.active_jobs:
+        if w.jobs[job].state != .claimed: continue
+        actor = w.jobs[job].carrier
+        if w.people[actor].trip >= 0 or w.people[actor].place < 0: continue
+        if not w.jobs[job].loaded:
+            if not load_job(w,job): continue
+        if w.people[actor].place == w.jobs[job].destination:
+            if w.minute >= w.people[actor].action.end_minute:
+                unload_at_harbor(w,actor)
+                if job_terminal(w.jobs[job].state):
+                    w.people[actor].action.activity = .wait
+                    w.people[actor].next_decision_minute = w.minute
+            continue
+        if actor == w.player: continue
+        if w.people[actor].action.activity == .fulfill and w.minute >= w.people[actor].action.end_minute:
+            t = start_trip(w,actor,w.jobs[job].destination,w.jobs[job].cause)
+            if t < 0:
+                w.people[actor].action.retry_minute = w.minute+60
+                w.people[actor].action.failure_code = "departure blocked: harbor, fuel or repair"
+                w.people[actor].action.end_minute = w.minute+60

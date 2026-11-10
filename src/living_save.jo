@@ -1,0 +1,148 @@
+use 'living_types.jo'
+use 'living_content.jo'
+use 'living_checks.jo'
+use 'living_commands.jo'
+use 'living_delivery.jo'
+use 'living_money.jo'
+
+error struct LivingSaveError:
+    message: str
+
+struct SaveHeader:
+    schema = 1
+    valid = false
+    generation = 0
+    terrain_key = 0
+
+type SaveResult = SaveGame | LivingSaveError
+
+ordered_map[K,V,O] = (source: {K: V}, key: (K) -> O) -> {K: V}:
+    keys = source.keys()
+    keys.sort_by(key)
+    result: {K: V}
+    loop id in keys: result[id] = source[id]
+    result
+
+# This copy exists only for canonical serialization at a save/test boundary.
+canonical_world = (w: World) -> World:
+    result = w
+    result.trips = ordered_map(w.trips,(id: int): id)
+    result.jobs = ordered_map(w.jobs,(id: int): id)
+    result.obligations = ordered_map(w.obligations,(id: int): id)
+    result.events = ordered_map(w.events,(id: int): id)
+    result.aftermath = ordered_map(w.aftermath,(id: int): id)
+    result.encounters = ordered_map(w.encounters,(id: int): id)
+    result.route_cache = ordered_map(w.route_cache,(id: int): id)
+    result.lost_property = ordered_map(w.lost_property,(id: int): id)
+    result.bounty_handled = ordered_map(w.bounty_handled,(id: int): id)
+    result.obligation_keys = ordered_map(w.obligation_keys,(key: str): key)
+    result.quote_residual = ordered_map(w.quote_residual,(key: str): key)
+    result.relationship_index = ordered_map(w.relationship_index,(key: RelationshipKey): (key.observer,key.other))
+    result.reputation = ordered_map(w.reputation,(key: ReputationKey): (key.place,int(key.subject_kind),key.subject))
+    result.receipts = ordered_map(w.receipts,(key: NewsReceiptKey): (key.receiver_kind,key.receiver,key.event))
+    result
+
+canonical_text = (w: World) -> str: to_text(canonical_world(w))
+canonical_hash = (w: World) -> u64: hash(canonical_text(w))
+
+# Structural checks precede helpers that index arrays. Malformed saves return errors, not panics.
+validate_save_world = (w: World) -> str:
+    if w.content_version != 1: return "unsupported content version; explicit key migration required"
+    if w.people.len() != 26 or w.places.len() != 6 or w.aircraft.len() != 8 or w.factions.len() != 4 or w.goods.len() != 9 or w.harbors.len() != 6: return "invalid v1 content dimensions"
+    if w.accounts.len() < 36 or w.tick < 0 or w.tick/120 != w.minute: return "invalid clock/accounts"
+    loop i in 0..9:
+        if w.goods[i].key != GOOD_DATA[i].key or w.goods[i].kind != GOOD_DATA[i].kind or w.goods[i].package_grams != GOOD_DATA[i].package_grams or w.goods[i].base_cents != GOOD_DATA[i].base_cents: return "good key/unit order requires migration"
+    loop i in 0..6:
+        if w.places[i].id != i or w.places[i].key != PLACE_KEYS[i] or w.harbors[i].place != i or w.harbors[i].docks.len() != (if i == 0: 3 else: 2): return "place/geometry key order requires migration"
+        if w.places[i].market.account < 0 or w.places[i].market.account >= w.accounts.len(): return "market account missing"
+    seen_accounts: {str: bool}
+    loop i in 0..w.accounts.len():
+        if w.accounts[i].id != i or w.accounts[i].key in seen_accounts: return "invalid account identity/key"
+        seen_accounts[w.accounts[i].key] = true
+    loop p in w.people:
+        if p.id < 0 or p.id >= 26 or p.account < 0 or p.account >= w.accounts.len() or p.craft < -1 or p.craft >= 8 or p.faction < -1 or p.faction >= 4: return "invalid person reference"
+        if p.trip >= 0 and not (p.trip in w.trips): return "person has missing trip"
+        if not pose_valid(p.pose): return "invalid person pose"
+        loop id in p.obligations:
+            if not (id in w.obligations): return "person has missing obligation"
+        loop id in p.relationship_ids:
+            if id < 0 or id >= w.relationships.len() or w.relationships[id].observer != p.id: return "invalid relationship reference"
+    loop c in w.aircraft:
+        if int(c.kind) < 0 or int(c.kind) >= 4 or c.owner < 0 or c.owner >= 26 or c.operator < -1 or c.operator >= 26 or c.place < -1 or c.place >= 6: return "invalid aircraft reference"
+        if c.dock < -1 or (c.place < 0 and c.dock >= 0) or (c.place >= 0 and c.dock >= w.harbors[c.place].docks.len()): return "invalid dock"
+        if c.trip >= 0 and not (c.trip in w.trips): return "aircraft has missing trip"
+        if c.repair_obligation >= 0 and not (c.repair_obligation in w.obligations): return "aircraft has missing repair"
+        if not pose_valid(c.pose): return "invalid aircraft pose"
+        loop id in c.job_manifests:
+            if not (id in w.jobs): return "aircraft has missing manifest"
+        loop p in c.passengers:
+            if p < 0 or p >= 26: return "invalid passenger"
+    loop id in w.active_trips:
+        if not (id in w.trips): return "missing scheduled trip"
+    loop id in w.active_jobs:
+        if not (id in w.jobs): return "missing scheduled job"
+    loop id in w.open_obligations:
+        if not (id in w.obligations): return "missing scheduled obligation"
+    loop id, t in w.trips:
+        if t.actor < 0 or t.actor >= 26 or t.craft < -1 or t.craft >= 8 or t.route.len() < 2 or t.cruise_mm_per_sec <= 0: return "invalid trip"
+        if t.segment_ticks.len() != 0 and t.segment_ticks.len() != t.route.len()-1: return "invalid segment schedule"
+        loop point in t.route:
+            if not is_finite(point.x) or not is_finite(point.y) or not is_finite(point.z): return "invalid route pose"
+    loop id, j in w.jobs:
+        if j.poster < 0 or j.poster >= 26 or j.carrier < -1 or j.carrier >= 26 or j.origin < 0 or j.origin >= 6 or j.destination < 0 or j.destination >= 6 or j.good < -1 or j.good >= 9 or j.escrow_account < 0 or j.escrow_account >= w.accounts.len(): return "invalid job reference"
+        if j.quantity <= 0 or j.paid_cents < 0 or j.reward_cents < 0: return "invalid job amount"
+        if not job_terminal(j.state) and j.obligation >= 0 and not (j.obligation in w.obligations): return "missing live delivery obligation"
+    loop id, o in w.obligations:
+        if o.debtor < 0 or o.debtor >= 26 or o.creditor < -1 or o.creditor >= 26 or o.creditor_account < 0 or o.creditor_account >= w.accounts.len(): return "invalid obligation reference"
+        if o.craft < -1 or o.craft >= 8 or o.mechanic < -1 or o.mechanic >= 26 or o.good < -1 or o.good >= 9 or o.amount_cents < 0: return "invalid obligation amount/service"
+    loop e in w.relationships:
+        if e.observer < 0 or e.observer >= 26 or e.other < 0 or e.other >= 26: return "invalid relationship"
+    loop _, a in w.aftermath:
+        if a.owner < 0 or a.owner >= 26 or not inventory_valid(a.inventory): return "invalid aftermath ownership"
+    errors = invariant_errors(w)
+    if errors.len() > 0: return errors.join("; ")
+    ""
+
+header_for = (name: str) -> SaveHeader:
+    raw = load_data(name)
+    if raw == none: return SaveHeader()
+    parsed = from_text[SaveHeader](raw!)
+    if parsed is TextError: return SaveHeader()
+    parsed
+
+load_game = (terrain_key: int, prefix: str = "world") -> SaveResult:
+    a_name = "{prefix}-a"; b_name = "{prefix}-b"
+    ah = header_for(a_name); bh = header_for(b_name)
+    if (ah.valid and ah.schema != 1) or (bh.valid and bh.schema != 1): return LivingSaveError("unsupported save schema; both slots left untouched")
+    a = load_value(a_name,SaveGame()); b = load_value(b_name,SaveGame())
+    av = a.valid and a.schema == 1 and a.terrain_key == terrain_key and validate_save_world(a.world) == ""
+    bv = b.valid and b.schema == 1 and b.terrain_key == terrain_key and validate_save_world(b.world) == ""
+    if not av and not bv: return LivingSaveError("no valid save slot for this terrain/schema; corrupt data preserved by load_value, no new game created")
+    if av and (not bv or a.generation >= b.generation): return a
+    b
+
+save_game = (w: World, presentation: PresentationState, terrain_key: int, prefix: str = "world") -> int | LivingSaveError:
+    validation = validate_save_world(w)
+    if validation != "": return LivingSaveError(validation)
+    # Coordinator must synchronize and fold scene bodies at a fixed tick before this call.
+    # Their extra physics state is the coordinator's schema extension, never regenerated here.
+    loop c in w.aircraft:
+        if c.move_owner == .scene: return LivingSaveError("synchronize/fold scene aircraft before save")
+    loop p in w.people:
+        if p.move_owner == .scene: return LivingSaveError("synchronize/fold scene people before save")
+    a_name = "{prefix}-a"; b_name = "{prefix}-b"
+    ah = header_for(a_name); bh = header_for(b_name)
+    if (ah.valid and ah.schema != 1) or (bh.valid and bh.schema != 1): return LivingSaveError("unsupported save schema; refusing to overwrite either slot")
+    if (ah.valid and ah.terrain_key != terrain_key) or (bh.valid and bh.terrain_key != terrain_key): return LivingSaveError("terrain migration required; existing slots left untouched")
+    old = load_game(terrain_key,prefix)
+    generation = 1
+    target = a_name
+    if old is SaveGame:
+        generation = old.generation+1
+        target = if ah.valid and ah.generation == old.generation: b_name else: a_name
+    state = presentation
+    state.bark_day = ordered_map(presentation.bark_day,(key: BarkKey): (key.speaker,key.event))
+    state.hailed_jobs = ordered_map(presentation.hailed_jobs,(id: int): id)
+    game = SaveGame(schema=1,valid=true,generation=generation,terrain_key=terrain_key,world=canonical_world(w),presentation=state)
+    if not save_value(target,game): return LivingSaveError("write failed: {file_error()}; previous slot retained")
+    generation

@@ -1,0 +1,341 @@
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_duties.jo'
+use 'living_travel.jo'
+use 'living_claims.jo'
+use 'living_events.jo'
+use 'living_contraband.jo'
+
+struct Candidate:
+    activity: Activity
+    purpose: Purpose
+    target: int = -1
+    job: int = -1
+    good: int = -1
+    quantity = 0
+    destination = -1
+    minutes = 60
+    net_cents = 0
+    duty = 0.0
+    rest = 0.0
+    company = 0.0
+    revenge = 0.0
+    greed = 0.0
+    risk = 0.0
+    social = 0.0
+    illegal = 0.0
+    ally = 0.0
+    trust = 0.0
+    affinity = 0.0
+    probability = 1.0
+    exposure_cents = 0
+    added_fatigue = 20
+    assignment_bonus = 0.0
+
+refresh_pressures = (w: mut World, p: int):
+    due = 0; duty = 0
+    loop id in w.people[p].obligations:
+        if not obligation_live(w.obligations[id].state): continue
+        if w.obligations[id].due_minute <= w.minute+360:
+            if w.obligations[id].kind == .debt or w.obligations[id].kind == .rent: due += w.obligations[id].amount_cents
+        slack = w.obligations[id].due_minute-w.minute
+        duty = max(duty,clamp((120-slack)*1000/120,0,1000))
+    cash = w.accounts[w.people[p].account].cents
+    reserve = 1200+due
+    w.people[p].pressures.money = clamp((reserve-cash)*1000/max(reserve,1200),0,1000)
+    w.people[p].pressures.duty = duty
+    w.people[p].pressures.rest = clamp((w.people[p].fatigue-200)*1000/800,0,1000)
+    w.people[p].pressures.company = clamp(w.people[p].alone_minutes*1000/720,0,1000)
+    grievance = 0
+    loop id in w.people[p].relationship_ids: grievance = max(grievance,w.relationships[id].grievance)
+    w.people[p].pressures.revenge = grievance
+
+update_vice = (w: mut World, p: int):
+    if w.people[p].vice == .none or w.people[p].trip >= 0: return
+    due = 0; blocked = false
+    loop o in w.people[p].obligations:
+        if obligation_live(w.obligations[o].state):
+            if w.obligations[o].due_minute <= w.minute+360: due += w.obligations[o].amount_cents
+            if w.obligations[o].state == .blocked: blocked = true
+    cash = w.accounts[w.people[p].account].cents
+    c = w.people[p].craft
+    broken = c >= 0 and (w.aircraft[c].engine < 350 or w.aircraft[c].hull < 350) and cash < 3000
+    if not w.people[p].vice_active:
+        if w.minute < w.people[p].vice_recovered_until: return
+        if (w.people[p].pressures.money >= 800 and due > cash) or broken:
+            w.people[p].vice_active = true; w.people[p].vice_until = w.minute+120; w.people[p].vice_recovery_minutes = 0
+            if w.people[p].vice == .refuse_flight:
+                w.people[p].state = .refusing
+                emit_event(w,.refused,w.people[p].place,p,-1,Reason(purpose=.return_home,actor=p,destination=w.people[p].home))
+    else if w.minute >= w.people[p].vice_until:
+        recovered = w.people[p].vice == .refuse_flight and w.people[p].vice_recovery_minutes >= 60
+        if recovered or (w.people[p].pressures.money < 450 and not blocked):
+            w.people[p].vice_active = false; w.people[p].state = .idle
+            if recovered: w.people[p].vice_recovered_until = w.minute+1440
+
+candidate_score = (w: World, p: int, c: Candidate, candidate_key: int) -> f64:
+    pr = w.people[p].pressures; tr = w.people[p].traits
+    money = clamp(f64(c.net_cents)/2000.0,-1.0,1.0)
+    loss = clamp((1.0-c.probability)*f64(c.exposure_cents)/4000.0,0.0,2.0)
+    duration = clamp(f64(c.minutes)/180.0,0.0,2.0)
+    fatigue_cost = clamp(f64(c.added_fatigue)/300.0,0.0,1.0)
+    noise = f64(draw1000000(w.seed,10,p,w.people[p].next_decision_minute,candidate_key))/1000000.0*0.1-0.05
+    2.4*f64(pr.money)/1000.0*money + 2.0*f64(pr.duty)/1000.0*c.duty + 1.6*f64(pr.rest)/1000.0*c.rest + f64(pr.company)/1000.0*c.company + 1.2*f64(pr.revenge)/1000.0*c.revenge + 0.50*f64(tr.greed)/1000.0*c.greed + 0.55*f64(tr.boldness)/1000.0*c.risk + 0.40*f64(tr.sociability)/1000.0*c.social + 0.60*f64(tr.loyalty)/1000.0*c.ally + 0.45*c.trust + 0.25*c.affinity - 0.90*f64(tr.honesty)/1000.0*c.illegal - 1.1*loss - 0.25*duration - 0.8*fatigue_cost + noise + c.assignment_bonus
+
+# Quotes never become fresh because someone retells them.
+believed_price = (w: World, p: int, place: int, good: int) -> int:
+    loop b in w.people[p].prices:
+        if b.place != place or b.good != good or w.minute-b.observed_minute > 720: continue
+        confidence = b.confidence*max(0,1440-(w.minute-b.observed_minute))/1440
+        return (b.cents*confidence+w.goods[good].base_cents*(1000-confidence))/1000
+    -1
+
+ensure_fuel = (w: mut World, p: int, destination: int) -> bool:
+    c = w.people[p].craft; place = w.people[p].place
+    if c < 0 or place < 0 or destination == place: return false
+    route = route_geometry(w,place,destination,w.aircraft[c].pose.pos)
+    fuel = route_fuel(route,w.aircraft[c].kind)
+    need = fuel+max(5000,fuel/5)
+    milli = max(0,(need-w.aircraft[c].fuel_ml+9)/10)
+    if milli == 0: return true
+    if w.accounts[w.people[p].account].cents < milli*w.places[place].market.price_cents[4]/1000+400: return false
+    if trade(w,p,place,4,milli,true,c): return fill_from_cargo(w,c,milli)
+    false
+
+gamble = (w: mut World, p: int) -> bool:
+    place = w.people[p].place
+    if place < 0 or w.people[p].last_gamble_day == day_index(w.minute): return false
+    inn = if place == 4: 20 else: if place == 5: 25 else: 6
+    if w.people[inn].place != place or inn == p: return false
+    stake = min(500,max(0,w.accounts[w.people[p].account].cents-400))
+    if stake <= 0: return false
+    assert(transfer(w,w.people[p].account,w.people[inn].account,stake,.gambling))
+    if draw1000000(w.seed,80,p,day_index(w.minute)) < 400000 and w.accounts[w.people[inn].account].cents >= stake*2:
+        assert(transfer(w,w.people[inn].account,w.people[p].account,stake*2,.gambling))
+    w.people[p].last_gamble_day = day_index(w.minute)
+    true
+
+candidates = (w: World, p: int) -> Candidate[]:
+    result: Candidate[] = [Candidate(activity=.rest,purpose=.visit,rest=1.0,company=-0.1,added_fatigue=-120),Candidate(activity=.socialize,purpose=.visit,minutes=30,net_cents=-100,rest=0.1,company=1.0,social=1.0,added_fatigue=10)]
+    place = w.people[p].place
+    if place < 0: return result
+    if w.people[p].last_local_work_day != day_index(w.minute) and w.casual_claims < 2 and w.accounts[w.factions[0].account].cents >= 1200 and local_minute(w.minute) >= 360 and local_minute(w.minute) < 1080:
+        result.push(Candidate(activity=.work,purpose=.trade,net_cents=1200,rest=-0.1,company=0.1,greed=0.6,social=0.1))
+    count = 0
+    loop id in w.active_jobs:
+        if count >= 4: break
+        if not claim_feasible(w,id,p): continue
+        c = w.people[p].craft
+        route = route_geometry(w,place,w.jobs[id].destination,w.aircraft[c].pose.pos)
+        fuel_bill = route_fuel(route,w.aircraft[c].kind)*w.places[place].market.price_cents[4]/10000
+        net = w.jobs[id].reward_cents-fuel_bill
+        if net <= 0: continue
+        bonus = if p == 8 and w.jobs[id].destination == 3: 0.15 else: 0.0
+        beneficiary = w.jobs[id].cause.beneficiary
+        rel = w.relationship_index.get(RelationshipKey(p,beneficiary),-1)
+        trust = if rel >= 0: f64(w.relationships[rel].trust-500)/500.0 else: 0.0
+        affinity = if rel >= 0: f64(w.relationships[rel].affinity)/1000.0 else: 0.0
+        result.push(Candidate(activity=.fulfill,trust=trust,affinity=affinity,purpose=w.jobs[id].purpose,target=w.jobs[id].poster,job=id,minutes=5+(route_duration(route,AIRFRAMES[int(w.aircraft[c].kind)].cruise_mps*1000)+119)/120,net_cents=net,duty=1.0,rest=-0.1,company=0.1,greed=clamp(f64(net)/2000.0,-1.0,1.0),social=0.1,assignment_bonus=bonus))
+        count += 1
+    # At most two genuinely known, affordable margins. Unknown destinations aren't quotes.
+    routes = 0
+    if w.people[p].craft >= 0 and w.people[p].fatigue <= 850 and (w.people[p].occupation == .courier or w.people[p].occupation == .merchant):
+        c = w.people[p].craft
+        loop destination in 0..w.places.len():
+            if routes >= 2: break
+            if destination == place or not travel_feasible(w,p,destination): continue
+            loop g in 0..GOOD_COUNT:
+                if routes >= 2: break
+                if w.goods[g].illegal: continue
+                quote = believed_price(w,p,destination,g)
+                local = w.places[place].market.price_cents[g]
+                qty = min(10000,available(w.places[place].market.inventory,g))
+                qty = min(qty,max(0,w.accounts[w.people[p].account].cents-400)*1000/max(local+local*2/100,1))
+                capacity = max(0,AIRFRAMES[int(w.aircraft[c].kind)].cargo_grams-craft_grams(w,c))
+                qty = min(qty,capacity*1000/w.goods[g].package_grams)
+                if quote < 0 or qty <= 0: continue
+                route = route_geometry(w,place,destination,w.aircraft[c].pose.pos)
+                fuel_bill = route_fuel(route,w.aircraft[c].kind)*w.places[place].market.price_cents[4]/10000
+                net = qty*(quote-local)/1000 - qty*(quote+local)*2/100000-fuel_bill
+                if net <= 400: continue
+                result.push(Candidate(activity=.trade,purpose=.trade,good=g,quantity=qty,destination=destination,net_cents=net,duty=0.3,rest=-0.1,company=0.1,greed=clamp(f64(net)/2000.0,-1.0,1.0),minutes=(route_duration(route,AIRFRAMES[int(w.aircraft[c].kind)].cruise_mps*1000)+119)/120))
+                routes += 1
+    # A known friend is a physical visit candidate, carrying real observations back home.
+    # Public tenders already advertised here keep their announced pickup opportunity.
+    pending_tender = false
+    loop job in w.active_jobs:
+        if w.jobs[job].state == .open and w.jobs[job].origin == place and w.jobs[job].npc_claim_after > w.minute: pending_tender = true
+    if w.people[p].occupation == .courier and w.people[p].last_visit_day != day_index(w.minute) and not pending_tender and local_minute(w.minute) >= 600 and local_minute(w.minute) < 960:
+        friend = -1
+        loop id in w.people[p].relationship_ids:
+            other = w.relationships[id].other
+            destination = w.people[other].home
+            if destination == place or w.relationships[id].trust < 600: continue
+            if not travel_feasible(w,p,destination): continue
+            if friend < 0 or w.relationships[id].affinity > w.relationships[friend].affinity: friend = id
+        if friend >= 0:
+            rel = w.relationships[friend]; destination = w.people[rel.other].home
+            craft = w.people[p].craft
+            route = route_geometry(w,place,destination,w.aircraft[craft].pose.pos)
+            bill = route_fuel(route,w.aircraft[craft].kind)*w.places[place].market.price_cents[4]/10000
+            if w.accounts[w.people[p].account].cents >= bill+1200:
+                result.push(Candidate(activity=.travel,purpose=.visit,target=rel.other,destination=destination,minutes=30+(route_duration(route,AIRFRAMES[int(w.aircraft[craft].kind)].cruise_mps*1000)+119)/120,net_cents=-bill,rest=0.1,company=1.0,social=1.0,trust=f64(rel.trust-500)/500.0,affinity=f64(rel.affinity)/1000.0,ally=if w.people[p].faction >= 0 and w.people[p].faction == w.people[rel.other].faction: 1.0 else: 0.0))
+    if w.people[p].vice_active and w.people[p].vice == .smuggle and place == 5 and w.people[p].craft >= 0:
+        craft = w.people[p].craft
+        loop buyer in [6,20]:
+            key = RelationshipKey(buyer,p)
+            destination = w.people[buyer].home
+            if not (key in w.relationship_index) or w.relationships[w.relationship_index[key]].trust < 600: continue
+            if not travel_feasible(w,p,destination) or available(w.places[5].market.inventory,7) < 1000: continue
+            bill = w.places[5].market.price_cents[7]
+            if w.accounts[w.people[p].account].cents < bill+400 or w.accounts[w.people[buyer].account].cents < 3080: continue
+            route = route_geometry(w,5,destination,w.aircraft[craft].pose.pos)
+            net = 3080-bill-route_fuel(route,w.aircraft[craft].kind)*w.places[5].market.price_cents[4]/10000
+            if net <= 0: continue
+            result.push(Candidate(activity=.smuggle,purpose=.trade,target=buyer,destination=destination,good=7,quantity=1000,net_cents=net,duty=0.7,rest=-0.1,company=0.1,greed=f64(net)/2000.0,risk=0.5,illegal=1.0,probability=0.9,exposure_cents=bill,minutes=120))
+    if w.people[p].vice_active and w.people[p].vice == .join_pirates and w.people[p].faction != 3:
+        loop crew in w.factions[3].members:
+            key = RelationshipKey(p,crew)
+            if w.people[crew].place == place and key in w.relationship_index and w.relationships[w.relationship_index[key]].trust >= 600:
+                result.push(Candidate(activity=.smuggle,purpose=.visit,target=crew,duty=0.7,company=0.5,ally=1.0,illegal=1.0,greed=0.5,risk=0.5,net_cents=0,minutes=30))
+                break
+    if w.people[p].vice_active and w.people[p].vice == .gamble and w.people[p].last_gamble_day != day_index(w.minute) and w.accounts[w.people[p].account].cents > 400:
+        inn = if place == 4: 20 else: if place == 5: 25 else: 6
+        if inn != p and w.people[inn].place == place:
+            result.push(Candidate(activity=.gamble,purpose=.visit,minutes=30,net_cents=-100,rest=0.0,company=0.5,risk=0.6,social=1.0,greed=0.5,probability=0.4,exposure_cents=500))
+    result
+
+complete_local_work = (w: mut World, p: int):
+    if w.people[p].action.activity != .work or w.people[p].action.purpose != .trade or w.people[p].action.end_minute > w.minute: return
+    if w.people[p].last_local_work_day == day_index(w.minute): return
+    if w.people[p].action.progress_minutes >= 60:
+        escrow = w.people[p].local_work_escrow
+        if escrow >= 0: assert(transfer(w,escrow,w.people[p].account,1200,.wage))
+        w.people[p].local_work_escrow = -1
+        w.people[p].last_local_work_day = day_index(w.minute)
+    w.people[p].action.activity = .wait
+
+decide_person = (w: mut World, p: int):
+    if p == w.player or w.people[p].trip >= 0 or w.people[p].state == .departed or w.people[p].injured_until > w.minute: return
+    if w.people[p].action.activity == .fulfill or w.people[p].action.activity == .raid or w.people[p].action.activity == .patrol: return
+    if w.people[p].action.activity == .work and (w.people[p].action.purpose == .trade or w.people[p].action.purpose == .salvage) and w.people[p].action.end_minute > w.minute: return
+    if w.minute < w.people[p].next_decision_minute: return
+    refresh_pressures(w,p); update_vice(w,p)
+    w.people[p].last_choice_minute = w.minute
+    # Feasible financial progress, without locking an insolvent person to 'pay'.
+    loop o in w.people[p].obligations:
+        if not obligation_live(w.obligations[o].state) or w.obligations[o].due_minute > w.minute+30 or w.obligations[o].next_retry_minute > w.minute: continue
+        if w.obligations[o].kind == .debt or w.obligations[o].kind == .rent:
+            paid = pay_obligation(w,o,max(0,w.accounts[w.people[p].account].cents-400))
+            if paid == 0: block_obligation(w,o,"cash below living reserve; seeking funded work")
+        else if w.obligations[o].kind == .repair:
+            if start_repair(w,o): w.people[p].next_decision_minute = w.minute+60; return
+    if w.people[p].vice_active and w.people[p].vice == .refuse_flight:
+        w.people[p].action = Action(activity=.rest,purpose=.visit,end_minute=w.minute+60)
+        w.people[p].next_decision_minute = w.minute+60
+        return
+    if local_minute(w.minute) < 360:
+        w.people[p].action = Action(activity=.rest,purpose=.visit,end_minute=w.minute+60)
+        w.people[p].next_decision_minute = w.minute+60
+        return
+    # Named routines reserve only their stated intervals; no all-day dock lock.
+    if w.people[p].place == w.people[p].home and work_window(w.people[p].occupation,local_minute(w.minute)):
+        w.people[p].next_decision_minute = w.minute+15
+        return
+    # Courier dispatch is a service obligation. Try positive-net public tenders first.
+    options = candidates(w,p)
+    best = -1; best_score = 0.10
+    dispatch = w.people[p].occupation == .courier and ((local_minute(w.minute) >= 480 and local_minute(w.minute) < 720) or (local_minute(w.minute) >= 780 and local_minute(w.minute) < 840))
+    loop i in 0..options.len():
+        score = candidate_score(w,p,options[i],i)
+        if dispatch and options[i].job >= 0: score += 10.0
+        if score > best_score: best_score = score; best = i
+    if dispatch:
+        # Dispatch duties choose earliest deadline first; equal company deadlines use
+        # the standing customer assignment before discretionary score/noise.
+        assigned = -1
+        loop i in 0..options.len():
+            if options[i].job < 0: continue
+            if assigned < 0:
+                assigned = i
+                continue
+            left = w.jobs[options[i].job].due_minute
+            right = w.jobs[options[assigned].job].due_minute
+            if left < right or (left == right and (options[i].assignment_bonus > options[assigned].assignment_bonus or (options[i].assignment_bonus == options[assigned].assignment_bonus and candidate_score(w,p,options[i],i) > candidate_score(w,p,options[assigned],assigned)))):
+                assigned = i
+        if assigned >= 0: best = assigned
+    if best >= 0 and options[best].job >= 0:
+        if take_job(w,options[best].job,p): return
+    # Return-home is a real paid-in-fuel trip, after completing current commitments.
+    if w.people[p].occupation == .courier and local_minute(w.minute) >= 1080 and local_minute(w.minute) < 1200 and w.people[p].place != w.people[p].home:
+        home = w.people[p].home
+        ensure_fuel(w,p,home)
+        if start_trip(w,p,home,Reason(purpose=.return_home,actor=p,origin=w.people[p].place,destination=home)) >= 0: return
+    w.people[p].free_choice_minutes += 15
+    if best < 0:
+        w.people[p].action = Action(activity=if w.people[p].fatigue > 600: Activity.rest else: Activity.wait,purpose=.visit,end_minute=w.minute+15)
+        w.people[p].next_decision_minute = w.minute+15
+        return
+    chosen = options[best]
+    if chosen.activity == .work:
+        escrow = fund_escrow(w,w.factions[0].account,1200,"harbor-labor-{p}-{day_index(w.minute)}")
+        if escrow < 0 or w.casual_claims >= 2:
+            if escrow >= 0: assert(transfer(w,escrow,w.factions[0].account,1200,.refund))
+            w.people[p].next_decision_minute = w.minute+15
+            return
+        w.people[p].local_work_escrow = escrow
+        w.casual_claims += 1
+    if chosen.activity == .travel and chosen.purpose == .visit:
+        reason = Reason(purpose=.visit,actor=p,counterparty=chosen.target,beneficiary=chosen.target,origin=w.people[p].place,destination=chosen.destination)
+        if start_trip(w,p,chosen.destination,reason) >= 0:
+            w.people[p].last_visit_day = day_index(w.minute)
+            return
+    if chosen.activity == .trade:
+        c = w.people[p].craft
+        if trade(w,p,w.people[p].place,chosen.good,chosen.quantity,true,c):
+            reason = Reason(purpose=.trade,actor=p,origin=w.people[p].place,destination=chosen.destination,good=chosen.good,quantity=chosen.quantity)
+            if start_trip(w,p,chosen.destination,reason) >= 0: return
+    if chosen.activity == .smuggle and chosen.purpose == .trade:
+        craft = w.people[p].craft
+        if trade(w,p,w.people[p].place,7,1000,true,craft):
+            reason = Reason(purpose=.trade,actor=p,beneficiary=chosen.target,origin=w.people[p].place,destination=chosen.destination,good=7,quantity=1000)
+            if start_trip(w,p,chosen.destination,reason) >= 0: return
+    if chosen.activity == .smuggle and chosen.purpose == .visit and chosen.target >= 0:
+        old = w.people[p].faction
+        if old >= 0: w.factions[old].members.remove(p)
+        w.people[p].faction = 3; w.factions[3].members.push(p)
+    if chosen.activity == .gamble: gamble(w,p)
+    social_progress = if chosen.activity == .socialize and w.people[p].action.activity == .socialize: w.people[p].action.progress_minutes else: 0
+    w.people[p].action = Action(progress_minutes=social_progress,activity=chosen.activity,purpose=chosen.purpose,reason=Reason(purpose=chosen.purpose,actor=p,destination=w.people[p].place),end_minute=w.minute+chosen.minutes)
+    if chosen.activity == .work: w.people[p].next_decision_minute = w.minute+chosen.minutes
+    else: w.people[p].next_decision_minute = w.minute+15
+
+choices_minute = (w: mut World):
+    if w.casual_day != day_index(w.minute):
+        w.casual_day = day_index(w.minute); w.casual_claims = 0
+    loop p in 1..w.people.len():
+        if w.people[p].action.activity == .work and w.people[p].action.purpose == .trade and w.people[p].place >= 0:
+            w.people[p].action.progress_minutes += 1
+        if w.people[p].action.activity == .rest and w.people[p].vice_active and w.people[p].vice == .refuse_flight:
+            w.people[p].vice_recovery_minutes += 1
+        complete_local_work(w,p)
+    loop p in [7,12,18]:
+        if w.people[p].place == w.people[p].home and w.people[p].trip < 0 and local_minute(w.minute) >= 600 and local_minute(w.minute) < 660:
+            qty = min(10000,available(w.people[p].pocket,0))
+            if qty > 0: trade(w,p,w.people[p].home,0,qty,false)
+    # Settle a trader's real stock at the local quote; a mistaken belief can lose money.
+    loop p in 1..w.people.len():
+        c = w.people[p].craft
+        if c < 0 or w.people[p].trip >= 0 or w.people[p].place < 0: continue
+        r = w.people[p].action.reason
+        if r.purpose == .trade and r.good >= 0 and w.people[p].place == r.destination:
+            qty = min(10000,available(w.aircraft[c].cargo,r.good))
+            if qty > 0:
+                if r.good == 7 and r.beneficiary >= 0: sell_discreet(w,p,r.beneficiary,min(1000,qty),c)
+                else: trade(w,p,w.people[p].place,r.good,qty,false,c)
+            w.people[p].action.reason.good = -1
+    # Rotate contention order only; all deterministic decision keys remain entity/minute based.
+    count = w.people.len()-1
+    loop n in 0..count:
+        p = 1+(n+day_index(w.minute))%count
+        decide_person(w,p)

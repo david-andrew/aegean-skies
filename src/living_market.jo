@@ -1,0 +1,167 @@
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_seed.jo'
+use 'living_events.jo'
+
+update_prices = (w: mut World):
+    loop p in 0..w.places.len():
+        loop g in 0..GOOD_COUNT:
+            desired = initial_price(w.goods[g].base_cents,w.places[p].market.inventory.qty[g],w.places[p].market.target[g])
+            # Integer round-to-nearest, ties up; desired and quote are positive cents.
+            w.places[p].market.price_cents[g] = (3*w.places[p].market.price_cents[g]+desired+2)/4
+
+prepare_shipments = (w: mut World):
+    day = day_index(w.minute)
+    if w.last_ship_day == day: return
+    w.last_ship_day = day
+    caps: int[9] = [0,3000,0,8000,8000,2000,2000,0,0]
+    loop p in 0..6:
+        night = p == 5
+        id = w.next_shipment; w.next_shipment += 1
+        cancel = draw1000000(w.seed,30,p,day,0) < 150000 and w.places[p].import_cancel_streak < 2
+        if cancel: w.places[p].import_cancel_streak += 1
+        else: w.places[p].import_cancel_streak = 0
+        arrival = day*1440-570+(if night: 1380 else: 600)+draw1000000(w.seed,30,p,day,1)*181/1000000
+        s = OutsideShipment(id=id,place=p,day=day,arrival_minute=max(w.minute,arrival),original_arrival_minute=max(w.minute,arrival),cancelled=cancel,night=night)
+        loop g in 0..GOOD_COUNT:
+            cap = if night: (if g == 4 or g == 7: 2000 else: if g == 5: 1000 else: 0) else: caps[g]
+            s.manifest[g] = min(max(0,w.places[p].market.target[g]-w.places[p].market.inventory.qty[g]),cap)
+        w.shipments.push(s)
+
+advance_shipments = (w: mut World):
+    loop i in 0..w.shipments.len():
+        if w.shipments[i].state != 0 or w.minute < w.shipments[i].arrival_minute: continue
+        p = w.shipments[i].place
+        if w.shipments[i].cancelled:
+            w.shipments[i].state = 2
+            emit_event(w,.late,p,w.places[p].market_owner,-1,Reason(purpose=.trade,actor=w.places[p].market_owner,destination=p,due_minute=w.shipments[i].original_arrival_minute))
+            continue
+        if w.places[p].harbor_closed:
+            if w.minute-w.shipments[i].original_arrival_minute >= 360:
+                w.shipments[i].state = 2
+                emit_event(w,.late,p,w.places[p].market_owner,-1,Reason(purpose=.trade,actor=w.places[p].market_owner,destination=p))
+            else: w.shipments[i].arrival_minute = w.minute+60
+            continue
+        a = w.places[p].market.account
+        # A documented working-capital advance is available when needed, once/day,
+        # rather than only if a low till happens to coincide with midnight.
+        if p != 5 and w.accounts[a].cents < 5000 and w.places[p].last_advance_day != day_index(w.minute):
+            assert(transfer(w,-1,a,20000,.subsidy))
+            w.places[p].last_advance_day = day_index(w.minute)
+        # Essential operating supplies are purchased before discretionary wine/grain.
+        loop g in [4,6,5,3,1,0,2,7,8]:
+            quote = w.goods[g].base_cents * (if w.shipments[i].night: 110 else: 80) / 100
+            quantity = min(w.shipments[i].manifest[g],w.accounts[a].cents*1000/max(quote,1))
+            if quantity <= 0: continue
+            key = "import:{p}:{g}"
+            raw = quantity*quote + w.quote_residual.get(key,0)
+            cents = raw/1000
+            if cents > 0: assert(transfer(w,a,-1,cents,.outside_import,w.shipments[i].id))
+            w.quote_residual[key] = raw%1000
+            w.places[p].market.inventory.qty[g] += quantity
+            record_creation(w,g,quantity)
+        w.shipments[i].state = 1
+
+hourly_demand = (w: mut World):
+    loop p in 0..6:
+        a = w.places[p].market.account
+        loop g in 0..GOOD_COUNT:
+            raw = w.places[p].market.demand_per_day[g]+w.places[p].market.demand_remainder[g]
+            wanted = raw/24
+            w.places[p].market.demand_remainder[g] = raw%24
+            qty = min(wanted,available(w.places[p].market.inventory,g))
+            if qty > 0:
+                key = "household:{p}:{g}"
+                raw_price = qty*w.places[p].market.price_cents[g]+w.quote_residual.get(key,0)
+                if raw_price/1000 > 0: assert(transfer(w,-1,a,raw_price/1000,.household_sale))
+                w.quote_residual[key] = raw_price%1000
+                w.places[p].market.inventory.qty[g] -= qty
+                record_consumption(w,g,qty)
+            if qty < wanted:
+                w.places[p].market.shortage_hours[g] += 1
+                if w.places[p].market.shortage_hours[g] == 6:
+                    emit_event(w,.shortage,p,w.places[p].market_owner,-1,Reason(purpose=.delivery,actor=w.places[p].market_owner,beneficiary=w.places[p].market_owner,destination=p,good=g,quantity=wanted-qty))
+            else: w.places[p].market.shortage_hours[g] = 0
+
+# Reserved fish also decays, with loss assigned to the real lot; promises don't preserve food.
+spoil_fish = (w: mut World):
+    loop p in 0..6:
+        qty = available(w.places[p].market.inventory,0)
+        raw = qty + w.places[p].spoil_remainder[0]
+        lost = raw/24
+        w.places[p].spoil_remainder[0] = raw%24
+        w.places[p].market.inventory.qty[0] -= lost
+        record_consumption(w,0,lost)
+    loop c in 0..w.aircraft.len():
+        # One residual per physical inventory, not one per rendering frame.
+        key = "spoil-craft:{c}"
+        raw = w.aircraft[c].cargo.qty[0]+w.quote_residual.get(key,0)
+        lost = raw/24; w.quote_residual[key] = raw%24
+        free = available(w.aircraft[c].cargo,0)
+        assigned = max(0,lost-free)
+        w.aircraft[c].cargo.qty[0] -= lost
+        w.aircraft[c].cargo.reserved[0] -= assigned
+        record_consumption(w,0,lost)
+        loop job in w.aircraft[c].job_manifests:
+            if assigned <= 0: break
+            if w.jobs[job].good != 0: continue
+            n = min(assigned,w.jobs[job].loaded_quantity-w.jobs[job].delivered_quantity-w.jobs[job].lost_quantity)
+            w.jobs[job].lost_quantity += n; assigned -= n
+    loop p in 0..w.people.len():
+        key = "spoil-person:{p}"
+        raw = w.people[p].pocket.qty[0]+w.quote_residual.get(key,0)
+        lost = raw/24; w.quote_residual[key] = raw%24
+        w.people[p].pocket.qty[0] -= lost; record_consumption(w,0,lost)
+
+outside_exports = (w: mut World):
+    loop p in 0..6:
+        if p == 5 or w.places[p].harbor_closed: continue
+        loop g in 0..7:
+            qty = min(8000,min(available(w.places[p].market.inventory,g),max(0,w.places[p].market.inventory.qty[g]-w.places[p].market.target[g])))
+            if qty <= 0: continue
+            cents = qty*w.goods[g].base_cents*65/100000
+            if cents > 0: assert(transfer(w,-1,w.places[p].market.account,cents,.outside_export))
+            w.places[p].market.inventory.qty[g] -= qty; record_consumption(w,g,qty)
+
+living_costs = (w: mut World):
+    day = day_index(w.minute)
+    loop person in 1..w.people.len():
+        place = w.people[person].place
+        if place < 0 or w.people[person].living_day == day: continue
+        w.people[person].living_day = day
+        loop g in [0,3]:
+            qty = min(500,available(w.places[place].market.inventory,g))
+            if qty > 0 and trade(w,person,place,g,qty,true):
+                w.people[person].pocket.qty[g] -= qty; record_consumption(w,g,qty)
+        landlord = if place == 0: 6 else: if place == 4: 20 else: if place == 5: 25 else: -1
+        recipient = if landlord >= 0 and landlord != person: w.people[landlord].account else: if place == 5: w.places[place].market.account else: w.factions[0].account
+        if w.accounts[w.people[person].account].cents >= 500:
+            assert(transfer(w,w.people[person].account,recipient,500,.rent))
+        else:
+            id = seed_obligation(w,"lodging-{person}-{day}",person,landlord,.rent,w.minute,w.minute+7*1440,500,place)
+            w.obligations[id].creditor_account = recipient
+
+market_day = (w: mut World):
+    assert(transfer(w,-1,w.factions[0].account,8000,.subsidy))
+    assert(transfer(w,-1,w.factions[2].account,3000,.subsidy))
+    day = day_index(w.minute)
+    loop p in 0..6:
+        market = w.places[p].market.account
+        owner = w.people[w.places[p].market_owner].account
+        draw = min(2000,max(0,w.accounts[market].cents-20000))
+        if draw > 0: assert(transfer(w,market,owner,draw,.wage))
+        if p != 5 and w.accounts[market].cents < 5000 and w.places[p].last_advance_day != day:
+            assert(transfer(w,-1,market,20000,.subsidy))
+            w.places[p].last_advance_day = day
+
+market_minute = (w: mut World):
+    clock = local_minute(w.minute)
+    if w.last_ship_day < 0 or clock == 360: prepare_shipments(w)
+    advance_shipments(w)
+    if clock%60 == 0:
+        hourly_demand(w)
+        spoil_fish(w)
+        update_prices(w)
+    if clock == 0: market_day(w)
+    if clock == 1020: outside_exports(w)
+    if clock == 1320: living_costs(w)

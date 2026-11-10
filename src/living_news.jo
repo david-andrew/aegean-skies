@@ -1,0 +1,281 @@
+use 'living_types.jo'
+use 'living_seed.jo'
+use 'living_text.jo'
+
+news_score = (n: NewsItem, minute: int) -> int:
+    n.severity*n.confidence*max(0,10080-max(0,minute-n.occurred_minute))/10080/1000
+
+news_better = (a: NewsItem, b: NewsItem, minute: int) -> bool:
+    sa = news_score(a,minute); sb = news_score(b,minute)
+    sa > sb or (sa == sb and (a.occurred_minute > b.occurred_minute or (a.occurred_minute == b.occurred_minute and a.event > b.event)))
+
+# Bounded insertion; a retelling cannot change occurrence time or refresh old evidence.
+insert_news = (items: mut NewsItem[], n: NewsItem, minute: int) -> bool:
+    if minute-n.occurred_minute >= 10080 or n.hops > 4 or n.confidence < 300: return false
+    first = true
+    loop i in 0..items.len():
+        if items[i].event != n.event: continue
+        first = false
+        if n.confidence > items[i].confidence or (n.confidence == items[i].confidence and n.hops < items[i].hops):
+            learned = items[i].learned_minute
+            items[i] = n
+            items[i].learned_minute = min(learned,n.learned_minute)
+        else: return false
+        break
+    if first: items.push(n)
+    # Small insertion sort, independent of map insertion order.
+    loop i in 1..items.len():
+        j = i
+        loop j > 0 and news_better(items[j],items[j-1],minute):
+            tmp = items[j-1]; items[j-1] = items[j]; items[j] = tmp
+            j -= 1
+    if items.len() > 12: items.pop()
+    first
+
+regard_delta = (n: NewsItem, place: int, w: World) -> int:
+    base = 0
+    match n.kind:
+        .delivery: base = 30
+        .rescue: base = 100
+        .repair: base = 10
+        .late: base = -20
+        .defaulted: base = -60
+        .theft: base = -100
+        .raid: base = -160
+        .fine: base = -15
+        else: pass
+    if place == 5 and (n.kind == .raid or n.kind == .theft):
+        target = n.reason.counterparty
+        base = if target >= 0 and w.people[target].faction == 3: -200 else: 40
+    numerator = abs(base)*n.confidence*(500+n.severity)
+    magnitude = (numerator+999999)/1000000
+    if base < 0: -magnitude else: magnitude
+
+receive_place = (w: mut World, place: int, n: NewsItem) -> bool:
+    if n.private_fact or n.event < 0 or w.minute-n.occurred_minute >= 10080 or n.hops > 4 or n.confidence < 300: return false
+    first = insert_news(w.places[place].news,n,w.minute)
+    receipt = NewsReceiptKey(0,place,n.event)
+    if receipt in w.receipts: return first
+    actor = n.reason.actor
+    delta = regard_delta(n,place,w)
+    w.receipts[receipt] = NewsReceipt(n.occurred_minute,delta)
+    if actor >= 0:
+        key = ReputationKey(place,.person,actor)
+        w.reputation[key] = clamp(w.reputation.get(key,0)+delta,-1000,1000)
+    if n.actor_faction >= 0:
+        key = ReputationKey(place,.faction,n.actor_faction)
+        w.reputation[key] = clamp(w.reputation.get(key,0)+delta*4/10,-1000,1000)
+    loop f in 0..w.factions.len():
+        if w.factions[f].home != place: continue
+        fr = NewsReceiptKey(1,f,n.event)
+        if not (fr in w.receipts):
+            w.receipts[fr] = NewsReceipt(n.occurred_minute,delta)
+            if actor == w.player: w.factions[f].player_regard = clamp(w.factions[f].player_regard+delta,-1000,1000)
+    first
+
+receive_person = (w: mut World, person: int, n: NewsItem) -> bool:
+    insert_news(w.people[person].news,n,w.minute)
+
+retell = (n: NewsItem, speaker: int, minute: int) -> NewsItem:
+    next = n
+    next.hops += 1; next.confidence = next.confidence*85/100
+    next.source_person = speaker; next.learned_minute = minute
+    next
+
+learn_price = (w: mut World, p: int, belief: PriceBelief):
+    loop i in 0..w.people[p].prices.len():
+        b = w.people[p].prices[i]
+        if b.place != belief.place or b.good != belief.good: continue
+        if belief.observed_minute > b.observed_minute or (belief.observed_minute == b.observed_minute and (belief.confidence > b.confidence or (belief.confidence == b.confidence and belief.source_person < b.source_person))):
+            w.people[p].prices[i] = belief
+        return
+    if w.people[p].prices.len() < 54: w.people[p].prices.push(belief)
+
+observe_prices = (w: mut World, p: int, place: int):
+    loop g in 0..GOOD_COUNT:
+        b = PriceBelief(place=place,good=g,cents=w.places[place].market.price_cents[g],observed_minute=w.minute,learned_minute=w.minute,source_person=p,stock_milli=w.places[place].market.inventory.qty[g],target_milli=w.places[place].market.target[g])
+        learn_price(w,p,b)
+
+arrival_exchange = (w: mut World, person: int, place: int):
+    # Snapshots are bounded (<=12), dropped before returning; never a World copy.
+    carried = w.people[person].news
+    heard = w.places[place].news
+    sent = 0
+    loop n in carried:
+        if sent >= 3: break
+        if n.private_fact: continue
+        received = if n.origin == place and n.hops == 0: n else: retell(n,person,w.minute)
+        receive_place(w,place,received)
+        sent += 1
+    count = 0
+    loop n in heard:
+        if count >= 3: break
+        receive_person(w,person,retell(n,w.places[place].market_owner,w.minute))
+        count += 1
+    observe_prices(w,person,place)
+
+remember = (w: mut World, observer: int, other: int, e: Event):
+    if observer < 0 or other < 0 or observer == other: return
+    seed_relationship(w,observer,other)
+    id = w.relationship_index[RelationshipKey(observer,other)]
+    trust = 0; affinity = 0; grievance = 0
+    match e.kind:
+        .delivery: trust = 40; affinity = 20
+        .late: trust = -30; affinity = -10
+        .theft: trust = -150; affinity = -100
+        .raid: trust = -250; affinity = -250; grievance = 400
+        .rescue: trust = 150; affinity = 150
+        else: pass
+    w.relationships[id].trust = clamp(w.relationships[id].trust+trust,0,1000)
+    w.relationships[id].affinity = clamp(w.relationships[id].affinity+affinity,-1000,1000)
+    w.relationships[id].grievance = clamp(w.relationships[id].grievance+grievance,0,1000)
+    w.relationships[id].last_contact_minute = w.minute
+    w.relationships[id].memories.push(Memory(e.id,e.kind,e.minute,e.severity,e.reason))
+    # Keep the four most severe reasons, tie newest. Serious unpaid reasons retain their value.
+    loop i in 1..w.relationships[id].memories.len():
+        j = i
+        loop j > 0 and w.relationships[id].memories[j].severity > w.relationships[id].memories[j-1].severity:
+            m = w.relationships[id].memories[j-1]
+            w.relationships[id].memories[j-1] = w.relationships[id].memories[j]
+            w.relationships[id].memories[j] = m
+            j -= 1
+    if w.relationships[id].memories.len() > 4: w.relationships[id].memories.pop()
+
+publish_events = (w: mut World):
+    end = w.next_event
+    loop w.next_news_event < end:
+        id = w.next_news_event; w.next_news_event += 1
+        if not (id in w.events): continue
+        e = w.events[id]
+        n = NewsItem(event=id,kind=e.kind,occurred_minute=e.minute,learned_minute=w.minute,origin=e.place,source_person=e.actor,actor_faction=e.actor_faction,private_fact=e.private_fact,confidence=1000,severity=e.severity,reason=e.reason)
+        n.reason.actor = e.actor
+        if e.place >= 0 and not e.private_fact: receive_place(w,e.place,n)
+        loop person in e.witnesses: receive_person(w,person,n)
+        remember(w,e.target,e.actor,e)
+
+hourly_gossip = (w: mut World):
+    loop place in 0..w.places.len():
+        present: int[]
+        loop p in 1..w.people.len():
+            if w.people[p].place == place and w.people[p].trip < 0 and w.people[p].action.purpose != .repair: present.push(p)
+        if present.len() < 2: continue
+        rotation = (w.minute/60)%present.len()
+        loop i in 0..present.len()/2:
+            a = present[(i*2+rotation)%present.len()]
+            b = present[(i*2+1+rotation)%present.len()]
+            left = w.people[a].news; right = w.people[b].news
+            sent = 0
+            loop n in left:
+                if n.private_fact: continue
+                if sent >= 2: break
+                receive_person(w,b,retell(n,a,w.minute)); sent += 1
+            sent = 0
+            loop n in right:
+                if n.private_fact: continue
+                if sent >= 2: break
+                receive_person(w,a,retell(n,b,w.minute)); sent += 1
+            prices = w.people[a].prices
+            loop belief in prices:
+                next = belief; next.source_person = a; next.learned_minute = w.minute; next.confidence = next.confidence*85/100
+                learn_price(w,b,next)
+            prices2 = w.people[b].prices
+            loop belief in prices2:
+                next = belief; next.source_person = b; next.learned_minute = w.minute; next.confidence = next.confidence*85/100
+                learn_price(w,a,next)
+            # Public place can hear its physically present speakers, never remote acquaintances.
+            if left.len() > 0 and not left[0].private_fact: receive_place(w,place,retell(left[0],a,w.minute))
+            if right.len() > 0 and not right[0].private_fact: receive_place(w,place,retell(right[0],b,w.minute))
+            seed_relationship(w,a,b)
+
+news_day = (w: mut World):
+    yesterday = day_index(w.minute)-1
+    loop p in 0..w.places.len():
+        w.places[p].yesterday.clear()
+        loop n in w.places[p].news:
+            if day_index(n.learned_minute) == yesterday and w.places[p].yesterday.len() < 3:
+                w.places[p].yesterday.push(n.reason)
+    keys: ReputationKey[]
+    loop key, _ in w.reputation: keys.push(key)
+    loop key in keys:
+        value = w.reputation[key]
+        decay = if value == 0: 0 else: max(1,abs(value)/100)
+        w.reputation[key] = if value < 0: min(0,value+decay) else: max(0,value-decay)
+    loop id in 0..w.relationships.len():
+        w.relationships[id].grievance = w.relationships[id].grievance*95/100
+        if day_index(w.relationships[id].last_contact_minute) < yesterday and w.relationships[id].grievance <= 250:
+            a = w.relationships[id].affinity
+            w.relationships[id].affinity += if a < 0: max(1,-a/100) else: if a > 0: -max(1,a/100) else: 0
+            t = w.relationships[id].trust-500
+            w.relationships[id].trust += if t < 0: max(1,-t/100) else: if t > 0: -max(1,t/100) else: 0
+    stale: NewsReceiptKey[]
+    loop key, receipt in w.receipts:
+        if w.minute-receipt.occurred_minute >= 11520: stale.push(key)
+    loop key in stale: w.receipts.remove(key)
+
+prune_news = (w: mut World):
+    loop p in 0..w.people.len():
+        live: NewsItem[]
+        loop n in w.people[p].news:
+            if w.minute-n.occurred_minute < 10080: live.push(n)
+        w.people[p].news = live
+    loop p in 0..w.places.len():
+        live: NewsItem[]
+        loop n in w.places[p].news:
+            if w.minute-n.occurred_minute < 10080: live.push(n)
+        w.places[p].news = live
+
+news_minute = (w: mut World):
+    publish_events(w)
+    if local_minute(w.minute) == 0: news_day(w)
+    if local_minute(w.minute)%60 == 0:
+        prune_news(w)
+        hourly_gossip(w)
+
+news_sentence = (w: World, n: NewsItem) -> str:
+    prefix = if n.confidence < 1000: "Heard: " else: ""
+    actor = person_name(w,n.reason.actor)
+    match n.kind:
+        .late: "{prefix}{actor} is late. {say_reason(w,n.reason)}"
+        .delivery: "{prefix}{actor} delivered to {place_name(n.reason.destination)} for {person_name(w,n.reason.beneficiary)}."
+        .raid, .theft: "{prefix}{actor} attacked {person_name(w,n.reason.counterparty)} near {place_name(n.origin)} for cargo."
+        .repair: "{prefix}{actor}'s engine was serviced by {person_name(w,n.reason.beneficiary)}."
+        .defaulted: "{prefix}{actor} defaulted on {f64(n.reason.amount_cents)/100.0:.2} lire owed to {person_name(w,n.reason.beneficiary)}."
+        .shortage: "{prefix}{place_name(n.reason.destination)} needs {w.goods[n.reason.good].key}; {person_name(w,n.reason.beneficiary)} is short."
+        .closure: "{prefix}Storm closure at {place_name(n.origin)}; harbor service has a timed retry."
+        .ditch: "{prefix}{actor}'s aircraft ditched; a harbor rescue is due."
+        .rescue: "{prefix}{actor} was rescued to {place_name(n.reason.destination)}."
+        else: prefix+say_reason(w,n.reason)
+
+news_lines = (w: World, place: int) -> str[]:
+    lines: str[]
+    loop n in w.places[place].news: lines.push(news_sentence(w,n))
+    lines
+
+proximity_speech = (w: World, person: int) -> str:
+    if person < 0 or person >= w.people.len(): return ""
+    loop id in w.people[person].obligations:
+        o = w.obligations[id]
+        if o.job >= 0 and o.job in w.jobs and w.jobs[o.job].state == .claimed and w.minute > o.due_minute: return say_reason(w,w.jobs[o.job].cause)
+    loop id in w.active_jobs:
+        if w.jobs[id].poster == person and w.jobs[id].state == .open: return "{say_reason(w,w.jobs[id].cause)} The reward is funded: {f64(w.jobs[id].reward_cents)/100.0:.2} lire."
+    c = w.people[person].craft
+    if c >= 0 and w.aircraft[c].repair_obligation >= 0: return say_reason(w,w.obligations[w.aircraft[c].repair_obligation].reason)
+    if w.people[person].injured_until > w.minute: return "{w.people[person].name} is recovering until minute {w.people[person].injured_until}; the aircraft still needs repair."
+    loop n in w.people[person].news:
+        if n.severity >= 180 and not n.private_fact: return news_sentence(w,n)
+    if w.people[person].action.reason.actor >= 0: return say_reason(w,w.people[person].action.reason)
+    "{w.people[person].name} is at {place_name(w.people[person].place)}."
+
+bark = (w: mut World, presentation: mut PresentationState, speaker: int, listener: vec3) -> str:
+    if speaker < 0 or speaker >= w.people.len() or w.people[speaker].place < 0 or w.people[speaker].trip >= 0: return ""
+    if length(w.people[speaker].pose.pos-listener) > 12 or w.people[speaker].action.purpose == .repair: return ""
+    place = w.people[speaker].place
+    if w.minute-w.places[place].last_bark_minute < 60: return ""
+    event = if w.people[speaker].news.len() > 0: w.people[speaker].news[0].event else: -1
+    key = BarkKey(speaker,event)
+    if presentation.bark_day.get(key,-1) == day_index(w.minute): return ""
+    line = proximity_speech(w,speaker)
+    if line != "":
+        presentation.bark_day[key] = day_index(w.minute)
+        w.places[place].last_bark_minute = w.minute
+    line

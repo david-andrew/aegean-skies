@@ -1,0 +1,128 @@
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_delivery.jo'
+use 'living_claims.jo'
+use 'living_travel.jo'
+use 'living_events.jo'
+use 'living_content.jo'
+use 'living_text.jo'
+
+# All prerequisites checked before reward/cargo change hands. The poster is physically at source.
+post_job = (w: mut World, poster: int, destination: int, mode: CargoMode, good: int, quantity: int, reward: int, due: int, passenger: int = -1, sealed_grams: int = 5000) -> int:
+    if poster < 0 or poster >= w.people.len() or destination < 0 or destination >= w.places.len(): return -1
+    origin = w.people[poster].place
+    if origin < 0 or destination == origin or quantity <= 0 or reward <= 0 or due <= w.minute: return -1
+    if mode == .commodity and (good < 0 or good >= GOOD_COUNT): return -1
+    if mode == .commodity and w.goods[good].shelf_hours > 0 and due-w.minute > 720: return -1
+    if passenger >= 0:
+        if passenger >= w.people.len() or w.people[passenger].place != origin or w.people[passenger].trip >= 0 or mode != .none: return -1
+        loop job in w.active_jobs:
+            if w.jobs[job].passenger == passenger and not job_terminal(w.jobs[job].state): return -1
+    cost = 0; tax = 0
+    if mode == .commodity:
+        if available(w.places[origin].market.inventory,good) < quantity or (w.goods[good].illegal and origin != 5): return -1
+        cost = quantity*w.places[origin].market.price_cents[good]/1000
+        tax = if origin == 5 or cost == 0: 0 else: max(1,cost*2/100)
+    if w.accounts[w.people[poster].account].cents < reward+cost+tax: return -1
+    id = w.next_job
+    escrow = fund_escrow(w,w.people[poster].account,reward,"job-{id}")
+    assert(escrow >= 0)
+    if cost > 0: assert(transfer(w,w.people[poster].account,w.places[origin].market.account,cost,.trade,id))
+    if tax > 0: assert(transfer(w,w.people[poster].account,w.factions[0].account,tax,.fine,id))
+    if mode == .commodity: assert(reserve(w.places[origin].market.inventory,good,quantity))
+    w.next_job += 1
+    purpose = if passenger >= 0: Purpose.passenger else: Purpose.delivery
+    cause = Reason(purpose=purpose,actor=poster,beneficiary=if passenger >= 0: passenger else: w.places[destination].market_owner,counterparty=passenger,origin=origin,destination=destination,good=good,quantity=quantity,due_minute=due,job=id,amount_cents=reward)
+    w.jobs[id] = Job(id=id,poster=poster,origin=origin,destination=destination,purpose=purpose,cargo_mode=mode,good=good,quantity=quantity,passenger=passenger,created_minute=w.minute,npc_claim_after=w.minute+90,due_minute=due,expire_minute=due+120,reward_cents=reward,escrow_account=escrow,source_inventory_kind=0,source_inventory_id=origin,cause=cause,sealed_grams=if mode == .sealed: sealed_grams else: 0,status_minute=w.minute)
+    w.active_jobs.push(id)
+    id
+
+# Return unused paid inventory to a real owner at the actual origin, not back into market stock.
+return_unloaded_goods = (w: mut World, job: int):
+    if w.jobs[job].loaded or w.jobs[job].cargo_mode != .commodity: return
+    p = w.jobs[job].origin; g = w.jobs[job].good
+    qty = w.jobs[job].quantity-w.jobs[job].lost_quantity
+    qty = min(qty,w.places[p].market.inventory.reserved[g])
+    if qty <= 0: return
+    a = w.next_aftermath; w.next_aftermath += 1
+    w.aftermath[a] = Aftermath(id=a,kind=.crate,event=-1,owner=w.jobs[job].poster,place=p,pos=w.harbors[p].center,reason=w.jobs[job].cause,created_minute=w.minute,expires_minute=-1)
+    w.places[p].market.inventory.qty[g] -= qty
+    w.places[p].market.inventory.reserved[g] -= qty
+    w.aftermath[a].inventory.qty[g] += qty
+
+expire_job = (w: mut World, id: int, cancel: bool = false) -> bool:
+    if not (id in w.jobs) or job_terminal(w.jobs[id].state): return false
+    if not cancel and w.minute < w.jobs[id].expire_minute: return false
+    carrier = w.jobs[id].carrier
+    return_unloaded_goods(w,id)
+    if carrier >= 0:
+        c = w.people[carrier].craft
+        if c >= 0:
+            # Surviving cargo stays aboard, owner/returnability remains in the terminal Job.
+            if w.jobs[id].loaded and w.jobs[id].cargo_mode == .commodity:
+                g = w.jobs[id].good
+                qty = w.jobs[id].loaded_quantity-w.jobs[id].delivered_quantity-w.jobs[id].lost_quantity
+                # Keep the earmark until the poster recovers the cargo. It cannot become pilot wealth.
+                assert(w.aircraft[c].cargo.reserved[g] >= qty)
+            else if not w.jobs[id].loaded or w.jobs[id].purpose == .passenger: w.aircraft[c].job_manifests.remove(id)
+        o = w.jobs[id].obligation
+        if o >= 0: w.obligations[o].state = .breached
+        if w.people[carrier].trip < 0 and w.people[carrier].action.reason.job == id:
+            w.people[carrier].action.activity = .wait; w.people[carrier].next_decision_minute = w.minute
+        if w.jobs[id].loaded and w.jobs[id].purpose == .passenger and c >= 0 and w.aircraft[c].place >= 0:
+            passenger = w.jobs[id].passenger
+            w.aircraft[c].passengers.remove(passenger)
+            w.people[passenger].trip = -1; w.people[passenger].place = w.aircraft[c].place
+            w.people[passenger].state = .idle
+    refund_job(w,id)
+    w.jobs[id].state = if cancel: JobState.cancelled else: if carrier >= 0: JobState.failed else: JobState.expired
+    w.jobs[id].status_minute = w.minute
+    true
+
+jobs_minute = (w: mut World):
+    loop id in w.active_jobs:
+        if job_terminal(w.jobs[id].state): continue
+        if w.minute > w.jobs[id].due_minute and w.jobs[id].late_event < 0:
+            o = w.jobs[id].obligation
+            if o >= 0 and w.obligations[o].late_event >= 0: w.jobs[id].late_event = w.obligations[o].late_event
+            else:
+                w.jobs[id].late_event = emit_event(w,.late,w.jobs[id].origin,if w.jobs[id].carrier >= 0: w.jobs[id].carrier else: w.jobs[id].poster,w.jobs[id].poster,w.jobs[id].cause)
+        if w.minute >= w.jobs[id].expire_minute: expire_job(w,id)
+
+# Heard shortage facts are requests; no remote live stock reads generate a posting.
+maintain_supply_jobs = (w: mut World):
+    if local_minute(w.minute)%60 != 0: return
+    loop origin in 0..5:
+        poster = w.places[origin].market_owner
+        if w.people[poster].place != origin: continue
+        made = false
+        loop n in w.places[origin].news:
+            if made: break
+            r = n.reason
+            if n.kind != .shortage or r.good < 0 or r.destination == origin or w.minute-n.occurred_minute > 720: continue
+            g = r.good; destination = r.destination
+            duplicate = false
+            loop id in w.active_jobs:
+                if w.jobs[id].poster == poster and w.jobs[id].destination == destination and w.jobs[id].good == g and (not job_terminal(w.jobs[id].state) or w.minute-w.jobs[id].status_minute < 720): duplicate = true
+            if duplicate: continue
+            surplus = min(5000,max(0,available(w.places[origin].market.inventory,g)-w.places[origin].market.target[g]/2))
+            if surplus < 2000: continue
+            route = route_geometry(w,origin,destination,w.harbors[origin].docks[0])
+            duration = (route_duration(route,60000)+119)/120
+            reward = max(800,8*duration)
+            # Quote policy includes enough pay to cover known local fuel and a positive wage.
+            reward = max(reward,route_fuel(route,.gull)*w.places[origin].market.price_cents[4]/10000+800)
+            id = post_job(w,poster,destination,.commodity,g,surplus,reward,w.minute+max(480,duration+180))
+            if id >= 0: made = true
+
+board_lines = (w: World, place: int) -> str[]:
+    result: str[]
+    loop id in w.active_jobs:
+        j = w.jobs[id]
+        if j.origin != place: continue
+        if job_terminal(j.state) and w.minute-j.status_minute > 720: continue
+        status = if j.state == .claimed: "taken by {person_name(w,j.carrier)}" else: "{j.state}"
+        item = if j.purpose == .passenger: "passenger {person_name(w,j.passenger)}" else: if j.cargo_mode == .sealed: "sealed dispatch" else: "{f64(j.quantity)/1000.0:.1} {w.goods[j.good].key}"
+        result.push("Job{id}: {person_name(w,j.poster)} pays {f64(j.reward_cents)/100.0:.2} lire for {item} to {place_name(j.destination)}; due {j.due_minute}, NPC tender opens {j.npc_claim_after}; {status}.")
+    loop r in w.places[place].yesterday: result.push("Yesterday: {say_reason(w,r)}")
+    result

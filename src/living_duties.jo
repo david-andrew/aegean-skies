@@ -1,0 +1,212 @@
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_events.jo'
+use 'living_seed.jo'
+use 'living_boats.jo'
+
+obligation_live = (state: ObligationState) -> bool: state == .open or state == .blocked or state == .breached
+
+pay_obligation = (w: mut World, id: int, max_cents: int) -> int:
+    if not (id in w.obligations) or not obligation_live(w.obligations[id].state): return 0
+    debtor = w.obligations[id].debtor
+    if w.obligations[id].kind != .debt and w.obligations[id].kind != .rent: return 0
+    amount = min(max(0,max_cents),min(w.obligations[id].amount_cents,w.accounts[w.people[debtor].account].cents))
+    if amount <= 0: return 0
+    if not transfer(w,w.people[debtor].account,w.obligations[id].creditor_account,amount,if w.obligations[id].kind == .debt: MoneyKind.debt else: MoneyKind.rent,id): return 0
+    if w.obligations[id].kind == .debt:
+        interest = min(amount,w.obligations[id].interest_cents)
+        w.obligations[id].interest_cents -= interest
+        w.obligations[id].principal_cents -= amount-interest
+    w.obligations[id].amount_cents -= amount
+    w.obligations[id].paid_cents += amount
+    w.obligations[id].next_retry_minute = w.minute + 60
+    w.obligations[id].blocked_code = ""
+    if w.obligations[id].amount_cents == 0: w.obligations[id].state = .fulfilled
+    amount
+
+block_obligation = (w: mut World, id: int, code: str):
+    w.obligations[id].state = .blocked
+    w.obligations[id].blocked_code = code
+    w.obligations[id].next_retry_minute = w.minute+60
+
+check_deadlines = (w: mut World):
+    loop id in w.open_obligations:
+        if not obligation_live(w.obligations[id].state): continue
+        kind = w.obligations[id].kind
+        if kind == .shift: continue
+        if w.minute > w.obligations[id].due_minute and w.obligations[id].late_event < 0:
+            # An unclaimed supply need isn't a courier promise or personal fault.
+            if kind != .supply:
+                event = emit_event(w,.late,w.obligations[id].place,w.obligations[id].debtor,w.obligations[id].creditor,w.obligations[id].reason,0,kind == .debt)
+                w.obligations[id].late_event = event
+        if kind == .debt and w.minute >= w.obligations[id].due_minute + 7*1440:
+            w.obligations[id].state = .defaulted
+            w.obligations[id].default_event = emit_event(w,.defaulted,w.obligations[id].place,w.obligations[id].debtor,w.obligations[id].creditor,w.obligations[id].reason,w.obligations[id].amount_cents)
+        else if kind == .rent and w.minute >= w.obligations[id].deadline_minute + 7*1440:
+            w.obligations[id].state = .defaulted
+            w.obligations[id].default_event = emit_event(w,.defaulted,w.obligations[id].place,w.obligations[id].debtor,w.obligations[id].creditor,w.obligations[id].reason,w.obligations[id].amount_cents)
+        else if w.obligations[id].state == .blocked and w.minute >= w.obligations[id].next_retry_minute:
+            # Wake the decision maker; never leave a retry date stranded in the past.
+            p = w.obligations[id].debtor
+            w.people[p].next_decision_minute = min(w.people[p].next_decision_minute,w.minute)
+            w.obligations[id].next_retry_minute = w.minute+60
+
+accrue_interest = (w: mut World):
+    day = day_index(w.minute)
+    loop id in w.open_obligations:
+        if w.obligations[id].kind != .debt or not w.obligations[id].interest_enabled or not obligation_live(w.obligations[id].state): continue
+        if w.obligations[id].last_interest_day >= day: continue
+        days = day-w.obligations[id].last_interest_day
+        raw = w.obligations[id].principal_cents * days + w.obligations[id].interest_remainder
+        interest = min(raw/100,max(0,w.obligations[id].original_cents/2-w.obligations[id].interest_accrued_total))
+        w.obligations[id].interest_remainder = raw%100
+        w.obligations[id].last_interest_day = day
+        w.obligations[id].interest_accrued_total += interest
+        w.obligations[id].interest_cents += interest
+        w.obligations[id].amount_cents += interest
+
+# Hourly labor has one named producer. Background rates never duplicate this output.
+work_role = (occupation: Occupation) -> bool:
+    occupation == .fisher or occupation == .oil_presser or occupation == .miller or occupation == .clerk or occupation == .patrol or occupation == .telegraphist or occupation == .teacher or occupation == .nurse or occupation == .priest
+
+work_window = (occupation: Occupation, minute_of_day: int) -> bool:
+    match occupation:
+        .fisher: minute_of_day >= 360 and minute_of_day < 600
+        .oil_presser, .miller: minute_of_day >= 480 and minute_of_day < 660
+        .clerk, .patrol, .telegraphist: (minute_of_day >= 480 and minute_of_day < 600) or (minute_of_day >= 840 and minute_of_day < 960)
+        .teacher, .nurse, .priest: minute_of_day >= 540 and minute_of_day < 720
+        else: false
+
+labor_minute = (w: mut World, person: int):
+    if w.people[person].local_work_escrow >= 0: return
+    occ = w.people[person].occupation
+    if not work_role(occ): return
+    home = w.people[person].home
+    at_workboat = occ == .fisher and w.people[person].trip >= 0 and w.trips[w.people[person].trip].reason.purpose == .fishing
+    if (w.people[person].place != home and not at_workboat) or w.people[person].injured_until > w.minute: return
+    # End-exclusive work intervals are credited at the following boundary.
+    if not work_window(occ,local_minute(w.minute-1)): return
+    if w.people[person].vice_active and w.people[person].vice == .refuse_flight: return
+    if occ == .fisher and w.places[home].harbor_closed: return
+    if w.people[person].routine_day != day_index(w.minute-1):
+        w.people[person].routine_day = day_index(w.minute-1)
+        loop i in 0..4: w.people[person].routine_minutes[i] = 0
+    if occ == .fisher and w.people[person].trip < 0: begin_fishing(w,person)
+    w.people[person].routine_minutes[0] += 1
+    w.people[person].action = Action(activity=.work,purpose=if occ == .fisher: Purpose.fishing else: Purpose.delivery,reason=Reason(purpose=if occ == .fisher: Purpose.fishing else: Purpose.delivery,actor=person,origin=home,destination=home),end_minute=w.minute+1,progress_minutes=w.people[person].routine_minutes[0])
+    producing = occ == .fisher or occ == .oil_presser or occ == .miller
+    if producing:
+        g = if occ == .fisher: 0 else: if occ == .oil_presser: 2 else: 3
+        rate = if occ == .fisher: 4000 else: if occ == .oil_presser: 3000 else: 6000
+        factor = if occ == .fisher: 600 + draw1000000(w.seed,20,person,day_index(w.minute-1)) * 800 / 1000000 else: 1000
+        # Per-minute fractional labor is retained; completed production is sold hourly.
+        raw = rate * factor + w.people[person].labor_remainder
+        qty = raw / 60000
+        w.people[person].labor_remainder = raw % 60000
+        w.people[person].pocket.qty[g] += qty
+        record_creation(w,g,qty)
+        if w.people[person].routine_minutes[0]%60 == 0 or not work_window(occ,local_minute(w.minute)):
+            quantity = available(w.people[person].pocket,g)
+            # Market may be out of cash; the named producer retains unsold goods.
+            if quantity > 0:
+                if w.people[person].place == home: trade(w,person,home,g,min(10000,quantity),false)
+                emit_event(w,.produced,home,person,-1,Reason(purpose=if occ == .fisher: Purpose.fishing else: Purpose.trade,actor=person,origin=home,destination=home,good=g,quantity=quantity))
+    else:
+        rate = if occ == .teacher or occ == .nurse or occ == .priest: 900 else: 1200
+        minutes = if rate == 900: 180 else: 240
+        faction = if occ == .teacher or occ == .priest: 2 else: 0
+        raw = rate + w.people[person].wage_remainder
+        cents = raw / minutes
+        w.people[person].wage_remainder = raw % minutes
+        if cents > 0: transfer(w,w.factions[faction].account,w.people[person].account,cents,.wage)
+
+start_repair = (w: mut World, obligation: int) -> bool:
+    if not (obligation in w.obligations) or not obligation_live(w.obligations[obligation].state): return false
+    if w.obligations[obligation].repair_started_minute >= 0: return false
+    c = w.obligations[obligation].craft; owner = w.obligations[obligation].debtor
+    if c < 0 or w.aircraft[c].trip >= 0 or w.people[owner].place < 0: return false
+    place = w.aircraft[c].place
+    if place != w.people[owner].place or not w.places[place].has_workshop: return false
+    if w.aircraft[c].repair_obligation >= 0 and w.aircraft[c].repair_obligation != obligation: return false
+    mechanic = -1
+    loop p in 0..w.people.len():
+        if w.people[p].occupation == .mechanic and w.people[p].place == place and w.people[p].trip < 0 and w.people[p].injured_until <= w.minute:
+            free = true
+            loop o in w.open_obligations:
+                if o != obligation and w.obligations[o].mechanic == p and w.obligations[o].repair_started_minute >= 0: free = false
+            if free: mechanic = p; break
+    if mechanic < 0: block_obligation(w,obligation,"mechanic absent; retry in 60 minutes"); return false
+    points = max(0,w.obligations[obligation].quantity)
+    parts = points * 500 / 200
+    labor = points * 800 / 200
+    cost = parts*w.places[place].market.price_cents[5]/1000
+    if points == 0 or available(w.places[place].market.inventory,5) < parts or w.accounts[w.people[owner].account].cents < cost+labor:
+        block_obligation(w,obligation,"parts or cash unavailable; local earnings needed"); return false
+    escrow = fund_escrow(w,w.people[owner].account,cost+labor,"repair-{obligation}")
+    if escrow < 0: return false
+    assert(reserve(w.places[place].market.inventory,5,parts))
+    w.obligations[obligation].labor_escrow = escrow
+    w.obligations[obligation].reserved_parts = parts
+    w.obligations[obligation].amount_cents = cost+labor
+    w.obligations[obligation].repair_started_minute = w.minute
+    w.obligations[obligation].mechanic = mechanic
+    w.obligations[obligation].work_minutes = 0
+    w.obligations[obligation].reserved_until_minute = w.minute+120
+    w.obligations[obligation].state = .open
+    w.aircraft[c].repair_obligation = obligation; w.aircraft[c].state = .workshop
+    true
+
+cancel_repair = (w: mut World, id: int):
+    c = w.obligations[id].craft
+    if c < 0 or w.obligations[id].repair_started_minute < 0: return
+    place = w.aircraft[c].place
+    parts = w.obligations[id].reserved_parts
+    if parts > 0: assert(release(w.places[place].market.inventory,5,parts))
+    escrow = w.obligations[id].labor_escrow
+    if escrow >= 0 and w.accounts[escrow].cents > 0:
+        assert(transfer(w,escrow,w.people[w.obligations[id].debtor].account,w.accounts[escrow].cents,.refund,id))
+    w.obligations[id].reserved_parts = 0; w.obligations[id].repair_started_minute = -1; w.obligations[id].mechanic = -1
+    w.aircraft[c].repair_obligation = -1; w.aircraft[c].state = .moored
+    block_obligation(w,id,"reservation expired without mechanic progress")
+
+advance_repairs = (w: mut World):
+    loop id in w.open_obligations:
+        if w.obligations[id].kind != .repair or w.obligations[id].repair_started_minute < 0: continue
+        c = w.obligations[id].craft; p = w.obligations[id].mechanic; place = w.aircraft[c].place
+        if w.people[p].place != place or w.people[p].injured_until > w.minute:
+            if w.minute >= w.obligations[id].reserved_until_minute: cancel_repair(w,id)
+            continue
+        w.obligations[id].work_minutes += 1
+        w.obligations[id].reserved_until_minute = w.minute+120
+        w.people[p].action = Action(activity=.work,purpose=.repair,reason=w.obligations[id].reason,end_minute=w.minute+1)
+        required = (w.obligations[id].quantity*60+199)/200
+        if w.obligations[id].work_minutes < required: continue
+        parts = w.obligations[id].reserved_parts
+        labor = w.obligations[id].quantity*800/200
+        escrow = w.obligations[id].labor_escrow
+        cost = w.obligations[id].amount_cents-labor
+        w.places[place].market.inventory.reserved[5] -= parts
+        w.places[place].market.inventory.qty[5] -= parts; record_consumption(w,5,parts)
+        if cost > 0: assert(transfer(w,escrow,w.places[place].market.account,cost,.repair,id))
+        if labor > 0: assert(transfer(w,escrow,w.people[p].account,labor,.repair,id))
+        w.aircraft[c].engine = min(1000,w.aircraft[c].engine+w.obligations[id].quantity)
+        w.aircraft[c].state = .moored; w.aircraft[c].repair_obligation = -1
+        w.obligations[id].state = .fulfilled; w.obligations[id].repair_started_minute = -1; w.obligations[id].reserved_parts = 0
+        emit_event(w,.repair,place,w.obligations[id].debtor,p,w.obligations[id].reason,w.obligations[id].amount_cents)
+
+update_people = (w: mut World):
+    loop p in 1..w.people.len():
+        if w.people[p].state == .departed: continue
+        resting = w.people[p].action.activity == .rest
+        raw = w.people[p].fatigue_remainder + (if resting: -120 else: if w.people[p].trip >= 0 or w.people[p].action.purpose == .repair: 40 else: 20)
+        w.people[p].fatigue = clamp(w.people[p].fatigue+raw/60,0,1000)
+        w.people[p].fatigue_remainder = raw%60
+        company = false
+        loop q in 1..w.people.len():
+            if p != q and w.people[p].place >= 0 and w.people[p].place == w.people[q].place and length(w.people[p].pose.pos-w.people[q].pose.pos) <= 20: company = true
+        if not company: w.people[p].alone_minutes += 1
+        if w.people[p].action.activity == .socialize and company:
+            w.people[p].action.progress_minutes += 1
+            if w.people[p].action.progress_minutes >= 30: w.people[p].alone_minutes = 0
+        if w.people[p].state == .injured and w.minute >= w.people[p].injured_until:
+            w.people[p].state = .idle; w.people[p].next_decision_minute = w.minute

@@ -1,0 +1,169 @@
+use 'living_types.jo'
+use 'living_conditions.jo'
+use 'living_money.jo'
+use 'living_events.jo'
+use 'living_travel.jo'
+use 'living_seed.jo'
+
+schedule_weather = (w: mut World):
+    day = day_index(w.minute)
+    if w.weather_day == day: return
+    w.weather_day = day
+    loop slot in 0..2:
+        id = w.next_weather; w.next_weather += 1
+        birth = day*1440-570+(if slot == 0: 420 else: 840)+draw1000000(w.seed,40,day,slot,0)*241/1000000
+        if day == 0: birth = max(180,birth)
+        edge = draw1000000(w.seed,40,day,slot,1)%4
+        along = f32(draw1000000(w.seed,40,day,slot,2)*16000/1000000-8000)
+        center = if edge == 0: vec2(-9000,along) else: if edge == 1: vec2(9000,along) else: if edge == 2: vec2(along,-9000) else: vec2(along,9000)
+        drift = if edge == 0: vec2(12000,0) else: if edge == 1: vec2(-12000,0) else: if edge == 2: vec2(0,12000) else: vec2(0,-12000)
+        storm = draw1000000(w.seed,40,day,slot,3) < 350000
+        severity = if storm: 850 else: 450+draw1000000(w.seed,40,day,slot,4)*251/1000000
+        w.weather.push(Weather(id=id,kind=if storm: WeatherKind.storm else: WeatherKind.squall,center=center,velocity_milli_m_per_minute=drift,radius_m=1800,severity=severity,wind_milli_m_per_sec=drift,born_minute=birth,expires_minute=birth+180))
+
+weather_minute = (w: mut World):
+    schedule_weather(w)
+    live: Weather[]
+    loop cell in w.weather:
+        if w.minute >= cell.expires_minute: continue
+        next = cell
+        if w.minute > cell.born_minute: next.center += cell.velocity_milli_m_per_minute/1000.0
+        live.push(next)
+    w.weather = live
+    loop p in 0..w.places.len():
+        severity = weather_severity(w,w.harbors[p].center)
+        if severity >= 800: w.places[p].storm_minutes += 1
+        else: w.places[p].storm_minutes = 0
+        if not w.places[p].harbor_closed and w.places[p].storm_minutes >= 3:
+            w.places[p].harbor_closed = true; w.places[p].reopen_minutes = 0
+            emit_event(w,.closure,p,-1,-1,Reason(purpose=.rescue,destination=p))
+        if w.places[p].harbor_closed:
+            if severity < 650: w.places[p].reopen_minutes += 1
+            else: w.places[p].reopen_minutes = 0
+            if w.places[p].reopen_minutes >= 30:
+                w.places[p].harbor_closed = false; w.places[p].reopen_minutes = 0
+
+nearest_harbor = (w: World, pos: vec3, open_only: bool = false) -> int:
+    best = -1; distance = 1e30
+    loop p in 0..w.harbors.len():
+        if open_only and w.places[p].harbor_closed: continue
+        d = f64(length(w.harbors[p].safe_water-pos))
+        if d < distance: best = p; distance = d
+    best
+
+# One ditch identity and one salvage location, irrespective of later materialization.
+ditch = (w: mut World, craft: int, reason: Reason) -> int:
+    if craft < 0 or craft >= w.aircraft.len(): return -1
+    loop id, a in w.aftermath:
+        if a.craft == craft and a.kind == .beach_wreck: return id
+    p = w.aircraft[craft].operator
+    if p < 0: p = w.aircraft[craft].owner
+    place = nearest_harbor(w,w.aircraft[craft].pose.pos)
+    anchor = w.harbors[place].safe_water
+    event = emit_event(w,.ditch,-1,p,-1,reason,0,false,anchor)
+    id = w.next_aftermath; w.next_aftermath += 1
+    w.aftermath[id] = Aftermath(id=id,kind=.beach_wreck,event=event,owner=w.aircraft[craft].owner,craft=craft,place=place,pos=anchor,inventory=w.aircraft[craft].cargo,reason=reason,created_minute=w.minute,expires_minute=-1)
+    w.aircraft[craft].cargo = Inventory()
+    loop job in w.aircraft[craft].job_manifests:
+        if w.jobs[job].state == .claimed:
+            w.jobs[job].lost_quantity += w.jobs[job].loaded_quantity-w.jobs[job].delivered_quantity-w.jobs[job].lost_quantity
+    t = w.aircraft[craft].trip
+    if t >= 0: w.trips[t].state = .failed; w.trips[t].terminal_minute = w.minute
+    w.aircraft[craft].trip = -1; w.aircraft[craft].place = -1; w.aircraft[craft].dock = -1; w.aircraft[craft].state = .ditched
+    w.aircraft[craft].pose.pos = anchor; w.aircraft[craft].pose.vel = vec3(0,0,0); w.aircraft[craft].revision += 1
+    injured = w.minute+1440*(1+draw1000000(w.seed,70,craft,w.minute)%3)
+    w.people[p].trip = -1; w.people[p].place = -1; w.people[p].state = .injured; w.people[p].injured_until = injured; w.people[p].pose.pos = anchor
+    w.people[p].action = Action(activity=.rest,purpose=.rescue,reason=reason,end_minute=w.minute+90,retry_minute=w.minute+90,failure_code="injured; harbor rescue dispatched")
+    w.rescues.push(RescueTask(person=p,craft=craft,aftermath=id,place=place,dispatch_minute=w.minute+90))
+    id
+
+divert_trip = (w: mut World, trip: int, destination: int) -> bool:
+    c = w.trips[trip].craft
+    if c < 0 or w.trips[trip].diversion_count > 0: return false
+    b = w.harbors[destination]
+    route = [w.aircraft[c].pose.pos,b.center+b.out*1500.0+vec3(0,500,0),b.center+b.out*250.0+vec3(0,150,0),b.buoy]
+    # Conservative direct remainder; original cruise altitude already clears the terrain.
+    need = route_fuel(route,w.aircraft[c].kind)
+    if w.aircraft[c].fuel_ml < need+5000: return false
+    w.trips[trip].destination = destination; w.trips[trip].route = route
+    w.trips[trip].segment = 0; w.trips[trip].segment_mm = 0; w.trips[trip].segment_elapsed_ticks = 0
+    w.trips[trip].last_tick = w.tick; w.trips[trip].diversion_count += 1; w.trips[trip].state = .diverted
+    configure_trip_timing(w,trip,false)
+    emit_event(w,.late,-1,w.trips[trip].actor,w.trips[trip].reason.beneficiary,w.trips[trip].reason,0,false,w.aircraft[c].pose.pos)
+    true
+
+flight_hazards = (w: mut World):
+    loop id in w.active_trips:
+        c = w.trips[id].craft
+        if c < 0 or w.aircraft[c].move_owner == .scene or w.trips[id].state == .arrived: continue
+        if w.aircraft[c].hull <= 0 or w.aircraft[c].fuel_ml <= 0 or w.aircraft[c].state == .ditched:
+            ditch(w,c,w.trips[id].reason); continue
+        if w.trips[id].incident_at_mm >= 0 and not w.trips[id].incident_resolved and w.trips[id].traveled_mm >= w.trips[id].incident_at_mm:
+            w.trips[id].incident_resolved = true
+            w.aircraft[c].engine = min(w.aircraft[c].engine,300)
+            ditch(w,c,w.trips[id].reason); continue
+        severity = weather_severity(w,w.aircraft[c].pose.pos)
+        if severity > pilot_nerve(w,w.trips[id].actor,c): w.trips[id].bad_weather_minutes += 1
+        else: w.trips[id].bad_weather_minutes = 0
+        if w.trips[id].bad_weather_minutes >= 3:
+            safe = nearest_harbor(w,w.aircraft[c].pose.pos,true)
+            if safe >= 0 and w.trips[id].diversion_count == 0:
+                if not divert_trip(w,id,safe): ditch(w,c,w.trips[id].reason)
+            else if safe < 0: ditch(w,c,w.trips[id].reason)
+
+rescue_minute = (w: mut World):
+    if w.rescue_day != day_index(w.minute):
+        w.rescue_day = day_index(w.minute)
+        loop p in 0..6: w.rescue_spent[p] = 0
+    loop i in 0..w.rescues.len():
+        if w.rescues[i].state == 2 or w.minute < w.rescues[i].dispatch_minute: continue
+        p = w.rescues[i].person; place = w.rescues[i].place
+        if w.rescues[i].state == 0:
+            start = w.harbors[place].buoy; pickup = w.aftermath[w.rescues[i].aftermath].pos
+            trip = w.next_trip; w.next_trip += 1
+            w.trips[trip] = Trip(id=trip,actor=p,mode=.boat,state=.active,origin=place,destination=place,reason=Reason(purpose=.rescue,actor=p,destination=place),route=[start,pickup,start],cruise_mm_per_sec=8000,departed_tick=w.tick,last_tick=w.tick,eta_tick=w.tick)
+            configure_trip_timing(w,trip,false)
+            # Rescue boat has no aircraft landing phase; distance alone sets both legs.
+            loop s in 0..2:
+                w.trips[trip].segment_ticks[s] = max(1,int(ceil(f64(length(w.trips[trip].route[s+1]-w.trips[trip].route[s]))*60.0/8.0)))
+            w.trips[trip].eta_tick = w.tick+w.trips[trip].segment_ticks[0]+w.trips[trip].segment_ticks[1]
+            w.rescues[i].trip = trip; w.rescues[i].state = 1
+            w.active_trips.push(trip)
+        trip = w.rescues[i].trip
+        elapsed = w.tick-w.trips[trip].departed_tick
+        outward = w.trips[trip].segment_ticks[0]; inward = w.trips[trip].segment_ticks[1]
+        if elapsed >= outward:
+            w.people[p].trip = trip
+            alpha = clamp(f64(elapsed-outward)/f64(inward),0.0,1.0)
+            w.people[p].pose.pos = lerp(w.trips[trip].route[1],w.trips[trip].route[2],f32(alpha))
+        if w.tick < w.trips[trip].eta_tick: continue
+        w.trips[trip].state = .arrived; w.trips[trip].terminal_minute = w.minute
+        w.people[p].place = place; w.people[p].trip = -1; w.people[p].state = .injured
+        w.people[p].pose.pos = w.harbors[place].center+vec3(0,1.2,0)
+        if not (p in w.places[place].residents): w.places[place].residents.push(p)
+        if not w.rescues[i].billed:
+            service = new_account(w,"rescue-{trip}")
+            if w.rescue_spent[place] < 2000 and w.accounts[w.factions[0].account].cents >= 2000:
+                assert(transfer(w,w.factions[0].account,service,2000,.repair,trip))
+                w.rescue_spent[place] += 2000
+            else:
+                assert(transfer(w,-1,service,2000,.subsidy,trip)); w.emergency_subsidies += 1
+            obligation = seed_obligation(w,"rescue-{trip}",p,-1,.debt,w.minute+1440,w.minute+2880,2000,place)
+            w.obligations[obligation].interest_enabled = false
+            w.rescues[i].billed = true
+        w.rescues[i].state = 2
+        emit_event(w,.rescue,place,p,-1,w.trips[trip].reason)
+
+recovery_minute = (w: mut World):
+    # Failed trips may have been removed from active list by the movement pass.
+    loop c in 0..w.aircraft.len():
+        if w.aircraft[c].state == .ditched:
+            t = w.aircraft[c].trip
+            r = if t >= 0: w.trips[t].reason else: Reason(purpose=.rescue,actor=w.aircraft[c].owner)
+            ditch(w,c,r)
+    rescue_minute(w)
+    loop id, a in w.aftermath:
+        if a.kind == .crate and a.expires_minute >= 0 and w.minute >= a.expires_minute and not (id in w.lost_property):
+            w.lost_property[id] = a.inventory
+            w.aftermath[id].inventory = Inventory()
+            w.aftermath[id].expires_minute = -1
