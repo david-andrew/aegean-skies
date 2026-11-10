@@ -26,6 +26,7 @@ use 'src/flight.jo'
 use 'src/pilot.jo'
 use 'src/traffic.jo'
 use 'src/wake.jo'
+use 'src/shadow.jo'
 
 window("Aegean Skies", 1280, 720)
 init_clouds()
@@ -35,6 +36,7 @@ init_objects()
 init_sea()
 init_grass()
 init_wake()
+init_shadow()
 
 t0 = time()
 if not load_land(embed("assets/terrain.bin")): print("assets/terrain.bin was made for other islands: run `sloppy --release tools/bake.jo` (working the land out as it is needed, slowly)")
@@ -92,6 +94,7 @@ loop k in 0..cast.len():
     if dock < towns[town].docks.len():
         traffic.push(make_traffic(nm, kind, model, craft_models[model].contacts, towns, town, dock, k * 13 + 5))
 spray_ps = Particles3D(gravity = vec3(0, -9.8, 0), drag = 1.5)
+vapor_ps = Particles3D(gravity = vec3(0, 0, 0), drag = 3.0)
 wakes: WakeTrail[] = [loop k in 0..traffic.len() + 1: WakeTrail()]
 
 # on the main quay, beside one's own aircraft
@@ -133,6 +136,17 @@ if let v = env("AEGEAN_AT"):
     follow.yaw = to_float(w[2]) ?? 0.0
 if env("AEGEAN_ABOARD") != none: me.mode = .aboard
 trace = env("AEGEAN_TRACE") != none
+# AEGEAN_FLYING="altitude speed" starts in the air off the home harbor, heading out to sea
+if let v = env("AEGEAN_FLYING"):
+    w = split(v, " ")
+    alt = to_float(w[0]) ?? 60.0
+    spd = to_float(w[1]) ?? 55.0
+    h = along_quay
+    p0 = home.docks[0] + vec3(home.out.x, 0, home.out.y) * 500.0
+    pc.state = CraftState(position = vec3(p0.x, f32(alt), p0.z), velocity = heading_vector(h) * f32(spd), orientation = quat_euler(0, -h, 0), fuel = pc.spec.fuel_capacity, water_age = 1.0, throttle = 0.85)
+    pc.throttle = 0.85
+    pc.aim_heading = h
+    me.mode = .aboard
 if let v = env("AEGEAN_WIND"):
     w = split(v, " ")
     wind_now.speed = to_float(w[0]) ?? 6.0
@@ -257,6 +271,7 @@ update = (dt: f64):
                 print("t {t:.0} spd {length(st.velocity):.1} alt {st.position.y:.1} pitch {asin(f64(f.y)) * 57.3:.0} aoa {st.aoa * 57.3:.0} thr {st.throttle:.2} water {st.on_water} stall {st.stalled} crash {st.crashed} cap {st.capsized} hull {st.hull_damage:.2}")
             chase(pc, dt)
             spray(pc, craft_models, spray_ps)
+            vapor(pc, craft_models, vapor_ps, hour)
             if key_pressed(.f):
                 if let d = mooring_spot(pc, towns):
                     moor(pc.state, vec3(d.x, f32(pc.spec.float_height), d.z), heading(pc.state))
@@ -276,6 +291,7 @@ update = (dt: f64):
     if trace and floor(t / 10.0) != floor((t - dt) / 10.0):
         loop tr in traffic: print("  {tr.name}: {if tr.flying: str(tr.plan.phase) else: "moored"} -> {towns[tr.town].name} at {tr.state.position.x:.0} {tr.state.position.y:.0} {tr.state.position.z:.0}")
     spray_ps.update(dt)
+    vapor_ps.update(dt)
     flying = me.mode == .aboard
     where = if flying: pc.state.position else: me.pos
     shore = abs(f64(surface_height(f64(where.x), f64(where.z)))) * 8.0 + (if flying: f64(where.y) * 2.0 else: 0.0)
@@ -311,12 +327,28 @@ draw_world = (L: Light):
         at = craft_transform(pc)
         draw(obj_sh, pm.body, obj_params(L, t, at))
         draw(obj_sh, pm.prop, obj_params(L, t, at * translation(pm.prop_at) * rotation_z(pc.prop_angle)))
-        if me.mode == .aboard: draw_figure(me_fig, transform_point(at, pm.cockpit - vec3(0, 1.55, 0)), heading_to_turn(heading(pc.state)), 0.0, 0.0, L, t)
+        if me.mode == .aboard: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
     spray_ps.draw(false)
+    vapor_ps.draw(false)
     draw_custom((): draw_clouds(puff_mesh, puffs, L, wind_now.drift * 0.35, t))
-    draw_custom((): draw_sea(sea_mesh, depth_tex, L, t, wind_now), transparent = true)
+    draw_custom((): draw_sea(sea_mesh, depth_tex, L, t, wind_now, if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0)), transparent = true)
+    draw_custom(():
+        # shadows of the aircraft near the camera
+        cam = scene_camera()
+        one = (st: CraftState, cm: CraftModel):
+            if length(st.position - cam) > 1500.0: return
+            sd = normalize(L.sun_dir)
+            g0 = max(surface_height(f64(st.position.x), f64(st.position.z)), 0.0)
+            drop = (f64(st.position.y) - g0) / max(f64(sd.y), 0.2)
+            under = st.position - sd * f32(drop)
+            g = max(surface_height(f64(under.x), f64(under.z)), 0.0)
+            m = translation(st.position) * quat_to_mat4(st.orientation)
+            draw_shadow(cm.body, m, g, f64(st.position.y) - g, L)
+        one(pc.state, craft_models[pc.model])
+        loop tr in traffic: one(tr.state, craft_models[tr.model])
+    , transparent = true)
     draw_custom((): draw_wakes(wakes, L, t), transparent = true)
 
 draw = ():
@@ -328,7 +360,7 @@ draw = ():
     post_effects(0.35, 0.85, 0.22, 1.08)
     match me.mode:
         .free: camera3d(free, 62.0, 1.0, 30000.0)
-        .aboard: place_chase_camera(pc)
+        .aboard: place_chase_camera(pc, t)
         _: camera3d(follow, 58.0, 0.3, 30000.0)
     draw_world(L)
     set_font(fonts.ui)
