@@ -10,6 +10,7 @@ use 'world.jo'
 use 'planes.jo'
 use 'flight.jo'
 use 'objects.jo'
+use 'trails.jo'
 
 struct Flyer:
     kind: Craft
@@ -33,6 +34,8 @@ struct Flyer:
     prev_dir: vec3 = vec3(0, 0, -1)
     last_speed = 0.0
     surge = 0.0                     # the felt acceleration, smoothed
+    mouse_mode = false              # the mouse is in charge (else the keys)
+    cam_vel: vec3 = vec3(0, 0, 0)   # the camera's own motion (it rides a spring behind the aircraft)
 
 make_flyer = (kind: Craft, model: int, contacts: vec3[], dock: vec3, heading: f64) -> Flyer:
     spec = craft_spec(kind, contacts)
@@ -57,9 +60,10 @@ aim_dir = (f: Flyer) -> vec3:
     cp = cos(f.aim_climb)
     vec3(f32(sin(f.aim_heading) * cp), f32(sin(f.aim_climb)), f32(-cos(f.aim_heading) * cp))
 
-# the controls, as Sky Barons has them: the mouse (captured) moves where to fly and the aircraft
-# steers there; held keys fly it directly, the aim following the nose; let go, the aim keeps the
-# way it was then flying and the steering levels the wings.
+# the controls, in two ways that do not fight: move the mouse (captured) and it is in charge, the
+# aircraft steering to where it points (Sky Barons' steer), keys adding to it while held; touch a
+# key and the keys are in charge, flying the aircraft directly with nothing steering it back, the
+# aim following the nose until the mouse moves again.
 key_controls = (f: mut Flyer, dt: f64) -> Controls:
     up = (k: Key) -> f64: if key_down(k): 1.0 else: 0.0
     if key_down(.shift): f.throttle = min(1.0, f.throttle + dt * 0.6)
@@ -78,24 +82,35 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
         c.assist = 0.0
         f.aim_heading = hd
         f.aim_climb = clamp(pitch, -0.2, 0.3)
+        f.last = c
         return c
     md = mouse_delta()
-    if length(md) > 0.0:
-        f.aim_heading += f64(md.x) * 0.0025
-        f.aim_climb = clamp(f.aim_climb - f64(md.y) * 0.0025, -1.45, 1.45)
     keys = abs(kp) + abs(kr) + abs(ky) > 0.0
-    if keys:
+    if length(md) > 0.5:
+        if not f.mouse_mode:
+            # taking over from the keys: the aim starts where the nose is
+            f.aim_heading = hd
+            f.aim_climb = pitch
+        f.mouse_mode = true
+        f.aim_heading += f64(md.x) * 0.0025
+        f.aim_climb = clamp(f.aim_climb - f64(md.y) * 0.0025, -1.55, 1.55)
+    else if keys and (key_pressed(.w) or key_pressed(.s) or key_pressed(.a) or key_pressed(.d) or key_pressed(.q) or key_pressed(.e) or key_pressed(.up) or key_pressed(.down) or key_pressed(.left) or key_pressed(.right)):
+        f.mouse_mode = false
+    if f.mouse_mode:
+        c = steer(f.spec, st, aim_dir(f))
+        c.throttle = f.throttle
+        if kp != 0.0: c.pitch = clamp(c.pitch + kp, -1.0, 1.0)
+        if kr != 0.0: c.roll = clamp(c.roll + kr, -1.0, 1.0)
+        if ky != 0.0: c.yaw = clamp(c.yaw + ky, -1.0, 1.0)
+    else:
         f.aim_heading = hd
         f.aim_climb = pitch
-        f.keys_held = true
-    c = steer(f.spec, st, aim_dir(f))
-    c.throttle = f.throttle
-    # keys override the axes they hold
-    if kp != 0.0: c.pitch = kp
-    if kr != 0.0: c.roll = kr
-    if ky != 0.0: c.yaw = ky
-    # (the controls ease toward what is asked, quickly)
-    rate = if keys: 9.0 else: 30.0
+        c.pitch = kp
+        c.roll = kr
+        c.yaw = ky
+    c.assist = 0.0
+    # (the controls ease toward what is asked: a stick is not a switch)
+    rate = if f.mouse_mode: 30.0 else: 7.0
     k = 1.0 - exp(-rate * dt)
     c.pitch = f.last.pitch + (c.pitch - f.last.pitch) * k
     c.roll = f.last.roll + (c.roll - f.last.roll) * k
@@ -103,20 +118,24 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
     f.last = c
     c
 
-# vapor off the wingtips: pulling hard at speed in damp air (morning, evening, near the clouds)
-vapor = (f: Flyer, models: CraftModel[], ps: mut Particles3D, hour: f64):
+# vapor off the wingtips: pulling hard at speed in damp air (morning, evening, near the clouds);
+# the two wingtips' trails (strength 0 when there is none)
+vapor = (f: Flyer, trails: mut Trail[], hour: f64, t: f64):
     sp = f64(length(f.state.velocity))
-    if f.state.on_water or sp < 40.0: return
     damp = max(1.0 - smoothstep(8.0, 11.0, hour), smoothstep(16.5, 19.0, hour))
     damp = max(damp, smoothstep(450.0, 680.0, f64(f.state.position.y)))
-    need = 3.6 - 1.2 * damp
-    if f.load < need: return
+    need = 3.4 - 1.2 * damp
+    strength = if f.state.on_water or sp < 40.0: 0.0 else: smoothstep(need, need + 1.5, f.load)
     m = translation(f.state.position) * quat_to_mat4(f.state.orientation)
+    # the outermost wingtips: left and right
     tips = f.spec.wing_contacts
+    left = tips[0]
+    right = tips[0]
     loop p in tips:
-        if p.y < 0.0 and tips.len() > 2: continue
-        w = transform_point(m, p)
-        emit(ps, w, 2, 0.3, rgba(1, 1, 1, f32(0.35 + 0.3 * smoothstep(need, need + 2.0, f.load))), 1.2, 0.35, PI, vec3(0, 1, 0))
+        if p.x < left.x: left = p
+        if p.x > right.x: right = p
+    trail_step(trails[0], transform_point(m, left), strength, t)
+    trail_step(trails[1], transform_point(m, right), strength, t)
 
 # a step of the player's aircraft
 fly = (f: mut Flyer, dt: f64, t: f64):
@@ -134,6 +153,10 @@ _cam_offset = (kind: Craft) -> vec2: match kind:
     _: vec2(16, 4.5)
 
 # the chase camera: behind the aircraft in a smoothed frame of it, the horizon kept level
+# The chase camera rides a damped spring behind the aircraft: at a steady speed it sits where it
+# should, but it lags when the aircraft surges ahead (the takeoff run, a dive) and catches up when
+# it slows, and it shows the aircraft's real jolts (waves, rough air) as the aircraft jumping in the
+# frame rather than as a shake laid on top. The horizon stays level.
 chase = (f: mut Flyer, dt: f64):
     fw = quat_rotate(f.state.orientation, vec3(0, 0, -1))
     k = 1.0 - exp(-5.0 * dt)
@@ -145,22 +168,33 @@ chase = (f: mut Flyer, dt: f64):
     sp = f64(length(f.state.velocity))
     # low and fast: closer and lower, so the sea fills more of the view and rushes past nearer
     low = (1.0 - smoothstep(10.0, 70.0, f64(f.state.position.y))) * smoothstep(35.0, 80.0, sp)
-    back = f64(off.x) * (1.0 - 0.22 * low)
-    lift = f64(off.y) * (1.0 - 0.35 * low)
-    # speeding up it falls back, slowing it closes in (felt as a push in the seat)
-    accel = (sp - f.last_speed) / max(dt, 1e-4)
-    f.last_speed = sp
-    f.surge = f.surge + (clamp(accel, -8.0, 12.0) - f.surge) * (1.0 - exp(-3.0 * dt))
-    back += f.surge * 0.45
+    back = f64(off.x) * (1.0 - 0.2 * low)
+    lift = f64(off.y) * (1.0 - 0.3 * low)
     flat = normalize(vec3(f.cam_fwd.x, f.cam_fwd.y * 0.6, f.cam_fwd.z))
     want = f.state.position - flat * f32(back) + vec3(0, f32(lift), 0)
     if f.state.on_water or f.state.moored: want = want + vec3(0, -1.0, 0)
-    g = surface_height(f64(want.x), f64(want.z))
-    want.y = max(want.y, f32(max(g, 0.0) + 1.5))
     if not f.placed:
         f.cam_pos = want
+        f.cam_vel = f.state.velocity
         f.placed = true
-    f.cam_pos = f.cam_pos + (want - f.cam_pos) * f32(1.0 - exp(-9.0 * dt))
+    # (the spring: soft along the way of travel, so surges show; stiffer across, so turns do not
+    # swing it out; damped against the aircraft's own velocity, so a steady speed leaves no lag)
+    w_along = 2.6
+    w_across = 4.5
+    zeta = 0.8
+    err = want - f.cam_pos
+    rel = f.state.velocity - f.cam_vel
+    fl = flat
+    e_along = fl * dot(err, fl)
+    v_along = fl * dot(rel, fl)
+    acc = e_along * f32(w_along * w_along) + v_along * f32(2.0 * zeta * w_along) + (err - e_along) * f32(w_across * w_across) + (rel - v_along) * f32(2.0 * zeta * w_across)
+    f.cam_vel += acc * f32(dt)
+    f.cam_pos += f.cam_vel * f32(dt)
+    # (never more than so far out of place, and never under the water or the ground)
+    e2 = f.cam_pos - want
+    if length(e2) > f32(back * 0.6): f.cam_pos = want + normalize(e2) * f32(back * 0.6)
+    g = surface_height(f64(f.cam_pos.x), f64(f.cam_pos.z))
+    f.cam_pos.y = max(f.cam_pos.y, f32(max(g, 0.0) + 1.2))
 
 # how it feels to be going: the load on the wings (from how fast the way it goes is turning), the
 # field of view opening with speed, a buffet when fast and low, or pulling hard
@@ -174,15 +208,16 @@ feel = (f: mut Flyer, dt: f64):
     f.load = f.load + (min(g, 8.0) - f.load) * (1.0 - exp(-6.0 * dt))
     want_fov = 58.0 + 24.0 * smoothstep(25.0, 110.0, sp)
     f.fov = f.fov + (want_fov - f.fov) * (1.0 - exp(-2.0 * dt))
-    alt = f64(f.state.position.y)
-    low = 1.0 - smoothstep(8.0, 90.0, alt)
-    fast = smoothstep(40.0, 90.0, sp)
     pull = smoothstep(2.2, 5.0, f.load)
-    f.shake = clamp(fast * (0.25 + 0.75 * low) * 0.8 + pull * 0.6, 0.0, 1.0)
-    if f.state.on_water: f.shake = smoothstep(4.0, 40.0, sp) * 0.75
+    # (a buffet only from the wings themselves: pulling toward the stall)
+    near_stall = 1.0 - smoothstep(f.spec.stall_speed * 1.05, f.spec.stall_speed * 1.6, sp)
+    f.shake = if f.state.on_water: 0.0 else: clamp(pull * near_stall * 0.8, 0.0, 1.0)
 
 place_chase_camera = (f: Flyer, t: f64):
     target = f.state.position + f.cam_fwd * 30.0 + vec3(0, 1.5, 0)
+    af = airframe(f)
+    hum = f64(af.y) * 1.6
+    target = target + vec3(f32(sin(t * 61.0) * hum), f32(sin(t * 53.0 + 1.3) * hum), 0)
     a = f.shake * f.shake * 0.35
     jitter = vec3(f32(noise(t * 9.0, 1.0) - 0.5), f32(noise(t * 11.0, 7.0) - 0.5), f32(noise(t * 8.0, 13.0) - 0.5)) * f32(a)
     camera3d(f.cam_pos + jitter * 0.3, target + jitter * 3.0, f.fov, 0.5, 30000.0)
@@ -225,11 +260,12 @@ heading_to_turn = (h: f64) -> f64: PI - h
 # out along the aim), as Sky Barons shows them
 aim_marks = (f: Flyer):
     if f.state.on_water or f.state.moored: return
-    nose = f.state.position + quat_rotate(f.state.orientation, vec3(0, 0, -1)) * 300.0
+    nose = f.state.position + quat_rotate(f.state.orientation, vec3(0, 0, -1)) * 600.0
     if let p = world_to_screen(nose):
         ring(p, 9, 2, rgba(1, 0.97, 0.9, 0.75))
         circle(p, 2, rgba(1, 0.97, 0.9, 0.75))
-    want = f.state.position + aim_dir(f) * 400.0
+    want = f.state.position + aim_dir(f) * 600.0
+    if not f.mouse_mode: return
     if let p = world_to_screen(want):
         c = rgba(1, 0.85, 0.45, 0.85)
         line(p + vec2(-14, 0), p + vec2(-5, 0), 2, c)
@@ -258,3 +294,14 @@ speed_streaks = (f: Flyer, t: f64):
         p1 = c + d * f32(r0 + sw * (0.04 + 0.1 * k) * (0.5 + h2))
         alpha = k * 0.22 * sin(ph * PI) * (0.5 + 0.5 * h2)
         line(p0, p1, 1.0 + h2 * 1.5, rgba(1, 1, 1, f32(alpha)))
+
+# how the airframe is working now, for drawing it: the wings bowing with the load, shaking with
+# the engine and the air, fluttering at speed (and the half span they are measured by)
+airframe = (f: Flyer) -> vec4:
+    sp = f64(length(f.state.velocity))
+    half = f.spec.span * 0.5
+    bow = if f.state.on_water: 0.0 else: clamp((f.load - 1.0) * 0.045, -0.06, 0.3)
+    shake = f.state.throttle * 0.012 + smoothstep(40.0, 120.0, sp) * 0.035
+    flutter = smoothstep(60.0, 120.0, sp) * (0.4 + 0.6 * smoothstep(1.5, 4.0, f.load))
+    if f.state.on_water: shake += smoothstep(5.0, 40.0, sp) * 0.04
+    vec4(f32(bow), f32(shake), f32(flutter), f32(half))
