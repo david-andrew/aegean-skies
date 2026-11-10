@@ -370,7 +370,7 @@ cloth_mesh: ClothMesh
 dbg = Debug()
 wind_bias = 0.0
 last_shots = 0
-MUZZLES: vec3[] = [vec3(-1.3, 1.75, -1.4), vec3(1.3, 1.75, -1.4)]
+MUZZLES: vec3[] = [vec3(-2.7, 1.7, -1.3), vec3(2.7, 1.7, -1.3)]
 
 # a new aircraft of another kind for the player, where the old one is (moored where it was moored)
 change_craft = (kind: Craft, model: int):
@@ -388,14 +388,81 @@ change_craft = (kind: Craft, model: int):
     nf.placed = false
     pc = nf
 
-# what the debugging panel asked for
-debug_do = (r: DebugResult):
+# the debugging panel: how things are now, for it to show and change
+debug_view = () -> DebugView:
+    v = DebugView()
+    v.craft = pc.model
+    v.fuel = pc.state.fuel / max(pc.spec.fuel_capacity, 0.001)
+    v.parts = [loop k in 0..pc.spec.parts.len(): part_health(pc.state.damage, pc.spec.parts[k].id)]
+    c = living_world.people[living_world.player].craft
+    if c >= 0:
+        v.hull_wear = 1.0 - f64(living_world.aircraft[c].hull) / 1000.0
+        v.engine_wear = 1.0 - f64(living_world.aircraft[c].engine) / 1000.0
+    v.hour = hour
+    v.wind = wind_bias
+    v.wind_now = wind_now.speed
+    v.lire = player_cents() / 100
+    v
+
+# put the aircraft in the air (or on the water, at 0 m) at x, z
+debug_place = (x: f64, z: f64, alt: f64):
+    h = heading(pc.state)
+    unmoor(pc.state)
+    if alt < 5.0:
+        if surface_height(x, z) > 0.0:
+            say_toast("That's land there: give it some altitude")
+            return
+        pc.state = water_start(pc.spec, vec3(f32(x), 0, f32(z)), h)
+        pc.throttle = 0.0
+    else:
+        ground = max(surface_height(x, z), 0.0)
+        pc.state.position = vec3(f32(x), f32(max(alt, ground + 40.0)), f32(z))
+        pc.state.velocity = heading_vector(h) * f32(pc.spec.cruise_speed)
+        pc.state.orientation = quat_euler(0, -h, 0)
+        pc.state.angular_velocity = vec3(0, 0, 0)
+        pc.state.on_water = false
+        pc.state.water_age = 1.0
+        pc.state.crashed = false
+        pc.throttle = 0.8
+    pc.aim_heading = h
+    pc.aim_climb = 0.0
+    pc.placed = false
+    me.mode = .aboard
+
+# what the debugging panel changed or asked for
+debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
     global hour, wind_bias
     c = living_world.people[living_world.player].craft
+    if v.craft != was.craft:
+        match v.craft:
+            0: change_craft(.gull, 0)
+            1: change_craft(.heron, 1)
+            2: change_craft(.corsair, 2)
+            _: change_craft(.falco, 3)
+        return
+    if abs(v.fuel - was.fuel) > 0.0001:
+        pc.state.fuel = v.fuel * pc.spec.fuel_capacity
+        if c >= 0: living_world.aircraft[c].fuel_ml = int(pc.state.fuel * 1000.0)
+    st = pc.state
+    loop k in 0..min(v.parts.len(), was.parts.len()):
+        if abs(v.parts[k] - was.parts[k]) < 0.0001: continue
+        id = pc.spec.parts[k].id
+        i = int(id)
+        if v.parts[k] <= 0.0:
+            detach_part(pc.state.damage, pc.spec.parts, id, pc.spec.mass, st.position, st.orientation, st.velocity, st.angular_velocity)
+        else:
+            if not pc.state.damage.parts[i].attached:
+                # (put back: its wreckage gone from the water)
+                pc.state.damage.parts[i].attached = true
+                pc.state.damage.debris = [loop db in pc.state.damage.debris if db.part != id: db]
+            pc.state.damage.parts[i].health = v.parts[k]
+    if c >= 0:
+        if abs(v.hull_wear - was.hull_wear) > 0.0001: living_world.aircraft[c].hull = int((1.0 - v.hull_wear) * 1000.0 + 0.5)
+        if abs(v.engine_wear - was.engine_wear) > 0.0001: living_world.aircraft[c].engine = int((1.0 - v.engine_wear) * 1000.0 + 0.5)
+    if abs(v.hour - was.hour) > 0.0001: hour = v.hour % 24.0
+    wind_bias = v.wind
+    a = living_world.people[living_world.player].account
     match r.act:
-        .refuel:
-            pc.state.fuel = pc.spec.fuel_capacity
-            if c >= 0: living_world.aircraft[c].fuel_ml = int(pc.spec.fuel_capacity * 1000.0)
         .repair:
             pc.state.damage = DamageState()
             pc.state.crashed = false
@@ -405,31 +472,19 @@ debug_do = (r: DebugResult):
             if c >= 0:
                 living_world.aircraft[c].hull = 1000
                 living_world.aircraft[c].engine = 1000
-        .money:
-            a = living_world.people[living_world.player].account
+        .wreck: detach_part(pc.state.damage, pc.spec.parts, .body, pc.spec.mass, st.position, st.orientation, st.velocity, st.angular_velocity)
+        .money_add:
             if a >= 0: living_world.accounts[a].cents += 100000
-        .hour_back: hour = (hour + 23.0) % 24.0
-        .hour_on: hour = (hour + 1.0) % 24.0
-        .wind_down: wind_bias -= 2.0
-        .wind_up: wind_bias += 2.0
-        .craft_gull: change_craft(.gull, 0)
-        .craft_heron: change_craft(.heron, 1)
-        .craft_corsair: change_craft(.corsair, 2)
-        .craft_falco: change_craft(.falco, 3)
-        .to_air:
-            h = heading(pc.state)
+        .money_set:
+            if a >= 0: living_world.accounts[a].cents = r.lire * 100
+        .to_altitude:
             p0 = if me.mode == .aboard: pc.state.position else: me.pos
-            unmoor(pc.state)
-            pc.state.position = vec3(p0.x, 300, p0.z)
-            pc.state.velocity = heading_vector(h) * f32(pc.spec.cruise_speed)
-            pc.state.orientation = quat_euler(0, -h, 0)
-            pc.state.on_water = false
-            pc.state.water_age = 1.0
-            pc.throttle = 0.8
-            pc.aim_heading = h
-            pc.aim_climb = 0.0
-            pc.placed = false
-            me.mode = .aboard
+            debug_place(f64(p0.x), f64(p0.z), dbg.altitude)
+        .pick:
+            global show_chart
+            dbg.picking = true
+            dbg.open = false
+            show_chart = true
         .to_town:
             tw = towns[r.town]
             dock = free_dock(tw, others_at(), tw.center) ?? tw.docks[0]
@@ -510,7 +565,7 @@ step_ashore = (near: vec3):
 update = (dt: f64):
     global t, hour, show_chart, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused
     # P stops the world (and its sounds) until pressed again
-    if key_pressed(.p) and not notebook.open:
+    if key_pressed(.p) and not notebook.open and not ui_typing():
         paused = not paused
         if paused: mouse_lock(false)
     if paused:
@@ -520,16 +575,26 @@ update = (dt: f64):
     t += dt
     wind_step(wind_now, t, dt, hour)
     hour = (hour + dt / 120.0 + 24.0) % 24.0          # an hour of the day: two minutes
-    if key_down(.n1): hour = (hour - dt * 2.0 + 24.0) % 24.0
-    if key_down(.n2): hour = (hour + dt * 2.0) % 24.0
-    if key_pressed(.m): show_chart = not show_chart
+    typing = ui_typing()
+    if key_down(.n1) and not typing: hour = (hour - dt * 2.0 + 24.0) % 24.0
+    if key_down(.n2) and not typing: hour = (hour + dt * 2.0) % 24.0
+    if key_pressed(.m) and not typing:
+        show_chart = not show_chart
+        dbg.picking = false
+    # (picking a place on the chart for the debugging panel)
+    if dbg.picking and show_chart and mouse_pressed(.left):
+        if let q = chart_place(mouse_pos()):
+            debug_place(f64(q.x), f64(q.y), dbg.altitude)
+            dbg.picking = false
+            show_chart = false
+            dbg.open = true
     if key_pressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
     if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart: mouse_lock(true)
-    if key_pressed(.j) and not notebook.open and ui == .none:
+    if key_pressed(.j) and not notebook.open and ui == .none and not typing:
         notebook.open = true
         mouse_lock(false)
-    if key_pressed(.f2): me.mode = if me.mode == .free: Mode.walking else: Mode.free
+    if key_pressed(.f2) and not typing: me.mode = if me.mode == .free: Mode.walking else: Mode.free
     match me.mode:
         .free: free.update(dt)
         .walking:
@@ -644,6 +709,7 @@ update = (dt: f64):
     # debugging: F1 opens the panel; its standing switches
     if key_pressed(.f1):
         dbg.open = not dbg.open
+        dbg.picking = false
         if dbg.open: mouse_lock(false)
     if dbg.infinite_fuel:
         pc.state.fuel = pc.spec.fuel_capacity
@@ -821,7 +887,11 @@ draw = ():
     if key_down(.h) or (t > 7.5 and t < 22.0 and me.mode == .walking): controls_card(fonts, me.mode == .aboard)
     draw_ui()
     notebook_panel(fonts, notebook, clock_text(living_world, living_world.minute))
-    debug_do(debug_panel(dbg, [loop tw in towns: tw.name]))
+    if dbg.open:
+        was = debug_view()
+        v = was
+        debug_apply(was, v, debug_panel(dbg, v, [loop tw in towns: tw.name], CRAFT_NAMES))
+    if dbg.picking and show_chart: prompt_card(fonts, "Click where to go  ({int(dbg.altitude)} m)", 60.0)
     if t < toast_until: prompt_card(fonts, toast, 260.0)
     if paused: pause_card(fonts)
     if show_chart: draw_chart(chart, towns, if me.mode == .aboard: pc.state.position else: me.pos, if me.mode == .aboard: heading(pc.state) else: PI - me.yaw, hour,
