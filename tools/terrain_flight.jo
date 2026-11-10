@@ -1,0 +1,113 @@
+# Deterministic seam/selection exercise (14 seconds at a fixed 60 Hz).
+# env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=2 \
+# SLOPPY_FRAMES=840 SLOPPY_SCREENSHOT=... sloppy --release tools/terrain_flight.jo
+use '../src/world.jo'
+use '../src/terrain.jo'
+use '../src/terrain_lod.jo'
+use '../src/terrain_data.jo'
+use '../src/render_space.jo'
+use '../src/sea.jo'
+use '../src/sky.jo'
+use '../src/look.jo'
+use 'terrain_reference.jo'
+
+# A bounded vertex-cost pilot: same selected geometry/texture reads, cheap
+# fragment shading. It distinguishes material cost from a VTF bottleneck.
+terrain_flat_fs = (i: GroundOut, u: GroundParams) -> vec4: vec4(0.3, 0.5, 0.2, 1)
+
+window("Terrain transition check", 1280, 720)
+init_terrain(); init_sea(); init_sky()
+if env("AEGEAN_GEOMETRY_ONLY") != none: ground_sh = make_shader(shader(ground_vs, terrain_flat_fs))
+assert(load_land(embed('../assets/terrain.bin')))
+load_terrain(embed('../assets/terrain_lod.bin'))
+sea = build_sea_mesh()
+depth = build_depth_texture()
+reference = if env("AEGEAN_MORPH_CHECK") != none: decode_render_land(embed("../assets/terrain_lod.bin")) else: []
+frame = 0
+previous: f64[][]
+previous_cam = vec3(0, 0, 0)
+worst_move = 0.0
+worst_actual = 0.0
+worst_edge = 0.0
+max_draws = 0
+max_triangles = 0
+peak_frame = 0
+max_upload = 0
+samples: f64[]
+preparation: f64[]
+
+update = (dt: f64):
+    global frame
+    frame += 1
+
+draw = ():
+    global previous, previous_cam, worst_move, worst_actual, worst_edge, max_draws, max_triangles, max_upload, samples, peak_frame, preparation
+    t = f64(frame) / 60.0
+    cam = vec3(f32(-1000.0 + t * 180.0), 0, 600)
+    cam.y = f32(max(surface_height(f64(cam.x), f64(cam.z)), 0.0) + 3.0)
+    target = cam + vec3(0, -0.1, -1)
+    fov = 62.0
+    up = vec3(0, 1, 0)
+    if t >= 4.0 and t < 8.0:
+        cam = vec3(2600, f32(100.0 + (t - 4.0) * 400.0), 2600)
+        target = vec3(0, 100, 0)
+        up = vec3(f32(sin(t * 2.0) * 0.5), 1, 0)
+    else if t >= 8.0 and t < 12.0:
+        cam = vec3(f32(2600.0 - (t - 8.0) * 400.0), 750, 2600)
+        target = cam + vec3(f32(sin(t * 2.0)), -0.3, f32(cos(t * 2.0)))
+    else if t >= 12.0:
+        cam = vec3(7000, 3000, -4000)
+        target = vec3(0, 0, 0)
+        fov = 85.0 - clamp(t - 12.0, 0.0, 2.0) * 27.0
+    clear(BLACK)
+    hide_sky()
+    camera3d(cam, target, fov, 0.3, world_far(f64(cam.y)), up)
+    L = light_at(12.0)
+    L.fog_density = 0.0
+    L.sea_deep = vec3(0.12, 0.0, 0.3) # contrasting water exposes holes
+    draw_custom(():
+        draw_sky(L, t)
+        draw_far_sea(depth, L, t, wind_now)
+        draw_ground(L, t)
+        # The actual selected states: all four edge owners must agree,
+        # including simultaneous transitions, direction reversals and zoom.
+        loop ti in 0..terrain_tiles.len():
+            tile = terrain_tiles[ti]
+            loop pi in 0..tile.patches.len():
+                p = tile.patches[pi]
+                loop nb in p.neighbor:
+                    if nb < 0: continue
+                    other = tile.patches[nb]
+                    assert(abs(p.lod - other.lod) <= 1.000001)
+                    assert(abs(int(floor(p.lod)) - int(floor(other.lod))) <= 1)
+                if previous.len() > 0 and length(cam - previous_cam) <= 500.0:
+                    if reference.len() > 0:
+                        worst_actual = max(worst_actual, ref_morph_pixels(reference[ti], tile, pi, previous[ti], cam, scene_view_proj()))
+                    old = previous[ti][pi]
+                    lev = min(int(ceil(max(old, p.lod))), 5)
+                    vp = scene_view_proj()
+                    focal = f64(length(vec3(vp[0].y, vp[1].y, vp[2].y))) * 360.0
+                    pixels = abs(p.lod - old) * p.data.error[lev] * land_projection_scale(tile, p.data, cam, vp, focal)
+                    if pixels > 1.0: print("MORPH frame={frame} island={ti} patch={pi} old={old:.4} new={p.lod:.4} bound={pixels:.3}")
+                    worst_move = max(worst_move, pixels)
+        previous_cam = cam
+        previous = [loop tile in terrain_tiles: [loop p in tile.patches: p.lod]]
+        max_draws = max(max_draws, terrain_draws)
+        if terrain_triangles > max_triangles: peak_frame = frame
+        max_triangles = max(max_triangles, terrain_triangles)
+        max_upload = max(max_upload, terrain_upload)
+        samples.push(terrain_selection * 1000000.0)
+        preparation.push(terrain_prepare * 1000000.0)
+        if frame == 840:
+            assert(worst_move < 1.0)
+            assert(worst_actual < 1.0)
+            if reference.len() > 0: print("actual projected morph maximum {worst_actual:.5} px/frame")
+            samples.sort()
+            preparation.sort()
+            print("selection + preparation p95 {preparation[int(f64(preparation.len() - 1) * 0.95)]:.1} us")
+            print("selection p95 {samples[int(f64(samples.len() - 1) * 0.95)]:.1} us (selection only)")
+            print(frame_stats_line())
+            print("flight PASS: balance checked through walk, 180 m/s crossing, climb, bank, reversal, teleport, zoom")
+            print("max morph bound {worst_move:.4} px/frame, max draws {max_draws}, triangles {max_triangles} at frame {peak_frame}, upload {max_upload} bytes")
+    )
+    draw_custom((): draw_sea(sea, depth, L, t, wind_now), transparent = true)

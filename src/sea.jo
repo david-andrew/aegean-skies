@@ -5,6 +5,7 @@
 
 use 'world.jo'
 use 'look.jo'
+use 'render_space.jo'
 
 const DEPTH_MAP = 1024
 const DEPTH_EXTENT = 24000.0        # the depth map's square, meters across (past it: open sea)
@@ -32,6 +33,9 @@ struct SeaParams:
     shade_alpha: vec4[4]            # each quad's darkness (four to a vec4)
     shade_n: f32
     depth: Texture
+    rays: mat4
+    center: vec2
+    residual: vec2
 
 struct SeaOut:
     pos: vec4
@@ -60,12 +64,14 @@ _swell = (p: vec2, t: f32, amp: f32, dist: f32, wd: vec2) -> vec3:
     vec3(h, dx, dz)
 
 sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
-    p = vec2(v.pos.x + u.cam.x, v.pos.z + u.cam.z)
-    r = length(v.pos.xz)
+    # The chart origin snaps, but its residual moves continuously. A snap
+    # must not resample the displaced near rings or move any procedural phase.
+    p = v.pos.xz + u.residual + u.center
+    r = length(p - u.cam.xz)
     near = 1.0 - smoothstep(80.0, 260.0, r)
     s = _swell(p, u.time, u.wind.w, r, u.wind.xy)
     w = vec3(p.x, s.x * near, p.y)
-    SeaOut(u.view_proj * vec4(w, 1), w)
+    SeaOut(u.view_proj * vec4(render_world(w, u.cam), 1), w)
 
 # fine ripples raised by the wind (their slope), shorter than the swells, filtered by distance
 _ripples = (p: vec2, t: f32, wd: vec2, dist: f32) -> vec2:
@@ -213,19 +219,19 @@ _glints = (p: vec2, n: vec3, v: vec3, l: vec3, dist: f32, t: f32, rough: f32) ->
 sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     p = i.world.xz
     dist = length(i.world - u.cam)
-    wd = u.wind.xy
-    ws = u.wind.z
-    g = gust(p, u.drift)
-    rough = clamp(0.1 + ws / 12.0 * (0.45 + 0.9 * g), 0.0, 1.5)
-    s = _swell(p, u.time, u.wind.w, dist, wd)
-    rp = _ripples(p, u.time, wd, dist) * rough
-    n = normalize(vec3(-(s.y + rp.x), 1.0, -(s.z + rp.y)))
-    vdir = normalize(u.cam - i.world)
-    l = normalize(u.sun_dir)
     # how deep it is here (the map: r = depth / 60 m), and so its color
     uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
     dm = sample(u.depth, uv)
     depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
+    wd = u.wind.xy
+    ws = u.wind.z
+    g = mix(gust(p, u.drift), 0.5, smoothstep(2500.0, 12000.0, dist))
+    rough = clamp(0.1 + ws / 12.0 * (0.45 + 0.9 * g), 0.0, 1.5)
+    s = _swell(p, u.time, u.wind.w, dist, wd)
+    rp = _ripples(p, u.time, wd, dist) * rough
+    n = render_normal(normalize(vec3(-(s.y + rp.x), 1.0, -(s.z + rp.y))), i.world, u.cam)
+    vdir = normalize(u.cam - render_world(i.world, u.cam))
+    l = normalize(u.sun_dir)
     sh = 1.0 - smoothstep(0.5, 26.0, depth)              # 1 in the shallows
     body = mix(u.deep, u.shallow, pow(sh, 1.4))
     # the gusts darken the water they pass over
@@ -256,7 +262,8 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     hv = normalize(l + vdir)
     nh = max(dot(n, hv), 0.0)
     day = smoothstep(-0.05, 0.12, l.y)
-    sheen = pow(nh, 90.0) * 0.22 + pow(nh, 600.0) * 0.5
+    variance = smoothstep(300.0, 3000.0, dist) * clamp(u.wind.w * 80.0, 0.0, 1.0)
+    sheen = pow(nh, mix(90.0, 55.0, variance)) * 0.22 + pow(nh, mix(600.0, 160.0, variance)) * 0.5
     gl = _glints(p, n, vdir, l, dist, u.time, rough)
     c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)
     # foam: a lace where the water is very shallow, moving with the swell
@@ -271,6 +278,24 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     vec4(c, a)
 
 sea_sh: Shader
+far_sea_sh: Shader
+far_sea_tri: Mesh
+
+struct FarSeaVertex:
+    pos: vec2
+struct FarSeaOut:
+    pos: vec4
+    ndc: vec2
+far_sea_vs = (v: FarSeaVertex, u: SeaParams) -> FarSeaOut:
+    FarSeaOut(vec4(v.pos, 1, 1), v.pos)
+far_sea_fs = (i: FarSeaOut, u: SeaParams) -> vec4:
+    dir = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
+    dist = sea_intersection(dir, u.cam.y)
+    if dist < 14000.0: discard()
+    world = vec3(u.cam.x + dir.x * dist, 0, u.cam.z + dir.z * dist)
+    # The identical sea material at its actual surface point, not a sky tint.
+    sea_fs(SeaOut(i.pos, world), u)
+
 
 # rings around the camera: fine near it, coarse far out
 build_sea_mesh = () -> Mesh:
@@ -279,9 +304,10 @@ build_sea_mesh = () -> Mesh:
     seg = 160
     radii: f64[] = [0.0]
     r = 1.5
-    loop r < 22000.0:
+    loop r < 16000.0:
         radii.push(r)
         r = r * 1.045 + 0.8
+    radii.push(16000.0)
     loop k in 0..radii.len():
         loop s in 0..seg:
             a = f64(s) / f64(seg) * TAU
@@ -292,8 +318,8 @@ build_sea_mesh = () -> Mesh:
             b = u32(k * seg + (s + 1) % seg)
             c = a + u32(seg)
             d = b + u32(seg)
-            idx.push(a); idx.push(c); idx.push(b)
-            idx.push(b); idx.push(c); idx.push(d)
+            idx.push(a); idx.push(b); idx.push(c)
+            idx.push(b); idx.push(d); idx.push(c)
     mesh(vs, idx)
 
 # the map of the sea floor's depth, for the water's color
@@ -339,11 +365,35 @@ add_sea_shadow = (sh: mut SeaShadows, model: mat4, c: vec3, h: vec3, sun: vec3, 
         _: sh.alpha[i].w = a
     sh.n += 1
 
-draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0), shadows: SeaShadows = SeaShadows()):
+sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows: SeaShadows) -> SeaParams:
     swell = 0.003 + 0.0011 * w.speed            # (the swells' height for their length)
+    cam = scene_camera()
+    center = render_origin(cam).xz
+    residual = vec2(f32(f64(cam.x) - f64(center.x)), f32(f64(cam.z) - f64(center.y)))
     p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
-        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(w.speed / 12.0), vec4(w.dir.x, w.dir.y, f32(w.speed), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth)
+        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(w.speed / 12.0), vec4(w.dir.x, w.dir.y, f32(w.speed), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth, render_rays(scene_view_proj()), center, residual)
+    p
+
+draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0), shadows: SeaShadows = SeaShadows()):
+    p = sea_params(depth, L, t, w, cam_vel, shadows)
+    # One material/pass: deep alpha is 1; the shallow alpha composites against
+    # the already-drawn seabed. Both record the water endpoint for later wakes,
+    # particles and geometry. Existing nearer clouds fail the depth test here.
+    zone("sea surface")
+    glDepthMask(1)
+    glEnable(GL_CULL_FACE)
     draw(sea_sh, m, p)
+    glDisable(GL_CULL_FACE)
+    glDepthMask(0)
+    zone_end()
+
+draw_far_sea = (depth: Texture, L: Light, t: f64, w: Wind):
+    p = sea_params(depth, L, t, w, vec3(0, 0, 0), SeaShadows())
+    zone("sea horizon")
+    glDepthMask(0)
+    draw(far_sea_sh, far_sea_tri, p)
+    glDepthMask(1)
+    zone_end()
 
 # how strongly the sea streaks past for a camera moving at vel (fast and low)
 rush_of = (vel: vec3) -> vec4:
@@ -354,7 +404,9 @@ rush_of = (vel: vec3) -> vec4:
 
 # (the GPU programs: made once the window is open)
 init_sea = ():
-    global sea_sh
+    global sea_sh, far_sea_sh, far_sea_tri
+    far_sea_sh = make_shader(shader(far_sea_vs, far_sea_fs))
+    far_sea_tri = mesh([FarSeaVertex(vec2(-1, -1)), FarSeaVertex(vec2(3, -1)), FarSeaVertex(vec2(-1, 3))])
     sea_sh = make_shader(shader(sea_vs, sea_fs))
 
 # the sea's surface where the eye sees it (the same swells the sea is drawn with): height and slope

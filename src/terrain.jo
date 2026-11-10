@@ -1,9 +1,12 @@
-# The islands' ground: one mesh per island, built once from world.jo's heights, and its shader
+# The islands' ground: error-bounded nested patches and the original painted shader
 # (white limestone with its strata on steep ground, dark green maquis on the gentle slopes, pale
 # sand at the water's edge, wet sand and seabed below it).
 
 use 'world.jo'
 use 'look.jo'
+use 'terrain_data.jo'
+use 'terrain_lod.jo'
+use 'render_space.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -17,6 +20,9 @@ struct GroundParams:
     time: f32
     wind: vec4
     drift: vec2
+    origin: vec3
+    heights: Texture
+    materials: Texture
 
 struct GroundOut:
     pos: vec4
@@ -24,10 +30,22 @@ struct GroundOut:
     normal: vec3
     tint: vec4
 
-ground_vs = (v: Vertex3D, u: GroundParams) -> GroundOut:
-    GroundOut(u.view_proj * vec4(v.pos, 1), v.pos, v.normal, v.color)
+ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> GroundOut:
+    p = v.cell
+    fine = land_vertex(u.heights, u.materials, inst.texel, p, inst.edges)
+    sample = fine
+    if inst.state.y > 0.0 and p.x > 0.0 and p.x < 32.0 and p.y > 0.0 and p.y < 32.0:
+        parent = land_parent(u.heights, u.materials, inst.texel, p, min(inst.state.x * 2.0, 32.0), inst.edges)
+        sample = land_mix(fine, parent, inst.state.y)
+    # Edges already use the shared record, independently of either interior.
+    local = vec3(inst.origin.x + p.x * 14.0, sample.h, inst.origin.y + p.y * 14.0)
+    world = local + u.origin
+    camera_local = u.cam - u.origin
+    bent = render_world(local, camera_local)
+    GroundOut(u.view_proj * vec4(bent, 1), world, sample.normal, sample.tint)
 
 ground_fs = (i: GroundOut, u: GroundParams) -> vec4:
+    if behind_sea(i.world, u.cam): discard()
     n = normalize(i.normal)
     y = i.world.y
     slope = 1.0 - n.y                                  # 0 flat, 1 a wall
@@ -70,7 +88,7 @@ ground_fs = (i: GroundOut, u: GroundParams) -> vec4:
         c = mix(c, c * detail, near)
         c = mix(c, vec3(0.55, 0.45, 0.32), earth * near * 0.55)
     # light: a painted two-tone, with the sky's fill and a cool shade
-    ndl = dot(n, normalize(u.sun_dir))
+    ndl = dot(render_normal(n, i.world, u.cam), normalize(u.sun_dir))
     lit = cel(ndl)
     light = u.sun * lit + mix(u.shade, u.sky, 0.35) * (1.0 - lit * 0.6) * 0.75
     col = c * light
@@ -89,52 +107,58 @@ ground_fs = (i: GroundOut, u: GroundParams) -> vec4:
 
 ground_sh: Shader
 
-# one island's ground: a grid over its reach, `step` meters apart, the cells deep under the sea
-# left out (and their corners not kept). Normals from the baked land, finer than the grid; the
-# ridge map in the color's z (-1 creases .. 1 ridges, as 0..1)
-build_island_mesh = (isl: Island, step: f64) -> Mesh:
-    ext = mesh_extent(isl)
-    n = int(ext * 2.0 / step) + 1
-    x0 = f64(isl.center.x) - ext
-    z0 = f64(isl.center.y) - ext
-    rows = parallel_map([0..n), (j: int) -> f64[]: [loop i in 0..n: island_height(isl, x0 + f64(i) * step, z0 + f64(j) * step)])
-    hs: f64[]
-    loop r in rows: hs.extend(r)
-    ids = fill(-1, n * n)
-    idx: u32[]
-    vs: Vertex3D[]
-    vert = (vs: mut Vertex3D[], ids: mut int[], i: int, j: int) -> u32:
-        k = j * n + i
-        if ids[k] >= 0: return u32(ids[k])
-        x = x0 + f64(i) * step
-        z = z0 + f64(j) * step
-        h = hs[k]
-        e = 5.0
-        nx = island_height(isl, x - e, z) - island_height(isl, x + e, z)
-        nz = island_height(isl, x, z - e) - island_height(isl, x, z + e)
-        nrm = normalize(vec3(f32(nx), f32(e * 2.0), f32(nz)))
-        # (tint: x where the green is olive rather than dark, y how much the rock is ochre, z the ridges)
-        tx = fbm(x * 0.004 + isl.seed, z * 0.004, 3)
-        ty = noise(x * 0.0011 - isl.seed, z * 0.0011)
-        tz = ridge_at(x, z) * 0.5 + 0.5
-        ids[k] = vs.len()
-        vs.push(Vertex3D(vec3(f32(x), f32(h), f32(z)), nrm, vec2(0, 0), vec4(f32(tx), f32(ty), f32(tz), 1)))
-        u32(ids[k])
-    loop j in 0..n - 1:
-        loop i in 0..n - 1:
-            a = j * n + i
-            if max(max(hs[a], hs[a + 1]), max(hs[a + n], hs[a + n + 1])) < -40.0: continue
-            va = vert(vs, ids, i, j); vb = vert(vs, ids, i + 1, j); vc = vert(vs, ids, i, j + 1); vd = vert(vs, ids, i + 1, j + 1)
-            idx.push(va); idx.push(vc); idx.push(vb)
-            idx.push(vb); idx.push(vc); idx.push(vd)
-    mesh(vs, idx)
+draw_ground = (L: Light, t: f64):
+    global terrain_draws, terrain_triangles, terrain_visible, terrain_upload, terrain_report, terrain_prepare
+    zone("terrain")
+    prepare_start = time()
+    terrain_prepare = 0.0
+    vp = scene_view_proj()
+    cam = scene_camera()
+    # Length of the vertical projection row removes camera rotation, leaving
+    # cot(fov/2). Use the full viewport, including zoom/chase FOV changes.
+    focal = f64(length(vec3(vp[0].y, vp[1].y, vp[2].y))) * f64(screen_height()) * 0.5
+    select_terrain(cam, vp, focal, t)
+    planes = land_planes(vp)
+    origin = render_origin(cam)
+    relative_vp = vp * translation(origin)
+    terrain_draws = 0; terrain_triangles = 0; terrain_visible = 0; terrain_upload = 0
+    loop tile in terrain_tiles:
+        batches: TerrainInstance[][] = [loop i in 0..96: []]
+        loop patch in tile.patches:
+            if not land_visible(tile, patch.data, cam, planes): continue
+            lev = min(int(floor(patch.lod)), 5)
+            edges = vec4(f32(patch.lod), f32(patch.lod), f32(patch.lod), f32(patch.lod))
+            mask = 0
+            loop side in 0..4:
+                nb = patch.neighbor[side]
+                if nb < 0: continue
+                other = tile.patches[nb].lod
+                e = f32(max(patch.lod, other))
+                match side:
+                    0: edges.x = e
+                    1: edges.y = e
+                    2: edges.z = e
+                    _: edges.w = e
+                if int(floor(other)) < lev: mask = mask | (1 << side)
+            p = patch.data
+            at = vec2(f32(tile.x + f64(p.x) * MESH_STEP - f64(origin.x)), f32(tile.z + f64(p.z) * MESH_STEP - f64(origin.z)))
+            batches[lev * 16 + mask].push(TerrainInstance(at, vec2(f32(p.x), f32(p.z)), vec2(f32(1 << lev), f32(patch.lod - f64(lev))), edges))
+            terrain_visible += 1
+        params = GroundParams(relative_vp, cam, L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t),
+            vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift, origin, tile.heights, tile.materials)
+        terrain_prepare += time() - prepare_start
+        loop i in 0..96:
+            if batches[i].len() == 0: continue
+            draw_instanced(ground_sh, terrain_grids[i], batches[i], params)
+            terrain_draws += 1
+            terrain_triangles += terrain_grids[i].index_count / 3 * batches[i].len()
+            terrain_upload += batches[i].len() * 40
+        prepare_start = time()
+    if env("AEGEAN_LOD_STATS") != none and (terrain_report < 0.0 or t - terrain_report > 1.0):
+        print("LOD patches={terrain_visible} draws={terrain_draws} triangles={terrain_triangles} instance_bytes={terrain_upload} select_us={terrain_selection * 1000000.0:.1} prepare_us={terrain_prepare * 1000000.0:.1}")
+        terrain_report = t
+    zone_end()
 
-draw_ground = (meshes: Mesh[], L: Light, t: f64):
-    p = GroundParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t),
-        vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift)
-    loop m in meshes: draw(ground_sh, m, p)
-
-# (the GPU programs: made once the window is open)
 init_terrain = ():
     global ground_sh
     ground_sh = make_shader(shader(ground_vs, ground_fs))

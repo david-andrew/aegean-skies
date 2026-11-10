@@ -141,6 +141,7 @@ struct LandTile:
     h: f32[]
     ridge: f32[]
 
+land_bake_hash = 0
 land_tiles: LandTile[]              # by island; empty until loaded
 
 terrain_key = () -> int: int((hash(ISLANDS) xor hash(ERODE) xor u64(TILE * 1000.0)) & u64(0x7FFFFFFFFFFFFFFF))
@@ -198,23 +199,27 @@ encode_tiles = (tiles: LandTile[]) -> u8[]:
 
 # read the baked land; false (and nothing loaded) when it was made for other islands
 load_land = (b: u8[]) -> bool:
-    global land_tiles
-    if b.len() < 16 or b[0] != c'A' or b[3] != c'T': return false
+    global land_tiles, land_bake_hash
+    if b.len() < 16 or b[0] != c'A' or b[1] != c'E' or b[2] != c'G' or b[3] != c'T': return false
     if get_le_signed(b, 4, 8) != terrain_key(): return false
     n = get_le(b, 12, 4)
     if n != ISLANDS.len(): return false
     at = 16
     tiles: LandTile[]
     loop k in 0..n:
+        if at + 16 > b.len(): return false
         x0 = f64(get_le_signed(b, at, 4)); z0 = f64(get_le_signed(b, at + 4, 4))
         nx = get_le(b, at + 8, 4); nz = get_le(b, at + 12, 4)
         at += 16
+        if nx < 2 or nz < 2 or nx > 4096 or nz > 4096 or nx * nz > (b.len() - at) / 3: return false
         h = [loop i in 0..nx * nz: f32(f64(get_le_signed(b, at + i * 2, 2)) * 0.1)]
         at += nx * nz * 2
         r = [loop i in 0..nx * nz: f32(f64(get_le_signed(b, at + i, 1)) / 127.0)]
         at += nx * nz
         tiles.push(LandTile(x0, z0, nx, nz, h, r))
+    if at != b.len(): return false
     land_tiles = tiles
+    land_bake_hash = int(hash(b) & u64(0x7FFFFFFFFFFFFFFF))
     true
 
 # the baked value at a point of a tile, between its grid points (none outside it)
@@ -259,10 +264,24 @@ height = (x: f64, z: f64) -> f64:
 # The islands' meshes are grids MESH_STEP meters apart, each cell two triangles split along its
 # b-c diagonal (a = i,j; b = i+1,j; c = i,j+1; d = i+1,j+1). Things that stand on the ground
 # (people, trees, houses) use this height, so they meet the ground that is drawn.
+# Placement audit: objects.jo (town foundations, cove hangar, quay tests, grove,
+# walk_height), grass.jo (blade placement), pilot.jo (FlightEnv.ground and camera
+# clearance). Folk/walkers/player use walk_height, which adds the quay top to
+# this surface. Main-scene shadows and projectile ground queries use it too.
+# height()/slope_at() remain the finer source for ecology/coast/depth queries;
+# camera-dependent render LOD must never enter any placement/collision query.
 
 const MESH_STEP = 14.0
 
 mesh_extent = (isl: Island) -> f64: isl.radius * REACH * f64(max(isl.stretch.x, isl.stretch.y)) * 1.05
+
+# Render bake uses a 24-bit fixed height (1/4096 m). Use exactly that value for
+# placement too: the compatibility surface changes by at most 0.122 mm, not 8 m.
+canonical_height = (isl: Island, x: f64, z: f64) -> f64:
+    round(island_height(isl, x, z) * 4096.0) / 4096.0
+
+triangle_height = (a: f64, b: f64, c: f64, d: f64, u: f64, v: f64) -> f64:
+    if u + v <= 1.0: a + u * (b - a) + v * (c - a) else: d + (1.0 - u) * (c - d) + (1.0 - v) * (b - d)
 
 surface_height = (x: f64, z: f64) -> f64:
     h = SEA_FLOOR
@@ -279,11 +298,11 @@ surface_height = (x: f64, z: f64) -> f64:
         v = fz - j
         ax = x0 + i * MESH_STEP
         az = z0 + j * MESH_STEP
-        a = island_height(isl, ax, az)
-        b = island_height(isl, ax + MESH_STEP, az)
-        c = island_height(isl, ax, az + MESH_STEP)
-        d = island_height(isl, ax + MESH_STEP, az + MESH_STEP)
-        hh = if u + v <= 1.0: a + u * (b - a) + v * (c - a) else: d + (1.0 - u) * (c - d) + (1.0 - v) * (b - d)
+        a = canonical_height(isl, ax, az)
+        b = canonical_height(isl, ax + MESH_STEP, az)
+        c = canonical_height(isl, ax, az + MESH_STEP)
+        d = canonical_height(isl, ax + MESH_STEP, az + MESH_STEP)
+        hh = triangle_height(a, b, c, d, u, v)
         h = max(h, hh)
     h
 

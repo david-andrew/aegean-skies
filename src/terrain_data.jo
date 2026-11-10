@@ -1,0 +1,134 @@
+# Render bake v1: 14 m compatibility surface, cropped to active land plus seabed.
+# Every patch covers 32 canonical cells. Its six nested grids use identical b-c
+# diagonals. Bounds/errors are measured against triangles, not an averaged mip.
+use 'world.jo'
+
+const LAND_CELLS = 32
+const LAND_LEVELS = 6
+const LAND_PATCH = MESH_STEP * LAND_CELLS
+const LAND_VERSION = 1
+
+struct LandPatchData:
+    x: int
+    z: int
+    low: f64
+    high: f64
+    error: f64[6]
+    shore: bool
+
+struct LandRenderData:
+    ix: int
+    iz: int
+    nx: int
+    nz: int
+    pixels: u8[]                   # RGB fixed height, A ridge; RG normal.xz, BA tint.xy
+    patches: LandPatchData[]
+
+render_height = (t: LandRenderData, x: int, z: int) -> f64:
+    k = (z * t.nx + x) * 8
+    f64(int(t.pixels[k]) + int(t.pixels[k + 1]) * 256 + int(t.pixels[k + 2]) * 65536) / 4096.0 - 64.0
+
+render_triangle = (t: LandRenderData, x: int, z: int, step: int) -> f64:
+    ax = min(x / step * step, t.nx - 1 - step)
+    az = min(z / step * step, t.nz - 1 - step)
+    triangle_height(render_height(t, ax, az), render_height(t, ax + step, az), render_height(t, ax, az + step), render_height(t, ax + step, az + step), f64(x - ax) / f64(step), f64(z - az) / f64(step))
+
+bake_render_tile = (k: int) -> LandRenderData:
+    isl = ISLANDS[k]
+    source = land_tiles[k]
+    ext = mesh_extent(isl)
+    ox = f64(isl.center.x) - ext
+    oz = f64(isl.center.y) - ext
+    ix = int(floor((source.x0 - ox - 64.0) / LAND_PATCH)) * LAND_CELLS
+    iz = int(floor((source.z0 - oz - 64.0) / LAND_PATCH)) * LAND_CELLS
+    ex = int(ceil((source.x0 + f64(source.nx - 1) * TILE + 64.0 - ox) / LAND_PATCH)) * LAND_CELLS
+    ez = int(ceil((source.z0 + f64(source.nz - 1) * TILE + 64.0 - oz) / LAND_PATCH)) * LAND_CELLS
+    nx = ex - ix + 1
+    nz = ez - iz + 1
+    rows = parallel_map([0..nz), (j: int) -> u8[]:
+        row: u8[]
+        loop i in 0..nx:
+            x = ox + f64(ix + i) * MESH_STEP
+            z = oz + f64(iz + j) * MESH_STEP
+            h = canonical_height(isl, x, z)
+            if h < -64.0 or h >= 4032.0: panic("render bake height outside 24-bit range")
+            append_le(row, int(round((h + 64.0) * 4096.0)), 3)
+            row.push(u8(round(clamp(ridge_at(x, z) * 0.5 + 0.5, 0.0, 1.0) * 255.0)))
+            normal_x = island_height(isl, x - 5.0, z) - island_height(isl, x + 5.0, z)
+            normal_z = island_height(isl, x, z - 5.0) - island_height(isl, x, z + 5.0)
+            n = normalize(vec3(f32(normal_x), 10, f32(normal_z)))
+            row.push(u8(round((f64(n.x) * 0.5 + 0.5) * 255.0)))
+            row.push(u8(round((f64(n.z) * 0.5 + 0.5) * 255.0)))
+            row.push(u8(round(clamp(fbm(x * 0.004 + isl.seed, z * 0.004, 3), 0.0, 1.0) * 255.0)))
+            row.push(u8(round(clamp(noise(x * 0.0011 - isl.seed, z * 0.0011), 0.0, 1.0) * 255.0)))
+        row
+    )
+    t = LandRenderData(ix, iz, nx, nz, [], [])
+    loop row in rows: t.pixels.extend(row)
+    loop z in 0..(nz - 1) / LAND_CELLS:
+        loop x in 0..(nx - 1) / LAND_CELLS:
+            p = LandPatchData(x * LAND_CELLS, z * LAND_CELLS, 1e9, -1e9, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], false)
+            loop j in 0..LAND_CELLS + 1:
+                loop i in 0..LAND_CELLS + 1:
+                    h = render_height(t, p.x + i, p.z + j)
+                    p.low = min(p.low, h)
+                    p.high = max(p.high, h)
+                    loop lev in 1..LAND_LEVELS:
+                        p.error[lev] = max(p.error[lev], abs(h - render_triangle(t, p.x + i, p.z + j, 1 << lev)))
+            # Nested triangle edges lie on canonical edges, so the maximum of the
+            # piecewise-linear difference is attained at a canonical vertex.
+            loop lev in 1..LAND_LEVELS: p.error[lev] = max(p.error[lev], p.error[lev - 1])
+            p.shore = p.low <= 1.0 and p.high >= -1.0
+            if p.high >= -40.0: t.patches.push(p)
+    t
+
+encode_render_land = (tiles: LandRenderData[]) -> u8[]:
+    b: u8[] = [c'A', c'E', c'G', c'L']
+    append_le(b, LAND_VERSION, 4)
+    append_le(b, terrain_key(), 8)
+    append_le(b, int(MESH_STEP * 4096.0), 4)
+    append_le(b, tiles.len(), 4)
+    append_le(b, land_bake_hash, 8)
+    loop t in tiles:
+        append_le(b, t.ix, 4); append_le(b, t.iz, 4)
+        append_le(b, t.nx, 4); append_le(b, t.nz, 4)
+        append_le(b, t.patches.len(), 4)
+        b.extend(t.pixels)
+        loop p in t.patches:
+            append_le(b, p.x, 4); append_le(b, p.z, 4)
+            append_le(b, int(round(p.low * 4096.0)), 4); append_le(b, int(round(p.high * 4096.0)), 4)
+            loop e in p.error: append_le(b, int(ceil(e * 4096.0)), 4)
+            append_le(b, int(p.shore), 4)
+    b
+
+# Strictly reject mismatched/truncated assets before a texture or a patch is made.
+decode_render_land = (b: u8[]) -> LandRenderData[]:
+    if b.len() < 32 or b[0] != c'A' or b[1] != c'E' or b[2] != c'G' or b[3] != c'L': return []
+    if get_le(b, 4, 4) != LAND_VERSION or get_le_signed(b, 8, 8) != terrain_key() or get_le(b, 16, 4) != int(MESH_STEP * 4096.0) or get_le(b, 20, 4) != ISLANDS.len(): return []
+    if get_le_signed(b, 24, 8) != land_bake_hash: return []
+    tiles: LandRenderData[]
+    at = 32
+    loop k in 0..ISLANDS.len():
+        if at + 20 > b.len(): return []
+        ix = get_le_signed(b, at, 4); iz = get_le_signed(b, at + 4, 4)
+        nx = get_le(b, at + 8, 4); nz = get_le(b, at + 12, 4); np = get_le(b, at + 16, 4)
+        at += 20
+        if nx < 33 or nz < 33 or nx > 2049 or nz > 2049 or (nx - 1) % 32 != 0 or (nz - 1) % 32 != 0: return []
+        if np > ((nx - 1) / 32) * ((nz - 1) / 32) or nx * nz * 8 + np * 44 > b.len() - at: return []
+        t = LandRenderData(ix, iz, nx, nz, b[at..at + nx * nz * 8], [])
+        at += nx * nz * 8
+        loop j in 0..np:
+            x = get_le(b, at, 4); z = get_le(b, at + 4, 4)
+            if x % 32 != 0 or z % 32 != 0 or x + 32 >= nx or z + 32 >= nz: return []
+            lo = f64(get_le_signed(b, at + 8, 4)) / 4096.0
+            hi = f64(get_le_signed(b, at + 12, 4)) / 4096.0
+            es: f64[6]
+            loop lev in 0..6: es[lev] = f64(get_le(b, at + 16 + lev * 4, 4)) / 4096.0
+            if lo > hi or es[0] != 0.0: return []
+            loop lev in 1..6:
+                if es[lev] < es[lev - 1]: return []
+            t.patches.push(LandPatchData(x, z, lo, hi, es, get_le(b, at + 40, 4) != 0))
+            at += 44
+        tiles.push(t)
+    if at != b.len(): return []
+    tiles

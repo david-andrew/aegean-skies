@@ -1,0 +1,134 @@
+# Numeric acceptance checks; no window/GPU/audio. Run after tools/bake.jo.
+# Exercises the actual bake reader, grid builder and canonical surface.
+use '../src/world.jo'
+use '../src/terrain_data.jo'
+use '../src/terrain_lod.jo'
+use '../src/render_space.jo'
+
+assert(load_land(embed('../assets/terrain.bin')))
+bytes = embed('../assets/terrain_lod.bin')
+ts = decode_render_land(bytes)
+assert(ts.len() == ISLANDS.len())
+loop n in [0, 3, 16, 31, 32, bytes.len() - 1]: assert(decode_render_land(bytes[0..n]).len() == 0)
+bad = bytes
+bad[4] = 99
+assert(decode_render_land(bad).len() == 0)
+bad = bytes
+bad[24] = bad[24] xor u8(1)
+assert(decode_render_land(bad).len() == 0)
+source_error = 0.0
+parent_error = 0.0
+placement_error = 0.0
+samples = 0
+patches = 0
+loop k in 0..ts.len():
+    t = ts[k]
+    isl = ISLANDS[k]
+    ox = f64(isl.center.x) - mesh_extent(isl) + f64(t.ix) * MESH_STEP
+    oz = f64(isl.center.y) - mesh_extent(isl) + f64(t.iz) * MESH_STEP
+    loop j in 0..t.nz:
+        loop i in 0..t.nx:
+            h = render_height(t, i, j)
+            x = ox + f64(i) * MESH_STEP; z = oz + f64(j) * MESH_STEP
+            source_error = max(source_error, abs(h - island_height(isl, x, z)))
+            assert(abs(h - canonical_height(isl, x, z)) < 0.000001)
+            samples += 1
+    loop p in t.patches:
+        patches += 1
+        loop lev in 0..6:
+            worst = 0.0
+            loop j in 0..33:
+                loop i in 0..33:
+                    worst = max(worst, abs(render_height(t, p.x + i, p.z + j) - render_triangle(t, p.x + i, p.z + j, 1 << lev)))
+            assert(worst <= p.error[lev] + 0.000001)
+        # Interior barycentric points on both halves of the b-c diagonal.
+        loop j in 0..32:
+            loop i in 0..32:
+                x = p.x + i; z = p.z + j
+                a = render_height(t, x, z); b = render_height(t, x + 1, z)
+                c = render_height(t, x, z + 1); d = render_height(t, x + 1, z + 1)
+                loop uv in [vec2(0.25, 0.25), vec2(0.75, 0.75)]:
+                    h = triangle_height(a, b, c, d, f64(uv.x), f64(uv.y))
+                    if h > -30.0:
+                        actual = surface_height(ox + (f64(x) + f64(uv.x)) * MESH_STEP, oz + (f64(z) + f64(uv.y)) * MESH_STEP)
+                        placement_error = max(placement_error, abs(actual - h))
+assert(source_error <= 0.5 / 4096.0 + 0.000001)
+assert(placement_error < 0.000001)
+
+# All stitch families preserve area and winding; each fine-facing edge has
+# exactly twice the segments. Their extra vertices lie on the parent plane.
+# Arbitrary parent vertex values test nested topology, independently of terrain
+# smoothness: a topology that crosses a parent diagonal would fail this check.
+parent_surface = (p: vec2, step: f64) -> f64:
+    x = min(floor(f64(p.x) / step) * step, 32.0 - step)
+    z = min(floor(f64(p.y) / step) * step, 32.0 - step)
+    h = (a: f64, b: f64) -> f64: sin(a * 1.7 + b * 2.9) * 100.0
+    triangle_height(h(x, z), h(x + step, z), h(x, z + step), h(x + step, z + step), (f64(p.x) - x) / step, (f64(p.y) - z) / step)
+patterns = 0
+grid_bytes = 0
+loop lev in 0..6:
+    loop mask in 0..16:
+        vs, ids = land_grid_data(lev, mask)
+        grid_bytes += vs.len() * 8 + ids.len() * 4
+        area = 0.0
+        edge_count: int[4] = [0, 0, 0, 0]
+        loop tri in 0..ids.len() / 3:
+            a = vs[int(ids[tri * 3])].cell
+            b = vs[int(ids[tri * 3 + 1])].cell
+            c = vs[int(ids[tri * 3 + 2])].cell
+            ar = f64((b.y - a.y) * (c.x - a.x) - (b.x - a.x) * (c.y - a.y)) * 0.5
+            assert(ar > 0.0)
+            area += ar
+            if lev < 5:
+                # Quarter barycentric points are exact binary fractions, so
+                # residuals here measure topology rather than centroid rounding.
+                step = f64(2 << lev)
+                mid = a * 0.5 + b * 0.25 + c * 0.25
+                actual = parent_surface(a, step) * 0.5 + parent_surface(b, step) * 0.25 + parent_surface(c, step) * 0.25
+                parent_error = max(parent_error, abs(actual - parent_surface(mid, step)))
+            ps = [a, b, c]
+            loop e in 0..3:
+                p = ps[e]; q = ps[(e + 1) % 3]
+                if p.x == 0.0 and q.x == 0.0: edge_count[0] += 1
+                if p.x == 32.0 and q.x == 32.0: edge_count[1] += 1
+                if p.y == 0.0 and q.y == 0.0: edge_count[2] += 1
+                if p.y == 32.0 and q.y == 32.0: edge_count[3] += 1
+        assert(abs(area - 1024.0) < 0.000001)
+        loop side in 0..4: assert(edge_count[side] == (32 >> lev) * (if (mask & (1 << side)) != 0: 2 else: 1))
+        patterns += 1
+
+assert(parent_error < 0.000001)
+print("resident grid vertex/index bytes: {grid_bytes}")
+print("parent morph endpoint residual {parent_error:.9} m")
+
+# Stable spherical roots and sagitta at the requested camera altitudes.
+# Tangent rays have a double root, so use a ray slightly below for f32 tests.
+loop h in [2.0, 100.0, 750.0, 1500.0, 3000.0, 5000.0]:
+    horizon = sqrt(h * (2.0 * EARTH_RADIUS + h))
+    dip = acos(EARTH_RADIUS / (EARTH_RADIUS + h))
+    dir = vec3(f32(cos(dip + 0.0001)), f32(-sin(dip + 0.0001)), 0)
+    hit = sea_intersection(dir, f32(h))
+    assert(hit > 0.0 and f64(hit) < horizon)
+    q = dir * hit
+    error = abs(f64(q.y) + h + f64(world_drop(q.xz)))
+    assert(error < 0.01)
+    assert(sea_intersection(vec3(1, 0, 0), f32(h)) < 0.0)
+print("PASS {samples} canonical vertices, {patches} patch error bounds, {patterns} stitch families")
+print("source quantization max {source_error:.9} m; grounded surface max {placement_error:.9} m; horizon roots <1 cm")
+
+# Ray reconstruction must survive a high camera/far plane without subtracting
+# nearly equal world-space unprojections; check arbitrary roll/FOV, too.
+loop fov in [0.5, 1.0, 1.5]:
+    eye = vec3(8123, 3000, -4567)
+    vp = perspective(fov, 16.0 / 9.0, 0.3, world_far(3000.0)) * look_at(eye, eye + vec3(0.3, -0.2, -1), vec3(0.2, 1, 0))
+    rays = render_rays(vp)
+    loop ndc in [vec2(-0.9, -0.8), vec2(0, 0), vec2(0.9, 0.8)]:
+        dir = normalize((rays * vec4(ndc, 1, 0)).xyz)
+        clip = vp * vec4(eye + dir * 5000.0, 1)
+        assert(length(clip.xy / clip.w - ndc) < 0.00001)
+loop x in [1023.99, 1024.01, -1024.01, -1023.99, 24000.0]:
+    cam = vec3(f32(x), 2, f32(x + 31.0))
+    origin = render_origin(cam)
+    residual = cam.xz - origin.xz
+    assert(length(origin.xz + residual - cam.xz) < 0.00001)
+print("PASS translation-free rays and snapped-origin residuals")

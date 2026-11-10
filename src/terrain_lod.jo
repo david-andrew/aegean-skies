@@ -1,0 +1,284 @@
+# Fixed 448 m domains with six nested patch grids, selected on the CPU. Unlike
+# a spatial quadtree, domains/edge owners never disappear in a topology swap.
+# All GPU data is resident; a frame uploads only the selected patch instances.
+use 'world.jo'
+use 'terrain_data.jo'
+use 'render_space.jo'
+
+struct TerrainPatch:
+    data: LandPatchData
+    neighbor: int[4]                # left, right, top, bottom; -1 = deep seabed
+    lod: f64 = 0.0                 # continuous: integer grid + parent blend
+    goal: int = 0
+
+struct TerrainTile:
+    x: f64
+    z: f64
+    heights: Texture
+    materials: Texture
+    patches: TerrainPatch[]
+
+struct TerrainVertex:
+    cell: vec2
+
+struct TerrainInstance:
+    origin: vec2                   # CPU f64 subtraction before upload
+    texel: vec2
+    state: vec2                    # current grid step, parent blend
+    edges: vec4                    # shared continuous LOD, left/right/top/bottom
+
+struct TerrainSample:
+    h: f32
+    normal: vec3
+    tint: vec4
+
+terrain_tiles: TerrainTile[]
+terrain_grids: Mesh[]
+terrain_ready = false
+terrain_last = 0.0
+terrain_camera = vec3(0, 0, 0)
+terrain_draws = 0
+terrain_triangles = 0
+terrain_visible = 0
+terrain_upload = 0
+terrain_selection = 0.0
+terrain_prepare = 0.0
+terrain_report = -1.0
+
+land_mix = (a: TerrainSample, b: TerrainSample, k: f32) -> TerrainSample:
+    TerrainSample(mix(a.h, b.h, k), mix(a.normal, b.normal, k), mix(a.tint, b.tint, k))
+
+land_sample = (heights: Texture, materials: Texture, p: vec2) -> TerrainSample:
+    a = texel(heights, ivec2(p))
+    b = texel(materials, ivec2(p))
+    h = dot(a.xyz, vec3(255.0, 65280.0, 16711680.0)) / 4096.0 - 64.0
+    n = b.xy * 2.0 - vec2(1, 1)
+    TerrainSample(h, vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.001)), n.y), vec4(b.z, b.w, a.w, 1))
+
+# Every endpoint is addressed as an integer texel, including tile borders.
+# Patch corners are canonical samples at every level; no corner ownership race.
+land_edge_level = (p: vec2, edges: vec4) -> f32:
+    e: f32 = 0.0
+    if p.x == 0.0: e = max(e, edges.x)
+    if p.x == 32.0: e = max(e, edges.y)
+    if p.y == 0.0: e = max(e, edges.z)
+    if p.y == 32.0: e = max(e, edges.w)
+    e
+
+land_edge_at = (h: Texture, m: Texture, base: vec2, p: vec2, step: f32) -> TerrainSample:
+    # Along an edge this is a one-dimensional linear interpolation. Corners
+    # and the constant coordinate stay exactly at 0/32.
+    a = floor(p / step) * step
+    b = min(a + vec2(step, step), vec2(32, 32))
+    if p.x == 0.0 or p.x == 32.0:
+        a.x = p.x; b.x = p.x
+    else:
+        a.y = p.y; b.y = p.y
+    k = max(p.x - a.x, p.y - a.y) / step
+    if k == 0.0: return land_sample(h, m, base + a)
+    land_mix(land_sample(h, m, base + a), land_sample(h, m, base + b), k)
+
+land_vertex = (h: Texture, m: Texture, base: vec2, p: vec2, edges: vec4) -> TerrainSample:
+    if p.x > 0.0 and p.x < 32.0 and p.y > 0.0 and p.y < 32.0: return land_sample(h, m, base + p)
+    e = land_edge_level(p, edges)
+    lev = floor(e)
+    s = pow(2.0, lev)
+    fine = land_edge_at(h, m, base, p, s)
+    if e == lev: return fine
+    land_mix(fine, land_edge_at(h, m, base, p, min(s * 2.0, 32.0)), e - lev)
+
+# Parent reconstruction includes the currently shared edge constraints, not
+# merely the parent's unmorphed height. The same blend applies to normals/tint.
+land_parent = (h: Texture, m: Texture, base: vec2, p: vec2, step: f32, edges: vec4) -> TerrainSample:
+    a = min(floor(p / step) * step, vec2(32.0 - step, 32.0 - step))
+    f = (p - a) / step
+    if f.x + f.y <= 1.0:
+        va = land_vertex(h, m, base, a, edges)
+        vb = land_vertex(h, m, base, a + vec2(step, 0), edges)
+        vc = land_vertex(h, m, base, a + vec2(0, step), edges)
+        return TerrainSample(va.h + f.x * (vb.h - va.h) + f.y * (vc.h - va.h), va.normal + f.x * (vb.normal - va.normal) + f.y * (vc.normal - va.normal), va.tint + f.x * (vb.tint - va.tint) + f.y * (vc.tint - va.tint))
+    vd = land_vertex(h, m, base, a + vec2(step, step), edges)
+    vb = land_vertex(h, m, base, a + vec2(step, 0), edges)
+    vc = land_vertex(h, m, base, a + vec2(0, step), edges)
+    TerrainSample(vd.h + (1.0 - f.x) * (vc.h - vd.h) + (1.0 - f.y) * (vb.h - vd.h), vd.normal + (1.0 - f.x) * (vc.normal - vd.normal) + (1.0 - f.y) * (vb.normal - vd.normal), vd.tint + (1.0 - f.x) * (vc.tint - vd.tint) + (1.0 - f.y) * (vb.tint - vd.tint))
+
+# Stitch UP on the coarse side: split its boundary triangle at the fine
+# neighbor's midpoint. That midpoint lies on the currently rendered coarse
+# edge, so adding/removing it changes no surface. In contrast, collapsing odd
+# fine indices changes the adjacent interior triangles during simultaneous
+# morphs. These 16 families preserve nested triangles and exact endpoint swaps.
+land_grid_data = (lev: int, mask: int) -> (TerrainVertex[], u32[]):
+    n = 32 >> lev
+    vs = [loop j in 0..n + 1: loop i in 0..n + 1: TerrainVertex(vec2(f32(i << lev), f32(j << lev)))]
+    ids: u32[]
+    emit = (a: int, b: int, c: int):
+        tris: int[][] = [[a, b, c]]
+        original = [a, b, c]
+        loop e in 0..3:
+            aa = original[e]; bb = original[(e + 1) % 3]
+            pa = vs[aa].cell; pb = vs[bb].cell
+            split = (pa.x == 0.0 and pb.x == 0.0 and (mask & 1) != 0) or (pa.x == 32.0 and pb.x == 32.0 and (mask & 2) != 0) or (pa.y == 0.0 and pb.y == 0.0 and (mask & 4) != 0) or (pa.y == 32.0 and pb.y == 32.0 and (mask & 8) != 0)
+            if not split: continue
+            mid = vs.len()
+            vs.push(TerrainVertex((pa + pb) * 0.5))
+            loop ti in 0..tris.len():
+                tri = tris[ti]
+                found = false
+                loop k in 0..3:
+                    if tri[k] == aa and tri[(k + 1) % 3] == bb:
+                        cc = tri[(k + 2) % 3]
+                        tris[ti] = [aa, mid, cc]
+                        tris.push([mid, bb, cc])
+                        found = true
+                        break
+                if found: break
+        loop tri in tris:
+            loop v in tri: ids.push(u32(v))
+    loop j in 0..n:
+        loop i in 0..n:
+            a = j * (n + 1) + i
+            b = a + 1; c = a + n + 1; d = c + 1
+            emit(a, c, b)
+            emit(b, c, d)
+    (vs, ids)
+
+land_grid = (lev: int, mask: int) -> Mesh:
+    vs, ids = land_grid_data(lev, mask)
+    mesh(vs, ids)
+
+load_terrain = (b: u8[]):
+    global terrain_tiles, terrain_grids
+    ts = decode_render_land(b)
+    if ts.len() != ISLANDS.len(): panic("terrain_lod.bin mismatch/corruption: run sloppy --release tools/bake.jo")
+    bytes = 0
+    count = 0
+    loop k in 0..ts.len():
+        t = ts[k]
+        hi = image(t.nx, t.nz)
+        ma = image(t.nx, t.nz)
+        loop j in 0..t.nz:
+            loop i in 0..t.nx:
+                a = (j * t.nx + i) * 8
+                hi.set(i, j, vec4(f32(t.pixels[a]), f32(t.pixels[a + 1]), f32(t.pixels[a + 2]), f32(t.pixels[a + 3])) / 255.0)
+                ma.set(i, j, vec4(f32(t.pixels[a + 4]), f32(t.pixels[a + 5]), f32(t.pixels[a + 6]), f32(t.pixels[a + 7])) / 255.0)
+        ps: TerrainPatch[]
+        # Dense lookup only during loading; stable neighbor IDs thereafter.
+        nx = (t.nx - 1) / 32
+        nz = (t.nz - 1) / 32
+        map = fill(-1, nx * nz)
+        loop i in 0..t.patches.len(): map[t.patches[i].z / 32 * nx + t.patches[i].x / 32] = i
+        loop p in t.patches:
+            x = p.x / 32; z = p.z / 32
+            nb: int[4] = [-1, -1, -1, -1]
+            if x > 0: nb[0] = map[z * nx + x - 1]
+            if x + 1 < nx: nb[1] = map[z * nx + x + 1]
+            if z > 0: nb[2] = map[(z - 1) * nx + x]
+            if z + 1 < nz: nb[3] = map[(z + 1) * nx + x]
+            ps.push(TerrainPatch(p, nb))
+        isl = ISLANDS[k]
+        terrain_tiles.push(TerrainTile(f64(isl.center.x) - mesh_extent(isl) + f64(t.ix) * MESH_STEP, f64(isl.center.y) - mesh_extent(isl) + f64(t.iz) * MESH_STEP, texture(hi), texture(ma), ps))
+        bytes += t.nx * t.nz * 8
+        count += ps.len()
+    loop lev in 0..6:
+        loop mask in 0..16: terrain_grids.push(land_grid(lev, mask))
+    print("terrain: {count} resident patches, {bytes} atlas bytes (no mips), 14 m canonical surface")
+
+land_distance = (t: TerrainTile, p: LandPatchData, cam: vec3) -> f64:
+    x = t.x + f64(p.x) * MESH_STEP
+    z = t.z + f64(p.z) * MESH_STEP
+    dx = max(max(x - f64(cam.x), f64(cam.x) - x - LAND_PATCH), 0.0)
+    dz = max(max(z - f64(cam.z), f64(cam.z) - z - LAND_PATCH), 0.0)
+    dy = max(max(p.low - f64(cam.y), f64(cam.y) - p.high), 0.0)
+    max(sqrt(dx * dx + dy * dy + dz * dz), 1.0)
+
+# Conservative vertical-displacement projection over the whole patch sphere.
+# Euclidean distance alone understates error at oblique/grazing view angles.
+land_projection_scale = (t: TerrainTile, p: LandPatchData, cam: vec3, vp: mat4, focal: f64) -> f64:
+    center = vec3(f32(t.x + (f64(p.x) + 16.0) * MESH_STEP), f32((p.low + p.high) * 0.5), f32(t.z + (f64(p.z) + 16.0) * MESH_STEP))
+    radius = sqrt(LAND_PATCH * LAND_PATCH * 0.5 + (p.high - p.low) ^ 2 * 0.25) + f64(length(center.xz - cam.xz)) * LAND_PATCH / EARTH_RADIUS + 1.0
+    c = vp * vec4(render_world(center, cam), 1)
+    depth = f64(c.w) - radius
+    if depth < 1.0: return focal / land_distance(t, p, cam) * 3.0
+    row_x = length(vec3(vp[0].x, vp[1].x, vp[2].x))
+    row_y = length(vec3(vp[0].y, vp[1].y, vp[2].y))
+    nx = (abs(f64(c.x)) + radius * f64(row_x)) / depth
+    ny = (abs(f64(c.y)) + radius * f64(row_y)) / depth
+    sx = f64(screen_width()) * 0.5 * (abs(f64(vp[1].x)) + nx * abs(f64(vp[1].w))) / depth
+    sy = f64(screen_height()) * 0.5 * (abs(f64(vp[1].y)) + ny * abs(f64(vp[1].w))) / depth
+    max(sx, sy)
+
+select_terrain = (cam: vec3, vp: mat4, focal: f64, now: f64):
+    global terrain_tiles, terrain_ready, terrain_last, terrain_selection, terrain_camera
+    begin = time()
+    if length(cam - terrain_camera) > 500.0: terrain_ready = false
+    terrain_camera = cam
+    dt = clamp(now - terrain_last, 0.0, 0.05)
+    terrain_last = now
+    loop ti in 0..terrain_tiles.len():
+        t = terrain_tiles[ti]
+        # Moving a shared edge can change either incident patch: use the worst
+        # projected bound when limiting the coupled interior/edge morph speed.
+        max_pixels = 1.0
+        scales: f64[]
+        loop pi in 0..t.patches.len():
+            p = t.patches[pi]
+            distance = land_distance(t, p.data, cam)
+            scale = land_projection_scale(t, p.data, cam, vp, focal)
+            goal = p.goal
+            if not terrain_ready:
+                goal = 0
+                loop goal < 5 and p.data.error[goal + 1] * scale < 1.25: goal += 1
+            else:
+                loop goal > 0 and p.data.error[goal] * scale > 1.5: goal -= 1
+                loop goal < 5 and p.data.error[goal + 1] * scale < 1.0: goal += 1
+            if distance < 750.0: goal = 0
+            p.goal = goal
+            scales.push(scale)
+            t.patches[pi] = p
+        # Refine coarse goals until every pair is 2:1 balanced. Six passes
+        # suffice: there are six levels and relaxation only decreases a goal.
+        loop balance_round in 0..6:
+            loop pi in 0..t.patches.len():
+                loop nb in t.patches[pi].neighbor:
+                    if nb >= 0: t.patches[pi].goal = min(t.patches[pi].goal, t.patches[nb].goal + 1)
+        loop pi in 0..t.patches.len():
+            p = t.patches[pi]
+            if abs(p.lod - f64(p.goal)) > 0.000001:
+                lev = min(if f64(p.goal) < p.lod: int(ceil(p.lod)) else: int(floor(p.lod)) + 1, 5)
+                max_pixels = max(max_pixels, p.data.error[lev] * scales[pi])
+                loop nb in p.neighbor:
+                    if nb >= 0: max_pixels = max(max_pixels, p.data.error[lev] * scales[nb])
+        # Interior blending also contains moving edge constraints. Reserve a
+        # factor of three for those coupled terms; cap per-frame as well as
+        # per-second movement, including low frame rates.
+        speed = min(dt * 4.0, min(dt * 12.0, 0.2) / max_pixels)
+        loop pi in 0..t.patches.len():
+            p = t.patches[pi]
+            if not terrain_ready: p.lod = f64(p.goal)
+            else if f64(p.goal) > p.lod:
+                p.lod = min(min(f64(p.goal), p.lod + speed), floor(p.lod) + 1.0)
+            else if f64(p.goal) < p.lod:
+                p.lod = max(max(f64(p.goal), p.lod - speed), ceil(p.lod) - 1.0)
+            t.patches[pi] = p
+        # Preserve continuous as well as discrete balance during reversals.
+        loop balance_round in 0..6:
+            loop pi in 0..t.patches.len():
+                loop nb in t.patches[pi].neighbor:
+                    if nb >= 0: t.patches[pi].lod = min(t.patches[pi].lod, t.patches[nb].lod + 1.0)
+        terrain_tiles[ti] = t
+    terrain_ready = true
+    terrain_selection = time() - begin
+
+land_visible = (t: TerrainTile, p: LandPatchData, cam: vec3, planes: vec4[]) -> bool:
+    c = vec3(f32(t.x + (f64(p.x) + 16.0) * MESH_STEP), f32((p.low + p.high) * 0.5), f32(t.z + (f64(p.z) + 16.0) * MESH_STEP))
+    # Curvature derivative over the patch expands the sphere conservatively.
+    radius = sqrt(LAND_PATCH * LAND_PATCH * 0.5 + (p.high - p.low) ^ 2 * 0.25) + f64(length(c.xz - cam.xz)) * LAND_PATCH / EARTH_RADIUS + 1.0
+    c = render_world(c, cam)
+    loop plane in planes:
+        if f64(dot(plane.xyz, c) + plane.w) < -radius: return false
+    true
+
+land_planes = (m: mat4) -> vec4[]:
+    row = (i: int) -> vec4: vec4(m[0][i], m[1][i], m[2][i], m[3][i])
+    a = row(0); b = row(1); c = row(2); d = row(3)
+    [loop p in [d + a, d - a, d + b, d - b, d + c, d - c]: p / max(length(p.xyz), 0.000001)]
