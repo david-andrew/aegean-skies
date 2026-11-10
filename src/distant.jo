@@ -5,21 +5,26 @@
 #     path is kept, and the moment its sound left it is solved for)
 #   - Doppler: higher as it comes, lower as it goes, by its speed toward the listener then, and
 #     the listener's own (c / (c - v))
-#   - louder near, falling off as sound pressure does, and duller far off: a bright copy of the
-#     engine close in crossfades into a muffled one as the air takes its highs away
+#   - and off the sea: a second, softer copy from its mirror image under the water, with its own
+#     Doppler, so the two drift against each other and phase as it passes (the fly-by's whoosh)
+#   - loud and carrying far, as engines do: falling off more gently than in a still room, and
+#     duller far off: a bright copy of the engine close in crossfades into a muffled one as the
+#     air takes its highs away
 # Only the nearest few are given voices.
 
 use 'sound.jo'
 use 'airsound.jo'
 
 const SOUND_SPEED = 343.0
-const HEARING = 4000.0              # meters: beyond this an engine is not heard
-const VOICES = 6                    # at most this many other engines at once
+const HEARING = 6000.0              # meters: beyond this an engine is not heard
+const VOICES = 8                    # at most this many other engines at once
 
 struct Heard:
     craft = -1
     near_v = -1
     far_v = -1
+    near_r = -1                     # (the copies off the sea)
+    far_r = -1
     trail: vec4[]                   # where it was (x, y, z) and when (w, seconds of game time)
     seen = 0.0                      # (the last time it was among the sources)
 
@@ -39,17 +44,17 @@ struct Hearing:
 
 make_hearing = () -> Hearing:
     h = Hearing()
-    h.near = engine_loop()
+    h.near = make_flyby()
     # (the distant engine: the same beat with its highs taken away by the air)
     lp = Biquad(); lp2 = Biquad()
-    lowpass(lp, 380.0)
-    lowpass(lp2, 520.0)
+    lowpass(lp, 450.0)
+    lowpass(lp2, 650.0)
     s = h.near.samples
     out = fill(f32(0), s.len())
     loop i in 0..s.len() / 2:
         v = filt(lp2, filt(lp, f64(s[i * 2])))
-        out[i * 2] = f32(v * 1.6)
-        out[i * 2 + 1] = f32(v * 1.6)
+        out[i * 2] = f32(v * 1.8)
+        out[i * 2 + 1] = f32(v * 1.8)
     h.far = Sound(out)
     h.ready = true
     h
@@ -84,10 +89,16 @@ heard_from = (trail: vec4[], ear: vec3, ear_vel: vec3, t: f64) -> (vec3, vec3, f
     (p, v, d, doppler)
 
 _silence = (h: mut Hearing, i: int):
-    if h.heard[i].near_v >= 0: stop(h.heard[i].near_v)
-    if h.heard[i].far_v >= 0: stop(h.heard[i].far_v)
+    loop id in [h.heard[i].near_v, h.heard[i].far_v, h.heard[i].near_r, h.heard[i].far_r]:
+        if id >= 0: stop(id)
     h.heard[i].near_v = -1
     h.heard[i].far_v = -1
+    h.heard[i].near_r = -1
+    h.heard[i].far_r = -1
+
+# how loud an engine is at d meters (1 at 60 m), falling off a little more gently than sound
+# pressure in still air (the game's ears are kind), and the air's own loss far off
+_carry = (d: f64) -> f64: min(pow(60.0 / max(d, 15.0), 0.85), 2.0) * exp(-d / 9000.0)
 
 # each frame: the engines about, heard by a listener at `ear` moving at `ear_vel`
 hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec3, t: f64):
@@ -133,26 +144,42 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
             i += 1
             continue
         p, v, d, doppler = heard_from(hd.trail, ear, ear_vel, t)
-        level = (0.25 + 0.45 * src.throttle) * min(1.0, 35.0 / d) * exp(-d / 7000.0) * 0.9
-        far = smoothstep(120.0, 1600.0, d)
-        gn = level * cos(far * PI * 0.5)
-        gf = level * sin(far * PI * 0.5)
-        pitch = src.tone * (0.7 + 0.55 * src.throttle + f64(length(v)) / 250.0) * doppler
+        power = 0.45 + 0.55 * src.throttle
+        level = power * _carry(d)
+        far = smoothstep(150.0, 2000.0, d)
+        base = src.tone * (0.75 + 0.5 * src.throttle + f64(length(v)) / 300.0)
+        pitch = base * doppler
+        # (its image under the sea: the reflected sound, weaker, with its own path and Doppler)
+        img = vec3(p.x, -p.y, p.z)
+        vimg = vec3(v.x, -v.y, v.z)
+        d2 = max(f64(length(img - ear)), 1.0)
+        u2 = (ear - img) / f32(d2)
+        doppler2 = clamp((SOUND_SPEED - f64(dot(ear_vel, u2))) / max(SOUND_SPEED - f64(dot(vimg, u2)), 30.0), 0.5, 2.2)
+        level2 = power * _carry(d2) * 0.55
+        far2 = smoothstep(150.0, 2000.0, d2)
         if hd.near_v < 0:
-            h.heard[i].near_v = play(h.near, 0.0, looping = true, pitch = pitch)
-            h.heard[i].far_v = play(h.far, 0.0, looping = true, pitch = pitch)
-            # (each its own place in the loop, so two engines do not beat in step)
+            # (each its own place in the loop, so two engines do not beat in step; the sea's copy
+            # starts with it, and drifts as the paths change)
             off = random(0.0, duration(h.near))
-            seek(h.heard[i].near_v, off)
-            seek(h.heard[i].far_v, off)
-        move_sound(h.heard[i].near_v, p, gn, 1000000000.0)
-        move_sound(h.heard[i].far_v, p, gf, 1000000000.0)
-        set_pitch(h.heard[i].near_v, pitch)
-        set_pitch(h.heard[i].far_v, pitch)
+            ids = [play(h.near, 0.0, looping = true, pitch = pitch), play(h.far, 0.0, looping = true, pitch = pitch), play(h.near, 0.0, looping = true, pitch = base * doppler2), play(h.far, 0.0, looping = true, pitch = base * doppler2)]
+            loop id in ids: seek(id, off)
+            h.heard[i].near_v = ids[0]
+            h.heard[i].far_v = ids[1]
+            h.heard[i].near_r = ids[2]
+            h.heard[i].far_r = ids[3]
+        hd2 = h.heard[i]
+        move_sound(hd2.near_v, p, level * cos(far * PI * 0.5), 1000000000.0)
+        move_sound(hd2.far_v, p, level * sin(far * PI * 0.5), 1000000000.0)
+        move_sound(hd2.near_r, img, level2 * cos(far2 * PI * 0.5), 1000000000.0)
+        move_sound(hd2.far_r, img, level2 * sin(far2 * PI * 0.5), 1000000000.0)
+        set_pitch(hd2.near_v, pitch)
+        set_pitch(hd2.far_v, pitch)
+        set_pitch(hd2.near_r, base * doppler2)
+        set_pitch(hd2.far_r, base * doppler2)
         i += 1
 
 # paused: the other engines silent too
 hush_engines = (h: Hearing):
     loop hd in h.heard:
-        if hd.near_v >= 0: set_volume(hd.near_v, 0.0)
-        if hd.far_v >= 0: set_volume(hd.far_v, 0.0)
+        loop id in [hd.near_v, hd.far_v, hd.near_r, hd.far_r]:
+            if id >= 0: set_volume(id, 0.0)
