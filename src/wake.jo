@@ -1,0 +1,112 @@
+# Wakes: the white trail an aircraft leaves on the water as it taxis, runs for a takeoff or settles
+# after a landing. Each craft keeps the points it passed; they widen and fade as they age, drawn as
+# one ribbon of broken foam over the sea.
+
+use 'look.jo'
+
+const WAKE_EVERY = 0.2              # seconds between points
+const WAKE_LIFE = 26.0              # seconds a point lasts
+
+struct WakePoint:
+    pos: vec2
+    side: vec2                      # unit, across the track
+    born: f64
+    width: f32                      # how wide the hull or floats made it
+    strength: f32                   # how hard it was churned (speed)
+
+struct WakeTrail:
+    pts: WakePoint[]
+    last = -1.0
+    broken = true                   # (the next point starts a new stretch)
+
+# a craft on the water at pos with velocity vel: add to its trail now and then
+wake_step = (w: mut WakeTrail, pos: vec3, vel: vec3, on_water: bool, width: f64, t: f64):
+    loop w.pts.len() > 0 and t - w.pts[0].born > WAKE_LIFE: w.pts.remove_at(0)
+    v = vec2(vel.x, vel.z)
+    sp = f64(length(v))
+    if not on_water or sp < 1.2:
+        w.broken = true
+        return
+    if t - w.last < WAKE_EVERY: return
+    w.last = t
+    d = v / f32(sp)
+    strength = f32(clamp(sp / 25.0, 0.15, 1.0))
+    if w.broken and w.pts.len() > 0:
+        # a gap: a point of no strength, so the ribbon does not join the old stretch to the new
+        p = w.pts[w.pts.len() - 1]
+        w.pts.push(WakePoint(p.pos, p.side, p.born, p.width, 0.0))
+        w.pts.push(WakePoint(vec2(pos.x, pos.z), vec2(-d.y, d.x), t, f32(width), 0.0))
+    w.broken = false
+    w.pts.push(WakePoint(vec2(pos.x, pos.z), vec2(-d.y, d.x), t, f32(width), strength))
+
+struct WakeVertex:
+    pos: vec3
+    data: vec4                      # x across (-1..1), y age (s), z strength, w along (m)
+
+struct WakeParams:
+    view_proj: mat4
+    cam: vec3
+    sun: vec3
+    sky: vec3
+    haze: vec3
+    fog: f32
+    time: f32
+
+struct WakeOut:
+    pos: vec4
+    world: vec3
+    data: vec4
+
+wake_vs = (v: WakeVertex, u: WakeParams) -> WakeOut: WakeOut(u.view_proj * vec4(v.pos, 1), v.pos, v.data)
+
+wake_fs = (i: WakeOut, u: WakeParams) -> vec4:
+    across = abs(i.data.x)
+    age = i.data.y
+    fade = (1.0 - smoothstep(0.0, WAKE_LIFE, age)) * i.data.z
+    # churned white along the middle when fresh, two spreading lines along the edges after
+    core = (1.0 - smoothstep(0.0, 0.45, across)) * (1.0 - smoothstep(0.0, 6.0, age))
+    edge = smoothstep(0.55, 0.85, across) * (1.0 - smoothstep(0.9, 1.0, across))
+    n = vnoise(vec2(i.data.w * 0.6, i.data.x * 3.0 + age * 0.3)) * 0.7 + vnoise(i.world.xz * 0.9) * 0.3
+    foam = clamp((core * 1.2 + edge * 0.8) * smoothstep(0.25, 0.65, n + core * 0.3), 0.0, 1.0)
+    a = foam * fade
+    if a < 0.01: discard()
+    c = vec3(0.96, 0.98, 1.0) * (u.sun * 0.75 + u.sky * 0.35)
+    vec4(aerial(c, i.world, u.cam, u.haze, u.fog), a * 0.85)
+
+wake_sh: Shader
+wake_mesh: Mesh
+wake_ready = false
+
+init_wake = ():
+    global wake_sh, wake_mesh, wake_ready
+    wake_sh = make_shader(shader(wake_vs, wake_fs))
+    wake_mesh = mesh([WakeVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), WakeVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), WakeVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0))])
+    wake_ready = true
+
+draw_wakes = (trails: WakeTrail[], L: Light, t: f64):
+    if not wake_ready: return
+    vs: WakeVertex[]
+    loop w in trails:
+        along = 0.0
+        loop k in 0..w.pts.len() - 1:
+            a = w.pts[k]
+            b = w.pts[k + 1]
+            if a.strength <= 0.0 and b.strength <= 0.0: continue
+            la = t - a.born
+            lb = t - b.born
+            wa = f64(a.width) + la * 0.55
+            wb = f64(b.width) + lb * 0.55
+            seg = f64(length(b.pos - a.pos))
+            pa0 = a.pos - a.side * f32(wa); pa1 = a.pos + a.side * f32(wa)
+            pb0 = b.pos - b.side * f32(wb); pb1 = b.pos + b.side * f32(wb)
+            y: f32 = 0.06
+            va0 = WakeVertex(vec3(pa0.x, y, pa0.y), vec4(-1, f32(la), a.strength, f32(along)))
+            va1 = WakeVertex(vec3(pa1.x, y, pa1.y), vec4(1, f32(la), a.strength, f32(along)))
+            vb0 = WakeVertex(vec3(pb0.x, y, pb0.y), vec4(-1, f32(lb), b.strength, f32(along + seg)))
+            vb1 = WakeVertex(vec3(pb1.x, y, pb1.y), vec4(1, f32(lb), b.strength, f32(along + seg)))
+            vs.push(va0); vs.push(vb0); vs.push(va1)
+            vs.push(va1); vs.push(vb0); vs.push(vb1)
+            along += seg
+    if vs.len() < 3: return
+    update_mesh(wake_mesh, vs)
+    draw(wake_sh, wake_mesh, WakeParams(scene_view_proj(), scene_camera(), L.sun, L.sky_top, L.haze, f32(L.fog_density), f32(t)))
