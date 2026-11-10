@@ -56,6 +56,8 @@ test "hands off assisted cruise for sixty seconds":
         s = _air_start(k, 300, k.cruise_speed)
         c = fl.Controls(throttle = fl.cruise_throttle(k, k.cruise_speed) / 0.97)
         s.throttle = c.throttle
+        s.orientation = quat_euler(0.04, 0, -0.08)
+        s.velocity.y = 0.4
         lo = 300.0; hi = 300.0
         loop i in 0..3600:
             fl.step(k, s, c, e, 1.0 / 60.0)
@@ -122,10 +124,15 @@ test "taxi rudder turns and wind drifts with limited leeway":
     loop kind in _kinds:
         k = _spec(kind); e = fl.FlightEnv(); s = fl.water_start(k, vec3(0, 0, 0))
         s.velocity = vec3(0, 0, -4)
-        loop i in 0..60 * 15: fl.step(k, s, fl.Controls(throttle = 0.17, yaw = 0.6), e, 1.0 / 60.0)
-        radius = f64(length(s.position.xz))
-        print("taxi {kind}: 15s displacement {radius:.2}m heading {fl.heading(s):.2}")
-        assert(radius > 5 and radius < 100 and s.on_water and not s.crashed)
+        arc = 0.0; turn = 0.0
+        loop i in 0..60 * 15:
+            old_heading = fl.heading(s); old_position = s.position
+            fl.step(k, s, fl.Controls(throttle = 0.17, yaw = 0.6), e, 1.0 / 60.0)
+            arc += f64(length(s.position.xz - old_position.xz))
+            turn += fl.angle_delta(fl.heading(s), old_heading)
+        radius = arc / abs(turn)
+        print("taxi {kind}: mean turn radius {radius:.2}m heading {fl.heading(s):.2}")
+        assert(radius > 5 and radius < 60 and s.on_water and not s.crashed)
         assert(abs(fl.heading(s)) > 0.5)
         s = fl.water_start(k, vec3(0, 0, 0)); e.wind = vec3(8, 0, 0)
         loop i in 0..60 * 60: fl.step(k, s, fl.Controls(), e, 1.0 / 60.0)
@@ -146,14 +153,15 @@ _trip = (kind: planes.Craft, e: fl.FlightEnv, ridge: bool = false, hz: int = 30)
         if plan.phase == .done or plan.phase == .failed or s.crashed: break
     error = length(plan.touchdown.xz - plan.target.xz)
     taxi_error = length(s.position.xz - plan.taxi_target.xz)
-    print("trip {kind} ridge={ridge}: phase={plan.phase} t={s.time:.1}s landing_error={error:.1}m taxi_error={taxi_error:.2}m max_y={maxalt:.1}m clearance={ridge_clearance:.1}m retries={plan.go_arounds}")
+    print("trip {kind} {hz}Hz ridge={ridge}: phase={plan.phase} t={s.time:.1}s landing_error={error:.1}m taxi_error={taxi_error:.2}m max_y={maxalt:.1}m clearance={ridge_clearance:.1}m retries={plan.go_arounds}")
     _finite(s)
     assert(plan.phase == .done and not s.crashed and s.hull_damage < 0.1)
     assert(error < 300 and taxi_error < 10 and length(s.velocity) < 0.7 and s.moored)
     if ridge: assert(maxalt > 350 and ridge_clearance > 25)
 
 test "autopilot five km open sea and dock all craft":
-    loop kind in _kinds: _trip(kind, fl.FlightEnv())
+    loop kind in _kinds:
+        loop hz in [30, 60]: _trip(kind, fl.FlightEnv(), false, hz)
 
 test "autopilot clears a 300m ridge all craft":
     e = fl.FlightEnv(ground = (x: f64, z: f64) -> f64: max(-100.0, 300.0 - abs(z + 2200.0) * 0.5))
@@ -184,16 +192,86 @@ test "deterministic replay rough water and timestep partition":
         _finite(a)
         assert(not a.crashed and a.position.y > k.float_height - 1.0 and a.position.y < k.float_height + 1.0)
 
-test "step cost on explicitly selected benchmark host":
-    if (env("FLIGHT_BENCH") ?? "0") != "1":
-        print("step cost: skipped (set FLIGHT_BENCH=1 on quiet laptop redfox)")
-    else:
-        loop kind in _kinds:
-            k = _spec(kind); e = fl.FlightEnv(); s = _air_start(k, 300, k.cruise_speed)
-            c = fl.Controls(throttle = fl.cruise_throttle(k, k.cruise_speed))
+_benchmark = ():
+    loop kind in _kinds:
+        k = _spec(kind)
+        loop wet in [false, true]:
+            e = fl.FlightEnv(wave_height = if wet: 0.25 else: 0.0)
+            s = if wet: fl.water_start(k, vec3(0, 0, 0)) else: _air_start(k, 300, k.cruise_speed)
+            c = fl.Controls(throttle = if wet: 0.0 else: fl.cruise_throttle(k, k.cruise_speed))
             loop i in 0..1000: fl.step(k, s, c, e, 1.0 / 60.0)
             started = time_ns()
             loop i in 0..100000: fl.step(k, s, c, e, 1.0 / 60.0)
             us = f64(time_ns() - started) / 100000.0 / 1000.0
-            print("step cost host=redfox-laptop {kind}: {us:.3}us at 60Hz (two substeps), checksum={s.position.x + s.position.z}")
-            assert(us < 20.0)
+            print("step cost host=redfox-laptop {kind} wet={wet}: {us:.3}us at 60Hz (two substeps), checksum={s.position.x + s.position.z}")
+            assert(us < 20.0 and not s.crashed)
+            if wet: assert(s.on_water)
+
+# Build this file to transfer its benchmark entry point to the laptop without a compiler.
+main = ():
+    if (env("FLIGHT_BENCH") ?? "0") == "1": _benchmark()
+    else: print("Use sloppy test tests/flight_test.jo (FLIGHT_BENCH=1 enables the laptop-only benchmark).")
+
+test "step cost on explicitly selected benchmark host":
+    if (env("FLIGHT_BENCH") ?? "0") == "1": _benchmark()
+    else: print("step cost: skipped (set FLIGHT_BENCH=1 on quiet laptop redfox)")
+
+
+test "autopilot wind varied headings and rough water repeated trips":
+    loop kind in _kinds:
+        k = _spec(kind)
+        loop route in 0..3:
+            e = fl.FlightEnv(wind = vec3(3, 0, 2), wave_height = 0.12)
+            s = fl.water_start(k, vec3(0, 0, 0), 0.4)
+            p = fl.FlightPlan(target = vec3(3000, 0, -4000), taxi_target = vec3(3020, 0, -4050), takeoff_heading = 0.4)
+            if route == 1: p.landing_heading = PI * 0.5
+            if route == 2:
+                e.wind = vec3(-4, 0, 1)
+                p.landing_heading = 0.0
+            loop i in 0..30 * 800:
+                c = fl.autopilot(k, s, p, e)
+                fl.step(k, s, c, e, 1.0 / 30.0)
+                if p.phase == .done or p.phase == .failed or s.crashed: break
+            error = length(p.touchdown.xz - p.target.xz)
+            dock_error = length(s.position.xz - p.taxi_target.xz)
+            print("varied {kind} route={route}: phase={p.phase} t={s.time:.1}s error={error:.1}m dock={dock_error:.1}m crash={s.crashed} damage={s.hull_damage:.2} retries={p.go_arounds}")
+            assert(p.phase == .done and not s.crashed and error < 300 and dock_error < 10 and s.moored)
+
+
+test "control signs engine spool fuel and maximum speed":
+    loop kind in _kinds:
+        k = _spec(kind); e = fl.FlightEnv()
+        s = _air_start(k, 300, k.cruise_speed)
+        fl.step(k, s, fl.Controls(pitch = 0.5, assist = 0.0), e, 0.1)
+        assert(fl.forward(s).y > 0.001)
+        s = _air_start(k, 300, k.cruise_speed)
+        fl.step(k, s, fl.Controls(roll = 0.5, assist = 0.0), e, 0.1)
+        assert(quat_rotate(s.orientation, vec3(1, 0, 0)).y < -0.005)
+        s = _air_start(k, 300, k.cruise_speed)
+        fl.step(k, s, fl.Controls(yaw = 0.5, assist = 0.0), e, 0.1)
+        assert(fl.forward(s).x > 0.002)
+        s = _air_start(k, 300, k.cruise_speed)
+        fl.step(k, s, fl.Controls(throttle = 2.0), e, 0.1)
+        assert(s.throttle > 0 and s.throttle < 0.1 and s.fuel < k.fuel_capacity)
+        s.fuel = 0
+        loop i in 0..120: fl.step(k, s, fl.Controls(throttle = 1.0), e, 1.0 / 60.0)
+        assert(s.throttle == 0 and s.fuel == 0)
+        s = _air_start(k, 300, k.cruise_speed)
+        loop i in 0..60 * 180: fl.step(k, s, fl.Controls(throttle = 1.0), e, 1.0 / 60.0)
+        print("maximum {kind}: {s.airspeed:.2}m/s (target {k.max_speed:.0})")
+        assert(abs(s.airspeed - k.max_speed) < 2.5 and not s.crashed)
+
+test "wing strike water and steep terrain remains finite":
+    loop kind in _kinds:
+        k = _spec(kind); e = fl.FlightEnv()
+        s = _air_start(k, k.float_height + 0.2, k.stall_speed * 1.4)
+        s.orientation = quat_euler(0, 0, -1.2); s.velocity.y = -2
+        loop i in 0..60 * 10: fl.step(k, s, fl.Controls(assist = 0.0), e, 1.0 / 60.0)
+        _finite(s)
+        assert(s.hull_damage > 0.1 or s.capsized)
+        assert(length(s.velocity) < 100)
+        # A wing clips a bank while the hull contacts are still over deep water.
+        e.ground = (x: f64, z: f64) -> f64: if x > 3.0: 10.0 else: -100.0
+        s = _air_start(k, 5.0, 30.0)
+        fl.step(k, s, fl.Controls(), e, 1.0 / 30.0)
+        assert(s.crashed)
