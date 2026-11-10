@@ -1,0 +1,167 @@
+# The sea: one wide disc of rings around the camera, finer near it. Waves are worked out per
+# pixel from a sum of swells; the water's color comes from its depth (a map of the sea floor made
+# once from world.jo): deep cobalt in the open sea, turquoise over sand, see-through at the shore,
+# with foam where it meets the land and the sun's glitter on it.
+
+use 'world.jo'
+use 'look.jo'
+
+const DEPTH_MAP = 1024
+const DEPTH_EXTENT = 24000.0        # the depth map's square, meters across (past it: open sea)
+
+struct SeaVertex:
+    pos: vec3
+
+struct SeaParams:
+    view_proj: mat4
+    cam: vec3
+    sun_dir: vec3
+    sun: vec3
+    sky_top: vec3
+    sky_horizon: vec3
+    haze: vec3
+    deep: vec3
+    shallow: vec3
+    fog: f32
+    time: f32
+    rough: f32                      # 0 a calm sea, 1 a rough one (weather)
+    depth: Texture
+
+struct SeaOut:
+    pos: vec4
+    world: vec3
+
+# the swells: height and slope (dh/dx, dh/dz) at a point. Each swell fades out where it is
+# too short for the pixels to show it (dist: how far the camera is), else the sea shimmers.
+_swell = (p: vec2, t: f32, rough: f32, dist: f32) -> vec3:
+    h: f32 = 0.0
+    dx: f32 = 0.0
+    dz: f32 = 0.0
+    dirs: vec2[6] = [vec2(0.8, 0.6), vec2(0.95, -0.3), vec2(0.3, 0.95), vec2(-0.6, 0.8), vec2(0.7, 0.71), vec2(-0.2, 0.98)]
+    lens: f32[6] = [61.0, 37.0, 23.0, 13.0, 7.3, 4.1]
+    loop k in 0..6:
+        d = dirs[k]
+        len = lens[k]
+        w = 6.2831853 / len
+        fade = 1.0 - smoothstep(len * 9.0, len * 40.0, dist)
+        a = len * (0.0045 + 0.006 * rough) * fade
+        ph = dot(d, p) * w + t * sqrt(9.8 * w)
+        h += a * sin(ph)
+        c = a * w * cos(ph)
+        dx += c * d.x
+        dz += c * d.y
+    vec3(h, dx, dz)
+
+sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
+    p = vec2(v.pos.x + u.cam.x, v.pos.z + u.cam.z)
+    r = length(v.pos.xz)
+    near = 1.0 - smoothstep(80.0, 260.0, r)
+    s = _swell(p, u.time, u.rough, r)
+    w = vec3(p.x, s.x * near, p.y)
+    SeaOut(u.view_proj * vec4(w, 1), w)
+
+# the painted marks on the water: short pale dashes along the swell, scattered, drifting
+_dashes = (p: vec2, t: f32) -> f32:
+    # a frame along the swell's crests
+    q = vec2(p.x * 0.8 + p.y * 0.6, -p.x * 0.6 + p.y * 0.8) + vec2(t * 0.6, t * 0.25)
+    cs = vec2(11.0, 3.2)
+    cell = floor(q / cs)
+    f = q / cs - cell
+    r = hash21(cell)
+    r2 = hash21(cell + vec2(17.0, 31.0))
+    if r < 0.45: return 0.0
+    # a dash: long across the cell, thin, its place jittered, its length breathing
+    cx = 0.25 + 0.5 * r2
+    cy = 0.3 + 0.4 * r
+    life = 0.5 + 0.5 * sin(t * (0.6 + r * 0.8) + r2 * 40.0)
+    lx = (f.x - cx) / (0.18 + 0.2 * life * r2 + 0.06)
+    ly = (f.y - cy) / 0.09
+    e = lx * lx + ly * ly
+    (1.0 - smoothstep(0.55, 1.0, e)) * smoothstep(0.15, 0.4, life)
+
+sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
+    p = i.world.xz
+    dist = length(i.world - u.cam)
+    s = _swell(p, u.time, u.rough, dist)
+    n = normalize(vec3(-s.y, 1.0, -s.z))
+    vdir = normalize(u.cam - i.world)
+    # how deep it is here (the map: r = depth / 60 m), and so its color
+    uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
+    dm = sample(u.depth, uv)
+    depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
+    sh = 1.0 - smoothstep(0.5, 26.0, depth)              # 1 in the shallows
+    body = mix(u.deep, u.shallow, pow(sh, 1.4))
+    # the water glows a little from within: lighter where the swell faces the light
+    l = normalize(u.sun_dir)
+    ndl = max(dot(n, l), 0.0)
+    c = body * (u.sun * (0.7 + 0.3 * ndl) + u.sky_top * 0.25)
+    # the sky in it, more at a glancing look (softened: a painted sea, not a mirror)
+    fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, vdir), 0.0), 5.0)
+    rd = reflect(-vdir, n)
+    skyc = mix(u.sky_horizon, u.sky_top, clamp(rd.y * 1.4, 0.0, 1.0))
+    c = mix(c, skyc, clamp(fres * 0.6, 0.0, 1.0))
+    # the dashes, near to middle distance
+    dfade = 1.0 - smoothstep(250.0, 1400.0, dist)
+    dsh = _dashes(p, u.time) * dfade * (1.0 - sh * 0.7)
+    c = mix(c, mix(body, u.sky_horizon, 0.55) * (u.sun * 0.9 + u.sky_top * 0.3) * 1.15, dsh * 0.75)
+    # the sun's glitter
+    hv = normalize(l + vdir)
+    nh = max(dot(n, hv), 0.0)
+    spec = pow(nh, 900.0) * 10.0 + pow(nh, 120.0) * 0.4
+    c = c + u.sun * spec * smoothstep(-0.05, 0.1, l.y)
+    # foam: a lace where the water is very shallow, moving with the swell
+    fn = sin(p.x * 0.9 + sin(p.y * 0.6) * 2.0 + u.time * 1.2) * sin(p.y * 1.1 + sin(p.x * 0.5) * 2.0 - u.time * 0.9)
+    edge = 1.0 - smoothstep(0.15, 1.4 + 0.7 * fn, depth)
+    ffade = 1.0 - smoothstep(1500.0, 5000.0, dist)
+    foam = clamp(edge * (0.75 + 0.35 * fn), 0.0, 1.0) * ffade
+    c = mix(c, vec3(0.97, 0.98, 1.0) * (u.sun * 0.8 + u.sky_top * 0.3), foam * 0.85)
+    # the water is clear: at the shore one sees the sand through it
+    a = clamp(0.3 + depth * 0.1 + fres * 0.4 + foam, 0.0, 1.0)
+    c = aerial(c, i.world, u.cam, u.haze, u.fog)
+    vec4(c, a)
+
+sea_sh = make_shader(shader(sea_vs, sea_fs))
+
+# rings around the camera: fine near it, coarse far out
+build_sea_mesh = () -> Mesh:
+    vs: SeaVertex[]
+    idx: u32[]
+    seg = 160
+    radii: f64[] = [0.0]
+    r = 1.5
+    loop r < 22000.0:
+        radii.push(r)
+        r = r * 1.045 + 0.8
+    loop k in 0..radii.len():
+        loop s in 0..seg:
+            a = f64(s) / f64(seg) * TAU
+            vs.push(SeaVertex(vec3(f32(cos(a) * radii[k]), 0, f32(sin(a) * radii[k]))))
+    loop k in 0..radii.len() - 1:
+        loop s in 0..seg:
+            a = u32(k * seg + s)
+            b = u32(k * seg + (s + 1) % seg)
+            c = a + u32(seg)
+            d = b + u32(seg)
+            idx.push(a); idx.push(c); idx.push(b)
+            idx.push(b); idx.push(c); idx.push(d)
+    mesh(vs, idx)
+
+# the map of the sea floor's depth, for the water's color
+build_depth_texture = () -> Texture:
+    n = DEPTH_MAP
+    rows = parallel_map([0..n), (j: int) -> f64[]:
+        z = (f64(j) + 0.5) / f64(n) * DEPTH_EXTENT - DEPTH_EXTENT * 0.5
+        [loop i in 0..n: height((f64(i) + 0.5) / f64(n) * DEPTH_EXTENT - DEPTH_EXTENT * 0.5, z)]
+    )
+    img = image(n, n)
+    loop j in 0..n:
+        loop i in 0..n:
+            h = rows[j][i]
+            d = clamp(-h / 60.0, 0.0, 1.0)
+            img.set(i, j, vec4(f32(d), if h > 0.0: 1.0 else: 0.0, 0, 1))
+    texture(img, true)
+
+draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, rough: f64):
+    p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
+        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(rough), depth)
+    draw(sea_sh, m, p)
