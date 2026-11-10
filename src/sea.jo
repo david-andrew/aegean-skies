@@ -28,6 +28,9 @@ struct SeaParams:
     wind: vec4                      # the way it blows (x, z), its speed, and (w) the swell's height
     drift: vec2                     # how far the gusts have moved
     rush: vec4                      # the camera's velocity (x, y, z) and how strongly the sea streaks past (w)
+    shade: vec4[32]                 # aircraft shadows on the sea: quads (corners a, b; c, d as x, z pairs)
+    shade_alpha: vec4[4]            # each quad's darkness (four to a vec4)
+    shade_n: f32
     depth: Texture
 
 struct SeaOut:
@@ -124,6 +127,27 @@ _rush = (p: vec2, vel: vec2) -> f32:
     sgn = if hash21(vec2(row * 1.7, seg + 5.0)) > 0.55: 1.0 else: -1.0
     along * across * on * sgn
 
+# how much a point is in the aircraft shadows passed (0..1), with an edge a pixel or so soft
+_shadowed = (p: vec2, u: SeaParams, aa: f32) -> f32:
+    sh: f32 = 0.0
+    loop q in 0..16:
+        if f32(q) < u.shade_n:
+            a = u.shade[q * 2].xy
+            b = u.shade[q * 2].zw
+            c = u.shade[q * 2 + 1].xy
+            d = u.shade[q * 2 + 1].zw
+            area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+            o: f32 = if area < 0.0: -1.0 else: 1.0
+            e1 = ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / max(length(b - a), 0.01) * o
+            e2 = ((c.x - b.x) * (p.y - b.y) - (c.y - b.y) * (p.x - b.x)) / max(length(c - b), 0.01) * o
+            e3 = ((d.x - c.x) * (p.y - c.y) - (d.y - c.y) * (p.x - c.x)) / max(length(d - c), 0.01) * o
+            e4 = ((a.x - d.x) * (p.y - d.y) - (a.y - d.y) * (p.x - d.x)) / max(length(a - d), 0.01) * o
+            m = min(min(e1, e2), min(e3, e4))
+            al = u.shade_alpha[q / 4]
+            k = if q % 4 == 0: al.x else: (if q % 4 == 1: al.y else: (if q % 4 == 2: al.z else: al.w))
+            sh = max(sh, smoothstep(-aa, aa, m) * k)
+    sh
+
 # the sun's glints: a sparse field of tiny facets, each tipped at random and re-tipped several
 # times a second; one that sends the sun into the eye flashes as a point. Cells grow with distance
 # (in steps of two) so a glint stays a pixel or two across.
@@ -183,13 +207,18 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
         if rf > 0.01:
             rs = _rush(p, u.rush.xz)
             c = mix(c, if rs > 0.0: mix(body, skyc, 0.6) * 1.25 + vec3(0.04, 0.06, 0.06) else: body * 0.55, abs(rs) * rf * 0.95)
+    # the shadows of aircraft above
+    shd: f32 = 0.0
+    if u.shade_n > 0.0:
+        shd = _shadowed(p, u, 0.08 + dist * 0.0015)
+        c = mix(c, c * 0.42 + vec3(0.0, 0.02, 0.05), shd)
     # the sun: a soft sheen along its path, and the glints
     hv = normalize(l + vdir)
     nh = max(dot(n, hv), 0.0)
     day = smoothstep(-0.05, 0.12, l.y)
     sheen = pow(nh, 90.0) * 0.22 + pow(nh, 600.0) * 0.5
     gl = _glints(p, n, vdir, l, dist, u.time, rough)
-    c = c + u.sun * (sheen + gl * 14.0) * day
+    c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)
     # foam: a lace where the water is very shallow, moving with the swell
     fn = sin(p.x * 0.9 + sin(p.y * 0.6) * 2.0 + u.time * 1.2) * sin(p.y * 1.1 + sin(p.x * 0.5) * 2.0 - u.time * 0.9)
     edge = 1.0 - smoothstep(0.15, 1.4 + 0.7 * fn, depth)
@@ -242,10 +271,38 @@ build_depth_texture = () -> Texture:
             img.set(i, j, vec4(f32(d), if h > 0.0: 1.0 else: 0.0, 0, 1))
     texture(img, true)
 
-draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0)):
+# a flat part's shadow on the sea: the four corners of a box's middle (local center c, half size h)
+# placed by model, carried along the sunlight down to sea level
+struct SeaShadows:
+    quads: vec4[32]
+    alpha: vec4[4]
+    n = 0
+
+add_sea_shadow = (sh: mut SeaShadows, model: mat4, c: vec3, h: vec3, sun: vec3, alpha: f64):
+    if sh.n >= 16: return
+    s = normalize(sun)
+    if s.y < 0.08: return
+    corners = [vec3(-1, 0, -1), vec3(1, 0, -1), vec3(1, 0, 1), vec3(-1, 0, 1)]
+    pts: vec2[]
+    loop k in corners:
+        w = transform_point(model, c + k * h)
+        t = w.y / s.y
+        pts.push(vec2(w.x - s.x * t, w.z - s.z * t))
+    sh.quads[sh.n * 2] = vec4(pts[0].x, pts[0].y, pts[1].x, pts[1].y)
+    sh.quads[sh.n * 2 + 1] = vec4(pts[2].x, pts[2].y, pts[3].x, pts[3].y)
+    i = sh.n / 4
+    a = f32(alpha)
+    match sh.n % 4:
+        0: sh.alpha[i].x = a
+        1: sh.alpha[i].y = a
+        2: sh.alpha[i].z = a
+        _: sh.alpha[i].w = a
+    sh.n += 1
+
+draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0), shadows: SeaShadows = SeaShadows()):
     swell = 0.003 + 0.0011 * w.speed            # (the swells' height for their length)
     p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
-        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(w.speed / 12.0), vec4(w.dir.x, w.dir.y, f32(w.speed), f32(swell)), w.drift, rush_of(cam_vel), depth)
+        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(w.speed / 12.0), vec4(w.dir.x, w.dir.y, f32(w.speed), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth)
     draw(sea_sh, m, p)
 
 # how strongly the sea streaks past for a camera moving at vel (fast and low)
