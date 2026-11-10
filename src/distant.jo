@@ -1,0 +1,158 @@
+# Other aircraft heard: each engine nearby a looping voice, placed and pitched each frame as sound
+# from it would really arrive.
+#   - heard where it was, not where it is: sound takes about three seconds to come a kilometer,
+#     so a plane passing at a distance is heard behind where it is seen (each aircraft's recent
+#     path is kept, and the moment its sound left it is solved for)
+#   - Doppler: higher as it comes, lower as it goes, by its speed toward the listener then, and
+#     the listener's own (c / (c - v))
+#   - louder near, falling off as sound pressure does, and duller far off: a bright copy of the
+#     engine close in crossfades into a muffled one as the air takes its highs away
+# Only the nearest few are given voices.
+
+use 'sound.jo'
+use 'airsound.jo'
+
+const SOUND_SPEED = 343.0
+const HEARING = 4000.0              # meters: beyond this an engine is not heard
+const VOICES = 6                    # at most this many other engines at once
+
+struct Heard:
+    craft = -1
+    near_v = -1
+    far_v = -1
+    trail: vec4[]                   # where it was (x, y, z) and when (w, seconds of game time)
+    seen = 0.0                      # (the last time it was among the sources)
+
+struct EngineSource:
+    craft: int
+    pos: vec3
+    vel: vec3
+    throttle: f64
+    on: bool
+    tone: f64                       # its engine's own pitch (bigger engines lower)
+
+struct Hearing:
+    near: Sound = Sound([])
+    far: Sound = Sound([])
+    heard: Heard[]
+    ready = false
+
+make_hearing = () -> Hearing:
+    h = Hearing()
+    h.near = engine_loop()
+    # (the distant engine: the same beat with its highs taken away by the air)
+    lp = Biquad(); lp2 = Biquad()
+    lowpass(lp, 380.0)
+    lowpass(lp2, 520.0)
+    s = h.near.samples
+    out = fill(f32(0), s.len())
+    loop i in 0..s.len() / 2:
+        v = filt(lp2, filt(lp, f64(s[i * 2])))
+        out[i * 2] = f32(v * 1.6)
+        out[i * 2 + 1] = f32(v * 1.6)
+    h.far = Sound(out)
+    h.ready = true
+    h
+
+# (where an aircraft was at time `at`, from its trail; and how fast it was going then)
+_was = (trail: vec4[], at: f64) -> (vec3, vec3):
+    n = trail.len()
+    if n == 0: return (vec3(0, 0, 0), vec3(0, 0, 0))
+    if n == 1 or at >= f64(trail[n - 1].w):
+        last = trail[n - 1]
+        v = if n >= 2: (last.xyz - trail[n - 2].xyz) / max(last.w - trail[n - 2].w, 0.001) else: vec3(0, 0, 0)
+        return (last.xyz, v)
+    k = n - 1
+    loop k > 0 and f64(trail[k - 1].w) > at: k -= 1
+    if k == 0: return (trail[0].xyz, (trail[1].xyz - trail[0].xyz) / max(trail[1].w - trail[0].w, 0.001))
+    a = trail[k - 1]
+    b = trail[k]
+    u = clamp((at - f64(a.w)) / max(f64(b.w - a.w), 0.0001), 0.0, 1.0)
+    (a.xyz + (b.xyz - a.xyz) * f32(u), (b.xyz - a.xyz) / max(b.w - a.w, 0.001))
+
+# the sound of an aircraft arriving now at `ear`: where it was when that sound left it, how fast
+# it was going then, how far that is, and the Doppler factor for it and the listener's motion
+heard_from = (trail: vec4[], ear: vec3, ear_vel: vec3, t: f64) -> (vec3, vec3, f64, f64):
+    at = t
+    p, v = _was(trail, at)
+    loop n in 0..4:
+        at = t - f64(length(p - ear)) / SOUND_SPEED
+        p, v = _was(trail, at)
+    d = max(f64(length(p - ear)), 1.0)
+    u = (ear - p) / f32(d)
+    doppler = clamp((SOUND_SPEED - f64(dot(ear_vel, u))) / max(SOUND_SPEED - f64(dot(v, u)), 30.0), 0.5, 2.2)
+    (p, v, d, doppler)
+
+_silence = (h: mut Hearing, i: int):
+    if h.heard[i].near_v >= 0: stop(h.heard[i].near_v)
+    if h.heard[i].far_v >= 0: stop(h.heard[i].far_v)
+    h.heard[i].near_v = -1
+    h.heard[i].far_v = -1
+
+# each frame: the engines about, heard by a listener at `ear` moving at `ear_vel`
+hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec3, t: f64):
+    if not h.ready: return
+    # keep each aircraft's recent path (a sample every twentieth of a second, twelve seconds back)
+    loop src in sources:
+        k = -1
+        loop i in 0..h.heard.len():
+            if h.heard[i].craft == src.craft: k = i
+        if k < 0:
+            if not src.on or f64(length(src.pos - ear)) > HEARING: continue
+            h.heard.push(Heard(src.craft))
+            k = h.heard.len() - 1
+        h.heard[k].seen = t
+        tr = h.heard[k].trail
+        if tr.len() == 0 or t - f64(tr[tr.len() - 1].w) >= 0.05: h.heard[k].trail.push(vec4(src.pos.x, src.pos.y, src.pos.z, f32(t)))
+        loop h.heard[k].trail.len() > 2 and t - f64(h.heard[k].trail[0].w) > 12.0: h.heard[k].trail.remove_at(0)
+    # the nearest few, by where their sound comes from now
+    dist: (f64, int)[]
+    loop i in 0..h.heard.len():
+        p, _ = _was(h.heard[i].trail, t)
+        dist.push((f64(length(p - ear)), i))
+    sort_by(dist, (x: (f64, int)) -> f64: x.0)
+    keep = fill(false, h.heard.len())
+    loop j in 0..min(VOICES, dist.len()): keep[dist[j].1] = true
+    i = 0
+    loop i < h.heard.len():
+        hd = h.heard[i]
+        src = EngineSource(-1, vec3(0, 0, 0), vec3(0, 0, 0), 0.0, false, 1.0)
+        found = false
+        loop s in sources:
+            if s.craft == hd.craft:
+                src = s
+                found = true
+        # (gone from the world, or long out of hearing: forgotten)
+        if not found or (not keep[i] and t - hd.seen > 1.0) or f64(length(src.pos - ear)) > HEARING * 1.3:
+            _silence(h, i)
+            h.heard.remove_at(i)
+            keep.remove_at(i)
+            continue
+        if not keep[i] or not src.on:
+            _silence(h, i)
+            i += 1
+            continue
+        p, v, d, doppler = heard_from(hd.trail, ear, ear_vel, t)
+        level = (0.25 + 0.45 * src.throttle) * min(1.0, 35.0 / d) * exp(-d / 7000.0) * 0.9
+        far = smoothstep(120.0, 1600.0, d)
+        gn = level * cos(far * PI * 0.5)
+        gf = level * sin(far * PI * 0.5)
+        pitch = src.tone * (0.7 + 0.55 * src.throttle + f64(length(v)) / 250.0) * doppler
+        if hd.near_v < 0:
+            h.heard[i].near_v = play(h.near, 0.0, looping = true, pitch = pitch)
+            h.heard[i].far_v = play(h.far, 0.0, looping = true, pitch = pitch)
+            # (each its own place in the loop, so two engines do not beat in step)
+            off = random(0.0, duration(h.near))
+            seek(h.heard[i].near_v, off)
+            seek(h.heard[i].far_v, off)
+        move_sound(h.heard[i].near_v, p, gn, 1000000000.0)
+        move_sound(h.heard[i].far_v, p, gf, 1000000000.0)
+        set_pitch(h.heard[i].near_v, pitch)
+        set_pitch(h.heard[i].far_v, pitch)
+        i += 1
+
+# paused: the other engines silent too
+hush_engines = (h: Hearing):
+    loop hd in h.heard:
+        if hd.near_v >= 0: set_volume(hd.near_v, 0.0)
+        if hd.far_v >= 0: set_volume(hd.far_v, 0.0)
