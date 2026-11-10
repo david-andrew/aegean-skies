@@ -32,6 +32,9 @@ use 'src/shadow.jo'
 use 'src/birds.jo'
 use 'src/trails.jo'
 use 'src/damage.jo'
+use 'src/townsfolk.jo'
+use 'src/speech.jo'
+use 'src/panels.jo'
 
 window("Aegean Skies", 1280, 720)
 init_clouds()
@@ -101,6 +104,83 @@ pc = make_flyer(.gull, 0, craft_models[0].contacts, home.docks[0], along_quay)
 moored: Moored[]
 traffic = make_living_traffic(living_world, craft_models)
 bind_living_player(pc, living_world, traffic_scene)
+
+# ---------------- the people of the towns, the boards, talking and trading ----------------
+
+folks: Folk[]
+sync_folk(folks, living_world, towns)
+folk_sync_t = 0.0
+enum Ui: none, talk, board, trade
+ui = Ui.none
+ui_folk = -1
+ui_place = -1
+ui_line = ""
+ui_news = 0
+toast = ""
+toast_until = 0.0
+
+# a harbor's notice board: two posts and a board with a little roof, on the waterfront
+board_mesh = custom_mesh(():
+    vs: Vertex3D[]
+    wood = rgb(0.42, 0.3, 0.19)
+    add_box(vs, vec3(-0.9, 0.9, 0), vec3(0.12, 1.8, 0.12), wood)
+    add_box(vs, vec3(0.9, 0.9, 0), vec3(0.12, 1.8, 0.12), wood)
+    add_box(vs, vec3(0, 1.45, 0), vec3(2.1, 1.1, 0.08), rgb(0.5, 0.36, 0.22))
+    loop k in 0..5: add_box(vs, vec3(f32(-0.75 + f64(k) * 0.37), f32(1.45 + f64((k * 37) % 3) * 0.12 - 0.12), 0.06), vec3(0.28, 0.34, 0.02), rgb(0.95, 0.91, 0.8))
+    add_gable(vs, vec3(0, 2.05, 0), 2.2, 0.5, 0.25, ROOFS[1], mat4())
+    vs
+())
+board_spots: vec3[]
+loop tw in towns:
+    bp = tw.center - vec3(tw.out.x, 0, tw.out.y) * 4.0 + vec3(-tw.out.y, 0, tw.out.x) * 7.0
+    board_spots.push(vec3(bp.x, f32(walk_height(towns, f64(bp.x), f64(bp.z))), bp.z))
+
+# (AEGEAN_UI=board|talk|trade opens that panel at the home harbor at the start, for screenshots)
+if let v = env("AEGEAN_UI"):
+    living.advance_minutes(living_world, 180)
+    sync_folk(folks, living_world, towns)
+    ui_place = 0
+    if v == "board": ui = .board
+    else:
+        loop k in 0..folks.len():
+            if folks[k].place == 0 and ui_folk < 0 and (v != "trade" or living_world.people[folks[k].person].occupation == .merchant): ui_folk = k
+        if ui_folk >= 0:
+            ui = if v == "trade": Ui.trade else: Ui.talk
+            ui_line = say(living_world, folks[ui_folk].person)
+
+player_cents = () -> int:
+    a = living_world.people[living_world.player].account
+    if a >= 0: living_world.accounts[a].cents else: 0
+
+say_toast = (s: str):
+    global toast, toast_until
+    toast = s
+    toast_until = t + 5.0
+
+# the town one is in (by the nearest waterfront within a few hundred meters), or -1
+town_here = (p: vec3) -> int:
+    best = -1
+    bd = 450.0
+    loop k in 0..towns.len():
+        d = f64(length(vec2(towns[k].center.x - p.x, towns[k].center.z - p.z)))
+        if d < bd:
+            bd = d
+            best = k
+    best
+
+near_board = () -> int:
+    loop k in 0..board_spots.len():
+        if length(board_spots[k] - me.pos) < 3.2: return k
+    -1
+
+# jobs the player carries for this place, delivered on arrival (paid then)
+deliver_here = (place: int):
+    loop id in living_world.active_jobs:
+        j = living_world.jobs[id]
+        if j.state != .claimed or j.carrier != living_world.player or j.destination != place: continue
+        before = player_cents()
+        if living.deliver_job(living_world, id, living_world.player):
+            say_toast("Delivered for {living_world.people[j.poster].name}: {(player_cents() - before) / 100} lire")
 spray_ps = Particles3D(gravity = vec3(0, -9.8, 0), drag = 1.5)
 smoke_ps = Particles3D(gravity = vec3(0, 1.5, 0), drag = 2.0)
 vapor_trails = [Trail(), Trail()]
@@ -177,7 +257,7 @@ seed_random(5)
 loop ti in 0..towns.len():
     tw = towns[ti]
     if tw.houses.len() < 3: continue
-    n = min(14, 3 + tw.houses.len() / 4)
+    n = min(6, 1 + tw.houses.len() / 12)
     loop k in 0..n:
         hp = tw.houses[random_int(0, tw.houses.len() - 1)]
         dress: Dress = [Dress.fisher, .merchant, .dress, .widow, .worker, .fisher, .police][k % 7]
@@ -274,7 +354,7 @@ step_ashore = (near: vec3):
         follow.placed = false
 
 update = (dt: f64):
-    global t, hour, show_chart, pc
+    global t, hour, show_chart, pc, ui, ui_folk, ui_line, ui_news, ui_place
     let dt = clamp(dt, 0.0, 0.25)
     t += dt
     wind_step(wind_now, t, dt, hour)
@@ -288,30 +368,45 @@ update = (dt: f64):
     match me.mode:
         .free: free.update(dt)
         .walking:
-            follow.distance = clamp(follow.distance - mouse_wheel() * 0.8, 2.5, 14.0)
-            if key_down(.q): follow.yaw += dt * 2.0
-            if key_down(.e): follow.yaw -= dt * 2.0
-            a = input_axis()
-            move = flat_forward(follow) * -a.y + flat_right(follow) * a.x
-            run = key_down(.shift)
-            speed = if run: 4.2 else: 1.7
-            if length(move) > 0.1:
-                dir = normalize(vec2(move.x, move.z))
-                me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 10.0, dt)
-                me.pos = walk_step(towns, me.pos, dir * f32(speed * dt))
-                me.stride = approach(me.stride, if run: 1.0 else: 0.7, 8.0, dt)
-                me.phase += dt * speed * 5.0
-            else:
-                me.stride = approach(me.stride, 0.0, 8.0, dt)
-            update(follow, me.pos, dt)
-            if key_down(.f) and not near_own_craft() and pc.state.moored:
-                if let a = mooring_anchor():
-                    if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: haul_in(dt)
-            if key_pressed(.f) and near_own_craft():
-                me.mode = .aboard
-                mouse_lock(true)
-                pc.placed = false
-                pc.throttle = 0.0
+          if ui != .none: update(follow, me.pos, dt)
+          if ui == .none:
+              follow.distance = clamp(follow.distance - mouse_wheel() * 0.8, 2.5, 14.0)
+              if key_down(.q): follow.yaw += dt * 2.0
+              if key_down(.e): follow.yaw -= dt * 2.0
+              a = input_axis()
+              move = flat_forward(follow) * -a.y + flat_right(follow) * a.x
+              run = key_down(.shift)
+              speed = if run: 4.2 else: 1.7
+              if length(move) > 0.1:
+                  dir = normalize(vec2(move.x, move.z))
+                  me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 10.0, dt)
+                  me.pos = walk_step(towns, me.pos, dir * f32(speed * dt))
+                  me.stride = approach(me.stride, if run: 1.0 else: 0.7, 8.0, dt)
+                  me.phase += dt * speed * 5.0
+              else:
+                  me.stride = approach(me.stride, 0.0, 8.0, dt)
+              update(follow, me.pos, dt)
+              if key_down(.f) and not near_own_craft() and pc.state.moored:
+                  if let a = mooring_anchor():
+                      if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: haul_in(dt)
+              # talk to whoever is near; read the board
+              if key_pressed(.t):
+                  k = nearest_folk(folks, me.pos, 3.5)
+                  if k >= 0:
+                      ui = .talk
+                      ui_folk = k
+                      ui_line = say(living_world, folks[k].person)
+                      ui_news = 0
+                      mouse_lock(false)
+              if key_pressed(.f) and not near_own_craft() and near_board() >= 0:
+                  ui = .board
+                  ui_place = near_board()
+                  mouse_lock(false)
+              if key_pressed(.f) and near_own_craft():
+                  me.mode = .aboard
+                  mouse_lock(true)
+                  pc.placed = false
+                  pc.throttle = 0.0
         .aboard:
             fly(pc, dt, t)
             if trace and floor(t) != floor(t - dt):
@@ -340,12 +435,19 @@ update = (dt: f64):
                     moor(pc.state, vec3(d.x, f32(pc.spec.float_height), d.z), heading(pc.state))
                     pc.throttle = 0.0
                     step_ashore(d)
+                    th = town_here(d)
+                    if th >= 0: deliver_here(th)
                 else if pc.state.moored: step_ashore(pc.state.position)
             if key_pressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached):
                 # towed home and patched up (the bill comes later)
                 pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, home.docks[0], along_quay)
                 pc.placed = false
     update_walkers(dt)
+    if t - folk_sync_t > 2.0:
+        sync_folk(folks, living_world, towns)
+        global folk_sync_t
+        folk_sync_t = t
+    update_folk(folks, living_world, towns, if me.mode == .aboard: pc.state.position else: me.pos, dt)
     update_traffic(traffic, living_world, traffic_scene, if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos, t, dt, pc.state)
     sync_living_player(pc, living_world)
     wake_step(wakes[0], pc.state.position, pc.state.velocity, pc.state.on_water and not pc.state.moored, 1.6, t)
@@ -397,6 +499,10 @@ draw_world = (L: Light):
             at = craft_matrix(m)
             draw(obj_sh, cm.body, obj_params(L, t, at))
             draw(obj_sh, cm.prop, obj_params(L, t, at * translation(cm.prop_at) * rotation_z(0.4)))
+        draw_folk(folks, L, t)
+        loop k in 0..board_spots.len():
+            tw = towns[k]
+            draw(obj_sh, board_mesh, obj_params(L, t, translation(board_spots[k]) * rotation_y(atan2(f64(tw.out.x), f64(tw.out.y)))))
         loop w in walkers:
             if length(w.pos - scene_camera()) < 600.0: draw_figure(w.fig, w.pos, w.yaw, w.phase, if w.wait > 0.0: 0.0 else: 0.8, L, t)
         if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, me.stride, L, t)
@@ -458,9 +564,30 @@ draw = ():
     set_font(fonts.ui)
     text("{int(hour):02}:{int((hour - floor(hour)) * 60.0):02}", vec2(f32(screen_width() - 80), 18), 22, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
     set_font()
+    # money
+    set_font(fonts.ui)
+    text("{player_cents() / 100} lire", vec2(f32(screen_width() - 120), 46), 20, rgba(1, 0.95, 0.8, 0.85), shadow = rgba(0, 0, 0, 0.4))
+    set_font()
+    # the people about: names over those near, a line from whoever is nearest
+    if me.mode == .walking and ui == .none:
+        k = nearest_folk(folks, me.pos, 7.0)
+        loop i in 0..folks.len():
+            f = folks[i]
+            if not f.shown or i == k: continue
+            d = f64(length(f.pos - me.pos))
+            if d < 16.0: name_tag(fonts, f.pos + vec3(0, 1.7, 0), living_world.people[f.person].name, d)
+        if k >= 0:
+            if t - folks[k].line_t > 20.0:
+                folks[k].line = say(living_world, folks[k].person)
+                folks[k].line_t = t
+            d = f64(length(folks[k].pos - me.pos))
+            speech_bubble(fonts, folks[k].pos + vec3(0, 1.7, 0), living_world.people[folks[k].person].name, folks[k].line, d, 8.0)
     match me.mode:
         .walking:
-            if near_own_craft(): prompt_card(fonts, "F  climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
+            if ui != .none: pass
+            else if near_own_craft(): prompt_card(fonts, "F  climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
+            else if near_board() >= 0: prompt_card(fonts, "F  read the notices")
+            else if nearest_folk(folks, me.pos, 3.5) >= 0: prompt_card(fonts, "T  talk to {living_world.people[folks[nearest_folk(folks, me.pos, 3.5)].person].name}")
             else if pc.state.moored:
                 if let a = mooring_anchor():
                     if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: prompt_card(fonts, "hold F  haul in the line")
@@ -476,5 +603,74 @@ draw = ():
         instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed)
     if me.mode != .free: title_card(fonts, t)
     if key_down(.h) or (t > 7.5 and t < 22.0 and me.mode == .walking): controls_card(fonts, me.mode == .aboard)
+    draw_ui()
+    if t < toast_until: prompt_card(fonts, toast, 260.0)
     if show_chart: draw_chart(chart, towns, if me.mode == .aboard: pc.state.position else: me.pos, if me.mode == .aboard: heading(pc.state) else: PI - me.yaw, hour,
         [loop tr in traffic: vec4(tr.state.position.x, tr.state.position.y, tr.state.position.z, f32(heading(tr.state)))])
+
+# the panels open over the scene: a conversation, a board, a ledger
+draw_ui = ():
+    global ui, ui_line, ui_news, ui_place
+    match ui:
+        .talk:
+            if ui_folk < 0 or ui_folk >= folks.len():
+                ui = .none
+                return
+            f = folks[ui_folk]
+            p = living_world.people[f.person]
+            merchant = p.occupation == .merchant or p.occupation == .innkeeper or p.occupation == .hotelier or p.occupation == .quartermaster
+            answers = ["What's the news?", "Any work going?"]
+            if merchant: answers.push("Let's trade.")
+            answers.push("Goodbye.")
+            role = "{p.occupation}".replace("_", " ")
+            c = conversation(fonts, p.name, "{role}, {SETTLEMENTS[f.place].name}", ui_line, answers)
+            if key_pressed(.escape): c = answers.len() - 1
+            if c == 0:
+                # the next thing they know
+                lines: str[]
+                loop n in p.news:
+                    l = news_line(living_world, f.person, n)
+                    if l != "": lines.push(cap_line(l))
+                ui_line = if lines.len() == 0: "Nothing I've heard." else: lines[ui_news % lines.len()]
+                ui_news += 1
+            else if c == 1:
+                ui_place = f.place
+                ui = .board
+            else if merchant and c == 2:
+                ui_place = f.place
+                ui = .trade
+            else if c >= 0:
+                ui = .none
+        .board:
+            yesterday: str[]
+            loop r in living_world.places[ui_place].yesterday:
+                l = reason_line(living_world, r)
+                if l != "": yesterday.push(l)
+            res = notice_board(fonts, SETTLEMENTS[ui_place].name, job_notices(living_world, ui_place), yesterday)
+            if res.take >= 0:
+                if living.take_job(living_world, res.take, living_world.player):
+                    j = living_world.jobs[res.take]
+                    say_toast("Taken: to {SETTLEMENTS[j.destination].name} by {clock_text(living_world, j.due_minute)}")
+                else: say_toast("Not now: it needs your aircraft here, room aboard, or it is spoken for")
+            if res.closed: ui = .none
+        .trade:
+            w = living_world
+            m = w.places[ui_place].market
+            c = w.people[w.player].craft
+            rows: GoodRow[]
+            goods: int[]
+            loop g in 0..w.goods.len():
+                if w.goods[g].illegal and ui_place != 5: continue
+                pr = m.price_cents[g]
+                have = if c >= 0: w.aircraft[c].cargo.qty[g] / 1000 else: 0
+                rows.push(GoodRow(w.goods[g].key, "load", pr * 102 / 10000, pr * 98 / 10000, m.inventory.qty[g] / 1000, have))
+                goods.push(g)
+            used = 0
+            if c >= 0:
+                loop g in 0..w.goods.len(): used += w.aircraft[c].cargo.qty[g] / 1000
+            res = ledger(fonts, w.people[folks[ui_folk].person].name, SETTLEMENTS[ui_place].name, rows, player_cents() / 100, used, 8)
+            if res.row >= 0:
+                ok = if res.dir > 0: living.buy(living_world, ui_place, goods[res.row], 1000, living_world.player, c) else: living.sell(living_world, ui_place, goods[res.row], 1000, living_world.player, c)
+                if not ok: say_toast("No: not enough money, stock or room aboard, or your aircraft is not here")
+            if res.closed: ui = .none
+        _: pass
