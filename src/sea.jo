@@ -25,29 +25,32 @@ struct SeaParams:
     fog: f32
     time: f32
     rough: f32                      # 0 a calm sea, 1 a rough one (weather)
+    wind: vec4                      # the way it blows (x, z), its speed, and (w) the swell's height
+    drift: vec2                     # how far the gusts have moved
     depth: Texture
 
 struct SeaOut:
     pos: vec4
     world: vec3
 
-# the swells: height and slope (dh/dx, dh/dz) at a point. Each swell fades out where it is
-# too short for the pixels to show it (dist: how far the camera is), else the sea shimmers.
-_swell = (p: vec2, t: f32, rough: f32, dist: f32) -> vec3:
+# the swells: height and slope (dh/dx, dh/dz) at a point, running mostly with the wind. Each
+# fades out where it is too short for the pixels to show it (dist: from the camera).
+_swell = (p: vec2, t: f32, amp: f32, dist: f32, wd: vec2) -> vec3:
     h: f32 = 0.0
     dx: f32 = 0.0
     dz: f32 = 0.0
-    dirs: vec2[6] = [vec2(0.8, 0.6), vec2(0.95, -0.3), vec2(0.3, 0.95), vec2(-0.6, 0.8), vec2(0.7, 0.71), vec2(-0.2, 0.98)]
+    turns: f32[6] = [0.0, 0.45, -0.5, 0.9, -0.25, 0.2]
     lens: f32[6] = [61.0, 37.0, 23.0, 13.0, 7.3, 4.1]
     loop k in 0..6:
-        d = dirs[k]
+        a = turns[k]
+        d = vec2(wd.x * cos(a) - wd.y * sin(a), wd.x * sin(a) + wd.y * cos(a))
         len = lens[k]
         w = 6.2831853 / len
         fade = 1.0 - smoothstep(len * 9.0, len * 40.0, dist)
-        a = len * (0.0045 + 0.006 * rough) * fade
-        ph = dot(d, p) * w + t * sqrt(9.8 * w)
-        h += a * sin(ph)
-        c = a * w * cos(ph)
+        hk = len * amp * fade
+        ph = dot(d, p) * w - t * sqrt(9.8 * w)
+        h += hk * sin(ph)
+        c = hk * w * cos(ph)
         dx += c * d.x
         dz += c * d.y
     vec3(h, dx, dz)
@@ -56,34 +59,75 @@ sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
     p = vec2(v.pos.x + u.cam.x, v.pos.z + u.cam.z)
     r = length(v.pos.xz)
     near = 1.0 - smoothstep(80.0, 260.0, r)
-    s = _swell(p, u.time, u.rough, r)
+    s = _swell(p, u.time, u.wind.w, r, u.wind.xy)
     w = vec3(p.x, s.x * near, p.y)
     SeaOut(u.view_proj * vec4(w, 1), w)
 
-# the painted marks on the water: short pale dashes along the swell, scattered, drifting
-_dashes = (p: vec2, t: f32) -> f32:
-    # a frame along the swell's crests
-    q = vec2(p.x * 0.8 + p.y * 0.6, -p.x * 0.6 + p.y * 0.8) + vec2(t * 0.6, t * 0.25)
-    cs = vec2(11.0, 3.2)
-    cell = floor(q / cs)
-    f = q / cs - cell
-    r = hash21(cell)
-    r2 = hash21(cell + vec2(17.0, 31.0))
-    if r < 0.45: return 0.0
-    # a dash: long across the cell, thin, its place jittered, its length breathing
-    cx = 0.25 + 0.5 * r2
-    cy = 0.3 + 0.4 * r
-    life = 0.5 + 0.5 * sin(t * (0.6 + r * 0.8) + r2 * 40.0)
-    lx = (f.x - cx) / (0.18 + 0.2 * life * r2 + 0.06)
-    ly = (f.y - cy) / 0.09
-    e = lx * lx + ly * ly
-    (1.0 - smoothstep(0.55, 1.0, e)) * smoothstep(0.15, 0.4, life)
+# fine ripples raised by the wind (their slope), shorter than the swells, filtered by distance
+_ripples = (p: vec2, t: f32, wd: vec2, dist: f32) -> vec2:
+    turns: f32[5] = [0.3, -0.35, 0.75, -0.8, 0.05]
+    lens: f32[5] = [3.1, 2.3, 1.6, 1.15, 0.8]
+    g = vec2(0, 0)
+    loop k in 0..5:
+        a = turns[k]
+        d = vec2(wd.x * cos(a) - wd.y * sin(a), wd.x * sin(a) + wd.y * cos(a))
+        w = 6.2831853 / lens[k]
+        fade = 1.0 - smoothstep(lens[k] * 14.0, lens[k] * 60.0, dist)
+        ph = dot(d, p) * w - t * sqrt(9.8 * w) * 1.1 + f32(k) * 1.7
+        g = g + d * (cos(ph) * 0.07 * fade)
+    g
+
+# the painted crests, after the toon seas: thin pale strokes across the wind, curling and broken,
+# drifting downwind
+_strokes = (p: vec2, t: f32, wd: vec2) -> f32:
+    side = vec2(-wd.y, wd.x)
+    a = dot(p, wd)
+    b = dot(p, side)
+    warp = (vnoise(vec2(a * 0.02, b * 0.03)) - 0.5) * 18.0 + sin(b * 0.09 + a * 0.02) * 2.5
+    ph = (a + warp - t * 2.4) / 9.0
+    row = floor(ph)
+    k = ph - row
+    # each stroke: a short arc along the crest, thick in its middle and tapering to points
+    sl = b * 0.11 + hash21(vec2(row, 3.0)) * 50.0
+    seg = floor(sl)
+    sf = sl - seg
+    on = step(0.55, hash21(vec2(seg, row)))
+    taper = sin(clamp((sf - 0.15) / 0.7, 0.0, 1.0) * 3.14159)
+    w = 0.012 + 0.03 * taper
+    band = smoothstep(0.0, w * 0.4, k) * (1.0 - smoothstep(w, w * 1.6, k))
+    band * on * step(0.001, taper)
+
+# the sun's glints: a sparse field of tiny facets, each tipped at random and re-tipped several
+# times a second; one that sends the sun into the eye flashes as a point. Cells grow with distance
+# (in steps of two) so a glint stays a pixel or two across.
+_glints = (p: vec2, n: vec3, v: vec3, l: vec3, dist: f32, t: f32, rough: f32) -> f32:
+    base: f32 = 0.3
+    lev = max(floor(log(max(dist * 0.0021, base) / base) * 1.442695), 0.0)
+    size = base * pow(2.0, lev)
+    q = p / size
+    cell = floor(q)
+    f = q - cell
+    r1 = hash21(cell + vec2(lev * 31.0, 7.0))
+    r2 = hash21(cell + vec2(13.0, lev * 17.0))
+    tick = floor(t * (1.5 + 3.0 * r1) + r2 * 10.0)
+    r3 = hash21(cell + vec2(5.0, 3.0 + tick))
+    r4 = hash21(cell + vec2(9.0 + tick, 11.0))
+    tilt = vec2(r3 - 0.5, r4 - 0.5) * (0.22 + 0.45 * rough)
+    nf = normalize(n + vec3(tilt.x, 0, tilt.y))
+    rl = dot(reflect(-v, nf), l)
+    spot = 1.0 - smoothstep(0.1, 0.32, length(f - vec2(0.2, 0.2) - vec2(r1, r2) * 0.6))
+    smoothstep(0.9945, 0.999, rl) * spot * (0.4 + 0.6 * r2)
 
 sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     p = i.world.xz
     dist = length(i.world - u.cam)
-    s = _swell(p, u.time, u.rough, dist)
-    n = normalize(vec3(-s.y, 1.0, -s.z))
+    wd = u.wind.xy
+    ws = u.wind.z
+    g = gust(p, u.drift)
+    rough = clamp(0.1 + ws / 12.0 * (0.45 + 0.9 * g), 0.0, 1.5)
+    s = _swell(p, u.time, u.wind.w, dist, wd)
+    rp = _ripples(p, u.time, wd, dist) * rough
+    n = normalize(vec3(-(s.y + rp.x), 1.0, -(s.z + rp.y)))
     vdir = normalize(u.cam - i.world)
     l = normalize(u.sun_dir)
     # how deep it is here (the map: r = depth / 60 m), and so its color
@@ -92,24 +136,27 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
     sh = 1.0 - smoothstep(0.5, 26.0, depth)              # 1 in the shallows
     body = mix(u.deep, u.shallow, pow(sh, 1.4))
-    # the water glows a little from within: lighter where the swell faces the light
+    # the gusts darken the water they pass over
+    body = body * (1.0 - 0.3 * g * clamp(ws / 8.0, 0.0, 1.0))
     ndl = max(dot(n, l), 0.0)
     c = body * (mix(u.sun, vec3(1, 1, 1), 0.45) * (0.7 + 0.3 * ndl) + u.sky_top * 0.25)
-    # the sky in it, more at a glancing look (softened: a painted sea, not a mirror)
+    # the sky in it, more at a glancing look (less where the gusts roughen it)
     fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, vdir), 0.0), 5.0)
     rd = reflect(-vdir, n)
     skyc = mix(u.sky_horizon, u.sky_top, clamp(rd.y * 1.4, 0.0, 1.0))
     low = 1.0 - smoothstep(0.1, 0.45, l.y)
-    c = mix(c, skyc, clamp(fres * (0.6 + 0.3 * low), 0.0, 1.0))
-    # the dashes, near to middle distance
-    dfade = 1.0 - smoothstep(250.0, 1400.0, dist)
-    dsh = _dashes(p, u.time) * dfade * (1.0 - sh * 0.7)
-    c = mix(c, mix(body, u.sky_horizon, 0.55) * (u.sun * 0.9 + u.sky_top * 0.3) * 1.15, dsh * 0.75)
-    # the sun's glitter
+    c = mix(c, skyc, clamp(fres * (0.6 + 0.3 * low) * (1.0 - 0.3 * g), 0.0, 1.0))
+    # the painted crests, near to middle distance, more in a fresh wind
+    sfade = (1.0 - smoothstep(180.0, 650.0, dist)) * (1.0 - sh * 0.8)
+    st = _strokes(p, u.time, wd) * sfade * clamp(0.35 + ws / 10.0, 0.0, 1.0)
+    c = mix(c, mix(skyc, vec3(1, 1, 1), 0.45) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.7)
+    # the sun: a soft sheen along its path, and the glints
     hv = normalize(l + vdir)
     nh = max(dot(n, hv), 0.0)
-    spec = (pow(nh, 2400.0) * 3.0 + pow(nh, 300.0) * 0.06) * (1.0 - smoothstep(200.0, 4000.0, dist) * 0.6)
-    c = c + u.sun * spec * smoothstep(-0.05, 0.1, l.y)
+    day = smoothstep(-0.05, 0.12, l.y)
+    sheen = pow(nh, 90.0) * 0.22 + pow(nh, 600.0) * 0.5
+    gl = _glints(p, n, vdir, l, dist, u.time, rough)
+    c = c + u.sun * (sheen + gl * 14.0) * day
     # foam: a lace where the water is very shallow, moving with the swell
     fn = sin(p.x * 0.9 + sin(p.y * 0.6) * 2.0 + u.time * 1.2) * sin(p.y * 1.1 + sin(p.x * 0.5) * 2.0 - u.time * 0.9)
     edge = 1.0 - smoothstep(0.15, 1.4 + 0.7 * fn, depth)
@@ -117,7 +164,7 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     foam = clamp(edge * (0.75 + 0.35 * fn), 0.0, 1.0) * ffade
     c = mix(c, vec3(0.97, 0.98, 1.0) * (u.sun * 0.8 + u.sky_top * 0.3), foam * 0.85)
     # the water is clear: at the shore one sees the sand through it
-    a = clamp(0.48 + depth * 0.12 + fres * 0.4 + foam, 0.0, 1.0)
+    a = clamp(0.48 + depth * 0.12 + fres * 0.4 + foam + gl, 0.0, 1.0)
     c = aerial(c, i.world, u.cam, u.haze, u.fog)
     vec4(c, a)
 
@@ -162,9 +209,10 @@ build_depth_texture = () -> Texture:
             img.set(i, j, vec4(f32(d), if h > 0.0: 1.0 else: 0.0, 0, 1))
     texture(img, true)
 
-draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, rough: f64):
+draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind):
+    swell = 0.003 + 0.0011 * w.speed            # (the swells' height for their length)
     p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
-        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(rough), depth)
+        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(w.speed / 12.0), vec4(w.dir.x, w.dir.y, f32(w.speed), f32(swell)), w.drift, depth)
     draw(sea_sh, m, p)
 
 # (the GPU programs: made once the window is open)
