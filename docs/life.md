@@ -27,7 +27,9 @@ the response choices; render the body once. Keep the NPC's name separately; the 
 A conversation has a speaker-wide four-hour use window, including questions and replies. Its
 bounded journal holds 64 lines; incessant requests reach silence instead of evicting fresh lines.
 This prevents repeating the same statement to the player immediately after saying it to a neighbour.
-Source quotations are dated beliefs, not current omniscient prices. Debts/private courtship are
+Committing a news/market turn transfers the selected saved account/quote into the listener's
+bounded knowledge, retaining the original occurrence/observation date and the immediate speaker's
+attribution. Source quotations are dated beliefs, not current omniscient prices. Debts/private courtship are
 only disclosed in an explicitly private conversation with a trusted listener and nobody else near.
 News may be incomplete or stale; the game does not quietly refresh its occurrence date.
 
