@@ -218,11 +218,28 @@ Things agreed to build, roughly in the order they'll come:
 - Clouds closer to the Porco Rosso references, and an atmosphere to go with them: scattering
   (distance going blue, the sun's warmth low in the sky, shafts of light), haze over the islands.
   Plan in docs/research/longrange_clouds.md.
-- The archipelago scaled with the aircraft's speed (islands farther apart and larger, local detail
-  unchanged): in progress.
+- A world the size of the real Aegean (about 500 by 400 km): the present archipelago kept exactly
+  as it is (its sizes and distances feel right), with much more land around it: a mainland the size
+  of a country, large islands, many small ones. Conflicts between real societies need country-sized
+  places, and all of them are places one can fly to and land at. Mountains as they really are:
+  the highest (near 3000 m) on the mainland and the biggest islands, most islands a few hundred
+  meters. This needs a new world renderer, far lighter per square kilometer than today's baked
+  terrain (research and design under way).
 - Bailing out under a parachute, brought over from Sky Barons: from a damaged or falling aircraft
   the pilot jumps (seat freed, thrown clear with the aircraft's velocity), falls, the chute opens,
   drifts down on the wind, and lands on foot on land or swims in the sea; the wreck goes on
   without them. See docs/SKYBARONS_REUSE.md, "Bailouts and parachutes".
 - More vessels on the water (above).
-- Paint shop and markings; sandbox settings (above).
+- Paint shop and markings (also from the pause menu); sandbox settings (above).
+- Cargo that really exists: every box on a quay belongs to someone; a delivery's goods were already
+  somewhere in the world, and someone (the sender, a hired porter, or the player) carries them to
+  the aircraft; some errands are on foot, on the same island.
+- Air brakes (perhaps a negative throttle); a way to lock and unlock the guns; a cockpit view.
+- Many more aircraft, especially the WWI-era seaplanes of the references.
+- A moon with phases, rising with the right phase for the sun; water green and clear as crystal in
+  chosen coves.
+- Prettier clouds, foliage and towns: stone paths and alleys between houses (bare earth on the small
+  islands), open-air cafes, shops, fountains, statues, benches, people on bicycles, a very few cars
+  in the busiest places only, musicians: a world lived in.
+- War: battles that play out whether or not one joins them, leaning on Sky Barons (its AI pilots,
+  smoke and fire when hit, parachutes); a larger overhaul of errands and the world's liveness.

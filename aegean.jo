@@ -346,6 +346,7 @@ near_own_craft = () -> bool:
 
 rope: Rope
 was_moored = false
+click_took_mouse = false            # (the left button's press that took the mouse, until let go)
 
 # the notebook, and errands agreed with people: the cargo waiting on the quay by one's aircraft
 notebook = load_notebook()
@@ -613,7 +614,17 @@ engine_tone = (kind: Craft, craft: int) -> f64:
     base * (1.0 + 0.03 * f64((craft * 37) % 7 - 3) / 3.0)
 
 # the other aircraft's places (for keeping docks free)
-others_at = () -> vec3[]: [loop tr in traffic: tr.state.position]
+# where every other aircraft is or is bound: those flying about, every one the world has tied up
+# anywhere (drawn or not), and the docks claimed by those on their way in
+others_at = () -> vec3[]:
+    out = [loop tr in traffic: tr.state.position]
+    mine = living_world.people[living_world.player].craft
+    loop c in 0..living_world.aircraft.len():
+        if c != mine: out.push(living_world.aircraft[c].pose.pos)
+    loop id in living_world.active_trips:
+        tp = living_world.trips[id]
+        if tp.craft != mine and tp.claimed_dock >= 0: out.push(living_world.harbors[tp.destination].docks[tp.claimed_dock])
+    out
 
 # tie up at the bollard nearest the aircraft
 tie_up = ():
@@ -704,7 +715,13 @@ update = (dt: f64):
     if key_pressed(.m) and not typing: show_chart = not show_chart
     if key_pressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
-    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart: mouse_lock(true)
+    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked():
+        mouse_lock(true)
+        global click_took_mouse
+        click_took_mouse = true             # (that click only takes the mouse: it doesn't fire)
+    if not mouse_down(.left):
+        global click_took_mouse
+        click_took_mouse = false
     if key_pressed(.j) and not notebook.open and ui == .none and not typing:
         notebook.open = true
         mouse_lock(false)
@@ -793,7 +810,7 @@ update = (dt: f64):
                 plunge_v = 0.0
             # the guns: Space in the air, or the left button once the game has the mouse
             # (not while slow, with the mouse orbiting the camera)
-            held = (not tweaks.orbit_camera or not pc.slow) and ((key_down(.space) and not pc.state.on_water) or (mouse_down(.left) and is_mouse_locked()))
+            held = (not tweaks.orbit_camera or not pc.slow) and ((key_down(.space) and not pc.state.on_water) or (mouse_down(.left) and is_mouse_locked() and not click_took_mouse))
             fire(guns, held and not pc.state.crashed, craft_transform(pc), pc.state.velocity, MUZZLES, dt, spray_ps)
             if guns.shots != last_shots:
                 global last_shots
@@ -928,6 +945,9 @@ craft_matrix = (m: Moored) -> mat4:
     roll = sin(t * 0.9 + f64(m.pos.z)) * 0.03
     translation(m.pos + vec3(0, f32(2.1 + bob), 0)) * rotation_y(m.yaw) * rotation_z(roll)
 
+# where the player's aircraft is drawn: riding the swell when moored, driven under in a plunge
+pc_at = () -> mat4: translation(vec3(0, f32(plunge), 0)) * (if pc.state.moored: afloat(pc.state.position, t) else: mat4()) * craft_transform(pc)
+
 draw_world = (L: Light):
     draw_custom(():
         bow = transform_point(afloat(pc.state.position, t) * craft_transform(pc), vec3(1.4, -1.9, -2.6))
@@ -946,6 +966,10 @@ draw_world = (L: Light):
             at = afloat(b.at, t) * translation(b.at)
             draw(obj_sh, b.mesh, obj_params(L, t, at))
             if f64(length(b.at - cam_now)) < 1500.0: draw_cloths(flag_meshes[k], [fleet_flags[k]], at, wind_now_vec() * 3.0 + vec3(0.01, 0, 0), L, t)
+        # and those tied up along the quays, riding the swell too
+        loop tw in towns:
+            if f64(length(tw.center - cam_now)) > 6000.0: continue
+            loop b in tw.boats: draw(obj_sh, b.mesh, obj_params(L, t, afloat(b.at, t) * translation(b.at)))
     )
     draw_custom((): draw_birds(bird_mesh, flocks, L, t))
     draw_custom((): draw_groves(tree_meshes, groves, L, t))
@@ -965,7 +989,7 @@ draw_world = (L: Light):
         if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, me.stride, L, t)
         draw_traffic(traffic, craft_models, L, t)
         pm = craft_models[pc.model]
-        at = translation(vec3(0, f32(plunge), 0)) * (if pc.state.moored: afloat(pc.state.position, t) else: mat4()) * craft_transform(pc)
+        at = pc_at()
         draw_craft_parts(pm, pc.state.damage, at, L, t, pc.prop_angle, airframe(pc))
         draw_debris(pm, pc.state.damage, L, t)
         if me.mode == .aboard: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true)
@@ -1013,16 +1037,18 @@ draw_world = (L: Light):
     # (under the pure scale the cloth goes by a speed between the true and the drawn, so it starts to
     # flap soon enough)
     true_vel = if tweaks.cloth_true: pc.state.velocity * f32(if vis > 0.1: true_speed(pc.spec, vis) / vis else: 1.0) else if tweaks.pure_scale: pc.state.velocity * f32(if vis > 0.1: min(1.0, 1.8 * true_speed(pc.spec, vis) / vis) else: 1.0) else: pc.state.velocity
-    draw_custom((): draw_cloths(cloth_mesh, cloths_for(pc.model), translation(vec3(0, f32(plunge), 0)) * craft_transform(pc), wind_now_vec() - true_vel, L, t))
+    # (and builds all the way to the aircraft's top speed in a dive, not saturating at a cruise)
+    cloth_top = if tweaks.pure_scale and not tweaks.cloth_true: 1.8 * 1.3 * pc.spec.max_speed / max(pc.spec.handling_scale, 1.0) else: 95.0
+    draw_custom((): draw_cloths(cloth_mesh, cloths_for(pc.model), pc_at(), wind_now_vec() - true_vel, L, t, cloth_top))
     # (the pilot's scarf, on him wherever he is: in the cockpit in the aircraft's wind, ashore in
     # the wind and his own walking)
     if me.mode == .aboard:
-        seat = translation(vec3(0, f32(plunge), 0)) * craft_transform(pc) * translation(craft_models[pc.model].cockpit - vec3(0, 1.55, 0)) * scaling(f64(me_fig.height))
-        draw_custom((): draw_cloths(scarf_mesh, [pilot_scarf()], seat, wind_now_vec() - true_vel, L, t))
+        seat = pc_at() * translation(craft_models[pc.model].cockpit - vec3(0, 1.55, 0)) * scaling(f64(me_fig.height))
+        draw_custom((): draw_cloths(scarf_mesh, pilot_scarf(), seat, wind_now_vec() - true_vel, L, t, cloth_top))
     else if me.mode == .walking:
         fwd = vec3(f32(sin(me.yaw)), 0, f32(cos(me.yaw)))
         body = translation(me.pos) * rotation_y(me.yaw + PI) * scaling(f64(me_fig.height))
-        draw_custom((): draw_cloths(scarf_mesh, [pilot_scarf(0.75)], body, (wind_now_vec() - fwd * f32(me.stride * 3.0)) * 2.2, L, t))
+        draw_custom((): draw_cloths(scarf_mesh, pilot_scarf(0.75), body, (wind_now_vec() - fwd * f32(me.stride * 3.0)) * 2.2, L, t))
 
 draw = ():
     L = light_at(hour)
