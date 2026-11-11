@@ -1,6 +1,9 @@
 // The web build in headless Chromium: load the page, let it run, save a screenshot and print what
 // the page logged (errors included).
 // Optional WEBSHOT_GPU=native probes headless ANGLE/Vulkan instead of SwiftShader.
+// WEBSHOT_MOBILE=1 uses an 844x390 CSS Android viewport at DPR 3.
+// WEBSHOT_CPU=4 throttles the browser CPU; frames/textures/programs go to out.png.json.
+// These are proxy measurements, not a claim about actual phone hardware.
 // usage: node tools/measure_web.mjs chrome page.html out.png [seconds] [query]
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -35,8 +38,25 @@ try {
   await send("Runtime.enable");
   await send("Page.enable");
   await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  if (process.env.WEBSHOT_MOBILE === "1") {
+    await send("Emulation.setDeviceMetricsOverride", {width:844,height:390,deviceScaleFactor:3,mobile:true});
+    await send("Emulation.setTouchEmulationEnabled", {enabled:true,maxTouchPoints:5});
+    await send("Emulation.setUserAgentOverride", {userAgent:"Mozilla/5.0 (Linux; Android 13; Pixel 6a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36"});
+  }
+  if(process.env.WEBSHOT_CPU) await send("Emulation.setCPUThrottlingRate",{rate:Number(process.env.WEBSHOT_CPU)});
+  await send("Page.addScriptToEvaluateOnNewDocument",{source:`
+  window.mobileProbe={frames:[],textures:[],errors:[],programs:[]};
+  const raf=requestAnimationFrame;
+  window.requestAnimationFrame=cb=>raf(t=>{mobileProbe.frames.push(t);cb(t)});
+  const p=WebGL2RenderingContext.prototype, tex=p.texImage2D, link=p.linkProgram;
+  p.texImage2D=function(...args){if(typeof args[3]==='number')mobileProbe.textures.push({width:args[3],height:args[4],format:args[2],type:args[7]}); return tex.apply(this,args)};
+  p.linkProgram=function(prog){link.call(this,prog);mobileProbe.programs.push({linked:this.getProgramParameter(prog,this.LINK_STATUS),log:this.getProgramInfoLog(prog),sources:this.getAttachedShaders(prog).map(s=>this.getShaderSource(s))});};
+  window.addEventListener('error',e=>mobileProbe.errors.push(String(e.error||e.message)));
+  `});
   await send("Page.navigate", { url: "file://" + page + query });
   await sleep(parseFloat(secs) * 1000);
+  const mobile=await send("Runtime.evaluate",{returnByValue:true,expression:`({quality:globalThis.AegeanWeb?.quality,canvas:[document.querySelector('canvas')?.width,document.querySelector('canvas')?.height],...window.mobileProbe})`});
+  writeFileSync(out+'.json',JSON.stringify(mobile.result.value,null,2));
   const shot = await send("Page.captureScreenshot", { format: "png" });
   writeFileSync(out, Buffer.from(shot.data, "base64"));
   console.log("saved", out);
