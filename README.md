@@ -29,7 +29,8 @@ startup. This saves a second terrain download without changing any source height
 or geometry. New land uses a bounded tile cache; a teleport initially shows coarse
 terrain while nearby tiles fill in. `tools/bake_world.jo` rebuilds only the compact
 world field after editing its authored regions. See
-[the design and measurements](docs/world-renderer-design.md).
+[the design and measurements](docs/world-renderer-design.md) and
+[the geography controls and shared terrain pipeline](docs/world-geography.md).
 
 Headless checks (no windows or audio):
 
