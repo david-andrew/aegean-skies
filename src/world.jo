@@ -1,5 +1,6 @@
 # The archipelago: islands, their shapes, and the height of the world at any point.
 use 'erosion.jo'
+use 'geography.jo'
 
 # Coordinates: meters, y up, x east, z south (so north is -z). Sea level is y = 0.
 
@@ -140,6 +141,7 @@ struct LandTile:
     nz: int
     h: f32[]
     ridge: f32[]
+    packed: u8[]                   # runtime source: exact baked i16 heights / i8 ridges
 
 land_bake_hash = 0
 land_tiles: LandTile[]              # by island; empty until loaded
@@ -193,8 +195,10 @@ encode_tiles = (tiles: LandTile[]) -> u8[]:
     append_le(b, tiles.len(), 4)
     loop t in tiles:
         append_le(b, int(t.x0), 4); append_le(b, int(t.z0), 4); append_le(b, t.nx, 4); append_le(b, t.nz, 4)
-        loop v in t.h: append_le(b, int(round(f64(v) * 10.0)), 2)
-        loop v in t.ridge: append_le(b, int(round(f64(v) * 127.0)), 1)
+        if t.packed.len() > 0: b.extend(t.packed)
+        else:
+            loop v in t.h: append_le(b, int(round(f64(v) * 10.0)), 2)
+            loop v in t.ridge: append_le(b, int(round(f64(v) * 127.0)), 1)
     b
 
 # read the baked land; false (and nothing loaded) when it was made for other islands
@@ -212,15 +216,20 @@ load_land = (b: u8[]) -> bool:
         nx = get_le(b, at + 8, 4); nz = get_le(b, at + 12, 4)
         at += 16
         if nx < 2 or nz < 2 or nx > 4096 or nz > 4096 or nx * nz > (b.len() - at) / 3: return false
-        h = [loop i in 0..nx * nz: f32(f64(get_le_signed(b, at + i * 2, 2)) * 0.1)]
-        at += nx * nz * 2
-        r = [loop i in 0..nx * nz: f32(f64(get_le_signed(b, at + i, 1)) / 127.0)]
-        at += nx * nz
-        tiles.push(LandTile(x0, z0, nx, nz, h, r))
+        packed = b[at..at+nx*nz*3]
+        at += nx*nz*3
+        tiles.push(LandTile(x0,z0,nx,nz,[],[],packed))
     if at != b.len(): return false
     land_tiles = tiles
     land_bake_hash = int(hash(b) & u64(0x7FFFFFFFFFFFFFFF))
     true
+
+# Keep the original f32 rounding before interpolation: packed storage changes
+# residency, never the authoritative height or ridge value.
+_tile_value = (t: LandTile,a: int,ridge: bool) -> f64:
+    if t.packed.len() == 0: return f64(if ridge: t.ridge[a] else: t.h[a])
+    if ridge: return f64(f32(f64(get_le_signed(t.packed,t.nx*t.nz*2+a,1))/127.0))
+    f64(f32(f64(get_le_signed(t.packed,a*2,2))*0.1))
 
 # the baked value at a point of a tile, between its grid points (none outside it)
 _tile_at = (t: LandTile, x: f64, z: f64, ridge: bool) -> f64?:
@@ -232,8 +241,7 @@ _tile_at = (t: LandTile, x: f64, z: f64, ridge: bool) -> f64?:
     u = fx - f64(i)
     v = fz - f64(j)
     a = j * t.nx + i
-    vs = if ridge: t.ridge else: t.h
-    f64(vs[a]) * (1.0 - u) * (1.0 - v) + f64(vs[a + 1]) * u * (1.0 - v) + f64(vs[a + t.nx]) * (1.0 - u) * v + f64(vs[a + t.nx + 1]) * u * v
+    _tile_value(t,a,ridge)*(1.0-u)*(1.0-v)+_tile_value(t,a+1,ridge)*u*(1.0-v)+_tile_value(t,a+t.nx,ridge)*(1.0-u)*v+_tile_value(t,a+t.nx+1,ridge)*u*v
 
 island_height = (isl: Island, x: f64, z: f64) -> f64:
     if land_tiles.len() > 0:
@@ -251,7 +259,7 @@ ridge_at = (x: f64, z: f64) -> f64:
 
 # the ground (or sea floor) height anywhere in the world
 height = (x: f64, z: f64) -> f64:
-    h = SEA_FLOOR
+    h = new_land_height(x,z)
     loop isl in ISLANDS:
         dx = x - f64(isl.center.x)
         dz = z - f64(isl.center.y)
@@ -284,7 +292,7 @@ triangle_height = (a: f64, b: f64, c: f64, d: f64, u: f64, v: f64) -> f64:
     if u + v <= 1.0: a + u * (b - a) + v * (c - a) else: d + (1.0 - u) * (c - d) + (1.0 - v) * (b - d)
 
 surface_height = (x: f64, z: f64) -> f64:
-    h = SEA_FLOOR
+    h = new_land_surface(x,z)
     loop isl in ISLANDS:
         ext = mesh_extent(isl)
         x0 = f64(isl.center.x) - ext

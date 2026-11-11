@@ -4,6 +4,7 @@
 # with foam where it meets the land and the sun's glitter on it.
 
 use 'world.jo'
+use 'geography.jo'
 use 'look.jo'
 use 'render_space.jo'
 
@@ -33,6 +34,10 @@ struct SeaParams:
     shade_alpha: vec4[4]            # each quad's darkness (four to a vec4)
     shade_n: f32
     depth: Texture
+    world_depth: Texture
+    local_depth: Texture
+    local_area: vec4                # center x,z, extent, valid
+    expanded: f32
     rays: mat4
     center: vec2
     residual: vec2
@@ -226,6 +231,12 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
     dm = sample(u.depth, uv)
     depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
+    if u.expanded > 0.5 and (abs(p.x) >= 12000.0 or abs(p.y) >= 12000.0):
+        depth = if abs(p.x) < 250000.0 and abs(p.y) < 200000.0: sample(u.world_depth, p / vec2(500000,400000) + vec2(0.5,0.5)).x * 60.0 else: 60.0
+        near_uv = (p-u.local_area.xy)/max(u.local_area.z,1.0)+vec2(0.5,0.5)
+        edge_dist = max(abs(near_uv.x-0.5),abs(near_uv.y-0.5))
+        if u.local_area.w > 0.5 and edge_dist < 0.5:
+            depth = mix(depth,sample(u.local_depth,near_uv).x*60.0,1.0-smoothstep(0.45,0.49,edge_dist))
     wd = u.wind.xy
     ws = u.wind.z
     g = mix(gust(p, u.drift), 0.5, smoothstep(2500.0, 12000.0, dist))
@@ -370,7 +381,60 @@ build_depth_texture = () -> Texture:
             h = rows[j][i]
             d = clamp(-h / 60.0, 0.0, 1.0)
             img.set(i, j, vec4(f32(d), if h > 0.0: 1.0 else: 0.0, 0, 1))
-    texture(img, true)
+    result = texture(img, true)
+    init_expanded_depth(result)
+    result
+
+# A fixed coarse map and one double-buffered near window. Partial rows are
+# never published. The 23.4375 m near sampling matches the original depth map.
+const NEAR_DEPTH_N = 256
+const NEAR_DEPTH_EXTENT = 6000.0
+const NEAR_DEPTH_ROWS = 8
+expanded_depth: Texture
+nearby_depth: Texture
+nearby_spare: Texture
+nearby_area = vec4(0,0,6000,0)
+nearby_pending = vec2(0,0)
+nearby_row = -1
+nearby_image: Image
+
+init_expanded_depth = (fallback: Texture):
+    global expanded_depth, nearby_depth, nearby_spare, nearby_image
+    expanded_depth = fallback; nearby_depth = fallback; nearby_spare = fallback
+    if not geography_enabled: return
+    img = image(500,400)
+    loop j in 0..400:
+        loop i in 0..500:
+            h = new_land_raw((f64(i)+0.5)*1000.0-250000.0,(f64(j)+0.5)*1000.0-200000.0)
+            img.set(i,j,vec4(f32(clamp(-h/60.0,0.0,1.0)),0,0,1))
+    expanded_depth = texture(img,true)
+    nearby_image = image(NEAR_DEPTH_N,NEAR_DEPTH_N)
+    nearby_depth = texture(nearby_image,true)
+    nearby_spare = texture(nearby_image,true)
+
+update_nearby_depth = ():
+    global nearby_depth,nearby_spare,nearby_area,nearby_pending,nearby_row,nearby_image
+    if not geography_enabled: return
+    cam = scene_camera().xz
+    if abs(cam.x) < 14000.0 and abs(cam.y) < 14000.0: return
+    if nearby_row < 0:
+        if nearby_area.w > 0.5 and length(cam-nearby_area.xy) < 750.0: return
+        nearby_pending = floor(cam/750.0)*750.0
+        nearby_row = 0
+    zone("world depth")
+    loop j in nearby_row..min(nearby_row+NEAR_DEPTH_ROWS,NEAR_DEPTH_N):
+        z = f64(nearby_pending.y)+(f64(j)+0.5)/f64(NEAR_DEPTH_N)*NEAR_DEPTH_EXTENT-NEAR_DEPTH_EXTENT*0.5
+        loop i in 0..NEAR_DEPTH_N:
+            x = f64(nearby_pending.x)+(f64(i)+0.5)/f64(NEAR_DEPTH_N)*NEAR_DEPTH_EXTENT-NEAR_DEPTH_EXTENT*0.5
+            h = new_land_height(x,z)
+            nearby_image.set(i,j,vec4(f32(clamp(-h/60.0,0.0,1.0)),0,0,1))
+    nearby_row += NEAR_DEPTH_ROWS
+    if nearby_row >= NEAR_DEPTH_N:
+        update_texture(nearby_spare,nearby_image)
+        old = nearby_depth; nearby_depth = nearby_spare; nearby_spare = old
+        nearby_area = vec4(nearby_pending.x,nearby_pending.y,f32(NEAR_DEPTH_EXTENT),1)
+        nearby_row = -1
+    zone_end()
 
 # a flat part's shadow on the sea: the four corners of a box's middle (local center c, half size h)
 # placed by model, carried along the sunlight down to sea level
@@ -417,10 +481,11 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     center = render_origin(cam).xz
     residual = vec2(f32(f64(cam.x) - f64(center.x)), f32(f64(cam.z) - f64(center.y)))
     p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
-        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(ws / 12.0), vec4(w.dir.x, w.dir.y, f32(ws), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth, render_rays(scene_view_proj()), center, residual, scene_flow, scene_warp_a, scene_warp_b)
+        L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(ws / 12.0), vec4(w.dir.x, w.dir.y, f32(ws), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth, expanded_depth, nearby_depth, nearby_area, if geography_enabled: 1.0 else: 0.0, render_rays(scene_view_proj()), center, residual, scene_flow, scene_warp_a, scene_warp_b)
     p
 
 draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0), shadows: SeaShadows = SeaShadows()):
+    update_nearby_depth()
     p = sea_params(depth, L, t, w, cam_vel, shadows)
     # One material/pass: deep alpha is 1; the shallow alpha composites against
     # the already-drawn seabed. Both record the water endpoint for later wakes,
