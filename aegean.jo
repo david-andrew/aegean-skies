@@ -16,6 +16,7 @@ use 'src/terrain_lod.jo'
 use 'src/geography.jo'
 use 'src/world_terrain.jo'
 use 'src/world_groves.jo'
+use 'src/world_towns.jo'
 use 'src/render_space.jo'
 use 'src/curved_world.jo'
 use 'src/sea.jo'
@@ -54,6 +55,7 @@ import 'src/life_view.jo' as life_view
 import 'src/living_portage.jo' as portage
 import 'src/living_claims.jo' as claims
 import 'src/living_types.jo' as lt
+from 'src/living_money.jo' import craft_grams
 
 window("Aegean Skies", 1280, 720)
 init_clouds()
@@ -89,6 +91,7 @@ cloud_list = build_puffs(7, 70)
 puffs = instance_buffer(cloud_list)
 print("{cloud_list.len()} cloud puffs")
 towns = [loop st in SETTLEMENTS: build_town(st)]
+init_world_towns(towns)
 living_world = living.build_world(u64(0), harbors_from_towns(towns))
 traffic_scene = living_scene.SceneAdapter()
 tree_meshes = build_tree_meshes()
@@ -100,9 +103,7 @@ fleet = build_fishing_fleet(towns, 33)
 # (each working boat's flag at its masthead: blue and white, or red, or white and blue)
 fleet_flags: Cloth[] = [loop k in 0..fleet.len(): Cloth(fleet[k].head, 1.0, 0.55, [rgb(0.15, 0.35, 0.7), rgb(0.8, 0.15, 0.12), rgb(0.95, 0.94, 0.9)][k % 3], [rgb(0.95, 0.94, 0.9), rgb(0.8, 0.15, 0.12), rgb(0.15, 0.35, 0.7)][k % 3], f64(k) * 1.37)]
 flag_meshes: ClothMesh[] = [loop k in 0..fleet.len(): ClothMesh()]
-craft_models = [build_craft(.gull, LIVERIES[0]), build_craft(.heron, LIVERIES[5]), build_craft(.corsair, LIVERIES[3]), build_craft(.falco, LIVERIES[1]),
-    build_craft(.gull, LIVERIES[1]), build_craft(.gull, LIVERIES[2]), build_craft(.heron, LIVERIES[4]), build_craft(.gull, LIVERIES[4]),
-    build_craft(.heron, LIVERIES[2]), build_craft(.gull, LIVERIES[5]), build_craft(.falco, LIVERIES[3]), build_craft(.corsair, LIVERIES[4])]
+craft_models = build_craft_models()
 if env("TOWNS_PRINT") != none:
     loop tw in towns: print("{tw.name}: {tw.center.x:.0} {tw.center.z:.0} out {tw.out.x:.2} {tw.out.y:.2} houses {tw.houses.len()}")
 print("world built in {(time() - t0) * 1000.0:.0} ms")
@@ -134,13 +135,13 @@ struct Moored:
 home = towns[0]
 along_quay = atan2(f64(home.out.x), -f64(home.out.y))        # (a flight heading: 0 north, east PI/2)
 # the player's own aircraft, moored at the first dock; others moored at the rest
-# (AEGEAN_CRAFT=0..3 starts in another aircraft: Gull, Heron, Corsair, Falco)
-start_model = clamp(to_int(env("AEGEAN_CRAFT") ?? "0") ?? 0, 0, 3)
-start_kind: Craft = match start_model:
-    1: .heron
-    2: .corsair
-    3: .falco
-    _: .gull
+# AEGEAN_CRAFT uses the append-only Craft ID, independent of cached livery/model slots.
+start_kind = Craft(clamp(to_int(env("AEGEAN_CRAFT") ?? "0") ?? 0, 0, CRAFT_NAMES.len() - 1))
+start_model = default_craft_model(start_kind)
+start_record = living_world.people[living_world.player].craft
+living_world.aircraft[start_record].kind = lt.Airframe(int(start_kind))
+living_world.aircraft[start_record].model_index = start_model
+living_world.aircraft[start_record].livery_index = DEFAULT_LIVERIES[int(start_kind)]
 pc = make_flyer(start_kind, start_model, craft_models[start_model].contacts, home.docks[0], along_quay)
 pc.spec.player = true
 moored: Moored[]
@@ -457,6 +458,11 @@ MUZZLES: vec3[] = [vec3(-2.7, 1.7, -1.3), vec3(2.7, 1.7, -1.3)]
 # a new aircraft of another kind for the player, where the old one is (moored where it was moored)
 change_craft = (kind: Craft, model: int):
     global pc
+    record = living_world.people[living_world.player].craft
+    a = lt.AIRFRAMES[int(kind)]
+    if craft_grams(living_world,record) > a.cargo_grams or living_world.aircraft[record].passengers.len() > a.seats:
+        say_toast("Unload cargo and passengers before changing to this aircraft")
+        return
     old = pc.state
     nf = make_flyer(kind, model, craft_models[model].contacts, old.position - vec3(0, f32(pc.spec.float_height), 0), heading(old))
     if not old.moored:
@@ -473,6 +479,16 @@ change_craft = (kind: Craft, model: int):
     nf.prev_vel = pc.prev_vel; nf.acc_lp = pc.acc_lp; nf.prev_dir = pc.prev_dir
     nf.placed = pc.placed
     nf.spec.player = true
+    nf.spec.fuel_capacity = f64(a.tank_ml)/1000.0
+    nf.spec.fuel_burn = f64(a.burn_ml_sec)/1000.0
+    nf.state.fuel = min(old.fuel,nf.spec.fuel_capacity)
+    living_world.aircraft[record].kind = lt.Airframe(int(kind))
+    living_world.aircraft[record].model_index = model
+    living_world.aircraft[record].livery_index = DEFAULT_LIVERIES[int(kind)]
+    living_world.aircraft[record].fuel_ml = int(nf.state.fuel*1000.0)
+    living_world.aircraft[record].scene_extension = ""
+    living_world.aircraft[record].scene_extension_tick = -1
+    living_world.aircraft[record].revision += 1
     pc = nf
 
 # paused (or not): the pause menu is the debugging panel
@@ -571,11 +587,8 @@ debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
     global hour, wind_bias
     c = living_world.people[living_world.player].craft
     if v.craft != was.craft:
-        match v.craft:
-            0: change_craft(.gull, 0)
-            1: change_craft(.heron, 1)
-            2: change_craft(.corsair, 2)
-            _: change_craft(.falco, 3)
+        kind = Craft(clamp(v.craft, 0, CRAFT_NAMES.len() - 1))
+        change_craft(kind, default_craft_model(kind))
         return
     if abs(v.fuel - was.fuel) > 0.0001:
         pc.state.fuel = v.fuel * pc.spec.fuel_capacity
@@ -639,11 +652,7 @@ debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
 
 # (each kind's engine its own pitch, the bigger lower; each aircraft a touch its own)
 engine_tone = (kind: Craft, craft: int) -> f64:
-    base = match kind:
-        .heron: 0.82
-        .corsair: 1.06
-        .falco: 1.18
-        _: 1.0
+    base = aircraft_profile(kind).tone
     base * (1.0 + 0.03 * f64((craft * 37) % 7 - 3) / 3.0)
 
 # the other aircraft's places (for keeping docks free)
@@ -946,12 +955,12 @@ update = (dt: f64):
     where = if flying: pc.state.position else: me.pos
     shore = abs(f64(surface_height(f64(where.x), f64(where.z)))) * 8.0 + (if flying: f64(where.y) * 2.0 else: 0.0)
     # (the sounds go by the speed as designed: true speed / the speed scale)
-    update_audio(audio, dt, flying and not pc.state.moored, pc.state.throttle, if flying: true_speed(pc.spec, f64(length(pc.state.velocity))) else: 0.0, shore, not flying, where)
+    update_audio(audio, dt, flying and not pc.state.moored, pc.state.throttle, if flying: true_speed(pc.spec, f64(length(pc.state.velocity))) else: 0.0, shore, not flying, where, pc.kind)
     # the other aircraft's engines, heard from where their sound left them, Doppler and all
     hear_engines(hearing, [loop tr in traffic: EngineSource(tr.craft, tr.state.position, tr.state.velocity,
         if tr.flying and tr.state.throttle < 0.05: 0.7 else: f64(tr.state.throttle),
         not tr.state.moored and (tr.flying or tr.state.throttle > 0.02 or f64(length(tr.state.velocity)) > 0.5),
-        engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))))], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t)
+        engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))), voice = aircraft_profile(tr.kind).voice)], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t)
     set_tweaks(dbg.tweaks)
     audio.air_on = dbg.snd_air
     audio.cloth_on = dbg.snd_cloth
@@ -983,7 +992,9 @@ draw_world = (L: Light):
         draw_ground(L, t)
         draw_world_terrain(L, t)
     )
-    draw_custom((): draw_towns(towns, L, t))
+    draw_custom(():
+        draw_towns(towns, L, t)
+        draw_world_towns(towns, L, t))
     # the boats out at work, each riding the swell where it is (as the moored aircraft do), its flag
     # in the wind (light cloth, so the wind streams it out); only those near enough to see
     cam_now = scene_camera()
@@ -1008,7 +1019,8 @@ draw_world = (L: Light):
             cm = craft_models[m.model]
             at = craft_matrix(m)
             draw(obj_sh, cm.body, obj_params(L, t, at))
-            draw(obj_sh, cm.prop, obj_params(L, t, at * translation(cm.prop_at) * rotation_z(0.4)))
+            draw_craft_props(cm, L, t, at, 0.4)
+            draw_craft_gear(cm, L, t, at)
         draw_folk(folks, L, t)
         life_view.draw_life(living_world,life_meshes,L,t)
         cargo_view.draw_cargo(living_world,cargo_meshes,L,t)
@@ -1021,7 +1033,7 @@ draw_world = (L: Light):
         draw_traffic(traffic, craft_models, L, t)
         pm = craft_models[pc.model]
         at = pc_at()
-        draw_craft_parts(pm, pc.state.damage, at, L, t, pc.prop_angle, airframe(pc))
+        draw_craft_parts(pm, pc.state.damage, at, L, t, pc.prop_angle, airframe(pc), pc.state.gear)
         draw_debris(pm, pc.state.damage, L, t)
         if me.mode == .aboard: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)

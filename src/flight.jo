@@ -2,7 +2,7 @@
 # Sky Barons sim.jo fly_air/steer inspired the rate controls, low-speed authority floor,
 # stall nose drop, bank coordination and pull drag. Forces replace its velocity steering:
 # lift does no work, gravity trades height for speed, water dissipates energy.
-from 'planes.jo' import Craft, PartId, PartSpec, craft_parts, craft_wing_contacts, contact_part
+from 'planes.jo' import Craft, PartId, PartSpec, craft_parts, craft_wing_contacts, contact_part, aircraft_profile, is_boat, craft_gear_contacts
 use 'damage.jo'
 use 'tweaks.jo'
 
@@ -34,11 +34,13 @@ struct CraftSpec:
     grip = 1.6                      # side-slip damping / second
     parts: PartSpec[]
     contacts: vec3[]
+    gear_contacts: vec3[]           # fully extended wheels, empty on water-only aircraft
     wing_contacts = [vec3(-4.7, -0.31, -0.3), vec3(4.7, -0.31, -0.3), vec3(-5.5, 1.55, -0.55), vec3(5.5, 1.55, -0.55)]
     volumes: f64[]                   # displaced m³ at 1 m immersion, per contact
     float_height = 2.0               # calm-water equilibrium CG height
     fuel_capacity = 180.0           # kg; mass above includes nominal load (fuel not re-weighed)
     fuel_burn = 0.025                # kg/s at full throttle
+    water_drag = 1.0                # hull/float planing resistance, catalog-specific
     spool_time = 1.5
     # (the air, after Sky Barons' fly_air: thrust as an acceleration, drag on speed squared,
     # how quickly the way it goes turns to follow the nose)
@@ -61,6 +63,7 @@ struct Controls:
     water_brake = 0.0
     airbrake = 0.0                 # landing drag: abstracts a deliberate forward slip, no extra lift
     anchor = false
+    gear = false                   # amphibian wheels; presentation may expose a lever
 
 struct CraftState:
     position = vec3(0, 3, 0)
@@ -75,6 +78,8 @@ struct CraftState:
     on_water = false
     planing = false
     beached = false
+    on_ground = false
+    gear = 0.0                     # extension, 0 folded / 1 down; two and a half seconds
     crashed = false
     capsized = false
     moored = false
@@ -181,6 +186,16 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
             s.fuel_capacity = 160; s.fuel_burn = 0.034
             s.pitch_rate = 1.8; s.roll_rate = 4.2; s.yaw_rate = 0.6
             s.arc_thrust = 22.0; s.arc_drag = 0.0014; s.arc_grip = 3.4
+        _: pass
+    if int(kind) >= 4:
+        p = aircraft_profile(kind)
+        s.mass = p.mass; s.span = p.span; s.wing_area = p.area
+        s.inertia = vec3(p.mass * p.length * p.length * 0.06, p.mass * (p.span*p.span + p.length*p.length) * 0.04, p.mass * p.span*p.span * 0.04)
+        s.stall_speed = p.stall; s.cruise_speed = p.cruise; s.max_speed = p.top
+        s.pitch_rate = p.pitch; s.roll_rate = p.roll; s.yaw_rate = p.yaw; s.response = p.response
+        s.arc_thrust = p.thrust; s.arc_drag = p.drag; s.arc_grip = p.grip
+        s.fuel_capacity = p.tank; s.fuel_burn = p.burn; s.water_drag = p.water_drag
+        s.spool_time = if p.engine_x > 0: 2.4 else: 1.5
     s.cl0 = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.cruise_speed * s.cruise_speed)
     s.cl_max = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.stall_speed * s.stall_speed)
     s.stall_angle = (s.cl_max - s.cl0) / s.lift_slope
@@ -194,7 +209,7 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         s.contacts = [vec3(-1, -1, -2), vec3(1, -1, -2), vec3(-1, -1, 2), vec3(1, -1, 2)]
     bottom = 0.0
     loop p in s.contacts: bottom = min(bottom, f64(p.y))
-    s.float_height = -bottom - (if kind == .heron: 0.55 else: 0.35)
+    s.float_height = -bottom - (if kind == .heron: 0.55 else: (if is_boat(kind): min(0.55, aircraft_profile(kind).width * 0.5) else: 0.35))
     nf = 0; na = 0; zf = 0.0; za = 0.0
     loop p in s.contacts:
         if -s.float_height - f64(p.y) > 0.04:
@@ -208,6 +223,7 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         s.volumes.push(if depth > 0.04: s.mass / 1000.0 * share / depth else: s.mass / 1000.0 * 0.08)
     s.wing_contacts = craft_wing_contacts(kind)
     s.parts = craft_parts(kind, s.contacts)
+    s.gear_contacts = craft_gear_contacts(kind)
     # (the speed scale: true cruise and top speeds this many times the designed ones (less drag,
     # so the same thrust keeps going), the takeoff, landing and water left as designed, and the
     # handling kept at the designed turn rates: _fly_air and _substep turn as though at speed / k)
@@ -322,6 +338,10 @@ _terrain_contact = (k: CraftSpec, s: mut CraftState, e: FlightEnv, id: int, arm:
 # whether every float, hull point and wing tip is at least `margin` clear of the sea and the land
 _clear_of_water = (k: CraftSpec, s: CraftState, e: FlightEnv, margin: f64) -> bool:
     if s.on_water and s.water_age < 0.12: return false
+    if s.gear > 0.95:
+        loop pt in k.gear_contacts:
+            p = s.position + quat_rotate(s.orientation, pt)
+            if p.y < e.ground(f64(p.x),f64(p.z)) + margin: return false
     loop i in 0..k.parts.len():
         if not s.damage.parts[i].attached: continue
         loop group in [k.parts[i].contacts, k.parts[i].wing_contacts, k.parts[i].strikes]:
@@ -344,6 +364,7 @@ set_drag_scale = (x: f64):
 
 _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
     s.on_water = false
+    s.on_ground = false
     s.beached = false
     s.planing = false
     s.water_age += dt
@@ -527,6 +548,7 @@ steer = (k: CraftSpec, s: CraftState, want: vec3) -> Controls:
 
 _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
     s.time += dt
+    if k.gear_contacts.len() > 0: s.gear = move_toward(s.gear,if c.gear: 1.0 else: 0.0,dt*0.4)
     if c.anchor and s.on_water and length(s.velocity) < 0.8 and not s.crashed: moor(s, s.position, heading(s))
     if s.moored:
         s.position = s.mooring_point; s.orientation = s.mooring_orientation
@@ -607,18 +629,38 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     pr *= 0.15 + 0.85 * tail; yr *= 0.15 + 0.85 * tail; rr *= 0.2 + 0.8 * wings
     torque = vec3((1.0 - tail) * sin(s.time * 5.0) * k.inertia.x, (right - left) * q * k.wing_area * 0.04, (right - left) * q * k.wing_area * k.span * 0.12)
     wet = 0.0; ground_hit = false
+    s.on_ground = false
     water_velocity = s.velocity - e.current
     flat_f = vec3(f.x, 0, f.z)
     if length(flat_f) < 0.001: flat_f = vec3(0, 0, -1)
     else: flat_f = normalize(flat_f)
     flat_r = vec3(-flat_f.z, 0, flat_f.x)
+    if s.gear > 0.95 and s.damage.parts[0].attached:
+        loop point in k.gear_contacts:
+            arm = quat_rotate(s.orientation,point); p = s.position+arm
+            land = e.ground(f64(p.x),f64(p.z))
+            if land <= sea_surface(e,f64(p.x),f64(p.z),s.time).height or p.y >= land: continue
+            s.on_ground = true
+            rel = s.velocity+cross(quat_rotate(s.orientation,s.angular_velocity),arm)
+            # A sprung rolling contact: vertical loads go to the hull, not to the tip floats.
+            normal = normalize(vec3(e.ground(f64(p.x)-0.25,f64(p.z))-e.ground(f64(p.x)+0.25,f64(p.z)),0.5,
+                e.ground(f64(p.x),f64(p.z)-0.25)-e.ground(f64(p.x),f64(p.z)+0.25)))
+            vn = f64(dot(rel,normal))
+            load = max(0.0,mass/f64(k.gear_contacts.len())*(35.0*min(land-f64(p.y),0.7)-8.0*vn))
+            longitudinal = f64(dot(rel,flat_f)); lateral = f64(dot(rel,flat_r))
+            brake = 0.025+0.65*clamp(c.water_brake,0.0,1.0)
+            friction = -flat_f*f32(clamp(longitudinal*mass*0.3,-load*brake,load*brake))-flat_r*f32(clamp(lateral*mass,-load*0.7,load*0.7))
+            b = normal*f32(load)+friction
+            force += b
+            torque += quat_rotate(quat_inverse(s.orientation),cross(arm,b))
+            _contact_load(k,s,0,p,normal,normal*f32(min(vn,0.0)),normal*f32(load*dt),5.0,.crunch)
     water_speed = f64(dot(water_velocity, flat_f))
     plane = f64(smoothstep(k.stall_speed * 0.35, k.stall_speed * 0.95, abs(water_speed)))
     omega_world = quat_rotate(s.orientation, s.angular_velocity)
     # Each buoyant point carries its own normal, lateral and digging load. Removing a float
     # removes its support and drag. Undamaged forward planing retains the calibrated old force.
     hump = 1.0 + 0.8 * exp(-((abs(water_speed) - 9.0) / 5.0)^2)
-    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane)
+    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane) * k.water_drag * (1.0 + s.gear * 0.6)
     # (pure scale: the water's drag never more than about half what the engine can pull, so every
     # aircraft can always push through it to its liftoff speed)
     if pk0 > 1.0001:
@@ -702,6 +744,9 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         support = min(part_health(s.damage, .left_float), part_health(s.damage, .right_float))
         rr += bank * 2.0 * wet * support
     else: s.water_age += dt
+    if s.on_ground:
+        pr = 0; rr = 0
+        yr = -clamp(c.yaw,-1.0,1.0)*0.45*clamp(abs(water_speed)/4.0,0.0,1.0)
     s.on_water = wet > 0 or (s.on_water and s.water_age < 0.12)
     s.planing = wet > 0 and plane > 0.5
     if wet > 0 and u.y < 0.0:
