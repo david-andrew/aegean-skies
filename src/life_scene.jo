@@ -4,13 +4,15 @@ use 'life_types.jo'
 use 'living_life_seed.jo'
 use 'living_life.jo'
 use 'objects.jo'
+use 'settlements.jo'
+use 'living_place_context.jo'
 import 'cargo_scene.jo' as navigation
 
 _life_ground = (towns: Town[], p: vec3) -> vec3: vec3(p.x,f32(walk_height(towns,p.x,p.z)),p.z)
 
 _free_spot = (towns: Town[], tw: Town, candidate: vec3, fallback: vec3) -> vec3:
     p = _life_ground(towns,candidate)
-    if p.y < -0.2: return fallback
+    if p.y < 0.5: return fallback
     loop block in tw.blocks:
         if length(p.xz-vec2(block.x,block.y)) < block.z+1.0: return fallback
     p
@@ -18,6 +20,7 @@ _free_spot = (towns: Town[], tw: Town, candidate: vec3, fallback: vec3) -> vec3:
 # Only legacy fallback anchors are replaced. A published town catalog owns its own keys/venues.
 configure_life_scene = (w: mut World, towns: Town[], force: bool = false):
     initialize_life(w)
+    if w.place_catalog_version != SETTLEMENT_VERSION and world_settlements.len() > 0: publish_settlement_life(w)
     loop place in 0..min(towns.len(),w.harbors.len()):
         authored = false; configured = false
         loop v in w.life_venues:
@@ -33,8 +36,8 @@ configure_life_scene = (w: mut World, towns: Town[], force: bool = false):
         quay = if w.cargo_harbors[place].loading.len()>0: w.cargo_harbors[place].loading[0]-out*8.0 else: warehouse
         supplied.push(LifeVenue(place,"legacy:{place}:scene:quay",.quay,_life_ground(towns,quay),facing=out,capacity=4))
         supplied.push(LifeVenue(place,"legacy:{place}:scene:market",.market,warehouse,facing=out,capacity=8))
-        supplied.push(LifeVenue(place,"legacy:{place}:scene:square",.square,_free_spot(towns,tw,warehouse-out*3.0+side*7.0,warehouse),facing=out,capacity=8))
-        supplied.push(LifeVenue(place,"legacy:{place}:scene:cafe",.cafe,homes[2%homes.len()],facing=out,capacity=6,covered=true))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:square",.square,_free_spot(towns,tw,tw.center-out*18.0-side*10.0,warehouse),facing=out,capacity=8))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:cafe",.cafe,_free_spot(towns,tw,tw.center-out*18.0+side*12.0,_free_spot(towns,tw,tw.center-out*18.0-side*10.0,warehouse)),facing=out,capacity=6,covered=true))
         supplied.push(LifeVenue(place,"legacy:{place}:scene:church",.church,homes[3%homes.len()],facing=out,capacity=6,covered=true))
         supplied.push(LifeVenue(place,"legacy:{place}:scene:school",.school,homes[4%homes.len()],facing=out,capacity=4,covered=true))
         supplied.push(LifeVenue(place,"legacy:{place}:scene:workshop",.workshop,homes[1%homes.len()],facing=out,capacity=3))
@@ -47,10 +50,11 @@ configure_life_scene = (w: mut World, towns: Town[], force: bool = false):
         loop k in 0..w.households.len():
             if w.households[k].home == place: w.households[k].pose = _life_ground(towns,w.households[k].pose)
 
-step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
-    if towns.len() == 0: return
+step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64, nav_budget: int = 1) -> int:
+    if towns.len() == 0: return 0
+    paths_started = 0
     initialize_life(w)
-    ids = w.daily_life.keys(); ids.sort()
+    ids = [1..w.people.len())
     loop person in ids:
         intent = w.daily_life[person]; p = w.people[person]
         if not life_free(w,person):
@@ -77,6 +81,8 @@ step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
             continue
         if intent.blocked != "": continue
         if intent.routed_revision != intent.path_revision:
+            if paths_started >= nav_budget: continue
+            paths_started += 1
             path = navigation.cargo_walk_path(towns,w.people[person].pose.pos,intent.target)
             w.daily_life[person].routed_revision = intent.path_revision
             if path.len() == 0:
@@ -108,19 +114,26 @@ step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
         if not near:
             if p.scene_owned: w.households[k].scene_owned = false; w.households[k].last_tick = w.tick-1
             continue
+        if not p.scene_owned: advance_household_motion(w,k,w.tick-1)
         w.households[k].scene_owned = true; w.households[k].last_tick = w.tick
-        if p.waypoint >= p.route.len(): continue
+        p = w.households[k]
+        if p.blocked: continue
         if p.routed_revision != p.path_revision:
+            if paths_started >= nav_budget: continue
+            paths_started += 1
             path = navigation.cargo_walk_path(towns,p.pose,p.target)
             w.households[k].routed_revision = p.path_revision
             w.households[k].route = path; w.households[k].waypoint = if path.len()>0: 1 else: 0
-            if path.len()==0: continue
+            if path.len()==0: w.households[k].blocked = true; continue
         p = w.households[k]
         if p.waypoint >= p.route.len(): continue
         delta = p.route[p.waypoint].xz-p.pose.xz; distance = f64(length(delta))
         if distance<0.10: w.households[k].waypoint += 1; continue
         moved = walk_step(towns,p.pose,delta*f32(min(1.0,1.1*dt/distance)))
         w.households[k].pose = moved
+        if length(moved.xz-p.pose.xz)<0.0001: w.households[k].blocked = true
+
+    paths_started
 
 fold_life_for_save = (w: mut World):
     ids = w.daily_life.keys()
@@ -130,3 +143,22 @@ fold_life_for_save = (w: mut World):
         if w.people[person].carriage < 0: w.people[person].move_owner = .abstract_world
     loop k in 0..w.households.len():
         w.households[k].scene_owned = false; w.households[k].last_tick = w.tick
+
+# Called after init_world_towns. Inlands get venues and country context, never fake aircraft docks.
+publish_settlement_life = (w: mut World):
+    contexts: LifePlaceContext[]; capitals = [-1,-1,-1]
+    loop s in world_settlements:
+        venues: LifeVenue[]
+        loop landmark in place_landmarks(s):
+            kind: VenueKind? = match landmark.kind:
+                "square": VenueKind.square
+                "cafe": VenueKind.cafe
+                "church", "cloister": VenueKind.church
+                "olive terrace": VenueKind.fields
+                "farmhouse": VenueKind.home
+                "warehouse": VenueKind.market
+                _: none
+            if kind != none: venues.push(LifeVenue(s.id,"registry:{s.id}:{landmark.kind}:{venues.len()}",kind!,landmark.at,capacity=if s.kind == .capital: 16 else: 6,covered=kind == .cafe or kind == .church or kind == .home))
+        contexts.push(LifePlaceContext(s.id,s.name,s.country,s.region,s.center,s.harbor.len()>0,s.legacy,s.neighbors,venues))
+        if s.kind == .capital and (capitals[s.country] < 0 or s.id < capitals[s.country]): capitals[s.country] = s.id
+    assert(publish_place_contexts(w,SETTLEMENT_VERSION,contexts,capitals))

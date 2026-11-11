@@ -330,14 +330,14 @@ happy ending or a new quest every evening.
 
 ### Identity and the three simulation tiers
 
-The two mainlands support two independent countries; the life branch uses provisional stable
-keys `thalene` and `karavia`. The original six harbours start neutral. Country membership,
+The two mainlands support **Kalyra** and **Orenthia**, country IDs 1 and 2 in the
+settlement registry. Country 0 is the neutral **Archipelago**, including the six original
+harbours. Stable country keys are `archipelago`, `kalyra`, `orenthia`. Country membership,
 citizenship, faction membership and occupation are different fields: a pirate from an eastern
 port is not automatically an officer acting on the eastern government's orders. Settlement
-country names/IDs must be explicitly mapped when the towns catalog lands, not inferred from a
-mesh array index or a change in the coastline.
+country IDs come from the catalog, never a mesh array index or a change in coastline.
 
-The town catalog supplies stable settlement ID/key, name, country/region, kind, population,
+The town catalog supplies stable settlement ID/key, name, country/region, kind, building target,
 position, facilities, optional harbor geometry, roads/neighbours and semantic local anchors.
 It owns **where places exist**, not all of their economic state. Adopt it in three tiers:
 
@@ -433,3 +433,20 @@ physical battle participation; occupation and peace. Gates include no double pro
 conserved provenance/payroll, no war from an unheard rumor, no double encounter resolution,
 finite funded retries, stable saves through tier switches, and a month with the player absent.
 UI orders, map overlays, topic presentation and participation prompts remain coordinator work.
+
+The merged towns registry is adopted through `publish_settlement_life` and the CPU-only
+`publish_place_contexts` contract. `World.place_contexts` is keyed by the actual sparse IDs;
+793 identity/venue contexts, reciprocal road neighbours, real country capitals and optional
+aviation facilities survive canonical saves. Inland churches, cafes and squares use authored
+`place_landmarks`; legacy venue fallbacks use original houses/quays, and the legacy cafe and
+square match the enriched furniture coordinates. `life_place_name` resolves sparse IDs.
+This catalog is the far tier's **context**, not a claim that it already has a funded economy:
+no far households, inventories, military actors or flights are fabricated by publication.
+National `capital_id` is independent of an optional detailed economic `seat`; the evidence
+policy cannot read a sparse capital ID as one of the six core array slots. Far-stock/cohort
+initialization and v2 travel/market promotion remain the next simulation migration.
+
+Speech keeps all utterances/questions/replies from the preceding four game hours, up to 64
+lines per person. At that bound a persistent conversation becomes silent until old lines age
+out; it never drops fresh history to repeat a phrase. Rendering previews are pure. Existing
+contact/news actions commit utterances; topic/reply selection remains a coordinator UI task.
