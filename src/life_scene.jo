@@ -1,0 +1,132 @@
+# Scene consumer of semantic life intents. Geometry publication and motion leases are explicit.
+use 'living_types.jo'
+use 'life_types.jo'
+use 'living_life_seed.jo'
+use 'living_life.jo'
+use 'objects.jo'
+import 'cargo_scene.jo' as navigation
+
+_life_ground = (towns: Town[], p: vec3) -> vec3: vec3(p.x,f32(walk_height(towns,p.x,p.z)),p.z)
+
+_free_spot = (towns: Town[], tw: Town, candidate: vec3, fallback: vec3) -> vec3:
+    p = _life_ground(towns,candidate)
+    if p.y < -0.2: return fallback
+    loop block in tw.blocks:
+        if length(p.xz-vec2(block.x,block.y)) < block.z+1.0: return fallback
+    p
+
+# Only legacy fallback anchors are replaced. A published town catalog owns its own keys/venues.
+configure_life_scene = (w: mut World, towns: Town[], force: bool = false):
+    initialize_life(w)
+    loop place in 0..min(towns.len(),w.harbors.len()):
+        authored = false; configured = false
+        loop v in w.life_venues:
+            if v.place == place and not v.key.starts_with("legacy:"): authored = true
+            if v.place == place and v.key.starts_with("legacy:{place}:scene:"): configured = true
+        if authored or configured and not force: continue
+        tw = towns[place]; out = vec3(tw.out.x,0,tw.out.y); side = vec3(-out.z,0,out.x)
+        warehouse = _life_ground(towns,w.cargo_harbors[place].warehouse)
+        homes = w.cargo_harbors[place].homes
+        if homes.len() == 0: homes = [warehouse]
+        supplied: LifeVenue[]
+        loop k in 0..homes.len(): supplied.push(LifeVenue(place,"legacy:{place}:scene:home:{k}",.home,homes[k],facing=out,capacity=2,covered=true))
+        quay = if w.cargo_harbors[place].loading.len()>0: w.cargo_harbors[place].loading[0]-out*8.0 else: warehouse
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:quay",.quay,_life_ground(towns,quay),facing=out,capacity=4))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:market",.market,warehouse,facing=out,capacity=8))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:square",.square,_free_spot(towns,tw,warehouse-out*3.0+side*7.0,warehouse),facing=out,capacity=8))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:cafe",.cafe,homes[2%homes.len()],facing=out,capacity=6,covered=true))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:church",.church,homes[3%homes.len()],facing=out,capacity=6,covered=true))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:school",.school,homes[4%homes.len()],facing=out,capacity=4,covered=true))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:workshop",.workshop,homes[1%homes.len()],facing=out,capacity=3))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:shelter",.shelter,homes[0],facing=out,capacity=3,covered=true))
+        supplied.push(LifeVenue(place,"legacy:{place}:scene:fields",.fields,_free_spot(towns,tw,warehouse-out*30.0+side*15.0,homes[0]),facing=out,capacity=4))
+        set_life_venues(w,place,supplied)
+        # Geometry provides height, never a different street/goal or a new actor identity.
+        loop person in 1..w.people.len():
+            if w.people[person].place == place and life_free(w,person): w.people[person].pose.pos = _life_ground(towns,w.people[person].pose.pos)
+        loop k in 0..w.households.len():
+            if w.households[k].home == place: w.households[k].pose = _life_ground(towns,w.households[k].pose)
+
+step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
+    if towns.len() == 0: return
+    initialize_life(w)
+    ids = w.daily_life.keys(); ids.sort()
+    loop person in ids:
+        intent = w.daily_life[person]; p = w.people[person]
+        if not life_free(w,person):
+            if intent.scene_owned:
+                w.daily_life[person].scene_owned = false
+                if p.carriage < 0: w.people[person].move_owner = .abstract_world
+            continue
+        near = length(p.pose.pos-observer) < (if intent.scene_owned: 360.0 else: 300.0)
+        if not near:
+            if intent.scene_owned:
+                w.daily_life[person].scene_owned = false; w.people[person].move_owner = .abstract_world
+                w.daily_life[person].last_tick = w.tick-1
+            continue
+        if not intent.scene_owned:
+            # Complete only the unowned interval before this tick, then lease the current tick.
+            advance_life_motion(w,w.tick-1,person)
+            w.daily_life[person].scene_owned = true; w.people[person].move_owner = .scene
+        w.daily_life[person].last_tick = w.tick
+        intent = w.daily_life[person]
+        if intent.arrived:
+            if intent.companion >= 0 and w.people[intent.companion].place == p.place:
+                delta = w.people[intent.companion].pose.pos-p.pose.pos
+                if length(delta)>0.1: w.people[person].pose.rot = facing(delta)
+            continue
+        if intent.blocked != "": continue
+        if intent.routed_revision != intent.path_revision:
+            path = navigation.cargo_walk_path(towns,w.people[person].pose.pos,intent.target)
+            w.daily_life[person].routed_revision = intent.path_revision
+            if path.len() == 0:
+                w.daily_life[person].blocked = "The walking route is obstructed."
+                w.daily_life[person].route.clear(); w.daily_life[person].waypoint = 0
+                continue
+            w.daily_life[person].route = path; w.daily_life[person].waypoint = 1
+        intent = w.daily_life[person]
+        if intent.waypoint >= intent.route.len(): w.daily_life[person].arrived = true; continue
+        delta = intent.route[intent.waypoint].xz-w.people[person].pose.pos.xz
+        distance = f64(length(delta))
+        if distance < 0.10:
+            w.daily_life[person].waypoint += 1
+            if w.daily_life[person].waypoint >= intent.route.len(): w.daily_life[person].arrived = true
+            continue
+        speed = if intent.mobility == .bicycle: 3.4 else: 1.25
+        moved = walk_step(towns,w.people[person].pose.pos,delta*f32(min(1.0,speed*dt/distance)))
+        if length(moved.xz-w.people[person].pose.pos.xz) < 0.0001:
+            w.daily_life[person].blocked = "The walking route is obstructed."
+            continue
+        w.people[person].pose.rot = facing(vec3(delta.x,0,delta.y))
+        w.people[person].pose.pos = moved
+        if intent.meeting >= 0 and intent.companion >= 0:
+            other = w.people[intent.companion].pose.pos-moved
+            if length(other)>0.1: w.people[person].pose.rot = facing(other)
+    loop k in 0..w.households.len():
+        p = w.households[k]
+        near = length(p.pose-observer)<(if p.scene_owned: 360.0 else: 300.0)
+        if not near:
+            if p.scene_owned: w.households[k].scene_owned = false; w.households[k].last_tick = w.tick-1
+            continue
+        w.households[k].scene_owned = true; w.households[k].last_tick = w.tick
+        if p.waypoint >= p.route.len(): continue
+        if p.routed_revision != p.path_revision:
+            path = navigation.cargo_walk_path(towns,p.pose,p.target)
+            w.households[k].routed_revision = p.path_revision
+            w.households[k].route = path; w.households[k].waypoint = if path.len()>0: 1 else: 0
+            if path.len()==0: continue
+        p = w.households[k]
+        if p.waypoint >= p.route.len(): continue
+        delta = p.route[p.waypoint].xz-p.pose.xz; distance = f64(length(delta))
+        if distance<0.10: w.households[k].waypoint += 1; continue
+        moved = walk_step(towns,p.pose,delta*f32(min(1.0,1.1*dt/distance)))
+        w.households[k].pose = moved
+
+fold_life_for_save = (w: mut World):
+    ids = w.daily_life.keys()
+    loop person in ids:
+        if not w.daily_life[person].scene_owned: continue
+        w.daily_life[person].scene_owned = false; w.daily_life[person].last_tick = w.tick
+        if w.people[person].carriage < 0: w.people[person].move_owner = .abstract_world
+    loop k in 0..w.households.len():
+        w.households[k].scene_owned = false; w.households[k].last_tick = w.tick
