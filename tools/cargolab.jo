@@ -1,0 +1,185 @@
+# Deterministic acceptance driver. Every simulated step is 1/60 s on the normal scene clock.
+# CARGO_PLAYER=1 also fetches/stows by hand and completes a local boat errand before flying.
+# CARGO_CAPTURE=quay|porter|player|collection freezes that real stage for a headless screenshot.
+use '../src/world.jo'
+use '../src/terrain.jo'
+use '../src/terrain_lod.jo'
+use '../src/render_space.jo'
+use '../src/curved_world.jo'
+use '../src/sea.jo'
+use '../src/sky.jo'
+use '../src/look.jo'
+use '../src/objects.jo'
+use '../src/folk.jo'
+use '../src/townsfolk.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/damage.jo'
+use '../src/pilot.jo'
+import '../src/traffic.jo' as air
+import '../src/living_world.jo' as living
+import '../src/living_types.jo' as data
+import '../src/living_scene.jo' as clock
+import '../src/living_cargo.jo' as cargo
+import '../src/living_claims.jo' as claims
+import '../src/living_jobs.jo' as jobs
+import '../src/living_portage.jo' as portage
+import '../src/cargo_scene.jo' as walking
+import '../src/cargo_view.jo' as goods
+
+window("Cargo acceptance", 1280, 720)
+init_terrain(); init_sea(); init_sky(); init_objects(); init_curved_world()
+assert(load_land(embed('../assets/terrain.bin')))
+load_terrain(embed('../assets/terrain_lod.bin'))
+sea = build_sea_mesh(); depth = build_depth_texture()
+towns = [loop s in SETTLEMENTS: build_town(s)]
+w = living.build_world(u64(0), air.harbors_from_towns(towns))
+walking.configure_cargo_scene(w, towns)
+folks: Folk[]; sync_folk(folks,w,towns)
+models = [build_craft(.gull,LIVERIES[0]),build_craft(.heron,LIVERIES[5]),build_craft(.corsair,LIVERIES[3]),build_craft(.falco,LIVERIES[1]),build_craft(.gull,LIVERIES[1]),build_craft(.gull,LIVERIES[2]),build_craft(.heron,LIVERIES[4]),build_craft(.gull,LIVERIES[4]),build_craft(.heron,LIVERIES[2]),build_craft(.gull,LIVERIES[5]),build_craft(.falco,LIVERIES[3]),build_craft(.corsair,LIVERIES[4])]
+traffic = air.make_living_traffic(w,models)
+adapter = clock.SceneAdapter()
+player = make_flyer(.gull,0,models[0].contacts,w.harbors[0].docks[0],0.0)
+air.bind_living_player(player,w,adapter)
+proxy = air.Traffic(craft=0,person=0,name="The Pilot",kind=.gull,model=0,spec=player.spec,state=player.state)
+figs = [loop p in w.people: build_figure(dress_of(p.occupation),p.appearance_seed)]
+meshes = goods.build_cargo_meshes()
+portage.cargo_person_pose(w,0,w.cargo_harbors[0].loading[0])
+manual = env("CARGO_PLAYER") != none
+capture = env("CARGO_CAPTURE") ?? ""
+assert(living.take_job(w,3,0,if manual: data.CarriageChoice.player else: data.CarriageChoice.porter))
+lot = w.jobs[3].cargo_ids[0]
+root = w.cargo[lot].source
+print("ACCEPT Job3 existing cargo {lot}, source {root}, owner {w.people[w.cargo[lot].owner].name}; {portage.cargo_status(w,3)}")
+focus = w.cargo_harbors[0].warehouse
+stage = 0; local_job = -1; local_lot = -1
+path: vec3[]; waypoint = 0
+frozen = capture == "quay"
+t = 0.0; last_minute = -1
+walk_distance = 0.0; carried_distance = 0.0; dropped = false
+
+walk_to = (target: vec3) -> bool:
+    global path, waypoint, walk_distance, carried_distance
+    if path.len() == 0:
+        path = walking.cargo_walk_path(towns,w.people[0].pose.pos,target); waypoint = 1
+        assert(path.len() > 0)
+    if waypoint >= path.len(): path.clear(); return true
+    delta = path[waypoint].xz-w.people[0].pose.pos.xz
+    if length(delta) < 0.12: waypoint += 1; return false
+    speed = if w.people[0].carrying >= 0: 1.0 else: 1.7
+    moved = walk_step(towns,w.people[0].pose.pos,normalize(delta)*f32(min(f64(length(delta)),speed/60.0)))
+    distance = f64(length(moved-w.people[0].pose.pos))
+    assert(distance > 0.00001 and distance < 0.03)
+    walk_distance += distance
+    if w.people[0].carrying >= 0: carried_distance += distance
+    w.people[0].pose.rot = data.facing(vec3(delta.x,0,delta.y))
+    portage.cargo_person_pose(w,0,moved)
+    false
+
+one_step = ():
+    global stage, local_job, local_lot, focus, frozen, t, proxy, player, dropped, path
+    if stage == 0 and manual:
+        focus = w.people[0].pose.pos
+        if walk_to(w.cargo[lot].pos):
+            assert(portage.cargo_pick_up(w,0,lot)); stage = 1
+            print("PICKUP cargo {lot}; hands full, carrying speed 1m/s")
+    else if stage == 1:
+        focus = w.people[0].pose.pos
+        if not dropped and carried_distance > 3:
+            position = w.people[0].pose.pos
+            assert(portage.cargo_put_down(w,0) and w.cargo[lot].pos == position)
+            parsed = from_text[data.World](to_text(w)); assert(parsed is data.World and parsed.cargo[lot].pos == position)
+            assert(portage.cargo_pick_up(w,0,lot)); dropped = true
+            print("DROP/RESTORE/PICKUP cargo {lot} at {position}")
+            if capture == "player": frozen = true; return
+        if walk_to(portage.cargo_loading_spot(w,0)!):
+            assert(portage.cargo_put_down(w,0,true)); stage = 2
+            print("STOW cargo {lot}; actually walked {carried_distance:.2}m with this source")
+    if (stage == 0 and not manual) or stage == 2:
+        if not manual:
+            task = w.carriage[0]; focus = w.people[task.person].pose.pos
+            if capture == "porter" and w.people[task.person].carrying == lot and length(focus-w.jobs[3].pickup) > 8:
+                print("CAPTURE {w.people[task.person].name} carrying cargo {lot} at {focus}")
+                frozen = true; return
+        if w.jobs[3].loaded:
+            assert(portage.cargo_all_aboard(w,3) and w.cargo[lot].source == root)
+            print("LOADED Job3 at minute {w.minute}; porter fee paid once")
+            if manual:
+                local_job = jobs.post_job(w,6,0,.commodity,1,1000,180,w.minute+600,delivery_mode=.foot,dropoff=w.cargo_harbors[0].boat,drop_store=.boat)
+                assert(local_job >= 0 and living.take_job(w,local_job,0,.player))
+                local_lot = w.jobs[local_job].cargo_ids[0]; stage = 3
+            else: stage = 5
+    if stage == 3:
+        focus = w.people[0].pose.pos
+        if walk_to(w.cargo[local_lot].pos): assert(portage.cargo_pick_up(w,0,local_lot)); stage = 4
+    else if stage == 4:
+        focus = w.people[0].pose.pos
+        if walk_to(w.jobs[local_job].dropoff):
+            assert(portage.cargo_put_down(w,0) and living.deliver_job(w,local_job,0))
+            assert(w.cargo[local_lot].where == .boat and w.cargo[local_lot].owner == 6)
+            print("LOCAL ERRAND delivered Job{local_job} to Sofia's moored boat, paid {w.jobs[local_job].paid_cents}c; no aircraft trip")
+            stage = 5
+    if stage == 5:
+        id = living.begin_trip(w,0,2,w.jobs[3].cause); assert(id >= 0)
+        unmoor(player.state)
+        proxy.state = player.state; proxy.trip = id
+        air.start_traffic_plan(proxy,w)
+        stage = 6; print("DEPART actual aircraft trip {id} at minute {w.minute}")
+    if stage == 6:
+        controls = air.traffic_controls(proxy,w,flight_env(t))
+        step(proxy.spec,proxy.state,controls,flight_env(t),1.0/60.0)
+        player.state = proxy.state; focus = player.state.position
+        assert(not player.state.crashed)
+    air.update_traffic(traffic,w,adapter,focus,t,1.0/60.0,player.state,towns)
+    if stage == 6 and w.people[0].trip < 0:
+        assert(w.aircraft[0].place == 2 and w.aircraft[0].dock >= 0)
+        stage = 7; print("ARRIVED physical flight and actual mooring at minute {w.minute}")
+    if stage == 7:
+        focus = w.cargo_harbors[2].loading[w.aircraft[0].dock]
+        if w.cargo[lot].where == .person:
+            focus = w.people[w.cargo[lot].person].pose.pos
+            if capture == "collection": frozen = true; print("CAPTURE actual consignee collection"); return
+        if w.jobs[3].state == .delivered:
+            assert(w.jobs[3].paid_cents > 0 and w.cargo[lot].source == root and w.cargo[lot].owner == 16)
+            errors = living.invariant_errors(w); if errors.len() > 0: print(errors)
+            assert(errors.len() == 0)
+            print("SUCCESS Job3 collected by {w.people[w.cargo[lot].owner].name}, paid {w.jobs[3].paid_cents}c at minute {w.minute}; same cargo {lot}, source {root}; all invariants pass")
+            stage = 8; frozen = true
+            if capture == "": quit()
+    assert(w.minute < 600)
+    t += 1.0/60.0
+
+update = (dt: f64):
+    global last_minute
+    loop k in 0..120:
+        if frozen: break
+        one_step()
+    if w.minute/10 != last_minute:
+        last_minute = w.minute/10
+        print("minute {w.minute}; stage {stage}; {portage.cargo_status(w,3)}")
+
+draw = ():
+    L = light_at(10.0)
+    clear(BLACK); hide_sky(); fog(L.haze,L.fog_density,0.0012)
+    eye = focus + vec3(8,5,9)
+    if capture == "quay": eye = focus + vec3(11,7,12)
+    if stage == 6: eye = focus + vec3(30,14,35)
+    camera3d(eye,focus+vec3(0,1,0),55.0,0.1,30000.0)
+    draw_custom((): draw_sky(L,t))
+    draw_custom((): draw_far_sea(depth,L,t,wind_now))
+    draw_custom((): draw_ground(L,t))
+    draw_custom((): draw_towns(towns,L,t))
+    draw_custom(():
+        loop p in w.people:
+            if p.place < 0 or length(p.pose.pos-focus)>500 or p.id == 0 and (not manual or stage >= 6): continue
+            if p.carriage < 0 and p.id != 0: continue
+            nose = quat_rotate(p.pose.rot,vec3(0,0,-1))
+            draw_figure(figs[p.id],p.pose.pos,atan2(f64(nose.x),f64(nose.z)),t*5.0,if p.carriage>=0 or p.id==0: 0.7 else: 0.0,L,t,carrying=p.carrying>=0)
+        goods.draw_cargo(w,meshes,L,t)
+        air.draw_traffic(traffic,models,L,t)
+        draw_craft_parts(models[0],player.state.damage,craft_transform(player),L,t,t*12.0)
+        loop tw in towns:
+            loop b in tw.boats: draw(obj_sh,b.mesh,obj_params(L,t,afloat(b.at,t)*translation(b.at)))
+    )
+    draw_custom((): draw_sea(sea,depth,L,t,wind_now,vec3(0,0,0)),transparent=true)
+    text("{if manual: "Player cargo / local errand" else: "Sender's hired porter"}  |  {portage.cargo_status(w,3)}",vec2(20,22),18,WHITE)
