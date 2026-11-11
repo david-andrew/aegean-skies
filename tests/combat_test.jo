@@ -1,0 +1,150 @@
+use '../src/combat.jo'
+use '../src/bailout.jo'
+use '../src/flight.jo'
+use '../src/planes.jo'
+
+combat_test_actor = (id: int, side: int, at: vec3, heading: f64, skill: f64 = 0.7) -> Combatant:
+    model=build_craft(.corsair,LIVERIES[3])
+    k=craft_spec(.corsair,model.contacts)
+    s=CraftState(position=at,orientation=quat_euler(0,-heading,0),velocity=heading_vector(heading)*65.0,throttle=0.8,fuel=k.fuel_capacity)
+    Combatant(id,id,side,k,s,pilot=CombatPilot(skill=skill,nerve=0.8))
+
+test "intercept solves moving target and segments choose entry":
+    aim=intercept(vec3(0,0,-400),vec3(40,0,0),420)
+    assert(aim.x>35 and aim.x<45 and aim.y>3)
+    assert(abs(segment_ellipsoid(vec3(0,0,-10),vec3(0,0,10),vec3(0,0,0),vec3(1,1,2))-0.4)<0.00001)
+    assert(segment_ellipsoid(vec3(3,0,-10),vec3(3,0,10),vec3(0,0,0),vec3(1,1,2))>1)
+
+test "bailout opens drifts and lands on land or sea without replacing identity":
+    loop land in [false,true]:
+        d=leave_aircraft(17,42,vec3(0,300,0),quat_euler(0,0,0),vec3(0,0,-70),vec3(0,1,0))
+        loop i in 0..60*100:
+            step_descent(d,vec3(6,0,0),(x:f64,z:f64)->f64: if land: 12.0 else: -20.0,0,1.0/60.0)
+            if d.landed_event: break
+        print("descent land={land}: {d.phase} at {d.position} injury={d.injury}")
+        assert(d.person==17 and d.craft==42 and d.opened>=1.25 and d.position.x>180 and d.injury==0)
+        assert(d.phase==(if land: DescentPhase.landed else: DescentPhase.swimming))
+
+test "two physical pilots settle a fight in bounded time":
+    set_speed_scale(1)
+    actors=[combat_test_actor(1,0,vec3(0,400,220),0,0.95),combat_test_actor(2,1,vec3(0,400,0),0,0.25)]
+    b=start_engagement(1,8,vec3(0,400,0),actors)
+    hits=0; shots=0
+    loop n in 0..60*240:
+        step_battle(b,FlightEnv(),vec3(0,400,0))
+        loop event in b.events:
+            if event.kind==.hit: hits+=1
+            if event.kind==.shot: shots+=1
+        if b.finished: break
+    print("duel ticks={b.tick} shots={shots} hits={hits} status={b.actors[0].status}/{b.actors[1].status} hull={b.actors[0].state.hull_damage}/{b.actors[1].state.hull_damage} outcomes={b.outcomes.len()}")
+    assert(shots>0 and hits>0 and b.finished and b.tick<60*240)
+    assert(b.actors[0].status==.flying or b.actors[1].status==.flying)
+
+test "engagement replay and save continuation ignore cosmetic randomness":
+    set_speed_scale(1)
+    actors=[combat_test_actor(1,0,vec3(0,400,220),0),combat_test_actor(2,1,vec3(0,400,0),0)]
+    a=start_engagement(5,99,vec3(0,400,0),actors);b=a
+    loop tick in 0..600:
+        step_battle(a,FlightEnv(),vec3(0,400,0))
+        assert(random()>=0)
+        step_battle(b,FlightEnv(),vec3(0,400,0))
+    assert(to_text(a)==to_text(b))
+    loaded=from_text[Battle](to_text(a))
+    assert(loaded is Battle)
+    loop tick in 0..300:
+        step_battle(a,FlightEnv(),vec3(0,400,0))
+        step_battle(loaded,FlightEnv(),vec3(0,400,0))
+    assert(to_text(a)==to_text(loaded))
+
+test "nearest hostile hit wins independent of array order and safety prevents fire":
+    set_speed_scale(1)
+    near=combat_test_actor(2,1,vec3(0,300,-10),0);near.external=true
+    far=combat_test_actor(3,1,vec3(0,300,-18),0);far.external=true
+    shooter=combat_test_actor(1,0,vec3(0,300,100),0);shooter.external=true
+    b=start_engagement(1,1,vec3(0,300,0),[shooter,far,near])
+    b.actors[0].pilot.trigger=true
+    b.rounds.push(Round(vec3(0,300,0),vec3(0,0,-1800),1,0,0.2))
+    step_battle(b,FlightEnv(),vec3(0,300,0))
+    assert(b.actors[0].gun.shots==0 and b.actors[2].state.hull_damage>0 and b.actors[1].state.hull_damage==0)
+    b.actors[0].gun.locked=false
+    step_battle(b,FlightEnv(),vec3(0,300,0))
+    assert(b.actors[0].gun.shots==1)
+
+test "thirty combatants have bounded work storage and staggered thinking":
+    set_speed_scale(1)
+    actors:Combatant[]
+    loop i in 0..30:
+        actors.push(combat_test_actor(i,i%2,vec3(f64(i/2)*80,400,if i%2==0: 300 else: -300),if i%2==0: 0 else: PI))
+    b=start_engagement(7,42,vec3(500,400,0),actors)
+    max_pairs=0;brains=0;physics=0
+    loop tick in 0..600:
+        step_battle(b,FlightEnv(),vec3(0,400,4000))
+        max_pairs=max(max_pairs,b.pair_tests);brains+=b.brain_steps;physics+=b.physics_steps
+        assert(b.rounds.len()<=COMBAT_MAX_ROUNDS and b.events.len()<256 and b.descents.len()<=30)
+        loop a in b.actors: assert(length(a.state.position)<100000 and abs(length(a.state.orientation)-1)<0.001)
+    print("30 craft: pair maximum={max_pairs} brains={brains} physics={physics} rounds={b.rounds.len()}")
+    assert(max_pairs<=9000 and brains<1000 and physics<=30*600)
+
+test "engine hits ignite and bailout is once with a durable outcome":
+    set_speed_scale(1)
+    a=combat_test_actor(7,0,vec3(0,300,0),0)
+    b=start_engagement(20,3,vec3(0,300,0),[a])
+    apply_bullet_hit(b,0,.engine,a.state.position,vec3(0,0,1),0.7,9)
+    assert(b.actors[0].fire>0)
+    assert(bail_combatant(b,0) and not bail_combatant(b,0))
+    assert(b.descents.len()==1 and b.actors[0].bailed and b.actors[0].gun.locked)
+    outcomes=take_combat_outcomes(b)
+    assert(outcomes.len()==1 and outcomes[0].engagement==20 and outcomes[0].person==7 and outcomes[0].kind==.bailed)
+    assert(take_combat_outcomes(b).len()==0)
+
+import '../src/pilot.jo' as player
+
+test "negative throttle is a real air brake and harbor safety requires deliberate unlock":
+    c=player.lever_controls(-0.8,true)
+    assert(c.throttle==0 and c.airbrake==0.8 and c.gear)
+    f=player.Flyer()
+    assert(f.guns_locked)
+    player.gun_safety(f,true,true);assert(not f.guns_locked)
+    player.gun_safety(f,true,false);assert(not f.guns_locked)
+    player.gun_safety(f,false,false);player.gun_safety(f,true,false);assert(f.guns_locked)
+    set_speed_scale(1)
+    a=combat_test_actor(1,0,vec3(0,500,0),0)
+    b=a.state;s=a.state
+    loop i in 0..120:
+        step(a.spec,b,Controls(throttle=0),FlightEnv(),1.0/60.0)
+        step(a.spec,s,c,FlightEnv(),1.0/60.0)
+    assert(length(s.velocity)<length(b.velocity)*0.95)
+
+test "strike pilots strafe moving boats and escort pilots select their attackers":
+    set_speed_scale(1)
+    a=combat_test_actor(1,0,vec3(0,250,900),0,0.95)
+    a.pilot.role=.strike;a.pilot.nerve=1
+    boat=CombatBoat(40,1,vec3(0,0,0),vec3(1,0,0))
+    b=start_engagement(1,4,vec3(0,300,0),[a],[boat])
+    shots=0
+    loop i in 0..60*150:
+        step_battle(b,FlightEnv(),vec3(0,300,0))
+        loop event in b.events:if event.kind==.shot:shots+=1
+        if b.boats[0].health<0.8:break
+    print("boat attack ticks={b.tick} health={b.boats[0].health} shots={shots}")
+    assert(shots>0 and b.boats[0].health<0.8 and b.boats[0].position.x>0)
+    assert(not b.finished) # A surviving hostile convoy still contests the engagement.
+    escort=combat_test_actor(2,1,vec3(0,400,1500),0)
+    escort.pilot.role=.escort
+    distant=combat_test_actor(3,0,vec3(2000,400,1500),0)
+    b=start_engagement(2,3,vec3(0,300,0),[escort,a,distant],[boat])
+    plan=combat_controls(b,0,FlightEnv())
+    assert(plan.target==1)
+
+test "terrain intercept blocks a shot before an aircraft and far flight clears terrain":
+    target=combat_test_actor(2,1,vec3(0,100,-30),0);target.external=true
+    shooter=combat_test_actor(1,0,vec3(0,100,100),0);shooter.external=true
+    b=start_engagement(1,1,vec3(0,300,0),[target,shooter])
+    b.rounds.push(Round(vec3(0,100,0),vec3(0,0,-2400),1,0,0.2))
+    e=FlightEnv(ground=(x:f64,z:f64)->f64:if z < -5 and z > -20:150.0 else:-100.0)
+    step_battle(b,e,vec3(0,100,0))
+    assert(b.actors[0].state.hull_damage==0 and b.rounds.len()==0)
+    a=combat_test_actor(7,0,vec3(0,80,0),0)
+    b=start_engagement(2,1,vec3(0,300,0),[a])
+    plan=combat_controls(b,0,FlightEnv(ground=(x:f64,z:f64)->f64:60.0))
+    assert(plan.mode==.evade and not plan.trigger and plan.controls.pitch>0)

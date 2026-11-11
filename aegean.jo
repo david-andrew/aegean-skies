@@ -52,6 +52,12 @@ use 'src/speech.jo'
 use 'src/panels.jo'
 use 'src/mooring.jo'
 use 'src/guns.jo'
+use 'src/combat.jo'
+use 'src/combat_bridge.jo'
+use 'src/combat_view.jo'
+use 'src/combat_sound.jo'
+use 'src/cockpit.jo'
+use 'src/bailout.jo'
 use 'src/fabric.jo'
 use 'src/debugmenu.jo'
 use 'src/notebook.jo'
@@ -128,6 +134,7 @@ fonts = Fonts(load_font(embed("assets/fonts/JosefinSans-SemiBold.ttf")), load_fo
 enum Mode:
     walking
     aboard          # in the cockpit (the flight model comes here)
+    descent         # falling, under a canopy, or swimming after leaving an aircraft
     free            # a free camera, for looking around
 
 struct Player:
@@ -265,9 +272,16 @@ me_fig = build_figure(.pilot, 7)
 tuft = build_tuft()
 audio = if env("SLOPPY_NO_AUDIO") != none: Audio() else: start_audio()
 hearing = if env("SLOPPY_NO_AUDIO") != none: Hearing() else: make_hearing()
+battle = Battle(enabled=true,seed=int(living_world.seed%100000))
+register_combat_body(battle,living_world,living_world.people[living_world.player].craft,pc.spec,pc.state,true)
+combat_visual = make_combat_view()
+combat_audio = if env("SLOPPY_NO_AUDIO") != none: CombatAudio() else: start_combat_audio()
+cockpit_model = build_cockpit()
+
 grass = GrassField(me.pos, instance_buffer([Instance3D(mat4(), vec4(1, 1, 1, 1))]), 0)
 
 follow = follow_camera(distance = 5.5, pitch = 0.25, height = 1.6)
+descent_camera = follow_camera(distance=14.0,pitch=0.18,height=3.5)
 follow.yaw = me.yaw + PI
 free = fly_camera(vec3(2600, 380, 2600), 0.8, -0.18)
 free.speed = 120.0
@@ -503,6 +517,8 @@ change_craft = (kind: Craft, model: int):
     living_world.aircraft[record].scene_extension_tick = -1
     living_world.aircraft[record].revision += 1
     pc = nf
+    ci=combat_index(battle,record)
+    if ci>=0:battle.actors[ci]=Combatant(record,living_world.player,0,nf.spec,nf.state,external=true,human=true,previous=nf.state.position,model=model)
 
 # paused (or not): the pause menu is the debugging panel
 set_paused = (on: bool):
@@ -663,6 +679,16 @@ debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
             set_paused(false)
         _: pass
 
+    # An explicit debug repair/part edit changes the authoritative physical body too.
+    ci=combat_index(battle,c)
+    if ci>=0:
+        battle.actors[ci].state=pc.state
+        if r.act==.repair:
+            battle.actors[ci].fire=0;battle.actors[ci].fire_age=0
+            battle.actors[ci].marks.clear();battle.actors[ci].last_attacker=-1
+            battle.actors[ci].down_reported=false
+            if not battle.actors[ci].bailed:battle.actors[ci].status=.flying
+
 # (each kind's engine its own pitch, the bigger lower; each aircraft a touch its own)
 engine_tone = (kind: Craft, craft: int) -> f64:
     base = aircraft_profile(kind).tone
@@ -723,9 +749,6 @@ haul_in = (dt: f64):
             pc.state.position = np
             pc.state.mooring_point = np
 
-# where the engine is, in the aircraft's frame (for its smoke)
-pm_engine_at = (f: Flyer) -> vec3: craft_models[f.model].prop_at + vec3(0, 0, 0.8)
-
 # off the aircraft onto the quay beside a dock (or the nearest walkable ground)
 step_ashore = (near: vec3):
     best = me.pos
@@ -744,7 +767,7 @@ step_ashore = (near: vec3):
         follow.placed = false
 
 update = (dt: f64):
-    global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused
+    global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused, descent_camera
     # (the touch screen's stick and buttons, read as keys below; mode: 0 flying, 1 on the water,
     # 2 on foot, 3 a panel open)
     pad_mode = if paused or ui != .none or notebook.open or show_chart: 3 else if me.mode == .aboard: (if pc.state.on_water or pc.state.moored: 1 else: 0) else: 2
@@ -754,6 +777,7 @@ update = (dt: f64):
     if show_chart and geography_enabled and vpressed(.tab): chart_local = not chart_local
     if paused:
         hush_audio(audio)
+        hush_combat_audio(combat_audio)
         hush_engines(hearing)
         # (picking a place on the chart from the pause menu; Escape gives up)
         if dbg.picking and show_chart and mouse_pressed(.left):
@@ -786,6 +810,8 @@ update = (dt: f64):
         notebook.open = true
         mouse_lock(false)
     if vpressed(.f2) and not typing: me.mode = if me.mode == .free: Mode.walking else: Mode.free
+    player_combat=combat_index(battle,living_world.people[living_world.player].craft)
+    if player_combat>=0:battle.actors[player_combat].pilot.trigger=false
     match me.mode:
         .free: free.update(dt)
         .walking:
@@ -840,10 +866,36 @@ update = (dt: f64):
                   mouse_lock(true)
                   pc.placed = false
                   pc.throttle = 0.0
+        .descent:
+            loop mut d in battle.descents:
+                if d.person!=living_world.player or d.released:continue
+                move=input_axis()
+                d.steering=flat_forward(descent_camera)*-move.y+flat_right(descent_camera)*move.x
+                d.open_requested=vpressed(.t)
+                me.pos=d.position
+                if d.phase==.swimming:descent_camera.height=1.2;descent_camera.distance=7.0
+                update(descent_camera,me.pos,dt)
+                if d.phase==.landed:
+                    me.mode=.walking;d.released=true;follow.placed=false
         .aboard:
+            if vpressed(.v) and not typing:pc.cockpit_view=not pc.cockpit_view
+            if vpressed(.x) and not typing:pc.gear_down=not pc.gear_down
+            protected=pc.state.moored
+            loop tw in towns:
+                if length(pc.state.position-tw.center)<1200 and pc.state.position.y<300:protected=true
+            gun_safety(pc,protected,vpressed(.g) and not typing)
+            ci=combat_index(battle,living_world.people[living_world.player].craft)
+            if vpressed(.t) and not typing and not pc.state.moored and ci>=0:
+                battle.actors[ci].state=pc.state
+                if bail_combatant(battle,ci):
+                    me.mode=.descent;pc.cockpit_view=false
+                    if combat_audio.guns.len()>0:combat_audio_events(combat_audio,[battle.events[battle.events.len()-1]],scene_camera())
+                    me.pos=battle.descents[battle.descents.len()-1].position;follow.placed=false
+                    descent_camera=follow_camera(distance=14.0,yaw=-heading(pc.state),pitch=0.18,height=3.5)
+                    update(descent_camera,me.pos,dt)
             before = pc.state.velocity
             set_drag_scale(if dbg.no_drag: 0.0 else: 1.0)
-            fly(pc, dt, t)
+            if me.mode==.aboard:fly(pc, dt, t)
             set_drag_scale(1.0)
             # into the water hard (falling fast): a column of spray thrown up all round, and the
             # aircraft driven under in the blink of an eye, to bob back up
@@ -865,11 +917,9 @@ update = (dt: f64):
             # the guns: Space in the air, or the left button once the game has the mouse
             # (not while slow, with the mouse orbiting the camera)
             held = (not tweaks.orbit_camera or not pc.slow) and ((vdown(.space) and not pc.state.on_water) or (mouse_down(.left) and is_mouse_locked() and not click_took_mouse))
-            fire(guns, held and not pc.state.crashed, craft_transform(pc), pc.state.velocity, MUZZLES, dt, spray_ps)
-            if guns.shots != last_shots:
-                global last_shots
-                last_shots = guns.shots
-                gun_sound(audio)
+            if ci>=0:
+                battle.actors[ci].pilot.trigger=held and me.mode==.aboard and not pc.state.crashed
+                battle.actors[ci].gun.locked=pc.guns_locked
             if trace and floor(t) != floor(t - dt):
                 st = pc.state
                 f = quat_rotate(st.orientation, vec3(0, 0, -1))
@@ -887,9 +937,6 @@ update = (dt: f64):
                 impact_sound(audio, ev.position, crunch, hard)
                 # (the camera feels it: a jolt in its spring)
                 pc.cam_ev += normalize(ev.impulse + vec3(0, 0.001, 0)) * f32(-3.0 * hard)
-            if pc.state.damage.smoke > 0.02 and not pc.state.on_water:
-                eng = transform_point(craft_transform(pc), pm_engine_at(pc))
-                emit(smoke_ps, eng, 1, 1.5, rgba(0.18, 0.17, 0.16, f32(0.4 + 0.4 * pc.state.damage.smoke)), 2.5, 1.2, 0.6, vec3(0, 1, 0))
             vapor(pc, vapor_trails, hour, t)
             if vpressed(.f):
                 if let d0 = mooring_spot(pc, towns):
@@ -907,6 +954,8 @@ update = (dt: f64):
                 # towed home to a free dock and patched up (the bill comes later)
                 dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
                 pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
+                ci=combat_index(battle,living_world.people[living_world.player].craft)
+                if ci>=0:battle.actors[ci]=Combatant(battle.actors[ci].craft,living_world.player,0,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=pc.model)
                 pc.placed = false
                 tie_up()
     if was_moored and not pc.state.moored and rope.tied:
@@ -915,7 +964,6 @@ update = (dt: f64):
         off = vec3(pc.state.position.x - rope.anchor.x, 0, pc.state.position.z - rope.anchor.z)
         rope.loose = rope.anchor + normalize(off + vec3(0.001, 0, 0)) * 3.0
     if not rope.tied and pc.state.moored: tie_up()
-    update_bullets(guns, splashes, spray_ps, dust_ps, (x: f64, z: f64) -> f64: f64(swell_at(x, z, t).x), surface_height, t, dt)
     dust_ps.update(dt)
     # debugging: F1 opens the panel; its standing switches
     if dbg.infinite_fuel:
@@ -953,8 +1001,29 @@ update = (dt: f64):
         sync_folk(folks, living_world, towns)
         global folk_sync_t
         folk_sync_t = t
-    update_traffic(traffic, living_world, traffic_scene, if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos, t, dt, pc.state, towns)
-    sync_living_player(pc, living_world)
+    battle.bullet_scale=bullet_scale
+    pci=combat_index(battle,living_world.people[living_world.player].craft)
+    if pci>=0:
+        battle.actors[pci].spec=pc.spec
+        if (pc.state.moored or dbg.no_damage) and not battle.actors[pci].bailed:
+            if pc.state.moored:sync_living_player(pc,living_world)
+            battle.actors[pci].state=pc.state
+            if dbg.no_damage:battle.actors[pci].fire=0;battle.actors[pci].fire_age=0
+    update_traffic(traffic,living_world,traffic_scene,if me.mode==.aboard:pc.state.position else:me.pos,t,dt,pc.state,towns,battle,
+        (events:CombatEvent[]):
+            combat_effect_events(combat_visual,events)
+            if combat_audio.guns.len()>0:combat_audio_events(combat_audio,events,scene_camera())
+    )
+    ci=combat_index(battle,living_world.people[living_world.player].craft)
+    if ci>=0:
+        pc.state.damage=battle.actors[ci].state.damage
+        refresh_damage(pc.spec,pc.state)
+        if battle.actors[ci].bailed:pc.state=battle.actors[ci].state
+    # Combat parts already supplied this tick's world condition; do not heal them through the
+    # older nonlinear wear projection. Outside combat retain the existing service adapter.
+    if ci<0 or (battle.actors[ci].last_attacker<0 and not battle.actors[ci].bailed):sync_living_player(pc,living_world)
+    update_combat_view(combat_visual,battle,wind_now_vec(),dt,scene_camera())
+    if combat_audio.guns.len()>0:update_combat_audio(combat_audio,battle,scene_camera(),living_world.player)
     update_folk(folks, living_world, towns, if me.mode == .aboard: pc.state.position else: me.pos, dt)
     # skimming: fast within about a span of the water, the downwash churns it and throws spray
     gap = f64(pc.state.position.y) - pc.spec.float_height
@@ -1051,12 +1120,18 @@ draw_world = (L: Light):
         loop w in walkers:
             if length(w.pos - scene_camera()) < 600.0: draw_figure(w.fig, w.pos, w.yaw, w.phase, if w.wait > 0.0: 0.0 else: 0.8, L, t)
         if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, me.stride, L, t, carrying=holding_cargo() >= 0)
-        draw_traffic(traffic, craft_models, L, t)
+        draw_traffic(traffic,craft_models,L,t,battle)
+        ci=combat_index(battle,living_world.people[living_world.player].craft)
+        left=ci>=0 and battle.actors[ci].bailed
+        draw_combat_aircraft(combat_visual,battle,craft_models,L,t,if left:-1 else:living_world.people[living_world.player].craft)
         pm = craft_models[pc.model]
         at = pc_at()
-        draw_craft_parts(pm, pc.state.damage, at, L, t, pc.prop_angle, airframe(pc), pc.state.gear)
-        draw_debris(pm, pc.state.damage, L, t)
-        if me.mode == .aboard: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true)
+        if not left:
+            draw_craft_parts(pm,pc.state.damage,at,L,t,pc.prop_angle,airframe(pc),pc.state.gear)
+            draw_debris(pm,pc.state.damage,L,t)
+            if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t)
+            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t)
+        if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
     if legacy_clouds: draw_custom((): draw_clouds(puff_mesh,puffs,L,wind_now.drift*0.35,t))
@@ -1094,8 +1169,7 @@ draw_world = (L: Light):
     draw_curved_particles(smoke_ps, false)
     draw_custom((): draw_trails(vapor_trails, L, t), transparent = true)
     draw_curved_particles(dust_ps, false)
-    draw_tracers(guns)
-    draw_splash_rings(splashes, t)
+    draw_combat_particles(combat_visual,battle)
     # (the cloth streams out by the drawn speed, as soon as the takeoff run gets going, and its
     # flutter builds all the way to the drawn top speed in a dive, so it doesn't saturate early; a
     # trial (Tweaks) has it by the true speed instead)
@@ -1105,7 +1179,7 @@ draw_world = (L: Light):
     draw_custom((): draw_cloths(cloth_mesh, cloths_for(pc.model), pc_at(), wind_now_vec() - cloth_vel, L, t, cloth_top))
     # (the pilot's scarf, on him wherever he is: in the cockpit in the aircraft's wind, ashore in
     # the wind and his own walking)
-    if me.mode == .aboard:
+    if me.mode == .aboard and not pc.cockpit_view:
         seat = pc_at() * translation(craft_models[pc.model].cockpit - vec3(0, 1.55, 0)) * scaling(f64(me_fig.height))
         draw_custom((): draw_cloths(scarf_mesh, pilot_scarf(), seat, wind_now_vec() - cloth_vel, L, t, cloth_top))
     else if me.mode == .walking:
@@ -1126,7 +1200,10 @@ draw = ():
     post_effects(0.35, 0.85, 0.22, 1.08)
     match me.mode:
         .free: camera3d(free, 62.0, 1.0, world_far(f64(free.pos.y)))
-        .aboard: place_chase_camera(pc, t)
+        .aboard:
+            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch)
+            else:place_chase_camera(pc,t)
+        .descent:camera3d(descent_camera,58.0,0.1,world_far(f64(me.pos.y)))
         _: camera3d(follow, 58.0, 0.3, world_far(f64(me.pos.y)))
     if me.mode == .aboard:
         pp = pc.state.position
@@ -1181,13 +1258,14 @@ draw = ():
             else if pc.state.beached: prompt_card(fonts, "Run aground.  R  to be towed home", 180.0)
             else if pc.state.moored: prompt_card(fonts, "F  step onto the quay      Shift  open the throttle", 180.0)
             else if mooring_spot(pc, towns) != none: prompt_card(fonts, "F  moor here", 180.0)
+        .descent: pass
         .free: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if me.mode == .aboard:
         aim_marks(pc)
         st = pc.state
         # (the speedometer reads the true speed)
-        if tweaks.true_curve or tweaks.pure_scale: instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale)
-        else: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed)
+        if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale)
+        else if not pc.cockpit_view: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed)
     if me.mode != .free and not paused: title_card(fonts, t)
     if vdown(.h) or (t > 7.5 and t < 22.0 and me.mode == .walking): controls_card(fonts, me.mode == .aboard)
     draw_ui()
