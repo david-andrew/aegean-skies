@@ -243,3 +243,193 @@ Things agreed to build, roughly in the order they'll come:
   in the busiest places only, musicians: a world lived in.
 - War: battles that play out whether or not one joins them, leaning on Sky Barons (its AI pilots,
   smoke and fire when hit, parachutes); a larger overhaul of errands and the world's liveness.
+
+## Daily life, conversation, and a wider society
+
+The original islands are now a protected neighbourhood inside a roughly 500 by 400 km world
+(see `world-geography.md`). They remain the detailed economic core while settlement generation
+is extended. Country-sized land is a prerequisite for country-sized societies, not evidence
+that a complete national economy or war simulation already exists.
+
+### A person has a day, not an idle animation
+
+A saved daily intent asks for a kind of place: home, quay, market, cafe, church, square, fields,
+workshop, shelter or school. Town data supplies stable named, walkable anchors; the simulation
+does not pick a building mesh by appearance. Existing quays and house entrances are fallbacks.
+Actual work, promised carriage, flying, wounds and repairs take precedence. Going to work is
+part of a person's day; it does not issue a second wage or substitute a decorative worker for
+the person who produces the goods. Fishermen prepare before dawn, boats depart before the
+ordinary catch interval and return by mid-morning. Production still counts only actual named
+labour in its established interval.
+
+Free hours make a recognisable place: morning business at the market, an afternoon pause,
+Sunday worship, the evening walk, company at the cafe and music in the square. Feast days are
+calendar observances, not a director inventing an emergency. Children belong to named
+households within the existing background headcount. They do not create an extra consumer
+population, cash accounts or free cargo. Some adults use a bicycle for local journeys. A
+musician has the same record and duties the rest of the day; music does not spawn an actor.
+Weather can make shelter preferable to a social visit.
+
+Meetings require bodies to reach a shared place. Groups are small and temporary. Participants
+exchange a few things they actually know, with the existing occurrence dates, confidence,
+privacy and receipt rules. Nobody learns a distant raid merely by sharing a settlement index
+with a witness. Acquaintance and remembered company accumulate through meetings and committed
+conversation. Strong grievances can keep people at different tables. A meeting is a short
+commitment, interruptible by a real obligation, not an all-day dock-readiness lock.
+
+Scene walking and abstract walking advance one saved plan. The scene leases the person's
+movement and follows collision-checked routes; folding preserves the actual pose and unspent
+route. Blocked routes cannot complete because the observer left. Town geometry can publish
+new anchors without relocating a person. Rendering reads intent, pose and movement ownership;
+it cannot choose a different daily life on each camera visit.
+
+### Speaking is an action; inspecting dialogue is not
+
+Topic lists and previews are pure queries. Committing a spoken turn records its words, subject,
+listener and source; selecting a reply consumes a pending question once. Saved recent-use
+memory stops repeating the same line or question within the defined bounded window. Exhausting
+a subject leads to an honest refusal and then silence, rather than another invented fact.
+
+Voices differ in rhythm and habits: an old fisherman can answer in six words, a clerk can make
+courtesy an obstacle, a young courier can leave an anxious question at the end, a shopkeeper
+can notice the price and the person in the same breath. Age, trade, temperament, fatigue,
+circumstance, acquaintance, actual relationship memories and where the day has brought them
+all matter. They need not make a confession whenever the player comes within earshot. Debts
+are not announced to a stranger in a crowd. A friendly answer is not a money cheat or a means
+to promise a delivery without reserving its goods.
+
+Public news, private knowledge, stale quotes and interpretation are distinct. A speaker uses
+what they heard, not a global event query. Second-hand accounts keep their source and date;
+uncertainty is part of the sentence. A price last heard yesterday can lead someone to a bad
+bargain today. A person's opinion of a late courier need not explain the courier's real delay.
+Speech must not quietly turn a guess into a verified Event or multiply reputation on retelling.
+Useful transaction details stay in structured data and notebook content; spoken lines do not
+recite minute counters, escrow rules or scheduler retries.
+
+The coordinator owns conversation presentation: choosing topics, showing questions/replies,
+maintaining a short conversational pause, and deciding how much source/uncertainty information
+to show. The simulation supplies this material without prescribing a new panel or control.
+
+### Small stories remember what happened
+
+A story is a compact journal of a situation and its evidence, not a script with a guaranteed
+ending. A courtship can begin with two adults repeatedly finding time at the same cafe; a
+modest gift has to be bought from actual stock and somebody has to carry it. Missed promises
+and older grievances can become a feud; improved dealings can let it cool. A boat becomes a
+concern because a real journey is overdue. A watcher learns of its return by seeing it or by
+hearing a carried report, not by reading the boat's hidden global state. A debt develops through
+actual partial payments, settlement or default. A household errand remembers whether the goods
+reached the promised door or stayed with their owner after cancellation.
+
+Keep living situations and a bounded history of outcomes. Preserve the compact reason in
+relationship memory after the full event is gone. Stories can offer work only through the same
+funded job, owned cargo and validation paths as ordinary business. The world owes nobody a
+happy ending or a new quest every evening.
+
+## Countries and conflict: scale and implementation plan
+
+### Identity and the three simulation tiers
+
+The two mainlands support two independent countries; the life branch uses provisional stable
+keys `thalene` and `karavia`. The original six harbours start neutral. Country membership,
+citizenship, faction membership and occupation are different fields: a pirate from an eastern
+port is not automatically an officer acting on the eastern government's orders. Settlement
+country names/IDs must be explicitly mapped when the towns catalog lands, not inferred from a
+mesh array index or a change in the coastline.
+
+The town catalog supplies stable settlement ID/key, name, country/region, kind, population,
+position, facilities, optional harbor geometry, roads/neighbours and semantic local anchors.
+It owns **where places exist**, not all of their economic state. Adopt it in three tiers:
+
+1. **Far districts**, reviewed hourly/daily: sparse stock, capacity, households/labour cohorts,
+   treasury/payroll, infrastructure condition and road/sea neighbours. A farmstead does not need
+   twenty fully ticking Persons or a full Town mesh. Only real facilities produce, consume or
+   repair; population and the active detailed people must not be counted twice.
+2. **Active settlements and routes**, reviewed per game minute: named residents with current
+   business, owned lots, sparse transport schedules, prices, obligations and carried knowledge.
+   Visiting a new place can select persistent residents from its saved cohort; it cannot issue
+   them a second share of the district's wallet, goods or day's labour.
+3. **The scene**, fixed ticks: leased physical aircraft, boats and people. No independent second
+   fleet, dock occupancy table, cargo pool or fighting force. Fold the actual remaining route,
+   resources, wounds and pending encounter back into the same IDs.
+
+Version the catalog and the core-to-catalog mapping. Preserve the six legacy IDs, original
+positions, commitments and owned cargo. A v2 save should use stable settlement IDs in all
+Person/Job/Trip/Obligation references and a sparse `place_by_id` registry, with an explicit
+`core_slot_by_id` cache for active records. Catalog-row indexes are not save identities. Do not
+silently reuse an array slot whose previous ID is still referenced by a cargo lot or journey.
+Existing six-place v1 validation is a migration boundary, not proof that an arbitrary catalog
+can be passed to the current constructor.
+
+Replace `origin*6+destination` with ordered ID-pair route addresses and retain an explicit old
+key decoder for cargo-era saves. Cache routes on demand by endpoint IDs, mode and geography
+version; never build N*N routes for hundreds of places. A sparse graph of service hubs supports
+multi-leg trips, real fuel stops and actual timetables. The old protected-island water corners
+are not a navigation solution for a 500 km sea. New long-range routes need water connectivity,
+terrain clearance and bounded asynchronous baking, with a valid coarse route while detail is
+prepared. AIRFRAMES supplies range/capacity; a new nation is not an excuse for an old Gull to
+cross a continent on one unchanged tank.
+
+Materializing/dematerializing economic detail is a transfer and a time lease. Extract named
+workers' stock/pay from their district, suppress that cohort's overlapping output/consumption,
+and return the same balances and elapsed work later. Keep coarse warehouses as actual cargo
+stores/provenance owners; moving them into a detailed market must not call `record_creation`.
+A market price is a stock-derived local quote, never a replacement quantity that appears when
+a town is rendered. Limit active people, route bakes, meetings and meshes independently of
+world area. No far simulation loop runs per camera frame.
+
+### Implemented foundation and evidence
+
+The life branch supplies country records with optional real treasury/authority seats, explicit
+core-country mapping, a bounded national incident ledger, duplicate receipts and sparse
+bilateral tension. Reports must actually be heard at the country's seat. Private facts,
+low-confidence tales and unknown targets do not become national incidents. One public Event
+has one effect even if it travels by five pilots. Civilian/privateer harm has smaller weight
+than attributed state action; public opinion can be strained without proving a government's
+orders. Quiet days allow tension to ease. No money, military units or world goods are minted
+by this foundation, and it does not claim that a running war has been implemented.
+
+### From tension to a war with real costs
+
+The next conflict slice should introduce national goals and funded orders. Pressure comes from
+security, trade access, treasury, infrastructure, food, political commitments and remembered
+losses. Multiple recent independent incidents, contested access and an actual government's
+choices can produce mobilization; a calendar threshold alone cannot declare a war. Require
+credible state attribution or an explicit political decision to blame a country. Local people
+can disagree, evade the question, benefit from smuggling or defend a friend across the border.
+
+Mobilization reserves real crews, aircraft, fuel, parts, food and wages from government-owned
+stock/accounts. Recruitment transfers a worker out of civilian labour; repair and replacement
+consume time and existing parts. Bounded loans/imports use explicit outside accounts. No free
+reinforcement appears because the player saw an empty sky. Orders have issuer, purpose,
+resource escrow, expiry/retry, route, participants and a printable reason.
+
+Convoys are actual saved manifests aboard owned vessels, with escorts and departure windows.
+Blockades require supplied patrols at a real lane, not a global invisible boolean. A customs
+search/seizure names the legal owner, patrol, cargo and authority, and records custody; privateers
+need a saved letter of marque with issuer, pay, targets and expiry. Pirates retain their own
+motives and can be disowned. Higher prices follow real disrupted supply, requisitions or
+transport risk; they are not a flat war surcharge painted over untouched stocks.
+
+Raids and battles can proceed without the player. Resolve the same saved encounter once,
+with recorded fuel/time, risk and resource losses, using abstract rules outside the scene and
+physical participants inside it. Observing a battle cannot re-roll it or spawn another wing.
+The player may join, escort, carry, report, smuggle, rescue or leave; participation uses the
+same aircraft identity, damage, cargo and legal/reputation evidence as any other person. A
+pilot shot down follows the existing ditch/rescue policy; civilian injury and displacement
+must have persistent households and costs, not decorative casualty counters.
+
+Occupation requires a force that actually reaches and can supply a place. Keep sovereign
+country, current controller, infrastructure damage and civilian attitudes separate. Transfer
+public custody/receipts without erasing private title or old relationships. Open/closed roads,
+harbors, shortages and danger alter real choices and routines. News about a captured town
+travels; remote people do not acquire the new map state before hearing of it. Counterattacks,
+exhaustion and negotiated terms can end an occupation or war through the same obligations
+and resources that sustain one.
+
+Implement and test in slices: catalog/core migration; district conservation/LOD leases;
+national orders/treasuries; convoys and interception; supplied blockades; political escalation;
+physical battle participation; occupation and peace. Gates include no double production,
+conserved provenance/payroll, no war from an unheard rumor, no double encounter resolution,
+finite funded retries, stable saves through tier switches, and a month with the player absent.
+UI orders, map overlays, topic presentation and participation prompts remain coordinator work.
