@@ -15,6 +15,23 @@ cargo_ids = (w: World, store: CargoStore, holder: int, good: int) -> int[]:
 cargo_anchor = (w: World, place: int) -> vec3:
     if place >= 0 and place < w.cargo_harbors.len(): w.cargo_harbors[place].warehouse else: vec3(0, 1.2, 0)
 
+cargo_stock_spot = (w: World, place: int, good: int) -> vec3:
+    a = cargo_anchor(w, place)
+    if place >= 0 and place < w.harbors.len(): a += w.harbors[place].out * f32(max(0, good)) * 0.9
+    a
+
+cargo_craft = (w: World, c: CargoLot) -> int:
+    if c.where != .aircraft: return -1
+    if c.store == .aircraft: return c.holder
+    if c.job >= 0 and c.job in w.jobs and w.jobs[c.job].carrier >= 0: return w.people[w.jobs[c.job].carrier].craft
+    -1
+
+cargo_aboard_quantity = (w: World, craft: int, good: int) -> int:
+    qty = 0
+    loop _, c in w.cargo:
+        if c.good == good and cargo_craft(w, c) == craft: qty += c.quantity
+    qty
+
 cargo_grams = (w: World, lot: CargoLot) -> int:
     if lot.good < 0: lot.grams * lot.quantity else: lot.quantity * w.goods[lot.good].package_grams / 1000
 
@@ -28,6 +45,7 @@ cargo_insert = (w: mut World, lot: CargoLot) -> int:
 cargo_remove = (w: mut World, id: int):
     if not (id in w.cargo): return
     c = w.cargo[id]
+    if c.person >= 0 and w.people[c.person].carrying == id: w.people[c.person].carrying = -1
     key = cargo_key(c.store, c.holder, c.good)
     w.cargo_bins[key].remove(id)
     w.cargo.remove(id)
@@ -43,14 +61,18 @@ cargo_mint = (w: mut World, store: CargoStore, holder: int, good: int, quantity:
         w.cargo_sources[source] = CargoSource(source, good, 0, if origin == .opening: -1 else: w.tick, w.cargo_sequence, origin, owner)
         w.cargo_source_keys[key] = source
     w.cargo_sources[source].issued += quantity
+    workboat = store == .pocket and place < 0 and holder >= 0 and holder < w.people.len() and w.people[holder].trip >= 0 and w.trips[w.people[holder].trip].mode == .boat
     # Bulk stock can coalesce within the same actual source; portable/job crates never do.
     loop id in cargo_ids(w, store, holder, good):
         c = w.cargo[id]
-        if c.source == source and c.job < 0 and c.owner == owner and c.where == .warehouse:
+        if c.source == source and c.job < 0 and c.owner == owner and (c.where == .warehouse or workboat and c.where == .boat and c.person == holder):
             w.cargo[id].quantity += quantity
             return id
     where = if store == .aircraft: CargoWhere.aircraft else: if store == .boat: CargoWhere.boat else: CargoWhere.warehouse
-    cargo_insert(w, CargoLot(source = source, good = good, quantity = quantity, grams = grams, owner = owner, store = store, holder = holder, where = where, place = place, pos = cargo_anchor(w, place)))
+    id = cargo_insert(w, CargoLot(source = source, good = good, quantity = quantity, grams = grams, owner = owner, store = store, holder = holder, where = where, place = place, pos = cargo_stock_spot(w, place, good)))
+    if workboat:
+        w.cargo[id].where = .boat; w.cargo[id].person = holder; w.cargo[id].pos = w.people[holder].pose.pos
+    id
 
 # Split preserves the root's issue date and beneficial ownership; no inventory quantity changes.
 cargo_split = (w: mut World, id: int, quantity: int) -> int:
@@ -60,35 +82,47 @@ cargo_split = (w: mut World, id: int, quantity: int) -> int:
     w.cargo[id].quantity -= quantity
     cargo_insert(w, c)
 
+# A personal sale hands over goods at this market, not a remote dropped crate or house stock.
+cargo_at_market = (w: World, c: CargoLot, person: int, place: int) -> bool:
+    c.owner == person and c.job < 0 and c.place == place and c.where != .aircraft and c.where != .boat and length(c.pos-cargo_stock_spot(w,place,c.good)) <= 4
+
 # Mirror a validated aggregate transfer. Job=-2 selects any lot (confiscation/salvage),
 # -1 selects unpromised goods. Identity follows the actual lot, including stolen earmarks.
-cargo_move = (w: mut World, from: CargoStore, source: int, to: CargoStore, destination: int, good: int, quantity: int, owner: int, place: int, job: int = -1) -> bool:
+cargo_move = (w: mut World, from: CargoStore, source: int, to: CargoStore, destination: int, good: int, quantity: int, owner: int, place: int, job: int = -1, aboard_only: bool = false, local_sale: bool = false) -> bool:
     if w.cargo_version == 0 or quantity == 0: return true
     ids = cargo_ids(w, from, source, good)
     available = 0
     loop id in ids:
-        if job == -2 or w.cargo[id].job == job: available += w.cargo[id].quantity
+        if (job == -2 or w.cargo[id].job == job) and (not aboard_only or w.cargo[id].where == .aircraft) and (not local_sale or cargo_at_market(w,w.cargo[id],source,place)): available += w.cargo[id].quantity
     if available < quantity: return false
     left = quantity
     loop id in ids:
         if left <= 0: break
         c = w.cargo[id]
         if job != -2 and c.job != job: continue
+        if aboard_only and c.where != .aircraft: continue
+        if local_sale and not cargo_at_market(w,c,source,place): continue
         n = min(left, c.quantity)
         moved = cargo_split(w, id, n)
         c = w.cargo[moved]
-        actual_pos = c.pos; actual_where = c.where; actual_place = c.place
+        actual_pos = c.pos; actual_where = c.where; actual_place = c.place; actual_person = c.person
+        direct_receipt = job >= 0 and to == .pocket and actual_where == .person and actual_person == owner
         w.cargo_bins[cargo_key(c.store, c.holder, c.good)].remove(moved)
+        if not direct_receipt and c.person >= 0 and w.people[c.person].carrying == moved: w.people[c.person].carrying = -1
         c.store = to; c.holder = destination; c.place = place; c.person = -1
         if owner >= 0 and (owner != c.owner or to != .aircraft): c.job = -1
         if owner >= 0: c.owner = owner
         c.where = if to == .aircraft: CargoWhere.aircraft else: if to == .boat: CargoWhere.boat else: CargoWhere.warehouse
-        c.pos = cargo_anchor(w, place)
+        c.pos = cargo_stock_spot(w, place, good)
+        if to == .lost_property and from == .aftermath:
+            c.pos = actual_pos
         if to == .aftermath:
             c.where = .quay; c.pos = w.aftermath[destination].pos
         if job >= 0 and actual_place == place and (actual_where == .warehouse or actual_where == .quay or actual_where == .boat):
             c.pos = actual_pos
             if to == .aftermath: c.where = .quay
+        if direct_receipt:
+            c.where = .person; c.person = actual_person; c.pos = actual_pos
         w.cargo[moved] = c
         w.cargo_bins[cargo_key(to, destination, good)].push(moved)
         left -= n
@@ -150,12 +184,12 @@ cargo_initialize = (w: mut World):
         a = h.center - h.out * 8.0 + vec3(-h.out.z, 0, h.out.x)
         a.y = 1.2
         loading: vec3[]
-        side = vec3(-h.out.z,0,h.out.x)
+        side = vec3(-h.out.z, 0, h.out.x)
         loop d in h.docks:
-            offset = f64(dot(d-h.center,side))
-            point = d-side*f32(if offset < 0: -8.0 else: 8.0); point.y = 1.2
+            offset = f64(dot(d - h.center, side))
+            point = d - side * f32(if offset < 0: -8.0 else: 8.0); point.y = 1.2
             loading.push(point)
-        w.cargo_harbors.push(CargoHarbor(a,[a,h.center+vec3(0,1.2,0)],[],h.center+h.out*15.0+vec3(0,1.2,0),loading,island=p))
+        w.cargo_harbors.push(CargoHarbor(a, [a, h.center + vec3(0, 1.2, 0)], [], h.center + h.out * 15.0 + vec3(0, 1.2, 0), loading, island = p, boat_position=h.center+h.out*18.0+vec3(0,0.8,0)))
     loop p in w.places:
         loop g in 0..GOOD_COUNT: cargo_mint(w, .market, p.id, g, p.market.inventory.qty[g], p.market_owner, p.id, .opening)
     loop p in w.people:
@@ -164,7 +198,7 @@ cargo_initialize = (w: mut World):
         cargo_mint(w, .market, p.home, -1, 3, p.id, p.home, .opening, 5000)
     loop c in w.aircraft:
         loop g in 0..GOOD_COUNT: cargo_mint(w, .aircraft, c.id, g, c.cargo.qty[g], c.owner, c.place, .opening)
-    loop p in [3,6,13,14,17,19,20,25]: w.people[p].porter = true
+    loop p in [3, 6, 13, 14, 17, 19, 20, 25]: w.people[p].porter = true
     w.cargo_version = 1
     loop id in w.active_jobs:
         if w.jobs[id].loaded and w.jobs[id].cargo_mode == .sealed:
@@ -185,18 +219,46 @@ cargo_inventory_errors = (w: World) -> str[]:
             if cargo_stock(w, .aircraft, c.id, g) != c.cargo.qty[g]: result.push("aircraft {c.id} cargo partition {g}")
     loop id, inv in w.boat_cargo:
         loop g in 0..GOOD_COUNT:
-            if cargo_stock(w,.boat,id,g) != inv.qty[g]: result.push("boat {id} cargo partition {g}")
+            if cargo_stock(w, .boat, id, g) != inv.qty[g]: result.push("boat {id} cargo partition {g}")
     loop id, a in w.aftermath:
         loop g in 0..GOOD_COUNT:
             if cargo_stock(w, .aftermath, id, g) != a.inventory.qty[g]: result.push("salvage {id} cargo partition {g}")
     loop id, inv in w.lost_property:
         loop g in 0..GOOD_COUNT:
             if cargo_stock(w, .lost_property, id, g) != inv.qty[g]: result.push("property {id} cargo partition {g}")
+    indexed: {int: int}
+    loop key, ids in w.cargo_bins:
+        loop id in ids:
+            if not (id in w.cargo): result.push("cargo bin references missing {id}"); continue
+            c = w.cargo[id]
+            if key != cargo_key(c.store,c.holder,c.good): result.push("cargo {id} wrong custody index")
+            indexed[id] = indexed.get(id,0)+1
+    max_cargo = -1; max_source = -1; max_task = -1
     loop id, lot in w.cargo:
+        max_cargo = max(max_cargo,id)
+        if indexed.get(id,0) != 1: result.push("cargo {id} custody index multiplicity")
         if id != lot.id or lot.quantity <= 0 or not (lot.source in w.cargo_sources): result.push("cargo {id} identity/source")
         else if w.cargo_sources[lot.source].good != lot.good: result.push("cargo {id} changed contents")
         if lot.owner < 0 or lot.owner >= w.people.len(): result.push("cargo {id} owner")
         if lot.where == .person and (lot.person < 0 or lot.person >= w.people.len() or w.people[lot.person].carrying != id): result.push("cargo {id} carrier")
+    issued: {int: int}
+    loop _, c in w.cargo: issued[c.source] = issued.get(c.source, 0) + c.quantity
+    loop id, source in w.cargo_sources:
+        max_source = max(max_source,id)
+        if id != source.id: result.push("cargo source identity")
+        if source.issued < 0 or source.consumed < 0 or issued.get(id, 0) + source.consumed != source.issued: result.push("cargo source {id} quantity/provenance")
+    loop p in w.people:
+        if p.carrying >= 0:
+            if not (p.carrying in w.cargo) or w.cargo[p.carrying].where != .person or w.cargo[p.carrying].person != p.id: result.push("person {p.id} carried identity")
+        if p.carriage >= 0:
+            if not (p.carriage in w.carriage) or w.carriage[p.carriage].person != p.id: result.push("person {p.id} carriage identity")
+    loop id, task in w.carriage: max_task = max(max_task,id)
+    if w.next_cargo <= max_cargo or w.next_cargo_source <= max_source or w.next_carriage <= max_task: result.push("cargo counters rewind")
+    loop id in w.active_carriage:
+        if not (id in w.carriage): result.push("missing carriage {id}"); continue
+        task = w.carriage[id]
+        if task.phase == .done or task.phase == .cancelled or task.person < 0 or task.person >= w.people.len(): result.push("carriage {id} owner/phase")
+        else if w.people[task.person].carriage != id or w.people[task.person].move_owner != task.move_owner: result.push("carriage {id} movement owner")
     loop id, job in w.jobs:
         if job.cargo_mode == .none: continue
         total = 0
@@ -205,3 +267,20 @@ cargo_inventory_errors = (w: World) -> str[]:
             if not (source in w.cargo_sources) or w.cargo_sources[source].sequence >= job.cargo_sequence: result.push("job {id} cargo did not predate agreement")
         if total != job.quantity: result.push("job {id} cargo provenance quantity")
     result
+
+cargo_inventory = (w: World, store: CargoStore, holder: int) -> Inventory: match store:
+    .market: w.places[holder].market.inventory
+    .pocket: w.people[holder].pocket
+    .aircraft: w.aircraft[holder].cargo
+    .aftermath: w.aftermath[holder].inventory
+    .lost_property: w.lost_property.get(holder, Inventory())
+    .boat: w.boat_cargo.get(holder, Inventory())
+
+cargo_write_inventory = (w: mut World, store: CargoStore, holder: int, inv: Inventory):
+    match store:
+        .market: w.places[holder].market.inventory = inv
+        .pocket: w.people[holder].pocket = inv
+        .aircraft: w.aircraft[holder].cargo = inv
+        .aftermath: w.aftermath[holder].inventory = inv
+        .lost_property: w.lost_property[holder] = inv
+        .boat: w.boat_cargo[holder] = inv

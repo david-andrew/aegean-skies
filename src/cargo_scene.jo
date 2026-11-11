@@ -1,0 +1,163 @@
+# Terrain-aware, visible carriage. Cargo IDs and saved Person poses are authoritative.
+use 'objects.jo'
+use 'world.jo'
+use 'living_types.jo'
+use 'living_cargo.jo'
+use 'living_portage.jo'
+import 'living_claims.jo' as claims
+import 'living_delivery.jo' as delivery
+
+_cargo_ground = (towns: Town[], p: vec3) -> vec3: vec3(p.x, f32(walk_height(towns, p.x, p.z)), p.z)
+
+_cargo_segment = (towns: Town[], from: vec3, to: vec3) -> bool:
+    delta = to.xz - from.xz
+    count = max(1, int(ceil(f64(length(delta)) / 0.7)))
+    p = from
+    loop i in 1..count + 1:
+        q = lerp(from, to, f32(f64(i) / f64(count)))
+        next = walk_step(towns, p, q.xz - p.xz)
+        if length(next.xz - q.xz) > 0.15: return false
+        p = next
+    true
+
+# Breadth-first navigation is only run on a new walking leg, never for frame steering.
+# It obeys the same house, quay, sea and slope collision checks as the player.
+cargo_walk_path = (towns: Town[], from: vec3, target: vec3) -> vec3[]:
+    if _cargo_segment(towns, from, target): return [from, target]
+    cell = 1.5
+    dx = f64(target.x - from.x); dz = f64(target.z - from.z)
+    xmin = int(floor(min(0.0, dx) / cell)) - 24; xmax = int(ceil(max(0.0, dx) / cell)) + 24
+    zmin = int(floor(min(0.0, dz) / cell)) - 24; zmax = int(ceil(max(0.0, dz) / cell)) + 24
+    nx = xmax - xmin + 1
+    start = -xmin - zmin * nx
+    parent: {int: int}; parent[start] = -1
+    positions: {int: vec3}; positions[start] = from
+    queue = [start]; at = 0; goal = -1
+    loop at < queue.len() and at < 40000:
+        id = queue[at]; at += 1
+        p = positions[id]
+        if length(p.xz - target.xz) < 2.0 and _cargo_segment(towns, p, target): goal = id; break
+        ix = id % nx + xmin; iz = id / nx + zmin
+        loop d in [vec2(1, 0), vec2(0, 1), vec2(-1, 0), vec2(0, -1), vec2(1, 1), vec2(-1, 1), vec2(-1, -1), vec2(1, -1)]:
+            x = ix + int(d.x); z = iz + int(d.y)
+            if x < xmin or x > xmax or z < zmin or z > zmax: continue
+            next_id = (x - xmin) + (z - zmin) * nx
+            if next_id in parent: continue
+            q = vec3(from.x + f32(f64(x) * cell), p.y, from.z + f32(f64(z) * cell))
+            moved = walk_step(towns, p, q.xz - p.xz)
+            if length(moved.xz - q.xz) > 0.15: continue
+            parent[next_id] = id; positions[next_id] = moved; queue.push(next_id)
+    if goal < 0: return []
+    result = [target]
+    id = goal
+    loop id >= 0:
+        result.push(positions[id]); id = parent[id]
+    result.reverse()
+    # Keep only real corners; a person follows the same corridor, with fewer saved points.
+    compact = [result[0]]
+    loop i in 1..result.len() - 1:
+        a = result[i].xz - result[i - 1].xz; b = result[i + 1].xz - result[i].xz
+        if length(a) > 0.001 and length(b) > 0.001 and dot(normalize(a), normalize(b)) < 0.99: compact.push(result[i])
+    compact.push(target)
+    compact
+
+# A hold is out on the water; the person stands on the nearest walkable quay edge.
+_cargo_quay_access = (tw: Town, point: vec3) -> vec3:
+    best = vec3(0, 0, 0); distance = 1e30
+    loop q in tw.quays:
+        line = q.b - q.a
+        u = clamp(dot(point.xz - q.a, line) / dot(line, line), 0.0, 1.0)
+        center = q.a + line * u
+        across = point.xz - center
+        side = if length(across) > 0.01: normalize(across) else: vec2(1, 0)
+        p = center + side * max(0.0, q.width * 0.5 - 0.9)
+        if f64(length(point.xz - p)) < distance:
+            distance = f64(length(point.xz - p)); best = vec3(p.x, f32(QUAY_TOP), p.y)
+    best
+
+configure_cargo_scene = (w: mut World, towns: Town[]):
+    loop place in 0..towns.len():
+        tw = towns[place]; old = w.cargo_harbors[place].warehouse
+        warehouse = _cargo_ground(towns, old)
+        w.cargo_harbors[place].warehouse = warehouse
+        loading: vec3[]
+        loop dock in tw.docks:
+            loading.push(_cargo_quay_access(tw,dock))
+        w.cargo_harbors[place].loading = loading
+        homes: vec3[]
+        out = vec3(tw.out.x, 0, tw.out.y)
+        loop house in tw.houses:
+            found = warehouse
+            loop r in [8.0, 12.0, 16.0, 20.0]:
+                p = _cargo_ground(towns, house + out * f32(r))
+                free = true
+                loop block in tw.blocks:
+                    if length(p.xz - vec2(block.x, block.y)) < block.z + 0.7: free = false
+                if free and p.y >= -0.2: found = p; break
+            homes.push(found)
+        w.cargo_harbors[place].homes = homes
+        w.cargo_harbors[place].island = SETTLEMENTS[place].island
+        # The boat's goods are handed over from the walkable quay, alongside the vessel.
+        if tw.boats.len() > 0:
+            w.cargo_harbors[place].boat = _cargo_quay_access(tw,tw.boats[0].at)
+            w.cargo_harbors[place].boat_position = tw.boats[0].at+vec3(0,0.8,0)
+        else if loading.len() > 0:
+            w.cargo_harbors[place].boat = loading[0] - out * 15.0
+            w.cargo_harbors[place].boat_position = w.cargo_harbors[place].boat
+        ids = w.cargo.keys()
+        loop id in ids:
+            c = w.cargo[id]
+            if c.place == place and c.where == .warehouse and length(c.pos - (old + out * f32(max(0, c.good)) * 0.9)) < 1.0: w.cargo[id].pos = _cargo_ground(towns, warehouse + out * f32(max(0, c.good)) * 0.9)
+
+# Called inside the aircraft adapter's 60 Hz clock, before minute decisions.
+# Empty towns opt into fully abstract motion (headless world tests).
+step_cargo_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
+    ids = w.active_carriage
+    loop id in ids:
+        task = w.carriage[id]; p = task.person
+        if not cargo_carriage_live(w, task):
+            cargo_cancel_carriage(w, id); continue
+        near = towns.len() > 0 and length(w.people[p].pose.pos - observer) < (if task.move_owner == .scene: 350.0 else: 300.0)
+        if not near:
+            if task.move_owner == .scene:
+                w.carriage[id].move_owner = .abstract_world
+                w.people[p].move_owner = .abstract_world; w.carriage[id].last_tick = w.tick - 1
+            continue
+        w.carriage[id].move_owner = .scene; w.people[p].move_owner = .scene
+        w.carriage[id].last_tick = w.tick
+        w.people[p].action.end_minute = w.minute + 30; w.people[p].action.retry_minute = w.minute + 1
+        if task.blocked != "" and not cargo_retry_carriage(w, id): continue
+        task = w.carriage[id]
+        if task.scene_path_phase != task.phase:
+            destination = task.route[task.route.len() - 1]
+            path = cargo_walk_path(towns, w.people[p].pose.pos, destination)
+            if path.len() == 0:
+                w.carriage[id].blocked = "the walking route is obstructed"; continue
+            w.carriage[id].route = path; w.carriage[id].waypoint = 1
+            w.carriage[id].scene_path_phase = task.phase
+        task = w.carriage[id]
+        if task.waypoint >= task.route.len(): cargo_carriage_reached(w, id); continue
+        target = task.route[task.waypoint]
+        delta = target.xz - w.people[p].pose.pos.xz
+        distance = f64(length(delta))
+        speed = if task.phase == .carry: 0.95 else: 1.25
+        if distance < 0.12:
+            w.carriage[id].waypoint += 1
+            if w.carriage[id].waypoint >= task.route.len(): cargo_carriage_reached(w, id)
+            continue
+        move = delta * f32(min(1.0, speed * dt / distance))
+        pos = walk_step(towns, w.people[p].pose.pos, move)
+        if length(pos.xz - w.people[p].pose.pos.xz) < 0.0001:
+            w.carriage[id].blocked = "the walking route is obstructed"; continue
+        w.people[p].pose.rot = facing(vec3(delta.x, 0, delta.y))
+        cargo_person_pose(w, p, pos)
+    carriage_abstract(w, w.tick)
+    # Physical placement, not a timer, is what makes these transactions eligible.
+    jobs = w.active_jobs
+    loop job in jobs:
+        j = w.jobs[job]
+        if j.state != .claimed:
+            if j.return_place >= 0 and j.collected: delivery.return_job_cargo(w, job, j.carrier)
+            continue
+        if j.delivery_mode == .aircraft and not j.loaded and j.cargo_mode != .none and cargo_all_aboard(w, job): claims.load_job(w, job)
+        if j.collected: delivery.deliver_job(w, job, j.carrier)
