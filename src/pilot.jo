@@ -32,6 +32,11 @@ struct Flyer:
     cam_lh = 0.0
     look_yaw = 0.0                  # (looking around while flying: offsets about the aircraft)
     look_pitch = 0.0
+    slow = false                    # (on the water or below the stall: the mouse orbits the camera)
+    orbit_yaw = 0.0                 # (the orbit: which way from the aircraft, how high, how far;
+    orbit_pitch = 0.32              # fixed to the world, not the aircraft, so it holds still while
+    orbit_dist = 30.0               # one taxis about)
+    orbit_w = 0.0                   # (how far the camera has gone over to the orbit)
     sea_t = 0.0                     # (the sea's clock: the game's time)
     prop_angle = 0.0
     placed = false                  # (the camera has been put somewhere yet)
@@ -108,7 +113,16 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
     # going. The view stays where it was put until flying again, then swings back behind)
     md = if is_mouse_locked(): mouse_delta() else: vec2(0, 0)
     slow = st.on_water or st.moored or f64(length(st.velocity)) < f.spec.stall_speed
-    looking = mouse_down(.right) or key_down(.c) or slow
+    if slow:
+        # (an orbit about the aircraft, as the camera on foot: the mouse turns it about and up and
+        # down the same way, the wheel brings it nearer or farther; it starts behind the aircraft)
+        if not f.slow: f.orbit_yaw = hd + PI
+        f.orbit_yaw -= f64(md.x) * 0.004
+        f.orbit_pitch = clamp(f.orbit_pitch + f64(md.y) * 0.004, -0.05, 1.35)
+        f.orbit_dist = clamp(f.orbit_dist * pow(0.93, clamp(mouse_wheel(), -3.0, 3.0)), 9.0, 90.0)
+        md = vec2(0, 0)
+    f.slow = slow
+    looking = mouse_down(.right) or key_down(.c)
     if looking:
         f.look_yaw = clamp(f.look_yaw - f64(md.x) * 0.004, -PI, PI)
         f.look_pitch = clamp(f.look_pitch - f64(md.y) * 0.004, -1.2, 1.2)
@@ -324,6 +338,19 @@ chase = (f: mut Flyer, dt: f64):
     f.a_fast = f.a_fast + (along - f.a_fast) * (1.0 - exp(-8.0 * dt))
     f.a_slow = f.a_slow + (along - f.a_slow) * (1.0 - exp(-1.0 * dt))
     f.fov = 60.0 + 6.0 * sfrac + clamp(0.6 * (f.a_fast - f.a_slow), -3.0, 4.0)
+    # (slow: the camera goes over to its orbit about the aircraft, and back when flying again)
+    f.orbit_w = f.orbit_w + ((if f.slow: 1.0 else: 0.0) - f.orbit_w) * (1.0 - exp(-3.0 * dt))
+    if not f.placed: f.orbit_w = if f.slow: 1.0 else: 0.0
+    if f.orbit_w > 0.001:
+        piv = P + vec3(0, 1.5, 0)
+        cp = cos(f.orbit_pitch)
+        dir = heading_vector(f.orbit_yaw) * f32(cp) + vec3(0, f32(sin(f.orbit_pitch)), 0)
+        oc = piv + dir * f32(f.orbit_dist)
+        oc.y = max(oc.y, f32(max(f64(swell_at(f64(oc.x), f64(oc.z), f.sea_t).x), surface_height(f64(oc.x), f64(oc.z))) + 1.3))
+        ow = f32(f.orbit_w)
+        f.cam_pos = f.cam_pos + (oc - f.cam_pos) * ow
+        f.look = normalize(f.look + (normalize(piv - oc) - f.look) * ow)
+        f.cam_up = normalize(f.cam_up + (vec3(0, 1, 0) - f.cam_up) * ow)
     f.placed = true
 
 # how it feels to be going: the load on the wings (from how fast the way it goes is turning), the
@@ -334,7 +361,7 @@ feel = (f: mut Flyer, dt: f64):
     dir = if sp > 1.0: v / f32(sp) else: f.prev_dir
     turn = f64(length(dir - f.prev_dir)) / max(dt, 1e-4)
     f.prev_dir = dir
-    g = 1.0 + turn * (sp / f.spec.handling_scale) / 9.81
+    g = 1.0 + turn * true_speed(f.spec, sp) / 9.81
     f.load = f.load + (min(g, 8.0) - f.load) * (1.0 - exp(-6.0 * dt))
     pull = smoothstep(2.2, 5.0, f.load)
     # (a buffet only from the wings themselves: pulling toward the stall)
@@ -345,7 +372,7 @@ place_chase_camera = (f: Flyer, t: f64):
     # the view hums only once it is really fast (the airframe itself shakes sooner), and shakes in a
     # buffet or a crash
     sp = f64(length(f.state.velocity))
-    hum = if f.state.on_water: 0.0 else: smoothstep(75.0 * f.spec.handling_scale, 125.0 * f.spec.handling_scale, sp) * 0.12
+    hum = if f.state.on_water: 0.0 else: smoothstep(75.0, 125.0, true_speed(f.spec, sp)) * 0.12
     side = normalize(cross(f.look, f.cam_up) + vec3(0.0001, 0, 0))
     up = normalize(cross(side, f.look))
     target = f.cam_pos + f.look * 50.0 + side * f32(sin(t * 61.0) * hum) + up * f32(sin(t * 53.0 + 1.3) * hum)
@@ -407,10 +434,12 @@ aim_marks = (f: Flyer):
 # how the airframe is working now, for drawing it: the wings bowing with the load, shaking with
 # the engine and the air, fluttering at speed (and the half span they are measured by)
 airframe = (f: Flyer) -> vec4:
-    sp = f64(length(f.state.velocity))
+    sp = true_speed(f.spec, f64(length(f.state.velocity)))
     half = f.spec.span * 0.5
     bow = if f.state.on_water: 0.0 else: clamp((f.load - 1.0) * 0.045, -0.06, 0.3)
-    shake = f.state.throttle * 0.012 + smoothstep(25.0, 95.0, sp) * 0.04
-    flutter = smoothstep(40.0, 100.0, sp) * (0.4 + 0.6 * smoothstep(1.5, 4.0, f.load))
+    # (by the true speed: the wings shake from cruise on, the tail and trailing edges flutter
+    # only near the top speed and in a dive)
+    shake = f.state.throttle * 0.012 + smoothstep(45.0, 100.0, sp) * 0.04
+    flutter = smoothstep(70.0, 110.0, sp) * (0.4 + 0.6 * smoothstep(1.5, 4.0, f.load))
     if f.state.on_water: shake += smoothstep(5.0, 40.0, sp) * 0.04
     vec4(f32(bow), f32(shake), f32(flutter), f32(half))
