@@ -1,4 +1,6 @@
 use 'living_types.jo'
+use 'living_portage.jo'
+use 'living_cargo.jo'
 use 'living_money.jo'
 use 'living_delivery.jo'
 use 'living_claims.jo'
@@ -9,16 +11,22 @@ use 'living_text.jo'
 use 'living_seed.jo'
 
 # All prerequisites checked before reward/cargo change hands. The poster is physically at source.
-post_job = (w: mut World, poster: int, destination: int, mode: CargoMode, good: int, quantity: int, reward: int, due: int, passenger: int = -1, sealed_grams: int = 5000) -> int:
+post_job = (w: mut World, poster: int, destination: int, mode: CargoMode, good: int, quantity: int, reward: int, due: int, passenger: int = -1, sealed_grams: int = 5000, delivery_mode: DeliveryMode = .aircraft, dropoff: vec3? = none, drop_store: CargoStore = .pocket) -> int:
     if poster < 0 or poster >= w.people.len() or destination < 0 or destination >= w.places.len(): return -1
     origin = w.people[poster].place
-    if origin < 0 or destination == origin or quantity <= 0 or reward <= 0 or due <= w.minute: return -1
+    if origin < 0 or (destination == origin and delivery_mode != .foot) or quantity <= 0 or reward <= 0 or due <= w.minute: return -1
+    if delivery_mode == .foot and (mode != .commodity or (destination != origin and w.cargo_harbors[destination].island != w.cargo_harbors[origin].island)): return -1
     if mode == .commodity and (good < 0 or good >= GOOD_COUNT): return -1
     if mode == .commodity and w.goods[good].shelf_hours > 0 and due-w.minute > 720: return -1
     if passenger >= 0:
         if passenger >= w.people.len() or w.people[passenger].place != origin or w.people[passenger].trip >= 0 or mode != .none: return -1
         loop job in w.active_jobs:
             if w.jobs[job].passenger == passenger and not job_terminal(w.jobs[job].state): return -1
+    if mode == .sealed:
+        letters = 0
+        loop lot in cargo_ids(w,.market,origin,-1):
+            if w.cargo[lot].owner == poster and w.cargo[lot].job < 0: letters += w.cargo[lot].quantity
+        if letters < quantity: return -1
     cost = 0; tax = 0
     if mode == .commodity:
         if available(w.places[origin].market.inventory,good) < quantity or (w.goods[good].illegal and origin != 5): return -1
@@ -35,18 +43,31 @@ post_job = (w: mut World, poster: int, destination: int, mode: CargoMode, good: 
     purpose = if passenger >= 0: Purpose.passenger else: Purpose.delivery
     cause = Reason(purpose=purpose,actor=poster,beneficiary=if passenger >= 0: passenger else: w.places[destination].market_owner,counterparty=passenger,origin=origin,destination=destination,good=good,quantity=quantity,due_minute=due,job=id,amount_cents=reward)
     w.jobs[id] = Job(id=id,poster=poster,origin=origin,destination=destination,purpose=purpose,cargo_mode=mode,good=good,quantity=quantity,passenger=passenger,created_minute=w.minute,npc_claim_after=w.minute+90,due_minute=due,expire_minute=due+120,reward_cents=reward,escrow_account=escrow,source_inventory_kind=0,source_inventory_id=origin,cause=cause,sealed_grams=if mode == .sealed: sealed_grams else: 0,status_minute=w.minute)
+    w.jobs[id].delivery_mode = delivery_mode
+    if delivery_mode == .foot:
+        w.jobs[id].cause.beneficiary = poster
+        w.jobs[id].drop_store = drop_store; w.jobs[id].drop_holder = poster
+    assert(cargo_reserve_job(w,id))
+    if dropoff != none: w.jobs[id].dropoff = dropoff!
+    else if delivery_mode == .foot: w.jobs[id].dropoff = w.harbors[destination].center+w.harbors[destination].out*18.0+vec3(0,1.2,0)
     w.active_jobs.push(id)
     id
 
 # Return unused paid inventory to a real owner at the actual origin, not back into market stock.
 return_unloaded_goods = (w: mut World, job: int):
-    if w.jobs[job].loaded or w.jobs[job].cargo_mode != .commodity: return
+    if w.jobs[job].loaded: return
+    if w.jobs[job].cargo_mode == .sealed:
+        loop lot in w.jobs[job].cargo_ids:
+            if lot in w.cargo and w.cargo[lot].job == job: w.cargo[lot].job = -1
+        return
+    if w.jobs[job].cargo_mode != .commodity: return
     p = w.jobs[job].origin; g = w.jobs[job].good
     qty = w.jobs[job].quantity-w.jobs[job].lost_quantity
     qty = min(qty,w.places[p].market.inventory.reserved[g])
     if qty <= 0: return
     a = w.next_aftermath; w.next_aftermath += 1
     w.aftermath[a] = Aftermath(id=a,kind=.crate,event=-1,owner=w.jobs[job].poster,place=p,pos=w.harbors[p].center,reason=w.jobs[job].cause,created_minute=w.minute,expires_minute=-1)
+    assert(cargo_move(w,.market,p,.aftermath,a,g,qty,w.jobs[job].poster,p,job))
     w.places[p].market.inventory.qty[g] -= qty
     w.places[p].market.inventory.reserved[g] -= qty
     w.aftermath[a].inventory.qty[g] += qty
@@ -55,6 +76,15 @@ expire_job = (w: mut World, id: int, cancel: bool = false) -> bool:
     if not (id in w.jobs) or job_terminal(w.jobs[id].state): return false
     if not cancel and w.minute < w.jobs[id].expire_minute: return false
     carrier = w.jobs[id].carrier
+    task_ids = w.carriage.keys()
+    loop task_id in task_ids:
+        if w.carriage[task_id].job == id and w.carriage[task_id].phase != .done and w.carriage[task_id].phase != .cancelled: cargo_cancel_carriage(w,task_id)
+    # Human hands are not an AI carriage task. Cancellation leaves the load at their feet.
+    loop lot in w.jobs[id].cargo_ids:
+        if lot in w.cargo and w.cargo[lot].where == .person:
+            actor = w.cargo[lot].person
+            w.cargo[lot].where = .quay; w.cargo[lot].pos = w.people[actor].pose.pos
+            w.cargo[lot].person = -1; w.people[actor].carrying = -1
     return_unloaded_goods(w,id)
     if carrier >= 0:
         c = w.people[carrier].craft
@@ -139,3 +169,27 @@ board_lines = (w: World, place: int) -> str[]:
         result.push("Job{id}: {person_name(w,j.poster)} pays {f64(j.reward_cents)/100.0:.2} lire for {item} to {place_name(j.destination)}; due {j.due_minute}, NPC tender opens {j.npc_claim_after}; {status}.{charter}")
     loop r in w.places[place].yesterday: result.push("Yesterday: {say_reason(w,r)}")
     result
+
+# Real local work, funded by a household/business and reserved from existing shop stock.
+# A public tender gives the player time to offer before a licensed local porter accepts it.
+local_errands_minute = (w: mut World):
+    if local_minute(w.minute) < 480 or local_minute(w.minute) >= 1080: return
+    loop place in 0..w.places.len():
+        if w.local_cargo_day.get(place,-1) == day_index(w.minute): continue
+        poster = if place == 0: 6 else: w.places[place].market_owner
+        if w.people[poster].place != place: continue
+        live = false
+        loop id in w.active_jobs:
+            if w.jobs[id].delivery_mode == .foot and w.jobs[id].poster == poster and not job_terminal(w.jobs[id].state): live = true
+        if live: continue
+        good = if place == 0 or place == 4: 1 else: 2
+        target = w.cargo_harbors[place].boat
+        if place != 1 and place != 3 and w.cargo_harbors[place].homes.len() > 0: target = w.cargo_harbors[place].homes[poster%w.cargo_harbors[place].homes.len()]
+        job = post_job(w,poster,place,.commodity,good,1000,180,w.minute+720,delivery_mode=.foot,dropoff=target,drop_store=if place == 1 or place == 3: CargoStore.boat else: CargoStore.pocket)
+        if job >= 0: w.local_cargo_day[place] = day_index(w.minute)
+    ids = w.active_jobs
+    loop id in ids:
+        j = w.jobs[id]
+        if j.delivery_mode != .foot or j.state != .open or w.minute < j.npc_claim_after: continue
+        loop p in 1..w.people.len():
+            if w.people[p].porter and cargo_worker_free(w,p,j.origin) and take_job(w,id,p): break

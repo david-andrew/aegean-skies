@@ -1,0 +1,401 @@
+# Saved carriage actions. Scene and abstract owners advance the SAME person's pose and crate.
+use 'living_types.jo'
+use 'living_cargo.jo'
+use 'living_money.jo'
+
+cargo_receiver = (w: World, job: int) -> int:
+    j = w.jobs[job]; p = j.cause.beneficiary
+    if j.return_place >= 0: return j.poster
+    if j.drop_holder >= 0: return j.drop_holder
+    if p >= 0 and p < w.people.len() and w.people[p].home == j.destination: p else: w.places[j.destination].market_owner
+
+cargo_loading_spot = (w: World, craft: int) -> vec3?:
+    if craft < 0 or craft >= w.aircraft.len(): return none
+    c = w.aircraft[craft]
+    if c.place < 0 or c.trip >= 0 or c.dock < 0: return none
+    h = w.cargo_harbors[c.place]
+    if c.dock >= h.loading.len(): return none
+    h.loading[c.dock]
+
+cargo_walk_route = (w: World, place: int, from: vec3, to: vec3) -> vec3[]:
+    if length(from - to) < 3: return [from, to]
+    h = w.harbors[place]
+    side = vec3(-h.out.z, 0, h.out.x)
+    # The shore quay connects the main and secondary piers; don't walk diagonally over water.
+    shore_from = h.center - h.out * 2.0 + side * dot(from - h.center, side); shore_from.y = 1.2
+    shore_to = h.center - h.out * 2.0 + side * dot(to - h.center, side); shore_to.y = 1.2
+    [from, shore_from, shore_to, to]
+
+cargo_worker_free = (w: World, person: int, place: int, job: int = -1) -> bool:
+    p = w.people[person]
+    if person == w.player: return false
+    if p.action.activity == .fulfill and p.action.reason.job >= 0 and p.action.reason.job != job: return false
+    p.place == place and p.trip < 0 and p.carriage < 0 and p.carrying < 0 and p.injured_until <= w.minute and p.state != .resting and p.state != .departed and p.local_work_escrow < 0 and p.action.purpose != .repair
+
+carriage_fee = (w: World, lot: CargoLot) -> int: 40 + max(1, cargo_grams(w, lot) / 1000) * 2
+
+cargo_choose_worker = (w: World, job: int, lot: CargoLot, unloading: bool) -> int:
+    j = w.jobs[job]
+    if j.delivery_mode == .foot:
+        if j.carrier == w.player: return -1
+        return if cargo_worker_free(w, j.carrier, j.origin, job): j.carrier else: -1
+    mode = if unloading: j.collector else: j.loader
+    if mode == .player: return -1
+    place = if unloading: (if j.return_place >= 0: j.return_place else: j.destination) else: j.origin
+    sender = if unloading: cargo_receiver(w, job) else: j.poster
+    can_pay = w.accounts[w.people[sender].account].cents >= carriage_fee(w, lot)
+    if mode != .sender and can_pay and (mode == .porter or cargo_grams(w, lot) > 15000 or not cargo_worker_free(w, sender, place)):
+        best = -1; distance = 1e30
+        loop p in w.people:
+            if p.id == sender or p.id == w.player or not p.porter or not cargo_worker_free(w, p.id, place): continue
+            d = f64(length(p.pose.pos - lot.pos))
+            if d < distance: best = p.id; distance = d
+        if best >= 0: return best
+    if mode != .porter and cargo_worker_free(w, sender, place): return sender
+    -1
+
+# Lost/recovered lots retain historical earmarks, but are no longer part of the transport hold.
+cargo_job_stock = (w: World, job: int, c: CargoLot) -> bool:
+    j = w.jobs[job]
+    if j.loaded: c.store == .aircraft and c.holder == w.people[j.carrier].craft
+    else: c.store == .market and c.holder == j.origin
+
+cargo_all_aboard = (w: World, job: int) -> bool:
+    j = w.jobs[job]; craft = w.people[j.carrier].craft
+    found = 0
+    loop id in j.cargo_ids:
+        if not (id in w.cargo) or w.cargo[id].job != job: continue
+        c = w.cargo[id]
+        if not cargo_job_stock(w,job,c): continue
+        if c.where != .aircraft or c.holder != craft and c.store == .aircraft: return false
+        found += c.quantity
+    found == j.quantity - j.lost_quantity
+
+cargo_all_collected = (w: World, job: int) -> bool:
+    j = w.jobs[job]; quantity = 0
+    destination = if j.return_place >= 0: j.return_place else: j.destination
+    loop id in j.cargo_ids:
+        if not (id in w.cargo) or w.cargo[id].job != job: continue
+        c = w.cargo[id]
+        if not cargo_job_stock(w,job,c): continue
+        receipt = j.delivery_mode == .aircraft and c.where == .person and c.person == cargo_receiver(w, job)
+        if not receipt and c.where != .warehouse and c.where != .boat: return false
+        if c.place != destination or (not receipt and length(c.pos - j.dropoff) > 3): return false
+        quantity += c.quantity
+    quantity == (if j.return_place >= 0: j.loaded_quantity - j.delivered_quantity - j.lost_quantity - j.returned_quantity else: j.quantity - j.lost_quantity)
+
+cargo_plan_carriage = (w: mut World, job: int, unloading: bool):
+    j = w.jobs[job]
+    if j.cargo_mode == .none or (j.state != .claimed and j.return_place < 0): return
+    if j.carrier < 0: return
+    craft = w.people[j.carrier].craft
+    point = if unloading: cargo_collection_spot(w, job) else: cargo_loading_spot(w, craft)
+    if j.delivery_mode == .aircraft and point == none: return
+    target = if unloading or j.delivery_mode == .foot: j.dropoff else: point!
+    place = if unloading: (if j.return_place >= 0: j.return_place else: j.destination) else: j.origin
+    loop lot_id in j.cargo_ids:
+        if not (lot_id in w.cargo) or w.cargo[lot_id].job != job: continue
+        c = w.cargo[lot_id]
+        if not cargo_job_stock(w,job,c): continue
+        if unloading and c.where != .aircraft and c.place != place: continue
+        ready = if unloading or j.delivery_mode == .foot: (c.where == .warehouse and c.place == place and length(c.pos - target) < 3) else: c.where == .aircraft
+        if ready: continue
+        assigned = false
+        loop task_id in w.active_carriage:
+            task = w.carriage[task_id]
+            if task.cargo == lot_id and task.phase != .done and task.phase != .cancelled: assigned = true
+        if assigned or c.where == .person: continue
+        person = cargo_choose_worker(w, job, c, unloading)
+        if person < 0: continue
+        payer = if unloading: cargo_receiver(w, job) else: j.poster
+        fee = if j.delivery_mode == .foot or person == payer: 0 else: carriage_fee(w, c)
+        escrow = if fee > 0: fund_escrow(w, w.people[payer].account, fee, "porter-{w.next_carriage}") else: -1
+        if fee > 0 and escrow < 0: continue
+        id = w.next_carriage; w.next_carriage += 1
+        # Unloading starts at the quay beside the mooring, not over the water at the CG.
+        pickup = if unloading and c.where == .aircraft: point! else: c.pos
+        w.carriage[id] = Carriage(id = id, job = job, cargo = lot_id, person = person, unloading = unloading, route = cargo_walk_route(w, place, w.people[person].pose.pos, pickup), target = target, last_tick = w.tick, payer = payer, escrow = escrow, fee = fee)
+        w.active_carriage.push(id)
+        w.people[person].carriage = id
+        w.people[person].action = Action(activity = .fulfill, purpose = .delivery, reason = j.cause, end_minute = w.minute + 30, retry_minute = w.minute + 1)
+        w.people[person].action.reason.actor = person
+        w.people[person].state = .walking
+
+cargo_cancel_carriage = (w: mut World, id: int):
+    task = w.carriage[id]; p = task.person
+    if w.people[p].carrying == task.cargo:
+        if task.cargo in w.cargo:
+            w.cargo[task.cargo].where = .quay; w.cargo[task.cargo].person = -1
+            w.cargo[task.cargo].pos = w.people[p].pose.pos
+        w.people[p].carrying = -1
+    if task.escrow >= 0 and w.accounts[task.escrow].cents > 0: assert(transfer(w, task.escrow, w.people[task.payer].account, w.accounts[task.escrow].cents, .refund, task.job))
+    w.active_carriage.remove(id)
+    w.carriage[id].phase = .cancelled; w.carriage[id].move_owner = .abstract_world
+    w.people[p].carriage = -1; w.people[p].move_owner = .abstract_world
+    w.people[p].state = .idle; w.people[p].action.activity = .wait
+    w.people[p].action.end_minute = w.minute; w.people[p].next_decision_minute = w.minute
+
+# End a real walking leg, validated by proximity. No timer can pick up a remote crate.
+cargo_carriage_reached = (w: mut World, id: int):
+    task = w.carriage[id]; p = task.person
+    if not (task.cargo in w.cargo): cargo_cancel_carriage(w, id); return
+    j = w.jobs[task.job]
+    if task.phase == .fetch:
+        pickup = if task.unloading and w.cargo[task.cargo].where == .aircraft: cargo_loading_spot(w, w.people[j.carrier].craft) else: w.cargo[task.cargo].pos
+        if pickup == none:
+            w.carriage[id].blocked = "waiting for the aircraft to return to the quay"
+            w.carriage[id].retry_tick = w.tick + 120
+            return
+        if length(w.people[p].pose.pos - pickup!) > 3: return
+        if w.cargo[task.cargo].where == .person: return
+        w.cargo[task.cargo].where = .person; w.cargo[task.cargo].person = p; w.cargo[task.cargo].place = w.people[p].place
+        w.cargo[task.cargo].pos = w.people[p].pose.pos
+        w.people[p].carrying = task.cargo
+        w.carriage[id].phase = .carry
+        w.carriage[id].route = cargo_walk_route(w, w.people[p].place, w.people[p].pose.pos, task.target)
+        w.carriage[id].waypoint = 0
+        if task.unloading and p == cargo_receiver(w, task.job) and cargo_all_collected(w, task.job):
+            w.jobs[task.job].drop_store = .pocket; w.jobs[task.job].drop_holder = p
+            w.jobs[task.job].collected = true
+    else if task.phase == .carry:
+        if length(w.people[p].pose.pos - task.target) > 2: return
+        if not task.unloading and j.delivery_mode == .aircraft:
+            spot = cargo_loading_spot(w, w.people[j.carrier].craft)
+            if spot == none or length(spot! - task.target) > 3:
+                w.carriage[id].blocked = "waiting for the aircraft at its quay"
+                w.carriage[id].retry_tick = w.tick + 120
+                return
+        if not task.unloading and j.delivery_mode == .aircraft:
+            craft = w.people[j.carrier].craft
+            if craft_grams(w, craft) + cargo_grams(w, w.cargo[task.cargo]) > AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams:
+                w.carriage[id].blocked = "the hold is full; make room before loading"
+                w.carriage[id].retry_tick = w.tick + 120
+                return
+        if j.delivery_mode == .foot and w.people[p].place != j.destination:
+            w.places[w.people[p].place].residents.remove(p)
+            if not (p in w.places[j.destination].residents): w.places[j.destination].residents.push(p)
+            w.people[p].place = j.destination
+        w.cargo[task.cargo].where = if task.unloading or j.delivery_mode == .foot: (if j.drop_store == .boat: CargoWhere.boat else: CargoWhere.warehouse) else: CargoWhere.aircraft
+        w.cargo[task.cargo].place = if task.unloading: (if j.return_place >= 0: j.return_place else: j.destination) else: if j.delivery_mode == .foot: j.destination else: j.origin
+        w.cargo[task.cargo].pos = task.target; w.cargo[task.cargo].person = -1
+        w.people[p].carrying = -1
+        w.active_carriage.remove(id)
+        w.carriage[id].phase = .done; w.carriage[id].move_owner = .abstract_world
+        if task.escrow >= 0 and not task.paid:
+            assert(transfer(w, task.escrow, w.people[p].account, task.fee, .wage, task.job))
+            w.carriage[id].paid = true
+        w.people[p].carriage = -1; w.people[p].move_owner = .abstract_world
+        w.people[p].state = .idle; w.people[p].action.activity = .wait
+        w.people[p].action.end_minute = w.minute; w.people[p].next_decision_minute = w.minute + 1
+        if (j.state == .claimed or j.return_place >= 0) and (task.unloading or j.delivery_mode == .foot): w.jobs[task.job].collected = cargo_all_collected(w, task.job)
+
+carriage_abstract = (w: mut World, target_tick: int):
+    ids = w.active_carriage; ids.sort()
+    loop id in ids:
+        task = w.carriage[id]
+        if task.phase == .done or task.phase == .cancelled: continue
+        if not cargo_carriage_live(w, task):
+            cargo_cancel_carriage(w, id); continue
+        if task.move_owner == .scene: continue
+        elapsed = max(0, target_tick - task.last_tick); w.carriage[id].last_tick = target_tick
+        if task.blocked != "":
+            w.people[task.person].action.end_minute = w.minute + 30
+            w.people[task.person].action.retry_minute = w.minute + 1
+            if not cargo_retry_carriage(w, id): continue
+        loop elapsed > 0 and w.carriage[id].phase != .done:
+            t = w.carriage[id]
+            if t.waypoint >= t.route.len(): cargo_carriage_reached(w, id); break
+            p = t.person; next = t.route[t.waypoint]
+            distance = f64(length(next - w.people[p].pose.pos))
+            speed = if t.phase == .carry: 0.95 else: 1.25
+            needed = max(1, int(ceil(distance / speed * 60.0)))
+            used = min(elapsed, needed)
+            old = w.people[p].pose.pos
+            w.people[p].pose.pos = lerp(old, next, f32(min(1.0, f64(used) / f64(needed))))
+            w.people[p].pose.rot = facing(next - old)
+            if t.phase == .carry: w.cargo[t.cargo].pos = w.people[p].pose.pos
+            elapsed -= used
+            if used == needed:
+                w.carriage[id].waypoint += 1
+                if w.carriage[id].waypoint >= t.route.len(): cargo_carriage_reached(w, id)
+            w.people[p].action.end_minute = w.minute + 30
+
+# Player hands: exactly one identified load; putting it down preserves its actual position.
+cargo_pick_up = (w: mut World, person: int, cargo: int) -> bool:
+    if person < 0 or person >= w.people.len() or not (cargo in w.cargo): return false
+    p = w.people[person]; c = w.cargo[cargo]
+    if p.trip >= 0 or p.carrying >= 0 or p.carriage >= 0 or c.where == .person: return false
+    reach = c.pos
+    if c.where == .aircraft:
+        craft = if c.store == .aircraft: c.holder else: if c.job >= 0: w.people[w.jobs[c.job].carrier].craft else: -1
+        spot = cargo_loading_spot(w, craft)
+        if spot == none: return false
+        reach = spot!
+    if length(p.pose.pos - reach) > 3: return false
+    loop task_id in w.active_carriage:
+        task = w.carriage[task_id]
+        if task.cargo == cargo and task.phase != .done and task.phase != .cancelled: return false
+    permitted = c.owner == person
+    if c.job >= 0 and c.job in w.jobs:
+        j = w.jobs[c.job]
+        permitted = permitted or (j.state == .claimed and j.carrier == person)
+        if c.where == .aircraft:
+            spot = cargo_loading_spot(w, w.people[person].craft)
+            if spot == none or length(p.pose.pos - spot!) > 3: return false
+    if not permitted: return false
+    id = cargo
+    if cargo_grams(w, c) > 25000:
+        if c.job >= 0: return false
+        quantity = if c.good < 0: max(1, 25000 / max(1, c.grams)) else: max(1, 25000 * 1000 / w.goods[c.good].package_grams)
+        id = cargo_split(w, cargo, min(c.quantity, quantity))
+    if c.job >= 0 and c.owner == person and w.jobs[c.job].state != .claimed:
+        w.cargo[id].job = -1 # Recovered title remains the owner's; the old loss remains historical.
+    w.people[person].carrying = id
+    w.cargo[id].where = .person; w.cargo[id].person = person
+    w.cargo[id].pos = p.pose.pos
+    true
+
+cargo_person_pose = (w: mut World, person: int, pos: vec3):
+    w.people[person].pose.pos = pos
+    if person == w.player: w.people[person].move_owner = .scene
+    # Walking between settlements on the same island never relocates the parked aircraft.
+    old_place = w.people[person].place
+    if old_place >= 0 and w.people[person].trip < 0:
+        best = old_place; distance = 450.0
+        loop place in 0..w.harbors.len():
+            if w.cargo_harbors[place].island != w.cargo_harbors[old_place].island: continue
+            d = f64(length(pos-w.harbors[place].center))
+            if d < distance: best = place; distance = d
+        if best != old_place:
+            w.places[old_place].residents.remove(person)
+            if not (person in w.places[best].residents): w.places[best].residents.push(person)
+            w.people[person].place = best
+    id = w.people[person].carrying
+    if id >= 0 and id in w.cargo: w.cargo[id].pos = pos; w.cargo[id].place = w.people[person].place
+
+fold_carriage_for_save = (w: mut World):
+    w.people[w.player].move_owner = .abstract_world
+    ids = w.carriage.keys()
+    loop id in ids:
+        if w.carriage[id].move_owner != .scene: continue
+        w.carriage[id].move_owner = .abstract_world; w.carriage[id].last_tick = w.tick
+        w.people[w.carriage[id].person].move_owner = .abstract_world
+
+choose_collection = (w: mut World, job: int, actor: int, choice: CarriageChoice) -> bool:
+    if not (job in w.jobs) or w.jobs[job].state != .claimed or w.jobs[job].carrier != actor or not w.jobs[job].loaded or w.jobs[job].collected: return false
+    if w.people[actor].place != w.jobs[job].destination: return false
+    ids = w.active_carriage
+    loop id in ids:
+        if w.carriage[id].job == job and w.carriage[id].unloading: cargo_cancel_carriage(w, id)
+    w.jobs[job].collector = choice
+    if choice != .player: cargo_plan_carriage(w, job, true)
+    true
+
+cargo_put_down = (w: mut World, person: int, aboard: bool = false) -> bool:
+    if person < 0 or person >= w.people.len(): return false
+    id = w.people[person].carrying
+    if id < 0 or not (id in w.cargo): return false
+    c = w.cargo[id]; p = w.people[person]
+    if aboard:
+        craft = p.craft; spot = cargo_loading_spot(w, craft)
+        if spot == none or length(p.pose.pos - spot!) > 4: return false
+        if c.job < 0:
+            if c.owner != person or craft_grams(w, craft) + cargo_grams(w, c) > AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams: return false
+            if not cargo_shift_owned(w, id, .aircraft, craft, person, p.place, spot!): return false
+        else:
+            if not (c.job in w.jobs) or w.jobs[c.job].origin != p.place: return false
+            if craft_grams(w, craft) + cargo_grams(w, c) > AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams: return false
+            w.cargo[id].where = .aircraft; w.cargo[id].pos = spot!
+    else:
+        if c.job < 0 and c.store == .aircraft:
+            if not cargo_shift_owned(w, id, .pocket, person, person, p.place, p.pose.pos): return false
+        w.cargo[id].where = .quay; w.cargo[id].pos = p.pose.pos
+        if c.job >= 0 and c.job in w.jobs:
+            j = w.jobs[c.job]
+            if (j.delivery_mode == .foot or j.loaded) and p.place == j.destination and length(p.pose.pos - j.dropoff) <= 3:
+                w.cargo[id].where = if j.drop_store == .boat: CargoWhere.boat else: CargoWhere.warehouse
+    w.cargo[id].person = -1; w.cargo[id].place = p.place
+    w.people[person].carrying = -1
+    if c.job >= 0 and c.job in w.jobs: w.jobs[c.job].collected = cargo_all_collected(w, c.job)
+    true
+
+cargo_status = (w: World, job: int) -> str:
+    if not (job in w.jobs): return "This errand is archived."
+    j = w.jobs[job]
+    if j.state == .delivered: return "Collected by {w.people[cargo_receiver(w,job)].name}; paid {f64(j.paid_cents)/100.0:.2} lire."
+    if j.state != .claimed: return "{j.state}"
+    loop task_id in w.active_carriage:
+        task = w.carriage[task_id]
+        if task.job != job or task.phase == .done or task.phase == .cancelled: continue
+        person = w.people[task.person].name
+        if task.blocked != "": return "{person}: {task.blocked}."
+        who = if task.fee > 0: "{w.people[task.payer].name}'s porter {person}" else: person
+        item = if j.good >= 0 and j.cargo_mode == .commodity: "{w.goods[j.good].key}" else: "the sealed bag"
+        return "{who} is {if task.phase == .fetch: "going to fetch" else: "carrying"} {item} {if task.unloading or j.delivery_mode == .foot: "to the receiver" else: "to the aircraft"}."
+    loop id in j.cargo_ids:
+        if not (id in w.cargo) or w.cargo[id].job != job: continue
+        c = w.cargo[id]
+        if not cargo_job_stock(w,job,c): continue
+        if c.where == .person: return "{w.people[c.person].name} is carrying the crate."
+        if c.where == .quay: return "Your crate is where it was put down, at {c.pos.x:.0}, {c.pos.z:.0}."
+    if j.delivery_mode == .foot: return "Fetch the crate at the warehouse and carry it to the marked destination."
+    if j.loaded: return "Cargo aboard; {if w.people[j.carrier].place == j.destination: "waiting for collection" else: "bound for the destination harbor"}."
+    if j.loader == .player: return "Fetch the crate at the warehouse; carry it to the aircraft's loading point."
+    "Waiting for an available carrier or a mooring at the quay."
+
+
+# Private purchases and unloads preserve this particular carried lot, never another FIFO lot.
+cargo_shift_owned = (w: mut World, id: int, to: CargoStore, holder: int, owner: int, place: int, pos: vec3) -> bool:
+    c = w.cargo[id]
+    if c.job >= 0 or c.owner != owner: return false
+    if c.good >= 0 and (c.store != to or c.holder != holder):
+        source = cargo_inventory(w, c.store, c.holder)
+        destination = cargo_inventory(w, to, holder)
+        if not move_stock(source, destination, c.good, c.quantity): return false
+        cargo_write_inventory(w, c.store, c.holder, source)
+        cargo_write_inventory(w, to, holder, destination)
+    w.cargo_bins[cargo_key(c.store, c.holder, c.good)].remove(id)
+    c.store = to; c.holder = holder; c.place = place; c.pos = pos
+    c.where = if to == .aircraft: CargoWhere.aircraft else: CargoWhere.quay
+    w.cargo[id] = c
+    w.cargo_bins[cargo_key(to, holder, c.good)].push(id)
+    true
+
+
+cargo_retry_carriage = (w: mut World, id: int) -> bool:
+    task = w.carriage[id]
+    if task.blocked == "": return true
+    if task.retry_tick < 0 or w.tick < task.retry_tick: return false
+    j = w.jobs[task.job]; craft = w.people[j.carrier].craft
+    place = if task.unloading: (if j.return_place >= 0: j.return_place else: j.destination) else: j.origin
+    point = cargo_loading_spot(w, craft)
+    w.carriage[id].retry_tick = w.tick + 120
+    if point == none or w.aircraft[craft].place != place: return false
+    if not task.unloading and craft_grams(w, craft) + cargo_grams(w, w.cargo[task.cargo]) > AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams: return false
+    target = if task.phase == .fetch: point! else: if task.unloading: j.dropoff else: point!
+    if not task.unloading: w.carriage[id].target = point!
+    w.carriage[id].route = cargo_walk_route(w, place, w.people[task.person].pose.pos, target)
+    w.carriage[id].waypoint = 0; w.carriage[id].scene_path_phase = .waiting
+    w.carriage[id].blocked = ""; w.carriage[id].retry_tick = -1
+    true
+
+# The consignee knows the announced berth of their own incoming consignment and can walk
+# down to meet it. This never permits pickup before the aircraft has actually moored.
+cargo_collection_spot = (w: World, job: int) -> vec3?:
+    j = w.jobs[job]; craft = w.people[j.carrier].craft
+    if craft < 0: return none
+    c = w.aircraft[craft]
+    destination = if j.return_place >= 0: j.return_place else: j.destination
+    if c.place == destination: return cargo_loading_spot(w, craft)
+    if c.trip >= 0 and w.trips[c.trip].destination == destination:
+        dock = w.trips[c.trip].claimed_dock
+        if dock >= 0 and dock < w.cargo_harbors[destination].loading.len(): return w.cargo_harbors[destination].loading[dock]
+    none
+
+cargo_carriage_live = (w: World, task: Carriage) -> bool:
+    if not (task.cargo in w.cargo) or not (task.job in w.jobs): return false
+    j = w.jobs[task.job]
+    if j.state == .claimed: return true
+    # A receiver who has signed for a load still has to walk home holding that actual load.
+    c = w.cargo[task.cargo]
+    task.unloading and (j.return_place >= 0 or task.phase == .carry and j.state == .delivered) and (c.job == task.job or c.where == .person and c.person == task.person and c.owner == cargo_receiver(w, task.job))

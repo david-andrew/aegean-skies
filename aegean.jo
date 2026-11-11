@@ -48,6 +48,9 @@ use 'src/guns.jo'
 use 'src/fabric.jo'
 use 'src/debugmenu.jo'
 use 'src/notebook.jo'
+import 'src/cargo_scene.jo' as cargo_scene
+import 'src/cargo_view.jo' as cargo_view
+import 'src/living_portage.jo' as portage
 import 'src/living_claims.jo' as claims
 import 'src/living_types.jo' as lt
 
@@ -145,15 +148,18 @@ bind_living_player(pc, living_world, traffic_scene)
 
 # ---------------- the people of the towns, the boards, talking and trading ----------------
 
+cargo_scene.configure_cargo_scene(living_world,towns)
+cargo_meshes = cargo_view.build_cargo_meshes()
 folks: Folk[]
 sync_folk(folks, living_world, towns)
 folk_sync_t = 0.0
-enum Ui: none, talk, board, trade
+enum Ui: none, talk, board, handling, trade
 ui = Ui.none
 ui_folk = -1
 ui_place = -1
 ui_line = ""
 ui_news = 0
+ui_job = -1
 toast = ""
 paused = false
 my_jobs: {int: lt.JobState} = {}       # the errands one carries, and how they stood last
@@ -187,7 +193,7 @@ if let v = env("AEGEAN_UI"):
         # (talk: someone with work to offer, if anyone has)
         loop k in 0..folks.len():
             loop id in living_world.active_jobs:
-                if v == "talk" and living_world.jobs[id].state == .open and living_world.jobs[id].poster == folks[k].person and living_world.jobs[id].origin == folks[k].place: ui_folk = k
+                if v == "talk" and folks[k].place == 0 and living_world.jobs[id].delivery_mode == .aircraft and living_world.jobs[id].state == .open and living_world.jobs[id].poster == folks[k].person and living_world.jobs[id].origin == folks[k].place: ui_folk = k
         if ui_folk >= 0:
             ui = if v == "trade": Ui.trade else: Ui.talk
             ui_line = say(living_world, folks[ui_folk].person)
@@ -356,20 +362,8 @@ rope: Rope
 was_moored = false
 click_took_mouse = false            # (the left button's press that took the mouse, until let go)
 
-# the notebook, and errands agreed with people: the cargo waiting on the quay by one's aircraft
+# Cargo is saved living-world stock; the notebook only projects its current handling status.
 notebook = load_notebook()
-struct Pending:
-    job: int
-    pos: vec3
-pending: Pending[]
-crate_mesh = custom_mesh(():
-    vs: Vertex3D[]
-    add_box(vs, vec3(-0.5, 0.4, 0), vec3(0.9, 0.8, 0.9), rgb(0.62, 0.47, 0.3))
-    add_box(vs, vec3(0.5, 0.35, 0.1), vec3(0.8, 0.7, 0.8), rgb(0.55, 0.4, 0.25))
-    add_box(vs, vec3(0, 1.1, 0), vec3(0.8, 0.6, 0.7), rgb(0.66, 0.5, 0.32))
-    add_box(vs, vec3(0, 1.42, 0), vec3(0.3, 0.02, 0.5), rgb(0.85, 0.2, 0.15))
-    vs
-())
 
 # who at a job's destination is waiting for it: whoever it is for, if they live there, else the
 # harbor's merchant
@@ -386,20 +380,49 @@ job_cargo = (id: int) -> str:
     if j.cargo_mode == .sealed: return "the sealed bag"
     "the {living_world.goods[j.good].key}"
 
-# the cargo for an errand: set down on the quay beside one's aircraft (or none if it is not here)
-crate_spot = () -> vec3?:
-    if not pc.state.moored: return none
-    if let a = mooring_anchor():
-        side = normalize(vec3(a.x - pc.state.position.x, 0, a.z - pc.state.position.z) + vec3(0.001, 0, 0))
-        along = vec3(-side.z, 0, side.x)
-        q = a + side * 1.8 + along * 2.0
-        return vec3(q.x, f32(walk_height(towns, f64(q.x), f64(q.z))), q.z)
-    none
+holding_cargo = () -> int: living_world.people[living_world.player].carrying
 
-near_pending = () -> int:
-    loop k in 0..pending.len():
-        if length(pending[k].pos - me.pos) < 3.0: return k
-    -1
+near_job_cargo = () -> int: cargo_view.nearest_cargo(living_world,living_world.player)
+
+# The same published handling terms can be agreed at the board or with the sender.
+agree_cargo_job = (id: int, choice: lt.CarriageChoice) -> str:
+    j = living_world.jobs[id]
+    if j.delivery_mode == .aircraft and not pc.state.moored: return "Bring your aircraft alongside a quay here first."
+    if not living.take_job(living_world,id,living_world.player,choice): return "The job is unavailable, the hold is reserved, or the journey cannot be made in time."
+    my_jobs[id] = lt.JobState.claimed
+    rcv = living_world.people[recipient_of(id)].name
+    status = portage.cargo_status(living_world,id)
+    pin_notice(notebook,id,j.poster,"{job_cargo(id)} to {rcv}","By {clock_text(living_world,j.due_minute)}; {f64(living_world.jobs[id].reward_cents)/100.0:.2} lire. From {living_world.people[j.poster].name}.",clock_text(living_world,living_world.minute))
+    log_note(notebook,"Agreed to {if j.delivery_mode == .foot: "carry" else: "fly"} {job_cargo(id)} for {rcv}. {status}",clock_text(living_world,living_world.minute))
+    status
+
+# F has one meaning per press: pick up, set down/load, or (with empty hands) board.
+cargo_interact = () -> bool:
+    actor = living_world.player
+    held = holding_cargo()
+    if held >= 0:
+        c = living_world.cargo[held]
+        aboard = false
+        if c.job >= 0 and c.job in living_world.jobs:
+            j = living_world.jobs[c.job]
+            point = portage.cargo_loading_spot(living_world,living_world.people[actor].craft)
+            aboard = j.delivery_mode == .aircraft and not j.loaded and point != none and length(me.pos-point!) < 4
+        if c.job < 0:
+            point = portage.cargo_loading_spot(living_world,living_world.people[actor].craft)
+            aboard = point != none and length(me.pos-point!) < 4 and c.store != .aircraft
+        if portage.cargo_put_down(living_world,actor,aboard):
+            if c.job >= 0:
+                if aboard: claims.load_job(living_world,c.job)
+                if living_world.jobs[c.job].collected: living.deliver_job(living_world,c.job,actor)
+            say_toast(if aboard: "Put {cargo_view.cargo_label(living_world,c)} into the hold" else: "Set down {cargo_view.cargo_label(living_world,c)}")
+            log_note(notebook,if aboard: "Loaded {cargo_view.cargo_label(living_world,c)} into the aircraft." else: "Set down {cargo_view.cargo_label(living_world,c)} at {me.pos.x:.0}, {me.pos.z:.0}.",clock_text(living_world,living_world.minute))
+        return true
+    id = near_job_cargo()
+    if id >= 0:
+        if portage.cargo_pick_up(living_world,actor,id): say_toast("Carrying {cargo_view.cargo_label(living_world,living_world.cargo[living_world.people[actor].carrying])}; F to put it down")
+        else: say_toast("It cannot be picked up now: it is too heavy or someone is handling it")
+        return true
+    false
 
 # guns, cloth, debugging
 guns = Guns()
@@ -746,7 +769,7 @@ update = (dt: f64):
               a = input_axis()
               move = flat_forward(follow) * -a.y + flat_right(follow) * a.x
               run = key_down(.shift)
-              speed = if run: 4.2 else: 1.7
+              speed = if holding_cargo() >= 0: 1.0 else: if run: 4.2 else: 1.7
               if length(move) > 0.1:
                   dir = normalize(vec2(move.x, move.z))
                   me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 10.0, dt)
@@ -756,23 +779,13 @@ update = (dt: f64):
               else:
                   me.stride = approach(me.stride, 0.0, 8.0, dt)
               update(follow, me.pos, dt)
-              if key_down(.f) and not near_own_craft() and pc.state.moored:
+              portage.cargo_person_pose(living_world,living_world.player,me.pos)
+              living_world.people[living_world.player].pose.rot = lt.facing(vec3(f32(sin(me.yaw)),0,f32(cos(me.yaw))))
+              if key_down(.f) and holding_cargo() < 0 and not near_own_craft() and pc.state.moored:
                   if let a = mooring_anchor():
                       if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: haul_in(dt)
               # talk to whoever is near; read the board
-              if key_pressed(.f) and near_pending() >= 0:
-                  # load the errand's cargo aboard: the job is now one's own
-                  pj = pending[near_pending()]
-                  if living.take_job(living_world, pj.job, living_world.player):
-                      # (aboard now, not a few minutes on: one may take off at once)
-                      living_world.jobs[pj.job].load_until_minute = living_world.minute
-                      claims.load_job(living_world, pj.job)
-                      j = living_world.jobs[pj.job]
-                      say_toast("Aboard: {job_cargo(pj.job)} for {living_world.people[recipient_of(pj.job)].name} at {SETTLEMENTS[j.destination].name}, by {clock_text(living_world, j.due_minute)}")
-                      log_note(notebook, "Loaded {job_cargo(pj.job)} for {living_world.people[recipient_of(pj.job)].name} at {SETTLEMENTS[j.destination].name}. Moor at a dock there to hand it over.", clock_text(living_world, living_world.minute))
-                      my_jobs[pj.job] = lt.JobState.claimed
-                  else: say_toast("It won't go aboard now: someone else has taken the job, or the aircraft is full")
-                  pending.remove_at(near_pending())
+              cargo_used = key_pressed(.f) and cargo_interact()
               if key_pressed(.t):
                   k = nearest_folk(folks, me.pos, 3.5)
                   if k >= 0:
@@ -786,11 +799,11 @@ update = (dt: f64):
                               ui_line = "Is that {job_cargo(id)} from {living_world.people[j.poster].name}?"
                       ui_news = 0
                       mouse_lock(false)
-              if key_pressed(.f) and not near_own_craft() and near_board() >= 0:
+              if key_pressed(.f) and not cargo_used and not near_own_craft() and near_board() >= 0:
                   ui = .board
                   ui_place = near_board()
                   mouse_lock(false)
-              if key_pressed(.f) and near_own_craft() and near_pending() < 0:
+              if key_pressed(.f) and not cargo_used and holding_cargo() < 0 and near_own_craft():
                   me.mode = .aboard
                   mouse_lock(true)
                   pc.placed = false
@@ -903,13 +916,14 @@ update = (dt: f64):
             .cancelled:
                 log_note(notebook, "Called off: {job_cargo(id)} for {rcv} at {dest}.", now)
             _: pass
+    notebook.live = [loop id in my_jobs.keys(): if id in living_world.jobs and living_world.jobs[id].state == .claimed: "{job_cargo(id)}: {portage.cargo_status(living_world,id)}"]
     if t - folk_sync_t > 2.0:
         sync_folk(folks, living_world, towns)
         global folk_sync_t
         folk_sync_t = t
-    update_folk(folks, living_world, towns, if me.mode == .aboard: pc.state.position else: me.pos, dt)
-    update_traffic(traffic, living_world, traffic_scene, if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos, t, dt, pc.state)
+    update_traffic(traffic, living_world, traffic_scene, if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos, t, dt, pc.state, towns)
     sync_living_player(pc, living_world)
+    update_folk(folks, living_world, towns, if me.mode == .aboard: pc.state.position else: me.pos, dt)
     # skimming: fast within about a span of the water, the downwash churns it and throws spray
     gap = f64(pc.state.position.y) - pc.spec.float_height
     skim = if pc.state.on_water or pc.state.moored: 0.0 else: (1.0 - smoothstep(0.5, pc.spec.span * 0.6, gap)) * smoothstep(28.0, 60.0, f64(length(pc.state.velocity)) / pure_k(pc.spec))
@@ -994,13 +1008,13 @@ draw_world = (L: Light):
             draw(obj_sh, cm.body, obj_params(L, t, at))
             draw(obj_sh, cm.prop, obj_params(L, t, at * translation(cm.prop_at) * rotation_z(0.4)))
         draw_folk(folks, L, t)
-        loop pj in pending: draw(obj_sh, crate_mesh, obj_params(L, t, translation(pj.pos)))
+        cargo_view.draw_cargo(living_world,cargo_meshes,L,t)
         loop k in 0..board_spots.len():
             tw = towns[k]
             draw(obj_sh, board_mesh, obj_params(L, t, translation(board_spots[k]) * rotation_y(atan2(f64(tw.out.x), f64(tw.out.y)))))
         loop w in walkers:
             if length(w.pos - scene_camera()) < 600.0: draw_figure(w.fig, w.pos, w.yaw, w.phase, if w.wait > 0.0: 0.0 else: 0.8, L, t)
-        if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, me.stride, L, t)
+        if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, me.stride, L, t, carrying=holding_cargo() >= 0)
         draw_traffic(traffic, craft_models, L, t)
         pm = craft_models[pc.model]
         at = pc_at()
@@ -1109,10 +1123,14 @@ draw = ():
                 folks[k].line_t = t
             d = f64(length(folks[k].pos - me.pos))
             speech_bubble(fonts, folks[k].pos + vec3(0, 1.7, 0), living_world.people[folks[k].person].name, folks[k].line, d, 8.0)
+    if me.mode == .walking: cargo_view.draw_cargo_targets(living_world)
     match me.mode:
         .walking:
             if ui != .none: pass
-            else if near_pending() >= 0: prompt_card(fonts, "F  load {job_cargo(pending[near_pending()].job)} aboard")
+            else if holding_cargo() >= 0:
+                point = portage.cargo_loading_spot(living_world,living_world.people[living_world.player].craft)
+                prompt_card(fonts,if point != none and length(me.pos-point!) < 4: "F  put the crate into the hold" else: "F  put down or hand over the crate")
+            else if near_job_cargo() >= 0: prompt_card(fonts,"F  pick up {cargo_view.cargo_label(living_world,living_world.cargo[near_job_cargo()])}")
             else if near_own_craft(): prompt_card(fonts, "F  climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
             else if near_board() >= 0: prompt_card(fonts, "F  read the notices")
             else if nearest_folk(folks, me.pos, 3.5) >= 0: prompt_card(fonts, "T  talk to {living_world.people[folks[nearest_folk(folks, me.pos, 3.5)].person].name}")
@@ -1147,7 +1165,7 @@ draw = ():
 
 # the panels open over the scene: a conversation, a board, a ledger
 draw_ui = ():
-    global ui, ui_line, ui_news, ui_place
+    global ui, ui_line, ui_news, ui_place, ui_job
     match ui:
         .talk:
             if ui_folk < 0 or ui_folk >= folks.len():
@@ -1158,21 +1176,29 @@ draw_ui = ():
             merchant = p.occupation == .merchant or p.occupation == .innkeeper or p.occupation == .hotelier or p.occupation == .quartermaster
             # errands first: work they posted (offered to them in person), cargo one has brought them
             offers: int[]
+            offer_choices: lt.CarriageChoice[]
             handovers: int[]
+            handover_choices: lt.CarriageChoice[]
             answers: str[]
             loop id in living_world.active_jobs:
                 j = living_world.jobs[id]
                 if j.poster == f.person and j.state == .open and j.origin == f.place:
                     offers.push(id)
-                    agreed = false
-                    loop pj in pending:
-                        if pj.job == id: agreed = true
-                    answers.push(if agreed: "Where did you put {job_cargo(id)}?" else: "I can take {job_cargo(id)} to {SETTLEMENTS[j.destination].name}.")
+                    offer_choices.push(if j.delivery_mode == .foot: lt.CarriageChoice.player else: lt.CarriageChoice.automatic)
+                    answers.push(if j.delivery_mode == .foot: "I'll carry {job_cargo(id)} across town." else: "Fly {job_cargo(id)} to {SETTLEMENTS[j.destination].name}; arrange carrying.")
+                    if j.delivery_mode == .aircraft and j.cargo_mode != .none:
+                        offers.push(id); offer_choices.push(.porter)
+                        answers.push("To {SETTLEMENTS[j.destination].name}: please hire a porter for {job_cargo(id)}.")
+                        offers.push(id); offer_choices.push(.player)
+                        answers.push("To {SETTLEMENTS[j.destination].name}: I'll fetch and load {job_cargo(id)}.")
             loop id in living_world.active_jobs:
                 j = living_world.jobs[id]
-                if j.state == .claimed and j.carrier == living_world.player and j.loaded and j.destination == f.place and recipient_of(id) == f.person:
-                    handovers.push(id)
+                if j.state == .claimed and j.carrier == living_world.player and (j.loaded or j.delivery_mode == .foot) and j.destination == f.place and recipient_of(id) == f.person:
+                    handovers.push(id); handover_choices.push(.automatic)
                     answers.push("I've brought {job_cargo(id)} from {living_world.people[j.poster].name}.")
+                    if j.delivery_mode == .aircraft and j.cargo_mode != .none:
+                        handovers.push(id); handover_choices.push(.player)
+                        answers.push("I'll carry {job_cargo(id)} from the aircraft to your door myself.")
             nerr = answers.len()
             answers.push("What's the news?")
             answers.push("Any work going?")
@@ -1183,34 +1209,18 @@ draw_ui = ():
             if key_pressed(.escape): c = answers.len() - 1
             if c >= 0 and c < offers.len():
                 id = offers[c]
-                j = living_world.jobs[id]
-                cpl = living_world.people[living_world.player].craft
-                here = living_world.people[living_world.player].place == f.place and pc.state.moored
-                busy = false
-                if cpl >= 0:
-                    loop mid in living_world.aircraft[cpl].job_manifests:
-                        if living_world.jobs[mid].state == .claimed: busy = true
-                if not here: ui_line = "Bring your aircraft to the quay here, and I'll have it sent down to you."
-                else if busy: ui_line = "You've a cargo aboard already. Come back when it's delivered."
-                else if not claims.claim_feasible(living_world, id, living_world.player, false): ui_line = "I don't think your aircraft would get it there in time, or it won't fit."
-                else:
-                    already = false
-                    loop pj in pending:
-                        if pj.job == id: already = true
-                    if already: ui_line = "On the quay, beside your aircraft. Load it aboard when you're ready."
-                    else if let spot = crate_spot():
-                        pending.push(Pending(id, spot))
-                        rcv = living_world.people[recipient_of(id)].name
-                        ui_line = if j.purpose == .passenger: "Good. {job_cargo(id)} will meet you at your aircraft." else: "Good, thank you. I'll have {job_cargo(id)} carried down beside your aircraft; load it and take it to {rcv} at {SETTLEMENTS[j.destination].name} by {clock_text(living_world, j.due_minute)}. {j.reward_cents / 100} lire when it's there."
-                        pin_notice(notebook, id, j.poster, "{job_cargo(id)} to {SETTLEMENTS[j.destination].name}".replace("the ", ""), "For {rcv}, by {clock_text(living_world, j.due_minute)}. {j.reward_cents / 100} lire. From {living_world.people[j.poster].name}.", clock_text(living_world, living_world.minute))
-                        log_note(notebook, "Agreed with {living_world.people[j.poster].name} at {SETTLEMENTS[j.origin].name} to take {job_cargo(id)} to {rcv} at {SETTLEMENTS[j.destination].name} by {clock_text(living_world, j.due_minute)}, for {j.reward_cents / 100} lire.", clock_text(living_world, living_world.minute))
-                    else: ui_line = "Bring your aircraft alongside the quay first."
+                choice = offer_choices[c]
+                ui_line = agree_cargo_job(id,choice)
             else if c >= offers.len() and c < nerr:
                 id = handovers[c - offers.len()]
                 before = player_cents()
-                if living.deliver_job(living_world, id, living_world.player):
+                choice = handover_choices[c-offers.len()]
+                if choice == .player:
+                    portage.choose_collection(living_world,id,living_world.player,.player)
+                    ui_line = "Please bring it to the marked delivery point. " + portage.cargo_status(living_world,id)
+                else if living.deliver_job(living_world, id, living_world.player):
                     ui_line = "Thank you. That's what was promised: {(player_cents() - before) / 100} lire."
-                else: ui_line = "That's not what I was waiting for."
+                else: ui_line = portage.cargo_status(living_world,id)
             else if c >= 0:
               c -= nerr
               if c == 0:
@@ -1236,11 +1246,29 @@ draw_ui = ():
                 if l != "": yesterday.push(l)
             res = notice_board(fonts, SETTLEMENTS[ui_place].name, job_notices(living_world, ui_place), yesterday)
             if res.take >= 0:
-                # the notice goes in one's notebook; the poster knows nothing of it till told
+                # Keep the notice, then review its actual handling terms before agreeing.
                 j = living_world.jobs[res.take]
                 pin_notice(notebook, res.take, j.poster, "{job_cargo(res.take)} to {SETTLEMENTS[j.destination].name}".replace("the ", ""), "{living_world.people[j.poster].name} at {SETTLEMENTS[j.origin].name} wants it there by {clock_text(living_world, j.due_minute)}. {j.reward_cents / 100} lire.", clock_text(living_world, living_world.minute))
-                say_toast("Copied into your notebook. Speak to {living_world.people[j.poster].name} about it.")
+                ui_job = res.take
+                ui_line = "{living_world.people[j.poster].name} offers {f64(j.reward_cents)/100.0:.2} lire. The goods are at their existing warehouse spot. Who will carry them?"
+                ui = .handling
             if res.closed: ui = .none
+        .handling:
+            if ui_job < 0 or not (ui_job in living_world.jobs): ui = .board; return
+            j = living_world.jobs[ui_job]
+            answers: str[]; choices: lt.CarriageChoice[]
+            if j.state == .open:
+                if j.delivery_mode == .foot:
+                    answers.push("I'll carry it on foot."); choices.push(.player)
+                else:
+                    answers.push("Arrange the carrying with the sender."); choices.push(.automatic)
+                    if j.cargo_mode != .none:
+                        answers.push("The sender hires a dock porter."); choices.push(.porter)
+                        answers.push("I'll fetch and load it myself."); choices.push(.player)
+            answers.push("Back to the board.")
+            c = conversation(fonts,"{living_world.people[j.poster].name}'s notice",SETTLEMENTS[j.origin].name,ui_line,answers)
+            if c >= 0 and c < choices.len(): ui_line = agree_cargo_job(ui_job,choices[c])
+            else if c >= 0 or key_pressed(.escape): ui = .board
         .trade:
             w = living_world
             m = w.places[ui_place].market
@@ -1250,7 +1278,7 @@ draw_ui = ():
             loop g in 0..w.goods.len():
                 if w.goods[g].illegal and ui_place != 5: continue
                 pr = m.price_cents[g]
-                have = if c >= 0: w.aircraft[c].cargo.qty[g] / 1000 else: 0
+                have = w.people[w.player].pocket.qty[g] / 1000
                 rows.push(GoodRow(w.goods[g].key, "load", pr * 102 / 10000, pr * 98 / 10000, m.inventory.qty[g] / 1000, have))
                 goods.push(g)
             used = 0
@@ -1258,7 +1286,8 @@ draw_ui = ():
                 loop g in 0..w.goods.len(): used += w.aircraft[c].cargo.qty[g] / 1000
             res = ledger(fonts, w.people[folks[ui_folk].person].name, SETTLEMENTS[ui_place].name, rows, player_cents() / 100, used, 8)
             if res.row >= 0:
-                ok = if res.dir > 0: living.buy(living_world, ui_place, goods[res.row], 1000, living_world.player, c) else: living.sell(living_world, ui_place, goods[res.row], 1000, living_world.player, c)
-                if not ok: say_toast("No: not enough money, stock or room aboard, or your aircraft is not here")
+                ok = if res.dir > 0: living.buy(living_world, ui_place, goods[res.row], 1000, living_world.player) else: living.sell(living_world, ui_place, goods[res.row], 1000, living_world.player)
+                if not ok: say_toast("No: not enough money or stock. Bring your goods ashore to sell them.")
+                else if res.dir > 0: say_toast("Yours at the warehouse. Carry the crate aboard with F.")
             if res.closed: ui = .none
         _: pass

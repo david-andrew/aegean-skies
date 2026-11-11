@@ -1,5 +1,7 @@
 # Arrival transactions shared by abstract routes and future scene docking commands.
 use 'living_types.jo'
+use 'living_portage.jo'
+use 'living_cargo.jo'
 use 'living_money.jo'
 use 'living_events.jo'
 
@@ -23,18 +25,47 @@ fulfill_supplies = (w: mut World, job: int):
 
 # A verified docking can unload the surviving earmarked goods once. Partial losses are final.
 deliver_job = (w: mut World, id: int, carrier: int) -> bool:
-    if not (id in w.jobs) or w.jobs[id].state != .claimed or not w.jobs[id].loaded: return false
-    if w.jobs[id].carrier != carrier or w.people[carrier].place != w.jobs[id].destination: return false
+    if not (id in w.jobs) or w.jobs[id].state != .claimed: return false
+    if w.jobs[id].cargo_mode != .none and (not w.jobs[id].collected or not cargo_all_collected(w,id)):
+        cargo_plan_carriage(w,id,true)
+        return false
+    if not w.jobs[id].loaded and w.jobs[id].delivery_mode != .foot: return false
+    if w.jobs[id].carrier != carrier: return false
+    if w.jobs[id].cargo_mode == .none and w.people[carrier].place != w.jobs[id].destination: return false
     c = w.people[carrier].craft
-    if c < 0 or w.aircraft[c].place != w.jobs[id].destination or w.aircraft[c].trip >= 0: return false
+    if w.jobs[id].cargo_mode == .none and (c < 0 or w.aircraft[c].place != w.jobs[id].destination or w.aircraft[c].trip >= 0): return false
     g = w.jobs[id].good
     amount = w.jobs[id].loaded_quantity - w.jobs[id].delivered_quantity - w.jobs[id].lost_quantity - w.jobs[id].returned_quantity
+    if w.jobs[id].delivery_mode == .foot:
+        amount = w.jobs[id].quantity-w.jobs[id].lost_quantity
+        w.jobs[id].loaded_quantity = w.jobs[id].quantity
     if w.jobs[id].cargo_mode == .commodity:
-        if amount > w.aircraft[c].cargo.reserved[g] or amount > w.aircraft[c].cargo.qty[g]: return false
+        foot = w.jobs[id].delivery_mode == .foot
+        if not foot and (amount > w.aircraft[c].cargo.reserved[g] or amount > w.aircraft[c].cargo.qty[g]): return false
         if amount > 0:
-            assert(move_stock(w.aircraft[c].cargo,w.places[w.jobs[id].destination].market.inventory,g,amount,true))
+            source = if foot: w.jobs[id].origin else: c
+            from = if foot: CargoStore.market else: CargoStore.aircraft
+            destination = w.jobs[id].destination
+            receiver = cargo_receiver(w,id)
+            store = w.jobs[id].drop_store
+            if store == .pocket:
+                if foot: assert(move_stock(w.places[source].market.inventory,w.people[receiver].pocket,g,amount,true))
+                else: assert(move_stock(w.aircraft[c].cargo,w.people[receiver].pocket,g,amount,true))
+            else if store == .boat:
+                boat = w.boat_cargo.get(destination,Inventory())
+                if foot: assert(move_stock(w.places[source].market.inventory,boat,g,amount,true))
+                else: assert(move_stock(w.aircraft[c].cargo,boat,g,amount,true))
+                w.boat_cargo[destination] = boat
+            else:
+                if foot and source == destination: assert(release(w.places[source].market.inventory,g,amount))
+                else if foot: assert(move_stock(w.places[source].market.inventory,w.places[destination].market.inventory,g,amount,true))
+                else: assert(move_stock(w.aircraft[c].cargo,w.places[destination].market.inventory,g,amount,true))
+            assert(cargo_move(w,from,source,store,if store == .pocket: receiver else: destination,g,amount,receiver,destination,id))
             w.jobs[id].delivered_quantity += amount
     else:
+        if w.jobs[id].cargo_mode == .sealed:
+            receiver = cargo_receiver(w,id)
+            if not cargo_move(w,.aircraft,c,.pocket,receiver,-1,amount,receiver,w.jobs[id].destination,id): return false
         if w.jobs[id].purpose == .passenger:
             p = w.jobs[id].passenger
             if p < 0 or not (p in w.aircraft[c].passengers): return false
@@ -56,9 +87,12 @@ deliver_job = (w: mut World, id: int, carrier: int) -> bool:
         refund_job(w,id)
         o = w.jobs[id].obligation
         if o >= 0: w.obligations[o].state = if w.jobs[id].state == .delivered: ObligationState.fulfilled else: ObligationState.breached
-        w.aircraft[c].job_manifests.remove(id)
+        if c >= 0: w.aircraft[c].job_manifests.remove(id)
         fulfill_supplies(w,id)
-    emit_event(w,.delivery,w.people[carrier].place,carrier,w.jobs[id].cause.beneficiary,w.jobs[id].cause,w.jobs[id].lost_quantity * (if g >= 0: w.goods[g].base_cents else: 0) / 1000)
+        if w.people[carrier].action.activity == .fulfill and w.people[carrier].action.reason.job == id:
+            w.people[carrier].action.activity = .wait
+            w.people[carrier].action.end_minute = w.minute; w.people[carrier].next_decision_minute = w.minute
+    emit_event(w,.delivery,w.jobs[id].destination,carrier,w.jobs[id].cause.beneficiary,w.jobs[id].cause,w.jobs[id].lost_quantity * (if g >= 0: w.goods[g].base_cents else: 0) / 1000)
     true
 
 unload_at_harbor = (w: mut World, carrier: int):
@@ -74,11 +108,24 @@ unload_at_harbor = (w: mut World, carrier: int):
 return_job_cargo = (w: mut World, id: int, carrier: int) -> bool:
     if not (id in w.jobs) or not job_terminal(w.jobs[id].state) or not w.jobs[id].loaded or w.jobs[id].carrier != carrier: return false
     c = w.people[carrier].craft; poster = w.jobs[id].poster
-    if c < 0 or w.aircraft[c].place < 0 or w.people[poster].place != w.aircraft[c].place: return false
+    if c < 0: return false
+    if w.jobs[id].return_place < 0 and (w.aircraft[c].place < 0 or w.people[poster].place != w.aircraft[c].place): return false
     qty = w.jobs[id].loaded_quantity-w.jobs[id].delivered_quantity-w.jobs[id].lost_quantity-w.jobs[id].returned_quantity
     if qty <= 0: return false
+    if w.jobs[id].cargo_mode != .none:
+        if w.jobs[id].return_place < 0:
+            w.jobs[id].return_place = w.aircraft[c].place
+            w.jobs[id].dropoff = cargo_anchor(w,w.aircraft[c].place)
+            w.jobs[id].drop_store = .pocket; w.jobs[id].drop_holder = poster
+            w.jobs[id].collected = false
+        if not w.jobs[id].collected or not cargo_all_collected(w,id):
+            cargo_plan_carriage(w,id,true)
+            return false
     if w.jobs[id].cargo_mode == .commodity:
         if not move_stock(w.aircraft[c].cargo,w.people[poster].pocket,w.jobs[id].good,qty,true): return false
+        assert(cargo_move(w,.aircraft,c,.pocket,poster,w.jobs[id].good,qty,poster,w.people[poster].place,id))
+    else if w.jobs[id].cargo_mode == .sealed:
+        if not cargo_move(w,.aircraft,c,.pocket,poster,-1,qty,poster,w.people[poster].place,id): return false
     w.jobs[id].returned_quantity += qty
     w.aircraft[c].job_manifests.remove(id)
     true
