@@ -167,6 +167,14 @@ place, acquaintances), but they are not run by the simulation: the player writes
 from outside (trades, deliveries, fights) and the world reacts as it would to anyone. Nothing waits
 for them, but people near them notice them: they speak to them, offer them work, and remember them.
 
+## Vessels on the water
+
+Caiques are the first: lofted low-poly hulls, sails set when out at work with a flag flapping at the
+masthead, furled at the quay. Later, other vessels with their own work and routes, so the sea has
+traffic of its own beside the aircraft: little old-fashioned motor yachts, ferries running between
+the islands on a timetable (a reason to race one, or to meet it), schooners carrying freight.
+Moving vessels would need their own wakes and their own place in the living world.
+
 ## Personal aircraft: paint and markings
 
 Owning an aircraft includes making it one's own, more freely than Sky Barons allows:
