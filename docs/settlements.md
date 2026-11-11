@@ -78,7 +78,8 @@ Irregular broken lane bands climb around a hill church, with narrow rotated lots
 Later quarters have several boulevards, rotated courtyard blocks, gardens, taller
 harbor frontage and gradually thinner outskirts. Small villages cluster tightly
 around their church/cove instead of covering a large grid. The terrain is never
-flattened for a town. Footprints reserve civic/warehouse areas and the main
+flattened for a town. Steeper lots try up to three smaller footprints while
+retaining the same dry-ground and maximum foundation-height checks. Footprints reserve civic/warehouse areas and the main
 approach; collision uses the same warped coordinates and house orientations.
 
 Distant buildings use these same lots, inexpensive white walls and tiled/flat
