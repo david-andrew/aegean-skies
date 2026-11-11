@@ -46,7 +46,7 @@ the same settlement is not a meeting or proof that somebody heard a private conv
 
 `life_scene.step_life_scene` returns path searches used; traffic allows one new search per render
 frame, including catch-up ticks. Regular motion stays at fixed 60 Hz. `life_view.set_life_density`
-reduces background children (0 disables life props/children); named adults remain authoritative.
+reduces background children (0 disables children); attached bicycles/instruments and named adults remain authoritative.
 There are no new shaders/textures. `life_audio` plays only the nearest arrived musician within
 70 m; `SLOPPY_NO_AUDIO` skips all synthesis and playback.
 
