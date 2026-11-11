@@ -4,13 +4,12 @@
 // usage: node tools/measure_web.mjs chrome page.html out.png [seconds] [query]
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 const [chrome, page, out, secs = "6", query = ""] = process.argv.slice(2);
 readFileSync(page); // Fail before opening Chromium when the requested build is missing.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const dir = mkdtempSync(join(process.env.WEBSHOT_TMP || tmpdir(), "webshot-"));
+const dir = mkdtempSync(join(process.env.WEBSHOT_TMP || dirname(out), "webshot-"));
 const gpuFlags = process.env.WEBSHOT_GPU === "native"
   ? ["--use-angle=vulkan", "--enable-features=Vulkan", "--disable-vulkan-surface"]
   : ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"];

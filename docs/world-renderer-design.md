@@ -184,10 +184,35 @@ Legacy checks: 511,914 canonical vertices, 424 patch error bounds, 96 stitch fam
 
 New streaming check after prioritizing the camera's quadrant and starting arrival morphs at publication: cache 496/512, 191 selected tiles, 98,736 triangles, shared-edge residual 0.00015626 m, canonical contact checks pass. Near-contact tiles bypass arrival morphing. The depth checker verifies three atomic window publications and 768 samples: maximum depth quantization difference 0.110175 m, below one 60/255 m step. Eight 256-pixel rows are generated per update; a window completes after 32 updates. Fast teleports retain coarse fallback until this completes.
 
-Final web payload: 8,247,912-byte wasm plus 78,770-byte loader; zlib6 total **3,703,578 bytes**, versus 7,204,341 baseline (48.6% smaller). Macro asset v2 is 1,259,469 bytes raw / 436,554 zlib6, including the refined coastline. Native and wasm canonical-height/region probes match fingerprint **17775399900910795030** for 1,000 locations.
+Final web payload: 8,249,813-byte wasm plus 78,770-byte loader; zlib6 total **3,704,071 bytes**, versus 7,204,341 baseline (48.6% smaller). Macro asset v2 is 1,259,469 bytes raw / 436,554 zlib6, including the refined coastline. Native and wasm canonical-height/region probes match fingerprint **17775399900910795030** for 1,000 locations.
 
 Wasm linear memory is **52,297,728 bytes (49.875 MiB)** versus 68,485,120 (65.3125 MiB), a 23.6% reduction. Headless Chromium on desktop ANGLE/NVIDIA GTX 1070: baseline process-tree PSS **900,577 KiB**, final **683,339 KiB** (24.1% lower); a preceding compact run was 666,307 KiB, so retain normal snapshot variation. SwiftShader: 945,790 KiB baseline / 890,660 KiB compact (5.8% lower); software JIT/driver overhead prevents the same proportional total reduction. GPU VRAM is not included in PSS. Both backends successfully render; hardware supports 32,768-square textures and 32 vertex samplers, far above the 544×272 atlas requirement. One concurrent native/browser GPU probe ran out of Vulkan allocation; serial rerun passed. Final tests run GPU jobs serially.
 
 Desktop Callgrind, only new-world CPU preparation plus edge ownership, after identical 120-frame warmup: crossing 737,244,381 setup vs 962,266,067 for setup+360 frames, **625,060 instructions/frame**, no new tiles. Mainland movement 2,363,689,026 vs 4,529,477,313, **6,016,079 instructions/frame**, 64 generated tiles / 360 frames, max 190 selected / 341 cached. These exclude draw submission and the original terrain's selection. They are a checkpoint before the final publication flag; that flag adds a small per-selected-tile check. Do not compare this new-world-only workload directly as a speedup against the old-world-only baseline.
 
-The final paired laptop runs, macro bake timing, and a browser probe using the laptop's own Intel GPU are queued/run under the same exclusive bench lock. The final report will carry their results and the exact remaining tradeoffs.
+The completed paired laptop runs, macro bake timing and Intel browser probe appear below and in the final report.
+
+
+### Final paired laptop and Intel browser results
+
+All final jobs ran serially under the laptop bench lock. Two paired runs reverse the binary order: harbor baseline109.4/109.4 ms, final110.7/110.8; crossing baseline96.8/96.7, final97.4/97.4; high baseline96.3/96.3, final97.4/97.4. The strict zero-regression target is missed by 0.65–1.35 ms (0.67–1.23%). The added new-world GPU work at these views is 0.07/0.09/0.47 ms and CPU work 0.26/0.30/0.32 ms; conservative legacy error-bound fixes also increase its work. There is no claim of a whole-game FPS improvement.
+
+Final mainland4000 m / coast80 m / ground views are 52.00/55.60/50.95 ms total; new terrain CPU0.70/1.86/1.81 ms and GPU4.40/4.40/3.74 ms. Native initialization is 5.37–5.46 s versus paired baseline2.39–2.42 s, excluding shader warmup. Peak native RSS is98,692–100,472 KiB versus108,132–109,232 KiB paired baseline. The compact macro bake takes0.3083 s including validation and peaks at5,848 KiB RSS.
+
+The laptop’s own Chromium1234, ANGLE/Vulkan Intel UHD620, successfully loads both builds under the lock. PSS:564,973 KiB baseline,485,446 KiB final (14.1% reduction). Wasm:68,485,120→52,297,728 bytes (23.6% reduction). Logged world initialization:3.280→6.702 s, excluding page/module and first-frame compilation. Native and browser fingerprint17775399900910795030 matches. The 20% total-PSS aspiration is met on the measured NVIDIA path, not on Intel or SwiftShader; memory is lower on all measured paths. Detailed final tables, limitations and merge instructions are in `report.md`.
+
+Main advanced to c8aa477 during this work. It has not been merged: keep its later mouse, docking, boat/cloth and audio work when integrating the small aegean.jo startup/draw/chart hooks. All performance comparisons above are against branch base97eda0d, so repeat the integrated game’s checks after merging.
+
+
+### Cold-contact refinement budget
+
+The final wide-angle stress test exposed a loading delay: contact tiles were cached in 3–9 updates but the balanced visible cut held them at coarse resolution for 60–88 updates. Prioritizing neighbor requests alone did not materially improve this and was discarded. A bounded cold-contact burst is simpler and measured: normal streaming remains four tiles / 9,248 sample-upload bytes per update, while a camera within 200 m of new ground can create eight tiles / 18,496 bytes until a 56 m contact footprint is at canonical resolution. Original islands and high views bypass this path. Cache capacity and steady geometry are unchanged.
+
+Locked redfox CPU preparation probe with software atlas uploads: four-tile policy reaches the contact footprint in81 updates, peak6.87 ms; eight-tile burst reaches it in41, peak12.27 ms. A16-tile candidate reached21 updates but peaked23.14 ms and was rejected. Eight ground teleports at110° FOV now reach contact in30–44 updates, max512 cached /250 selected. The seam/motion/contact test still passes with residual0.00015626 m. These are cold-load improvements, not a claim of eliminating all transient coarse coverage. Implementation checkpoint6874ff0; final native/browser spot checks follow the earlier paired measurements.
+
+
+### Final artifact spot check (6874ff0)
+
+After the cold-contact burst, locked laptop medians are harbor110.7 ms, crossing97.45 ms, original high97.4 ms, mainland ground50.8 ms: consistent with the paired checkpoint. Initialization5.399–5.502 s; peak native RSS102,268–103,696 KiB, about5% below baseline at matched original views (the preceding checkpoint was8–9% lower; use the final range). The final Intel browser snapshot is479,215 KiB PSS versus564,973 baseline, a15.2% reduction; wasm remains52,297,728 bytes and fingerprint17775399900910795030 matches. Logged world init6.761 s.
+
+The final hashed wasm is8,249,813 bytes, loader78,770 bytes; total zlib6 estimate3,704,071 bytes (48.6% smaller than baseline). `measurement-manifest.json` preserves both the paired140e392 artifacts and final6874ff0 artifacts. `chart-final.png` shows the final whole-world chart. The report separates these measured checkpoints and records the remaining target misses.
