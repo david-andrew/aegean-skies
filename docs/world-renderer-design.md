@@ -153,3 +153,9 @@ Frame time/upload budgets and memory gains must be measured again after implemen
 20. Epic heightfield/distance-field distinction: https://dev.epicgames.com/documentation/unreal-engine/distance-field-ambient-occlusion-in-unreal-engine
 
 Evidence is beside this document: baseline bake/check logs, baseline-sizes.txt, laptop-baseline/*.log/png and summary JSON, baseline-web-memory.log/png, capabilities logs, Callgrind files, sources/, and preserved standalone baseline executables. Repo tools/terrain_cost.jo and tools/measure_web.mjs reproduce the new probes. Initial design notebook is retained for provenance, not used as the current recommendation.
+
+### Phase2 step1 evidence
+
+Reviewed LOD projection/neighbor-bound fixes applied without any geography scaling. Laptop paired cameras: harbor109.5ms total/5.84ms terrain GPU, crossing96.7/1.74, high96.6/4.46 versus baseline109.4/5.81,96.8/1.65,96.3/3.94. Total differences under0.4%; high-view terrain cost rises for the corrected bound. No claim that this fix speeds up terrain.
+
+Lossless split of the same baseline wasm loads in Chromium. PSS falls from945790KiB to905468KiB (about4.3%); wasm stays68485120bytes. It does NOT achieve the20%memory aspiration alone. Measurement remains a software-GPU snapshot; preserve this limitation in final reporting. Initial new-world macro asset is1259469bytes raw and its actual compressed size is recorded alongside implementation measurements. Legacy source and render assets remain unchanged.
