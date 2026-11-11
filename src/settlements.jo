@@ -48,6 +48,8 @@ world_settlements: WorldSettlement[]
 settlement_roads: SettlementRoad[]
 settlement_by_id: {int: int} = {}
 settlement_bins: {int: int[]} = {}
+settlement_registry_ready = true
+settlement_island_cursor = 0
 const SETTLEMENT_VERSION = 2
 const PLACE_SPACING = 20.0
 SETTLEMENT_COUNTRIES = ["Archipelago", "Kalyra", "Orenthia"]
@@ -321,8 +323,9 @@ place_landmarks = (s: WorldSettlement) -> PlaceLandmark[]:
             if place_ground(q) > 1.0: result.push(PlaceLandmark("warehouse",place_point(q)))
     result
 
-init_settlements = (roads: bool = false):
-    global world_settlements,settlement_roads,settlement_by_id,settlement_road_bins
+init_settlements = (roads: bool = false,defer_islands: bool = false):
+    global world_settlements,settlement_roads,settlement_by_id,settlement_road_bins,settlement_registry_ready,settlement_island_cursor
+    settlement_registry_ready = not geography_enabled; settlement_island_cursor = 0
     settlement_road_bins = {}
     world_settlements = []; settlement_roads = []; settlement_by_id = {}
     loop k in 0..SETTLEMENTS.len():
@@ -386,32 +389,52 @@ init_settlements = (roads: bool = false):
                 size = if kind == .market: 130 else: (if kind == .farm: 1 else: 20)
                 radius = if kind == .market: 240.0 else: (if kind == .farm: 45.0 else: 100.0)
                 place_add(100000+region.id*10000+(j+30)*64+i+30,kind,region.id,p,vec2(0,1),false,size,radius)
-    loop isl in small_islands:
-        radius = f64(max(isl.radii.x,isl.radii.y))
-        if radius < 380.0: continue
-        best = -1.0; chosen = isl.center; direction = vec2(0,1); found = false
-        loop k in 0..32:
-            a = f64(k)*TAU/32.0
-            out = vec2(f32(cos(a)),f32(sin(a)))
-            p,dir,ok = place_coast(isl.center,isl.center+out*f32(radius*1.9))
-            if not ok: continue
-            score = place_shelter(p,dir)
-            if score > best: best = score; chosen = p; direction = dir; found = true
-        if found:
-            kind: SettlementKind = if radius > 3200.0: .port else: .fishing
-            place_add(300000+isl.id*10,kind,isl.id,chosen,direction,true,if kind == .port: 100 else: 18,if kind == .port: 210.0 else: min(95.0,radius*0.2))
-        # High islands receive an inland village or monastery on a shoulder.
-        if radius > 1600.0 or not found:
-            loop k in 0..200:
-                r = rng(place_hash(isl.id,k))
-                p = if k == 0: isl.center else: isl.center+vec2(f32(geo_random(r,-radius*0.65,radius*0.65)),f32(geo_random(r,-radius*0.5,radius*0.5)))
-                if not place_flat(p,28.0,0.25) or not place_spaced(p,400.0): continue
-                kind: SettlementKind = if not found and radius < 1200.0: .chapel else: (if isl.id%3 == 0: .monastery else: .hill)
-                place_add(300001+isl.id*10,kind,isl.id,p,vec2(0,1),false,if kind == .chapel: 1 else: 16,if kind == .chapel: 40.0 else: 85.0)
-                break
     plan_settlement_roads()
     index_settlement_bins()
+    if not defer_islands or roads: finish_settlement_registry()
     if roads: build_settlement_roads()
+
+# Mainland places (including capitals) are immediately available. The game can
+# append small-island records in authored order after its first frame. This same
+# path serves eager/offline callers, preserving names, IDs and candidate indices.
+append_island_settlements = (isl: SmallIsland):
+    radius = f64(max(isl.radii.x,isl.radii.y))
+    if radius < 380.0: return
+    best = -1.0; chosen = isl.center; direction = vec2(0,1); found = false
+    loop k in 0..32:
+        a = f64(k)*TAU/32.0
+        out = vec2(f32(cos(a)),f32(sin(a)))
+        p,dir,ok = place_coast(isl.center,isl.center+out*f32(radius*1.9))
+        if not ok: continue
+        score = place_shelter(p,dir)
+        if score > best: best = score; chosen = p; direction = dir; found = true
+    if found:
+        kind: SettlementKind = if radius > 3200.0: .port else: .fishing
+        place_add(300000+isl.id*10,kind,isl.id,chosen,direction,true,if kind == .port: 100 else: 18,if kind == .port: 210.0 else: min(95.0,radius*0.2))
+    # High islands receive an inland village or monastery on a shoulder.
+    if radius > 1600.0 or not found:
+        loop k in 0..200:
+            r = rng(place_hash(isl.id,k))
+            p = if k == 0: isl.center else: isl.center+vec2(f32(geo_random(r,-radius*0.65,radius*0.65)),f32(geo_random(r,-radius*0.5,radius*0.5)))
+            if not place_flat(p,28.0,0.25) or not place_spaced(p,400.0): continue
+            kind: SettlementKind = if not found and radius < 1200.0: .chapel else: (if isl.id%3 == 0: .monastery else: .hill)
+            place_add(300001+isl.id*10,kind,isl.id,p,vec2(0,1),false,if kind == .chapel: 1 else: 16,if kind == .chapel: 40.0 else: 85.0)
+            break
+
+prepare_settlement_registry = () -> bool:
+    global settlement_island_cursor,settlement_registry_ready
+    if settlement_registry_ready: return false
+    first = world_settlements.len()
+    stop = min(small_islands.len(),settlement_island_cursor+4)
+    loop k in settlement_island_cursor..stop: append_island_settlements(small_islands[k])
+    settlement_island_cursor = stop
+    plan_settlement_roads(first)
+    index_settlement_bins(first)
+    settlement_registry_ready = stop == small_islands.len()
+    true
+
+finish_settlement_registry = ():
+    loop not settlement_registry_ready: prepare_settlement_registry()
 
 # Bounded A* in a corridor around a pair. Elevation change costs more than
 # distance, so roads choose valleys and contours; sea and steep grades forbid
@@ -475,9 +498,9 @@ place_route = (a: vec2,b: vec2) -> vec3[]:
 
 # Candidate identities depend only on place order, not camera or cache history.
 # Adapters must check ready and points.len() before treating a link as traversable.
-plan_settlement_roads = ():
+plan_settlement_roads = (first: int = 6):
     global settlement_roads,world_settlements
-    loop i in 6..world_settlements.len():
+    loop i in max(6,first)..world_settlements.len():
         a = world_settlements[i]
         nearest = -1; distance = 24000.0
         loop j in 6..i:
@@ -521,6 +544,7 @@ ensure_settlement_road = (id: int):
     index_settlement_road(id)
 
 build_settlement_roads = ():
+    finish_settlement_registry()
     loop id in 0..settlement_roads.len(): ensure_settlement_road(id)
 
 # One bounded search per request. The chart can request the next unevaluated link;
@@ -536,10 +560,10 @@ prepare_settlement_roads = (p: vec2,chart: bool = false) -> bool:
     false
 
 # Spatial lookup for ecology and contact. Includes enough apron for long moles.
-index_settlement_bins = ():
+index_settlement_bins = (first: int = 0):
     global settlement_bins
-    settlement_bins = {}
-    loop index in 0..world_settlements.len():
+    if first == 0: settlement_bins = {}
+    loop index in first..world_settlements.len():
         s = world_settlements[index]; r = s.radius+600.0
         loop z in int(floor((f64(s.center.z)-r)/16000.0))..int(floor((f64(s.center.z)+r)/16000.0))+1:
             loop x in int(floor((f64(s.center.x)-r)/16000.0))..int(floor((f64(s.center.x)+r)/16000.0))+1:

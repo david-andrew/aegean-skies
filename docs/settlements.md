@@ -2,9 +2,14 @@
 
 `src/settlements.jo` owns places without owning people or economies. Load the
 legacy and geography assets first, enable geography, then call
-`init_settlements()` (compact records and pending road links only). In the game
-`init_world_towns(towns)` performs that call. Pass `true` only for an explicit
-offline/eager topology check.
+`init_settlements()` (compact records and pending road links only). Pass `true`
+only for an explicit offline/eager topology check. The game calls
+`init_settlements(false,true)`: legacy/mainland records, including both capitals,
+are immediate; `prepare_settlement_registry()` appends at most four small islands
+per rendered frame. It preserves authored generation order and stable road
+indices. `settlement_registry_ready` marks completion; offline consumers can use
+`finish_settlement_registry()` before requiring the complete catalog. The default
+`init_settlements()` remains synchronous for existing data-only callers.
 No additional world assets are shipped.
 
 The original six settlement IDs, names, centers and mooring positions retain their
@@ -53,7 +58,7 @@ finishes all candidates. No remote road geometry is generated at game startup.
 Accepted paths retain only horizontal bends (within 4.5 cm of the validated
 samples); paving resamples canonical triangles. A coarse 2 km index stores road
 IDs, rather than copies of every fine sample. Grove tiles refresh when a new
-verified road enters their bin. Rejected links retain empty `points`; they never
+verified road or newly cataloged place enters their bin. Rejected links retain empty `points`; they never
 become bridges across channels. Verified neighbor/road lists are reciprocal and
 sorted by stable candidate index, independent of evaluation order. Width distinguishes a
 mule track from a road. This is a sparse network, not an all-pairs travel graph.
