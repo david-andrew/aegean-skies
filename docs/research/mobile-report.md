@@ -1,6 +1,7 @@
 # Mobile and sky implementation
 
-Branch `t3/mobile-sky`, base `9656387`. Work in progress. All runs headless/silent,
+Branch `t3/mobile-sky`, base `9656387`. Part 1 committed as `51db62e`; Part 2 implementation and correctness checks complete.
+The bounded quiet-window CPU proxy follow-up is still running. All runs headless/silent,
 one test process at a time, SLOPPY_THREADS=1. No main-checkout changes or pushes.
 
 ## Part 1: phone startup
@@ -102,5 +103,178 @@ or control design was changed.
 
 ## Part 2: sky
 
-Cloud/grove GPU profiling is running on redfox, using the same high/low profiles
-and camera. No sky rendering changes yet.
+### Implementation
+
+Replaced the default 22,878 opaque puff meshes with connected density formations.
+Four original 64³ density/normal stamps share a 1056² RGBA8 slice atlas (one-pixel
+slice gutters, manual interpolation between adjacent slices). Smooth unions and
+procedural erosion give each stamp one body, common condensation base, shoulders
+and rising lobes. No reference-image pixels or film designs were copied.
+
+The field is deterministic in 6.5 km world cells, with coherent coverage bands,
+breaks, ordinary banks and occasional towers. Rotated bounds fit disjoint cells;
+there is no camera-relative 34 km wrap. Wind advects the same identities on every
+quality tier. A cached neighborhood extends 150 km, fading from 125 km before its
+edge. Formation bases are roughly 650–950 m; tallest tops reach about 4 km. The
+same curved-Earth chart and analytic sea intersection hide clouds below the sea
+horizon. Frustum bounds include curvature across the complete rotated box.
+
+Each visible formation draws an instanced screen rectangle, integrates density
+front-to-back, then composites formations back-to-front. A half-resolution RGBA8
+target is reconstructed with four depth-aware taps at full resolution. Near steps
+are 40 high/medium and 24 low, declining continuously to eight far away. Early
+transmittance termination bounds dense interiors. High/medium get one secondary
+sun-density probe nearby; low uses the baked normal and shared lighting. No float
+targets, MRT, temporal history, or new engine features are required.
+
+`cloud_depth.jo` adapts the engine's post target: attach a sampleable 24-bit depth
+texture before scene geometry; sample it only from the separate cloud target;
+temporarily restore the original renderbuffer when compositing into scene color.
+The scene depth texture is reattached afterward. This avoids WebGL feedback loops
+and preserves actual terrain/aircraft intersections during cloud entry. Targets
+resize with the scene; the browser cap now uses the CSS aspect to avoid one-pixel
+allocation oscillations as the engine changes its adaptive resolution.
+
+Cloud lighting uses the existing sun, blue-grey shade and haze palette, softened
+bases, self-shadowing and a forward-lit rim. The atmosphere integrates mean density
+through the existing height-exponential air instead of treating the entire ray as
+being at its lowest endpoint. The solar horizon has directional warmth; an eight-
+tap (four on low) screen-space shaft pass uses cloud transmittance and scene depth,
+only around a low visible sun. It is an inexpensive screen-space approximation,
+not volumetric multiple scattering or terrain/ground cloud shadows.
+
+The Sun now follows a continuous 24-hour orbit (east at dawn, west at dusk). Stars
+are compact antialiased points. The Moon is a lit sphere projected as a disk:
+its illumination and crescent orientation follow the actual Sun direction, with a
+29.53059-day synodic cycle driven by living-world days and a small inclination.
+The initial age is ten days. Full Moon is opposite the Sun; new Moon is near it;
+quarter phases are roughly 90° away. This is a fixed-season, twelve-hour-day model,
+not a real-date ephemeris, tide model or eclipse simulation. It changes ground
+lighting direction too; the old clamped nighttime Sun path was not continuous.
+
+Primary lunar references: [NASA Moon phases](https://science.nasa.gov/moon/moon-phases/),
+[USNO phases](https://aa.usno.navy.mil/faq/moon_phases), and
+[NASA orbital inclination](https://eclipse.gsfc.nasa.gov/SEhelp/moonorbit.html).
+Renderer direction: `docs/research/longrange_clouds.md`, bounded pilot first.
+
+### Measured bound and pilot
+
+Redfox Intel UHD 620, headless Vulkan, one worker under `~/dev/tmp/bench.lock`.
+The old high-quality harbor scene spends about 40.2 ms GPU on clouds, 40.2 ms on
+groves, 17.4 ms on near sea and 5.9 ms on terrain: clouds were about 37% of the
+110 ms frame, not the whole bottleneck. A sub-5-ms replacement had a useful bound.
+
+The full-resolution 32³ pilot cost 11.72 ms cloud GPU from outside and 23.42 ms
+inside; that resolution was rejected. Half-resolution 64³ stamps with depth-aware
+reconstruction cost 4.01 ms outside, 3.35 above, 6.90 inside and 7.03 during entry.
+The full field has much smaller screen footprints in normal game views.
+
+The shared development compiler changed to Sloppy 0.30.0 during work. Consequently
+old-baseline/new-engine comparisons are exploratory, not the final paired result.
+Final primary measurements use the isolated official **0.29.2** compiler and
+library pinned by Pages CI, with both baseline `51db62e` and this branch rebuilt
+from the same generated land assets. Release archive SHA256:
+`29ce86c3a5674c84d6c935adbb76fe294550409d773bcec4a2ec09010c17b77e`.
+
+500 native frames/view, 1280×720; medians of reported windows after the first:
+
+| Harbor | Phone commit baseline | New sky | Cloud GPU baseline/new |
+|---|---:|---:|---:|
+| High | 111.25 ms | 73.50 ms | 40.20 / 2.27 ms |
+| Low | 41.90 ms | 40.55 ms | 3.67 / 2.08 ms |
+
+Peak RSS high: 103204 / 111800 KiB; low: 103396 / 105660 KiB. High frame time
+improves about 34%. These are laptop bench-lock measurements, but background
+projects were later found running CPU-heavy builds outside that lock. Do not treat
+small frame/RSS differences as isolated effects. The large cloud GPU reduction is
+consistent across the pilot and full-scene runs.
+
+Normal Android browser proxy, before resize, excluding five seconds after first
+real draw: baseline/new median gaps 33.3 / 16.7 ms, p95 33.4 / 33.4 ms, mean
+27.42 / 24.50 ms. The new run alternates 16.7 and 33.3 ms gaps; its median does
+not mean a steady 60 fps. All 35 baseline and 36 new scene programs link, no JS
+errors. Wasm memory 56623104 / 65667072 B (+8.63 MiB); browser-tree PSS
+491365 / 526996 KiB. Native/browser resize checks stay framebuffer-complete and
+report GL error zero in portrait, landscape and wider viewports.
+
+Severe CPU4x samples were contaminated: background Sloppy (four CPU threads),
+Dewy/Python workers and indexing were active despite the held bench lock. A
+counterbalanced profiling attempt observed 1-minute loads 6.06 and 6.71. Their
+50–98 ms medians/means are not an isolated sky comparison. Following the user's
+instruction, a bounded quiet-window gate now checks load under the lock before
+each A/B/B/A run, starts only below 1.5, checks at five-minute intervals and gives
+up after thirty minutes. A labelled desktop CPU-throttling proxy is the fallback.
+The quiet-window gate started at 2026-11-11 21:57:29 UTC; its first load was
+6.89, so it skipped the run. Final quiet-window or desktop-fallback results will
+be added in a separate measurement update. This does not delay the phone fix.
+
+Additional 0.30.0 development-runtime coverage (engine `90e7daf`): high/low harbor
+73.8/39.8 ms, sunset toward the Sun 45.6/17.35, night 43.0/15.9; cloud GPU costs
+2.27/2.04, 5.16/3.77 and 3.66/3.30 ms respectively. Entry and rapid-bank pilots
+complete without errors; bank cloud GPU 4.01 ms, entry 7.51 ms. These are separate
+compatibility/coverage measurements, not mixed into the pinned-version comparison.
+
+### Assets, memory and portability
+
+Atlas PNG: **769707 bytes**, decoded/GPU RGBA8 **4460544 bytes (4.25 MiB)**.
+Redfox cloud-only bake: **2.40 seconds** (0.30 development runtime); the pinned
+0.29.2 bake produces the identical SHA256. The atlas is generated by the normal
+`tools/bake.jo`; `tools/bake_clouds.jo` rebuilds it alone. No baked PNG is committed.
+Additional GPU targets at 1280×720: about 3.52 MiB depth plus 0.88 MiB half-size
+color, with implementation-specific depth padding. At 706×326 these total about
+1.10 MiB. The original scene renderbuffer is retained for legal attachment swaps.
+
+Pinned 0.29.2 packaged web baseline/new:
+- Wasm: 8689261 / 9506970 bytes.
+- HTML: 86571 / 86951 bytes.
+- Combined zlib level-6 transfer estimate: **3961347 / 4741140 bytes**, +779793
+  bytes (+19.7%). Actual hosting compression can differ.
+
+All **60** embedded stages pass WebGL2 minimums: max vertex/fragment uniform rows
+207/60, varying rows 5, attributes 9, samplers 3. New volume fragment program uses
+16 rows/two samplers; reconstruction eight/two; sky thirteen/zero. No new texture
+exceeds the minimum maximum dimension. The development 0.30 library adds PBR/morph
+programs: its 68 stages also pass (207/60 rows, seven varyings, eleven attributes,
+nine samplers), but those engine changes are not part of this branch.
+
+### Validation, captures and remaining limits
+
+Six new tests cover solar wrap/lunar phase geometry, cell separation and RNG
+independence, atlas gutters and unclipped boundaries, atmospheric reciprocity,
+world identities across cache movement/wind, and projected curvature bounds.
+The atlas check also verifies that over 99.5% of solid voxels belong to one
+six-connected body in each stamp. Both quality tests pass with the
+pinned release. Flight tests and JS specialization/quality checks pass. Release
+native/web builds and shader audits pass. Pages CI runs the sky tests after baking.
+Native GPU and hardware WebGL captures verify a cube in front of, inside and behind
+a volume. Crescent, quarter and full-Moon captures verify terminator orientation.
+
+The engine's pure CPU rasterizer cannot sample scene depth through its GL texture
+API. Software-only/CI runs therefore retain the old opaque cloud path; GPU-native
+and WebGL use volumes. `AEGEAN_LEGACY_CLOUDS=1` also selects it for comparison.
+The software smoke run completes with two frames. The depth adapter uses private
+Sloppy post-target globals; recheck it when upgrading the pinned engine.
+
+The field is bounded at 150 km. At very high altitudes it can thin before the most
+distant physically visible elevated clouds; a coarse far bank would extend that
+cheaply. Four rotated/scaled stamps give finite shape diversity. Thin frontmost
+transparent effects do not supply their own depth, so their cloud attenuation is
+approximate; opaque aircraft, terrain and water use the real scene endpoint.
+There is no temporal reprojection, so no history ghosting, but half-resolution
+edges and low-step distant detail can shimmer during fast movement. Screen-space
+shafts cannot account for off-screen occluders. Browser context-loss recovery
+remains the engine's reload behavior, not a new recovery system. Actual Android
+handset confirmation remains necessary; emulation is not the handset GPU.
+
+All artifacts are under `~/dev/tmp/aegean-skies/mobile/`: paired pinned results in
+`sky-029-results/`, development-runtime coverage in `sky-030/`, initial pilots in
+`part2-pilot-v1/` and `part2-pilot-v2/`, and `moon-crescent.png`, `moon-quarter.png`,
+`moon-full.png` (4° inspection FOV). `tools/cloud_pilot.jo` reproduces front/above/
+inside/entry/bank/field/field_sunset/moon views via `CLOUD_VIEW`, with `AEGEAN_HOUR`
+and `CLOUD_DAY` for celestial checks. Main captures use `AEGEAN_VIEW` as before.
+
+No UI was changed. Phone controls still need the Part 1 UI handoff. No new sky UI
+is required; artistic tuning lives in `look.jo`, `cloud_density.jo` and
+`cloud_field.jo`. Merge the phone commit first, then the separate sky commit;
+shared `aegean.jo` edits are confined to cloud initialization/draw and lunar time.
+Nothing was pushed and the main checkout was untouched.

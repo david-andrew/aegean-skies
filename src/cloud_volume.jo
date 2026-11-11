@@ -1,0 +1,258 @@
+# Bounded stamp-volume pilot. Each formation is a connected density field, not
+# independently shaded spheres. Spatial reconstruction has no temporal trails.
+use 'cloud_density.jo'
+use 'cloud_depth.jo'
+use 'look.jo'
+use 'render_space.jo'
+use 'quality.jo'
+
+struct CloudVolume:
+    center: vec3
+    extent: vec3
+    shape: f32
+    heading: f32 = 0.0
+    tone: f32 = 0.5
+
+struct VolumeVertex:
+    corner: vec2
+
+struct VolumeInstance:
+    rect: vec4
+    center: vec3
+    extent: vec3
+    meta: vec4                      # cos yaw, sin yaw, stamp, tone
+
+struct VolumeParams:
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    sun_dir: vec3
+    sun: vec3
+    shade: vec3
+    haze: vec3
+    fog: f32
+    depth_ab: vec2
+    atlas: Texture
+    depth: Texture
+    steps: f32
+    shadows: f32
+
+struct VolumeOut:
+    pos: vec4
+    ndc: vec2
+    center: vec3
+    extent: vec3
+    meta: vec4
+
+volume_vs = (v: VolumeVertex, inst: VolumeInstance, u: VolumeParams) -> VolumeOut:
+    ndc = mix(inst.rect.xy, inst.rect.zw, v.corner)
+    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta)
+
+cloud_to_local = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x + p.z * yaw.y, p.y, -p.x * yaw.y + p.z * yaw.x)
+cloud_to_world = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x - p.z * yaw.y, p.y, p.x * yaw.y + p.z * yaw.x)
+
+volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
+    if max(abs(p.x), max(abs(p.y), abs(p.z))) > 1.0: return vec4(0.5, 1, 0.5, 0)
+    q = (p * 0.5 + vec3(0.5, 0.5, 0.5)) * f32(CLOUD_VOXELS - 1)
+    z0 = floor(q.z); z1 = min(z0 + 1.0, f32(CLOUD_VOXELS - 1))
+    base = vec2((kind - floor(kind / 2.0) * 2.0) * f32(CLOUD_SLICE * 8), floor(kind / 2.0) * f32(CLOUD_SLICE * (CLOUD_VOXELS / 8)))
+    a = vec2(z0 - floor(z0 / 8.0) * 8.0, floor(z0 / 8.0)) * f32(CLOUD_SLICE) + q.xy + vec2(1.5, 1.5) + base
+    b = vec2(z1 - floor(z1 / 8.0) * 8.0, floor(z1 / 8.0)) * f32(CLOUD_SLICE) + q.xy + vec2(1.5, 1.5) + base
+    mix(sample(atlas, a / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), sample(atlas, b / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), q.z - z0)
+
+volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
+    ray = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
+    bent = render_world(i.center, u.cam)
+    origin = cloud_to_local(u.cam - bent, i.meta.xy)
+    direction = cloud_to_local(ray, i.meta.xy)
+    reach = length(i.extent.xz)
+    distance_xz = length(i.center.xz - u.cam.xz)
+    pad = world_drop(vec2(distance_xz + reach, 0)) - world_drop(vec2(distance_xz, 0))
+    bounds = i.extent + vec3(0, pad, 0)
+    inv = vec3(1.0 / (if abs(direction.x) < 0.000001: 0.000001 else: direction.x), 1.0 / (if abs(direction.y) < 0.000001: 0.000001 else: direction.y), 1.0 / (if abs(direction.z) < 0.000001: 0.000001 else: direction.z))
+    a = (-bounds - origin) * inv; b = (bounds - origin) * inv
+    lo = min(a, b); hi = max(a, b)
+    enter = max(0.0, max(lo.x, max(lo.y, lo.z)))
+    leave = min(hi.x, min(hi.y, hi.z))
+    # A sampled depth is an endpoint along this pixel's ray, not a cloud layer.
+    depth = sample(u.depth, i.ndc * 0.5 + vec2(0.5, 0.5)).x
+    if depth < 0.9999999:
+        view_depth = u.depth_ab.y / (depth * 2.0 - 1.0 + u.depth_ab.x)
+        leave = min(leave, view_depth / max(dot(ray, u.forward), 0.0001))
+    sea = sea_intersection(ray, u.cam.y)
+    if sea > 0.0: leave = min(leave, sea)
+    if leave <= enter: discard()
+    distance = length(i.center - u.cam)
+    steps = mix(u.steps, 8.0, smoothstep(12000.0, 65000.0, distance))
+    dt = (leave - enter) / steps
+    # Midpoints are stable in world/view space. No frame-random dither/history.
+    t = enter + dt * 0.5
+    trans: f32 = 1.0
+    color = vec3(0, 0, 0)
+    sun = normalize(u.sun_dir)
+    local_sun = cloud_to_local(sun, i.meta.xy)
+    loop step in 0..64:
+        if f32(step) >= steps or trans < 0.008: break
+        world = u.cam + ray * t
+        world.y += world_drop(ray.xz * t)
+        p = cloud_to_local(world - i.center, i.meta.xy) / i.extent
+        form = volume_sample(u.atlas, p, i.meta.z)
+        density = form.w
+        if density > 0.005:
+            normal = cloud_to_world((form.xyz * 2.0 - vec3(1, 1, 1)) / i.extent, i.meta.xy)
+            normal = normal / max(length(normal), 0.000001)
+            under = smoothstep(-0.58, 0.05, p.y)
+            lit = smoothstep(-0.2, 0.6, dot(normal, sun)) * (0.35 + 0.65 * under)
+            if u.shadows > 0.0 and distance < 25000.0:
+                probe = volume_sample(u.atlas, p + local_sun * 0.22, i.meta.z).w
+                lit *= exp(-probe * 2.5)
+            white = u.sun * vec3(1, 0.98, 0.93) * (0.92 + 0.08 * i.meta.w)
+            shade = u.shade * (0.88 + 0.24 * under)
+            light = mix(shade, white, lit)
+            forward = pow(max(dot(ray, sun), 0.0), 12.0)
+            light += u.sun * (forward * 0.28 * (1.0 - density))
+            light = aerial(light, world, u.cam, u.haze, u.fog)
+            opacity = 1.0 - exp(-density * dt * 0.009)
+            color += light * (trans * opacity)
+            trans *= 1.0 - opacity
+        t += dt
+    vec4(color, 1.0 - trans) * (1.0 - smoothstep(125000.0, 150000.0, distance))
+
+volume_sh: Shader
+volume_quad: Mesh
+volume_atlas: Texture
+volume_instances: InstanceBuffer[VolumeInstance]
+volume_visible = 0
+volume_color: RenderTarget
+
+struct VolumeCompositeParams:
+    color: Texture
+    depth: Texture
+    size: vec2
+    depth_ab: vec2
+    sun_uv: vec2
+    shaft_color: vec3
+    shaft_gain: f32
+    shaft_steps: f32
+
+struct VolumeCompositeOut:
+    pos: vec4
+    uv: vec2
+
+volume_composite_vs = (v: VolumeVertex, u: VolumeCompositeParams) -> VolumeCompositeOut:
+    VolumeCompositeOut(vec4(v.corner * 2.0 - vec2(1, 1), 0, 1), v.corner)
+
+volume_view_depth = (d: f32, ab: vec2) -> f32: min(1000000.0, ab.y / min(d * 2.0 - 1.0 + ab.x, -0.0000001))
+
+volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
+    center = volume_view_depth(sample(u.depth, i.uv).x, u.depth_ab)
+    pixel = i.uv * u.size - vec2(0.5, 0.5)
+    base = floor(pixel); f = fract(pixel)
+    color = vec4(0, 0, 0, 0); weight: f32 = 0.0
+    loop k in 0..4:
+        corner = vec2(f32(k % 2), f32(k / 2))
+        uv = (base + corner + vec2(0.5, 0.5)) / u.size
+        depth = volume_view_depth(sample(u.depth, uv).x, u.depth_ab)
+        delta = abs(depth - center) / max(8.0, center * 0.025)
+        # Reject cloud/sky samples across an opaque silhouette. An unresolved
+        # isolated foreground pixel gets no cloud rather than a bright edge leak.
+        w = (if k % 2 == 0: 1.0 - f.x else: f.x) * (if k / 2 == 0: 1.0 - f.y else: f.y) / (1.0 + delta * delta * delta * delta)
+        color += sample(u.color, uv) * w; weight += w
+    result = if weight < 0.0001: vec4(0, 0, 0, 0) else: color / weight
+    if u.shaft_gain > 0.0:
+        # Screen-space crepuscular rays. Both land and the integrated cloud
+        # transmittance occlude them. Bounded taps; no temporal trails/history.
+        light: f32 = 0.0
+        loop k in 0..8:
+            if f32(k) >= u.shaft_steps: break
+            q = mix(i.uv, u.sun_uv, (f32(k) + 0.5) / u.shaft_steps * 0.85)
+            if q.x < 0.0 or q.y < 0.0 or q.x > 1.0 or q.y > 1.0: continue
+            clear = step(0.999999, sample(u.depth, q).x)
+            light += (1.0 - sample(u.color, q).w) * clear / u.shaft_steps
+        path = 1.0 - exp(-center * 0.00025)
+        cone = exp(-dot(i.uv - u.sun_uv, i.uv - u.sun_uv) * 1.8)
+        result = vec4(result.xyz + u.shaft_color * (light * u.shaft_gain * path * cone * (1.0 - result.w)), result.w)
+    result
+
+volume_composite_sh: Shader
+
+init_cloud_volumes = ():
+    global volume_sh, volume_quad, volume_atlas, volume_instances, volume_composite_sh
+    volume_sh = make_shader(shader(volume_vs, volume_fs))
+    volume_composite_sh = make_shader(shader(volume_composite_vs, volume_composite_fs))
+    volume_quad = mesh([VolumeVertex(vec2(0, 0)), VolumeVertex(vec2(1, 0)), VolumeVertex(vec2(0, 1)), VolumeVertex(vec2(1, 1))], [u32(0), u32(1), u32(2), u32(2), u32(1), u32(3)])
+    volume_atlas = load_texture(embed('../assets/clouds.png'), true)
+    empty: VolumeInstance[]
+    volume_instances = instance_buffer(empty)
+
+volume_bounds = (v: CloudVolume, cam: vec3, vp: mat4) -> vec4:
+    lo = vec2(1, 1); hi = vec2(-1, -1)
+    reach = length(v.extent.xz)
+    distance_xz = length(v.center.xz - cam.xz)
+    pad = world_drop(vec2(distance_xz + reach, 0)) - world_drop(vec2(distance_xz, 0))
+    e = v.extent + vec3(0, pad, 0)
+    center = render_world(v.center, cam)
+    yaw = vec2(cos(v.heading), sin(v.heading))
+    loop corner in 0..8:
+        p = center + cloud_to_world(vec3(if corner & 1 == 0: -e.x else: e.x, if corner & 2 == 0: -e.y else: e.y, if corner & 4 == 0: -e.z else: e.z), yaw)
+        clip = vp * vec4(p, 1)
+        if clip.w <= 0.01: return vec4(-1, -1, 1, 1)
+        q = clip.xy / clip.w
+        lo = min(lo, q); hi = max(hi, q)
+    vec4(max(lo, vec2(-1, -1)), min(hi, vec2(1, 1)))
+
+draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
+    global volume_visible, volume_color
+    if not __post_active or cloud_scene_depth.id == 0: return
+    zone("cloud volumes")
+    cam = scene_camera(); vp = scene_view_proj(); planes = __frustum(vp)
+    selected: CloudVolume[]
+    loop v in clouds:
+        center = render_world(v.center, cam)
+        reach = length(v.extent.xz)
+        distance_xz = length(v.center.xz - cam.xz)
+        radius = length(v.extent) + world_drop(vec2(distance_xz + reach, 0)) - world_drop(vec2(distance_xz, 0))
+        visible = true
+        loop plane in planes:
+            if dot(plane.xyz, center) + plane.w < -radius: visible = false; break
+        if visible: selected.push(v)
+    selected.sort_by((v: CloudVolume) -> f64: f64(length(v.center - cam)), descending = true)
+    instances: VolumeInstance[]
+    loop v in selected:
+        rect = volume_bounds(v, cam, vp)
+        if rect.x >= rect.z or rect.y >= rect.w: continue
+        instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone)))
+    volume_visible = instances.len()
+    set_instances(volume_instances, instances)
+    rays = render_rays(vp)
+    steps: f32 = if render_quality.tier == 0: 24.0 else: 40.0
+    p = VolumeParams(rays, cam, normalize(rays[2].xyz), L.sun_dir, L.sun, L.shade, L.haze, f32(L.fog_density), vec2(__proj3[2].z, __proj3[3].z), volume_atlas, cloud_scene_depth, steps, if render_quality.tier == 0: 0.0 else: 1.0)
+    # A color-only half-size target. Scene depth remains attached to the scene
+    # while this DIFFERENT framebuffer samples it, which is legal on WebGL2.
+    w = max(1, cloud_scene_depth.width / 2); h = max(1, cloud_scene_depth.height / 2)
+    if volume_color.texture.width != w or volume_color.texture.height != h:
+        if volume_color.fbo != 0: free_render_target(volume_color)
+        tex = texture(image(w, h), true)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(tex.id), 0)
+        volume_color = RenderTarget(tex, fbo, 0)
+    glBindFramebuffer(GL_FRAMEBUFFER, u32(volume_color.fbo))
+    glViewport(0, 0, i32(w), i32(h))
+    glDisable(GL_DEPTH_TEST); glDepthMask(0)
+    glClearColor(0, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    glDisable(GL_CULL_FACE)
+    draw_instanced(volume_sh, volume_quad, volume_instances, p)
+    # The final full-resolution reconstruction samples scene depth, so swap its
+    # attachment out temporarily. Color and the actual scene depth are preserved.
+    detach_cloud_depth()
+    glViewport(0, 0, i32(cloud_scene_depth.width), i32(cloud_scene_depth.height))
+    sun_clip = vp * vec4(L.sun_dir, 0)
+    sun_uv = sun_clip.xy / max(sun_clip.w, 0.0001) * 0.5 + vec2(0.5, 0.5)
+    shaft = smoothstep(-0.03, 0.05, L.sun_dir.y) * (1.0 - smoothstep(0.15, 0.55, L.sun_dir.y)) * 0.12
+    if sun_clip.w <= 0.0 or sun_uv.x < -0.25 or sun_uv.x > 1.25 or sun_uv.y < -0.25 or sun_uv.y > 1.25: shaft = 0.0
+    draw(volume_composite_sh, volume_quad, VolumeCompositeParams(volume_color.texture, cloud_scene_depth, vec2(f32(w), f32(h)), p.depth_ab, sun_uv, L.sun, shaft, if render_quality.tier == 0: 4.0 else: 8.0))
+    restore_cloud_depth()
+    zone_end()

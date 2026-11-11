@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const {specializeUniforms,chooseTier}=require('../src/web_compat.js');
+const {specializeUniforms,chooseTier,cappedSize}=require('../src/web_compat.js');
 const {audit}=require('./check_web_shaders.cjs');
 const source=`#version 300 es
 precision highp float;
@@ -29,3 +29,11 @@ assert.equal(chooseTier({renderer:'Intel UHD 620'}),1);
 assert.equal(chooseTier({renderer:'NVIDIA',fragmentLimit:224}),0);
 assert.equal(chooseTier({renderer:'NVIDIA',fragmentLimit:1024,textureLimit:8192}),2);
 console.log('Web uniform specialization and quality selection passed');
+
+// Changing the engine's rounded internal scale must not jitter a capped target.
+const cap=cappedSize(2532,1170,844,390,230400);
+assert.deepEqual(cap,[706,326]);
+assert.deepEqual(cappedSize(1266,585,844,390,230400),cap);
+assert.deepEqual(cappedSize(844,390,844,390,230400),cap);
+assert.deepEqual(cappedSize(600,277,844,390,230400),[600,277]);
+assert.deepEqual(cappedSize(1170,2532,390,844,230400),[326,706]);

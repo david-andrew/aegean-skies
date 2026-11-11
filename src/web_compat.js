@@ -87,7 +87,15 @@
     if (/Intel|Iris|UHD|SwiftShader|llvmpipe/i.test(device.renderer)) return 1;
     return 2;
   }
-  root.AegeanWeb = { specializeUniforms, chooseTier };
+  function cappedSize(width,height,cssWidth,cssHeight,maxPixels) {
+    if(width*height <= maxPixels) return [width,height];
+    // Use the stable CSS aspect, not rounded adaptive-resolution dimensions:
+    // one-pixel cap oscillations otherwise recreate every cloud/depth target.
+    const aspect = Math.max(cssWidth,1)/Math.max(cssHeight,1);
+    return [Math.max(1,Math.floor(Math.sqrt(maxPixels*aspect))),
+      Math.max(1,Math.floor(Math.sqrt(maxPixels/aspect)))];
+  }
+  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize };
   if (typeof module !== "undefined") module.exports = root.AegeanWeb;
   if (typeof WebGL2RenderingContext === "undefined") return;
   const mobile = navigator.userAgentData?.mobile || /Android|iPhone|iPad/i.test(navigator.userAgent) ||
@@ -112,8 +120,7 @@
     const originalFit = sloppy.res.fit;
     const fit = () => {
       originalFit();
-      const ratio = Math.min(1, Math.sqrt(maxPixels / Math.max(canvas.width * canvas.height, 1)));
-      const w = Math.max(1, Math.floor(canvas.width * ratio)), h = Math.max(1, Math.floor(canvas.height * ratio));
+      const [w,h] = cappedSize(canvas.width,canvas.height,canvas.clientWidth,canvas.clientHeight,maxPixels);
       if (canvas.width !== w) canvas.width = w;
       if (canvas.height !== h) canvas.height = h;
     };
