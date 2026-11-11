@@ -1,0 +1,304 @@
+# Bounded regular-grid quadtree for the NEW geography. Legacy terrain remains
+# byte-for-byte the original canonical surface, drawn by terrain.jo.
+use 'geography.jo'
+use 'terrain.jo'
+use 'terrain_lod.jo'
+use 'look.jo'
+use 'render_space.jo'
+
+const WORLD_TILE_CELLS = 16
+const WORLD_TILE_SPAN = 224.0
+const WORLD_ROOT_LEVEL = 12
+const WORLD_ROOT_ORIGIN = -458752.0
+const WORLD_CACHE_SLOTS = 512
+const WORLD_ATLAS_COLS = 32
+const WORLD_TILE_PIXELS = 17
+const WORLD_GENERATE_LIMIT = 4
+
+struct WorldTile:
+    key: int = -1
+    x: int
+    z: int
+    level: int
+    used: int = -100
+    born: f64
+    low: f64
+    high: f64
+    lod: f64
+
+struct WorldInstance:
+    origin: vec2
+    texel: vec2
+    state: vec4                    # cell metres, interior morph, level, unused
+    edges: vec4                    # shared absolute levels relative to this tile
+
+world_tiles: WorldTile[]
+world_cache: {int:int} = {}
+world_selected: int[]
+world_frame = 0
+world_generated = 0
+world_uploaded = 0
+world_draws = 0
+world_triangles = 0
+world_clock = 0.0
+world_heights: Texture
+world_materials: Texture
+world_ground_sh: Shader
+
+world_tile_key = (x: int,z: int,level: int) -> int: level * 100000000 + x * 8192 + z
+world_tile_size = (level: int) -> f64: WORLD_TILE_SPAN * f64(1 << level)
+world_tile_origin = (x: int,z: int,level: int) -> (f64,f64):
+    size = world_tile_size(level)
+    (WORLD_ROOT_ORIGIN + f64(x)*size,WORLD_ROOT_ORIGIN + f64(z)*size)
+
+world_possible_land = (x: f64,z: f64,size: f64) -> bool:
+    if x >= WORLD_WIDTH*0.5 or z >= WORLD_DEPTH*0.5 or x+size <= -WORLD_WIDTH*0.5 or z+size <= -WORLD_DEPTH*0.5: return false
+    if x >= -LEGACY_RESERVE and z >= -LEGACY_RESERVE and x+size <= LEGACY_RESERVE and z+size <= LEGACY_RESERVE: return false
+    loop r in LAND_REGIONS:
+        if x <= f64(r.bounds.z)*1000.0+2000.0 and z <= f64(r.bounds.w)*1000.0+2000.0 and x+size >= f64(r.bounds.x)*1000.0-2000.0 and z+size >= f64(r.bounds.y)*1000.0-2000.0: return true
+    if size <= 16000.0:
+        loop bz in int(floor(z/16000.0))..int(floor((z+size)/16000.0))+1:
+            loop bx in int(floor(x/16000.0))..int(floor((x+size)/16000.0))+1:
+                key = (bx+32)*128+bz+32
+                if not (key in island_bins): continue
+                loop k in island_bins[key]:
+                    isl = small_islands[k]
+                    radius = f64(max(isl.radii.x,isl.radii.y))*1.4+500.0
+                    if x <= f64(isl.center.x)+radius and z <= f64(isl.center.y)+radius and x+size >= f64(isl.center.x)-radius and z+size >= f64(isl.center.y)-radius: return true
+    else:
+        loop isl in small_islands:
+            radius = f64(max(isl.radii.x,isl.radii.y))*1.4+500.0
+            if x <= f64(isl.center.x)+radius and z <= f64(isl.center.y)+radius and x+size >= f64(isl.center.x)-radius and z+size >= f64(isl.center.y)-radius: return true
+    false
+
+world_distance = (x: f64,z: f64,size: f64,cam: vec3) -> f64:
+    dx = max(max(x-f64(cam.x),f64(cam.x)-x-size),0.0)
+    dz = max(max(z-f64(cam.z),f64(cam.z)-z-size),0.0)
+    dy = max(f64(cam.y)-3010.0,0.0)
+    sqrt(dx*dx+dz*dz+dy*dy)
+
+world_tile_visible = (x: f64,z: f64,size: f64,cam: vec3,planes: vec4[]) -> bool:
+    center = vec3(f32(x+size*0.5),1475,f32(z+size*0.5))
+    radius = sqrt(size*size*0.5+1535.0*1535.0) + f64(length(center.xz-cam.xz))*size/EARTH_RADIUS + size*size/EARTH_RADIUS + 1.0
+    c = render_world(center,cam)
+    loop p in planes:
+        if f64(dot(p.xyz,c)+p.w) < -radius: return false
+    true
+
+world_upload_tile = (t: Texture,img: Image,slot: int):
+    flush()
+    glBindTexture(GL_TEXTURE_2D,u32(t.id))
+    glPixelStorei(GL_UNPACK_ALIGNMENT,1)
+    gl_tex_sub_image((slot%WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,(slot/WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,WORLD_TILE_PIXELS,WORLD_TILE_PIXELS,GL_RGBA,GL_UNSIGNED_BYTE,data(img.pixels),img.pixels.len())
+
+world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
+    ox,oz = world_tile_origin(x,z,level)
+    cell = 14.0*f64(1<<level)
+    h = image(17,17); m = image(17,17)
+    low = 1e9; high = -1e9
+    loop j in 0..17:
+        loop i in 0..17:
+            wx = ox + f64(i)*cell; wz = oz+f64(j)*cell
+            y = new_land_canonical(wx,wz)
+            low = min(low,y); high = max(high,y)
+            packed = int(round((y+64.0)*4096.0))
+            a = (j*17+i)*4
+            h.pixels[a] = u8(packed & 255)
+            h.pixels[a+1] = u8((packed>>8)&255)
+            h.pixels[a+2] = u8((packed>>16)&255)
+            h.pixels[a+3] = 128
+            # Normals use a fixed world-space footprint at every LOD, so shared
+            # samples keep the same material as neighboring tiles refine.
+            nx = new_land_raw(wx-14.0,wz)-new_land_raw(wx+14.0,wz)
+            nz = new_land_raw(wx,wz-14.0)-new_land_raw(wx,wz+14.0)
+            normal = normalize(vec3(f32(nx),28,f32(nz)))
+            m.set(i,j,vec4(normal.x*0.5+0.5,normal.z*0.5+0.5,f32(noise(wx*0.004+91.0,wz*0.004)),f32(noise(wx*0.0011,wz*0.0011))))
+    world_upload_tile(world_heights,h,slot)
+    world_upload_tile(world_materials,m,slot)
+    WorldTile(world_tile_key(x,z,level),x,z,level,world_frame,world_clock,low,high,f64(level+1))
+
+world_request_tile = (x: int,z: int,level: int) -> int:
+    global world_tiles,world_cache,world_generated,world_uploaded
+    key = world_tile_key(x,z,level)
+    if key in world_cache:
+        slot = world_cache[key]
+        world_tiles[slot].used = world_frame
+        return slot
+    if world_generated >= WORLD_GENERATE_LIMIT: return -1
+    slot = -1; oldest = world_frame-2
+    loop i in 0..WORLD_CACHE_SLOTS:
+        if world_tiles[i].key < 0: slot = i; break
+        if world_tiles[i].level == WORLD_ROOT_LEVEL: continue
+        if world_tiles[i].used < oldest: oldest = world_tiles[i].used; slot = i
+    if slot < 0: return -1
+    if world_tiles[slot].key >= 0: world_cache.remove(world_tiles[slot].key)
+    world_tiles[slot] = world_make_tile(x,z,level,slot)
+    world_cache[key] = slot
+    world_generated += 1
+    world_uploaded += 17*17*8
+    slot
+
+world_visit = (x: int,z: int,level: int,cam: vec3,planes: vec4[]):
+    global world_selected
+    ox,oz = world_tile_origin(x,z,level); size = world_tile_size(level)
+    if not world_possible_land(ox,oz,size) or not world_tile_visible(ox,oz,size,cam,planes): return
+    slot = world_request_tile(x,z,level)
+    if slot < 0: return
+    distance = world_distance(ox,oz,size,cam)
+    if level > 0 and distance < size*1.5:
+        ready = true
+        children: (int,int)[]
+        # Visit the camera's nearest quadrant first, so a teleport or landing
+        # spends its bounded generation budget on nearby contact tiles first.
+        first = (if f64(cam.x) >= ox+size*0.5: 1 else: 0) + (if f64(cam.z) >= oz+size*0.5: 2 else: 0)
+        loop order in 0..4:
+            quadrant = order xor first
+            cx = x*2+(quadrant%2); cz = z*2+(quadrant/2)
+            px,pz = world_tile_origin(cx,cz,level-1)
+            if not world_possible_land(px,pz,size*0.5) or not world_tile_visible(px,pz,size*0.5,cam,planes): continue
+            children.push((cx,cz))
+            if world_request_tile(cx,cz,level-1) < 0: ready = false
+        if ready:
+            loop child in children: world_visit(child.0,child.1,level-1,cam,planes)
+            return
+    world_selected.push(slot)
+
+# Integer base-cell rectangles make adjacency independent of f32 world position.
+world_rect = (t: WorldTile) -> (int,int,int): (t.x*(1<<t.level),t.z*(1<<t.level),1<<t.level)
+world_neighbor_side = (a: WorldTile,b: WorldTile) -> int:
+    ax,az,asize = world_rect(a); bx,bz,bsize = world_rect(b)
+    if az < bz+bsize and az+asize > bz:
+        if ax == bx+bsize: return 0
+        if ax+asize == bx: return 1
+    if ax < bx+bsize and ax+asize > bx:
+        if az == bz+bsize: return 2
+        if az+asize == bz: return 3
+    -1
+
+world_balance = ():
+    global world_selected
+    loop balance_round in 0..WORLD_CACHE_SLOTS:
+        changed = false
+        loop ia in 0..world_selected.len():
+            a = world_tiles[world_selected[ia]]
+            loop ib in 0..world_selected.len():
+                b = world_tiles[world_selected[ib]]
+                if b.level <= a.level+1 or world_neighbor_side(a,b) < 0: continue
+                level = b.level-1
+                x = a.x >> (level-a.level); z = a.z >> (level-a.level)
+                key = world_tile_key(x,z,level)
+                if not (key in world_cache): continue
+                parent = world_cache[key]
+                next: int[]
+                loop slot in world_selected:
+                    c = world_tiles[slot]
+                    if c.level <= level and (c.x>>(level-c.level)) == x and (c.z>>(level-c.level)) == z: continue
+                    next.push(slot)
+                next.push(parent); world_selected = next
+                changed = true
+                break
+            if changed: break
+        if not changed: break
+
+world_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> TerrainSample:
+    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return land_sample(u.heights,u.materials,base+p)
+    a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
+    f = (p-a)/step
+    aa = land_sample(u.heights,u.materials,base+a)
+    bb = land_sample(u.heights,u.materials,base+a+vec2(step,0))
+    cc = land_sample(u.heights,u.materials,base+a+vec2(0,step))
+    dd = land_sample(u.heights,u.materials,base+a+vec2(step,step))
+    if f.x+f.y <= 1.0:
+        return TerrainSample(aa.h+f.x*(bb.h-aa.h)+f.y*(cc.h-aa.h),aa.normal+f.x*(bb.normal-aa.normal)+f.y*(cc.normal-aa.normal),aa.tint+f.x*(bb.tint-aa.tint)+f.y*(cc.tint-aa.tint))
+    TerrainSample(dd.h+(1.0-f.x)*(cc.h-dd.h)+(1.0-f.y)*(bb.h-dd.h),dd.normal+(1.0-f.x)*(cc.normal-dd.normal)+(1.0-f.y)*(bb.normal-dd.normal),dd.tint+(1.0-f.x)*(cc.tint-dd.tint)+(1.0-f.y)*(bb.tint-dd.tint))
+
+world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundOut:
+    p = v.cell*0.5
+    level = inst.state.y
+    if p.x == 0.0: level = max(level,inst.edges.x)
+    if p.x == 16.0: level = max(level,inst.edges.y)
+    if p.y == 0.0: level = max(level,inst.edges.z)
+    if p.y == 16.0: level = max(level,inst.edges.w)
+    level = clamp(level,0.0,3.0)
+    s = pow(2.0,floor(level))
+    fine = world_coarse(u,inst.texel,p,s)
+    sample = fine
+    if fract(level) > 0.0: sample = land_mix(fine,world_coarse(u,inst.texel,p,min(s*2.0,16.0)),fract(level))
+    local = vec3(inst.origin.x+p.x*inst.state.x,sample.h,inst.origin.y+p.y*inst.state.x)
+    absolute = local+u.origin
+    curved = local
+    curved.y -= world_drop(absolute.xz-u.cam.xz)
+    GroundOut(u.view_proj*vec4(curved,1),absolute,normalize(sample.normal),sample.tint)
+
+world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+    # Coarse fallback triangles may cross empty space while streaming. Never
+    # let them cover the preserved archipelago, including its seabed apron.
+    if abs(i.world.x) < 20000.0 and abs(i.world.z) < 20000.0: discard()
+    if abs(i.world.x) >= 250000.0 or abs(i.world.z) >= 200000.0: discard()
+    # Haze saturation is an explicit <=0.001 linear-color error bound. Keep
+    # geometry/depth and horizon occlusion, skip invisible material detail.
+    transmission = exp(-length(i.world-u.cam)*u.fog*exp(-max(min(i.world.y,u.cam.y),0.0)*0.0012))
+    if transmission < 0.001:
+        if behind_sea(i.world,u.cam): discard()
+        return vec4(u.haze,1)
+    ground_fs(i,u)
+
+init_world_terrain = ():
+    global world_tiles,world_heights,world_materials,world_ground_sh
+    world_tiles = [loop i in 0..WORLD_CACHE_SLOTS: WorldTile()]
+    world_heights = texture(image(32*17,16*17),false)
+    world_materials = texture(image(32*17,16*17),false)
+    world_ground_sh = make_shader(shader(world_vertex,world_fragment))
+
+world_edge_state = (slot: int) -> (vec4,int):
+    node = world_tiles[slot]
+    edges = vec4(f32(node.lod),f32(node.lod),f32(node.lod),f32(node.lod))
+    mask = 0
+    loop other in world_selected:
+        if other == slot: continue
+        nb = world_tiles[other]
+        side = world_neighbor_side(node,nb)
+        if side < 0: continue
+        e = f32(max(node.lod,nb.lod))
+        match side:
+            0: edges.x = max(edges.x,e)
+            1: edges.y = max(edges.y,e)
+            2: edges.z = max(edges.z,e)
+            _: edges.w = max(edges.w,e)
+        if nb.level < node.level: mask = mask | (1<<side)
+    (edges,mask)
+
+draw_world_terrain = (L: Light,t: f64):
+    global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_draws,world_triangles
+    if not geography_enabled: return
+    zone("world terrain")
+    world_frame += 1; world_clock = t; world_generated = 0; world_uploaded = 0
+    cam = scene_camera(); vp = scene_view_proj(); planes = land_planes(vp)
+    world_selected = []
+    world_visit(0,0,WORLD_ROOT_LEVEL,cam,planes)
+    world_balance()
+    loop slot in world_selected:
+        node = world_tiles[slot]
+        ox,oz = world_tile_origin(node.x,node.z,node.level); size = world_tile_size(node.level)
+        distance = world_distance(ox,oz,size,cam)
+        transition = clamp(distance/(size*1.5)-1.0,0.0,1.0)
+        birth = clamp((t-node.born)*2.0,0.0,1.0)
+        node.lod = f64(node.level)+max(transition,1.0-birth)
+        world_tiles[slot] = node
+    origin = render_origin(cam)
+    batches: WorldInstance[][] = [loop i in 0..16: []]
+    loop slot in world_selected:
+        node = world_tiles[slot]
+        edges,mask = world_edge_state(slot)
+        ox,oz = world_tile_origin(node.x,node.z,node.level)
+        batches[mask].push(WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),0),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level))))
+    params = GroundParams(vp*translation(origin),cam,L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),0),wind_now.drift,origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
+    world_draws = 0; world_triangles = 0
+    loop i in 0..16:
+        if batches[i].len() == 0: continue
+        grid = terrain_grids[16+i]
+        draw_instanced(world_ground_sh,grid,batches[i],params)
+        world_draws += 1; world_triangles += grid.index_count/3*batches[i].len()
+    if env("AEGEAN_LOD_STATS") != none and world_frame%60 == 1:
+        print("WORLD tiles={world_selected.len()} cache={world_cache.len()}/{WORLD_CACHE_SLOTS} generated={world_generated} upload={world_uploaded} draws={world_draws} triangles={world_triangles}")
+    zone_end()
