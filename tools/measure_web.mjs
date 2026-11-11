@@ -1,15 +1,20 @@
 // The web build in headless Chromium: load the page, let it run, save a screenshot and print what
 // the page logged (errors included).
-// usage: node tools/webshot.mjs chrome page.html out.png [seconds] [query]
+// Optional WEBSHOT_GPU=native probes headless ANGLE/Vulkan instead of SwiftShader.
+// usage: node tools/measure_web.mjs chrome page.html out.png [seconds] [query]
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const [chrome, page, out, secs = "6", query = ""] = process.argv.slice(2);
+readFileSync(page); // Fail before opening Chromium when the requested build is missing.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dir = mkdtempSync(join(process.env.WEBSHOT_TMP || tmpdir(), "webshot-"));
-const b = spawn(chrome, ["--headless=new", "--allow-file-access-from-files", "--mute-audio", "--renderer-process-limit=1", "--no-sandbox", "--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--window-size=1280,720", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+const gpuFlags = process.env.WEBSHOT_GPU === "native"
+  ? ["--use-angle=vulkan", "--enable-features=Vulkan", "--disable-vulkan-surface"]
+  : ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"];
+const b = spawn(chrome, ["--headless=new", "--allow-file-access-from-files", "--mute-audio", "--renderer-process-limit=1", "--no-sandbox", ...gpuFlags, "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--window-size=1280,720", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
 let err = "";
 b.stderr.on("data", (d) => { err += d; });
 const t0 = Date.now();
