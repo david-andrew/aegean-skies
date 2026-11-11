@@ -1,0 +1,193 @@
+# Owned physical goods, provenance and custody projections. No renderer or world generator.
+use 'living_types.jo'
+
+cargo_key = (store: CargoStore, holder: int, good: int) -> str: "{int(store)}:{holder}:{good}"
+
+cargo_stock = (w: World, store: CargoStore, holder: int, good: int) -> int:
+    total = 0
+    loop id in w.cargo_bins.get(cargo_key(store, holder, good), []):
+        if id in w.cargo: total += w.cargo[id].quantity
+    total
+
+cargo_ids = (w: World, store: CargoStore, holder: int, good: int) -> int[]:
+    w.cargo_bins.get(cargo_key(store, holder, good), [])
+
+cargo_anchor = (w: World, place: int) -> vec3:
+    if place >= 0 and place < w.cargo_harbors.len(): w.cargo_harbors[place].warehouse else: vec3(0, 1.2, 0)
+
+cargo_grams = (w: World, lot: CargoLot) -> int:
+    if lot.good < 0: lot.grams * lot.quantity else: lot.quantity * w.goods[lot.good].package_grams / 1000
+
+cargo_insert = (w: mut World, lot: CargoLot) -> int:
+    c = lot; c.id = w.next_cargo; w.next_cargo += 1
+    w.cargo[c.id] = c
+    key = cargo_key(c.store, c.holder, c.good)
+    w.cargo_bins[key].push(c.id)
+    c.id
+
+cargo_remove = (w: mut World, id: int):
+    if not (id in w.cargo): return
+    c = w.cargo[id]
+    key = cargo_key(c.store, c.holder, c.good)
+    w.cargo_bins[key].remove(id)
+    w.cargo.remove(id)
+
+# Only opening stock, named production and imports call this. Posting/claiming never does.
+cargo_mint = (w: mut World, store: CargoStore, holder: int, good: int, quantity: int, owner: int, place: int, origin: CargoOrigin, grams: int = 0) -> int:
+    if quantity <= 0: return -1
+    key = "{int(origin)}:{int(store)}:{holder}:{good}:{owner}:{day_index(w.minute)}"
+    source = w.cargo_source_keys.get(key, -1)
+    if source < 0:
+        source = w.next_cargo_source; w.next_cargo_source += 1
+        w.cargo_sequence += 1
+        w.cargo_sources[source] = CargoSource(source, good, 0, if origin == .opening: -1 else: w.tick, w.cargo_sequence, origin, owner)
+        w.cargo_source_keys[key] = source
+    w.cargo_sources[source].issued += quantity
+    # Bulk stock can coalesce within the same actual source; portable/job crates never do.
+    loop id in cargo_ids(w, store, holder, good):
+        c = w.cargo[id]
+        if c.source == source and c.job < 0 and c.owner == owner and c.where == .warehouse:
+            w.cargo[id].quantity += quantity
+            return id
+    where = if store == .aircraft: CargoWhere.aircraft else: if store == .boat: CargoWhere.boat else: CargoWhere.warehouse
+    cargo_insert(w, CargoLot(source = source, good = good, quantity = quantity, grams = grams, owner = owner, store = store, holder = holder, where = where, place = place, pos = cargo_anchor(w, place)))
+
+# Split preserves the root's issue date and beneficial ownership; no inventory quantity changes.
+cargo_split = (w: mut World, id: int, quantity: int) -> int:
+    if not (id in w.cargo) or quantity <= 0 or quantity > w.cargo[id].quantity: return -1
+    if quantity == w.cargo[id].quantity: return id
+    c = w.cargo[id]; c.quantity = quantity
+    w.cargo[id].quantity -= quantity
+    cargo_insert(w, c)
+
+# Mirror a validated aggregate transfer. Job=-2 selects any lot (confiscation/salvage),
+# -1 selects unpromised goods. Identity follows the actual lot, including stolen earmarks.
+cargo_move = (w: mut World, from: CargoStore, source: int, to: CargoStore, destination: int, good: int, quantity: int, owner: int, place: int, job: int = -1) -> bool:
+    if w.cargo_version == 0 or quantity == 0: return true
+    ids = cargo_ids(w, from, source, good)
+    available = 0
+    loop id in ids:
+        if job == -2 or w.cargo[id].job == job: available += w.cargo[id].quantity
+    if available < quantity: return false
+    left = quantity
+    loop id in ids:
+        if left <= 0: break
+        c = w.cargo[id]
+        if job != -2 and c.job != job: continue
+        n = min(left, c.quantity)
+        moved = cargo_split(w, id, n)
+        c = w.cargo[moved]
+        w.cargo_bins[cargo_key(c.store, c.holder, c.good)].remove(moved)
+        c.store = to; c.holder = destination; c.place = place; c.person = -1
+        if owner >= 0 and (owner != c.owner or to == .pocket): c.job = -1
+        if owner >= 0: c.owner = owner
+        c.where = if to == .aircraft: CargoWhere.aircraft else: if to == .boat: CargoWhere.boat else: CargoWhere.warehouse
+        c.pos = cargo_anchor(w, place)
+        if to == .aftermath:
+            c.where = .quay; c.pos = w.aftermath[destination].pos
+        w.cargo[moved] = c
+        w.cargo_bins[cargo_key(to, destination, good)].push(moved)
+        left -= n
+    true
+
+# Consumption prefers unpromised goods, then assigns any unavoidable loss to the real lot.
+cargo_consume = (w: mut World, store: CargoStore, holder: int, good: int, quantity: int):
+    if w.cargo_version == 0 or quantity <= 0: return
+    left = quantity
+    loop reserved in [false, true]:
+        ids = cargo_ids(w, store, holder, good)
+        loop id in ids:
+            if left <= 0: break
+            c = w.cargo[id]
+            if (c.job >= 0) != reserved: continue
+            n = min(left, c.quantity)
+            w.cargo_sources[c.source].consumed += n
+            w.cargo[id].quantity -= n; left -= n
+            if w.cargo[id].quantity == 0: cargo_remove(w, id)
+    assert(left == 0)
+
+cargo_reserve_job = (w: mut World, job: int) -> bool:
+    j = w.jobs[job]
+    if j.cargo_mode == .none: return true
+    good = if j.cargo_mode == .sealed: -1 else: j.good
+    store = if j.loaded: CargoStore.aircraft else: CargoStore.market
+    holder = if j.loaded: w.people[j.carrier].craft else: j.origin
+    available = 0
+    ids = cargo_ids(w, store, holder, good)
+    loop id in ids:
+        if w.cargo[id].job < 0 and (good >= 0 or w.cargo[id].owner == j.poster): available += w.cargo[id].quantity
+    if available < j.quantity: return false
+    w.cargo_sequence += 1; w.jobs[job].cargo_sequence = w.cargo_sequence
+    left = j.quantity
+    loop id in ids:
+        if left == 0: break
+        c = w.cargo[id]
+        if c.job >= 0 or (good < 0 and c.owner != j.poster): continue
+        capacity = if good < 0: 1 else: max(1, 25000 * 1000 / w.goods[good].package_grams)
+        remaining = min(left, c.quantity)
+        loop remaining > 0:
+            n = min(remaining, capacity)
+            crate = cargo_split(w, id, n)
+            w.cargo[crate].job = job; w.cargo[crate].owner = j.poster
+            if not j.loaded: w.cargo[crate].where = .warehouse
+            w.jobs[job].cargo_ids.push(crate)
+            root = w.cargo[crate].source
+            w.jobs[job].source_quantities[root] = w.jobs[job].source_quantities.get(root, 0) + n
+            left -= n; remaining -= n
+            if crate == id: break
+    w.jobs[job].pickup = cargo_anchor(w, j.origin)
+    w.jobs[job].dropoff = cargo_anchor(w, j.destination)
+    left == 0
+
+cargo_initialize = (w: mut World):
+    if w.cargo_version != 0: return
+    loop p in 0..w.harbors.len():
+        h = w.harbors[p]
+        a = h.center - h.out * 8.0 + vec3(-h.out.z, 0, h.out.x)
+        a.y = 1.2
+        w.cargo_harbors.push(CargoHarbor(a, [a, h.center + vec3(0, 1.2, 0)], [], h.center + h.out * 15.0 + vec3(0, 1.2, 0)))
+    loop p in w.places:
+        loop g in 0..GOOD_COUNT: cargo_mint(w, .market, p.id, g, p.market.inventory.qty[g], p.market_owner, p.id, .opening)
+    loop p in w.people:
+        loop g in 0..GOOD_COUNT: cargo_mint(w, .pocket, p.id, g, p.pocket.qty[g], p.id, p.place, .opening)
+        # Existing business correspondence, before any job asks to carry it.
+        cargo_mint(w, .market, p.home, -1, 3, p.id, p.home, .opening, 5000)
+    loop c in w.aircraft:
+        loop g in 0..GOOD_COUNT: cargo_mint(w, .aircraft, c.id, g, c.cargo.qty[g], c.owner, c.place, .opening)
+    w.cargo_version = 1
+    loop id in w.active_jobs:
+        if w.jobs[id].loaded and w.jobs[id].cargo_mode == .sealed:
+            cargo_mint(w, .aircraft, w.people[w.jobs[id].carrier].craft, -1, w.jobs[id].quantity, w.jobs[id].poster, w.jobs[id].origin, .opening, w.jobs[id].sealed_grams)
+        assert(cargo_reserve_job(w, id))
+
+cargo_inventory_errors = (w: World) -> str[]:
+    result: str[]
+    if w.cargo_version != 1: return ["cargo content requires migration"]
+    loop p in w.places:
+        loop g in 0..GOOD_COUNT:
+            if cargo_stock(w, .market, p.id, g) != p.market.inventory.qty[g]: result.push("market {p.id} cargo partition {g}")
+    loop p in w.people:
+        loop g in 0..GOOD_COUNT:
+            if cargo_stock(w, .pocket, p.id, g) != p.pocket.qty[g]: result.push("person {p.id} cargo partition {g}")
+    loop c in w.aircraft:
+        loop g in 0..GOOD_COUNT:
+            if cargo_stock(w, .aircraft, c.id, g) != c.cargo.qty[g]: result.push("aircraft {c.id} cargo partition {g}")
+    loop id, a in w.aftermath:
+        loop g in 0..GOOD_COUNT:
+            if cargo_stock(w, .aftermath, id, g) != a.inventory.qty[g]: result.push("salvage {id} cargo partition {g}")
+    loop id, inv in w.lost_property:
+        loop g in 0..GOOD_COUNT:
+            if cargo_stock(w, .lost_property, id, g) != inv.qty[g]: result.push("property {id} cargo partition {g}")
+    loop id, lot in w.cargo:
+        if id != lot.id or lot.quantity <= 0 or not (lot.source in w.cargo_sources): result.push("cargo {id} identity/source")
+        else if w.cargo_sources[lot.source].good != lot.good: result.push("cargo {id} changed contents")
+        if lot.owner < 0 or lot.owner >= w.people.len(): result.push("cargo {id} owner")
+        if lot.where == .person and (lot.person < 0 or lot.person >= w.people.len() or w.people[lot.person].carrying != id): result.push("cargo {id} carrier")
+    loop id, job in w.jobs:
+        if job.cargo_mode == .none: continue
+        total = 0
+        loop source, qty in job.source_quantities:
+            total += qty
+            if not (source in w.cargo_sources) or w.cargo_sources[source].sequence >= job.cargo_sequence: result.push("job {id} cargo did not predate agreement")
+        if total != job.quantity: result.push("job {id} cargo provenance quantity")
+    result
