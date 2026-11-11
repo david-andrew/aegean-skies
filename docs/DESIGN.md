@@ -210,3 +210,19 @@ A small, complete living archipelago:
 - headless tests over many seeds: within two game hours of the start, someone is in the air on a
   route that crosses the start harbor's lane for a reason someone can say; in thirty days the
   books balance and nothing is stuck; the pirates raid at least once and are answered
+
+## Backlog
+
+Things agreed to build, roughly in the order they'll come:
+
+- Clouds closer to the Porco Rosso references, and an atmosphere to go with them: scattering
+  (distance going blue, the sun's warmth low in the sky, shafts of light), haze over the islands.
+  Plan in docs/research/longrange_clouds.md.
+- The archipelago scaled with the aircraft's speed (islands farther apart and larger, local detail
+  unchanged): in progress.
+- Bailing out under a parachute, brought over from Sky Barons: from a damaged or falling aircraft
+  the pilot jumps (seat freed, thrown clear with the aircraft's velocity), falls, the chute opens,
+  drifts down on the wind, and lands on foot on land or swims in the sea; the wreck goes on
+  without them. See docs/SKYBARONS_REUSE.md, "Bailouts and parachutes".
+- More vessels on the water (above).
+- Paint shop and markings; sandbox settings (above).
