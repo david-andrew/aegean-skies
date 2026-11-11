@@ -3,6 +3,8 @@
 # all the time; their volumes follow what the player is near and doing.
 
 use 'airsound.jo'
+use 'aircraft_catalog.jo'
+from 'planes.jo' import Craft, aircraft_profile
 
 # a loop of noise passed through a one-pole low-pass (cut: 0..1, lower is deeper), its loudness
 # rising and falling `swells` times over its length (a surf's breathing)
@@ -26,11 +28,12 @@ _noise_loop = (seconds: f64, cut: f64, swells: f64, depth: f64, seed: int) -> So
 
 # a radial engine: a beat of firing pulses (each a short, rough thump) with a low drone under it.
 # At pitch 1 it beats 30 times a second; set_pitch turns it up with the throttle.
-engine_loop = () -> Sound:
+engine_loop = (voice: EngineVoice = .radial) -> Sound:
+    timbre = ENGINE_TIMBRES[int(voice)]
     seed_random(3)
     n = MIX_RATE                    # one second
     out = fill(f32(0), n * 2)
-    beat = 30.0
+    beat = timbre.firing
     rough = 0.0
     loop i in 0..n:
         t = f64(i) / f64(MIX_RATE)
@@ -39,9 +42,11 @@ engine_loop = () -> Sound:
         k = int(ph) % 7
         loud = 0.75 + 0.25 * f64((k * 5) % 7) / 6.0
         rough += (random(-1.0, 1.0) - rough) * 0.35
-        pulse = exp(-f * 9.0) * (0.6 * sin(f * 26.0) + 0.5 * rough) * loud
+        pulse = exp(-f * timbre.pulse_decay) * (0.6 * sin(f * 26.0) + timbre.roughness * rough) * loud
         drone = 0.22 * sin(t * TAU * beat * 0.5) + 0.12 * sin(t * TAU * beat * 2.0)
-        v = f32((pulse * 0.7 + drone) * 0.6)
+        pair = if timbre.beating > 0: 0.12 * sin(t * TAU * (beat + timbre.beating)) else: 0.0
+        chop = if voice == .rotary: 0.85 + 0.15 * cos(t * TAU * 4.0) else: 1.0
+        v = f32((pulse * 0.7 + drone + pair) * 0.6 * chop)
         out[i * 2] = v
         out[i * 2 + 1] = v
     Sound(out)
@@ -50,12 +55,13 @@ engine_loop = () -> Sound:
 # blades passing about 72 times a second at pitch 1, a rasp of harmonics up to a couple of kHz,
 # wavering a little), the exhaust's beat under it, fainter than from the cockpit. One second, so
 # every part loops clean.
-engine_outside_loop = () -> Sound:
+engine_outside_loop = (voice: EngineVoice = .radial) -> Sound:
+    timbre = ENGINE_TIMBRES[int(voice)]
     seed_random(5)
     n = MIX_RATE
     out = fill(f32(0), n * 2)
-    beat = 30.0
-    blade = 72.0
+    beat = timbre.firing
+    blade = timbre.blades
     rough = 0.0
     loop i in 0..n:
         t = f64(i) / f64(MIX_RATE)
@@ -64,11 +70,14 @@ engine_outside_loop = () -> Sound:
         wob = 0.25 * sin(t * TAU * 3.0) + 0.15 * sin(t * TAU * 7.0)
         buzz = 0.0
         loop k in 1..22:
-            buzz += sin(t * TAU * blade * f64(k) + wob * f64(k) * 0.3 + f64(k * k) * 0.7) / pow(f64(k), 0.85)
+            ph0 = t * TAU * blade * f64(k) + wob * f64(k) * 0.3 + f64(k * k) * 0.7
+            wave = sin(ph0)
+            if timbre.beating > 0: wave = 0.5 * (wave + sin(ph0 + t * TAU * timbre.beating * f64(k)))
+            buzz += wave / pow(f64(k), if voice == .inline: 1.05 else: 0.85)
         ph = t * beat
         f = ph - floor(ph)
         rough += (random(-1.0, 1.0) - rough) * 0.5
-        bark = exp(-f * 11.0) * (0.5 * sin(f * 30.0) + 0.5 * rough)
+        bark = exp(-f * timbre.pulse_decay) * (0.5 * sin(f * 30.0) + timbre.roughness * rough)
         v = f32((buzz * 0.11 * (0.8 + 0.2 * exp(-f * 4.0)) + bark * 0.3) * 1.15)
         out[i * 2] = v
         out[i * 2 + 1] = v
@@ -168,6 +177,8 @@ struct Audio:
     splash: Sound = Sound([])
     crunch: Sound = Sound([])
     engine: int = -1
+    engine_voice: EngineVoice = .radial
+    engine_loops: Sound[]
     wind: int = -1
     surf: int = -1
     gulls: Sound[]
@@ -175,7 +186,8 @@ struct Audio:
 
 start_audio = () -> Audio:
     a = Audio()
-    a.engine = play(engine_loop(), 0.0, looping = true)
+    a.engine_loops = [loop i in 0..4: engine_loop(EngineVoice(i))]
+    a.engine = play(a.engine_loops[int(a.engine_voice)], 0.0, looping = true)
     a.wind = play(make_rush(), 0.0, looping = true)
     a.whistle = play(make_singing(), 0.0, looping = true)
     a.flap = play(make_flap(), 0.0, looping = true)
@@ -205,14 +217,19 @@ engine_note = (throttle: f64, speed: f64) -> f64:
 
 # each frame: the engine (0 when stopped; throttle 0..1), the speed through the air, how near the
 # nearest shore is (meters), and where the listener is (for gulls)
-update_audio = (a: mut Audio, dt: f64, engine_on: bool, throttle: f64, airspeed: f64, shore: f64, near_town: bool, listener: vec3):
+update_audio = (a: mut Audio, dt: f64, engine_on: bool, throttle: f64, airspeed: f64, shore: f64, near_town: bool, listener: vec3, kind: Craft = .gull):
+    profile = aircraft_profile(kind)
+    if a.engine_voice != profile.voice and a.engine_loops.len() == 4:
+        if a.engine >= 0: stop(a.engine)
+        a.engine_voice = profile.voice
+        a.engine = play(a.engine_loops[int(profile.voice)], 0.0, looping = true)
     if a.engine >= 0:
         # (the engine leads: louder than the air at cruise, level with it at the top speed)
         # (louder with the throttle and a little with the speed; its note rising with both: a
         # fixed propeller turns faster in a dive, throttled back or not)
         lv = 0.22 + 0.33 * throttle + 0.12 * clamp(airspeed / 85.0, 0.0, 1.4)
         set_volume(a.engine, if engine_on: lv else: 0.0)
-        set_pitch(a.engine, engine_note(throttle, airspeed))
+        set_pitch(a.engine, engine_note(throttle, airspeed) * profile.tone)
     if a.wind >= 0:
         # (the air's howl rises in pitch and grows with the speed; more layers join it in
         # airframe_sounds)
