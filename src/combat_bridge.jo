@@ -1,0 +1,71 @@
+# Thin scene adapter. Combat never owns money, cargo, identities or rescue policy.
+use 'combat.jo'
+use 'flight.jo'
+import 'living_types.jo' as living
+import 'living_pirates.jo' as raids
+
+combat_owns = (b: Battle,craft: int) -> bool:
+    i=combat_index(b,craft)
+    b.enabled and i>=0 and not b.actors[i].external and b.actors[i].status!=.escaped
+
+register_combat_body = (b: mut Battle,w: living.World,craft: int,spec: CraftSpec,state: CraftState,human: bool = false) -> int:
+    i=combat_index(b,craft)
+    if i>=0:
+        b.actors[i].spec=spec
+        return i
+    if b.actors.len()>=COMBAT_MAX_CRAFT:return -1
+    c=w.aircraft[craft];person=if c.operator>=0:c.operator else:c.owner
+    traits=w.people[person].traits
+    role=if w.people[person].occupation==.patrol or w.people[person].occupation==.pirate:CombatRole.fighter else:CombatRole.flee
+    a=Combatant(craft,person,if human:0 else:100+max(0,w.people[person].faction),spec,state,
+        pilot=CombatPilot(skill=0.45+f64(traits.boldness)*0.00045,nerve=f64(traits.boldness)/1000.0,role=role),external=true,human=human,previous=state.position,model=c.model_index,rally=state.position)
+    b.actors.push(a)
+    b.actors.len()-1
+
+# Bind only when both aircraft already have physical leases. Mixed/abstract encounters retain
+# their existing world owner; entering a camera view cannot duplicate a raid or reroll it.
+bind_scene_engagements = (b: mut Battle,w: mut living.World) -> int[]:
+    raids.begin_encounters(w)
+    physical:int[]
+    ids=w.encounters.keys();ids.sort()
+    loop id in ids:
+        encounter=w.encounters[id]
+        if encounter.resolved:continue
+        rc=w.trips[encounter.raider_trip].craft;vc=w.trips[encounter.victim_trip].craft
+        if w.aircraft[rc].move_owner!=.scene or w.aircraft[vc].move_owner!=.scene:continue
+        r=combat_index(b,rc);v=combat_index(b,vc)
+        if r<0 or v<0:continue
+        physical.push(id)
+        if b.actors[r].engagement==id:continue
+        b.center=(b.actors[r].state.position+b.actors[v].state.position)*0.5
+        loop i in [r,v]:
+            b.actors[i].engagement=id
+            b.actors[i].rally=b.center
+            if b.actors[i].human:continue
+            b.actors[i].external=false;b.actors[i].gun.locked=false;b.actors[i].status=.flying
+            b.actors[i].pilot.role=if i==r:CombatRole.fighter else:CombatRole.flee
+            b.actors[i].pilot.mode=.regroup;b.actors[i].pilot.brain_tick=-1
+        b.actors[r].side=3;b.actors[v].side=1
+    physical
+
+resolve_scene_engagements = (b: mut Battle,w: mut living.World,physical: int[]):
+    loop id in physical:
+        if w.encounters[id].resolved:continue
+        e=w.encounters[id];rc=w.trips[e.raider_trip].craft;vc=w.trips[e.victim_trip].craft
+        r=combat_index(b,rc);v=combat_index(b,vc)
+        if r<0 or v<0:continue
+        done=b.actors[r].status!=.flying or b.actors[v].status!=.flying
+        if not done and w.tick-e.started_tick>60*240:
+            if not b.actors[r].human:b.actors[r].pilot.role=.flee
+            if not b.actors[v].human:b.actors[v].pilot.role=.flee
+        if not done:continue
+        # Physical hits were already committed. No abstract damage, loot teleport or second roll.
+        if raids.commit_encounter(w,id,w.aircraft[rc].revision,w.aircraft[vc].revision,false):
+            loop i in [r,v]:
+                if b.actors[i].status==.flying and not b.actors[i].human:
+                    b.actors[i].external=true;b.actors[i].gun.locked=true;b.actors[i].pilot.trigger=false
+
+# A serialized Battle is the physical extension for the war coordinator. Outcome serials are
+# monotonically increasing; take_combat_outcomes transfers their ownership to that coordinator.
+# In particular, bailed/landed carry the SAME person ID and the actual descent position. Rescue
+# must consume those, not move the person to a convenient harbor while still under a canopy.

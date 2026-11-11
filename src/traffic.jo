@@ -3,6 +3,8 @@ use 'world.jo'
 use 'look.jo'
 use 'planes.jo'
 use 'flight.jo'
+use 'combat.jo'
+use 'combat_bridge.jo'
 use 'objects.jo'
 use 'pilot.jo'
 use 'sea.jo'
@@ -35,6 +37,7 @@ struct Traffic:
     waypoint = 1
     route_key: u64 = u64(0)
     why_minute = -1
+    combat_damage = false
 
 # Original model indices 0..7 stay stable; the four extra seed liveries are appended in aegean.
 traffic_model = (craft: int) -> int: [0, 5, 8, 9, 2, 10, 11, 9][craft]
@@ -159,7 +162,7 @@ sync_living_player = (player: mut Flyer, w: living.World):
     if abs(player.state.hull_damage - (1.0 - f64(c.hull) / 1000.0)) > 0.001: player.state.hull_damage = 1.0 - f64(c.hull) / 1000.0
     if abs(player.state.engine_damage - (1.0 - f64(c.engine) / 1000.0)) > 0.001: player.state.engine_damage = 1.0 - f64(c.engine) / 1000.0
 
-_player_motion = (w: mut living.World, state: CraftState, before: data.Pose, before_fuel: int, alpha: f64):
+_player_motion = (w: mut living.World, state: CraftState, before: data.Pose, before_fuel: int, alpha: f64, progress: bool = true, recover: bool = true):
     c = w.people[w.player].craft
     if w.aircraft[c].move_owner != .scene: return
     rotation = if dot(before.rot, state.orientation) < 0: -state.orientation else: state.orientation
@@ -169,7 +172,7 @@ _player_motion = (w: mut living.World, state: CraftState, before: data.Pose, bef
     phase: data.CraftState = if state.moored: data.CraftState.moored else: if state.on_water: data.CraftState.taxi else: data.CraftState.airborne
     hull = min(w.aircraft[c].hull, max(0, int(round((1.0 - state.hull_damage) * 1000.0))))
     engine = min(w.aircraft[c].engine, max(0, int(round((1.0 - state.engine_damage) * 1000.0))))
-    assert(scene.scene_motion(w, c, w.aircraft[c].revision, pose, fuel, hull, engine, phase) >= 0)
+    assert(scene.scene_motion(w, c, w.aircraft[c].revision, pose, fuel, hull, engine, phase,progress,recover) >= 0)
     if state.moored and alpha >= 1.0 and w.aircraft[c].trip >= 0:
         loop p in 0..w.harbors.len():
             loop d in 0..w.harbors[p].docks.len():
@@ -184,6 +187,7 @@ struct SceneFlightSnapshot:
     waypoint: int
     route_key: u64
     trip: int
+    combat_damage = false
 
 start_traffic_plan = (tr: mut Traffic, w: living.World):
     t = w.trips[tr.trip]; h = w.harbors[t.destination]
@@ -222,6 +226,7 @@ _acquire_traffic = (tr: mut Traffic, w: mut living.World, adapter: mut scene.Sce
         if snapshot is SceneFlightSnapshot and snapshot.trip == tr.trip:
             tr.state = snapshot.state; tr.plan = snapshot.plan
             tr.waypoint = snapshot.waypoint; tr.route_key = snapshot.route_key
+            tr.combat_damage = snapshot.combat_damage
     w.aircraft[tr.craft].scene_extension = ""; w.aircraft[tr.craft].scene_extension_tick = -1
 
 # Include the controller's real outer approach fix when folding. Otherwise an abstract craft
@@ -293,25 +298,32 @@ _traffic_berth = (tr: mut Traffic, w: mut living.World):
     tr.town = place; tr.dock = dock
     w.trips[id].claimed_dock = dock
 
-_step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv):
+_step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: bool = true):
     c = w.aircraft[tr.craft]
     if c.trip < 0: return
     # Mixed abstract encounters can damage/resolve this body at a minute boundary.
     if c.fuel_ml + 1 < int(round(tr.state.fuel * 1000.0)): tr.state.fuel = f64(c.fuel_ml) / 1000.0
-    _impose_condition(tr.state, tr.spec, c.hull, c.engine)
-    tr.state.hull_damage = max(tr.state.hull_damage, 1.0 - f64(c.hull) / 1000.0)
-    tr.state.engine_damage = max(tr.state.engine_damage, 1.0 - f64(c.engine) / 1000.0)
+    # Keep actual bullet/part damage while this body retains its scene lease. Reapplying the
+    # legacy nonlinear wear map here would heal bullet damage on the first return-to-route tick.
+    if not tr.combat_damage or tr.state.moored:
+        _impose_condition(tr.state, tr.spec, c.hull, c.engine)
+        tr.state.hull_damage = max(tr.state.hull_damage, 1.0 - f64(c.hull) / 1000.0)
+        tr.state.engine_damage = max(tr.state.engine_damage, 1.0 - f64(c.engine) / 1000.0)
     _traffic_berth(tr, w)
     controls = traffic_controls(tr, w, e)
     step(tr.spec, tr.state, controls, e, 1.0 / 60.0)
     tr.prop_angle += (8.0 + 70.0 * tr.state.throttle) / 60.0
+    if commit:_commit_traffic(tr,w)
+
+_commit_traffic = (tr: mut Traffic,w: mut living.World,arrival: bool = true):
+    c=w.aircraft[tr.craft]
     phase: data.CraftState = if tr.state.on_water: (if tr.plan.phase == .takeoff: data.CraftState.taxi else: data.CraftState.approach) else: data.CraftState.airborne
     fuel = min(c.fuel_ml, max(0, int(round(tr.state.fuel * 1000.0))))
     hull = min(c.hull, max(0, int(round((1.0 - tr.state.hull_damage) * 1000.0))))
     engine = min(c.engine, max(0, int(round((1.0 - tr.state.engine_damage) * 1000.0))))
-    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position, vel = tr.state.velocity, rot = tr.state.orientation, throttle = int(round(tr.state.throttle * 1000.0))), fuel, hull, engine, phase)
+    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position, vel = tr.state.velocity, rot = tr.state.orientation, throttle = int(round(tr.state.throttle * 1000.0))), fuel, hull, engine, phase,arrival)
     assert(revision >= 0)
-    if w.aircraft[tr.craft].trip < 0: return
+    if w.aircraft[tr.craft].trip < 0 or not arrival: return
     if tr.state.crashed or tr.state.beached or tr.plan.phase == .failed:
         # Explicit recovery/aftermath, never the old traffic's free tow-and-repair teleport.
         weather.ditch(w, tr.craft, w.trips[tr.trip].reason)
@@ -319,7 +331,7 @@ _step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv):
         if not scene.encounter_active(w, tr.craft) and (tr.dock >= 0 or w.minute >= w.trips[tr.trip].hold_until_minute):
             living.commit_arrival(w, tr.trip, tr.town, tr.dock, revision)
 
-update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = []):
+update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = [], battle: mut Battle = Battle(), effects: (CombatEvent[]) -> void = (events: CombatEvent[]): pass):
     accepted = clamp(dt, 0.0, 0.25)
     velocity = (observer - adapter.observer) / f32(max(accepted, 1.0 / 60.0))
     if length(velocity) > 200: velocity = normalize(velocity) * 200.0
@@ -346,31 +358,85 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
         scene.scene_clock_begin(w)
         cargo_scene.step_cargo_scene(w,towns,observer,1.0/60.0)
         stepped += 1
-        if let body = player: _player_motion(w, body, player_before, player_fuel, f64(stepped) / f64(steps))
+        alpha=f64(stepped)/f64(steps)
+        if not battle.enabled:
+            if let body=player:_player_motion(w,body,player_before,player_fuel,alpha)
         e = flight_env(f64(w.tick) / 60.0)
+        physical:int[]
+        if battle.enabled:
+            # Registration does not create a second person, lease or body. Passive traffic
+            # retains its route controller until a world engagement (or a real hit) takes it.
+            loop tr in traffic:
+                if scene.scene_bound(adapter,tr.craft):register_combat_body(battle,w,tr.craft,tr.spec,tr.state)
+            if let body=player:
+                pi=combat_index(battle,player_craft)
+                if pi>=0 and not battle.actors[pi].bailed:
+                    old=battle.actors[pi].state
+                    battle.actors[pi].previous=old.position
+                    battle.actors[pi].state=body
+                    battle.actors[pi].state.position=lerp(player_before.pos,body.position,f32(alpha))
+                    loop part in 0..7:
+                        if old.damage.parts[part].health<body.damage.parts[part].health:
+                            battle.actors[pi].state.damage.parts[part]=old.damage.parts[part]
+                            # Retain only pieces detached since this frame's input state.
+                            # Copying every old piece would resurrect debris retired by flight.
+                            if body.damage.parts[part].attached and not old.damage.parts[part].attached:
+                                loop piece in old.damage.debris:
+                                    if int(piece.part)==part:battle.actors[pi].state.damage.debris.push(piece)
+                    refresh_damage(battle.actors[pi].spec,battle.actors[pi].state)
+            physical=bind_scene_engagements(battle,w)
         loop i in 0..traffic.len():
             tr = traffic[i]
-            if scene.scene_bound(adapter, tr.craft): _step_traffic(tr, w, e)
+            if scene.scene_bound(adapter, tr.craft) and not combat_owns(battle,tr.craft):
+                _step_traffic(tr, w, e,not battle.enabled)
+                ci=combat_index(battle,tr.craft)
+                if battle.enabled and ci>=0 and battle.actors[ci].external:
+                    battle.actors[ci].previous=battle.actors[ci].state.position
+                    battle.actors[ci].state=tr.state
             traffic[i] = tr
-        scene.scene_encounters(w)
+        if battle.enabled:
+            step_battle(battle,e,observer)
+            effects(battle.events)
+            loop i in 0..traffic.len():
+                tr=traffic[i];ci=combat_index(battle,tr.craft)
+                if scene.scene_bound(adapter,tr.craft):
+                    if ci>=0:
+                        actor=battle.actors[ci]
+                        tr.state=actor.state;tr.prop_angle=actor.prop
+                        if actor.last_attacker>=0:tr.combat_damage=true
+                    # One revisioned motion commit, after this tick's rounds and fire. A
+                    # passive pilot hit in this tick must not also take the route's ditch path.
+                    _commit_traffic(tr,w,not combat_owns(battle,tr.craft))
+                traffic[i]=tr
+        if battle.enabled:
+            if let body=player:
+                pi=combat_index(battle,player_craft)
+                if pi>=0:_player_motion(w,battle.actors[pi].state,w.aircraft[player_craft].pose,w.aircraft[player_craft].fuel_ml,1.0,battle.actors[pi].status==.flying,false)
+                else:_player_motion(w,body,player_before,player_fuel,alpha)
+        if battle.enabled:resolve_scene_engagements(battle,w,physical)
+        scene.scene_encounters(w,physical)
         scene.scene_clock_end(w)
         loop mut tr in traffic:
             if scene.scene_bound(adapter, tr.craft):
                 c = w.aircraft[tr.craft]
-                safe = not tr.state.stalled and not tr.state.beached and not tr.state.crashed and not tr.state.on_water
+                safe = not combat_owns(battle,tr.craft) and not tr.state.stalled and not tr.state.beached and not tr.state.crashed and not tr.state.on_water
                 terminal = c.trip < 0
                 if terminal or scene.scene_should_fold(w, adapter, tr.craft, safe):
                     scene.release_scene(w, adapter, tr.craft, if terminal: [] else: _physical_remainder(tr, w))
                     tr.materialized = false
         # Abstract poses already interpolate at fixed ticks, rather than jumping by minutes.
-    loop mut tr in traffic: traffic_projection(tr, w)
+    loop mut tr in traffic:
+        traffic_projection(tr,w)
+        ci=combat_index(battle,tr.craft)
+        if battle.enabled and ci>=0 and battle.actors[ci].external:
+            battle.actors[ci].present=tr.materialized and tr.visible
 
 # Synchronize NPCs at a completed fixed tick. Use fold_living_scene_for_save for a bound player.
 # On reload only an exact matching tick restores hidden state; abstract motion invalidates it.
 fold_traffic_for_save = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter):
     loop mut tr in traffic:
         if not scene.scene_bound(adapter, tr.craft): continue
-        state = SceneFlightSnapshot(tr.state, tr.plan, tr.waypoint, tr.route_key, tr.trip)
+        state = SceneFlightSnapshot(tr.state, tr.plan, tr.waypoint, tr.route_key, tr.trip,tr.combat_damage)
         guiding = tr.waypoint < w.trips[tr.trip].route.len() - 2
         scene.release_scene(w, adapter, tr.craft, _physical_remainder(tr, w))
         state.waypoint = if guiding: 1 else: w.trips[tr.trip].route.len() - 2
@@ -394,9 +460,12 @@ traffic_for_craft = (traffic: Traffic[], craft: int) -> Traffic?:
         if tr.craft == craft: return tr
     none
 
-draw_traffic = (traffic: Traffic[], models: CraftModel[], L: Light, t: f64):
+draw_traffic = (traffic: Traffic[], models: CraftModel[], L: Light, t: f64, battle: Battle = Battle()):
     cam = scene_camera()
     loop tr in traffic:
+        ci=combat_index(battle,tr.craft)
+        if battle.enabled and ci>=0 and battle.actors[ci].present and battle.actors[ci].status!=.escaped:
+            if not battle.actors[ci].external or battle.actors[ci].last_attacker>=0:continue
         if not tr.visible or length(tr.state.position - cam) > 9000.0: continue
         m = models[tr.model]
         at = translation(tr.state.position) * quat_to_mat4(tr.state.orientation)
