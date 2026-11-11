@@ -1,0 +1,336 @@
+# Bounded settlement streaming. Full 160 m districts are generated one per
+# frame; shared house/prop meshes and reused instance buffers bound GPU state.
+use 'world.jo'
+use 'geography.jo'
+use 'settlements.jo'
+use 'objects.jo'
+use 'town_details.jo'
+use 'look.jo'
+use 'render_space.jo'
+
+# Match the terrain's camera-relative projection. Multiplying 150 km absolute
+# positions by a view matrix loses enough depth precision to tear thin paving.
+# Material/curvature coordinates remain absolute; only projection is rebased.
+struct TownParams:
+    light: ObjParams
+    origin: vec3
+
+town_project = (world: vec3,normal: vec3,color: vec4,u: TownParams) -> ObjOut:
+    curved = render_warped(world,u.light.cam,u.light.warp_a,u.light.warp_b)
+    ObjOut(u.light.view_proj*vec4(curved-u.origin,1),world,render_normal(normal,world,u.light.cam),color)
+
+town_vertex = (v: Vertex3D,u: TownParams) -> ObjOut:
+    w = u.light.model*vec4(v.pos,1)
+    town_project(w.xyz,(u.light.model*vec4(v.normal,0)).xyz,v.color*u.light.tint,u)
+
+town_instance_vertex = (v: Vertex3D,inst: Instance3D,u: TownParams) -> ObjOut:
+    w = inst.model*vec4(v.pos,1)
+    town_project(w.xyz,(inst.model*vec4(v.normal,0)).xyz,v.color*inst.color,u)
+
+town_fragment = (v: ObjOut,u: TownParams) -> vec4:
+    if behind_sea(v.world,u.light.cam): discard()
+    obj_light(v,u.light)
+
+world_town_sh: Shader
+world_town_inst_sh: Shader
+
+const TOWN_DISTRICT = 160.0
+const TOWN_DISTRICT_LIMIT = 40
+struct TownDistrict:
+    key: int
+    settlement: int
+    x: int
+    z: int
+    center: vec2
+    houses: Instance3D[]
+    props: Instance3D[][]
+    paths: Vertex3D[]
+
+struct FarTown:
+    houses: Instance3D[]
+    cells: int[]
+
+world_town_density = 1.0           # public quality knob, 0..1; changes decoration/range, never IDs
+world_town_slots: TownDistrict[]
+world_town_far: FarTown[]
+world_town_harbors: Mesh[]
+world_town_house: Mesh
+world_town_proxy: Mesh
+world_town_props: Mesh[]
+world_town_house_buffer: InstanceBuffer[Instance3D]
+world_town_far_buffer: InstanceBuffer[Instance3D]
+world_town_prop_buffers: InstanceBuffer[Instance3D][]
+world_town_paths: Mesh
+world_town_last_cam = vec3(1e9,1e9,1e9)
+world_town_last_density = -1.0
+world_town_generated = 0
+world_town_near_count = 0
+world_town_far_count = 0
+world_town_active: int[]
+legacy_town_details: Mesh[]
+
+place_district_key = (id: int,x: int,z: int) -> int: id*65536+(x+128)*256+z+128
+
+place_model = (p: PlaceParcel) -> mat4:
+    translation(p.at)*rotation_y(p.yaw)*scaling(vec3(f32(p.width/12.0),f32(p.height/9.0),f32(p.depth/12.0)))
+
+place_prop = (lists: mut Instance3D[][],kind: int,p: vec2,yaw: f64 = 0.0,scale: f64 = 1.0):
+    h = place_ground(p)
+    if h < 0.4: return
+    lists[kind].push(Instance3D(translation(vec3(p.x,f32(h+0.04),p.y))*rotation_y(yaw)*scaling(scale),vec4(1,1,1,1)))
+
+build_town_district = (index: int,x: int,z: int,density: f64) -> TownDistrict:
+    s = world_settlements[index]
+    tangent = vec2(-s.out.y,s.out.x)
+    center = s.center.xz+tangent*f32((f64(x)+0.5)*TOWN_DISTRICT)-s.out*f32((f64(z)+0.5)*TOWN_DISTRICT)
+    houses: Instance3D[]; props: Instance3D[][] = [loop k in 0..TOWN_PROP_COUNT: []]
+    paths: Vertex3D[]
+    yaw = atan2(f64(s.out.x),f64(s.out.y))
+    loop j in z*8..z*8+8:
+        loop i in x*8..x*8+8:
+            if let p = place_parcel(s,i,j):
+                shade = f32(0.9+f64(p.seed%9)*0.012)
+                houses.push(Instance3D(place_model(p),vec4(shade,shade,shade,1)))
+                if f64(p.seed%100)/100.0 > density: continue
+                front = p.at.xz+s.out*f32(p.depth*0.5+1.5)
+                if p.seed%4 == 0: place_prop(props,4,front+tangent*3.0,yaw)
+                if p.seed%9 == 0: place_prop(props,1,front+s.out*0.5,yaw)
+                if p.seed%13 == 0: place_prop(props,2,p.at.xz+tangent*9.0,yaw)
+                if p.seed%23 == 0: place_prop(props,6,front,yaw)
+                if p.seed%19 == 0: place_prop(props,12,front-tangent*3.0,yaw)
+                if s.kind == .capital and p.seed%151 == 0: place_prop(props,11,p.at.xz+tangent*12.0,yaw)
+            # Through alleys, leaving the exact same corridors as the parcels.
+            if (i%4 == 0 or j%4 == 0) and place_inside(s,place_local(i,j)):
+                p = s.center.xz+tangent*place_local(i,j).x-s.out*place_local(i,j).y
+                if s.harbor.len() > 0 and j < -2: continue
+
+                if density > 0.25 and i%4 == 0 and j%4 == 0 and place_ground(p) > 1.0:
+                    add_lamp(paths,place_point(p+tangent*2.2))
+    loop street in place_streets(s,x,z): town_path(paths,street.a,street.b,street.width,street.paved)
+    # Landmarks belong to exactly one district; no duplicate squares or piers.
+    if x == 0 and z == 0:
+        square = s.center.xz
+        if s.kind != .farm:
+            town_path(paths,square-tangent*16.0,square+tangent*16.0,25.0,true)
+            place_prop(props,if s.kind == .lighthouse: 15 else: 8,square-s.out*26.0,yaw,if s.kind == .capital: 1.6 else: 1.0)
+        else:
+            place_prop(props,13,square-s.out*18.0,yaw)
+            place_prop(props,13,square-s.out*27.0,yaw)
+        if s.kind != .lighthouse and s.kind != .chapel and s.kind != .farm:
+            place_prop(props,10,square+tangent*9.0,yaw)
+            place_prop(props,9,square-tangent*7.0,yaw)
+            place_prop(props,0,square+s.out*7.0+tangent*9.0,yaw)
+            place_prop(props,3,square-tangent*13.0,yaw)
+            if s.kind == .capital or s.kind == .market: place_prop(props,16,square+s.out*6.0-tangent*7.0,yaw)
+            if s.kind == .monastery:
+                loop k in 0..4:
+                    add_house(paths,translation(place_point(square+tangent*f32(-27+k*18)-s.out*46.0))*rotation_y(yaw),16.0,10.0,7.0,s.seed+k)
+        if s.harbor.len() > 0:
+            mooring = s.harbor[0]
+            add_quay(paths,mooring.quay_a,mooring.quay_b,mooring.width)
+            # A long mole and warehouse district distinguish capitals from villages.
+            if s.kind == .capital:
+                end = mooring.quay_b
+                add_quay(paths,end,end+tangent*350.0,11.0)
+                loop k in 0..6:
+                    p = mooring.quay_a+tangent*f32(k*36)-s.out*20.0
+                    if place_ground(p) > 1.0:
+                        add_house(paths,translation(place_point(p))*rotation_y(yaw),30.0,18.0,11.0,s.seed+k)
+                # Customs office and a derrick crane at the mole root.
+                cp = place_point(mooring.quay_a-s.out*18.0-tangent*32.0)
+                add_house(paths,translation(cp)*rotation_y(yaw),24.0,18.0,14.0,2)
+                crane = vec3(mooring.quay_b.x,1.2,mooring.quay_b.y)
+                town_beam(paths,crane,crane+vec3(0,13,0),0.3,rgb(0.25,0.25,0.21))
+                town_beam(paths,crane+vec3(0,13,0),crane+vec3(tangent.x*13,15,tangent.y*13),0.2,rgb(0.25,0.25,0.21))
+                town_beam(paths,crane+vec3(tangent.x*13,15,tangent.y*13),crane+vec3(tangent.x*13,3,tangent.y*13),0.035,rgb(0.15,0.15,0.14))
+            loop dock in s.harbor:
+                add_cylinder(paths,dock.buoy,0.7,1.0,rgba(0.8,0.34,0.15,0.5),8,0.3)
+            length = f64(length(mooring.quay_b-mooring.quay_a))
+            loop k in 0..int(length/24.0):
+                p = mooring.quay_a+s.out*f32(k*24)+tangent*f32(mooring.width*0.4)
+                add_lamp(paths,vec3(p.x,1.2,p.y))
+            place_prop(props,5,mooring.quay_a-tangent*12.0,yaw)
+            place_prop(props,14,mooring.quay_a+tangent*14.0,yaw)
+    if density > 0.4 and x == 0 and z == int(s.radius/TOWN_DISTRICT)-1:
+        p = center
+        if place_flat(p,12.0,0.3):
+            place_prop(props,7,p,yaw)
+            place_prop(props,13,p+tangent*25.0,yaw)
+    TownDistrict(place_district_key(s.id,x,z),index,x,z,center,houses,props,paths)
+
+# Distant blocks keep the real parcel pattern, but skip expensive corner detail
+# and street furniture. They are culled/replaced when a full district publishes.
+build_far_town = (s: WorldSettlement) -> FarTown:
+    houses: Instance3D[]; cells: int[]
+    tangent = vec2(-s.out.y,s.out.x)
+    count = int(ceil(s.radius/PLACE_SPACING))
+    loop j in -count..count+1:
+        loop i in -count..count+1:
+            if i%4 == 0 or j%4 == 0 or (s.size > 1 and abs(i) <= 1 and abs(j) <= 1): continue
+            if not place_inside(s,place_local(i,j)) or place_reserved(s,place_local(i,j)): continue
+            if s.harbor.len() > 0 and j < -1: continue
+            if s.size == 1 and (i != 1 or j != 1): continue
+            p = s.center.xz+tangent*place_local(i,j).x-s.out*place_local(i,j).y
+            h = place_base(p)
+            if h < 2.0 or h > 900.0: continue
+            seed = place_hash(s.seed,place_hash(i+4096,j+4096))
+            hh = f64(if s.kind == .capital: 2+seed%3 else: 1+seed%2)*4.0+1.0
+            pose = translation(vec3(p.x,f32(h),p.y))*rotation_y(atan2(f64(s.out.x),f64(s.out.y)))*scaling(vec3(f32((12.0+f64(seed%6))/12.0),f32(hh/9.0),f32((12.0+f64((seed/7)%5))/12.0)))
+            shade = f32(0.82+f64(seed%16)*0.012)
+            houses.push(Instance3D(pose,vec4(shade,shade,shade,1)))
+            cells.push(place_district_key(s.id,int(floor(f64(i)/8.0)),int(floor(f64(j)/8.0))))
+    FarTown(houses,cells)
+
+build_legacy_town_detail = (tw: Town) -> Mesh:
+    vs: Vertex3D[]
+    tangent = vec2(-tw.out.y,tw.out.x)
+    yaw = atan2(f64(tw.out.x),f64(tw.out.y))
+    loop k in 0..tw.houses.len():
+        hp = tw.houses[k]
+        front = hp.xz+tw.out*8.0
+        if place_ground(front) < 1.0: continue
+        # Frontage strips join only nearby frontages, never across house centers.
+        town_path(vs,front-tangent*6.0,front+tangent*6.0,2.0,true)
+        if k > 0:
+            prev = tw.houses[k-1].xz+tw.out*8.0
+            if length(prev-front) < 25.0: town_path(vs,prev,front,2.0,true)
+        kinds = [4]
+        if k%8 == 0: kinds.push(1)
+        if k%11 == 0: kinds.push(2)
+        if k%17 == 0: kinds.push(6)
+        if k%19 == 0: kinds.push(12)
+        loop kind in kinds:
+            p = front+tangent*f32(if kind == 4: 4.0 else: -2.0)
+            m = translation(place_point(p))*rotation_y(yaw)
+            loop v in town_prop_vertices(kind):
+                vs.push(Vertex3D(transform_point(m,v.pos),(m*vec4(v.normal,0)).xyz,v.uv,v.color))
+    # Cafe and a shady meeting place at the dry end of the original quay.
+    root = tw.center.xz-tw.out*18.0
+    loop pair in [(0,root+tangent*12.0),(10,root-tangent*10.0),(3,root-tangent*5.0),(5,root+tangent*24.0),(14,root-tangent*22.0)]:
+        if place_ground(pair.1) < 0.5: continue
+        m = translation(place_point(pair.1))*rotation_y(yaw)
+        loop v in town_prop_vertices(pair.0): vs.push(Vertex3D(transform_point(m,v.pos),(m*vec4(v.normal,0)).xyz,v.uv,v.color))
+    custom_mesh(vs)
+
+init_world_towns = (towns: Town[]):
+    global world_town_sh,world_town_inst_sh,world_town_far,world_town_harbors,world_town_house,world_town_proxy,world_town_props,world_town_house_buffer,world_town_far_buffer,world_town_prop_buffers,world_town_paths,legacy_town_details,world_town_density
+    world_town_density = clamp(to_float(env("AEGEAN_TOWN_DENSITY") ?? "1") ?? 1.0,0.0,1.0)
+    init_settlements()
+    world_town_sh = make_shader(shader(town_vertex,town_fragment))
+    world_town_inst_sh = make_shader(shader(town_instance_vertex,town_fragment))
+    h: Vertex3D[]; add_house(h,mat4(),12.0,12.0,9.0,31); world_town_house = custom_mesh(h)
+    far: Vertex3D[]
+    add_box(far,vec3(0,3.5,0),vec3(12,11,12),WALLS[0]); add_gable(far,vec3(0,9,0),12.0,12.0,2.7,ROOFS[0],mat4())
+    add_box(far,vec3(0,4.0,6.05),vec3(5,1.5,0.1),rgba(0.15,0.17,0.22,0.5))
+    world_town_proxy = custom_mesh(far)
+    world_town_props = [loop k in 0..TOWN_PROP_COUNT: custom_mesh(town_prop_vertices(k))]
+    empty: Instance3D[]; vertices: Vertex3D[]
+    world_town_house_buffer = instance_buffer(empty); world_town_far_buffer = instance_buffer(empty)
+    world_town_prop_buffers = [loop k in 0..TOWN_PROP_COUNT: instance_buffer(empty)]
+    world_town_paths = custom_mesh(vertices)
+    world_town_far = [loop s in world_settlements: (if s.legacy < 0: build_far_town(s) else: FarTown())]
+    legacy_town_details = [loop tw in towns: build_legacy_town_detail(tw)]
+    world_town_harbors = [loop s in world_settlements: build_far_harbor(s)]
+
+# Update only when moving a meaningful distance, a district publishes, or the
+# density changes. Steady frames submit shared buffers without CPU regeneration.
+prepare_world_towns = (cam: vec3):
+    global world_town_slots,world_town_generated,world_town_active,world_town_last_cam,world_town_last_density,world_town_house_buffer,world_town_far_buffer,world_town_prop_buffers,world_town_paths,world_town_near_count,world_town_far_count
+    world_town_generated = 0
+    density = clamp(world_town_density,0.0,1.0)
+    changed = length(cam-world_town_last_cam) > 120.0 or density != world_town_last_density
+    if density != world_town_last_density: world_town_slots = []
+    range = 180.0+350.0*density
+    desired: int[]; active: int[]
+    next_index = -1; next_x = 0; next_z = 0; closest = 1e30
+    loop index in 6..world_settlements.len():
+        s = world_settlements[index]
+        d = f64(length(cam.xz-s.center.xz))
+        if d > 12000.0+33000.0*density+s.radius: continue
+        active.push(index)
+        if d > s.radius+range or f64(cam.y-s.center.y) > 1600.0: continue
+        tangent = vec2(-s.out.y,s.out.x)
+        local = vec2(dot(cam.xz-s.center.xz,tangent),-dot(cam.xz-s.center.xz,s.out))
+        n = int(ceil(s.radius/TOWN_DISTRICT))
+        cx = int(floor(f64(local.x)/TOWN_DISTRICT)); cz = int(floor(f64(local.y)/TOWN_DISTRICT))
+        reach = int(ceil(range/TOWN_DISTRICT))
+        loop z in max(-n,cz-reach)..min(n,cz+reach)+1:
+            loop x in max(-n,cx-reach)..min(n,cx+reach)+1:
+                center = s.center.xz+tangent*f32((f64(x)+0.5)*TOWN_DISTRICT)-s.out*f32((f64(z)+0.5)*TOWN_DISTRICT)
+                if f64(length(center-s.center.xz)) > s.radius+135.0: continue
+                dist = f64(length(cam.xz-center))
+                if dist > range and not (x == 0 and z == 0 and d < 700.0): continue
+                key = place_district_key(s.id,x,z); desired.push(key)
+                found = false
+                loop slot in world_town_slots:
+                    if slot.key == key: found = true; break
+                if not found and dist < closest: closest = dist; next_index = index; next_x = x; next_z = z
+    kept: TownDistrict[]
+    loop slot in world_town_slots:
+        if slot.key in desired: kept.push(slot)
+        else: changed = true
+    world_town_slots = kept
+    if next_index >= 0 and world_town_slots.len() < TOWN_DISTRICT_LIMIT:
+        world_town_slots.push(build_town_district(next_index,next_x,next_z,density))
+        changed = true; world_town_generated = 1
+    if not changed: return
+    world_town_active = active
+    world_town_last_cam = cam; world_town_last_density = density
+    houses: Instance3D[]; far: Instance3D[]; props: Instance3D[][] = [loop k in 0..TOWN_PROP_COUNT: []]
+    paths: Vertex3D[]; keys: {int: bool} = {}
+    loop slot in world_town_slots:
+        keys[slot.key] = true; houses.extend(slot.houses); paths.extend(slot.paths)
+        loop k in 0..TOWN_PROP_COUNT: props[k].extend(slot.props[k])
+    loop index in active:
+        ft = world_town_far[index]
+        loop k in 0..ft.houses.len():
+            if not (ft.cells[k] in keys): far.push(ft.houses[k])
+    # Nearby stretches of country roads: bounded to the same detail radius.
+    loop road in settlement_roads:
+        loop k in 0..road.points.len()-1:
+            a = road.points[k]; b = road.points[k+1]
+            if length(cam.xz-(a.xz+b.xz)*0.5) > f32(range): continue
+            town_path(paths,a.xz,b.xz,road.width,false)
+    world_town_near_count = houses.len(); world_town_far_count = far.len()
+    set_instances(world_town_house_buffer,houses); set_instances(world_town_far_buffer,far)
+    loop k in 0..TOWN_PROP_COUNT: set_instances(world_town_prop_buffers[k],props[k])
+    update_mesh(world_town_paths,paths)
+
+draw_world_towns = (towns: Town[],L: Light,t: f64):
+    cam = scene_camera(); p = obj_params(L,t)
+    loop k in 0..towns.len():
+        if k < legacy_town_details.len() and length(cam-towns[k].center) < 650.0 and world_town_density > 0.0: draw(obj_sh,legacy_town_details[k],p)
+    if not geography_enabled: return
+    # Ground-level original harbors cannot see beyond the protected archipelago.
+    if abs(cam.x) < LEGACY_RESERVE-4000.0 and abs(cam.z) < LEGACY_RESERVE-4000.0 and cam.y < 250.0: return
+    prepare_world_towns(cam)
+    origin = render_origin(cam)
+    p.view_proj = scene_view_proj()*translation(origin)
+    tp = TownParams(p,origin)
+    loop index in world_town_active:
+        detailed = false
+        loop slot in world_town_slots:
+            if slot.settlement == index and slot.x == 0 and slot.z == 0: detailed = true; break
+        if not detailed and world_town_harbors[index].count > 0: draw(world_town_sh,world_town_harbors[index],tp)
+    if world_town_far_buffer.count > 0: draw_instanced(world_town_inst_sh,world_town_proxy,world_town_far_buffer,tp)
+    if world_town_house_buffer.count > 0: draw_instanced(world_town_inst_sh,world_town_house,world_town_house_buffer,tp)
+    if world_town_paths.count > 0: draw(world_town_sh,world_town_paths,tp)
+    loop k in 0..TOWN_PROP_COUNT:
+        if world_town_prop_buffers[k].count > 0: draw_instanced(world_town_inst_sh,world_town_props[k],world_town_prop_buffers[k],tp)
+
+# Aerial harbor silhouettes have no bollards, windows, or decorative meshes.
+build_far_harbor = (s: WorldSettlement) -> Mesh:
+    vs: Vertex3D[]
+    if s.legacy >= 0 or s.harbor.len() == 0: return custom_mesh(vs)
+    dock = s.harbor[0]
+    tangent = vec2(-s.out.y,s.out.x)
+    segments = [(dock.quay_a,dock.quay_b,dock.width)]
+    if s.kind == .capital: segments.push((dock.quay_b,dock.quay_b+tangent*350.0,11.0))
+    loop q in segments:
+        mid = (q.0+q.1)*0.5; delta = q.1-q.0
+        add_box(vs,vec3(0,-1.0,0),vec3(f32(q.2),4.4,length(delta)),rgb(0.8,0.76,0.68),translation(vec3(mid.x,0,mid.y))*rotation_y(atan2(f64(delta.x),f64(delta.y))))
+    if s.kind == .capital:
+        p = place_point(s.center.xz-s.out*26.0)
+        add_box(vs,vec3(0,6,0),vec3(15,16,22),WALLS[0],translation(p))
+        add_sphere(vs,vec3(0,16,0),5.0,rgb(0.28,0.46,0.66),8,4,translation(p))
+    custom_mesh(vs)
