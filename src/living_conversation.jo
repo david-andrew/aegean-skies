@@ -10,6 +10,8 @@ use 'living_work_knowledge.jo'
 use 'living_conditions.jo'
 use 'living_content.jo'
 use 'living_place_context.jo'
+use 'living_far_context.jo'
+use 'living_far_news.jo'
 import 'living_seed.jo' as acquaintances
 import 'living_news.jo' as knowledge
 
@@ -57,7 +59,7 @@ talk_load = (w: World, good: int, quantity: int) -> str:
 conversation_topics = (w: World, speaker: int, listener: int) -> TalkOption[]:
     if speaker < 0 or speaker >= w.people.len() or listener < 0 or listener >= w.people.len(): return []
     p = w.people[speaker]
-    if p.place < 0 or p.place != w.people[listener].place: return []
+    if not people_can_talk(w,speaker,listener): return []
     topics = [TalkOption(.greeting,"Say hello"),TalkOption(.weather,"The weather"),TalkOption(.home,"Their day")]
     loop job in w.active_jobs:
         j = w.jobs[job]
@@ -66,6 +68,8 @@ conversation_topics = (w: World, speaker: int, listener: int) -> TalkOption[]:
     public_news = false
     loop n in p.news:
         if not n.private_fact and w.minute-n.occurred_minute < 10080: public_news = true
+    loop r in p.far_reports:
+        if w.minute-r.occurred_minute<10080: public_news=true
     if public_news: topics.push(TalkOption(.news,"What they've heard"))
     if p.occupation == .merchant or p.occupation == .oil_presser or p.occupation == .miller or p.occupation == .fisher or p.occupation == .quartermaster: topics.push(TalkOption(.market,"Trade and prices"))
     topics.push(TalkOption(.people,"People they know"))
@@ -84,7 +88,7 @@ _bank = (lines: str[], key: str, priority: int = 100) -> SpeechCandidate[]:
 
 # Only saved, personally known news is eligible. The speaker never queries remote events.
 news_candidates = (w: World, speaker: int) -> SpeechCandidate[]:
-    result: SpeechCandidate[]
+    result: SpeechCandidate[] = far_report_candidates(w,speaker)
     p = w.people[speaker]
     loop n in p.news:
         if n.private_fact or w.minute-n.occurred_minute >= 10080: continue
@@ -237,6 +241,8 @@ conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTop
         if other.id != speaker and other.id != listener and other.place == p.place and length(other.pose.pos-p.pose.pos) < 6: alone = false
     discreet = private and alone and close
     result: SpeechCandidate[]
+    if p.far_home>=0 and topic!=.greeting and topic!=.farewell and topic!=.weather:
+        return far_speech_candidates(w,speaker,listener,topic)
     match topic:
         .greeting:
             result = context_greeting(w,speaker,listener,voice,count > 0 or (rel >= 0 and w.relationships[rel].trust >= 500))
@@ -319,7 +325,7 @@ conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTop
 conversation_preview = (w: World, speaker: int, listener: int, topic: TalkTopic, private: bool = false) -> ConversationTurn:
     turn = ConversationTurn(speaker,listener,topic)
     if speaker < 0 or speaker >= w.people.len() or listener < 0 or listener >= w.people.len() or speaker == listener: turn.exhausted = true; return turn
-    if w.people[speaker].place < 0 or w.people[speaker].place != w.people[listener].place: turn.exhausted = true; return turn
+    if not people_can_talk(w,speaker,listener): turn.exhausted = true; return turn
     ledger = w.speech.get(speaker,SpeechLedger())
     active_lines = 0
     loop line in ledger.recent:
@@ -342,6 +348,7 @@ conversation_preview = (w: World, speaker: int, listener: int, topic: TalkTopic,
     c = candidates[best]
     turn.question_kind = c.ask.kind
     turn.text = c.text; turn.source_event = c.event; turn.source_person = c.source_person
+    turn.far_news=c.far_news
     turn.confidence = c.confidence; turn.private = c.private; turn.job = c.job
     turn
 
@@ -397,6 +404,7 @@ _guarded_converse = (w: mut World, speaker: int, listener: int, topic: TalkTopic
         turn.replies = question_replies(detail,ledger.sequence)
         ledger.pending_kind = detail.kind; ledger.pending_echo = detail.echo; ledger.pending_open_topic = detail.open_topic
     w.speech[speaker] = ledger
+    if turn.far_news>=0: far_relay_report(w,speaker,listener,turn.far_news)
     if topic == .work and turn.job >= 0: remember_work_offer(w,listener,speaker,turn.job)
     # The listener actually heard this account/quote. Use the existing bounded transfer rules,
     # preserving occurrence/observation date and attribution; never query a hidden Event here.
@@ -421,7 +429,7 @@ _guarded_answer_conversation = (w: mut World, speaker: int, listener: int, reply
     if not (speaker in w.speech) or listener < 0 or listener >= w.people.len(): turn.exhausted = true; return turn
     ledger = w.speech[speaker]
     if ledger.pending_listener != listener or ledger.pending_question == "" or w.minute-ledger.question_minute > 30: turn.exhausted = true; return turn
-    if w.people[speaker].place < 0 or w.people[speaker].place != w.people[listener].place: turn.exhausted = true; return turn
+    if not people_can_talk(w,speaker,listener): turn.exhausted = true; return turn
     detail = if ledger.pending_kind == .none: question_details(ledger.pending_question) else: TalkQuestion(ledger.pending_kind,ledger.pending_question,ledger.pending_echo,ledger.pending_open_topic)
     ledger.pending_question = ""; ledger.pending_listener = -1; ledger.pending_kind = .none; ledger.pending_echo = ""
     w.speech[speaker] = ledger
@@ -430,7 +438,7 @@ _guarded_answer_conversation = (w: mut World, speaker: int, listener: int, reply
     voice = voice_of(w,speaker)
     lines: str[]
     if reply == .ask_back:
-        lines = context_question_answer(w,speaker,detail)
+        lines = if w.people[speaker].far_home>=0: far_question_answer(w,speaker,detail) else: context_question_answer(w,speaker,detail)
         if lines.len() == 0: return converse(w,speaker,listener,if detail.kind == .business: TalkTopic.home else: detail.open_topic)
     else if reply == .open_topic:
         return converse(w,speaker,listener,if detail.kind == .work: TalkTopic.home else: detail.open_topic)
@@ -469,7 +477,7 @@ _guarded_answer_conversation = (w: mut World, speaker: int, listener: int, reply
 # Offered IDs are a person's own live commissions or an explicit dated referral they heard.
 person_work_offers = (w: World, speaker: int, listener: int) -> WorkOffer[]:
     if speaker < 0 or speaker >= w.people.len() or listener < 0 or listener >= w.people.len(): return []
-    if w.people[speaker].place < 0 or w.people[speaker].place != w.people[listener].place: return []
+    if not people_can_talk(w,speaker,listener): return []
     result: WorkOffer[]
     loop id in w.active_jobs:
         j = w.jobs[id]

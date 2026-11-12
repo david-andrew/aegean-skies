@@ -58,3 +58,38 @@ malformed reference rejection. `tools/farlog.jo` exercises all793 places for sev
 conservation and daily canonical save round-trips. Named local promotion, scene vehicles, far
 aviation, political force logistics, combat/capture/refugee/rescue/contracts remain subsequent
 work; district data alone is not a running war.
+
+## Persistent local residents and carried accounts
+
+A bounded local scan promotes up to three real adult workers of a nearby generated settlement
+into `World.people` (up to3072 persistent named residents; at most24 nearby scene leases).
+Their citizenship stays theirs. A population member and their actual share of household cash
+leave the cohort exactly once. The original26 people remain the detailed planner prefix;
+`core_person_count` keeps original dispatch/fishing/social/job planners from owning these people.
+Far identities, names, accounts and poses are not duplicated in a separate identity table.
+
+`Person.far_home/far_place` are sparse registry IDs, with legacy `home/place=-1`; use facade
+`person_place`, `place_name`, `person_position`, or `far_resident_views`. The latter includes
+person/name, home/place, citizenship/controller/authority, pose/target, role and a short reason.
+The same four conversation signatures work for far residents; `ConversationTurn.far_news` is
+optional evidence metadata. Original enum ordinals stay fixed; Occupation appends farmer/sailor.
+
+House door anchors come from the same accepted canonical parcels as town rendering/collision,
+baked offline alongside the routes (catalog now93KB compressed). Named residents keep those
+home doors, go to the actual market/fields/workshop/quay, cafe, evening square and Sunday church,
+and disappear indoors at night. Scene walking shares the existing single navigation-start
+budget per frame. A saved route survives folding; the abstract walker skips scene-owned ticks.
+Obstructions stop the walk rather than phase through a wall. Worked minutes at the destination
+fund real wages; named people buy and consume their own grain from their own purses.
+
+Local counter quotes are witnessed snapshots, not live remote market queries. Departures and
+committed deliveries create actual dated local accounts. Only physical arrivals carry the
+origin's recent accounts to another place. A named resident hears counter accounts when present;
+conversation copies the selected report to the listener with occurrence date, source, confidence
+and hop count. World journal<=2048; each person carries<=12 snapshots, surviving journal pruning.
+`heard_notes` includes actually heard far reports. Preview never transmits information.
+
+The shared conversation UI has three small data-wiring changes: sparse place-name lookup,
+Any-work dispatch through ask_for_work, and a guard against opening the six-port trade panel
+for a sparse counter. Its layout/controls stay the coordinator's. Far bulk trade, named aircraft,
+shipping/cart drawing, war and military contracts remain subsequent work.
