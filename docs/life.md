@@ -91,3 +91,13 @@ Run `tools/lifelog.jo` to record a deterministic month; then
 `python3 tools/speech_critic.py transcript.txt` reports literal particulars, deliberate social
 moves, repetition, distinct 3/5-grams, common phrases and samples. Review samples as well as the
 heuristic score: a named place alone cannot establish whether a claim was truthful.
+
+`ask_for_work(w,speaker,listener=0) -> ConversationTurn` is the person-to-person work action.
+It returns their own open offer (`turn.job`), a personally heard dated referral, or a voiced no.
+It never opens or projects the general board. `work_offers(w,speaker,listener=0) -> WorkOffer[]`
+is the pure list for follow-up offer buttons; `own`, `source_person` and `heard_minute` distinguish
+a live personal offer from quoted referral terms. A referral is an introduction, not a claim
+that a remote job is still available. Use existing job validation on acceptance. Actual nearby
+meetings exchange at most one own offer in each direction; residence alone transmits nothing.
+Hearing a referral never refreshes its original date; leads expire after three game days and
+are bounded to twelve per speaker. Merely asking for work neither claims cargo nor spends money.
