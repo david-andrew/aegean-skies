@@ -18,7 +18,7 @@ const WORLD_CACHE_SLOTS = 512
 const WORLD_ATLAS_COLS = 32
 const WORLD_TILE_PIXELS = 17
 const WORLD_GENERATE_LIMIT = 4
-const WORLD_CONTACT_GENERATE_LIMIT = 8
+const WORLD_CONTACT_GENERATE_LIMIT = 9
 
 struct WorldTile:
     key: int = -1
@@ -41,6 +41,8 @@ struct WorldInstance:
 world_tiles: WorldTile[]
 world_cache: {int:int} = {}
 world_selected: int[]
+world_contact_slots: int[]
+world_contact_rect = vec4(0,0,0,0)
 world_frame = 0
 world_generated = 0
 world_generate_budget = WORLD_GENERATE_LIMIT
@@ -243,9 +245,12 @@ world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundO
     curved.y -= world_drop(local.xz-u.cam.xz)
     tint = sample.tint
     tint.w = 1.0-smoothstep(1700.0,2300.0,absolute.y)   # (the treeline: wooded below, bare above)
-    GroundOut(u.view_proj*vec4(curved,1),local,normalize(sample.normal),tint,orchard_cover(absolute.xz,absolute.y,length(sample.normal.xz)/max(sample.normal.y,0.1)))
+    GroundOut(u.view_proj*vec4(curved,1),local,normalize(sample.normal),tint,orchard_cover(absolute.xz,absolute.y,length(sample.normal.xz)/max(sample.normal.y,0.1)),inst.state.z)
 
 world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+    # Canonical contact tiles replace coarse fallback geometry immediately,
+    # even while the surrounding quadtree is still streaming after arrival.
+    if i.tile_level>0.0 and i.world.x>=u.contact_rect.x and i.world.z>=u.contact_rect.y and i.world.x<u.contact_rect.z and i.world.z<u.contact_rect.w:discard()
     # Coarse fallback triangles may cross empty space while streaming. Never
     # let them cover the preserved archipelago, including its seabed apron.
     absolute = i.world+u.origin
@@ -304,14 +309,42 @@ world_contact_budget = (cam: vec3) -> int:
     ground = new_land_surface(f64(cam.x),f64(cam.z))
     if ground >= 0.0 and f64(cam.y)-ground < 200.0: WORLD_CONTACT_GENERATE_LIMIT else: WORLD_GENERATE_LIMIT
 
+# Pin the camera's 3x3 contact neighbourhood before traversing the distant
+# tree. A newly arrived walker must never stand on a 14 m CPU surface while
+# the renderer morphs a kilometre-sized fallback under their feet.
+world_prepare_contact = (cam: vec3,enabled: bool = true):
+    global world_contact_slots,world_contact_rect,world_generate_budget
+    world_contact_slots=[];world_contact_rect=vec4(0,0,0,0)
+    if not enabled:return
+    if abs(cam.x)<LEGACY_RESERVE and abs(cam.z)<LEGACY_RESERVE:return
+    ground=new_land_surface(f64(cam.x),f64(cam.z))
+    if ground < -40.0 or f64(cam.y)-ground>80.0:return
+    cx=int(floor((f64(cam.x)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+    cz=int(floor((f64(cam.z)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+    # Nine uploads only on a cold arrival; walking across an edge adds three.
+    ordinary_budget=world_generate_budget
+    world_generate_budget=max(world_generate_budget,WORLD_CONTACT_GENERATE_LIMIT)
+    loop dz in [-1,0,1]:
+        loop dx in [-1,0,1]:
+            slot=world_request_tile(cx+dx,cz+dz,0)
+            if slot>=0:world_contact_slots.push(slot)
+    world_generate_budget=max(ordinary_budget,world_generated)
+    if world_contact_slots.len()!=9:return
+    x,z=world_tile_origin(cx-1,cz-1,0)
+    world_contact_rect=vec4(f32(x),f32(z),f32(x+WORLD_TILE_SPAN*3),f32(z+WORLD_TILE_SPAN*3))
+
 prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_generate_budget
     world_generate_budget = if contact_burst: world_contact_budget(cam) else: WORLD_GENERATE_LIMIT
     world_frame += 1; world_clock = t; world_generated = 0; world_uploaded = 0
+    world_prepare_contact(cam,contact_burst)
     planes = land_planes(vp)
     world_selected = []
     world_visit(0,0,WORLD_ROOT_LEVEL,cam,planes)
     world_balance()
+    # Preserve these exact tiles even if balancing selected a coarse ancestor.
+    loop slot in world_contact_slots:
+        if not (slot in world_selected):world_selected.push(slot)
     loop slot in world_selected:
         node = world_tiles[slot]
         ox,oz = world_tile_origin(node.x,node.z,node.level); size = world_tile_size(node.level)
@@ -324,7 +357,7 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
         # Physical contact is always the canonical 14 m surface, even during
         # an arrival transition after teleporting to a fresh tile.
         if node.level == 0 and distance < size*1.5: birth = 1.0
-        node.lod = f64(node.level)+max(transition,1.0-birth)
+        node.lod = if slot in world_contact_slots: 0.0 else:f64(node.level)+max(transition,1.0-birth)
         world_tiles[slot] = node
 
 draw_world_terrain = (L: Light,t: f64):
@@ -340,8 +373,9 @@ draw_world_terrain = (L: Light,t: f64):
         edges,mask = world_edge_state(slot)
         ox,oz = world_tile_origin(node.x,node.z,node.level)
         batches[mask].push(WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),0),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level))))
-    params = GroundParams(render_view_proj(origin),cam-origin,L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),0),wind_now.drift,origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
+    params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),0),wind_now.drift,origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
     params.pigment = paint_surface()
+    if world_contact_slots.len()==9:params.contact_rect=world_contact_rect-vec4(origin.x,origin.z,origin.x,origin.z)
     world_draws = 0; world_triangles = 0
     loop i in 0..16:
         if batches[i].len() == 0: continue
