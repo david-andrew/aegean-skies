@@ -66,6 +66,11 @@ planar triangles may use four times that length when a triangular lattice of
 15 probes agrees with the contact field within 5.5 cm. The independent clearance
 audit uses 45 barycentric samples per output triangle. Explicit entrance
 steps retain main's shared rendering/walking plans; lanes do not add duplicate treads.
+Legacy and close-town paving is cached in 64 m blocks with conservative
+frustum spheres, so refinement outside the view does not submit vertices.
+Each of the two caches reuses at most 129 mesh buffers (128 spatial blocks
+and one conservative overflow bucket); switching towns empties unused buffers.
+Curvature expands bounds, and active speed-warp trials bypass this culling.
 
 Streaming terrain retains its coarse fallback outside main's pinned 3×3
 contact neighborhood; ready contact tiles refine immediately. Rendering caches
