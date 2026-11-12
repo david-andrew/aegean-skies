@@ -242,6 +242,17 @@ Things agreed to build, roughly in the order they'll come:
   and browsing: the coordinator.)
 - A radio in the cockpit: period music, news, weather and shipping reports, each country's
   propaganda, reception by distance, height and hour (Astra, t3/radio).
+- Scenarios (a pause-menu page): buttons that each load a prepared situation at once, like a save
+  state: where one is, in what aircraft and paint, the state of the people, the countries and the
+  weather, set up in code rather than by playing there. E.g. "a battle between the two countries":
+  flying in one country's colours in a formation heading for the other's, under a dark overcast
+  with light rain. Others on foot, mid-errand, in a storm, at a feast. Added one at a time, each
+  polished before the next, about as often as a judging round.
+- The overcast climb: from a dark, rainy sea, up through the cloud deck, breaking out into blue sky.
+- Errands with real provenance: every request traces to someone who needs the thing (and why), a
+  supplier who has it (produced or bought), and a negotiation that happened, as if every person
+  pursues their own goals (survive, then get ahead) and the economy is all of them together under
+  the world's constraints.
 - Air brakes (perhaps a negative throttle); a way to lock and unlock the guns; a cockpit view.
 - Many more aircraft, especially the WWI-era seaplanes of the references.
 - A moon with phases, rising with the right phase for the sun; water green and clear as crystal in
