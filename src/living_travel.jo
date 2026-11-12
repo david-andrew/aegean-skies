@@ -159,11 +159,12 @@ commit_arrival = (w: mut World, trip: int, place: int, dock: int, revision: int)
             w.people[actor].next_decision_minute = w.minute+30
     if not (actor in w.places[place].residents): w.places[place].residents.push(actor)
     emit_event(w,.arrived,place,actor,w.trips[trip].reason.beneficiary,w.trips[trip].reason)
-    arrival_search(w,trip)
+    if not w.trips[trip].harbor_move: arrival_search(w,trip)
     unload_at_harbor(w,actor)
     disembark_failed_passengers(w,actor,place)
-    arrival_exchange(w,actor,place)
-    living_costs(w,actor)
+    if not w.trips[trip].harbor_move:
+        arrival_exchange(w,actor,place)
+        living_costs(w,actor)
     true
 
 advance_trips = (w: mut World, target_tick: int):
@@ -183,7 +184,7 @@ advance_trips = (w: mut World, target_tick: int):
             s = w.trips[id].segment
             duration = segment_duration(w.trips[id],s)
             dt = min(remaining,duration-w.trips[id].segment_elapsed_ticks)
-            rate = if s == 0 and w.trips[id].departure_taxi and w.trips[id].departed_tick >= 0: 20 else: AIRFRAMES[int(w.aircraft[c].kind)].burn_ml_sec
+            rate = if w.trips[id].harbor_move: 20 else: if s == 0 and w.trips[id].departure_taxi and w.trips[id].departed_tick >= 0: 20 else: AIRFRAMES[int(w.aircraft[c].kind)].burn_ml_sec
             raw = dt * rate + w.aircraft[c].burn_remainder
             fuel = raw / 60
             if fuel > w.aircraft[c].fuel_ml:
@@ -219,12 +220,12 @@ advance_trips = (w: mut World, target_tick: int):
             if dock >= 0:
                 loop other in w.aircraft:
                     if other.id != c and other.place == dest and other.dock == dock: dock = -1
-            if dock < 0: dock = free_dock(w,dest,c)
-            if w.places[dest].harbor_closed or (dock < 0 and w.trips[id].hold_until_minute == 0):
+            if dock < 0 and not w.trips[id].harbor_move: dock = free_dock(w,dest,c)
+            if w.places[dest].harbor_closed or (dock < 0 and not w.trips[id].harbor_move and w.trips[id].hold_until_minute == 0):
                 w.trips[id].state = .holding
                 w.aircraft[c].pose.vel = vec3(0,0,0); w.aircraft[c].pose.throttle = 0
                 if w.trips[id].hold_until_minute == 0: w.trips[id].hold_until_minute = w.minute+30
-            if not w.places[dest].harbor_closed and (dock >= 0 or w.minute >= w.trips[id].hold_until_minute):
+            if not w.places[dest].harbor_closed and (dock >= 0 or w.trips[id].harbor_move or w.minute >= w.trips[id].hold_until_minute):
                 target = if dock >= 0: w.harbors[dest].docks[dock] else: w.harbors[dest].buoy
                 if length(w.aircraft[c].pose.pos-target) > 1.0:
                     # Changed allocation requires a real final taxi, never a snap between berths.
@@ -292,9 +293,46 @@ harbor_taxi = (w: mut World, actor: int) -> int:
     if craft < 0 or place < 0 or w.people[actor].trip >= 0 or w.aircraft[craft].dock >= 0: return -1
     dock = free_dock(w,place,craft)
     if dock < 0: return -1
-    route = [w.aircraft[craft].pose.pos,w.harbors[place].docks[dock]]
-    id = launch_route(w,actor,place,route,Reason(purpose=.visit,actor=actor,origin=place,destination=place))
-    if id >= 0:
-        ticks = max(120,int(ceil(f64(length(route[1]-route[0]))/5.0*60.0)))
-        w.trips[id].segment_ticks = [ticks]; w.trips[id].eta_tick = w.tick+ticks
+    start_harbor_move(w,actor,dock)
+
+# Same physical body/route owner as a flight, with water-only admission, speed and fuel.
+start_harbor_move = (w: mut World, actor: int, dock: int) -> int:
+    if actor<0 or actor>=w.people.len() or actor==w.player: return -1
+    p=w.people[actor]; craft=p.craft; place=p.place
+    if craft<0 or place<0 or p.trip>=0 or p.carriage>=0 or p.carrying>=0: return -1
+    c=w.aircraft[craft]
+    if c.place!=place or c.trip>=0 or c.repair_obligation>=0 or c.engine<350 or c.hull<350 or c.state!=.moored: return -1
+    if dock< -1 or dock>=w.harbors[place].docks.len() or dock==c.dock: return -1
+    if dock>=0 and free_dock(w,place,craft)!=dock: return -1
+    target=if dock>=0: w.harbors[place].docks[dock] else: w.harbors[place].buoy
+    ticks=max(120,int(ceil(f64(length(target-c.pose.pos))/3.0*60.0)))
+    if c.fuel_ml<(ticks*20+59)/60: return -1
+    id=w.next_trip; w.next_trip += 1
+    reason=Reason(purpose=.mooring,actor=actor,origin=place,destination=place)
+    w.trips[id]=Trip(id=id,actor=actor,craft=craft,mode=.aircraft,state=.active,origin=place,destination=place,reason=reason,route=[c.pose.pos,target],segment_ticks=[ticks],cruise_mm_per_sec=3000,departed_tick=w.tick,last_tick=w.tick,eta_tick=w.tick+ticks,origin_dock=c.dock,claimed_dock=dock,harbor_move=true)
+    w.active_trips.push(id); w.places[place].residents.remove(actor)
+    w.people[actor].place= -1; w.people[actor].trip=id; w.people[actor].state=.traveling
+    w.people[actor].action=Action(activity=.travel,purpose=.mooring,reason=reason,end_minute=(w.tick+ticks+119)/120)
+    w.aircraft[craft].operator=actor; w.aircraft[craft].place= -1; w.aircraft[craft].dock= -1
+    w.aircraft[craft].trip=id; w.aircraft[craft].state=.taxi; w.aircraft[craft].revision += 1
     id
+
+# Loading berths are working space. When a real queue needs one, an idle NPC vacates it by
+# taxiing to the buoy. Never move the player's craft, an active load, a repair or a scene lease.
+harbor_berths_minute = (w: mut World):
+    loop place in 0..w.places.len():
+        if w.places[place].harbor_closed or free_dock(w,place)>=0: continue
+        waiting=false
+        loop c in w.aircraft:
+            if c.trip>=0:
+                t=w.trips[c.trip]
+                if t.destination==place and t.state==.holding: waiting=true
+            if c.place!=place or c.dock>=0: continue
+            loop id in c.job_manifests:
+                if not job_terminal(w.jobs[id].state) or w.jobs[id].return_place==place: waiting=true
+        if not waiting: continue
+        loop c in w.aircraft:
+            if c.place!=place or c.dock<0 or c.owner==w.player or c.operator==w.player or c.move_owner==.scene or c.job_manifests.len()>0 or c.passengers.len()>0: continue
+            p=w.people[c.owner]
+            if p.carriage>=0 or p.carrying>=0 or p.local_work_escrow>=0 or p.action.purpose==.repair: continue
+            if start_harbor_move(w,c.owner,-1)>=0: break
