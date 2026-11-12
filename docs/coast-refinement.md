@@ -60,8 +60,11 @@ optical depth still drives the broad turquoise shallow band, ripples, glints,
 transparency and breakers. Fine land normals affect softened lighting rather than
 reclassifying each microfacet as bare rock. Shallow seabed shading reuses the
 existing smooth procedural noise channels at broad/fine scales instead of
-reconstructing five value-noise fields per fragment; sea detail is unchanged. Coastal paving and raised tread
-bands sample the physical surface and subdivide to keep their clearance.
+reconstructing five value-noise fields per fragment; sea detail is unchanged. Coastal paving samples the physical surface and subdivides to keep its clearance.
+Its longest edges are bounded by 0.875 m (0.4375 m on steep cells); nearly
+planar triangles may use twice that length when all three edge midpoints and
+the centroid agree with the contact field within 3 cm. Explicit entrance
+steps retain main's shared rendering/walking plans; lanes do not add duplicate treads.
 
 Streaming terrain retains its coarse fallback outside main's pinned 3×3
 contact neighborhood; ready contact tiles refine immediately. Rendering caches
