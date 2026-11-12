@@ -8,7 +8,9 @@ use 'geography.jo'
 import 'living_conditions.jo' as weather
 const CLOUD_CELL = 6500.0
 const CLOUD_RANGE = 150000.0
+const CLOUD_LOCAL_RANGE = 70000.0
 const CLOUD_BANK_CELL = 26000.0
+const CLOUD_BANK_CHANCE = 0.22
 cloud_bank_x = -999999
 cloud_bank_z = -999999
 cloud_bank_cache: CloudVolume[]
@@ -25,12 +27,15 @@ cloud_cell = (x: int, z: int) -> CloudVolume?:
     cz = (f64(z) + 0.5) * CLOUD_CELL + (r.next_float() - 0.5) * 600.0
     width = 1500.0 + r.next_float() * 800.0
     depth = 1100.0 + r.next_float() * 600.0
-    tall = r.next_float() < 0.13
-    height = if tall: 1500.0 + r.next_float() * 700.0 else: 460.0 + r.next_float() * 700.0
+    # Nearby cumulus has real vertical development even before afternoon heating.
+    # A sparse upper tail gives occasional landmarks without enlarging footprints.
+    size = r.next_float()
+    tall = size < 0.76
+    height = if size < 0.09: 5400.0+r.next_float()*1200.0 else if tall: 2800.0+r.next_float()*1800.0 else: 650.0+r.next_float()*750.0
     base = 650.0 + noise(cx / 60000.0, cz / 60000.0) * 300.0
     # Rotated full boxes fit disjoint horizontal cells, avoiding interpenetrating
     # formation layers. Each stamp's lobes already form a whole bank.
-    CloudVolume(vec3(f32(cx), f32(base + height * CLOUD_BASE), f32(cz)), vec3(f32(width), f32(height), f32(depth)), f32(floor(r.next_float() * 3.0)), f32(r.next_float() * TAU), f32(r.next_float()))
+    CloudVolume(vec3(f32(cx), f32(base + height * CLOUD_BASE), f32(cz)), vec3(f32(width), f32(height), f32(depth)), f32(if tall: floor(r.next_float()*2.0) else: 2.0+floor(r.next_float()*2.0)), f32(r.next_float() * TAU), f32(r.next_float()))
 
 # Stable geography-derived heating: sampled once per cell cache build, never
 # per fragment/frame. Island groups seed afternoon lines even over nearby water.
@@ -44,15 +49,15 @@ cloud_heating = (p: vec2) -> f32:
             heat = max(heat,f32(smoothstep(0.0,120.0,new_land_base(f64(q.x),f64(q.y)).0)))
     heat
 
-cloud_bank = (x: int,z: int,drift: vec2 = vec2(0,0)) -> CloudVolume?:
+cloud_bank = (x: int,z: int,drift: vec2 = vec2(0,0), heating: bool = true) -> CloudVolume?:
     r = rng(1701+x*73856093+z*19349663)
-    if r.next_float() > 0.43: return none
+    if r.next_float() > CLOUD_BANK_CHANCE: return none
     p = vec2(f32((f64(x)+0.5)*CLOUD_BANK_CELL),f32((f64(z)+0.5)*CLOUD_BANK_CELL))
-    heat = cloud_heating(p+drift)
+    heat = if heating: cloud_heating(p+drift) else: 0.0
     tone = f32(r.next_float())
-    height = 1800.0+tone*2600.0
+    height = 700.0+tone*900.0
     extent = vec3(f32(6500.0+r.next_float()*2200.0),height,f32(3900.0+r.next_float()*1800.0))
-    CloudVolume(vec3(p.x,950+height*CLOUD_BASE,p.y),extent,if tone < 0.45: 1.0 else: 2.0, f32(r.next_float()*TAU),tone,thermal=heat)
+    CloudVolume(vec3(p.x,950+height*CLOUD_BASE,p.y),extent,if tone < 0.45: 2.0 else: 3.0, f32(r.next_float()*TAU),tone,thermal=heat)
 
 cloud_evolve = (source: CloudVolume,air: weather.WeatherAir,seconds: f64) -> CloudVolume:
     v = source
@@ -65,7 +70,7 @@ cloud_evolve = (source: CloudVolume,air: weather.WeatherAir,seconds: f64) -> Clo
     v.weather.x = clamp((amount-v.tone*0.42)*4.0,0.0,1.0)*alive*(1.0-smoothstep(0.2,0.75,air.deck))
     tall = smoothstep(0.55,0.95,v.tone)*max(air.towers,heating*0.65)
     v.extent.xz *= 0.65+rise*0.3+spread*0.12
-    v.extent.y *= (0.15+rise*0.85)*(1.0-spread*0.62)*(0.7+tall*1.7)
+    v.extent.y *= (0.15+rise*0.85)*(1.0-spread*0.62)*(0.95+tall*1.45)
     v.center.y = air.ceiling+v.extent.y*f32(CLOUD_BASE)
     v.weather.y = air.storm
     v.growth = vec4((1.0-rise)*0.075+spread*0.10,f32(seconds*0.005)+v.tone*6.28,0.018*rise,spread*0.035)
@@ -77,12 +82,19 @@ world_clouds = (cam: vec3, drift: vec2) -> CloudVolume[]:
     z = int(floor(f64(cam.z - drift.y) / CLOUD_CELL))
     if x != cloud_field_x or z != cloud_field_z:
         cloud_field_cache.clear()
-        radius = int(ceil(CLOUD_RANGE / CLOUD_CELL)) + 1
+        radius = int(ceil(CLOUD_LOCAL_RANGE / CLOUD_CELL)) + 1
         loop iz in z - radius..z + radius + 1:
             loop ix in x - radius..x + radius + 1:
                 v = cloud_cell(ix, iz)
                 if v != none:
-                    source = v!; source.thermal = cloud_heating(source.center.xz+drift)
+                    source = v!
+                    # Reserve only intersecting footprints, not the entire 26 km cell.
+                    # The nearest bank cell suffices: even maximum radii cannot reach a
+                    # small cell center on the far side of a bank-cell boundary.
+                    bank_ix = int(floor(f64(source.center.x)/CLOUD_BANK_CELL)); bank_iz = int(floor(f64(source.center.z)/CLOUD_BANK_CELL))
+                    if let bank = cloud_bank(bank_ix,bank_iz,heating=false):
+                        if length(source.center.xz-bank.center.xz) < length(source.extent.xz)+length(bank.extent.xz): continue
+                    source.thermal = cloud_heating(source.center.xz+drift)
                     cloud_field_cache.push(source)
         cloud_field_x = x; cloud_field_z = z
     bx = int(floor(f64(cam.x-drift.x)/CLOUD_BANK_CELL)); bz = int(floor(f64(cam.z-drift.y)/CLOUD_BANK_CELL))
@@ -95,14 +107,12 @@ world_clouds = (cam: vec3, drift: vec2) -> CloudVolume[]:
     result: CloudVolume[]
     loop source in cloud_field_cache:
         v = source
-        # Reserve the large formation's whole cell. This prevents interleaved
-        # translucent boxes and reduces, rather than adds to, small-cloud overdraw.
-        ix = int(floor(f64(v.center.x)/CLOUD_BANK_CELL)); iz = int(floor(f64(v.center.z)/CLOUD_BANK_CELL))
-        r = rng(1701+ix*73856093+iz*19349663)
-        if r.next_float() <= 0.43: continue
         v.center += vec3(drift.x,0,drift.y)
         if weather_active: v = cloud_evolve(v,weather_at_point(v.center),weather_seconds)
-        if v.weather.x >= 0.005 and length(v.center.xz-cam.xz) < f32(CLOUD_RANGE): result.push(v)
+        # Individual plumes give way to broad distant banks. Keep the 3–15 km
+        # flight neighbourhood intact and avoid a forest of tiny horizon towers.
+        v.weather.x *= 1.0-smoothstep(40000.0,f32(CLOUD_LOCAL_RANGE),length(v.center.xz-cam.xz))
+        if v.weather.x >= 0.005: result.push(v)
     loop source in cloud_bank_cache:
         v = source
         v.center += vec3(drift.x,0,drift.y)
