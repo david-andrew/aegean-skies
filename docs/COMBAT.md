@@ -51,8 +51,14 @@ Guns use real forward muzzle/convergence vectors, inherited aircraft velocity, g
 seeded scatter. Moving aircraft are hit in local part ellipsoids, with nearest-hit ordering and
 stable ID tie breaks. Terrain/sea is sampled nine times along each bullet step; this is a bounded
 approximation, not an exact terrain raycast for arbitrarily thin ridges. Multiple wing decks and
-separate twin engines are included. Heat can jam a gun until it cools. Ammo is finite. One round
-in three is drawn as a tracer; all rounds remain physical. `bullet_scale` follows the existing
+separate twin engines are included. NPC guns keep their 700 rounds, aircraft-specific cadence, heat/jams and one-in-three tracers.
+Human guns start with 10,000 rounds and the legacy rapid stream: 11 rounds/s combined, every
+round a tracer, cooling at 0.35/s, slowing above 0.85 heat rather than jamming. The Aircraft pause
+page cycles Rapid / Light / Medium / Heavy (period rates 8 / 11 / 14 rounds/s, original period
+heat/jams and tracer frequency). Endless ammunition bypasses consumption/exhaustion only;
+safety and period overheating still apply. Switching guns does not replenish the magazine.
+`configure_player_gun` applies these settings only to human actors; its one-time magazine load
+is serialized. All rounds remain physical. `bullet_scale` follows the existing
 flight-speed experiment in the main game and defaults to design speed in standalone battles.
 
 ## Events, survival and persistence
@@ -74,6 +80,16 @@ produce a second pilot. NPCs bail when the airframe/engine/fire is hopeless; hum
 choice. The canopy opens after 1.25 seconds (or manually after 0.17), settles to 7 m/s and drifts
 with the actual wind. Land produces `.landed`; water produces `.swimming`. Descent steering is
 world-space horizontal movement. `released=true` transfers drawing to a foot/rescue controller.
+Presentation follows Sky Barons: FALL somersaults at 9 radians/s; CHUTE switches upright with
+a full twelve-gore canopy (that reference has no inflation or independent sway animation).
+The eye follows at 14/s, nine metres back with a 0.7 m shoulder offset, looking along the player's
+aim independently of the somersault. Existing descent physics and opening times are retained.
+
+Gun audio uses eight broadband-noise reports per family, randomly selected per shot, with a
+short high-frequency crack and a wide low-frequency thump. Playback follows physical shot
+events; there is no synthesized pitched gun oscillator or separate looping firing sound.
+`tools/gunlab.jo OUTPUT_DIR` writes spaced shots and three-second held bursts as WAV files
+without opening a window or playing sound.
 
 The **rescue/war integration boundary is intentional**: this branch exposes bail/land/swim data
 but does not choose a rescue vessel, transfer crew/cargo ownership, award a victory, set faction
