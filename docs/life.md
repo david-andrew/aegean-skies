@@ -65,3 +65,29 @@ Lifelog advances a real month, checks conservation hourly, canonical save round-
 records physically nearby conversations and carried public news, and checks recent-line uniqueness.
 Lifelab advances normal routines from startup and walks them under scene leases; it never moves
 people for the camera. Evening captures the second day's dusk square, when the mechanic plays.
+
+## Questions and speech particulars
+
+The four talk facade signatures and original topic/reply ordinals are unchanged. `TalkReply`
+appends **`open_topic` (6)**: dispatch it through `reply` just like any other supplied option.
+`ConversationTurn.question_kind` is optional semantic metadata. Render `turn.replies` verbatim;
+there are three or four options for ordinary questions, without a duplicate goodbye option.
+A reciprocal option echoes the actual question. Work offers have three different options:
+request the terms, decline, or open other work. None claims a job; acceptance uses the validated
+work transaction. The farewell is short enough for a departure toast and never asks a follow-up.
+
+New speech candidates carry a `TalkQuestion` domain, wording, reciprocal wording and related topic.
+Punctuation and substrings cannot select replies. Legacy saved questions use exact registered
+wording only; an unrecognized old pending question expires without a guessed answer. The saved
+ledger preserves the domain/wording, so a reload keeps the same answer choices. Asking back a
+route/company question gives the speaker's route/planned stop, not a stock acknowledgement.
+
+`living_talk_context` composes the speaker's own carriage, promises, repair bills, shifts, fuel,
+household, observed nearby moored aircraft, actual wind direction/strength and audible musician.
+Market/news quotes retain saved source and observation dates. An uninformed speaker reaches a
+refusal or silence. There is no invented individual meal history and new banks do not ask about it.
+
+Run `tools/lifelog.jo` to record a deterministic month; then
+`python3 tools/speech_critic.py transcript.txt` reports literal particulars, deliberate social
+moves, repetition, distinct 3/5-grams, common phrases and samples. Review samples as well as the
+heuristic score: a named place alone cannot establish whether a claim was truthful.
