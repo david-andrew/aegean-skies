@@ -169,6 +169,43 @@
     sloppy.env.__aegean_motion_x = () => { const v = dx; dx = 0; return v; };
     sloppy.env.__aegean_motion_y = () => { const v = dy; dy = 0; return v; };
   }
+  // In full screen a phone hides its navigation bar, and with it the little rotate button Android
+  // offers when auto-rotate is off and the phone is turned. So the page offers its own: when the
+  // phone has been held the other way for a moment, a rotate button shows in the corner; tapping it
+  // turns the screen that way and keeps it there (till the phone is turned and it's tapped again).
+  {
+    let held = null, since = 0, button = null, hideAt = 0;
+    const physical = g => {
+      if (Math.abs(g.x) > Math.abs(g.y) + 2.5) return g.x > 0 ? "landscape-primary" : "landscape-secondary";
+      if (Math.abs(g.y) > Math.abs(g.x) + 2.5 && g.y > 0) return "portrait-primary";
+      return null;
+    };
+    const current = () => (screen.orientation && screen.orientation.type) || "";
+    const make = () => {
+      button = document.createElement("button");
+      button.textContent = "\u27F3";
+      button.setAttribute("aria-label", "Rotate the screen");
+      Object.assign(button.style, {position:"fixed", right:"18px", bottom:"18px", width:"52px", height:"52px",
+        borderRadius:"26px", border:"2px solid rgba(255,248,230,0.7)", background:"rgba(16,20,30,0.6)",
+        color:"#fff8e6", fontSize:"30px", lineHeight:"46px", padding:"0", zIndex:"10", display:"none"});
+      button.addEventListener("click", e => {
+        e.stopPropagation();
+        if (held && screen.orientation && screen.orientation.lock) screen.orientation.lock(held).catch(() => {});
+        button.style.display = "none";
+      });
+      document.body.appendChild(button);
+    };
+    window.addEventListener("devicemotion", e => {
+      const g = e.accelerationIncludingGravity;
+      if (!g || g.x == null || !document.fullscreenElement) { if (button) button.style.display = "none"; return; }
+      const p = physical(g), now = performance.now();
+      if (p !== held) { held = p; since = now; }
+      const differs = held && held.split("-")[0] !== current().split("-")[0];
+      if (!button) make();
+      if (differs && now - since > 600 && button.style.display === "none") { button.style.display = "block"; hideAt = now + 5000; }
+      if ((!differs || now > hideAt) && button.style.display !== "none") button.style.display = "none";
+    });
+  }
   const proto = WebGL2RenderingContext.prototype;
   const shaderSource = proto.shaderSource, linkProgram = proto.linkProgram, uniformLocation = proto.getUniformLocation;
   proto.shaderSource = function (shader, source) {
