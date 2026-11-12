@@ -1,3 +1,5 @@
+use 'living_guard.jo'
+use 'living_transaction.jo'
 use 'living_types.jo'
 use 'living_cargo.jo'
 use 'living_money.jo'
@@ -7,7 +9,7 @@ use 'living_boats.jo'
 
 obligation_live = (state: ObligationState) -> bool: state == .open or state == .blocked or state == .breached
 
-pay_obligation = (w: mut World, id: int, max_cents: int) -> int:
+_guarded_pay_obligation = (w: mut World, id: int, max_cents: int) -> int:
     if not (id in w.obligations): return 0
     if not obligation_live(w.obligations[id].state) and w.obligations[id].state != .defaulted: return 0
     debtor = w.obligations[id].debtor
@@ -16,7 +18,9 @@ pay_obligation = (w: mut World, id: int, max_cents: int) -> int:
     if amount <= 0: return 0
     if not transfer(w,w.people[debtor].account,w.obligations[id].creditor_account,amount,if w.obligations[id].kind == .debt: MoneyKind.debt else: MoneyKind.rent,id): return 0
     if w.obligations[id].creditor_account == w.outside_creditor_account and w.outside_creditor_account >= 0:
-        assert(transfer(w,w.outside_creditor_account,-1,amount,.outside_credit,id))
+        if not (transfer(w,w.outside_creditor_account,-1,amount,.outside_credit,id)):
+            living_fault("living_duties.pay_obligation.0",guard_context(w)+" id={id} max_cents={max_cents}")
+            return -1
     if w.obligations[id].kind == .debt:
         interest = min(amount,w.obligations[id].interest_cents)
         w.obligations[id].interest_cents -= interest
@@ -126,7 +130,7 @@ labor_minute = (w: mut World, person: int):
         w.people[person].wage_remainder = raw % minutes
         if cents > 0: transfer(w,w.factions[faction].account,w.people[person].account,cents,.wage)
 
-start_repair = (w: mut World, obligation: int) -> bool:
+_guarded_start_repair = (w: mut World, obligation: int) -> bool:
     if not (obligation in w.obligations) or not obligation_live(w.obligations[obligation].state): return false
     if w.obligations[obligation].repair_started_minute >= 0: return false
     c = w.obligations[obligation].craft; owner = w.obligations[obligation].debtor
@@ -150,7 +154,9 @@ start_repair = (w: mut World, obligation: int) -> bool:
         block_obligation(w,obligation,"parts or cash unavailable; local earnings needed"); return false
     escrow = fund_escrow(w,w.people[owner].account,cost+labor,"repair-{obligation}")
     if escrow < 0: return false
-    assert(reserve(w.places[place].market.inventory,5,parts))
+    if not (reserve(w.places[place].market.inventory,5,parts)):
+        living_fault("living_duties.start_repair.1",guard_context(w)+" obligation={obligation}")
+        return false
     w.people[owner].last_recovery_action_minute = w.minute
     w.obligations[obligation].labor_escrow = escrow
     w.obligations[obligation].reserved_parts = parts
@@ -165,20 +171,25 @@ start_repair = (w: mut World, obligation: int) -> bool:
     w.aircraft[c].repair_obligation = obligation; w.aircraft[c].state = .workshop
     true
 
-cancel_repair = (w: mut World, id: int):
+_guarded_cancel_repair = (w: mut World, id: int):
     c = w.obligations[id].craft
     if c < 0 or w.obligations[id].repair_started_minute < 0: return
     place = w.aircraft[c].place
     parts = w.obligations[id].reserved_parts
-    if parts > 0: assert(release(w.places[place].market.inventory,5,parts))
+    if parts > 0:
+        if not (release(w.places[place].market.inventory,5,parts)):
+            living_fault("living_duties.cancel_repair.2",guard_context(w)+" id={id}")
+            return
     escrow = w.obligations[id].labor_escrow
     if escrow >= 0 and w.accounts[escrow].cents > 0:
-        assert(transfer(w,escrow,w.people[w.obligations[id].debtor].account,w.accounts[escrow].cents,.refund,id))
+        if not (transfer(w,escrow,w.people[w.obligations[id].debtor].account,w.accounts[escrow].cents,.refund,id)):
+            living_fault("living_duties.cancel_repair.3",guard_context(w)+" id={id}")
+            return
     w.obligations[id].reserved_parts = 0; w.obligations[id].repair_started_minute = -1; w.obligations[id].mechanic = -1
     w.aircraft[c].repair_obligation = -1; w.aircraft[c].state = .moored
     block_obligation(w,id,"reservation expired without mechanic progress")
 
-advance_repairs = (w: mut World):
+_guarded_advance_repairs = (w: mut World):
     loop id in w.open_obligations:
         if w.obligations[id].kind != .repair or w.obligations[id].repair_started_minute < 0: continue
         c = w.obligations[id].craft; p = w.obligations[id].mechanic; place = w.aircraft[c].place
@@ -197,8 +208,14 @@ advance_repairs = (w: mut World):
         w.places[place].market.inventory.reserved[5] -= parts
         cargo_consume(w,.market,place,5,parts)
         w.places[place].market.inventory.qty[5] -= parts; record_consumption(w,5,parts)
-        if cost > 0: assert(transfer(w,escrow,w.places[place].market.account,cost,.repair,id))
-        if labor > 0: assert(transfer(w,escrow,w.people[p].account,labor,.repair,id))
+        if cost > 0:
+            if not (transfer(w,escrow,w.places[place].market.account,cost,.repair,id)):
+                living_fault("living_duties.advance_repairs.4",guard_context(w))
+                return
+        if labor > 0:
+            if not (transfer(w,escrow,w.people[p].account,labor,.repair,id)):
+                living_fault("living_duties.advance_repairs.5",guard_context(w))
+                return
         if w.obligations[id].repair_hull: w.aircraft[c].hull = min(1000,w.aircraft[c].hull+w.obligations[id].quantity)
         else: w.aircraft[c].engine = min(1000,w.aircraft[c].engine+w.obligations[id].quantity)
         w.aircraft[c].revision += 1
@@ -235,3 +252,33 @@ request_repair = (w: mut World, owner: int) -> int:
     id = seed_obligation(w,"service-{c}-{w.next_obligation}",owner,-1,.repair,w.minute,w.minute+2880,points*800/200,place)
     w.obligations[id].craft = c; w.obligations[id].quantity = points; w.obligations[id].repair_hull = hull
     id
+
+
+# Recovery boundaries share one checkpoint when nested; strict mode retains loud failures.
+pay_obligation = (w: mut World, id: int, max_cents: int) -> int:
+    if guard_blocked(): return -1
+    scope = guard_begin(w)
+    result = _guarded_pay_obligation(w,id,max_cents)
+    failed = guard_failed(scope)
+    guard_finish(w,scope)
+    if failed: -1 else: result
+
+start_repair = (w: mut World, obligation: int) -> bool:
+    if guard_blocked(): return false
+    scope = guard_begin(w)
+    result = _guarded_start_repair(w,obligation)
+    failed = guard_failed(scope)
+    guard_finish(w,scope)
+    if failed: false else: result
+
+cancel_repair = (w: mut World, id: int):
+    if guard_blocked(): return
+    scope = guard_begin(w)
+    _guarded_cancel_repair(w,id)
+    guard_finish(w,scope)
+
+advance_repairs = (w: mut World):
+    if guard_blocked(): return
+    scope = guard_begin(w)
+    _guarded_advance_repairs(w)
+    guard_finish(w,scope)
