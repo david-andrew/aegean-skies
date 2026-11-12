@@ -1,0 +1,113 @@
+use '../src/living_types.jo'
+use '../src/life_types.jo'
+use '../src/living_seed.jo'
+use '../src/living_place_context.jo'
+use '../src/living_far_types.jo'
+use '../src/living_far_economy.jo'
+use '../src/living_far_orders.jo'
+use '../src/living_far_transport.jo'
+use '../src/living_far_stock.jo'
+use '../src/living_far_checks.jo'
+use '../src/living_far_news.jo'
+use '../src/living_money.jo'
+use '../src/living_save.jo'
+
+wholesale_fixture = () -> World:
+    w=build_world(u64(42)); contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k,"Core {k}",0,k,w.harbors[k].center,true,k))
+    loop pair in [(100,1),(200,1),(300,2)]: contexts.push(LifePlaceContext(pair.0,"Port {pair.0}",pair.1,pair.0,vec3(f32(pair.0),0,0)))
+    assert(publish_place_contexts(w,1,contexts,[-1,100,300]))
+    seeds=[FarPlaceSeed(100,4000,1,3,productivity=80),FarPlaceSeed(200,80,1,0),FarPlaceSeed(300,2000,2,5,raw_ore=1000000)]
+    links=[FarLink(0,100,200,.cart,[vec3(100,0,0),vec3(200,0,0)],100000),FarLink(1,200,300,.cart,[vec3(200,0,0),vec3(300,0,0)],100000)]
+    assert(populate_settlement_economy(w,1,seeds,links))
+    assert(far_provision(w,0) and far_provision(w,1))
+    # Three days of real wages and household purchases deplete the city's opening grain.
+    loop hour in 1..73:
+        w.minute=hour*60; w.tick=w.minute*120
+        loop place in [100,200,300]: far_work_hour(w,place); far_household_hour(w,place)
+    w
+
+finish_order_leg = (w: mut World, vehicle: int):
+    assert(far_depart(w,vehicle))
+    w.tick+=6000; w.minute=w.tick/120; far_advance_transport(w,w.tick)
+    assert(w.far.vehicles[vehicle].journey<0)
+    w.tick+=3600; w.minute=w.tick/120
+
+test "an actual city order reaches a middle counter and then its producer before the same grain is bought and resold":
+    w=wholesale_fixture(); own=w.far.districts[200].target[3]
+    assert(counter_stock_target(w,200,3)==own)
+    finish_order_leg(w,1) # middle -> city, collecting its real quote
+    assert(counter_stock_target(w,200,3)==own) # the request is still out of town
+    finish_order_leg(w,1) # city -> middle, carrying the actual customer order
+    assert(counter_stock_target(w,200,3)>own*10)
+    customer=w.far.districts[200].customer_orders[0]
+    assert(customer.order.place==300 and customer.heard>customer.order.minute)
+    finish_order_leg(w,0) # producer -> middle, collecting its wholesale request
+    finish_order_leg(w,0) # middle -> producer, carrying that request back
+    mandate=w.far.vehicles[0].buying_order!
+    assert(mandate.place==200 and 300 in order_path(mandate,3) and 200 in order_path(mandate,3))
+    assert(mandate.quantity[3]>own and order_need_since(mandate,3)==order_need_since(customer.order,3))
+    # An order descended from this customer must never echo back and amplify its need.
+    echoed=counter_restock_order(w,0,100)
+    assert(echoed.quantity[3]==0)
+    stock=stock_totals(w); roots=w.next_cargo_source
+    assert(far_depart(w,0)); j=w.far.journeys[w.far.vehicles[0].journey]
+    assert(j.good==3 and j.quantity>own and j.provenance.need_places==order_path(mandate,3),"chosen good={j.good} quantity={j.quantity} needs={j.provenance.need_places} grain order={mandate.quantity[3]}")
+    assert(stock_totals(w)==stock and w.next_cargo_source==roots)
+    source_roots=w.far.vehicles[0].cargo.roots.keys()
+    w.tick+=6000; w.minute=w.tick/120; far_advance_transport(w,w.tick)
+    w.tick+=3600; w.minute=w.tick/120
+    # The intermediary's quote reflects its received customers, rather than declaring
+    # a full warehouse merely because it holds more than its own small household reserve.
+    far_household_hour(w,200)
+    assert(far_depart(w,1)); sale=w.far.journeys[w.far.vehicles[1].journey]
+    assert(sale.good==3 and sale.quantity>0)
+    loop root in w.far.vehicles[1].cargo.roots.keys(): assert(root in source_roots)
+    w.tick+=6000; w.minute=w.tick/120; far_advance_transport(w,w.tick)
+    assert(far_market_qty(w,300,3)>0)
+    assert(goods_balance(w) and money_balances(w) and validate_far(w)=="",validate_far(w))
+    text=canonical_text(w); parsed=from_text[World](text)
+    assert(parsed is World and canonical_text(parsed)==text)
+
+test "fulfilled or expired customer orders stop upstream demand and cannot refresh their original deadline":
+    w=wholesale_fixture(); finish_order_leg(w,1); finish_order_leg(w,1)
+    e=w.far.districts[200].customer_orders[0]
+    before=counter_stock_target(w,200,3)
+    serve_counter_order(w,200,e.service,e.order.minute,3,e.order.quantity[3])
+    assert(counter_stock_target(w,200,3)<before)
+    # Repeated handling of the same arrival cannot restore the supplied quantity.
+    remember_counter_order(w,200,e.service,e.order)
+    assert(counter_stock_target(w,200,3)==w.far.districts[200].target[3])
+    w.minute=order_due(e.order,3)+1; w.tick=w.minute*120
+    remember_counter_order(w,200,e.service,e.order)
+    assert(counter_stock_target(w,200,3)==w.far.districts[200].target[3])
+
+test "public work records the genuine received downstream customer and refuses malformed ancestry":
+    w=wholesale_fixture(); finish_order_leg(w,1); finish_order_leg(w,1)
+    far_supply_requests(w,200)
+    bid=[loop r in w.far.districts[200].reports: if r.kind=="supply_request" and r.supply_good==3: r][0]
+    assert(300 in bid.supply_places and 200 in bid.supply_places and "Port 300" in bid.text)
+    assert(bid.supply_since<=bid.occurred_minute)
+    e=w.far.districts[200].customer_orders[0]
+    bad=e.order; bad.paths[3].places=[300,300]
+    assert(not restock_order_valid(w,bad))
+
+test "a factory's actual input needs are procured and a renewed upstream order cannot extend its customer's deadline":
+    w=wholesale_fixture()
+    # The parts works owns an honest opening input reserve, then consumes it to pay workers.
+    need=counter_own_target(w,300,4)
+    assert(need>1000)
+    input=far_take_market(w,300,4,far_market_qty(w,300,4)); far_use(w,input)
+    purchase=counter_restock_order(w,1,300)
+    assert(purchase.quantity[4]==need)
+    finish_order_leg(w,1); finish_order_leg(w,1)
+    original=w.far.districts[200].customer_orders[0].order
+    first=counter_restock_order(w,0,200)
+    w.minute+=120; w.tick=w.minute*120
+    next=counter_restock_order(w,0,200)
+    assert(next.minute>first.minute and order_due(next,3)==order_due(original,3))
+    assert(order_need_since(next,3)==order_need_since(original,3))
+    # Tariffs cover real crew time; a longer route is not sold at the tiny local-round fee.
+    short=service_freight_quote(w,0,100)
+    w.far.links[0].length_mm*=1000
+    assert(service_freight_quote(w,0,100)>short)
