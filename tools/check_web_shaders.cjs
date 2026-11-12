@@ -24,8 +24,9 @@ function audit(source, raw = false) {
     throw Error('Unknown GLSL resource type: ' + type);
   }
   let rows = 0, samplers = 0;
-  for (const m of s.matchAll(/^uniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+(\w+)(?:\[(\d+)\])?;/gm)) {
-    const [_, type, name, count] = m;
+  for (const m of s.matchAll(/^uniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)(?:\[(\d+)\])?\s+(\w+)(?:\[(\d+)\])?;/gm)) {
+    const [_, type, typeCount, name, nameCount] = m;
+    const count = typeCount || nameCount;
     let c;
     if (structs.has(type) && name === 'u' && !raw) {
       c = fields(structs.get(type)).filter(f => new RegExp('\\bu\\.' + f.name + '\\b').test(s))
