@@ -23,8 +23,7 @@ Sea swells/ripples carry their wave vectors and CPU-f64, modulo-tau anchor/time 
 water query uses the same vectors and f64 phase. Detail marks and glints carry integer cell IDs
 separately from fractional cell origins; their centre distances never subtract large floats.
 Coarser glint anchors derive from the finest lattice by exact power-of-two integer quotient/
-remainder. Sea band calls use constant indices and wavelengths to avoid dynamic uniform reads
-and retain shader constant folding on Intel GPUs.
+remainder. Sea band calls use constant indices to avoid dynamic uniform reads on Intel GPUs.
 Main's original circular mark sizes and ripple bands are preserved. Legacy puff-cloud wrapping,
 rain displacement, foliage pigment and vegetation sway also retain phase through chart changes.
 
