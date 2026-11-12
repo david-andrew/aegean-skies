@@ -64,12 +64,13 @@ for t in turns:
  if any(re.search(r"\bask "+re.escape(name)+r"\b",text,re.I) for name in aliases(listener)) or any(re.search(re.escape(name)+r" asked about carrying.*\bAsk them",text) for name in aliases(listener)):record('listener_self_referral')
  if re.search(r"(?<!The )\bpilot's\b|\bbelongs to pilot\b",text):record('player_placeholder_possession')
  if re.search(r"\bi(?:\b|['’])",text):record('lowercase_i')
+ if re.search(r'\b(?:near|off|at) out at sea\b',text):record('malformed_offshore_location')
  if 'Please distinguish what we can see from what someone has predicted' in text:record('pedantic_prediction')
  if re.search(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?) told me this:.*\b\1\b",text):record('source_repeated_as_stranger')
  for sentence in re.split(r'(?<=[.!?])\s+(?=[A-Z])',text):
   if len(re.findall(r"[A-Za-z]+",sentence))<6:continue
   item=sentences[sentence];item['voices'].add(t['voice']);item['count']+=1
-classes=['past_current_shift','self_named_beneficiary','listener_self_referral','player_placeholder_possession','lowercase_i','pedantic_prediction','source_repeated_as_stranger']
+classes=['past_current_shift','self_named_beneficiary','listener_self_referral','player_placeholder_possession','lowercase_i','pedantic_prediction','source_repeated_as_stranger','malformed_offshore_location']
 shared=[dict(sentence=k,voices=sorted(v['voices']),count=v['count']) for k,v in sentences.items() if len(v['voices'])>1]
 shared.sort(key=lambda x:(-x['count'],x['sentence']))
 result['bug_counts']={k:len(bugs[k]) for k in classes}
