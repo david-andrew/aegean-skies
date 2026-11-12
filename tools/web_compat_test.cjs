@@ -37,3 +37,11 @@ assert.deepEqual(cappedSize(1266,585,844,390,230400),cap);
 assert.deepEqual(cappedSize(844,390,844,390,230400),cap);
 assert.deepEqual(cappedSize(600,277,844,390,230400),[600,277]);
 assert.deepEqual(cappedSize(1170,2532,390,844,230400),[326,706]);
+
+// New compiler output may put the array size on its type rather than its name.
+// Both forms must count all rows, including a shader that exceeds mobile limits.
+for (const declaration of ['vec4[32] clouds', 'vec4 clouds[32]']) {
+  const glsl=`#version 300 es\nprecision highp float;\nprecision highp int;\nuniform ${declaration};\nout vec4 color;\nvoid main(){color=clouds[0];}`;
+  assert.equal(audit(glsl).uniforms,32);
+  assert.equal(audit(glsl.replace(/32/g,'240')).errors.length,1);
+}

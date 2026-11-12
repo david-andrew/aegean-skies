@@ -1,0 +1,152 @@
+# Whole-state builders. No input, wall clock, cosmetic RNG, or changes to the running world.
+# Render resources are shared; everything that can affect play belongs to this result.
+use 'scenario_catalog.jo'
+use 'life_types.jo'
+use 'combat.jo'
+use 'pilot.jo'
+use 'planes.jo'
+use 'flight.jo'
+use 'objects.jo'
+use 'settlements.jo'
+use 'traffic.jo'
+use 'vessel_types.jo'
+import 'living_world.jo' as life
+import 'living_types.jo' as data
+import 'living_far_aircraft.jo' as registry
+import 'living_far_stock.jo' as stock
+import 'living_scene.jo' as scene
+import 'life_scene.jo' as venues
+import 'cargo_scene.jo' as cargo
+
+# These IDs reuse existing meshes/markings, so repeated loads allocate no aircraft models.
+const STRAIT_BLUE_MODEL = 7
+const STRAIT_RED_MODEL = 5
+const STRAIT_ENGAGEMENT = 1000000
+const STRAIT_CENTER = vec3(138000,440,-73000)
+
+enum ScenarioMode: walking, aboard, free
+struct ScenarioState:
+    world: data.World
+    flyer: Flyer
+    battle: Battle
+    mode: ScenarioMode = .walking
+    position: vec3
+    yaw = 0.0
+    hour = 9.5
+    camera_yaw = 0.0
+    camera_pitch = 0.25
+    vessels: VesselFleet
+
+# Fixture grants are explicit in the books. Subsequent use remains finite and conserved.
+_scenario_fuel = (w: mut data.World, craft: int, ml: int):
+    difference = ml - w.aircraft[craft].fuel_ml
+    if difference >= 0: w.goods_ledger.created[int(data.GoodKind.fuel)] += difference
+    else: w.goods_ledger.consumed[int(data.GoodKind.fuel)] -= difference
+    w.aircraft[craft].fuel_ml = ml
+
+_scenario_body = (w: mut data.World, craft: int, model: int, models: CraftModel[], at: vec3, h: f64) -> Combatant:
+    person = w.aircraft[craft].owner
+    k = craft_spec(.gull,models[model].contacts)
+    k.fuel_capacity = f64(data.AIRFRAMES[0].tank_ml)/1000.0
+    k.fuel_burn = f64(data.AIRFRAMES[0].burn_ml_sec)/1000.0
+    power=clamp(k.arc_drag*(k.cruise_speed*0.86)^2/k.arc_thrust,0.2,1.0)
+    s = CraftState(position=at,velocity=heading_vector(h)*f32(k.cruise_speed*0.86),orientation=quat_euler(0,-h,0),fuel=k.fuel_capacity,throttle=power,water_age=1)
+    c = w.aircraft[craft]
+    c.kind=.gull; c.model_index=model; c.livery_index=if model==STRAIT_BLUE_MODEL:4 else:2
+    c.pose=data.Pose(pos=at,vel=s.velocity,rot=s.orientation,throttle=int(power*1000))
+    c.previous_pos=at;c.move_owner=.scene;c.state=.airborne;c.place=-1;c.dock=-1
+    c.hull=1000;c.engine=1000;c.last_scene_tick=-1
+    w.aircraft[craft]=c
+    _scenario_fuel(w,craft,int(k.fuel_capacity*1000))
+    w.people[person].pose=c.pose
+    if person in w.far.people:
+        w.far.people[person].vehicle=craft
+        registry.release_far_berth(w,craft)
+    Combatant(craft,person,if model==STRAIT_BLUE_MODEL:1 else:2,k,s,model=model,
+        pilot=CombatPilot(skill=0.78,nerve=0.85,formation=true,formation_heading=h,formation_speed=k.cruise_speed*0.86))
+
+build_strait = (towns: Town[], models: CraftModel[]) -> ScenarioState:
+    finish_settlement_registry()
+    w=life.build_world(u64(1934),harbors_from_towns(towns))
+    cargo.configure_cargo_scene(w,towns)
+    venues.configure_life_scene(w,towns)
+    # War is a saved diplomatic condition; this is an authored starting state, not a random raid.
+    w.diplomacy=[DiplomaticRelation(1,2,tension=1000,stage=.war,last_incident_minute=0)]
+    w.people[w.player].citizenship=1
+    ids: int[][] = [[],[]]
+    mine=w.people[w.player].craft
+    # Normal departure creates the player's existing trip/occupancy records before relocation.
+    scene.scene_player_departure(w)
+    # Real pilots are drawn from national harbor cohorts and registered to real aircraft.
+    # Select sorted IDs, never hash iteration order. Seven allies plus eight opponents.
+    places=w.far.place_ids; places.sort()
+    loop side in 1..3:
+        loop place in places:
+            if ids[side-1].len()>=(if side==1:7 else:8): break
+            if not (place in w.far.harbors) or w.far.districts[place].born_country!=side: continue
+            d=w.far.districts[place]
+            if stock.far_market_qty(w,place,5)<4000: continue
+            # Each harbor sends at most two pilots, within its registered cohort limits.
+            loop slot in 0..2:
+                if ids[side-1].len()>=(if side==1:7 else:8): break
+                price=data.AIRFRAMES[0].price_cents
+                grant=max(0,price-w.accounts[d.household_account].cents)
+                w.accounts[d.household_account].cents+=grant;w.ledger.external_in_cents+=grant
+                r=registry.register_far_aircraft(w,place,.gull,d.household_account,"strait:{side}:{ids[side-1].len()}")
+                if r.craft>=0:ids[side-1].push(r.craft)
+    assert(ids[0].len()==7 and ids[1].len()==8,"The strait requires fifteen registered pilots")
+    actors:Combatant[]
+    loop side in 0..2:
+        members=if side==0:ids[0]+[mine] else:ids[1]
+        h=if side==0:0.0 else:PI
+        origin=STRAIT_CENTER+vec3(if side==0:-65 else:65,if side==0:0 else:35,if side==0:3000 else:-3000)
+        loop slot in 0..members.len():
+            # A loose V, with the player behind its centre: every wing pair is visible.
+            row=(slot+1)/2
+            offset=if slot==0:vec3(0,0,0) else:if slot==7:vec3(0,24,400) else:vec3((if slot%2==1:-1 else:1)*row*36,row*7,row*70)
+            a=_scenario_body(w,members[slot],if side==0:STRAIT_BLUE_MODEL else:STRAIT_RED_MODEL,models,origin+quat_rotate(quat_euler(0,-h,0),offset),h)
+            a.pilot.leader=members[0]
+            a.pilot.formation_offset=offset
+            a.pilot.skill=0.70+f64(slot%4)*0.055
+            a.human=a.craft==mine;a.external=a.human;a.spec.player=a.human
+            actors.push(a)
+    b=start_engagement(STRAIT_ENGAGEMENT,1934,STRAIT_CENTER,actors)
+    b.retreat_radius=18000;b.bullet_scale=5
+    a=b.actors[combat_index(b,mine)]
+    f=Flyer(kind=.gull,model=STRAIT_BLUE_MODEL,spec=a.spec,state=a.state,throttle=a.state.throttle,guns_locked=false,aim_heading=0)
+    w.weather=[data.Weather(id=991,kind=.overcast,center=STRAIT_CENTER.xz,radius_m=100000,born_minute=-60,expires_minute=1440),
+        data.Weather(id=992,kind=.squall,center=STRAIT_CENTER.xz,radius_m=100000,severity=240,born_minute=-60,expires_minute=1440)]
+    w.next_weather=993
+    ScenarioState(world=w,flyer=f,battle=b,mode=.aboard,position=f.state.position,hour=9.5)
+
+build_scenario = (key: str, towns: Town[], models: CraftModel[]) -> ScenarioState?:
+    match key:
+        "strait": build_strait(towns,models)
+        _: none
+
+# Combat owns these sparse bodies (no Traffic/Trip integrator). Commit once after its tick.
+# The scene adapter calls this for all internally-owned bodies outside the traffic registry.
+commit_scenario_aircraft = (w: mut data.World, b: Battle):
+    loop a in b.actors:
+        if b.engagement<0 or a.engagement!=b.engagement or a.human or not a.present: continue
+        c=w.aircraft[a.craft]
+        phase=if a.status==.wreck or a.state.crashed:data.CraftState.wrecked else:if a.state.on_water:data.CraftState.taxi else:data.CraftState.airborne
+        scene.scene_motion(w,a.craft,c.revision,data.Pose(pos=a.state.position,vel=a.state.velocity,rot=a.state.orientation,throttle=int(clamp(a.state.throttle,0.0,1.0)*1000)),
+            min(c.fuel_ml,max(0,int(a.state.fuel*1000))),min(c.hull,max(0,int((1-a.state.hull_damage)*1000))),min(c.engine,max(0,int((1-a.state.engine_damage)*1000))),phase,false,false)
+        w.aircraft[a.craft].state=phase
+        if not a.bailed:w.people[a.person].pose=w.aircraft[a.craft].pose
+    loop descent in b.descents:
+        i=combat_index(b,descent.craft)
+        if i<0 or b.engagement<0 or b.actors[i].engagement!=b.engagement:continue
+        w.people[descent.person].pose.pos=descent.position
+        w.people[descent.person].pose.vel=descent.velocity
+
+# Read-only projection for existing engine sound, exhaust, glints and shadows. The traffic
+# integrator never receives this list; draw_traffic also skips combat-owned bodies.
+scenario_air_traffic = (w: data.World, b: Battle) -> Traffic[]:
+    result:Traffic[]
+    loop a in b.actors:
+        if b.engagement<0 or a.engagement!=b.engagement or a.human or not a.present or a.status==.escaped:continue
+        result.push(Traffic(craft=a.craft,person=a.person,name=w.people[a.person].name,why="Flying in the engagement",reason=data.Reason(purpose=.patrol,actor=a.person),
+            kind=a.spec.kind,model=a.model,spec=a.spec,state=a.state,plan=FlightPlan(phase=.cruise),town=-1,dock=-1,flying=a.status==.flying,materialized=true,prop_angle=a.prop))
+    result
