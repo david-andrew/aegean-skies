@@ -132,6 +132,43 @@
     console.info("Aegean render quality", JSON.stringify(root.AegeanWeb.quality));
     return tier;
   };
+  // The phone's gyroscope, for fine aiming by tilting it (as Breath of the Wild's bow did): its
+  // turning, read from devicemotion's rotationRate, integrated into degrees about the SCREEN's
+  // axes (whichever way up the phone is held), handed over and cleared each frame. iOS asks for
+  // permission, and only in answer to a tap: asked at the next touch after the option is turned on.
+  {
+    let started = false, pendingAsk = false, last = 0, dx = 0, dy = 0, live = false;
+    const onMotion = e => {
+      const r = e.rotationRate; if (!r || r.beta == null) return;
+      const now = performance.now(), dt = last ? Math.min((now - last) / 1000, 0.1) : 0; last = now;
+      live = true;
+      const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      // (rates about the device's x (beta) and y (gamma), deg/s; pointing the phone's back up
+      // aims up, its back to the left aims left)
+      let up, right;
+      switch (((ang % 360) + 360) % 360) {
+        case 90: up = r.gamma; right = r.beta; break;
+        case 180: up = -r.beta; right = r.gamma; break;
+        case 270: up = -r.gamma; right = -r.beta; break;
+        default: up = r.beta; right = -r.gamma;
+      }
+      dx += right * dt; dy += up * dt;
+    };
+    const go = () => { if (!started) { window.addEventListener("devicemotion", onMotion); started = true; } };
+    const ask = () => {
+      const D = window.DeviceMotionEvent;
+      if (!D) return;
+      if (typeof D.requestPermission === "function") D.requestPermission().then(r => { if (r === "granted") go(); }).catch(() => {});
+      else go();
+    };
+    const onTouch = () => { if (pendingAsk) { pendingAsk = false; ask(); } };
+    window.addEventListener("touchend", onTouch);
+    window.addEventListener("click", onTouch);
+    sloppy.env.__aegean_motion_start = () => { pendingAsk = true; if (!(window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === "function")) { pendingAsk = false; ask(); } };
+    sloppy.env.__aegean_motion_live = () => live ? 1 : 0;
+    sloppy.env.__aegean_motion_x = () => { const v = dx; dx = 0; return v; };
+    sloppy.env.__aegean_motion_y = () => { const v = dy; dy = 0; return v; };
+  }
   const proto = WebGL2RenderingContext.prototype;
   const shaderSource = proto.shaderSource, linkProgram = proto.linkProgram, uniformLocation = proto.getUniformLocation;
   proto.shaderSource = function (shader, source) {
