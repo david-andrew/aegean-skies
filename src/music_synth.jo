@@ -5,9 +5,9 @@ use 'music_models.jo'
 const MUSIC_RATE = 16000
 const MUSIC_TABLE = 512
 const MUSIC_VOICES = 64
-const MUSIC_KINDS = 15
+const MUSIC_KINDS = MUSIC_MODEL_KINDS
 
-enum MusicInstrument: strings, brass, flute, oboe, clarinet, bassoon, piano, harp, bouzouki, accordion, banjo, timpani, drums, bass, choir
+enum MusicInstrument: strings, brass, flute, oboe, clarinet, bassoon, piano, harp, bouzouki, accordion, banjo, timpani, drums, bass, choir, trumpet
 
 struct MusicEvent:
     start: int
@@ -16,6 +16,8 @@ struct MusicEvent:
     instrument: int
     gain: f64
     end_gain: f64
+    peak_gain = -1.0
+    peak_fraction = 0.4
 
 struct MusicVoice:
     active = false
@@ -31,6 +33,10 @@ struct MusicVoice:
     increment = 0.0
     gain = 0.0
     gain_step = 0.0
+    peak_age = 0
+    late_step = 0.0
+    tone_low = 0.0
+    peak_level = 1.0
     attack_env = 0.0
     attack_rate = 0.99
     gate = 1.0
@@ -105,18 +111,19 @@ music_load = (s: mut MusicSynth, piece: int):
     balances = [0.70,0.90,0.40,0.70,0.22,1.2,0.55]
     s.gain = balances[s.piece]
     if let b = inflate(music_bytes(s.piece)):
-        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and b[3] == 49)
+        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and (b[3] == 49 or b[3] == 50))
         count = music_u32(b,4)
-        assert(count <= 50000 and b.len() == 16+count*12)
+        stride = if b[3] == 50: 14 else: 12
+        assert(count <= 50000 and b.len() == 16+count*stride)
         s.frames = music_u32(b,8); s.lookback = music_u32(b,12)
         loop i in 0..count:
-            at = 16+i*12
-            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0))
+            at = 16+i*stride
+            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0,if stride == 14: f64(b[at+12])/100.0 else: -1.0,if stride == 14: f64(b[at+13])/100.0 else: 0.4))
     assert(s.events.len() > 0)
 
 music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
     kind = MusicInstrument(e.instrument)
-    velocity = clamp(e.gain*127.0,1.0,127.0)
+    velocity = clamp((if e.peak_gain >= 0: max(e.gain,max(e.peak_gain,e.end_gain)) else: e.gain)*127.0,1.0,127.0)
     blend = music_blend(s.models,e.instrument,e.pitch,velocity)
     models = s.models
     parameter = (field: int) -> f64: music_parameter(models,blend,field)
@@ -131,14 +138,28 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
     mode = if kind == .piano or kind == .timpani or kind == .drums or kind == .harp or kind == .bouzouki or kind == .banjo or kind == .bass: 1 else: 0
     attack = min(parameter(0),max(0.004,f64(e.duration)/f64(MUSIC_RATE)*0.35))
     loudness = parameter(7)*(if velocity < 45: pow(velocity/45.0,1.5) else: if velocity > 115: pow(velocity/115.0,1.4) else: 1.0)
-    balances = [1.0,0.9,0.75,0.85,0.9,0.9,1.1,1.0,0.9,0.9,0.8,1.1,0.8,1.15,0.8]
+    balances = [1.0,0.9,0.75,0.85,0.9,0.9,1.1,1.0,0.9,0.9,0.8,1.1,0.8,1.15,0.8,0.90]
     gain = 0.12*loudness*balances[e.instrument]
     end_gain = gain*clamp(e.end_gain/max(0.01,e.gain),0.15,3.0)
+    peak_age = e.duration
+    first_step = (end_gain-gain)/f64(e.duration)
+    late_step = 0.0
+    initial = gain+first_step*f64(min(age,e.duration))
+    peak_level = gain
+    if e.peak_gain >= 0:
+        peak_age = clamp(int(e.peak_fraction*f64(e.duration)),1,max(1,e.duration-1))
+        top = max(e.gain,max(e.peak_gain,e.end_gain))
+        start_level = gain*pow(2.0,(e.gain-top)*127.0/36.0)
+        peak_level = gain*pow(2.0,(e.peak_gain-top)*127.0/36.0)
+        end_level = gain*pow(2.0,(e.end_gain-top)*127.0/36.0)
+        first_step = (peak_level-start_level)/f64(peak_age)
+        late_step = (end_level-peak_level)/f64(max(1,e.duration-peak_age))
+        initial = if age < peak_age: start_level+first_step*f64(age) else: peak_level+late_step*f64(min(age,e.duration)-peak_age)
     phase = f64(age)*hz/f64(MUSIC_RATE)
     phase_offset = f64((e.start*13+e.pitch*7919+e.instrument*101)%65536)/65536.0
     n = MusicVoice(active=true,instrument=kind,mode=mode,age=age,duration=e.duration,release=release,
         phase=(phase+phase_offset)%1.0,phase2=(phase*1.0031+phase_offset+0.31)%1.0,phase3=(phase*0.9963+phase_offset+0.67)%1.0,
-        increment=hz/f64(MUSIC_RATE),gain=gain+(end_gain-gain)*f64(min(age,e.duration))/f64(e.duration),gain_step=(end_gain-gain)/f64(e.duration),
+        increment=hz/f64(MUSIC_RATE),gain=initial,gain_step=if age < peak_age: first_step else: late_step,peak_age=peak_age,late_step=late_step,peak_level=peak_level,
         attack_env=1.0-exp(-1.897*f64(age)/(attack*f64(MUSIC_RATE))),attack_rate=exp(-1.897/(attack*f64(MUSIC_RATE))),
         gate=exp(-6.9078*f64(max(0,age-e.duration))/f64(release)),release_rate=exp(-6.9078/f64(release)),
         morph=exp(-f64(age)/(0.25*f64(MUSIC_RATE))),vibrato=(phase_offset+f64(age)*parameter(5)/f64(MUSIC_RATE))%1.0,
@@ -154,7 +175,9 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
         fast = parameter(74+h); slow = parameter(106+h)
         ratio = parameter(138+h)
         f = hz*ratio*sqrt(1.0+parameter(4)*ratio*ratio)
-        phi = f64((h*173+e.instrument*67+e.pitch*19)%512)/512.0
+        # Coherent odd modes create a closed-bore reed pulse; brass uses a sharper
+        # asymmetric source. These phases are analytic choices, never recorded phases.
+        phi = if kind == .clarinet: 0.0 else: if kind == .trumpet: f64(h)*0.027 else: f64((h*173+e.instrument*67+e.pitch*19)%512)/512.0
         if f > 7100 or ratio < 0.1: first = 0; second = 0
         if mode == 1:
             if first+second < 0.000001: continue
@@ -240,13 +263,17 @@ music_sample = (s: mut MusicSynth) -> f64:
         v += texture*(n.noise+n.transient*max(0.0,1.0-f64(n.age)/600.0))*n.noise_env
         if kind == .drums or kind == .timpani:
             v += texture*n.transient*n.noise_env
+        if kind == .trumpet:
+            n.tone_low += (v-n.tone_low)*0.42
+            brightness = clamp(n.gain/max(n.peak_level,0.0001),0.4,1.0)
+            v = n.tone_low+(v-n.tone_low)*(0.55+brightness*0.45)
         value += v*n.attack_env*n.gate*n.gain
         # Incommensurate ensemble motion avoids a fixed repeating chorus. Depth builds
         # after the attack; a wind note starts with a slight, quickly settling pitch scoop.
         if n.mode == 0:
             vib = music_sine(s.sine,n.vibrato)
             depth = n.vibrato_depth*min(1.0,f64(n.age)/4000.0)
-            scoop = if kind == .brass or kind == .oboe: -0.004*max(0.0,1.0-f64(n.age)/500.0) else: 0.0
+            scoop = if kind == .trumpet: 0.009*max(0.0,1.0-f64(n.age)/400.0) else: if kind == .brass or kind == .oboe: -0.004*max(0.0,1.0-f64(n.age)/500.0) else: 0.0
             inc = n.increment*(1.0+vib*depth+scoop)
             n.phase = (n.phase+inc)%1.0
             if kind == .strings or kind == .accordion or kind == .choir:
@@ -257,6 +284,7 @@ music_sample = (s: mut MusicSynth) -> f64:
         n.morph *= 0.999750031
         n.noise_env *= n.noise_decay
         if n.age >= n.duration: n.gate *= n.release_rate
+        if n.age == n.peak_age: n.gain_step = n.late_step
         if n.age < n.duration: n.gain += n.gain_step
         n.age += 1
         s.voices[k] = n

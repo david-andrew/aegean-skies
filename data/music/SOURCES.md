@@ -43,8 +43,11 @@ a small subset of metadata retained. This is not an endorsement by any source au
   not a critical edition; the converter does not interpret printed expression marks.
 * The first-movement sample is **only the opening solo call**, not the whole movement
   or its orchestral entry. Written B-flat trumpet pitches are transposed down a tone.
-  The score says “In gemessenem Schritt. Streng. Wie ein Kondukt.” Quarter=88 and the
-  interpolation of its p/sf/crescendo/f markings are our performance choices.
+  The score says “In gemessenem Schritt. Streng. Wie ein Kondukt.” The pickups are
+  sixteenth-note triplets. The fourth long note is E4 concert pitch; the final tied
+  C-sharp5 is one continuous note. Earlier versions used overly broad pickups and
+  incorrectly retriggered that tie. Coarse timing and three-point effort contours in
+  `opening-performance.json` now annotate this solo excerpt explicitly.
 * Magnetic Rag is explicitly a **foxtrot arrangement of a rag**, not labelled an
   original foxtrot. All source piano pitches/rhythms are retained, at quarter=116;
   upper notes use clarinet, lower piano/bass, with light banjo doubling and a drum beat.

@@ -81,22 +81,10 @@ def read_midi(path):
  return result
 
 def opening():
- # Peters plate 9015 (1904), printed p.3: pickup + eight bars, trumpet in B-flat.
- # Concert pitches below; written D#4/F#4/A#4/D#5 transpose down two semitones.
- # In gemessenem Schritt: editorial quarter=88, not a metronome marking in the score.
- b=60/88; rows=[]
- def note(t,d,n,v,w=None): rows.append([t*b,d*b,n,BRASS,v,v if w is None else w,0])
- def triplet(t,notes,vel=.62):
-  for i,n in enumerate(notes):note(t+i/3,.29,n,vel+i*.055)
- triplet(0,[61]*3,.42)
- for t in [1,5]:
-  note(t,1.95,61,.82,.53);triplet(t+3,[61]*3,.5)
- note(9,4.95,64,.88,.62)
- triplet(16,[61]*3,.55)
- note(17,1.95,61,.9,.6);triplet(20,[61]*3,.60)
- note(21,1.95,64,.94,.68);triplet(24,[61,64,68],.68)
- note(25,4.95,73,.96,.7);note(31,1.95,73,.96,.78)
- return rows
+ # The opening solo has six pickups, each a sixteenth-note triplet, not a
+ # full-quarter triplet. Tied notes continue through bar lines without retriggering.
+ targets=json.loads((ROOT/'data/music/opening-performance.json').read_text())
+ return [[n['start'],n['duration'],n['pitch'],15,n['effort'][0],n['effort'][2],0,n['effort'][1],.40] for n in targets]
 
 def arrange(name,notes):
  out=[]
@@ -120,19 +108,26 @@ def arrange(name,notes):
 
 def pack(notes):
  events=[]
- for t,d,p,ins,g0,g1,_ in notes:
-  events.append((round(t*RATE),max(1,round(d*RATE)),p,ins,min(127,round(g0*100)),min(127,round(g1*100))))
+ extended=len(notes[0])>7
+ for n in notes:
+  t,d,p,ins,g0,g1,_=n[:7]
+  event=(round(t*RATE),max(1,round(d*RATE)),p,ins,min(127,round(g0*100)),min(127,round(g1*100)))
+  if extended:event+=(min(127,round(n[7]*100)),round(n[8]*100))
+  events.append(event)
  events.sort()
  end=max(t+d for t,d,*_ in events)+RATE*2
  longest=max(d for _,d,*_ in events)+RATE*2
- raw=b'MUS1'+struct.pack('<III',len(events),end,longest)+b''.join(struct.pack('<IIBBBB',*n) for n in events)
+ raw=(b'MUS2' if extended else b'MUS1')+struct.pack('<III',len(events),end,longest)+b''.join(struct.pack('<IIBBBBBB' if extended else '<IIBBBB',*n) for n in events)
  return zlib.compress(raw,9,wbits=-15),end,events
 
 def main():
  meta=[]; performances={}
  for name,title,composer,station in PIECES:
   notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{name}.mid')
-  notes,performance=interpret(arrange(name,notes),name,score_clock(ROOT/'data/music/source'/f'{name}.mid',name))
+  if name=='mahler-opening':
+   performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
+  else:
+   notes,performance=interpret(arrange(name,notes),name,score_clock(ROOT/'data/music/source'/f'{name}.mid',name))
   performances[name]=performance
   blob,end,events=pack(notes)
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)

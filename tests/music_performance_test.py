@@ -24,10 +24,22 @@ class Performance(unittest.TestCase):
   a,_=interpret(notes,'adagietto',BeatMap([(0,0,.5)]))
   self.assertGreater(max(n[4] for n in a),min(n[4] for n in a)*1.2)
   self.assertGreater(a[-1][0]-a[-2][0],a[8][0]-a[7][0])
- def test_checked_in_model_bank_rebuilds_exactly(self):
+ def test_solo_call_extended_events_round_trip(self):
+  from music_pack import opening,pack
+  notes=opening();blob,end,events=pack(notes);raw=zlib.decompress(blob,wbits=-15)
+  self.assertEqual(raw[:4],b'MUS2');self.assertEqual(len(raw),16+24*14)
+  self.assertEqual(struct.unpack_from('<I',raw,4)[0],24)
+  for i,n in enumerate(events):self.assertEqual(struct.unpack_from('<IIBBBBBB',raw,16+i*14),n)
+  self.assertEqual(events[15][2],64);self.assertEqual(events[-1][2],73)
+  self.assertLess(end/16000,20)
+ def test_model_bank_rebuild_preserves_every_scalar(self):
   data=json.loads((ROOT/'data/music/instruments.json').read_text())
-  actual=(ROOT/'data/music/instruments.z').read_bytes();self.assertEqual(pack_models(data),actual)
-  raw=zlib.decompress(actual,wbits=-15);self.assertEqual(raw[:8],b'TIM1\x0f\x07\x03\x20')
-  values=struct.unpack('<'+str((len(raw)-116)//4)+'f',raw[116:])
+  actual=(ROOT/'data/music/instruments.z').read_bytes()
+  # zlib and zlib-ng can select different deflate blocks for the same scalar bytes.
+  raw=zlib.decompress(actual,wbits=-15)
+  self.assertEqual(zlib.decompress(pack_models(data),wbits=-15),raw)
+  self.assertEqual(raw[:8],b'TIM1\x10\x07\x03\x20')
+  header=11+raw[4]*7
+  values=struct.unpack('<'+str((len(raw)-header)//4)+'f',raw[header:])
   self.assertTrue(all(math.isfinite(x) and x>=0 for x in values))
 if __name__=='__main__':unittest.main()
