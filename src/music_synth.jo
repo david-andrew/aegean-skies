@@ -6,6 +6,10 @@ const MUSIC_RATE = 16000
 const MUSIC_TABLE = 512
 const MUSIC_VOICES = 64
 const MUSIC_KINDS = MUSIC_MODEL_KINDS
+# Exact f64 bodies: 64 half-second prefixes use 4 MiB. No velocity quantization.
+const MUSIC_BODY_SLOTS = 64
+const MUSIC_BODY_FRAMES = 8192
+const MUSIC_RENDER_BLOCK = 128
 
 enum MusicInstrument: strings, brass, flute, oboe, clarinet, bassoon, piano, harp, bouzouki, accordion, banjo, timpani, drums, bass, choir, trumpet
 
@@ -23,6 +27,7 @@ struct MusicVoice:
     active = false
     instrument: MusicInstrument = .strings
     partials = 0
+    body = -1
     mode = 0                       # harmonic bow/wind source, or decaying string/membrane modes
     age = 0
     duration = 1
@@ -63,6 +68,16 @@ struct MusicMode:
     decay_fast = 0.0
     decay_slow = 0.0
 
+struct MusicBody:
+    used = false
+    instrument = 0
+    pitch = 0
+    velocity = 0.0
+    origin = 0                    # analytic seek initialization is distinct from replay
+    length = 0
+    partials = 0
+    stamp = 0
+
 struct MusicSynth:
     piece = -1
     events: MusicEvent[]
@@ -75,6 +90,19 @@ struct MusicSynth:
     sine: f64[]
     waves: f32[]
     modes: MusicMode[]
+    cache_enabled = true
+    wave_keys: MusicBody[]
+    wave_cache: f32[]
+    wave_hits = 0
+    wave_misses = 0
+    bodies: MusicBody[]
+    body_samples: f64[]
+    body_modes: MusicMode[]
+    body_work: f64[]
+    body_clock = 0
+    body_hits = 0
+    body_misses = 0
+    body_frames = 0
     pitches: f64[]
     delays: f64[][]
     damp: f64[]
@@ -95,12 +123,18 @@ make_music_synth = () -> MusicSynth:
     s.sine = [loop i in 0..MUSIC_TABLE: sin(TAU*f64(i)/f64(MUSIC_TABLE))]
     s.waves = fill(f32(0),MUSIC_VOICES*2*MUSIC_TABLE)
     s.modes = fill(MusicMode(),MUSIC_VOICES*MUSIC_PARTIALS)
+    s.wave_keys = fill(MusicBody(),MUSIC_BODY_SLOTS)
+    s.wave_cache = fill(f32(0),MUSIC_BODY_SLOTS*2*MUSIC_TABLE)
+    s.bodies = fill(MusicBody(),MUSIC_BODY_SLOTS)
+    s.body_samples = fill(0.0,MUSIC_BODY_SLOTS*MUSIC_BODY_FRAMES)
+    s.body_modes = fill(MusicMode(),MUSIC_BODY_SLOTS*MUSIC_PARTIALS)
+    s.body_work = fill(0.0,MUSIC_RENDER_BLOCK)
     s.delays = [fill(0.0,479),fill(0.0,631),fill(0.0,797),fill(0.0,941),fill(0.0,89),fill(0.0,127)]
     s.damp = fill(0.0,4)
     s
 
 music_sine = (sine: f64[], phase: f64) -> f64:
-    p = (phase-floor(phase))*f64(MUSIC_TABLE); i = int(p)
+    p = (phase-f64(int(phase)))*f64(MUSIC_TABLE); i = int(p)
     sine[i]+(sine[(i+1)%MUSIC_TABLE]-sine[i])*(p-f64(i))
 
 music_load = (s: mut MusicSynth, piece: int):
@@ -167,36 +201,58 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
         noise=parameter(2),transient=parameter(3),noise_rng=u64(17+e.start+e.pitch*7919+slot*31),
         noise_env=exp(-f64(age)*(if mode == 0: 0.0 else: if kind == .drums or kind == .timpani: max(2.0,parameter(8)) else: 4.0)/f64(MUSIC_RATE)),
         noise_decay=exp(-(if mode == 0: 0.0 else: if kind == .drums or kind == .timpani: max(2.0,parameter(8)) else: 4.0)/f64(MUSIC_RATE)),noise_hz=if kind == .drums: 0.72 else: if kind == .strings: 0.28 else: 0.42)
-    if mode == 0:
-        # Construct fresh analytic cycles from magnitudes. No measured phase is used.
-        loop i in 0..MUSIC_TABLE*2: s.waves[slot*MUSIC_TABLE*2+i] = 0
-    loop h in 0..MUSIC_PARTIALS:
-        first = parameter(10+h); second = parameter(42+h)
-        fast = parameter(74+h); slow = parameter(106+h)
-        ratio = parameter(138+h)
-        f = hz*ratio*sqrt(1.0+parameter(4)*ratio*ratio)
-        # Coherent odd modes create a closed-bore reed pulse; brass uses a sharper
-        # asymmetric source. These phases are analytic choices, never recorded phases.
-        phi = if kind == .clarinet: 0.0 else: if kind == .trumpet: f64(h)*0.027 else: f64((h*173+e.instrument*67+e.pitch*19)%512)/512.0
-        if f > 7100 or ratio < 0.1: first = 0; second = 0
-        if mode == 1:
-            if first+second < 0.000001: continue
-            at = slot*MUSIC_PARTIALS+n.partials
-            n.partials += 1
-            s.modes[at] = MusicMode(
-                sin(TAU*(f*f64(age-1)/f64(MUSIC_RATE)+phi)),
-                sin(TAU*(f*f64(age-2)/f64(MUSIC_RATE)+phi)),
-                2.0*cos(TAU*min(f,7100.0)/f64(MUSIC_RATE)),
-                first*exp(-fast*f64(age)/f64(MUSIC_RATE)),
-                second*exp(-slow*f64(age)/f64(MUSIC_RATE)),
-                exp(-fast/f64(MUSIC_RATE)),exp(-slow/f64(MUSIC_RATE)))
-        else if mode == 0:
-            if first+second < 0.0001: continue
-            offset = int(phi*f64(MUSIC_TABLE))
-            loop i in 0..MUSIC_TABLE:
-                value = s.sine[(i*(h+1)+offset)%MUSIC_TABLE]
-                s.waves[slot*2*MUSIC_TABLE+i] += f32(value*first)
-                s.waves[(slot*2+1)*MUSIC_TABLE+i] += f32(value*second)
+    cached = if s.cache_enabled: music_cached_key(if mode == 0: s.wave_keys else: s.bodies,e.instrument,e.pitch,velocity,if mode == 0: 0 else: age) else: -1
+    if cached >= 0:
+        s.body_clock += 1
+        if mode == 0:
+            s.wave_keys[cached].stamp = s.body_clock
+            s.wave_hits += 1
+            loop i in 0..2*MUSIC_TABLE: s.waves[slot*2*MUSIC_TABLE+i] = s.wave_cache[cached*2*MUSIC_TABLE+i]
+        else:
+            n.body = cached; n.partials = s.bodies[cached].partials
+            s.bodies[cached].stamp = s.body_clock
+            s.body_hits += 1
+    else:
+        inharmonicity = parameter(4)
+        if mode == 0:
+            # Construct fresh analytic cycles from magnitudes. No measured phase is used.
+            loop i in 0..MUSIC_TABLE*2: s.waves[slot*MUSIC_TABLE*2+i] = 0
+        loop h in 0..MUSIC_PARTIALS:
+            first = parameter(10+h); second = parameter(42+h)
+            fast = parameter(74+h); slow = parameter(106+h)
+            ratio = parameter(138+h)
+            f = hz*ratio*sqrt(1.0+inharmonicity*ratio*ratio)
+            # Coherent odd modes create a closed-bore reed pulse; brass uses a sharper
+            # asymmetric source. These phases are analytic choices, never recorded phases.
+            phi = if kind == .clarinet: 0.0 else: if kind == .trumpet: f64(h)*0.027 else: f64((h*173+e.instrument*67+e.pitch*19)%512)/512.0
+            if f > 7100 or ratio < 0.1: first = 0; second = 0
+            if mode == 1:
+                if first+second < 0.000001: continue
+                at = slot*MUSIC_PARTIALS+n.partials
+                n.partials += 1
+                s.modes[at] = MusicMode(
+                    sin(TAU*(f*f64(age-1)/f64(MUSIC_RATE)+phi)),
+                    sin(TAU*(f*f64(age-2)/f64(MUSIC_RATE)+phi)),
+                    2.0*cos(TAU*min(f,7100.0)/f64(MUSIC_RATE)),
+                    first*exp(-fast*f64(age)/f64(MUSIC_RATE)),
+                    second*exp(-slow*f64(age)/f64(MUSIC_RATE)),
+                    exp(-fast/f64(MUSIC_RATE)),exp(-slow/f64(MUSIC_RATE)))
+            else if mode == 0:
+                if first+second < 0.0001: continue
+                offset = int(phi*f64(MUSIC_TABLE))
+                loop i in 0..MUSIC_TABLE:
+                    value = s.sine[(i*(h+1)+offset)%MUSIC_TABLE]
+                    s.waves[slot*2*MUSIC_TABLE+i] += f32(value*first)
+                    s.waves[(slot*2+1)*MUSIC_TABLE+i] += f32(value*second)
+        if s.cache_enabled:
+            if mode == 1: n.body = music_body_acquire(s,e.instrument,e.pitch,velocity,age,slot,n.partials)
+            else:
+                selected = 0
+                loop i in 1..MUSIC_BODY_SLOTS:
+                    if s.wave_keys[i].stamp < s.wave_keys[selected].stamp: selected = i
+                s.body_clock += 1; s.wave_misses += 1
+                s.wave_keys[selected] = MusicBody(true,e.instrument,e.pitch,velocity,0,0,0,s.body_clock)
+                loop i in 0..2*MUSIC_TABLE: s.wave_cache[selected*2*MUSIC_TABLE+i] = s.waves[slot*2*MUSIC_TABLE+i]
     s.voices[slot] = n
 
 # Binary search plus at most the longest note's overlap window. No replay from bar one.
@@ -220,74 +276,215 @@ music_seek = (s: mut MusicSynth, seconds: f64):
         s.next += 1
 
 music_osc = (waves: f32[], slot: int, phase: f64, morph: f64) -> f64:
-    p = phase*f64(MUSIC_TABLE); i = int(p)%MUSIC_TABLE; f = p-floor(p)
+    p = phase*f64(MUSIC_TABLE); i = int(p); f = p-f64(i)
     at = slot*2*MUSIC_TABLE
     a = f64(waves[at+i])*(1.0-f)+f64(waves[at+(i+1)%MUSIC_TABLE])*f
     at += MUSIC_TABLE
     b = f64(waves[at+i])*(1.0-f)+f64(waves[at+(i+1)%MUSIC_TABLE])*f
     a*morph+b*(1.0-morph)
 
-music_sample = (s: mut MusicSynth) -> f64:
-    if s.cursor >= s.frames: return 0
-    loop s.next < s.events.len() and s.events[s.next].start <= s.cursor:
-        music_start(s,s.events[s.next],s.cursor-s.events[s.next].start)
-        s.next += 1
-    value = 0.0
-    loop k in 0..s.voices.len():
-        if not s.voices[k].active: continue
-        n = s.voices[k]
-        if n.age >= n.duration+n.release:
-            s.voices[k].active = false
-            continue
-        kind = n.instrument
-        v = 0.0
-        if n.mode == 0:
-            v = music_osc(s.waves,k,n.phase,n.morph)
-            if kind == .strings or kind == .accordion or kind == .choir:
-                v = (v+music_osc(s.waves,k,n.phase2,n.morph)+music_osc(s.waves,k,n.phase3,n.morph))*0.5773503
-        else if n.mode == 1:
-            loop h in 0..n.partials:
-                at = k*MUSIC_PARTIALS+h
-                m = s.modes[at]
-                if m.fast+m.slow < 0.000001: continue
-                y = m.coefficient*m.y1-m.y2
-                m.y2 = m.y1; m.y1 = y
-                v += y*(m.fast+m.slow)
-                m.fast *= m.decay_fast; m.slow *= m.decay_slow
-                s.modes[at] = m
-        n.noise_rng = (n.noise_rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
-        local_noise = f64(n.noise_rng)/2147483648.0-1.0
-        n.noise_low += (local_noise-n.noise_low)*n.noise_hz
-        n.noise_body += (n.noise_low-n.noise_body)*0.035
-        texture = n.noise_low-n.noise_body
-        v += texture*(n.noise+n.transient*max(0.0,1.0-f64(n.age)/600.0))*n.noise_env
+music_cached_key = (keys: MusicBody[], kind: int, pitch: int, velocity: f64, origin: int) -> int:
+    loop k in 0..keys.len():
+        b = keys[k]
+        if b.used and b.instrument == kind and b.pitch == pitch and b.velocity == velocity and b.origin == origin: return k
+    -1
+
+# Pin entries only while a voice reads their prefix. Eviction never changes a live
+# recurrence: at the prefix boundary its exact end state transfers back to the voice.
+music_body_acquire = (s: mut MusicSynth, kind: int, pitch: int, velocity: f64, origin: int, voice: int, partials: int) -> int:
+    s.body_clock += 1
+    selected = -1; oldest = s.body_clock+1
+    loop k in 0..MUSIC_BODY_SLOTS:
+        pinned = false
+        loop v in 0..MUSIC_VOICES:
+            if v != voice and s.voices[v].active and s.voices[v].body == k: pinned = true; break
+        if not pinned and (not s.bodies[k].used or s.bodies[k].stamp < oldest):
+            selected = k; oldest = s.bodies[k].stamp
+            if not s.bodies[k].used: break
+    if selected < 0: return -1
+    s.bodies[selected] = MusicBody(true,kind,pitch,velocity,origin,0,partials,s.body_clock)
+    loop h in 0..partials: s.body_modes[selected*MUSIC_PARTIALS+h] = s.modes[voice*MUSIC_PARTIALS+h]
+    s.body_misses += 1
+    selected
+
+# Interchange the independent sample/partial loops without changing any sample's
+# summation order or recurrence arithmetic. No lookahead exceeds 128 samples.
+# Two independent recurrences hide multiply latency on native CPUs. Add each term
+# separately, in the original partial order; no reassociation or fused multiply-add.
+music_mode_pair = (modes: mut MusicMode[], at: int, values: *f64, count: int) -> bool:
+    a=modes[at];b=modes[at+1]
+    lower_a=a.fast*(1.0-f64(count)*(1.0-a.decay_fast))+a.slow*(1.0-f64(count)*(1.0-a.decay_slow))
+    lower_b=b.fast*(1.0-f64(count)*(1.0-b.decay_fast))+b.slow*(1.0-f64(count)*(1.0-b.decay_slow))
+    if min(lower_a,lower_b)<0.000002:return false
+    a1=a.y1;a2=a.y2;ac=a.coefficient;af=a.fast;aslow=a.slow;adf=a.decay_fast;ads=a.decay_slow
+    b1=b.y1;b2=b.y2;bc=b.coefficient;bf=b.fast;bslow=b.slow;bdf=b.decay_fast;bds=b.decay_slow
+    loop i in 0..count:
+        ay=ac*a1-a2
+        a2=a1;a1=ay
+        value=values[i]+ay*(af+aslow)
+        af*=adf;aslow*=ads
+        by=bc*b1-b2
+        b2=b1;b1=by
+        value+=by*(bf+bslow)
+        bf*=bdf;bslow*=bds
+        values[i]=value
+    modes[at]=MusicMode(a1,a2,ac,af,aslow,adf,ads)
+    modes[at+1]=MusicMode(b1,b2,bc,bf,bslow,bdf,bds)
+    true
+
+music_modes_render = (modes: mut MusicMode[], base: int, partials: int, out: mut f64[], at: int, count: int):
+    assert(count >= 0 and count <= MUSIC_RENDER_BLOCK and at >= 0 and at <= out.len() and count <= out.len()-at)
+    # Fixed, checked span. data unshares before taking the pointer; neither array
+    # resizes or escapes while it is held. This also works in wasm linear memory.
+    values = data(out)+at
+    loop i in 0..count: values[i] = 0
+    h = 0
+    loop h < partials:
+        when ARCH == "x86_64":
+            if h+1 < partials and music_mode_pair(modes,base+h,values,count):
+                h += 2
+                continue
+        m = modes[base+h]
+        y1 = m.y1; y2 = m.y2; coefficient = m.coefficient
+        fast = m.fast; slow = m.slow
+        decay_fast = m.decay_fast; decay_slow = m.decay_slow
+        # Bernoulli's inequality bounds the decay below for this short block.
+        # A full 1e-6 margin dwarfs rounding error: the usual loud-mode path needs
+        # no per-sample cutoff branch. The quiet tail keeps the original cutoff.
+        lower = fast*(1.0-f64(count)*(1.0-decay_fast))+slow*(1.0-f64(count)*(1.0-decay_slow))
+        if lower >= 0.000002:
+            loop i in 0..count:
+                y = coefficient*y1-y2
+                y2 = y1; y1 = y
+                values[i] += y*(fast+slow)
+                fast *= decay_fast; slow *= decay_slow
+        else:
+            loop i in 0..count:
+                if fast+slow < 0.000001: break
+                y = coefficient*y1-y2
+                y2 = y1; y1 = y
+                values[i] += y*(fast+slow)
+                fast *= decay_fast; slow *= decay_slow
+        modes[base+h] = MusicMode(y1,y2,coefficient,fast,slow,decay_fast,decay_slow)
+        h += 1
+
+music_wind_render = (s: mut MusicSynth, k: int, n: mut MusicVoice, count: int):
+    kind = n.instrument
+    phase = n.phase; phase2 = n.phase2; phase3 = n.phase3
+    vibrato = n.vibrato; morph = n.morph
+    age = n.age
+    increment = n.increment; vibrato_depth = n.vibrato_depth; vibrato_step = n.vibrato_step
+    waves = s.waves; sine = s.sine
+    loop i in 0..count:
+        v = music_osc(waves,k,phase,morph)
+        if kind == .strings or kind == .accordion or kind == .choir:
+            v = (v+music_osc(waves,k,phase2,morph)+music_osc(waves,k,phase3,morph))*0.5773503
+        s.body_work[i] = v
+        vib = music_sine(sine,vibrato)
+        depth = vibrato_depth*min(1.0,f64(age)/4000.0)
+        scoop = if kind == .trumpet: 0.009*max(0.0,1.0-f64(age)/400.0) else: if kind == .brass or kind == .oboe: -0.004*max(0.0,1.0-f64(age)/500.0) else: 0.0
+        inc = increment*(1.0+vib*depth+scoop)
+        phase += inc; phase -= f64(int(phase))
+        if kind == .strings or kind == .accordion or kind == .choir:
+            phase2 += increment*(1.0031+music_sine(sine,vibrato*1.071+0.3)*depth*0.8); phase2 -= f64(int(phase2))
+            phase3 += increment*(0.9963+music_sine(sine,vibrato*0.937+0.6)*depth*1.1); phase3 -= f64(int(phase3))
+        vibrato += vibrato_step; vibrato -= f64(int(vibrato))
+        morph *= 0.999750031
+        age += 1
+    n.phase = phase; n.phase2 = phase2; n.phase3 = phase3
+    n.vibrato = vibrato; n.morph = morph
+
+music_voice_render = (s: mut MusicSynth, k: int, out: mut f64[], at: int, count: int):
+    n = s.voices[k]
+    requested = count
+    let count = min(count,n.duration+n.release-n.age)
+    if count <= 0:
+        s.voices[k].active = false
+        return
+    if n.mode == 1:
+        if n.body >= 0:
+            b = s.bodies[n.body]
+            offset = n.age-b.origin
+            if offset >= MUSIC_BODY_FRAMES:
+                loop h in 0..n.partials: s.modes[k*MUSIC_PARTIALS+h] = s.body_modes[n.body*MUSIC_PARTIALS+h]
+                n.body = -1
+            else:
+                # The outer renderer splits at cache-prefix ends, so no voice crosses
+                # a boundary here. Build only a small missing suffix, never a note.
+                required = offset+count
+                if required > b.length:
+                    missing = required-b.length
+                    music_modes_render(s.body_modes,n.body*MUSIC_PARTIALS,b.partials,s.body_samples,n.body*MUSIC_BODY_FRAMES+b.length,missing)
+                    s.bodies[n.body].length = required
+                    s.body_frames += missing
+        if n.body < 0: music_modes_render(s.modes,k*MUSIC_PARTIALS,n.partials,s.body_work,0,count)
+    if n.mode == 0: music_wind_render(s,k,n,count)
+    body_at = if n.body >= 0: n.body*MUSIC_BODY_FRAMES+n.age-s.bodies[n.body].origin else: 0
+    kind = n.instrument
+    noise_rng = n.noise_rng
+    noise_low = n.noise_low
+    noise_hz = n.noise_hz
+    noise_body = n.noise_body
+    noise = n.noise
+    transient = n.transient
+    age = n.age
+    noise_env = n.noise_env
+    tone_low = n.tone_low
+    gain = n.gain
+    peak_level = n.peak_level
+    attack_env = n.attack_env
+    gate = n.gate
+    attack_rate = n.attack_rate
+    noise_decay = n.noise_decay
+    duration = n.duration
+    release_rate = n.release_rate
+    peak_age = n.peak_age
+    gain_step = n.gain_step
+    late_step = n.late_step
+    # Check the two contiguous spans once. These arrays do not resize or escape
+    # during the loop; only the destination span is written.
+    assert(at >= 0 and at <= out.len() and count <= out.len()-at)
+    assert(body_at >= 0 and count <= MUSIC_RENDER_BLOCK)
+    assert(if n.body >= 0: body_at <= s.body_samples.len()-count else: count <= s.body_work.len())
+    samples = if n.body >= 0: data(s.body_samples)+body_at else: data(s.body_work)
+    mixed = data(out)+at
+    loop i in 0..count:
+        v = samples[i]
+        noise_rng = (noise_rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
+        # Exact power-of-two scale for a 32-bit integer; avoids a hardware divide.
+        local_noise = f64(int(noise_rng))*0.0000000004656612873077392578125-1.0
+        noise_low += (local_noise-noise_low)*noise_hz
+        noise_body += (noise_low-noise_body)*0.035
+        texture = noise_low-noise_body
+        transient_shape = if age < 600: 1.0-f64(age)/600.0 else: 0.0
+        v += texture*(noise+transient*transient_shape)*noise_env
         if kind == .drums or kind == .timpani:
-            v += texture*n.transient*n.noise_env
+            v += texture*transient*noise_env
         if kind == .trumpet:
-            n.tone_low += (v-n.tone_low)*0.42
-            brightness = clamp(n.gain/max(n.peak_level,0.0001),0.4,1.0)
-            v = n.tone_low+(v-n.tone_low)*(0.55+brightness*0.45)
-        value += v*n.attack_env*n.gate*n.gain
-        # Incommensurate ensemble motion avoids a fixed repeating chorus. Depth builds
-        # after the attack; a wind note starts with a slight, quickly settling pitch scoop.
-        if n.mode == 0:
-            vib = music_sine(s.sine,n.vibrato)
-            depth = n.vibrato_depth*min(1.0,f64(n.age)/4000.0)
-            scoop = if kind == .trumpet: 0.009*max(0.0,1.0-f64(n.age)/400.0) else: if kind == .brass or kind == .oboe: -0.004*max(0.0,1.0-f64(n.age)/500.0) else: 0.0
-            inc = n.increment*(1.0+vib*depth+scoop)
-            n.phase = (n.phase+inc)%1.0
-            if kind == .strings or kind == .accordion or kind == .choir:
-                n.phase2 = (n.phase2+n.increment*(1.0031+music_sine(s.sine,n.vibrato*1.071+0.3)*depth*0.8))%1.0
-                n.phase3 = (n.phase3+n.increment*(0.9963+music_sine(s.sine,n.vibrato*0.937+0.6)*depth*1.1))%1.0
-            n.vibrato = (n.vibrato+n.vibrato_step)%1.0
-        n.attack_env = 1.0-(1.0-n.attack_env)*n.attack_rate
-        n.morph *= 0.999750031
-        n.noise_env *= n.noise_decay
-        if n.age >= n.duration: n.gate *= n.release_rate
-        if n.age == n.peak_age: n.gain_step = n.late_step
-        if n.age < n.duration: n.gain += n.gain_step
-        n.age += 1
-        s.voices[k] = n
+            tone_low += (v-tone_low)*0.42
+            brightness = clamp(gain/max(peak_level,0.0001),0.4,1.0)
+            v = tone_low+(v-tone_low)*(0.55+brightness*0.45)
+        mixed[i] += v*attack_env*gate*gain
+        attack_env = 1.0-(1.0-attack_env)*attack_rate
+        noise_env *= noise_decay
+        if age >= duration: gate *= release_rate
+        if age == peak_age: gain_step = late_step
+        if age < duration: gain += gain_step
+        age += 1
+    n.noise_rng = noise_rng
+    n.noise_low = noise_low
+    n.noise_body = noise_body
+    n.age = age
+    n.noise_env = noise_env
+    n.tone_low = tone_low
+    n.gain = gain
+    n.attack_env = attack_env
+    n.gate = gate
+    n.gain_step = gain_step
+    if count < requested: n.active = false
+    s.voices[k] = n
+
+music_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
     hall = 0.0
     loop k in 0..4:
         at = s.reverb_at%s.delays[k].len()
@@ -302,5 +499,30 @@ music_sample = (s: mut MusicSynth) -> f64:
         hall = delayed-v*0.5
         s.delays[k][at] = v+hall*0.5
     s.reverb_at += 1; s.cursor += 1; s.fade = min(160,s.fade+1)
-    value = (value+hall*s.wet)*s.gain
-    value/(1.0+abs(value)*0.28)*f64(s.fade)/160.0
+    mixed = (value+hall*s.wet)*s.gain
+    mixed/(1.0+abs(mixed)*0.28)*f64(s.fade)/160.0
+
+# Same slot-order mix and per-voice arithmetic as the scalar renderer. Event
+# boundaries preserve stealing and note starts; block partition changes no samples.
+music_render = (s: mut MusicSynth, count: int) -> f64[]:
+    out = fill(0.0,clamp(count,0,800))
+    at = 0
+    loop at < out.len() and s.cursor < s.frames:
+        loop s.next < s.events.len() and s.events[s.next].start <= s.cursor:
+            music_start(s,s.events[s.next],s.cursor-s.events[s.next].start)
+            s.next += 1
+        n = min(MUSIC_RENDER_BLOCK,min(out.len()-at,s.frames-s.cursor))
+        if s.next < s.events.len(): n = min(n,s.events[s.next].start-s.cursor)
+        loop k in 0..MUSIC_VOICES:
+            v = s.voices[k]
+            if v.active and v.body >= 0:
+                left = MUSIC_BODY_FRAMES-(v.age-s.bodies[v.body].origin)
+                if left > 0: n = min(n,left)
+        loop k in 0..MUSIC_VOICES:
+            if s.voices[k].active: music_voice_render(s,k,out,at,n)
+        loop i in 0..n: out[at+i] = music_hall_sample(s,out[at+i])
+        at += n
+    out
+
+music_sample = (s: mut MusicSynth) -> f64:
+    music_render(s,1)[0]
