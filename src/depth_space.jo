@@ -1,0 +1,118 @@
+# Perspective-correct logarithmic world depth. ShaderSource is the compiler's
+# public backend boundary: transform its entry wrappers, not material functions.
+# gl_FragCoord.w is interpolated reciprocal clip-w, so its inverse recovers the
+# fragment's true view depth even across very large triangles (no log interpolation).
+const WORLD_DEPTH_LOG_RANGE: f32 = 20.0       # log2(1 + 1,048,575 metres)
+world_log_depth = env("AEGEAN_LINEAR_DEPTH")==none
+world_log_depth_active = () -> bool: world_log_depth and not __soft
+world_depth_params = () -> vec2:
+    if world_log_depth_active():vec2(WORLD_DEPTH_LOG_RANGE,0)
+    else:vec2(__proj3[2].z,__proj3[3].z)
+
+world_depth_encode = (distance: f32) -> f32: log(1.0+max(distance,0.0))*(1.44269504089/WORLD_DEPTH_LOG_RANGE)
+world_depth_decode = (depth: f32,ab: vec2) -> f32:
+    if ab.y==0.0:return pow(2.0,depth*ab.x)-1.0
+    min(1000000.0,ab.y/min(depth*2.0-1.0+ab.x,-0.0000001))
+
+# SPIR-V 1.5 entry-point adapter. The original Sloppy functions and their
+# descriptor/physical-buffer ABI remain byte-for-byte unchanged. Fail explicitly
+# if a future compiler changes the entry contract; never mix depth conventions.
+depth_spirv = (code: str,fragment: bool) -> str:
+    w=data(code) as *u32;n=len(code)/4
+    assert(n>=5 and len(code)%4==0 and w[0]==u32(0x07230203))
+    main=0;coordinate=0;scalar=0;vector=0;glsl=0
+    i=5
+    loop i<n:
+        op=int(w[i]&u32(65535));count=int(w[i]>>16)
+        assert(count>0 and i+count<=n)
+        if op==15:main=int(w[i+2])
+        if op==11 and w[i+2]==u32(0x4c534c47):glsl=int(w[i+1])
+        if op==71 and count==4 and w[i+2]==u32(11) and int(w[i+3])==(if fragment:15 else:0):coordinate=int(w[i+1])
+        if op==22 and w[i+2]==u32(32):scalar=int(w[i+1])
+        if op==23 and int(w[i+2])==scalar and w[i+3]==u32(4):vector=int(w[i+1])
+        i+=count
+    assert(main>0 and coordinate>0 and scalar>0 and vector>0 and glsl>0)
+    id=int(w[3])
+    globals:int[]=[0x4002B,scalar,id,0,0x4002B,scalar,id+1,0x3f800000,0x4002B,scalar,id+2,0x3d4ccccd]
+    if fragment:
+        globals+= [0x40020,id+3,3,scalar,0x4003B,id+3,id+4,3]
+    out:u32[]=[loop k in 0..5:w[k]];out[3]=u32(id+20)
+    in_main=false;inserted_globals=false;decorated=false;writes=0
+    i=5
+    loop i<n:
+        op=int(w[i]&u32(65535));count=int(w[i]>>16)
+        if fragment and op==15:
+            out.push(u32(((count+1)<<16)|op))
+            loop k in 1..count:out.push(w[i+k])
+            out.push(u32(id+4))
+            # DepthReplacing is mandatory for a fragment-depth output.
+            loop x in [0x30010,main,12]:out.push(u32(x))
+            i+=count;continue
+        if not decorated and op>=19 and op<=39:
+            if fragment:
+                loop x in [0x40047,id+4,11,22]:out.push(u32(x))
+            decorated=true
+        if op==54:
+            if not inserted_globals:
+                loop x in globals:out.push(u32(x))
+                inserted_globals=true
+            in_main=int(w[i+2])==main
+        if in_main and not fragment and op==62 and int(w[i+1])==coordinate:
+            value=int(w[i+2])
+            patch:int[]=[0x50051,scalar,id+8,value,3,
+                0x7000C,scalar,id+9,glsl,40,id+8,id,
+                0x50081,scalar,id+10,id+9,id+1,
+                0x6000C,scalar,id+11,glsl,30,id+10,
+                0x50085,scalar,id+12,id+11,id+2,
+                0x50085,scalar,id+13,id+12,id+8,
+                0x60052,vector,id+14,id+13,value,2,
+                0x3003E,coordinate,id+14]
+            loop x in patch:out.push(u32(x))
+            writes+=1;i+=count;continue
+        if in_main and fragment and op==253:
+            patch:int[]=[0x4003D,vector,id+8,coordinate,
+                0x50051,scalar,id+9,id+8,3,
+                0x50088,scalar,id+10,id+1,id+9,
+                0x50081,scalar,id+11,id+10,id+1,
+                0x6000C,scalar,id+12,glsl,30,id+11,
+                0x50085,scalar,id+13,id+12,id+2,
+                0x3003E,id+4,id+13]
+            loop x in patch:out.push(u32(x))
+            writes+=1
+        loop k in 0..count:out.push(w[i+k])
+        if op==56:in_main=false
+        i+=count
+    assert(writes==1 and decorated and inserted_globals)
+    str_from_bytes(bytes_from(data(out) as *u8,out.len()*4))
+
+depth_glsl = (source: str,fragment: bool) -> str:
+    finish=last_index_of(source,"}") ?? -1
+    assert(finish>0 and "void main()" in source)
+    expression=if fragment:"    gl_FragDepth = log2(1.0 + 1.0 / gl_FragCoord.w) * 0.05;\n" else:"    gl_Position.z = (log2(1.0 + max(gl_Position.w, 0.0)) * 0.1 - 1.0) * gl_Position.w;\n"
+    source[..finish]+expression+source[finish..]
+
+depth_metal = (source: str,fragment: bool) -> str:
+    if not fragment:
+        assert("    return r;" in source)
+        return replace(source,"    return r;","    r.pos.z = log2(1.0f + max(r.pos.w, 0.0f)) * 0.05f * r.pos.w;\n    return r;")
+    start=index_of(source,"fragment float4 sl_fs") ?? -1
+    ret=last_index_of(source,"    return ") ?? -1
+    finish=last_index_of(source,";") ?? -1
+    assert(start>=0 and ret>start and finish>ret)
+    decl="struct SlDepthColor \{ float4 color [[color(0)]]; float depth [[depth(any)]]; };\n"
+    prefix=source[..start]+decl+replace(source[start..ret],"fragment float4 sl_fs","fragment SlDepthColor sl_fs")
+    prefix+"    SlDepthColor result;\n    result.color = "+source[ret+11..finish]+";\n    result.depth = log2(1.0f + 1.0f / in.pos.w) * 0.05f;\n    return result;\n}\n"
+
+world_depth_source = (source: ShaderSource) -> ShaderSource:
+    s=source
+    s.vs=depth_glsl(s.vs,false);s.fs=depth_glsl(s.fs,true)
+    when TARGET=="macos":
+        s.vs_spirv=depth_metal(s.vs_spirv,false);s.fs_spirv=depth_metal(s.fs_spirv,true)
+    else when TARGET!="wasm":
+        s.vs_spirv=depth_spirv(s.vs_spirv,false);s.fs_spirv=depth_spirv(s.fs_spirv,true)
+    s
+
+make_world_shader = (source: ShaderSource) -> Shader:
+    # Software rasterization has no fragment-depth output hook. Its CPU shaders
+    # retain conventional perspective depth; all hardware backends share log depth.
+    make_shader(if world_log_depth_active():world_depth_source(source) else:source)
