@@ -1,5 +1,6 @@
 # Licensed scores and procedural instruments; see data/music/SOURCES.md.
 use 'music_synth.jo'
+use 'radio_chain.jo'
 # One mono 16 kHz stream, bounded blocks. No game/global RNG is touched.
 const RADIO_RATE = 16000
 const RADIO_TABLE = 1024
@@ -47,10 +48,28 @@ struct RadioSynth:
     crackle = 0.0
     fade_phase = 0.0
     whistle_phase = 0.0
+    chain: RadioChain = RadioChain()
+    record_mix = 0.0
+    night = 0.0
 
 # The receiver only needs a sine for its Morse tone, fading and tuning whistle.
 make_radio_synth = () -> RadioSynth:
     RadioSynth(sine=[loop i in 0..RADIO_TABLE: f32(sin(TAU*f64(i)/f64(RADIO_TABLE))*0.48)])
+
+# Prepare bounded storage and hot paths during world loading, before first play.
+# Discard the tiny procedural warmup; subsequent programme selection resets all audible
+# state. This opens no stream/device and retains no reference or pre-rendered programme.
+radio_synth_prepare = (s: mut RadioSynth):
+    if s.music_ready: return
+    s.music = make_music_synth(); s.music_ready = true
+    s.music.events = [MusicEvent(0,1600,60,0,0.6,0.6),MusicEvent(0,1600,60,6,0.6,0.6)]
+    s.music.frames = 128
+    s.chain = make_radio_chain(0,0)
+    _ = radio_render(s,128,1,0)
+    s.music.piece = -1; s.music.events = []; s.music.frames = 1
+    music_seek(s.music,0)
+    s.strength = 0
+    radio_synth_program(s,.morse,0,0)
 
 # The legacy choir slot now carries quiet instrumental island music, never fake speech.
 radio_piece = (style: RadioStyle, seed: int) -> int:
@@ -67,6 +86,8 @@ radio_music_program = (s: mut RadioSynth, piece: int, seconds: f64):
     if not s.music_ready:
         s.music = make_music_synth(); s.music_ready = true
     music_load(s.music,piece)
+    record_levels = [0.35,0.15,0.80,0.70,0.50,0.10,0.60]
+    s.record_mix = record_levels[clamp(piece,0,record_levels.len()-1)]
     music_seek(s.music,seconds%(f64(s.music.frames)/f64(MUSIC_RATE)))
 
 radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds: f64, morse: bool[] = []):
@@ -76,6 +97,9 @@ radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds:
     s.hp = radio_filter(300,true); s.lp = radio_filter(3000,false)
     s.rng = u64(1729 + s.seed*31 + s.cursor%1000003)
     s.crackle = 0; s.fade_phase = 0; s.whistle_phase = 0
+    s.chain = make_radio_chain(seed,seconds)
+    s.chain.strength = clamp(s.strength,0.0,1.0)
+    s.record_mix = 0
     if style != .morse: radio_music_program(s,radio_piece(style,seed),seconds)
 
 radio_noise = (s: mut RadioSynth) -> f64:
@@ -91,9 +115,19 @@ radio_osc = (s: RadioSynth, phase: f64) -> f64:
 # Return raw mono PCM for either a live stream or an offline file. Work is always bounded.
 radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f64 = 0.0, dry: bool = false) -> f32[]:
     out = fill(f32(0),clamp(count,0,RADIO_BLOCK))
+    if out.len() == 0: return out
     target = clamp(strength,0.0,1.0)
+    programme: f64[]
+    if s.style != .morse:
+        if not s.music_ready: radio_music_program(s,radio_piece(s.style,s.seed),f64(s.cursor)/f64(RADIO_RATE))
+        if s.music.cursor >= s.music.frames: music_seek(s.music,0)
+        first = min(out.len(),s.music.frames-s.music.cursor)
+        programme = music_render(s.music,first)
+        if first < out.len():
+            music_seek(s.music,0)
+            tail = music_render(s.music,out.len()-first)
+            loop v in tail: programme.push(v)
     loop i in 0..out.len():
-        white = radio_noise(s)
         value = 0.0
         if s.style == .morse:
             morse_cursor = max(0,s.cursor-s.morse_origin)
@@ -108,26 +142,10 @@ radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f6
                 envelope = min(attack,release)
                 value = radio_osc(s,(f64(s.cursor)*720.0/f64(RADIO_RATE))%1.0)*0.65*envelope
         else:
-            if not s.music_ready: radio_music_program(s,radio_piece(s.style,s.seed),f64(s.cursor)/f64(RADIO_RATE))
-            if s.music.cursor >= s.music.frames: music_seek(s.music,0)
-            value = music_sample(s.music)
+            value = programme[i]
         s.strength += (target-s.strength)*0.002
         if not dry:
-            s.fade_phase = (s.fade_phase+0.7/f64(RADIO_RATE))%1.0
-            fading = 1.0-(1.0-s.strength)*0.25*(0.5+radio_osc(s,s.fade_phase))
-            wanted_whistle = min(1.0,abs(detuning)/8.0)*(1.0-min(1.0,abs(detuning)/30.0))
-            s.whistle += (wanted_whistle-s.whistle)*0.003
-            s.whistle_phase = (s.whistle_phase+(380.0+min(2500.0,abs(detuning)*130.0))/f64(RADIO_RATE))%1.0
-            if white > 0.9996: s.crackle = (1.0-s.strength)*0.4
-            s.crackle *= 0.92
-            value = value*s.strength*fading + white*(0.004+0.065*(1.0-s.strength)) + s.crackle*white
-            value += radio_osc(s,s.whistle_phase)*s.whistle*0.045
-            value = value/(1.0+abs(value)*0.9)
-            value = radio_filter_sample(s.lp,radio_filter_sample(s.hp,value))*2.2
-            # Receiver overload has a smooth knee; avoid flat digital clipping on tuttis.
-            if abs(value) > 0.70:
-                magnitude = 0.70+0.25*(1.0-exp(-(abs(value)-0.70)/0.25))
-                value = if value < 0: -magnitude else: magnitude
+            value = radio_chain_sample(s.chain,value,target,detuning,if s.style == .morse: 0.0 else: s.record_mix,s.night)
         out[i] = f32(clamp(value,-0.95,0.95))
         s.cursor += 1
     out
