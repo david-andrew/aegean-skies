@@ -139,18 +139,20 @@ world_depth_source = (source: ShaderSource) -> ShaderSource:
         s.vs_spirv=depth_spirv(s.vs_spirv,false);s.fs_spirv=depth_spirv(s.fs_spirv,true)
     s
 
-make_world_shader = (source: ShaderSource,near_source:ShaderSource?=none,split:bool=true) -> Shader:
+# near_variant is only useful with draw_world (mesh bounds) or an explicit
+# conservative near=true instance submission. It never duplicates geometry.
+make_world_shader = (source: ShaderSource,near_source:ShaderSource?=none,near_variant:bool=false) -> Shader:
     # Software rasterization has no fragment-depth output hook. Its CPU shaders
     # retain conventional perspective depth. Native float depth can use reversed Z;
     # WebGL2/OpenGL use fragment-correct log depth without requiring clip control.
-    global world_depth_dump_index,world_far_shaders
+    global world_depth_dump_index,world_near_shaders
     __gfx_init_gl_only()
     if world_split_depth_active():
-        if split:
-            near=make_shader(split_depth_source(near_source ?? source,0))
-            world_far_shaders[near.prog]=make_shader(split_depth_source(source,1))
-            return near
-        return make_shader(split_depth_source(source,2))
+        if near_variant:
+            full=make_shader(split_depth_source(source))
+            world_near_shaders[full.prog]=make_shader(split_depth_source(near_source ?? source,true))
+            return full
+        return make_shader(split_depth_source(source))
     adapted=if world_reverse_depth_active():reverse_depth_source(source) else:if world_log_depth_active():world_depth_source(source) else:source
     if let path=env("AEGEAN_DEPTH_DUMP"):
         id=world_depth_dump_index;world_depth_dump_index+=1
@@ -220,47 +222,46 @@ clear_world_depth=():
     draw(depth_clear_shader,depth_clear_mesh,DepthClearParams())
     glColorMask(1,1,1,1);glDepthFunc(world_depth_compare())
 
-# Split WebGL depth at 128 m. Near geometry uses ordinary interpolated inverse
-# distance in the lower half of the buffer, without a fragment-depth output.
-# Its cheap far discard precedes material work; early depth rejection stays legal.
-# Far geometry clips at 64 m, then discards fragments nearer than 128 m before
-# material work and writes exact log depth into the upper half. The overlapping
-# clip region is intentional: both passes must agree on multisample coverage at
-# the fragment cutoff, even when the pixel center straddles it. Both ranges increase.
+# WebGL depth has a conventional near range below 128 m and a logarithmic
+# far range. Proven near-only meshes use the interpolated inverse-distance
+# depth in the lower half without a fragment-depth output. Unknown/mixed meshes
+# use exact fragment depth for both ranges in one pass, including coarse terrain.
+# The small unused interval just below 0.5 keeps the ranges strictly ordered.
 world_scene_depth_encode=(distance:f32,ab:vec2)->f32:
     if ab.y== -2.0:
         if distance<128.0:return 0.5-0.0175/max(distance,0.035)
         return 0.5+(log(max(distance,128.0))*1.44269504089-7.0)/26.0
     world_depth_encode(distance)
 
-split_depth_source=(source:ShaderSource,kind:int)->ShaderSource:
+split_depth_source=(source:ShaderSource,near:bool=false)->ShaderSource:
     s=source
     tail=last_index_of(s.vs,"}") ?? -1
-    expression=if kind==0:"    gl_Position.z = -0.035;\n" else:if kind==1:"    gl_Position.z = gl_Position.w - 128.0;\n" else:"    float wd = max(gl_Position.w, 0.035);\n    float wz = wd < 128.0 ? 0.5 - 0.0175 / wd : 0.5 + (log2(wd) - 7.0) / 26.0;\n    gl_Position.z = (wz * 2.0 - 1.0) * gl_Position.w;\n"
+    expression=if near:"    gl_Position.z = -0.035;\n" else:"    float wd = max(gl_Position.w, 0.035);\n    float wz = wd < 128.0 ? 0.5 - 0.0175 / wd : 0.5 + (log2(wd) - 7.0) / 26.0;\n    gl_Position.z = (wz * 2.0 - 1.0) * gl_Position.w;\n"
     assert(tail>0);s.vs=s.vs[..tail]+expression+s.vs[tail..]
-    if kind!=2:
-        start=index_of(s.fs,"void main()") ?? -1
-        assert(start>=0)
-        loop s.fs[start]!='{':start+=1
-        start+=1
-        depth_test=if kind==0:">=" else:"<"
-        s.fs=s.fs[..start]+"\n    if (1.0 / gl_FragCoord.w "+depth_test+" 128.0) discard;\n"+s.fs[start..]
-    if kind!=0:
+    if not near:
         tail=last_index_of(s.fs,"}") ?? -1
-        expression=if kind==1:"    gl_FragDepth = 0.5 + (log2(1.0 / gl_FragCoord.w) - 7.0) / 26.0;\n" else:"    float wd = 1.0 / gl_FragCoord.w;\n    gl_FragDepth = wd < 128.0 ? 0.5 - 0.0175 / wd : 0.5 + (log2(wd) - 7.0) / 26.0;\n"
-        s.fs=s.fs[..tail]+expression+s.fs[tail..]
+        s.fs=s.fs[..tail]+"    float wd = 1.0 / gl_FragCoord.w;\n    gl_FragDepth = wd < 128.0 ? 0.5 - 0.0175 / wd : 0.5 + (log2(wd) - 7.0) / 26.0;\n"+s.fs[tail..]
     s
 
-world_far_shaders:{int:Shader}={}
+# Each submission remains one draw. Callers may use the near variant only with
+# a conservative bound entirely inside the near range; mixed/unknown batches
+# retain the fragment-correct piecewise shader.
+world_near_shaders:{int:Shader}={}
+world_shader_for=(sh:Shader,near:bool)->Shader:
+    when TARGET=="wasm":
+        if near:return world_near_shaders.get(sh.prog,sh)
+    sh
+world_mesh_near[U]=(m:Mesh,params:U)->bool:false
 draw_world[U]=(sh:Shader,m:Mesh,params:U):
-    when TARGET=="wasm":
-        if let far=world_far_shaders.get(sh.prog):draw(far,m,params)
-    draw(sh,m,params)
-draw_world_instanced[U,I]=(sh:Shader,m:Mesh,instances:I[],params:U):
-    when TARGET=="wasm":
-        if let far=world_far_shaders.get(sh.prog):draw_instanced(far,m,instances,params)
-    draw_instanced(sh,m,instances,params)
-draw_world_instanced[U,I]=(sh:Shader,m:Mesh,b:InstanceBuffer[I],params:U,first:int=0,count:int= -1):
-    when TARGET=="wasm":
-        if let far=world_far_shaders.get(sh.prog):draw_instanced(far,m,b,params,first,count)
-    draw_instanced(sh,m,b,params,first,count)
+    near=false
+    when TARGET=="wasm":near=world_split_depth_active() and world_mesh_near(m,params)
+    draw(world_shader_for(sh,near),m,params)
+draw_world_instanced[U,I]=(sh:Shader,m:Mesh,instances:I[],params:U,near:bool=false):
+    draw_instanced(world_shader_for(sh,near),m,instances,params)
+draw_world_instanced[U,I]=(sh:Shader,m:Mesh,b:InstanceBuffer[I],params:U,first:int=0,count:int= -1,near:bool=false):
+    draw_instanced(world_shader_for(sh,near),m,b,params,first,count)
+
+# Frobenius norm bounds arbitrary scale/shear, not only orthogonal transforms.
+world_mesh_radius=(m:Mesh,model:mat4)->f32:
+    if m.radius<0:return 1e20
+    m.radius*sqrt(dot(model[0].xyz,model[0].xyz)+dot(model[1].xyz,model[1].xyz)+dot(model[2].xyz,model[2].xyz))

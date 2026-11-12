@@ -22,6 +22,46 @@ struct TownParams:
     light: ObjParams
     origin: vec3
 
+# Partition persistent town batches on upload, not by drawing every instance
+# twice. The near partition keeps a conservative radius about its upload camera;
+# if the camera moves out of that bound it uses the full shader until refreshed.
+struct TownDepthBatch:
+    buffer:InstanceBuffer[Instance3D]
+    camera:vec3
+    bound:f32
+town_depth_batches:{int:TownDepthBatch}={}
+set_town_instances=(b:mut InstanceBuffer[Instance3D],xs:Instance3D[],m:Mesh,cam:vec3,rigid:bool=true):
+    global town_depth_batches
+    when TARGET=="wasm":
+        if world_split_depth_active() and rigid:
+            nearby:Instance3D[];others:Instance3D[];bound=f32(0)
+            loop x in xs:
+                radius=length((x.model*vec4(m.center,1)).xyz-cam)+world_mesh_radius(m,x.model)
+                if radius<110:
+                    nearby.push(x);bound=max(bound,radius)
+                else:others.push(x)
+            batch=town_depth_batches.get(b.vbo,TownDepthBatch())
+            if batch.buffer.vbo==0:batch.buffer=instance_buffer(nearby)
+            else:set_instances(batch.buffer,nearby)
+            batch.camera=cam;batch.bound=bound
+            town_depth_batches[b.vbo]=batch
+            set_instances(b,others)
+            return
+    when TARGET=="wasm":
+        if let old=town_depth_batches.get(b.vbo):
+            batch=old;batch.buffer.count=0;town_depth_batches[b.vbo]=batch
+    set_instances(b,xs)
+
+draw_town_instances[U]=(sh:Shader,m:Mesh,b:InstanceBuffer[Instance3D],p:U,cam:vec3):
+    draw_world_instanced(sh,m,b,p)
+    when TARGET=="wasm":
+        if let batch=town_depth_batches.get(b.vbo):
+            if batch.buffer.count>0:
+                near=scene_warp_b.x==0 and batch.bound+length(cam-batch.camera)<127
+                draw_world_instanced(sh,m,batch.buffer,p,near=near)
+
+world_mesh_near=(m:Mesh,u:TownParams)->bool:world_mesh_near(m,u.light)
+
 town_project = (world: vec3,normal: vec3,color: vec4,u: TownParams,surface: vec3) -> ObjOut:
     curved = render_warped(world,u.light.cam,u.light.warp_a,u.light.warp_b)
     ObjOut(u.light.view_proj*vec4(curved,1),world,render_normal(normal,world,u.light.cam),color,surface)
@@ -36,6 +76,8 @@ town_instance_vertex = (v: Vertex3D,inst: Instance3D,u: TownParams) -> ObjOut:
         bend = max(v.pos.y,0.0)*u.light.wind.z*0.006*(0.3+0.7*gust(w.xz,u.light.drift))
         w += vec4(u.light.wind.x*bend,0,u.light.wind.y*bend,0)
     town_project(w.xyz,(inst.model*vec4(v.normal,0)).xyz,v.color*inst.color,u,obj_surface(v,u.light.sway))
+
+town_near_fragment=(v:ObjOut,u:TownParams)->vec4:obj_light(v,u.light)
 
 town_fragment = (v: ObjOut,u: TownParams) -> vec4:
     if behind_sea(v.world,u.light.cam): discard()
@@ -237,9 +279,9 @@ init_world_towns = (towns: Town[]):
     global world_town_sh,world_town_inst_sh,legacy_town_inst_sh,world_town_far,world_town_harbors,world_town_house,world_town_proxy,world_town_props,world_town_house_buffer,world_town_far_buffer,world_town_prop_buffers,world_town_paths,world_town_path_meshes,legacy_town_index,world_town_density
     world_town_density = clamp(to_float(env("AEGEAN_TOWN_DENSITY") ?? "1") ?? 1.0,0.0,1.0)
     init_settlements(false,true)
-    legacy_town_inst_sh = make_world_shader(shader(legacy_town_vertex,obj_fs))
-    world_town_sh = make_world_shader(shader(town_vertex,town_fragment))
-    world_town_inst_sh = make_world_shader(shader(town_instance_vertex,town_fragment))
+    legacy_town_inst_sh = make_world_shader(shader(legacy_town_vertex,obj_fs),near_variant=true)
+    world_town_sh = make_world_shader(shader(town_vertex,town_fragment),near_source=shader(town_vertex,town_near_fragment),near_variant=true)
+    world_town_inst_sh = make_world_shader(shader(town_instance_vertex,town_fragment),near_source=shader(town_instance_vertex,town_near_fragment),near_variant=true)
     world_town_house = []
     loop style in 0..8:
         h: Vertex3D[]
@@ -361,10 +403,10 @@ prepare_world_towns = (cam: vec3):
             town_path(paths,a.xz+delta*max(0.0,u-margin),a.xz+delta*min(1.0,u+margin),road.width,false)
     world_town_near_count = 0; world_town_far_count = 0
     loop k in 0..8:
-        world_town_near_count += houses[k].len(); set_instances(world_town_house_buffer[k],houses[k])
+        world_town_near_count += houses[k].len(); set_town_instances(world_town_house_buffer[k],houses[k],world_town_house[k],cam)
     loop k in 0..2:
         world_town_far_count += far[k].len(); set_instances(world_town_far_buffer[k],far[k])
-    loop k in 0..TOWN_PROP_COUNT: set_instances(world_town_prop_buffers[k],props[k])
+    loop k in 0..TOWN_PROP_COUNT: set_town_instances(world_town_prop_buffers[k],props[k],world_town_props[k],cam,k!=10 and k!=17)
     update_mesh(world_town_paths,paths)
     update_mesh(world_town_harbors,harbors)
 
@@ -383,12 +425,12 @@ draw_world_towns = (towns: Town[],L: Light,t: f64):
         if legacy_town_index != legacy:
             detail = build_legacy_town_detail(towns[legacy],legacy)
             update_mesh(world_town_paths,detail.paths)
-            loop k in 0..TOWN_PROP_COUNT: set_instances(world_town_prop_buffers[k],detail.props[k])
+            loop k in 0..TOWN_PROP_COUNT: set_town_instances(world_town_prop_buffers[k],detail.props[k],world_town_props[k],cam)
             legacy_town_index = legacy
             world_town_last_density = -1.0
         draw_world(obj_sh,world_town_paths,p)
         loop k in 0..TOWN_PROP_COUNT:
-            if world_town_prop_buffers[k].count > 0: draw_world_instanced(legacy_town_inst_sh,world_town_props[k],world_town_prop_buffers[k],p)
+            draw_town_instances(legacy_town_inst_sh,world_town_props[k],world_town_prop_buffers[k],p,cam)
         draw_close_town(towns,cam,L,t)
         return
     else: legacy_town_index = -1
@@ -403,13 +445,13 @@ draw_world_towns = (towns: Town[],L: Light,t: f64):
     loop k in 0..2:
         if world_town_far_buffer[k].count > 0: draw_world_instanced(world_town_inst_sh,world_town_proxy[k],world_town_far_buffer[k],tp)
     loop k in 0..8:
-        if world_town_house_buffer[k].count > 0: draw_world_instanced(world_town_inst_sh,world_town_house[k],world_town_house_buffer[k],tp)
+        draw_town_instances(world_town_inst_sh,world_town_house[k],world_town_house_buffer[k],tp,cam)
     if world_town_paths.count > 0: draw_world(world_town_sh,world_town_paths,tp)
     loop slot in world_town_slots:
         if slot.mesh_slot >= 0 and world_town_path_meshes[slot.mesh_slot].count > 0: draw_world(world_town_sh,world_town_path_meshes[slot.mesh_slot],tp)
     loop k in 0..TOWN_PROP_COUNT:
         tp.light.sway = if k == 10 or k == 17: 1.0 else: 0.0
-        if world_town_prop_buffers[k].count > 0: draw_world_instanced(world_town_inst_sh,world_town_props[k],world_town_prop_buffers[k],tp)
+        draw_town_instances(world_town_inst_sh,world_town_props[k],world_town_prop_buffers[k],tp,cam)
     draw_close_town(towns,cam,L,t)
 
 # Aerial harbor silhouettes have no bollards, windows, or decorative meshes.
@@ -431,6 +473,13 @@ close_town_instances=0
 close_town_prop_count=0
 close_town_prop_gap=0.0
 close_town_local_bound=0.0
+
+close_town_bound:f32[]=[]
+close_prop_bound:f32[]=[]
+close_instance_bound=(m:Mesh,xs:Instance3D[],cam:vec3)->f32:
+    bound=f32(0)
+    loop x in xs:bound=max(bound,length((x.model*vec4(m.center,1)).xyz-cam)+world_mesh_radius(m,x.model))
+    bound
 
 close_site_limit = () -> int: if render_quality.tier==0: 24 else: if render_quality.tier==1: 48 else: 80
 close_site_radius = () -> f32: if render_quality.tier==0: 65.0 else: if render_quality.tier==1: 95.0 else: 130.0
@@ -459,7 +508,7 @@ close_sites = (towns: Town[],cam: vec3) -> TownSite[]:
 
 prepare_close_town = (towns: Town[],cam: vec3):
     global close_town_origin,close_town_meshes,close_town_buffers,close_town_props,close_town_paths,close_town_last,close_town_stamp,close_town_density,close_town_sites,close_town_instances
-    global close_town_prop_count,close_town_prop_gap,close_town_local_bound
+    global close_town_prop_count,close_town_prop_gap,close_town_local_bound,close_town_bound,close_prop_bound
     stamp=world_town_slots.len()*4+render_quality.tier
     density=world_town_density
     if length(cam-close_town_last)<12 and stamp==close_town_stamp and density==close_town_density and world_town_generated==0: return
@@ -491,12 +540,17 @@ prepare_close_town = (towns: Town[],cam: vec3):
         town_path(paths,a,b,3.5,true,origin)
         arch_side_lanes(lists,paths,s,sites,ornament,origin)
         if ornament: arch_courtyard(lists,props,paths,s,sites,origin)
+    close_town_bound=[];close_prop_bound=[]
     loop k in 0..ARCH_COUNT:
+        when TARGET=="wasm":
+            if world_split_depth_active():close_town_bound.push(close_instance_bound(close_town_meshes[k],lists[k],cam-origin))
         close_town_instances+=lists[k].len()
         if env("AEGEAN_WALK_TRACE")!=none:
             loop inst in lists[k]:close_town_local_bound=max(close_town_local_bound,f64(length(inst.model[3].xz)))
         set_instances(close_town_buffers[k],lists[k])
     loop k in 0..TOWN_PROP_COUNT:
+        when TARGET=="wasm":
+            if world_split_depth_active():close_prop_bound.push(close_instance_bound(world_town_props[k],props[k],cam-origin))
         close_town_instances+=props[k].len()
         close_town_prop_count+=props[k].len()
         if env("AEGEAN_WALK_TRACE")!=none:
@@ -517,6 +571,12 @@ draw_close_town = (towns: Town[],cam: vec3,L: Light,t: f64):
     tp=TownParams(p,origin-close_town_origin)
     if close_town_paths.count>0: draw_world(world_town_sh,close_town_paths,tp)
     loop k in 0..ARCH_COUNT:
-        if close_town_buffers[k].count>0: draw_world_instanced(world_town_inst_sh,close_town_meshes[k],close_town_buffers[k],tp)
+        near=false
+        when TARGET=="wasm":
+            if world_split_depth_active():near=p.warp_b.x==0 and close_town_bound[k]+length(cam-close_town_last)<127
+        if close_town_buffers[k].count>0:draw_world_instanced(world_town_inst_sh,close_town_meshes[k],close_town_buffers[k],tp,near=near)
     loop k in 0..TOWN_PROP_COUNT:
-        if close_town_props[k].count>0: draw_world_instanced(world_town_inst_sh,world_town_props[k],close_town_props[k],tp)
+        near=false
+        when TARGET=="wasm":
+            if world_split_depth_active():near=p.warp_b.x==0 and close_prop_bound[k]+length(cam-close_town_last)<127
+        if close_town_props[k].count>0:draw_world_instanced(world_town_inst_sh,world_town_props[k],close_town_props[k],tp,near=near)
