@@ -62,8 +62,9 @@ reclassifying each microfacet as bare rock. Shallow seabed shading reuses the
 existing smooth procedural noise channels at broad/fine scales instead of
 reconstructing five value-noise fields per fragment; sea detail is unchanged. Coastal paving samples the physical surface and subdivides to keep its clearance.
 Its longest edges are bounded by 0.875 m (0.4375 m on steep cells); nearly
-planar triangles may use twice that length when all three edge midpoints and
-the centroid agree with the contact field within 3 cm. Explicit entrance
+planar triangles may use four times that length when a triangular lattice of
+15 probes agrees with the contact field within 5.5 cm. The independent clearance
+audit uses 45 barycentric samples per output triangle. Explicit entrance
 steps retain main's shared rendering/walking plans; lanes do not add duplicate treads.
 
 Streaming terrain retains its coarse fallback outside main's pinned 3×3
