@@ -1,0 +1,145 @@
+"""Rebuild licensed note data: python -m pip install mido; python tools/music_pack.py.
+No audio, sampled instruments or network calls. Durations include MIDI tempo changes.
+The per-track channel state matters: exported orchestral MIDIs reuse channel numbers.
+"""
+from pathlib import Path
+from bisect import bisect_right
+from collections import defaultdict, deque
+import json, math, struct, zlib
+import mido
+ROOT = Path(__file__).resolve().parents[1]
+RATE = 16000
+# Must agree with MusicInstrument in music_synth.jo.
+STRINGS, BRASS, FLUTE, OBOE, CLARINET, BASSOON, PIANO, HARP, BOUZOUKI, ACCORDION, BANJO, TIMPANI, DRUMS, BASS = range(14)
+PIECES = [
+ ('adagietto', 'Symphony No. 5: Adagietto', 'Gustav Mahler', 'Voice of Kalyra'),
+ ('mahler-opening', 'Symphony No. 5: opening call (excerpt)', 'Gustav Mahler', 'Voice of Kalyra'),
+ ('magnetic', 'Magnetic Rag (foxtrot arrangement)', 'Scott Joplin', 'Blue Lantern'),
+ ('el-choclo', 'El Choclo', 'Angel Villoldo', 'Night Gull / Blue Lantern'),
+ ('gladiators', 'Entry of the Gladiators (excerpt)', 'Julius Fucik; arr. Eric Russ', 'Orenthia National'),
+ ('ikariotikos', 'Ikariotikos', 'Traditional Greek', 'Archipelago Radio'),
+ ('bethena', 'Bethena: a concert waltz', 'Scott Joplin', 'Blue Lantern'),
+]
+
+def gm(program, drum=False):
+ if drum: return DRUMS
+ if program < 8: return PIANO
+ if program == 46: return HARP
+ if program in (21,22,23): return ACCORDION
+ if 24 <= program < 32 or program == 105: return BANJO
+ if 32 <= program < 40: return BASS
+ if program == 47: return TIMPANI
+ if 40 <= program < 52: return STRINGS
+ if 56 <= program < 64: return BRASS
+ if 64 <= program < 68 or program == 71: return CLARINET
+ if program in (68,69): return OBOE
+ if program == 70: return BASSOON
+ if 72 <= program < 80: return FLUTE
+ return STRINGS
+
+def read_midi(path):
+ midi = mido.MidiFile(path)
+ tempos = {0:500000}
+ tracks=[]
+ for track in midi.tracks:
+  tick=0; events=[]
+  for msg in track:
+   tick+=msg.time; events.append((tick,msg))
+   if msg.type=='set_tempo': tempos[tick]=msg.tempo
+  tracks.append(events)
+ times=sorted(tempos); seconds=[0.0]
+ for a,b in zip(times,times[1:]): seconds.append(seconds[-1]+(b-a)*tempos[a]/midi.ticks_per_beat/1e6)
+ def sec(t):
+  i=bisect_right(times,t)-1
+  return seconds[i]+(t-times[i])*tempos[times[i]]/midi.ticks_per_beat/1e6
+ result=[]
+ for ti,events in enumerate(tracks):
+  program=defaultdict(int); vol=defaultdict(lambda:100); expr=defaultdict(lambda:127); opened=defaultdict(deque)
+  initial=next((m.program for _,m in events if m.type=='program_change'),0)
+  # A split bass/treble staff has its program on the first track only.
+  if not any(m.type=='program_change' for _,m in events) and ti:
+   initial=next((m.program for _,m in tracks[ti-1] if m.type=='program_change'),initial)
+  cc=defaultdict(list)
+  for t,m in events:
+   if m.type=='control_change' and m.control in (7,11): cc[(m.channel,m.control)].append((t,m.value))
+  def control(ch,control,t,default):
+   vals=cc[(ch,control)];i=bisect_right(vals,(t,128))-1
+   return vals[i][1] if i>=0 else default
+  for t,m in events:
+   if m.type=='program_change': program[m.channel]=m.program
+   elif m.type=='note_on' and m.velocity:
+    opened[(m.channel,m.note)].append((t,m.velocity,program.get(m.channel,initial)))
+   elif m.type=='note_off' or (m.type=='note_on' and not m.velocity):
+    q=opened[(m.channel,m.note)]
+    if not q: continue
+    start,vel,pg=q.popleft()
+    if t<=start: continue
+    gains=[vel/127*control(m.channel,7,x,100)/100*control(m.channel,11,x,127)/127 for x in [start,t-1]]
+    result.append([sec(start),sec(t)-sec(start),m.note,gm(pg,m.channel==9),*gains,ti])
+  if any(opened.values()): raise ValueError(f'unterminated notes in {path}, track {ti}')
+ return result
+
+def opening():
+ # Peters plate 9015 (1904), printed p.3: pickup + eight bars, trumpet in B-flat.
+ # Concert pitches below; written D#4/F#4/A#4/D#5 transpose down two semitones.
+ # In gemessenem Schritt: editorial quarter=88, not a metronome marking in the score.
+ b=60/88; rows=[]
+ def note(t,d,n,v,w=None): rows.append([t*b,d*b,n,BRASS,v,v if w is None else w,0])
+ def triplet(t,notes,vel=.62):
+  for i,n in enumerate(notes):note(t+i/3,.29,n,vel+i*.055)
+ triplet(0,[61]*3,.42)
+ for t in [1,5]:
+  note(t,1.95,61,.82,.53);triplet(t+3,[61]*3,.5)
+ note(9,4.95,64,.88,.62)
+ triplet(16,[61]*3,.55)
+ note(17,1.95,61,.9,.6);triplet(20,[61]*3,.60)
+ note(21,1.95,64,.94,.68);triplet(24,[61,64,68],.68)
+ note(25,4.95,73,.96,.7);note(31,1.95,73,.96,.78)
+ return rows
+
+def arrange(name,notes):
+ out=[]
+ for start,dur,pitch,ins,g0,g1,track in notes:
+  if name=='magnetic':
+   start*=60/116;dur*=60/116
+   ins=CLARINET if track==1 and pitch>=60 else PIANO if pitch>=48 else BASS
+   # Keep every original piano pitch; light banjo doubles the off-beat middle register.
+   if track==2 and 48<=pitch<67:out.append([start,dur,pitch,BANJO,g0*.36,g1*.36,track])
+  elif name=='el-choclo': ins=ACCORDION if track==0 else PIANO if pitch>=48 else BASS
+  elif name=='ikariotikos':
+   ins=BOUZOUKI
+   # Unison octave accompaniment follows the traditional melody, no invented harmony.
+   out.append([start,dur,pitch-12,ACCORDION,g0*.28,g1*.28,track])
+  out.append([start,dur,pitch,ins,g0,g1,track])
+ if name=='magnetic':
+  end=max(n[0]+n[1] for n in out);beat=60/116
+  for i in range(int(end/beat)):
+   out.append([i*beat,.12,36 if i%2==0 else 38,DRUMS,.25,.25,99])
+ return sorted(out)
+
+def pack(notes):
+ events=[]
+ for t,d,p,ins,g0,g1,_ in notes:
+  events.append((round(t*RATE),max(1,round(d*RATE)),p,ins,min(127,round(g0*100)),min(127,round(g1*100))))
+ events.sort()
+ end=max(t+d for t,d,*_ in events)+RATE*2
+ longest=max(d for _,d,*_ in events)+RATE*2
+ raw=b'MUS1'+struct.pack('<III',len(events),end,longest)+b''.join(struct.pack('<IIBBBB',*n) for n in events)
+ return zlib.compress(raw,9,wbits=-15),end,events
+
+def main():
+ meta=[]
+ for name,title,composer,station in PIECES:
+  notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{name}.mid')
+  blob,end,events=pack(arrange(name,notes))
+  (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
+  meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob)))
+  print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
+ (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
+ lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '', 'MUSIC_PIECES: MusicPiece[] = [']
+ for r in meta:lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}),")
+ lines+= [']','','music_bytes = (piece: int) -> u8[]:', '    match piece:']
+ for i,r in enumerate(meta):lines.append(f'        {i}: embed(\'../data/music/{r["id"]}.z\')')
+ lines+= ['        else: []','']
+ (ROOT/'src/music_data.jo').write_text('\n'.join(lines))
+if __name__=='__main__':main()
