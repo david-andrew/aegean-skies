@@ -125,3 +125,8 @@ pack separately captures the unmodified first view. `AEGEAN_CAPTURE_MINUTES` adv
 world clock to match a lighting-hour fixture. No in-game key binding is added.
 For isolated Python dependencies, create `~/dev/tmp/aegean-skies/judging/.venv` and install
 `pillow matplotlib`; the shell runner uses that interpreter when present (`JUDGE_PYTHON` overrides).
+
+The refreshed round-1 list also includes saved-weather fixtures (storm, overcast above/below,
+rain and fog), vessel fixtures (morning harbor, steamer, convoy and the eighteen-type catalog),
+cockpit compass/radio, pocket compass on the maps, desktop/phone Options, and two bailout states.
+`--stage additions` collects just these supplemental fixtures for framing checks.

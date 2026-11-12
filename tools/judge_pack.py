@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT=Path(__file__).resolve().parents[1]
 BASE=Path.home()/'dev/tmp/aegean-skies/judging'
 os.environ.setdefault('MPLCONFIGDIR',str(BASE/'tool-cache/matplotlib'))
-ENV={k:v for k,v in os.environ.items() if not k.startswith(('AEGEAN_','COMBAT_','LIFE_','LIVING_','AIRCRAFT_SOUND_','FLIGHT_','SLOPPY_')) and k not in ('DISPLAY','WAYLAND_DISPLAY')}
+ENV={k:v for k,v in os.environ.items() if not k.startswith(('AEGEAN_','COMBAT_','LIFE_','LIVING_','AIRCRAFT_SOUND_','VESSEL_','RADIO_','STALL_','FLIGHT_','SLOPPY_')) and k not in ('DISPLAY','WAYLAND_DISPLAY')}
 ENV.update(SLOPPY_THREADS='1',SLOPPY_NO_AUDIO='1',SLOPPY_SEED='12345')
 KINDS=['capital','port','market','fishing','hill','monastery','hamlet','farm','lighthouse','chapel']
 CRAFT=['Gull','Heron','Corsair','Falco','Tern','Petrel','Osprey','Swift','Pelican','Kite','Ibis','Kestrel','Minnow','Albatross','Cormorant','Kingfisher']
@@ -54,9 +54,11 @@ def build():
     compiler=subprocess.check_output([SLOPPY,'--version'],text=True).strip()
     assets={n:dict(bytes=(ROOT/'assets'/n).stat().st_size,sha256=digest(ROOT/'assets'/n)) for n in names}
     stamp=hashlib.sha256((git('rev-parse','HEAD')+inputs+Path(__file__).read_text()+compiler+TOOLCHAIN+json.dumps(assets,sort_keys=True)).encode()).hexdigest()
+    prior=json.loads((P/'provenance.json').read_text()) if (P/'provenance.json').exists() else {}
+    baseline=prior.get('game_baseline',git('rev-parse','HEAD'))
     write(P/'source.patch',git('diff','HEAD')+'\n')
-    write(P/'provenance.json',dict(commit=git('rev-parse','HEAD'),branch=git('branch','--show-current'),dirty=bool(git('status','--porcelain')),source_signature=stamp,utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),host=os.uname().nodename,cpu=[l.split(':',1)[1].strip() for l in Path('/proc/cpuinfo').read_text().splitlines() if l.startswith('model name')][0],memory=Path('/proc/meminfo').read_text().splitlines()[0],python=sys.version,pillow=Image.__version__,compiler=compiler,toolchain_sha256=TOOLCHAIN,assets=assets))
-    for source,name in [('aegean.jo','aegean'),('tools/combatlab.jo','combatlab'),('tools/lifelab.jo','lifelab'),('tools/lifelog.jo','lifelog'),('tools/judge_audio.jo','audio')]:
+    write(P/'provenance.json',dict(commit=git('rev-parse','HEAD'),game_baseline=baseline,branch=git('branch','--show-current'),dirty=bool(git('status','--porcelain')),source_signature=stamp,utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),host=os.uname().nodename,cpu=[l.split(':',1)[1].strip() for l in Path('/proc/cpuinfo').read_text().splitlines() if l.startswith('model name')][0],memory=Path('/proc/meminfo').read_text().splitlines()[0],python=sys.version,pillow=Image.__version__,compiler=compiler,toolchain_sha256=TOOLCHAIN,assets=assets))
+    for source,name in [('aegean.jo','aegean'),('tools/combatlab.jo','combatlab'),('tools/lifelab.jo','lifelab'),('tools/lifelog.jo','lifelog'),('tools/judge_audio.jo','audio'),('tools/vessellab.jo','vessellab')]:
         output=P/'build'/name;done=output.with_name(output.name+'.stamp')
         if not A.force and output.exists() and done.exists() and done.read_text()==stamp:continue
         assert run([SLOPPY,'build','--release',source,'-o',output],P/'logs'/f'build-{name}.log')==0
@@ -121,19 +123,34 @@ def images():
         sheet([P/'images'/f'aircraft-{i:02}-{mode}.png' for i in range(16)],P/'sheets'/f'aircraft-{mode}.png',CRAFT)
     capture('first-view','Unmodified opening view at the home quay, 1.5 s after start',dict(AEGEAN_CAPTURE_READY=''))
     capture('controls-help','Keyboard help opened with H at the starting quay, 09:30',dict(SLOPPY_INPUT='2:h+ 92:h-'))
-    capture('cockpit','Gull cockpit off home harbor, 09:30',dict(AEGEAN_FLYING='300 190',SLOPPY_INPUT='2:v+ 3:v-'))
+    capture('cockpit','Gull cockpit with brass compass and radio dial, off home harbor, 09:30',dict(AEGEAN_FLYING='300 190',SLOPPY_INPUT='2:v+ 3:v-'))
     capture('battle','Thirty-aircraft battle fixture over sea, t=6 s, 14:30 lighting',dict(COMBAT_SEEK='360',COMBAT_FREEZE='1',COMBAT_STATIC_CAMERA='1'),2,'combatlab')
-    capture('chart-world','Whole-world chart at home harbor, 09:30',dict(AEGEAN_CHART='1'))
-    capture('chart-local','Local archipelago chart at home harbor, 09:30',dict(AEGEAN_CHART='1',SLOPPY_INPUT='2:tab+ 3:tab-'))
+    capture('chart-world','Whole-world chart with pocket compass, at home harbor, 09:30',dict(AEGEAN_CHART='1'))
+    capture('chart-local','Local archipelago chart with pocket compass, at home harbor, 09:30',dict(AEGEAN_CHART='1',SLOPPY_INPUT='2:tab+ 3:tab-'))
     capture('pause','Pause menu from the starting quay, 09:30',dict(SLOPPY_INPUT='60:p+ 61:p-'))
     capture('conversation','Conversation with the nearest person at the starting quay, 09:30; real greeting',dict(AEGEAN_TALK='1'))
     capture('notebook','Notebook with available real home-board notices pinned by the capture hook; day 2 at 08:00',dict(AEGEAN_CAPTURE_PANEL='notebook',AEGEAN_HOUR='8',AEGEAN_CAPTURE_MINUTES='1170'))
     for name,e in [('touch-flight',dict(AEGEAN_FLYING='300 190')),('touch-cockpit',dict(AEGEAN_FLYING='300 190',SLOPPY_INPUT='2:v+ 3:v-')),('touch-quay',{})]:
         capture(name,f'Phone-like 844×390 low-tier {name.removeprefix("touch-")}; native layout proxy, 09:30',e|dict(AEGEAN_TOUCH='1',AEGEAN_QUALITY='low'),size='844x390')
 
+    additions()
+
+def additions():
+    for name,weather,recipe in [('storm','storm','weather-storm'),('overcast-above','overcast','weather-above'),('overcast-below','overcast','weather-below'),('rain','rain','home'),('fog','fog','weather-fog')]:
+        e=dict(AEGEAN_CAPTURE=recipe,AEGEAN_WEATHER=weather)
+        if name=='storm':e['AEGEAN_WEATHER_CENTER']='0 -26000'
+        capture('weather-'+name,f'{name.replace("-"," ").title()}, 09:30; explicit saved-weather fixture, fixed camera recorded below',e)
+    for scene,label in [('morning','Three caiques by the harbor mouth, 06:36'),('steamer','Coastal steamer under way, 14:30'),('convoy','Six-ship convoy with escorts, 14:30'),('catalog','All eighteen vessel types, 14:30')]:
+        capture('ships-'+scene,label+'; explicit vessel fixture, navigation solved before capture',dict(VESSEL_SCENE=scene),90,'vessellab')
+    capture('ships-harbour-morning','Home harbor at 06:36, with the normal vessel population; world clock advanced to match lighting',dict(AEGEAN_CAPTURE='home',AEGEAN_HOUR='6.6',AEGEAN_CAPTURE_MINUTES='1266'))
+    capture('options','Options page at the starting quay, 09:30; default settings',dict(AEGEAN_CAPTURE_PANEL='options',SLOPPY_INPUT='60:p+ 61:p-'))
+    capture('touch-options','Phone-like 844×390 low-tier Options page; default tilt and inversion settings',dict(AEGEAN_CAPTURE_PANEL='options',SLOPPY_INPUT='60:p+ 61:p-',AEGEAN_TOUCH='1',AEGEAN_QUALITY='low'),size='844x390')
+    for name,tick in [('tumble',30),('canopy',150)]:
+        capture('bailout-'+name,f'Bail-out {name}, {tick/60:.2f} s after leaving aircraft; explicit combat fixture, 14:30',dict(COMBAT_SCENE='chute',COMBAT_SEEK=str(tick),COMBAT_FREEZE='1'),2,'combatlab')
+
 # 12 successive 60 Hz states, nine frames apart = 0.15 s. Full traces accompany the excerpts.
 SEQUENCES={
- 'takeoff':(dict(AEGEAN_ABOARD='1',SLOPPY_INPUT='1:shift+ 120:shift- 720:s+ 1800:s-'),720),
+ 'takeoff':(dict(AEGEAN_ABOARD='1',SLOPPY_INPUT='1:shift+ 120:shift- 720:s+ 1800:s-'),810),
  'loop':(dict(AEGEAN_FLYING='600 210',SLOPPY_INPUT='1:s+ 1000:s-'),150),
  'water-landing':(dict(AEGEAN_FLYING='3 70',AEGEAN_CAPTURE_ATTITUDE='-0.025',SLOPPY_INPUT='1:z+ 90:z-'),9),
  'dive-into-sea':(dict(AEGEAN_FLYING='100 190',AEGEAN_CAPTURE_ATTITUDE='-0.75'),12),
@@ -149,11 +166,11 @@ def sequences():
         capture(name+'-trace-end',f'{name}: home harbor departure waters, trace endpoint at 18 s after 09:30 initialization',e|dict(AEGEAN_CAPTURE_TRACE='1'),1080,group='traces')
         lines=(P/'logs/traces'/f'{name}-trace-end.log').read_text().splitlines()
         write(P/'traces'/f'{name}.csv','frame,time_s,x_m,y_m,z_m,vx_mps,vy_mps,vz_mps,pitch_rad,throttle,on_water,crashed,hull_damage\n'+'\n'.join(l[7:] for l in lines if l.startswith('FLIGHT,'))+'\n')
-    # Supplemental full maneuver: the primary loop strip remains at 0.15 s spacing.
+    # Show the longer input response under current defaults; do not imply a completed loop.
     paths=[]
     for j in range(12):
-        frame=1+j*33
-        paths.append(capture(f'loop-overview-{j:02}',f'Full-loop overview off home harbor: frame {frame}, {frame/60:.2f} s; supplemental 0.55 s spacing',SEQUENCES['loop'][0]|dict(AEGEAN_CAPTURE_TRACE='1'),frame,group='sequences/loop-overview'))
+        frame=1+j*90
+        paths.append(capture(f'loop-overview-{j:02}',f'Loop-input overview off home harbor: frame {frame}, {frame/60:.2f} s; supplemental 1.5 s spacing; current default physics, not a claim of a completed loop',SEQUENCES['loop'][0]|dict(AEGEAN_CAPTURE_TRACE='1'),frame,group='sequences/loop-overview'))
     sheet(paths,P/'sheets/loop-overview.png',cols=4)
     for name,scene,start in [('flyby','flyby',12),('dogfight','battle',360)]:
         paths=[]
@@ -238,7 +255,7 @@ CSV files preserve the curves. No audible recording is necessary for judging thi
   speed/load determine their mix. They are separate layers, not six simultaneous full-volume loops.
 - Cloth, cloth-hit and heavy-cloth: irregular flutter and individual fabric snaps; flex-up/down
   are brief oil-can sounds tied to changes in load.
-- Combat 0–2: the three gun voices; 3: impact; 4: canopy opening; 5: fire; 6: falling/canopy wind;
+- Combat 0–2: representative light, medium and heavy gun reports (the live game selects among eight variants each); 3: impact; 4: canopy opening; 5: fire; 6: falling/canopy wind;
   7: body thump when the player's aircraft is hit; 8: near-pass crack/swish. Spatial attenuation
   and cooldowns apply in play.
 - Surf: slowly swelling low-pass noise near shore. Gulls: short procedurally pitched calls.
@@ -248,9 +265,13 @@ CSV files preserve the curves. No audible recording is necessary for judging thi
   293.6648 Hz transposed through [0,2,3,5,7,9,10,12] semitones; six harmonics weighted 1/h^1.3
   decay at (5+1.5h)/s. Three notes per second, range 70 m. Analytic harmonic description, not a recording.
 
+- Radio: original foxtrot, tango, waltz, bouzouki, march, wordless choir and Morse programmes.
+  A bounded mono 16 kHz synthesizer feeds a 300–3000 Hz AM filter, with signal-dependent static,
+  fading and whistle. The radio spectra below use the actual synthesizer, without playback.
+
 Dialogue is text, not recorded voice acting.
 
-Sources: src/sound.jo, src/airsound.jo, src/combat_sound.jo, src/life_audio.jo.
+Sources: src/sound.jo, src/airsound.jo, src/combat_sound.jo, src/life_audio.jo, src/radio_synth.jo.
 '''
 
 def remote(stage):
@@ -359,7 +380,7 @@ def index():
     numbers+=['', '## Code size', '', '| Module | Lines | Bytes |', '|---|---:|---:|']
     numbers += [f"| {r['module']} | {r['lines']} | {r['bytes']} |" for r in modules]
     write(P/'numbers/README.md','\n'.join(numbers)+'\n')
-    write(P/'README.md',README_TEXT+f'\nSource commit: `{git("rev-parse","HEAD")}`. Exact source state and build identity: [provenance.json](provenance.json), [source.patch](source.patch).\n\n'+
+    write(P/'README.md',README_TEXT+f'\nGame baseline: `{json.loads((P/"provenance.json").read_text()).get("game_baseline",git("rev-parse","HEAD"))}`. Source commit (including capture tooling): `{git("rev-parse","HEAD")}`. Exact source state and build identity: [provenance.json](provenance.json), [source.patch](source.patch).\n\n'+
           '\n'.join(f'- [{name} change](numbers/diff-{name}.txt), baseline `{commit}`.' for name,commit in origins.items())+'\n')
 
 README_TEXT='''# Aegean Skies — judging capture pack
@@ -390,7 +411,12 @@ These are private review references copied into scratch, not game assets or orig
 - Sky Barons' energy is the base; add realism only where it does not make flying harder.
 - The title stands alone. No UI taglines or subtitles.
 - The original islands' sizes and distances are right; the surrounding world is about 500×400 km.
-- Trials belong behind the pause menu's Tweaks checkboxes, off by default.
+- Mobile controls follow Sky Barons: drag to aim and a Walk button. The user liked them.
+- Tilt for fine aiming was liked; it is available in Options.
+- Chaotic stalls were liked and are now the default.
+- Clouds are known not to match the film references yet. They are work in progress; judge them anyway.
+- Optional trials belong behind the pause menu's Tweaks checkboxes, off by default. The accepted
+  chaotic-stall behavior above is now a default, not a rejected trial.
 - Read [FEEL.md](references/FEEL.md) and the user feedback in DESIGN.md before proposing to undo
   accepted work. Treat any older world-size wording there as superseded by the ruling above.
 
@@ -398,12 +424,15 @@ These are private review references copied into scratch, not game assets or orig
 
 You cannot feel control latency, resistance, acceleration or the player's decisions through stills.
 The six sequences are twelve adjacent states, 0.15 seconds apart: short excerpts, not movies of a
-whole maneuver. A supplemental twelve-frame loop overview uses 0.55 s spacing to show one full
-turn. Four full 18-second flight traces include position, velocity, pitch, throttle,
+whole maneuver. A supplemental twelve-frame loop-input overview uses 1.5 s spacing to show
+the longer climb/descent response under current defaults, without claiming a completed turn.
+Four full 18-second flight traces include position, velocity, pitch, throttle,
 water contact, crash and damage; inputs and initial conditions are in each adjacent capture receipt.
 Catalog captures skip the transient title/help overlay; `first-view.png` preserves the unmodified
 opening view. Native main-game captures use real rendering and physics. The battle and fly-by are explicitly
-seeded combat fixtures; the evening square is the existing daily-life fixture, advancing real
+seeded combat fixtures. Weather shots explicitly replace the saved weather cells; vessel shots
+use the existing synthetic acceptance fleet, with real navigation/rendering and no changes to
+the living game. The evening square is the existing daily-life fixture, advancing real
 routines rather than arranging people. These fixtures are not claims about how often encounters
 happen in ordinary play. Notebook notices are copied from the actual board; no player successes
 are invented. The month transcript records NPC errands and their real outcomes.
@@ -445,7 +474,7 @@ browser and tests have explicit logs; source provenance and hashes travel with t
 def main():
     global A,P,SLOPPY,TOOLCHAIN
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('round');parser.add_argument('--stage',choices=STAGES,action='append');parser.add_argument('--force',action='store_true');parser.add_argument('--previous')
+    parser.add_argument('round');parser.add_argument('--stage',choices=STAGES+['additions'],action='append');parser.add_argument('--force',action='store_true');parser.add_argument('--previous')
     A=parser.parse_args();assert re.fullmatch(r'[a-zA-Z0-9_-]+',A.round)
     P=BASE/A.round;P.mkdir(parents=True,exist_ok=True)
     # Freeze compiler and standard library once per round: shared installations can be upgraded.
