@@ -46,7 +46,7 @@ obj_surface = (v: Vertex3D, sway: f32 = 0.0) -> vec3:
     material = if v.uv.x >= 180.0 and v.uv.x <= 181.0: 2.0 else: if (sway > 0.0 or v.uv.x == 173.0) and v.color.y > v.color.x*1.15: 1.0 else: 0.0
     vec3(v.uv.x-180.0,v.uv.y,material)
 
-obj_light = (i: ObjOut, u: ObjParams) -> vec4:
+obj_light = (i: ObjOut, u: ObjParams, detail: bool = true) -> vec4:
     n = normalize(i.normal)
     ndl = dot(n, normalize(u.sun_dir))
     lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,0.015))
@@ -57,7 +57,7 @@ obj_light = (i: ObjOut, u: ObjParams) -> vec4:
     # Subpixel crowns and distant roof washes converge to the base material.
     # Keep their texture work out of the heavily instanced distant groves.
     paint_near = 1.0-smoothstep(120.0,300.0,length(i.world-u.cam))
-    if paint_near > 0.0:
+    if detail and paint_near > 0.0:
         # A broad pigment wash rather than per-pixel speckle on walls and roofs.
         uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0
         foliage = i.surface.z > 0.5 and i.surface.z < 1.5
@@ -70,9 +70,11 @@ obj_light = (i: ObjOut, u: ObjParams) -> vec4:
         if foliage:
             # Existing rounded crown geometry, with smaller painted lobes inside it.
             leaf = pigment.xyz*2.0-vec3(1,1,1)
-            dap = paint_ramp(dot(leaf,normalize(u.sun_dir)),0.06)
-            c *= mix(vec3(1,1,1),vec3(mix(0.78,1.18,dap))*vec3(1.06,1.0,0.92),resolved)
-    if i.surface.z > 1.5:
+            # The crown's silhouette carries the crisp light boundary; soften
+            # the small dabs inside it so adjacent lobes do not look cracked.
+            dap = paint_ramp(dot(leaf,normalize(u.sun_dir)),0.18)
+            c *= mix(vec3(1,1,1),vec3(mix(0.88,1.12,dap))*vec3(1.04,1.0,0.95),resolved)
+    if detail and i.surface.z > 1.5:
         # A painted top/side recess on the existing door/window triangles.
         edge = max(fwidth(i.surface.x),fwidth(i.surface.y))*1.2+0.015
         inset = smoothstep(0.10-edge,0.10+edge,i.surface.x)*(1.0-smoothstep(0.82-edge,0.82+edge,i.surface.y))
@@ -115,18 +117,29 @@ obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
 
 obj_vs_inst = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
     w = inst.model * vec4(v.pos, 1)
-    # trees bend with the wind, more in a gust, and sway: more toward the top
-    g = gust(w.xz, u.drift)
-    lean = u.sway * max(v.pos.y, 0.0) * 0.0035 * u.wind.z * (0.25 + 0.75 * g)
-    ph = u.time * (1.1 + 0.15 * u.wind.z) + w.x * 0.05 + w.z * 0.04
-    sw = u.sway * max(v.pos.y, 0.0) * 0.004 * (0.5 + u.wind.z * 0.2) * (0.4 + g)
-    w = w + vec4(u.wind.x * lean + sin(ph) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8) * sw * 0.6, 0)
+    # Fade centimetres of crown motion before they become subpixel; distant
+    # grove batches need neither gust noise nor sway trigonometry.
+    sway = u.sway*(1.0-smoothstep(180.0,420.0,length(w.xyz-u.cam)))
+    if sway > 0.0:
+        g = gust(w.xz, u.drift)
+        lean = sway * max(v.pos.y, 0.0) * 0.0035 * u.wind.z * (0.25 + 0.75 * g)
+        ph = u.time * (1.1 + 0.15 * u.wind.z) + w.x * 0.05 + w.z * 0.04
+        sw = sway * max(v.pos.y, 0.0) * 0.004 * (0.5 + u.wind.z * 0.2) * (0.4 + g)
+        w = w + vec4(u.wind.x * lean + sin(ph) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8) * sw * 0.6, 0)
     ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, v.color * inst.color,obj_surface(v,u.sway))
+
+# A separate pipeline lets the driver eliminate unused pigment/recess varyings
+# and all wind work for cells wholly beyond the resolved animation range.
+obj_far_vs = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
+    w = inst.model * vec4(v.pos, 1)
+    ObjOut(u.view_proj*w,w.xyz,(inst.model*vec4(v.normal,0)).xyz,v.color*inst.color)
+obj_far_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_light(i,u,false)
 
 obj_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_light(i, u)
 
 obj_sh: Shader
 obj_inst_sh: Shader
+obj_far_sh: Shader
 
 obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0)) -> ObjParams:
     p = ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t), f32(sway),
@@ -697,8 +710,9 @@ draw_groves = (meshes: Mesh[], groves: Grove[], L: Light, t: f64):
         # Beyond 900 m a crown spans only a few pixels. Keep every tree and
         # every crown lobe, but use the low-tier rings for distant cells.
         distant = g.bounds.w > 0 and length(cam-g.bounds.xyz)-g.bounds.w > 900.0 and grove_far_meshes.len() == meshes.len()
+        still = g.bounds.w > 0 and length(cam-g.bounds.xyz)-g.bounds.w > 420.0
         loop k in 0..g.kinds.len():
-            if g.kinds[k].count > 0: draw_instanced(obj_inst_sh,if distant: grove_far_meshes[k] else: meshes[k],g.kinds[k],p)
+            if g.kinds[k].count > 0: draw_instanced(if still: obj_far_sh else: obj_inst_sh,if distant: grove_far_meshes[k] else: meshes[k],g.kinds[k],p)
     zone_end()
 
 draw_towns = (towns: Town[], L: Light, t: f64):
@@ -710,9 +724,10 @@ draw_towns = (towns: Town[], L: Light, t: f64):
 
 # (the GPU programs: made once the window is open)
 init_objects = ():
-    global obj_sh, obj_inst_sh
+    global obj_sh, obj_inst_sh, obj_far_sh
     obj_sh = make_shader(shader(obj_vs, obj_fs))
     obj_inst_sh = make_shader(shader(obj_vs_inst, obj_fs))
+    obj_far_sh = make_shader(shader(obj_far_vs,obj_far_fs))
 
 # ---------------- walking ----------------
 
