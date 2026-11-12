@@ -40,7 +40,7 @@ step_battle(b, environment, physical_observer)
   cross assigned engagement IDs. `finished` means at most one active side (flying aircraft or an non-disabled boat)
   remains in the Battle;
   a multi-engagement world should inspect each engagement's actors/outcomes instead.
-- Maximum 64 aircraft and 512 live rounds. Near AI thinks every 6 ticks, medium every 15, distant
+- Maximum 128 aircraft and 2048 live rounds. Near AI thinks every 6 ticks, medium every 15, distant
   every 30, staggered by craft ID. Full contact physics is retained near terrain, wrecks and debris.
   Clear distant air uses the same force equations at 60 rather than 120 Hz. Observer position
   changes numerical detail; deterministic replay requires the same observer/LOD schedule.
@@ -157,7 +157,7 @@ uniform/texture limits are introduced.
 
 ## Acceptance commands
 
-Use `SLOPPY_THREADS=1`, `SLOPPY_NO_AUDIO=1`, empty desktop displays, and a private `SLOPPY_SAVE_DIR`.
+Use `SLOPPY_THREADS=1`, `SLOPPY_NO_AUDIO=1`, unset `DISPLAY`/`WAYLAND_DISPLAY`, and a private `SLOPPY_SAVE_DIR`.
 
 ```sh
 sloppy test tests/combat_test.jo --release
@@ -199,7 +199,7 @@ combat tick, checks the swept round segment within 12 m of the listener, exclude
 and remembers 128 pass IDs. Whizzes are globally spaced by 90 ms. Hits on the occupied aircraft
 produce a damped camera jolt and a separate low body thump. Wing marks sit on both fabric skins;
 engine damage produces oil drops/streaks on the cockpit windscreen. Repair removes these through
-the existing damage state. There are no new keys or HUD/control layouts.
+the existing damage state. Target controls and additional instruments are described below.
 
 Each aircraft has a named wood or metal panel fitted behind a stitched leather coaming, a thin
 windscreen frame, five engraved instruments, a stick and gloved hands. Existing wings, cowling,
@@ -220,3 +220,69 @@ drop at the selected bullet speed. Bank, range, wind and pilot aim still require
 and `COMBAT_PITCH=-0.25` to inspect the lower cockpit. It initializes the same WebGL compatibility
 and resolution tier as the main game. Stress is an explicitly synthetic acceptance fixture and is
 never loaded into the living world.
+
+
+## Battle response, timing and target view
+
+The live frame budget (`frame_budget.jo`) accepts at most 50 ms and three 60 Hz ticks per
+render frame, discarding older catch-up time. Camera position/look use exact damped springs.
+`Combatant.previous`/`previous_rotation` and `Battle.render_alpha` provide presentation-only
+interpolation through `combat_render_state`; external/human poses bypass it. Always use the
+current authoritative state for collision/world commits.
+
+Combat NPC specs set `combat_flight` so their pure-scale lift, gravity and energy equations
+match the player. Ordinary route traffic keeps its existing calibration. The off-by-default
+**Sky Barons energy and response** Tweaks option raises the load limit to 8 g, roll authority
+by 1.125, key smoothing to 9/s, and scales both thrust and drag by the pure speed scale without
+changing equilibrium speed. It applies equally to player and combat NPCs. Chaotic stalls now
+contribute only near low airspeed, separation or reverse flow; attached flight retains normal
+kinematic response.
+
+A swept 128 m spatial grid reduces bullet/body candidate tests while preserving narrow-phase
+hit ordering. Exceptional long sweeps fall back to the bounded complete list. Firing order
+rotates each tick to avoid side bias when the round budget fills. Detailed mesh counts are
+capped at 6/10/16 on low/medium/high; further aircraft use instanced silhouettes. Expired smoke
+ribbons are compacted, not retained until the hard cap.
+
+**Tab** cycles targets and **C** toggles target-follow camera; right mouse keeps free look.
+Mouse/drag flight steering stays independent of the viewed target. Touch **Look** cycles on
+release after a tap, or toggles follow after a .45-second hold. Combat candidates include all
+hostiles without a cap, sorted by immediate threat then distance, followed by nearby friends.
+Outside combat, at most six relevant aircraft, job destinations/ships and nearby landmarks
+are offered. Candidate refresh is 2.5 Hz; selected moving positions track every render frame.
+Stable IDs survive reorder; losing the selected object releases follow. A small bracket/name
+or edge chevron marks the selection.
+
+All panels now include attitude and turn/slip instruments. The ball follows apparent gravity
+using true acceleration; a coordinated turn centers it. Third-person gauges expose the same
+state. Compass card and radio dial are camera-relative panel meshes; radio touch hit testing
+projects that same relative rectangle. The station card remains a HUD element.
+
+Near-pass audio consumes `Battle.sweeps` after each fixed tick, including rounds consumed by
+hits/water, clipped at impact. The occupied aircraft is the listener, and pass/own-hit sound is
+listener-relative so chase-camera distance cannot mute it. Nearby water strikes have their
+own attenuation. Synthesis uses Sky Barons' short two-band noise crack/whizz.
+
+`build_scenario(key,towns,models,per_side=8)` supports up to 64 per side. For captures use
+`AEGEAN_SCENARIO=strait AEGEAN_BATTLE_SIDE=64`; the normal button remains eight per side.
+`AEGEAN_TWEAKS=energy` or `stalls` enables the corresponding comparison. `Start of the game`
+rebuilds the initial seed, quay/player, weather, handling and title while preserving rendering
+options and loaded resources.
+
+Regression tools: `tools/scenario_soak.jo` (`SOAK_SIDE`, `SOAK_SECONDS`, `SOAK_TIMING`) and
+`tools/combat_bench.jo`. Run timing only on the quiet laptop under its benchmark lock.
+
+
+Flight's `FlightEnv.ground` uses `flight_ground.jo`: an 8192-entry direct-mapped cache of
+exact country-surface canonical vertices. Coordinates and geography revision validate every
+entry; collision eviction only recomputes the same value. Legacy islands retain their original
+individually aligned grids. Triangle arithmetic is unchanged, and cache equality is tested
+against the uncached `surface_height` through reloads, switches, terrain seams and eviction.
+The cache is bounded at approximately 256 KiB and never changes contact heights or handling.
+
+The flight environment also advertises a conservative ceiling for the six-band sea: its
+wavelength coefficients sum to 145.4, bounded upward by 146 times the f32 amplitude plus a
+rounding pad. Contact-clearance checks above that ceiling skip swell evaluation; below it,
+all original height/slope/contact forces remain. Custom seas default to unbounded/full sampling.
+State-equality tests cover airborne and near-water motion, and compare the bound to rendered
+swell samples. This changes work, not the water or flying equations.
