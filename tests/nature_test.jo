@@ -1,0 +1,175 @@
+use '../src/look.jo'
+use '../src/living_types.jo'
+use '../src/living_conditions.jo'
+import '../src/living_weather.jo' as schedule
+use '../src/weather_scene.jo'
+use '../src/cloud_volume.jo'
+use '../src/cloud_density.jo'
+use '../src/cloud_field.jo'
+use '../src/objects.jo'
+use '../src/plants.jo'
+use '../src/quality.jo'
+use '../src/sea.jo'
+use '../src/boat_scene.jo'
+
+test "Weather fronts use one bounded continuous envelope and honor their lifetime":
+    c = Weather(kind=.squall,center=vec2(100,200),radius_m=1000,aspect=vec2(3,0.5),severity=800,born_minute=10,expires_minute=100,fade_minutes=10)
+    assert(weather_weight(c,9.0,vec3(100,0,200)) == 0.0)
+    assert(weather_weight(c,100.0,vec3(100,0,200)) == 0.0)
+    assert(abs(weather_weight(c,30.0,vec3(1600,0,200))-0.5) < 0.0001)
+    assert(weather_weight(c,30.0,vec3(100,0,800)) == 0.0)
+    assert(abs(weather_weight(c,15.001,vec3(100,0,200))-weather_weight(c,15.0,vec3(100,0,200))) < 0.001)
+
+test "Visible rain and physical wind read saved cells without consuming randomness":
+    w = World()
+    weather_fixture(w,"storm",vec3(0,0,0))
+    a = weather_air(w.weather,0.0,9.5,vec3(0,0,0))
+    assert(a.rain > 0.9 and a.storm == 1.0)
+    assert(length(wind_at(w,vec3(0,0,0))-a.wind-weather_gust(a,vec3(0,0,0),0.0)) < 0.00001)
+    seed_random(12); expected = random()
+    seed_random(12)
+    loop k in 0..100:
+        p = vec3(f32(k),500,f32(-k))
+        gust = weather_gust(a,p,f64(k)*0.01)
+        assert(length(gust) < 6.0 and abs(gust.y) <= 1.8)
+        assert(length(gust-weather_gust(a,p,f64(k)*0.01+0.001)) < 0.03)
+    assert(random() == expected)
+
+test "Meltemi is clear northerly and calm evenings have weaker wind":
+    w = World()
+    weather_fixture(w,"meltemi",vec3(0,0,0))
+    a = weather_air(w.weather,0.0,14.0,vec3(0,0,0))
+    assert(a.wind.z > 10.0 and a.cloud < 0.1 and a.rain == 0.0 and a.clarity > 1.5)
+    weather_fixture(w,"calm",vec3(0,0,0))
+    a = weather_air(w.weather,0.0,19.0,vec3(0,0,0))
+    assert(length(a.wind) < 0.1)
+
+test "Weather records round trip including old default geometry":
+    c = Weather(id=7,kind=.storm,radius_m=2000,born_minute=4,expires_minute=200)
+    encoded = to_text(c)
+    decoded = from_text[Weather](encoded)
+    assert(decoded is Weather and decoded == c)
+    old = from_text[Weather]("Weather()")
+    assert(old is Weather and old.aspect == vec2(1,1) and old.fade_minutes == 0)
+
+test "Analytic weather volumes fit guarded support without texture allocation":
+    loop kind in [4.0,6.0,7.0]:
+        sum: f32 = 0.0
+        loop z in 0..20:
+            loop y in 0..20:
+                loop x in 0..20:
+                    p = vec3(f32(x)/9.5-1.0,f32(y)/9.5-1.0,f32(z)/9.5-1.0)
+                    d = volume_sample(Texture(),p,f32(kind)).w
+                    assert(d >= 0.0 and d <= 1.0)
+                    if d > 0.00001:
+                        loop axis in 0..3: assert(p[axis] >= CLOUD_MIN[axis] and p[axis] <= CLOUD_MAX[axis])
+                    sum += d
+        assert(sum > 0.0)
+
+test "Country-sized layers clip to the curved ceiling from above and below":
+    below = cloud_layer_interval(1.0,100.0,700.0,1400.0,vec2(0,150000))
+    assert(abs(below.x-600.0) < 0.1 and abs(below.y-1300.0) < 0.1)
+    above = cloud_layer_interval(-1.0,2200.0,700.0,1400.0,vec2(0,150000))
+    assert(abs(above.x-800.0) < 0.1 and abs(above.y-1500.0) < 0.1)
+    inside = cloud_layer_interval(0.0,1000.0,700.0,1400.0,vec2(0,150000))
+    assert(inside.x == 0.0 and inside.y > 70000.0 and inside.y < 72000.0)
+    away = cloud_layer_interval(0.2,2200.0,700.0,1400.0,vec2(0,150000))
+    assert(away.x > away.y)
+
+test "Shelter publication preserves every depth byte and selects enclosed coves":
+    img = image(32,32)
+    loop j in 0..32:
+        loop i in 0..32: img.set(i,j,vec4(if i < 10 or i > 20 or j < 10: 0.0 else: 0.12,0,0,1))
+    before = img.pixels
+    coast_shelter(img)
+    loop k in 0..1024: assert(img.pixels[k*4] == before[k*4])
+    assert(img.get(15,12).y > img.get(15,29).y)
+
+test "Splitting groves among species never raises any tier's population cap":
+    lists: Instance3D[][] = [loop kind in 0..PLANT_KINDS: [loop k in 0..17: Instance3D(translation(vec3(f32(k),0,f32(kind))),vec4(1,1,1,1))]]
+    loop tier in 0..3:
+        render_quality = quality_profile(tier)
+        kept = thin_grove(lists)
+        count = 0
+        loop group in kept: count += group.len()
+        assert(count <= int(ceil(f64(PLANT_KINDS*17)/f64(render_quality.tree_stride))))
+    render_quality = RenderQuality()
+
+test "Thirty weather days replay identically through save and cosmetic draws":
+    a = World(seed=u64(42)); b = a
+    loop minute in 0..43200:
+        a.minute = minute; a.tick = minute*TICKS_PER_MINUTE
+        b.minute = minute; b.tick = minute*TICKS_PER_MINUTE
+        schedule.weather_minute(a)
+        random()
+        schedule.weather_minute(b)
+        assert(a.weather == b.weather and a.next_weather == b.next_weather)
+        assert(a.weather.len() <= 12)
+        if minute%1440 == 0:
+            saved = from_text[Weather[]](to_text(b.weather))
+            assert(saved is Weather[])
+            b.weather = saved
+
+test "Boat wakes follow saved motion and never move or wake anchored boats":
+    boat_views = []
+    w = World()
+    w.people.push(Person(pose=Pose(pos=vec3(0,0,0))))
+    w.trips[0] = Trip(id=0,actor=0,mode=.boat,state=.active)
+    w.active_trips = [0]
+    before = to_text(w)
+    update_boat_scene(w,0.0,vec3(0,0,0))
+    update_boat_scene(w,1.0,vec3(0,0,0))
+    assert(to_text(w) == before and boat_views[0].wake.pts.len() == 0)
+    w.people[0].pose.pos = vec3(6,0,0)
+    before = to_text(w)
+    update_boat_scene(w,2.0,vec3(0,0,0))
+    assert(to_text(w) == before and boat_views[0].wake.pts.len() == 1)
+    bow = transform_point(rotation_y(boat_views[0].yaw),vec3(0,0,-1))
+    assert(bow.x > 0.99)
+    w.people[0].pose.pos = vec3(300,0,0)
+    update_boat_scene(w,3.0,vec3(0,0,0))
+    assert(boat_views[0].wake.pts.len() == 1 and boat_views[0].wake.broken)
+    w.trips[0].state = .arrived
+    update_boat_scene(w,44.0,vec3(0,0,0))
+    assert(boat_views.len() == 0)
+
+
+test "Cumulus life keeps its condensation base and is continuous at rebirth":
+    source = CloudVolume(vec3(0,2000,0),vec3(2000,1800,1400),0,tone=0.5,thermal=1.0)
+    air = WeatherAir(towers=0.8,cloud=0.8)
+    period = 1400.0
+    largest: f32 = 0.0; smallest: f32 = 100000.0
+    loop k in 0..100:
+        t = f64(k)*period/100.0
+        v = cloud_evolve(source,air,t)
+        assert(abs(v.center.y-v.extent.y*0.62-air.ceiling) < 0.01)
+        assert(v.weather.x >= 0.0 and v.weather.x <= 1.0)
+        largest = max(largest,v.extent.y); smallest = min(smallest,v.extent.y)
+        next = cloud_evolve(source,air,t+0.001)
+        assert(abs(next.weather.x-v.weather.x) < 0.001)
+    assert(largest > smallest*4.0)
+    before = cloud_evolve(source,air,period*0.5-0.001)
+    after = cloud_evolve(source,air,period*0.5+0.001)
+    assert(before.weather.x < 0.00001 and after.weather.x < 0.00001)
+
+test "Large banks have deterministic world identity and disjoint support":
+    seed_random(981); expected = random(); seed_random(981)
+    count = 0
+    loop z in -5..6:
+        loop x in -5..6:
+            bank = cloud_bank(x,z)
+            assert(bank == cloud_bank(x,z))
+            if bank == none: continue
+            v = bank!; count += 1
+            assert(length(v.extent.xz)*1.1 < f32(CLOUD_BANK_CELL*0.5))
+            assert(v.extent.x > 6000.0 and v.extent.y >= 1800.0)
+    assert(count > 30 and random() == expected)
+
+test "Deck noise gradients agree with independent finite differences":
+    loop k in 0..40:
+        p = vec2(f32(k)*0.137-2.3,f32(k)*0.217+0.19)
+        value = cloud_layer_noise(p)
+        assert(abs(value.x-vnoise(p)) < 0.00001)
+        dx = (vnoise(p+vec2(0.001,0))-vnoise(p-vec2(0.001,0)))/0.002
+        dz = (vnoise(p+vec2(0,0.001))-vnoise(p-vec2(0,0.001)))/0.002
+        assert(abs(value.y-dx) < 0.01 and abs(value.z-dz) < 0.01)

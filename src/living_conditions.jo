@@ -1,21 +1,79 @@
 # Pure saved weather / incident math; independent of route controller.
 use 'living_types.jo'
 
+struct WeatherAir:
+    wind: vec3 = vec3(3,0,1)
+    cloud: f32 = 0.45
+    towers: f32 = 0.0
+    deck: f32 = 0.0
+    rain: f32 = 0.0
+    storm: f32 = 0.0
+    fog: f32 = 0.0
+    cirrus: f32 = 0.2
+    ceiling: f32 = 950.0
+    clarity: f32 = 1.0
+
+# One spatial/lifetime envelope for simulation, flight and visible weather.
+# Renderer callers may interpolate the current saved center by a fractional minute.
+weather_weight = (cell: Weather, minute: f64, pos: vec3) -> f32:
+    if minute < f64(cell.born_minute) or minute >= f64(cell.expires_minute): return 0.0
+    center = cell.center + cell.velocity_milli_m_per_minute * f32((minute-floor(minute))/1000.0)
+    q = (pos.xz-center)/max(cell.aspect,vec2(0.1,0.1))
+    radial = max(0.0,1.0-length(q)/f32(max(cell.radius_m,1)))
+    fade: f32 = 1.0
+    if cell.fade_minutes > 0:
+        fade = f32(smoothstep(0.0,f64(cell.fade_minutes),minute-f64(cell.born_minute))*(1.0-smoothstep(0.0,f64(cell.fade_minutes),minute-f64(cell.expires_minute-cell.fade_minutes))))
+    radial*fade
+
+weather_air = (cells: Weather[], minute: f64, hour: f64, pos: vec3) -> WeatherAir:
+    a = WeatherAir()
+    afternoon = f32(smoothstep(10.0,15.0,hour)*(1.0-smoothstep(17.0,20.0,hour)))
+    evening = f32(smoothstep(17.0,19.0,hour)*(1.0-smoothstep(21.0,23.0,hour)))
+    a.wind *= 1.0-evening*0.8
+    a.towers = afternoon*0.22
+    loop cell in cells:
+        weight = weather_weight(cell,minute,pos)
+        if weight <= 0.0: continue
+        a.wind += vec3(cell.wind_milli_m_per_sec.x,0,cell.wind_milli_m_per_sec.y)*(weight/1000.0)
+        match cell.kind:
+            .wind:
+                a.cloud *= 1.0-weight*0.92; a.clarity += weight*0.8
+            .calm:
+                a.wind *= 1.0-weight*0.94; a.cloud *= 1.0-weight*0.7
+            .towers:
+                a.towers = max(a.towers,weight); a.cloud = max(a.cloud,weight*0.7)
+            .overcast:
+                a.deck = max(a.deck,weight); a.cloud = max(a.cloud,weight)
+                a.ceiling = mix(a.ceiling,700.0,weight)
+            .fog:
+                a.fog = max(a.fog,weight); a.wind *= 1.0-weight*0.8
+            .squall, .storm:
+                a.rain = max(a.rain,weight*f32(cell.severity)/1000.0)
+                a.deck = max(a.deck,weight*0.7); a.cloud = max(a.cloud,weight)
+                a.towers = max(a.towers,weight)
+                if cell.kind == .storm: a.storm = max(a.storm,weight)
+                a.ceiling = mix(a.ceiling,650.0,weight)
+            _: pass
+    a.wind *= min(1.0,20.0/max(length(a.wind),0.001))
+    a
+
+# Continuous, bounded air motion, not camera shake. Same field for every aircraft.
+weather_gust = (a: WeatherAir, pos: vec3, seconds: f64) -> vec3:
+    strength = a.storm*3.0+a.rain*1.0
+    p = pos*0.008
+    t = f32(seconds)
+    vec3(sin(p.z+t*1.7)*0.65+sin(p.x-t*0.7)*0.35, sin(p.x+p.z+t*1.1)*0.45, cos(p.x-t*1.3)*0.7)*strength
+
 weather_severity = (w: World, pos: vec3) -> int:
     severity = 0
     loop cell in w.weather:
-        if w.minute < cell.born_minute or w.minute >= cell.expires_minute: continue
-        distance = f64(length(pos.xz-cell.center))
-        severity = max(severity,int(f64(cell.severity)*max(0.0,1.0-distance/f64(cell.radius_m))))
+        severity = max(severity,int(f32(cell.severity)*weather_weight(cell,f64(w.minute),pos)))
     severity
 
 wind_at = (w: World, pos: vec3) -> vec3:
-    wind = vec3(3,0,1)
-    loop cell in w.weather:
-        if w.minute < cell.born_minute or w.minute >= cell.expires_minute: continue
-        falloff = max(0.0,1.0-f64(length(pos.xz-cell.center))/f64(cell.radius_m))
-        wind += vec3(cell.wind_milli_m_per_sec.x,0,cell.wind_milli_m_per_sec.y)*f32(falloff/1000.0)
-    wind
+    minute = f64(w.tick)/f64(TICKS_PER_MINUTE)
+    a = weather_air(w.weather,minute,f64((w.minute+EPOCH_LOCAL_MINUTE)%1440)/60.0,pos)
+    a.wind+weather_gust(a,pos,f64(w.tick)/60.0)
 
 pilot_nerve = (w: World, actor: int, craft: int) -> int:
     350+w.people[actor].traits.boldness*6/10-(if w.aircraft[craft].hull < 500: 100 else: 0)
