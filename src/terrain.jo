@@ -9,6 +9,9 @@ use 'plants.jo'
 use 'terrain_data.jo'
 use 'terrain_lod.jo'
 use 'render_space.jo'
+use 'coast_field.jo'
+use 'coast_mesh.jo'
+use 'quality.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -36,6 +39,41 @@ struct GroundOut:
     normal: vec3
     tint: vec4
     orchard: f32 = 0.0
+
+coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
+    p = v.cell
+    a = land_sample(u.heights,u.materials,inst.texel)
+    b = land_sample(u.heights,u.materials,inst.texel+vec2(1,0))
+    c = land_sample(u.heights,u.materials,inst.texel+vec2(0,1))
+    d = land_sample(u.heights,u.materials,inst.texel+vec2(1,1))
+    s = a
+    if p.x+p.y <= 1.0:
+        s.normal = a.normal+p.x*(b.normal-a.normal)+p.y*(c.normal-a.normal)
+        s.tint = a.tint+p.x*(b.tint-a.tint)+p.y*(c.tint-a.tint)
+    else:
+        s.normal = d.normal+(1.0-p.x)*(c.normal-d.normal)+(1.0-p.y)*(b.normal-d.normal)
+        s.tint = d.tint+(1.0-p.x)*(c.tint-d.tint)+(1.0-p.y)*(b.tint-d.tint)
+    y = coast_mesh_height(inst,p)
+    s.normal = coast_normal(inst.absolute+p*14.0,p,inst.heights,s.normal,smoothstep(0.0,3.0,inst.level))
+    local = vec3(inst.origin.x+p.x*14.0,y,inst.origin.y+p.y*14.0)
+    world = local+u.origin
+    bent = render_warped(local,u.cam-u.origin,u.warp_a,u.warp_b)
+    GroundOut(u.view_proj*vec4(bent,1),world,s.normal,s.tint,orchard_cover(world.xz,y,length(s.normal.xz)/max(s.normal.y,0.1)))
+
+# The analytic detail gradient avoids derivative extensions and extra fragment
+# work on WebGL2. It converges to the same continuous field as the fine mesh.
+coast_fs = (i: GroundOut,u: GroundParams) -> vec4:
+    ground_material(i,u,false)
+
+coast_sh: Shader
+
+draw_coast_batches = (batches: CoastInstance[][],params: GroundParams):
+    global coast_triangles,coast_instances
+    loop level in 0..COAST_LEVELS:
+        if batches[level].len() == 0: continue
+        draw_instanced(coast_sh,coast_grids[level],batches[level],params)
+        coast_triangles += coast_grids[level].index_count/3*batches[level].len()
+        coast_instances += batches[level].len()
 
 ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> GroundOut:
     p = v.cell
@@ -220,6 +258,8 @@ ground_sh: Shader
 
 draw_ground = (L: Light, t: f64):
     global terrain_draws, terrain_triangles, terrain_visible, terrain_upload, terrain_report, terrain_prepare
+    global coast_triangles,coast_instances
+    coast_triangles = 0; coast_instances = 0
     zone("terrain")
     prepare_start = time()
     terrain_prepare = 0.0
@@ -235,6 +275,7 @@ draw_ground = (L: Light, t: f64):
     terrain_draws = 0; terrain_triangles = 0; terrain_visible = 0; terrain_upload = 0
     loop tile in terrain_tiles:
         batches: TerrainInstance[][] = [loop i in 0..96: []]
+        coastal: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
         loop patch in tile.patches:
             if not land_visible(tile, patch.data, cam, planes): continue
             lev = min(int(floor(patch.lod)), 5)
@@ -252,6 +293,10 @@ draw_ground = (L: Light, t: f64):
                     _: edges.w = e
                 if int(floor(other)) < lev: mask = mask | (1 << side)
             p = patch.data
+            if coast_enabled and patch.lod == 0.0 and p.low < 192.0 and p.high > -40.0 and land_distance(tile,p,cam) < 21.0+focal*0.5/render_quality.terrain_error:
+                coast_add_patch(coastal,tile.cpu_heights,tile.heights.width,tile.heights.height,tile.x,tile.z,p.x,p.z,32,vec2(0,0),cam,origin,focal/render_quality.terrain_error)
+                terrain_visible += 1
+                continue
             at = vec2(f32(tile.x + f64(p.x) * MESH_STEP - f64(origin.x)), f32(tile.z + f64(p.z) * MESH_STEP - f64(origin.z)))
             batches[lev * 16 + mask].push(TerrainInstance(at, vec2(f32(p.x), f32(p.z)), vec2(f32(1 << lev), f32(patch.lod - f64(lev))), edges))
             terrain_visible += 1
@@ -259,6 +304,7 @@ draw_ground = (L: Light, t: f64):
             vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift, origin, tile.heights, tile.materials, scene_flow, vec4(scene_warp_a.x - origin.x, scene_warp_a.y - origin.z, scene_warp_a.z, scene_warp_a.w), scene_warp_b)
         params.pigment = paint_surface()
         terrain_prepare += time() - prepare_start
+        draw_coast_batches(coastal,params)
         loop i in 0..96:
             if batches[i].len() == 0: continue
             draw_instanced(ground_sh, terrain_grids[i], batches[i], params)
@@ -272,5 +318,7 @@ draw_ground = (L: Light, t: f64):
     zone_end()
 
 init_terrain = ():
-    global ground_sh
+    global ground_sh,coast_sh
     ground_sh = make_shader(shader(ground_vs, ground_fs))
+    init_coast_mesh()
+    coast_sh = make_shader(shader(coast_vs,coast_fs))

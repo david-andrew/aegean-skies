@@ -1,0 +1,89 @@
+# Subdivide canonical cells only in selected coastal patches. One resident grid
+# per level, instanced in seven batches; no per-frame mesh/texture generation.
+use 'coast_field.jo'
+use 'terrain_lod.jo'
+
+struct CoastInstance:
+    origin: vec2                   # render-chart local x,z
+    absolute: vec2                 # fixed procedural phase / CPU parity
+    texel: vec2
+    heights: vec4
+    level: f32
+    edges: vec4                    # lesser subdivision of the two owners
+
+coast_grids: Mesh[]
+coast_triangles = 0
+coast_instances = 0
+coast_enabled = true
+
+init_coast_mesh = ():
+    global coast_grids,coast_enabled
+    coast_enabled = (env("AEGEAN_COAST") ?? "1") != "0"
+    if coast_grids.len() > 0: return
+    loop level in 0..COAST_LEVELS:
+        n = 1<<level
+        vertices: TerrainVertex[]
+        indices: u32[]
+        loop j in 0..n+1:
+            loop i in 0..n+1: vertices.push(TerrainVertex(vec2(f32(i)/f32(n),f32(j)/f32(n))))
+        loop j in 0..n:
+            loop i in 0..n:
+                a = u32(j*(n+1)+i); b = a+1; c = a+u32(n+1); d = c+1
+                indices.extend([a,c,b,b,c,d])
+        coast_grids.push(mesh(vertices,indices))
+
+coast_corners = (values: f32[],nx: int,nz: int,x: int,z: int) -> vec4:
+    a = clamp(z,0,nz-1)*nx+clamp(x,0,nx-1)
+    b = clamp(z,0,nz-1)*nx+clamp(x+1,0,nx-1)
+    c = clamp(z+1,0,nz-1)*nx+clamp(x,0,nx-1)
+    d = clamp(z+1,0,nz-1)*nx+clamp(x+1,0,nx-1)
+    vec4(values[a],values[b],values[c],values[d])
+
+coast_add_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,ox: f64,oz: f64,px: int,pz: int,cells: int,texel: vec2,cam: vec3,origin: vec3,focal: f64,limits: vec4 = vec4(6,6,6,6)):
+    levels: f32[]
+    # Include one neighbor cell on every side, so shared edges get the same
+    # state even when their owners live in separate patches/atlas slots.
+    loop j in -1..cells+1:
+        loop i in -1..cells+1:
+            h = coast_corners(values,nx,nz,px+i,pz+j)
+            low = f64(min(min(h.x,h.y),min(h.z,h.w)))
+            high = f64(max(max(h.x,h.y),max(h.z,h.w)))
+            if px+i < 0 or pz+j < 0 or px+i >= nx-1 or pz+j >= nz-1: low = -40.0; high = 192.0
+            levels.push(f32(coast_level(ox+f64(px+i)*14.0,oz+f64(pz+j)*14.0,low,high,cam,focal)))
+    loop j in 0..cells:
+        loop i in 0..cells:
+            at = (j+1)*(cells+2)+i+1
+            level = levels[at]
+            edges = min(vec4(level,level,level,level),vec4(levels[at-1],levels[at+1],levels[at-cells-2],levels[at+cells+2]))
+            if i == 0: edges.x = min(edges.x,limits.x)
+            if i == cells-1: edges.y = min(edges.y,limits.y)
+            if j == 0: edges.z = min(edges.z,limits.z)
+            if j == cells-1: edges.w = min(edges.w,limits.w)
+            x = ox+f64(px+i)*14.0; z = oz+f64(pz+j)*14.0
+            batches[int(ceil(level))].push(CoastInstance(vec2(f32(x-f64(origin.x)),f32(z-f64(origin.z))),vec2(f32(x),f32(z)),texel+vec2(f32(px+i),f32(pz+j)),coast_corners(values,nx,nz,px+i,pz+j),level,edges))
+
+# Reconstruct a vertex on a dyadic grid, then interpolate its parent. Since all
+# triangles use b-c, each finer grid is a subdivision of the same base surface.
+coast_at_level = (h: vec4,f: vec2,origin: vec2,level: f32) -> f32:
+    if level <= 0.0: return coast_triangle(h,f)
+    n = pow(2.0,level)
+    if fract(f.x*n) == 0.0 and fract(f.y*n) == 0.0: return coast_vertex_height(h,f,origin)
+    a = min(floor(f*n),vec2(n-1.0,n-1.0))/n
+    s = 1.0/n
+    corners = vec4(coast_vertex_height(h,a,origin),coast_vertex_height(h,a+vec2(s,0),origin),coast_vertex_height(h,a+vec2(0,s),origin),coast_vertex_height(h,a+vec2(s,s),origin))
+    coast_triangle(corners,(f-a)*n)
+
+coast_morphed = (h: vec4,f: vec2,origin: vec2,level: f32) -> f32:
+    if level <= 0.0: return coast_triangle(h,f)
+    lo = floor(level)
+    a = coast_at_level(h,f,origin,lo)
+    if level == lo: return a
+    mix(a,coast_at_level(h,f,origin,lo+1.0),level-lo)
+
+coast_mesh_height = (inst: CoastInstance,p: vec2) -> f32:
+    level = inst.level
+    if p.x == 0.0: level = min(level,inst.edges.x)
+    if p.x == 1.0: level = min(level,inst.edges.y)
+    if p.y == 0.0: level = min(level,inst.edges.z)
+    if p.y == 1.0: level = min(level,inst.edges.w)
+    coast_morphed(inst.heights,p,inst.absolute,level)
