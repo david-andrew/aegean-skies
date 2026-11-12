@@ -1,6 +1,6 @@
 # Tuning the Aegean geography
 
-The original ten islands remain defined by `ISLANDS` in `src/world.jo`. Their coordinates, profiles, erosion bake and canonical triangles are unchanged. New geography lives outside the protected ±20 km square. Coordinates are metres at query boundaries; the authored region/range/group controls in `src/geography.jo` are kilometres, with x east and z south.
+The original ten islands remain defined by `ISLANDS` in `src/world.jo`. Their coordinates, profiles, erosion bake and canonical vertices are unchanged. Near coasts, contact and rendering now add sub-source refinement to their triangles; see [coast-refinement.md](coast-refinement.md). New geography lives outside the protected ±20 km square. Coordinates are metres at query boundaries; the authored region/range/group controls in `src/geography.jo` are kilometres, with x east and z south.
 
 ## Authored controls and seeded variation
 
