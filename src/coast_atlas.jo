@@ -1,0 +1,137 @@
+# Rasterize the selected shore triangles once into bounded, color-only caches.
+# Samples are aligned with the canonical dyadic lattice, including island phase.
+# RGB8 encoding needs no floating render-target extension; alpha marks coverage.
+use 'coast_mesh.jo'
+use 'coast_field.jo'
+use 'coast_pattern.jo'
+use 'terrain_lod.jo'
+use 'render_space.jo'
+
+coast_height_batches: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
+coast_height_previous: CoastInstance[][] = []
+coast_height_near: RenderTarget
+coast_height_far: RenderTarget
+coast_height_near_area = vec4(0,0,0,0) # local origin x,z, sample spacing, dimension
+coast_height_far_area = vec4(0,0,0,0)
+coast_height_shader: Shader
+coast_height_valid = false
+coast_height_draws = 0
+coast_height_refreshes = 0
+
+struct CoastHeightParams:
+    area: vec4
+    pattern: Texture
+struct CoastHeightOut:
+    pos: vec4
+    height: f32
+
+coast_height_vs = (v: TerrainVertex,inst: CoastInstance,u: CoastHeightParams) -> CoastHeightOut:
+    f = inst.region.xy+v.cell*inst.region.z
+    p = inst.origin+f*14.0
+    clip = ((p-u.area.xy)/u.area.z+vec2(0.5,0.5))/u.area.w*2.0-vec2(1,1)
+    CoastHeightOut(vec4(clip,0,1),coast_gpu_height(inst,f,u.pattern))
+coast_height_fs = (v: CoastHeightOut,u: CoastHeightParams) -> vec4:
+    packed = int(round(clamp((v.height+16.0)*2048.0,0.0,65535.0)))
+    vec4(f32(packed & 255),f32(packed>>8),0,255)/255.0
+
+coast_height_target = (n: int) -> RenderTarget:
+    tex = texture(image(n,n),false)
+    fbo = gl_create_framebuffer()
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+    RenderTarget(tex,fbo,0)
+
+begin_coast_height = ():
+    global coast_height_batches
+    coast_height_batches = [loop i in 0..COAST_LEVELS: []]
+
+coast_frame = -1
+begin_coast_frame = ():
+    global coast_frame,coast_triangles,coast_instances,coast_draws
+    if coast_frame == frame_number(): return
+    coast_frame = frame_number()
+    coast_triangles = 0; coast_instances = 0; coast_draws = 0
+    begin_coast_height()
+    begin_coast_selection()
+
+collect_coast_height = (batches: CoastInstance[][]):
+    loop level in 0..COAST_LEVELS:
+        loop inst in batches[level]:
+            h = inst.heights
+            lo = min(min(h.x,h.y),min(h.z,h.w)); hi = max(max(h.x,h.y),max(h.z,h.w))
+            relief = 2.0+1.616*(hi-lo)/14.0
+            if lo-relief > 4.0 or hi+relief < -4.0: continue
+            coast_height_batches[level].push(inst)
+
+coast_height_same = () -> bool:
+    if coast_height_previous.len() != COAST_LEVELS: return false
+    loop k in 0..COAST_LEVELS:
+        if coast_height_batches[k] != coast_height_previous[k]: return false
+    true
+
+refresh_coast_height = (cam: vec3):
+    global coast_height_near,coast_height_far,coast_height_shader,coast_height_previous,coast_height_near_area,coast_height_far_area,coast_height_valid,coast_height_draws,coast_height_refreshes
+    coast_height_draws = 0
+    count = 0; phase = vec2(0,0)
+    loop group in coast_height_batches:
+        count += group.len()
+        if group.len() > 0: phase = group[0].origin
+    if count == 0:
+        coast_height_valid = false
+        return
+    local = render_eye(render_origin(cam)).xz
+    center = floor((local-phase)/14.0)*14.0+phase
+    # Exact instance equality also catches LOD morphs, chart snaps and arrivals.
+    # Track atlas coverage even when moving across an unchanged coarse mesh.
+    if coast_height_valid and coast_height_same() and coast_height_near_area.xy == center-vec2(70,70): return
+    if coast_height_near.fbo == 0:
+        coast_height_near = coast_height_target(640)
+        coast_height_far = coast_height_target(1024)
+        coast_height_shader = make_shader(shader(coast_height_vs,coast_height_fs))
+    zone("shore atlas")
+    coast_height_near_area = vec4(center-vec2(70,70),0.21875,640)
+    coast_height_far_area = vec4(center-vec2(448,448),0.875,1024)
+    glDisable(GL_DEPTH_TEST); glDepthMask(0)
+    glDisable(GL_BLEND); glDisable(GL_CULL_FACE)
+    loop layer in 0..2:
+        rt = if layer == 0: coast_height_near else: coast_height_far
+        area = if layer == 0: coast_height_near_area else: coast_height_far_area
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(rt.fbo))
+        glViewport(0,0,i32(rt.texture.width),i32(rt.texture.height))
+        glClearColor(0,0,0,0); glClear(GL_COLOR_BUFFER_BIT)
+        loop level in 0..COAST_LEVELS:
+            if coast_height_batches[level].len() == 0: continue
+            draw_instanced(coast_height_shader,coast_grids[level],coast_height_batches[level],CoastHeightParams(area,coast_pattern_texture))
+            coast_height_draws += 1
+    __rebind_target()
+    glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+    coast_height_previous = coast_height_batches
+    coast_height_valid = true
+    coast_height_refreshes += 1
+    zone_end()
+
+coast_height_decode = (v: vec4) -> f32: dot(v.xy,vec2(255,65280))/2048.0-16.0
+
+# Three taps reconstruct the same b-c triangle; never filter coverage into water.
+coast_height_read = (t: Texture,area: vec4,p: vec2) -> vec2:
+    q = (p-area.xy)/area.z
+    cell = floor(q); f = q-cell
+    if cell.x < 1.0 or cell.y < 1.0 or cell.x >= area.w-2.0 or cell.y >= area.w-2.0: return vec2(0,0)
+    lower = f.x+f.y <= 1.0
+    v = texel(t,ivec2(if lower: cell else: cell+vec2(1,1)))
+    b = texel(t,ivec2(cell+vec2(1,0)))
+    c = texel(t,ivec2(cell+vec2(0,1)))
+    y = if lower: coast_height_decode(v)*(1.0-f.x-f.y)+coast_height_decode(b)*f.x+coast_height_decode(c)*f.y else: coast_height_decode(v)*(f.x+f.y-1.0)+coast_height_decode(b)*(1.0-f.y)+coast_height_decode(c)*(1.0-f.x)
+    vec2(y,min(v.w,min(b.w,c.w)))
+
+coast_height_lookup = (near: Texture,far: Texture,a: vec4,b: vec4,p: vec2) -> vec2:
+    q = (p-a.xy)/a.z
+    if q.x >= 1.0 and q.y >= 1.0 and q.x < a.w-2.0 and q.y < a.w-2.0:
+        return coast_height_read(near,a,p)
+    coast_height_read(far,b,p)
+
+# Optical depth is deliberately separate. Only the last 1.5 vertical metres of
+# contact change foam; broad color/clarity, breakers and speed marks stay intact.
+coast_shore_depth = (optical: f32,physical: f32) -> f32:
+    mix(optical,physical,1.0-smoothstep(0.25,1.5,physical))

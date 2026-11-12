@@ -31,27 +31,41 @@ the generator; changing its constants changes contact geometry.
 `coast_mesh.jo` instances seven shared grids over existing canonical cells.
 Projected cell size selects a continuous subdivision level, using the viewport
 and FOV and the existing terrain quality budget. The cell under the camera reaches the finest grid on every tier; nearby
-cells refine according to their projected distance. Adjacent cells share the
-less detailed edge state; dyadic b-c triangulation makes both sides coincide
-through morphs. Canonical patches/tile atlases stay resident; there are no new
-per-frame mesh allocations or GPU geometry uploads. Instance lists are rebuilt
-for the nearby replaced patches. The effective focal length is capped at 1200
+cells refine according to their distance from conservative displaced cell bounds. Shared edge levels depend only on the edge's two
+endpoints, so independently streamed tiles agree even when their interior
+height bounds differ; dyadic b-c triangulation makes both sides coincide
+through morphs. The closest cells use four smaller domains, avoiding full-cell subdivision
+on their more distant halves while preserving their canonical outer edges.
+Canonical patches/tile atlases stay resident; there are no new
+per-frame mesh allocations or GPU geometry uploads. Instance lists are rebuilt for nearby replaced patches when the view or
+source identity changes. An exact previous-frame cache retains at most 64
+immutable patches / 8192 instances; camera/frustum, quality, atlas-slot and
+boundary changes invalidate it immediately. Both terrain paths begin this
+cache once per render frame; loading either source clears it. The effective focal length is capped at 1200
 pixels (600 m maximum refinement radius), bounding work under extreme zoom;
 this cap takes priority over additional zoom detail. Distant terrain uses the
 original draw path and adds no detail triangles.
 
-The sea reconstructs the same morphed triangles, including constrained boundary
-strips, before choosing foam, sand transparency and shallow-water color.
-The refined depth applies within 500 m and fades to the existing depth map by
-600 m; the distant sea shader excludes the reconstruction code. Depth is
-measured from the actual displaced sea surface, so the wash follows waves too. Legacy
-coasts reuse the existing signed 24-bit height atlas. New land streams a 65²
-canonical-height atlas over 896 m, four rows per frame, publishing all 17 frames
-of work atomically. Until a new map is ready, the previous valid map and existing
-coarse depth fallback remain available. Streaming terrain retains its coarse fallback outside main’s pinned 3×3
-contact neighborhood; ready contact tiles refine immediately. Neither fallback is a
-collision authority. Depth decoding keeps dry heights signed until after
-interpolation, avoiding broad false foam bands caused by clamping dry texels.
+The sea samples the actual selected shore mesh from two bounded, color-only
+RGBA8 height atlases: 640² at 0.21875 m spacing and 1024² at 0.875 m spacing.
+Rasterization happens only when the selected instances change (including LOD
+morphs, chart snaps and arriving terrain). Near and far grids align with the
+canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
+16-bit packed signed heights have 1/2048 m resolution, and alpha marks coverage.
+No floating-point framebuffer extension or depth attachment is required.
+The sea skips uncovered areas and falls back to its original depth map.
+
+Only the final 1.5 vertical metres of contact affect edge foam. The original
+optical depth still drives the broad turquoise shallow band, ripples, glints,
+transparency and breakers. Fine land normals affect softened lighting rather than
+reclassifying each microfacet as bare rock. Shallow seabed shading reuses the
+existing smooth procedural noise channels at broad/fine scales instead of
+reconstructing five value-noise fields per fragment; sea detail is unchanged. Coastal paving and raised tread
+bands sample the physical surface and subdivide to keep their clearance.
+
+Streaming terrain retains its coarse fallback outside main's pinned 3×3
+contact neighborhood; ready contact tiles refine immediately. Rendering caches
+never become the collision authority.
 
 Validation tools:
 
@@ -60,7 +74,11 @@ Validation tools:
 - `sloppy --release tools/coast_gpu_check.jo`: actual native GPU readback
   against CPU contact samples, including steep slopes and country coordinates.
 - `SLOPPY_SOFTWARE=1 sloppy --release tools/coast_check.jo`: CPU/texture parity,
-  sea/mesh morph and edge parity, atomic bounded new-depth publication.
+  optimized GPU parent interpolation against the CPU mesh.
+- `sloppy --release tools/coast_atlas_check.jo`: native GPU atlas readback,
+  quantization/triangle agreement and unchanged-instance cache reuse.
+- `sloppy --release tools/coast_paving_check.jo`: barycentric clearance audit
+  across two legacy towns and two new ports (`COAST_PAVING_ASSERT=1` to enforce).
 - `tools/coast_capture.jo`: deterministic `COAST_SITE=legacy|new|beach|harbor`,
   `COAST_RANGE=2000|300|50|2`; the beach's 2 m recipe stands on land.
 - `AEGEAN_COAST=0`: diagnostic rendering baseline only. Physics remains refined;
@@ -73,7 +91,7 @@ The source height arrays retained for instance selection add about 2 MiB for
 legacy terrain and at most 578 KiB for 512 resident 17² new-land tiles. The seven
 shared refinement meshes use about 173 KiB of vertex/index payload, independent
 of the size of the country. Splitting the near/far sea shader adds 291 KiB of
-shared water vertex payload and one sea draw; it does not add water triangles. Temporary instances remain proportional to the
+shared water vertex payload and one sea draw; it does not add water triangles. The two color atlases add 5.56 MiB of GPU storage. Temporary instances remain proportional to the
 nearby canonical patches and are culled per cell before upload. The phone tier
 uses its existing larger terrain error budget, while retaining the same physical
 contact surface. These bounds do not substitute for frame-time measurements;

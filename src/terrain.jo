@@ -12,6 +12,7 @@ use 'render_space.jo'
 use 'coast_field.jo'
 use 'coast_pattern.jo'
 use 'coast_mesh.jo'
+use 'coast_atlas.jo'
 use 'quality.jo'
 
 struct GroundParams:
@@ -43,9 +44,10 @@ struct GroundOut:
     tint: vec4
     orchard: f32 = 0.0
     tile_level: f32 = 0.0
+    relief_normal: vec3 = vec3(0,0,0)
 
 coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
-    p = v.cell
+    p = inst.region.xy+v.cell*inst.region.z
     # Filtering the continuous material channels needs two cached reads,
     # rather than fetching/decoding all four full corner records per vertex.
     uv = (inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.materials))
@@ -55,26 +57,28 @@ coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
     normal = vec3(normal_xz.x,sqrt(max(1.0-dot(normal_xz,normal_xz),0.001)),normal_xz.y)
     s = TerrainSample(0,normal,vec4(material.z,material.w,ridge,1))
     y = coast_gpu_height(inst,p,u.coast_pattern)
+    base_normal = s.normal
     s.normal = coast_gpu_normal(inst.absolute,p,inst.heights,s.normal,smoothstep(0.0,3.0,coast_mesh_level(inst,p)),u.coast_pattern)
     s.tint.w = 1.0-smoothstep(1700.0,2300.0,y)
     local = vec3(inst.origin.x+p.x*14.0,y,inst.origin.y+p.y*14.0)
     world = local+u.origin
     bent = render_warped(local,u.cam,u.warp_a,u.warp_b)
-    GroundOut(u.view_proj*vec4(bent,1),local,s.normal,s.tint,orchard_cover(world.xz,y,length(s.normal.xz)/max(s.normal.y,0.1)))
+    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1)),0,s.normal)
 
 # The analytic detail gradient avoids derivative extensions and extra fragment
 # work on WebGL2. It converges to the same continuous field as the fine mesh.
 coast_fs = (i: GroundOut,u: GroundParams) -> vec4:
-    ground_material(i,u,false)
+    ground_material(i,u,false,true)
 
 coast_world_fs = (i: GroundOut,u: GroundParams) -> vec4:
-    ground_material(i,u,true)
+    ground_material(i,u,true,true)
 
 coast_sh: Shader
 coast_world_sh: Shader
 
 draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: bool = false):
     global coast_triangles,coast_instances,coast_draws
+    collect_coast_height(batches)
     loop level in 0..COAST_LEVELS:
         if batches[level].len() == 0: continue
         draw_instanced(if large: coast_world_sh else: coast_sh,coast_grids[level],batches[level],params)
@@ -100,7 +104,7 @@ ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> Ground
 # resolved strata nearby; distant slopes use each pattern's mean, not aliasing.
 ground_band_visibility = (phase: f32) -> f32: 1.0-smoothstep(PI,TAU,fwidth(phase))
 
-ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
+ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: bool = false) -> vec4:
     if behind_sea(i.world, u.cam): discard()
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
@@ -149,7 +153,7 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
     dry: f32 = 0.0
     crease: f32 = 0.0
     # Underwater the wet sand/rock branch replaces every land contribution.
-    if y >= 0.6:
+    if y >= (if coastal: 0.25 else: 0.6):
         canopy = sample(u.pigment,world.xz/320.0)
         ridge = i.tint.z*2.0-1.0
         crease = smoothstep(0.05,-0.6,ridge)
@@ -194,19 +198,26 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
         # with maquis immediately behind it, rather than flooding the basins.
         beach = (1.0 - smoothstep(0.65, 1.35, y)) * (1.0 - smoothstep(0.035, 0.12, slope))
         c = mix(c, sand, beach)
-    if y < 0.6:
-        c = mix(wet, sand * 0.9, clamp(y + 0.4, 0.0, 1.0))
-        c = mix(c, stone * 0.8, smoothstep(0.35, 0.6, slope))
+    if y < (if coastal: 0.9 else: 0.6):
+        shore_color = mix(wet, sand * 0.9, clamp(y + 0.4, 0.0, 1.0))
+        shore_color = mix(shore_color, stone * 0.8, smoothstep(0.35, 0.6, slope))
+        c = if coastal: mix(c,shore_color,1.0-smoothstep(0.25,0.9,y)) else: shore_color
         # Offshore opaque water hides this material. Restrict its extra work
         # to the shallow seabed and filter fine blades out in the distance.
         if y < -0.5 and y > -38.0 and length(i.world-u.cam) < 650.0:
-            patch = vnoise(world.xz*0.045)+vnoise(world.xz*0.23)*0.25
+            # Reuse the smooth procedural noise tile at broad and fine scales,
+            # rather than rebuilding five value-noise fields per seabed pixel.
+            bed = if coastal: sample(u.coast_pattern,world.xz/448.0)*2.0-vec4(0.5,0.5,0.5,0) else: vec4(0,0,0,0)
+            bed_fine = if coastal: sample(u.coast_pattern,world.xz/112.0)*3.0-vec4(1,1,1,0) else: vec4(0,0,0,0)
+            patch = if coastal: bed.x+bed.y*0.25 else: vnoise(world.xz*0.045)+vnoise(world.xz*0.23)*0.25
             grass_bed = smoothstep(0.57,0.76,patch)*smoothstep(0.5,2.5,-y)*(1.0-smoothstep(22.0,38.0,-y))
             blades: f32 = 0.96
-            if resolved > 0.0: blades += (vnoise(world.xz*1.7+vec2(u.time*0.02,0))-0.5)*0.08*resolved
+            if resolved > 0.0:
+                fine = if coastal: bed_fine.x else: vnoise(world.xz*1.7+vec2(u.time*0.02,0))
+                blades += (fine-0.5)*0.08*resolved
             c = mix(c,vec3(0.12,0.23,0.12)*blades,grass_bed*0.8)
-            rocks = smoothstep(0.76,0.86,vnoise(world.xz*0.18+vec2(17,9)))
-            c = mix(c,stone*0.65,rocks*0.7)
+            rocks = smoothstep(0.76,0.86,if coastal: bed_fine.z else: vnoise(world.xz*0.18+vec2(17,9)))
+            c = mix(c,stone*0.65,rocks*(if coastal: 0.18 else: 0.7))
     # close up: patches of lighter and darker growth, bare earth, small stones
     near = 1.0 - smoothstep(60.0, 260.0, length(i.world - u.cam))
     if near > 0.0:
@@ -231,8 +242,12 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
         c = mix(c, c * detail, near)
         c = mix(c, vec3(0.55, 0.45, 0.32), earth * near * 0.55)
     # light: a painted two-tone, with the sky's fill and a cool shade
-    ndl = dot(render_normal(n, i.world, u.cam), normalize(u.sun_dir))
-    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,0.015))
+    # Microrelief changes light, not the broad sand/grass/rock classification.
+    # Reclassifying every tiny tilted facet produced hard, flat rubble decals
+    # and ran the cliff material over otherwise gentle beach ground.
+    light_normal = if coastal: normalize(i.relief_normal) else: n
+    ndl = dot(render_normal(light_normal, i.world, u.cam), normalize(u.sun_dir))
+    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,if coastal: 0.08 else: 0.015))
     # Dappled rounded tree/maquis masses continue beyond individual grove meshes.
     # The shared procedural tile varies crown radius/spacing, fading before aliasing.
     if veg*woody > 0.02:
@@ -273,7 +288,7 @@ ground_sh: Shader
 draw_ground = (L: Light, t: f64):
     global terrain_draws, terrain_triangles, terrain_visible, terrain_upload, terrain_report, terrain_prepare
     global coast_triangles,coast_instances,coast_draws
-    coast_triangles = 0; coast_instances = 0; coast_draws = 0
+    begin_coast_frame()
     zone("terrain")
     prepare_start = time()
     terrain_prepare = 0.0
@@ -291,7 +306,9 @@ draw_ground = (L: Light, t: f64):
         batches: TerrainInstance[][] = [loop i in 0..96: []]
         coastal: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
         loop patch in tile.patches:
-            if not land_visible(tile, patch.data, cam, planes): continue
+            p = patch.data
+            refined = coast_enabled and patch.lod == 0.0 and p.low < 192.0 and p.high > -10.0 and coast_patch_near(tile.x+f64(p.x)*14.0,tile.z+f64(p.z)*14.0,448.0,cam,focal/render_quality.terrain_error)
+            if not land_visible(tile, p, cam, planes,refined): continue
             lev = min(int(floor(patch.lod)), 5)
             edges = vec4(f32(patch.lod), f32(patch.lod), f32(patch.lod), f32(patch.lod))
             mask = 0
@@ -306,9 +323,8 @@ draw_ground = (L: Light, t: f64):
                     2: edges.z = e
                     _: edges.w = e
                 if int(floor(other)) < lev: mask = mask | (1 << side)
-            p = patch.data
-            if coast_enabled and patch.lod == 0.0 and p.low < 192.0 and p.high > -10.0 and coast_patch_near(tile.x+f64(p.x)*14.0,tile.z+f64(p.z)*14.0,448.0,cam,focal/render_quality.terrain_error):
-                coast_add_patch(coastal,tile.cpu_heights,tile.heights.width,tile.heights.height,tile.x,tile.z,p.x,p.z,32,vec2(0,0),cam,origin,focal/render_quality.terrain_error,planes)
+            if refined:
+                coast_add_patch(coastal,tile.cpu_heights,tile.heights.width,tile.heights.height,tile.x,tile.z,p.x,p.z,32,vec2(0,0),cam,origin,focal/render_quality.terrain_error,planes,source_id=tile.heights.id)
                 terrain_visible += 1
                 continue
             at = vec2(f32(tile.x + f64(p.x) * MESH_STEP - f64(origin.x)), f32(tile.z + f64(p.z) * MESH_STEP - f64(origin.z)))
@@ -328,7 +344,7 @@ draw_ground = (L: Light, t: f64):
             terrain_upload += batches[i].len() * 40
         prepare_start = time()
     if env("AEGEAN_LOD_STATS") != none and (terrain_report < 0.0 or t - terrain_report > 1.0):
-        print("LOD patches={terrain_visible} draws={terrain_draws} triangles={terrain_triangles} instance_bytes={terrain_upload} select_us={terrain_selection * 1000000.0:.1} prepare_us={terrain_prepare * 1000000.0:.1}")
+        print("LOD patches={terrain_visible} draws={terrain_draws} triangles={terrain_triangles} coast_triangles={coast_triangles} coast_cells={coast_instances} instance_bytes={terrain_upload} select_us={terrain_selection * 1000000.0:.1} prepare_us={terrain_prepare * 1000000.0:.1}")
         terrain_report = t
     zone_end()
 
@@ -336,5 +352,6 @@ init_terrain = ():
     global ground_sh,coast_sh,coast_world_sh
     ground_sh = make_shader(shader(ground_vs, ground_fs))
     init_coast_mesh()
+    reset_coast_selection()
     coast_sh = make_shader(shader(coast_vs,coast_fs))
     coast_world_sh = make_shader(shader(coast_vs,coast_world_fs))
