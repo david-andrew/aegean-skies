@@ -29,7 +29,7 @@ generated-art assets, and no country-wide fine bake. `coast_pattern.jo` owns
 the generator; changing its constants changes contact geometry.
 
 `coast_mesh.jo` instances seven shared grids over existing canonical cells.
-Projected cell size selects a continuous subdivision level, using the viewport
+A 36-pixel projected spacing budget selects a continuous subdivision level, using the viewport
 and FOV and the existing terrain quality budget. The cell under the camera reaches the finest grid on every tier; nearby
 cells refine according to their distance from conservative displaced cell bounds. Shared edge levels depend only on the edge's two
 endpoints, so independently streamed tiles agree even when their interior
@@ -54,6 +54,8 @@ canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
 16-bit packed signed heights have 1/2048 m resolution, and alpha marks coverage.
 No floating-point framebuffer extension or depth attachment is required.
 The sea skips uncovered areas and falls back to its original depth map.
+An uncovered first texel returns immediately; the lookup runs at the foam
+calculation, keeping its temporary values out of the preceding water lighting.
 
 Only the final 1.5 vertical metres of contact affect edge foam. The original
 optical depth still drives the broad turquoise shallow band, ripples, glints,
