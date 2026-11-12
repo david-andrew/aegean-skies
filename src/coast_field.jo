@@ -1,96 +1,48 @@
-use 'look.jo'
+use 'coast_pattern.jo'
 # Sub-source coastal relief, shared by CPU queries and GPU terrain/sea.
 # Version 1: fixed world phases, no RNG or camera state. The largest band is
 # 7 m, below the unchanged 8 m erosion source. Vertical rubble <= 1.01 m;
 # cliff relief additionally moves the local contour by at most 1.15 m.
 const COAST_STEP = 0.21875          # 14 / 64: contact triangulation, all tiers
 const COAST_LEVELS = 7
+const COAST_MAX_FOCAL = 1200.0     # fixed work bound even with extreme zoom
 
 coast_weight = (h: f32) -> f32:
-    smoothstep(-40.0,-12.0,h)*(1.0-smoothstep(64.0,192.0,h))
-
-coast_noise_gradient = (p: vec2) -> vec3:
-    result = vec3(0,0,0)
-    lens: f32[5] = [7.0,3.5,1.75,0.875,0.4375]
-    amps: f32[5] = [0.55,0.26,0.12,0.055,0.025]
-    offsets: vec2[5] = [vec2(19,31),vec2(53,7),vec2(11,83),vec2(71,29),vec2(37,61)]
-    loop k in 0..5:
-        q = p/lens[k]+offsets[k]
-        i = floor(q); f = fract(q)
-        u = f*f*(vec2(3,3)-2.0*f)
-        du = 6.0*f*(vec2(1,1)-f)/lens[k]
-        a = hash21(i); b = hash21(i+vec2(1,0))
-        c = hash21(i+vec2(0,1)); d = hash21(i+vec2(1,1))
-        value = mix(mix(a,b,u.x),mix(c,d,u.x),u.y)*2.0-1.0
-        dx = mix(b-a,d-c,u.y)*du.x*2.0
-        dz = mix(c-a,d-b,u.x)*du.y*2.0
-        result += vec3(value,dx,dz)*amps[k]
-    result
-
-coast_normal = (p: vec2,f: vec2,h: vec4,normal: vec3,strength: f32) -> vec3:
-    base = coast_triangle(h,f)
-    if strength == 0.0 or coast_weight(base) == 0.0: return normal
-    g = coast_noise_gradient(p)
-    raw = 4.0*(f.x*(1.0-f.x)+f.y*(1.0-f.y))
-    anchor = min(1.0,raw)
-    da = if raw < 1.0: (vec2(1,1)-2.0*f)*(4.0/14.0) else: vec2(0,0)
-    gradient = g.yz*anchor+g.x*da
-    # Analytic slope of the horizontal cliff perturbation, including the
-    # shared-edge window; no texture-dependent finite differences in pixels.
-    left = clamp(f/0.12,vec2(0,0),vec2(1,1))
-    right = clamp((vec2(1,1)-f)/0.12,vec2(0,0),vec2(1,1))
-    a = left*left*(vec2(3,3)-2.0*left)
-    b = right*right*(vec2(3,3)-2.0*right)
-    edge = a*b
-    de = (6.0*left*(vec2(1,1)-left)*b-6.0*right*(vec2(1,1)-right)*a)/(0.12*14.0)
-    slope = vec2(mix(h.y-h.x,h.w-h.z,f.y),mix(h.z-h.x,h.w-h.y,f.x))/14.0
-    wx = coast_noise_gradient(p+vec2(113,47))*0.8
-    wz = coast_noise_gradient(p+vec2(29,157))*0.8
-    cross_slope = (h.w-h.z-h.y+h.x)/(14.0*14.0)
-    warp = slope.x*wx.x+slope.y*wz.x
-    gradient += vec2(slope.x*wx.y+slope.y*wz.y+cross_slope*wz.x,slope.x*wx.z+slope.y*wz.z+cross_slope*wx.x)*edge.x*edge.y+warp*vec2(de.x*edge.y,de.y*edge.x)
-    gradient *= coast_weight(base)*strength
-    normalize(vec3(normal.x-gradient.x*normal.y,normal.y,normal.z-gradient.y*normal.y))
-
-coast_noise = (p: vec2) -> f32:
-    a = (vnoise(p/7.0+vec2(19,31))*2.0-1.0)*0.55
-    b = (vnoise(p/3.5+vec2(53,7))*2.0-1.0)*0.26
-    c = (vnoise(p/1.75+vec2(11,83))*2.0-1.0)*0.12
-    d = (vnoise(p/0.875+vec2(71,29))*2.0-1.0)*0.055
-    e = (vnoise(p/0.4375+vec2(37,61))*2.0-1.0)*0.025
-    a+b+c+d+e
-
-coast_displacement = (p: vec2,grid: vec2,h: f32) -> f32:
-    weight = coast_weight(h)
-    if weight == 0.0: return 0.0
-    # Leave canonical vertices fixed. The envelope is continuous across cell
-    # edges and diagonals; this also makes the coarsest LOD exactly the bake.
-    f = fract(grid)
-    anchor = min(1.0,4.0*(f.x*(1.0-f.x)+f.y*(1.0-f.y)))
-    if anchor == 0.0: return 0.0
-    coast_noise(p)*anchor*weight
+    smoothstep(-10.0,-3.0,h)*(1.0-smoothstep(64.0,192.0,h))
 
 coast_triangle = (h: vec4,f: vec2) -> f32:
     if f.x+f.y <= 1.0: h.x+f.x*(h.y-h.x)+f.y*(h.z-h.x)
     else: h.w+(1.0-f.x)*(h.z-h.w)+(1.0-f.y)*(h.y-h.w)
 
-coast_vertex_height = (h: vec4,f: vec2,origin: vec2) -> f32:
+# The relief arithmetic is shared; only the lookup of deterministic pattern
+# bytes differs between the pure CPU query and its texture-backed GPU mirror.
+coast_height_detail = (h: vec4,f: vec2,detail: vec3) -> f32:
     base = coast_triangle(h,f)
     weight = coast_weight(base)
-    if weight == 0.0: return base
-    p = origin+f*14.0
-    relief = coast_displacement(p,f,base)
-    # A local horizontal contour perturbation becomes vertical relief on a
-    # heightfield. Window only this slope-dependent term at cell edges, where
-    # the two canonical gradients can differ. The zero derivative window
-    # guarantees continuity without extra source samples or physics caches.
+    anchor = min(1.0,4.0*(f.x*(1.0-f.x)+f.y*(1.0-f.y)))
     edge = smoothstep(0.0,0.12,f)*smoothstep(0.0,0.12,vec2(1,1)-f)
-    window = edge.x*edge.y
-    if window > 0.0:
-        gradient = vec2(mix(h.y-h.x,h.w-h.z,f.y),mix(h.z-h.x,h.w-h.y,f.x))/14.0
-        warp = vec2(coast_noise(p+vec2(113,47)),coast_noise(p+vec2(29,157)))*0.8
-        relief += dot(gradient,warp)*window*weight
-    base+relief
+    gradient = vec2(mix(h.y-h.x,h.w-h.z,f.y),mix(h.z-h.x,h.w-h.y,f.x))/14.0
+    base+(detail.x*anchor+dot(gradient,detail.yz)*0.8*edge.x*edge.y)*weight
+
+coast_vertex_height = (h: vec4,f: vec2,origin: vec2) -> f32:
+    base = coast_triangle(h,f)
+    if coast_weight(base) == 0.0 or ((f.x == 0.0 or f.x == 1.0) and (f.y == 0.0 or f.y == 1.0)): return base
+    coast_height_detail(h,f,coast_pattern_at(origin+f*14.0))
+
+coast_gpu_vertex = (h: vec4,f: vec2,origin: vec2,pattern: Texture) -> f32:
+    base = coast_triangle(h,f)
+    if coast_weight(base) == 0.0 or ((f.x == 0.0 or f.x == 1.0) and (f.y == 0.0 or f.y == 1.0)): return base
+    coast_height_detail(h,f,coast_pattern_gpu(pattern,origin+f*14.0))
+
+coast_gpu_normal = (p: vec2,f: vec2,h: vec4,normal: vec3,strength: f32,pattern: Texture) -> vec3:
+    if strength == 0.0 or coast_weight(coast_triangle(h,f)) == 0.0: return normal
+    e: f32 = 1.0/64.0
+    a = max(f-vec2(e,e),vec2(0,0)); b = min(f+vec2(e,e),vec2(1,1))
+    left = vec2(a.x,f.y); right = vec2(b.x,f.y)
+    top = vec2(f.x,a.y); bottom = vec2(f.x,b.y)
+    dx = (coast_gpu_vertex(h,right,p,pattern)-coast_triangle(h,right)-coast_gpu_vertex(h,left,p,pattern)+coast_triangle(h,left))/((b.x-a.x)*14.0)
+    dz = (coast_gpu_vertex(h,bottom,p,pattern)-coast_triangle(h,bottom)-coast_gpu_vertex(h,top,p,pattern)+coast_triangle(h,top))/((b.y-a.y)*14.0)
+    normalize(vec3(normal.x-dx*normal.y*strength,normal.y,normal.z-dz*normal.y*strength))
 
 # Same finest b-c triangles as rendering. Sampling needs only the caller's
 # four canonical corners; physics never allocates or depends on render caches.
@@ -98,7 +50,7 @@ coast_contact = (a: f64,b: f64,c: f64,d: f64,u: f64,v: f64,x: f64,z: f64) -> f64
     h = vec4(f32(a),f32(b),f32(c),f32(d))
     f = vec2(f32(u),f32(v))
     base = coast_triangle(h,f)
-    if coast_weight(base) == 0.0: return f64(base)
+    if min(min(h.x,h.y),min(h.z,h.w)) >= 192.0 or max(max(h.x,h.y),max(h.z,h.w)) <= -10.0: return f64(base)
     p = min(floor(f*64.0),vec2(63,63))/64.0
     step: f32 = 1.0/64.0
     origin = vec2(f32(x),f32(z))
@@ -109,9 +61,17 @@ coast_contact = (a: f64,b: f64,c: f64,d: f64,u: f64,v: f64,x: f64,z: f64) -> f64
 # starts refining when it spans 28 pixels; a resolved band gets several samples.
 # Use the closest point of the cell's bounds for contact and oblique views.
 coast_level = (x: f64,z: f64,low: f64,high: f64,cam: vec3,focal: f64) -> f64:
-    if high <= -40.0 or low >= 192.0: return 0.0
+    if high <= -10.0 or low >= 192.0: return 0.0
     dx = max(max(x-f64(cam.x),f64(cam.x)-x-14.0),0.0)
     dz = max(max(z-f64(cam.z),f64(cam.z)-z-14.0),0.0)
-    dy = max(max(low-f64(cam.y),f64(cam.y)-high),0.0)
+    # Fixed coastal vertical bounds make both sides of an edge choose the
+    # same level without consulting the other cell's interior heights.
+    dy = max(max(-10.0-f64(cam.y),f64(cam.y)-192.0),0.0)
     distance = max(sqrt(dx*dx+dy*dy+dz*dz)-21.0,0.25)
-    clamp(log2(14.0*focal/(28.0*distance)),0.0,6.0)
+    clamp(log2(14.0*min(focal,COAST_MAX_FOCAL)/(28.0*distance)),0.0,6.0)
+
+coast_patch_near = (x: f64,z: f64,size: f64,cam: vec3,focal: f64) -> bool:
+    dx = max(max(x-f64(cam.x),f64(cam.x)-x-size),0.0)
+    dz = max(max(z-f64(cam.z),f64(cam.z)-z-size),0.0)
+    dy = max(max(-10.0-f64(cam.y),f64(cam.y)-192.0),0.0)
+    dx*dx+dy*dy+dz*dz < (21.0+min(focal,COAST_MAX_FOCAL)*0.5)^2
