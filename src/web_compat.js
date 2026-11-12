@@ -143,14 +143,19 @@
       const now = performance.now(), dt = last ? Math.min((now - last) / 1000, 0.1) : 0; last = now;
       live = true;
       const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
-      // (rates about the device's x (beta) and y (gamma), deg/s; pointing the phone's back up
-      // aims up, its back to the left aims left)
+      // (rates about the device's own axes, deg/s. Chrome hands them over as alpha about x (the
+      // short edge), beta about y (the long edge), gamma about z (out of the screen), whatever
+      // the spec's lettering. Right-handed: +x tips the back up, +y turns the back to the left.
+      // The aim turns with the phone about the SCREEN's axes as it is held: up for the back
+      // tipping up about the screen's horizontal, right for it turning about the screen's
+      // vertical; a twist in the screen's own plane does nothing)
+      const rx = r.alpha || 0, ry = r.beta || 0;
       let up, right;
       switch (((ang % 360) + 360) % 360) {
-        case 90: up = r.gamma; right = r.beta; break;
-        case 180: up = -r.beta; right = r.gamma; break;
-        case 270: up = -r.gamma; right = -r.beta; break;
-        default: up = r.beta; right = -r.gamma;
+        case 90: up = -ry; right = -rx; break;      // (the top to the left)
+        case 180: up = -rx; right = ry; break;
+        case 270: up = ry; right = rx; break;       // (the top to the right)
+        default: up = rx; right = -ry;
       }
       dx += right * dt; dy += up * dt;
     };
