@@ -11,11 +11,13 @@ use 'living_place_context.jo'
 use 'living_far_checks.jo'
 use 'living_far_news.jo'
 use 'living_war_access.jo'
+use 'living_far_orders.jo'
+use 'living_work_types.jo'
 
 _far_depart = (w: mut World, vehicle: int) -> bool:
     if vehicle<0 or vehicle>=w.far.vehicles.len(): return false
     v = w.far.vehicles[vehicle]
-    if v.duty!=.merchant or v.journey>=0 or v.route<0 or v.route>=w.far.links.len() or w.minute<v.next_departure or v.hull<=0: return false
+    if v.duty!=.merchant or not v.service_agreement or v.journey>=0 or v.route<0 or v.route>=w.far.links.len() or w.minute<v.next_departure or v.hull<=0: return false
     link = w.far.links[v.route]
     if v.place!=link.a and v.place!=link.b: return false
     destination = if v.place==link.a: link.b else: link.a
@@ -23,36 +25,44 @@ _far_depart = (w: mut World, vehicle: int) -> bool:
     if (local_block>=0 and length(v.pos-w.far.vehicles[w.war.units[local_block].vehicle].pos)<850) or known_blockade(w,v.place,destination):
         w.far.vehicles[vehicle].next_departure=w.minute+120
         return false
-    origin = w.far.districts[v.place]; dest = w.far.districts[destination]
+    origin = w.far.districts[v.place]
     best_good = -1; best_qty = 0; best_score = 0
-    loop g in 0..9:
-        if g==8: continue # ordinary carriers do not acquire contraband by default
-        reserve = max(1000,origin.target[g]/3)
-        surplus = max(0,far_market_qty(w,v.place,g)-reserve)
-        need = max(0,dest.target[g]-far_market_qty(w,destination,g))
-        qty = min(min(surplus,need),v.capacity_grams*1000/w.goods[g].package_grams)
-        qty = min(qty,max(0,w.accounts[dest.market_account].cents-40)*1000/max(1,origin.prices[g]))
-        score = qty*1000/max(1000,dest.target[g])
-        if qty>=100 and score>best_score: best_good=g; best_qty=qty; best_score=score
+    travel_minutes=(link.length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    if let order=v.buying_order:
+        if order.place==destination and w.minute+travel_minutes<=order.due:
+            loop g in 0..9:
+                if g==8 or origin.prices[g]>order.price[g]: continue
+                reserve = max(1000,origin.target[g]/3)
+                surplus = max(0,far_market_qty(w,v.place,g)-reserve)
+                qty = min(min(surplus,order.quantity[g]),v.capacity_grams*1000/w.goods[g].package_grams)
+                qty = min(qty,max(0,w.accounts[order.account].cents-order.freight)*1000/max(1,origin.prices[g]))
+                score = qty*1000/max(1000,order.target[g])
+                if qty>=100 and score>best_score: best_good=g; best_qty=qty; best_score=score
     w.far.vehicles[vehicle].next_departure = w.minute+30
-    if best_good<0: return false
+    survey=best_good<0
+    if survey and ((v.place==v.home and w.minute-v.last_survey_minute<1440) or w.accounts[origin.market_account].cents<40): return false
     if not far_provision(w,vehicle): return false
-    batch = far_take_market(w,v.place,best_good,best_qty)
+    batch = if survey: FarStock() else: far_take_market(w,v.place,best_good,best_qty)
     if not far_market_accepts(w,destination,batch):
         far_put_market(w,v.place,batch); return false
-    cents = max(1,(best_qty*origin.prices[best_good]+999)/1000)
-    freight = 40
-    if not transfer(w,dest.market_account,origin.market_account,cents,.trade,vehicle):
+    cents = if survey: 0 else: max(1,(best_qty*origin.prices[best_good]+999)/1000)
+    freight = if survey: 40 else: v.buying_order!.freight
+    buyer=if survey: origin.market_account else: v.buying_order!.account
+    if cents>0 and not transfer(w,buyer,origin.market_account,cents,.trade,vehicle):
         far_put_market(w,v.place,batch); return false
-    if not transfer(w,dest.market_account,v.account,freight,.wage,vehicle):
+    if freight>0 and not transfer(w,buyer,v.account,freight,.wage,vehicle):
         living_fault("far.freight_payment",guard_context(w)+" vehicle={vehicle}")
         return false
-    far_local_news(w,v.place,"cargo_departure","A {if v.kind==.cart: "cart" else: "coaster"} left {life_place_name(w,v.place)} for {life_place_name(w,destination)} with {f64(best_qty)/1000.0:.1} packages of {w.goods[best_good].key}.")
+    why=if survey: "The {life_place_name(w,v.place)} counter paid carrier {vehicle} to bring its buying orders to {life_place_name(w,destination)} and collect that counter's actual quotes under their reciprocal service agreement. There is no sale cargo aboard." else: ""
+    provenance=if survey: WorkProvenance(cause=why,requester=origin.market_owner,requester_account=buyer,supplier_account=v.account,request_place=v.place,requested_minute=w.minute,heard_minute=w.minute,agreed_minute=w.minute,freight_cents=freight,freight_payer=buyer,deadline=w.minute+travel_minutes+1440,negotiated=true) else: trade_work_provenance(w,v.buying_order!,vehicle,v.place,best_good,best_qty,cents,batch)
+    if not survey: why=provenance.cause
+    far_local_news(w,v.place,if survey: "order_departure" else: "cargo_departure",why)
     id = w.far.next_journey; w.far.next_journey += 1
-    w.far.journeys[id] = FarJourney(id,vehicle,v.place,destination,link.id,v.place==link.a,.merchant,w.tick,w.tick,speed_mm_sec=v.speed_mm_sec,cargo_owner=dest.market_account,seller=origin.market_account,buyer=dest.market_account,good=best_good,quantity=best_qty,news=w.far.districts[v.place].recent_news,reports=far_departing_accounts(w,v.place,vehicle))
-    w.far.vehicles[vehicle].cargo = batch; w.far.vehicles[vehicle].cargo_owner = dest.market_account
+    w.far.journeys[id] = FarJourney(id,vehicle,v.place,destination,link.id,v.place==link.a,.merchant,w.tick,w.tick,speed_mm_sec=v.speed_mm_sec,cargo_owner=buyer,seller=origin.market_account,buyer=buyer,good=best_good,quantity=best_qty,news=w.far.districts[v.place].recent_news,reports=far_departing_accounts(w,v.place,vehicle),return_order=counter_restock_order(w,vehicle,v.place),provenance=provenance,survey=survey)
+    w.far.vehicles[vehicle].cargo = batch; w.far.vehicles[vehicle].cargo_owner = buyer
     w.far.vehicles[vehicle].journey = id; w.far.vehicles[vehicle].place = -1
     w.far.vehicles[vehicle].freight_earned += freight
+    if survey: w.far.vehicles[vehicle].last_survey_minute=w.minute
     true
 
 _far_arrive = (w: mut World, journey: int):
@@ -83,9 +93,15 @@ _far_arrive = (w: mut World, journey: int):
     w.far.vehicles[j.vehicle].journey = -1; w.far.vehicles[j.vehicle].place = j.destination
     w.far.vehicles[j.vehicle].velocity = vec3(0,0,0)
     w.far.vehicles[j.vehicle].next_departure = w.minute+30
+    w.far.vehicles[j.vehicle].buying_order=j.return_order
     if w.war.arrivals.len()<128: w.war.arrivals.push(j.vehicle)
-    w.far.transported[j.good] += j.quantity; w.far.completed_journeys += 1
-    far_local_news(w,j.destination,"cargo_arrival","{f64(j.quantity)/1000.0:.1} packages of {w.goods[j.good].key} reached {life_place_name(w,j.destination)} from {life_place_name(w,j.origin)} by {if v.kind==.cart: "cart" else: "coaster"}.")
+    w.far.completed_journeys += 1
+    if j.survey:
+        w.far.order_rounds+=1
+        far_local_news(w,j.destination,"order_arrival","Carrier {v.id} brought {life_place_name(w,j.origin)}'s dated buying orders to the actual counter at {life_place_name(w,j.destination)}. It will take this counter's orders back on its next departure.")
+    else:
+        w.far.transported[j.good] += j.quantity; w.far.cargo_deliveries+=1
+        far_local_news(w,j.destination,"cargo_arrival","{f64(j.quantity)/1000.0:.1} packages of {w.goods[j.good].key} reached {life_place_name(w,j.destination)} from {life_place_name(w,j.origin)} by {if v.kind==.cart: "cart" else: "coaster"}. {j.provenance.cause}")
     # Only actual arrivals bring their carried accounts to the receiving community.
     loop id in j.news:
         if not (id in w.far.news) or id in w.far.districts[j.destination].recent_news: continue
@@ -164,7 +180,7 @@ far_transport_views = (w: World, observer: vec3, radius: f64 = 6000.0) -> FarTra
         if v.journey<0 or length(v.pos-observer)>radius: continue
         j = w.far.journeys[v.journey]
         name = if j.good>=0: w.goods[j.good].key else: "people and dispatches"
-        reason = "{j.quantity/1000}.{(j.quantity%1000)/100} packages of {name} from {life_place_name(w,j.origin)} to {life_place_name(w,j.destination)}; the receiving market paid for this load."
+        reason = if j.provenance.cause!="": j.provenance.cause else: "{j.quantity/1000}.{(j.quantity%1000)/100} packages of {name} from {life_place_name(w,j.origin)} to {life_place_name(w,j.destination)}; the receiving market paid for this load."
         result.push(FarTransportView(v.id,v.kind,j.origin,j.destination,v.pos,v.velocity,j.good,j.quantity,reason))
     result
 
