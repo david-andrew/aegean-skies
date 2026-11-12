@@ -15,7 +15,7 @@ feels off and there is no measurement for it. Rounds so far:
 
 | Round | When | After |
 |---|---|---|
-| 1 | when the four streams of 2026-11-11 land (phone fix and sky, towns, aircraft, people and speech) | the world grew to the Aegean, cargo, towns, aircraft, speech |
+| 1 | 2026-11-12, pack at 12bfc07 (speech at 119afc1) | the world grew to the Aegean, cargo, towns, aircraft, speech, weather, ships. Scores (Sol / Astra / Grok): look 2/2/2, lived-in 2/2/2, words 3/3/2, something to do 2/3/2, geography 3/2/3, technical 2/2/2, first ten minutes 3/2/2. Acted on: the aircraft-delivery stall (verified), the harbour's frame time, sea holes, speech bugs, town composition, the bubble, lamps in rain |
 
 ## Who
 
