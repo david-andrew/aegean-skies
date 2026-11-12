@@ -64,3 +64,9 @@ composition **and** sequence permission checks. Do not substitute an unlicensed 
 just because its underlying composition is old.
 
 Dataset publications: Long et al., *PDMX: A Large-Scale Public Domain MusicXML Dataset for Symbolic Music Processing*, ICASSP 2025, [doi:10.1109/ICASSP49660.2025.10890217](https://doi.org/10.1109/ICASSP49660.2025.10890217); Xu et al., *Generating Symbolic Music from Natural Language Prompts using an LLM-Enhanced Dataset*, 2024, [arXiv:2410.02084](https://arxiv.org/abs/2410.02084). Only the source score MIDI is used here, not generated examples or model output.
+
+The interpretation pass changes timing, articulation and dynamics, not these licensed
+pitch sequences. Its decisions are recorded in `performance.json`; see
+`docs/music-performance.md`. `instruments.json` contains scalar parameters for the game's
+procedural oscillators and envelopes, packed by `tools/music_timbres.py`. It contains no
+PCM, recorded sample loops, waveform phases or measured impulse responses.
