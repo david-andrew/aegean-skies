@@ -1,10 +1,11 @@
-# Bounded stamp-volume pilot. Each formation is a connected density field, not
+# Bounded stamp clouds. Each formation is a connected distance field, not
 # independently shaded spheres. Spatial reconstruction has no temporal trails.
 use 'cloud_density.jo'
 use 'cloud_depth.jo'
 use 'look.jo'
 use 'render_space.jo'
 use 'quality.jo'
+use 'weather_scene.jo'
 
 struct CloudVolume:
     center: vec3
@@ -12,6 +13,9 @@ struct CloudVolume:
     shape: f32
     heading: f32 = 0.0
     tone: f32 = 0.5
+    weather: vec2 = vec2(1,0)       # opacity envelope, storm shading
+    growth: vec4 = vec4(0,0,0,0)    # erosion distance, rolling phase, roll, shear
+    thermal: f32 = 0.0             # cached land heating, CPU only
 
 struct VolumeVertex:
     corner: vec2
@@ -21,6 +25,8 @@ struct VolumeInstance:
     center: vec3
     extent: vec3
     meta: vec4                      # cos yaw, sin yaw, stamp, tone
+    weather: vec2
+    growth: vec4
 
 struct VolumeParams:
     rays: mat4
@@ -38,6 +44,7 @@ struct VolumeParams:
     shadows: f32
     low_size: vec2
     edge_pass: f32
+    lightning: f32 = 0.0
 
 struct VolumeOut:
     pos: vec4
@@ -45,22 +52,120 @@ struct VolumeOut:
     center: vec3
     extent: vec3
     meta: vec4
+    weather: vec2
+    growth: vec4
 
 volume_vs = (v: VolumeVertex, inst: VolumeInstance, u: VolumeParams) -> VolumeOut:
     ndc = mix(inst.rect.xy, inst.rect.zw, v.corner)
-    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta)
+    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth)
 
 cloud_to_local = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x + p.z * yaw.y, p.y, -p.x * yaw.y + p.z * yaw.x)
 cloud_to_world = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x - p.z * yaw.y, p.y, p.x * yaw.y + p.z * yaw.x)
 
+# Exact roots for the spherical render chart's constant-height surface. The
+# product form avoids cancelling Earth-sized numbers for a nearby ceiling.
+cloud_height_roots = (ray_y: f32, altitude: f32, height: f32) -> vec2:
+    h = altitude-height
+    b = (f32(EARTH_RADIUS)+h)*ray_y
+    c = h*(2.0*f32(EARTH_RADIUS)+h)
+    disc = b*b-c
+    if disc < 0.0: return vec2(1,-1)
+    q = -b-(if b < 0.0: -1.0 else: 1.0)*sqrt(disc)
+    other = if abs(q) > 0.00001: c/q else: -b
+    vec2(min(q,other),max(q,other))
+
+cloud_layer_interval = (ray_y: f32, altitude: f32, bottom: f32, top: f32, bounds: vec2) -> vec2:
+    upper = cloud_height_roots(ray_y,altitude,top)
+    if upper.x > upper.y: return vec2(1,-1)
+    start = max(bounds.x,upper.x); end = min(bounds.y,upper.y)
+    lower = cloud_height_roots(ray_y,altitude,bottom)
+    if lower.x <= lower.y:
+        if start < lower.x: end = min(end,lower.x)
+        else: start = max(start,lower.y)
+    vec2(start,end)
+
+# Value and exact gradient share four hashes; finite differences would run
+# this noise three times at every deck sample.
+cloud_layer_noise = (p: vec2) -> vec3:
+    cell = floor(p); f = p-cell
+    u = f*f*(vec2(3,3)-f*2.0)
+    du = f*(vec2(1,1)-f)*6.0
+    a = hash21(cell); b = hash21(cell+vec2(1,0))
+    c = hash21(cell+vec2(0,1)); d = hash21(cell+vec2(1,1))
+    vec3(mix(mix(a,b,u.x),mix(c,d,u.x),u.y),mix(b-a,d-c,u.y)*du.x,mix(c-a,d-b,u.x)*du.y)
+
 volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
     if max(abs(p.x), max(abs(p.y), abs(p.z))) > 1.0: return vec4(0.5, 1, 0.5, 0)
+    if kind == 4.0 or kind >= 6.0:
+        # Continuous decks / rain curtains / sea fog. No atlas fetches; their
+        # horizontal scales are kilometres, so a 64-voxel stamp would repeat.
+        rim = 1.0-smoothstep(0.6,1.0,length(p.xz/vec2(0.83,0.64)))
+        broad_field = cloud_layer_noise(p.xz*35.0)
+        broad = broad_field.x
+        n = broad*0.65+vnoise(p.xz*93.0)*0.35
+        bottom = -0.5+(n-0.5)*0.18
+        top = 0.15+n*0.72
+        body = smoothstep(bottom,bottom+0.12,p.y)*(1.0-smoothstep(top-0.18,top,p.y))
+        density = body*rim*(0.35+n*0.65)
+        if kind == 6.0: density *= 0.035*(0.3+0.7*smoothstep(0.35,0.7,n))
+        if kind == 7.0: density *= 0.22
+        normal = vec3(0,if p.y < 0.0: -1.0 else: 1.0,0)
+        if kind == 4.0 and density > 0.005:
+            normal = normalize(vec3(-broad_field.y*21.0,if p.y < 0.0: -1.0 else: 1.0,-broad_field.z*21.0))
+        return vec4(normal*0.5+vec3(0.5,0.5,0.5),density)
+    field = cloud_stamp_sample(atlas,p,kind)
+    vec4(field.xyz,clamp((field.w-0.5)*14.0,0.0,1.0))
+
+cloud_stamp_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
+    if max(abs(p.x),max(abs(p.y),abs(p.z))) > 1.0: return vec4(0.5,1,0.5,0)
+    stamp = if kind == 5.0: 3.0 else: kind
     q = (p * 0.5 + vec3(0.5, 0.5, 0.5)) * f32(CLOUD_VOXELS - 1)
     z0 = floor(q.z); z1 = min(z0 + 1.0, f32(CLOUD_VOXELS - 1))
-    base = vec2((kind - floor(kind / 2.0) * 2.0) * f32(CLOUD_SLICE * 8), floor(kind / 2.0) * f32(CLOUD_SLICE * (CLOUD_VOXELS / 8)))
-    a = vec2(z0 - floor(z0 / 8.0) * 8.0, floor(z0 / 8.0)) * f32(CLOUD_SLICE) + q.xy + vec2(1.5, 1.5) + base
-    b = vec2(z1 - floor(z1 / 8.0) * 8.0, floor(z1 / 8.0)) * f32(CLOUD_SLICE) + q.xy + vec2(1.5, 1.5) + base
+    slice0 = stamp*f32(CLOUD_VOXELS)+z0; slice1 = stamp*f32(CLOUD_VOXELS)+z1
+    a = vec2(slice0-floor(slice0/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice0/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
+    b = vec2(slice1-floor(slice1/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice1/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
     mix(sample(atlas, a / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), sample(atlas, b / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), q.z - z0)
+
+cloud_growing_point = (p: vec3, growth: vec4) -> vec3:
+    # Slow roll around rising plumes, followed by wind shear as they spread.
+    q = p
+    q.x += sin(p.y*5.0-growth.y)*growth.z+p.y*growth.w
+    q.z += cos(p.y*4.0-growth.y+p.x*3.0)*growth.z
+    q
+
+# Surface values are deliberately grouped into broad painted regions, with
+# soft transitions inside them. The silhouette comes from the distance field,
+# rather than an accumulation of widely spaced translucent samples.
+cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
+    normal = cloud_to_world((form.xyz*2.0-vec3(1,1,1))/vec3(sqrt(i.extent.x),sqrt(i.extent.y),sqrt(i.extent.z)),i.meta.xy)
+    normal /= max(length(normal),0.000001)
+    sun = normalize(u.sun_dir)
+    facing = dot(normal,sun)
+    wash = vnoise(p.xz*19.0+vec2(p.y*13.0,p.y*7.0))-0.5
+    value = facing+wash*0.12
+    shade = mix(u.shade,vec3(0.38,0.61,0.77)*u.sun,0.48)
+    shade = mix(shade,vec3(0.08,0.23,0.37)*u.sun,i.weather.y*0.8)
+    white = u.sun*vec3(0.76,0.80,0.86)
+    middle = mix(shade,white,0.53)
+    light = mix(shade,middle,smoothstep(-0.45,0.05,value))
+    light = mix(light,white,smoothstep(0.04,0.33,value))
+    under = smoothstep(-0.59,-0.12,p.y)
+    light = mix(shade*0.88,light,0.35+under*0.65)
+    if u.shadows > 0.0:
+        probe = cloud_stamp_sample(u.atlas,p+cloud_to_local(sun,i.meta.xy)*0.16,i.meta.z).w
+        shadow = smoothstep(0.50,0.57,probe)*0.32
+        light = mix(light,shade,shadow)
+    edge = 1.0-abs(dot(normal,ray))
+    rim = edge*edge*edge*smoothstep(-0.15,0.35,facing)*(0.5+under*0.5)
+    light = mix(light,white*1.08,rim*0.6)
+    # Irregular washes live in the formation, not in screen coordinates. They
+    # vary value within a painted region without putting outlines on every lobe.
+    pigment = vnoise(p.xy*8.0+vec2(p.z*5.0,0))*0.65+vnoise(p.yz*19.0+vec2(p.x*11.0,0))*0.35
+    light = mix(light,shade,smoothstep(0.52,0.73,pigment)*0.22)
+    light *= 0.94+pigment*0.05+wash*0.07
+    light *= 1.0-i.weather.y*0.18*(1.0-under*0.45)
+    if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
+    aerial(light,world,u.cam,u.haze,u.fog)
 
 volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
     # Only ambiguous reconstruction pixels are marched again at full resolution.
@@ -92,9 +197,42 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         leave = min(leave, view_depth / max(dot(ray, u.forward), 0.0001))
     sea = sea_intersection(ray, u.cam.y)
     if sea > 0.0: leave = min(leave, sea)
+    if i.meta.z == 4.0 or i.meta.z >= 6.0:
+        # A 600 km weather record must not turn a 500 m cloud layer into a
+        # 100 km march through its curvature-expanded bounding box.
+        interval = cloud_layer_interval(ray.y,u.cam.y,i.center.y-i.extent.y*0.59,i.center.y+i.extent.y*0.87,vec2(enter,min(leave,150000.0)))
+        enter = interval.x; leave = interval.y
+        # Inside the guaranteed dense core, distant samples must not replace
+        # the near fog with kilometres of aerial haze at the grazing horizon.
+        inside = (u.cam-i.center)/i.extent
+        if i.meta.z == 4.0 and length(inside.xz/vec2(0.83,0.64)) < 0.55 and inside.y > -0.35 and inside.y < 0.12:
+            leave = min(leave,enter+4000.0/max(i.weather.x,0.02))
     if leave <= enter: discard()
     distance = length(i.center - u.cam)
     steps = mix(u.steps, 8.0, smoothstep(12000.0, 65000.0, distance))
+    if i.meta.z >= 4.0 and i.meta.z != 5.0: steps = min(steps,8.0)
+    if i.meta.z < 4.0 or i.meta.z == 5.0:
+        # Conservative distance steps skip empty air; quantization and warped
+        # ellipsoid gradients get a safety margin. Refine only the visible shell.
+        scale = min(i.extent.x,min(i.extent.y,i.extent.z))
+        ray_scale = 1.0/max(length(direction/i.extent)+leave/(f32(EARTH_RADIUS)*i.extent.y),0.000001)
+        pixel = max(fwidth(i.ndc.x),fwidth(i.ndc.y))*0.4
+        t = enter
+        loop k in 0..80:
+            if t >= leave: break
+            world = u.cam+ray*t
+            world.y += world_drop(ray.xz*t)
+            p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
+            form = cloud_stamp_sample(u.atlas,p,i.meta.z)
+            d = (0.5-form.w)*0.5+i.growth.x
+            epsilon = max(0.005,t*pixel/scale*0.55)
+            if d < epsilon:
+                opacity = i.weather.x*(1.0-exp(-max(leave-t,0.0)*0.035))
+                color = cloud_paint(form,p,world,ray,i,u)
+                fade = 1.0-smoothstep(125000.0,150000.0,distance)
+                return vec4(color*opacity,opacity)*fade
+            t += max((d-0.001)*ray_scale*0.72,epsilon*ray_scale*0.5)
+        return vec4(0,0,0,0)
     dt = (leave - enter) / steps
     # Midpoints are stable in world/view space. No frame-random dither/history.
     t = enter + dt * 0.5
@@ -108,18 +246,22 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         world.y += world_drop(ray.xz * t)
         p = cloud_to_local(world - i.center, i.meta.xy) / i.extent
         form = volume_sample(u.atlas, p, i.meta.z)
-        density = form.w
+        density = form.w*i.weather.x
         if density > 0.005:
             normal = cloud_to_world((form.xyz * 2.0 - vec3(1, 1, 1)) / i.extent, i.meta.xy)
             normal = normal / max(length(normal), 0.000001)
             under = smoothstep(-0.58, 0.05, p.y)
             lit = smoothstep(-0.2, 0.6, dot(normal, sun)) * (0.35 + 0.65 * under)
-            if u.shadows > 0.0 and distance < 25000.0:
+            if u.shadows > 0.0 and distance < 25000.0 and i.meta.z < 4.0:
                 probe = volume_sample(u.atlas, p + local_sun * 0.22, i.meta.z).w
                 lit *= exp(-probe * 2.5)
             white = u.sun * vec3(1, 0.98, 0.93) * (0.92 + 0.08 * i.meta.w)
             shade = u.shade * (0.88 + 0.24 * under)
             light = mix(shade, white, lit)
+            light *= 1.0-i.weather.y*0.48*(1.0-under*0.5)
+            if i.meta.z == 4.0: light *= 0.72+0.28*vnoise(p.xz*93.0)
+            if i.meta.z == 6.0: light = mix(u.shade,u.haze,0.35)*0.85
+            if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
             forward = pow(max(dot(ray, sun), 0.0), 12.0)
             light += u.sun * (forward * 0.28 * (1.0 - density))
             light = aerial(light, world, u.cam, u.haze, u.fog)
@@ -127,14 +269,21 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
             color += light * (trans * opacity)
             trans *= 1.0 - opacity
         t += dt
-    vec4(color, 1.0 - trans) * (1.0 - smoothstep(125000.0, 150000.0, distance))
+    # Country-sized layers can contain the camera while their record center
+    # is hundreds of kilometres away. Their ray interval is already range
+    # limited above; a center-distance fade would erase mainland weather.
+    fade = if i.meta.z == 4.0 or i.meta.z >= 6.0: 1.0 else: 1.0-smoothstep(125000.0,150000.0,distance)
+    vec4(color, 1.0 - trans)*fade
 
 volume_sh: Shader
 volume_quad: Mesh
 volume_atlas: Texture
 volume_instances: InstanceBuffer[VolumeInstance]
 volume_visible = 0
+volume_occluders: CloudVolume[]
 volume_color: RenderTarget
+volume_weather_small = false
+volume_rain_small = false
 
 struct VolumeCompositeParams:
     color: Texture
@@ -226,7 +375,7 @@ volume_bounds = (v: CloudVolume, cam: vec3, vp: mat4) -> vec4:
     vec4(max(lo, vec2(-1, -1)), min(hi, vec2(1, 1)))
 
 draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
-    global volume_visible, volume_color
+    global volume_visible, volume_color, volume_weather_small,volume_rain_small,volume_occluders
     if not __post_active or cloud_scene_depth.id == 0: return
     zone("cloud volumes")
     cam = scene_camera(); vp = scene_view_proj(); planes = __frustum(vp)
@@ -241,18 +390,41 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
             if dot(plane.xyz, center) + plane.w < -radius: visible = false; break
         if visible: selected.push(v)
     selected.sort_by((v: CloudVolume) -> f64: f64(length(v.center - cam)), descending = true)
+    volume_occluders = selected
     instances: VolumeInstance[]
+    weather_coverage: f32 = 0.0
+    deck_coverage: f32 = 0.0; rain_coverage: f32 = 0.0
     loop v in selected:
         rect = volume_bounds(v, cam, vp)
         if rect.x >= rect.z or rect.y >= rect.w: continue
-        instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone)))
+        area = (rect.z-rect.x)*(rect.w-rect.y)*v.weather.x*0.25
+        if v.shape >= 4.0: weather_coverage += area
+        if v.shape == 4.0: deck_coverage += area
+        if v.shape == 6.0: rain_coverage += area
+        # A distant thunderhead can be costly while occupying less area than
+        # a broad deck. Use the same weather target once it is visibly substantial.
+        if v.shape == 5.0 and area > 0.03: weather_coverage = max(weather_coverage,0.31)
+        instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth))
     volume_visible = instances.len()
     set_instances(volume_instances, instances)
     rays = render_rays(vp)
     steps: f32 = if render_quality.tier == 0: 24.0 else: 40.0
-    w = max(1, cloud_scene_depth.width / 2); h = max(1, cloud_scene_depth.height / 2)
+    # Broad, softly varying weather layers need fewer pixels than isolated
+    # cumulus silhouettes. Hysteresis avoids reallocating around the threshold;
+    # the existing full-resolution depth-edge repair still protects foregrounds.
+    if weather_coverage > 0.3: volume_weather_small = true
+    if weather_coverage < 0.15: volume_weather_small = false
+    # Two overlapping soft layers (front/rain) cost more than an isolated
+    # thunderhead. Give their wash fewer pixels, retaining full-resolution
+    # scene-depth repair and full-resolution near rain/trails.
+    layered = min(deck_coverage,rain_coverage)
+    if layered > 0.02: volume_rain_small = true
+    if layered < 0.01: volume_rain_small = false
+    divisor = if volume_rain_small: 4 else: if volume_weather_small or render_quality.tier == 0: 3 else: 2
+    w = max(1, cloud_scene_depth.width / divisor); h = max(1, cloud_scene_depth.height / divisor)
     p = VolumeParams(rays, cam, normalize(rays[2].xyz), L.sun_dir, L.sun, L.shade, L.haze, f32(L.fog_density), vec2(__proj3[2].z, __proj3[3].z), volume_atlas, cloud_scene_depth, steps, if render_quality.tier == 0: 0.0 else: 1.0, vec2(f32(w), f32(h)), 0.0)
-    # A color-only half-size target. Scene depth remains attached to the scene
+    if weather_active: p.lightning = weather_lightning()
+    # A color-only reduced target. Scene depth remains attached to the scene
     # while this DIFFERENT framebuffer samples it, which is legal on WebGL2.
     if volume_color.texture.width != w or volume_color.texture.height != h:
         if volume_color.fbo != 0: free_render_target(volume_color)

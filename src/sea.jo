@@ -7,6 +7,7 @@ use 'world.jo'
 use 'geography.jo'
 use 'look.jo'
 use 'render_space.jo'
+use 'weather_scene.jo'
 
 const DEPTH_MAP = 1024
 const DEPTH_EXTENT = 24000.0        # the depth map's square, meters across (past it: open sea)
@@ -44,6 +45,7 @@ struct SeaParams:
     flow: vec4                      # the near detail's extra drift (x, z m/s), its cycle (s), and (w) 1: the whole sea's look slides
     warp_a: vec4                    # (the speed trial's warp: render_space.jo)
     warp_b: vec4
+    rain: f32 = 0.0
 
 struct SeaOut:
     pos: vec4
@@ -52,6 +54,8 @@ struct SeaOut:
 # the swells: height and slope (dh/dx, dh/dz) at a point, running mostly with the wind. Each
 # fades out where it is too short for the pixels to show it (dist: from the camera).
 _swell = (p: vec2, t: f32, amp: f32, dist: f32, wd: vec2) -> vec3:
+    # All six bands have reached exactly zero beyond the longest fade.
+    if dist >= 2440.0: return vec3(0,0,0)
     h: f32 = 0.0
     dx: f32 = 0.0
     dz: f32 = 0.0
@@ -83,6 +87,7 @@ sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
 
 # fine ripples raised by the wind (their slope), shorter than the swells, filtered by distance
 _ripples = (p: vec2, t: f32, wd: vec2, dist: f32) -> vec2:
+    if dist >= 186.0: return vec2(0,0)
     turns: f32[5] = [0.3, -0.35, 0.75, -0.8, 0.05]
     lens: f32[5] = [3.1, 2.3, 1.6, 1.15, 0.8]
     g = vec2(0, 0)
@@ -230,13 +235,16 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     # how deep it is here (the map: r = depth / 60 m), and so its color
     uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
     dm = sample(u.depth, uv)
+    shelter = dm.y
     depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
     if u.expanded > 0.5 and (abs(p.x) >= 12000.0 or abs(p.y) >= 12000.0):
+        shelter = 0.0
         depth = if abs(p.x) < 250000.0 and abs(p.y) < 200000.0: sample(u.world_depth, p / vec2(500000,400000) + vec2(0.5,0.5)).x * 60.0 else: 60.0
         near_uv = (p-u.local_area.xy)/max(u.local_area.z,1.0)+vec2(0.5,0.5)
         edge_dist = max(abs(near_uv.x-0.5),abs(near_uv.y-0.5))
         if u.local_area.w > 0.5 and edge_dist < 0.5:
             depth = mix(depth,sample(u.local_depth,near_uv).x*60.0,1.0-smoothstep(0.45,0.49,edge_dist))
+            shelter = sample(u.local_depth,near_uv).y*(1.0-smoothstep(0.45,0.49,edge_dist))
     wd = u.wind.xy
     ws = u.wind.z
     g = mix(gust(p, u.drift), 0.5, smoothstep(2500.0, 12000.0, dist))
@@ -267,12 +275,20 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
         sb = _swell(p + offb, u.time, u.wind.w, dist, wd)
         s = vec3(s.x, (sa.y * wa + sb.y * wb) * keep, (sa.z * wa + sb.z * wb) * keep)
     rp = _ripples(p + offa, u.time, wd, dist) * rough
+    if u.rain > 0.01 and dist < 90.0:
+        q = p*1.4
+        cell = floor(q); f = fract(q)-vec2(0.5,0.5)
+        age = fract(u.time*1.7+hash21(cell))
+        ring = sin((length(f)-age*0.7)*45.0)*exp(-abs(length(f)-age*0.7)*25.0)*(1.0-age)
+        rp += f*(ring*u.rain*0.12*(1.0-smoothstep(45.0,90.0,dist)))
     if near > 0.0: rp = (rp * wa + _ripples(p + offb, u.time, wd, dist) * (rough * wb)) * keep
     n = render_normal(normalize(vec3(-(s.y + rp.x), 1.0, -(s.z + rp.y))), i.world, u.cam)
     vdir = normalize(u.cam - render_world(i.world, u.cam))
     l = normalize(u.sun_dir)
     sh = 1.0 - smoothstep(0.5, 26.0, depth)              # 1 in the shallows
-    body = mix(u.deep, u.shallow, pow(sh, 1.4))
+    clear_bay = shelter*(1.0-smoothstep(8.0,20.0,depth))*(1.0-u.rain*0.7)
+    shallow = mix(u.shallow,vec3(0.13,0.63,0.43),clear_bay*0.68)
+    body = mix(u.deep, shallow, pow(sh, 1.4))
     # the gusts darken the water they pass over
     body = body * (1.0 - 0.3 * g * clamp(ws / 8.0, 0.0, 1.0))
     ndl = max(dot(n, l), 0.0)
@@ -287,10 +303,10 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     sfade = (1.0 - smoothstep(180.0, 650.0, dist)) * (1.0 - sh * 0.8)
     st = _crest_strokes(p, s, u.time, wd, ws, u.wind.w, dist)
     if whole: st = _crest_strokes(p + offa, sa, u.time, wd, ws, u.wind.w, dist) * wa + _crest_strokes(p + offb, sb, u.time, wd, ws, u.wind.w, dist) * wb
-    st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)
+    st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)
     c = mix(c, mix(skyc, vec3(1, 1, 1), 0.55) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.85)
     # the sea's own marks, persistent, nearer and stronger the faster one goes over them
-    rf = (1.0 - smoothstep(120.0, 450.0, dist)) * (0.35 + 0.65 * u.rush.w) * (1.0 - sh * 0.5)
+    rf = (1.0 - smoothstep(120.0, 450.0, dist)) * (0.35 + 0.65 * u.rush.w) * (1.0 - sh * 0.5)*smoothstep(0.1,2.0,ws)
     if rf > 0.01:
         smear = (u.rush.xz + u.flow.xy * near) * (0.6 / 60.0)
         rs = _marks(p + offa, smear, dist)
@@ -311,15 +327,23 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     sheen = pow(nh, mix(90.0, 55.0, variance)) * 0.22 + pow(nh, mix(600.0, 160.0, variance)) * 0.5
     gl = _glints(p + offa, n, vdir, l, dist, u.time, rough)
     if near > 0.0: gl = gl * wa + _glints(p + offb, n, vdir, l, dist, u.time, rough) * wb
-    c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)
-    # foam: a lace where the water is very shallow, moving with the swell
-    fn = sin(p.x * 0.9 + sin(p.y * 0.6) * 2.0 + u.time * 1.2) * sin(p.y * 1.1 + sin(p.x * 0.5) * 2.0 - u.time * 0.9)
-    edge = 1.0 - smoothstep(0.15, 1.4 + 0.7 * fn, depth)
-    ffade = 1.0 - smoothstep(1500.0, 5000.0, dist)
-    foam = clamp(edge * (0.75 + 0.35 * fn), 0.0, 1.0) * ffade
+    c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)*(1.0-u.rain*0.75)
+    # Both shore terms are identically zero beyond 3 m depth / 5 km range.
+    # Do not run their noise and trigonometry over every offshore pixel.
+    foam: f32 = 0.0
+    if depth < 3.0 and dist < 5000.0:
+        fn = sin(p.x*0.9+sin(p.y*0.6)*2.0+u.time*1.2)*sin(p.y*1.1+sin(p.x*0.5)*2.0-u.time*0.9)
+        wash = 0.6+max(s.x,0.0)*0.8+0.35*sin(u.time*1.4+vnoise(p*0.04)*6.0)
+        edge = 1.0-smoothstep(0.12,wash+0.7+0.45*fn,depth)
+        breaker = (1.0-smoothstep(0.15,0.65,abs(depth-wash-0.6)))*clamp(ws/10.0,0.15,0.85)
+        foam = clamp(edge*(0.75+0.35*fn)+breaker*(0.5+0.5*fn),0.0,1.0)*(1.0-smoothstep(1500.0,5000.0,dist))
     c = mix(c, vec3(0.97, 0.98, 1.0) * (u.sun * 0.8 + u.sky_top * 0.3), foam * 0.85)
     # the water is clear: at the shore one sees the sand through it
-    a = clamp(0.48 + depth * 0.12 + fres * 0.4 + foam + gl, 0.0, 1.0)
+    a = clamp(0.48+depth*0.12+fres*0.4+foam+gl,0.0,1.0)
+    if clear_bay > 0.005:
+        absorption = mix(0.12,0.055,clear_bay)
+        clear_alpha = clamp(1.0-exp(-depth*absorption)*(1.0-fres*0.85)*0.95+foam+gl+u.rain*0.12,0.0,1.0)
+        a = mix(a,clear_alpha,clear_bay)
     c = aerial(c, i.world, u.cam, u.haze, u.fog)
     vec4(c, a)
 
@@ -381,9 +405,25 @@ build_depth_texture = () -> Texture:
             h = rows[j][i]
             d = clamp(-h / 60.0, 0.0, 1.0)
             img.set(i, j, vec4(f32(d), if h > 0.0: 1.0 else: 0.0, 0, 1))
+    coast_shelter(img)
     result = texture(img, true)
     init_expanded_depth(result)
     result
+
+# Reuse completed depth pixels to find bays enclosed on several sides. This
+# adds no terrain queries or GPU samples; the otherwise unused green channel
+# is published together with depth, never while a near map is half-built.
+coast_shelter = (img: mut Image):
+    loop j in 0..img.height:
+        loop i in 0..img.width:
+            c = img.get(i,j)
+            if c.x > 0.35: continue
+            enclosed: f32 = 0.0
+            loop d in [vec2(6,0),vec2(-6,0),vec2(0,6),vec2(0,-6)]:
+                q = img.get(clamp(i+int(d.x),0,img.width-1),clamp(j+int(d.y),0,img.height-1)).x
+                enclosed += 1.0-smoothstep(0.005,0.06,q)
+            c.y = smoothstep(0.8,2.7,enclosed)
+            img.set(i,j,c)
 
 # A fixed coarse map and one double-buffered near window. Partial rows are
 # never published. The 23.4375 m near sampling matches the original depth map.
@@ -430,6 +470,7 @@ update_nearby_depth = ():
             nearby_image.set(i,j,vec4(f32(clamp(-h/60.0,0.0,1.0)),0,0,1))
     nearby_row += NEAR_DEPTH_ROWS
     if nearby_row >= NEAR_DEPTH_N:
+        coast_shelter(nearby_image)
         update_texture(nearby_spare,nearby_image)
         old = nearby_depth; nearby_depth = nearby_spare; nearby_spare = old
         nearby_area = vec4(nearby_pending.x,nearby_pending.y,f32(NEAR_DEPTH_EXTENT),1)
@@ -472,7 +513,7 @@ set_sea_rough = (r: f64):
     global sea_rough
     sea_rough = max(r, 0.0)
 
-_swell_amp = (w: Wind) -> f64: (0.003 + 0.0011 * w.speed) * sea_rough
+_swell_amp = (w: Wind) -> f64: (0.003 + 0.0011 * w.speed) * sea_rough * smoothstep(0.05,2.0,w.speed)
 
 sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows: SeaShadows) -> SeaParams:
     swell = _swell_amp(w)                       # (the swells' height for their length)
@@ -482,6 +523,7 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     residual = vec2(f32(f64(cam.x) - f64(center.x)), f32(f64(cam.z) - f64(center.y)))
     p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
         L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(ws / 12.0), vec4(w.dir.x, w.dir.y, f32(ws), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth, expanded_depth, nearby_depth, nearby_area, if geography_enabled: 1.0 else: 0.0, render_rays(scene_view_proj()), center, residual, scene_flow, scene_warp_a, scene_warp_b)
+    p.rain = if weather_active: weather_here.rain else: 0.0
     p
 
 draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0), shadows: SeaShadows = SeaShadows()):

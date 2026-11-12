@@ -3,6 +3,8 @@
 
 use 'look.jo'
 use 'render_space.jo'
+use 'cloud_volume.jo'
+use 'cloud_density.jo'
 
 const TRAIL_LIFE = 2.2
 
@@ -41,19 +43,71 @@ struct TrailParams:
     fog: f32
     warp_a: vec4                    # (the speed trial's warp: render_space.jo)
     warp_b: vec4
+    cloud_center: vec4[32]
+    cloud_extent: vec4[32]
+    cloud_meta: vec4[32]             # yaw cosine/sine, kind, opacity
+    cloud_growth: vec4[32]
+    cloud_count: f32 = 0.0
+    cloud_atlas: Texture
 
 struct TrailOut:
     pos: vec4
     world: vec3
     data: vec4
 
-trail_vs = (v: TrailVertex, u: TrailParams) -> TrailOut: TrailOut(u.view_proj * vec4(v.pos, 1), v.pos, v.data)
+trail_vs = (v: TrailVertex, u: TrailParams) -> TrailOut: TrailOut(u.view_proj * vec4(render_warped(v.pos,u.cam,u.warp_a,u.warp_b), 1), v.pos, v.data)
+
+# Evaluate only the tiny ribbon's pixels, and only up to THEIR depth. Drawing
+# after the composite alone would incorrectly put a far trail over near clouds.
+trail_transmittance = (world: vec3,u: TrailParams) -> f32:
+    delta = render_world(world,u.cam)-u.cam
+    limit = length(delta); ray = delta/max(limit,0.0001)
+    trans: f32 = 1.0
+    loop k in 0..32:
+        if f32(k) >= u.cloud_count or trans < 0.005: break
+        center = u.cloud_center[k].xyz; extent = u.cloud_extent[k].xyz; meta = u.cloud_meta[k]
+        bent = render_world(center,u.cam)
+        origin = cloud_to_local(u.cam-bent,meta.xy)
+        direction = cloud_to_local(ray,meta.xy)
+        reach = length(extent.xz); distance = length(center.xz-u.cam.xz)
+        pad = world_drop(vec2(distance+reach,0))-world_drop(vec2(distance,0))
+        inv = vec3(1.0/(if abs(direction.x) < 0.000001: 0.000001 else: direction.x),1.0/(if abs(direction.y) < 0.000001: 0.000001 else: direction.y),1.0/(if abs(direction.z) < 0.000001: 0.000001 else: direction.z))
+        a = (extent*CLOUD_MIN-vec3(0,pad,0)-origin)*inv
+        b = (extent*CLOUD_MAX+vec3(0,pad,0)-origin)*inv
+        lo = min(a,b); hi = max(a,b)
+        enter = max(0.0,max(lo.x,max(lo.y,lo.z))); leave = min(limit,min(hi.x,min(hi.y,hi.z)))
+        if meta.z == 4.0 or meta.z >= 6.0:
+            interval = cloud_layer_interval(ray.y,u.cam.y,center.y-extent.y*0.59,center.y+extent.y*0.87,vec2(enter,leave))
+            enter = interval.x; leave = interval.y
+        if leave <= enter: continue
+        scale = 1.0/max(length(direction/extent)+leave/(f32(EARTH_RADIUS)*extent.y),0.000001)
+        t = enter
+        if meta.z < 4.0 or meta.z == 5.0:
+            loop step in 0..80:
+                if t >= leave: break
+                at = u.cam+ray*t; at.y += world_drop(ray.xz*t)
+                p = cloud_growing_point(cloud_to_local(at-center,meta.xy)/extent,u.cloud_growth[k])
+                d = (0.5-cloud_stamp_sample(u.cloud_atlas,p,meta.z).w)*0.5+u.cloud_growth[k].x
+                if d < 0.005:
+                    trans *= 1.0-meta.w*(1.0-exp(-(leave-t)*0.035))
+                    break
+                t += max((d-0.001)*scale*0.72,scale*0.0025)
+        else:
+            dt = (leave-enter)/8.0
+            loop step in 0..8:
+                at = u.cam+ray*(enter+(f32(step)+0.5)*dt); at.y += world_drop(ray.xz*(enter+(f32(step)+0.5)*dt))
+                p = cloud_to_local(at-center,meta.xy)/extent
+                density = volume_sample(u.cloud_atlas,p,meta.z).w*meta.w
+                trans *= exp(-density*dt*0.009)
+    trans
 
 trail_fs = (i: TrailOut, u: TrailParams) -> vec4:
     across = abs(i.data.x)
     fade = (1.0 - smoothstep(0.0, TRAIL_LIFE, i.data.y)) * i.data.z
     a = (1.0 - smoothstep(0.2, 1.0, across)) * fade * 0.75
     if a < 0.01: discard()
+    a *= trail_transmittance(i.world,u)
+    if a < 0.001: discard()
     c = vec3(1, 1, 1) * (u.sun * 0.8 + u.sky * 0.4)
     vec4(aerial(c, i.world, u.cam, u.haze, u.fog), a)
 
@@ -76,10 +130,14 @@ draw_trails = (trails: Trail[], L: Light, t: f64):
             a = tr.pts[k]
             b = tr.pts[k + 1]
             if a.strength <= 0.0 and b.strength <= 0.0: continue
+            # At 3 km the oldest ribbon is subpixel even at desktop resolution.
+            # The active view segment is therefore local and its cloud list bounded.
+            if min(length(a.pos-cam),length(b.pos-cam)) > 3000.0: continue
             d = b.pos - a.pos
             if length(d) < 0.001: continue
             view = normalize((a.pos + b.pos) * 0.5 - cam)
-            side = normalize(cross(d, view))
+            side = cross(d,view)
+            side /= max(length(side),0.00001)
             la = t - a.born
             lb = t - b.born
             wa = f32(0.07 + la * 0.25)
@@ -92,4 +150,20 @@ draw_trails = (trails: Trail[], L: Light, t: f64):
             vs.push(a1); vs.push(b0); vs.push(b1)
     if vs.len() < 3: return
     update_mesh(trail_mesh, vs)
-    draw(trail_sh, trail_mesh, TrailParams(scene_view_proj(), cam, L.sun, L.sky_top, L.haze, f32(L.fog_density), scene_warp_a, scene_warp_b))
+    u = TrailParams(view_proj=scene_view_proj(),cam=cam,sun=L.sun,sky=L.sky_top,haze=L.haze,fog=f32(L.fog_density),warp_a=scene_warp_a,warp_b=scene_warp_b,cloud_atlas=volume_atlas)
+    count = 0
+    loop cloud in volume_occluders:
+        center = render_world(cloud.center,cam)
+        reach = length(cloud.extent.xz); distance = length(cloud.center.xz-cam.xz)
+        radius = length(cloud.extent)+world_drop(vec2(distance+reach,0))-world_drop(vec2(distance,0))
+        if length(center-cam)-radius > 3100.0: continue
+        # At most four disjoint local cell boxes plus the saved weather layers;
+        # 32 entries leave headroom while staying below WebGL2 minimum uniforms.
+        if count >= 32: break
+        u.cloud_center[count] = vec4(cloud.center,0)
+        u.cloud_extent[count] = vec4(cloud.extent,0)
+        u.cloud_meta[count] = vec4(cos(cloud.heading),sin(cloud.heading),cloud.shape,cloud.weather.x)
+        u.cloud_growth[count] = cloud.growth
+        count += 1
+    u.cloud_count = f32(count)
+    draw(trail_sh,trail_mesh,u)

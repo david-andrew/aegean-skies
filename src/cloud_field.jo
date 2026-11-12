@@ -1,8 +1,16 @@
 # Persistent world cells. Identity depends on seed/cell, never camera position or
 # render quality. The outer ring fades before cells enter/leave the cache.
 use 'cloud_volume.jo'
+use 'weather_scene.jo'
+use 'world.jo'
+use 'geography.jo'
+import 'living_conditions.jo' as weather
 const CLOUD_CELL = 6500.0
 const CLOUD_RANGE = 150000.0
+const CLOUD_BANK_CELL = 26000.0
+cloud_bank_x = -999999
+cloud_bank_z = -999999
+cloud_bank_cache: CloudVolume[]
 cloud_field_x = -999999
 cloud_field_z = -999999
 cloud_field_cache: CloudVolume[]
@@ -21,10 +29,49 @@ cloud_cell = (x: int, z: int) -> CloudVolume?:
     base = 650.0 + noise(cx / 60000.0, cz / 60000.0) * 300.0
     # Rotated full boxes fit disjoint horizontal cells, avoiding interpenetrating
     # formation layers. Each stamp's lobes already form a whole bank.
-    CloudVolume(vec3(f32(cx), f32(base + height * 0.62), f32(cz)), vec3(f32(width), f32(height), f32(depth)), f32(floor(r.next_float() * 4.0)), f32(r.next_float() * TAU), f32(r.next_float()))
+    CloudVolume(vec3(f32(cx), f32(base + height * 0.62), f32(cz)), vec3(f32(width), f32(height), f32(depth)), f32(floor(r.next_float() * 3.0)), f32(r.next_float() * TAU), f32(r.next_float()))
+
+# Stable geography-derived heating: sampled once per cell cache build, never
+# per fragment/frame. Island groups seed afternoon lines even over nearby water.
+cloud_heating = (p: vec2) -> f32:
+    heat: f32 = 0.0
+    loop isl in ISLANDS:
+        heat = max(heat,1.0-smoothstep(f32(isl.radius),f32(isl.radius+6000.0),length(p-isl.center)))
+    if geography_enabled:
+        loop offset in [vec2(0,0),vec2(-2500,0),vec2(2500,0),vec2(0,-2500),vec2(0,2500)]:
+            q = p+offset
+            heat = max(heat,f32(smoothstep(0.0,120.0,new_land_base(f64(q.x),f64(q.y)).0)))
+    heat
+
+cloud_bank = (x: int,z: int,drift: vec2 = vec2(0,0)) -> CloudVolume?:
+    r = rng(1701+x*73856093+z*19349663)
+    if r.next_float() > 0.43: return none
+    p = vec2(f32((f64(x)+0.5)*CLOUD_BANK_CELL),f32((f64(z)+0.5)*CLOUD_BANK_CELL))
+    heat = cloud_heating(p+drift)
+    tone = f32(r.next_float())
+    height = 1800.0+tone*2600.0
+    extent = vec3(f32(6500.0+r.next_float()*2200.0),height,f32(3900.0+r.next_float()*1800.0))
+    CloudVolume(vec3(p.x,950+height*0.62,p.y),extent,if tone < 0.45: 1.0 else: 2.0, f32(r.next_float()*TAU),tone,thermal=heat)
+
+cloud_evolve = (source: CloudVolume,air: weather.WeatherAir,seconds: f64) -> CloudVolume:
+    v = source
+    phase = f32(fract(seconds/(1000.0+f64(v.tone)*800.0)+f64(v.tone)))
+    rise = smoothstep(0.02,0.38,phase)
+    spread = smoothstep(0.55,0.94,phase)
+    alive = smoothstep(0.0,0.06,phase)*(1.0-smoothstep(0.92,1.0,phase))
+    heating = f32(smoothstep(9.0,15.0,weather_hour_now)*(1.0-smoothstep(17.0,20.0,weather_hour_now)))*v.thermal
+    amount = air.cloud+heating*0.22
+    v.weather.x = clamp((amount-v.tone*0.42)*4.0,0.0,1.0)*alive*(1.0-smoothstep(0.2,0.75,air.deck))
+    tall = smoothstep(0.55,0.95,v.tone)*max(air.towers,heating*0.65)
+    v.extent.xz *= 0.65+rise*0.3+spread*0.12
+    v.extent.y *= (0.15+rise*0.85)*(1.0-spread*0.62)*(0.7+tall*1.7)
+    v.center.y = air.ceiling+v.extent.y*0.62
+    v.weather.y = air.storm
+    v.growth = vec4((1.0-rise)*0.075+spread*0.10,f32(seconds*0.005)+v.tone*6.28,0.018*rise,spread*0.035)
+    v
 
 world_clouds = (cam: vec3, drift: vec2) -> CloudVolume[]:
-    global cloud_field_x, cloud_field_z, cloud_field_cache
+    global cloud_field_x, cloud_field_z, cloud_field_cache,cloud_bank_x,cloud_bank_z,cloud_bank_cache
     x = int(floor(f64(cam.x - drift.x) / CLOUD_CELL))
     z = int(floor(f64(cam.z - drift.y) / CLOUD_CELL))
     if x != cloud_field_x or z != cloud_field_z:
@@ -33,11 +80,50 @@ world_clouds = (cam: vec3, drift: vec2) -> CloudVolume[]:
         loop iz in z - radius..z + radius + 1:
             loop ix in x - radius..x + radius + 1:
                 v = cloud_cell(ix, iz)
-                if v != none: cloud_field_cache.push(v!)
+                if v != none:
+                    source = v!; source.thermal = cloud_heating(source.center.xz+drift)
+                    cloud_field_cache.push(source)
         cloud_field_x = x; cloud_field_z = z
+    bx = int(floor(f64(cam.x-drift.x)/CLOUD_BANK_CELL)); bz = int(floor(f64(cam.z-drift.y)/CLOUD_BANK_CELL))
+    if bx != cloud_bank_x or bz != cloud_bank_z:
+        cloud_bank_cache.clear()
+        loop iz in bz-7..bz+8:
+            loop ix in bx-7..bx+8:
+                if let bank = cloud_bank(ix,iz,drift): cloud_bank_cache.push(bank)
+        cloud_bank_x = bx; cloud_bank_z = bz
     result: CloudVolume[]
     loop source in cloud_field_cache:
         v = source
-        v.center += vec3(drift.x, 0, drift.y)
-        if length(v.center.xz - cam.xz) < f32(CLOUD_RANGE): result.push(v)
+        # Reserve the large formation's whole cell. This prevents interleaved
+        # translucent boxes and reduces, rather than adds to, small-cloud overdraw.
+        ix = int(floor(f64(v.center.x)/CLOUD_BANK_CELL)); iz = int(floor(f64(v.center.z)/CLOUD_BANK_CELL))
+        r = rng(1701+ix*73856093+iz*19349663)
+        if r.next_float() <= 0.43: continue
+        v.center += vec3(drift.x,0,drift.y)
+        if weather_active: v = cloud_evolve(v,weather_at_point(v.center),weather_seconds)
+        if v.weather.x >= 0.005 and length(v.center.xz-cam.xz) < f32(CLOUD_RANGE): result.push(v)
+    loop source in cloud_bank_cache:
+        v = source
+        v.center += vec3(drift.x,0,drift.y)
+        if weather_active: v = cloud_evolve(v,weather_at_point(v.center),weather_seconds)
+        if v.weather.x >= 0.005 and length(v.center.xz-cam.xz) < f32(CLOUD_RANGE): result.push(v)
+    if weather_active:
+        loop cell in weather_cells:
+            # Match the shared field between minute updates, so fronts move
+            # continuously instead of jumping once every two play seconds.
+            center = cell.center+cell.velocity_milli_m_per_minute*f32((weather_minute_now-floor(weather_minute_now))/1000.0)
+            life = weather.weather_weight(cell,weather_minute_now,vec3(center.x,0,center.y))
+            if life < 0.005: continue
+            radius = f32(cell.radius_m)
+            base: f32 = 700.0
+            if cell.kind == .overcast or cell.kind == .squall:
+                # The same ellipse as the simulation; bounded, climbable deck.
+                result.push(CloudVolume(vec3(center.x,base+250.0,center.y),vec3(radius*cell.aspect.x/0.83,500,radius*cell.aspect.y/0.64),4,weather=vec2(life,0.4)))
+            if cell.kind == .storm:
+                # A dark anvil and rising column at the saved storm center.
+                result.push(CloudVolume(vec3(center.x,3000,center.y),vec3(max(4000.0,min(radius,5500.0)),4000,max(3200.0,min(radius,4500.0))),5,weather=vec2(life,1),growth=vec4(0,f32(weather_seconds*0.004)+f32(cell.id),0.025,0.035)))
+            if cell.kind == .squall or cell.kind == .storm:
+                result.push(CloudVolume(vec3(center.x,base*0.35,center.y),vec3(radius*cell.aspect.x/0.83,base*0.7,radius*cell.aspect.y/0.64),6,weather=vec2(life,1)))
+            if cell.kind == .fog:
+                result.push(CloudVolume(vec3(center.x,40,center.y),vec3(radius*cell.aspect.x/0.83,100,radius*cell.aspect.y/0.64),7,weather=vec2(life,0)))
     result
