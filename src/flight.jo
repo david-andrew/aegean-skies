@@ -90,6 +90,8 @@ struct CraftState:
     airspeed = 0.0
     stalled = false
     water_age = 1.0                 # time since last wet contact; a fresh airborne state can impact
+    wing_separation = vec2(0, 0)    # trial: left/right detached flow, 0..1 (also telemetry)
+    buffet = 0.0                    # trial: pre-break flow unsteadiness, 0..1
     trim_held = false               # (auto-trim, a trial: the stick let go, the way it went held)
     trim_path = 0.0                 # (the climb or descent held, radians)
 
@@ -390,9 +392,25 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # the throttle open: a hammerhead's pivot at the top)
     wash = max(auth, 0.7 * s.throttle) * (0.15 + 0.85 * tail)
     q = s.orientation
+    trial = 0.0
+    flow = StallFlow()
+    if tweaks.chaotic_stalls:
+        sea = sea_surface(e, f64(s.position.x), f64(s.position.z), s.time).height
+        clearance = f64(s.position.y) - k.float_height - max(sea, e.ground(f64(s.position.x), f64(s.position.z)))
+        # Exactly the liked path up to one span clear, then a smooth transition. This preserves
+        # the pure-scale takeoff hop and low-water hold, including their existing rotations.
+        trial = f64(smoothstep(k.span, k.span * 3.0, clearance))
+        if trial > 0.0:
+            flow = _stall_flow(k, s, c, e, k.stall_speed * sqrt(mass / max(wings, 0.12)), dt)
+    if trial == 0.0:
+        s.wing_separation = vec2(0, 0); s.buffet = 0.0
     # Asymmetric lift and torn skin act even with the stick centered. Keep impact momentum
     # through the arcade/contact boundary; only an intact airframe follows the original rates.
-    if s.hull_damage > 0.000001:
+    if trial > 0.0:
+        _stall_rotation(k, s, c, flow, auth, wash, dt)
+        spin = f64(length(s.angular_velocity))
+        if spin > 0.00001: q = quat_mul(q, quat_axis_angle(s.angular_velocity, spin * trial * dt))
+    else if s.hull_damage > 0.000001:
         imbalance = right - left
         a = clamp(speed / k.stall_speed, 0.0, 3.0)
         loss_torque = vec3((1.0 - tail) * sin(s.time * 5.0) * a, imbalance * 0.45 * a, imbalance * 4.0 * a)
@@ -411,9 +429,9 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # (the wings can only pull so many g: fast, the nose comes round slower, and pulling out of a
     # steep dive takes room)
     g_lim = 6.0 * FLIGHT_G / max(true_speed(k, speed), 1.0)
-    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, g_lim) * dt))
-    q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), -clamp(c.roll, -1.0, 1.0) * k.roll_rate * auth * dt))
-    q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, g_lim) * (1.0 - trial) * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), -clamp(c.roll, -1.0, 1.0) * k.roll_rate * auth * (1.0 - trial) * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash * (1.0 - trial) * dt))
     fwd = quat_rotate(q, vec3(0, 0, -1))
     vdir = fwd
     if speed > 0.1: vdir = air * f32(1.0 / speed)
@@ -426,12 +444,14 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # only badly hurt ones lose lift, and that sinks it rather than stalling it)
     lift_v = f64(smoothstep(stall * 0.75, stall * 1.15, ts))
     lift = lift_v * clamp(wings / 0.8, 0.0, 1.0)
-    s.stalled = lift_v < 0.999
+    if trial > 0.0:
+        lift *= 1.0 - trial * (1.0 - flow.support)
+    s.stalled = lift_v < 0.999 or (trial > 0.0 and flow.separation > 0.25)
     if lift_v < 1.0:
         axis = cross(fwd, normalize(vdir + vec3(0, -0.7, 0)))
         # (pure scale, low over the water: a hop off it doesn't drop the nose; it sinks back level)
         near_water = if pure_k(k) > 1.0001: 1.0 - f64(smoothstep(k.span * 1.0, k.span * 3.0, gap)) else: 0.0
-        if length(axis) > 0.001: q = quat_mul(quat_axis_angle(axis, (1.0 - lift_v) * 1.6 * (1.0 - near_water) * dt), q)
+        if length(axis) > 0.001: q = quat_mul(quat_axis_angle(axis, (1.0 - lift_v) * 1.6 * (1.0 - near_water) * (1.0 - trial) * dt), q)
     tilt = 1.0 - max(f64(quat_rotate(q, vec3(0, 1, 0)).y), 0.0)
     axis = cross(quat_rotate(q, vec3(0, 0, -1)), vec3(0, -1, 0))
     if length(axis) > 0.001: q = quat_mul(quat_axis_angle(normalize(axis), tilt * lift * 0.5 * k.yaw_rate * dt), q)
@@ -470,7 +490,7 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # or the water's ground effect lets go, and letting the stick go again takes the new path)
     if tweaks.auto_trim and k.player:
         away = f64(smoothstep(k.span * 1.5, k.span * 4.0, gap))
-        free = abs(c.pitch) < 0.05 and lift_v > 0.999 and upright > 0.5 and not s.on_water
+        free = abs(c.pitch) < 0.05 and not s.stalled and lift_v > 0.999 and upright > 0.5 and not s.on_water
         if not free:
             s.trim_held = false
         else:
@@ -482,7 +502,7 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             want = s.trim_path + clamp(s.trim_path - path_now, -0.1, 0.1)
             trim = 0.0
             q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp((want - nose) * 2.5, -0.3, 0.3) * upright * away * dt))
-    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), trim * tail * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), trim * tail * (1.0 - trial * flow.separation) * dt))
     s.orientation = normalize(q)
     fwd = quat_rotate(s.orientation, vec3(0, 0, -1))
     up = quat_rotate(s.orientation, vec3(0, 1, 0))
@@ -491,12 +511,19 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # (pulling costs drag; pushing, as in holding a dive, doesn't)
     pull = max(clamp(c.pitch, -1.0, 1.0), 0.0) * auth
     drag = k.arc_drag * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0)) * (1.0 + 0.5 * s.hull_damage + 1.6 * abs(left - right)) / mass
+    if trial > 0.0: drag += 0.008 * trial * flow.separation / (pure_k(k) * pure_k(k))
     # (gravity along the way it goes trades speed for height and back; pulling hard costs a little
     # more drag; with no drag, a loop or a zoom climb gives back all it took)
     # (pure scale: gravity along the way trades the true speed for height at its real rate, so a
     # dive gains, and a climb costs, the scale's times the drawn speed)
     acc = k.arc_thrust * s.throttle * thin / mass - drag * flight_drag_scale * speed * speed * (1.0 + 0.35 * pull) - FLIGHT_G * pure_k(k) * f64(vdir.y)
-    speed = max(speed + acc * dt, 0.0)
+    next_speed = speed + acc * dt
+    if trial > 0.0 and next_speed < 0.0:
+        # At the top of a vertical zoom, gravity reverses the flow. Clamping to zero here
+        # would pin a perfectly vertical aircraft at the apex instead of letting it tail-slide.
+        speed = -next_speed
+        vdir = -vdir
+    else: speed = max(next_speed, 0.0)
     # (the way it goes follows the nose; at a drawn speed many times the true one, it follows
     # quicker, so the turn isn't a long slide)
     ratio = if tweaks.quick_grip and speed > 1.0: speed / max(true_speed(k, speed), 1.0) else: 1.0
@@ -513,6 +540,99 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     air.y += f32((noise(tt * 3.3, 41.0) - 0.5) * rough * 6.0 * dt)
     s.velocity = air + wind
     s.position += s.velocity * f32(dt)
+
+# The stall trial augments the arcade flight path with two lifting panels and a flying tail.
+# No random draws or attitude targets: local flow includes roll/yaw velocity at each panel.
+# Beyond the lift peak, a falling wing loses lift and gains drag, sustaining autorotation;
+# forward stick unloads both panels and opposite rudder removes the yaw feeding the split.
+struct StallFlow:
+    separation = 0.0
+    support = 1.0
+    torque = vec3(0, 0, 0)
+    alpha = 0.0
+    pressure = 0.0
+    reverse = 0.0
+
+_stall_flow = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, stall: f64, dt: f64) -> StallFlow:
+    flow = StallFlow()
+    air = quat_rotate(quat_inverse(s.orientation), (s.velocity - e.wind) / f32(pure_k(k)))
+    speed = f64(length(air))
+    flow.alpha = atan2(-f64(air.y), -f64(air.z))
+    flow.reverse = f64(smoothstep(0.0, 5.0, f64(air.z)))
+    flow.pressure = clamp(speed * speed / (stall * stall), 0.0, 4.0)
+    # Broad, lightly loaded wings break gradually; racers have a narrow lift peak.
+    loading = k.mass / k.wing_area
+    sharp = f64(smoothstep(38.0, 78.0, loading))
+    critical = 0.30 - 0.08 * sharp
+    width = 0.24 - 0.16 * sharp
+    beta = atan2(f64(air.x), max(abs(f64(air.z)), 2.0))
+    lever = k.span * 0.32
+    lifts = vec2(0, 0); drags = vec2(0, 0)
+    warning = 0.0
+    loop i in 0..2:
+        side = if i == 0: -1.0 else: 1.0
+        local = air + cross(s.angular_velocity, vec3(side * lever, 0, 0))
+        vf = -f64(local.z)
+        # Incidence represents the load the arcade wing carries at zero geometric AoA.
+        # Requiring more lift at low true speed brings it to the peak naturally.
+        incidence = critical * 0.72 * stall * stall / max(vf * vf, stall * stall * 0.4)
+        aileron = -side * clamp(c.roll, -1.0, 1.0) * 0.065
+        alpha = atan2(-f64(local.y), vf) + incidence + side * beta * 0.12 + aileron
+        health = if i == 0: wing_lift(s.damage, .left_wing) else: wing_lift(s.damage, .right_wing)
+        peak = critical * (0.8 + 0.2 * health)
+        separated = f64(smoothstep(peak, peak + width, abs(alpha)))
+        previous = if i == 0: f64(s.wing_separation.x) else: f64(s.wing_separation.y)
+        # Reattachment takes longer than the initial break. This is flow memory, not a timer
+        # holding the aircraft in a pose; it also allows alternating falling-leaf wing drops.
+        sep = previous + (separated - previous) * min(dt / (if separated > previous: 0.10 else: 0.24), 1.0)
+        if i == 0: s.wing_separation.x = f32(sep)
+        else: s.wing_separation.y = f32(sep)
+        pressure = min(f64(dot(local, local)) / (stall * stall), 4.0)
+        cl = clamp(alpha / critical, -1.2, 1.2) * (1.0 - 0.88 * sep)
+        load = pressure * cl * health
+        drag = pressure * (0.06 + 0.85 * sep) * health
+        if i == 0: lifts.x = f32(load); drags.x = f32(drag)
+        else: lifts.y = f32(load); drags.y = f32(drag)
+        warning = max(warning, f64(smoothstep(peak * 0.75, peak, abs(alpha))) * (1.0 - 0.75 * sep))
+    flow.separation = f64(s.wing_separation.x + s.wing_separation.y) * 0.5
+    flow.support = 1.0 - 0.88 * flow.separation
+    s.buffet = warning
+    # Only the outer half of each semispan contributes to the differential load; the
+    # attached inner panel still carries weight but has little rolling/yawing leverage.
+    weight = k.mass * FLIGHT_G * 0.25
+    flow.torque.z = f32((f64(lifts.y - lifts.x)) * weight * lever)
+    flow.torque.y = f32((f64(drags.x - drags.y)) * weight * lever)
+    # The centre of pressure moves aft as lift separates. Tail load keeps pitching into
+    # the relative wind, including backward flow in a tail slide; no prescribed nose rate.
+    tail = part_health(s.damage, .tail)
+    chord = k.wing_area / k.span
+    flow.torque.x = f32(-k.mass * FLIGHT_G * chord * (0.18 * flow.separation + 0.55 * sin(flow.alpha) * flow.pressure) * tail)
+    # Dihedral and the fin oppose sideslip while they still see attached flow.
+    flow.torque.z += f32(beta * k.mass * FLIGHT_G * k.span * 0.035 * flow.pressure * (1.0 - flow.separation))
+    flow.torque.y -= f32(beta * k.mass * FLIGHT_G * chord * 0.18 * flow.pressure * tail)
+    # A rotary biases the break and couples pitch/yaw through its spinning mass.
+    if aircraft_profile(k.kind).voice == .rotary:
+        flow.torque += vec3(-f64(s.angular_velocity.y) * 260.0, f64(s.angular_velocity.x) * 260.0, 420.0) * f32(s.throttle * (0.15 + flow.separation))
+    # Incommensurate shedding frequencies, clocked by deterministic simulation time.
+    phase = s.time * (17.0 + speed * 0.13) + f64(int(k.kind)) * 1.7
+    flow.torque += vec3(sin(phase * 1.31) * 0.12, 0, sin(phase) * 0.24) * f32(warning * k.mass * FLIGHT_G * chord)
+    flow
+
+_stall_rotation = (k: CraftSpec, s: mut CraftState, c: Controls, flow: StallFlow, auth: f64, wash: f64, dt: f64):
+    sep = flow.separation
+    # Tail retains propwash; the ailerons lose authority and their local incidence/drag above
+    # can deepen a stalled wing. Damping changes sign in the panel forces, not in a spin script.
+    tail_flow = 1.0 - 2.0 * flow.reverse * (1.0 - s.throttle)
+    desired = vec3(tail_flow * clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, 6.0 * FLIGHT_G / max(true_speed(k, s.airspeed), 1.0)),
+        -tail_flow * clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash,
+        -clamp(c.roll, -1.0, 1.0) * k.roll_rate * auth * (1.0 - sep))
+    damping = vec3(2.8, 2.2 * (1.0 - 0.78 * sep), 3.0 * (1.0 - 0.85 * sep))
+    drive = vec3(2.8, 2.2, 3.0 * (1.0 - sep))
+    moment = flow.torque
+    accel = vec3(moment.x / k.inertia.x, moment.y / k.inertia.y, moment.z / k.inertia.z)
+    # Finite air damping grows with angular speed. No angular-rate clamp or fixed spin speed.
+    damping += vec3(1, 1, 1) * (length(s.angular_velocity) * f32(0.45))
+    s.angular_velocity = (s.angular_velocity + (desired * drive + accel) * f32(dt)) / (vec3(1, 1, 1) + damping * f32(dt))
 
 # Sky Barons' steer (sim.jo): stick and rudder that turn the aircraft toward a direction: far off,
 # rolled toward it and pulled; nearly there (or a little below), small corrections with the wings
