@@ -28,8 +28,10 @@ tone-mapping from the engine), so the palette below is what reaches the screen.
 
 - **White-grey limestone** with strong horizontal **strata** and overhangs; cliffs fall straight
   to the sea on some islands, and hidden coves have small white beaches.
-- Above the cliffs, **dense dark-green maquis** and pines with lighter yellow-green patches;
-  dark **cypresses** standing up like brush strokes around villas and churches.
+- Above the cliffs, **dry ochre/straw summer grass**, grey-green maquis patches and darker pine
+  stands. Slope, elevation and geographic aspect distinguish exposed dry slopes from cooler
+  wooded folds; pale limestone appears in broad outcrops, not thin bright erosion scars. Dark
+  **cypresses** stand up like brush strokes around villas and churches.
 - Villages: whitewashed and ochre houses, **terracotta roofs**, stone quays, small boats.
 - A small hotel on its own islet, with a dock, cypresses and a garden: the kind of place
   pilots gather in the evening.
@@ -42,6 +44,7 @@ tone-mapping from the engine), so the palette below is what reaches the screen.
 
 ## Light
 
-- A soft two-tone (cel-like) light: lit and shaded sides with a narrow soft edge, the shade a
-  cool blue-violet, never black.
+- A soft two-tone (cel-like) light: lit and shaded sides with a narrow soft edge. Whitewash
+  stays **warm cream in sun and pale blue-grey in shade**, with broad neutral ambient fill.
+  Richer cool shadows belong to foliage/cloud masses, not a blue dye over every wall.
 - Distance fades to a pale blue haze, warm gold in the evening.
