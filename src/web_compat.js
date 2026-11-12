@@ -155,10 +155,11 @@
       live = true;
       if (!prev) { prev = R; return; }
       // (dR = prev^T R: the turn since the last reading, in the phone's frame)
-      const m = (i, j) => prev[0*3+i]*R[0*3+j] + prev[1*3+i]*R[1*3+j] + prev[2*3+i]*R[2*3+j];
-      prev = R;
+      const P = prev;
+      const m = (i, j) => P[0*3+i]*R[0*3+j] + P[1*3+i]*R[1*3+j] + P[2*3+i]*R[2*3+j];
       const k = 180 / Math.PI;
       const rx = (m(2,1) - m(1,2)) * 0.5 * k, ry = (m(0,2) - m(2,0)) * 0.5 * k;
+      prev = R;
       if (Math.abs(rx) > 20 || Math.abs(ry) > 20) return;   // (a jump: the compass correcting itself)
       const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
       // (right-handed: +x tips the back up, +y turns the back to the left. The aim turns with the
@@ -173,16 +174,18 @@
       dx += right; dy += up;
     };
     const go = () => { if (!started) { window.addEventListener("deviceorientation", onMotion); started = true; } };
+    // (listen at once: Android's browsers send the readings without asking. Where the browser has
+    // a permission to ask for (Safari, and newer Chrome and Firefox), ask now, and if that needs a
+    // tap, ask again at the next one, caught before the game's own touch handling can stop it)
     const ask = () => {
       const D = window.DeviceOrientationEvent;
-      if (!D) return;
-      if (typeof D.requestPermission === "function") D.requestPermission().then(r => { if (r === "granted") go(); }).catch(() => {});
-      else go();
+      if (!D || typeof D.requestPermission !== "function") return;
+      D.requestPermission().then(r => { if (r !== "granted") pendingAsk = true; }).catch(() => { pendingAsk = true; });
     };
-    const onTouch = () => { if (pendingAsk) { pendingAsk = false; ask(); } };
-    window.addEventListener("touchend", onTouch);
-    window.addEventListener("click", onTouch);
-    sloppy.env.__aegean_motion_start = () => { pendingAsk = true; if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function")) { pendingAsk = false; ask(); } };
+    const onTouch = () => { if (pendingAsk && !live) { pendingAsk = false; ask(); } };
+    window.addEventListener("touchend", onTouch, {capture: true});
+    window.addEventListener("click", onTouch, {capture: true});
+    sloppy.env.__aegean_motion_start = () => { go(); ask(); };
     sloppy.env.__aegean_motion_live = () => live ? 1 : 0;
     sloppy.env.__aegean_motion_x = () => { const v = dx; dx = 0; return v; };
     sloppy.env.__aegean_motion_y = () => { const v = dy; dy = 0; return v; };
