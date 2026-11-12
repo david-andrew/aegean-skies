@@ -49,6 +49,10 @@ struct SeaParams:
     shade_bounds: vec4 = vec4(0,0,0,0)
     shade_pad: f32 = 1.0
     rain: f32 = 0.0
+    swell_phase: vec4[6]
+    ripple_phase: vec4[5]
+    glint_phase: vec4
+    mark_phase: vec4[3]             # fractional cell origin xy, integer cell identity zw
 
 struct SeaOut:
     pos: vec4
@@ -81,16 +85,49 @@ _swell = (p: vec2, t: f32, amp: f32, dist: f32, wd: vec2) -> vec3:
 sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
     # The chart origin snaps, but its residual moves continuously. A snap
     # must not resample the displaced near rings or move any procedural phase.
-    p = v.pos.xz + u.residual + u.center
+    p = v.pos.xz + u.residual
     r = length(p - u.cam.xz)
     near = 1.0 - smoothstep(80.0, 260.0, r)
-    s = _swell(p, u.time, u.wind.w, r, u.wind.xy)
+    s = sea_swell(p,u,r)
     w = vec3(p.x, s.x * near, p.y)
-    # Match terrain's local chart. Multiplying absolute country coordinates
-    # loses clip-z precision relative to clip-w and exposes submerged triangles.
-    local = w-u.origin
-    anchor = vec4(u.warp_a.xy-u.origin.xz,u.warp_a.zw)
-    SeaOut(u.view_proj * vec4(render_warped(local,u.cam-u.origin,anchor,u.warp_b),1),w)
+    SeaOut(u.view_proj * vec4(render_warped(w,u.cam,u.warp_a,u.warp_b),1),w)
+
+# Wave directions/frequencies and the anchor/time phase are reduced on the CPU.
+# Small local dot products retain sub-centimetre wave motion at every world corner.
+sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32) -> vec3:
+    fade=1.0-smoothstep(band.w*9.0,band.w*40.0,dist)
+    phase=dot(band.xy,p)+band.z
+    height=band.w*amp*fade
+    slope=height*cos(phase)
+    vec3(height*sin(phase),slope*band.x,slope*band.y)
+
+sea_swell = (p: vec2,u: SeaParams,dist: f32) -> vec3:
+    if dist>=2440.0:return vec3(0,0,0)
+    # Constant uniform indices avoid a per-pixel dynamic array loop on Intel.
+    result=vec3(0,0,0)
+    result += sea_swell_band(p,u.swell_phase[0],u.wind.w,dist)
+    result += sea_swell_band(p,u.swell_phase[1],u.wind.w,dist)
+    result += sea_swell_band(p,u.swell_phase[2],u.wind.w,dist)
+    result += sea_swell_band(p,u.swell_phase[3],u.wind.w,dist)
+    result += sea_swell_band(p,u.swell_phase[4],u.wind.w,dist)
+    result += sea_swell_band(p,u.swell_phase[5],u.wind.w,dist)
+    result
+
+sea_ripple_band = (p: vec2,band: vec4,dist: f32) -> vec2:
+    fade=1.0-smoothstep(band.w*14.0,band.w*60.0,dist)
+    # The vector already contains tau/wavelength; recover its direction with
+    # multiplication, preserving the original wind magnitude without sqrt.
+    band.xy*(band.w*(0.07/6.28318530718)*cos(dot(band.xy,p)+band.z)*fade)
+
+sea_ripples = (p: vec2,u: SeaParams,dist: f32) -> vec2:
+    if dist>=186.0:return vec2(0,0)
+    result=vec2(0,0)
+    result += sea_ripple_band(p,u.ripple_phase[0],dist)
+    result += sea_ripple_band(p,u.ripple_phase[1],dist)
+    result += sea_ripple_band(p,u.ripple_phase[2],dist)
+    result += sea_ripple_band(p,u.ripple_phase[3],dist)
+    result += sea_ripple_band(p,u.ripple_phase[4],dist)
+    result
 
 # fine ripples raised by the wind (their slope), shorter than the swells, filtered by distance
 _ripples = (p: vec2, t: f32, wd: vec2, dist: f32) -> vec2:
@@ -140,18 +177,20 @@ _strokes = (p: vec2, t: f32, wd: vec2, ws: f32) -> f32:
 # cells `size` meters across. The shutter: the mark seen through the stretch of sea [p - smear, p]
 # that passed over this pixel while it was open (a capsule, so one smooth smear, not copies).
 # (+ light, - dark, 0 none)
-_fleck = (p: vec2, smear: vec2, size: f32, seed: f32) -> f32:
+sea_fleck = (p: vec2, smear: vec2, size: f32, seed: f32, anchor: vec4) -> f32:
     best: f32 = 0.0
     loop k in 0..2:
-        q = (p - smear * f32(k)) / size
-        cell = floor(q)
+        q = (p - smear * f32(k)) / size + anchor.xy
+        cell = floor(q)+anchor.zw
         r1 = hash21(cell + vec2(41.0 + seed, 7.0))
         if r1 >= 0.6:
             r2 = hash21(cell + vec2(3.0, 59.0 + seed))
             r3 = hash21(cell + vec2(17.0 + seed, 23.0))
-            c = (cell + vec2(0.25, 0.25) + vec2(r2, r3) * 0.5) * size
+            # Centre relative to this sample; never form two huge positions
+            # just to subtract them. The cell hash stays fixed across chart snaps.
+            c = (vec2(0.25,0.25)+vec2(r2,r3)*0.5-fract(q))*size+smear*(1.0-f32(k))
             # (distance from the mark's center to the swept stretch)
-            a = p - smear
+            a = vec2(0,0)
             ab = smear
             t = clamp(dot(c - a, ab) / max(dot(ab, ab), 0.0001), 0.0, 1.0)
             d = length(c - (a + ab * t)) / size
@@ -160,15 +199,16 @@ _fleck = (p: vec2, smear: vec2, size: f32, seed: f32) -> f32:
             if abs(v) > abs(best): best = v
     best
 
-# the sea's marks at three sizes, each shown only where it is a few pixels across or more
-_marks = (p: vec2, smear: vec2, dist: f32) -> f32:
-    sizes: f32[3] = [1.3, 3.6, 10.0]
+# The original three circular detail sizes, with separate integer cell identity
+# and local position. Translation cannot enlarge a mark or change its density.
+sea_marks = (p: vec2, smear: vec2, dist: f32, wd: vec2, u: SeaParams) -> f32:
+    sizes: f32[3] = [1.3,3.6,10.0]
     acc: f32 = 0.0
     loop o in 0..3:
         size = sizes[o]
-        vis = smoothstep(dist * 0.004, dist * 0.009, size)
+        vis = smoothstep(dist*0.004,dist*0.009,size)
         if vis > 0.0:
-            m = _fleck(p, smear, size, f32(o) * 13.0) * vis
+            m = sea_fleck(p,smear,size,f32(o)*13.0,u.mark_phase[o])*vis
             if abs(m) > abs(acc): acc = m
     acc
 
@@ -225,13 +265,14 @@ _crest_strokes = (p: vec2, s: vec3, t: f32, wd: vec2, ws: f32, amp: f32, dist: f
 # the sun's glints: a sparse field of tiny facets, each tipped at random and re-tipped several
 # times a second; one that sends the sun into the eye flashes as a point. Cells grow with distance
 # (in steps of two) so a glint stays a pixel or two across.
-_glints = (p: vec2, n: vec3, v: vec3, l: vec3, dist: f32, t: f32, rough: f32) -> f32:
+_glints = (p: vec2, n: vec3, v: vec3, l: vec3, dist: f32, t: f32, rough: f32, u: SeaParams) -> f32:
     base: f32 = 0.3
     lev = max(floor(log(max(dist * 0.0021, base) / base) * 1.442695), 0.0)
     size = base * pow(2.0, lev)
-    q = p / size
-    cell = floor(q)
-    f = q - cell
+    anchor = sea_glint_anchor(u.glint_phase,pow(2.0,min(lev,15.0)))
+    q = p / size+anchor.xy
+    cell = floor(q)+anchor.zw
+    f = fract(q)
     r1 = hash21(cell + vec2(lev * 31.0, 7.0))
     r2 = hash21(cell + vec2(13.0, lev * 17.0))
     tick = floor(t * (1.5 + 3.0 * r1) + r2 * 10.0)
@@ -251,7 +292,8 @@ sea_shallow_mix = (depth: f32, shelter: f32) -> f32:
     clear*clear
 
 sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
-    p = i.world.xz
+    local = i.world.xz
+    p = local+u.origin.xz
     dist = length(i.world - u.cam)
     # how deep it is here (the map: r = depth / 60 m), and so its color
     uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
@@ -285,24 +327,24 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     keep = 1.0 / sqrt(wa * wa + wb * wb)
     offa = u.flow.xy * ((pa - 0.5) * u.flow.z * near)
     offb = u.flow.xy * ((pb - 0.5) * u.flow.z * near)
-    s = _swell(p, u.time, u.wind.w, dist, wd)
+    s = sea_swell(local,u,dist)
     sa = s
     sb = s
     whole = u.flow.w > 0.5 and near > 0.0
     if whole:
         # (the whole look slides: the swells' slopes, so their light and shade, and their crests;
         # their height, under the aircraft's floats, stays true)
-        sa = _swell(p + offa, u.time, u.wind.w, dist, wd)
-        sb = _swell(p + offb, u.time, u.wind.w, dist, wd)
+        sa = sea_swell(local+offa,u,dist)
+        sb = sea_swell(local+offb,u,dist)
         s = vec3(s.x, (sa.y * wa + sb.y * wb) * keep, (sa.z * wa + sb.z * wb) * keep)
-    rp = _ripples(p + offa, u.time, wd, dist) * rough
+    rp = sea_ripples(local+offa,u,dist) * rough
     if u.rain > 0.01 and dist < 90.0:
         q = p*1.4
         cell = floor(q); f = fract(q)-vec2(0.5,0.5)
         age = fract(u.time*1.7+hash21(cell))
         ring = sin((length(f)-age*0.7)*45.0)*exp(-abs(length(f)-age*0.7)*25.0)*(1.0-age)
         rp += f*(ring*u.rain*0.12*(1.0-smoothstep(45.0,90.0,dist)))
-    if near > 0.0: rp = (rp * wa + _ripples(p + offb, u.time, wd, dist) * (rough * wb)) * keep
+    if near > 0.0: rp = (rp * wa + sea_ripples(local+offb,u,dist) * (rough * wb)) * keep
     n = render_normal(normalize(vec3(-(s.y + rp.x), 1.0, -(s.z + rp.y))), i.world, u.cam)
     vdir = normalize(u.cam - render_world(i.world, u.cam))
     l = normalize(u.sun_dir)
@@ -330,15 +372,15 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     rf = (1.0 - smoothstep(120.0, 450.0, dist)) * (0.35 + 0.65 * u.rush.w) * (1.0 - sh * 0.5)*smoothstep(0.1,2.0,ws)
     if rf > 0.01:
         smear = (u.rush.xz + u.flow.xy * near) * (0.6 / 60.0)
-        rs = _marks(p + offa, smear, dist)
+        rs = sea_marks(local+offa,smear,dist,wd,u)
         if near > 0.0:
-            rb = _marks(p + offb, smear, dist)
+            rb = sea_marks(local+offb,smear,dist,wd,u)
             rs = if abs(rs) * wa > abs(rb) * wb: rs * min(wa * keep, 1.0) else: rb * min(wb * keep, 1.0)
         c = mix(c, if rs > 0.0: mix(body, skyc, 0.6) * 1.3 + vec3(0.05, 0.07, 0.07) else: body * 0.6, abs(rs) * rf * 0.65)
     # the shadows of aircraft above
     shd: f32 = 0.0
     if u.shade_n > 0.0:
-        shd = _shadowed(p, u, 0.08 + dist * 0.0015)
+        shd = _shadowed(local, u, 0.08 + dist * 0.0015)
         c = mix(c, c * 0.42 + vec3(0.0, 0.02, 0.05), shd)
     # the sun: a soft sheen along its path, and the glints
     hv = normalize(l + vdir)
@@ -346,8 +388,8 @@ sea_fs = (i: SeaOut, u: SeaParams) -> vec4:
     day = smoothstep(-0.05, 0.12, l.y)
     variance = smoothstep(300.0, 3000.0, dist) * clamp(u.wind.w * 80.0, 0.0, 1.0)
     sheen = pow(nh, mix(90.0, 55.0, variance)) * 0.22 + pow(nh, mix(600.0, 160.0, variance)) * 0.5
-    gl = _glints(p + offa, n, vdir, l, dist, u.time, rough)
-    if near > 0.0: gl = gl * wa + _glints(p + offb, n, vdir, l, dist, u.time, rough) * wb
+    gl = _glints(local + offa, n, vdir, l, dist, u.time, rough,u)
+    if near > 0.0: gl = gl * wa + _glints(local + offb, n, vdir, l, dist, u.time, rough,u) * wb
     c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)*(1.0-u.rain*0.75)
     # Both shore terms are identically zero beyond 3 m depth / 5 km range.
     # Do not run their noise and trigonometry over every offshore pixel.
@@ -504,15 +546,18 @@ struct SeaShadows:
     quads: vec4[32]
     alpha: vec4[4]
     n = 0
+    origin = vec3(0,0,0)
 
 add_sea_shadow = (sh: mut SeaShadows, model: mat4, c: vec3, h: vec3, sun: vec3, alpha: f64):
     if sh.n >= 16: return
     s = normalize(sun)
     if s.y < 0.08: return
+    if sh.n == 0: sh.origin = render_origin(scene_camera())
+    local_model = render_model(model,sh.origin)
     corners = [vec3(-1, 0, -1), vec3(1, 0, -1), vec3(1, 0, 1), vec3(-1, 0, 1)]
     pts: vec2[]
     loop k in corners:
-        w = transform_point(model, c + k * h)
+        w = transform_point(local_model, c + k * h)
         t = w.y / s.y
         pts.push(vec2(w.x - s.x * t, w.z - s.z * t))
     sh.quads[sh.n * 2] = vec4(pts[0].x, pts[0].y, pts[1].x, pts[1].y)
@@ -545,10 +590,15 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     p = SeaParams(scene_view_proj(), scene_camera(), L.sun_dir, L.sun, L.sky_top, L.sky_horizon, L.haze,
         L.sea_deep, L.sea_shallow, f32(L.fog_density), f32(t), f32(ws / 12.0), vec4(w.dir.x, w.dir.y, f32(ws), f32(swell)), w.drift, rush_of(cam_vel), shadows.quads, shadows.alpha, f32(shadows.n), depth, expanded_depth, nearby_depth, nearby_area, if geography_enabled: 1.0 else: 0.0, render_rays(scene_view_proj()), center, residual, scene_flow, scene_warp_a, scene_warp_b)
     p.origin = render_origin(p.cam)
-    p.view_proj = p.view_proj*translation(p.origin)
+    p.view_proj = render_view_proj(p.origin)
+    p.cam = render_eye(p.origin)
+    p.warp_a = render_anchor(p.warp_a,p.origin)
+    offset = shadows.origin-p.origin
+    loop k in 0..shadows.n*2: p.shade[k] += vec4(offset.x,offset.z,offset.x,offset.z)
+    sea_phases(p,t)
     lo = vec2(1e20,1e20); hi = vec2(-1e20,-1e20)
     loop k in 0..shadows.n*2:
-        q = shadows.quads[k]
+        q = p.shade[k]
         lo = min(lo,min(q.xy,q.zw)); hi = max(hi,max(q.xy,q.zw))
     p.shade_bounds = vec4(lo.x,lo.y,hi.x,hi.y)
     # Offset edge half-planes can extend farther than aa at acute corners.
@@ -559,6 +609,34 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
         p.shade_pad = max(p.shade_pad,2.0*length(ab)*length(bc)/max(abs(ab.x*bc.y-ab.y*bc.x),0.000001))
     p.rain = if weather_active: weather_here.rain else: 0.0
     p
+
+sea_phases = (p: mut SeaParams,t: f64):
+    turns = [0.0,0.45,-0.5,0.9,-0.25,0.2,0.3,-0.35,0.75,-0.8,0.05]
+    lengths = [61.0,37.0,23.0,13.0,7.3,4.1,3.1,2.3,1.6,1.15,0.8]
+    loop k in 0..11:
+        a = turns[k]; len = lengths[k]; frequency = TAU/len
+        dx = f64(p.wind.x)*cos(a)-f64(p.wind.y)*sin(a)
+        dz = f64(p.wind.x)*sin(a)+f64(p.wind.y)*cos(a)
+        wave = vec2(f32(dx*frequency),f32(dz*frequency))
+        phase = f64(wave.x)*f64(p.origin.x)+f64(wave.y)*f64(p.origin.z)-t*sqrt(9.8*frequency)*(if k < 6: 1.0 else: 1.1)+(if k < 6: 0.0 else: f64(k-6)*1.7)
+        band = vec4(wave,render_phase(phase,TAU),f32(len))
+        if k < 6: p.swell_phase[k] = band
+        else: p.ripple_phase[k-6] = band
+    sizes: f32[3] = [1.3,3.6,10.0]
+    loop k in 0..3: p.mark_phase[k] = sea_cell_anchor(p.origin.xz,f64(sizes[k]))
+    p.glint_phase = sea_cell_anchor(p.origin.xz,f64(f32(0.3)))
+
+# Coarser glint cells are powers of two of the finest lattice. Integer quotient
+# and remainder stay exact within this world's bounds; only the fractional cell
+# is rounded. Avoid a varying-index uniform-array fetch for every sea fragment.
+sea_glint_anchor = (base: vec4,divisor: f32) -> vec4:
+    cell = floor(base.zw/divisor)
+    fraction = (base.zw-cell*divisor+base.xy)/divisor
+    vec4(fraction,cell)
+
+sea_cell_anchor = (origin: vec2,size: f64) -> vec4:
+    x = f64(origin.x)/size; z = f64(origin.y)/size
+    vec4(f32(x-floor(x)),f32(z-floor(z)),f32(floor(x)),f32(floor(z)))
 
 draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = vec3(0, 0, 0), shadows: SeaShadows = SeaShadows()):
     update_nearby_depth()
@@ -598,8 +676,21 @@ init_sea = ():
 
 # the sea's surface where the eye sees it (the same swells the sea is drawn with): height and slope
 swell_at = (x: f64, z: f64, t: f64) -> vec3:
-    w = wind_now
-    _swell(vec2(f32(x), f32(z)), f32(t), f32(_swell_amp(w)), 0.0, w.dir)
+    # No SeaParams/texture work in physics contacts. Match the uploaded wave
+    # vectors, then perform the full spatial/time dot in double precision.
+    turns = [0.0,0.45,-0.5,0.9,-0.25,0.2]
+    lengths = [61.0,37.0,23.0,13.0,7.3,4.1]
+    amp = _swell_amp(wind_now)
+    result = vec3(0,0,0)
+    loop k in 0..6:
+        a = turns[k]; len = lengths[k]; frequency = TAU/len
+        dx = f64(wind_now.dir.x)*cos(a)-f64(wind_now.dir.y)*sin(a)
+        dz = f64(wind_now.dir.x)*sin(a)+f64(wind_now.dir.y)*cos(a)
+        wave = vec2(f32(dx*frequency),f32(dz*frequency))
+        phase = f64(wave.x)*x+f64(wave.y)*z-t*sqrt(9.8*frequency)
+        h = len*amp
+        result += vec3(f32(h*sin(phase)),f32(h*cos(phase)*f64(wave.x)),f32(h*cos(phase)*f64(wave.y)))
+    result
 
 # The six wavelengths sum to 145.4; every sine and fade is bounded by one.
 # Pad the f32 amplitude/sum so this is conservative even at a crest.
@@ -609,3 +700,15 @@ swell_height_bound = () -> f64: f64(abs(f32(_swell_amp(wind_now))))*146.0+0.001
 afloat = (p: vec3, t: f64) -> mat4:
     s = swell_at(f64(p.x), f64(p.z), t)
     translation(vec3(0, s.x, 0)) * translation(p) * rotation_x(f64(clamp(s.z, -0.3, 0.3)) * 0.6) * rotation_z(f64(clamp(-s.y, -0.3, 0.3)) * 0.6) * translation(-p)
+
+# Compose buoyancy about the model's local root, never T(p)*R*T(-p)*T(p).
+# The latter cancels two country-sized f32 translations on the CPU; keeping
+# the pivot local avoids depending on that cancellation as the tilt changes.
+afloat_transform = (at: mat4,t: f64) -> mat4:
+    p=at[3].xyz
+    s=swell_at(f64(p.x),f64(p.z),t)
+    local=at;local[3]=vec4(0,0,0,1)
+    tilt=rotation_x(f64(clamp(s.z,-0.3,0.3))*0.6)*rotation_z(f64(clamp(-s.y,-0.3,0.3))*0.6)
+    result=tilt*local
+    result[3]=vec4(p+vec3(0,s.x,0),1)
+    result
