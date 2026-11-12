@@ -73,7 +73,7 @@ appends **`open_topic` (6)**: dispatch it through `reply` just like any other su
 `ConversationTurn.question_kind` is optional semantic metadata. Render `turn.replies` verbatim;
 there are three or four options for ordinary questions, without a duplicate goodbye option.
 A reciprocal option echoes the actual question. Work offers have three different options:
-request the terms, decline, or open other work. None claims a job; acceptance uses the validated
+request the terms, decline, or open another topic. None claims a job; acceptance uses the validated
 work transaction. The farewell is short enough for a departure toast and never asks a follow-up.
 
 New speech candidates carry a `TalkQuestion` domain, wording, reciprocal wording and related topic.
