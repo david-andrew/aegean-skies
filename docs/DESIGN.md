@@ -249,6 +249,10 @@ Things agreed to build, roughly in the order they'll come:
   with light rain. Others on foot, mid-errand, in a storm, at a feast. Added one at a time, each
   polished before the next, about as often as a judging round.
 - The overcast climb: from a dark, rainy sea, up through the cloud deck, breaking out into blue sky.
+- Battle title cards: when one joins a battle that matters (the war's named engagements, like the
+  Battle over the strait), its name comes up over the scene the way the game's title does at the
+  start, then fades. Which fights earn a name and a card (size, sides, stakes, the war's own events)
+  is for the war simulation to decide; skirmishes and pirates don't.
 - Errands with real provenance: every request traces to someone who needs the thing (and why), a
   supplier who has it (produced or bought), and a negotiation that happened, as if every person
   pursues their own goals (survive, then get ahead) and the economy is all of them together under
