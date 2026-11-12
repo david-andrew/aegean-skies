@@ -32,6 +32,9 @@ use 'src/rain.jo'
 use 'src/sky.jo'
 use 'src/objects.jo'
 use 'src/touch.jo'
+use 'src/targets.jo'
+use 'src/target_scene.jo'
+use 'src/target_view.jo'
 use 'src/options.jo'
 use 'src/chart.jo'
 use 'src/planes.jo'
@@ -45,6 +48,7 @@ import 'src/radio.jo' as radio
 import 'src/radio_content.jo' as broadcast
 use 'src/flight.jo'
 use 'src/pilot.jo'
+use 'src/frame_budget.jo'
 use 'src/traffic.jo'
 use 'src/air_view.jo'
 use 'src/air_events.jo'
@@ -308,6 +312,8 @@ air_visual=make_air_view()
 air_events=AirEvents()
 air_meet_view=make_air_meet_view()
 all_air_traffic=traffic
+view_target=TargetView()
+target_scan=0.0
 wakes: WakeTrail[] = [loop k in 0..traffic.len() + 1: WakeTrail()]
 
 # on the main quay, beside one's own aircraft
@@ -564,8 +570,7 @@ dust_ps = Particles3D(gravity = vec3(0, -9.8, 0), drag = 1.2)
 cloth_mesh: ClothMesh
 scarf_mesh: ClothMesh
 dbg = Debug()
-# (the chaotic stalls and spins: a trial again, off by default; the user found combat better
-# without them (pause menu, Tweaks, to compare))
+# (the chaotic stalls and spins remain an opt-in trial.)
 set_tweaks(dbg.tweaks)
 dbg.opts = options
 # AEGEAN_TWEAKS="pure,curve,grip,airframe,cloth,trim,orbit" switches trials on from the start
@@ -578,6 +583,8 @@ if let tw = env("AEGEAN_TWEAKS"):
             "airframe": dbg.tweaks.airframe_true = true
             "cloth": dbg.tweaks.cloth_true = true
             "trim": dbg.tweaks.auto_trim = true
+            "stalls": dbg.tweaks.chaotic_stalls = true
+            "energy": dbg.tweaks.skybarons_response = true
             "orbit": dbg.tweaks.orbit_camera = true
             _: pass
     set_tweaks(dbg.tweaks)
@@ -726,23 +733,31 @@ debug_place = (x: f64, z: f64, alt: f64):
 active_scenario = ""
 scenario_templates: {str: ScenarioState}
 load_scenario = (key: str) -> bool:
-    global living_world,pc,me,battle,traffic,traffic_scene,folks,folk_sync_t,air_events,all_air_traffic
+    global living_world,pc,me,battle,traffic,traffic_scene,folks,folk_sync_t,air_events,all_air_traffic,view_target,target_scan
     global vessels,vessel_bindings,vessel_view,vessel_mooring,combat_visual,air_visual
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,my_jobs,toast,toast_until,notebook
     global t,hour,wind_bias,wind_now,follow,descent_camera,free,show_chart,chart_local
     global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
-    global active_scenario,judge_camera,scenario_templates,walkers
+    global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
     load_started=time()
-    # Handling is part of the situation; display/input/audio preferences stay the user's.
-    apply_speed_scale(BASE_SPEED_SCALE);set_lift_scale(BASE_SPEED_SCALE);set_bullet_scale(5.0);set_sea_rough(1.0)
-    dbg.tweaks=Tweaks();set_tweaks(dbg.tweaks)        # (the default handling; chaotic stalls are a trial)
-    if not (key in scenario_templates):
-        loaded=build_scenario(key,towns,craft_models)
+    fresh=key=="start"
+    if fresh:
+        music_audition_stop(dbg.music)
+        dbg=Debug(opts=dbg.opts)
+        apply_speed_scale(BASE_SPEED_SCALE);set_lift_scale(3.3);set_bullet_scale(5.0)
+        set_sea_rough(1.0);set_drag_scale(1.0);set_tweaks(dbg.tweaks)
+        set_near_boost(3.0);set_speed_mode(0);set_camera_rises(false)
+    # A situation chooses the world and aircraft, never the user's flight calibration.
+    # Cached specs depend on the selected speed scale, just like a normal aircraft change.
+    side_size=clamp(to_int(env("AEGEAN_BATTLE_SIDE") ?? "8") ?? 8,2,64)
+    cache_key=key+":"+to_text(speed_scale)+":"+to_text(side_size)
+    if fresh or not (cache_key in scenario_templates):
+        loaded=build_scenario(key,towns,craft_models,side_size)
         if loaded==none:return false
-        scenario_templates[key]=loaded!
-    next=scenario_templates[key]
-    seed_random(1934);walkers=initial_walkers
+        scenario_templates[cache_key]=loaded!
+    next=scenario_templates[cache_key]
+    seed_random(if fresh:5 else:1934);walkers=initial_walkers
     hush_audio(audio);hush_combat_audio(combat_audio)
     audio.clock=0;audio.clock_cloth=0;audio.settled_at=0;audio.settled_load=1;audio.quiet=0.5;audio.next_gull=4;audio.flap_next=0;audio.flap_energy=1
     loop heard in hearing.heard:
@@ -763,7 +778,7 @@ load_scenario = (key: str) -> bool:
     bind_living_player(pc,living_world,traffic_scene)
     me=Player(mode=if next.mode==.aboard:Mode.aboard else:if next.mode==.free:Mode.free else:Mode.walking,pos=next.position,yaw=next.yaw)
     folks=[];sync_folk(folks,living_world,towns);folk_sync_t=0
-    air_events=AirEvents();all_air_traffic=traffic
+    air_events=AirEvents();all_air_traffic=traffic;view_target=TargetView();target_scan=0
     vessels=next.vessels;vessel_bindings=VesselBindings();vessel_view=VesselView();vessel_mooring=VesselMooring()
     cv=combat_visual
     combat_visual=CombatView(low=cv.low,low_parts=cv.low_parts,chute=cv.chute,hole=cv.hole,oil=cv.oil,pilot=cv.pilot,distant_pilot=cv.distant_pilot,
@@ -775,20 +790,28 @@ load_scenario = (key: str) -> bool:
     guns=Guns();splashes=[];last_shots=0;plunge=0;plunge_v=0
     rope=Rope();was_moored=false
     ui=.none;ui_folk=-1;ui_place=-1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job=-1;my_jobs={}
-    notebook=Notebook(storage_key="scenario-notebook:"+key)
+    notebook=if fresh:Notebook() else:Notebook(storage_key="scenario-notebook:"+key)
+    if fresh:save_notebook(notebook)
     toast="";toast_until=0;show_chart=false;chart_local=false
     talk_at_start=false;pad_talk=false;click_took_mouse=true
     t=0;hour=next.hour;wind_bias=0;wind_now=Wind()
     follow=follow_camera(distance=5.5,pitch=next.camera_pitch,height=1.6);follow.yaw=next.camera_yaw
     descent_camera=DescentCamera();free=fly_camera(next.position,next.camera_yaw,next.camera_pitch)
-    dbg.infinite_fuel=false;dbg.no_damage=false;dbg.no_drag=false;dbg.endless_ammunition=false;dbg.gun_choice=0;dbg.weather_choice=-1
+    # A battle replaces its weather, not the user's weapon/debug choices. Fresh-start
+    # already rebuilt Debug above, including those defaults and their handling globals.
+    dbg.weather_choice=-1
     weather_scene_step(living_world,next.position,hour,0)
     chase(pc,1.0/60.0)
     update_player_follow(1.0/60.0,input=false)
-    active_scenario=key;judge_camera=none
+    active_scenario=(if fresh:"" else:key);judge_camera=none
+    if fresh:judge_ready=false
     set_paused(false)
+    if me.mode==.aboard:
+        mouse_lock(true)
+        pc.mouse_mode=true
     if env("AEGEAN_SCENARIO_TIMING")!=none:print("SCENARIO_LOAD_MS {(time()-load_started)*1000.0:.3}")
     if env("AEGEAN_CAPTURE_TRACE")!=none:print("SCENARIO_STATE {living.canonical_hash(living_world)} {hash(to_text(battle))} {hour} {pc.throttle}")
+    if env("AEGEAN_RUNTIME_TRACE")!=none:print("SCENARIO_FEEL player={pc.spec.player} scale={pc.spec.handling_scale} pure={dbg.tweaks.pure_scale} grip={dbg.tweaks.quick_grip} trial={dbg.tweaks.chaotic_stalls} external={battle.actors[combat_index(battle,living_world.people[living_world.player].craft)].external}")
     print("SCENARIO {key}: {battle.actors.len()} aircraft, player {pc.state.position}, weather {living_world.weather.len()}")
     true
 
@@ -959,6 +982,7 @@ judge_origin=pc.state.position
 judge_ready=env("AEGEAN_CAPTURE_READY")!=none
 judge_trace=env("AEGEAN_CAPTURE_TRACE")!=none
 judge_frame=0
+stress_frame_dt=to_float(env("AEGEAN_STRESS_FRAME_DT") ?? "0") ?? 0.0
 if let recipe=env("AEGEAN_CAPTURE"):
     judge_camera=judge_view(recipe,towns,pc.state.position,pc.spec.span)
     if recipe!="flight":free.pos=judge_camera!.eye;me.pos=free.pos;me.mode=.free
@@ -985,7 +1009,7 @@ if let scenario=env("AEGEAN_SCENARIO"):assert(load_scenario(scenario),"Unknown s
 if env("AEGEAN_CAPTURE_PANEL")=="scenarios":dbg.page=5;set_paused(true)
 
 update = (dt: f64):
-    global air_visual,air_events,all_air_traffic
+    global air_visual,air_events,all_air_traffic,view_target,target_scan
     global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused, descent_camera, vessel_mooring, was_moored
     # (the touch screen's stick and buttons, read as keys below; mode: 0 flying, 1 on the water,
     # 2 on foot, 3 a panel open)
@@ -1025,7 +1049,7 @@ update = (dt: f64):
             dbg.open = true
             show_chart = false
         return
-    let dt = clamp(dt, 0.0, 0.25)
+    let dt = frame_dt(if stress_frame_dt>0:stress_frame_dt else:dt)
     t += dt
     weather_scene_step(living_world,if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos,hour,dt)
     hour = (hour + dt / 120.0 + 24.0) % 24.0          # an hour of the day: two minutes
@@ -1318,9 +1342,11 @@ update = (dt: f64):
     update_traffic(traffic,living_world,traffic_scene,if me.mode == .free: free.pos else: if me.mode==.aboard:pc.state.position else:me.pos,t,dt,pc.state,towns,battle,
         (events:CombatEvent[]):
             combat_effect_events(combat_visual,events,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
-            combat_near_passes(combat_visual,battle,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1,if pc.cockpit_view:cockpit_eye(craft_models[pc.model],pc.state) else:pc.state.position)
+            listener_index=combat_index(battle,living_world.people[living_world.player].craft)
+            listener=if listener_index>=0:battle.actors[listener_index].state.position else:pc.state.position
+            combat_near_passes(combat_visual,battle,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1,listener)
             if combat_audio.guns.len()>0:combat_audio_passes(combat_audio,combat_visual.whizzes)
-            if combat_audio.guns.len()>0:combat_audio_events(combat_audio,events,scene_camera(),if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
+            if combat_audio.guns.len()>0:combat_audio_events(combat_audio,events,listener,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
         ,(craft: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState:
             result = state
             collide_vessels(vessels,spec,result,previous,craft)
@@ -1341,6 +1367,8 @@ update = (dt: f64):
     if ci<0 or (battle.actors[ci].last_attacker<0 and not battle.actors[ci].bailed):sync_living_player(pc,living_world)
     if me.mode==.aboard:pc.jolt=max(pc.jolt,combat_visual.hit)
     update_combat_view(combat_visual,battle,wind_now_vec(),dt,scene_camera())
+    if env("AEGEAN_RUNTIME_TRACE")!=none and floor(t)!=floor(t-dt):
+        print("RUNTIME t={t:.3} dt={dt:.4} ticks={traffic_scene.frame_ticks} tick={battle.tick} actors={battle.actors.len()} rounds={battle.rounds.len()} ribbons={combat_visual.trails.ribbons.len()} flame={combat_visual.flame.items.len()} mist={combat_visual.mist.items.len()} spray={spray_ps.items.len()} lookv={length(pc.look_v):.3} came={length(pc.cam_e):.3} camv={length(pc.cam_ev):.3} physics={battle.physics_steps}")
     if combat_audio.guns.len()>0:update_combat_audio(combat_audio,battle,scene_camera(),living_world.player)
     update_folk(folks, living_world, towns, if me.mode==.free:free.pos else:if me.mode == .aboard: pc.state.position else: me.pos, dt)
     # A contact/bark event commits words once; drawing the bubble only reads them.
@@ -1351,6 +1379,32 @@ update = (dt: f64):
             folks[k].line_t = t
     update_air_events(air_events,living_world,craft_models,pc.state.position,me.mode==.aboard,other_air=[loop tr in traffic:if tr.visible:AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored)])
     all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)+(if active_scenario!="":scenario_air_traffic(living_world,battle) else:[])
+    # Relevance is refreshed at 2.5 Hz; selected moving bodies are followed every frame.
+    if me.mode==.aboard:
+        target_scan-=dt
+        if target_scan<=0:
+            refresh_targets(view_target,view_candidates(living_world,battle,all_air_traffic,vessels,pc.state.position,living_world.people[living_world.player].craft))
+            target_scan=0.4
+        if view_target.selected>=0:
+            item=view_target.items[view_target.selected]
+            if item.kind==0:
+                ci=combat_index(battle,item.id)
+                if ci>=0:item.position=combat_render_state(battle.actors[ci],battle.render_alpha).position
+                else:
+                    loop tr in all_air_traffic:if tr.craft==item.id:item.position=tr.state.position;break
+            else if item.kind==2:
+                vi=vessel_index(vessels,item.id)
+                if vi>=0:item.position=vessels.ships[vi].position
+            view_target.items[view_target.selected]=item
+        if not show_chart and ui==.none and not notebook.open and not typing:
+            if key_pressed(.tab):cycle_target(view_target)
+            if key_pressed(.c):toggle_target(view_target)
+            target_touch(view_target,pad.held.contains(.tab),dt)
+        else:view_target.held=0;view_target.long_press=false
+        eye=if pc.cockpit_view:cockpit_eye(craft_models[pc.model],pc.state) else:pc.cam_pos
+        normal=if pc.cockpit_view:quat_rotate(pc.state.orientation,vec3(0,0,-1)) else:pc.look
+        step_target_view(view_target,eye,normal,dt)
+    else:view_target=TargetView();target_scan=0
     loop wakes.len()<all_air_traffic.len()+1:wakes.push(WakeTrail())
     update_air_view(air_visual,all_air_traffic,wind_now_vec(),if me.mode==.aboard:pc.state.position else:me.pos,dt)
     # skimming: fast within about a span of the water, the downwash churns it and throws spray
@@ -1484,7 +1538,7 @@ draw_world = (L: Light):
             else:draw_craft_parts(pm,pc.state.damage,at,L,t,pc.prop_angle,airframe(pc),pc.state.gear)
             draw_debris(pm,pc.state.damage,L,t)
             if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t,me.mode==.aboard and pc.cockpit_view)
-            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale)
+            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength)
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
@@ -1562,8 +1616,8 @@ draw = ():
     match me.mode:
         .free: render_camera(free.pos, forward(free), 62.0, 1.0, world_far(f64(free.pos.y)))
         .aboard:
-            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil)
-            else:place_chase_camera(pc,t)
+            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil,view_target.bearing,view_target.weight)
+            else:place_chase_camera(pc,t,view_target.bearing,view_target.weight)
         .descent:camera3d(descent_camera.eye,descent_aim(descent_camera),descent_fov(),0.1,world_far(f64(me.pos.y)))
         _: place_local_follow(follow,follow_frame,58.0,0.3,world_far(f64(me.pos.y)))
     if let view=judge_camera:
@@ -1623,25 +1677,15 @@ draw = ():
         .free: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if me.mode == .aboard:
         aim_marks(pc,not pc.cockpit_view)
-        # (in the cockpit, the compass in its brass case on top of the panel)
-        # (fixed to the panel's top: where its two ends fall on the screen, as one looks about)
         if pc.cockpit_view:
-            cf = pc_at() * translation(craft_models[pc.model].cockpit)
-            if let l = world_to_screen(transform_point(cf, vec3(-0.21, -0.12, -0.80))):
-                if let r = world_to_screen(transform_point(cf, vec3(0.21, -0.12, -0.80))):
-                    wc = f64(length(r - l))
-                    if wc > 40.0 and wc < f64(screen_width()) * 1.5: cockpit_compass(fonts, f64(l.x + r.x) * 0.5, f64(l.y + r.y) * 0.5 - 16.0, wc, (heading(pc.state) + TAU) % TAU)
-            # (and the radio, on the coaming to the right of the compass)
-            if let l2 = world_to_screen(transform_point(cf, vec3(0.26, -0.13, -0.80))):
-                if let r2 = world_to_screen(transform_point(cf, vec3(0.46, -0.13, -0.80))):
-                    wr = f64(length(r2 - l2))
-                    if wr > 30.0 and wr < f64(screen_width()) * 1.2: radio_dial(fonts, f64(l2.x + r2.x) * 0.5, f64(l2.y + r2.y) * 0.5, wr, cockpit_radio.khz, not cockpit_radio.muted, cockpit_radio.strength)
+            if let radio_hit=cockpit_radio_rect(craft_models[pc.model],pc_at()):tap_card(radio_hit,.f9)
         st = pc.state
         # (the speedometer reads the true speed)
         if show_chart: pass
-        else if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale)
-        else if not pc.cockpit_view: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed)
+        else if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale,pc.instruments)
+        else if not pc.cockpit_view: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed,pc.instruments)
     if me.mode != .free and not paused and not judge_ready and active_scenario=="": title_card(fonts, t)
+    if me.mode==.aboard and not paused and not show_chart and ui==.none and not notebook.open:draw_view_target(view_target,fonts)
     if vdown(.h): controls_card(fonts, me.mode == .aboard)
     else if t > 7.5 and t < 22.0 and not judge_ready and active_scenario=="": keys_hint(fonts)
     draw_ui()

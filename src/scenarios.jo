@@ -3,6 +3,7 @@
 use 'scenario_catalog.jo'
 use 'life_types.jo'
 use 'combat.jo'
+use 'combat_bridge.jo'
 use 'pilot.jo'
 use 'planes.jo'
 use 'flight.jo'
@@ -65,7 +66,8 @@ _scenario_body = (w: mut data.World, craft: int, model: int, models: CraftModel[
     Combatant(craft,person,if model==STRAIT_BLUE_MODEL:1 else:2,k,s,model=model,
         pilot=CombatPilot(skill=0.78,nerve=0.85,formation=true,formation_heading=h,formation_speed=k.cruise_speed*0.86))
 
-build_strait = (towns: Town[], models: CraftModel[]) -> ScenarioState:
+build_strait = (towns: Town[], models: CraftModel[], per_side:int = 8) -> ScenarioState:
+    assert(per_side>=2 and per_side<=64)
     finish_settlement_registry()
     w=life.build_world(u64(1934),harbors_from_towns(towns))
     cargo.configure_cargo_scene(w,towns)
@@ -81,20 +83,29 @@ build_strait = (towns: Town[], models: CraftModel[]) -> ScenarioState:
     # Select sorted IDs, never hash iteration order. Seven allies plus eight opponents.
     places=w.far.place_ids; places.sort()
     loop side in 1..3:
-        loop place in places:
-            if ids[side-1].len()>=(if side==1:7 else:8): break
-            if not (place in w.far.harbors) or w.far.districts[place].born_country!=side: continue
-            d=w.far.districts[place]
-            if stock.far_market_qty(w,place,5)<4000: continue
-            # Each harbor sends at most two pilots, within its registered cohort limits.
-            loop slot in 0..2:
-                if ids[side-1].len()>=(if side==1:7 else:8): break
-                price=data.AIRFRAMES[0].price_cents
-                grant=max(0,price-w.accounts[d.household_account].cents)
-                w.accounts[d.household_account].cents+=grant;w.ledger.external_in_cents+=grant
-                r=registry.register_far_aircraft(w,place,.gull,d.household_account,"strait:{side}:{ids[side-1].len()}")
-                if r.craft>=0:ids[side-1].push(r.craft)
-    assert(ids[0].len()==7 and ids[1].len()==8,"The strait requires fifteen registered pilots")
+        loop mobilization in 0..(if per_side>8:32 else:1):
+            loop place in places:
+                if ids[side-1].len()>=(if side==1:per_side-1 else:per_side): break
+                if not (place in w.far.harbors) or w.far.districts[place].born_country!=side: continue
+                d=w.far.districts[place]
+                if per_side>8:
+                    w.far.districts[place].pilot_slots=64
+                    missing=4000-stock.far_market_qty(w,place,5)
+                    if missing>0:assert(stock.far_produce(w,place,5,missing,opening=true))
+                if stock.far_market_qty(w,place,5)<4000: continue
+                # Each harbor sends at most two pilots, within its registered cohort limits.
+                loop slot in 0..2:
+                    if ids[side-1].len()>=(if side==1:per_side-1 else:per_side): break
+                    price=data.AIRFRAMES[0].price_cents
+                    grant=max(0,price-w.accounts[d.household_account].cents)
+                    w.accounts[d.household_account].cents+=grant;w.ledger.external_in_cents+=grant
+                    r=registry.register_far_aircraft(w,place,.gull,d.household_account,"strait:{side}:{ids[side-1].len()}")
+                    if r.craft>=0:
+                        ids[side-1].push(r.craft)
+                        if per_side>8:
+                            # Launch each registered body before another uses the same berth.
+                            _scenario_body(w,r.craft,if side==1:STRAIT_BLUE_MODEL else:STRAIT_RED_MODEL,models,STRAIT_CENTER,0)
+    assert(ids[0].len()==per_side-1 and ids[1].len()==per_side,"The strait needs {per_side} per side; registered {ids[0].len()} allies and {ids[1].len()} opponents")
     actors:Combatant[]
     loop side in 0..2:
         members=if side==0:ids[0]+[mine] else:ids[1]
@@ -103,7 +114,7 @@ build_strait = (towns: Town[], models: CraftModel[]) -> ScenarioState:
         loop slot in 0..members.len():
             # A loose V, with the player behind its centre: every wing pair is visible.
             row=(slot+1)/2
-            offset=if slot==0:vec3(0,0,0) else:if slot==7:vec3(0,24,400) else:vec3((if slot%2==1:-1 else:1)*row*36,row*7,row*70)
+            offset=if slot==0:vec3(0,0,0) else:if members[slot]==mine:vec3(0,24,400) else:vec3((if slot%2==1:-1 else:1)*row*36,row*7,row*70)
             a=_scenario_body(w,members[slot],if side==0:STRAIT_BLUE_MODEL else:STRAIT_RED_MODEL,models,origin+quat_rotate(quat_euler(0,-h,0),offset),h)
             a.pilot.leader=members[0]
             a.pilot.formation_offset=offset
@@ -119,9 +130,27 @@ build_strait = (towns: Town[], models: CraftModel[]) -> ScenarioState:
     w.next_weather=993
     ScenarioState(world=w,flyer=f,battle=b,mode=.aboard,position=f.state.position,hour=9.5)
 
-build_scenario = (key: str, towns: Town[], models: CraftModel[]) -> ScenarioState?:
+# The original quay start, reconstructed from seed rather than a snapshot of a played world.
+build_start_game = (towns:Town[],models:CraftModel[]) -> ScenarioState:
+    w=life.build_world(u64(0),harbors_from_towns(towns));home=towns[0]
+    model=default_craft_model(.gull)
+    f=make_flyer(.gull,model,models[model].contacts,home.docks[0],atan2(f64(home.out.x),-f64(home.out.y)))
+    f.spec.player=true
+    adapter=scene.SceneAdapter();bind_living_player(f,w,adapter)
+    cargo.configure_cargo_scene(w,towns)
+    quay=home.quays[0];dock=home.docks[0].xz;edge=quay.b-quay.a
+    near=quay.a+edge*clamp(dot(dock-quay.a,edge)/dot(edge,edge),0.0,1.0)
+    start=near+normalize(dock-near)*(quay.width*0.5-1.2)
+    position=vec3(start.x,walk_height(towns,f64(start.x),f64(start.y)),start.y)
+    yaw=atan2(f64(home.out.x),f64(home.out.y))
+    battle=Battle(enabled=true,seed=int(w.seed%100000))
+    register_combat_body(battle,w,w.people[w.player].craft,f.spec,f.state,true)
+    ScenarioState(world=w,flyer=f,battle=battle,position=position,yaw=yaw,camera_yaw=yaw+PI)
+
+build_scenario = (key: str, towns: Town[], models: CraftModel[], per_side:int = 8) -> ScenarioState?:
     match key:
-        "strait": build_strait(towns,models)
+        "start":build_start_game(towns,models)
+        "strait": build_strait(towns,models,per_side)
         _: none
 
 # Combat owns these sparse bodies (no Traffic/Trip integrator). Commit once after its tick.
@@ -148,5 +177,5 @@ scenario_air_traffic = (w: data.World, b: Battle) -> Traffic[]:
     loop a in b.actors:
         if b.engagement<0 or a.engagement!=b.engagement or a.human or not a.present or a.status==.escaped:continue
         result.push(Traffic(craft=a.craft,person=a.person,name=w.people[a.person].name,why="Flying in the engagement",reason=data.Reason(purpose=.patrol,actor=a.person),
-            kind=a.spec.kind,model=a.model,spec=a.spec,state=a.state,plan=FlightPlan(phase=.cruise),town=-1,dock=-1,flying=a.status==.flying,materialized=true,prop_angle=a.prop))
+            kind=a.spec.kind,model=a.model,spec=a.spec,state=combat_render_state(a,b.render_alpha),plan=FlightPlan(phase=.cruise),town=-1,dock=-1,flying=a.status==.flying,materialized=true,prop_angle=a.prop))
     result
