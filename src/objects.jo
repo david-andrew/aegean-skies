@@ -6,6 +6,7 @@ use 'terrain_lod.jo'
 use 'world.jo'
 use 'settlements.jo'
 use 'look.jo'
+use 'paint.jo'
 use 'weather_scene.jo'
 use 'plants.jo'
 use 'render_space.jo'
@@ -31,21 +32,55 @@ struct ObjParams:
     warp_a: vec4                    # (the speed trial's warp: render_space.jo)
     warp_b: vec4
     wet: f32 = 0.0
+    pigment: Texture = Texture()
 
 struct ObjOut:
     pos: vec4
     world: vec3
     normal: vec3
     color: vec4
+    surface: vec3 = vec3(0,0,0) # opening UV / material: 1 foliage, 2 recess
+
+# Shared by the original and streamed-town vertex paths as well as groves.
+obj_surface = (v: Vertex3D, sway: f32 = 0.0) -> vec3:
+    material = if v.uv.x >= 180.0 and v.uv.x <= 181.0: 2.0 else: if (sway > 0.0 or v.uv.x == 173.0) and v.color.y > v.color.x*1.15: 1.0 else: 0.0
+    vec3(v.uv.x-180.0,v.uv.y,material)
 
 obj_light = (i: ObjOut, u: ObjParams) -> vec4:
     n = normalize(i.normal)
     ndl = dot(n, normalize(u.sun_dir))
-    lit = cel(ndl)
-    light = u.sun * lit + (mix(u.shade, u.sky, 0.35) * 1.2 + vec3(0.1, 0.1, 0.12)) * (1.0 - lit * 0.7)
+    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,0.015))
+    light = mix(u.shade*1.12+vec3(0.06,0.07,0.09),u.sun*vec3(1.02,1.0,0.94),lit)
     # a little light from below, off the sea
     light = light + vec3(0.03, 0.06, 0.08) * clamp(-n.y, 0.0, 1.0)
     c = i.color.xyz * light
+    # Subpixel crowns and distant roof washes converge to the base material.
+    # Keep their texture work out of the heavily instanced distant groves.
+    paint_near = 1.0-smoothstep(120.0,300.0,length(i.world-u.cam))
+    if paint_near > 0.0:
+        # A broad pigment wash rather than per-pixel speckle on walls and roofs.
+        uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0
+        foliage = i.surface.z > 0.5 and i.surface.z < 1.5
+        if foliage: uv = i.world.xz/12.0+vec2(i.world.y*0.08,0)
+        pigment = sample(u.pigment,uv)
+        wash = pigment.w-0.5
+        resolved = (1.0-smoothstep(0.04,0.14,max(fwidth(uv.x),fwidth(uv.y))))*paint_near
+        roof = step(i.color.y*1.4,i.color.x)*step(i.color.z*1.3,i.color.x)
+        c *= 1.0+wash*(0.28+roof*0.45)*resolved
+        if foliage:
+            # Existing rounded crown geometry, with smaller painted lobes inside it.
+            leaf = pigment.xyz*2.0-vec3(1,1,1)
+            dap = paint_ramp(dot(leaf,normalize(u.sun_dir)),0.06)
+            c *= mix(vec3(1,1,1),vec3(mix(0.78,1.18,dap))*vec3(1.06,1.0,0.92),resolved)
+    if i.surface.z > 1.5:
+        # A painted top/side recess on the existing door/window triangles.
+        edge = max(fwidth(i.surface.x),fwidth(i.surface.y))*1.2+0.015
+        inset = smoothstep(0.10-edge,0.10+edge,i.surface.x)*(1.0-smoothstep(0.82-edge,0.82+edge,i.surface.y))
+        c = mix(c*vec3(0.34,0.43,0.58),c,inset)
+    if u.flex.w > 0.0:
+        view = normalize(u.cam-i.world)
+        rim = smoothstep(0.72,0.94,1.0-max(dot(n,view),0.0))*smoothstep(-0.15,0.25,ndl)
+        c += i.color.xyz*u.sun*(rim*0.16)
     if u.wet > 0.001:
         wet = u.wet*smoothstep(0.2,0.8,n.y)
         view = normalize(u.cam-i.world)
@@ -56,7 +91,7 @@ obj_light = (i: ObjOut, u: ObjParams) -> vec4:
         # (by the sun's height, not its brightness: a rainy morning is dim, but nobody lights lamps)
         night = 1.0 - smoothstep(-0.04, 0.1, normalize(u.sun_dir).y)
         c = mix(c, vec3(1.0, 0.72, 0.38) * (1.6 + 0.4 * i.color.w), night)
-    vec4(aerial(c, i.world, u.cam, u.haze, u.fog), 1.0)
+    vec4(aerial(c, i.world, u.cam, u.haze, u.fog)*paint_paper(i.pos.xy), 1.0)
 
 obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
     p = v.pos
@@ -76,7 +111,7 @@ obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
     if v.uv.x == 173.0 and v.color.y > v.color.x*1.15:
         bend = max(v.uv.y,0.0)*u.wind.z*0.006*(0.3+0.7*gust(w.xz,u.drift))
         w += vec4(u.wind.x*bend,0,u.wind.y*bend,0)
-    ObjOut(u.view_proj * w, w.xyz, (u.model * vec4(v.normal, 0)).xyz, v.color * u.tint)
+    ObjOut(u.view_proj * w, w.xyz, (u.model * vec4(v.normal, 0)).xyz, v.color * u.tint,obj_surface(v))
 
 obj_vs_inst = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
     w = inst.model * vec4(v.pos, 1)
@@ -86,7 +121,7 @@ obj_vs_inst = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
     ph = u.time * (1.1 + 0.15 * u.wind.z) + w.x * 0.05 + w.z * 0.04
     sw = u.sway * max(v.pos.y, 0.0) * 0.004 * (0.5 + u.wind.z * 0.2) * (0.4 + g)
     w = w + vec4(u.wind.x * lean + sin(ph) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8) * sw * 0.6, 0)
-    ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, v.color * inst.color)
+    ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, v.color * inst.color,obj_surface(v,u.sway))
 
 obj_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_light(i, u)
 
@@ -94,8 +129,10 @@ obj_sh: Shader
 obj_inst_sh: Shader
 
 obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0)) -> ObjParams:
-    ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t), f32(sway),
+    p = ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t), f32(sway),
         vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift, flex, scene_warp_a, scene_warp_b,if weather_active: weather_here.rain else: 0.0)
+    p.pigment = paint_surface()
+    p
 
 # ---------------- building blocks ----------------
 
@@ -129,6 +166,17 @@ WALLS = [vec4(0.95, 0.93, 0.88, 1), vec4(0.93, 0.9, 0.82, 1), vec4(0.91, 0.76, 0
 ROOFS = [vec4(0.74, 0.34, 0.2, 1), vec4(0.68, 0.3, 0.19, 1), vec4(0.78, 0.42, 0.26, 1), vec4(0.62, 0.28, 0.2, 1)]
 DOORS = [vec4(0.18, 0.38, 0.62, 1), vec4(0.2, 0.45, 0.32, 1), vec4(0.45, 0.25, 0.15, 1), vec4(0.55, 0.62, 0.7, 1)]
 
+# Mark the existing opening geometry; no extra draw calls or triangles.
+add_painted_opening = (vs: mut Vertex3D[], c: vec3, size: vec3, color: vec4, m: mat4):
+    opening: Vertex3D[]
+    add_box(opening,c,size,color)
+    loop source in opening:
+        v = source
+        v.uv = vec2(180.0+clamp((v.pos.x-c.x)/size.x+0.5,0.0,1.0),clamp((v.pos.y-c.y)/size.y+0.5,0.0,1.0))
+        v.pos = transform_point(m,v.pos)
+        v.normal = (m*vec4(v.normal,0)).xyz
+        vs.push(v)
+
 # a house: whitewashed or ochre walls, a terracotta roof, a door and windows on its front (+z)
 add_house = (vs: mut Vertex3D[], m: mat4, w: f64, d: f64, h: f64, rng: int):
     wall = WALLS[rng % WALLS.len()]
@@ -142,7 +190,7 @@ add_house = (vs: mut Vertex3D[], m: mat4, w: f64, d: f64, h: f64, rng: int):
         add_gable(vs, vec3(0, f32(h), 0), w, d, min(w, d) * 0.22, roof, m)
     # door and windows on the front, shutters on the floors above
     fz = f32(d * 0.5 + 0.06)
-    add_box(vs, vec3(f32(-w * 0.2), 0.0, fz), vec3(1.7, 3.0, 0.12), door, m)
+    add_painted_opening(vs, vec3(f32(-w * 0.2), 0.0, fz), vec3(1.7, 3.0, 0.12), door, m)
     floors = max(1, int(h / 4.0))
     loop fl in 0..floors:
         y = f32(2.0 + f64(fl) * 4.0)
@@ -151,7 +199,7 @@ add_house = (vs: mut Vertex3D[], m: mat4, w: f64, d: f64, h: f64, rng: int):
             if fl == 0 and abs(f64(x) + w * 0.2) < 1.9: continue
             lit = (rng / 13 + k * 7 + fl * 3) % 3 == 0
             win = if lit: vec4(0.15, 0.17, 0.22, 0.5) else: (if fl == 0: vec4(0.15, 0.17, 0.22, 1) else: door)
-            add_box(vs, vec3(x, y, fz), vec3(1.4, 1.9, 0.12), win, m)
+            add_painted_opening(vs, vec3(x, y, fz), vec3(1.4, 1.9, 0.12), win, m)
 
 # a chapel: white, a dome or a bell tower
 add_chapel = (vs: mut Vertex3D[], m: mat4):
