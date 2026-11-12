@@ -1,0 +1,177 @@
+# One deterministic motion/damage owner for a caller's existing vessels.
+use 'vessel_types.jo'
+use 'sea_routes.jo'
+
+vessel_event = (f: mut VesselFleet,v: Vessel,kind: VesselEventKind,other: int = -1):
+    f.serial += 1
+    f.events.push(VesselEvent(f.serial,v.id,kind,v.position,v.owner,v.attacker,other,v.health))
+
+take_vessel_events = (f: mut VesselFleet) -> VesselEvent[]:
+    result = f.events; f.events = []; result
+
+spawn_vessel = (f: mut VesselFleet,v: Vessel) -> bool:
+    if v.id < 0 or v.owner < 0 or vessel_index(f,v.id) >= 0 or f.ships.len() >= VESSEL_LIMIT: return false
+    if v.lane >= 0:
+        at = sea_lane_index(f,v.lane)
+        if at < 0 or length(v.position.xz-f.lanes[at].start) > 2.0: return false
+        spec = vessel_spec(v.kind)
+        if f.lanes[at].draft < spec.draft or f.lanes[at].clearance < spec.beam*0.5: return false
+    else if not v.external and v.status == .waiting_route: return false
+    f.ships.push(v)
+    true
+
+# Atomic registration: the caller supplies every identity, cargo lot and escort.
+# No offsets are invented across unvalidated water; same-lane vessels depart with
+# their supplied positions/routes or wait in sequence behind their leader.
+spawn_convoy = (f: mut VesselFleet,convoy: int,ships: Vessel[]) -> bool:
+    if convoy < 0 or ships.len() == 0 or f.ships.len()+ships.len() > VESSEL_LIMIT: return false
+    candidate = f
+    loop original in ships:
+        v = original; v.convoy = convoy
+        if not spawn_vessel(candidate,v): return false
+    f = candidate
+    true
+
+stop_vessel = (f: mut VesselFleet,id: int,attacker: int = -1) -> bool:
+    k = vessel_index(f,id)
+    if k < 0 or f.ships[k].status != .underway: return false
+    f.ships[k].status = .stopped; f.ships[k].speed = 0; f.ships[k].velocity = vec3(0,0,0); f.ships[k].attacker = attacker
+    vessel_event(f,f.ships[k],.stopped)
+    true
+resume_vessel = (f: mut VesselFleet,id: int) -> bool:
+    k = vessel_index(f,id)
+    if k < 0 or f.ships[k].status != .stopped or f.ships[k].health <= 0: return false
+    f.ships[k].status = .underway; vessel_event(f,f.ships[k],.resumed); true
+capture_vessel = (f: mut VesselFleet,id: int,new_owner: int,new_side: int,attacker: int) -> bool:
+    k = vessel_index(f,id)
+    if k < 0 or new_owner < 0 or f.ships[k].status != .stopped: return false
+    previous = f.ships[k].owner
+    f.ships[k].owner = new_owner; f.ships[k].side = new_side; f.ships[k].status = .captured; f.ships[k].attacker = attacker
+    vessel_event(f,f.ships[k],.captured,previous)
+    true
+
+damage_vessel = (f: mut VesselFleet,id: int,amount: f64,attacker: int = -1,incendiary: bool = false):
+    k = vessel_index(f,id)
+    if k < 0 or amount <= 0 or f.ships[k].status == .sunk: return
+    v = f.ships[k]; v.attacker = attacker
+    v.health = max(0.0,v.health-amount)
+    if incendiary: v.fire = clamp(v.fire+amount*0.8,0.0,1.0)
+    v.flooding = clamp(v.flooding+amount*0.35,0.0,1.0)
+    vessel_event(f,v,.damaged)
+    if v.health <= 0 and v.status != .sinking:
+        v.status = .sinking; v.speed = 0; v.velocity = vec3(0,0,0)
+        vessel_event(f,v,.sinking)
+    f.ships[k] = v
+
+# A caller retires only identities whose strategic outcome has been committed.
+retire_vessel = (f: mut VesselFleet,id: int) -> bool:
+    k = vessel_index(f,id)
+    if k < 0: return false
+    f.ships.remove_at(k); true
+retire_sea_lane = (f: mut VesselFleet,id: int) -> bool:
+    loop v in f.ships:
+        if v.lane == id: return false
+    if f.search.lane == id: return false
+    k = sea_lane_index(f,id)
+    if k < 0: return false
+    f.lanes.remove_at(k); true
+
+vessel_target_speed = (v: Vessel,wind: vec2) -> f64:
+    spec = vessel_spec(v.kind)
+    factor = 1.0
+    if spec.sail:
+        forward = vec2(f32(sin(v.yaw)),f32(cos(v.yaw)))
+        ws = f64(length(wind)); along = if ws > 0.01: f64(dot(forward,wind))/ws else: 0.0
+        # These working sailboats carry auxiliary propulsion/oars: an adverse wind
+        # slows them but does not conjure a tack outside the verified sea corridor.
+        factor = clamp(ws/8.0,0.2,1.2)*(0.42+0.58*sqrt(max(0.0,(along+1.0)*0.5)))
+    spec.speed*factor*clamp(v.desired_speed,0.0,1.0)*clamp(v.health*1.3,0.15,1.0)
+
+vessel_footprint_wet = (v: Vessel,at: vec2,yaw: f64) -> bool:
+    spec = vessel_spec(v.kind)
+    forward = vec2(f32(sin(yaw)),f32(cos(yaw))); side = vec2(forward.y,-forward.x)
+    loop along in [-0.47,0.0,0.47]:
+        loop cross in [-0.45,0.45]:
+            if not sea_depth_ok(at+forward*f32(spec.length*along)+side*f32(spec.beam*cross),spec.draft): return false
+    true
+
+vessel_tick = (f: mut VesselFleet,wind: vec2):
+    f.tick += 1; f.seconds = f64(f.tick)*VESSEL_DT
+    loop k in 0..f.ships.len():
+        v = f.ships[k]; spec = vessel_spec(v.kind)
+        if v.status == .sunk: continue
+        if v.status == .sinking:
+            v.sink_age += VESSEL_DT; v.fire = max(0.0,v.fire-VESSEL_DT*0.004)
+            if not v.lifeboats_released and v.sink_age >= 6.0:
+                v.lifeboats_released = true
+                f.survivors.push(VesselSurvival(v.id,v.position,v.crew,spec.lifeboats,f.seconds))
+                vessel_event(f,v,.lifeboats)
+            if v.sink_age >= 65.0: v.status = .sunk; vessel_event(f,v,.sunk)
+            f.ships[k] = v; continue
+        if v.fire > 0:
+            v.health = max(0.0,v.health-v.fire*VESSEL_DT*0.002)
+            v.flooding = min(1.0,v.flooding+v.fire*VESSEL_DT*0.001)
+        if v.health <= 0:
+            v.status = .sinking; v.speed = 0; v.velocity = vec3(0,0,0); vessel_event(f,v,.sinking); f.ships[k] = v; continue
+        if v.external: f.ships[k] = v; continue
+        li = sea_lane_index(f,v.lane)
+        if li < 0: f.ships[k] = v; continue
+        lane = f.lanes[li]
+        if v.status == .waiting_route:
+            if lane.status == .blocked:
+                v.status = .stopped; vessel_event(f,v,.blocked); f.ships[k] = v; continue
+            if lane.status != .ready: f.ships[k] = v; continue
+            v.status = .underway
+        if v.status != .underway: f.ships[k] = v; continue
+        if v.segment >= lane.points.len()-1:
+            v.status = if lane.anchorage: .anchored else: .docked
+            v.speed = 0; v.velocity = vec3(0,0,0); vessel_event(f,v,.arrived); f.ships[k] = v; continue
+        a = lane.points[v.segment]; b = lane.points[v.segment+1]
+        delta = b-a; distance = f64(length(delta)); dir = delta/f32(max(distance,0.001))
+        target = vessel_target_speed(v,wind)
+        if v.segment == lane.points.len()-2: target = min(target,max(0.3,sqrt(max(0.0,distance-v.progress)*0.28)))
+        # Convoy spacing and crossing priority use persistent IDs, not camera LOD.
+        loop other in f.ships:
+            if other.id == v.id or other.status == .sunk or other.lane != v.lane: continue
+            ahead = f64(dot(other.position.xz-v.position.xz,dir))
+            if ahead >= -0.1 and ahead < (spec.length+vessel_spec(other.kind).length)*0.65+12.0 and (ahead > 0.1 or other.id < v.id): target = 0.0
+        v.speed += clamp(target-v.speed,-0.35*VESSEL_DT,0.18*VESSEL_DT)
+        advance = min(distance-v.progress,v.speed*VESSEL_DT)
+        pos = a+dir*f32(v.progress+advance)
+        yaw = atan2(f64(dir.x),f64(dir.y))
+        turn = atan2(sin(yaw-v.yaw),cos(yaw-v.yaw))
+        v.yaw += clamp(turn,-VESSEL_DT*0.3,VESSEL_DT*0.3)
+        # Guard actual hull corners at low cadence, plus every segment transition.
+        # A failed guard stops on the last valid pose; it never teleports ashore.
+        if advance > 0 and (f.tick%15 == v.id%15 or v.progress == 0.0) and not vessel_footprint_wet(v,pos,v.yaw):
+            v.status = .stopped; v.speed = 0; v.velocity = vec3(0,0,0); vessel_event(f,v,.blocked)
+        else:
+            v.progress += advance; v.position = vec3(pos.x,0,pos.y); v.velocity = vec3(dir.x*f32(v.speed),0,dir.y*f32(v.speed))
+            if v.progress >= distance-0.001: v.segment += 1; v.progress = 0.0
+        f.ships[k] = v
+
+step_vessels = (f: mut VesselFleet,wind: vec2,dt: f64):
+    # Never silently discard elapsed time. Caller batches distant simulation with
+    # the same fixed ticks; render quality does not alter route progress.
+    f.accumulator += max(0.0,dt)
+    loop f.accumulator+1e-10 >= VESSEL_DT:
+        vessel_tick(f,wind); f.accumulator -= VESSEL_DT
+
+
+# A new voyage begins on the hull's actual position, including after a capture.
+# If another berth/sea anchor is wanted, route to it; never relocate on assignment.
+set_vessel_route = (f: mut VesselFleet,id: int,lane_id: int) -> bool:
+    k = vessel_index(f,id); li = sea_lane_index(f,lane_id)
+    if k < 0 or li < 0: return false
+    v = f.ships[k]; lane = f.lanes[li]; spec = vessel_spec(v.kind)
+    if v.external or v.status == .underway or v.status == .sinking or v.status == .sunk: return false
+    if length(v.position.xz-lane.start) > 2 or lane.draft < spec.draft or lane.clearance < spec.beam*0.5: return false
+    v.lane = lane_id; v.segment = 0; v.progress = 0; v.status = .waiting_route
+    f.ships[k] = v
+    true
+
+take_vessel_survivors = (f: mut VesselFleet,id: int) -> VesselSurvival?:
+    loop k in 0..f.survivors.len():
+        if f.survivors[k].vessel == id:
+            result = f.survivors[k]; f.survivors.remove_at(k); return result
+    none
