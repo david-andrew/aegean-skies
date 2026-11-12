@@ -1,0 +1,151 @@
+# Scene boundary: living Trips own existing workboat positions; registered fleet
+# vessels own new motion. No inventories, catches or strategic outcomes are made here.
+use 'vessel_types.jo'
+use 'vessels.jo'
+use 'sea_routes.jo'
+use 'combat.jo'
+use 'flight.jo'
+use 'damage.jo'
+use 'planes.jo'
+import 'living_types.jo' as lt
+import 'living_boats.jo' as workboats
+
+const WORKBOAT_ID_BASE = 700000000
+struct VesselBindings:
+    combat: int[]
+    workboats: int[]
+
+sync_workboat_vessels = (f: mut VesselFleet,binding: mut VesselBindings,w: mut lt.World,dt: f64):
+    seen: int[]
+    loop marker in workboats.query_boats(w):
+        # Public ferry/tow tasks do not yet expose a suspendable vessel lease.
+        # Their passenger is not a ship owner or crew; bind only real fishers.
+        if marker.reason.purpose != .fishing: continue
+        id = WORKBOAT_ID_BASE+marker.trip; seen.push(id)
+        k = vessel_index(f,id)
+        if k < 0:
+            kind = if marker.reason.purpose == .fishing: VesselKind.sail_caique else: VesselKind.motor_caique
+            owner = w.trips[marker.trip].actor
+            if not spawn_vessel(f,Vessel(id=id,kind=kind,owner=owner,side=100+max(0,w.people[owner].faction),crew=if marker.person >= 0: [marker.person] else: [],position=marker.pose.pos,status=.underway,external=true,source_trip=marker.trip)): continue
+            k = vessel_index(f,id)
+        v = f.ships[k]
+        if v.status == .sinking or v.status == .sunk or v.status == .captured or v.status == .stopped:
+            # Physical harm suspends the same Trip's abstract motion. The living
+            # coordinator consumes its outcome for custody, rescue and production.
+            actor = w.trips[marker.trip].actor
+            w.people[actor].move_owner = .scene
+            continue
+        v.position = vec3(marker.pose.pos.x,0,marker.pose.pos.z)
+        trip = w.trips[marker.trip]
+        v.velocity = vec3(0,0,0)
+        if trip.segment < trip.route.len()-1 and trip.segment < trip.segment_ticks.len():
+            v.velocity = (trip.route[trip.segment+1]-trip.route[trip.segment])*f32(60.0/f64(max(1,trip.segment_ticks[trip.segment])))
+        v.speed = min(12.0,f64(length(v.velocity)))
+        if v.speed > 0.05: v.yaw = atan2(f64(v.velocity.x),f64(v.velocity.z))
+        v.status = if v.speed > 0.05: .underway else: .anchored
+        v.seen_tick = f.tick; f.ships[k] = v
+    loop id in binding.workboats:
+        if not (id in seen):
+            k = vessel_index(f,id)
+            # A completed trip transfers its normal body back to the living owner.
+            # A damaged/stranded body waits for that owner's durable outcome commit.
+            if k >= 0 and f.ships[k].health >= 1.0: retire_vessel(f,id)
+    binding.workboats = seen
+
+publish_vessel_targets = (f: VesselFleet,b: mut Battle,binding: mut VesselBindings,observer: vec3):
+    b.boats = [loop boat in b.boats: if not (boat.id in binding.combat): boat]
+    binding.combat = []
+    loop s in f.ships:
+        if s.status == .sunk or length(s.position-observer) > 6000: continue
+        spec = vessel_spec(s.kind)
+        b.boats.push(CombatBoat(s.id,s.side,s.position+vec3(0,f32(spec.deck*0.5-vessel_sink_depth(s)),0),s.velocity,vec3(f32(spec.beam*0.5),f32(max(1.0,spec.deck*0.7)),f32(spec.length*0.5)),s.health,s.health<=0,external=true,yaw=s.yaw))
+        binding.combat.push(s.id)
+
+receive_vessel_hits = (f: mut VesselFleet,b: Battle,binding: VesselBindings):
+    loop boat in b.boats:
+        if not (boat.id in binding.combat): continue
+        k = vessel_index(f,boat.id)
+        if k < 0: continue
+        amount = f.ships[k].health-boat.health
+        if amount > 0:
+            damage_vessel(f,boat.id,amount,boat.attacker,amount > 0.08)
+
+# Return contact time in 0..1 for a swept point against the oriented vessel hull.
+vessel_segment_hit = (s: Vessel,a: vec3,b: vec3,margin: f64 = 0.0) -> f64:
+    spec = vessel_spec(s.kind); c = cos(s.yaw); sn = sin(s.yaw)
+    local = (p: vec3) -> vec3:
+        d = p-s.position-vec3(0,f32(spec.deck*0.4-vessel_sink_depth(s)),0)
+        vec3(f32(f64(d.x)*c-f64(d.z)*sn),d.y,f32(f64(d.x)*sn+f64(d.z)*c))
+    segment_ellipsoid(local(a),local(b),vec3(0,0,0),vec3(f32(spec.beam*0.5+margin),f32(spec.deck*0.6+margin),f32(spec.length*0.5+margin)))
+
+collide_vessels = (f: mut VesselFleet,spec: CraftSpec,state: mut CraftState,previous: vec3,craft: int):
+    if state.moored: return
+    hit = -1; best = 2.0
+    loop k in 0..f.ships.len():
+        ship = f.ships[k]
+        if ship.status == .sunk or length(ship.position-state.position) > vessel_spec(ship.kind).length+spec.span+length(state.position-previous): continue
+        time = vessel_segment_hit(ship,previous,state.position,max(0.6,spec.span*0.12))
+        if time < best: best = time; hit = k
+    if hit < 0: return
+    ship = f.ships[hit]
+    hull = vessel_spec(ship.kind)
+    entry = mix(previous,state.position,f32(best))
+    delta = entry-ship.position-vec3(0,f32(hull.deck*0.4-vessel_sink_depth(ship)),0)
+    right = vec3(f32(cos(ship.yaw)),0,f32(-sin(ship.yaw)))
+    forward = vec3(f32(sin(ship.yaw)),0,f32(cos(ship.yaw)))
+    normal = normalize(right*dot(delta,right)/f32(hull.beam*hull.beam)+forward*dot(delta,forward)/f32(hull.length*hull.length)+vec3(0,delta.y/f32(max(hull.deck*hull.deck,1.0)),0)+vec3(0,0.000001,0))
+    relative = state.velocity-ship.velocity
+    closing = max(0.0,-f64(dot(relative,normal)))
+    if closing < 0.1: return
+    impulse = normal*f32(closing*spec.mass*1.05)
+    contact = mix(previous,state.position,f32(max(0.0,best-0.01)))
+    contact_damage(state.damage,spec.parts,.body,contact,normal,relative,impulse,1.2,.crunch,spec.mass,state.position,state.orientation,state.velocity,state.angular_velocity)
+    state.position = contact+normal*0.15; state.velocity += impulse/f32(spec.mass)
+    refresh_damage(spec,state)
+    damage_vessel(f,ship.id,min(1.0,0.5*spec.mass*closing*closing/(vessel_spec(ship.kind).mass*140.0)),craft)
+
+struct VesselMooring:
+    vessel = -1
+    side = 1.0
+    offset = 0.0
+
+# Boarding/presentation remains the coordinator's choice. This is a safe water
+# mooring only; it does not teleport a person onto an unwalkable ship deck.
+find_vessel_mooring = (f: VesselFleet,state: CraftState,span: f64) -> VesselMooring?:
+    if not state.on_water or state.crashed: return none
+    loop s in f.ships:
+        spec = vessel_spec(s.kind)
+        if not spec.mooring or s.status == .sinking or s.status == .sunk or s.speed > 1.5: continue
+        if length(state.velocity-s.velocity) > 2.0: continue
+        delta = state.position-s.position
+        right = vec3(f32(cos(s.yaw)),0,f32(-sin(s.yaw)))
+        forward = vec3(f32(sin(s.yaw)),0,f32(cos(s.yaw)))
+        side = f64(dot(delta,right)); along = f64(dot(delta,forward))
+        target = spec.beam*0.5+span*0.55+3.0
+        if abs(along) < spec.length*0.32 and abs(abs(side)-target) < 8.0:
+            candidate = VesselMooring(s.id,if side < 0: -1.0 else: 1.0,along)
+            if vessel_mooring_point(f,candidate,span) != none: return candidate
+    none
+
+vessel_mooring_point = (f: VesselFleet,m: VesselMooring,span: f64) -> vec3?:
+    k = vessel_index(f,m.vessel)
+    if k < 0: return none
+    s = f.ships[k]; spec = vessel_spec(s.kind)
+    if s.status == .sinking or s.status == .sunk or s.speed > 1.5: return none
+    side = vec3(f32(cos(s.yaw)),0,f32(-sin(s.yaw)))
+    forward = vec3(f32(sin(s.yaw)),0,f32(cos(s.yaw)))
+    point = s.position+side*f32(m.side*(spec.beam*0.5+span*0.55+3.0))+forward*f32(m.offset)
+    loop x in [-0.25,0.0,0.25]:
+        loop z in [-0.25,0.25]:
+            if not sea_depth_ok((point+side*f32(span*x)+forward*f32(span*z)).xz,0.4): return none
+    point
+
+resume_workboat_trip = (f: mut VesselFleet,w: mut lt.World,id: int) -> bool:
+    k = vessel_index(f,id)
+    if k < 0 or not f.ships[k].external or f.ships[k].status != .stopped: return false
+    trip = f.ships[k].source_trip
+    if not (trip in w.trips) or w.trips[trip].state != .active: return false
+    actor = w.trips[trip].actor
+    w.trips[trip].last_tick = w.tick
+    w.people[actor].move_owner = .abstract_world
+    resume_vessel(f,id)

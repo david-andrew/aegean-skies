@@ -1,0 +1,232 @@
+# Bounded observer-only rendering. These caches never own route/cargo state.
+use 'vessel_types.jo'
+use 'vessel_models.jo'
+use 'objects.jo'
+use 'look.jo'
+use 'sea.jo'
+use 'render_space.jo'
+use 'quality.jo'
+use 'wake.jo'
+
+struct VesselInstance:
+    model: mat4
+    color: vec4 = vec4(1,1,1,1)
+    rig: vec4 = vec4(0,0,0,0)       # sail spread, wind strength, unused, unused
+
+struct VesselParams:
+    light: ObjParams
+    origin: vec3
+
+vessel_vertex = (v: Vertex3D,i: VesselInstance,u: VesselParams) -> ObjOut:
+    p = v.pos
+    if v.uv.y > 0.5:
+        foot = v.uv.y-1.0
+        p.y = foot+(p.y-foot)*i.rig.x
+        right = (i.model*vec4(1,0,0,0)).xz
+        across = dot(right,u.light.wind.xy)
+        p.x += v.uv.x*across*i.rig.x*(0.35+i.rig.y*0.05)*(1.0+0.05*sin(u.light.time*2.1+p.z*1.4))
+    w = (i.model*vec4(p,1)).xyz
+    curved = render_warped(w,u.light.cam,u.light.warp_a,u.light.warp_b)
+    ObjOut(u.light.view_proj*vec4(curved-u.origin,1),w,render_normal((i.model*vec4(v.normal,0)).xyz,w,u.light.cam),v.color*i.color)
+
+vessel_fragment = (v: ObjOut,u: VesselParams) -> vec4:
+    if behind_sea(v.world,u.light.cam): discard()
+    if v.color.w < 0.6:
+        night = 1.0-smoothstep(0.58,1.1,length(u.light.sun))
+        lit = obj_light(v,u.light).xyz
+        emission = if v.color.w > 0.53: vec3(1.6,1.0,0.38) else: v.color.xyz*2.0
+        return vec4(mix(lit,aerial(emission,v.world,u.light.cam,u.light.haze,u.light.fog),night),1)
+    obj_light(v,u.light)
+
+vessel_smoke_fragment = (v: ObjOut,u: VesselParams) -> vec4:
+    if behind_sea(v.world,u.light.cam): discard()
+    solid = ObjOut(v.pos,v.world,v.normal,vec4(v.color.xyz,1))
+    vec4(obj_light(solid,u.light).xyz,v.color.w)
+
+struct VesselModel:
+    kind: VesselKind
+    near: Mesh
+    far: Mesh
+    close: InstanceBuffer[VesselInstance]
+    distant: InstanceBuffer[VesselInstance]
+
+struct VesselWake:
+    id: int
+    trail: WakeTrail
+    used: int
+
+struct VesselView:
+    ready = false
+    shader: Shader
+    smoke_shader: Shader
+    models: VesselModel[]
+    smoke: Mesh
+    smoke_buffer: InstanceBuffer[VesselInstance]
+    bow: Mesh
+    bow_buffer: InstanceBuffer[VesselInstance]
+    lifeboat: Mesh
+    lifeboat_buffer: InstanceBuffer[VesselInstance]
+    wakes: VesselWake[]
+    wake_mesh: Mesh
+    frame = 0
+    near_count = 0
+    far_count = 0
+    triangles = 0
+
+vessel_upload = (buffer: InstanceBuffer[VesselInstance],items: VesselInstance[]) -> InstanceBuffer[VesselInstance]:
+    result = buffer
+    set_instances(result,items)
+    result
+
+vessel_view_init = (v: mut VesselView):
+    if v.ready: return
+    v.shader = make_shader(shader(vessel_vertex,vessel_fragment))
+    v.smoke_shader = make_shader(shader(vessel_vertex,vessel_smoke_fragment))
+    puff: Vertex3D[]; add_sphere(puff,vec3(0,0,0),1,rgb(0.38,0.39,0.37),6,4)
+    v.smoke = custom_mesh(puff)
+    empty: VesselInstance[]; vertices: Vertex3D[]
+    v.smoke_buffer = instance_buffer(empty)
+    bow: Vertex3D[]
+    loop side in [-1.0,1.0]:
+        a = vec3(0,0.12,0); b = vec3(f32(side*1.6),0.08,-2.1); c = vec3(f32(side*1.3),0.08,-2.1)
+        if side > 0: vessel_triangle(bow,a,b,c,rgb(0.87,0.93,0.88))
+        else: vessel_triangle(bow,a,c,b,rgb(0.87,0.93,0.88))
+    v.bow = custom_mesh(bow); v.bow_buffer = instance_buffer(empty)
+    v.lifeboat = custom_mesh(vessel_vertices(.rowboat,true)); v.lifeboat_buffer = instance_buffer(empty)
+    v.wake_mesh = mesh(vertices)
+    v.ready = true
+
+vessel_pose = (s: Vessel,t: f64,wind: vec2) -> mat4:
+    spec = vessel_spec(s.kind)
+    forward = vec2(f32(sin(s.yaw)),f32(cos(s.yaw))); right = vec2(forward.y,-forward.x)
+    p = s.position
+    swell = swell_at(f64(p.x),f64(p.z),t)
+    # Three separated samples smooth short crests under a long hull.
+    nose = p.xz+forward*f32(spec.length*0.32); stern = p.xz-forward*f32(spec.length*0.32)
+    a = swell_at(f64(nose.x),f64(nose.y),t); b = swell_at(f64(stern.x),f64(stern.y),t)
+    heave = (swell.x+a.x+b.x)/3.0
+    pitch = -atan2(f64(a.x-b.x),spec.length*0.64)
+    roll = -atan(f64(dot(vec2(swell.y,swell.z),right)))*min(1.0,6.0/spec.beam)
+    if spec.sail and s.status == .underway: roll += clamp(f64(dot(wind,right))*0.014,-0.22,0.22)
+    sinking = if s.status == .sinking or s.status == .sunk: min(1.0,s.sink_age/65.0) else: 0.0
+    roll += sinking*0.65; pitch -= sinking*0.25
+    translation(vec3(p.x,f32(heave-f32(vessel_sink_depth(s))),p.z))*rotation_y(s.yaw)*rotation_x(pitch)*rotation_z(roll)
+
+vessel_funnel = (s: Vessel) -> vec3:
+    spec = vessel_spec(s.kind)
+    levels = if s.kind == .passenger_steamer: 3.0 else: if s.kind == .island_ferry: 2.0 else: 1.0
+    vec3(0,f32(spec.deck+levels*2.8+spec.beam*0.52),f32(-spec.length*(if s.kind == .tanker: 0.30 else: 0.13)))
+
+prepare_vessel_view = (v: mut VesselView,f: VesselFleet,observer: vec3,t: f64,wind: vec2):
+    v.frame += 1; v.near_count = 0; v.far_count = 0; v.triangles = 0
+    visible: int[]
+    range = if render_quality.tier == 0: 10000.0 else: 24000.0
+    loop k in 0..f.ships.len():
+        s = f.ships[k]
+        if s.status != .sunk and length(s.position-observer) < range: visible.push(k)
+    if visible.len() == 0 and f.survivors.len() == 0:
+        if v.ready:
+            empty: VesselInstance[]
+            loop k in 0..v.models.len():
+                v.models[k].close = vessel_upload(v.models[k].close,empty); v.models[k].distant = vessel_upload(v.models[k].distant,empty)
+            v.bow_buffer = vessel_upload(v.bow_buffer,empty)
+            v.smoke_buffer = vessel_upload(v.smoke_buffer,empty); v.lifeboat_buffer = vessel_upload(v.lifeboat_buffer,empty)
+            v.wakes.clear()
+        return
+    visible.sort_by((index: int) -> f64: f64(length(f.ships[index].position-observer)))
+    vessel_view_init(v)
+    # Build no more than one newly visible hull type per frame.
+    loop index in visible:
+        kind = f.ships[index].kind; found = false
+        loop model in v.models:
+            if model.kind == kind: found = true
+        if not found:
+            empty: VesselInstance[]
+            v.models.push(VesselModel(kind,custom_mesh(vessel_vertices(kind)),custom_mesh(vessel_vertices(kind,true)),instance_buffer(empty),instance_buffer(empty)))
+            break
+    near_limit = if render_quality.tier == 0: 6 else: 16
+    wake_limit = if render_quality.tier == 0: 2 else: 6
+    near_ids = [loop k in 0..min(near_limit,visible.len()): visible[k]]
+    wake_ids: int[]
+    loop index in near_ids:
+        if f.ships[index].status == .underway and f.ships[index].speed > 1 and wake_ids.len() < wake_limit: wake_ids.push(index)
+    smoke: VesselInstance[]; bows: VesselInstance[]
+    loop mi in 0..v.models.len():
+        close: VesselInstance[]; distant: VesselInstance[]
+        loop index in visible:
+            s = f.ships[index]
+            if s.kind != v.models[mi].kind: continue
+            spec = vessel_spec(s.kind); dist = f64(length(s.position-observer))
+            near = dist < (if render_quality.tier == 0: 900.0 else: 2200.0) and index in near_ids
+            pose = if near: vessel_pose(s,t,wind) else: translation(s.position)*rotation_y(s.yaw)
+            if not near and s.status == .sinking: pose = translation(s.position-vec3(0,f32(vessel_sink_depth(s)),0))*rotation_y(s.yaw)
+            spread = if s.status == .underway: clamp(s.speed/max(spec.speed,0.01),0.35,1.0) else: 0.03
+            inst = VesselInstance(pose,rig=vec4(f32(spread),length(wind),0,0))
+            if near: close.push(inst); v.near_count += 1
+            else: distant.push(inst); v.far_count += 1
+            if (spec.steam and s.status == .underway) or s.fire > 0.01:
+                count = if near: (if render_quality.tier == 0: 8 else: 14) else: 5
+                funnels = if spec.steam: vessel_funnels(s.kind) else: 1
+                loop k in 0..count:
+                    head = transform_point(pose,vessel_funnel(s)-vec3(0,0,f32(spec.length*0.10*f64(k%funnels))))
+                    age = f64(k/funnels)*0.45*f64(funnels)+(t%0.45)
+                    at = head-s.velocity*f32(age)+vec3(wind.x*f32(age*0.65),f32(age*1.9),wind.y*f32(age*0.65))
+                    size = (1.2+age*0.55)*max(0.7,spec.beam*0.13)
+                    at += vec3(f32(sin(age*2.8+f64(s.id))*age*0.25),f32(sin(age*1.9)*0.3),f32(cos(age*2.3+f64(s.id))*age*0.20))
+                    shade = f32(1.1+age*0.17)
+                    alpha = f32(0.62*(1.0-f64(k)/f64(count)))
+                    smoke.push(VesselInstance(translation(at)*scaling(vec3(f32(size*1.15),f32(size*0.75),f32(size))),color=vec4(shade,shade,shade,alpha)))
+            if near and s.speed > 1.0:
+                at = transform_point(pose,vec3(0,0,f32(spec.length*0.47)))
+                bows.push(VesselInstance(translation(at)*rotation_y(s.yaw)*scaling(vec3(f32(spec.beam*0.30),1,f32(spec.beam*0.40)))))
+            if near and s.fire > 0:
+                fire_at = s.position+vec3(0,f32(spec.deck+1.8),0)
+                smoke.push(VesselInstance(translation(fire_at)*scaling(vec3(1.2,f32(2.0+s.fire*3.0),1.2)),color=vec4(4.0,1.6,0.3,0.4)))
+            if near and index in wake_ids:
+                wi = -1
+                loop k in 0..v.wakes.len():
+                    if v.wakes[k].id == s.id: wi = k
+                if wi < 0 and v.wakes.len() < wake_limit:
+                    wi = v.wakes.len(); v.wakes.push(VesselWake(s.id,WakeTrail(),v.frame))
+                if wi >= 0:
+                    v.wakes[wi].used = v.frame
+                    stern = s.position-vec3(f32(sin(s.yaw)),0,f32(cos(s.yaw)))*f32(spec.length*0.48)
+                    if t-v.wakes[wi].trail.last >= 0.5: wake_step(v.wakes[wi].trail,stern,s.velocity,true,spec.beam*0.25,t)
+                    loop v.wakes[wi].trail.pts.len() > 24: v.wakes[wi].trail.pts.remove_at(0)
+        v.models[mi].close = vessel_upload(v.models[mi].close,close); v.models[mi].distant = vessel_upload(v.models[mi].distant,distant)
+        v.triangles += (v.models[mi].near.count*close.len()+v.models[mi].far.count*distant.len())/3
+    boats: VesselInstance[]
+    loop survivor in f.survivors:
+        if survivor.rescued or length(survivor.at-observer) > 2500: continue
+        loop k in 0..min(survivor.boats,8):
+            d = vec3(f32(f64(k)*7.0+12.0),0,f32(f64(k%2)*5.0))
+            at = survivor.at+d+vec3(wind.x,0,wind.y)*f32(min(60.0,f.seconds-survivor.born)*0.02)
+            boats.push(VesselInstance(translation(at+vec3(0,swell_at(at.x,at.z,t).x,0))))
+    v.bow_buffer = vessel_upload(v.bow_buffer,bows)
+    v.smoke_buffer = vessel_upload(v.smoke_buffer,smoke); v.lifeboat_buffer = vessel_upload(v.lifeboat_buffer,boats)
+    k = v.wakes.len()-1
+    loop k >= 0:
+        if v.wakes[k].used != v.frame or k >= wake_limit: v.wakes.remove_at(k)
+        k -= 1
+
+draw_vessels = (v: VesselView,L: Light,t: f64):
+    if not v.ready: return
+    origin = render_origin(scene_camera()); light = obj_params(L,t)
+    light.view_proj = scene_view_proj()*translation(origin)
+    p = VesselParams(light,origin)
+    loop model in v.models:
+        if model.close.count > 0: draw_instanced(v.shader,model.near,model.close,p)
+        if model.distant.count > 0: draw_instanced(v.shader,model.far,model.distant,p)
+    if v.bow_buffer.count > 0: draw_instanced(v.shader,v.bow,v.bow_buffer,p)
+    if v.lifeboat_buffer.count > 0: draw_instanced(v.shader,v.lifeboat,v.lifeboat_buffer,p)
+
+draw_vessel_wakes = (v: VesselView,L: Light,t: f64):
+    if not v.ready: return
+    draw_wakes([loop w in v.wakes: w.trail],L,t,v.wake_mesh)
+
+# Transparent plume after the water; fading puffs overlap rather than form a stack.
+draw_vessel_smoke = (v: VesselView,L: Light,t: f64):
+    if not v.ready or v.smoke_buffer.count == 0: return
+    origin = render_origin(scene_camera()); light = obj_params(L,t)
+    light.view_proj = scene_view_proj()*translation(origin)
+    draw_instanced(v.smoke_shader,v.smoke,v.smoke_buffer,VesselParams(light,origin))
