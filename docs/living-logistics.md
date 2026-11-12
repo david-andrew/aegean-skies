@@ -73,9 +73,14 @@ work. No second decorative crew or vessel is added when a ship comes into view.
 
 National treasuries charter existing carriers and pay real local recruits, provisions, stores and
 wages. Arsenal conversion consumes actual parts/fuel and pays actual workers. A force follows
-saved route orders and carries reports; declarations and ceasefires must reach it. A hungry force
+saved route orders and carries reports; declarations and ceasefires must reach it. Signed incidents and diplomatic papers retain their original
+dates for a90-day delivery window, sufficient for sea-scale correspondence; duplicate receipt
+does not refresh them. A patrol revisiting its current town cannot count as another armed entry:
+that evidence requires an actual traveled order. A hungry force
 may attempt a return home with partially purchased provisions, while remaining unsupplied for
-combat. A finite charter ends through actual return and demobilization.
+combat. After two actual hungry days, merchants may likewise attempt home or seek grain in a
+still-current carried quote, recording the risk and continuing to consume their finite rations.
+A finite charter ends through actual return and demobilization.
 
 Blockades require an actual supplied hull at the lane mouth. Privateers need paid, dated letters;
 boarding transfers a finite part of an existing enemy-owned load. The prize rides home before a

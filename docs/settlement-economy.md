@@ -125,8 +125,10 @@ The UI should dispatch those IDs to the commission methods, not the six-port job
 `living_far_aircraft.register_far_aircraft(w,place,kind,funder,key)` is a guarded, idempotent
 registration for scene/event callers. It consumes two owned packages of parts and transfers
 the actual AIRFRAMES purchase price to the local yard. It reserves a real berth and promotes
-a worker into one of two pilot slots, alongside three ordinary resident slots. The same
-World.aircraft ID owns its empty tank, health and future payload. Saves accept8..64 bodies;
+a worker into one of the default two pilot slots, alongside three ordinary resident slots.
+Authored mobilizations may explicitly reserve up to64pilot slots from the same finite cohorts;
+ordinary settlements retain the two-pilot limit. The same
+World.aircraft ID owns its empty tank, health and future payload. Saves accept8..256 bodies;
 no duplicate far aircraft tank/hold is introduced. `fill_far_tank` purchases owned local fuel,
 `reserve_far_berth` and `release_far_berth` own sparse berth metadata. Scene callers still
 commit actual flight motion once; no headless flying or rendering is implied by registration.
