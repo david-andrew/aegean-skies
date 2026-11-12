@@ -1,0 +1,230 @@
+# Flight-only pilot intentions. No world transactions, random draws or attitude overrides.
+use 'flight.jo'
+use 'tweaks.jo'
+
+enum AirTemperament: careful, sociable, racer, low_patrol
+enum AirManner: route, coast, formation, greeting, circling, avoiding, departure_taxi
+struct AirProfile:
+    temperament: AirTemperament = .sociable
+    altitude = 300.0
+    pace = 1.0
+    friendly = true
+    curious = false
+
+struct AirContact:
+    craft: int
+    position: vec3
+    velocity: vec3
+    destination = -1
+    wet = false
+    parked = false
+
+struct AirShip:
+    id: int
+    position: vec3
+    velocity: vec3 = vec3(0, 0, 0)
+
+struct AirMind:
+    manner: AirManner = .route
+    departing = false
+    departure: vec3 = vec3(0, 0, 0)
+    greeted = -100000
+    orbit_ship = -1
+    orbit_until = 0
+    orbited = false
+    leader = -1
+    next_think = 0
+    aim: vec3 = vec3(0, 0, 0)
+    altitude = 300.0
+    speed = 0.0
+    yield_water = false
+    avoiding = false
+
+# Capture a wind-aligned runway only if all three corridors remain over water.
+# Move the runway offshore when the wind blows toward land; don't land across the quay.
+struct AirRunway:
+    start: vec3
+    touchdown: vec3
+    heading: f64
+    valid = false
+
+air_runway = (center: vec3, out: vec3, wind: vec3, ground: (f64, f64) -> f64, altitude: f64 = 240.0) -> AirRunway:
+    wind_heading = if length(wind.xz) > 1: atan2(-f64(wind.x), f64(wind.z)) else: atan2(f64(out.x), -f64(out.z))
+    best = AirRunway(center + out * 300.0, center + out * 600.0, wind_heading)
+    score = 1e9
+    loop turn in [0.0, 0.35, -0.35, 0.7, -0.7, PI]:
+        h = wind_heading + turn; dir = heading_vector(h); side = vec3(-dir.z, 0, dir.x)
+        loop off in [700.0, 1300.0, 2200.0]:
+            target = center + out * f32(off)
+            safe = true
+            approach = max(1800.0, altitude / 0.065 + 500.0)
+            loop i in 0..25:
+                d = -approach + f64(i) * (approach + 500.0) / 24.0
+                loop lane in [-1.0, 0.0, 1.0]:
+                    p = target + dir * f32(d) + side * f32(lane * 60.0)
+                    # Airborne approach may cross low ground, but the flare/run must be water.
+                    ceiling = if d < -600: max(0.0, -d * 0.065 - 100.0) else: 0.0
+                    if ground(f64(p.x), f64(p.z)) > ceiling: safe = false
+            value = abs(turn) * 4000.0 + off
+            if safe and value < score:
+                score = value; best = AirRunway(target - dir * 350.0, target, h, true)
+    best
+
+# A virtual landing fix uses the proven autopilot's steering/terrain lookahead for a waypoint.
+# The guide is disposable: only the real harbor FlightPlan is allowed to descend or moor.
+air_waypoint_controls = (spec: CraftSpec, state: CraftState, e: FlightEnv, aim: vec3, altitude: f64, speed: f64) -> Controls:
+    delta = aim - state.position; delta.y = 0
+    h = if length(delta) > 1: atan2(f64(delta.x), -f64(delta.z)) else: heading(state)
+    distance = max(1800.0, altitude / 0.065 + 500.0)
+    guide = FlightPlan(target = state.position + heading_vector(h) * f32(distance + max(1600.0, f64(length(delta)))), altitude = altitude, speed = speed,
+        phase = .cruise, initialized = true, approach_heading = h, approach_distance = distance, clearance_altitude = altitude)
+    autopilot(spec, state, guide, e)
+
+# Five Hz decisions, using the same completed-tick snapshot for every pilot. Lower stable IDs
+# lead formations; right-of-way never depends on array order. Physical controls still run 60 Hz.
+air_think = (mind: mut AirMind, profile: AirProfile, id: int, destination: int, state: CraftState, spec: CraftSpec, waypoint: vec3,
+    contacts: AirContact[], ships: AirShip[], player: int, tick: int, e: FlightEnv):
+    if tick < mind.next_think: return
+    mind.next_think = tick + 12
+    mind.manner = .route; mind.leader = -1; mind.yield_water = false; mind.avoiding = false
+    mind.aim = waypoint; mind.altitude = max(profile.altitude, f64(waypoint.y) - (if profile.temperament == .low_patrol: 180.0 else: 0.0)); mind.speed = spec.cruise_speed * profile.pace
+    f = heading_vector(heading(state)); right = vec3(-f.z, 0, f.x)
+    speed = max(20.0, f64(length(state.velocity))); look = max(700.0, speed * 5.0)
+    # Predict swept conflicts, including the human and docked aircraft. Both airborne pilots
+    # turn to their own right in a head-on encounter; taxiing yields to the lower stable ID.
+    loop other in contacts:
+        if other.craft == id: continue
+        delta = other.position - state.position; rv = other.velocity - state.velocity
+        if length(delta) > max(900.0, speed * 8.0): continue
+        close = clamp(-f64(dot(delta, rv)) / max(1.0, f64(dot(rv, rv))), 0.0, 6.0)
+        miss = delta + rv * f32(close)
+        if state.on_water:
+            if other.position.y > 15: continue
+            ahead = dot(delta, f)
+            if ahead > -spec.span and length(miss.xz) < spec.span * 2.0 + 12 and (other.parked or id > other.craft):
+                mind.avoiding = true; mind.manner = .avoiding
+                if other.parked:
+                    mind.aim = other.position + right * f32(spec.span * 3.0 + 35.0) + f * 20.0
+                    mind.yield_water = length(delta) < spec.span * 1.2 + 15 and length(state.velocity) > 1.5
+                else: mind.yield_water = true
+        else if length(miss) < max(85.0, spec.span * 4.0) and (close > 0.05 or length(delta) < 100):
+            mind.aim = state.position + f * f32(look) + right * f32(look * 0.8)
+            mind.altitude = max(mind.altitude, f64(state.position.y) + 35.0)
+            mind.avoiding = true; mind.manner = .avoiding
+    if mind.avoiding or state.on_water: return
+    # Sparse, deliberate wing greetings; never on approach or close to another airplane.
+    loop other in contacts:
+        if other.craft == player and profile.friendly and tick - mind.greeted > 5400 and length(other.position - state.position) < 650 and length(other.position - state.position) > 180 and abs(other.position.y - state.position.y) < 250:
+            mind.greeted = tick
+    # Form on a slower neighbour ahead, going to the same harbor. Followers form an echelon,
+    # with enough lateral space to leave wake turbulence and room to break away.
+    loop other in contacts:
+        if other.craft >= id or other.craft == player or other.wet or other.destination != destination: continue
+        d = other.position - state.position
+        if length(d) < 250 or length(d) > 1100 or dot(d, f) < 0: continue
+        if length(other.velocity) < 20 or dot(normalize(other.velocity), f) < 0.92: continue
+        if mind.leader >= 0 and other.craft > mind.leader: continue
+        mind.leader = other.craft; mind.manner = .formation
+        mind.aim = other.position + other.velocity * 3.0 - right * f32(120 + (id % 3) * 55)
+        mind.altitude = f64(other.position.y) + 20.0
+        mind.speed = clamp(f64(length(other.velocity)) + (f64(dot(d, f)) - 350.0) * 0.035, spec.stall_speed * pure_k(spec) * 1.45, spec.cruise_speed * 1.05)
+    if mind.leader >= 0: return
+    # One inspection circle per trip for a patrol/show-off, around an actual vessel. Never
+    # overfly a shoreline to perform it. Delivery pilots keep their commitments instead.
+    if profile.curious and not mind.orbited:
+        loop ship in ships:
+            if length(ship.position - state.position) > 1200 or length(ship.position - waypoint) < 1200: continue
+            radius = max(350.0, speed * 5.0); safe = true
+            loop i in 0..16:
+                a = TAU * f64(i) / 16.0; p = ship.position + vec3(cos(a) * radius, 0, sin(a) * radius)
+                if e.ground(f64(p.x), f64(p.z)) > 0: safe = false
+            if safe:
+                mind.orbit_ship = ship.id; mind.orbit_until = tick + int((TAU * radius / speed + 3) * 60.0); mind.orbited = true
+                break
+    if tick < mind.orbit_until:
+        loop ship in ships:
+            if ship.id != mind.orbit_ship: continue
+            radius = max(350.0, speed * 5.0)
+            radial = state.position - ship.position; radial.y = 0
+            radial = normalize(radial + vec3(0.001, 0, 0))
+            tangent = vec3(-radial.z, 0, radial.x)
+            mind.aim = ship.position + radial * f32(radius * 0.8) + tangent * f32(radius * 0.65)
+            mind.altitude = max(160.0, profile.altitude); mind.manner = .circling
+            return
+    # Route-preserving coastal bias: when one side borders land, stay offshore and fly its
+    # tangent. The autopilot's terrain probes retain final authority over altitude.
+    route = waypoint - state.position; route.y = 0
+    if length(route) > 1200:
+        dir = normalize(route); side = vec3(-dir.z, 0, dir.x); ahead = state.position + dir * f32(look)
+        left = e.ground(f64((ahead - side * 500.0).x), f64((ahead - side * 500.0).z))
+        right_land = e.ground(f64((ahead + side * 500.0).x), f64((ahead + side * 500.0).z))
+        if (left > 10) != (right_land > 10):
+            mind.aim = ahead + side * (if left > 10: 180.0 else: -180.0); mind.manner = .coast
+
+air_social_controls = (mind: AirMind, profile: AirProfile, id: int, state: CraftState, spec: CraftSpec, e: FlightEnv, tick: int) -> Controls:
+    c = air_waypoint_controls(spec, state, e, mind.aim, mind.altitude, mind.speed)
+    age = f64(tick - mind.greeted) / 60.0
+    if age >= 0 and age < 3.0 and not mind.avoiding and f64(state.position.y) > e.ground(f64(state.position.x), f64(state.position.z)) + 150 and not state.stalled:
+        c.roll = clamp(c.roll + sin(age * TAU / 1.5) * 0.55, -0.85, 0.85)
+    c
+
+# The travel speed multiplier lowers drag. The legacy flare's fixed 15% throttle can then
+# accelerate a racer beyond its landing speed; regulate power against the actual airspeed.
+# Pitch, flare, go-around and terrain logic remain the shared autopilot's.
+air_autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, e: FlightEnv) -> Controls:
+    if state.on_water and (plan.phase == .land or plan.phase == .descend):
+        plan.touchdown = state.position; plan.phase = .taxi
+    # Complete the straight water run before turning toward the dock.
+    if state.on_water and plan.phase == .taxi and length(state.velocity) > 7:
+        return Controls(water_brake = 1.0)
+    # Once safely flaring over clear water, use the available run-out. The old point
+    # threshold would abort at +350 m even with the floats only a few metres above the sea.
+    original = plan.target
+    previous = plan.phase
+    hdir = heading_vector(plan.approach_heading)
+    fix = plan.target - hdir * f32(plan.approach_distance)
+    if plan.arrival_setup:
+        lead = fix - hdir * 1400.0
+        if length((state.position - lead).xz) < max(180.0, length(state.velocity) * 3): plan.arrival_setup = false
+        else: return air_waypoint_controls(spec, state, e, lead, plan.altitude, max(spec.stall_speed * 1.7, min(spec.cruise_speed, 100.0)))
+    if plan.phase == .land and state.position.y < spec.float_height + 12 and not state.on_water:
+        dir = heading_vector(plan.approach_heading); clear = true
+        loop d in [100.0, 300.0, 600.0]:
+            p = state.position + dir * f32(d)
+            if e.ground(f64(p.x), f64(p.z)) > 0: clear = false
+        if clear and dot(forward(state), dir) > 0.95 and abs(quat_rotate(state.orientation, vec3(1, 0, 0)).y) < 0.18:
+            along = f64(dot(plan.target - state.position, dir))
+            if along < 400: plan.target += dir * f32(400 - along)
+    c = autopilot(spec, state, plan, e)
+    plan.target = original
+    if tweaks.chaotic_stalls and plan.phase == .descend and (previous == .cruise or previous == .climb) and dot(forward(state), hdir) < 0.85:
+        # Do not start descending while still turning across the approach. Fly upstream,
+        # then return along the runway's centreline at a stable speed and height.
+        plan.phase = .cruise; plan.arrival_setup = true
+        return air_waypoint_controls(spec, state, e, fix - hdir * 1400.0, plan.altitude, max(spec.stall_speed * 1.7, min(spec.cruise_speed, 100.0)))
+    # The landing fix is behind a departing aircraft. First establish a safe straight climb
+    # before banking back toward it; an eight-metre-high reversal can drop a stalled wing.
+    if tweaks.chaotic_stalls and plan.phase == .climb and not state.on_water and state.position.y < max(100.0, e.ground(f64(state.position.x), f64(state.position.z)) + 100):
+        aim = state.position + heading_vector(plan.takeoff_heading) * 4000.0
+        c = air_waypoint_controls(spec, state, e, aim, f64(state.position.y) + 20.0, min(spec.cruise_speed, 140.0))
+        c.throttle = max(c.throttle, 0.8); c.airbrake = 0
+    if plan.phase == .land and spec.handling_scale > 1.0:
+        want = spec.stall_speed * 1.30 * pure_k(spec)
+        speed = f64(length(state.velocity - e.wind))
+        equilibrium = sqrt(max(1.0, spec.arc_thrust / spec.arc_drag))
+        c.throttle = min(c.throttle, clamp((want / equilibrium) ^ 2 + (want - speed) * 0.06, 0.0, 0.6))
+    c
+
+# Inertial flight needs rate feedback: the legacy steer assumes immediate angular rates.
+# These are pilot stick/rudder corrections only; they never edit attitude or momentum.
+air_stabilize = (spec: CraftSpec, state: CraftState, e: FlightEnv, input: Controls) -> Controls:
+    c = input
+    if not tweaks.chaotic_stalls or state.on_water: return c
+    c.pitch -= f64(state.angular_velocity.x) / max(0.1, spec.pitch_rate) * 1.6
+    c.yaw += f64(state.angular_velocity.y) / max(0.1, spec.yaw_rate * 1.6) * 1.6
+    c.roll += f64(state.angular_velocity.z) / max(0.1, spec.roll_rate) * 1.6
+    air = quat_rotate(quat_inverse(state.orientation), state.velocity - e.wind)
+    alpha = atan2(-f64(air.y), -f64(air.z))
+    if alpha > 0.18: c.pitch = min(c.pitch, -min(0.6, (alpha - 0.18) * 4.0))
+    if alpha < -0.25: c.pitch = max(c.pitch, min(0.6, (-alpha - 0.25) * 4.0))
+    c

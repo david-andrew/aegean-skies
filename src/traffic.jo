@@ -1,8 +1,10 @@
+use 'ports_scene.jo'
 # Living-world aircraft. Identity and intent belong to World; only leased craft run physics.
 use 'world.jo'
 use 'look.jo'
 use 'planes.jo'
 use 'flight.jo'
+use 'air_pilot.jo'
 use 'combat.jo'
 use 'living_guard.jo'
 use 'living_transaction.jo'
@@ -43,6 +45,7 @@ struct Traffic:
     route_key: u64 = u64(0)
     why_minute = -1
     combat_damage = false
+    air: AirMind = AirMind()
 
 # Original model indices 0..7 stay stable; the four extra seed liveries are appended in aegean.
 traffic_model = (craft: int) -> int: [0, 5, 8, 9, 2, 10, 11, 9][craft]
@@ -123,7 +126,7 @@ make_living_traffic = (w: mut living.World, models: mut CraftModel[]) -> Traffic
     extend_craft_models(models)
     result: Traffic[]
     loop c in w.aircraft:
-        if c.owner == w.player: continue
+        if c.owner == w.player or w.people[c.owner].far_home>=0: continue
         kind = Craft(int(c.kind))
         model = if int(kind) >= 4: default_craft_model(kind) else: traffic_model(c.id)
         spec = craft_spec(kind, models[model].contacts)
@@ -198,11 +201,14 @@ commit_player_motion = (w: mut living.World, state: CraftState, before: data.Pos
     if scene.scene_motion(w,c,w.aircraft[c].revision,pose,fuel,hull,engine,phase,progress,recover)<0:
         living_fault("traffic.player_motion.refused",guard_context(w)+" craft={c} revision={w.aircraft[c].revision} last_tick={w.aircraft[c].last_scene_tick} pose={pose} fuel={fuel} hull={hull} engine={engine}")
         return
+    if state.moored and alpha >= 1.0 and arrive_registry_port(w,pose.pos): return
+    if not state.moored: leave_registry_port(w)
     if state.moored and alpha >= 1.0 and w.aircraft[c].trip >= 0:
         loop p in 0..w.harbors.len():
             loop d in 0..w.harbors[p].docks.len():
                 if length(pose.pos - w.harbors[p].docks[d]) < 20:
-                    scene.scene_player_arrival(w, p, d)
+                    if scene.scene_player_arrival(w, p, d):
+                        w.aircraft[c].port_place=-1; w.people[w.player].far_place=-1
                     return
 
 # Saved only at an explicit save boundary. The world remains graphics-independent.
@@ -213,6 +219,15 @@ struct SceneFlightSnapshot:
     route_key: u64
     trip: int
     combat_damage = false
+    air: AirMind = AirMind()
+
+traffic_profile = (w:living.World,person:int) -> AirProfile:
+    p=w.people[person]
+    if p.occupation==.courier:return AirProfile(.careful,340,0.94,p.traits.sociability>450,false)
+    if p.occupation==.racer:return AirProfile(.racer,230,1.08,true,true)
+    if p.occupation==.pirate:return AirProfile(.low_patrol,120,0.95,false,true)
+    if p.occupation==.patrol:return AirProfile(.careful,280,0.98,true,true)
+    AirProfile(altitude=280+f64(1000-p.traits.boldness)*0.1,friendly=p.traits.sociability>450)
 
 start_traffic_plan = (tr: mut Traffic, w: living.World):
     t = w.trips[tr.trip]; h = w.harbors[t.destination]
@@ -221,14 +236,20 @@ start_traffic_plan = (tr: mut Traffic, w: living.World):
     tr.plan = FlightPlan(target = h.center + h.out * 420.0, taxi_target = target,
         altitude = 240.0, speed = f64(data.AIRFRAMES[int(w.aircraft[tr.craft].kind)].cruise_mps),
         takeoff_heading = out_heading, landing_heading = atan2(-f64(h.out.x), f64(h.out.z)))
+    landing=air_runway(h.center,h.out,conditions.wind_at(w,h.center),surface_height,tr.plan.altitude)
+    if landing.valid:tr.plan.target=landing.touchdown;tr.plan.landing_heading=landing.heading
+    tr.air=AirMind()
+    departure=air_runway(w.harbors[t.origin].center,w.harbors[t.origin].out,conditions.wind_at(w,tr.state.position),surface_height,tr.plan.altitude)
+    if departure.valid and tr.state.on_water and not t.harbor_move:
+        tr.air.departing=true;tr.air.departure=departure.start;tr.plan.takeoff_heading=departure.heading
     tr.waypoint = max(t.segment + 1, if tr.state.on_water: 2 else: 1)
     # A folded final taxi resumes taxiing, rather than taking off again.
     if tr.state.on_water and length(tr.state.position - h.center) < 1000 and (t.origin != t.destination or t.segment >= t.route.len() - 2):
-        tr.waypoint = t.route.len() - 2; tr.plan.phase = .taxi
+        tr.waypoint = t.route.len() - 2; tr.plan.phase = .taxi; tr.air.departing=false
     else if not tr.state.on_water:
         tr.plan.phase = .cruise
         # Preserve an already aligned descent across an abstract/scene handoff.
-        inward = -h.out
+        inward = heading_vector(tr.plan.landing_heading ?? tr.plan.takeoff_heading)
         delta = tr.plan.target - tr.state.position; delta.y = 0
         along = f64(dot(delta, inward))
         cross_track = length(delta - inward * f32(along))
@@ -253,7 +274,7 @@ _acquire_traffic = (tr: mut Traffic, w: mut living.World, adapter: mut scene.Sce
         if snapshot is SceneFlightSnapshot and snapshot.trip == tr.trip:
             tr.state = snapshot.state; tr.plan = snapshot.plan
             tr.waypoint = snapshot.waypoint; tr.route_key = snapshot.route_key
-            tr.combat_damage = snapshot.combat_damage
+            tr.combat_damage = snapshot.combat_damage;tr.air=snapshot.air
             _restore_snapshot_health(tr.state,tr.spec,w,tr.craft)
     w.aircraft[tr.craft].scene_extension = ""; w.aircraft[tr.craft].scene_extension_tick = -1
 
@@ -276,10 +297,26 @@ _physical_remainder = (tr: Traffic, w: living.World) -> vec3[]:
 
 # Feed semantic cruise waypoints through the existing autopilot. Its virtual landing fix is
 # the next waypoint; only the final harbor approach is allowed to descend, land and taxi.
-traffic_controls = (tr: mut Traffic, w: living.World, e: FlightEnv) -> Controls:
+traffic_controls = (tr: mut Traffic, w: living.World, e: FlightEnv, contacts:AirContact[] = [], ships:AirShip[] = [], player:int = -1) -> Controls:
     t = w.trips[tr.trip]
     if tr.route_key != hash(t.route): start_traffic_plan(tr, w)
     last = t.route.len() - 2
+    profile=traffic_profile(w,tr.person)
+    # Sail away from the berth at taxi speed before aligning for the water run.
+    if tr.air.departing:
+        taxi=FlightPlan(phase=.taxi,initialized=true,taxi_target=tr.air.departure)
+        c=air_autopilot(tr.spec,tr.state,taxi,e);c.anchor=false
+        air_think(tr.air,profile,tr.craft,t.destination,tr.state,tr.spec,tr.air.departure,contacts,[],player,w.tick,e)
+        tr.air.manner=.departure_taxi
+        if tr.air.avoiding and not tr.air.yield_water:
+            taxi.taxi_target=tr.air.aim;c=air_autopilot(tr.spec,tr.state,taxi,e);c.anchor=false
+        if tr.air.yield_water:c.throttle=0;c.water_brake=1
+        if length((tr.state.position-tr.air.departure).xz)<12 and length(tr.state.velocity)<2:
+            tr.air.departing=false;tr.plan.phase=.takeoff;unmoor(tr.state)
+        return c
+    if tr.plan.phase==.takeoff and tr.state.on_water and length(tr.state.velocity)<5:
+        error=angle_delta(tr.plan.takeoff_heading,heading(tr.state))
+        if abs(error)>0.2:return Controls(throttle=0.16,yaw=clamp(error*2.0,-1.0,1.0),water_brake=if length(tr.state.velocity)>2:1.0 else:0.0,assist=0)
     if tr.waypoint < last and tr.plan.phase != .taxi:
         p = t.route[tr.waypoint]
         if length(tr.state.position - p) < 260:
@@ -288,20 +325,24 @@ traffic_controls = (tr: mut Traffic, w: living.World, e: FlightEnv) -> Controls:
                 # Rebuild the real harbor approach after the last cruise waypoint.
                 saved = tr.waypoint; start_traffic_plan(tr, w); tr.waypoint = saved
                 tr.plan.phase = .cruise
-                return autopilot(tr.spec, tr.state, tr.plan, e)
+                return air_autopilot(tr.spec, tr.state, tr.plan, e)
             p = t.route[tr.waypoint]
-        dir = p - tr.state.position; dir.y = 0
-        h = if length(dir) > 1: atan2(f64(dir.x), -f64(dir.z)) else: heading(tr.state)
-        altitude = max(300.0, f64(p.y))
-        distance = max(1800.0, altitude / 0.065 + 500.0)
-        guide = FlightPlan(target = p + heading_vector(h) * f32(distance), altitude = altitude,
-            speed = tr.plan.speed, takeoff_heading = tr.plan.takeoff_heading, landing_heading = h,
-            phase = if tr.plan.phase == .takeoff: FlightPhase.takeoff else: FlightPhase.cruise,
-            initialized = true, approach_heading = h, approach_distance = distance, clearance_altitude = altitude)
-        controls = autopilot(tr.spec, tr.state, guide, e)
-        if guide.phase != .takeoff: tr.plan.phase = .cruise
-        return controls
-    autopilot(tr.spec, tr.state, tr.plan, e)
+        if tr.plan.phase==.takeoff or tr.plan.phase==.climb:
+            controls=air_autopilot(tr.spec,tr.state,tr.plan,e)
+            return controls
+        air_think(tr.air,profile,tr.craft,t.destination,tr.state,tr.spec,p,contacts,ships,player,w.tick,e)
+        return air_social_controls(tr.air,profile,tr.craft,tr.state,tr.spec,e,w.tick)
+    # Approach/taxi never perform social manoeuvres. Emergency separation can still wave off
+    # a landing or stop a taxi, and retries remain the existing FlightPlan's responsibility.
+    air_think(tr.air,profile,tr.craft,t.destination,tr.state,tr.spec,tr.plan.target,contacts,[],player,w.tick,e)
+    if tr.air.avoiding and not tr.state.on_water:
+        if tr.plan.phase==.land or tr.plan.phase==.descend:tr.plan.phase=.climb
+        return air_social_controls(tr.air,profile,tr.craft,tr.state,tr.spec,e,w.tick)
+    if tr.state.on_water and tr.air.yield_water:return Controls(throttle=0,water_brake=1)
+    if tr.state.on_water and tr.air.avoiding:
+        taxi=FlightPlan(phase=.taxi,initialized=true,taxi_target=tr.air.aim)
+        c=air_autopilot(tr.spec,tr.state,taxi,e);c.anchor=false;return c
+    air_autopilot(tr.spec, tr.state, tr.plan, e)
 
 # Berths can change while the plane is approaching (notably when the player docks).
 # Wait physically at the safe buoy, then taxi to a newly reserved berth; never snap or share.
@@ -326,7 +367,7 @@ _traffic_berth = (tr: mut Traffic, w: mut living.World):
     tr.town = place; tr.dock = dock
     w.trips[id].claimed_dock = dock
 
-_step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: bool = true):
+_step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: bool = true,contacts:AirContact[] = [],ships:AirShip[] = [],player:int = -1):
     c = w.aircraft[tr.craft]
     if c.trip < 0: return
     # Mixed abstract encounters can damage/resolve this body at a minute boundary.
@@ -338,8 +379,8 @@ _step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: boo
         tr.state.hull_damage = max(tr.state.hull_damage, 1.0 - f64(c.hull) / 1000.0)
         tr.state.engine_damage = max(tr.state.engine_damage, 1.0 - f64(c.engine) / 1000.0)
     _traffic_berth(tr, w)
-    controls = traffic_controls(tr, w, e)
-    step(tr.spec, tr.state, controls, e, 1.0 / 60.0)
+    controls = traffic_controls(tr, w, e,contacts,ships,player)
+    step(tr.spec, tr.state, air_stabilize(tr.spec,tr.state,e,controls), e, 1.0 / 60.0)
     tr.prop_angle += (8.0 + 70.0 * tr.state.throttle) / 60.0
     if commit:commit_traffic_motion(tr,w)
 
@@ -363,7 +404,7 @@ commit_traffic_motion = (tr: mut Traffic,w: mut living.World,arrival: bool = tru
         if not scene.encounter_active(w, tr.craft) and (tr.dock >= 0 or w.minute >= w.trips[tr.trip].hold_until_minute):
             living.commit_arrival(w, tr.trip, tr.town, tr.dock, revision)
 
-update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = [], battle: mut Battle = Battle(), effects: (CombatEvent[]) -> void = (events: CombatEvent[]): pass, contact: (int,CraftSpec,CraftState,vec3) -> CraftState = (id: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState: state):
+update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = [], battle: mut Battle = Battle(), effects: (CombatEvent[]) -> void = (events: CombatEvent[]): pass, contact: (int,CraftSpec,CraftState,vec3) -> CraftState = (id: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState: state,ships:AirShip[] = [],other_air:AirContact[] = []):
     accepted = clamp(dt, 0.0, 0.25)
     velocity = (observer - adapter.observer) / f32(max(accepted, 1.0 / 60.0))
     if length(velocity) > 200: velocity = normalize(velocity) * 200.0
@@ -419,13 +460,18 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                                     if int(piece.part)==part:battle.actors[pi].state.damage.debris.push(piece)
                     refresh_damage(battle.actors[pi].spec,battle.actors[pi].state)
             physical=bind_scene_engagements(battle,w)
+        contacts:AirContact[]=other_air
+        loop tr in traffic:
+            if not tr.visible or length(tr.state.position-observer)>8000:continue
+            contacts.push(AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored))
+        if let body=player:contacts.push(AirContact(player_craft,body.position,body.velocity,-1,body.on_water,body.moored))
         loop i in 0..traffic.len():
             tr = traffic[i]
             if scene.scene_bound(adapter, tr.craft) and not combat_owns(battle,tr.craft):
                 if weather_active: e.wind = conditions.wind_at(w,tr.state.position)
                 previous = tr.state.position
                 active = w.aircraft[tr.craft].trip >= 0
-                _step_traffic(tr, w, e,false)
+                _step_traffic(tr, w, e,false,contacts,ships,player_craft)
                 if not battle.enabled and active:
                     before = tr.state.hull_damage
                     tr.state = contact(tr.craft,tr.spec,tr.state,previous)
@@ -485,7 +531,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
 fold_traffic_for_save = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter):
     loop mut tr in traffic:
         if not scene.scene_bound(adapter, tr.craft): continue
-        state = SceneFlightSnapshot(tr.state, tr.plan, tr.waypoint, tr.route_key, tr.trip,tr.combat_damage)
+        state = SceneFlightSnapshot(tr.state, tr.plan, tr.waypoint, tr.route_key, tr.trip,tr.combat_damage,tr.air)
         guiding = tr.waypoint < w.trips[tr.trip].route.len() - 2
         scene.release_scene(w, adapter, tr.craft, _physical_remainder(tr, w))
         state.waypoint = if guiding: 1 else: w.trips[tr.trip].route.len() - 2
@@ -510,13 +556,13 @@ traffic_for_craft = (traffic: Traffic[], craft: int) -> Traffic?:
         if tr.craft == craft: return tr
     none
 
-draw_traffic = (traffic: Traffic[], models: CraftModel[], L: Light, t: f64, battle: Battle = Battle()):
+draw_traffic = (traffic: Traffic[], models: CraftModel[], L: Light, t: f64, battle: Battle = Battle(),detail_distance:f64 = 9000.0):
     cam = scene_camera()
     loop tr in traffic:
         ci=combat_index(battle,tr.craft)
         if battle.enabled and ci>=0 and battle.actors[ci].present and battle.actors[ci].status!=.escaped:
             if not battle.actors[ci].external or battle.actors[ci].last_attacker>=0:continue
-        if not tr.visible or length(tr.state.position - cam) > 9000.0: continue
+        if not tr.visible or length(tr.state.position - cam) > detail_distance: continue
         m = models[tr.model]
         at = translation(tr.state.position) * quat_to_mat4(tr.state.orientation)
         if tr.state.moored: at = afloat(tr.state.position, t) * at

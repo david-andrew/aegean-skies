@@ -1,0 +1,233 @@
+# Capital clubs own physical flying only. Identity, sponsorship, parts, fuel and berths come
+# from the living world's guarded APIs. A club is never a second aircraft/person registry.
+use 'air_race.jo'
+use 'air_pilot.jo'
+use 'flight.jo'
+use 'planes.jo'
+use 'traffic.jo'
+use 'world.jo'
+import 'living_types.jo' as data
+import 'living_calendar.jo' as calendar
+import 'living_far_aircraft.jo' as registry
+import 'living_scene.jo' as scene
+import 'living_conditions.jo' as conditions
+
+club_spec = (p: AirClubPilot, w: data.World, models: CraftModel[]) -> CraftSpec:
+    kind = Craft(int(w.aircraft[p.craft].kind)); spec = craft_spec(kind, models[p.model].contacts)
+    spec.fuel_capacity = f64(data.AIRFRAMES[int(kind)].tank_ml) / 1000.0
+    spec.fuel_burn = f64(data.AIRFRAMES[int(kind)].burn_ml_sec) / 1000.0
+    spec
+
+club_index = (events: AirEvents, craft: int) -> int:
+    loop i in 0..events.pilots.len(): if events.pilots[i].craft == craft: return i
+    -1
+
+air_meet_index = (events: AirEvents, id: int) -> int:
+    loop i in 0..events.meets.len(): if events.meets[i].id == id: return i
+    -1
+
+# Call once a minute after the world's clock. Failed purchases remain failures, not free
+# replacement aircraft. Two club purchases each spend at most 5% of today's household purse.
+prepare_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64 = surface_height):
+    if events.last_minute == w.minute or not w.far.populated: return
+    events.last_minute = w.minute
+    day = data.day_index(w.minute)
+    # Retain a month of results, bounded independently of frame rate or visits.
+    events.meets = [loop meet in events.meets: if day - meet.day <= 28: meet]
+    loop country in w.countries:
+        capital = country.capital_id
+        if not (capital in w.far.harbors) or not (capital in w.far.districts): continue
+        harbor = w.far.harbors[capital]; district = w.far.districts[capital]
+        funder = district.household_account
+        loop slot in 0..2:
+            key = "air-club:{capital}:{slot}"
+            # Registered ownership is permanent; never recreate a destroyed or sold aircraft.
+            existing = w.far.air_registrations.get(key, -1)
+            kind = if slot == 0: data.Airframe.swift else: data.Airframe.falco
+            if existing < 0 and (w.accounts[funder].cents / 20 < data.AIRFRAMES[int(kind)].price_cents): continue
+            registration = registry.register_far_aircraft(w, capital, kind, funder, key)
+            if registration.craft < 0: continue
+            id = registration.craft
+            if club_index(events, id) >= 0: continue
+            model = default_craft_model(Craft(int(w.aircraft[id].kind)))
+            w.aircraft[id].model_index = model
+            spec = craft_spec(Craft(int(w.aircraft[id].kind)), models[model].contacts)
+            body = water_start(spec, w.aircraft[id].pose.pos, atan2(f64(harbor.out.x), -f64(harbor.out.z)))
+            body.fuel = f64(w.aircraft[id].fuel_ml) / 1000.0; moor(body, body.position, heading(body))
+            pilot = AirClubPilot(id, registration.person, capital, model, body, FlightPlan(), last_tick = w.tick)
+            if w.aircraft[id].scene_extension != "":
+                saved = from_text[AirClubPilot](w.aircraft[id].scene_extension)
+                if saved is AirClubPilot and saved.craft == id and saved.person == registration.person: pilot = saved
+            events.pilots.push(pilot)
+        if not calendar.capital_feast_day(capital, day): continue
+        id = capital * 100000 + day
+        if air_meet_index(events, id) >= 0: continue
+        center = w.place_contexts[capital].center
+        gates = air_course(center, harbor.out, ground)
+        if gates.len() == 0: continue
+        start = (day * 1440 + 1020 - data.EPOCH_LOCAL_MINUTE) * data.TICKS_PER_MINUTE
+        meet = AirMeet(id, capital, day, w.place_contexts[capital].name + " air meeting", gates,
+            race_tick = start, display_tick = start + 120 * data.TICKS_PER_MINUTE, end_tick = start + 240 * data.TICKS_PER_MINUTE)
+        # Venue data counts residents but never instantiates named people a second time.
+        loop gathering in calendar.capital_gatherings(w, start / data.TICKS_PER_MINUTE):
+            if gathering.place == capital: meet.audience = min(48, gathering.cohort_people)
+        if harbor.quays.len() > 0:
+            right = vec3(-harbor.out.z, 0, harbor.out.x)
+            meet.quay_a = harbor.quays[0] - right * 12.0; meet.quay_b = harbor.quays[0] + right * 12.0
+        loop pilot in events.pilots:
+            if pilot.capital == capital: enter_air_meet(meet, pilot.craft, pilot.person, false, w.tick)
+        events.meets.push(meet)
+
+struct AirEntryResult:
+    accepted = false
+    reason = ""
+
+enter_player_air_meet = (events: mut AirEvents, w: data.World, meet_id: int) -> AirEntryResult:
+    i = air_meet_index(events, meet_id)
+    if i < 0: return AirEntryResult(reason = "No meeting is scheduled here.")
+    c = w.people[w.player].craft
+    if c < 0: return AirEntryResult(reason = "An aircraft is needed.")
+    body = w.aircraft[c]
+    if body.hull < 700 or body.engine < 700 or body.fuel_ml < 10000: return AirEntryResult(reason = "Repair and refuel before entering.")
+    if length(body.pose.pos - events.meets[i].gates[0].center) > 12000: return AirEntryResult(reason = "Enter at the host harbor.")
+    if not enter_air_meet(events.meets[i], c, w.player, true, w.tick): return AirEntryResult(reason = "Entries are closed or this pilot is already entered.")
+    AirEntryResult(true, "")
+
+withdraw_air_meet = (events: mut AirEvents, meet_id: int, craft: int) -> bool:
+    i = air_meet_index(events, meet_id)
+    if i < 0: return false
+    loop mut entry in events.meets[i].entries:
+        if entry.craft == craft and entry.finished_tick < 0: entry.disqualified = true; return true
+    false
+
+nearby_air_meets = (events: AirEvents, position: vec3) -> AirMeet[]:
+    [loop meet in events.meets: if meet.gates.len() > 0 and length(meet.gates[0].center - position) < 15000: meet]
+
+# Display is a broad horizontal figure eight, staggered in height and phase, with wing
+# greetings on the straight passes. It uses control inputs, never animated aircraft poses.
+air_display_task = (pilot: AirClubPilot, center: vec3, out: vec3, tick: int, speed: f64) -> AirTask:
+    a = f64(tick) / 60.0 / 12.0 + f64(pilot.craft % 2) * PI
+    side = vec3(-out.z, 0, out.x); radius = max(650.0, speed * 7.0)
+    at = center + side * f32(sin(a) * radius) + out * f32(sin(a * 2.0) * radius * 0.42)
+    AirTask(pilot.craft, at, 260 + f64(pilot.craft % 2) * 80.0, 0.95)
+
+# Commit one pose per world tick, after integrating any batched render-frame interval. These
+# sparse flights have no core Trip: the capital/meeting lives in AirEvents, not a core index.
+update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], observer: vec3, player_aboard: bool = true, other_air: AirContact[] = [], ground: (f64, f64) -> f64 = surface_height):
+    prepare_air_events(events, w, models, ground)
+    loop mut meet in events.meets:
+        safe = conditions.weather_severity(w, meet.gates[0].center) < 650
+        advance_air_meet(meet, w.tick, safe)
+        loop entry in meet.entries:
+            if entry.human:
+                c = w.aircraft[entry.craft]
+                sample_air_entry(meet, entry.craft, c.pose.pos, w.tick, c.hull > 0 and (entry.started_tick < 0 or player_aboard))
+    contacts = other_air + [loop p in events.pilots: AirContact(p.craft, p.state.position, p.state.velocity, p.capital, p.state.on_water, p.state.moored)]
+    pc = w.people[w.player].craft
+    if pc >= 0: contacts.push(AirContact(pc, w.aircraft[pc].pose.pos, w.aircraft[pc].pose.vel, parked = w.aircraft[pc].state == .moored))
+    loop k in 0..events.pilots.len():
+        p = events.pilots[k]; c = w.aircraft[p.craft]; h = w.far.harbors[p.capital]
+        if c.owner != p.person or w.people[p.person].craft != p.craft:
+            p.active = false; w.far.people[p.person].vehicle = -1; events.pilots[k] = p
+            loop mut meet in events.meets:
+                loop mut entry in meet.entries:
+                    if entry.craft == p.craft and entry.finished_tick < 0: entry.disqualified = true
+            continue
+        spec = club_spec(p, w, models)
+        if p.last_tick == w.tick: continue
+        meeting = -1
+        loop i in 0..events.meets.len():
+            m = events.meets[i]
+            if m.capital == p.capital and m.phase != .finished and m.phase != .cancelled and w.tick >= m.race_tick - 120 * data.TICKS_PER_MINUTE: meeting = i
+        clock = data.local_minute(w.minute); day = data.day_index(w.minute)
+        practice = meeting < 0 and clock >= 600 and clock < 660 and p.practice_day != day
+        launch_meet = meeting >= 0 and p.meet != events.meets[meeting].id
+        if not p.active and (launch_meet or practice) and not p.state.crashed and c.engine > 700:
+            funder = w.far.districts[p.capital].household_account
+            # A finite refill from the market; fuel starvation cancels the sortie.
+            registry.fill_far_tank(w, p.craft, p.capital, 45000 - c.fuel_ml, funder)
+            c = w.aircraft[p.craft]
+            p.state.fuel = f64(c.fuel_ml) / 1000.0
+            if c.fuel_ml < 40000: p.last_tick = w.tick; events.pilots[k] = p; continue
+            dock = registry.reserve_far_berth(w, p.craft, p.capital)
+            if dock < 0: p.last_tick = w.tick; events.pilots[k] = p; continue
+            runway = air_runway(w.place_contexts[p.capital].center, h.out, conditions.wind_at(w, p.state.position), ground, 220)
+            if not runway.valid: p.last_tick = w.tick; events.pilots[k] = p; continue
+            p.plan = FlightPlan(target = runway.touchdown, taxi_target = h.docks[dock], altitude = 220,
+                takeoff_heading = runway.heading, landing_heading = runway.heading, speed = spec.stall_speed * 1.5)
+            p.departure = runway.start; p.departing = true; p.active = true; p.waypoint = 0
+            p.state.fuel = f64(c.fuel_ml) / 1000.0; unmoor(p.state)
+            p.meet = if meeting >= 0: events.meets[meeting].id else: -1
+            if practice: p.practice_day = day; p.practice_until = w.tick + 60 * 240
+            w.aircraft[p.craft].move_owner = .scene; w.aircraft[p.craft].revision += 1
+            w.far.people[p.person].vehicle = p.craft
+        elapsed = clamp(w.tick - p.last_tick, 0, 15); p.last_tick = w.tick
+        if not p.active: events.pilots[k] = p; continue
+        e = FlightEnv(ground = ground, wind = conditions.wind_at(w, p.state.position))
+        loop n in 0..elapsed:
+            tick = w.tick - elapsed + n + 1
+            mi = air_meet_index(events, p.meet)
+            returning = if p.meet >= 0: mi < 0 or events.meets[mi].phase == .finished or events.meets[mi].phase == .cancelled else: tick >= p.practice_until
+            returning = returning or p.state.fuel < 22.0
+            approach_busy = false
+            if returning:
+                loop other in events.pilots:
+                    if other.craft < p.craft and other.capital == p.capital and other.active and not other.state.on_water: approach_busy = true
+            if tick >= p.next_think:
+                p.next_think = tick + 6
+                air_think(p.air, AirProfile(temperament = .racer, altitude = 260, pace = min(1.0, 140.0 / spec.cruise_speed)), p.craft, p.capital, p.state, spec, p.plan.target, contacts, [], -1, tick, e)
+                if p.departing:
+                    taxi = FlightPlan(phase = .taxi, initialized = true, taxi_target = if p.air.avoiding: p.air.aim else: p.departure)
+                    p.controls = air_autopilot(spec, p.state, taxi, e); p.controls.anchor = false
+                    if length((p.state.position - p.departure).xz) < 8 and length(p.state.velocity) < 1:
+                        p.departing = false; p.plan.phase = .takeoff
+                else if p.plan.phase == .takeoff or p.plan.phase == .climb or (returning and not approach_busy):
+                    p.controls = air_autopilot(spec, p.state, p.plan, e)
+                else:
+                    task = air_display_task(p, w.place_contexts[p.capital].center + h.out * 2200.0, h.out, tick, spec.cruise_speed)
+                    if mi >= 0:
+                        loop entry in events.meets[mi].entries:
+                            if entry.craft == p.craft:
+                                if let race = air_race_task(events.meets[mi], entry, p.state.position):
+                                    task = race; task.altitude = 130 + f64(p.craft % 2) * 140.0
+                    if approach_busy: task.altitude = 400; task.aim += h.out * 1500.0; task.pace = 0.60
+                    p.controls = air_waypoint_controls(spec, p.state, e, task.aim, task.altitude, min(spec.cruise_speed, 140.0) * task.pace)
+                    if mi >= 0 and events.meets[mi].phase == .display: p.controls.roll += sin(f64(tick) / 60.0 * 2.0) * 0.18
+                if p.air.avoiding:
+                    if p.state.on_water:
+                        if p.air.yield_water: p.controls.throttle = 0; p.controls.water_brake = 1.0
+                    else: p.controls = air_waypoint_controls(spec, p.state, e, p.air.aim, p.air.altitude, p.air.speed)
+            if p.plan.phase == .failed and p.state.on_water and not p.state.crashed and not p.state.beached and p.state.fuel > 0: p.plan.phase = .taxi
+            step(spec, p.state, air_stabilize(spec, p.state, e, p.controls), e, 1.0 / 60.0)
+            p.prop += (8 + 70 * p.state.throttle) / 60.0
+            if mi >= 0: sample_air_entry(events.meets[mi], p.craft, p.state.position, tick, not p.state.crashed)
+        phase = if p.state.crashed: data.CraftState.wrecked else: if p.state.moored: data.CraftState.moored else: if p.state.on_water: data.CraftState.taxi else: data.CraftState.airborne
+        revision = scene.scene_motion(w, p.craft, w.aircraft[p.craft].revision, data.Pose(pos = p.state.position, vel = p.state.velocity, rot = p.state.orientation, throttle = int(p.state.throttle * 1000)),
+            max(0, int(round(p.state.fuel * 1000))), max(0, int((1.0 - p.state.hull_damage) * 1000)), max(0, int((1.0 - p.state.engine_damage) * 1000)), phase, false, false)
+        if revision >= 0: w.aircraft[p.craft].state = phase
+        w.people[p.person].pose.pos = p.state.position
+        if p.state.moored or p.state.crashed:
+            p.active = false; w.aircraft[p.craft].move_owner = .abstract_world
+            if p.state.moored:
+                w.far.people[p.person].vehicle = -1
+                berth = w.far.air_berths[p.craft]
+                w.people[p.person].pose.pos = h.quays[berth.dock]
+            # A wreck keeps its occupant bound until the living rescue owner takes over.
+        events.pilots[k] = p
+
+air_event_traffic = (events: AirEvents, w: data.World, models: CraftModel[]) -> Traffic[]:
+    result: Traffic[]
+    loop p in events.pilots:
+        kind = Craft(int(w.aircraft[p.craft].kind))
+        result.push(Traffic(craft = p.craft, person = p.person, name = w.people[p.person].name, why = if p.meet >= 0: "Flying at the capital air meeting" else: "Flying a local club circuit",
+            reason = data.Reason(purpose = .visit, actor = p.person), kind = kind, model = p.model, spec = club_spec(p, w, models), state = p.state, plan = p.plan, town = -1, dock = -1,
+            flying = p.active, materialized = p.active, prop_angle = p.prop))
+    result
+
+# Save this alongside the world at the save boundary, not on the render/physics path.
+# Restoring the AirEvents value preserves race progress and sampled gate segments.
+snapshot_air_events = (events: AirEvents, w: mut data.World) -> str:
+    loop p in events.pilots:
+        w.aircraft[p.craft].scene_extension = to_text(p)
+        w.aircraft[p.craft].scene_extension_tick = w.tick
+    to_text(events)
