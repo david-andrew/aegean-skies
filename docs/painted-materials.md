@@ -15,7 +15,8 @@ fades with the screen footprint. The decorative ripples do not drive physics.
 Both terrain renderers use the same light and pigment. Limestone strata have
 irregular broken value shelves, warm exposed rock and cooler blue-grey shadow;
 all strata are filtered in the distance. Rounded dappled vegetation masses
-continue beneath and beyond the individual grove meshes. Canonical heights,
+continue beneath and beyond the individual grove meshes. Meadow motion advects
+the broad pigment wash with the existing wind drift, avoiding fine hash mottling. Canonical heights,
 coastlines, contact normals and terrain streaming remain unchanged.
 
 Town and aircraft meshes share stepped warm sun/cool shade. Existing door and
