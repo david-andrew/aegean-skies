@@ -9,6 +9,8 @@ use 'living_money.jo'
 use 'living_place_context.jo'
 use 'living_guard.jo'
 use 'living_transaction.jo'
+use 'living_work.jo'
+use 'living_work_types.jo'
 
 const FAR_COMMISSION_LIMIT = 96
 
@@ -45,7 +47,7 @@ commission_views = (w: World, place: int = -1, actor: int = -1) -> CommissionVie
         result.push(CommissionView(id,c.kind,c.phase,c.origin,c.destination,c.poster,c.carrier,c.reward,c.deadline,commission_mass(w,c),c.pos,c.why))
     result
 
-_post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1) -> int:
+_post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1, request: FarReport? = none) -> int:
     if not w.far.populated or not (origin in w.far.districts) or not (destination in w.far.districts) or origin==destination or good<0 or good>=9 or qty<=0 or reward<0 or sponsor< -1 or sponsor>=3 or w.far.commissions.len()>=FAR_COMMISSION_LIMIT: return -1
     if qty*w.goods[good].package_grams/1000>25000 or far_market_qty(w,origin,good)<qty: return -1
     loop _, old in w.far.commissions:
@@ -55,8 +57,13 @@ _post_far_commission = (w: mut World, origin: int, destination: int, good: int, 
     if sender<0 and source.core>=0: sender=w.places[source.core].market_owner
     if sender<0: sender=promote_far_person(w,origin,.trader)
     if sender<0: return -1
+    if let bid=request:
+        known=false
+        loop r in source.reports:
+            if r.id==bid.id and r.kind=="supply_request" and r.hops==0 and r.confidence>=900: known=true
+        if not known or bid.origin!=destination or bid.supply_good!=good or qty>bid.supply_qty or w.minute>bid.supply_due or source.prices[good]>bid.supply_bid or bid.supply_account!=dest.market_account or bid.id in w.far.accepted_requests or w.far.accepted_requests.len()>=1024: return -1
     distance=f64(length(w.place_contexts[origin].center-w.place_contexts[destination].center))
-    let reward=if reward>0: reward else: max(180,int(ceil(distance*0.065)))
+    let reward=if request!=none and sponsor<0: request!.supply_reward else: if reward>0: reward else: max(180,int(ceil(distance*0.065)))
     funder=if sponsor>=0: w.far.treasury[sponsor] else: dest.market_account
     price=max(1,(qty*source.prices[good]+999)/1000)
     if w.accounts[funder].cents<price+reward: return -1
@@ -67,14 +74,22 @@ _post_far_commission = (w: mut World, origin: int, destination: int, good: int, 
         living_fault("commission.funding",guard_context(w)+" id={id}"); return -1
     why="{f64(qty)/1000.0:.1} packages of {w.goods[good].key} from {life_place_name(w,origin)} to {life_place_name(w,destination)}; {if sponsor>=0: w.countries[sponsor].name else: "the receiving market"} has paid for the goods and set aside {f64(reward)/100.0:.2} lire for carriage."
     w.far.commissions[id]=FarCommission(id,kind,origin,destination,sender,funder,funder,escrow,reward,w.minute+max(1440,int(ceil(distance/60.0/2.0))*4+360),w.minute,cargo=batch,quantity=qty,good=good,pos=far_counter(w,origin),last_tick=w.tick,why=why,country=sponsor,news=source.recent_news)
+    roots=batch.roots.keys(); roots.sort()
+    cause="An explicit stock purchase; no received buyer request was attached."
+    if let bid=request:
+        cause="{life_place_name(w,destination)} requested {w.goods[good].key}: it held {f64(bid.supply_observed)/1000.0:.2} packages against its household supply target of {f64(bid.supply_target)/1000.0:.2}. The bid was issued at minute {bid.occurred_minute} and reached this counter at minute {bid.learned_minute}; {w.people[sender].name} accepted its price and carriage terms."
+        w.far.accepted_requests[bid.id]=bid.supply_due
+        w.far.commissions[id].deadline=bid.supply_due
+    w.far.commissions[id].provenance=WorkProvenance(cause=cause,requester=dest.market_owner,requester_account=if request!=none: request!.supply_account else: funder,supplier=sender,supplier_account=source.market_account,request_place=destination,request_report=if request!=none: request!.id else: -1,requested_minute=if request!=none: request!.occurred_minute else: -1,heard_minute=if request!=none: request!.learned_minute else: -1,agreed_minute=w.minute,goods_cents=price,freight_cents=reward,freight_payer=funder,deadline=w.far.commissions[id].deadline,supply_roots=roots,supply=work_supply(w,roots),negotiated=request!=none)
+    w.far.commissions[id].why=cause+" "+why
     w.far.next_commission+=1
-    far_local_news(w,origin,"commission",why,actor=sender,country=sponsor)
+    far_local_news(w,origin,"commission",w.far.commissions[id].why,actor=sender,country=sponsor)
     id
 
-post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1) -> int:
+post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1, request: FarReport? = none) -> int:
     if guard_blocked(): return -1
     scope=guard_begin(w)
-    result=_post_far_commission(w,origin,destination,good,qty,kind,reward,sponsor)
+    result=_post_far_commission(w,origin,destination,good,qty,kind,reward,sponsor,request)
     failed=guard_failed(scope); guard_finish(w,scope)
     if failed: -1 else: result
 
@@ -147,29 +162,26 @@ collect_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
 refresh_far_work = (w: mut World, place: int) -> int:
     if not (place in w.far.districts): return -1
     source=w.far.districts[place]
-    destinations: int[]
-    loop link in source.links:
-        l=w.far.links[link]; destinations.push(if l.a==place: l.b else: l.a)
-    if place in w.far.harbors:
-        loop id in w.far.place_ids:
-            if id==place or not (id in w.far.harbors): continue
-            distance=length(w.place_contexts[id].center-w.place_contexts[place].center)
-            if distance>3000 and distance<65000: destinations.push(id)
-    best= -1; good= -1; amount=0; score=0
-    destinations.sort()
-    loop dest in destinations:
-        d=w.far.districts[dest]
-        loop g in 0..8:
-            surplus=max(0,far_market_qty(w,place,g)-source.target[g]/2)
-            need=max(0,d.target[g]-far_market_qty(w,dest,g))
-            qty=min(min(surplus,need),25000*1000/w.goods[g].package_grams)
-            value=qty*1000/max(1000,d.target[g])
-            if qty>=100 and value>score: best=dest; good=g; amount=qty; score=value
-    if best<0: return -1
-    post_far_commission(w,place,best,good,amount)
+    # A remote inventory/price table is not a message. Only physically received signed
+    # buying bids permit an automatic commission. Supplier quote must fit the buyer's bid.
+    reports=source.reports
+    reports.sort((r: FarReport): (r.occurred_minute,r.id),descending=true)
+    loop r in reports:
+        g=r.supply_good
+        if r.kind!="supply_request" or r.origin==place or g<0 or g>=8 or r.hops!=0 or r.confidence<900 or w.minute>r.supply_due or r.id in w.far.accepted_requests: continue
+        if w.goods[g].shelf_hours>0: continue
+        surplus=max(0,far_market_qty(w,place,g)-source.target[g]/2)
+        qty=min(surplus,r.supply_qty)
+        if qty<100 or source.prices[g]>r.supply_bid: continue
+        result=post_far_commission(w,place,r.origin,g,qty,request=r)
+        if result>=0: return result
+    -1
 
 far_commissions_minute = (w: mut World):
     if not w.far.populated: return
+    expired=w.far.accepted_requests.keys()
+    loop request in expired:
+        if w.far.accepted_requests[request]<w.minute: w.far.accepted_requests.remove(request)
     ids=w.far.commissions.keys(); ids.sort()
     loop id in ids:
         c=w.far.commissions[id]
@@ -277,5 +289,6 @@ post_far_mail = (w: mut World, origin: int, destination: int, country: int, repo
     distance=f64(length(w.place_contexts[origin].center-w.place_contexts[destination].center))
     why="A sealed dispatch from {life_place_name(w,origin)} to the office at {life_place_name(w,destination)}; {w.countries[country].name} has reserved {f64(reward)/100.0:.2} lire for delivery."
     w.far.commissions[id]=FarCommission(id=id,kind=.mail,origin=origin,destination=destination,poster=sender,funder=payer,owner=payer,escrow=escrow,reward=reward,deadline=w.minute+max(2880,int(ceil(distance/120.0))*5+720),created=w.minute,quantity=1,good=-1,pos=far_counter(w,origin),last_tick=w.tick,why=why,country=country,paper=report)
+    w.far.commissions[id].provenance=WorkProvenance(cause="The office at {life_place_name(w,origin)} needs its actually received report {report.id} carried to {life_place_name(w,destination)}.",requester=sender,requester_account=payer,supplier=sender,supplier_account=payer,request_place=origin,request_report=report.id,requested_minute=w.minute,heard_minute=report.learned_minute,agreed_minute=w.minute,freight_cents=reward,freight_payer=payer,deadline=w.far.commissions[id].deadline,supply="Existing report {report.id}: {report.text}",negotiated=true)
     w.far.next_commission+=1
     id
