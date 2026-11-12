@@ -1,8 +1,7 @@
-# Painted cumulus sheets and analytic weather layers. Camera-facing paintings
-# carry procedural pigment masks; no SDF/normal shading remains for cumulus.
+# Painted 3D cloud bodies and analytic weather layers. The distance atlas holds
+# shape and normals only: lighting follows the real sun, never a camera-facing card.
 use 'cloud_density.jo'
 use 'sky_air.jo'
-use 'cloud_paint.jo'
 use 'cloud_depth.jo'
 use 'look.jo'
 use 'render_space.jo'
@@ -121,101 +120,67 @@ volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
         if kind == 4.0 and density > 0.005:
             normal = normalize(vec3(-broad_field.y*21.0,if p.y < 0.0: -1.0 else: 1.0,-broad_field.z*21.0))
         return vec4(normal*0.5+vec3(0.5,0.5,0.5),density)
-    vec4(0.5,1,0.5,0)
+    field = cloud_stamp_sample(atlas,p,kind)
+    vec4(field.xyz,clamp((field.w-0.5)*14.0,0.0,1.0))
 
-# Three view-facing painted sheets; shared by color and trail coverage. Sheet
-# intersections carry real depth, so a ribbon between sheets is only partially
-# covered. All tiers use exactly the same geometry and masks.
-paint_facing = (center: vec3, cam: vec3) -> vec3:
-    delta = render_world(center,cam)-cam
-    delta/max(length(delta),0.0001)
+cloud_stamp_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
+    if max(abs(p.x),max(abs(p.y),abs(p.z))) > 1.0: return vec4(0.5,1,0.5,0)
+    stamp = if kind == 5.0: 3.0 else: kind
+    q = (p * 0.5 + vec3(0.5, 0.5, 0.5)) * f32(CLOUD_VOXELS - 1)
+    z0 = floor(q.z); z1 = min(z0 + 1.0, f32(CLOUD_VOXELS - 1))
+    slice0 = stamp*f32(CLOUD_VOXELS)+z0; slice1 = stamp*f32(CLOUD_VOXELS)+z1
+    a = vec2(slice0-floor(slice0/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice0/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
+    b = vec2(slice1-floor(slice1/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice1/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
+    mix(sample(atlas, a / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), sample(atlas, b / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), q.z - z0)
 
-paint_right = (facing: vec3) -> vec3:
-    side = cross(facing,vec3(0,1,0))
-    if length(side) < 0.001: return vec3(1,0,0)
-    normalize(side)
+cloud_growing_point = (p: vec3, growth: vec4) -> vec3:
+    # Slow roll around rising plumes, followed by wind shear as they spread.
+    q = p
+    q.x += sin(p.y*5.0-growth.y)*growth.z+p.y*growth.w
+    q.z += cos(p.y*4.0-growth.y+p.x*3.0)*growth.z
+    q
 
-paint_intersection_basis = (ray: vec3,cam: vec3,bent: vec3,extent: vec3,yaw: vec2,growth: vec4,layer: f32,facing: vec3,right: vec3,up: vec3) -> vec3:
-    offset = (1.0-layer)*extent.z*0.08
-    anchor = bent+facing*offset
-    t = dot(anchor-cam,facing)/max(dot(ray,facing),0.00001)
-    at = cam+ray*t-anchor
-    p = vec2(dot(at,right)/extent.x,dot(at,up)/extent.y)
-    p.x += layer*0.012*dot(right,vec3(yaw.x,0,yaw.y))
-    p.x += sin(p.y*4.0-growth.y)*growth.z+p.y*growth.w
-    p.y += sin(p.x*5.0+growth.y)*growth.z*0.25
-    vec3(p,t)
-
-paint_intersection = (ray: vec3,cam: vec3,center: vec3,extent: vec3,yaw: vec2,growth: vec4,layer: f32) -> vec3:
-    facing = paint_facing(center,cam); right = paint_right(facing); up = cross(right,facing)
-    paint_intersection_basis(ray,cam,render_world(center,cam),extent,yaw,growth,layer,facing,right,up)
-
-paint_sample = (atlas: Texture,p: vec2,kind: f32,yaw: vec2,layer: f32,growth: vec4) -> vec4:
-    if max(abs(p.x),abs(p.y)) > 0.98 or p.y < -0.56: return vec4(0,0,0,0)
-    if layer > 0.5 and p.y > 0.27: return vec4(0,0,0,0)
-    variant = if kind == 5.0: 6.0+step(0.0,yaw.x) else: kind+step(0.0,yaw.x)*4.0
-    tile = variant*3.0+layer
-    xy = p; xy.x *= if yaw.y < 0.0: -1.0 else: 1.0
-    uv = (vec2(tile-floor(tile/6.0)*6.0,floor(tile/6.0))*256.0+(xy*0.5+vec2(0.5,0.5))*255.0+vec2(0.5,0.5))/vec2(1536,1024)
-    paint = sample(atlas,uv)
-    # Erosion exposes gaps in weaker pigment as a plume dissipates; the same
-    # animated mask is evaluated by vapor trails, with no stale density field.
-    paint.w *= smoothstep(growth.x*1.8,growth.x*1.8+0.09,paint.x*0.5+paint.w*0.5)
-    paint
-
-paint_cloud = (i: VolumeOut,u: VolumeParams,ray: vec3) -> vec4:
-    depth = sample(u.depth,i.ndc*0.5+vec2(0.5,0.5)).x
-    limit: f32 = 1000000.0
-    if depth < 0.9999999: limit = u.depth_ab.y/(depth*2.0-1.0+u.depth_ab.x)/max(dot(ray,u.forward),0.0001)
-    sea = sea_intersection(ray,u.cam.y)
-    if sea > 0.0: limit = min(limit,sea)
-    color = vec4(0,0,0,0)
-    sun_height = smoothstep(-0.12,0.15,u.sun_dir.y)
-    # Sampled daylight pigment ratios, modulated by the existing sun/night light.
-    light = u.sun*u.paint_light
-    shade = mix(u.shade*0.8,u.paint_shade,sun_height)
-    sun_visible = smoothstep(-0.045,0.015,u.sun_dir.y+sqrt(max(i.center.y,0.0)*2.0/f32(EARTH_RADIUS)))
-    low_sun = (1.0-smoothstep(0.08,0.4,u.sun_dir.y))*sun_visible
-    facing = paint_facing(i.center,u.cam)
-    right = paint_right(facing); up = cross(right,facing); bent = render_world(i.center,u.cam)
-    # Looking down onto a cloud reveals light; looking up retains its cool foot.
-    above = smoothstep(0.15,0.75,-facing.y)
-    loop layer in 0..3:
-        hit = paint_intersection_basis(ray,u.cam,bent,i.extent,i.meta.xy,i.growth,f32(layer),facing,right,up)
-        if hit.z <= 0.0 or hit.z >= limit: continue
-        paint = paint_sample(u.atlas,hit.xy,i.meta.z,i.meta.xy,f32(layer),i.growth)
-        alpha = paint.w*i.weather.x
-        if alpha < 0.001: continue
-        # Four ragged luminance bands preserve the painted pigment ratios.
-        # The broad within-band wash retains the baked painting's brush texture.
-        value = dot(paint.xyz,vec3(0.2126,0.7152,0.0722))
-        bands = 0.45+smoothstep(0.51,0.55,value)*0.15+smoothstep(0.65,0.69,value)*0.15+smoothstep(0.79,0.83,value)*0.14
-        steps = smoothstep(0.48,0.88,value)
-        pigment = paint.xyz*(mix(bands,value,0.8)/max(value,0.01))
-        tint = mix(u.paint_shade/vec3(0.43,0.61,0.70),u.paint_light/vec3(0.78,0.84,0.84),steps)
-        # The painted light mask remains sunlit through sunset. Previously the
-        # entire sheet crossed to purple ambient light while the Sun was visible.
-        # High crowns see the Sun briefly after it sets at sea level.
-        illumination = mix(u.shade*1.35,u.sun*vec3(0.85,0.91,1.02),sun_height)
-        illumination = mix(illumination,u.sun*vec3(1.13,0.98,0.79),low_sun*steps)
-        pigment *= tint*illumination
-        pigment = mix(pigment,max(pigment,light*0.85),above*0.6)
-        pigment *= 1.0-i.weather.y*(0.28+0.24*(1.0-steps))
-        pigment += vec3(0.7,0.78,1)*u.lightning*i.weather.y*0.5
-        color = vec4(pigment*alpha,alpha)+color*(1.0-alpha)
-    # Sheets share one atmospheric path through the formation center. Their
-    # separation is small compared with the haze scale; avoid three exponentials.
-    if color.w > 0.001:
-        at = u.cam+ray*length(bent-u.cam); at.y += world_drop(ray.xz*length(bent-u.cam))
-        color = vec4(aerial(color.xyz/max(color.w,0.001),at,u.cam,i.air,u.fog)*color.w,color.w)
-    # A short analytic interior fog bridges the camera through the facing
-    # sheets. It is continuous at entry and never uses the old visible SDF.
-    local = (u.cam-i.center)/i.extent
-    interior = (1.0-smoothstep(0.2,0.65,length(local*vec3(1,1.3,1))))*i.weather.x
-    interior *= 1.0-exp(-limit*0.018)
-    fog_color = mix(shade,light,0.16)*(1.0-i.weather.y*0.45)
-    color = vec4(fog_color*interior,interior)+color*(1.0-interior)
-    color*(1.0-smoothstep(125000.0,150000.0,length(i.center-u.cam)))
+# Surface values are deliberately grouped into broad painted regions, with
+# narrow transitions and gentle washes inside them. The silhouette comes from the distance field,
+# rather than an accumulation of widely spaced translucent samples.
+cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
+    normal = cloud_to_world((form.xyz*2.0-vec3(1,1,1))/i.extent,i.meta.xy)
+    normal /= max(length(normal),0.000001)
+    sun = normalize(u.sun_dir)
+    facing = dot(normal,sun)
+    wash = vnoise(p.xz*19.0+vec2(p.y*13.0,p.y*7.0))-0.5
+    # A broad wash links neighboring heads; local normals retain the lobe cuts.
+    # Otherwise every shoulder becomes an identical isolated dark crescent.
+    mass_normal = p*vec3(0.8,0.55,0.8)+vec3(0,0.18,0)
+    mass_normal = cloud_to_world(mass_normal/max(length(mass_normal),0.000001),i.meta.xy)
+    value = mix(facing,dot(mass_normal,sun),0.3)+wash*0.08
+    shade = mix(u.shade*0.9,u.paint_shade,smoothstep(-0.12,0.15,sun.y))
+    shade = mix(shade,vec3(0.08,0.23,0.37)*u.sun,i.weather.y*0.8)
+    white = u.sun*u.paint_light
+    shade = mix(shade,white,0.32*(1.0-i.weather.y))
+    middle = mix(shade,white,0.82)
+    # Narrow transitions retain a drawn terminator on every rounded head.
+    light = mix(shade,middle,smoothstep(-0.28,-0.12,value))
+    light = mix(light,white,smoothstep(0.20,0.38,value))
+    light *= 0.93+0.07*smoothstep(-0.3,0.9,facing)
+    under = smoothstep(f32(-CLOUD_BASE+0.01),f32(-CLOUD_BASE+0.04),p.y)
+    if u.shadows > 0.0:
+        probe = cloud_stamp_sample(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.16,i.meta.z).w
+        light = mix(light,shade,smoothstep(0.51,0.53,probe)*0.38)
+    edge = 1.0-abs(dot(normal,ray))
+    rim = smoothstep(0.80,0.96,edge)*smoothstep(0.0,0.15,facing)
+    light = mix(light,white*1.04,rim*0.45)
+    # The shared condensation floor reads as one cool plane.
+    light = mix(shade*0.94,light,under)
+    # Fine pigment, independent of lobe lighting; no broad mottled gradients.
+    pigment = vnoise(p.xy*47.0+vec2(p.z*23.0,0))-0.5
+    tooth = hash21(floor(p.xy*1400.0)+floor(p.z*1400.0)*vec2(17,31))-0.5
+    light *= 1.0+pigment*0.12+tooth*0.025
+    light *= 1.0-i.weather.y*0.18*(1.0-under*0.45)
+    if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
+    distance = length(world-u.cam)
+    air = 1.0-exp(-distance*max(u.fog,0.000001)*0.30)
+    mix(light,i.air,air)
 
 volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
     # Only ambiguous reconstruction pixels are marched again at full resolution.
@@ -237,7 +202,6 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         if volume_nearest_resolves(center_z,nearest_z): discard()
         if volume_edge_weight(u.depth, uv, u.low_size, u.depth_ab) >= 0.0001: discard()
     ray = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
-    if i.meta.z < 4.0 or i.meta.z == 5.0: return paint_cloud(i,u,ray)
     bent = render_world(i.center, u.cam)
     origin = cloud_to_local(u.cam - bent, i.meta.xy)
     direction = cloud_to_local(ray, i.meta.xy)
@@ -270,6 +234,39 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
     distance = length(i.center - u.cam)
     steps = mix(u.steps, 8.0, smoothstep(12000.0, 65000.0, distance))
     if i.meta.z >= 4.0 and i.meta.z != 5.0: steps = f32(WEATHER_STEPS)
+    if i.meta.z < 4.0 or i.meta.z == 5.0:
+        # Conservative distance steps skip empty air; quantization and warped
+        # ellipsoid gradients get a safety margin. Refine only the visible shell.
+        scale = min(i.extent.x,min(i.extent.y,i.extent.z))
+        ray_scale = 1.0/max(length(direction/i.extent)+leave/(f32(EARTH_RADIUS)*i.extent.y),0.000001)
+        pixel = max(fwidth(i.ndc.x),fwidth(i.ndc.y))*0.4
+        t = enter
+        loop k in 0..80:
+            if t >= leave: break
+            world = u.cam+ray*t
+            world.y += world_drop(ray.xz*t)
+            p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
+            form = cloud_stamp_sample(u.atlas,p,i.meta.z)
+            d = (0.5-form.w)*0.5+i.growth.x
+            epsilon = max(0.005,t*pixel/scale*0.55)
+            if d < epsilon:
+                path = max(leave-t,0.0)
+                if t < 0.01 and d < 0.0:
+                    # Looking outward near an exit thins continuously; inward rays
+                    # see the dense interior rather than a turning sheet.
+                    normal = normalize(cloud_to_world((form.xyz*2.0-vec3(1,1,1))/i.extent,i.meta.xy))
+                    outward = dot(normal,ray)
+                    if outward > 0.05: path = min(path,-d*scale/outward)
+                opacity = i.weather.x*(1.0-exp(-path*0.018))
+                color = cloud_paint(form,p,world,ray,i,u)
+                inside = smoothstep(0.0,0.035,-d)*step(t,0.01)
+                mist = mix(u.paint_shade,u.shade*0.7,i.weather.y)*mix(1.0,0.48,i.weather.y)
+                mist += vec3(0.7,0.78,1.0)*u.lightning*i.weather.y
+                color = mix(color,mist*(0.94+0.08*vnoise(p.xz*32.0+vec2(p.y*17.0,i.growth.y))),inside)
+                fade = 1.0-smoothstep(125000.0,150000.0,distance)
+                return vec4(color*opacity,opacity)*fade
+            t += max((d-0.001)*ray_scale*0.72,epsilon*ray_scale*0.5)
+        return vec4(0,0,0,0)
     dt = (leave - enter) / steps
     # Midpoints are stable in world/view space. No frame-random dither/history.
     t = enter + dt * 0.5
@@ -432,7 +429,7 @@ init_cloud_volumes = ():
     global volume_paint_light,volume_paint_shade,volume_paint_grain
     volume_paint_light = paint_env_color("CLOUD_PAINT_LIGHT",volume_paint_light)
     volume_paint_shade = paint_env_color("CLOUD_PAINT_SHADE",volume_paint_shade)
-    volume_paint_grain = f32(clamp(to_float(env("CLOUD_PAINT_GRAIN") ?? "0.06") ?? 0.06,0.0,0.2))
+    volume_paint_grain = f32(clamp(to_float(env("CLOUD_PAINT_GRAIN") ?? "0.025") ?? 0.025,0.0,0.2))
     volume_sh = make_shader(shader(volume_vs, volume_fs))
     volume_composite_sh = make_shader(shader(volume_composite_vs, volume_composite_fs))
     volume_repair_sh = make_shader(shader(volume_repair_vs,volume_repair_fs))
@@ -444,10 +441,7 @@ init_cloud_volumes = ():
     volume_instances = instance_buffer(empty)
 
 cloud_support_radius = (v: CloudVolume) -> f32:
-    if v.shape == 4.0 or v.shape >= 6.0: return length(v.extent)
-    x = v.extent.x*(1.08+abs(v.growth.z)+abs(v.growth.w))
-    y = v.extent.y*(1.0+abs(v.growth.z)*0.25)
-    length(vec2(x,y))+v.extent.z*0.2
+    length(v.extent)+max(v.extent.x,v.extent.z)*(abs(v.growth.z)+abs(v.growth.w))
 
 volume_bounds = (v: CloudVolume, cam: vec3, vp: mat4) -> vec4:
     lo = vec2(1, 1); hi = vec2(-1, -1)
@@ -456,25 +450,6 @@ volume_bounds = (v: CloudVolume, cam: vec3, vp: mat4) -> vec4:
     pad = world_drop(vec2(distance_xz + reach, 0)) - world_drop(vec2(distance_xz, 0))
     low = v.extent * CLOUD_MIN - vec3(0, pad, 0)
     high = v.extent * CLOUD_MAX + vec3(0, pad, 0)
-    if v.shape < 4.0 or v.shape == 5.0:
-        center = render_world(v.center,cam)
-        facing = paint_facing(v.center,cam); right = paint_right(facing); up = cross(right,facing)
-        # Tight support comes from the baked sheet footprint, including alpha
-        # filtering, lifecycle shear/roll and parallax. Using a whole +/-1 box
-        # wastes more than half the fragments for low bank paintings.
-        variant = int(if v.shape == 5.0: 6.0+(if cos(v.heading) >= 0.0: 1.0 else: 0.0) else: v.shape+(if cos(v.heading) >= 0.0: 4.0 else: 0.0))
-        top = paint_top(variant)
-        loop layer in 0..3:
-            anchor = center+facing*((1.0-f32(layer))*v.extent.z*0.08)
-            loop corner in 0..4:
-                x = (if corner & 1 == 0: -1.0 else: 1.0)*(0.95+abs(v.growth.z)+abs(v.growth.w))*v.extent.x
-                y = (if corner & 2 == 0: -0.56-abs(v.growth.z)*0.25 else: top+abs(v.growth.z)*0.25)*v.extent.y
-                clip = vp*vec4(anchor+right*x+up*y,1)
-                if clip.w <= 0.01: return vec4(-1,-1,1,1)
-                q = clip.xy/clip.w
-                lo = min(lo,q); hi = max(hi,q)
-        if length((cam-v.center)/v.extent) < 0.8: return vec4(-1,-1,1,1)
-        return vec4(max(lo,vec2(-1,-1)),min(hi,vec2(1,1)))
     center = render_world(v.center, cam)
     yaw = vec2(cos(v.heading), sin(v.heading))
     loop corner in 0..8:
