@@ -133,23 +133,36 @@
     return tier;
   };
   // The phone's gyroscope, for fine aiming by tilting it (as Breath of the Wild's bow did): its
-  // turning, read from devicemotion's rotationRate, integrated into degrees about the SCREEN's
+  // turning, from the deviceorientation readings (see below), integrated into degrees about the SCREEN's
   // axes (whichever way up the phone is held), handed over and cleared each frame. iOS asks for
   // permission, and only in answer to a tap: asked at the next touch after the option is turned on.
   {
-    let started = false, pendingAsk = false, last = 0, dx = 0, dy = 0, live = false;
+    let started = false, pendingAsk = false, dx = 0, dy = 0, live = false;
+    // (from the phone's orientation, which every browser letters the same way: alpha about z,
+    // beta about x, gamma about y, applied Z-X'-Y''. The turn between two readings, in the phone's
+    // own axes, comes from the two rotations, so no letters for rates are trusted (browsers
+    // disagree on those) and holding the phone upright is no trouble.)
+    let prev = null;
+    const matrix = (a, b, g) => {
+      const d = Math.PI / 180, ca = Math.cos(a*d), sa = Math.sin(a*d), cb = Math.cos(b*d), sb = Math.sin(b*d), cg = Math.cos(g*d), sg = Math.sin(g*d);
+      return [ca*cg - sa*sb*sg, -cb*sa, ca*sg + cg*sa*sb,
+              cg*sa + ca*sb*sg,  ca*cb, sa*sg - ca*cg*sb,
+              -cb*sg,            sb,    cb*cg];
+    };
     const onMotion = e => {
-      const r = e.rotationRate; if (!r || r.beta == null) return;
-      const now = performance.now(), dt = last ? Math.min((now - last) / 1000, 0.1) : 0; last = now;
+      if (e.alpha == null || e.beta == null || e.gamma == null) return;
+      const R = matrix(e.alpha, e.beta, e.gamma);
       live = true;
+      if (!prev) { prev = R; return; }
+      // (dR = prev^T R: the turn since the last reading, in the phone's frame)
+      const m = (i, j) => prev[0*3+i]*R[0*3+j] + prev[1*3+i]*R[1*3+j] + prev[2*3+i]*R[2*3+j];
+      prev = R;
+      const k = 180 / Math.PI;
+      const rx = (m(2,1) - m(1,2)) * 0.5 * k, ry = (m(0,2) - m(2,0)) * 0.5 * k;
+      if (Math.abs(rx) > 20 || Math.abs(ry) > 20) return;   // (a jump: the compass correcting itself)
       const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
-      // (rates about the device's own axes, deg/s. Chrome hands them over as alpha about x (the
-      // short edge), beta about y (the long edge), gamma about z (out of the screen), whatever
-      // the spec's lettering. Right-handed: +x tips the back up, +y turns the back to the left.
-      // The aim turns with the phone about the SCREEN's axes as it is held: up for the back
-      // tipping up about the screen's horizontal, right for it turning about the screen's
-      // vertical; a twist in the screen's own plane does nothing)
-      const rx = r.alpha || 0, ry = r.beta || 0;
+      // (right-handed: +x tips the back up, +y turns the back to the left. The aim turns with the
+      // phone about the SCREEN's axes as it is held; a twist in the screen's own plane does nothing)
       let up, right;
       switch (((ang % 360) + 360) % 360) {
         case 90: up = -ry; right = -rx; break;      // (the top to the left)
@@ -157,11 +170,11 @@
         case 270: up = ry; right = rx; break;       // (the top to the right)
         default: up = rx; right = -ry;
       }
-      dx += right * dt; dy += up * dt;
+      dx += right; dy += up;
     };
-    const go = () => { if (!started) { window.addEventListener("devicemotion", onMotion); started = true; } };
+    const go = () => { if (!started) { window.addEventListener("deviceorientation", onMotion); started = true; } };
     const ask = () => {
-      const D = window.DeviceMotionEvent;
+      const D = window.DeviceOrientationEvent;
       if (!D) return;
       if (typeof D.requestPermission === "function") D.requestPermission().then(r => { if (r === "granted") go(); }).catch(() => {});
       else go();
@@ -169,7 +182,7 @@
     const onTouch = () => { if (pendingAsk) { pendingAsk = false; ask(); } };
     window.addEventListener("touchend", onTouch);
     window.addEventListener("click", onTouch);
-    sloppy.env.__aegean_motion_start = () => { pendingAsk = true; if (!(window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === "function")) { pendingAsk = false; ask(); } };
+    sloppy.env.__aegean_motion_start = () => { pendingAsk = true; if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function")) { pendingAsk = false; ask(); } };
     sloppy.env.__aegean_motion_live = () => live ? 1 : 0;
     sloppy.env.__aegean_motion_x = () => { const v = dx; dx = 0; return v; };
     sloppy.env.__aegean_motion_y = () => { const v = dy; dy = 0; return v; };
