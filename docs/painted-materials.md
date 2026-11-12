@@ -30,3 +30,20 @@ subpixel. Cells wholly beyond that range use a separate shader without gust
 noise, sway trigonometry or fine pigment/recess work. Tree counts,
 meshes and the nearby animation are retained. Pigment detail also fades before
 it becomes unresolved; the broad colors and lighting remain on every tier.
+
+Atmosphere uses the same time/weather palette across sky, sea and opaque
+materials. `sky_air_color` honours its supplied palette (including rain and
+night) and reaches the haze colour exactly at the curved horizon. Clear-day
+teal belongs in `light_at`, not a hard-coded replacement inside the sky shader.
+`weather_light` dims both direct and ambient light under a deck, keeps lit faces
+brighter than shaded ones, and restores clear light above the cloud ceiling.
+Rain darkens the frame while the sea retains a broad, cool reflected sheen.
+
+Aerial perspective integrates the coastal height falloff plus a thin upper-air
+component, preserving nearby colour and separating distant ridges even from an
+aircraft. The first 60 m retain their pigment. The existing bounded cloud pass
+carries slanted rain curtains scaled by the saved squall severity; no new cloud
+population or textures are allocated. Its existing depth/transmittance-masked
+light shafts can also operate in moist daylight, not only at a low sun. All
+these changes are cosmetic; weather scheduling, flight, visibility used by AI,
+world randomness and save formats remain unchanged.
