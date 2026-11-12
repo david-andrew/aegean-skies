@@ -22,6 +22,8 @@ struct MusicEvent:
     end_gain: f64
     peak_gain = -1.0
     peak_fraction = 0.4
+    mix_gain = 1.0
+    mix_end_gain = 1.0
 
 struct MusicVoice:
     active = false
@@ -68,6 +70,13 @@ struct MusicMode:
     decay_fast = 0.0
     decay_slow = 0.0
 
+# Independent lip state only used by the solo trumpet; other voices keep their
+# original source, noise sequence and storage layout.
+struct MusicLip:
+    rng: u64 = 23
+    target = 0.0
+    motion = 0.0
+
 struct MusicBody:
     used = false
     instrument = 0
@@ -86,6 +95,10 @@ struct MusicSynth:
     frames = 1
     lookback = 0
     voices: MusicVoice[]
+    lips: MusicLip[]
+    concert_hall = false
+    hall_early: f64[]
+    hall_feedback: f64[]
     models: MusicModels = MusicModels()
     sine: f64[]
     waves: f32[]
@@ -120,6 +133,7 @@ make_music_synth = () -> MusicSynth:
     s.models = make_music_models()
     s.pitches = [loop n in 0..128: 440.0*pow(2.0,f64(n-69)/12.0)]
     s.voices = fill(MusicVoice(),MUSIC_VOICES)
+    s.lips = fill(MusicLip(),MUSIC_VOICES)
     s.sine = [loop i in 0..MUSIC_TABLE: sin(TAU*f64(i)/f64(MUSIC_TABLE))]
     s.waves = fill(f32(0),MUSIC_VOICES*2*MUSIC_TABLE)
     s.modes = fill(MusicMode(),MUSIC_VOICES*MUSIC_PARTIALS)
@@ -141,18 +155,26 @@ music_load = (s: mut MusicSynth, piece: int):
     if piece == s.piece: return
     s.events = []
     s.piece = clamp(piece,0,MUSIC_PIECES.len()-1)
+    concert = s.piece == 0 or s.piece == 1
+    if concert != s.concert_hall:
+        s.concert_hall = concert
+        lengths = if concert: [1499,1747,1999,2239,239,379] else: [479,631,797,941,89,127]
+        s.delays = [loop length in lengths: fill(0.0,length)]
+        s.hall_early = if concert: fill(0.0,2048) else: []
+        # Equal low-frequency T60 across the unequal prime delays; highs die sooner.
+        s.hall_feedback = [loop k in 0..4: exp(-6.907755278982137*f64(lengths[k])/(3.0*f64(MUSIC_RATE)))]
     # Fixed orchestra balances; retain each score's internal dynamic range.
     balances = [0.70,0.90,0.40,0.70,0.22,1.2,0.55]
     s.gain = balances[s.piece]
     if let b = inflate(music_bytes(s.piece)):
-        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and (b[3] == 49 or b[3] == 50))
+        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and (b[3] == 49 or b[3] == 50 or b[3] == 51))
         count = music_u32(b,4)
-        stride = if b[3] == 50: 14 else: 12
+        stride = if b[3] == 51: 16 else: if b[3] == 50: 14 else: 12
         assert(count <= 50000 and b.len() == 16+count*stride)
         s.frames = music_u32(b,8); s.lookback = music_u32(b,12)
         loop i in 0..count:
             at = 16+i*stride
-            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0,if stride == 14: f64(b[at+12])/100.0 else: -1.0,if stride == 14: f64(b[at+13])/100.0 else: 0.4))
+            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0,if b[3] == 50: f64(b[at+12])/100.0 else: -1.0,if b[3] == 50: f64(b[at+13])/100.0 else: 0.4,if b[3] == 51: f64(int(b[at+12])+int(b[at+13])*256)/4096.0 else: 1.0,if b[3] == 51: f64(int(b[at+14])+int(b[at+15])*256)/4096.0 else: 1.0))
     assert(s.events.len() > 0)
 
 music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
@@ -175,6 +197,8 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
     balances = [1.0,0.9,0.75,0.85,0.9,0.9,1.1,1.0,0.9,0.9,0.8,1.1,0.8,1.15,0.8,0.90]
     gain = 0.12*loudness*balances[e.instrument]
     end_gain = gain*clamp(e.end_gain/max(0.01,e.gain),0.15,3.0)
+    if e.mix_gain != 1.0 or e.mix_end_gain != 1.0:
+        gain *= e.mix_gain; end_gain *= e.mix_end_gain
     peak_age = e.duration
     first_step = (end_gain-gain)/f64(e.duration)
     late_step = 0.0
@@ -253,6 +277,8 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
                 s.body_clock += 1; s.wave_misses += 1
                 s.wave_keys[selected] = MusicBody(true,e.instrument,e.pitch,velocity,0,0,0,s.body_clock)
                 loop i in 0..2*MUSIC_TABLE: s.wave_cache[selected*2*MUSIC_TABLE+i] = s.waves[slot*2*MUSIC_TABLE+i]
+    if kind == .trumpet:
+        s.lips[slot] = MusicLip(u64(23+e.start+e.pitch*1543+slot*43),0,0)
     s.voices[slot] = n
 
 # Binary search plus at most the longest note's overlap window. No replay from bar one.
@@ -263,6 +289,7 @@ music_seek = (s: mut MusicSynth, seconds: f64):
     s.next = 0; s.fade = 0; s.stolen = 0
     loop k in 0..s.delays.len(): s.delays[k] = fill(0.0,s.delays[k].len())
     s.damp = fill(0.0,4); s.reverb_at = 0
+    s.hall_early = fill(0.0,s.hall_early.len())
     low = 0; high = s.events.len()
     earliest = s.cursor-s.lookback
     loop low < high:
@@ -368,7 +395,30 @@ music_modes_render = (modes: mut MusicMode[], base: int, partials: int, out: mut
         modes[base+h] = MusicMode(y1,y2,coefficient,fast,slow,decay_fast,decay_slow)
         h += 1
 
+# Slowly smoothed cycle-to-cycle pressure variation, not a repeated vibrato LFO.
+# The dedicated path adds no per-sample noise/jitter work to other instruments.
+music_trumpet_render = (s: mut MusicSynth, k: int, n: mut MusicVoice, count: int):
+    lip = s.lips[k]
+    phase = n.phase; vibrato = n.vibrato; morph = n.morph; age = n.age
+    waves = s.waves; sine = s.sine
+    loop i in 0..count:
+        lip.motion += (lip.target-lip.motion)*0.012
+        s.body_work[i] = music_osc(waves,k,phase,morph)*(1.0+0.012*lip.motion)
+        vib = music_sine(sine,vibrato)
+        depth = n.vibrato_depth*min(1.0,f64(age)/4000.0)
+        scoop = 0.009*max(0.0,1.0-f64(age)/400.0)
+        phase += n.increment*(1.0+vib*depth+scoop+0.004*lip.motion)
+        if phase >= 1.0:
+            phase -= f64(int(phase))
+            lip.rng = (lip.rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
+            lip.target = f64(lip.rng)*0.0000000004656612873077392578125-1.0
+        vibrato += n.vibrato_step; vibrato -= f64(int(vibrato))
+        morph *= 0.999750031; age += 1
+    n.phase = phase; n.vibrato = vibrato; n.morph = morph
+    s.lips[k] = lip
+
 music_wind_render = (s: mut MusicSynth, k: int, n: mut MusicVoice, count: int):
+    if n.instrument == .trumpet: music_trumpet_render(s,k,n,count); return
     kind = n.instrument
     phase = n.phase; phase2 = n.phase2; phase3 = n.phase3
     vibrato = n.vibrato; morph = n.morph
@@ -461,6 +511,8 @@ music_voice_render = (s: mut MusicSynth, k: int, out: mut f64[], at: int, count:
         if kind == .drums or kind == .timpani:
             v += texture*transient*noise_env
         if kind == .trumpet:
+            # A faint turbulent component above the existing reed/breath lowpass.
+            v += (local_noise-noise_low)*0.018
             tone_low += (v-tone_low)*0.42
             brightness = clamp(gain/max(peak_level,0.0001),0.4,1.0)
             v = tone_low+(v-tone_low)*(0.55+brightness*0.45)
@@ -483,6 +535,29 @@ music_voice_render = (s: mut MusicSynth, k: int, out: mut f64[], at: int, count:
     n.gain_step = gain_step
     if count < requested: n.active = false
     s.voices[k] = n
+
+# Larger orchestral room, using the same bounded four-comb/two-allpass topology.
+# Three early arrivals establish space before the denser, high-frequency-damped tail.
+music_concert_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
+    write = s.reverb_at%2048
+    s.hall_early[write] = value
+    early = s.hall_early[(write+2048-417)%2048]*0.45+s.hall_early[(write+2048-683)%2048]*0.32+s.hall_early[(write+2048-1061)%2048]*0.23
+    hall = 0.0
+    loop k in 0..4:
+        at = s.reverb_at%s.delays[k].len()
+        delayed = s.delays[k][at]
+        s.damp[k] += (delayed-s.damp[k])*0.28
+        s.delays[k][at] = value+s.damp[k]*s.hall_feedback[k]
+        hall += delayed*0.25
+    loop k in 4..6:
+        at = s.reverb_at%s.delays[k].len()
+        delayed = s.delays[k][at]
+        v = hall
+        hall = delayed-v*0.5
+        s.delays[k][at] = v+hall*0.5
+    s.reverb_at += 1; s.cursor += 1; s.fade = min(160,s.fade+1)
+    mixed = (value+(hall*1.8+early*0.4)*s.wet)*s.gain
+    mixed/(1.0+abs(mixed)*0.28)*f64(s.fade)/160.0
 
 music_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
     hall = 0.0
@@ -520,7 +595,10 @@ music_render = (s: mut MusicSynth, count: int) -> f64[]:
                 if left > 0: n = min(n,left)
         loop k in 0..MUSIC_VOICES:
             if s.voices[k].active: music_voice_render(s,k,out,at,n)
-        loop i in 0..n: out[at+i] = music_hall_sample(s,out[at+i])
+        if s.concert_hall:
+            loop i in 0..n: out[at+i] = music_concert_hall_sample(s,out[at+i])
+        else:
+            loop i in 0..n: out[at+i] = music_hall_sample(s,out[at+i])
         at += n
     out
 
