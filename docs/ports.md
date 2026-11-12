@@ -19,7 +19,7 @@ The harbour renderer, collision, mooring bollards and walking contact consume th
 
 It does not create people, markets or stock. Existing `FarDistrict` residents and accounts own those. Publication is lazy and persisted in `place_contexts`; it does not change the catalog fingerprint/version. This is the adoption boundary for the parallel living-world work.
 
-`arrive_registry_port` records a physical port call only near a dock at low speed. The aircraft retains the pilot's declared core journey during the stopover; the walking player has `place=-1`, `far_place=<registry ID>`, `trip=-1`. No core delivery/arrival is awarded there. Casting off restores the player's pending trip reference. The aircraft's saved `port_place`, `port_at`, `port_loading` provide the existing portage system with a real loading point. A moving aircraft or stale anchor cannot be loaded remotely.
+`arrive_registry_port` records a physical port call only near a dock at low speed. The aircraft retains the pilot's declared core journey during the stopover; the walking player has `place=-1`, `far_place=<registry ID>`, `trip=-1`. The shared `person_place` helper returns that registry ID for visiting core pilots without changing their home or planner. No core delivery/arrival is awarded there. Casting off restores the player's pending trip reference. The aircraft's saved `port_place`, `port_at`, `port_loading` provide the existing portage system with a real loading point. A moving aircraft or stale anchor cannot be loaded remotely.
 
 ## Owned goods and presentation hooks
 
