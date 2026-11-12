@@ -1,0 +1,120 @@
+# Player-only effects, one small transparent mesh; no additional render target or texture.
+use 'pilot.jo'
+use 'planes.jo'
+use 'flight_feedback.jo'
+use 'sea.jo'
+use 'damage.jo'
+use 'render_space.jo'
+use 'look.jo'
+
+struct FlightFxVertex:
+    pos: vec3
+    color: vec4
+struct FlightFxParams:
+    vp: mat4
+    cam: vec3
+    haze: vec3
+    fog: f32
+    warp_a: vec4
+    warp_b: vec4
+struct FlightFxOut:
+    pos: vec4
+    world: vec3
+    color: vec4
+flight_fx_vs = (v: FlightFxVertex,u: FlightFxParams) -> FlightFxOut:
+    FlightFxOut(u.vp*vec4(render_warped(v.pos,u.cam,u.warp_a,u.warp_b),1),v.pos,v.color)
+flight_fx_fs = (i: FlightFxOut,u: FlightFxParams) -> vec4:
+    vec4(aerial(i.color.xyz,i.world,u.cam,u.haze,u.fog),i.color.w)
+flight_fx_shader: Shader
+flight_fx_mesh: Mesh
+init_flight_effects = ():
+    global flight_fx_shader,flight_fx_mesh
+    flight_fx_shader = make_shader(shader(flight_fx_vs,flight_fx_fs))
+    flight_fx_mesh = mesh([FlightFxVertex(vec3(0,0,0),vec4(0,0,0,0))])
+
+fx_tri = (vs: mut FlightFxVertex[],a: vec3,b: vec3,c: vec3,color: vec3,alpha: vec3):
+    vs.extend([FlightFxVertex(a,vec4(color,alpha.x)),FlightFxVertex(b,vec4(color,alpha.y)),FlightFxVertex(c,vec4(color,alpha.z))])
+
+# Called before cloud compositing, so a cloud can hide the prop, spray and exhaust together.
+draw_flight_effects = (f: Flyer, model: CraftModel, at: mat4,L: Light,t: f64):
+    vs: FlightFxVertex[]
+    s = f.state; cue = f.feedback
+    right = quat_rotate(s.orientation,vec3(1,0,0))
+    back = quat_rotate(s.orientation,vec3(0,0,1))
+    if s.on_water and not s.moored and not s.crashed:
+        speed = water_run_speed(f.spec,s)
+        run = smoothstep(3.0,f.spec.stall_speed,speed)
+        # The sheet peels from the bow to the step as the hull lifts. Its roots are real
+        # contact points: dry bows disappear first; the aft wet footprint remains visible.
+        loop p in model.contacts:
+            if run < 0.01 or part_health(s.damage,PartId(contact_part(f.kind,p))) <= 0: continue
+            root = transform_point(at,p)
+            sea = swell_at(f64(root.x),f64(root.z),f.sea_t)
+            if root.y > sea.x+0.18: continue
+            root.y = sea.x+0.07
+            side = if p.x < 0: -1.0 else: 1.0
+            outward = right*f32(side)
+            color = mix(L.shade,L.sun,0.60)*0.8+vec3(0.18,0.21,0.23)
+            loop j in 0..5:
+                a = f64(j)/5.0; b = f64(j+1)/5.0
+                # Arcing fan thins at the rim, breaks up into the existing ballistic droplets.
+                point = (u: f64,outer: bool) -> vec3:
+                    w = if outer: 1.0 else: 0.25
+                    pulse = 1.0+0.12*sin(t*24.0+f64(p.x)*3.0-u*8.0)
+                    root + back*f32(u*(1.0+run*4.0)) + outward*f32(w*u*(0.5+run*2.5))*f32(pulse) + vec3(0,f32(w*sin(u*PI)*(0.15+run*0.9)*(1.0+cue.slap)),0)
+                aa=point(a,false); bb=point(a,true); cc=point(b,false); dd=point(b,true)
+                opacity=f32(run*0.23*(1.0-a))
+                fx_tri(vs,aa,cc,bb,color,vec3(opacity,opacity*0.7,0))
+                fx_tri(vs,bb,cc,dd,color,vec3(0,opacity*0.7,0))
+    if part_health(s.damage,.engine) > 0:
+        rpm = prop_rotation_speed(s,cue.speed)
+        blur = smoothstep(16.0,50.0,rpm)
+        radius = aircraft_profile(f.kind).prop_radius
+        night = 1.0-smoothstep(-0.08,0.08,f64(L.sun_dir.y))
+        loop hub in model.prop_hubs:
+            center = transform_point(at,hub)
+            normal = normalize(transform_point(at,hub+vec3(0,0,1))-center)
+            view = normalize(scene_camera()-center+vec3(0.0001,0,0))
+            glint = pow(abs(f64(dot(normal,normalize(view+L.sun_dir+vec3(0.0001,0,0))))),18.0)*smoothstep(0.0,0.2,f64(L.sun_dir.y))
+            color = mix(L.shade*0.55+vec3(0.16,0.17,0.18),L.sun,f32(glint*0.7))
+            loop j in 0..(if f.cockpit_view: 0 else: 40):
+                a = f64(j)*TAU/40.0; b = f64(j+1)*TAU/40.0
+                # Broad translucent blade sweeps over a faint whole disc, no opaque wagon wheel.
+                strength = f32(blur*(0.045+0.065*pow(0.5+0.5*cos(a*2.0-f.prop_angle*2.0),4.0)+glint*0.11))
+                p = (angle: f64,r: f64) -> vec3: transform_point(at,hub+vec3(cos(angle)*r,sin(angle)*r,0.015))
+                fx_tri(vs,p(a,radius*0.15),p(a,radius),p(b,radius),color,vec3(strength*0.25,strength,strength))
+                fx_tri(vs,p(a,radius*0.15),p(b,radius),p(b,radius*0.15),color,vec3(strength*0.25,strength,strength*0.25))
+            if night > 0.01 and s.throttle > 0.05 and s.fuel > 0 and not s.crashed:
+                # Short hot exhaust at the sides of the actual nacelle; paired engines each fire.
+                loop side in [-1.0,1.0]:
+                    flicker = 0.35+0.65*pow(0.5+0.5*sin(t*73.0+side*2.0+f64(hub.x)),3.0)
+                    root = hub+vec3(side*0.38,-0.25,0.65)
+                    length = (0.12+0.42*s.throttle)*flicker
+                    color = vec3(1.0,0.35+flicker*0.2,0.08)
+                    a=transform_point(at,root+vec3(0,0.07,0)); b=transform_point(at,root-vec3(0,0.07,0)); c=transform_point(at,root+vec3(side*0.08,-0.04,length))
+                    fx_tri(vs,a,b,c,color,vec3(f32(night*0.8),f32(night*0.8),0))
+    if vs.len() == 0: return
+    glDepthMask(0); glDisable(GL_CULL_FACE)
+    m=flight_fx_mesh
+    update_mesh(m,vs)
+    draw(flight_fx_shader,m,FlightFxParams(scene_view_proj(),scene_camera(),L.haze,f32(L.fog_density),scene_warp_a,scene_warp_b))
+
+# Tiny edge droplets, no full-screen blur and no obstruction of the gunsight. Rain and actual
+# water slaps supply the exposure. Deterministic phases never consume the simulation RNG.
+draw_flight_lens = (f: Flyer,rain: f64,t: f64):
+    if f.state.moored: return
+    cam = scene_camera()
+    water_height = f64(swell_at(f64(cam.x),f64(cam.z),f.sea_t).x)
+    spray = f.feedback.lens*(1.0-smoothstep(3.0,8.0,f64(cam.y)-water_height))
+    wet = max(rain*0.32,spray*0.65)
+    if wet < 0.015: return
+    w=f64(screen_width()); h=f64(screen_height())
+    loop j in 0..12:
+        seed=f64(j)
+        phase=fract(t*(0.19+seed*0.006)+seed*0.618)
+        fade=sin(phase*PI)*wet
+        x=(if j%2 == 0: 0.05+0.012*seed else: 0.95-0.012*seed)*w
+        y=fract(seed*0.371+phase*0.24)*h
+        radius=(2.0+f64(j%4))*h/720.0
+        ring(vec2(x,y),radius,1.0,rgba(0.76,0.86,0.94,f32(fade*0.35)))
+        line(vec2(x-radius*0.6,y-radius*0.5),vec2(x-radius*0.3,y-radius*0.8),1.0,rgba(0.95,0.98,1,f32(fade*0.8)))
