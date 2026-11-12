@@ -1,0 +1,234 @@
+# Geometry adapter: sources are fixed in world space, not random offsets around an ear.
+use 'ambience.jo'
+use 'ambience_synth.jo'
+use 'objects.jo'
+use 'settlements.jo'
+use 'world.jo'
+use 'geography.jo'
+use 'plants.jo'
+from 'grass.jo' import grass_cover
+import 'living_types.jo' as life
+import 'living_conditions.jo' as conditions
+use 'vessel_types.jo'
+
+struct AmbienceSite:
+    key: int
+    kind: int                       # church, quay, cafe, farm, roof, tree
+    pos: vec3
+struct AmbienceScene:
+    sound: Ambience
+    sites: AmbienceSite[]
+    center = vec3(1e9,1e9,1e9)
+    registry_size = -1
+    shore = vec3(0,0,0)
+    has_shore = false
+    rocky = false
+    plants: vec3[]
+    trees: vec3[]
+    previous_scan = -1.0
+    ships: {int: VesselStatus} = {}
+
+# A crossing of the authoritative coast height field, then classify with the same
+# slope criterion as the terrain's beach material (no independent shoreline map).
+ambience_coast = (p: vec3,ground: (f64,f64) -> f64) -> (vec3,bool,bool):
+    origin = p.xz; h0 = ground(f64(p.x),f64(p.z))
+    best = vec3(0,0,0); distance = 500.0; found = false
+    loop k in 0..8:
+        angle = f64(k)*TAU/8
+        dir = vec2(f32(cos(angle)),f32(sin(angle)))
+        before = origin; hb = h0
+        loop radius in [32.0,96.0,224.0,480.0]:
+            q = origin+dir*f32(radius); h = ground(f64(q.x),f64(q.y))
+            if (hb > 0) != (h > 0):
+                a = before; b = q
+                loop j in 0..8:
+                    mid = (a+b)*0.5; hm = ground(f64(mid.x),f64(mid.y))
+                    if (hm > 0) == (hb > 0): a = mid
+                    else: b = mid
+                at = (a+b)*0.5; d = f64(length(at-origin))
+                if d < distance: best = vec3(at.x,0.5,at.y); distance = d; found = true
+                break
+            before = q; hb = h
+    if not found: return (best,false,false)
+    x = f64(best.x); z = f64(best.z)
+    gx = (ground(x+4,z)-ground(x-4,z))/8; gz = (ground(x,z+4)-ground(x,z-4))/8
+    slope = 1.0-1.0/sqrt(1+gx*gx+gz*gz)
+    (best,true,slope > 0.12)
+
+ambience_cache = (scene: mut AmbienceScene,towns: Town[],groves: Grove[],listener: vec3):
+    if length(listener-scene.center) < 64 and scene.registry_size == world_settlements.len(): return
+    scene.center = listener; scene.registry_size = world_settlements.len()
+    scene.sites = []; scene.plants = []; scene.trees = []
+    loop index in 0..towns.len():
+        tw = towns[index]
+        if length(listener-tw.center) > 1800: continue
+        loop k in 0..tw.chapels.len(): scene.sites.push(AmbienceSite(index*100+k,0,tw.chapels[k]+vec3(0,8,0)))
+        scene.sites.push(AmbienceSite(index*100+20,1,tw.center+vec3(0,1,0)))
+        # Existing core life venues supply the actual cafe point below, never a made-up cafe.
+        nearest_roof = -1; roof_distance = 80.0
+        loop k in 0..tw.houses.len():
+            d = f64(length(listener-tw.houses[k]))
+            if d < roof_distance: nearest_roof = k; roof_distance = d
+        if nearest_roof >= 0: scene.sites.push(AmbienceSite(index*100+30,4,tw.houses[nearest_roof]+vec3(0,5,0)))
+    # Spatial bins, at most eight nearest registry districts, regardless of world size.
+    candidates: int[]
+    loop dz in -1..2:
+        loop dx in -1..2:
+            key = geography_bin(f64(listener.x)+f64(dx)*16000,f64(listener.z)+f64(dz)*16000)
+            loop index in settlement_bins.get(key,[]):
+                if index in candidates or world_settlements[index].legacy >= 0: continue
+                if length(world_settlements[index].center-listener) > 1800: continue
+                candidates.push(index)
+    candidates.sort_by((i: int) -> f32: length(world_settlements[i].center-listener))
+    loop index in candidates[0..min(8,candidates.len())]:
+        s = world_settlements[index]
+        loop k in 0.. and landmark in place_landmarks(s):
+            key = 100000+s.id*100+k
+            kind = match landmark.kind:
+                "church", "hill church": 0
+                "cafe": 2
+                "farmhouse", "olive terrace": 3
+                "plane tree": 5
+                _: -1
+            if kind >= 0: scene.sites.push(AmbienceSite(key,kind,landmark.at+vec3(0,if kind == 0: 8 else: 1,0)))
+        if s.harbor.len() > 0: scene.sites.push(AmbienceSite(100000+s.id*100+60,1,s.harbor[0].at+vec3(0,1,0)))
+        if s.kind == .hill or s.kind == .hamlet: scene.sites.push(AmbienceSite(100000+s.id*100+61,3,s.center))
+        # One nearest real parcel roof per district, not an infinite rain roof at the listener.
+        local = place_to_local(s,listener.xz); roof: vec3? = none; nearest = 80.0
+        loop cell in place_candidate_cells(s,local):
+            if let lot = place_lot(s,cell.0,cell.1):
+                at = place_to_world(s,lot.local); d = f64(length(at-listener.xz))
+                if d >= nearest: continue
+                if let parcel = place_ground_lot(s,lot):
+                    roof = parcel.at+vec3(0,5,0); nearest = d
+        if roof != none: scene.sites.push(AmbienceSite(100000+s.id*100+62,4,roof!))
+    scene.shore,scene.has_shore,scene.rocky = ambience_coast(listener,height)
+    # Stable 64m habitat cells: below-ground/high-altitude ears hear none via 3D distance.
+    gx = int(floor(f64(listener.x)/64)); gz = int(floor(f64(listener.z)/64))
+    loop z in gz-1..gz+2:
+        loop x in gx-1..gx+2:
+            at = vec3(f32(x*64+32),0,f32(z*64+32)); h = height(f64(at.x),f64(at.z))
+            sl = slope_at(f64(at.x),f64(at.z))
+            if h < 3 or h > 800 or sl > 0.6 or settlement_urban(at.xz): continue
+            at.y = f32(surface_height(f64(at.x),f64(at.z)))+0.5
+            if grass_cover(towns,f64(at.x),f64(at.z)) > 0.1: scene.plants.push(at)
+            if orchard_cover(at.xz,f32(h),f32(sl)) > 0.1: scene.trees.push(at+vec3(0,3,0))
+    # Resident grove bounds come from actual generated trees. One nearest tree stand.
+    nearest = 150.0; tree: vec3? = none
+    loop g in groves:
+        d = f64(length(g.bounds.xyz-listener))-f64(g.bounds.w)
+        if d < nearest:
+            at = g.bounds.xyz; at.y = f32(surface_height(f64(at.x),f64(at.z)))+3
+            if length(at-listener) < 180: nearest = d; tree = at
+    if tree != none: scene.trees.push(tree!)
+
+ambience_obstruction = (source: vec3,listener: vec3,towns: Town[]) -> f64:
+    blocked = 0.0
+    loop k in 1..6:
+        p = source+(listener-source)*f32(f64(k)/6)
+        ground = surface_height(f64(p.x),f64(p.z))
+        if ground > f64(p.y)-0.5: blocked = max(blocked,0.85)
+        # Registry collision footprints; their displacement tells us the path is inside a wall.
+        if p.y < f32(ground+9) and length(settlement_avoid_buildings(p.xz)-p.xz) > 0.1: blocked = max(blocked,0.75)
+    # Exact horizontal segment/cylinder intersection for original town collision blocks.
+    d = listener.xz-source.xz; denom = max(dot(d,d),0.001)
+    loop town in towns:
+        if length(town.center-listener) > 650: continue
+        loop block in town.blocks:
+            u = clamp(dot(block.xy-source.xz,d)/denom,0.0,1.0)
+            p = source+(listener-source)*u
+            if length(p.xz-block.xy) < block.z and p.y < f32(surface_height(f64(block.x),f64(block.y))+9): blocked = max(blocked,0.75)
+    blocked
+
+ambience_period = (previous: f64,now: f64,key: int,seconds: f64) -> bool:
+    previous >= 0 and now > previous and now-previous <= 1.5 and floor((previous+f64(key%97))/seconds) != floor((now+f64(key%97))/seconds)
+
+ambience_scene_offer = (sound: Ambience,sources: mut AmbienceSource[],s: AmbienceSource,listener: vec3):
+    if sound.enabled[ambience_category(s.kind)]: ambience_offer(sources,s,listener)
+
+ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet,towns: Town[],groves: Grove[],listener: vec3,dt: f64,flying: bool,wind: vec3):
+    if not scene.sound.active: return
+    now = f64(w.tick)/60.0; previous = scene.sound.last_time
+    # Load/rewind/teleport discards all tails, queued strikes and vessel transition history.
+    if previous >= 0 and (now < previous or now-previous > 1.0 or length(listener-scene.center) > 800):
+        ambience_hush(scene.sound); scene.ships = {}; scene.previous_scan = -1
+        previous = -1
+    scene.sound.last_time = now; scene.sound.muted = false
+    ambience_thunder(scene.sound,w,previous,now,listener)
+    scene.sound.refresh -= dt
+    if scene.sound.refresh <= 0:
+        scene.sound.refresh = 0.5
+        ambience_cache(scene,towns,groves,listener)
+        hour = f64(life.local_minute(w.minute))/60
+        air = conditions.weather_air(w.weather,f64(w.tick)/f64(life.TICKS_PER_MINUTE),hour,listener)
+        wind_speed = f64(length(wind)); rain = if listener.y > air.ceiling: 0.0 else: f64(air.rain)
+        night = hour < 5.5 or hour >= 20
+        daytime = hour >= 7 and hour < 20
+        sources: AmbienceSource[]; churches: AmbienceSource[]
+        people = ambience_people(w,listener)
+        loop site in scene.sites:
+            count = ambience_count(people,site.pos,if site.kind == 1: 55 else: 22)
+            crowd = min(1.0,f64(count)/6.0)
+            if site.kind == 0:
+                churches.push(AmbienceSource(site.key,.bell,site.pos,0.24,1600))
+            else if site.kind == 1:
+                ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.murmur,site.pos,0.14*crowd,110),listener)
+                ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key+1,.rope,site.pos,0.025*crowd*clamp(wind_speed/5,0.0,1.0),65),listener)
+                ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key+2,.rigging,site.pos,0.025*crowd*clamp(wind_speed/8,0.0,1.0),80),listener)
+                # Hull work requires someone actually working nearby, not just a full population.
+                working = false
+                loop person, intent in w.daily_life:
+                    if intent.arrived and intent.activity == .work and w.people[person].occupation == .mechanic and length(w.people[person].pose.pos-site.pos) < 65: working = true
+                if working and daytime and ambience_period(scene.previous_scan,now,site.key,4.7): ambience_queue(scene.sound,AmbienceSource(site.key,.hammer,site.pos,0.12,100),now,listener)
+                if count > 0 and ambience_period(scene.previous_scan,now,site.key,47): ambience_queue(scene.sound,AmbienceSource(site.key,.dog,site.pos,0.10,150),now,listener)
+            else if site.kind == 2:
+                if hour >= 17 and hour < 23: ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.cafe,site.pos,0.12*crowd,65),listener)
+            else if site.kind == 3:
+                if daytime and rain < 0.2 and site.pos.y > 25 and ambience_period(scene.previous_scan,now,site.key,11): ambience_queue(scene.sound,AmbienceSource(site.key,.goat,site.pos,0.09,100),now,listener)
+                if daytime and count > 0 and ambience_period(scene.previous_scan,now,site.key,61): ambience_queue(scene.sound,AmbienceSource(site.key,.donkey,site.pos,0.12,200),now,listener)
+            else if site.kind == 4:
+                ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.rain_roof,site.pos,0.15*rain,70),listener)
+            else if site.kind == 5: ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.trees,site.pos,0.07*clamp(wind_speed/10,0.0,1.0),85),listener)
+        # Legacy cafe geometry is supplied by existing daily-life venues. Actual bodies are counted.
+        loop venue in w.life_venues:
+            if venue.kind != .cafe or length(venue.pos-listener) > 80 or hour < 17 or hour >= 23: continue
+            gain = min(1.0,f64(ambience_count(people,venue.pos,22))/6)*0.12
+            ambience_scene_offer(scene.sound,sources,AmbienceSource(7000000+venue.place,.cafe,venue.pos,gain,65),listener)
+        if scene.has_shore:
+            if daytime and rain < 0.5 and ambience_period(scene.previous_scan,now,int(scene.shore.x),23):
+                ambience_queue(scene.sound,AmbienceSource(-2,.gull,scene.shore+vec3(0,12,0),0.09,180),now,listener)
+            ambience_scene_offer(scene.sound,sources,AmbienceSource(-1,if scene.rocky: AmbienceKind.cliff else: .beach,scene.shore,0.06+clamp(wind_speed/15,0.0,1.0)*0.12,260),listener)
+        loop k in 0.. and p in scene.plants:
+            ambience_scene_offer(scene.sound,sources,AmbienceSource(-100-k,.grass,p,0.045*clamp(wind_speed/10,0.0,1.0),80),listener)
+            heat = smoothstep(9,12,hour)*(1-smoothstep(16,19,hour))*(1-rain)*(1-f64(air.deck)*0.8)
+            insect = if night: AmbienceKind.cricket else: AmbienceKind.cicada
+            gain = if night: 0.04*(1-rain)*max(0.0,1-wind_speed/14) else: 0.045*heat*max(0.0,1-wind_speed/16)
+            ambience_scene_offer(scene.sound,sources,AmbienceSource(-200-k,insect,p,gain,70),listener)
+        loop k in 0.. and p in scene.trees:
+            ambience_scene_offer(scene.sound,sources,AmbienceSource(-300-k,.trees,p,0.08*clamp(wind_speed/12,0.0,1.0),120),listener)
+            if night and rain < 0.2 and ambience_period(scene.previous_scan,now,k+int(p.x),37): ambience_queue(scene.sound,AmbienceSource(-300-k,.owl,p,0.10,180),now,listener)
+        # Rain on open water is anchored to a stable surface tile; no rain above cloud tops.
+        water = vec3(f32(floor(f64(listener.x)/48)*48+24),0.2,f32(floor(f64(listener.z)/48)*48+24))
+        if height(f64(water.x),f64(water.z)) < 0: ambience_scene_offer(scene.sound,sources,AmbienceSource(-400,.rain_sea,water,0.16*rain,100),listener)
+        current: {int: VesselStatus} = {}
+        loop ship in fleet.ships:
+            if length(ship.position-listener) > 1400: continue
+            current[ship.id] = ship.status
+            if let source = ambience_ship_source(ship,wind): ambience_scene_offer(scene.sound,sources,source,listener)
+            if ship.id in scene.ships and scene.ships[ship.id] != ship.status and vessel_spec(ship.kind).steam and (ship.status == .underway or ship.status == .docked):
+                ambience_queue(scene.sound,AmbienceSource(8000000+ship.id,.whistle,ship.position+vec3(0,5,0),0.20,1200),now,listener)
+        scene.ships = current
+        # The scan can straddle the boundary by <=0.5s, so retain the hour edge until scanned.
+        if scene.previous_scan >= 0 and now-scene.previous_scan <= 1.5:
+            before = int(scene.previous_scan/2)
+            if w.minute > before and life.local_minute(w.minute)%60 == 0: ambience_bells(scene.sound,churches,w.minute,now,listener)
+        loop k in 0..sources.len(): sources[k].soft = ambience_obstruction(sources[k].pos,listener,towns)
+        loop k in 0..scene.sound.pending.len():
+            if scene.sound.pending[k].screened: continue
+            scene.sound.pending[k].screened = true
+            s = scene.sound.pending[k].source
+            scene.sound.pending[k].source.soft = max(s.soft,ambience_obstruction(s.pos,listener,towns))
+        # Disable before selecting voices, so a muted category cannot starve audible ones.
+        scene.sound.sources = [loop s in sources if scene.sound.enabled[ambience_category(s.kind)]: s]
+        scene.previous_scan = now
+    ambience_mix(scene.sound,listener,dt,now,flying)
