@@ -1,0 +1,141 @@
+# Survival keeps the original person or crew cohort; boarding and shelter arrival are separate
+# actual transactions. No reward or replacement person appears because a shot was fired.
+use 'living_types.jo'
+use 'living_war_types.jo'
+use 'living_war.jo'
+use 'living_far_types.jo'
+use 'living_commissions.jo'
+use 'living_far_news.jo'
+use 'living_money.jo'
+use 'living_guard.jo'
+
+struct SurvivorView:
+    id: int
+    person: int
+    country: int
+    pos: vec3
+    people: int
+    aboard: int
+    rescuer: int
+    deadline: int
+    why: str
+
+war_rescue_riders = (w: World, craft: int) -> int:
+    count=0
+    loop _, s in w.war.survivors:
+        if s.riding_craft==craft:
+            loop n in s.passengers: count+=n
+    count
+
+record_downed_airman = (w: mut World, person: int, craft: int, at: vec3, country: int) -> int:
+    if not w.far.populated or person<0 or person>=w.people.len() or craft<0 or craft>=w.aircraft.len() or country<0 or country>=3 or not finite_living_point(at) or w.war.survivors.len()>=64: return -1
+    body=w.aircraft[craft]
+    if body.owner!=person and body.operator!=person and not (person in body.passengers): return -1
+    old=body.rescue_event
+    if old>=0 and old in w.war.survivors:
+        if w.war.survivors[old].person==person: return old
+        return -1
+    initialize_war(w)
+    id=w.war.next_survivor; w.war.next_survivor+=1
+    w.war.survivors[id]=WarSurvivor(id,unit=-1,person=person,at=at,country=country,since=w.minute,deadline=w.minute+1440)
+    w.aircraft[craft].rescue_event=id; w.aircraft[craft].state=.wrecked
+    if w.aircraft[craft].trip>=0:
+        trip=w.aircraft[craft].trip
+        w.trips[trip].state=.failed; w.trips[trip].terminal_minute=w.minute
+    w.people[person].move_owner=.abstract_world
+    w.people[person].trip= -1; w.people[person].place= -1; w.people[person].far_visit= -1
+    w.people[person].pose.pos=at; w.people[person].state=.injured
+    w.people[person].injured_until=w.minute+4320
+    w.people[person].action=Action(activity=.wait,purpose=.rescue,end_minute=w.minute+1440)
+    if person in w.far.people:
+        w.far.people[person].vehicle=craft
+        w.far.people[person].scene_owned=false
+    id
+
+survivor_views = (w: World, observer: vec3, radius: f64 = 6000.0) -> SurvivorView[]:
+    result: SurvivorView[]
+    ids=w.war.survivors.keys(); ids.sort()
+    loop id in ids:
+        s=w.war.survivors[id]
+        if s.resolved: continue
+        at=if s.riding_craft>=0: w.aircraft[s.riding_craft].pose.pos else: s.at
+        if length(at-observer)>radius: continue
+        waiting=if s.person>=0 and s.riding_craft<0: 1 else: 0
+        if s.vehicle>=0:
+            loop n in w.far.vehicles[s.vehicle].crew: waiting+=n
+        aboard=if s.person>=0 and s.riding_craft>=0: 1 else: 0
+        loop n in s.passengers: aboard+=n
+        who=if s.person>=0: w.people[s.person].name else: "Carrier {s.vehicle}'s crew"
+        result.push(SurvivorView(id,s.person,s.country,at,waiting,aboard,s.rescuer,s.deadline,"{who} need a real pickup and passage to shelter."))
+    result
+
+board_survivors = (w: mut World, id: int, actor: int = 0) -> int:
+    if not (id in w.war.survivors) or actor<0 or actor>=w.people.len(): return 0
+    s=w.war.survivors[id]; craft=w.people[actor].craft
+    if s.resolved or s.riding_craft>=0 or s.person==actor or craft<0 or craft>=w.aircraft.len(): return 0
+    c=w.aircraft[craft]
+    if (c.state!=.taxi and c.state!=.moored) or length(c.pose.vel)>3 or length(c.pose.pos-s.at)>30: return 0
+    seats=AIRFRAMES[int(c.kind)].seats-c.passengers.len()-war_rescue_riders(w,craft)
+    seats=min(seats,max(0,(AIRFRAMES[int(c.kind)].cargo_grams-craft_grams(w,craft))/75000))
+    if seats<=0: return 0
+    count=0
+    if s.person>=0:
+        loop ship in w.aircraft:
+            if s.person in ship.passengers: return 0
+        w.aircraft[craft].passengers.push(s.person)
+        w.people[s.person].pose.pos=c.pose.pos
+        if s.person in w.far.people: w.far.people[s.person].vehicle=craft
+        count=1
+    else if s.vehicle>=0:
+        loop citizen in 0..3:
+            take=min(seats-count,w.far.vehicles[s.vehicle].crew[citizen])
+            if take<=0: continue
+            w.far.vehicles[s.vehicle].crew[citizen]-=take
+            w.far.crew_population[citizen]-=take
+            w.war.survivors[id].passengers[citizen]+=take; count+=take
+    if count>0:
+        w.war.survivors[id].riding_craft=craft
+        w.war.survivors[id].rescuer=actor
+    count
+
+land_survivors = (w: mut World, id: int, place: int, actor: int = 0) -> int:
+    if not (id in w.war.survivors) or not (place in w.far.districts): return 0
+    s=w.war.survivors[id]
+    if s.resolved or s.rescuer!=actor or s.riding_craft<0 or far_mooring(w,s.riding_craft,place)<0: return 0
+    count=0
+    if s.person>=0:
+        person=s.person
+        if not (person in w.aircraft[s.riding_craft].passengers): return 0
+        w.aircraft[s.riding_craft].passengers.remove(person)
+        if w.people[person].far_home>=0:
+            w.people[person].far_place=place
+            w.far.people[person].vehicle= -1
+            w.far.people[person].route=[]; w.far.people[person].waypoint=0
+            w.far.people[person].target=far_counter(w,place)
+            w.far.people[person].anchor="rescue:{id}:shelter"
+            w.far.people[person].last_tick=w.tick; w.far.people[person].last_hour= -1
+        else if place<w.places.len():
+            w.people[person].place=place
+            if not (person in w.places[place].residents): w.places[place].residents.push(person)
+        else: w.people[person].far_visit=place
+        w.people[person].pose.pos=far_counter(w,place)
+        count=1
+    else:
+        loop c in 0..3:
+            n=s.passengers[c]; count+=n
+            w.far.districts[place].dependents[c]+=n
+            w.far.districts[place].pending_workers[c]+=n
+            if n>0: w.far.districts[place].workers_ready_hour[c]=w.minute/60+1
+        w.war.survivors[id].passengers=[0,0,0]
+    if count<=0: return 0
+    w.war.survivors[id].rescued_total+=count
+    w.war.survivors[id].riding_craft= -1
+    if s.person>=0: w.war.survivors[id].resolved=true
+    else:
+        remaining=0
+        loop n in w.far.vehicles[s.vehicle].crew: remaining+=n
+        if remaining==0: w.war.survivors[id].resolved=true
+    key="{actor}:{s.country}"
+    w.war.reputation[key]=clamp(w.war.reputation.get(key,0)+count*12,-1000,1000)
+    far_local_news(w,place,"rescue","{w.people[actor].name} brought {count} survivors of {w.countries[s.country].name} to shelter at {w.place_contexts[place].name}.",actor=actor,country=s.country,severity=700)
+    count
