@@ -59,13 +59,11 @@ harbors_from_towns = (towns: Town[]) -> living.HarborGeometry[]:
 
 # The flight model's part health is authoritative while present. Seed coarse world wear into
 # attached parts only when constructing a body; snapshots retain actual individual damage.
-# the world's wear (condition out of 1000: an aircraft needing maintenance) as the parts' physical
-# health: wear tells, but a worn aircraft is not a damaged one
-_worn = (c: f64) -> f64: 1.0 - (1.0 - clamp(c, 0.0, 1.0)) ^ 2.0
-
+# The records are per-mille physical health, including real combat loss. Applying a nonlinear
+# wear curve every frame heals damaged parts and makes scene/save projections disagree.
 _seed_condition = (state: mut CraftState, spec: CraftSpec, hull0: int, engine0: int):
-    hull = int(_worn(f64(hull0) / 1000.0) * 1000.0)
-    engine = int(_worn(f64(engine0) / 1000.0) * 1000.0)
+    hull = clamp(hull0,0,1000)
+    engine = clamp(engine0,0,1000)
     engine_id = int(PartId.engine)
     engine_share = spec.parts[engine_id].mass_share
     structural = clamp((f64(hull) / 1000.0 - engine_share * f64(engine) / 1000.0) / max(0.01, 1.0 - engine_share), 0.0, 1.0)
@@ -74,8 +72,8 @@ _seed_condition = (state: mut CraftState, spec: CraftSpec, hull0: int, engine0: 
     state.hull_damage = 1.0 - f64(hull) / 1000.0; state.engine_damage = 1.0 - f64(engine) / 1000.0
 
 _impose_condition = (state: mut CraftState, spec: CraftSpec, hull0: int, engine0: int):
-    hull = int(_worn(f64(hull0) / 1000.0) * 1000.0)
-    engine = int(_worn(f64(engine0) / 1000.0) * 1000.0)
+    hull = clamp(hull0,0,1000)
+    engine = clamp(engine0,0,1000)
     engine_id = int(PartId.engine)
     engine_share = spec.parts[engine_id].mass_share
     old_engine = state.damage.parts[engine_id].health
@@ -146,26 +144,41 @@ bind_living_player = (player: mut Flyer, w: mut living.World, adapter: mut scene
     player.state.position = record.pose.pos
     if record.pose.pos.y == 0 and record.state == .moored: player.state.position.y = f32(player.spec.float_height)
     player.state.velocity = record.pose.vel; player.state.orientation = record.pose.rot
+    restored=false
     if record.scene_extension_tick == w.tick and record.scene_extension != "":
         snapshot = from_text[CraftState](record.scene_extension)
-        if snapshot is CraftState: player.state = snapshot
+        if snapshot is CraftState: player.state = snapshot; restored=true
     player.spec.fuel_capacity = f64(data.AIRFRAMES[int(w.aircraft[c].kind)].tank_ml) / 1000.0
     player.spec.fuel_burn = f64(data.AIRFRAMES[int(w.aircraft[c].kind)].burn_ml_sec) / 1000.0
-    player.state.fuel = f64(w.aircraft[c].fuel_ml) / 1000.0
-    player.state.hull_damage = 1.0 - f64(w.aircraft[c].hull) / 1000.0
-    player.state.engine_damage = 1.0 - f64(w.aircraft[c].engine) / 1000.0
-    if record.scene_extension_tick != w.tick or record.scene_extension == "": _seed_condition(player.state, player.spec, record.hull, record.engine)
+    if not restored:
+        player.state.fuel=f64(record.fuel_ml)/1000.0
+        _seed_condition(player.state,player.spec,record.hull,record.engine)
+    else:
+        # Keep the exact saved integrator, part damage and fractional ml. Coarse projections
+        # may differ by their documented integer rounding, never a new healing pass.
+        _restore_snapshot_health(player.state,player.spec,w,c)
+        if abs(player.state.fuel*1000.0-f64(record.fuel_ml))>1: player.state.fuel=f64(record.fuel_ml)/1000.0
     w.aircraft[c].pose = data.Pose(pos = player.state.position, vel = player.state.velocity, rot = player.state.orientation)
     if w.aircraft[c].move_owner != .scene: w.aircraft[c].revision += 1
     w.aircraft[c].move_owner = .scene
     if not scene.scene_bound(adapter, c): adapter.handles[c] = adapter.bodies.add(scene.SceneLease(c))
 
+# A valid same-tick full snapshot owns part health. Older saves can contain a coarse wear
+# projection alongside different physical health; restoring must not heal or re-damage parts.
+_restore_snapshot_health = (state: mut CraftState, spec: CraftSpec, w: mut living.World, craft: int):
+    summary=state; refresh_damage(spec,summary)
+    if abs(summary.hull_damage-state.hull_damage)>0.001 or abs(summary.engine_damage-state.engine_damage)>0.001: state=summary
+    w.aircraft[craft].hull=clamp(int(round((1.0-state.hull_damage)*1000.0)),0,1000)
+    w.aircraft[craft].engine=clamp(int(round((1.0-state.engine_damage)*1000.0)),0,1000)
+
 sync_living_player = (player: mut Flyer, w: living.World):
     c = w.aircraft[w.people[w.player].craft]
     if abs(player.state.fuel * 1000.0 - f64(c.fuel_ml)) > 1: player.state.fuel = f64(c.fuel_ml) / 1000.0
-    _impose_condition(player.state, player.spec, c.hull, c.engine)
-    if abs(player.state.hull_damage - (1.0 - f64(c.hull) / 1000.0)) > 0.001: player.state.hull_damage = 1.0 - f64(c.hull) / 1000.0
-    if abs(player.state.engine_damage - (1.0 - f64(c.engine) / 1000.0)) > 0.001: player.state.engine_damage = 1.0 - f64(c.engine) / 1000.0
+    hull=int(round((1.0-player.state.hull_damage)*1000.0))
+    engine=int(round((1.0-player.state.engine_damage)*1000.0))
+    if abs(hull-c.hull)>1 or abs(engine-c.engine)>1:
+        _impose_condition(player.state,player.spec,c.hull,c.engine)
+        refresh_damage(player.spec,player.state)
 
 commit_player_motion = (w: mut living.World, state: CraftState, before: data.Pose, before_fuel: int, alpha: f64, progress: bool = true, recover: bool = true):
     c = w.people[w.player].craft
@@ -223,6 +236,8 @@ start_traffic_plan = (tr: mut Traffic, w: living.World):
         approach_distance = max(1800.0, tr.plan.altitude / 0.065 + 500.0)
         if along > 0 and along < approach_distance and cross_track < 200 and tr.state.position.y < 280 and length(v) > 1 and dot(normalize(v), inward) > 0.85:
             tr.waypoint = t.route.len() - 2; tr.plan.phase = .descend
+    if t.harbor_move:
+        tr.plan.phase=.taxi; tr.waypoint=t.route.len()-2
     tr.route_key = hash(t.route)
 
 _acquire_traffic = (tr: mut Traffic, w: mut living.World, adapter: mut scene.SceneAdapter):
@@ -239,6 +254,7 @@ _acquire_traffic = (tr: mut Traffic, w: mut living.World, adapter: mut scene.Sce
             tr.state = snapshot.state; tr.plan = snapshot.plan
             tr.waypoint = snapshot.waypoint; tr.route_key = snapshot.route_key
             tr.combat_damage = snapshot.combat_damage
+            _restore_snapshot_health(tr.state,tr.spec,w,tr.craft)
     w.aircraft[tr.craft].scene_extension = ""; w.aircraft[tr.craft].scene_extension_tick = -1
 
 # Include the controller's real outer approach fix when folding. Otherwise an abstract craft
@@ -296,9 +312,9 @@ _traffic_berth = (tr: mut Traffic, w: mut living.World):
     if available:
         loop c in w.aircraft:
             if c.id != tr.craft and c.place == place and c.dock == dock: available = false
-    if not available: dock = travel.free_dock(w, place, tr.craft)
+    if not available and not w.trips[id].harbor_move: dock = travel.free_dock(w, place, tr.craft)
     if w.places[place].harbor_closed: dock = -1
-    if dock < 0:
+    if dock < 0 and not w.trips[id].harbor_move:
         w.trips[id].state = .holding
         if w.trips[id].hold_until_minute == 0: w.trips[id].hold_until_minute = w.minute + 30
     else if w.trips[id].state == .holding: w.trips[id].state = .active
@@ -316,7 +332,7 @@ _step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: boo
     # Mixed abstract encounters can damage/resolve this body at a minute boundary.
     if c.fuel_ml + 1 < int(round(tr.state.fuel * 1000.0)): tr.state.fuel = f64(c.fuel_ml) / 1000.0
     # Keep actual bullet/part damage while this body retains its scene lease. Reapplying the
-    # legacy nonlinear wear map here would heal bullet damage on the first return-to-route tick.
+    # a nonlinear wear map here would heal bullet damage on the first return-to-route tick.
     if not tr.combat_damage or tr.state.moored:
         _impose_condition(tr.state, tr.spec, c.hull, c.engine)
         tr.state.hull_damage = max(tr.state.hull_damage, 1.0 - f64(c.hull) / 1000.0)

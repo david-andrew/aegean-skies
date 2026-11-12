@@ -43,10 +43,41 @@ for raw in source.read_text().splitlines():
     for old_min,old in seen[speaker]:
         if minute-old_min<240 and old==text: forbidden.append({'speaker':speaker,'minute':minute,'text':text})
     seen[speaker]=[(t,s) for t,s in seen[speaker] if minute-t<240]+[(minute,text)]
-    turns.append(dict(speaker=speaker,voice=voice,topic=topic,text=text,concrete=concrete,social=social))
+    turns.append(dict(speaker=speaker,voice=voice,topic=topic,text=text,concrete=concrete,social=social,listener=listener))
 words=[re.findall(r"[a-z]+(?:'[a-z]+)?|\d+",t['text'].lower()) for t in turns]
 ngrams={n:Counter(tuple(w[i:i+n]) for w in words for i in range(len(w)-n+1)) for n in (3,5)}
 by=defaultdict(list)
 for t in turns: by[t['topic']].append(t)
 result={'file':source.name,'turns':len(turns),'concrete_percent':round(100*sum(t['concrete'] for t in turns)/max(1,len(turns)),2),'social_only_percent':round(100*sum(t['social'] and not t['concrete'] for t in turns)/max(1,len(turns)),2),'concrete_or_relationship_social_percent':round(100*sum(t['concrete'] or t['social'] for t in turns)/max(1,len(turns)),2),'forbidden_repeat_count':len(forbidden),'distinct_3gram_percent':round(100*len(ngrams[3])/max(1,sum(ngrams[3].values())),2),'distinct_5gram_percent':round(100*len(ngrams[5])/max(1,sum(ngrams[5].values())),2),'most_repeated_5grams':[{'phrase':' '.join(k),'count':v} for k,v in ngrams[5].most_common(15)],'by_topic':{k:{'turns':len(v),'grounded_percent':round(100*sum(t['concrete'] or t['social'] for t in v)/len(v),2)} for k,v in sorted(by.items())},'filler_samples':[t for t in turns if not(t['concrete'] or t['social'])][::max(1,len(turns)//30)][:20]}
+# Judged semantic bugs are separate gates, never absorbed by lexical specificity.
+bugs=defaultdict(list)
+sentences=defaultdict(lambda:dict(voices=set(),count=0))
+def aliases(full):
+ if full=='The Pilot': return ['The Pilot','pilot']
+ parts=full.split()
+ return [full,' '.join(parts[:2]) if parts and parts[0]=='Father' else (parts[0] if parts else full)]
+for t in turns:
+ text=t['text']; speaker=t['speaker']; listener=t['listener']
+ def record(kind): bugs[kind].append(dict(speaker=speaker,listener=listener,topic=t['topic'],text=text))
+ if re.search(r"\b(?:shift|at work|due at work)\b",text,re.I) and re.search(r"\b(?:yesterday|\d+ days? ago)\b",text,re.I):record('past_current_shift')
+ if any(re.search(r"\bfor "+re.escape(name)+r"\b",text) for name in aliases(speaker)):record('self_named_beneficiary')
+ if any(re.search(r"\bask "+re.escape(name)+r"\b",text,re.I) for name in aliases(listener)) or any(re.search(re.escape(name)+r" asked about carrying.*\bAsk them",text) for name in aliases(listener)):record('listener_self_referral')
+ if re.search(r"(?<!The )\bpilot's\b|\bbelongs to pilot\b",text):record('player_placeholder_possession')
+ if re.search(r"\bi(?:\b|['’])",text):record('lowercase_i')
+ if re.search(r'\b(?:near|off|at) out at sea\b',text):record('malformed_offshore_location')
+ if 'Please distinguish what we can see from what someone has predicted' in text:record('pedantic_prediction')
+ if re.search(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?) told me this:.*\b\1\b",text):record('source_repeated_as_stranger')
+ for sentence in re.split(r'(?<=[.!?])\s+(?=[A-Z])',text):
+  if len(re.findall(r"[A-Za-z]+",sentence))<6:continue
+  item=sentences[sentence];item['voices'].add(t['voice']);item['count']+=1
+classes=['past_current_shift','self_named_beneficiary','listener_self_referral','player_placeholder_possession','lowercase_i','pedantic_prediction','source_repeated_as_stranger','malformed_offshore_location']
+shared=[dict(sentence=k,voices=sorted(v['voices']),count=v['count']) for k,v in sentences.items() if len(v['voices'])>1]
+shared.sort(key=lambda x:(-x['count'],x['sentence']))
+result['bug_counts']={k:len(bugs[k]) for k in classes}
+result['bug_samples']={k:bugs[k][:5] for k in classes if bugs[k]}
+result['cross_voice_sentence_groups']=len(shared)
+result['cross_voice_sentence_samples']=shared
+result['targeted_shared_bank_counts']={'old_day_question':sum('And you? How has the day treated you?' in t['text'] for t in turns),'old_moored_sentence':sum("No point asking me what they've promised to carry." in t['text'] for t in turns)}
 print(json.dumps(result,indent=2))
+if '--strict' in sys.argv[2:]:
+ sys.exit(bool(sum(result['bug_counts'].values()) or shared or sum(result['targeted_shared_bank_counts'].values())))

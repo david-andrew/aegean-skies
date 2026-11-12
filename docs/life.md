@@ -101,3 +101,31 @@ that a remote job is still available. Use existing job validation on acceptance.
 meetings exchange at most one own offer in each direction; residence alone transmits nothing.
 Hearing a referral never refreshes its original date; leads expire after three game days and
 are bounded to twelve per speaker. Merely asking for work neither claims cargo nor spends money.
+
+## Judging regression gates
+
+`tests/living_delivery_month.jo` counts only actual aircraft deliveries, requiring successes in
+all six five-day windows, a delivery in the final two days and no three-day stall. A month total
+including foot errands cannot pass this gate. Completed jobs with no cargo remaining do not
+schedule return handling; a real berth queue can ask an idle NPC to taxi to the buoy using owned
+fuel. Player berths, active loads/repairs/passengers and current scene leases are protected.
+
+`living_schedule.jo` is the single recurring labor schedule used for work credit and current
+shift speech. Opening absolute shift-obligation dates do not describe a current shift. Speech
+names use speaker/listener/source roles; first-person supplies, the player's own craft and a
+source's report of their own attack are rendered in that perspective. Asking a person for work
+excludes referring the listener to their own offer. Named family facts remain; shared sentences
+that merely commented on those facts were cut. The eight voices have separate question, greeting,
+farewell, acknowledgement, price, relationship and music phrases. No hash-based phrase ownership
+or automatic paraphrasing suppresses an otherwise relevant fact.
+
+`python3 tools/speech_critic.py transcript.txt --strict` reports/gates seven judged semantic
+classes, the retired question/moored-aircraft banks, and exact sentences shared across voices
+(at least six words, so routine two-word courtesies do not fail it). It still reports lexical
+specificity, n-gram diversity and exact recent repetitions separately. The semantic regexes are
+heuristics; inspect their examples (notably `The Pilot` must not alias the word `The`). A zero
+count is evidence for the generated corpus, not proof about all possible world states.
+
+Yesterday's board facts are deduplicated by their printable reason before selecting three.
+Distinct event IDs, confidence, reputation receipts and occurrence dates are retained. The board
+projection also handles duplicate Reason snapshots already present in older saves.
