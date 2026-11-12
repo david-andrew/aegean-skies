@@ -39,7 +39,9 @@ this cap takes priority over additional zoom detail. Distant terrain uses the
 original draw path and adds no detail triangles.
 
 The sea reconstructs the same morphed triangles, including constrained boundary
-strips, before choosing foam, sand transparency and shallow-water color. Depth is
+strips, before choosing foam, sand transparency and shallow-water color.
+The refined depth applies within 500 m and fades to the existing depth map by
+600 m; the distant sea shader excludes the reconstruction code. Depth is
 measured from the actual displaced sea surface, so the wash follows waves too. Legacy
 coasts reuse the existing signed 24-bit height atlas. New land streams a 65²
 canonical-height atlas over 896 m, four rows per frame, publishing all 17 frames
@@ -64,3 +66,12 @@ Validation tools:
 
 Run all tools headlessly and silently with `SLOPPY_THREADS=1`. Captures and
 machine-specific measurements belong in scratch, not the asset directory.
+
+The source height arrays retained for instance selection add about 2 MiB for
+legacy terrain and at most 578 KiB for 512 resident 17² new-land tiles. The seven
+shared refinement meshes use about 173 KiB of vertex/index payload, independent
+of the size of the country. Temporary instances remain proportional to the
+nearby canonical patches and are culled per cell before upload. The phone tier
+uses its existing larger terrain error budget, while retaining the same physical
+contact surface. These bounds do not substitute for frame-time measurements;
+see the task's scratch report for measured acceptance and remaining limitations.
