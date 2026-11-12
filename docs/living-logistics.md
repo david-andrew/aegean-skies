@@ -114,7 +114,11 @@ Schema3 keeps readable metadata in each `-a`/`-b` bank and raw deflate bytes in 
 The body is written before its checksum/header commits. The other latest valid bank remains
 available after a failure. Schema1/2 remain readable. Route/procurement versions requiring a
 migration are refused while preserving their files. The browser runtime base64-encodes the raw
-bytes once, avoiding the former double expansion.
+bytes once, avoiding the former double expansion. The browser compatibility layer packs only
+`sloppy:...-a-data` / `-b-data` values into a reversible fifteen-bit BMP alphabet in localStorage;
+its byte API still reads/writes the exact native compressed body. Legacy base64 bodies remain
+readable. New headers use encoding3 so older builds refuse these banks explicitly. Ordinary
+settings and metadata are unaffected; each bank retains its own complete independent body.
 
 The simulation bounds the registry at1024 places, carriers at1280, local people at24 and visible
 economic ships at16 (the phone tier can choose6). Commissions are bounded96; political evidence,
