@@ -154,3 +154,25 @@ can carry a saved optional title, exposed on WarContact.name and through war_eng
 Native/browser saves use schema3 readable metadata and a raw compressed body for each bank.
 Keep both banks and their -data keys together. Schema1/2 remain readable; incompatible old far
 procurement/navigation versions are explicitly refused without replacing the saved world.
+
+
+## Feeder tracks and opening rolling stock
+
+The offline living-route bake preserves every authored road and accepted sea lane, then tries
+at most2048 deterministic short links between disconnected transport components. An accepted
+unpaved feeder uses canonical dry terrain, a bounded grade and wagon-width building clearance;
+local detours use the same contact geometry as walking. The resulting samples are baked, never
+searched in the game minute or frame loop. These tracks belong to the living transport catalog,
+not the authored settlement road registry or chart. Unpassable candidates stay disconnected.
+
+The current catalog adds11tracks: the largest connected component grows483→674places.
+Opening services on authored roads own a1.5-ton horse wagon and one real cohort driver; narrow
+feeder tracks retain the500kgcart. The ship hold remains30tons. These are declared opening
+vehicles, with funded operating purses and actual crew removed from their households. Cargo
+still requires actual stock, received purchase terms, payment and carried original roots.
+Loading a populated save never enlarges its fleet, resizes its vehicles or replaces its routes.
+
+A connected graph alone does not establish adequate carrying capacity. An optimistic grain-only
+flow bound on the measured month snapshot improved61.6%→98.9%of import demand when route
+capacities were treated as unlimited. At finite capacities, wagons and multi-day route times
+remain important constraints; no claim of general economic equilibrium follows from that bound.
