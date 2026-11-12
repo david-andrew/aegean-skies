@@ -4,8 +4,11 @@
 use 'quality.jo'
 use 'terrain_lod.jo'
 use 'world.jo'
+use 'geography.jo'
+use 'world_source.jo'
 use 'settlements.jo'
 use 'town_sites.jo'
+use 'settlement_ports.jo'
 use 'look.jo'
 use 'paint.jo'
 use 'weather_scene.jo'
@@ -34,6 +37,9 @@ struct ObjParams:
     warp_b: vec4
     wet: f32 = 0.0
     pigment: Texture = Texture()
+    origin: vec3 = vec3(0,0,0)
+    pigment_phase: vec4 = vec4(0,0,0,0)
+    sway_phase: vec4 = vec4(0,0,0,0)
 
 struct ObjOut:
     pos: vec4
@@ -81,9 +87,9 @@ obj_light = (i: ObjOut,u: ObjParams) -> vec4:
     paint_near = 1.0-smoothstep(120.0,300.0,length(i.world-u.cam))
     if paint_near > 0.0:
         # A broad pigment wash rather than per-pixel speckle on walls and roofs.
-        uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0
+        uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0+u.pigment_phase.xy
         foliage = i.surface.z > 0.5 and i.surface.z < 1.5
-        if foliage: uv = i.world.xz/12.0+vec2(i.world.y*0.08,0)
+        if foliage: uv = i.world.xz/12.0+u.pigment_phase.zw+vec2(i.world.y*0.08,0)
         pigment = sample(u.pigment,uv)
         wash = pigment.w-0.5
         resolved = (1.0-smoothstep(0.04,0.14,max(fwidth(uv.x),fwidth(uv.y))))*paint_near
@@ -103,12 +109,12 @@ obj_light = (i: ObjOut,u: ObjParams) -> vec4:
         c = mix(c*vec3(0.34,0.43,0.58),c,inset)
     if i.surface.z > 3.5 and paint_near > 0.0:
         # Fine, staggered paving joints fade before they become subpixel stripes.
-        uv=i.world.xz/vec2(0.8,0.48)
+        uv=i.world.xz/vec2(0.8,0.5)
         uv.x+=floor(uv.y)*0.5
         edge=min(fract(uv),vec2(1,1)-fract(uv))
         aa=max(fwidth(uv.x),fwidth(uv.y))
         mortar=1.0-smoothstep(0.018,0.018+aa,min(edge.x,edge.y))
-        variation=fract(dot(floor(uv),vec2(0.754877,0.56984)))-0.5
+        variation=fract(dot(floor(uv),vec2(0.0625,0.21875)))-0.5
         fade=(1.0-smoothstep(0.1,0.5,aa))*paint_near
         c*=1.0+fade*(variation*0.13-mortar*0.17)
     if u.flex.w > 0.0:
@@ -138,22 +144,23 @@ obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
     ObjOut(u.view_proj * w, w.xyz, (u.model * vec4(v.normal, 0)).xyz, v.color * u.tint,obj_surface(v))
 
 obj_vs_inst = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
-    w = inst.model * vec4(v.pos, 1)
+    w = render_model(inst.model,u.origin) * vec4(v.pos, 1)
     # Fade centimetres of crown motion before they become subpixel; distant
     # grove batches need neither gust noise nor sway trigonometry.
     sway = u.sway*(1.0-smoothstep(180.0,420.0,length(w.xyz-u.cam)))
     if sway > 0.0:
         g = gust(w.xz, u.drift)
         lean = sway * max(v.pos.y, 0.0) * 0.0035 * u.wind.z * (0.25 + 0.75 * g)
-        ph = u.time * (1.1 + 0.15 * u.wind.z) + w.x * 0.05 + w.z * 0.04
+        ph = w.x * 0.05 + w.z * 0.04
+        phase = ph+u.sway_phase.x
         sw = sway * max(v.pos.y, 0.0) * 0.004 * (0.5 + u.wind.z * 0.2) * (0.4 + g)
-        w = w + vec4(u.wind.x * lean + sin(ph) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8) * sw * 0.6, 0)
+        w = w + vec4(u.wind.x * lean + sin(phase) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8+u.sway_phase.y) * sw * 0.6, 0)
     ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, v.color * inst.color,obj_surface(v,u.sway))
 
 # A separate pipeline lets the driver eliminate unused pigment/recess varyings
 # and all wind work for cells wholly beyond the resolved animation range.
 obj_far_vs = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
-    w = inst.model * vec4(v.pos, 1)
+    w = render_model(inst.model,u.origin) * vec4(v.pos, 1)
     ObjOut(u.view_proj*w,w.xyz,(inst.model*vec4(v.normal,0)).xyz,v.color*inst.color)
 obj_far_fs = (i: ObjOut, u: ObjParams) -> vec4:
     n = normalize(i.normal)
@@ -169,6 +176,16 @@ obj_far_sh: Shader
 obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0)) -> ObjParams:
     p = ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t), f32(sway),
         vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift, flex, scene_warp_a, scene_warp_b,if weather_active: weather_here.rain else: 0.0)
+    p.origin = render_origin(p.cam)
+    p.view_proj = render_view_proj(p.origin)
+    p.cam = render_eye(p.origin)
+    p.model = render_model(model,p.origin)
+    p.warp_a = render_anchor(p.warp_a,p.origin)
+    p.drift -= p.origin.xz
+    p.pigment_phase = vec4(render_phase(f64(p.origin.x)/18.0,1),render_phase(f64(p.origin.z)/18.0,1),render_phase(f64(p.origin.x)/12.0,1),render_phase(f64(p.origin.z)/12.0,1))
+    phase = t*(1.1+0.15*f64(p.wind.z))+f64(p.origin.x)*0.05+f64(p.origin.z)*0.04
+    grass_phase = t*(2.2+0.2*f64(p.wind.z))+f64(p.origin.x)*0.4+f64(p.origin.z)*0.3
+    p.sway_phase = vec4(render_phase(phase,TAU),render_phase(phase*0.8,TAU),render_phase(grass_phase,TAU),0)
     p.pigment = paint_surface()
     p
 
@@ -777,7 +794,8 @@ init_objects = ():
 
 # the height one stands at, on the ground or on a quay
 walk_height = (towns: Town[], x: f64, z: f64) -> f64:
-    h = surface_height(x, z)
+    # Main-thread walking shares the exact canonical source memo used by towns.
+    h = if geography_enabled and (abs(x)>=LEGACY_RESERVE or abs(z)>=LEGACY_RESERVE):world_source_surface(x,z) else:surface_height(x,z)
     p = vec2(f32(x), f32(z))
     loop tw in towns:
         if length(vec2(tw.center.x, tw.center.z) - p) > 400.0: continue
@@ -795,22 +813,12 @@ walk_height = (towns: Town[], x: f64, z: f64) -> f64:
                 if abs(q.x-f32(site.width*0.5+0.85))<0.9 and abs(q.y)<f32(site.depth*0.5+0.6):
                     if let roof=site_roof_entry(site,tw.sites): h=entry_height(roof,p,h)
             if abs(q.x+f32(if site.chapel: 0.0 else: site.width*0.2))<1.5 and q.y>f32(site.depth*0.5) and q.y<f32(site.depth*0.5+2.6): h=entry_height(site_entry(site),p,h)
-    settlement_entry_height(p,settlement_quay_height(p,h))
+    settlement_entry_height(p,port_quay_height_at(x,z,h))
 
 # a step from p toward p + move, kept out of houses and out of the sea (deeper than the ankles)
 walk_step = (towns: Town[], p: vec3, move: vec2) -> vec3:
     np = vec2(p.x, p.z) + move
-    loop tw in towns:
-        if length(vec2(tw.center.x, tw.center.z) - np) > 400.0: continue
-        if tw.sites.len()>0:
-            loop s in tw.sites:
-                if length(np-s.at.xz)<f32(max(s.width,s.depth)+1) and not (s.flat and s.floors==1 and f64(p.y)>=f64(s.at.y)+s.height+0.05): np=site_exclude(s,np)
-        else:
-            loop b in tw.blocks:
-                d = np - vec2(b.x, b.y)
-                l = length(d)
-                if l < b.z + 0.35 and l > 0.001: np = vec2(b.x, b.y) + d / l * (b.z + 0.35)
-    np = settlement_avoid_buildings(np)
+    np=town_avoid_buildings(towns,np,f64(p.y))
     h = walk_height(towns, f64(np.x), f64(np.y))
     if h < -0.3: return p
     if h - f64(p.y) > 0.8: return p                # a wall or a quay's edge from below
@@ -850,3 +858,37 @@ add_house_proxy = (vs: mut Vertex3D[],m: mat4,w: f64,d: f64,h: f64,seed: int):
     add_plaster_box(vs,vec3(0,f32(h*0.5-1.0),0),vec3(f32(w),f32(h+2.0),f32(d)),WALLS[seed%WALLS.len()],m)
     if (seed/11)%4 != 0: add_gable(vs,vec3(0,f32(h),0),w,d,min(w,d)*0.22,ROOFS[(seed/7)%ROOFS.len()],m)
     add_box(vs,vec3(0,f32(h*0.55),f32(d*0.5+0.05)),vec3(f32(w*0.35),1.5,0.08),rgba(0.15,0.17,0.22,0.5),m)
+
+# An articulated/dynamic model composed entirely inside the current chart.
+obj_local_params = (L: Light,t: f64,model: mat4) -> ObjParams:
+    p=obj_params(L,t)
+    p.model=model
+    p
+
+# Keep the fractional step through legacy collision broad-phase rounding. Only
+# a real collision replaces that candidate; ground is queried at precise x/z.
+walk_step_precise = (towns: Town[],p: WorldPoint,move: vec2) -> WorldPoint:
+    x=p.x+f64(move.x);z=p.z+f64(move.y)
+    candidate=vec2(f32(x),f32(z));np=candidate
+    np=town_avoid_buildings(towns,np,p.y)
+    if np.x!=candidate.x:x=f64(np.x)
+    if np.y!=candidate.y:z=f64(np.y)
+    h=walk_height(towns,x,z)
+    if h < -0.3 or h-p.y > 0.8:return p
+    WorldPoint(x,h,z)
+
+
+town_avoid_buildings = (towns: Town[],at: vec2,height: f64) -> vec2:
+    np=at
+    loop tw in towns:
+        if length(vec2(tw.center.x, tw.center.z) - np) > 400.0: continue
+        if tw.sites.len()>0:
+            loop s in tw.sites:
+                if length(np-s.at.xz)<f32(max(s.width,s.depth)+1) and not (s.flat and s.floors==1 and height>=f64(s.at.y)+s.height+0.05): np=site_exclude(s,np)
+        else:
+            loop b in tw.blocks:
+                d = np - vec2(b.x, b.y)
+                l = length(d)
+                if l < b.z + 0.35 and l > 0.001: np = vec2(b.x, b.y) + d / l * (b.z + 0.35)
+    np = settlement_avoid_buildings(np)
+    np

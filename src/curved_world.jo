@@ -1,6 +1,6 @@
 # Adapt existing shaders at their position boundary. This deliberately calls the
 # original vertex/fragment functions so concurrent material/wake work is kept.
-# Every material still receives FLAT world coordinates for phase and placement.
+# Materials receive flat LOCAL coordinates; placement remains in world space.
 use 'render_space.jo'
 use 'look.jo'
 use 'objects.jo'
@@ -21,6 +21,14 @@ curved_obj_inst = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
     o.pos = u.view_proj * vec4(render_warped(o.world, u.cam, u.warp_a, u.warp_b), 1)
     o.normal = render_normal(o.normal, o.world, u.cam)
     o
+curved_obj_far = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
+    o = obj_far_vs(v,inst,u)
+    o.pos = u.view_proj*vec4(render_warped(o.world,u.cam,u.warp_a,u.warp_b),1)
+    o.normal = render_normal(o.normal,o.world,u.cam)
+    o
+curved_obj_far_fs = (i: ObjOut,u: ObjParams) -> vec4:
+    if behind_sea(i.world,u.cam): discard()
+    obj_far_fs(i,u)
 curved_obj_fs = (i: ObjOut, u: ObjParams) -> vec4:
     if behind_sea(i.world, u.cam): discard()
     obj_fs(i, u)
@@ -93,12 +101,13 @@ curved_lit_fs = (i: LitOut, u: LitParams) -> vec4:
 curved_shadow_sh: Shader
 
 init_curved_world = ():
-    global obj_sh, obj_inst_sh, grass_sh, bird_sh, cloud_sh, wake_sh, trail_sh, curved_shadow_sh, __lit, __lit_inst, __lit_skin
+    global obj_sh, obj_inst_sh, obj_far_sh, grass_sh, bird_sh, cloud_sh, wake_sh, trail_sh, curved_shadow_sh, __lit, __lit_inst, __lit_skin
     # The engine lazily initializes standard shaders; initialize before replacing
     # these three handles so its first 3D pass cannot overwrite the chart.
     __3d_init()
     obj_sh = make_shader(shader(curved_obj_vs, curved_obj_fs))
     obj_inst_sh = make_shader(shader(curved_obj_inst, curved_obj_fs))
+    obj_far_sh = make_shader(shader(curved_obj_far,curved_obj_far_fs))
     grass_sh = make_shader(shader(curved_grass_vs, curved_obj_fs))
     bird_sh = make_shader(shader(curved_bird_vs, curved_bird_fs))
     cloud_sh = make_shader(shader(curved_cloud_vs, curved_cloud_fs))
@@ -109,11 +118,52 @@ init_curved_world = ():
     __lit_inst = make_shader(shader(curved_lit_inst, curved_lit_fs))
     __lit_skin = make_shader(shader(curved_lit_skin, curved_lit_fs))
 
+struct LocalParticle:
+    pos: vec3
+    half: f32
+    color: vec4
+struct LocalParticleParams:
+    vp: mat4
+    right: vec3
+    up: vec3
+struct LocalParticleOut:
+    pos: vec4
+    uv: vec2
+    color: vec4
+local_particle_vs = (v: Vertex3D,p: LocalParticle,u: LocalParticleParams) -> LocalParticleOut:
+    c = v.uv*2.0-vec2(1,1)
+    w = p.pos+u.right*(c.x*p.half)+u.up*(c.y*p.half)
+    LocalParticleOut(u.vp*vec4(w,1),v.uv,p.color)
+local_particle_fs = (i: LocalParticleOut,u: LocalParticleParams) -> vec4:
+    a = clamp(1.0-length(i.uv*2.0-vec2(1,1)),0.0,1.0)
+    vec4(i.color.xyz,i.color.w*a*a)
+local_particle_sh: Shader
+local_particle_mesh: Mesh
+local_particles_ready = false
+init_local_particles = ():
+    global local_particle_sh,local_particle_mesh,local_particles_ready
+    if local_particles_ready: return
+    local_particle_sh = make_shader(shader(local_particle_vs,local_particle_fs))
+    local_particle_mesh = mesh([loop uv in [vec2(0,0),vec2(1,0),vec2(1,1),vec2(0,0),vec2(1,1),vec2(0,1)]: Vertex3D(vec3(0,0,0),vec3(0,0,1),uv,vec4(1,1,1,1))])
+    local_particles_ready = true
+
 draw_curved_particles = (ps: Particles3D, glow: bool):
-    bent = ps
-    cam = scene_camera()
-    loop mut p in bent.items: p.pos = render_warped(p.pos, cam, scene_warp_a, scene_warp_b)
-    bent.draw(glow)
+    if ps.items.len() == 0: return
+    init_local_particles()
+    cam = scene_camera(); origin = render_origin(cam)
+    local_cam = render_eye(origin)
+    warp = render_anchor(scene_warp_a,origin)
+    instances: LocalParticle[]
+    loop p in ps.items:
+        life = clamp(p.life/p.max_life,0.0,1.0)
+        color = p.color; color.w *= life
+        instances.push(LocalParticle(render_warped(p.pos-origin,local_cam,warp,scene_warp_b),p.size*(0.5+0.5*life)*0.5,color))
+    draw_custom(():
+        # Read camera axes in the render callback, after the pass sets its view.
+        vp = render_view_proj(origin)
+        rays = render_rays(vp)
+        draw_instanced(local_particle_sh,local_particle_mesh,instances,LocalParticleParams(vp,normalize(rays[0].xyz),normalize(rays[1].xyz)))
+    ,transparent=not glow,additive=glow)
 
 draw_curved_shadow = (m: Mesh, model: mat4, g: f64, height: f64, L: Light):
     if L.sun_dir.y < 0.05: return
@@ -121,7 +171,8 @@ draw_curved_shadow = (m: Mesh, model: mat4, g: f64, height: f64, L: Light):
     if a < 0.01: return
     glDepthMask(1)
     glDepthFunc(GL_LESS)
-    p = ShadowParams(scene_view_proj(), model, L.sun_dir, f32(g), vec4(0.0, 0.05, 0.12, f32(a)))
-    draw(curved_shadow_sh, m, CurvedShadowParams(p, scene_camera(), scene_warp_a, scene_warp_b))
+    origin = render_origin(scene_camera())
+    p = ShadowParams(render_view_proj(origin), render_model(model,origin), L.sun_dir, f32(g), vec4(0.0, 0.05, 0.12, f32(a)))
+    draw(curved_shadow_sh, m, CurvedShadowParams(p, render_eye(origin), render_anchor(scene_warp_a,origin), scene_warp_b))
     glDepthFunc(GL_LEQUAL)
     glDepthMask(0)

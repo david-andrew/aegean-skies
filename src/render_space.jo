@@ -1,4 +1,4 @@
-# One spherical render chart; simulation, placement and material phase stay flat.
+# One local spherical render chart; simulation and persistent placement stay flat.
 # Rationalized sagitta avoids subtracting nearly equal Earth radii in f32.
 const EARTH_RADIUS = 6371000.0
 
@@ -87,3 +87,85 @@ render_rays = (vp: mat4) -> mat4:
     m[1] = vec4(up / max(dot(up, up), 0.000001), 0)
     m[2] = vec4(forward, 0)
     m
+
+# Construct the view in the local chart. Never cancel an absolute view-projection
+# translation: that matrix has already rounded away the nearby depth bits.
+render_view_proj = (origin: vec3) -> mat4:
+    view = __view
+    eye = render_eye(origin)
+    view[3] = vec4(
+        f32(-(f64(view[0].x)*f64(eye.x)+f64(view[1].x)*f64(eye.y)+f64(view[2].x)*f64(eye.z))),
+        f32(-(f64(view[0].y)*f64(eye.x)+f64(view[1].y)*f64(eye.y)+f64(view[2].y)*f64(eye.z))),
+        f32(-(f64(view[0].z)*f64(eye.x)+f64(view[1].z)*f64(eye.y)+f64(view[2].z)*f64(eye.z))),1)
+    __proj3*view
+
+render_model = (model: mat4, origin: vec3) -> mat4:
+    m = model
+    m[3] = vec4(model[3].xyz-origin,model[3].w)
+    m
+
+render_anchor = (anchor: vec4, origin: vec3) -> vec4:
+    vec4(anchor.xy-origin.xz,anchor.zw)
+
+# CPU phase reduction before f32 upload. Positive for negative world coordinates.
+render_phase = (x: f64, period: f64) -> f32: f32(x-floor(x/period)*period)
+
+# FlyCamera's default one-metre aim loses angular precision at country coordinates.
+# A long aim vector preserves the direction without moving the camera or simulation.
+render_camera = (eye: vec3, direction: vec3, fov: f64, near: f64, far: f64, up: vec3 = vec3(0,1,0)):
+    camera3d(eye,eye+normalize(direction)*16384.0,fov,near,far,up)
+
+# Standard lit effects use the same chart as custom materials. Call in a 3D
+# callback so camera axes/projection refer to the pass being rendered.
+render_lit_params = (origin: vec3,emissive: f32) -> LitParams:
+    LitParams(view_proj=render_view_proj(origin),model=mat4(),color=vec4(1,1,1,1),cam_pos=render_eye(origin),
+        sun_dir=__sun_dir,sun_color=__sun_color,sky_color=__sky_top*0.6+__sky_horizon*0.4,ground_color=__ground_color,
+        fog_color=__fog_color,fog_density=__fog_density,fog_height=__fog_height,emissive=emissive,specular=0)
+
+# Precise positions at the CPU/render boundary. Existing world IDs, saves and
+# broad-phase queries may use the rounded vec3; motion never accumulates in it.
+struct WorldPoint:
+    x: f64
+    y: f64
+    z: f64
+world_point = (p: vec3) -> WorldPoint: WorldPoint(f64(p.x),f64(p.y),f64(p.z))
+world_vec = (p: WorldPoint) -> vec3: vec3(f32(p.x),f32(p.y),f32(p.z))
+world_local = (p: WorldPoint,origin: vec3) -> vec3: vec3(f32(p.x-f64(origin.x)),f32(p.y-f64(origin.y)),f32(p.z-f64(origin.z)))
+world_residual = (p: WorldPoint) -> vec3: world_local(p,world_vec(p))
+world_lerp = (a: WorldPoint,b: WorldPoint,t: f64) -> WorldPoint:
+    WorldPoint(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t)
+
+# A camera's low part is not folded back into an absolute f32 matrix. Reset for
+# each draw before choosing a camera; precise cameras then supply the low part.
+render_eye_low = vec3(0,0,0)
+render_eye = (origin: vec3) -> vec3: (scene_camera()-origin)+render_eye_low
+precise_camera = (eye: WorldPoint,direction: vec3,fov: f64,near: f64,far: f64):
+    global render_eye_low
+    render_camera(world_vec(eye),direction,fov,near,far)
+    render_eye_low = world_residual(eye)
+
+struct FollowFrame:
+    origin: vec3
+    ready = false
+
+# FollowCamera stores its smoothed target locally. Re-charting translates both
+# targets before smoothing, so crossing a chart edge cannot move the camera.
+update_local_follow = (c: mut FollowCamera,frame: mut FollowFrame,target: WorldPoint,dt: f64,input: bool = true):
+    origin=render_origin(world_vec(target))
+    if frame.ready:
+        c.target += frame.origin-origin
+        c.shown_target += frame.origin-origin
+    else: c.placed=false
+    frame.origin=origin; frame.ready=true
+    update(c,world_local(target,origin),dt,input=input)
+
+place_local_follow = (c: FollowCamera,frame: FollowFrame,fov: f64,near: f64,far: f64):
+    local=position(c)
+    eye=WorldPoint(f64(frame.origin.x)+f64(local.x),f64(local.y),f64(frame.origin.z)+f64(local.z))
+    # The direction is computed before the large world translation is added.
+    precise_camera(eye,aim(c)-local,fov,near,far)
+
+# View-only actor offsets from published poses, shared with carried cargo.
+# NPC entries include interpolation lag as well as the sub-centimetre low part.
+# These never replace persistent actor coordinates or identities.
+actor_render_offsets: {int:vec3}
