@@ -8,9 +8,10 @@ one small shared texture, not a texture per tree, building or terrain tile.
 No reference images or generated image assets enter the game.
 
 The sea keeps its physical swells, depth maps, clear coves, shoreline opacity,
-wakes and shadows. Its material separates broad wave values, wind-aligned soft
-marks and restrained painted reflection highlights. Small unresolved detail
-fades with the screen footprint. The decorative ripples do not drive physics.
+wakes and shadows. Dense small wind-aligned marks and tiny sun glints supply
+near-field motion cues. The larger, sparser painted replacements were reverted
+after playtesting lost the sense of speed; colour adjustments must preserve
+that fine detail. The decorative ripples do not drive physics.
 
 Both terrain renderers use the same light and pigment. Limestone strata have
 irregular broken value shelves, warm exposed rock and cooler blue-grey shadow;
@@ -47,3 +48,28 @@ population or textures are allocated. Its existing depth/transmittance-masked
 light shafts can also operate in moist daylight, not only at a low sun. All
 these changes are cosmetic; weather scheduling, flight, visibility used by AI,
 world randomness and save formats remain unchanged.
+
+
+Summer material refinements (`t3/look-3`): plaster boxes carry UV tag 182, mapped
+to material 3 by both town vertex paths. This is an explicit wall tag, not a
+heuristic that would recolour white aircraft or pale doors. Detailed houses,
+far proxies, chapels and harbour warehouses use the same neutral ambient fill;
+positions, normals, vertex colours and triangle counts remain unchanged. Opening
+recesses keep their distinct material 2 tag.
+
+`summer_cover` in `plants.jo` mixes straw grass, grey-green maquis and pine by
+height, the geographic south-facing component of the normal, existing ridge
+information and a stable pigment/baked-tint patch field. Cover never rotates
+with the sun or consumes the world RNG. Intermediate rocky slopes carry warm
+scree; broad exposed patches and steep cliffs retain limestone. This replaces
+the narrow ridge-dependent vegetation cutoff that produced pale scar streaks.
+The same material runs on the original islands and streamed mainland.
+
+Sea body colour has a separate optical-depth ramp: open shelves reach the deep
+blue palette at 12 m, sheltered coves retain a 24 m ramp. Physical bathymetry,
+seabed transparency, shoreline opacity, waves, wakes and shelter data are
+unchanged. The restored pre-painted sea microdetail is preserved byte-for-byte:
+no change to mark/glint density, scale, advection, intensity or reflection.
+Only the shallow/deep body-colour interpolation weight changes. Low fast
+passes (`AEGEAN_FLYING="60 150"`) belong in every future sea visual check.
+The shader adds no texture, sampler, varying or world record.
