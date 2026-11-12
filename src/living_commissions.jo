@@ -1,0 +1,253 @@
+# Real funded work beyond the six detailed harbors. Sparse IDs are keys throughout.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_far_checks.jo'
+use 'living_far_people.jo'
+use 'living_far_news.jo'
+use 'living_money.jo'
+use 'living_place_context.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+
+const FAR_COMMISSION_LIMIT = 96
+
+far_counter = (w: World, place: int) -> vec3:
+    if not (place in w.place_contexts): return vec3(0,0,0)
+    loop v in w.place_contexts[place].venues:
+        if v.kind==.market: return v.pos
+    if place>=0 and place<w.cargo_harbors.len(): return w.cargo_harbors[place].warehouse
+    w.place_contexts[place].center
+
+publish_far_harbors = (w: mut World, harbors: FarHarbor[]) -> bool:
+    staged: {int: FarHarbor}
+    loop h in harbors:
+        if not (h.place in w.place_contexts) or h.place in staged or h.docks.len()==0 or h.docks.len()!=h.quays.len() or h.docks.len()>32 or not finite_living_point(h.out) or not finite_living_point(h.buoy): return false
+        loop p in h.docks+h.quays:
+            if not finite_living_point(p): return false
+        staged[h.place]=h
+    w.far.harbors=staged
+    true
+
+far_mooring = (w: World, craft: int, place: int) -> int:
+    if craft<0 or craft>=w.aircraft.len() or not (place in w.far.harbors): return -1
+    c=w.aircraft[craft]
+    if c.state!=.moored or length(c.pose.vel)>1.0: return -1
+    h=w.far.harbors[place]
+    loop k in 0..h.docks.len():
+        if length(c.pose.pos-h.docks[k])<22.0: return k
+    -1
+
+commission_mass = (w: World, c: FarCommission) -> int: inventory_mass(w,c.cargo)
+
+commission_views = (w: World, place: int = -1, actor: int = -1) -> CommissionView[]:
+    result: CommissionView[]
+    ids=w.far.commissions.keys(); ids.sort()
+    loop id in ids:
+        c=w.far.commissions[id]
+        if place>=0 and c.origin!=place and c.destination!=place: continue
+        if actor>=0 and c.carrier!=actor: continue
+        result.push(CommissionView(id,c.kind,c.phase,c.origin,c.destination,c.poster,c.carrier,c.reward,c.deadline,commission_mass(w,c),c.pos,c.why))
+    result
+
+_post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1) -> int:
+    if not w.far.populated or not (origin in w.far.districts) or not (destination in w.far.districts) or origin==destination or good<0 or good>=9 or qty<=0 or reward<0 or sponsor< -1 or sponsor>=3 or w.far.commissions.len()>=FAR_COMMISSION_LIMIT: return -1
+    if qty*w.goods[good].package_grams/1000>25000 or far_market_qty(w,origin,good)<qty: return -1
+    loop _, old in w.far.commissions:
+        if old.origin==origin and old.phase==.open: return -1
+    source=w.far.districts[origin]; dest=w.far.districts[destination]
+    sender=source.market_owner
+    if sender<0 and source.core>=0: sender=w.places[source.core].market_owner
+    if sender<0: sender=promote_far_person(w,origin,.trader)
+    if sender<0: return -1
+    distance=f64(length(w.place_contexts[origin].center-w.place_contexts[destination].center))
+    let reward=if reward>0: reward else: max(180,int(ceil(distance*0.065)))
+    funder=if sponsor>=0: w.far.treasury[sponsor] else: dest.market_account
+    price=max(1,(qty*source.prices[good]+999)/1000)
+    if w.accounts[funder].cents<price+reward: return -1
+    id=w.far.next_commission
+    escrow=new_account(w,"commission:{id}")
+    batch=far_take_market(w,origin,good,qty)
+    if not transfer(w,funder,source.market_account,price,.trade,id) or not transfer(w,funder,escrow,reward,.escrow,id):
+        living_fault("commission.funding",guard_context(w)+" id={id}"); return -1
+    why="{f64(qty)/1000.0:.1} packages of {w.goods[good].key} from {life_place_name(w,origin)} to {life_place_name(w,destination)}; {if sponsor>=0: w.countries[sponsor].name else: "the receiving market"} has paid for the goods and set aside {f64(reward)/100.0:.2} lire for carriage."
+    w.far.commissions[id]=FarCommission(id,kind,origin,destination,sender,funder,funder,escrow,reward,w.minute+max(1440,int(ceil(distance/60.0/2.0))*4+360),w.minute,cargo=batch,quantity=qty,good=good,pos=far_counter(w,origin),last_tick=w.tick,why=why,country=sponsor,news=source.recent_news)
+    w.far.next_commission+=1
+    far_local_news(w,origin,"commission",why,actor=sender,country=sponsor)
+    id
+
+post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1) -> int:
+    if guard_blocked(): return -1
+    scope=guard_begin(w)
+    result=_post_far_commission(w,origin,destination,good,qty,kind,reward,sponsor)
+    failed=guard_failed(scope); guard_finish(w,scope)
+    if failed: -1 else: result
+
+claim_far_commission = (w: mut World, id: int, actor: int = 0, loader: CarriageChoice = .player) -> bool:
+    if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
+    c=w.far.commissions[id]
+    if c.phase!=.open or w.minute>c.deadline or length(w.people[actor].pose.pos-c.pos)>40.0: return false
+    loop _, old in w.far.commissions:
+        if old.carrier==actor and old.phase!=.delivered and old.phase!=.expired and old.phase!=.cancelled: return false
+    if w.people[actor].carrying>=0 or w.people[actor].carriage>=0: return false
+    w.far.commissions[id].carrier=actor; w.far.commissions[id].loader=int(loader)
+    w.far.commissions[id].phase=.claimed
+    true
+
+pickup_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
+    if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
+    c=w.far.commissions[id]
+    if c.carrier!=actor or (c.phase!=.claimed and c.phase!=.aboard) or w.people[actor].carrying>=0 or w.people[actor].carriage>=0: return false
+    point=c.pos
+    if c.phase==.aboard:
+        if far_mooring(w,c.craft,c.destination)<0: return false
+        point=w.aircraft[c.craft].pose.pos
+    if length(w.people[actor].pose.pos-point)>18.0: return false
+    w.far.commissions[id].phase=if c.phase==.aboard: CommissionPhase.collecting else: .carrying
+    w.far.commissions[id].pos=w.people[actor].pose.pos
+    w.far.commissions[id].craft= -1
+    true
+
+load_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
+    if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
+    c=w.far.commissions[id]; craft=w.people[actor].craft
+    if c.carrier!=actor or c.phase!=.carrying or far_mooring(w,craft,c.origin)<0: return false
+    holder=if c.porter>=0: c.porter else: actor
+    if length(w.people[holder].pose.pos-w.aircraft[craft].pose.pos)>18.0 or craft_grams(w,craft)+commission_mass(w,c)>AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams: return false
+    w.far.commissions[id].phase=.aboard; w.far.commissions[id].craft=craft
+    w.far.commissions[id].pos=w.aircraft[craft].pose.pos
+    true
+
+collect_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
+    if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
+    c=w.far.commissions[id]
+    if c.carrier!=actor or (c.phase!=.collecting and c.phase!=.carrying) or length(w.people[if c.porter>=0: c.porter else: actor].pose.pos-far_counter(w,c.destination))>6.0 or not far_market_accepts(w,c.destination,c.cargo): return false
+    far_put_market(w,c.destination,c.cargo)
+    w.far.commissions[id].cargo=FarStock(); w.far.commissions[id].phase=.delivered
+    w.far.commissions[id].collected_minute=w.minute; w.far.commissions[id].pos=far_counter(w,c.destination)
+    cash=w.accounts[c.escrow].cents
+    if c.porter>=0:
+        porter_cash=min(c.porter_fee,cash)
+        if porter_cash>0: transfer(w,c.escrow,w.people[c.porter].account,porter_cash,.wage,id)
+        cash-=porter_cash
+        w.far.people[c.porter].commission= -1
+        w.far.commissions[id].porter= -1
+    if cash>0 and not transfer(w,c.escrow,w.people[actor].account,cash,.reward,id):
+        living_fault("commission.collection_payment",guard_context(w)+" id={id}"); return false
+    regard=ReputationKey(c.destination,.person,actor)
+    w.reputation[regard]=clamp(w.reputation.get(regard,0)+(if c.failed_minute<0: 12 else: -4),-1000,1000)
+    loop news in c.news:
+        if news in w.far.news and not (news in w.far.districts[c.destination].recent_news):
+            w.far.districts[c.destination].recent_news.push(news)
+            if w.far.districts[c.destination].recent_news.len()>12: w.far.districts[c.destination].recent_news.remove_at(0)
+    far_local_news(w,c.destination,"commission_delivered","{w.people[actor].name} brought {f64(c.quantity)/1000.0:.1} packages of {w.goods[c.good].key} from {life_place_name(w,c.origin)} to {life_place_name(w,c.destination)}.",actor=actor,country=c.country)
+    true
+
+# Only a local counter can make new offers; preview/query functions never reserve stock.
+refresh_far_work = (w: mut World, place: int) -> int:
+    if not (place in w.far.districts): return -1
+    source=w.far.districts[place]
+    destinations: int[]
+    loop link in source.links:
+        l=w.far.links[link]; destinations.push(if l.a==place: l.b else: l.a)
+    if place in w.far.harbors:
+        loop id in w.far.place_ids:
+            if id==place or not (id in w.far.harbors): continue
+            distance=length(w.place_contexts[id].center-w.place_contexts[place].center)
+            if distance>3000 and distance<65000: destinations.push(id)
+    best= -1; good= -1; amount=0; score=0
+    destinations.sort()
+    loop dest in destinations:
+        d=w.far.districts[dest]
+        loop g in 0..8:
+            surplus=max(0,far_market_qty(w,place,g)-source.target[g]/2)
+            need=max(0,d.target[g]-far_market_qty(w,dest,g))
+            qty=min(min(surplus,need),25000*1000/w.goods[g].package_grams)
+            value=qty*1000/max(1000,d.target[g])
+            if qty>=100 and value>score: best=dest; good=g; amount=qty; score=value
+    if best<0: return -1
+    post_far_commission(w,place,best,good,amount)
+
+far_commissions_minute = (w: mut World):
+    if not w.far.populated: return
+    ids=w.far.commissions.keys(); ids.sort()
+    loop id in ids:
+        c=w.far.commissions[id]
+        if c.phase==.delivered or c.phase==.expired or c.phase==.cancelled:
+            if w.minute-max(c.created,max(c.collected_minute,c.failed_minute))>10080 and c.cargo.roots.len()==0: w.far.commissions.remove(id)
+            continue
+        if w.minute>c.deadline and c.failed_minute<0:
+            cents=max(0,w.accounts[c.escrow].cents-c.porter_fee)
+            if cents>0: transfer(w,c.escrow,c.funder,cents,.refund,id)
+            w.far.commissions[id].failed_minute=w.minute
+            if c.phase==.open:
+                if far_market_accepts(w,c.origin,c.cargo):
+                    # Title is still the buyer's; refund the purchase only by a real resale.
+                    origin=w.far.districts[c.origin]
+                    price=max(1,(c.quantity*origin.prices[c.good]+999)/1000)
+                    if w.accounts[origin.market_account].cents>=price and transfer(w,origin.market_account,c.owner,price,.trade,id):
+                        far_put_market(w,c.origin,c.cargo)
+                        w.far.commissions[id].cargo=FarStock(); w.far.commissions[id].phase=.expired
+        commission_portage(w,id)
+        c=w.far.commissions[id]
+        if c.phase==.carrying or c.phase==.collecting:
+            holder=if c.porter>=0: c.porter else: c.carrier
+            w.far.commissions[id].pos=w.people[holder].pose.pos
+        else if c.phase==.aboard: w.far.commissions[id].pos=w.aircraft[c.craft].pose.pos
+    # One district per minute, rather than793 path/offer decisions per frame.
+    place=w.far.place_ids[w.far.next_commission_place%w.far.place_ids.len()]
+    w.far.next_commission_place=(w.far.next_commission_place+1)%w.far.place_ids.len()
+    if w.far.commissions.len()<FAR_COMMISSION_LIMIT/2: refresh_far_work(w,place)
+
+# Offscene walking shares the same named person's saved route and clock as daily life. Near
+# the camera far_scene walks that route against actual collision; this never moves a lease.
+commission_set_target = (w: mut World, person: int, target: vec3, key: str):
+    if w.far.people[person].anchor==key and length(w.far.people[person].target-target)<1: return
+    w.far.people[person].target=target; w.far.people[person].anchor=key
+    w.far.people[person].planned_anchor=""; w.far.people[person].route=[]
+    w.far.people[person].waypoint=0; w.far.people[person].blocked=""
+
+commission_portage = (w: mut World, id: int):
+    c=w.far.commissions[id]
+    if c.carrier<0 or c.loader==int(CarriageChoice.player): return
+    craft=w.people[c.carrier].craft
+    place=if c.phase==.aboard or c.phase==.collecting: c.destination else: c.origin
+    if c.phase!=.claimed and c.phase!=.carrying and c.phase!=.aboard and c.phase!=.collecting: return
+    if c.phase!=.collecting and far_mooring(w,craft,place)<0: return
+    if c.porter<0:
+        person=w.far.districts[place].market_owner
+        if person<0: person=promote_far_person(w,place,.trader)
+        if not (person in w.far.people) or w.far.people[person].commission>=0 or w.far.people[person].vehicle>=0: return
+        # The sender works their own load; a hired collector receives an actual reserved fee.
+        fee=if c.loader==int(CarriageChoice.porter) or c.phase==.aboard: 60 else: 0
+        if fee>0 and not transfer(w,w.people[c.carrier].account,c.escrow,fee,.escrow,id): return
+        w.far.commissions[id].porter=person; w.far.commissions[id].porter_fee=fee
+        w.far.people[person].commission=id
+        c=w.far.commissions[id]
+    person=c.porter
+    if c.phase==.claimed:
+        commission_set_target(w,person,c.pos,"commission:{id}:pickup")
+        if length(w.people[person].pose.pos-c.pos)>3: return
+        w.far.commissions[id].phase=.carrying
+        c=w.far.commissions[id]
+    if c.phase==.carrying:
+        # Approach the walkable quay, not the aircraft's water position.
+        dock=far_mooring(w,craft,c.origin)
+        if dock<0: return
+        quay=w.far.harbors[c.origin].quays[dock]
+        commission_set_target(w,person,quay,"commission:{id}:load")
+        if length(w.people[person].pose.pos-quay)>3: return
+        if not load_far_commission(w,id,c.carrier): return
+        if c.porter_fee>0: transfer(w,c.escrow,w.people[person].account,c.porter_fee,.wage,id)
+        w.far.people[person].commission= -1
+        w.far.commissions[id].porter= -1; w.far.commissions[id].porter_fee=0
+    else if c.phase==.aboard:
+        dock=far_mooring(w,craft,c.destination)
+        if dock<0: return
+        quay=w.far.harbors[c.destination].quays[dock]
+        commission_set_target(w,person,quay,"commission:{id}:unload")
+        if length(w.people[person].pose.pos-quay)>3 or length(w.people[person].pose.pos-w.aircraft[craft].pose.pos)>18: return
+        w.far.commissions[id].phase=.collecting; w.far.commissions[id].craft= -1
+    else if c.phase==.collecting:
+        commission_set_target(w,person,far_counter(w,c.destination),"commission:{id}:collect")
+        if length(w.people[person].pose.pos-far_counter(w,c.destination))<=6: collect_far_commission(w,id,c.carrier)

@@ -93,3 +93,38 @@ The shared conversation UI has three small data-wiring changes: sparse place-nam
 Any-work dispatch through ask_for_work, and a guard against opening the six-port trade panel
 for a sparse counter. Its layout/controls stay the coordinator's. Far bulk trade, named aircraft,
 shipping/cart drawing, war and military contracts remain subsequent work.
+
+## Sparse harbor commissions and aircraft callers
+
+`far_scene.configure_far_harbors` publishes `World.far.harbors` from the actual registry's
+MooringPlace records. They are sparse keys, with water docks and walkable quay anchors;
+inland places never acquire invented aircraft facilities. `living_commissions` reserves
+existing root stock before publishing an offer, pays its seller from the receiving market,
+and puts the real carriage reward in escrow. At most96 records exist. Counter queries and
+conversation previews are pure; `refresh_far_work` is an explicit offer publication action.
+The minute worker considers one district per minute, rather than all settlements per frame.
+
+`living_world.commission_views(w,place=-1,actor=-1)` exposes ID, kind/phase, real endpoints,
+poster/carrier, reward/deadline, owned mass/position and why. `claim_commission`,
+`pickup_commission`, `load_commission` and `collect_commission` implement actual custody.
+Pickup requires foot proximity, loading requires the player's own moored aircraft at the
+origin's real dock and free payload capacity, and payment requires collection at the actual
+receiving counter. Those goods are a single FarStock partition while carried, included in
+`craft_grams` aboard; never copied into a second anonymous hold. A missed deadline refunds
+the reward but retains the buyer's title/cargo until collection or a funded local resale.
+
+Automatic/sender/porter handling uses persistent promoted residents. Their existing route
+and movement lease walk to pickup, the real quay and the receiving counter; they do not also
+perform daily work while carrying. Paid collectors reserve60cents from the carrier, paid
+from actual escrow at completion. Player carriage remains explicit. `WorkOffer.commission`
+and `ConversationTurn.commission` are optional separate IDs; `.job` retains its core meaning.
+The UI should dispatch those IDs to the commission methods, not the six-port job methods.
+
+`living_far_aircraft.register_far_aircraft(w,place,kind,funder,key)` is a guarded, idempotent
+registration for scene/event callers. It consumes two owned packages of parts and transfers
+the actual AIRFRAMES purchase price to the local yard. It reserves a real berth and promotes
+a worker into one of two pilot slots, alongside three ordinary resident slots. The same
+World.aircraft ID owns its empty tank, health and future payload. Saves accept8..64 bodies;
+no duplicate far aircraft tank/hold is introduced. `fill_far_tank` purchases owned local fuel,
+`reserve_far_berth` and `release_far_berth` own sparse berth metadata. Scene callers still
+commit actual flight motion once; no headless flying or rendering is implied by registration.
