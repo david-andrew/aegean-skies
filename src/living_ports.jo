@@ -1,0 +1,97 @@
+# Business at registry ports. The six detailed markets/harbour indices stay unchanged.
+# A far stock root becomes an owned physical crate only on a funded purchase; selling
+# returns that same root. Geometry lives in place contexts, never in the goods ledger.
+use 'living_types.jo'
+use 'life_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_cargo.jo'
+use 'living_money.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+
+port_market_spot = (w: World,place: int) -> vec3?:
+    if not (place in w.place_contexts): return none
+    loop v in w.place_contexts[place].venues:
+        if v.kind==.market and v.key=="port:{place}:warehouse": return v.pos
+    none
+
+port_sale_lots = (w: World,person: int,place: int,good: int) -> int[]:
+    spot=port_market_spot(w,place); result: int[]
+    if spot==none: return result
+    loop id in cargo_ids(w,.pocket,person,good):
+        c=w.cargo[id]
+        if c.job<0 and c.owner==person and c.where!=.aircraft and c.where!=.boat and length(c.pos-spot!)<=4.0: result.push(id)
+    result.sort()
+    result
+
+port_sale_quantity = (w: World,person: int,place: int,good: int) -> int:
+    qty=0
+    loop id in port_sale_lots(w,person,place,good): qty+=w.cargo[id].quantity
+    qty
+
+_guarded_port_trade = (w: mut World,person: int,place: int,good: int,qty: int,buying: bool) -> bool:
+    if person<0 or person>=w.people.len() or not (place in w.far.districts) or good<0 or good>=GOOD_COUNT or qty<=0 or qty>1000000: return false
+    d=w.far.districts[place]; p=w.people[person]; spot=port_market_spot(w,place)
+    if d.core>=0 or p.place>=0 or p.far_place!=place or p.trip>=0 or spot==none or length(p.pose.pos-spot!)>35.0: return false
+    if w.goods[good].illegal or d.prices[good]<=0: return false
+    # No aircraft teleport sale/loading: a player first carries a crate to the warehouse.
+    if buying:
+        if far_market_qty(w,place,good)<qty: return false
+    else:
+        if port_sale_quantity(w,person,place,good)<qty: return false
+    key="port:{person}:{place}:{good}:{buying}"
+    raw=qty*d.prices[good]+w.quote_residual.get(key,0); cents=raw/1000
+    treasury=w.far.treasury[d.controller]
+    tax=if cents>0 and account_valid(w,treasury): max(1,cents*2/100) else: 0
+    if buying and w.accounts[p.account].cents<cents+tax: return false
+    if not buying and (w.accounts[d.market_account].cents<cents or w.accounts[p.account].cents+cents<tax): return false
+    batch=FarStock()
+    if not buying:
+        left=qty
+        loop id in port_sale_lots(w,person,place,good):
+            c=w.cargo[id]; n=min(left,c.quantity)
+            batch.roots[c.source]=batch.roots.get(c.source,0)+n
+            left-=n
+            if left==0: break
+        batch.qty[good]=qty
+        if not far_market_accepts(w,place,batch): return false
+    if cents>0 and not transfer(w,if buying: p.account else: d.market_account,if buying: d.market_account else: p.account,cents,.trade): return false
+    if tax>0 and not transfer(w,p.account,treasury,tax,.fine):
+        living_fault("ports.tax",guard_context(w)); return false
+    if buying:
+        batch=far_take_market(w,place,good,qty)
+        if batch.qty[good]!=qty:
+            living_fault("ports.stock",guard_context(w)); return false
+        roots=batch.roots.keys(); roots.sort()
+        loop root in roots:
+            n=batch.roots[root]
+            w.cargo_sources[root].far_quantity-=n
+            merged=false
+            loop id in cargo_ids(w,.pocket,person,good):
+                c=w.cargo[id]
+                if c.source==root and c.owner==person and c.job<0 and c.where==.warehouse and length(c.pos-spot!)<0.1:
+                    w.cargo[id].quantity+=n; merged=true; break
+            if not merged: cargo_insert(w,CargoLot(source=root,good=good,quantity=n,owner=person,store=.pocket,holder=person,where=.warehouse,place=-1,pos=spot!))
+        w.far.live_totals[good]-=qty*10
+        w.people[person].pocket.qty[good]+=qty
+    else:
+        left=qty
+        loop id in port_sale_lots(w,person,place,good):
+            n=min(left,w.cargo[id].quantity); left-=n
+            w.cargo_sources[w.cargo[id].source].far_quantity+=n
+            w.cargo[id].quantity-=n
+            if w.cargo[id].quantity==0: cargo_remove(w,id)
+            if left==0: break
+        w.people[person].pocket.qty[good]-=qty
+        w.far.live_totals[good]+=qty*10
+        far_put_market(w,place,batch)
+    w.quote_residual[key]=raw%1000
+    true
+
+port_trade = (w: mut World,person: int,place: int,good: int,qty: int,buying: bool) -> bool:
+    if guard_blocked(): return false
+    scope=guard_begin(w)
+    ok=_guarded_port_trade(w,person,place,good,qty,buying)
+    failed=guard_failed(scope); guard_finish(w,scope)
+    ok and not failed
