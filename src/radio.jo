@@ -1,0 +1,218 @@
+# Receiver and programme clock. This module knows neither the UI nor World: it can be tested
+# without terrain/assets. RadioContent supplies one bounded current bulletin from public facts.
+use 'radio_synth.jo'
+
+const RADIO_MIN_KHZ = 540.0
+const RADIO_MAX_KHZ = 1600.0
+
+enum RadioProgramme: music, news, weather, shipping, editorial, advert, quiz, off_air
+
+struct RadioStation:
+    id: int
+    name: str
+    callsign: str
+    khz: f64
+    transmitter: vec3             # metres, y includes antenna height above terrain
+    reach: f64
+    country: int = -1
+    home: int = -1                # place that supplies public news, not omniscient World events
+    style: RadioStyle = .foxtrot
+
+# Transmitter positions are fictional broadcast sites, not political capital declarations.
+radio_stations = () -> RadioStation[]: [
+    RadioStation(0,"Archipelago Radio","ARC",620,vec3(0,320,0),105000,0,0,.bouzouki),
+    RadioStation(1,"Voice of Kalyra","KAL",780,vec3(-110000,400,-60000),200000,1,-1,.waltz),
+    RadioStation(2,"Orenthia National","ORN",940,vec3(190000,400,10000),230000,2,-1,.march),
+    RadioStation(3,"Blue Lantern Dance Band","BLU",1100,vec3(-780,420,-7800),50000,-1,4,.foxtrot),
+    RadioStation(4,"Aegean Maritime Service","SEA",1260,vec3(5980,480,-4420),180000,-1,2,.morse),
+    RadioStation(5,"The Night Gull","GUL",1460,vec3(-8580,300,-520),36000,-1,5,.tango)
+]
+
+radio_local_minute = (minute: int) -> int: ((minute+570)%1440+1440)%1440
+
+radio_on_air = (station: int, minute: int) -> bool:
+    h = radio_local_minute(minute)/60
+    if station == 5: h >= 19 or h < 3
+    else: true
+
+radio_programme = (station: int, minute: int) -> RadioProgramme:
+    if station < 0 or station >= 6 or not radio_on_air(station,minute): return .off_air
+    m = radio_local_minute(minute)
+    if station == 4: return if m%30 < 15: .weather else: .shipping
+    slot = m%30
+    if slot < 5: return .news
+    if slot < 10:
+        if station < 3: return .editorial
+        if station == 3: return .advert
+        return .quiz
+    .music
+
+radio_music_style = (station: RadioStation, minute: int) -> RadioStyle:
+    hour = radio_local_minute(minute)/60
+    if station.id == 0 and hour == 6: return .choir
+    if station.id == 3:
+        return RadioStyle((radio_local_minute(minute)/30)%3)  # foxtrot, tango, waltz
+    station.style
+
+# A line of sight's highest obstruction (metres), supplied by a bounded terrain sampler.
+# Ground-wave remains behind ridges. This is an intentionally simple game model, not an RF solver.
+radio_reception = (station: RadioStation, khz: f64, listener: vec3, local_hour: f64, obstruction: f64 = 0) -> f64:
+    detune = abs(khz-station.khz)
+    if detune >= 18.0: return 0
+    night = if local_hour < 6.0 or local_hour >= 18.0: 1.45 else: 1.0
+    distance = f64(length(listener-station.transmitter))
+    height_gain = 0.75+0.25*clamp(f64(listener.y)/1200.0,0.0,1.0)
+    range = station.reach*night*height_gain
+    path = 1.0/(1.0+pow(distance/max(1.0,range*0.45),2.0))
+    terrain = 0.18+0.82*exp(-max(0.0,obstruction)/180.0)
+    tune = pow(max(0.0,1.0-detune/18.0),2.0)
+    clamp(path*terrain*tune,0.0,1.0)
+
+radio_obstruction = (transmitter: vec3, listener: vec3, ground: (f64,f64) -> f64) -> f64:
+    blocked = 0.0
+    # 15 samples, at most twice/second. Curvature uses the same Earth radius as rendering.
+    d = f64(length(listener.xz-transmitter.xz))
+    loop k in 1..16:
+        u = f64(k)/16.0
+        p = transmitter+(listener-transmitter)*f32(u)
+        bulge = d*d*u*(1.0-u)/(2.0*6371000.0)
+        blocked = max(blocked,ground(f64(p.x),f64(p.z))+bulge-f64(p.y))
+    blocked
+
+struct RadioContent:
+    title: str = ""
+    text: str = ""
+    code: str = ""                # short, truthful Morse summary; not a claim to read all text
+    event: int = -1
+    occurred_minute: int = -1
+    confidence: int = 1000
+
+struct RadioSnapshot:
+    khz = 1100.0
+    muted = true
+    station = -1
+    station_name: str = "Between stations"
+    strength = 0.0
+    programme: RadioProgramme = .off_air
+    title: str = ""
+    transcript: str = ""
+    morse_text: str = ""
+    event = -1
+    confidence = 1000
+    speech_available = false
+
+struct Radio:
+    stations: RadioStation[] = radio_stations()
+    khz = 1100.0
+    muted = true
+    volume = 0.55
+    voice = -1
+    station = -1
+    strength = 0.0
+    obstruction = 0.0
+    refresh = 0.0
+    minute = -1000000
+    programme: RadioProgramme = .off_air
+    content: RadioContent
+    content_key: str = ""
+    synth: RadioSynth
+    ready = false
+    programme_seed = -1
+    active = false
+    generated = 0                  # samples generated this update; bounded, useful to acceptance
+
+radio_silence = (r: mut Radio):
+    if r.voice >= 0: stop(r.voice)
+    r.voice = -1; r.active = false
+    r.content_key = ""; r.programme_seed = -1
+
+radio_tune = (r: mut Radio, khz: f64):
+    next = clamp(khz,RADIO_MIN_KHZ,RADIO_MAX_KHZ)
+    if next == r.khz: return
+    r.khz = next; r.refresh = 0; r.minute = -1000000
+    r.station = -1; r.strength = 0; r.content = RadioContent()
+    radio_silence(r)
+
+radio_step = (r: mut Radio, direction: int): radio_tune(r,r.khz+f64(clamp(direction,-1,1))*5.0)
+
+# Adjacent live station for a touch button or Shift+comma/period; fine tuning stays continuous.
+radio_seek = (r: mut Radio, direction: int, minute: int):
+    if direction == 0: return
+    best = -1; gap = 2000.0
+    loop station in r.stations:
+        if not radio_on_air(station.id,minute): continue
+        delta = (station.khz-r.khz)*(if direction > 0: 1.0 else: -1.0)
+        if delta <= 0.1: delta += RADIO_MAX_KHZ-RADIO_MIN_KHZ+5.0
+        if delta < gap: best = station.id; gap = delta
+    if best >= 0: radio_tune(r,r.stations[best].khz)
+
+radio_mute = (r: mut Radio, muted: bool):
+    r.muted = muted
+    if muted: radio_silence(r)
+
+# Pure selection and bounded terrain refresh; also runs with SLOPPY_NO_AUDIO for UI/tests.
+radio_receive = (r: mut Radio, dt: f64, minute: int, listener: vec3, ground: (f64,f64) -> f64):
+    r.refresh -= max(0.0,dt)
+    if r.refresh > 0 and r.minute == minute: return
+    r.refresh = 0.5; r.minute = minute
+    nearest = -1; distance = 18.0
+    loop s in r.stations:
+        delta = abs(r.khz-s.khz)
+        if delta < distance and radio_on_air(s.id,minute): nearest = s.id; distance = delta
+    r.station = nearest
+    r.strength = 0; r.obstruction = 0
+    r.programme = radio_programme(nearest,minute)
+    if nearest < 0: return
+    s = r.stations[nearest]
+    r.obstruction = radio_obstruction(s.transmitter,listener,ground)
+    r.strength = radio_reception(s,r.khz,listener,f64(radio_local_minute(minute))/60.0,r.obstruction)
+
+# Readable content only after capture; never leak a full hidden bulletin through pure static.
+radio_snapshot = (r: Radio) -> RadioSnapshot:
+    view = RadioSnapshot(khz=r.khz,muted=r.muted,strength=r.strength)
+    if r.muted or not r.active or r.station < 0 or r.strength < 0.12: return view
+    view.station = r.station; view.station_name = r.stations[r.station].name
+    view.programme = r.programme; view.title = r.content.title
+    view.transcript = r.content.text; view.morse_text = r.content.code
+    view.event = r.content.event; view.confidence = r.content.confidence
+    view
+
+# One stream, 250 ms target and 250 ms maximum generation per frame, even after a stall.
+# Flush queued old stations/bulletins on changes, pause, mute and leaving the aircraft.
+radio_play = (r: mut Radio, seconds: f64, aboard: bool, engine: bool, throttle: f64, audio_enabled: bool):
+    r.generated = 0
+    if r.muted or not aboard:
+        radio_silence(r)
+        return
+    r.active = true
+    if not audio_enabled: return
+    if not r.ready:
+        r.synth = make_radio_synth(); r.ready = true
+    music = r.station >= 0 and r.programme == .music
+    style = if music: radio_music_style(r.stations[r.station],r.minute) else: RadioStyle.morse
+    # Station/programme slot ties music to the world clock, not time spent tuned in.
+    seed = max(0,(r.minute+570)/30)*7+max(0,r.station)
+    key = "{r.station}:{r.programme}:{style}:{r.content.code}"
+    desired = max(0,int(seconds*f64(RADIO_RATE)))
+    queued = if r.voice >= 0: queued_samples(r.voice) else: 0
+    discontinuity = abs(desired-(r.synth.cursor-queued)) > RADIO_RATE/2
+    if r.voice < 0 or key != r.content_key or seed != r.programme_seed or discontinuity:
+        if r.voice >= 0: stop(r.voice)
+        r.voice = sound_stream(RADIO_RATE,1,0.0)
+        radio_synth_program(r.synth,style,seed,seconds,radio_morse(r.content.code))
+        span = if r.programme == .weather or r.programme == .shipping: 30.0 else: 10.0
+        r.synth.morse_origin = int((floor((seconds+1140.0)/span)*span-1140.0)*f64(RADIO_RATE))
+        r.content_key = key; r.programme_seed = seed
+    # Faint at cruise; plainly audible with engine off. Engine mix is untouched.
+    gain = clamp(r.volume,0.0,1.0)*(if engine: 0.20-0.10*clamp(throttle,0.0,1.0) else: 0.30)
+    set_volume(r.voice,gain)
+    need = clamp(RADIO_RATE/4-queued_samples(r.voice),0,RADIO_RATE/4)
+    # Underrun: resume the current broadcast instead of replaying an old queued timeline.
+    if desired > r.synth.cursor+RADIO_RATE/4:
+        radio_synth_program(r.synth,style,seed,seconds,radio_morse(r.content.code))
+    loop need > 0:
+        count = min(need,RADIO_BLOCK)
+        delta = if r.station >= 0: r.khz-r.stations[r.station].khz else: 0.0
+        chunk = radio_render(r.synth,count,r.strength,delta)
+        push_samples(r.voice,chunk)
+        need -= count; r.generated += count

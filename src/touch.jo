@@ -1,8 +1,14 @@
-# Playing on a touch screen: a thumb stick on the left half (where the thumb lands), a drag on the
-# right half to look about, and a few buttons by the right thumb and along the top. They don't
-# drive the game themselves: they hold virtual keys and an analog stick that the game reads
-# alongside the keyboard (vdown, vpressed, pad.stick), so flying, walking and the panels work
-# the same by finger as by key.
+# Playing on a touch screen, with as few things on the screen as can be:
+#   aboard   as in Sky Barons: a finger dragged anywhere turns the view about the aircraft, and the
+#            aircraft turns to fly where the view looks (on the water too: it steers there). The
+#            aim stays where it was put when the finger lifts. The throttle is a slider along the
+#            left edge; Fire, the guns' safety and jumping out are buttons by the right thumb.
+#   on foot  as in Sky Barons: a finger dragged anywhere turns the view, and one Walk button walks
+#            the way the view looks: hold it to walk, slide the thumb away from it to go faster,
+#            up to a run. A tap on someone nearby talks to them; two fingers pinch the view nearer.
+#   anywhere the prompt cards ("F  climb aboard...") are buttons: tap one to do it.
+# Buttons hold virtual keys the game reads alongside the keyboard (vdown, vpressed), so flying,
+# walking and the panels work the same by finger as by key.
 
 struct PadButton:
     label: str
@@ -13,16 +19,34 @@ struct PadButton:
 
 struct TouchPad:
     on = false                      # a touch screen (or AEGEAN_TOUCH): the controls are drawn
-    stick = vec2(0, 0)              # the left thumb: -1..1 each way (x right, y down)
-    look = vec2(0, 0)               # the right thumb's drag this frame, in screen units
+    mode = 2                        # 0 in the air, 1 on the water, 2 on foot, 3 a panel open
+    aim = vec2(0, 0)                # aboard: the drag this frame, in screen units
+    orbit = vec2(0, 0)              # two fingers' drag this frame
+    zoom = 1.0                      # two fingers' pinch this frame (above 1: spreading)
+    walking = false                 # on foot: a thumb on the Walk button
+    walk_speed = 0.0                # (how far it has slid from it: 0 a walk .. 1 a run)
+    walk_side = 0.0                 # (and how far across: -1 left .. 1 right, to bear that way)
+    walk_id = -1
+    tapped = false                  # on foot: a tap this frame, and where
+    tap_at = vec2(0, 0)
+    throttle_want = -1.0            # a finger on the throttle slider: 0..1 (else -1)
+    throttle_now = 0.0              # (the throttle as it is, for drawing the slider)
     held: Key[]                     # virtual keys held this frame
     pressed: Key[]                  # and those pressed this frame
     buttons: PadButton[]
-    stick_id = -1                   # (the finger on the stick, where it landed)
-    stick_at = vec2(0, 0)
-    look_id = -1                    # (the finger dragging the view, where it was)
-    look_last = vec2(0, 0)
-    claimed: int[]                  # (fingers on buttons, so they don't also steer or look)
+    cards: Rect[]                   # (the prompt cards drawn last frame, and their keys)
+    card_keys: Key[]
+    next_cards: Rect[]              # (and those being drawn this frame)
+    next_card_keys: Key[]
+    drag_id = -1                    # (the finger dragging the view or walking: where it landed and was)
+    drag_at = vec2(0, 0)
+    drag_last = vec2(0, 0)
+    drag_t = 0.0                    # (how long it's been down)
+    drag_far = 0.0                  # (how far it has wandered from where it landed)
+    slider_id = -1                  # (the finger on the throttle)
+    pinch = 0.0                     # (two fingers' spread the frame before)
+    two = false                     # (two fingers down: that gesture owns them till both lift)
+    claimed: int[]                  # (fingers on buttons and cards, so they don't also steer)
     claimed_key: Key[]
 
 pad = TouchPad()
@@ -38,11 +62,34 @@ vdown = (k: Key) -> bool: key_down(k) or pad.held.contains(k)
 # a key pressed this frame: on the keyboard or on the pad
 vpressed = (k: Key) -> bool: key_pressed(k) or pad.pressed.contains(k)
 
+# a prompt card drawn this frame at r, for key k: a finger on it holds k
+tap_card = (r: Rect, k: Key):
+    global pad
+    if not pad.on: return
+    pad.next_cards.push(r)
+    pad.next_card_keys.push(k)
+
 _unit = () -> f64: min(f64(screen_width()), f64(screen_height()))
 
-# the buttons for what one is doing: flying, on the water, or on foot (and always the pause, the
-# chart and the notebook along the top)
-_layout = (mode: int, guns: bool, crashed: bool) -> PadButton[]:
+# (held upright, a phone gets narrower units so its type and buttons stay big enough; on its side,
+# the usual 1280 x 720)
+lay_out_screen = ():
+    p = pixel_size()
+    if p.y > p.x: design_size(600, max(1067, int(600.0 * f64(p.y) / f64(max(p.x, 1.0)))))
+    else: design_size(1280, 720)
+
+# the Walk button, by the right thumb
+walk_button = () -> vec2:
+    u = _unit()
+    vec2(f32(f64(screen_width()) - u * 0.085 * 1.6), f32(f64(screen_height()) - u * 0.085 * 1.6))
+
+# the throttle's slider, along the left edge
+throttle_track = () -> Rect:
+    u = _unit()
+    sh = f64(screen_height())
+    Rect(u * 0.05, sh - u * 0.66, u * 0.075, u * 0.42)
+
+_layout = (mode: int, guns: bool) -> PadButton[]:
     u = _unit()
     sw = f64(screen_width())
     sh = f64(screen_height())
@@ -54,52 +101,57 @@ _layout = (mode: int, guns: bool, crashed: bool) -> PadButton[]:
     bs.push(PadButton("II", .p, vec2(f32(small * 1.4), f32(top)), small, false))
     bs.push(PadButton("Map", .m, vec2(f32(small * 3.8), f32(top)), small, false))
     bs.push(PadButton("Log", .j, vec2(f32(small * 6.2), f32(top)), small, false))
-    if mode == 0 or mode == 1: bs.push(PadButton("View", .v, vec2(f32(small * 8.6), f32(top)), small, false))
+    aboard = mode == 0 or mode == 1
+    if aboard:
+        # (a second row under the first, clear of the compass along the top)
+        bs.push(PadButton("View", .v, vec2(f32(small * 1.4), f32(top + small * 2.6)), small, false))
+        bs.push(PadButton("Radio", .f9, vec2(f32(small * 3.8), f32(top + small * 2.6)), small, false))
+    # (fullscreen: top right, under the clock and the money, clear of the compass)
+    if can_fullscreen() and not is_fullscreen(): bs.push(PadButton("Full", .f11, vec2(f32(sw - small * 1.4), f32(top + small * 2.6)), small, false))
     rx = sw - big * 1.5
     ry = sh - big * 1.5
     match mode:
-        # (in the air)
         0:
-            bs.push(PadButton("+", .shift, vec2(f32(rx), f32(ry - big * 2.4)), big * 0.8))
-            bs.push(PadButton("-", .z, vec2(f32(rx), f32(ry - big * 0.6)), big * 0.8))
-            if guns: bs.push(PadButton("Fire", .space, vec2(f32(rx - big * 2.3), f32(ry - big * 0.2)), big))
-            bs.push(PadButton("F", .f, vec2(f32(rx - big * 2.3), f32(ry - big * 2.4)), small, false))
-            # (the guns' safety, and jumping out under a parachute)
-            bs.push(PadButton("Safe", .g, vec2(f32(rx), f32(ry - big * 4.0)), small, false))
-            bs.push(PadButton("Jump", .t, vec2(f32(rx - big * 2.3), f32(ry - big * 4.0)), small, false))
-        # (on the water)
-        1:
-            bs.push(PadButton("+", .shift, vec2(f32(rx), f32(ry - big * 2.4)), big * 0.8))
-            bs.push(PadButton("-", .z, vec2(f32(rx), f32(ry - big * 0.6)), big * 0.8))
-            bs.push(PadButton("Brake", .space, vec2(f32(rx - big * 2.3), f32(ry - big * 0.2)), big))
-            bs.push(PadButton("F", .f, vec2(f32(rx - big * 2.3), f32(ry - big * 2.4)), big * 0.8, false))
-        # (on foot)
-        _:
-            bs.push(PadButton("F", .f, vec2(f32(rx), f32(ry - big * 0.4)), big, false))
-            bs.push(PadButton("Run", .shift, vec2(f32(rx - big * 2.3), f32(ry - big * 0.2)), big * 0.8))
-            bs.push(PadButton("Talk", .t, vec2(f32(rx), f32(ry - big * 2.6)), big * 0.7, false))
-    if crashed: bs.push(PadButton("R", .r, vec2(f32(sw * 0.5), f32(top * 2.4)), big, false))
+            if guns: bs.push(PadButton("Fire", .space, vec2(f32(rx), f32(ry)), big))
+            bs.push(PadButton("Safe", .g, vec2(f32(rx), f32(ry - big * 2.1)), small, false))
+            bs.push(PadButton("Jump", .t, vec2(f32(rx - big * 1.9), f32(ry - big * 2.1)), small, false))
+        1: bs.push(PadButton("Brake", .space, vec2(f32(rx), f32(ry)), big))
+        _: pass
     bs
 
-# each frame, before the game reads its input: mode 0 flying, 1 on the water, 2 on foot, 3 a panel
-# open (only the top buttons, no stick or look)
-update_pad = (mode: int, guns: bool, crashed: bool):
+# each frame, before the game reads its input. mode: 0 in the air, 1 on the water, 2 on foot, 3 a
+# panel open; throttle: the aircraft's now (0..1), for the slider
+update_pad = (mode: int, guns: bool, throttle: f64, dt: f64):
     global pad
     if not pad.on: return
     prev = pad.held
+    pad.mode = mode
     pad.held = []
     pad.pressed = []
-    pad.stick = vec2(0, 0)
-    pad.look = vec2(0, 0)
-    pad.buttons = _layout(if mode == 3: 2 else: mode, guns, crashed)
-    if mode == 3: pad.buttons = [loop b in pad.buttons: if b.key == .p or b.key == .m or b.key == .j: b]
+    pad.aim = vec2(0, 0)
+    pad.orbit = vec2(0, 0)
+    pad.zoom = 1.0
+    pad.walking = false
+    pad.tapped = false
+    pad.throttle_want = -1.0
+    pad.throttle_now = throttle
+    pad.cards = pad.next_cards
+    pad.card_keys = pad.next_card_keys
+    pad.next_cards = []
+    pad.next_card_keys = []
+    pad.buttons = _layout(if mode == 3: 2 else: mode, guns)
+    if mode == 3: pad.buttons = [loop b in pad.buttons: if b.key == .p or b.key == .m or b.key == .j or b.key == .f11: b]
     ts = touches()
     ids = touch_ids()
-    sw = f64(screen_width())
     u = _unit()
-    # (forget fingers that have lifted)
-    if not ids.contains(pad.stick_id): pad.stick_id = -1
-    if not ids.contains(pad.look_id): pad.look_id = -1
+    # (a finger that lifted: a short touch that barely moved, on foot, is a tap)
+    if pad.drag_id >= 0 and not ids.contains(pad.drag_id):
+        if mode == 2 and not pad.two and pad.drag_t < 0.25 and pad.drag_far < u * 0.03:
+            pad.tapped = true
+            pad.tap_at = pad.drag_last
+        pad.drag_id = -1
+    if not ids.contains(pad.slider_id): pad.slider_id = -1
+    if not ids.contains(pad.walk_id): pad.walk_id = -1
     keep: int[]
     keep_key: Key[]
     loop k in 0..pad.claimed.len():
@@ -108,35 +160,75 @@ update_pad = (mode: int, guns: bool, crashed: bool):
             keep_key.push(pad.claimed_key[k])
     pad.claimed = keep
     pad.claimed_key = keep_key
+    track = throttle_track()
+    grown = Rect(track.x - 20.0, track.y - 20.0, track.w + 40.0, track.h + 40.0)
+    free: vec2[]                    # (fingers on nothing in particular: the view, walking)
     loop k in 0..ts.len():
         id = ids[k]
         p = ts[k]
-        if id == pad.stick_id or id == pad.look_id or pad.claimed.contains(id): continue
-        # a finger landing: on a button, else the stick (left half) or the view (right half)
+        if id == pad.slider_id or id == pad.walk_id or pad.claimed.contains(id): continue
+        if id == pad.drag_id:
+            free.push(p)
+            continue
+        # a finger landing: on a button or a card, on the throttle, else the view / walking
         hit = -1
         loop b in 0..pad.buttons.len():
             if f64(length(p - pad.buttons[b].at)) < pad.buttons[b].r * 1.15: hit = b
+        card = -1
+        loop c in 0..pad.cards.len():
+            if contains(pad.cards[c], p): card = c
         if hit >= 0:
             pad.claimed.push(id)
             pad.claimed_key.push(pad.buttons[hit].key)
-            if not pad.buttons[hit].hold: pad.pressed.push(pad.buttons[hit].key)
-        else if mode != 3 and f64(p.x) < sw * 0.5 and pad.stick_id < 0:
-            pad.stick_id = id
-            pad.stick_at = p
-        else if mode != 3 and pad.look_id < 0:
-            pad.look_id = id
-            pad.look_last = p
-    loop k in 0..ts.len():
-        id = ids[k]
-        p = ts[k]
-        if id == pad.stick_id:
-            reach = u * 0.12
-            d = (p - pad.stick_at) / f32(reach)
-            if length(d) > 1.0: d = normalize(d)
-            pad.stick = d
-        else if id == pad.look_id:
-            pad.look = p - pad.look_last
-            pad.look_last = p
+            if not pad.buttons[hit].hold:
+                pad.pressed.push(pad.buttons[hit].key)
+                # (fullscreen must come from a tap: the browser asks it be done in answer to one)
+                if pad.buttons[hit].key == .f11: set_fullscreen(true)
+        else if card >= 0:
+            pad.claimed.push(id)
+            pad.claimed_key.push(pad.card_keys[card])
+        else if mode == 2 and f64(length(p - walk_button())) < u * 0.085 * 1.25 and pad.walk_id < 0:
+            pad.walk_id = id
+        else if (mode == 0 or mode == 1) and contains(grown, p) and pad.slider_id < 0:
+            pad.slider_id = id
+        else if mode != 3:
+            free.push(p)
+            if pad.drag_id < 0:
+                pad.drag_id = id
+                pad.drag_at = p
+                pad.drag_last = p
+                pad.drag_t = 0.0
+                pad.drag_far = 0.0
+    if free.len() == 0: pad.two = false
+    # two fingers free: they turn the view and pinch it nearer, and don't walk or steer
+    if free.len() >= 2:
+        pad.two = true
+        mid = (free[0] + free[1]) * 0.5
+        spread = f64(length(free[0] - free[1]))
+        if pad.pinch > 0.0:
+            pad.orbit = mid - pad.drag_last
+            pad.zoom = spread / pad.pinch
+        pad.pinch = spread
+        pad.drag_last = mid
+    else:
+        pad.pinch = 0.0
+        loop k in 0..ts.len():
+            id = ids[k]
+            p = ts[k]
+            if id == pad.drag_id:
+                pad.drag_t += dt
+                pad.drag_far = max(pad.drag_far, f64(length(p - pad.drag_at)))
+                if not pad.two:
+                    pad.aim = p - pad.drag_last
+                    if mode == 2: pad.orbit = p - pad.drag_last
+                pad.drag_last = p
+            else if id == pad.walk_id:
+                pad.walking = true
+                off = p - walk_button()
+                pad.walk_speed = clamp(f64(length(off)) / (u * 0.16), 0.0, 1.0)
+                pad.walk_side = clamp(f64(off.x) / (u * 0.16), -1.0, 1.0)
+            else if id == pad.slider_id:
+                pad.throttle_want = clamp(f64(track.y + track.h - p.y) / f64(track.h), 0.0, 1.0)
     loop k in 0..pad.claimed.len():
         key = pad.claimed_key[k]
         hold = true
@@ -150,14 +242,26 @@ update_pad = (mode: int, guns: bool, crashed: bool):
 draw_pad = ():
     if not pad.on: return
     u = _unit()
-    if pad.stick_id >= 0:
-        reach = u * 0.12
-        ring(pad.stick_at, reach, 2.0, rgba(1, 1, 1, 0.35))
-        circle(pad.stick_at + pad.stick * f32(reach), u * 0.045, rgba(1, 1, 1, 0.35))
-    else:
-        # (where the thumb goes)
-        at = vec2(f32(u * 0.24), f32(f64(screen_height()) - u * 0.52))   # (above the gauges)
-        ring(at, u * 0.12, 2.0, rgba(1, 1, 1, 0.18))
+    if pad.mode == 2:
+        # (the Walk button; a thumb slid away from it shows how far, up to a run)
+        at = walk_button()
+        r = u * 0.085
+        circle(at, r, if pad.walking: rgba(1, 0.97, 0.88, 0.42) else: rgba(0.06, 0.08, 0.12, 0.35))
+        ring(at, r, 2.0, rgba(1, 0.97, 0.9, 0.55))
+        if pad.walking: ring(at, r + u * 0.16 * pad.walk_speed, 1.5, rgba(1, 0.97, 0.9, 0.35))
+        size = max(r * 0.45, 13.0)
+        lbl = if pad.walk_speed > 0.6: "Run" else: "Walk"
+        text(lbl, at - vec2(f32(text_width(lbl, size) * 0.5), f32(size * 0.55)), size, rgba(1, 0.97, 0.9, 0.9))
+    if pad.mode == 0 or pad.mode == 1:
+        r = throttle_track()
+        rect(r, rgba(0.06, 0.08, 0.12, 0.35))
+        rect(Rect(r.x, r.y, r.w, 2.0), rgba(1, 0.97, 0.9, 0.5))
+        rect(Rect(r.x, r.y + r.h - 2.0, r.w, 2.0), rgba(1, 0.97, 0.9, 0.5))
+        level = clamp(pad.throttle_now, 0.0, 1.0)
+        hy = r.y + r.h - r.h * f32(level)
+        rect(Rect(r.x - 6.0, hy - 7.0, r.w + 12.0, 14.0), if pad.slider_id >= 0: rgba(1, 0.97, 0.88, 0.75) else: rgba(1, 0.97, 0.9, 0.5))
+        size = max(u * 0.03, 12.0)
+        text("Throttle", vec2(r.x, r.y - f32(size * 1.4)), size, rgba(1, 0.97, 0.9, 0.7))
     loop b in pad.buttons:
         down = pad.held.contains(b.key) or pad.pressed.contains(b.key)
         circle(b.at, b.r, if down: rgba(1, 0.97, 0.88, 0.42) else: rgba(0.06, 0.08, 0.12, 0.35))

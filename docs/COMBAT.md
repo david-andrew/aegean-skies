@@ -160,3 +160,47 @@ bounds bullet-pair work, brains, physics, storage and finite states. Other tests
 through serialization, cosmetic-RNG independence, nearest-hit ordering, terrain occlusion,
 boat attack/escort selection, land/sea parachutes, real air-brake drag, gun safety, single
 scene ownership, damage persistence, human fixed-substep hits and finite/distinct sound waves.
+
+## Combat presentation budgets and cockpit
+
+The presentation pass keeps simulation ownership unchanged. `combat_trails.jo` holds a fixed,
+reused ribbon history: 960/1600/2400 segments on low/medium/high, sampled every 0.65/0.4/0.25 s.
+Smoke lives up to 22 s, rises, expands and drifts with wind. A small minimum angular width
+keeps distant trails from disappearing below a phone pixel. Hard-cap eviction gives thirty
+burning craft about twenty seconds even on low. Healthy aircraft pulling/rolling in an engagement
+leave shorter pale wingtip trails; these stop when the aircraft starts smoking. Teleports and
+inactive sources break trails. Effects never consume `combat_noise` or feed back into physics.
+
+Each of the four particle pools has a hard cap of 240/500/900. Muzzle and impact flashes last
+several frames, muzzle glows follow their actual moving mount, tracers use a bounded angular width
+and longer range-visible streaks. All effects stop emitting outside 11 km. Detailed aircraft give
+way to batched silhouettes at 450/750/1000 m; separated wings and tumbling debris retain separate
+silhouettes. Parachutes bloom over 0.65 s. Low uses half as many canopy gores; beyond 450 m the
+hanging pilot is a twelve-triangle silhouette.
+
+`Round.serial` is the shot event's stable identity. `combat_near_passes` runs after each physical
+combat tick, checks the swept round segment within 12 m of the listener, excludes their aircraft,
+and remembers 128 pass IDs. Whizzes are globally spaced by 90 ms. Hits on the occupied aircraft
+produce a damped camera jolt and a separate low body thump. Wing marks sit on both fabric skins;
+engine damage produces oil drops/streaks on the cockpit windscreen. Repair removes these through
+the existing damage state. There are no new keys or HUD/control layouts.
+
+Each aircraft has a named wood or metal panel fitted behind a stitched leather coaming, a thin
+windscreen frame, five engraved instruments, a stick and gloved hands. Existing wings, cowling,
+engine placement and props retain each design's silhouette. The first-person fuselage has a clipped
+cockpit well, and the box cabanes become thin round tubing in that view. Running propellers resolve as narrow
+blade-tip arcs; stopped engines retain their blades.
+Exterior models and collision solids are unchanged. All cockpit geometry is camera-relative before
+projection so millimetre gauge details survive remote world coordinates.
+
+The instrument scales are 0–400 km/h true airspeed, a 10,000 m altimeter revolution, 0–4000 RPM
+(engine-family rated speed, throttle and engine health), 0–4 oil pressure and a north-pointing
+compass. RPM/oil are indicative engine gauges, not an additional engine simulation. The physical
+ring sight and neutral camera aim at the guns' 450 m convergence, including level-flight gravity
+drop at the selected bullet speed. Bank, range, wind and pilot aim still require correction.
+
+`tools/combatlab.jo` also accepts `COMBAT_DISTANCE=1500`, `AEGEAN_QUALITY=low`,
+`COMBAT_SCENE=stress` (thirty continually firing/burning aircraft), `COMBAT_HIT=1` with cockpit,
+and `COMBAT_PITCH=-0.25` to inspect the lower cockpit. It initializes the same WebGL compatibility
+and resolution tier as the main game. Stress is an explicitly synthetic acceptance fixture and is
+never loaded into the living world.

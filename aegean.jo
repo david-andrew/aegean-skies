@@ -29,12 +29,15 @@ use 'src/cloud_depth.jo'
 use 'src/sky.jo'
 use 'src/objects.jo'
 use 'src/touch.jo'
+use 'src/options.jo'
 use 'src/chart.jo'
 use 'src/planes.jo'
 use 'src/folk.jo'
 use 'src/hud.jo'
 use 'src/grass.jo'
 use 'src/sound.jo'
+import 'src/radio.jo' as radio
+import 'src/radio_content.jo' as broadcast
 use 'src/flight.jo'
 use 'src/pilot.jo'
 use 'src/traffic.jo'
@@ -69,6 +72,7 @@ import 'src/life_audio.jo' as life_audio
 import 'src/living_portage.jo' as portage
 import 'src/living_claims.jo' as claims
 import 'src/living_types.jo' as lt
+import 'src/life_types.jo' as social
 from 'src/living_money.jo' import craft_grams
 
 window("Aegean Skies", 1280, 720)
@@ -186,6 +190,12 @@ ui_folk = -1
 ui_place = -1
 ui_line = ""
 ui_news = 0
+# (the conversation under way: the last thing they said, the replies it invites, whether they've
+# had enough)
+ui_turn = social.ConversationTurn(-1, -1, .greeting)
+
+# what a turn says aloud: the words, then any question
+turn_text = (turn: social.ConversationTurn) -> str: if turn.question != "": "{turn.text} {turn.question}" else: turn.text
 ui_job = -1
 toast = ""
 paused = false
@@ -277,6 +287,9 @@ me_fig = build_figure(.pilot, 7)
 tuft = build_tuft()
 audio = if env("SLOPPY_NO_AUDIO") != none: Audio() else: start_audio()
 life_sound = life_audio.build_life_audio()
+cockpit_radio = radio.Radio()
+radio_bulletin = broadcast.RadioBulletinCache()
+broadcast.radio_place_transmitters(cockpit_radio, height)
 hearing = if env("SLOPPY_NO_AUDIO") != none: Hearing() else: make_hearing()
 battle = Battle(enabled=true,seed=int(living_world.seed%100000))
 register_combat_body(battle,living_world,living_world.people[living_world.player].craft,pc.spec,pc.state,true)
@@ -395,6 +408,16 @@ near_own_craft = () -> bool:
 
 rope: Rope
 was_moored = false
+talk_at_start = env("AEGEAN_TALK") != none
+pad_talk = false                    # (a tap on someone near: talk to them)
+
+# where on the ground (or the quay) a point on the screen falls, near the walker's height
+ground_under = (p: vec2) -> vec3?:
+    o, d = screen_ray(p)
+    if f64(d.y) > -0.02: return none
+    t = (f64(me.pos.y) - f64(o.y)) / f64(d.y)
+    if t < 0.0 or t > 400.0: return none
+    o + d * f32(t)
 click_took_mouse = false            # (the left button's press that took the mouse, until let go)
 
 # Cargo is saved living-world stock; the notebook only projects its current handling status.
@@ -466,6 +489,11 @@ dust_ps = Particles3D(gravity = vec3(0, -9.8, 0), drag = 1.2)
 cloth_mesh: ClothMesh
 scarf_mesh: ClothMesh
 dbg = Debug()
+# (the chaotic stalls and spins, liked in play: on in the game; the tests keep the old stall as
+# Tweaks()' default, and the pause menu's Tweaks page turns them off to compare)
+dbg.tweaks.chaotic_stalls = true
+set_tweaks(dbg.tweaks)
+dbg.opts = options
 # AEGEAN_TWEAKS="pure,curve,grip,airframe,cloth,trim,orbit" switches trials on from the start
 if let tw = env("AEGEAN_TWEAKS"):
     loop name in split(tw, ","):
@@ -518,6 +546,7 @@ change_craft = (kind: Craft, model: int):
     living_world.aircraft[record].kind = lt.Airframe(int(kind))
     living_world.aircraft[record].model_index = model
     living_world.aircraft[record].livery_index = DEFAULT_LIVERIES[int(kind)]
+    # (the tank's change goes through the debugging ledger, so the world's goods still balance)
     debug_fuel_ml(record, int(nf.state.fuel*1000.0))
     living_world.aircraft[record].scene_extension = ""
     living_world.aircraft[record].scene_extension_tick = -1
@@ -554,7 +583,7 @@ apply_speed_scale = (k: f64):
 # the debugging panel: how things are now, for it to show and change
 debug_view = () -> DebugView:
     v = DebugView()
-    v.craft = pc.model
+    v.craft = int(pc.kind)                # (the type, as the menu lists them; the model index differs past the first four)
     v.fuel = pc.state.fuel / max(pc.spec.fuel_capacity, 0.001)
     v.parts = [loop k in 0..pc.spec.parts.len(): part_health(pc.state.damage, pc.spec.parts[k].id)]
     c = living_world.people[living_world.player].craft
@@ -776,13 +805,25 @@ update = (dt: f64):
     global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused, descent_camera
     # (the touch screen's stick and buttons, read as keys below; mode: 0 flying, 1 on the water,
     # 2 on foot, 3 a panel open)
+    # (AEGEAN_TALK: a conversation with the nearest person opens at the start, for looking at it)
+    if talk_at_start and t > 1.0 and ui == .none and me.mode == .walking:
+        global talk_at_start, ui_turn
+        talk_at_start = false
+        k0 = nearest_folk(folks, me.pos, 1000000.0)
+        if k0 >= 0:
+            ui = .talk
+            ui_folk = k0
+            ui_turn = living.talk(living_world, folks[k0].person, .greeting, living_world.player)
+            ui_line = turn_text(ui_turn)
     pad_mode = if paused or ui != .none or notebook.open or show_chart: 3 else if me.mode == .aboard: (if pc.state.on_water or pc.state.moored: 1 else: 0) else: 2
-    update_pad(pad_mode, not pc.slow, me.mode == .aboard and (pc.state.crashed or pc.state.capsized or pc.state.beached))
+    lay_out_screen()                # (upright or on its side, a phone gets its own units)
+    update_pad(pad_mode, not pc.slow, pc.throttle, dt)
     # P (or F1) stops the world and its sounds, and opens the pause menu (the debugging panel)
     if (vpressed(.p) or vpressed(.f1)) and not notebook.open and not ui_typing() and not debug_typing(): set_paused(not paused)
     if show_chart and geography_enabled and vpressed(.tab): chart_local = not chart_local
     if paused:
         hush_audio(audio)
+        radio.radio_silence(cockpit_radio)
         hush_combat_audio(combat_audio)
         hush_engines(hearing)
         # (picking a place on the chart from the pause menu; Escape gives up)
@@ -800,6 +841,29 @@ update = (dt: f64):
     wind_step(wind_now, t, dt, hour)
     hour = (hour + dt / 120.0 + 24.0) % 24.0          # an hour of the day: two minutes
     typing = ui_typing() or debug_typing()
+    # Receiver controls; the cockpit dial and touch presentation are separate UI work.
+    if me.mode == .aboard and ui == .none and not notebook.open and not show_chart and not typing:
+        if vpressed(.comma):
+            if vdown(.shift): radio.radio_seek(cockpit_radio,-1,living_world.minute)
+            else: radio.radio_step(cockpit_radio,-1)
+        if vpressed(.period):
+            if vdown(.shift): radio.radio_seek(cockpit_radio,1,living_world.minute)
+            else: radio.radio_step(cockpit_radio,1)
+        if vpressed(.slash): radio.radio_mute(cockpit_radio,not cockpit_radio.muted)
+        # (on a touch screen, one Radio button: each tap the next station on the air, past the
+        # last one off again)
+        if vpressed(.f9):
+            if cockpit_radio.muted:
+                radio.radio_mute(cockpit_radio, false)
+                radio.radio_seek(cockpit_radio, 1, living_world.minute)
+            else:
+                was = cockpit_radio.khz
+                radio.radio_seek(cockpit_radio, 1, living_world.minute)
+                if cockpit_radio.khz <= was: radio.radio_mute(cockpit_radio, true)
+            if cockpit_radio.muted: say_toast("Radio off")
+            else:
+                loop st in cockpit_radio.stations:
+                    if abs(st.khz - cockpit_radio.khz) < 1.0: say_toast("{st.name}  {int(st.khz)} kc")
     if vdown(.n1) and not typing: hour = (hour - dt * 2.0 + 24.0) % 24.0
     if vdown(.n2) and not typing: hour = (hour + dt * 2.0) % 24.0
     if vpressed(.m) and not typing: show_chart = not show_chart
@@ -826,14 +890,27 @@ update = (dt: f64):
               follow.distance = clamp(follow.distance * pow(0.93, clamp(mouse_wheel(), -3.0, 3.0)), 2.5, 14.0)
               if vdown(.q): follow.yaw += dt * 2.0
               if vdown(.e): follow.yaw -= dt * 2.0
-              a = input_axis() + pad.stick
-              if length(a) > 1.0: a = normalize(a)
-              # (a finger dragging on the right half turns the view, as the mouse does)
-              follow.yaw -= f64(pad.look.x) * 0.006
-              follow.pitch = clamp(follow.pitch + f64(pad.look.y) * 0.004, follow.min_pitch, follow.max_pitch)
+              a = input_axis()
+              # (on a touch screen: two fingers turn the view and pinch it nearer)
+              follow.yaw -= f64(pad.orbit.x) * 0.006
+              follow.pitch = clamp(follow.pitch + f64(pad.orbit.y) * 0.004, follow.min_pitch, follow.max_pitch)
+              if pad.zoom != 1.0: follow.distance = clamp(follow.distance / pad.zoom, 2.5, 14.0)
               move = flat_forward(follow) * -a.y + flat_right(follow) * a.x
               run = vdown(.shift)
-              speed = if holding_cargo() >= 0: 1.0 else: if run: 4.2 else: 1.7
+              # (on a touch screen: the Walk button walks the way the view looks, faster the farther
+              # the thumb slides from it; a tap on someone near talks to them)
+              global pad_talk
+              if pad.walking:
+                  # (the thumb slid across bears him that way, and the view swings after him)
+                  bear = pad.walk_side * 0.9
+                  move = flat_forward(follow) * f32(cos(bear)) + flat_right(follow) * f32(sin(bear))
+                  run = pad.walk_speed > 0.6
+                  if abs(pad.walk_side) > 0.15: follow.yaw = approach_angle(follow.yaw, me.yaw + PI, 0.9 * abs(pad.walk_side), dt)
+              if pad.tapped:
+                  if let g = ground_under(pad.tap_at):
+                      k = nearest_folk(folks, g, 2.0)
+                      if k >= 0 and length(folks[k].pos - me.pos) < 3.5: pad_talk = true
+              speed = if holding_cargo() >= 0: 1.0 else: if pad.walking: 1.7 + 2.5 * pad.walk_speed else: if run: 4.2 else: 1.7
               if length(move) > 0.1:
                   dir = normalize(vec2(move.x, move.z))
                   me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 10.0, dt)
@@ -850,12 +927,15 @@ update = (dt: f64):
                       if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: haul_in(dt)
               # talk to whoever is near; read the board
               cargo_used = vpressed(.f) and cargo_interact()
-              if vpressed(.t):
+              if vpressed(.t) or pad_talk:
+                  pad_talk = false
                   k = nearest_folk(folks, me.pos, 3.5)
                   if k >= 0:
                       ui = .talk
                       ui_folk = k
-                      ui_line = say(living_world, folks[k].person)
+                      global ui_turn
+                      ui_turn = living.talk(living_world, folks[k].person, .greeting, living_world.player)
+                      ui_line = turn_text(ui_turn)
                       # (someone whose cargo one has brought sees it)
                       loop id in living_world.active_jobs:
                           j = living_world.jobs[id]
@@ -1017,8 +1097,10 @@ update = (dt: f64):
             if dbg.no_damage:battle.actors[pci].fire=0;battle.actors[pci].fire_age=0
     update_traffic(traffic,living_world,traffic_scene,if me.mode==.aboard:pc.state.position else:me.pos,t,dt,pc.state,towns,battle,
         (events:CombatEvent[]):
-            combat_effect_events(combat_visual,events)
-            if combat_audio.guns.len()>0:combat_audio_events(combat_audio,events,scene_camera())
+            combat_effect_events(combat_visual,events,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
+            combat_near_passes(combat_visual,battle,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1,if pc.cockpit_view:cockpit_eye(craft_models[pc.model],pc.state) else:pc.state.position)
+            if combat_audio.guns.len()>0:combat_audio_passes(combat_audio,combat_visual.whizzes)
+            if combat_audio.guns.len()>0:combat_audio_events(combat_audio,events,scene_camera(),if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
     )
     ci=combat_index(battle,living_world.people[living_world.player].craft)
     if ci>=0:
@@ -1028,6 +1110,7 @@ update = (dt: f64):
     # Combat parts already supplied this tick's world condition; do not heal them through the
     # older nonlinear wear projection. Outside combat retain the existing service adapter.
     if ci<0 or (battle.actors[ci].last_attacker<0 and not battle.actors[ci].bailed):sync_living_player(pc,living_world)
+    if me.mode==.aboard:pc.jolt=max(pc.jolt,combat_visual.hit)
     update_combat_view(combat_visual,battle,wind_now_vec(),dt,scene_camera())
     if combat_audio.guns.len()>0:update_combat_audio(combat_audio,battle,scene_camera(),living_world.player)
     update_folk(folks, living_world, towns, if me.mode == .aboard: pc.state.position else: me.pos, dt)
@@ -1059,12 +1142,18 @@ update = (dt: f64):
     # (the sounds go by the speed as designed: true speed / the speed scale)
     update_audio(audio, dt, flying and not pc.state.moored, pc.state.throttle, if flying: true_speed(pc.spec, f64(length(pc.state.velocity))) else: 0.0, shore, not flying, where, pc.kind)
     life_audio.update_life_audio(life_sound,living_world,where,t)
+    if me.mode == .aboard and not cockpit_radio.muted:
+        radio.radio_receive(cockpit_radio,dt,living_world.minute,pc.state.position,height)
+        broadcast.radio_update_content(cockpit_radio,radio_bulletin,living_world)
+    radio.radio_play(cockpit_radio,f64(living_world.tick)/60.0,me.mode == .aboard,
+        not pc.state.moored,pc.state.throttle,env("SLOPPY_NO_AUDIO") == none)
     # the other aircraft's engines, heard from where their sound left them, Doppler and all
     hear_engines(hearing, [loop tr in traffic: EngineSource(tr.craft, tr.state.position, tr.state.velocity,
         if tr.flying and tr.state.throttle < 0.05: 0.7 else: f64(tr.state.throttle),
         not tr.state.moored and (tr.flying or tr.state.throttle > 0.02 or f64(length(tr.state.velocity)) > 0.5),
         engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))), voice = aircraft_profile(tr.kind).voice)], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t)
     set_tweaks(dbg.tweaks)
+    set_options(dbg.opts)
     audio.air_on = dbg.snd_air
     audio.cloth_on = dbg.snd_cloth
     audio.frame_on = dbg.snd_frame
@@ -1141,10 +1230,11 @@ draw_world = (L: Light):
         pm = craft_models[pc.model]
         at = pc_at()
         if not left:
-            draw_craft_parts(pm,pc.state.damage,at,L,t,pc.prop_angle,airframe(pc),pc.state.gear)
+            if me.mode==.aboard and pc.cockpit_view:draw_cockpit_airframe(pm,pc.state,at,L,t,pc.prop_angle)
+            else:draw_craft_parts(pm,pc.state.damage,at,L,t,pc.prop_angle,airframe(pc),pc.state.gear)
             draw_debris(pm,pc.state.damage,L,t)
-            if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t)
-            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t)
+            if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t,me.mode==.aboard and pc.cockpit_view)
+            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale)
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
@@ -1215,7 +1305,7 @@ draw = ():
     match me.mode:
         .free: camera3d(free, 62.0, 1.0, world_far(f64(free.pos.y)))
         .aboard:
-            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch)
+            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil)
             else:place_chase_camera(pc,t)
         .descent:camera3d(descent_camera,58.0,0.1,world_far(f64(me.pos.y)))
         _: camera3d(follow, 58.0, 0.3, world_far(f64(me.pos.y)))
@@ -1272,13 +1362,17 @@ draw = ():
         .descent: pass
         .free: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if me.mode == .aboard:
-        aim_marks(pc)
+        aim_marks(pc,not pc.cockpit_view)
+        # (in the cockpit, the compass in its brass case on top of the panel)
+        if pc.cockpit_view: cockpit_compass(fonts, f64(screen_width()) * 0.5, f64(screen_height()) - 270.0, 230.0, (heading(pc.state) + TAU) % TAU)
         st = pc.state
         # (the speedometer reads the true speed)
-        if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale)
+        if show_chart: pass
+        else if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale)
         else if not pc.cockpit_view: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed)
     if me.mode != .free and not paused: title_card(fonts, t)
-    if vdown(.h) or (t > 7.5 and t < 22.0 and me.mode == .walking): controls_card(fonts, me.mode == .aboard)
+    if vdown(.h): controls_card(fonts, me.mode == .aboard)
+    else if t > 7.5 and t < 22.0: keys_hint(fonts)
     draw_ui()
     notebook_panel(fonts, notebook, clock_text(living_world, living_world.minute))
     if paused and not dbg.picking: rect(0, 0, f64(screen_width()), f64(screen_height()), rgba(0.03, 0.05, 0.08, 0.25))
@@ -1288,14 +1382,20 @@ draw = ():
         debug_apply(was, v, debug_panel(dbg, v, [loop tw in towns: tw.name], CRAFT_NAMES))
     if dbg.picking and show_chart: prompt_card(fonts, "Click where to go  ({int(dbg.altitude)} m)", 60.0)
     if t < toast_until: prompt_card(fonts, toast, 260.0)
-    if show_chart: draw_chart(chart, towns, if me.mode == .aboard: pc.state.position else: me.pos, if me.mode == .aboard: heading(pc.state) else: PI - me.yaw, hour,
-        [loop tr in traffic: vec4(tr.state.position.x, tr.state.position.y, tr.state.position.z, f32(heading(tr.state)))])
+    if show_chart:
+        facing = if me.mode == .aboard: heading(pc.state) else: PI - me.yaw
+        draw_chart(chart, towns, if me.mode == .aboard: pc.state.position else: me.pos, facing, hour,
+            [loop tr in traffic: vec4(tr.state.position.x, tr.state.position.y, tr.state.position.z, f32(heading(tr.state)))])
+        # (the pocket compass, set down on the map's corner)
+        cr = chart_rect()
+        rr = min(70.0, f64(screen_width()) * 0.11)
+        pocket_compass(fonts, vec2(f32(cr.x + cr.w - rr * 0.6), f32(cr.y + cr.h - rr * 0.6)), rr, facing)
     # (on a touch screen: the stick and the buttons, over everything)
     draw_pad()
 
 # the panels open over the scene: a conversation, a board, a ledger
 draw_ui = ():
-    global ui, ui_line, ui_news, ui_place, ui_job
+    global ui, ui_line, ui_news, ui_place, ui_job, ui_turn
     match ui:
         .talk:
             if ui_folk < 0 or ui_folk >= folks.len():
@@ -1330,12 +1430,21 @@ draw_ui = ():
                         handovers.push(id); handover_choices.push(.player)
                         answers.push("I'll carry {job_cargo(id)} from the aircraft to your door myself.")
             nerr = answers.len()
-            answers.push("What's the news?")
+            # then the conversation itself: answers to what they just asked, the things one can
+            # bring up with them (their work, the news, the weather, the market, people, home...),
+            # work and trade, and leaving. When they've had enough, only leaving.
+            replies = if ui_turn.exhausted: [] else: ui_turn.replies
+            loop r in replies: answers.push("\"{r.label}\"")
+            nrep = answers.len()
+            topics = if ui_turn.exhausted: [] else: [loop o in living.talk_topics(living_world, f.person, living_world.player): if o.topic != .greeting and o.topic != .farewell: o]
+            if topics.len() > 5: topics = [loop k in 0..5: topics[k]]
+            loop o in topics: answers.push(o.label)
+            ntop = answers.len()
             answers.push("Any work going?")
             if merchant: answers.push("Let's trade.")
             answers.push("Goodbye.")
             role = "{p.occupation}".replace("_", " ")
-            c = conversation(fonts, p.name, "{role}, {SETTLEMENTS[f.place].name}", ui_line, answers)
+            c = conversation_grouped(fonts, p.name, "{role}, {SETTLEMENTS[f.place].name}", ui_line, [loop k in 0..nrep: answers[k]], [loop k in nrep..ntop: answers[k]], [loop k in ntop..answers.len(): answers[k]])
             if vpressed(.escape): c = answers.len() - 1
             if c >= 0 and c < offers.len():
                 id = offers[c]
@@ -1351,19 +1460,25 @@ draw_ui = ():
                 else if living.deliver_job(living_world, id, living_world.player):
                     ui_line = "Thank you. That's what was promised: {(player_cents() - before) / 100} lire."
                 else: ui_line = portage.cargo_status(living_world,id)
+            else if c >= nerr and c < nrep:
+                ui_turn = living.reply(living_world, f.person, replies[c - nerr].reply, living_world.player)
+                ui_line = turn_text(ui_turn)
+            else if c >= nrep and c < ntop:
+                ui_turn = living.talk(living_world, f.person, topics[c - nrep].topic, living_world.player)
+                ui_line = turn_text(ui_turn)
+                if topics[c - nrep].topic == .news: ui_news += 1
             else if c >= 0:
-              c -= nerr
+              c -= ntop
               if c == 0:
-                  # Explicit news request commits one saved utterance.
-                  ui_line = living.talk(living_world,f.person,.news).text
-                  ui_news += 1
-              else if c == 1:
                   ui_place = f.place
                   ui = .board
-              else if merchant and c == 2:
+              else if merchant and c == 1:
                   ui_place = f.place
                   ui = .trade
               else if c >= 0:
+                  # (a parting word, left hanging over the quay as one walks off)
+                  bye = living.talk(living_world, f.person, .farewell, living_world.player)
+                  if bye.text != "": say_toast("{p.name}: {bye.text}")
                   ui = .none
         .board:
             yesterday: str[]

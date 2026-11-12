@@ -132,6 +132,80 @@
     console.info("Aegean render quality", JSON.stringify(root.AegeanWeb.quality));
     return tier;
   };
+  // The phone's gyroscope, for fine aiming by tilting it (as Breath of the Wild's bow did): its
+  // turning, read from devicemotion's rotationRate, integrated into degrees about the SCREEN's
+  // axes (whichever way up the phone is held), handed over and cleared each frame. iOS asks for
+  // permission, and only in answer to a tap: asked at the next touch after the option is turned on.
+  {
+    let started = false, pendingAsk = false, last = 0, dx = 0, dy = 0, live = false;
+    const onMotion = e => {
+      const r = e.rotationRate; if (!r || r.beta == null) return;
+      const now = performance.now(), dt = last ? Math.min((now - last) / 1000, 0.1) : 0; last = now;
+      live = true;
+      const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      // (rates about the device's x (beta) and y (gamma), deg/s; pointing the phone's back up
+      // aims up, its back to the left aims left)
+      let up, right;
+      switch (((ang % 360) + 360) % 360) {
+        case 90: up = r.gamma; right = r.beta; break;
+        case 180: up = -r.beta; right = r.gamma; break;
+        case 270: up = -r.gamma; right = -r.beta; break;
+        default: up = r.beta; right = -r.gamma;
+      }
+      dx += right * dt; dy += up * dt;
+    };
+    const go = () => { if (!started) { window.addEventListener("devicemotion", onMotion); started = true; } };
+    const ask = () => {
+      const D = window.DeviceMotionEvent;
+      if (!D) return;
+      if (typeof D.requestPermission === "function") D.requestPermission().then(r => { if (r === "granted") go(); }).catch(() => {});
+      else go();
+    };
+    const onTouch = () => { if (pendingAsk) { pendingAsk = false; ask(); } };
+    window.addEventListener("touchend", onTouch);
+    window.addEventListener("click", onTouch);
+    sloppy.env.__aegean_motion_start = () => { pendingAsk = true; if (!(window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === "function")) { pendingAsk = false; ask(); } };
+    sloppy.env.__aegean_motion_live = () => live ? 1 : 0;
+    sloppy.env.__aegean_motion_x = () => { const v = dx; dx = 0; return v; };
+    sloppy.env.__aegean_motion_y = () => { const v = dy; dy = 0; return v; };
+  }
+  // In full screen a phone hides its navigation bar, and with it the little rotate button Android
+  // offers when auto-rotate is off and the phone is turned. So the page offers its own: when the
+  // phone has been held the other way for a moment, a rotate button shows in the corner; tapping it
+  // turns the screen that way and keeps it there (till the phone is turned and it's tapped again).
+  {
+    let held = null, since = 0, button = null, hideAt = 0;
+    const physical = g => {
+      if (Math.abs(g.x) > Math.abs(g.y) + 2.5) return g.x > 0 ? "landscape-primary" : "landscape-secondary";
+      if (Math.abs(g.y) > Math.abs(g.x) + 2.5 && g.y > 0) return "portrait-primary";
+      return null;
+    };
+    const current = () => (screen.orientation && screen.orientation.type) || "";
+    const make = () => {
+      button = document.createElement("button");
+      button.textContent = "\u27F3";
+      button.setAttribute("aria-label", "Rotate the screen");
+      Object.assign(button.style, {position:"fixed", right:"18px", bottom:"18px", width:"52px", height:"52px",
+        borderRadius:"26px", border:"2px solid rgba(255,248,230,0.7)", background:"rgba(16,20,30,0.6)",
+        color:"#fff8e6", fontSize:"30px", lineHeight:"46px", padding:"0", zIndex:"10", display:"none"});
+      button.addEventListener("click", e => {
+        e.stopPropagation();
+        if (held && screen.orientation && screen.orientation.lock) screen.orientation.lock(held).catch(() => {});
+        button.style.display = "none";
+      });
+      document.body.appendChild(button);
+    };
+    window.addEventListener("devicemotion", e => {
+      const g = e.accelerationIncludingGravity;
+      if (!g || g.x == null || !document.fullscreenElement) { if (button) button.style.display = "none"; return; }
+      const p = physical(g), now = performance.now();
+      if (p !== held) { held = p; since = now; }
+      const differs = held && held.split("-")[0] !== current().split("-")[0];
+      if (!button) make();
+      if (differs && now - since > 600 && button.style.display === "none") { button.style.display = "block"; hideAt = now + 5000; }
+      if ((!differs || now > hideAt) && button.style.display !== "none") button.style.display = "none";
+    });
+  }
   const proto = WebGL2RenderingContext.prototype;
   const shaderSource = proto.shaderSource, linkProgram = proto.linkProgram, uniformLocation = proto.getUniformLocation;
   proto.shaderSource = function (shader, source) {

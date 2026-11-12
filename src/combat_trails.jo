@@ -1,0 +1,114 @@
+# Persistent exhaust and turn trails. A bounded ribbon history, independent of simulation RNG.
+# Even a distant disabled aircraft gets a continuous trail, without a detailed model or a cloud
+# of spheres. A thirty-craft fire retains about twenty seconds on every tier; lower tiers
+# sample less often. The hard global cap evicts the oldest segments in larger engagements.
+use 'quality.jo'
+use 'render_space.jo'
+use 'look.jo'
+
+struct BattleBudget:
+    ribbons = 2400
+    particles = 900
+    sample = 0.25
+    detail = 1000.0
+
+battle_budget = (tier:int) -> BattleBudget:
+    if tier==0:return BattleBudget(960,240,0.65,450)
+    if tier==1:return BattleBudget(1600,500,0.4,750)
+    BattleBudget()
+
+struct BattleRibbon:
+    a:vec3
+    b:vec3
+    age:f64
+    life:f64
+    width:f64
+    dark:f64
+    strength:f64
+
+struct BattleTrailSource:
+    craft:int
+    point:vec3
+    wing:vec3
+    active=false
+    turning=false
+    last=0.0
+
+struct BattleTrailVertex:
+    pos:vec3
+    data:vec4
+    color:vec4
+
+struct BattleTrailOut:
+    pos:vec4
+    world:vec3
+    data:vec4
+    color:vec4
+
+struct BattleTrailParams:
+    vp:mat4
+    cam:vec3
+    haze:vec3
+    fog:f32
+    warp_a:vec4
+    warp_b:vec4
+
+battle_trail_vs = (v:BattleTrailVertex,u:BattleTrailParams) -> BattleTrailOut:
+    BattleTrailOut(u.vp*vec4(render_warped(v.pos,u.cam,u.warp_a,u.warp_b),1),v.pos,v.data,v.color)
+
+battle_trail_fs = (i:BattleTrailOut,u:BattleTrailParams) -> vec4:
+    if behind_sea(i.world,u.cam):discard()
+    # Scalloped edges and two scales of turbulence keep the ribbon from looking like a cable.
+    edge=abs(i.data.x)*(1.0+0.13*sin(i.data.y*19.0+i.data.z*2.0)+0.09*sin(i.data.y*43.0-i.data.z))
+    alpha=(1.0-smoothstep(0.25,1.0,edge))*i.color.w
+    if alpha<0.008:discard()
+    vec4(aerial(i.color.xyz,i.world,u.cam,u.haze,u.fog),alpha)
+
+struct BattleTrails:
+    ribbons:BattleRibbon[]
+    sources:BattleTrailSource[]
+    cursor=0
+    mesh:Mesh
+    shader:Shader
+
+make_battle_trails = () -> BattleTrails:
+    zero=BattleTrailVertex(vec3(0,0,0),vec4(0,0,0,0),vec4(0,0,0,0))
+    BattleTrails(mesh=mesh([zero,zero,zero]),shader=make_shader(shader(battle_trail_vs,battle_trail_fs)))
+
+push_battle_ribbon = (tr:mut BattleTrails,r:BattleRibbon,limit:int):
+    if length(r.b-r.a)<0.05 or limit<=0:return
+    if tr.ribbons.len()<limit:tr.ribbons.push(r)
+    else:
+        tr.cursor=tr.cursor%limit
+        tr.ribbons[tr.cursor]=r;tr.cursor=(tr.cursor+1)%limit
+
+step_battle_trails = (tr:mut BattleTrails,wind:vec3,dt:f64):
+    loop mut r in tr.ribbons:
+        r.age+=dt
+        if r.age>r.life:continue
+        drift=(wind*0.8+vec3(0,0.5+r.dark,0))*f32(dt)
+        r.a+=drift;r.b+=drift
+
+# Called only in a transparent custom draw pass; two triangles per history segment.
+draw_battle_trails = (tr:BattleTrails):
+    cam=scene_camera();vs:BattleTrailVertex[]
+    loop r in tr.ribbons:
+        if r.age>=r.life or length((r.a+r.b)*0.5-cam)>12000:continue
+        direction=r.b-r.a
+        side=normalize(cross(direction,(r.a+r.b)*0.5-cam)+vec3(0.0001,0,0))
+        # Impostor width: subpixel trails disappear on a phone long before the aircraft's
+        # flight path stops being useful. Keep about one pixel across at the horizon.
+        distance=f64(length((r.a+r.b)*0.5-cam))
+        width=f32(max(r.width*(1.0+r.age*0.23),distance*0.0012))
+        opacity=f32(r.strength*(1.0-smoothstep(r.life*0.45,r.life,r.age)))
+        color=mix(vec3(0.82,0.83,0.78),vec3(0.075,0.067,0.058),f32(r.dark))
+        # A stable world phase hides joins without re-rolling noise every frame.
+        a=BattleTrailVertex(r.a-side*width,vec4(-1,dot(r.a,vec3(0.08,0.13,0.08)),f32(r.age),0),vec4(color,opacity))
+        b=BattleTrailVertex(r.a+side*width,vec4(1,dot(r.a,vec3(0.08,0.13,0.08)),f32(r.age),0),vec4(color,opacity))
+        c=BattleTrailVertex(r.b-side*width,vec4(-1,dot(r.b,vec3(0.08,0.13,0.08)),f32(r.age),0),vec4(color,opacity))
+        d=BattleTrailVertex(r.b+side*width,vec4(1,dot(r.b,vec3(0.08,0.13,0.08)),f32(r.age),0),vec4(color,opacity))
+        vs.extend([a,c,b,b,c,d])
+    if vs.len()==0:return
+    m=tr.mesh
+    update_mesh(m,vs)
+    draw(tr.shader,m,BattleTrailParams(scene_view_proj(),cam,scene_fog_color(),scene_fog().x,scene_warp_a,scene_warp_b))

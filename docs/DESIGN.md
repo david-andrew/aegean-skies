@@ -234,6 +234,14 @@ Things agreed to build, roughly in the order they'll come:
 - Cargo that really exists: every box on a quay belongs to someone; a delivery's goods were already
   somewhere in the world, and someone (the sender, a hired porter, or the player) carries them to
   the aircraft; some errands are on foot, on the same island.
+- Maps as things one owns, not one convenient zoomable chart: a hodgepodge collected over the game
+  (an island's map, a group's, a country's, a sea chart of the Aegean), bought at chandlers,
+  harbour offices and booksellers, given or found, each with a diegetic title, its own coverage,
+  detail, landmarks, style and errors. The map doesn't show which way one faces: a compass is
+  carried beside it, and a compass rose is drawn on the maps that have one. (Data: Sol; drawing
+  and browsing: the coordinator.)
+- A radio in the cockpit: period music, news, weather and shipping reports, each country's
+  propaganda, reception by distance, height and hour (Astra, t3/radio).
 - Air brakes (perhaps a negative throttle); a way to lock and unlock the guns; a cockpit view.
 - Many more aircraft, especially the WWI-era seaplanes of the references.
 - A moon with phases, rising with the right phase for the sun; water green and clear as crystal in
