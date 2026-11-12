@@ -1,6 +1,7 @@
 # Painted cumulus sheets and analytic weather layers. Camera-facing paintings
 # carry procedural pigment masks; no SDF/normal shading remains for cumulus.
 use 'cloud_density.jo'
+use 'sky_air.jo'
 use 'cloud_paint.jo'
 use 'cloud_depth.jo'
 use 'look.jo'
@@ -29,6 +30,7 @@ struct VolumeInstance:
     meta: vec4                      # cos yaw, sin yaw, stamp, tone
     weather: vec2
     growth: vec4
+    air: vec3
 
 struct VolumeParams:
     rays: mat4
@@ -59,10 +61,11 @@ struct VolumeOut:
     meta: vec4
     weather: vec2
     growth: vec4
+    air: vec3
 
 volume_vs = (v: VolumeVertex, inst: VolumeInstance, u: VolumeParams) -> VolumeOut:
     ndc = mix(inst.rect.xy, inst.rect.zw, v.corner)
-    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth)
+    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air)
 
 cloud_to_local = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x + p.z * yaw.y, p.y, -p.x * yaw.y + p.z * yaw.x)
 cloud_to_world = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x - p.z * yaw.y, p.y, p.x * yaw.y + p.z * yaw.x)
@@ -171,6 +174,8 @@ paint_cloud = (i: VolumeOut,u: VolumeParams,ray: vec3) -> vec4:
     # Sampled daylight pigment ratios, modulated by the existing sun/night light.
     light = u.sun*u.paint_light
     shade = mix(u.shade*0.8,u.paint_shade,sun_height)
+    sun_visible = smoothstep(-0.045,0.015,u.sun_dir.y+sqrt(max(i.center.y,0.0)*2.0/f32(EARTH_RADIUS)))
+    low_sun = (1.0-smoothstep(0.08,0.4,u.sun_dir.y))*sun_visible
     facing = paint_facing(i.center,u.cam)
     right = paint_right(facing); up = cross(right,facing); bent = render_world(i.center,u.cam)
     # Looking down onto a cloud reveals light; looking up retains its cool foot.
@@ -188,7 +193,12 @@ paint_cloud = (i: VolumeOut,u: VolumeParams,ray: vec3) -> vec4:
         steps = smoothstep(0.48,0.88,value)
         pigment = paint.xyz*(mix(bands,value,0.8)/max(value,0.01))
         tint = mix(u.paint_shade/vec3(0.43,0.61,0.70),u.paint_light/vec3(0.78,0.84,0.84),steps)
-        pigment *= tint*mix(u.shade*1.35,u.sun*vec3(0.85,0.91,1.02),sun_height)
+        # The painted light mask remains sunlit through sunset. Previously the
+        # entire sheet crossed to purple ambient light while the Sun was visible.
+        # High crowns see the Sun briefly after it sets at sea level.
+        illumination = mix(u.shade*1.35,u.sun*vec3(0.85,0.91,1.02),sun_height)
+        illumination = mix(illumination,u.sun*vec3(1.13,0.98,0.79),low_sun*steps)
+        pigment *= tint*illumination
         pigment = mix(pigment,max(pigment,light*0.85),above*0.6)
         pigment *= 1.0-i.weather.y*(0.28+0.24*(1.0-steps))
         pigment += vec3(0.7,0.78,1)*u.lightning*i.weather.y*0.5
@@ -197,7 +207,7 @@ paint_cloud = (i: VolumeOut,u: VolumeParams,ray: vec3) -> vec4:
     # separation is small compared with the haze scale; avoid three exponentials.
     if color.w > 0.001:
         at = u.cam+ray*length(bent-u.cam); at.y += world_drop(ray.xz*length(bent-u.cam))
-        color = vec4(aerial(color.xyz/max(color.w,0.001),at,u.cam,u.haze,u.fog)*color.w,color.w)
+        color = vec4(aerial(color.xyz/max(color.w,0.001),at,u.cam,i.air,u.fog)*color.w,color.w)
     # A short analytic interior fog bridges the camera through the facing
     # sheets. It is continuous at entry and never uses the old visible SDF.
     local = (u.cam-i.center)/i.extent
@@ -495,11 +505,13 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     instances: VolumeInstance[]
     composite_low = vec2(1,1); composite_high = vec2(-1,-1)
     weather_coverage: f32 = 0.0
+    paint_coverage: f32 = 0.0
     deck_coverage: f32 = 0.0; rain_coverage: f32 = 0.0
     loop v in selected:
         rect = volume_bounds(v, cam, vp)
         if rect.x >= rect.z or rect.y >= rect.w: continue
         area = (rect.z-rect.x)*(rect.w-rect.y)*v.weather.x*0.25
+        if v.shape < 4.0: paint_coverage += area
         if v.shape >= 4.0: weather_coverage += area
         if v.shape == 4.0: deck_coverage += area
         if v.shape == 6.0: rain_coverage += area
@@ -507,7 +519,8 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         # a broad deck. Use the same weather target once it is visibly substantial.
         if v.shape == 5.0 and area > 0.03: weather_coverage = max(weather_coverage,0.31)
         composite_low = min(composite_low,rect.xy); composite_high = max(composite_high,rect.zw)
-        instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth))
+        air = sky_air_color(normalize(render_world(v.center,cam)-cam).y,cam.y,L.sun_dir.y,L.sky_top,L.sky_horizon,L.haze)
+        instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air))
     volume_visible = instances.len()
     set_instances(volume_instances, instances)
     rays = render_rays(vp)
@@ -574,7 +587,9 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     # The actual scene depth is detached and sampled read-only. Its spare
     # renderbuffer is disposable: clear to far, write 0.5 where reconstruction
     # succeeded, then render edge quads at 0.5 with LESS. Only holes pass.
-    if volume_weather_small or volume_rain_small:
+    # Large nearby paintings benefit from the same early depth rejection as
+    # weather: don't shade every overlapping full-resolution quad in clear sky.
+    if volume_weather_small or volume_rain_small or paint_coverage > 0.7:
         glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(1)
         glClear(GL_DEPTH_BUFFER_BIT)
         glColorMask(0,0,0,0)
