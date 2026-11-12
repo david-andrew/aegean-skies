@@ -39,8 +39,7 @@ they are not reachable from the audited frame roots. Combat's standalone engagem
 asserts are likewise outside the current scene bridge, which registers existing bodies.
 
 `python3 tools/check_living_guards.py` traces a conservative source call graph from traffic,
-minute rules, scene/cargo/life adapters, player commands and talk/reply. The current graph reaches
-the reachable functions and finds only the strict-mode panic in `living_fault`. This is an approximation,
+minute rules, scene/cargo/life adapters, player commands and talk/reply. The current graph finds only the strict-mode panic in `living_fault`. This is an approximation,
 not a proof about implicit bounds checks, arbitrary callbacks, the renderer or allocation errors.
 Re-run it when adding new frame paths; do not introduce unchecked constructors below them.
 

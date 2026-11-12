@@ -1,0 +1,135 @@
+use '../src/living_money.jo'
+use '../src/living_types.jo'
+use '../src/living_map_types.jo'
+use '../src/living_maps.jo'
+use '../src/living_seed.jo'
+use '../src/living_save.jo'
+use '../src/living_checks.jo'
+use '../src/living_jobs.jo'
+use '../src/living_claims.jo'
+use '../src/living_portage.jo'
+use '../src/living_delivery.jo'
+
+find_sale = (w: World, edition: str) -> int:
+    loop offer in map_offers(w,"porto-chandler"):
+        if offer.edition == edition: return offer.copy
+    -1
+
+test "opening collection is one local paper sheet and editions have distinct coverage and layers":
+    w = build_world(); before = canonical_text(w)
+    own = owned_maps(w)
+    assert(own.len() == 1 and own[0].edition == "porto-tourist-1925")
+    assert(selected_map(w) == own[0] and canonical_text(w) == before)
+    street = map_description(w,own[0].edition); ocean = map_description(w,"aegean-general-1898")
+    assert(street != none and ocean != none)
+    assert(street!.kind == .tourist and street!.detail == 3 and street!.year == 1925)
+    assert(not (MapLayer.depth in street!.layers) and not (MapLayer.airfields in ocean!.layers))
+    assert(ocean!.detail == 0 and ocean!.accuracy_m>street!.accuracy_m)
+    assert(not map_contains(street!.bounds,vec3(100000,0,0)) and map_contains(ocean!.bounds,vec3(100000,0,0)))
+    assert(validate_save_world(w) == "")
+
+test "buying transfers one existing copy and actual cash to its seller once":
+    w = build_world(); count = w.maps.copies.len(); id = find_sale(w,"kalamos-channel-1911")
+    assert(id >= 0); source = w.maps.copies[id].source
+    from = w.people[0].account; to = w.maps.shops["porto-chandler"].account
+    a = w.accounts[from].cents; b = w.accounts[to].cents; price = w.maps.copies[id].price_cents
+    stock = stock_totals(w)
+    result = buy_map(w,id)
+    assert(result.ok and result.copy == id and result.cents == price)
+    assert(w.accounts[from].cents == a-price and w.accounts[to].cents == b+price)
+    assert(w.maps.copies.len() == count and w.maps.copies[id].source == source)
+    assert(w.maps.copies[id].person == 0 and w.maps.copies[id].holder == .person)
+    after = canonical_text(w)
+    assert(not buy_map(w,id).ok and canonical_text(w) == after)
+    assert(select_map(w,id) and selected_map(w)!.id == id)
+    assert(stock_totals(w) == stock and invariant_errors(w).len() == 0)
+
+test "remote or unaffordable purchases and selecting unowned sheets are atomic rejections":
+    w = build_world(); id = find_sale(w,"kalamos-channel-1911")
+    assert(not select_map(w,id))
+    w.people[0].pose.pos = vec3(100000,0,0)
+    before = canonical_text(w)
+    assert(map_offers(w,"porto-chandler").len() == 0 and not buy_map(w,id).ok)
+    assert(canonical_text(w) == before)
+    w.people[0].pose.pos = w.maps.shops["porto-chandler"].pos
+    # Fixture prices cannot be financed by silently creating money.
+    w.maps.copies[id].price_cents = w.accounts[w.people[0].account].cents+1
+    before = canonical_text(w)
+    assert(not buy_map(w,id).ok and canonical_text(w) == before)
+
+test "found and given maps retain the same article and cannot be duplicated":
+    w = build_world(); id = -1
+    loop key, c in w.maps.copies:
+        if c.holder == .cache: id = key
+    assert(id >= 0 and not find_map(w,id).ok)
+    w.people[0].pose.pos = w.maps.copies[id].pos
+    assert(nearby_map_finds(w).len() == 1)
+    count = w.maps.issued; source = w.maps.copies[id].source
+    assert(find_map(w,id).ok and not find_map(w,id).ok)
+    w.people[7].pose.pos = w.people[0].pose.pos
+    assert(select_map(w,id) and give_map(w,id,0,7))
+    assert(selected_map(w) == none and not give_map(w,id,0,7))
+    assert(w.maps.issued == count and w.maps.copies[id].source == source and w.maps.copies[id].person == 7)
+    assert(validate_save_world(w) == "")
+
+test "an actual foot errand earns a reserved existing map collected from its grantor":
+    w = build_world(); id = find_sale(w,"island:2:1923"); assert(id >= 0)
+    drop = w.cargo_harbors[0].warehouse+vec3(5,0,0)
+    job = post_job(w,1,0,.commodity,3,100,40,300,delivery_mode=.foot,dropoff=drop)
+    assert(job >= 0 and offer_map_reward(w,job,id,1))
+    before = canonical_text(w)
+    assert(not buy_map(w,id).ok and not claim_map_reward(w,job).ok and canonical_text(w) == before)
+    count = w.maps.issued; root = w.maps.copies[id].source
+    assert(take_job(w,job,0,.player))
+    lot = w.jobs[job].cargo_ids[0]
+    cargo_person_pose(w,0,w.cargo[lot].pos); assert(cargo_pick_up(w,0,lot))
+    cargo_person_pose(w,0,drop); assert(cargo_put_down(w,0) and deliver_job(w,job,0))
+    assert(claim_map_reward(w,job).ok and not claim_map_reward(w,job).ok)
+    assert(w.maps.copies[id].acquisition == .reward and w.maps.copies[id].source == root and w.maps.issued == count)
+    assert(invariant_errors(w).len() == 0 and validate_save_world(w) == "")
+
+test "cancelled work releases its sheet and unrelated completion gives no reward":
+    w = build_world(); id = w.maps.rewards[3]
+    assert(not claim_map_reward(w,4).ok)
+    assert(expire_job(w,3,true)); map_rewards_minute(w)
+    assert(not (3 in w.maps.rewards) and w.maps.copies[id].reserved_job == -1)
+    assert(validate_save_world(w) == "")
+
+test "old editions omit and misplace marks and never acquire absent layers":
+    w = build_world(); edition = "kalamos-channel-1911"
+    pier = w.harbors[0].docks[2]
+    assert(not map_feature(w,edition,.moorings,"mooring:0:2",pier).visible)
+    p = w.harbors[1].docks[0]; m = w.maps.editions[edition]
+    mark = map_feature(w,edition,.moorings,"mooring:1:0",p,"Kalamos quay")
+    expected = map_position(m,p)+vec3(130,0,-45)
+    assert(mark.visible and length(mark.position-expected)<0.01)
+    assert(map_extra_marks(w,edition,.hazards).len() == 1)
+    assert(not map_feature(w,"porto-tourist-1925",.depth,"depth:test",pier).visible)
+    assert(not map_feature(w,"aegean-general-1898",.towns,"town:0",pier,town_size=20).visible)
+    assert(not map_feature(w,"porto-tourist-1925",.towns,"town:far",vec3(150000,0,0)).visible)
+
+test "collection stock errors rewards and selection survive canonical saves deterministically":
+    a = build_world(u64(42)); b = build_world(u64(42))
+    assert(canonical_text(a) == canonical_text(b))
+    id = find_sale(a,"kalamos-channel-1911")
+    assert(buy_map(a,id).ok and select_map(a,id))
+    text = canonical_text(a); restored = from_text[World](text); assert(restored is World)
+    assert(validate_save_world(restored) == "" and canonical_text(restored) == text)
+    assert(owned_maps(restored) == owned_maps(a) and selected_map(restored) == selected_map(a))
+    assert(map_feature(restored,"kalamos-channel-1911",.moorings,"mooring:1:0",a.harbors[1].docks[0]) == map_feature(a,"kalamos-channel-1911",.moorings,"mooring:1:0",a.harbors[1].docks[0]))
+    corrupt = a; corrupt.maps.copies[id].holder = .shop
+    assert(validate_maps(corrupt) != "")
+
+test "a printed edition does not learn moved renamed or newly added world features":
+    w = build_world(); edition = "kalamos-channel-1911"; key = "mooring:1:0"
+    recorded = w.maps.features[key]
+    before = map_feature(w,edition,.moorings,key,recorded.position,recorded.label)
+    after = map_feature(w,edition,.moorings,key,vec3(150000,0,0),"A new quay with a different name")
+    assert(before == after)
+    key = "mooring:1:new"
+    w.maps.features[key] = MapFeature(key,.moorings,w.harbors[1].center,"A newly built pier")
+    map_snapshot_features(w,edition) # publication is one-time, not an implicit update
+    assert(not map_feature(w,edition,.moorings,key,w.harbors[1].center).visible)
+    marks = map_features(w,edition,.moorings)
+    loop mark in marks: assert(mark.key != "mooring:0:2" and mark.key != key)
+    assert(map_features(w,edition,.hazards).len() == 1 and validate_save_world(w) == "")

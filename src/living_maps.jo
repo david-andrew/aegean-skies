@@ -1,0 +1,274 @@
+# Saved article ownership and cash transactions. Chart drawing/browsing belongs to the UI.
+use 'living_types.jo'
+use 'living_map_types.jo'
+use 'living_money.jo'
+
+map_bounds_valid = (b: MapBounds) -> bool:
+    is_finite(b.west) and is_finite(b.east) and is_finite(b.north) and is_finite(b.south) and b.east>b.west and b.south>b.north
+
+map_contains = (b: MapBounds, at: vec3) -> bool:
+    f64(at.x)>=b.west and f64(at.x)<=b.east and f64(at.z)>=b.north and f64(at.z)<=b.south
+
+map_segment_intersects = (b: MapBounds, a: vec3, c: vec3) -> bool:
+    first = 0.0; last = 1.0
+    loop start, stop, lo, hi in [(f64(a.x),f64(c.x),b.west,b.east),(f64(a.z),f64(c.z),b.north,b.south)]:
+        delta = stop-start
+        if abs(delta)<0.000001:
+            if start<lo or start>hi: return false
+        else:
+            t0 = (lo-start)/delta; t1 = (hi-start)/delta
+            first = max(first,min(t0,t1)); last = min(last,max(t0,t1))
+            if first>last: return false
+    true
+
+map_survey_intersects = (b: MapBounds, feature: MapFeature) -> bool:
+    if map_contains(b,feature.position): return true
+    loop i in 0..feature.points.len()-1:
+        if map_segment_intersects(b,feature.points[i],feature.points[i+1]): return true
+    false
+
+map_description = (w: World, edition: str) -> PaperMap?:
+    if edition in w.maps.editions: w.maps.editions[edition] else: none
+
+map_layers = (w: World, edition: str) -> MapLayer[]:
+    if edition in w.maps.editions: w.maps.editions[edition].layers else: []
+
+owned_maps = (w: World, person: int = 0) -> MapCopy[]:
+    result = [loop _, copy in w.maps.copies: if copy.holder == .person and copy.person == person: copy]
+    result.sort_by((c: MapCopy): (c.acquired_minute,c.id))
+    result
+
+selected_map = (w: World, person: int = 0) -> MapCopy?:
+    id = w.maps.selected.get(person,-1)
+    if id in w.maps.copies and w.maps.copies[id].holder == .person and w.maps.copies[id].person == person: w.maps.copies[id] else: none
+
+select_map = (w: mut World, copy: int, person: int = 0) -> bool:
+    if not (copy in w.maps.copies) or w.maps.copies[copy].holder != .person or w.maps.copies[copy].person != person: return false
+    w.maps.selected[person] = copy
+    true
+
+# Physical proximity is authoritative, including shops outside the old six economic place slots.
+# An aircraft passing overhead is not a customer: the actor must be out of an active journey.
+map_customer_near = (w: World, person: int, position: vec3, radius: f64 = 80.0) -> bool:
+    person >= 0 and person < w.people.len() and w.people[person].trip < 0 and w.people[person].state != .traveling and f64(length(w.people[person].pose.pos-position))<=radius
+
+map_sellers = (w: World, person: int = 0) -> MapShop[]:
+    result = [loop _, shop in w.maps.shops: if map_customer_near(w,person,shop.pos): shop]
+    result.sort_by((shop: MapShop): shop.id)
+    result
+
+map_offers = (w: World, shop: str, person: int = 0) -> MapOffer[]:
+    if not (shop in w.maps.shops) or not map_customer_near(w,person,w.maps.shops[shop].pos): return []
+    result: MapOffer[]
+    loop id, copy in w.maps.copies:
+        if copy.holder != .shop or copy.shop != shop or copy.reserved_job >= 0: continue
+        m = w.maps.editions[copy.edition]
+        result.push(MapOffer(id,m.id,m.title,copy.price_cents,shop,w.accounts[w.people[person].account].cents>=copy.price_cents))
+    result.sort_by((o: MapOffer): (o.edition,o.copy))
+    result
+
+map_record_transfer = (w: mut World, copy: int, previous: MapHolder, giver: int, receiver: int, kind: MapAcquisition, cents: int = 0, job: int = -1):
+    serial = w.maps.next_transfer; w.maps.next_transfer += 1
+    w.maps.copies[copy].last_transfer = serial
+    w.maps.transfers.push(MapTransfer(serial,copy,w.minute,previous,w.maps.copies[copy].holder,giver,receiver,kind,cents,job))
+    if w.maps.transfers.len()>128: w.maps.transfers.remove_at(0)
+
+map_to_person = (w: mut World, copy: int, person: int, kind: MapAcquisition):
+    w.maps.copies[copy].holder = .person; w.maps.copies[copy].person = person
+    w.maps.copies[copy].shop = ""; w.maps.copies[copy].place = -1
+    w.maps.copies[copy].pos = vec3(0,0,0); w.maps.copies[copy].acquisition = kind
+    w.maps.copies[copy].acquired_minute = w.minute; w.maps.copies[copy].reserved_job = -1
+    if selected_map(w,person) == none: w.maps.selected[person] = copy
+
+buy_map = (w: mut World, copy: int, person: int = 0) -> MapTradeResult:
+    if not (copy in w.maps.copies): return MapTradeResult(false,"That sheet isn't in stock.")
+    c = w.maps.copies[copy]
+    if c.holder != .shop or not (c.shop in w.maps.shops) or c.reserved_job >= 0: return MapTradeResult(false,"That sheet isn't for sale.")
+    shop = w.maps.shops[c.shop]
+    if not map_customer_near(w,person,shop.pos): return MapTradeResult(false,"Visit the seller to collect the paper map.")
+    account = w.people[person].account
+    if c.price_cents <= 0 or not transfer(w,account,shop.account,c.price_cents,.trade,copy): return MapTradeResult(false,"You haven't the money for that edition.")
+    map_to_person(w,copy,person,.purchase)
+    map_record_transfer(w,copy,.shop,shop.person,person,.purchase,c.price_cents)
+    MapTradeResult(true,"Bought {w.maps.editions[c.edition].title}.",copy,c.price_cents)
+
+give_map = (w: mut World, copy: int, giver: int, receiver: int) -> bool:
+    if not (copy in w.maps.copies) or giver < 0 or giver >= w.people.len() or receiver < 0 or receiver >= w.people.len() or giver == receiver: return false
+    c = w.maps.copies[copy]
+    if c.holder != .person or c.person != giver or not map_customer_near(w,receiver,w.people[giver].pose.pos,8.0) or w.people[giver].trip >= 0: return false
+    map_to_person(w,copy,receiver,.gift)
+    if w.maps.selected.get(giver,-1) == copy: w.maps.selected.remove(giver)
+    map_record_transfer(w,copy,.person,giver,receiver,.gift)
+    true
+
+nearby_map_finds = (w: World, person: int = 0) -> MapCopy[]:
+    result = [loop _, copy in w.maps.copies: if copy.holder == .cache and map_customer_near(w,person,copy.pos,3.0): copy]
+    result.sort_by((c: MapCopy): c.id)
+    result
+
+find_map = (w: mut World, copy: int, person: int = 0) -> MapTradeResult:
+    if not (copy in w.maps.copies) or w.maps.copies[copy].holder != .cache: return MapTradeResult(false,"There is no loose map here.")
+    c = w.maps.copies[copy]
+    if not map_customer_near(w,person,c.pos,3.0): return MapTradeResult(false,"Come close enough to pick up the paper.")
+    map_to_person(w,copy,person,.found)
+    map_record_transfer(w,copy,.cache,-1,person,.found)
+    MapTradeResult(true,"Found {w.maps.editions[c.edition].title}.",copy)
+
+# A reward is reserved from an actual existing stock copy before agreement. It cannot be sold
+# as well, and completing an arbitrary unrelated job confers no right to a seller's maps.
+offer_map_reward = (w: mut World, job: int, copy: int, grantor: int) -> bool:
+    if not (job in w.jobs) or not (copy in w.maps.copies) or job in w.maps.rewards: return false
+    j = w.jobs[job]; c = w.maps.copies[copy]
+    if j.poster != grantor or (j.state != .open and j.state != .claimed) or c.reserved_job >= 0 or c.holder != .shop or not (c.shop in w.maps.shops): return false
+    shop = w.maps.shops[c.shop]
+    if shop.person != grantor or (shop.account != w.people[grantor].account and j.reward_funder != shop.account): return false
+    w.maps.copies[copy].reserved_job = job; w.maps.rewards[job] = copy
+    true
+
+claim_map_reward = (w: mut World, job: int, person: int = 0) -> MapTradeResult:
+    if not (job in w.maps.rewards) or not (job in w.jobs): return MapTradeResult(false,"No paper map was promised for that work.")
+    j = w.jobs[job]; id = w.maps.rewards[job]; c = w.maps.copies[id]
+    if j.state != .delivered or j.carrier != person: return MapTradeResult(false,"Finish the promised work before collecting the map.")
+    if c.holder != .shop or c.reserved_job != job or not (c.shop in w.maps.shops): return MapTradeResult(false,"That map reward has already changed hands.")
+    shop = w.maps.shops[c.shop]
+    if not map_customer_near(w,person,shop.pos): return MapTradeResult(false,"Return to {shop.name} to collect the paper map.")
+    map_to_person(w,id,person,.reward); w.maps.rewards.remove(job)
+    map_record_transfer(w,id,.shop,j.poster,person,.reward,job=job)
+    MapTradeResult(true,"Collected {w.maps.editions[c.edition].title}.",id)
+
+map_rewards_minute = (w: mut World):
+    if w.minute%60 != 0: return
+    keys = w.maps.rewards.keys(); keys.sort()
+    loop job in keys:
+        if job in w.jobs:
+            j = w.jobs[job]
+            if j.state == .delivered:
+                if j.carrier >= 0 and j.carrier != w.player: claim_map_reward(w,job,j.carrier)
+                continue
+            if j.state == .open or j.state == .claimed: continue
+        copy = w.maps.rewards[job]
+        w.maps.copies[copy].reserved_job = -1; w.maps.rewards.remove(job)
+
+# Smooth survey distortion for coastlines/polylines; feature-specific errors are applied below.
+map_position = (m: PaperMap, position: vec3) -> vec3:
+    center = vec2((m.bounds.west+m.bounds.east)*0.5,(m.bounds.north+m.bounds.south)*0.5)
+    delta = (position.xz-center)*f32(1.0+m.scale_error_ppm/1000000.0)
+    c = cos(m.rotation_rad); s = sin(m.rotation_rad)
+    q = vec2(f32(f64(delta.x)*c-f64(delta.y)*s),f32(f64(delta.x)*s+f64(delta.y)*c))+center+m.survey_offset
+    vec3(q.x,position.y,q.y)
+
+map_feature = (w: World, edition: str, layer: MapLayer, key: str, actual: vec3, label: str = "", town_size: int = 1000000) -> MapMark:
+    if not (edition in w.maps.editions): return MapMark(false,actual,label)
+    m = w.maps.editions[edition]
+    if not (layer in m.layers): return MapMark(false,actual,label)
+    at = actual; printed_label = label; size = town_size; intersects = map_contains(m.bounds,actual)
+    if layer != .coast and layer != .depth:
+        if not m.features_ready or not (key in m.feature_keys) or not (key in w.maps.features): return MapMark(false,actual,label)
+        surveyed = w.maps.features[key]
+        if surveyed.layer != layer: return MapMark(false,actual,label)
+        at = surveyed.position; printed_label = surveyed.label; size = surveyed.town_size
+        intersects = map_survey_intersects(m.bounds,surveyed)
+    if not intersects or (layer == .towns and size<m.minimum_town_size): return MapMark(false,at,printed_label)
+    mark = MapMark(true,map_position(m,at),printed_label)
+    loop error in m.errors:
+        if error.layer != layer or error.feature != key: continue
+        match error.kind:
+            .omitted: mark.visible = false
+            .displaced: mark.position.x += error.offset.x; mark.position.z += error.offset.y
+            .misnamed: mark.label = error.label
+            .sounding: mark.depth_m = error.depth_m
+            .phantom: mark.visible = false # Render phantom marks once, from map_extra_marks instead.
+    mark
+
+map_extra_marks = (w: World, edition: str, layer: MapLayer) -> MapMark[]:
+    if not (edition in w.maps.editions): return []
+    m = w.maps.editions[edition]
+    if not (layer in m.layers): return []
+    [loop e in m.errors: if e.kind == .phantom and e.layer == layer and map_contains(m.bounds,e.at): MapMark(true,map_position(m,e.at),e.label,e.depth_m)]
+
+validate_maps = (w: World) -> str:
+    m = w.maps
+    if m.version == 0:
+        if m.copies.len()>0 or m.editions.len()>0 or m.shops.len()>0 or m.features.len()>0 or m.selected.len()>0 or m.rewards.len()>0 or m.transfers.len()>0 or m.issued!=0 or m.next_copy!=0 or m.next_transfer!=0: return "uninitialized map articles"
+        return ""
+    if m.version != 1 or m.catalog_version < 0 or m.editions.len()>256 or m.shops.len()>128 or m.copies.len()>1024 or m.transfers.len()>128 or m.features.len()>8192: return "unsupported or unbounded paper maps"
+    loop key, feature in m.features:
+        if key != feature.key or feature.points.len()>33 or not is_finite(feature.position.x) or not is_finite(feature.position.y) or not is_finite(feature.position.z): return "invalid map survey feature"
+        loop p in feature.points:
+            if not is_finite(p.x) or not is_finite(p.y) or not is_finite(p.z): return "invalid map survey line"
+    reference_count = 0
+    loop key, edition in m.editions:
+        if key != edition.id or edition.title == "" or not map_bounds_valid(edition.bounds) or edition.year<1800 or edition.year>1926 or edition.layers.len()>9 or edition.scale<1 or edition.detail<0 or edition.detail>3 or not is_finite(edition.accuracy_m) or edition.accuracy_m<0: return "invalid paper map edition"
+        if not is_finite(edition.rotation_rad) or not is_finite(edition.scale_error_ppm): return "invalid paper map survey"
+        if not is_finite(edition.survey_offset.x) or not is_finite(edition.survey_offset.y) or edition.feature_keys.len()>8192: return "invalid map survey offset/bound"
+        reference_count += edition.feature_keys.len()
+        if reference_count>65536 or edition.errors.len()>256: return "unbounded map survey references/errors"
+        feature_seen: {str: bool}
+        loop key, present in edition.feature_keys:
+            if not present or not (key in m.features) or feature_seen.get(key,false): return "invalid map edition feature snapshot"
+            feature_seen[key] = true
+        seen: {MapLayer: bool}
+        loop layer in edition.layers:
+            if seen.get(layer,false): return "duplicate map layer"
+            seen[layer] = true
+        loop e in edition.errors:
+            if not (e.layer in edition.layers) or e.feature == "" or not is_finite(e.offset.x) or not is_finite(e.offset.y) or not is_finite(e.depth_m) or not is_finite(e.at.x) or not is_finite(e.at.y) or not is_finite(e.at.z): return "invalid paper map error"
+    loop key, shop in m.shops:
+        if key != shop.id or shop.name == "" or shop.account<0 or shop.account>=w.accounts.len() or shop.person < -1 or shop.person>=w.people.len(): return "invalid map seller"
+        if not is_finite(shop.pos.x) or not is_finite(shop.pos.y) or not is_finite(shop.pos.z): return "invalid map seller position"
+    max_id = -1; sources: {str: bool}
+    loop id, copy in m.copies:
+        max_id = max(max_id,id)
+        if id != copy.id or id<0 or not (copy.edition in m.editions) or copy.source == "" or sources.get(copy.source,false) or copy.price_cents<0: return "invalid map article/provenance"
+        sources[copy.source] = true
+        if copy.acquired_minute>w.minute or copy.last_transfer>=m.next_transfer: return "invalid map receipt date"
+        match copy.holder:
+            .person:
+                if copy.person<0 or copy.person>=w.people.len() or copy.shop!="" or copy.place!=-1 or copy.reserved_job>=0: return "map has multiple owners"
+            .shop:
+                if not (copy.shop in m.shops) or copy.person!=-1 or copy.place!=m.shops[copy.shop].place: return "map shop stock ownership"
+            .cache:
+                if copy.person!=-1 or copy.shop!="" or copy.reserved_job>=0 or not is_finite(copy.pos.x) or not is_finite(copy.pos.y) or not is_finite(copy.pos.z): return "invalid loose map"
+            .destroyed:
+                if copy.person!=-1 or copy.shop!="" or copy.reserved_job>=0: return "destroyed map still owned"
+        if copy.reserved_job>=0 and m.rewards.get(copy.reserved_job,-1)!=id: return "map reward reservation mismatch"
+    serial = -1
+    loop t in m.transfers:
+        if t.serial<=serial or t.serial>=m.next_transfer or not (t.copy in m.copies) or t.minute>w.minute or t.cents<0: return "invalid map transfer receipt"
+        serial = t.serial
+    if m.next_copy<=max_id or m.issued!=m.copies.len(): return "map article conservation/counter"
+    loop person, copy in m.selected:
+        if person<0 or person>=w.people.len() or not (copy in m.copies) or m.copies[copy].holder!=.person or m.copies[copy].person!=person: return "unowned selected map"
+    loop job, copy in m.rewards:
+        if not (job in w.jobs) or not (copy in m.copies) or m.copies[copy].reserved_job!=job or m.copies[copy].holder!=.shop: return "invalid map reward"
+    ""
+
+
+# Named features are frozen at publication. Geometry/labels supplied by a later renderer cannot
+# silently update the sheet. Coast/depth raster layers use the immutable terrain edition.
+map_snapshot_features = (w: mut World, edition: str):
+    if not (edition in w.maps.editions) or w.maps.editions[edition].features_ready: return
+    m = w.maps.editions[edition]; keys = w.maps.features.keys(); keys.sort()
+    selected: {str: bool}
+    loop key in keys:
+        feature = w.maps.features[key]
+        if not (feature.layer in m.layers): continue
+        intersects = map_survey_intersects(m.bounds,feature)
+        if intersects and (feature.layer != .towns or feature.town_size>=m.minimum_town_size): selected[key] = true
+    w.maps.editions[edition].feature_keys = selected
+    w.maps.editions[edition].features_ready = true
+
+map_features = (w: World, edition: str, layer: MapLayer) -> MapFeature[]:
+    if not (edition in w.maps.editions): return []
+    result: MapFeature[]; m = w.maps.editions[edition]
+    loop key, _ in m.feature_keys:
+        f = w.maps.features[key]
+        if f.layer != layer: continue
+        mark = map_feature(w,edition,layer,key,f.position,f.label,f.town_size)
+        if not mark.visible: continue
+        f.position = mark.position; f.label = mark.label; f.depth_m = mark.depth_m
+        f.points = [loop p in f.points: map_position(m,p)]
+        result.push(f)
+    loop e in m.errors:
+        if e.layer == layer and e.kind == .phantom and layer in m.layers: result.push(MapFeature(e.feature,layer,map_position(m,e.at),e.label,depth_m=e.depth_m))
+    result
