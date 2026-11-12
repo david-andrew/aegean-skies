@@ -60,6 +60,12 @@ _far_depart = (w: mut World, vehicle: int) -> bool:
     if not supplied:
         motive=if destination==v.home: "return home" else: "seek grain listed in the counter's carried quote, dated {work_date(v.buying_order!.minute)}"
         ration_note=" After {v.hungry_days} hungry days, the crew chose to {motive} on {f64(w.far.vehicles[vehicle].provisions.qty[3])/1000.0:.2} packages of actual remaining grain; a full crossing ration was unavailable."
+    if not survey:
+        # The paid ration purchase can consume the same local grain considered above.
+        # Recheck the real sale surplus before withdrawing or invoicing that cargo.
+        reserve=max(1000,origin.target[best_good]/3)
+        best_qty=min(best_qty,max(0,far_market_qty(w,v.place,best_good)-reserve))
+        if best_qty<100: return false
     batch = if survey: FarStock() else: far_take_market(w,v.place,best_good,best_qty)
     if not far_market_accepts(w,destination,batch):
         far_put_market(w,v.place,batch); return false
@@ -227,21 +233,46 @@ far_transport_views = (w: World, observer: vec3, radius: f64 = 6000.0) -> FarTra
         result.push(FarTransportView(v.id,v.kind,j.origin,j.destination,v.pos,v.velocity,j.good,j.quantity,reason))
     result
 
-# Provisioning/consumption follows the crew, including during a multi-day crossing.
+# Provisioning/consumption follows all the actual people aboard, including rescues.
+far_aboard_count = (w: World, vehicle: int) -> int:
+    v=w.far.vehicles[vehicle]; people=v.crew[0]+v.crew[1]+v.crew[2]+v.passengers.len()
+    if v.journey>=0:
+        loop n in w.far.journeys[v.journey].refugees: people+=n
+    loop _, s in w.war.survivors:
+        if s.riding_vehicle==vehicle:
+            loop n in s.passengers: people+=n
+    people
+
+# Count meal boundaries on the actual next leg, including a meal still due today.
+# The usual two-day safety reserve is desirable; it is not a departure permit when
+# the existing owned rations already cover this short crossing.
+far_leg_rations = (w: World, vehicle: int) -> int:
+    v=w.far.vehicles[vehicle]; link=w.far.links[v.route]
+    minutes=(link.length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    first=max(day_index(w.minute),v.last_meal_day+1)
+    meals=max(1,day_index(w.minute+minutes)-first+1)
+    far_aboard_count(w,vehicle)*28*meals
+
 far_provision = (w: mut World, vehicle: int, partial: bool = false) -> bool:
-    v = w.far.vehicles[vehicle]; crew = 0
-    loop n in v.crew: crew += n
-    days = max(1,(w.far.links[v.route].length_mm/v.speed_mm_sec/2+1439)/1440)+2
-    wanted = max(0,crew*28*days-v.provisions.qty[3])
+    v = w.far.vehicles[vehicle]; crew=far_aboard_count(w,vehicle)
+    minutes=(w.far.links[v.route].length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    days=max(1,(minutes+1439)/1440)+2
+    minimum=far_leg_rations(w,vehicle)
+    wanted = max(0,max(minimum,crew*28*days)-v.provisions.qty[3])
     if wanted==0: return true
     d = w.far.districts[v.place]
-    if partial: wanted=min(wanted,min(far_market_qty(w,v.place,3),w.accounts[v.account].cents*1000/max(1,d.prices[3])))
-    if wanted<=0: return false
+    available=min(far_market_qty(w,v.place,3),w.accounts[v.account].cents*1000/max(1,d.prices[3]))
+    wanted=min(wanted,available)
+    # Refusing a preferred refill must not strand a sufficiently provisioned crew.
+    # Ordinary departures still refuse an underfed leg; emergency callers explicitly
+    # accept that risk and continue consuming only their real purchased provisions.
+    if not partial and v.provisions.qty[3]+wanted<minimum: return false
+    if wanted<=0: return v.provisions.qty[3]>=minimum
     cents = max(1,(wanted*d.prices[3]+999)/1000)
     if far_market_qty(w,v.place,3)<wanted or w.accounts[v.account].cents<cents: return false
     batch = far_take_market(w,v.place,3,wanted)
     if not far_stock_fits(v.provisions,batch):
-        far_put_market(w,v.place,batch); return false
+        far_put_market(w,v.place,batch); return v.provisions.qty[3]>=minimum
     if not transfer(w,v.account,d.market_account,cents,.trade,vehicle):
         far_put_market(w,v.place,batch); return false
     if not far_stock_add(w.far.vehicles[vehicle].provisions,batch): living_fault("far.provision_partition",guard_context(w)+" vehicle={vehicle}")
@@ -251,14 +282,7 @@ far_crew_meals = (w: mut World):
     loop vehicle in 0..w.far.vehicles.len():
         v = w.far.vehicles[vehicle]
         if v.last_meal_day==day_index(w.minute): continue
-        crew = 0
-        loop n in v.crew: crew += n
-        if v.journey>=0:
-            loop n in w.far.journeys[v.journey].refugees: crew+=n
-        crew+=v.passengers.len()
-        loop _, s in w.war.survivors:
-            if s.riding_vehicle==vehicle:
-                loop n in s.passengers: crew+=n
+        crew=far_aboard_count(w,vehicle)
         wanted = crew*28; qty = min(wanted,v.provisions.qty[3])
         if qty>0:
             batch = far_stock_take(w.far.vehicles[vehicle].provisions,w.cargo_sources,3,qty)

@@ -82,6 +82,13 @@ combat. After two actual hungry days, merchants may likewise attempt home or see
 still-current carried quote, recording the risk and continuing to consume their finite rations.
 A finite charter ends through actual return and demobilization.
 
+Provisioning prefers a two-day reserve beyond the next leg, but requires only the actual meals
+through arrival (including one still due today). Failure to refill that preferred reserve does
+not strand a crew already carrying enough owned food. A smaller paid purchase may cover the
+leg; an ordinary underfed departure still refuses. Rescued people count in those meals. Cargo
+selection rechecks the remaining sale surplus after a grain ration purchase, so an earlier quote
+cannot withdraw or invoice that same grain again.
+
 Blockades require an actual supplied hull at the lane mouth. Privateers need paid, dated letters;
 boarding transfers a finite part of an existing enemy-owned load. The prize rides home before a
 funded local sale and treasury share. A convoy binds an actual merchant voyage and a paid nearby
