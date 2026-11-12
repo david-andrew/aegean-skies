@@ -1,0 +1,86 @@
+use '../src/air_pilot.jo'
+use '../src/flight.jo'
+use '../src/tweaks.jo'
+use '../src/planes.jo'
+
+test "wind runway is stable aligned and rejects dry flare corridors":
+    sea = (x: f64, z: f64) -> f64: -20.0
+    runway = air_runway(vec3(0, 0, 0), vec3(0, 0, -1), vec3(8, 0, 0), sea)
+    assert(runway.valid and dot(heading_vector(runway.heading), vec3(-1, 0, 0)) > 0.99)
+    assert(not air_runway(vec3(0, 0, 0), vec3(0, 0, -1), vec3(8, 0, 0), (x: f64, z: f64) -> f64: 500.0).valid)
+    land = (x: f64, z: f64) -> f64: if z > 0: 80.0 else: -20.0
+    runway = air_runway(vec3(0, 0, 0), vec3(0, 0, -1), vec3(0, 0, -8), land)
+    assert(runway.valid)
+    loop i in 0..11:
+        p = runway.touchdown + heading_vector(runway.heading) * f32(-500 + i * 100)
+        assert(land(p.x, p.z) < 0)
+
+test "head-on pilots both turn right with ample swept separation":
+    set_speed_scale(1)
+    spec = craft_spec(.gull, [])
+    a = CraftState(position = vec3(0, 300, 500), velocity = vec3(0, 0, -60), fuel = 100)
+    b = CraftState(position = vec3(0, 300, -500), velocity = vec3(0, 0, 60), orientation = quat_euler(0, PI, 0), fuel = 100)
+    am = AirMind(); bm = AirMind(); closest = 1000.0
+    loop tick in 0..600:
+        contacts = [AirContact(1, a.position, a.velocity), AirContact(2, b.position, b.velocity)]
+        air_think(am, AirProfile(), 1, 0, a, spec, vec3(0, 300, -5000), contacts, [], -1, tick, FlightEnv())
+        air_think(bm, AirProfile(), 2, 1, b, spec, vec3(0, 300, 5000), contacts, [], -1, tick, FlightEnv())
+        ca = air_social_controls(am, AirProfile(), 1, a, spec, FlightEnv(), tick)
+        cb = air_social_controls(bm, AirProfile(), 2, b, spec, FlightEnv(), tick)
+        step(spec, a, ca, FlightEnv(), 1.0 / 60.0); step(spec, b, cb, FlightEnv(), 1.0 / 60.0)
+        closest = min(closest, f64(length(a.position - b.position)))
+    print("head-on minimum separation {closest:.1} m")
+    assert(closest > 50 and not a.crashed and not b.crashed)
+
+test "formation has stable lead and greeting never replaces avoidance":
+    set_speed_scale(1); k = craft_spec(.gull, [])
+    s = CraftState(position = vec3(0, 300, 0), velocity = vec3(0, 0, -60))
+    peers = [AirContact(4, vec3(0, 300, -500), s.velocity, 2), AirContact(2, vec3(200, 300, -600), s.velocity, 2), AirContact(0, vec3(300, 300, 0), s.velocity)]
+    a = AirMind(); b = AirMind()
+    air_think(a, AirProfile(), 8, 2, s, k, vec3(0, 300, -5000), peers, [], 0, 0, FlightEnv())
+    peers.reverse()
+    air_think(b, AirProfile(), 8, 2, s, k, vec3(0, 300, -5000), peers, [], 0, 0, FlightEnv())
+    assert(a == b and a.leader == 2 and a.greeted == 0)
+    peers = [AirContact(0, vec3(0, 300, -300), vec3(0, 0, 60))]
+    air_think(a, AirProfile(), 8, 2, s, k, vec3(0, 300, -5000), peers, [], 0, 12, FlightEnv())
+    assert(a.avoiding and a.leader < 0)
+
+test "water traffic yields to parked aircraft and coast following stays offshore":
+    k = craft_spec(.gull, []); s = CraftState(position = vec3(0, 2, 0), velocity = vec3(0, 0, -4), on_water = true)
+    mind = AirMind()
+    air_think(mind, AirProfile(), 2, 0, s, k, vec3(0, 0, -500), [AirContact(1, vec3(0, 2, -20), vec3(0, 0, 0), wet = true, parked = true)], [], -1, 0, FlightEnv())
+    assert(mind.yield_water)
+    s.on_water = false; s.position.y = 300; s.velocity = vec3(0, 0, -60)
+    e = FlightEnv(ground = (x: f64, z: f64) -> f64: if x < -200: 60.0 else: -20.0)
+    air_think(mind, AirProfile(), 2, 0, s, k, vec3(0, 300, -5000), [], [], -1, 12, e)
+    assert(mind.manner == .coast and mind.aim.x > 0)
+
+test "curious pilot circles a real ship once without stealing a courier's route":
+    k = craft_spec(.gull, []); s = CraftState(position = vec3(0, 300, 600), velocity = vec3(0, 0, -60))
+    ships = [AirShip(17, vec3(0, 0, 0))]; p = AirProfile(curious = true); m = AirMind()
+    air_think(m, p, 1, 0, s, k, vec3(0, 300, -5000), [], ships, -1, 0, FlightEnv())
+    assert(m.manner == .circling and m.orbit_ship == 17 and m.orbited)
+    air_think(m, p, 1, 0, s, k, vec3(0, 300, -5000), [], ships, -1, m.orbit_until + 1, FlightEnv())
+    assert(m.manner == .route)
+    m = AirMind(); p.curious = false
+    air_think(m, p, 1, 0, s, k, vec3(0, 300, -5000), [], ships, -1, 0, FlightEnv())
+    assert(m.manner == .route)
+
+
+test "inertial NPC pilots climb turn approach and moor at game travel speed":
+    set_speed_scale(3.3); set_tweaks(Tweaks(chaotic_stalls = true))
+    loop kind in [Craft.gull, Craft.heron, Craft.corsair, Craft.falco]:
+        model = build_craft(kind, LIVERIES[0]); spec = craft_spec(kind, model.contacts)
+        state = water_start(spec, vec3(0, 0, 0), 0)
+        state.fuel = 100
+        plan = FlightPlan(target = vec3(0, 0, -6000), taxi_target = vec3(0, 0, -6500), altitude = 240, takeoff_heading = 0, landing_heading = 0, speed = spec.stall_speed * 1.6)
+        e = FlightEnv(wind = vec3(1, 0, 3))
+        loop tick in 0..60 * 900:
+            c = air_autopilot(spec, state, plan, e)
+            step(spec, state, air_stabilize(spec, state, e, c), e, 1.0 / 60.0)
+            if kind == .falco and (tick % 600 == 0 or (tick >= 6000 and tick < 6600 and tick % 60 == 0)) and env("AIR_TRACE") != none:
+                print("falco tick={tick} phase={plan.phase} p={state.position} v={length(state.velocity):.1} wet={state.on_water} fuel={state.fuel:.1} f={forward(state)} up={quat_rotate(state.orientation,vec3(0,1,0))} sep={state.wing_separation} c={c.pitch:.2},{c.roll:.2},{c.yaw:.2}")
+            if state.moored or state.crashed: break
+        print("inertial pilot kind={kind} phase={plan.phase} pos={state.position} damage={state.hull_damage} fuel={state.fuel}")
+        assert(state.moored and not state.crashed and state.hull_damage < 0.01)
+    set_tweaks(Tweaks()); set_speed_scale(1)

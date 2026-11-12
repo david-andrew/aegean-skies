@@ -1,0 +1,89 @@
+# Aircraft registration and fuel transactions for sparse-harbor callers (races/trade/war).
+# The core body's ID and tank are authoritative; these tables contain only home/berth metadata.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_people.jo'
+use 'living_far_stock.jo'
+use 'living_commissions.jo'
+use 'living_money.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+
+reserve_far_berth = (w: mut World, craft: int, place: int) -> int:
+    if craft<0 or craft>=w.aircraft.len() or not (place in w.far.harbors): return -1
+    if craft in w.far.air_berths:
+        old=w.far.air_berths[craft]
+        if old.place==place and old.dock>=0 and old.dock<w.far.harbors[place].docks.len(): return old.dock
+    h=w.far.harbors[place]
+    loop k in 0..h.docks.len():
+        free=true
+        loop other, b in w.far.air_berths:
+            if other!=craft and b.place==place and b.dock==k: free=false
+        loop c in w.aircraft:
+            if c.id!=craft and c.state==.moored and length(c.pose.pos-h.docks[k])<20: free=false
+        if free:
+            w.far.air_berths[craft]=FarBerth(place,k)
+            return k
+    -1
+
+release_far_berth = (w: mut World, craft: int):
+    w.far.air_berths.remove(craft)
+
+_register_far_aircraft = (w: mut World, place: int, kind: Airframe, funder: int, key: str) -> AircraftRegistration:
+    if key in w.far.air_registrations:
+        id=w.far.air_registrations[key]
+        if id<8 or id>=w.aircraft.len():
+            living_fault("far.aircraft_registration_reference",guard_context(w)+" key={key} craft={id}")
+            return AircraftRegistration(error="Invalid saved aircraft registration.")
+        return AircraftRegistration(w.aircraft[id].owner,id)
+    if not w.far.populated or not (place in w.far.districts) or not (place in w.far.harbors) or key=="" or key.len()>160 or not account_valid(w,funder) or w.aircraft.len()>=64 or int(kind)<0 or int(kind)>=AIRFRAMES.len(): return AircraftRegistration(error="No valid funded aircraft registration at this harbor.")
+    d=w.far.districts[place]; price=AIRFRAMES[int(kind)].price_cents
+    parts=2000
+    if funder==d.market_account or w.accounts[funder].cents<price or far_market_qty(w,place,5)<parts: return AircraftRegistration(error="The sponsor needs the purchase price and the local yard needs two packages of parts.")
+    pilots=0
+    loop id in d.named:
+        if w.far.people[id].role==.pilot: pilots+=1
+    if pilots>=2 or d.workers[d.born_country]<=0: return AircraftRegistration(error="No unassigned pilot cohort slot remains here.")
+    free= -1
+    loop k in 0..w.far.harbors[place].docks.len():
+        used=false
+        loop _, b in w.far.air_berths:
+            if b.place==place and b.dock==k: used=true
+        if not used and free<0: free=k
+    if free<0: return AircraftRegistration(error="The harbor has no unreserved aircraft berth.")
+    person=promote_far_person(w,place,.pilot)
+    if person<0: return AircraftRegistration(error="No pilot could be registered.")
+    if not transfer(w,funder,d.market_account,price,.trade,person):
+        living_fault("far.aircraft_purchase",guard_context(w)+" place={place}"); return AircraftRegistration(error="Purchase refused.")
+    batch=far_take_market(w,place,5,parts); far_use(w,batch)
+    id=w.aircraft.len(); pos=w.far.harbors[place].docks[free]
+    w.aircraft.push(AircraftRecord(id=id,kind=kind,owner=person,fuel_ml=0,pose=Pose(pos=pos),model_index=int(kind)))
+    w.people[person].craft=id; w.people[person].pose.pos=w.far.harbors[place].quays[free]
+    w.far.air_homes[id]=place; w.far.air_berths[id]=FarBerth(place,free)
+    w.far.air_registrations[key]=id
+    AircraftRegistration(person,id)
+
+register_far_aircraft = (w: mut World, place: int, kind: Airframe, funder: int, key: str) -> AircraftRegistration:
+    if guard_blocked(): return AircraftRegistration(error="The living transaction is blocked.")
+    scope=guard_begin(w)
+    result=_register_far_aircraft(w,place,kind,funder,key)
+    failed=guard_failed(scope); guard_finish(w,scope)
+    if failed: AircraftRegistration(error="Aircraft registration rolled back.") else: result
+
+fill_far_tank = (w: mut World, craft: int, place: int, wanted_ml: int, payer: int = -1) -> int:
+    if craft<0 or craft>=w.aircraft.len() or not (place in w.far.districts) or wanted_ml<=0 or far_mooring(w,craft,place)<0: return 0
+    c=w.aircraft[craft]; d=w.far.districts[place]
+    account=if payer>=0: payer else: w.people[c.owner].account
+    if not account_valid(w,account) or account==d.market_account: return 0
+    qty=min(wanted_ml/10,min((AIRFRAMES[int(c.kind)].tank_ml-c.fuel_ml)/10,far_market_qty(w,place,4)))
+    quote=max(1,d.prices[4]); qty=min(qty,w.accounts[account].cents*1000/quote)
+    if qty<=0: return 0
+    cost=max(1,(qty*quote+999)/1000)
+    if w.accounts[account].cents<cost: return 0
+    scope=guard_begin(w)
+    if not transfer(w,account,d.market_account,cost,.fuel,craft):
+        guard_finish(w,scope); return 0
+    batch=far_take_market(w,place,4,qty); far_use(w,batch,tank=true)
+    w.aircraft[craft].fuel_ml+=qty*10
+    failed=guard_failed(scope); guard_finish(w,scope)
+    if failed: 0 else: qty*10

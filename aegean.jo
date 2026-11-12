@@ -43,6 +43,11 @@ import 'src/radio_content.jo' as broadcast
 use 'src/flight.jo'
 use 'src/pilot.jo'
 use 'src/traffic.jo'
+use 'src/air_view.jo'
+use 'src/air_events.jo'
+use 'src/air_race.jo'
+use 'src/air_meet_view.jo'
+use 'src/air_pilot.jo'
 use 'src/distant.jo'
 use 'src/tweaks.jo'
 import 'src/living_guard.jo' as living_validation
@@ -151,7 +156,13 @@ if env("TOWNS_PRINT") != none:
     loop tw in towns: print("{tw.name}: {tw.center.x:.0} {tw.center.z:.0} out {tw.out.x:.2} {tw.out.y:.2} houses {tw.houses.len()}")
 print("world built in {(time() - t0) * 1000.0:.0} ms")
 
-fonts = Fonts(load_font(embed("assets/fonts/JosefinSans-SemiBold.ttf")), load_font(embed("assets/fonts/Limelight-Regular.ttf")))
+# a font from the game's own files (they're known good: a bad one stops at once, saying so)
+_font = (bytes: u8[]) -> Font:
+    f = load_font(bytes)
+    if f is FontError: panic("font: {f}")
+    f
+
+fonts = Fonts(_font(embed("assets/fonts/JosefinSans-SemiBold.ttf")), _font(embed("assets/fonts/Limelight-Regular.ttf")))
 
 # ---------------- the player ----------------
 
@@ -287,6 +298,10 @@ deliver_here = (place: int):
 spray_ps = Particles3D(gravity = vec3(0, -9.8, 0), drag = 1.5)
 smoke_ps = Particles3D(gravity = vec3(0, 1.5, 0), drag = 2.0)
 vapor_trails = [Trail(), Trail()]
+air_visual=make_air_view()
+air_events=AirEvents()
+air_meet_view=make_air_meet_view()
+all_air_traffic=traffic
 wakes: WakeTrail[] = [loop k in 0..traffic.len() + 1: WakeTrail()]
 
 # on the main quay, beside one's own aircraft
@@ -861,6 +876,7 @@ if let attitude=env("AEGEAN_CAPTURE_ATTITUDE"):
     pc.state.velocity=quat_rotate(pc.state.orientation,vec3(0,0,-f32(length(pc.state.velocity))))
 
 update = (dt: f64):
+    global air_visual,air_events,all_air_traffic
     global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused, descent_camera, vessel_mooring, was_moored
     # (the touch screen's stick and buttons, read as keys below; mode: 0 flying, 1 on the water,
     # 2 on foot, 3 a panel open)
@@ -1194,6 +1210,8 @@ update = (dt: f64):
             result = state
             collide_vessels(vessels,spec,result,previous,craft)
             result
+        ,ships=[loop ship in vessels.ships:if ship.health>0.2:AirShip(ship.id,ship.position,ship.velocity)]
+        ,other_air=[loop p in air_events.pilots:AirContact(p.craft,p.state.position,p.state.velocity,p.capital,p.state.on_water,p.state.moored)]
     )
     receive_vessel_hits(vessels,battle,vessel_bindings)
     sync_workboat_vessels(vessels,vessel_bindings,living_world,dt)
@@ -1215,14 +1233,18 @@ update = (dt: f64):
         if k >= 0 and t-folks[k].line_t > 20.0:
             folks[k].line = passing_line(living_world,folks[k].person)
             folks[k].line_t = t
+    update_air_events(air_events,living_world,craft_models,pc.state.position,me.mode==.aboard,other_air=[loop tr in traffic:if tr.visible:AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored)])
+    all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)
+    loop wakes.len()<all_air_traffic.len()+1:wakes.push(WakeTrail())
+    update_air_view(air_visual,all_air_traffic,wind_now_vec(),if me.mode==.aboard:pc.state.position else:me.pos,dt)
     # skimming: fast within about a span of the water, the downwash churns it and throws spray
     gap = f64(pc.state.position.y) - pc.spec.float_height
     skim = if pc.state.on_water or pc.state.moored: 0.0 else: (1.0 - smoothstep(0.5, pc.spec.span * 0.6, gap)) * smoothstep(28.0, 60.0, f64(length(pc.state.velocity)) / pure_k(pc.spec))
     under = vec3(pc.state.position.x, 0.1, pc.state.position.z) - vec3(pc.state.velocity.x, 0, pc.state.velocity.z) * 0.15
     wake_step(wakes[0], under, pc.state.velocity, pc.state.on_water and not pc.state.moored, 1.6, t, skim)
     if skim > 0.1 and me.mode == .aboard: emit(spray_ps, under, int(1.0 + skim * 4.0), 3.0 + 6.0 * skim, rgba(0.96, 0.98, 1.0, f32(0.5 + 0.4 * skim)), 1.2, 0.5 + 0.6 * skim, 0.7, normalize(vec3(-pc.state.velocity.x, 30.0, -pc.state.velocity.z)))
-    loop k in 0..traffic.len():
-        tr = traffic[k]
+    loop k in 0..all_air_traffic.len():
+        tr = all_air_traffic[k]
         wake_step(wakes[k + 1], tr.state.position, tr.state.velocity, tr.state.on_water and not tr.state.moored, if tr.kind == .heron: 1.4 else: 1.6, t)
     if trace and floor(t / 10.0) != floor((t - dt) / 10.0):
         print("living minute {living_world.minute}, tick {living_world.tick}")
@@ -1249,7 +1271,7 @@ update = (dt: f64):
     radio.radio_play(cockpit_radio,f64(living_world.tick)/60.0,me.mode == .aboard,
         not pc.state.moored,pc.state.throttle,env("SLOPPY_NO_AUDIO") == none)
     # the other aircraft's engines, heard from where their sound left them, Doppler and all
-    hear_engines(hearing, [loop tr in traffic: EngineSource(tr.craft, tr.state.position, tr.state.velocity,
+    hear_engines(hearing, [loop tr in all_air_traffic: EngineSource(tr.craft, tr.state.position, tr.state.velocity,
         if tr.flying and tr.state.throttle < 0.05: 0.7 else: f64(tr.state.throttle),
         not tr.state.moored and (tr.flying or tr.state.throttle > 0.02 or f64(length(tr.state.velocity)) > 0.5),
         engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))), voice = aircraft_profile(tr.kind).voice)], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t)
@@ -1322,7 +1344,9 @@ draw_world = (L: Light):
         loop w in walkers:
             if length(w.pos - scene_camera()) < 600.0: draw_figure(w.fig, w.pos, w.yaw, w.phase, if w.wait > 0.0: 0.0 else: 0.8, L, t)
         if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, me.stride, L, t, carrying=holding_cargo() >= 0)
-        draw_traffic(traffic,craft_models,L,t,battle)
+        draw_traffic(all_air_traffic,craft_models,L,t,battle,1800)
+        draw_air_meets(air_meet_view,air_events,L,t)
+        draw_air_far(air_visual,all_air_traffic,L,t,battle)
         ci=combat_index(battle,living_world.people[living_world.player].craft)
         left=ci>=0 and battle.actors[ci].bailed
         draw_combat_aircraft(combat_visual,battle,craft_models,L,t,if left:-1 else:living_world.people[living_world.player].craft)
@@ -1342,9 +1366,9 @@ draw_world = (L: Light):
     sea_sh = SeaShadows()
     cam = scene_camera()
     land: (CraftState, CraftModel)[]
-    loop k in 0..traffic.len() + 1:
-        st = if k == 0: pc.state else: traffic[k - 1].state
-        cm = if k == 0: craft_models[pc.model] else: craft_models[traffic[k - 1].model]
+    loop k in 0..all_air_traffic.len() + 1:
+        st = if k == 0: pc.state else: all_air_traffic[k - 1].state
+        cm = if k == 0: craft_models[pc.model] else: craft_models[all_air_traffic[k - 1].model]
         if length(st.position - cam) > 1500.0: continue
         sd = normalize(L.sun_dir)
         if sd.y < 0.08: continue
@@ -1375,6 +1399,7 @@ draw_world = (L: Light):
     draw_curved_particles(smoke_ps, false)
     draw_curved_particles(dust_ps, false)
     draw_combat_particles(combat_visual,battle)
+    draw_air_view(air_visual,all_air_traffic,L,t)
     # (the cloth streams out by the drawn speed, as soon as the takeoff run gets going, and its
     # flutter builds all the way to the drawn top speed in a dive, so it doesn't saturate early; a
     # trial (Tweaks) has it by the true speed instead)

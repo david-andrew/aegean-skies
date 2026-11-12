@@ -1,0 +1,170 @@
+# Serializable air-meet rules. The scene supplies actual swept positions; UI reads this data.
+# No teleporting, prizes, invented people, renderer dependencies or input-device reads.
+use 'air_pilot.jo'
+use 'flight.jo'
+
+enum AirMeetPhase: registration, racing, display, finished, cancelled
+struct AirGate:
+    center: vec3
+    forward: vec3
+    width = 220.0                    # half-width; two floating pylons mark the passage
+    floor = 35.0
+    ceiling = 300.0
+
+struct AirEntry:
+    craft: int
+    person: int
+    human = false
+    gate = 0
+    laps = 0
+    started_tick = -1
+    finished_tick = -1
+    disqualified = false
+    previous: vec3 = vec3(0, 0, 0)
+    sampled = false
+    last_tick = -1
+    missed = false
+    trip = -1
+
+struct AirMeet:
+    id: int                         # stable capital ID * 100000 + day
+    capital: int
+    day: int
+    name: str
+    gates: AirGate[]
+    phase: AirMeetPhase = .registration
+    laps = 2
+    race_tick: int
+    display_tick: int
+    end_tick: int
+    entries: AirEntry[]
+    cancellation = ""
+    quay_a: vec3 = vec3(0, 0, 0)
+    quay_b: vec3 = vec3(0, 0, 0)
+    audience = 0
+
+struct AirTask:
+    craft: int
+    aim: vec3
+    altitude: f64
+    pace = 1.0
+
+struct AirClubPilot:
+    craft: int
+    person: int
+    capital: int
+    model: int
+    state: CraftState
+    plan: FlightPlan
+    departing = false
+    departure: vec3 = vec3(0, 0, 0)
+    active = false
+    meet = -1
+    practice_day = -1
+    practice_until = 0
+    waypoint = 0
+    prop = 0.0
+    last_tick = -1
+    controls: Controls = Controls()
+    next_think = 0
+    air: AirMind = AirMind()
+
+struct AirEvents:
+    pilots: AirClubPilot[]
+    meets: AirMeet[]
+    last_minute = -1
+    version = 1
+
+# Compact oval over checked open water. Reject a venue rather than plant a pylon on land.
+air_course = (center: vec3, out: vec3, ground: (f64, f64) -> f64, scale: f64 = 1.0) -> AirGate[]:
+    right = vec3(-out.z, 0, out.x)
+    loop offset in [2800.0, 4500.0, 6500.0]:
+        origin = center + out * f32(offset * scale); radius = 1400.0 * scale; points: vec3[]; safe = true
+        loop k in 0..6:
+            a = TAU * f64(k) / 6.0
+            p = origin + right * f32(cos(a) * radius) + out * f32(sin(a) * radius * 0.75); p.y = 150
+            points.push(p)
+        loop k in 0..points.len():
+            a = points[k]; b = points[(k + 1) % points.len()]
+            loop j in 0..17:
+                p = lerp(a, b, f32(j) / 16.0)
+                loop side in [-1.0, 0.0, 1.0]:
+                    q = p + right * f32(side * 240.0)
+                    if ground(f64(q.x), f64(q.z)) > 0: safe = false
+        if safe:
+            gates: AirGate[]
+            loop k in 0..points.len():
+                dir = normalize(points[(k + 1) % points.len()] - points[(k + points.len() - 1) % points.len()])
+                gates.push(AirGate(points[k], dir, width = 220.0 * scale))
+            return gates
+    []
+
+enter_air_meet = (meet: mut AirMeet, craft: int, person: int, human: bool, tick: int) -> bool:
+    if meet.phase != .registration or tick >= meet.race_tick or craft < 0 or person < 0 or meet.entries.len() >= 8: return false
+    loop entry in meet.entries: if entry.craft == craft or entry.person == person: return false
+    meet.entries.push(AirEntry(craft, person, human))
+    true
+
+# Plane crossing, positive direction and finite lateral/vertical extent. Flying nearby, going
+# backwards, or teleporting cannot score; a missed gate remains the next gate until retried.
+air_gate_crossing = (gate: AirGate, a: vec3, b: vec3) -> f64:
+    before = f64(dot(a - gate.center, gate.forward)); after = f64(dot(b - gate.center, gate.forward))
+    if before >= 0 or after < 0 or after - before < 0.00001: return -1
+    fraction = -before / (after - before); at = lerp(a, b, f32(fraction))
+    side = vec3(-gate.forward.z, 0, gate.forward.x)
+    if abs(f64(dot(at - gate.center, side))) > gate.width or at.y < gate.floor or at.y > gate.ceiling: return -1
+    fraction
+
+sample_air_entry = (meet: mut AirMeet, craft: int, position: vec3, tick: int, airworthy: bool = true):
+    loop i in 0..meet.entries.len():
+        entry = meet.entries[i]
+        if entry.craft != craft or tick <= entry.last_tick: continue
+        previous = entry.previous; elapsed = tick - entry.last_tick
+        entry.previous = position; entry.last_tick = tick
+        if not airworthy and entry.finished_tick < 0: entry.disqualified = true
+        if not entry.sampled: entry.sampled = true; meet.entries[i] = entry; return
+        if meet.phase != .racing or entry.disqualified or entry.finished_tick >= 0: meet.entries[i] = entry; return
+        # Reject a discontinuous handoff/save relocation. A normal low-frame-rate sweep is fine.
+        if elapsed > 60 or length(position - previous) > f32(max(100, elapsed * 15)):
+            entry.missed = true; meet.entries[i] = entry; return
+        gate = meet.gates[entry.gate]
+        crossing = air_gate_crossing(gate, previous, position)
+        if crossing >= 0:
+            crossed_tick = tick - int(f64(elapsed) * (1.0 - crossing))
+            if entry.started_tick < 0: entry.started_tick = crossed_tick
+            else if entry.gate == 0:
+                entry.laps += 1
+                if entry.laps >= meet.laps: entry.finished_tick = crossed_tick
+            entry.missed = false; entry.gate = (entry.gate + 1) % meet.gates.len()
+        else if dot(position - gate.center, gate.forward) > 0: entry.missed = true
+        meet.entries[i] = entry
+        return
+
+advance_air_meet = (meet: mut AirMeet, tick: int, safe_weather: bool = true):
+    if meet.phase == .finished or meet.phase == .cancelled: return
+    if not safe_weather: meet.phase = .cancelled; meet.cancellation = "Harbor closed or weather unsafe"; return
+    if tick >= meet.end_tick:
+        loop mut entry in meet.entries: if entry.finished_tick < 0: entry.disqualified = true
+        meet.phase = .finished; return
+    if tick >= meet.display_tick:
+        loop mut entry in meet.entries: if entry.finished_tick < 0: entry.disqualified = true
+        meet.phase = .display; return
+    if tick >= meet.race_tick: meet.phase = .racing
+
+# Human controls are untouched. NPCs rejoin from behind a missed gate instead of orbiting its
+# far side forever; a lead-in makes them cross the actual timing plane in the correct direction.
+air_race_task = (meet: AirMeet, entry: AirEntry, position: vec3) -> AirTask?:
+    if entry.human or entry.disqualified or entry.finished_tick >= 0 or meet.phase != .racing: return none
+    gate = meet.gates[entry.gate]; side = vec3(-gate.forward.z, 0, gate.forward.x)
+    along = f64(dot(position - gate.center, gate.forward))
+    cross_track = f64(dot(position - gate.center, side))
+    aim = gate.center + gate.forward * 250.0
+    if along > 80 or (along > -400 and abs(cross_track) > gate.width): aim = gate.center - gate.forward * 700.0 + side * f32(if cross_track >= 0: 350.0 else: -350.0)
+    AirTask(entry.craft, aim, 150.0 + f64(entry.craft % 3) * 18.0, 1.02 + f64(entry.craft % 4) * 0.02)
+
+# Results are ordered by finish time, then progress. Stable IDs break ties; no renderer clock.
+air_standings = (meet: AirMeet) -> AirEntry[]:
+    result = meet.entries
+    result.sort(key = (e: AirEntry): (if e.disqualified: 2 else: if e.finished_tick >= 0: 0 else: 1,
+        if e.finished_tick >= 0: e.finished_tick else: -(e.laps * meet.gates.len() + e.gate), e.craft))
+    result
