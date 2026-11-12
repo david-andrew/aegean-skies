@@ -1,3 +1,5 @@
+use 'living_guard.jo'
+use 'living_transaction.jo'
 # Paid ferry/tow service uses one public boat per home harbor; it sails home empty after delivery.
 use 'living_types.jo'
 use 'living_money.jo'
@@ -13,7 +15,7 @@ public_boat_busy = (w: World, origin: int, except_trip: int = -1) -> bool:
         if rescue.place == origin and rescue.state == 1: return true
     false
 
-request_service = (w: mut World, person: int, destination: int, craft: int = -1) -> int:
+_guarded_request_service = (w: mut World, person: int, destination: int, craft: int = -1) -> int:
     if person < 0 or person >= w.people.len() or destination < 0 or destination >= 6 or w.people[person].trip >= 0 or passenger_craft(w,person) >= 0: return -1
     origin = w.people[person].place
     if w.people[person].carriage >= 0 or w.people[person].carrying >= 0: return -1
@@ -42,7 +44,9 @@ request_service = (w: mut World, person: int, destination: int, craft: int = -1)
     if w.accounts[w.people[person].account].cents < fare: return -1
     id = w.next_trip
     account = new_account(w,"harbor-boat-{id}")
-    assert(transfer(w,w.people[person].account,account,fare,.departure,id))
+    if not (transfer(w,w.people[person].account,account,fare,.departure,id)):
+        living_fault("living_services.request_service.0",guard_context(w)+" person={person} destination={destination} craft={craft}")
+        return -1
     w.next_trip += 1
     route = forward
     if origin != destination:
@@ -55,7 +59,7 @@ request_service = (w: mut World, person: int, destination: int, craft: int = -1)
 request_ferry = (w: mut World, person: int, destination: int) -> int: request_service(w,person,destination)
 request_tow = (w: mut World, person: int, craft: int, workshop: int) -> int: request_service(w,person,workshop,craft)
 
-advance_public_boats = (w: mut World):
+_guarded_advance_public_boats = (w: mut World):
     loop i in 0..w.public_boats.len():
         if w.public_boats[i].state >= 2: continue
         id = w.public_boats[i].trip; p = w.public_boats[i].person
@@ -66,7 +70,9 @@ advance_public_boats = (w: mut World):
                 w.public_boats[i].dispatch_minute = w.minute+30
                 continue
             if w.public_boats[i].craft < 0 and (w.people[p].place != origin or passenger_craft(w,p) >= 0):
-                assert(transfer(w,w.public_boats[i].account,w.people[p].account,w.public_boats[i].fare,.refund,id))
+                if not (transfer(w,w.public_boats[i].account,w.people[p].account,w.public_boats[i].fare,.refund,id)):
+                    living_fault("living_services.advance_public_boats.1",guard_context(w))
+                    return
                 w.public_boats[i].state = 3; w.trips[id].state = .failed; w.trips[id].terminal_minute = w.minute
                 continue
             w.public_boats[i].state = 1; w.trips[id].state = .active
@@ -122,7 +128,7 @@ advance_public_boats = (w: mut World):
             w.public_boats[i].state = 2; w.public_boats[i].return_minute = w.minute
 
     # A missed boarded promise offers a real funded return passage, not deletion or teleport.
-    loop p in 1..w.people.len():
+    loop p in 1..core_person_count(w):
         if not w.people[p].return_passage_needed or w.people[p].trip >= 0 or w.people[p].place < 0 or passenger_craft(w,p) >= 0: continue
         if w.people[p].place == w.people[p].home: w.people[p].return_passage_needed = false; continue
         pending = false
@@ -132,7 +138,7 @@ advance_public_boats = (w: mut World):
 
 # Known service failures prompt funded progress well before the 48-hour loss detector.
 service_recovery = (w: mut World):
-    loop p in 1..w.people.len():
+    loop p in 1..core_person_count(w):
         craft = w.people[p].craft
         if craft < 0: continue
         broken = w.aircraft[craft].hull < 350 or w.aircraft[craft].engine < 350 or w.aircraft[craft].state == .ditched
@@ -176,3 +182,19 @@ service_recovery = (w: mut World):
             w.people[p].local_work_escrow = escrow
             w.people[p].action = Action(activity=.work,purpose=.trade,reason=Reason(purpose=.repair,actor=p,destination=place,amount_cents=1200),end_minute=w.minute+60)
             w.people[p].next_decision_minute = w.minute+60
+
+
+# Recovery boundaries share one checkpoint when nested; strict mode retains loud failures.
+request_service = (w: mut World, person: int, destination: int, craft: int = -1) -> int:
+    if guard_blocked(): return -1
+    scope = guard_begin(w)
+    result = _guarded_request_service(w,person,destination,craft)
+    failed = guard_failed(scope)
+    guard_finish(w,scope)
+    if failed: -1 else: result
+
+advance_public_boats = (w: mut World):
+    if guard_blocked(): return
+    scope = guard_begin(w)
+    _guarded_advance_public_boats(w)
+    guard_finish(w,scope)

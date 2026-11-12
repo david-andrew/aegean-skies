@@ -1,0 +1,187 @@
+# One accounting path across abstract stores and detailed crates. Moving tiers never mints a
+# source, consumes stock, or changes the goods ledger. Only issue/use do those things.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_cargo.jo'
+use 'living_money.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+
+const FAR_MAX_STOCK_ROOTS = 64
+
+far_stock_valid = (w: World, stock: FarStock) -> bool:
+    sums: int[9]
+    if stock.roots.len()>FAR_MAX_STOCK_ROOTS: return false
+    loop root, qty in stock.roots:
+        if qty <= 0 or not (root in w.cargo_sources): return false
+        g = w.cargo_sources[root].good
+        if g < 0 or g >= GOOD_COUNT: return false
+        sums[g] += qty
+    sums == stock.qty
+
+far_stock_fits = (stock: FarStock, batch: FarStock) -> bool:
+    count = stock.roots.len()
+    loop root, _ in batch.roots:
+        if not (root in stock.roots): count += 1
+    count <= FAR_MAX_STOCK_ROOTS
+
+far_stock_add = (stock: mut FarStock, batch: FarStock) -> bool:
+    if not far_stock_fits(stock,batch): return false
+    loop _, qty in batch.roots:
+        if qty<=0: return false
+    loop qty in batch.qty:
+        if qty<0: return false
+    loop root, qty in batch.roots: stock.roots[root] = stock.roots.get(root,0)+qty
+    loop g in 0..9: stock.qty[g] += batch.qty[g]
+    true
+
+# Pure container primitive: no global diagnostics while a caller borrows a World field.
+# The owning World transaction reports an unexpected refusal and rolls back as necessary.
+far_stock_take = (stock: mut FarStock, sources: {int: CargoSource}, good: int, qty: int) -> FarStock?:
+    if good<0 or good>=9 or qty<0 or stock.qty[good]<qty: return none
+    physical = 0
+    loop root, amount in stock.roots:
+        if amount<=0 or not (root in sources): return none
+        if sources[root].good == good: physical += amount
+    if physical<qty: return none
+    result = FarStock(); left = qty
+    keys = stock.roots.keys(); keys.sort()
+    loop root in keys:
+        if left == 0: break
+        if sources[root].good != good: continue
+        n = min(left,stock.roots[root]); left -= n
+        result.roots[root] = n; stock.roots[root] -= n
+        if stock.roots[root] == 0: stock.roots.remove(root)
+    result.qty[good] = qty; stock.qty[good] -= qty
+    result
+
+_far_issue = (w: mut World, place: int, good: int, qty: int, opening: bool = false) -> FarStock:
+    if not (place in w.far.districts) or good<0 or good>=9 or qty<=0:
+        living_fault("far_stock.issue_arguments",guard_context(w)+" place={place} good={good} qty={qty}")
+        return FarStock()
+    key = "far:{place}:{good}:{opening}"
+    root = w.cargo_source_keys.get(key,-1)
+    if root < 0:
+        root = w.next_cargo_source; w.next_cargo_source += 1; w.cargo_sequence += 1
+        w.cargo_sources[root] = CargoSource(root,good,0,if opening: -1 else: w.tick,w.cargo_sequence,if opening: CargoOrigin.opening else: CargoOrigin.production,-1,producer_place=place)
+        w.cargo_source_keys[key] = root
+    w.cargo_sources[root].issued += qty; w.cargo_sources[root].far_quantity += qty
+    w.far.live_totals[good] += qty*10
+    if opening: w.goods_ledger.opening[good] += qty*10
+    else: w.goods_ledger.created[good] += qty*10; w.far.produced[good] += qty
+    result = FarStock(); result.roots[root] = qty; result.qty[good] = qty
+    result
+
+far_use = (w: mut World, batch: FarStock, tank: bool = false):
+    if not far_stock_valid(w,batch):
+        living_fault("far_stock.use_projection",guard_context(w))
+        return
+    loop root, qty in batch.roots:
+        if not (root in w.cargo_sources) or qty<=0 or w.cargo_sources[root].far_quantity<qty:
+            living_fault("far_stock.use_partition",guard_context(w)+" root={root} qty={qty}")
+            return
+    loop root, qty in batch.roots:
+        w.cargo_sources[root].far_quantity -= qty; w.cargo_sources[root].consumed += qty
+    loop g in 0..9:
+        w.far.live_totals[g] -= batch.qty[g]*10
+        if not tank:
+            w.goods_ledger.consumed[g] += batch.qty[g]*10
+            w.far.consumed[g] += batch.qty[g]
+
+# Read the detailed market's actual unpromised, physically present stock at a core gateway.
+far_market_qty = (w: World, place: int, good: int) -> int:
+    d = w.far.districts[place]
+    if d.core < 0: return d.stock.qty[good]
+    total = 0
+    loop id in cargo_ids(w,.market,d.core,good):
+        c = w.cargo[id]
+        if c.job < 0 and c.where != .person and cargo_at_market(w,c,w.places[d.core].market_owner,d.core): total += c.quantity
+    total
+
+far_take_market = (w: mut World, place: int, good: int, qty: int) -> FarStock:
+    if qty<0 or not (place in w.far.districts) or good<0 or good>=9 or far_market_qty(w,place,good)<qty:
+        living_fault("far_stock.market_quantity",guard_context(w)+" place={place} good={good} qty={qty}")
+        return FarStock()
+    core = w.far.districts[place].core
+    if core < 0:
+        batch = far_stock_take(w.far.districts[place].stock,w.cargo_sources,good,qty)
+        if batch == none:
+            living_fault("far_stock.take_partition",guard_context(w)+" place={place} good={good} qty={qty}")
+            return FarStock()
+        return batch!
+    result = FarStock(); left = qty
+    ids = cargo_ids(w,.market,core,good); ids.sort()
+    loop id in ids:
+        if left <= 0: break
+        c = w.cargo[id]
+        if c.job >= 0 or c.where == .person or not cargo_at_market(w,c,w.places[core].market_owner,core): continue
+        n = min(left,c.quantity); left -= n
+        result.roots[c.source] = result.roots.get(c.source,0)+n
+        w.cargo_sources[c.source].far_quantity += n
+        w.cargo[id].quantity -= n
+        if w.cargo[id].quantity == 0: cargo_remove(w,id)
+    result.qty[good] = qty
+    w.places[core].market.inventory.qty[good] -= qty
+    w.far.live_totals[good] += qty*10
+    result
+
+far_market_accepts = (w: World, place: int, batch: FarStock) -> bool:
+    d = w.far.districts[place]
+    d.core >= 0 or far_stock_fits(d.stock,batch)
+
+far_put_market = (w: mut World, place: int, batch: FarStock):
+    if not far_stock_valid(w,batch) or not (place in w.far.districts) or not far_market_accepts(w,place,batch):
+        living_fault("far_stock.market_capacity",guard_context(w)+" place={place} roots={batch.roots.len()}")
+        return
+    core = w.far.districts[place].core
+    if core < 0:
+        if not far_stock_add(w.far.districts[place].stock,batch): living_fault("far_stock.add_partition",guard_context(w)+" place={place}")
+        return
+    keys = batch.roots.keys(); keys.sort()
+    loop root in keys:
+        qty = batch.roots[root]; g = w.cargo_sources[root].good
+        w.cargo_sources[root].far_quantity -= qty
+        owner = w.places[core].market_owner
+        # Existing detailed cargo carries the exact root across the boundary, not a new import.
+        merged = false
+        loop id in cargo_ids(w,.market,core,g):
+            c = w.cargo[id]
+            if c.source == root and c.job < 0 and c.owner == owner and c.where == .warehouse:
+                w.cargo[id].quantity += qty; merged = true; break
+        if not merged: cargo_insert(w,CargoLot(source=root,good=g,quantity=qty,owner=owner,store=.market,holder=core,where=.warehouse,place=core,pos=cargo_anchor(w,core)))
+        w.places[core].market.inventory.qty[g] += qty
+        w.far.live_totals[g] -= qty*10
+
+far_stock_errors = (w: World) -> str[]:
+    result: str[]; roots: {int: int}; totals: int[9]
+    stocks: FarStock[]
+    loop _, d in w.far.districts: stocks.push(d.stock)
+    loop _, p in w.far.people: stocks.push(p.stock)
+    loop v in w.far.vehicles:
+        stocks.push(v.cargo); stocks.push(v.provisions)
+        if v.craft<0: totals[4] += v.fuel_ml
+        else if v.fuel_ml!=0 or v.cargo.roots.len()>0: result.push("aircraft has duplicate far tank/hold")
+    loop stock in stocks:
+        if not far_stock_valid(w,stock): result.push("far stock projection/root bound")
+        loop root, qty in stock.roots: roots[root] = roots.get(root,0)+qty
+        loop g in 0..9: totals[g] += stock.qty[g]*10
+    if totals != w.far.live_totals: result.push("far cached live stock total")
+    loop root, source in w.cargo_sources:
+        if roots.get(root,0) != source.far_quantity: result.push("far source {root} partition")
+    result
+
+
+# The producer operation owns the issued batch immediately. It cannot mint an unheld return
+# value or create a 65th fragment and leave orphan stock when the store is full.
+far_produce = (w: mut World, place: int, good: int, qty: int, opening: bool = false) -> bool:
+    if guard_blocked(): return false
+    if not (place in w.far.districts) or good<0 or good>=9 or qty<=0: return false
+    d = w.far.districts[place]
+    key = "far:{place}:{good}:{opening}"; root = w.cargo_source_keys.get(key,-1)
+    if d.core<0 and not (root in d.stock.roots) and d.stock.roots.len()>=FAR_MAX_STOCK_ROOTS: return false
+    scope = guard_begin(w)
+    batch = _far_issue(w,place,good,qty,opening)
+    if not guard_failed(scope): far_put_market(w,place,batch)
+    failed = guard_failed(scope)
+    guard_finish(w,scope)
+    not failed

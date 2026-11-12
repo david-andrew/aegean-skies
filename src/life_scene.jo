@@ -1,3 +1,5 @@
+use 'living_guard.jo'
+use 'living_transaction.jo'
 # Scene consumer of semantic life intents. Geometry publication and motion leases are explicit.
 use 'living_types.jo'
 use 'life_types.jo'
@@ -7,6 +9,8 @@ use 'objects.jo'
 use 'settlements.jo'
 use 'living_place_context.jo'
 import 'cargo_scene.jo' as navigation
+import 'map_scene.jo' as paper_maps
+import 'far_scene.jo' as far_places
 
 _life_ground = (towns: Town[], p: vec3) -> vec3: vec3(p.x,f32(walk_height(towns,p.x,p.z)),p.z)
 
@@ -20,7 +24,9 @@ _free_spot = (towns: Town[], tw: Town, candidate: vec3, fallback: vec3) -> vec3:
 # Only legacy fallback anchors are replaced. A published town catalog owns its own keys/venues.
 configure_life_scene = (w: mut World, towns: Town[], force: bool = false):
     initialize_life(w)
-    if w.place_catalog_version != SETTLEMENT_VERSION and world_settlements.len() > 0: publish_settlement_life(w)
+    if settlement_registry_ready and (w.place_catalog_version != SETTLEMENT_VERSION or w.place_contexts.len()!=world_settlements.len()) and world_settlements.len() > 0: publish_settlement_life(w)
+    if settlement_registry_ready and w.maps.catalog_version < SETTLEMENT_VERSION and world_settlements.len()>6: paper_maps.publish_settlement_maps(w)
+    if not w.far.populated: far_places.configure_far_economy(w)
     loop place in 0..min(towns.len(),w.harbors.len()):
         authored = false; configured = false
         loop v in w.life_venues:
@@ -45,18 +51,26 @@ configure_life_scene = (w: mut World, towns: Town[], force: bool = false):
         supplied.push(LifeVenue(place,"legacy:{place}:scene:fields",.fields,_free_spot(towns,tw,warehouse-out*30.0+side*15.0,homes[0]),facing=out,capacity=4))
         set_life_venues(w,place,supplied)
         # Geometry provides height, never a different street/goal or a new actor identity.
-        loop person in 1..w.people.len():
+        loop person in 1..core_person_count(w):
             if w.people[person].place == place and life_free(w,person): w.people[person].pose.pos = _life_ground(towns,w.people[person].pose.pos)
         loop k in 0..w.households.len():
             if w.households[k].home == place: w.households[k].pose = _life_ground(towns,w.households[k].pose)
 
 step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64, nav_budget: int = 1) -> int:
     if towns.len() == 0: return 0
-    paths_started = 0
+    paths_started = far_places.step_far_people_scene(w,towns,observer,dt,nav_budget)
     initialize_life(w)
-    ids = [1..w.people.len())
+    ids = [1..core_person_count(w))
     loop person in ids:
+        if not (person in w.daily_life):
+            living_fault("life_scene.missing_intent",guard_context(w)+" person={person}")
+            w.daily_life[person] = DailyIntent(person,w.people[person].place,target=w.people[person].pose.pos,last_tick=w.tick)
+            continue
         intent = w.daily_life[person]; p = w.people[person]
+        if intent.companion>=w.people.len() or intent.companion< -1 or intent.waypoint<0 or not finite_living_point(intent.target):
+            living_fault("life_scene.invalid_intent",guard_context(w)+" person={person} companion={intent.companion} waypoint={intent.waypoint} target={intent.target}")
+            w.daily_life[person].blocked = "The daily walking route needs to be replanned."
+            continue
         if not life_free(w,person):
             if intent.scene_owned:
                 w.daily_life[person].scene_owned = false
@@ -136,6 +150,7 @@ step_life_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64, nav_bud
     paths_started
 
 fold_life_for_save = (w: mut World):
+    far_places.fold_far_people(w)
     ids = w.daily_life.keys()
     loop person in ids:
         if not w.daily_life[person].scene_owned: continue
@@ -145,7 +160,7 @@ fold_life_for_save = (w: mut World):
         w.households[k].scene_owned = false; w.households[k].last_tick = w.tick
 
 # Called after init_world_towns. Inlands get venues and country context, never fake aircraft docks.
-publish_settlement_life = (w: mut World):
+_guarded_publish_settlement_life = (w: mut World):
     contexts: LifePlaceContext[]; capitals = [-1,-1,-1]
     loop s in world_settlements:
         venues: LifeVenue[]
@@ -161,4 +176,15 @@ publish_settlement_life = (w: mut World):
             if kind != none: venues.push(LifeVenue(s.id,"registry:{s.id}:{landmark.kind}:{venues.len()}",kind!,landmark.at,capacity=if s.kind == .capital: 16 else: 6,covered=kind == .cafe or kind == .church or kind == .home))
         contexts.push(LifePlaceContext(s.id,s.name,s.country,s.region,s.center,s.harbor.len()>0,s.legacy,s.neighbors,venues))
         if s.kind == .capital and (capitals[s.country] < 0 or s.id < capitals[s.country]): capitals[s.country] = s.id
-    assert(publish_place_contexts(w,SETTLEMENT_VERSION,contexts,capitals))
+    if not (publish_place_contexts(w,SETTLEMENT_VERSION,contexts,capitals)):
+        living_fault("life_scene.publish_settlement_life.0",guard_context(w))
+        return
+    paper_maps.publish_settlement_maps(w)
+
+
+# Recovery boundaries share one checkpoint when nested; strict mode retains loud failures.
+publish_settlement_life = (w: mut World):
+    if guard_blocked(): return
+    scope = guard_begin(w)
+    _guarded_publish_settlement_life(w)
+    guard_finish(w,scope)

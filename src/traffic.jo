@@ -4,6 +4,8 @@ use 'look.jo'
 use 'planes.jo'
 use 'flight.jo'
 use 'combat.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
 use 'combat_bridge.jo'
 use 'objects.jo'
 use 'pilot.jo'
@@ -165,7 +167,7 @@ sync_living_player = (player: mut Flyer, w: living.World):
     if abs(player.state.hull_damage - (1.0 - f64(c.hull) / 1000.0)) > 0.001: player.state.hull_damage = 1.0 - f64(c.hull) / 1000.0
     if abs(player.state.engine_damage - (1.0 - f64(c.engine) / 1000.0)) > 0.001: player.state.engine_damage = 1.0 - f64(c.engine) / 1000.0
 
-_player_motion = (w: mut living.World, state: CraftState, before: data.Pose, before_fuel: int, alpha: f64, progress: bool = true, recover: bool = true):
+commit_player_motion = (w: mut living.World, state: CraftState, before: data.Pose, before_fuel: int, alpha: f64, progress: bool = true, recover: bool = true):
     c = w.people[w.player].craft
     if w.aircraft[c].move_owner != .scene: return
     rotation = if dot(before.rot, state.orientation) < 0: -state.orientation else: state.orientation
@@ -180,7 +182,9 @@ _player_motion = (w: mut living.World, state: CraftState, before: data.Pose, bef
     hull = min(w.aircraft[c].hull, max(0, int(round((1.0 - state.hull_damage) * 1000.0))))
     engine = min(w.aircraft[c].engine, max(0, int(round((1.0 - state.engine_damage) * 1000.0))))
     # (a motion the world turns down is left out, not a crash: the next frame's will do)
-    if scene.scene_motion(w, c, w.aircraft[c].revision, pose, fuel, hull, engine, phase,progress,recover) < 0: return
+    if scene.scene_motion(w,c,w.aircraft[c].revision,pose,fuel,hull,engine,phase,progress,recover)<0:
+        living_fault("traffic.player_motion.refused",guard_context(w)+" craft={c} revision={w.aircraft[c].revision} last_tick={w.aircraft[c].last_scene_tick} pose={pose} fuel={fuel} hull={hull} engine={engine}")
+        return
     if state.moored and alpha >= 1.0 and w.aircraft[c].trip >= 0:
         loop p in 0..w.harbors.len():
             loop d in 0..w.harbors[p].docks.len():
@@ -321,16 +325,20 @@ _step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: boo
     controls = traffic_controls(tr, w, e)
     step(tr.spec, tr.state, controls, e, 1.0 / 60.0)
     tr.prop_angle += (8.0 + 70.0 * tr.state.throttle) / 60.0
-    if commit:_commit_traffic(tr,w)
+    if commit:commit_traffic_motion(tr,w)
 
-_commit_traffic = (tr: mut Traffic,w: mut living.World,arrival: bool = true):
+commit_traffic_motion = (tr: mut Traffic,w: mut living.World,arrival: bool = true):
     c=w.aircraft[tr.craft]
     phase: data.CraftState = if tr.state.on_water: (if tr.plan.phase == .takeoff: data.CraftState.taxi else: data.CraftState.approach) else: data.CraftState.airborne
     fuel = min(c.fuel_ml, max(0, int(round(tr.state.fuel * 1000.0))))
     hull = min(c.hull, max(0, int(round((1.0 - tr.state.hull_damage) * 1000.0))))
     engine = min(c.engine, max(0, int(round((1.0 - tr.state.engine_damage) * 1000.0))))
-    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position, vel = tr.state.velocity, rot = tr.state.orientation, throttle = clamp(int(round(tr.state.throttle * 1000.0)), 0, 1000)), fuel, hull, engine, phase,arrival)
-    assert(revision >= 0)
+    velocity = tr.state.velocity
+    if length(velocity)>900.0: velocity = normalize(velocity)*900.0
+    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position, vel = velocity, rot = tr.state.orientation, throttle = clamp(int(round(tr.state.throttle * 1000.0)), 0, 1000)), fuel, hull, engine, phase,arrival)
+    if revision < 0:
+        living_fault("traffic.npc_motion.refused",guard_context(w)+" craft={tr.craft} revision={c.revision} last_tick={c.last_scene_tick} pos={tr.state.position} velocity={tr.state.velocity} fuel={fuel} hull={hull} engine={engine}")
+        return
     if w.aircraft[tr.craft].trip < 0 or not arrival: return
     if tr.state.crashed or tr.state.beached or tr.plan.phase == .failed:
         # Explicit recovery/aftermath, never the old traffic's free tow-and-repair teleport.
@@ -370,7 +378,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
         stepped += 1
         alpha=f64(stepped)/f64(steps)
         if not battle.enabled:
-            if let body=player:_player_motion(w,body,player_before,player_fuel,alpha)
+            if let body=player:commit_player_motion(w,body,player_before,player_fuel,alpha)
         e = flight_env(f64(w.tick) / 60.0)
         physical:int[]
         if battle.enabled:
@@ -406,7 +414,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                     before = tr.state.hull_damage
                     tr.state = contact(tr.craft,tr.spec,tr.state,previous)
                     if tr.state.hull_damage > before: tr.combat_damage = true
-                    _commit_traffic(tr,w)
+                    commit_traffic_motion(tr,w)
                 ci=combat_index(battle,tr.craft)
                 if battle.enabled and ci>=0 and battle.actors[ci].external:
                     battle.actors[ci].previous=battle.actors[ci].state.position
@@ -431,13 +439,13 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                         if actor.last_attacker>=0:tr.combat_damage=true
                     # One revisioned motion commit, after this tick's rounds and fire. A
                     # passive pilot hit in this tick must not also take the route's ditch path.
-                    _commit_traffic(tr,w,not combat_owns(battle,tr.craft))
+                    commit_traffic_motion(tr,w,not combat_owns(battle,tr.craft))
                 traffic[i]=tr
         if battle.enabled:
             if let body=player:
                 pi=combat_index(battle,player_craft)
-                if pi>=0:_player_motion(w,battle.actors[pi].state,w.aircraft[player_craft].pose,w.aircraft[player_craft].fuel_ml,1.0,battle.actors[pi].status==.flying,false)
-                else:_player_motion(w,body,player_before,player_fuel,alpha)
+                if pi>=0:commit_player_motion(w,battle.actors[pi].state,w.aircraft[player_craft].pose,w.aircraft[player_craft].fuel_ml,1.0,battle.actors[pi].status==.flying,false)
+                else:commit_player_motion(w,body,player_before,player_fuel,alpha)
         if battle.enabled:resolve_scene_engagements(battle,w,physical)
         scene.scene_encounters(w,physical)
         scene.scene_clock_end(w)

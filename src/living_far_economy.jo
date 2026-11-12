@@ -1,0 +1,166 @@
+# Funded cohort markets. Only opening endowments and explicit production create anything.
+# All transport transfers the original roots; the detailed harbors alias existing inventory.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_money.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+use 'living_place_context.jo'
+use 'living_far_checks.jo'
+
+const FAR_DAILY_FOOD: int[9] = [35,8,8,28,0,0,1,2,0]
+const FAR_MAX_VEHICLES = 768
+
+far_population = (w: World) -> int:
+    total = w.far.named_core_population+w.far.dead+w.far.evacuated
+    loop n in w.far.crew_population: total += n
+    loop _, d in w.far.districts:
+        loop c in 0..3: total += d.workers[c]+d.dependents[c]
+    total+w.far.people.len()
+
+far_link_valid = (w: World, link: FarLink) -> bool:
+    if not (link.a in w.far.districts) or not (link.b in w.far.districts) or link.a==link.b or link.points.len()<2 or link.points.len()>4096 or link.length_mm<=0: return false
+    loop p in link.points:
+        if not finite_living_point(p): return false
+    true
+
+# Initialization is explicit and idempotent. Existing saves are upgraded once after the real
+# registry is published. Six legacy markets remain their original physical stock/accounts.
+_far_populate = (w: mut World, version: int, seeds: FarPlaceSeed[], links: FarLink[]) -> bool:
+    if w.far.populated: return w.far.registry_version==version
+    if seeds.len()==0 or seeds.len()>1024 or w.far.districts.len()>0: return false
+    seen: {int: bool}
+    loop s in seeds:
+        if s.id in seen or not (s.id in w.place_contexts) or s.population<1 or s.country<0 or s.country>=3 or s.output<0 or s.output>=9 or s.productivity<1 or s.raw_ore<0: return false
+        seen[s.id] = true
+    loop c in 0..3:
+        treasury = new_account(w,"national-treasury:{c}",6000000)
+        w.far.treasury[c] = treasury
+        w.countries[c].treasury_account = treasury
+    w.far.version = 1; w.far.registry_version = version
+    ordered = seeds; ordered.sort_by((s: FarPlaceSeed): s.id)
+    w.far.core_people = w.people.len()
+    w.far.named_core_population = w.people.len()+w.households.len()
+    w.far.opening_population = w.far.named_core_population
+    loop s in ordered:
+        core = w.place_contexts[s.id].detailed
+        population = s.population
+        if core>=0:
+            named = 0
+            loop p in w.people:
+                if p.home==core: named += 1
+            loop h in w.households:
+                if h.home==core: named += 1
+            population = max(1,population-named)
+        market = if core>=0: w.places[core].market.account else: new_account(w,"district-market:{s.id}",population*20000)
+        home = new_account(w,"district-households:{s.id}",population*30000)
+        d = FarDistrict(id=s.id,core=core,born_country=s.country,controller=s.country,authority=s.country,market_account=market,household_account=home,output=s.output,productivity=s.productivity,raw_ore=s.raw_ore,raw_crude=s.raw_crude,homes=s.homes,population=population,last_hour=w.minute/60)
+        d.workers[s.country] = max(1,population*3/5); d.dependents[s.country] = population-d.workers[s.country]
+        loop g in 0..9:
+            d.target[g] = max(1000,population*(if g==s.output: s.productivity else: FAR_DAILY_FOOD[g])*3)
+            d.prices[g] = w.goods[g].base_cents
+        w.far.districts[s.id] = d; w.far.place_ids.push(s.id)
+        w.far.opening_population += population
+        if core>=0: continue
+        loop g in 0..9:
+            amount = max(1000,population*(if g==s.output: s.productivity*4 else: max(FAR_DAILY_FOOD[g],1)*3))
+            if not far_produce(w,s.id,g,amount,true): return false
+    loop input in links:
+        link = input; link.id = w.far.links.len()
+        if not far_link_valid(w,link): return false
+        w.far.links.push(link)
+        w.far.districts[link.a].links.push(link.id); w.far.districts[link.b].links.push(link.id)
+        if w.far.vehicles.len()>=FAR_MAX_VEHICLES or link.mode==.aircraft: continue
+        d = w.far.districts[link.a]; crew = if link.mode==.cart: 1 else: 3
+        if d.workers[d.born_country]<crew: continue
+        w.far.districts[link.a].workers[d.born_country] -= crew; w.far.crew_population[d.born_country] += crew
+        id = w.far.vehicles.len(); purse = new_account(w,"transport:{id}",30000)
+        v = FarVehicle(id,link.mode,link.a,link.a,d.born_country,purse,-1,route=link.id,pos=link.points[0],capacity_grams=if link.mode==.cart: 500000 else: 30000000,speed_mm_sec=if link.mode==.cart: 1600 else: 6500,next_departure=w.minute+id%60)
+        v.crew[d.born_country] = crew
+        w.far.vehicles.push(v)
+    w.far.populated = true; w.far.last_minute = w.minute
+    true
+
+populate_settlement_economy = (w: mut World, version: int, seeds: FarPlaceSeed[], links: FarLink[]) -> bool:
+    if guard_blocked(): return false
+    scope = guard_begin(w)
+    result = _far_populate(w,version,seeds,links)
+    # Invalid publication is also atomic in strict tools: no partially funded catalog survives.
+    if not result and not w.far.populated:
+        living_fault("far.populate",guard_context(w)+" registry={version} places={seeds.len()} links={links.len()}")
+    failed = guard_failed(scope)
+    guard_finish(w,scope)
+    result and not failed
+
+far_input = (good: int) -> int:
+    if good==5: 4 else: if good==8: 5 else: if good==6: 1 else: -1
+
+# New output is paid work, constrained by actual labor, funds, raw material and owned inputs.
+far_work_hour = (w: mut World, place: int):
+    d = w.far.districts[place]; workers = 0
+    loop n in d.workers: workers += n
+    g = d.output; raw = workers*d.productivity+d.production_remainder
+    qty = raw/24; w.far.districts[place].production_remainder = raw%24
+    # Stops at a real warehouse ceiling instead of accumulating infinite unwanted output.
+    qty = min(qty,max(0,d.target[g]*3-far_market_qty(w,place,g)))
+    wage_rate = max(1,w.goods[g].base_cents*4/5)
+    qty = min(qty,w.accounts[d.market_account].cents*1000/wage_rate)
+    input = far_input(g)
+    divisor = if g==5: 10 else: 2
+    if input>=0: qty = min(qty,far_market_qty(w,place,input)*divisor)
+    if g==5: qty = min(qty,d.raw_ore)
+    if g==4: qty = min(qty,d.raw_crude)
+    if qty<=0: return
+    key = "far:{place}:{g}:false"; root = w.cargo_source_keys.get(key,-1)
+    if d.core<0 and not (root in d.stock.roots) and d.stock.roots.len()>=FAR_MAX_STOCK_ROOTS: return
+    wage_raw = qty*wage_rate+d.wage_remainder; wage = wage_raw/1000
+    if wage>0 and not transfer(w,d.market_account,d.household_account,wage,.wage,place): return
+    w.far.districts[place].wage_remainder = wage_raw%1000
+    if input>=0:
+        batch = far_take_market(w,place,input,(qty+divisor-1)/divisor); far_use(w,batch)
+    if g==5: w.far.districts[place].raw_ore -= qty
+    if g==4: w.far.districts[place].raw_crude -= qty
+    if not far_produce(w,place,g,qty): living_fault("far.production",guard_context(w)+" place={place} good={g} qty={qty}")
+
+far_household_hour = (w: mut World, place: int):
+    d = w.far.districts[place]; population = 0
+    loop c in 0..3: population += d.workers[c]+d.dependents[c]
+    # Food, lamp oil and clinic supplies are bought by funded households, then really consumed.
+    loop g in 0..9:
+        raw = population*FAR_DAILY_FOOD[g]+d.demand_remainder[g]
+        wanted = raw/24; w.far.districts[place].demand_remainder[g] = raw%24
+        quote = max(1,d.prices[g]); qty = min(wanted,min(far_market_qty(w,place,g),w.accounts[d.household_account].cents*1000/quote))
+        if qty>0:
+            key = "far-household:{place}:{g}"; cash_raw = qty*quote+w.quote_residual.get(key,0)
+            cents = cash_raw/1000
+            if cents>0 and not transfer(w,d.household_account,d.market_account,cents,.trade,place): continue
+            w.quote_residual[key] = cash_raw%1000
+            batch = far_take_market(w,place,g,qty); far_use(w,batch)
+        w.far.districts[place].unmet[g] = min(1000000000,d.unmet[g]+wanted-qty)
+        if g==0 or g==3:
+            w.far.districts[place].hunger = clamp(w.far.districts[place].hunger+(if qty<wanted: 2 else: -1),0,1000)
+    if d.last_tax_day != day_index(w.minute):
+        # A finite levy; ownership/control determines recipient, citizenship stays unchanged.
+        tax = min(population*2,w.accounts[d.market_account].cents/100)
+        if tax>0: transfer(w,d.market_account,w.far.treasury[d.controller],tax,.fine,place)
+        w.far.districts[place].last_tax_day = day_index(w.minute)
+    loop g in 0..9:
+        ratio = clamp(f64(far_market_qty(w,place,g))/f64(max(1000,d.target[g])),0.0,3.0)
+        desired = int(round(f64(w.goods[g].base_cents)*clamp(1.0+0.8*(1.0-ratio),0.45,1.8)))
+        w.far.districts[place].prices[g] = (3*d.prices[g]+desired+2)/4
+    w.far.districts[place].last_hour = w.minute/60
+
+far_economy_minute = (w: mut World):
+    if not w.far.populated or w.far.last_minute>=w.minute: return
+    error = validate_far(w)
+    if error!="":
+        living_fault("far.economy_state",guard_context(w)+" "+error); return
+    # Each place gets exactly one hour of work per 60 game minutes, staggered across frames.
+    loop index in w.minute%60,60..w.far.place_ids.len():
+        place = w.far.place_ids[index]
+        far_work_hour(w,place)
+        if guard_blocked(): return
+        far_household_hour(w,place)
+        if guard_blocked(): return
+    w.far.last_minute = w.minute

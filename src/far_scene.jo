@@ -1,0 +1,109 @@
+# Publish a baked canonical road/water network only after the complete registry is available.
+# No path search, rendering mesh, random destination or invisible market inventory here.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_catalog.jo'
+use 'living_far_economy.jo'
+use 'living_far_people.jo'
+use 'objects.jo'
+import 'cargo_scene.jo' as navigation
+use 'living_guard.jo'
+use 'living_transaction.jo'
+use 'world.jo'
+use 'geography.jo'
+use 'settlements.jo'
+
+_far_catalog_rejected = false
+
+configure_far_economy = (w: mut World) -> bool:
+    global _far_catalog_rejected
+    if w.far.populated: return true
+    if _far_catalog_rejected: return false
+    if not geography_enabled or not settlement_registry_ready or w.place_contexts.len()!=world_settlements.len(): return false
+    packed = inflate(embed('../assets/living-routes.bin'))
+    if packed==none:
+        _far_catalog_rejected = true
+        living_fault("far.catalog_decode","corrupt living-routes.bin; run tools/bake_living_routes.jo")
+        return false
+    decoded = from_text[FarRouteCatalog](str_from_bytes(packed!))
+    if decoded is TextError:
+        _far_catalog_rejected = true
+        living_fault("far.catalog_parse","invalid living-routes.bin; run tools/bake_living_routes.jo")
+        return false
+    ordered = world_settlements; ordered.sort_by((s: WorldSettlement): s.id)
+    key = hash([loop s in ordered: (s.id,s.center,s.out,s.country)])
+    if decoded.version!=SETTLEMENT_VERSION or decoded.terrain!=terrain_key() or decoded.geography!=geography_key() or decoded.places!=key:
+        _far_catalog_rejected = true
+        living_fault("far.catalog_stale","expected registry={SETTLEMENT_VERSION} places={key}; run tools/bake_living_routes.jo")
+        return false
+    populate_settlement_economy(w,decoded.version,decoded.seeds,decoded.links)
+
+# One bounded local materialization scan per physical second. Camera visibility may name a real
+# resident, but it cannot change their cohort/purse twice or return their identity on folding.
+prepare_far_people = (w: mut World, observer: vec3):
+    if not w.far.populated or w.tick<w.far.next_actor_scan: return
+    w.far.next_actor_scan=w.tick+60
+    nearest = -1; distance = 400.0
+    loop id in w.far.place_ids:
+        if w.far.districts[id].core>=0: continue
+        d = f64(length(w.place_contexts[id].center-observer))
+        if d<distance: nearest=id; distance=d
+    if nearest>=0:
+        roles: FarRole[] = [.trader,if w.far.districts[nearest].output==0: FarRole.fisher else: .farmer,.artisan]
+        loop role in roles:
+            if w.far.districts[nearest].named.len()>=3: break
+            duplicate = false
+            loop id in w.far.districts[nearest].named:
+                if w.far.people[id].role==role: duplicate=true
+            if not duplicate: promote_far_person(w,nearest,role)
+    candidates: int[]
+    loop id, a in w.far.people:
+        if length(w.people[id].pose.pos-observer)<(if a.scene_owned: 420.0 else: 350.0): candidates.push(id)
+    positions=w.people
+    candidates.sort_by((id: int): (length(positions[id].pose.pos-observer),id))
+    if candidates.len()>FAR_MAX_NEAR: candidates=candidates[0..FAR_MAX_NEAR]
+    previous = w.far.near_people
+    loop id in previous:
+        if id in candidates: continue
+        w.far.people[id].scene_owned=false; w.far.people[id].last_tick=w.tick
+        w.people[id].move_owner=.abstract_world
+    w.far.near_people=candidates
+
+step_far_people_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64, nav_budget: int = 1) -> int:
+    prepare_far_people(w,observer)
+    started=0
+    loop id in w.far.near_people:
+        a = w.far.people[id]
+        if not a.scene_owned:
+            far_walk_abstract(w,id,w.tick-1)
+            w.far.people[id].scene_owned=true; w.people[id].move_owner=.scene
+        w.far.people[id].last_tick=w.tick
+        if length(a.target-w.people[id].pose.pos)<0.05 or a.blocked!="": continue
+        if a.planned_anchor!=a.anchor or a.route.len()==0:
+            if started>=nav_budget: continue
+            started += 1
+            path=navigation.cargo_walk_path(towns,w.people[id].pose.pos,a.target)
+            w.far.people[id].planned_anchor=a.anchor
+            if path.len()<2 or path.len()>512:
+                w.far.people[id].blocked="There is no clear walking route to my next stop."
+                continue
+            w.far.people[id].route=path; w.far.people[id].waypoint=1
+        a=w.far.people[id]
+        if a.waypoint<0 or a.waypoint>a.route.len():
+            living_fault("far.scene_walk_route",guard_context(w)+" person={id}"); continue
+        if a.waypoint>=a.route.len(): continue
+        delta=a.route[a.waypoint].xz-w.people[id].pose.pos.xz; distance=f64(length(delta))
+        if distance<0.05:
+            w.far.people[id].waypoint += 1; continue
+        moved=walk_step(towns,w.people[id].pose.pos,delta*f32(min(1.0,1.2*dt/distance)))
+        if not finite_living_point(moved):
+            living_fault("far.walk_pose",guard_context(w)+" person={id} target={a.target}"); continue
+        w.people[id].pose.pos=moved
+        w.people[id].pose.rot=facing(vec3(delta.x,0,delta.y))
+    started
+
+fold_far_people = (w: mut World):
+    loop id in w.far.near_people:
+        w.far.people[id].scene_owned=false; w.far.people[id].last_tick=w.tick
+        w.people[id].move_owner=.abstract_world
+    w.far.near_people=[]; w.far.next_actor_scan=w.tick
