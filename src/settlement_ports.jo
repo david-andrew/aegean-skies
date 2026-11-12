@@ -1,0 +1,209 @@
+# Harbour geometry is a lazy, deterministic view of a settlement, not another town or market.
+# IDs/docks in the compact registry never change. No meshes, population or goods live here.
+use 'settlements.jo'
+use 'geography.jo'
+
+struct PortQuay:
+    a: vec3
+    b: vec3
+    width: f64
+    mole = false
+    street = false
+    profile = false
+
+struct PortBuilding:
+    kind: str
+    at: vec3
+    width: f64
+    depth: f64
+    height: f64
+    door: vec3
+
+struct SettlementPort:
+    id: int
+    name: str
+    center: vec3
+    out: vec2
+    docks: vec3[]
+    loading: vec3[]
+    quays: PortQuay[]
+    buildings: PortBuilding[]
+    board: vec3
+    anchorage: vec3
+    boats: vec3[]
+    # Walkable graph: every loading point joins the pier root, square and venue doors.
+    routes: vec3[][]
+    country = 0
+    region = 0
+
+const PORT_CACHE_LIMIT = 8
+port_cache: SettlementPort[]
+
+port_span = (s: WorldSettlement) -> f64:
+    if s.kind == .capital: 180.0 else: (if s.kind == .port: 100.0 else: 45.0)
+
+# Flat landings at joins prevent a wide quay's end cap cutting across a sloping ramp.
+port_deck = (q: PortQuay,u: f32) -> f32:
+    if q.profile: return mix(q.a.y,q.b.y,u)
+    len=length(q.b.xz-q.a.xz); pad=min(6.5,len*0.25)
+    mix(q.a.y,q.b.y,clamp((u*len-pad)/max(0.1,len-pad*2.0),0.0,1.0))
+
+port_point = (p: vec2,h: f64) -> vec3: vec3(p.x,f32(h),p.y)
+
+# Follow the actual coast within a bounded strip. A failed bracket terminates that arm,
+# rather than running a concrete wall over a headland or across a neighbouring bay.
+port_shore = (s: WorldSettlement,along: f64) -> vec2?:
+    tangent = vec2(-s.out.y,s.out.x)
+    base = s.harbor[0].quay_a+s.out*40.0+tangent*f32(along)
+    a = base-s.out*90.0; b = base+s.out*90.0
+    if place_ground(a)<1.0 or place_ground(b)>0.0: return none
+    loop k in 0..10:
+        mid = (a+b)*0.5
+        if place_ground(mid)>0.5: a=mid
+        else: b=mid
+    (a+b)*0.5
+
+build_settlement_port = (s: WorldSettlement) -> SettlementPort:
+    result = SettlementPort(s.id,s.name,s.center,s.out,country=s.country,region=s.region)
+    if s.legacy>=0 or s.harbor.len()==0: return result
+    dock = s.harbor[0]; tangent = vec2(-s.out.y,s.out.x)
+    root = port_point(dock.quay_a,max(dock.deck,place_ground(dock.quay_a)+0.08))
+    # The landward ramp meets canonical terrain; the rest of the pier has a level deck.
+    join = port_point(dock.quay_a+s.out*80.0,dock.deck)
+    tip = port_point(dock.quay_b,dock.deck)
+    # A canonical terrain profile bridges steep coastal detail without stepping down cliffs.
+    # Two envelope passes limit grade; this is sampled only when a port is requested.
+    profile: vec3[]
+    loop k in 0..21:
+        at=mix(root,join,f32(k)/20.0)
+        at.y=max(at.y,f32(place_ground(at.xz)+0.12))
+        profile.push(at)
+    loop k in 1..profile.len():
+        high=-1e9
+        loop n in 0..9:
+            at=mix(profile[k-1],profile[k],f32(n)/8.0).xz
+            loop side in [-1.0,0.0,1.0]: high=max(high,place_ground(at+tangent*f32(side*dock.width*0.5))+0.3)
+        profile[k-1].y=max(profile[k-1].y,f32(high)); profile[k].y=max(profile[k].y,f32(high))
+    loop k in 1..profile.len(): profile[k].y=max(profile[k].y,profile[k-1].y-2.4)
+    loop k in 1..profile.len():
+        i=profile.len()-1-k
+        profile[i].y=max(profile[i].y,profile[i+1].y-2.4)
+    root=profile[0]; join=profile[20]
+    loop k in 1..profile.len(): result.quays.push(PortQuay(profile[k-1],profile[k],dock.width,profile=true))
+    result.quays.push(PortQuay(join,tip,dock.width))
+    result.quays.push(PortQuay(s.center,root,4.0,street=true))
+    result.routes.push([s.center,root,join,tip])
+    result.board = root+vec3(tangent.x,0,tangent.y)*f32(dock.width*0.5-1.0)+vec3(s.out.x,0,s.out.y)*5.0
+    result.board.y = port_deck(result.quays[1],0.25)
+    loop mooring in s.harbor:
+        result.docks.push(mooring.at)
+        p = mooring.at.xz
+        u = clamp(dot(p-join.xz,tip.xz-join.xz)/dot(tip.xz-join.xz,tip.xz-join.xz),0.0,1.0)
+        at = mix(join,tip,u)
+        side = if dot(p-at.xz,tangent)<0: -1.0 else: 1.0
+        at += vec3(tangent.x,0,tangent.y)*f32(side*(dock.width*0.5-0.8))
+        result.loading.push(at)
+        result.routes.push([root,join,port_point(at.xz-tangent*f32(side*(dock.width*0.5-0.8)),dock.deck),at])
+    # A continuous waterfront on both sides of the pier. Segment lengths are small
+    # enough to follow coves; no giant axis-aligned apron and no flattening of terrain.
+    loop side in [-1.0,1.0]:
+        step=max(20.0,port_span(s)/6.0)
+        prev=join+vec3(tangent.x,0,tangent.y)*f32(side*step)
+        clear=true
+        loop n in 1..9:
+            if place_ground(mix(join,prev,f32(n)/8.0).xz)>dock.deck-0.5: clear=false
+        if not clear: continue
+        result.quays.push(PortQuay(join,prev,8.0))
+        result.routes.push([join,prev])
+        loop k in 1..int(port_span(s)/step)+1:
+            next=port_shore(s,side*step*f64(k))
+            if next==none or length(next!-prev.xz)>65.0: break
+            at=port_point(next!,dock.deck)
+            clear=true
+            loop n in 1..17:
+                if place_ground(mix(prev,at,f32(n)/16.0).xz)>dock.deck-0.5: clear=false
+            if not clear: break
+            result.quays.push(PortQuay(prev,at,8.0))
+            result.routes.push([prev,at])
+            prev=at
+        # One breakwater shelters a basin while keeping an open, marked entrance.
+        if side==(if s.seed%2==0: -1.0 else: 1.0) and length(prev.xz-join.xz)>30.0:
+            end = prev+vec3(s.out.x,0,s.out.y)*f32(if s.kind==.capital: 175.0 else: 75.0)
+            clear = true
+            loop n in 1..9:
+                if place_ground(mix(prev,end,f32(n)/8.0).xz)>dock.deck-0.5: clear=false
+            if clear: result.quays.push(PortQuay(prev,end,6.0,mole=true))
+    # Service buildings stand on dry land, with accessible doors facing the pier root.
+    loop k in 0..(if s.kind==.capital: 4 else: 2):
+        side = if k==0: 1.0 else: -1.0
+        p = dock.quay_a+tangent*f32(side*(21.0+f64(max(0,k-1))*29.0))-s.out*16.0
+        if place_ground(p)<1.0: continue
+        width = if k==0: 15.0 else: 23.0
+        at=place_point(p); door=place_point(p+s.out*9.0)
+        result.buildings.push(PortBuilding(if k==0: "harbour office" else: "warehouse",at,width,14.0,if k==0: 9.0 else: 8.0,door))
+        start = if k>1: result.buildings[result.buildings.len()-2].door else: root
+        result.routes.push([start,door])
+        result.quays.push(PortQuay(start,door,3.5,street=true))
+    # Ships have a separate offshore anchorage, never a seaplane berth.
+    result.anchorage=port_point(tip.xz+s.out*180.0,0.0)
+    loop k in 0..12:
+        if place_ground(result.anchorage.xz)<-8.0: break
+        result.anchorage += vec3(s.out.x,0,s.out.y)*40.0
+    loop side in [-1.0,1.0]:
+        p = join.xz+tangent*f32(side*port_span(s)*0.6)+s.out*18.0
+        if place_ground(p)<-1.0: result.boats.push(port_point(p,0.0))
+    result
+
+# An eight-entry FIFO bounds resident detail even after flying across the whole map.
+# Eviction changes neither the result nor the compact registry's hash/catalog identity.
+settlement_port = (s: WorldSettlement) -> SettlementPort:
+    global port_cache
+    loop p in port_cache:
+        if p.id==s.id: return p
+    p=build_settlement_port(s)
+    if s.legacy<0 and s.harbor.len()>0:
+        if port_cache.len()>=PORT_CACHE_LIMIT: port_cache=port_cache[1..port_cache.len()]
+        port_cache.push(p)
+    p
+
+nearby_ports = (p: vec2,distance: f64 = 700.0) -> int[]:
+    result: int[]
+    loop index in settlement_bins.get(geography_bin(f64(p.x),f64(p.y)),[]):
+        s=world_settlements[index]
+        if s.legacy<0 and s.harbor.len()>0 and length(s.center.xz-p)<f32(distance): result.push(index)
+    result
+
+port_quay_height = (p: vec2,h: f64) -> f64:
+    result=h
+    loop index in nearby_ports(p):
+        loop q in settlement_port(world_settlements[index]).quays:
+            d=q.b.xz-q.a.xz; raw=dot(p-q.a.xz,d)/dot(d,d)
+            if (q.profile or q.street) and (raw<0.0 or raw>1.0): continue
+            u=clamp(raw,0.0,1.0)
+            # Round-ended coverage joins the strips without hairline gaps at bends.
+            if length(p-q.a.xz-d*u)<=f32(q.width*0.5): result=max(result,f64(port_deck(q,u)))
+    result
+
+port_mooring = (p: vec3,distance: f64 = 22.0) -> vec3?:
+    best: vec3?=none; bd=distance
+    loop index in nearby_ports(p.xz):
+        # Dock lookup needs only compact records, never a terrain query or detailed plan.
+        loop d in world_settlements[index].harbor:
+            l=f64(length(p.xz-d.at.xz))
+            if l<bd: best=d.at; bd=l
+    best
+
+port_bollard = (p: vec3) -> vec3?:
+    best: vec3?=none; bd=45.0
+    loop index in nearby_ports(p.xz):
+        loop q in settlement_port(world_settlements[index]).quays:
+            if q.street or q.profile: continue
+            delta=q.b-q.a; len=f64(length(delta.xz)); n=vec2(-delta.z,delta.x)/f32(len)
+            loop k in 0..max(1,int(len/12.0)):
+                u=f32((1.0+f64(k)*12.0)/len)
+                loop side in [-1.0,1.0]:
+                    at=mix(q.a,q.b,u); at.y=port_deck(q,u)
+                    at+=vec3(n.x,0,n.y)*f32(side*(q.width*0.5-0.5))+vec3(0,0.55,0)
+                    d=f64(length(at.xz-p.xz))
+                    if d<bd: best=at; bd=d
+    best
