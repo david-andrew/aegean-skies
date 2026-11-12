@@ -1,0 +1,244 @@
+# Score-driven procedural orchestra. No recordings or soundfonts. Fixed 64-voice ceiling;
+# only the selected score is decoded. Reverb storage and waveform tables are bounded.
+use 'music_data.jo'
+const MUSIC_RATE = 16000
+const MUSIC_TABLE = 1024
+const MUSIC_VOICES = 64
+const MUSIC_KINDS = 14
+const MUSIC_BANDS = 7
+
+enum MusicInstrument: strings, brass, flute, oboe, clarinet, bassoon, piano, harp, bouzouki, accordion, banjo, timpani, drums, bass
+
+struct MusicEvent:
+    start: int
+    duration: int
+    pitch: int
+    instrument: int
+    gain: f64
+    end_gain: f64
+
+struct MusicVoice:
+    active = false
+    instrument = 0
+    table = 0
+    age = 0
+    duration = 1
+    attack = 100
+    release = 800
+    phase = 0.0
+    phase2 = 0.0
+    phase3 = 0.0
+    increment = 0.0
+    gain = 0.0
+    gain_step = 0.0
+    level = 1.0
+    decay = 1.0
+    vibrato = 0.0
+
+struct MusicSynth:
+    piece = -1
+    events: MusicEvent[]
+    next = 0
+    cursor = 0
+    frames = 1
+    lookback = 0
+    voices: MusicVoice[]
+    tables: f32[][]
+    pitches: f64[]
+    delays: f64[][]
+    damp: f64[]
+    reverb_at = 0
+    rng: u64 = 31
+    fade = 0
+    stolen = 0
+    gain = 1.0
+    wet = 0.18
+
+music_u32 = (b: u8[], at: int) -> int:
+    int(b[at])+int(b[at+1])*256+int(b[at+2])*65536+int(b[at+3])*16777216
+
+make_music_synth = () -> MusicSynth:
+    s = MusicSynth()
+    s.pitches = [loop n in 0..128: 440.0*pow(2.0,f64(n-69)/12.0)]
+    s.voices = fill(MusicVoice(),MUSIC_VOICES)
+    # Octave mipmaps prevent upper harmonics folding above Nyquist at high notes.
+    loop kind in 0..MUSIC_KINDS:
+        loop band in 0..MUSIC_BANDS:
+            harmonics = 1 << band
+            table = fill(f32(0),MUSIC_TABLE)
+            loop h in 1..harmonics+1:
+                f = f64(h)
+                weight = match MusicInstrument(kind):
+                    .strings: 0.48/pow(f,1.18)
+                    .brass: 0.42/pow(f,1.05)
+                    .flute: if h == 1: 0.70 else: 0.12/pow(f,2.0)
+                    .oboe: 0.45/pow(f,1.05)*(if h%2 == 1: 1.0 else: 0.60)
+                    .clarinet: 0.60/pow(f,1.20)*(if h%2 == 1: 1.0 else: 0.10)
+                    .bassoon: 0.50/pow(f,1.40)*(if h == 3: 1.8 else: 1.0)
+                    .piano: 0.62/pow(f,1.65)
+                    .harp: 0.64/pow(f,1.85)
+                    .bouzouki: 0.47/pow(f,1.24)*(if h%3 == 0: 0.4 else: 1.0)
+                    .accordion: 0.43/pow(f,1.18)
+                    .banjo: 0.50/pow(f,1.05)*(if h%2 == 1: 1.0 else: 0.5)
+                    .bass: 0.72/pow(f,2.1)
+                    else: if h == 1: 0.75 else: 0.0
+                loop i in 0..MUSIC_TABLE:
+                    table[i] += f32(weight*sin(TAU*f*f64(i)/f64(MUSIC_TABLE)))
+            s.tables.push(table)
+    s.delays = [fill(0.0,479),fill(0.0,631),fill(0.0,797),fill(0.0,941),fill(0.0,89),fill(0.0,127)]
+    s.damp = fill(0.0,4)
+    s
+
+music_load = (s: mut MusicSynth, piece: int):
+    if piece == s.piece: return
+    s.events = []
+    s.piece = clamp(piece,0,MUSIC_PIECES.len()-1)
+    # Fixed orchestra balances measured over each complete score; retain its internal dynamics.
+    balances = [0.75,1.35,0.40,0.70,0.22,3.0,0.55]
+    s.gain = balances[s.piece]
+    if let b = inflate(music_bytes(s.piece)):
+        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and b[3] == 49)
+        count = music_u32(b,4)
+        assert(count <= 50000 and b.len() == 16+count*12)
+        s.frames = music_u32(b,8); s.lookback = music_u32(b,12)
+        loop i in 0..count:
+            at = 16+i*12
+            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0))
+    assert(s.events.len() > 0)
+
+music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
+    kind = MusicInstrument(e.instrument)
+    release = match kind:
+        .strings: 2400
+        .piano, .harp: 3200
+        .bouzouki, .banjo, .bass: 900
+        else: 800
+    if age >= e.duration+release: return
+    slot = -1; oldest = -1
+    loop k in 0..s.voices.len():
+        if not s.voices[k].active:
+            slot = k
+            break
+        if s.voices[k].age > oldest: oldest = s.voices[k].age; slot = k
+    if s.voices[slot].active: s.stolen += 1
+    hz = s.pitches[clamp(e.pitch,0,127)]
+    if kind == .drums: hz = if e.pitch <= 36: 65.0 else: if e.pitch < 45: 175.0 else: 330.0
+    band = 0
+    loop band+1 < MUSIC_BANDS and hz*f64(1 << (band+1)) < 7200.0: band += 1
+    attack = match kind:
+        .strings: 650
+        .brass: 190
+        .flute, .oboe, .clarinet, .bassoon, .accordion: 170
+        else: 20
+    decay_rate = match kind:
+        .piano: 1.8
+        .harp: 2.4
+        .bouzouki: 4.5
+        .banjo: 7.5
+        .bass: 2.0
+        .timpani: 4.0
+        .drums: if e.pitch <= 36: 22.0 else: 32.0
+        else: 0.0
+    # Score dynamics are not normalized away; large sections sum quietly, then soft-limit.
+    balance = match kind:
+        .strings: 0.25
+        .harp: 0.38
+        .brass: 0.29
+        .drums: 0.20
+        .bass: 0.46
+        else: 0.36
+    phase = (f64(age)*hz/f64(MUSIC_RATE))%1.0
+    s.voices[slot] = MusicVoice(active=true,instrument=e.instrument,table=e.instrument*MUSIC_BANDS+band,
+        age=age,duration=e.duration,attack=min(attack,max(1,e.duration/3)),release=release,
+        phase=phase,phase2=(f64(age)*hz/f64(MUSIC_RATE)*(if kind == .timpani: 1.48 else: 1.0017)+0.31)%1.0,phase3=(f64(age)*hz/f64(MUSIC_RATE)*0.9983+0.67)%1.0,
+        increment=hz/f64(MUSIC_RATE),gain=(e.gain+(e.end_gain-e.gain)*f64(min(age,e.duration))/f64(e.duration))*balance,
+        gain_step=(e.end_gain-e.gain)*balance/f64(e.duration),
+        level=exp(-decay_rate*f64(age)/f64(MUSIC_RATE)),decay=exp(-decay_rate/f64(MUSIC_RATE)),
+        vibrato=(f64((e.start+e.pitch*31)%MUSIC_RATE)/f64(MUSIC_RATE)+f64(age)*5.2/f64(MUSIC_RATE))%1.0)
+
+# Binary search plus at most the longest note's overlap window. No replay from bar one.
+# Seeking intentionally clears the hall tail; a 10 ms fade suppresses the discontinuity.
+music_seek = (s: mut MusicSynth, seconds: f64):
+    s.cursor = clamp(int(seconds*f64(MUSIC_RATE)),0,s.frames)
+    s.voices = fill(MusicVoice(),MUSIC_VOICES)
+    s.next = 0; s.fade = 0; s.stolen = 0
+    s.rng = u64(31+s.cursor)
+    loop k in 0..s.delays.len(): s.delays[k] = fill(0.0,s.delays[k].len())
+    s.damp = fill(0.0,4); s.reverb_at = 0
+    low = 0; high = s.events.len()
+    earliest = s.cursor-s.lookback
+    loop low < high:
+        middle = (low+high)/2
+        if s.events[middle].start < earliest: low = middle+1
+        else: high = middle
+    s.next = low
+    loop s.next < s.events.len() and s.events[s.next].start < s.cursor:
+        e = s.events[s.next]
+        music_start(s,e,s.cursor-e.start)
+        s.next += 1
+
+music_osc = (s: MusicSynth, table: int, phase: f64) -> f64:
+    p = phase*f64(MUSIC_TABLE); i = int(p)%MUSIC_TABLE
+    a = f64(s.tables[table][i]); b = f64(s.tables[table][(i+1)%MUSIC_TABLE])
+    a+(b-a)*(p-floor(p))
+
+music_sample = (s: mut MusicSynth) -> f64:
+    if s.cursor >= s.frames: return 0
+    loop s.next < s.events.len() and s.events[s.next].start <= s.cursor:
+        music_start(s,s.events[s.next],s.cursor-s.events[s.next].start)
+        s.next += 1
+    s.rng = (s.rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
+    noise = f64(s.rng)/2147483648.0-1.0
+    value = 0.0
+    loop k in 0..s.voices.len():
+        n = s.voices[k]
+        if not n.active: continue
+        if n.age >= n.duration+n.release:
+            s.voices[k].active = false
+            continue
+        kind = MusicInstrument(n.instrument)
+        env = min(1.0,f64(n.age)/f64(n.attack))*clamp(f64(n.duration+n.release-n.age)/f64(n.release),0.0,1.0)
+        v = music_osc(s,n.table,n.phase)
+        if kind == .strings or kind == .accordion or kind == .bouzouki:
+            v = (v+music_osc(s,n.table,n.phase2)+music_osc(s,n.table,n.phase3))/3.0
+        if kind == .brass:
+            # Softer attacks/quiet brass have less high-frequency energy.
+            sine = music_osc(s,int(MusicInstrument.timpani)*MUSIC_BANDS,n.phase)
+            brightness = clamp(n.gain*2.4+env*0.25,0.2,0.95)
+            v = v*brightness+sine*(1.0-brightness)
+        if kind == .drums:
+            v = v*0.55+noise*(if n.increment < 0.006: 0.08 else: 0.65)
+        if kind == .timpani:
+            v += 0.30*music_osc(s,n.table,n.phase2)+noise*0.03
+        if kind == .flute: v += noise*0.015
+        if kind == .strings: v += noise*0.008
+        if kind == .piano or kind == .bouzouki or kind == .banjo:
+            v += noise*0.10*max(0.0,1.0-f64(n.age)/160.0)
+        value += v*env*n.gain*n.level
+        vib = music_osc(s,int(MusicInstrument.timpani)*MUSIC_BANDS,n.vibrato)
+        depth = if kind == .strings: 0.0025 else: if kind == .flute or kind == .oboe: 0.0015 else: 0.0
+        inc = n.increment*(1.0+vib*depth*min(1.0,f64(n.age)/3200.0))
+        n.phase = (n.phase+inc)%1.0
+        n.phase2 = (n.phase2+inc*(if kind == .timpani: 1.48 else: 1.0017))%1.0
+        n.phase3 = (n.phase3+inc*0.9983)%1.0
+        n.vibrato = (n.vibrato+5.2/f64(MUSIC_RATE))%1.0
+        n.level *= n.decay
+        if n.age < n.duration: n.gain += n.gain_step
+        n.age += 1
+        s.voices[k] = n
+    hall = 0.0
+    loop k in 0..4:
+        at = s.reverb_at%s.delays[k].len()
+        delayed = s.delays[k][at]
+        s.damp[k] += (delayed-s.damp[k])*0.35
+        s.delays[k][at] = value+s.damp[k]*0.76
+        hall += delayed*0.25
+    loop k in 4..6:
+        at = s.reverb_at%s.delays[k].len()
+        delayed = s.delays[k][at]
+        v = hall
+        hall = delayed-v*0.5
+        s.delays[k][at] = v+hall*0.5
+    s.reverb_at += 1; s.cursor += 1; s.fade = min(160,s.fade+1)
+    value = (value+hall*s.wet)*s.gain
+    value/(1.0+abs(value)*0.28)*f64(s.fade)/160.0
