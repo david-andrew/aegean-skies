@@ -1,0 +1,143 @@
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as pl
+import '../tools/stalllab.jo' as lab
+
+_trial = ():
+    fl.set_speed_scale(3.3)
+    tw.set_tweaks(tw.Tweaks(chaotic_stalls = true))
+
+_reset = ():
+    fl.set_speed_scale(1.0)
+    tw.set_tweaks(tw.Tweaks())
+
+_sep = (s: fl.CraftState) -> f64: f64(s.wing_separation.x + s.wing_separation.y) * 0.5
+
+_finite = (s: fl.CraftState):
+    assert(abs(f64(s.position.x)) < 1e6 and abs(f64(s.position.y)) < 1e6 and abs(f64(s.position.z)) < 1e6)
+    assert(abs(f64(length(s.orientation)) - 1.0) < 0.00001)
+    assert(length(s.angular_velocity) < 15)
+    assert(s.wing_separation.x >= 0 and s.wing_separation.x <= 1 and s.wing_separation.y >= 0 and s.wing_separation.y <= 1)
+
+test "chaotic stall trial defaults off and preserves low water hop exactly":
+    assert(not tw.Tweaks().chaotic_stalls)
+    fl.set_speed_scale(3.3)
+    loop kind in [pl.Craft.gull, pl.Craft.falco, pl.Craft.tern, pl.Craft.pelican]:
+        k = lab.stall_spec(kind)
+        loop airborne in [false, true]:
+            a = fl.water_start(k, vec3(0, 0, 0)); b = a
+            if airborne:
+                a.position.y += 4; a.on_water = false; a.water_age = 1
+                a.velocity = vec3(0, 0, -k.stall_speed * 3.3 * 0.85); b = a
+            loop i in 0..360:
+                c = fl.Controls(throttle = if airborne: 0.0 else: 1.0)
+                tw.set_tweaks(tw.Tweaks())
+                fl.step(k, a, c, fl.FlightEnv(), 1.0 / 60.0)
+                tw.set_tweaks(tw.Tweaks(chaotic_stalls = true))
+                fl.step(k, b, c, fl.FlightEnv(), 1.0 / 60.0)
+                assert(a == b)
+                if a.position.y > k.float_height + k.span * 0.95: break
+    _reset()
+
+test "sideslip breaks one wing first and a powered held spin grows and keeps rotating":
+    _trial()
+    k = lab.stall_spec(.tern); s = lab.stall_start(k, 2)
+    split = 0.0; drop = 0.0; early = 0.0; growing = 0.0; rotation = 0.0
+    loop i in 0..480:
+        fl.step(k, s, lab.stall_controls(s, 2), fl.FlightEnv(), 1.0 / 60.0)
+        split = max(split, abs(f64(s.wing_separation.x - s.wing_separation.y)))
+        drop = max(drop, abs(f64(quat_rotate(s.orientation, vec3(1, 0, 0)).y)))
+        if s.time < 1.0: early += f64(length(s.angular_velocity)) / 60.0
+        if s.time > 2.0 and s.time < 4.0: growing += f64(length(s.angular_velocity)) / 120.0
+        if s.time > 4.0: rotation += f64(length(vec2(s.angular_velocity.y, s.angular_velocity.z))) / 60.0
+    print("held Tern: split={split:.3} wing drop={drop:.3} early={early:.3} growing={growing:.3} late rotation={rotation:.3}rad")
+    assert(split > 0.6 and drop > 0.5 and growing > early * 1.5 and rotation > 2.0 * PI)
+    _finite(s)
+    _reset()
+
+test "standard spin recovery reattaches and levels every intact aircraft within bounded altitude":
+    _trial()
+    loop id in 0..pl.CRAFT_NAMES.len():
+        k = lab.stall_spec(pl.Craft(id))
+        loop scenario in [1, 2]:
+            s = lab.stall_start(k, scenario)
+            recovery_alt = 0.0; lowest = 1e9; attached_at = 0.0
+            loop i in 0..60 * 22:
+                if i == 480: recovery_alt = f64(s.position.y)
+                fl.step(k, s, lab.stall_controls(s, scenario), fl.FlightEnv(), 1.0 / 60.0)
+                if i >= 480:
+                    lowest = min(lowest, f64(s.position.y))
+                    if attached_at == 0.0 and _sep(s) < 0.1 and length(s.angular_velocity) < 0.8: attached_at = s.time - 8.0
+                _finite(s)
+            bank = atan2(-f64(quat_rotate(s.orientation, vec3(1, 0, 0)).y), f64(quat_rotate(s.orientation, vec3(0, 1, 0)).y))
+            print("recovery {k.kind} entry={scenario}: wing/rotation recovery={attached_at:.2}s loss={recovery_alt-lowest:.1}m final altitude={s.position.y:.1} bank={bank:.2}")
+            assert(attached_at > 0 and attached_at < 6.0)
+            assert(recovery_alt - lowest < 1400 and s.position.y > 50 and not s.crashed)
+            assert(_sep(s) < 0.05 and abs(bank) < 0.1 and abs(f64(fl.forward(s).y)) < 0.15)
+    _reset()
+
+test "stall forces weaken roll damping at the break and forward stick unloads":
+    _trial()
+    k = lab.stall_spec(.falco)
+    a = lab.stall_start(k, 0)
+    a.velocity = vec3(0, 0, -k.stall_speed * 3.3 * 1.25)
+    a.orientation = quat_euler(0.06, 0, 0); a.angular_velocity.z = -0.4
+    b = a; b.orientation = quat_euler(0.14, 0, 0)
+    # A small roll perturbation damps less sharply as the wing enters the lift break.
+    loop i in 0..24:
+        fl.step(k, a, fl.Controls(assist = 0), fl.FlightEnv(), 1.0 / 120.0)
+        fl.step(k, b, fl.Controls(assist = 0), fl.FlightEnv(), 1.0 / 120.0)
+    print("roll perturbation: attached={a.angular_velocity.z:.3} separated={b.angular_velocity.z:.3}")
+    assert(a.angular_velocity.z > -0.4 and b.angular_velocity.z < a.angular_velocity.z)
+    s = lab.stall_start(k, 1)
+    loop i in 0..180: fl.step(k, s, fl.Controls(pitch = 0.8, yaw = 0.8, assist = 0), fl.FlightEnv(), 1.0 / 60.0)
+    held = s; recovered = s; unloaded = 1.0
+    loop i in 0..180:
+        fl.step(k, held, fl.Controls(pitch = 0.8, yaw = 0.8, assist = 0), fl.FlightEnv(), 1.0 / 60.0)
+        fl.step(k, recovered, fl.Controls(pitch = -1, yaw = -1, assist = 0), fl.FlightEnv(), 1.0 / 60.0)
+        unloaded = min(unloaded, _sep(recovered))
+    assert(unloaded < 0.1 and _sep(held) > 0.5)
+    _reset()
+
+test "trainer mush is gentler than racer and hammerhead and tail slide reverse vertical flight":
+    _trial()
+    peaks: f64[]; final_flow: f64[]
+    loop kind in [pl.Craft.tern, pl.Craft.falco]:
+        k = lab.stall_spec(kind); s = lab.stall_start(k, 0)
+        peak = 0.0
+        loop i in 0..480:
+            fl.step(k, s, lab.stall_controls(s, 0), fl.FlightEnv(), 1.0 / 60.0)
+            peak = max(peak, _sep(s))
+        peaks.push(peak); final_flow.push(_sep(s))
+        _finite(s)
+    print("hands-off after entry, peak / remaining separation: trainer={peaks[0]:.2}/{final_flow[0]:.2}, racer={peaks[1]:.2}/{final_flow[1]:.2}")
+    assert(peaks[0] < 0.8 and peaks[1] > 0.95 and final_flow[0] < 0.1 and final_flow[1] > 0.3)
+    loop scenario in [3, 4]:
+        k = lab.stall_spec(.gull); s = lab.stall_start(k, scenario)
+        reversed = false; backward = false
+        loop i in 0..180:
+            fl.step(k, s, lab.stall_controls(s, scenario), fl.FlightEnv(), 1.0 / 60.0)
+            if s.velocity.y < -2: reversed = true
+            if dot(s.velocity, fl.forward(s)) < -1: backward = true
+        assert(reversed)
+        if scenario == 4: assert(backward)
+        _finite(s)
+    _reset()
+
+test "stall replay substep partition and saved flow memory are deterministic":
+    _trial()
+    loop kind in [pl.Craft.gull, pl.Craft.tern, pl.Craft.falco, pl.Craft.pelican]:
+        k = lab.stall_spec(kind); a = lab.stall_start(k, 2); b = a
+        c = fl.Controls(pitch = 0.8, yaw = 0.8, roll = 0.6, throttle = 0.7)
+        loop i in 0..240:
+            fl.step(k, a, c, fl.FlightEnv(), 1.0 / 30.0)
+            fl.step(k, b, c, fl.FlightEnv(), 1.0 / 60.0)
+            fl.step(k, b, c, fl.FlightEnv(), 1.0 / 60.0)
+            assert(a == b)
+        parsed = from_text[fl.CraftState](to_text(a))
+        assert(parsed is fl.CraftState)
+        loop i in 0..120:
+            fl.step(k, a, c, fl.FlightEnv(), 1.0 / 60.0)
+            fl.step(k, parsed, c, fl.FlightEnv(), 1.0 / 60.0)
+            assert(a == parsed)
+    _reset()
