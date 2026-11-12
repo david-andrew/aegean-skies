@@ -134,7 +134,7 @@ cloud_growing_point = (p: vec3, growth: vec4) -> vec3:
     q
 
 # Surface values are deliberately grouped into broad painted regions, with
-# soft transitions inside them. The silhouette comes from the distance field,
+# narrow transitions and gentle washes inside them. The silhouette comes from the distance field,
 # rather than an accumulation of widely spaced translucent samples.
 cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
     normal = cloud_to_world((form.xyz*2.0-vec3(1,1,1))/vec3(sqrt(i.extent.x),sqrt(i.extent.y),sqrt(i.extent.z)),i.meta.xy)
@@ -142,27 +142,32 @@ cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: Vol
     sun = normalize(u.sun_dir)
     facing = dot(normal,sun)
     wash = vnoise(p.xz*19.0+vec2(p.y*13.0,p.y*7.0))-0.5
-    value = facing+wash*0.12
+    # A broad wash links neighboring heads; local normals retain the lobe cuts.
+    # Otherwise every shoulder becomes an identical isolated dark crescent.
+    mass_normal = p*vec3(0.8,0.55,0.8)+vec3(0,0.18,0)
+    mass_normal = cloud_to_world(mass_normal/max(length(mass_normal),0.000001),i.meta.xy)
+    value = mix(facing,dot(mass_normal,sun),0.3)+wash*0.08
     shade = mix(u.shade,vec3(0.38,0.61,0.77)*u.sun,0.48)
     shade = mix(shade,vec3(0.08,0.23,0.37)*u.sun,i.weather.y*0.8)
     white = u.sun*vec3(0.76,0.80,0.86)
-    middle = mix(shade,white,0.53)
-    light = mix(shade,middle,smoothstep(-0.45,0.05,value))
-    light = mix(light,white,smoothstep(0.04,0.33,value))
-    under = smoothstep(-0.59,-0.12,p.y)
-    light = mix(shade*0.88,light,0.35+under*0.65)
+    shade = mix(shade,white,0.32*(1.0-i.weather.y))
+    middle = mix(shade,white,0.82)
+    # Narrow transitions retain a drawn terminator on every rounded head.
+    light = mix(shade,middle,smoothstep(-0.28,-0.12,value))
+    light = mix(light,white,smoothstep(0.20,0.38,value))
+    light *= 0.93+0.07*smoothstep(-0.3,0.9,facing)
+    under = smoothstep(f32(-CLOUD_BASE+0.01),f32(-CLOUD_BASE+0.04),p.y)
     if u.shadows > 0.0:
         probe = cloud_stamp_sample(u.atlas,p+cloud_to_local(sun,i.meta.xy)*0.16,i.meta.z).w
-        shadow = smoothstep(0.50,0.57,probe)*0.32
-        light = mix(light,shade,shadow)
+        light = mix(light,shade,smoothstep(0.51,0.53,probe)*0.38)
     edge = 1.0-abs(dot(normal,ray))
-    rim = edge*edge*edge*smoothstep(-0.15,0.35,facing)*(0.5+under*0.5)
-    light = mix(light,white*1.08,rim*0.6)
-    # Irregular washes live in the formation, not in screen coordinates. They
-    # vary value within a painted region without putting outlines on every lobe.
-    pigment = vnoise(p.xy*8.0+vec2(p.z*5.0,0))*0.65+vnoise(p.yz*19.0+vec2(p.x*11.0,0))*0.35
-    light = mix(light,shade,smoothstep(0.52,0.73,pigment)*0.22)
-    light *= 0.94+pigment*0.05+wash*0.07
+    rim = smoothstep(0.80,0.96,edge)*smoothstep(0.0,0.15,facing)
+    light = mix(light,white*1.04,rim*0.45)
+    # The shared condensation floor reads as one cool plane.
+    light = mix(shade*0.94,light,under)
+    # Fine pigment, independent of lobe lighting; no broad mottled gradients.
+    pigment = vnoise(p.xy*47.0+vec2(p.z*23.0,0))-0.5
+    light *= 1.0+pigment*0.03
     light *= 1.0-i.weather.y*0.18*(1.0-under*0.45)
     if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
     aerial(light,world,u.cam,u.haze,u.fog)
@@ -294,13 +299,17 @@ struct VolumeCompositeParams:
     shaft_color: vec3
     shaft_gain: f32
     shaft_steps: f32
+    screen_size: vec2
+    rect: vec4
+    grain_gain: f32
 
 struct VolumeCompositeOut:
     pos: vec4
     uv: vec2
 
 volume_composite_vs = (v: VolumeVertex, u: VolumeCompositeParams) -> VolumeCompositeOut:
-    VolumeCompositeOut(vec4(v.corner * 2.0 - vec2(1, 1), 0, 1), v.corner)
+    uv = mix(u.rect.xy,u.rect.zw,v.corner)
+    VolumeCompositeOut(vec4(uv * 2.0 - vec2(1, 1), 0, 1), uv)
 
 volume_view_depth = (d: f32, ab: vec2) -> f32: min(1000000.0, ab.y / min(d * 2.0 - 1.0 + ab.x, -0.0000001))
 
@@ -344,7 +353,16 @@ volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
         path = 1.0 - exp(-center * 0.00025)
         cone = exp(-dot(i.uv - u.sun_uv, i.uv - u.sun_uv) * 1.8)
         result = vec4(result.xyz + u.shaft_color * (light * u.shaft_gain * path * cone * (1.0 - result.w)), result.w)
-    result
+    # Paper grain is evaluated once at the final pixel size, never enlarged
+    # with the half/third/quarter resolution cloud target. Premultiplied RGB
+    # keeps empty sky pixels untouched. No extra texture or history.
+    if u.grain_gain <= 0.0 or result.w < 0.001: return result
+    paper_pixel = floor(i.uv*u.screen_size)
+    # Decorrelate both axes; a linear dither hash leaves visible diagonal rows.
+    grain = fract(vec3(paper_pixel.x,paper_pixel.y,paper_pixel.x)*0.1031)
+    grain += vec3(dot(grain,grain.yzx+vec3(33.33,33.33,33.33)))
+    paper = fract((grain.x+grain.y)*grain.z)-0.5
+    vec4(result.xyz*(1.0+paper*u.grain_gain),result.w)
 
 volume_composite_sh: Shader
 
@@ -392,6 +410,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     selected.sort_by((v: CloudVolume) -> f64: f64(length(v.center - cam)), descending = true)
     volume_occluders = selected
     instances: VolumeInstance[]
+    composite_low = vec2(1,1); composite_high = vec2(-1,-1)
     weather_coverage: f32 = 0.0
     deck_coverage: f32 = 0.0; rain_coverage: f32 = 0.0
     loop v in selected:
@@ -404,6 +423,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         # A distant thunderhead can be costly while occupying less area than
         # a broad deck. Use the same weather target once it is visibly substantial.
         if v.shape == 5.0 and area > 0.03: weather_coverage = max(weather_coverage,0.31)
+        composite_low = min(composite_low,rect.xy); composite_high = max(composite_high,rect.zw)
         instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth))
     volume_visible = instances.len()
     set_instances(volume_instances, instances)
@@ -449,7 +469,15 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     sun_uv = sun_clip.xy / max(sun_clip.w, 0.0001) * 0.5 + vec2(0.5, 0.5)
     shaft = smoothstep(-0.03, 0.05, L.sun_dir.y) * (1.0 - smoothstep(0.15, 0.55, L.sun_dir.y)) * 0.12
     if sun_clip.w <= 0.0 or sun_uv.x < -0.25 or sun_uv.x > 1.25 or sun_uv.y < -0.25 or sun_uv.y > 1.25: shaft = 0.0
-    draw(volume_composite_sh, volume_quad, VolumeCompositeParams(volume_color.texture, cloud_scene_depth, vec2(f32(w), f32(h)), p.depth_ab, sun_uv, L.sun, shaft, if render_quality.tier == 0: 4.0 else: 8.0))
+    # With no shafts, clear pixels outside every projected cloud cannot
+    # contribute. Include two low-resolution texels for reconstruction taps.
+    # This uses the same conservative curved bounds as the volume/edge passes.
+    composite_rect = vec4(0,0,1,1)
+    if shaft == 0.0:
+        pad_uv = vec2(2.0/f32(w),2.0/f32(h))
+        composite_rect = vec4(max(vec2(0,0),composite_low*0.5+vec2(0.5,0.5)-pad_uv),min(vec2(1,1),composite_high*0.5+vec2(0.5,0.5)+pad_uv))
+    if shaft > 0.0 or instances.len() > 0:
+        draw(volume_composite_sh, volume_quad, VolumeCompositeParams(volume_color.texture, cloud_scene_depth, vec2(f32(w), f32(h)), p.depth_ab, sun_uv, L.sun, shaft, if render_quality.tier == 0: 4.0 else: 8.0, vec2(f32(cloud_scene_depth.width),f32(cloud_scene_depth.height)),composite_rect,if volume_weather_small or volume_rain_small: 0.0 else: 0.012))
     p.edge_pass = 1.0
     draw_instanced(volume_sh, volume_quad, volume_instances, p)
     restore_cloud_depth()
