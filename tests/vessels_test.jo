@@ -1,0 +1,110 @@
+use '../src/vessel_types.jo'
+use '../src/vessels.jo'
+use '../src/sea_routes.jo'
+use '../src/world.jo'
+use '../src/geography.jo'
+use '../src/settlements.jo'
+
+assert(load_land(embed('../assets/terrain.bin')))
+assert(load_geography(embed('../assets/world.bin')))
+geography_enabled = true
+
+test "vessel catalog includes distinct civilian and national hulls":
+    names: {str: bool} = {}
+    loop k in 0..18:
+        s = vessel_spec(VesselKind(k))
+        assert(s.length > s.beam and s.draft > 0 and s.speed > 0 and not (s.name in names))
+        names[s.name] = true
+    assert(vessel_spec(.passenger_steamer).length > 100)
+    assert(vessel_spec(.kalyra_destroyer).length != vessel_spec(.orenthia_destroyer).length)
+
+test "incremental navigation publishes only depth checked water lanes":
+    f = VesselFleet()
+    id = request_sea_lane(f,-1,-1,vec2(0,-20000),vec2(4000,-20000),1.0,3.0)
+    assert(id >= 0)
+    calls = 0
+    loop f.lanes[0].status != .ready and f.lanes[0].status != .blocked and calls < 15000:
+        assert(step_sea_navigation(f,23) <= 23)
+        calls += 1
+    assert(f.lanes[0].status == .ready)
+    loop k in 0..f.lanes[0].points.len()-1:
+        a = f.lanes[0].points[k]; b = f.lanes[0].points[k+1]
+        n = int(ceil(f64(length(b-a))/7))
+        loop j in 0..n+1: assert(sea_depth_ok(mix(a,b,f32(j)/f32(n)),1.0))
+    assert(calls > 1)
+
+test "vessel motion outcomes and saves have one deterministic owner":
+    f = VesselFleet()
+    f.lanes.push(SeaLane(0,1,2,vec2(0,-20000),vec2(180,-20000),1.2,4,status=.ready,points=[vec2(0,-20000),vec2(180,-20000)],distance=180))
+    assert(spawn_vessel(f,Vessel(11,.motor_caique,7,1,lane=0,position=vec3(0,0,-20000),yaw=PI/2,cargo=[32],crew=[7])))
+    saved = to_text(f); other = unwrap(from_text[VesselFleet](saved))
+    loop k in 0..2400: step_vessels(f,vec2(8,0),VESSEL_DT)
+    loop k in 0..800: step_vessels(other,vec2(8,0),VESSEL_DT*3)
+    assert(hash(f.ships) == hash(other.ships))
+    assert(f.ships[0].status == .docked and length(f.ships[0].position-vec3(180,0,-20000)) < 0.01)
+    events = take_vessel_events(f)
+    assert(events.len() == 1 and events[0].kind == .arrived and take_vessel_events(f).len() == 0)
+    damage_vessel(f,11,1.0,99,true)
+    step_vessels(f,vec2(8,0),66)
+    assert(f.ships[0].status == .sunk and f.survivors.len() == 1 and f.survivors[0].crew == [7])
+    step_vessels(f,vec2(8,0),10)
+    assert(f.survivors.len() == 1 and f.ships[0].cargo == [32])
+
+
+test "navigation save resume and frame budgets preserve the verified lane":
+    f = VesselFleet()
+    request_sea_lane(f,-1,-1,vec2(0,-20000),vec2(1500,-20000),1.2,4.0)
+    step_sea_navigation(f,31)
+    other = unwrap(from_text[VesselFleet](to_text(f)))
+    loop k in 0..2000:
+        step_sea_navigation(f,23)
+        if f.lanes[0].status == .ready or f.lanes[0].status == .blocked: break
+    loop k in 0..2000:
+        step_sea_navigation(other,71)
+        if other.lanes[0].status == .ready or other.lanes[0].status == .blocked: break
+    assert(f.lanes[0].status == .ready and hash(f.lanes) == hash(other.lanes))
+    assert(f.search.nodes.len() == 0 and other.search.nodes.len() == 0)
+
+test "impossible depth blocks a lane without publishing a partial route":
+    f = VesselFleet()
+    request_sea_lane(f,-1,-1,vec2(0,-20000),vec2(1500,-20000),100000.0,4.0)
+    loop k in 0..100: step_sea_navigation(f,17)
+    assert(f.lanes[0].status == .blocked and f.lanes[0].points.len() == 0)
+
+test "convoy registration is atomic and capture preserves cargo and crew":
+    f = VesselFleet()
+    a = Vessel(1,.motor_caique,8,1,status=.underway,external=true,position=vec3(0,0,-20000),cargo=[44],crew=[8])
+    assert(not spawn_convoy(f,4,[a,a]) and f.ships.len() == 0)
+    b = a; b.id = 2; b.escort = 1
+    assert(spawn_convoy(f,4,[a,b]) and f.ships.len() == 2)
+    assert(stop_vessel(f,1,99) and capture_vessel(f,1,99,2,99))
+    assert(f.ships[0].owner == 99 and f.ships[0].cargo == [44] and f.ships[0].crew == [8])
+    assert(f.ships[1].escort == 1 and f.ships[1].convoy == 4)
+    events = take_vessel_events(f)
+    assert(events.len() == 2 and events[1].kind == .captured and events[1].other == 8)
+    assert(not capture_vessel(f,1,100,2,100))
+
+test "docked fire persists and survivor handoff is consumed once":
+    f = VesselFleet()
+    assert(spawn_vessel(f,Vessel(1,.coastal_steamer,8,1,status=.docked,position=vec3(0,0,-20000),crew=[8,9])))
+    damage_vessel(f,1,0.5,99,true)
+    step_vessels(f,vec2(8,0),5)
+    assert(f.ships[0].health < 0.5 and f.ships[0].status == .docked)
+    damage_vessel(f,1,1,99)
+    step_vessels(f,vec2(8,0),7)
+    result = take_vessel_survivors(f,1)
+    assert(result != none and result!.crew == [8,9])
+    assert(take_vessel_survivors(f,1) == none)
+    step_vessels(f,vec2(8,0),70)
+    assert(f.survivors.len() == 0)
+
+test "new voyages start at the physical hull and active routes cannot be retired":
+    f = VesselFleet()
+    assert(spawn_vessel(f,Vessel(1,.motor_caique,8,1,status=.docked,position=vec3(0,0,-20000))))
+    near = request_sea_lane(f,1,2,vec2(0,-20000),vec2(1000,-20000),1.2,4)
+    far = request_sea_lane(f,1,2,vec2(100,-20000),vec2(1000,-20000),1.2,4)
+    assert(not set_vessel_route(f,1,far))
+    before = f.ships[0].position
+    assert(set_vessel_route(f,1,near) and f.ships[0].position == before)
+    assert(not retire_sea_lane(f,near))
+    assert(retire_vessel(f,1) and retire_sea_lane(f,near))

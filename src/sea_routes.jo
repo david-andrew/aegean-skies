@@ -1,0 +1,175 @@
+# Bounded, lazy A* sea lanes. Both search and final canonical checks resume at a
+# sample boundary, so even a 300 km route cannot monopolize one render frame.
+use 'vessel_types.jo'
+use 'settlements.jo'
+use 'geography.jo'
+
+const SEA_GRID = 1500.0
+sea_key = (x: int,z: int) -> int: (x+512)*2048+z+512
+sea_edge_key = (a: int,b: int) -> int: min(a,b)*8388608+max(a,b)
+sea_depth_ok = (at: vec2,draft: f64) -> bool:
+    if place_ground(at) > -draft-0.35: return false
+    # Quays stand above water; seabed depth alone must not route through a pier.
+    loop index in settlement_bins.get(geography_bin(at.x,at.y),[]):
+        s = world_settlements[index]
+        if length(at-s.center.xz) > s.radius+1000.0: continue
+        loop dock in s.harbor:
+            segments = [(dock.quay_a,dock.quay_b,dock.width)]
+            if s.kind == .capital: segments.push((dock.quay_b,dock.quay_b+vec2(-s.out.y,s.out.x)*350.0,11.0))
+            loop q in segments:
+                d = q.1-q.0; u = clamp(dot(at-q.0,d)/max(dot(d,d),0.001),0.0,1.0)
+                if length(at-q.0-d*u) < q.2*0.5+0.5: return false
+    true
+
+# A commercial berth shares the actual harbor's quay, not a second dock table.
+# Deep-draft hulls use an explicitly reported anchorage if the quay is too shallow.
+vessel_berth = (place: int,kind: VesselKind) -> (vec2,bool)?:
+    if not (place in settlement_by_id): return none
+    s = world_settlements[settlement_by_id[place]]
+    if s.harbor.len() == 0: return none
+    spec = vessel_spec(kind); dock = s.harbor[0]
+    side = vec2(-s.out.y,s.out.x)
+    p = dock.quay_b+side*f32(dock.width*0.5+spec.beam*0.5+4.0)-s.out*f32(min(spec.length*0.3,20.0))
+    safe = (q: vec2) -> bool:
+        loop a in [-1.0,0.0,1.0]:
+            loop b in [-1.0,0.0,1.0]:
+                if not sea_depth_ok(q+s.out*f32(a*spec.length*0.55)+side*f32(b*(spec.beam*0.5+1.0)),spec.draft): return false
+        true
+    if safe(p): return (p,false)
+    loop distance in [100.0,200.0,400.0,700.0,1100.0]:
+        q = dock.quay_b+s.out*f32(distance)
+        if safe(q): return (q,true)
+    none
+
+request_sea_lane = (f: mut VesselFleet,origin: int,destination: int,start: vec2,finish: vec2,draft: f64,clearance: f64,anchorage: bool = false) -> int:
+    if draft <= 0 or clearance < 0 or length(start-finish) < 1.0: return -1
+    loop lane in f.lanes:
+        if lane.origin == origin and lane.destination == destination and lane.start == start and lane.finish == finish and lane.draft == draft and lane.clearance == clearance and lane.anchorage == anchorage: return lane.id
+    if f.lanes.len() >= SEA_LANE_LIMIT: return -1
+    id = f.next_lane; f.next_lane += 1
+    f.lanes.push(SeaLane(id,origin,destination,start,finish,draft,clearance,anchorage=anchorage))
+    id
+
+request_harbor_lane = (f: mut VesselFleet,origin: int,destination: int,kind: VesselKind) -> int:
+    a = vessel_berth(origin,kind); b = vessel_berth(destination,kind)
+    if a == none or b == none: return -1
+    spec = vessel_spec(kind)
+    request_sea_lane(f,origin,destination,a!.0,b!.0,spec.draft,spec.beam*0.5+2.0,b!.1)
+
+sea_push = (s: mut SeaSearch,score: f64,index: int):
+    s.open.push((score,index)); at = s.open.len()-1
+    loop at > 0:
+        parent = (at-1)/2
+        if s.open[parent].0 < score or (s.open[parent].0 == score and s.open[parent].1 < index): break
+        s.open[at] = s.open[parent]; at = parent
+    s.open[at] = (score,index)
+
+sea_pop = (s: mut SeaSearch) -> int:
+    result = s.open[0].1; last = s.open.pop()
+    if s.open.len() == 0: return result
+    at = 0
+    loop at*2+1 < s.open.len():
+        child = at*2+1
+        if child+1 < s.open.len() and (s.open[child+1].0 < s.open[child].0 or (s.open[child+1].0 == s.open[child].0 and s.open[child+1].1 < s.open[child].1)): child += 1
+        if last.0 < s.open[child].0 or (last.0 == s.open[child].0 and last.1 <= s.open[child].1): break
+        s.open[at] = s.open[child]; at = child
+    s.open[at] = last
+    result
+
+sea_begin = (s: mut SeaSearch,lane: SeaLane):
+    forbidden = s.forbidden
+    s = SeaSearch(lane=lane.id,forbidden=forbidden,grid=if length(lane.finish-lane.start) > 80000: 6000.0 else: SEA_GRID)
+    s.nodes.push(SeaNode(-1,lane.start,0,-1)); s.by_key[-1] = 0
+    sea_push(s,f64(length(lane.finish-lane.start)),0)
+
+sea_neighbor = (s: SeaSearch,lane: SeaLane) -> (int,vec2)?:
+    n = s.nodes[s.current]
+    if s.neighbor == 9:
+        if length(n.at-lane.finish) <= f32(s.grid*2.2) or (n.key == -1 and length(lane.start-lane.finish) < 12000): return (-2,lane.finish)
+        return none
+    x = int(floor(f64(n.at.x)/s.grid)); z = int(floor(f64(n.at.y)/s.grid))
+    dx = s.neighbor%3-1; dz = s.neighbor/3-1
+    if n.key != -1 and dx == 0 and dz == 0: return none
+    q = vec2(f32(f64(x+dx)*s.grid),f32(f64(z+dz)*s.grid))
+    if abs(q.x) > WORLD_WIDTH*0.5 or abs(q.y) > WORLD_DEPTH*0.5 or length(q-n.at) < 1.0: return none
+    (sea_key(x+dx,z+dz),q)
+
+sea_probe_point = (a: vec2,b: vec2,clearance: f64,sample: int,steps: int) -> vec2:
+    d = normalize(b-a); side = vec2(-d.y,d.x)
+    mix(a,b,f32(f64(sample/3)/f64(steps)))+side*f32(f64(sample%3-1)*clearance)
+
+# Returns canonical sample count, bounded by budget. Node work is bounded too.
+step_sea_navigation = (f: mut VesselFleet,budget: int = 64) -> int:
+    if budget <= 0: return 0
+    if f.search.lane < 0:
+        loop lane in f.lanes:
+            if lane.status == .queued:
+                f.search = SeaSearch(); sea_begin(f.search,lane)
+                break
+    index = sea_lane_index(f,f.search.lane)
+    if index < 0: return 0
+    lane = f.lanes[index]; s = f.search; f.search = SeaSearch()
+    if lane.status == .queued: lane.status = .searching
+    used = 0; work = 0
+    loop used < budget and work < budget*8:
+        work += 1
+        if lane.status == .searching:
+            if s.current < 0:
+                if s.open.len() == 0 or s.expanded >= SEA_NODE_LIMIT:
+                    lane.status = .blocked; lane.reason = "No navigable water corridor within the route budget."; break
+                next = sea_pop(s)
+                if s.nodes[next].closed: continue
+                s.nodes[next].closed = true; s.expanded += 1
+                if s.nodes[next].key == -2:
+                    chain: int[]; at = next
+                    loop at >= 0: chain.push(at); at = s.nodes[at].parent
+                    lane.candidate = []; s.path_nodes = []
+                    loop k in 0..chain.len():
+                        id = chain[chain.len()-1-k]
+                        lane.candidate.push(s.nodes[id].at); s.path_nodes.push(s.nodes[id].key)
+                    lane.status = .validating; lane.checked_segment = 0; lane.checked_sample = 0
+                    continue
+                s.current = next; s.neighbor = 0; s.sample = 0
+            if s.neighbor >= 10: s.current = -1; continue
+            candidate = sea_neighbor(s,lane)
+            if candidate == none: s.neighbor += 1; s.sample = 0; continue
+            key,q = candidate!; n = s.nodes[s.current]
+            if sea_edge_key(n.key,key) in s.forbidden: s.neighbor += 1; s.sample = 0; continue
+            existing = s.by_key.get(key,-1)
+            if existing >= 0 and s.nodes[existing].closed: s.neighbor += 1; s.sample = 0; continue
+            steps = max(1,int(ceil(f64(length(q-n.at))/120.0)))
+            wet = sea_depth_ok(sea_probe_point(n.at,q,lane.clearance,s.sample,steps),lane.draft)
+            used += 1; s.sample += 1
+            if not wet: s.neighbor += 1; s.sample = 0; continue
+            if s.sample < (steps+1)*3: continue
+            cost = n.cost+f64(length(q-n.at))
+            if existing < 0:
+                if s.nodes.len() >= SEA_NODE_LIMIT:
+                    lane.status = .blocked; lane.reason = "Sea route node capacity reached."; break
+                existing = s.nodes.len(); s.by_key[key] = existing
+                s.nodes.push(SeaNode(key,q,cost,s.current))
+                sea_push(s,cost+f64(length(lane.finish-q))*1.2,existing)
+            else if cost < s.nodes[existing].cost:
+                s.nodes[existing].cost = cost; s.nodes[existing].parent = s.current
+                sea_push(s,cost+f64(length(lane.finish-q))*1.2,existing)
+            s.neighbor += 1; s.sample = 0
+        else if lane.status == .validating:
+            k = lane.checked_segment
+            if k >= lane.candidate.len()-1:
+                lane.points = lane.candidate; lane.candidate = []; lane.distance = 0.0
+                loop j in 0..lane.points.len()-1: lane.distance += f64(length(lane.points[j+1]-lane.points[j]))
+                lane.status = .ready; break
+            a = lane.candidate[k]; b = lane.candidate[k+1]
+            steps = max(1,int(ceil(f64(length(b-a))/7.0)))
+            wet = sea_depth_ok(sea_probe_point(a,b,lane.clearance,lane.checked_sample,steps),lane.draft)
+            used += 1; lane.checked_sample += 1
+            if not wet:
+                s.forbidden[sea_edge_key(s.path_nodes[k],s.path_nodes[k+1])] = true
+                lane.retries += 1; lane.candidate = []
+                if lane.retries >= 64: lane.status = .blocked; lane.reason = "Fine depth checks rejected the available corridors."; break
+                sea_begin(s,lane); lane.status = .searching
+            else if lane.checked_sample >= (steps+1)*3: lane.checked_segment += 1; lane.checked_sample = 0
+        else: break
+    f.lanes[index] = lane
+    f.search = if lane.status == .ready or lane.status == .blocked: SeaSearch() else: s
+    used
