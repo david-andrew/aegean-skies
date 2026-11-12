@@ -1,0 +1,202 @@
+# Deterministic pigment painter. Every pixel comes from discs, brush stamps and
+# noise; no image input, learned weights, traced masks or reference pixels.
+const PAINT_SIZE = 256
+const PAINT_KINDS = 8
+const PAINT_LAYERS = 3
+const PAINT_COLS = 6
+const PAINT_WIDTH = PAINT_SIZE*PAINT_COLS
+const PAINT_HEIGHT = PAINT_SIZE*4
+const PAINT_WORK = 512
+
+struct PaintLobe:
+    center: vec2
+    radius: vec2
+    parent: vec4
+    cut: f32
+    wash: f32
+    level: int = 0
+
+paint_top = (variant: int) -> f32: if variant == 2 or variant == 3: 0.42 else: 0.70
+
+# Inverse CDF of a bounded r^-2 distribution, not uniform-size scallops.
+paint_radius = (u: f64, low: f64, high: f64) -> f64:
+    1.0/(1.0/low-u*(1.0/low-1.0/high))
+
+paint_lobes = (kind: int) -> PaintLobe[]:
+    r = rng(63019+kind*191)
+    lobes: PaintLobe[]
+    roots: PaintLobe[]
+    lean = (r.next_float()-0.5)*0.08
+    # Distinct growth profiles: single towers, paired crowns, low banks and a
+    # spread thunderhead. Random detail alone must not repeat one cone all sky.
+    counts = if kind == 0: [1,3,4,2,1] else if kind == 1: [1,2,4,3,1] else if kind == 2: [1,2,1,2,1] else if kind == 3: [2,1,2,2,1] else if kind == 4: [1,3,3,2,1] else if kind == 5: [1,2,3,3,1] else if kind == 6: [2,3,3,3,2] else: [1,3,4,3,1]
+    # Several unequal rising plumes share the same condensation plane. Their
+    # branches overlap, but neither heads nor their shoulders lie on a grid.
+    loop j in 0..5:
+        x = [-0.55,-0.29,-0.05,0.30,0.57][j]+(r.next_float()-0.5)*0.08
+        count = counts[j]
+        y = -0.34+(r.next_float()-0.5)*0.08
+        radius = (if kind == 6: [0.23,0.25,0.26,0.26,0.23][j] else: [0.15,0.25,0.28,0.26,0.15][j])*(0.90+r.next_float()*0.20)
+        loop k in 0..count:
+            cx = x+lean*f64(k)+(if j == 1: 0.06 else if j == 3: -0.09 else: 0.0)*f64(k)+(r.next_float()-0.5)*0.07
+            at = vec2(f32(cx),f32(y)); rad = vec2(f32(radius),f32(radius*(0.85+r.next_float()*0.25)))
+            roots.push(PaintLobe(at,rad,vec4(at,rad),f32(-0.35+r.next_float()*0.40),f32(r.next_float())))
+            y += radius*(0.95+r.next_float()*0.20)
+            radius *= 0.87+r.next_float()*0.10
+    # Far crowns first, low foreground plumes last: a few large overlapping
+    # pigment regions rather than an independently shaded circle at every scale.
+    roots.sort((l: PaintLobe) -> f32: l.center.y,descending=true)
+    loop root in roots:
+        lobes.push(root)
+        loop j in 0..18:
+            a = -0.15+r.next_float()*3.65
+            radius = f64(min(root.radius.x,root.radius.y))*paint_radius(r.next_float(),0.14,0.42)
+            at = root.center+root.radius*vec2(f32(cos(a)),f32(sin(a)))*0.97
+            child = PaintLobe(at,vec2(f32(radius),f32(radius*(0.85+r.next_float()*0.3))),root.parent,root.cut,root.wash,1)
+            lobes.push(child)
+            loop k in 0..4:
+                angle = a+(r.next_float()-0.5)*2.3
+                tiny = paint_radius(r.next_float(),0.004,min(0.025,radius*0.55))
+                p = child.center+child.radius*vec2(f32(cos(angle)),f32(sin(angle)))*0.96
+                lobes.push(PaintLobe(p,vec2(f32(tiny)),root.parent,root.cut,root.wash,2))
+    # Normalize the whole brush plan, not a raster crop: preserve all lobes and
+    # guarantee two-texel gutters and a common physical base for every seed.
+    low = vec2(10,10); high = vec2(-10,-10)
+    loop l in lobes:
+        low = min(low,l.center-l.radius); high = max(high,l.center+l.radius)
+    scale = vec2(1.68/(high.x-low.x),(paint_top(kind)-0.04+0.60)/(high.y-low.y))
+    offset = vec2(-0.84,-0.60)-low*scale
+    loop i in 0..lobes.len():
+        l = lobes[i]
+        l.center = l.center*scale+offset; l.radius *= scale
+        l.parent = vec4(l.parent.xy*scale+offset,l.parent.zw*scale)
+        lobes[i] = l
+    lobes
+
+paint_noise = (p: vec2, seed: f32) -> f32: f32(noise(f64(p.x),f64(p.y),f64(seed)))
+
+# Opaque pigment deposited through an antialiased stamp. Alpha remains coverage;
+# wetness/brush opacity only change pigment, never drill holes into the silhouette.
+paint_dab = (img: mut Image, l: PaintLobe, kind: int):
+    n = img.width
+    lo = ivec2(clamp((l.center-l.radius-vec2(0.015))*0.5*f32(n)+vec2(f32(n)*0.5),vec2(0),vec2(f32(n-1))))
+    hi = ivec2(clamp((l.center+l.radius+vec2(0.015))*0.5*f32(n)+vec2(f32(n)*0.5),vec2(0),vec2(f32(n-1))))
+    loop y in lo.y..hi.y+1:
+        loop x in lo.x..hi.x+1:
+            p = vec2(f32(x),f32(y))/f32(n-1)*2.0-vec2(1)
+            q = (p-l.center)/l.radius
+            wash = paint_noise(p*11.0,f32(kind)*2.1)-0.5
+            tooth = paint_noise(p*149.0,f32(kind)*3.7)-0.5
+            d = (length(q)-1.0)*min(l.radius.x,l.radius.y)+tooth*0.0025
+            coverage = (1.0-smoothstep(-0.002,0.004,d))*(if l.level == 3: 0.28 else: 1.0)
+            if coverage <= 0.0: continue
+            parent = (p-l.parent.xy)/l.parent.zw
+            # A slightly ragged, swept paint boundary follows a common light
+            # direction. Children inherit the parent's shadow mass.
+            cut = parent.y-parent.x*0.38-l.cut+wash*0.5+tooth*0.05
+            # Mixed wet and dry edges: a narrow value cut sits inside a broad
+            # wash. Round brush pressure within a lobe adds softer secondary
+            # shapes without changing the shared large shadow silhouette.
+            lit = smoothstep(-0.10,0.12,cut)
+            wash_light = smoothstep(-0.65,0.70,cut)
+            round_wash = smoothstep(-0.8,0.55,q.y-q.x*0.45)
+            value = wash_light*0.55+lit*0.20+round_wash*0.25*wash_light
+            value -= smoothstep(-0.28,0.27,p.x)*smoothstep(-0.38,0.12,p.y)*0.43
+            value += wash*0.16+(l.wash-0.5)*0.07
+            cool = vec3(0.40,0.55,0.64); warm = vec3(0.97,0.89,0.79)
+            # Pigment density compresses middle washes while leaving the
+            # brightest paper exposed. A linear mix made nearly every lobe
+            # cream and erased the broad cool masses in the reference look.
+            exposed = clamp(value,0.0,1.0)
+            color = mix(cool,warm,exposed*exposed)
+            pool = exp(-abs(cut)*23.0)*(1.0-lit)*0.025
+            color -= vec3(0.7,0.6,0.45)*pool
+            old = img.get(x,y)
+            a = coverage+old.w*(1.0-coverage)
+            rgb = (color*coverage+old.xyz*old.w*(1.0-coverage))/max(a,0.001)
+            img.set(x,y,vec4(rgb,a))
+
+# Tangential, soft bristle stamps, clipped to the wet painted shape. Orientation,
+# width, opacity and gaps vary along each lobe arc; fine noise leaves dry tooth.
+paint_stroke = (img: mut Image, center: vec2, tangent: vec2, size: vec2, pigment: vec3, opacity: f32, seed: f32):
+    n = img.width
+    radius = length(size)
+    lo = ivec2(clamp((center-vec2(radius))*0.5*f32(n)+vec2(f32(n)*0.5),vec2(0),vec2(f32(n-1))))
+    hi = ivec2(clamp((center+vec2(radius))*0.5*f32(n)+vec2(f32(n)*0.5),vec2(0),vec2(f32(n-1))))
+    normal = vec2(-tangent.y,tangent.x)
+    loop y in lo.y..hi.y+1:
+        loop x in lo.x..hi.x+1:
+            old = img.get(x,y)
+            if old.w < 0.1: continue
+            p = vec2(f32(x),f32(y))/f32(n-1)*2.0-vec2(1)
+            delta = p-center
+            q = vec2(dot(delta,tangent),dot(delta,normal))/size
+            stamp = 1.0-smoothstep(0.15,1.0,dot(q,q))
+            if stamp <= 0.0: continue
+            dry = paint_noise(vec2(dot(p,tangent)*80.0,dot(p,normal)*330.0),seed)
+            alpha = opacity*stamp*smoothstep(0.22,0.65,dry)
+            img.set(x,y,vec4(mix(old.xyz,pigment,alpha),old.w))
+
+paint_sheet = (kind: int) -> Image:
+    img = image(PAINT_WORK,PAINT_WORK)
+    lobes = paint_lobes(kind)
+    loop l in lobes: paint_dab(img,l,kind)
+    r = rng(7907+kind*317)
+    loop l in lobes:
+        if l.level > 1: continue
+        loop j in 0..5:
+            angle = 0.4+r.next_float()*2.5
+            normal = vec2(f32(cos(angle)),f32(sin(angle)))
+            at = l.center+l.radius*normal*f32(0.68+r.next_float()*0.23)
+            tangent = vec2(-normal.y,normal.x)
+            size = vec2(f32(0.018+r.next_float()*0.06),f32(0.003+r.next_float()*0.009))
+            paint_stroke(img,at,tangent,size,vec3(0.94,0.90,0.82),f32(0.10+r.next_float()*0.18),f32(kind)+l.wash*7.0)
+    # A single cool underside joins all rising plumes. Only the condensation
+    # base dissolves; the upper cauliflower outline stays crisp.
+    loop y in 0..PAINT_WORK:
+        loop x in 0..PAINT_WORK:
+            old = img.get(x,y)
+            if old.w <= 0.0: continue
+            p = vec2(f32(x),f32(y))/f32(PAINT_WORK-1)*2.0-vec2(1)
+            wash = paint_noise(p*vec2(29,7),f32(kind)*4.1)
+            base = smoothstep(-0.49,-0.25+(wash-0.5)*0.08,p.y)
+            streak = paint_noise(p*vec2(8,90),f32(kind)*9.2)
+            base *= mix(0.35+0.65*streak,1.0,smoothstep(-0.49,-0.31,p.y))
+            flat = 1.0-smoothstep(-0.37,-0.18,p.y)
+            pigment = mix(old.xyz,vec3(0.40,0.55,0.64),flat*0.65)
+            tooth = paint_noise(p*257.0,f32(kind)*3.3)-0.5
+            granule = paint_noise(p*vec2(71,113),f32(kind)*6.7)-0.5
+            pigment *= 1.0+tooth*0.055+granule*0.025
+            pigment += vec3(tooth*0.018,-granule*0.010,tooth*granule*0.04)
+            img.set(x,y,vec4(pigment,old.w*base))
+    loop j in 0..18:
+        width = 0.06+r.next_float()*0.15
+        at = vec2(f32((r.next_float()-0.5)*(1.75-width*2.0)),f32(-0.46+r.next_float()*0.10))
+        rad = vec2(f32(width),f32(0.008+r.next_float()*0.024))
+        paint_dab(img,PaintLobe(at,rad,vec4(at,rad),3.0,0.5,3),kind)
+    img
+
+paint_image = () -> Image:
+    atlas = image(PAINT_WIDTH,PAINT_HEIGHT)
+    loop kind in 0..PAINT_KINDS:
+        source = paint_sheet(kind)
+        loop layer in 0..PAINT_LAYERS:
+            tile = kind*PAINT_LAYERS+layer
+            ox = tile%PAINT_COLS*PAINT_SIZE; oy = tile/PAINT_COLS*PAINT_SIZE
+            loop y in 0..PAINT_SIZE:
+                loop x in 0..PAINT_SIZE:
+                    pigment = vec3(0); alpha: f32 = 0.0
+                    loop tap in 0..4:
+                        c = source.get(x*2+tap%2,y*2+tap/2)
+                        pigment += c.xyz*c.w; alpha += c.w
+                    pigment /= max(alpha,0.001); alpha *= 0.25
+                    p = vec2(f32(x),f32(y))/255.0*2.0-vec2(1)
+                    if layer > 0:
+                        center = if layer == 1: vec2(-0.23,-0.23) else: vec2(0.28,-0.29)
+                        q = (p-center)/vec2(0.42,0.32)
+                        mask = 1.0-smoothstep(0.55,1.0,length(q))
+                        light = dot(pigment,vec3(0.2126,0.7152,0.0722))
+                        alpha *= mask*smoothstep(0.53,0.72,light)*0.85
+                    if x < 2 or y < 2 or x >= PAINT_SIZE-2 or y >= PAINT_SIZE-2: alpha = 0.0
+                    atlas.set(ox+x,oy+y,vec4(pigment,alpha))
+    atlas
