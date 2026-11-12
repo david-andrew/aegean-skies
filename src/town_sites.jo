@@ -1,0 +1,177 @@
+# Compact architectural footprints. These describe existing houses, not new
+# simulation places. Contact and close scenery share them at every quality.
+use 'settlements.jo'
+use 'geography.jo'
+
+struct TownSite:
+    at: vec3
+    yaw: f64
+    width: f64
+    depth: f64
+    height: f64
+    seed: int
+    floors: int = 1
+    flat: bool = false
+    modular: bool = false
+    chapel: bool = false
+    service: bool = false
+    door_y: f64 = -1.0
+
+site_right = (s: TownSite) -> vec2: vec2(f32(cos(s.yaw)),f32(-sin(s.yaw)))
+site_front = (s: TownSite) -> vec2: vec2(f32(sin(s.yaw)),f32(cos(s.yaw)))
+site_point = (s: TownSite,x: f64,z: f64) -> vec2: s.at.xz+site_right(s)*f32(x)+site_front(s)*f32(z)
+site_local = (s: TownSite,p: vec2) -> vec2:
+    d=p-s.at.xz
+    vec2(dot(d,site_right(s)),dot(d,site_front(s)))
+
+site_from_parcel = (p: PlaceParcel) -> TownSite:
+    TownSite(p.at,p.yaw,p.width,p.depth,p.height,p.seed,p.floors,p.seed%4==0,true)
+
+site_exclude_box = (s: TownSite,p: vec2,margin: f64 = 0.35) -> vec2:
+    q=site_local(s,p); w=f32(s.width*0.5+margin); d=f32(s.depth*0.5+margin)
+    if abs(q.x)>=w or abs(q.y)>=d: return p
+    if w-abs(q.x)<d-abs(q.y): q.x=if q.x<0: -w else: w
+    else: q.y=if q.y<0: -d else: d
+    site_point(s,f64(q.x),f64(q.y))
+
+struct TownEntry:
+    front: vec2
+    outside: vec2
+    bottom: f64
+    top: f64
+    steps: int
+    width: f64 = 2.0
+
+# A short, real stair from canonical ground to the front door. The same
+# quantised top is used by rendering and walking; no dependency on LOD/density.
+site_entry = (s: TownSite) -> TownEntry:
+    front=site_point(s,if s.chapel or s.service: 0.0 else: -s.width*0.2,s.depth*0.5+0.12)
+    outside=front+site_front(s)*2.4
+    bottom=place_ground(outside)+0.12
+    top=if s.service: s.door_y else: max(bottom+0.24,place_ground(front)+0.24)
+    steps=clamp(int(ceil((top-bottom)/0.20)),2,16)
+    TownEntry(front,outside,bottom,top,steps,if s.chapel: 2.8 else: 2.0)
+
+entry_height = (e: TownEntry,p: vec2,ground: f64) -> f64:
+    d=e.front-e.outside; len=length(d); along=dot(p-e.outside,d)/dot(d,d)
+    off=abs(dot(p-e.outside,vec2(-d.y,d.x)/len))
+    if along< -0.0001 or along>1.0001 or off>f32(e.width*0.5): return ground
+    tread=min(e.steps-1,max(0,int(floor(f64(along)*f64(e.steps)))))
+    max(ground,e.bottom+(e.top-e.bottom)*f64(tread+1)/f64(e.steps))
+
+settlement_entry_height = (p: vec2,h: f64) -> f64:
+    result=h
+    loop index in settlement_bins.get(geography_bin(f64(p.x),f64(p.y)),[]):
+        place=world_settlements[index]
+        if place.legacy>=0 or length(p-place.center.xz)>f32(place.radius+20): continue
+        loop cell in place_candidate_cells(place,place_to_local(place,p)):
+            if let lot=place_lot(place,cell.0,cell.1):
+                if length(place_to_world(place,lot.local)-p)>18: continue
+                if let parcel=place_ground_lot(place,lot):
+                    site=site_from_parcel(parcel)
+                    q=site_local(site,p)
+                    if abs(q.x+f32(site.width*0.2))>1.1 or q.y<f32(site.depth*0.5) or q.y>f32(site.depth*0.5+2.6): continue
+                    result=entry_height(site_entry(site),p,result)
+    result
+
+struct TownLane:
+    a: vec2
+    b: vec2
+    width: f64 = 2.2
+
+# Segment/expanded footprint clipping avoids paving through a house. It also
+# reserves the lane's width, rather than testing only its centre line.
+site_box_crosses = (s: TownSite,a: vec2,b: vec2,margin: f64) -> bool:
+    p=site_local(s,a); q=site_local(s,b); d=q-p
+    lo=0.0; hi=1.0
+    loop axis in 0..2:
+        start=if axis==0: f64(p.x) else: f64(p.y)
+        delta=if axis==0: f64(d.x) else: f64(d.y)
+        extent=(if axis==0: s.width else: s.depth)*0.5+margin
+        if abs(delta)<0.00001:
+            if abs(start)>=extent: return false
+        else:
+            u=(-extent-start)/delta; v=(extent-start)/delta
+            lo=max(lo,min(u,v)); hi=min(hi,max(u,v))
+            if lo>=hi: return false
+    true
+
+lane_clear = (sites: TownSite[],a: vec2,b: vec2,width: f64) -> bool:
+    loop s in sites:
+        if length(s.at.xz-(a+b)*0.5)>length(b-a)*0.5+f32(max(s.width,s.depth)): continue
+        if site_crosses(s,a,b,width*0.5+0.1): return false
+    # Avoid paths stepping into the sea or traversing a cliff.
+    prev=place_ground(a)
+    n=max(1,int(ceil(f64(length(b-a))/2)))
+    loop k in 1..n+1:
+        h=place_ground(mix(a,b,f32(k)/f32(n)))
+        if h<0.5 or abs(h-prev)>1.5: return false
+        prev=h
+    true
+
+site_lanes = (sites: TownSite[]) -> TownLane[]:
+    nodes: vec2[]; result: TownLane[]
+    loop s in sites:
+        loop x in [-1.0,1.0]:
+            # Front corners sit outside the footprint, and align along a row.
+            loop z in [1.0]: nodes.push(site_point(s,x*(s.width*0.5+1.8),z*(s.depth*0.5+2.8)))
+    loop i in 0..nodes.len():
+        near: int[]
+        loop j in i+1..nodes.len():
+            len=length(nodes[j]-nodes[i])
+            if len<1 or len>26: continue
+            near.push(j)
+        near.sort((j: int) -> f32: length(nodes[j]-nodes[i]))
+        count=0
+        loop j in near:
+            if count>=3: break
+            if lane_clear(sites,nodes[i],nodes[j],2.2):
+                result.push(TownLane(nodes[i],nodes[j])); count+=1
+    # A minimum connecting forest keeps junctions, not overlapping diagonal webs.
+    result.sort((lane: TownLane) -> f32: length(lane.b-lane.a))
+    groups=[loop k in 0..nodes.len(): k]
+    tree: TownLane[]
+    loop lane in result:
+        ai=-1; bi=-1
+        loop k in 0..nodes.len():
+            if nodes[k]==lane.a: ai=k
+            if nodes[k]==lane.b: bi=k
+        if ai<0 or bi<0 or groups[ai]==groups[bi]: continue
+        old=groups[bi]; fresh=groups[ai]
+        loop k in 0..groups.len():
+            if groups[k]==old: groups[k]=fresh
+        tree.push(lane)
+    tree
+
+
+town_site_color = (seed: int) -> vec4:
+    palette=[vec4(1,1,1,1),vec4(0.97,0.96,0.91,1),vec4(0.98,0.91,0.78,1),vec4(0.96,0.87,0.83,1),vec4(0.86,0.91,0.88,1),vec4(0.91,0.93,0.97,1)]
+    palette[(seed/17)%palette.len()]
+
+# A modest outside stair on suitable low flat-roof houses. It is a
+# structural feature, independent of decoration density. Neighbour clearance
+# keeps it out of the narrow shared alleys.
+site_roof_entry = (s: TownSite,sites: TownSite[]) -> TownEntry?:
+    if s.modular or s.service or s.chapel or not s.flat or s.floors>2: return none
+    x=s.width*0.5+0.85
+    a=site_point(s,x,s.depth*0.5+0.5)
+    b=site_point(s,x,-s.depth*0.5+1)
+    bottom=place_ground(a)+0.12; top=f64(s.at.y)+s.height+0.3
+    if top-bottom<1.2 or top-bottom>10.0 or f64(length(b-a))/(top-bottom)<0.9: return none
+    loop other in sites:
+        if other.at==s.at: continue
+        if site_crosses(other,a,b,0.95): return none
+    TownEntry(b,a,bottom,top,int(ceil((top-bottom)/0.20)),1.8)
+
+
+site_tower = (s: TownSite) -> TownSite:
+    p=site_point(s,0,-11.9)
+    TownSite(vec3(p.x,s.at.y,p.y),s.yaw,5.6,5.6,21,s.seed)
+
+site_exclude = (s: TownSite,p: vec2,margin: f64 = 0.35) -> vec2:
+    q=site_exclude_box(s,p,margin)
+    if s.chapel: q=site_exclude_box(site_tower(s),q,margin)
+    q
+
+site_crosses = (s: TownSite,a: vec2,b: vec2,margin: f64) -> bool:
+    site_box_crosses(s,a,b,margin) or (s.chapel and site_box_crosses(site_tower(s),a,b,margin))
