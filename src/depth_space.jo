@@ -8,18 +8,24 @@ const WORLD_DEPTH_LOG_RANGE: f32 = 20.0       # log2(1 + 1,048,575 metres)
 # depth clear. Standalone tools mixing ordinary engine meshes retain normal depth.
 world_log_depth=false
 native_reverse_requested=false
+world_split_requested=false
 enable_world_depth=():
-    global world_log_depth,native_reverse_requested
+    global world_log_depth,native_reverse_requested,world_split_requested
     world_log_depth=env("AEGEAN_LINEAR_DEPTH")==none
     native_reverse_requested=env("AEGEAN_LOG_DEPTH")==none
+    world_split_requested=env("AEGEAN_SPLIT_DEPTH")!=none
 world_reverse_depth_active=()->bool:
     when TARGET=="wasm":return false
     else:return world_log_depth and not __soft and __vk and native_reverse_requested
 world_log_depth_active = () -> bool: world_log_depth and not __soft and not world_reverse_depth_active()
+world_split_depth_active=()->bool:
+    when TARGET=="wasm":return world_log_depth_active() and world_split_requested
+    else:return false
 world_depth_compare=()->u32:if world_reverse_depth_active():u32(0x0206) else:GL_LEQUAL
 world_depth_strict=()->u32:if world_reverse_depth_active():u32(0x0204) else:GL_LESS
 world_depth_params = () -> vec2:
-    if world_reverse_depth_active():vec2(0.035,-1)
+    if world_split_depth_active():vec2(0.035,-2)
+    else if world_reverse_depth_active():vec2(0.035,-1)
     else if world_log_depth_active():vec2(WORLD_DEPTH_LOG_RANGE,0)
     else:vec2(__proj3[2].z,__proj3[3].z)
 
@@ -27,6 +33,9 @@ world_has_depth=(depth:f32,ab:vec2)->bool:if ab.y== -1.0:depth>0.0 else:depth<0.
 
 world_depth_encode = (distance: f32) -> f32: log(1.0+max(distance,0.0))*(1.44269504089/WORLD_DEPTH_LOG_RANGE)
 world_depth_decode = (depth: f32,ab: vec2) -> f32:
+    if ab.y== -2.0:
+        if depth<0.5:return ab.x/max(1.0-2.0*depth,0.000000001)
+        return pow(2.0,(depth-0.5)*26.0+7.0)
     if ab.y== -1.0:return min(1000000.0,ab.x/max(depth,0.000000001))
     if ab.y==0.0:return pow(2.0,depth*ab.x)-1.0
     min(1000000.0,ab.y/min(depth*2.0-1.0+ab.x,-0.0000001))
@@ -130,12 +139,18 @@ world_depth_source = (source: ShaderSource) -> ShaderSource:
         s.vs_spirv=depth_spirv(s.vs_spirv,false);s.fs_spirv=depth_spirv(s.fs_spirv,true)
     s
 
-make_world_shader = (source: ShaderSource) -> Shader:
+make_world_shader = (source: ShaderSource,near_source:ShaderSource?=none,split:bool=true) -> Shader:
     # Software rasterization has no fragment-depth output hook. Its CPU shaders
     # retain conventional perspective depth. Native float depth can use reversed Z;
     # WebGL2/OpenGL use fragment-correct log depth without requiring clip control.
-    global world_depth_dump_index
+    global world_depth_dump_index,world_far_shaders
     __gfx_init_gl_only()
+    if world_split_depth_active():
+        if split:
+            near=make_shader(split_depth_source(near_source ?? source,0))
+            world_far_shaders[near.prog]=make_shader(split_depth_source(source,1))
+            return near
+        return make_shader(split_depth_source(source,2))
     adapted=if world_reverse_depth_active():reverse_depth_source(source) else:if world_log_depth_active():world_depth_source(source) else:source
     if let path=env("AEGEAN_DEPTH_DUMP"):
         id=world_depth_dump_index;world_depth_dump_index+=1
@@ -204,3 +219,48 @@ clear_world_depth=():
     glColorMask(0,0,0,0);glDisable(GL_CULL_FACE)
     draw(depth_clear_shader,depth_clear_mesh,DepthClearParams())
     glColorMask(1,1,1,1);glDepthFunc(world_depth_compare())
+
+# Split WebGL depth at 128 m. Near geometry uses ordinary interpolated inverse
+# distance in the lower half of the buffer, without a fragment-depth output.
+# Its cheap far discard precedes material work; early depth rejection stays legal.
+# Far geometry clips at 64 m, then discards fragments nearer than 128 m before
+# material work and writes exact log depth into the upper half. The overlapping
+# clip region is intentional: both passes must agree on multisample coverage at
+# the fragment cutoff, even when the pixel center straddles it. Both ranges increase.
+world_scene_depth_encode=(distance:f32,ab:vec2)->f32:
+    if ab.y== -2.0:
+        if distance<128.0:return 0.5-0.0175/max(distance,0.035)
+        return 0.5+(log(max(distance,128.0))*1.44269504089-7.0)/26.0
+    world_depth_encode(distance)
+
+split_depth_source=(source:ShaderSource,kind:int)->ShaderSource:
+    s=source
+    tail=last_index_of(s.vs,"}") ?? -1
+    expression=if kind==0:"    gl_Position.z = -0.035;\n" else:if kind==1:"    gl_Position.z = gl_Position.w - 128.0;\n" else:"    float wd = max(gl_Position.w, 0.035);\n    float wz = wd < 128.0 ? 0.5 - 0.0175 / wd : 0.5 + (log2(wd) - 7.0) / 26.0;\n    gl_Position.z = (wz * 2.0 - 1.0) * gl_Position.w;\n"
+    assert(tail>0);s.vs=s.vs[..tail]+expression+s.vs[tail..]
+    if kind!=2:
+        start=index_of(s.fs,"void main()") ?? -1
+        assert(start>=0)
+        loop s.fs[start]!='{':start+=1
+        start+=1
+        depth_test=if kind==0:">=" else:"<"
+        s.fs=s.fs[..start]+"\n    if (1.0 / gl_FragCoord.w "+depth_test+" 128.0) discard;\n"+s.fs[start..]
+    if kind!=0:
+        tail=last_index_of(s.fs,"}") ?? -1
+        expression=if kind==1:"    gl_FragDepth = 0.5 + (log2(1.0 / gl_FragCoord.w) - 7.0) / 26.0;\n" else:"    float wd = 1.0 / gl_FragCoord.w;\n    gl_FragDepth = wd < 128.0 ? 0.5 - 0.0175 / wd : 0.5 + (log2(wd) - 7.0) / 26.0;\n"
+        s.fs=s.fs[..tail]+expression+s.fs[tail..]
+    s
+
+world_far_shaders:{int:Shader}={}
+draw_world[U]=(sh:Shader,m:Mesh,params:U):
+    when TARGET=="wasm":
+        if let far=world_far_shaders.get(sh.prog):draw(far,m,params)
+    draw(sh,m,params)
+draw_world_instanced[U,I]=(sh:Shader,m:Mesh,instances:I[],params:U):
+    when TARGET=="wasm":
+        if let far=world_far_shaders.get(sh.prog):draw_instanced(far,m,instances,params)
+    draw_instanced(sh,m,instances,params)
+draw_world_instanced[U,I]=(sh:Shader,m:Mesh,b:InstanceBuffer[I],params:U,first:int=0,count:int= -1):
+    when TARGET=="wasm":
+        if let far=world_far_shaders.get(sh.prog):draw_instanced(far,m,b,params,first,count)
+    draw_instanced(sh,m,b,params,first,count)
