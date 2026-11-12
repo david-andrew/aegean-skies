@@ -150,7 +150,7 @@ def additions():
 
 # 12 successive 60 Hz states, nine frames apart = 0.15 s. Full traces accompany the excerpts.
 SEQUENCES={
- 'takeoff':(dict(AEGEAN_ABOARD='1',SLOPPY_INPUT='1:shift+ 120:shift- 720:s+ 1800:s-'),720),
+ 'takeoff':(dict(AEGEAN_ABOARD='1',SLOPPY_INPUT='1:shift+ 120:shift- 720:s+ 1800:s-'),810),
  'loop':(dict(AEGEAN_FLYING='600 210',SLOPPY_INPUT='1:s+ 1000:s-'),150),
  'water-landing':(dict(AEGEAN_FLYING='3 70',AEGEAN_CAPTURE_ATTITUDE='-0.025',SLOPPY_INPUT='1:z+ 90:z-'),9),
  'dive-into-sea':(dict(AEGEAN_FLYING='100 190',AEGEAN_CAPTURE_ATTITUDE='-0.75'),12),
@@ -166,11 +166,11 @@ def sequences():
         capture(name+'-trace-end',f'{name}: home harbor departure waters, trace endpoint at 18 s after 09:30 initialization',e|dict(AEGEAN_CAPTURE_TRACE='1'),1080,group='traces')
         lines=(P/'logs/traces'/f'{name}-trace-end.log').read_text().splitlines()
         write(P/'traces'/f'{name}.csv','frame,time_s,x_m,y_m,z_m,vx_mps,vy_mps,vz_mps,pitch_rad,throttle,on_water,crashed,hull_damage\n'+'\n'.join(l[7:] for l in lines if l.startswith('FLIGHT,'))+'\n')
-    # Supplemental full maneuver: the primary loop strip remains at 0.15 s spacing.
+    # Show the longer input response under current defaults; do not imply a completed loop.
     paths=[]
     for j in range(12):
-        frame=1+j*33
-        paths.append(capture(f'loop-overview-{j:02}',f'Full-loop overview off home harbor: frame {frame}, {frame/60:.2f} s; supplemental 0.55 s spacing',SEQUENCES['loop'][0]|dict(AEGEAN_CAPTURE_TRACE='1'),frame,group='sequences/loop-overview'))
+        frame=1+j*90
+        paths.append(capture(f'loop-overview-{j:02}',f'Loop-input overview off home harbor: frame {frame}, {frame/60:.2f} s; supplemental 1.5 s spacing; current default physics, not a claim of a completed loop',SEQUENCES['loop'][0]|dict(AEGEAN_CAPTURE_TRACE='1'),frame,group='sequences/loop-overview'))
     sheet(paths,P/'sheets/loop-overview.png',cols=4)
     for name,scene,start in [('flyby','flyby',12),('dogfight','battle',360)]:
         paths=[]
@@ -424,8 +424,9 @@ These are private review references copied into scratch, not game assets or orig
 
 You cannot feel control latency, resistance, acceleration or the player's decisions through stills.
 The six sequences are twelve adjacent states, 0.15 seconds apart: short excerpts, not movies of a
-whole maneuver. A supplemental twelve-frame loop overview uses 0.55 s spacing to show one full
-turn. Four full 18-second flight traces include position, velocity, pitch, throttle,
+whole maneuver. A supplemental twelve-frame loop-input overview uses 1.5 s spacing to show
+the longer climb/descent response under current defaults, without claiming a completed turn.
+Four full 18-second flight traces include position, velocity, pitch, throttle,
 water contact, crash and damage; inputs and initial conditions are in each adjacent capture receipt.
 Catalog captures skip the transient title/help overlay; `first-view.png` preserves the unmodified
 opening view. Native main-game captures use real rendering and physics. The battle and fly-by are explicitly
