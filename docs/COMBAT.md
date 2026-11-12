@@ -271,3 +271,11 @@ options and loaded resources.
 
 Regression tools: `tools/scenario_soak.jo` (`SOAK_SIDE`, `SOAK_SECONDS`, `SOAK_TIMING`) and
 `tools/combat_bench.jo`. Run timing only on the quiet laptop under its benchmark lock.
+
+
+Flight's `FlightEnv.ground` uses `flight_ground.jo`: an 8192-entry direct-mapped cache of
+exact country-surface canonical vertices. Coordinates and geography revision validate every
+entry; collision eviction only recomputes the same value. Legacy islands retain their original
+individually aligned grids. Triangle arithmetic is unchanged, and cache equality is tested
+against the uncached `surface_height` through reloads, switches, terrain seams and eviction.
+The cache is bounded at approximately 256 KiB and never changes contact heights or handling.
