@@ -1,0 +1,96 @@
+use '../src/scenarios.jo'
+use '../src/scenario_catalog.jo'
+use '../src/settlements.jo'
+use '../src/world.jo'
+use '../src/world_towns.jo'
+use '../src/geography.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/combat.jo'
+use '../src/tweaks.jo'
+import '../src/living_types.jo' as data
+import '../src/living_checks.jo' as checks
+import '../src/living_save.jo' as saves
+import '../src/living_conditions.jo' as conditions
+
+scenario_fixture = () -> ScenarioState:
+    global geography_enabled
+    assert(load_land(embed('../assets/terrain.bin')))
+    assert(load_geography(embed('../assets/world.bin')))
+    geography_enabled=true
+    towns=[loop st in SETTLEMENTS:build_town(st)]
+    init_world_towns(towns)
+    set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+    set_tweaks(Tweaks(chaotic_stalls=true))
+    build_scenario("strait",towns,build_craft_models())!
+
+test "scenario builds a conserved repeatable complete national engagement":
+    s=scenario_fixture()
+    errors=checks.invariant_errors(s.world)
+    print("scenario invariants {errors}; save {saves.validate_save_world(s.world)}")
+    assert(errors.len()==0)
+    assert(saves.validate_save_world(s.world)=="")
+    assert(s.battle.actors.len()==16 and s.mode==.aboard)
+    assert(s.world.diplomacy.len()==1 and s.world.diplomacy[0].stage==.war)
+    assert(s.hour==f64(data.local_minute(s.world.minute))/60.0)
+    a=conditions.weather_air(s.world.weather,0,s.hour,s.position)
+    assert(a.deck>0.95 and a.rain>0.2 and a.rain<0.3 and a.ceiling>s.position.y)
+    loop actor in s.battle.actors:
+        assert(actor.state.position.y>max(0.0,surface_height(actor.state.position.x,actor.state.position.z))+100)
+        assert(s.world.people[actor.person].citizenship==actor.side)
+        assert(actor.model==(if actor.side==1:STRAIT_BLUE_MODEL else:STRAIT_RED_MODEL))
+    before=saves.canonical_hash(s.world); before_battle=hash(to_text(s.battle))
+    s.world.accounts[0].cents=0;s.battle.actors[0].state.fuel=0
+    assert(s.battle.actors[0].state.fuel==0 and s.world.accounts[0].cents==0)
+    again=scenario_fixture()
+    assert(before==saves.canonical_hash(again.world) and before_battle==hash(to_text(again.battle)))
+
+test "strait formations hold then engage with finite physical fire and bounded work":
+    s=scenario_fixture();b=s.battle
+    # Automated observer flies the same slot while the human is hands-off in this harness.
+    pi=combat_index(b,s.world.people[s.world.player].craft)
+    b.actors[pi].human=false;b.actors[pi].external=false;b.actors[pi].gun.locked=false
+    shots=0;hits=0;first_shot=-1;max_error=0.0;max_rounds=0;min_gap=1e9
+    e=FlightEnv(ground=surface_height,wind=conditions.weather_air(s.world.weather,0,9,STRAIT_CENTER).wind)
+    loop tick in 0..60*90:
+        step_battle(b,e,b.actors[pi].state.position)
+        s.world.tick+=1;s.world.minute=s.world.tick/120
+        commit_scenario_aircraft(s.world,b)
+        loop event in b.events:
+            if event.kind==.shot:
+                shots+=1
+                if first_shot<0:first_shot=tick
+            if event.kind==.hit:hits+=1
+        max_rounds=max(max_rounds,b.rounds.len())
+        loop actor in b.actors:
+            assert(is_finite(actor.state.position.x) and is_finite(actor.state.position.y))
+            if tick<600 and actor.pilot.leader!=actor.craft:
+                leader=b.actors[combat_index(b,actor.pilot.leader)]
+                slot=leader.state.position+quat_rotate(quat_euler(0,-actor.pilot.formation_heading,0),actor.pilot.formation_offset)
+                max_error=max(max_error,f64(length(slot-actor.state.position)))
+        if tick<600:
+            loop i in 0..b.actors.len():
+                loop j in 0..i:min_gap=min(min_gap,f64(length(b.actors[i].state.position-b.actors[j].state.position)))
+        if tick%300==0:print("strait seconds={tick/60} shots={shots} hits={hits} formation_error={max_error:.1} player={b.actors[pi].state.position} rates={b.actors[pi].state.angular_velocity} rounds={b.rounds.len()}")
+        assert(b.physics_steps<=16 and b.rounds.len()<=COMBAT_MAX_ROUNDS)
+    print("strait first_shot={f64(first_shot)/60:.1}s shots={shots} hits={hits} slot_error={max_error:.1} min_gap={min_gap:.1} rounds_high={max_rounds}")
+    assert(max_error<60 and min_gap>30 and first_shot>600 and first_shot<2400 and hits>0 and shots>20)
+    assert(checks.invariant_errors(s.world).len()==0)
+
+test "scenario adapters support another engagement and commit an aircraft only once per tick":
+    w=life.build_world(u64(5))
+    c=w.aircraft[1];w.aircraft[1].move_owner=.scene
+    k=craft_spec(.gull,[])
+    body=CraftState(position=vec3(20,300,0),velocity=vec3(0,0,-80),fuel=f64(c.fuel_ml-100)/1000,throttle=0.5)
+    b=start_engagement(77,5,body.position,[Combatant(1,c.owner,1,k,body,model=0)])
+    w.tick=1
+    commit_scenario_aircraft(w,b)
+    assert(w.aircraft[1].pose.pos==body.position and w.aircraft[1].fuel_ml==c.fuel_ml-100)
+    revision=w.aircraft[1].revision
+    commit_scenario_aircraft(w,b)
+    assert(w.aircraft[1].revision==revision)
+    visible=scenario_air_traffic(w,b)
+    assert(visible.len()==1 and visible[0].craft==1 and visible[0].person==c.owner)
+    b.actors[0].engagement=78
+    assert(scenario_air_traffic(w,b).len()==0)
