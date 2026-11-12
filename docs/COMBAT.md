@@ -279,3 +279,10 @@ entry; collision eviction only recomputes the same value. Legacy islands retain 
 individually aligned grids. Triangle arithmetic is unchanged, and cache equality is tested
 against the uncached `surface_height` through reloads, switches, terrain seams and eviction.
 The cache is bounded at approximately 256 KiB and never changes contact heights or handling.
+
+The flight environment also advertises a conservative ceiling for the six-band sea: its
+wavelength coefficients sum to 145.4, bounded upward by 146 times the f32 amplitude plus a
+rounding pad. Contact-clearance checks above that ceiling skip swell evaluation; below it,
+all original height/slope/contact forces remain. Custom seas default to unbounded/full sampling.
+State-equality tests cover airborne and near-water motion, and compare the bound to rendered
+swell samples. This changes work, not the water or flying equations.
