@@ -11,6 +11,7 @@ use 'living_money.jo'
 use 'living_place_context.jo'
 use 'living_guard.jo'
 use 'living_transaction.jo'
+use 'living_war_supply.jo'
 
 initialize_war = (w: mut World):
     if w.war.version>=1: return
@@ -189,7 +190,7 @@ war_supply = (w: mut World, unit: int):
     u=w.war.units[unit]
     if u.retired or u.vehicle<0: return
     v=w.far.vehicles[u.vehicle]
-    if v.place>=0 and w.far.districts[v.place].controller==u.country:
+    if v.place>=0 and not war_hostile(w,u.country,w.far.districts[v.place].controller):
         if w.minute/1440!=u.last_pay_day:
             pay=100*(v.crew[0]+v.crew[1]+v.crew[2])
             if transfer(w,w.far.treasury[u.country],v.account,pay,.wage,unit): w.war.units[unit].last_pay_day=w.minute/1440
@@ -214,6 +215,8 @@ war_occupy = (w: mut World, unit: int, place: int) -> bool:
         if other.place==place and other.hull>300 and enemy.supplied_until>=w.minute: return false
     if not war_spend(w,unit,8,50): return false
     old=d.controller
+    prior=if place in w.war.occupations: w.war.occupations[place].prior else: old
+    w.war.occupations[place]=WarOccupation(place,u.country,prior,unit,w.minute)
     w.far.districts[place].controller=u.country; w.far.districts[place].authority=u.country
     w.far.districts[place].unrest=min(1000,d.unrest+350)
     w.far.districts[place].danger=min(1000,d.danger+250)
@@ -229,6 +232,16 @@ war_orders = (w: mut World):
         v=w.far.vehicles[u.vehicle]
         if u.order<0: continue
         order=w.war.orders[u.order]
+        if v.place>=0 and order.task!=.withdraw and order.task!=.repair and v.place!=u.home and v.place!=order.target:
+            home_path=war_path(w,v.place,u.home,v.kind)
+            length_mm=0
+            loop edge in home_path: length_mm+=w.far.links[edge].length_mm
+            days=max(1,(length_mm/v.speed_mm_sec/2+1439)/1440)+1
+            crew=v.crew[0]+v.crew[1]+v.crew[2]
+            if v.provisions.qty[3]<=crew*28*days:
+                w.war.orders.remove(u.order); w.war.units[unit].order= -1
+                issue_war_order(w,unit,if w.minute>=u.charter_until: WarTask.withdraw else: WarTask.repair,u.home)
+                continue
         if order.cancelled or w.minute>order.expires:
             w.war.orders.remove(u.order); w.war.units[unit].order= -1; continue
         if order.task==.blockade and not order.blockade_reported and u.supplied_until>=w.minute and length(v.pos-w.place_contexts[order.target].center)<2500:
@@ -254,7 +267,9 @@ war_orders = (w: mut World):
                 w.war.units[unit].stock=FarStock(); w.war.units[unit].strength=0
                 w.war.units[unit].retired=true
                 w.far.vehicles[u.vehicle].duty=.merchant
-            if order.task==.occupy: war_occupy(w,unit,v.place)
+            if order.task==.occupy:
+                war_occupy(w,unit,v.place)
+                if w.far.districts[v.place].controller==u.country and w.minute<u.charter_until: continue
             if order.task==.patrol and w.far.districts[v.place].controller!=u.country:
                 other=w.far.districts[v.place].controller
                 war_incident(w,v.place,u.country,other,"armed_intrusion","An armed {w.countries[u.country].name} charter entered {life_place_name(w,v.place)} under orders to inspect its traffic.")
@@ -271,14 +286,16 @@ war_decisions = (w: mut World):
     # One order per idle supplied unit/hour. Local shortages and actual border access inform it.
     loop unit in 0..w.war.units.len():
         u=w.war.units[unit]
-        if u.retired or u.order>=0 or u.vehicle<0 or u.supplied_until<w.minute: continue
+        if u.retired or u.order>=0 or u.vehicle<0: continue
         v=w.far.vehicles[u.vehicle]
         if v.place<0 or v.journey>=0 or v.scene_owned: continue
         target= -1; task=WarTask.patrol
         if w.minute>=u.charter_until: target=u.home; task=.withdraw
+        else if u.supplied_until<w.minute:
+            if v.place!=u.home: target=u.home; task=.repair
         else:
             target=war_border_destination(w,v.place,v.kind,u.country)
-            if target>=0 and war_hostile(w,u.country,w.far.districts[target].controller): task=if v.kind==.ship: WarTask.blockade else: .occupy
+            if target>=0 and war_hostile(w,u.country,w.far.districts[target].controller): task=if v.kind==.ship and u.country!=1: WarTask.blockade else: .occupy
         if target>=0: issue_war_order(w,unit,task,target)
 
 war_minute = (w: mut World):
@@ -309,9 +326,11 @@ war_minute = (w: mut World):
             value=distances[v.place]
             if not old and value<score: candidate=v.id; score=value
         if candidate>=0: war_charter(w,candidate,country)
+    war_industry_minute(w)
     war_diplomacy(w)
     war_orders(w)
     war_decisions(w)
+    war_occupations_minute(w)
 
 # A single bounded BFS finds a reachable frontier. Choosing the first local edge forever
 # made interior units oscillate without ever carrying out a national border policy.
@@ -357,3 +376,17 @@ war_frontier_hops = (w: World, country: int, mode: FarMode) -> {int: int}:
             if l.mode!=mode or w.far.districts[next].born_country!=country or next in distance: continue
             distance[next]=distance[at]+1; queue.push(next)
     distance
+
+# Control is held by the actual supplied landing force. A departed/disabled/starving charter
+# cannot permanently control a town from its former map flag; the prior civil authority returns.
+war_occupations_minute = (w: mut World):
+    ids=w.war.occupations.keys(); ids.sort()
+    loop place in ids:
+        o=w.war.occupations[place]; u=w.war.units[o.unit]; v=w.far.vehicles[u.vehicle]
+        crew=v.crew[0]+v.crew[1]+v.crew[2]
+        present=not u.retired and v.hull>350 and crew>=4 and u.supplied_until>=w.minute and length(v.pos-w.place_contexts[place].center)<2500
+        if present: continue
+        if w.far.districts[place].controller==o.country:
+            w.far.districts[place].controller=o.prior; w.far.districts[place].authority=o.prior
+            far_local_news(w,place,"occupation","The {w.countries[o.country].name} landing force can no longer hold {life_place_name(w,place)}. The {w.countries[o.prior].name} civil authority has resumed its work.",country=o.prior,other_country=o.country,severity=850)
+        w.war.occupations.remove(place)
