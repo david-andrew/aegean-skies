@@ -1,3 +1,5 @@
+use 'world_point.jo'
+use 'render_space.jo'
 # Other aircraft heard: each engine nearby a looping voice, placed and pitched each frame as sound
 # from it would really arrive.
 #   - heard where it was, not where it is: sound takes about three seconds to come a kilometer,
@@ -20,6 +22,10 @@ const SOUND_SPEED = 343.0
 const HEARING = 6000.0              # meters: beyond this an engine is not heard
 const VOICES = 8                    # at most this many other engines at once
 
+struct SoundSample:
+    point:WorldPoint
+    time:f64
+
 struct Heard:
     craft = -1
     voice: EngineVoice = .radial
@@ -27,7 +33,7 @@ struct Heard:
     far_v = -1
     near_r = -1                     # (the copies off the sea)
     far_r = -1
-    trail: vec4[]                   # where it was (x, y, z) and when (w, seconds of game time)
+    trail: SoundSample[]                   # where it was (x, y, z) and when (w, seconds of game time)
     seen = 0.0                      # (the last time it was among the sources)
 
 struct EngineSource:
@@ -39,6 +45,7 @@ struct EngineSource:
     tone: f64                       # its engine's own pitch (bigger engines lower)
     true_speed: f64 = 0.0           # (its speed as designed, for its engine's note)
     voice: EngineVoice = .radial
+    point:WorldPoint?=none
 
 struct Hearing:
     near: Sound[]
@@ -109,6 +116,34 @@ heard_from = (trail: vec4[], ear: vec3, ear_vel: vec3, t: f64) -> (vec3, vec3, f
     doppler = clamp((SOUND_SPEED - f64(dot(ear_vel, u))) / max(SOUND_SPEED - f64(dot(v, u)), 30.0), 0.5, 2.2)
     (p, v, d, doppler)
 
+_was = (trail: SoundSample[], at: f64) -> (WorldPoint, vec3):
+    n = trail.len()
+    if n == 0: return (WorldPoint(), vec3(0, 0, 0))
+    if n == 1 or at >= f64(trail[n - 1].time):
+        last = trail[n - 1]
+        v = if n >= 2: world_delta(last.point,trail[n - 2].point) / f32(max(last.time - trail[n - 2].time, 0.001)) else: vec3(0, 0, 0)
+        return (last.point, v)
+    k = n - 1
+    loop k > 0 and f64(trail[k - 1].time) > at: k -= 1
+    if k == 0: return (trail[0].point, world_delta(trail[1].point,trail[0].point) / f32(max(trail[1].time - trail[0].time, 0.001)))
+    a = trail[k - 1]
+    b = trail[k]
+    u = clamp((at - f64(a.time)) / max(f64(b.time - a.time), 0.0001), 0.0, 1.0)
+    (world_lerp(a.point,b.point,u), world_delta(b.point,a.point) / f32(max(b.time - a.time, 0.001)))
+
+# the sound of an aircraft arriving now at `ear`: where it was when that sound left it, how fast
+# it was going then, how far that is, and the Doppler factor for it and the listener's motion
+heard_from = (trail: SoundSample[], ear: WorldPoint, ear_vel: vec3, t: f64) -> (WorldPoint, vec3, f64, f64):
+    at = t
+    p, v = _was(trail, at)
+    loop n in 0..4:
+        at = t - f64(length(world_delta(p,ear))) / SOUND_SPEED
+        p, v = _was(trail, at)
+    d = max(f64(length(world_delta(p,ear))), 1.0)
+    u = world_delta(ear,p) / f32(d)
+    doppler = clamp((SOUND_SPEED - f64(dot(ear_vel, u))) / max(SOUND_SPEED - f64(dot(v, u)), 30.0), 0.5, 2.2)
+    (p, v, d, doppler)
+
 _silence = (h: mut Hearing, i: int):
     loop id in [h.heard[i].near_v, h.heard[i].far_v, h.heard[i].near_r, h.heard[i].far_r]:
         if id >= 0: stop(id)
@@ -123,7 +158,8 @@ _silence = (h: mut Hearing, i: int):
 _carry = (d: f64) -> f64: min(pow(60.0 / max(d, 15.0), 0.7), 2.0) * exp(-max(d - 2500.0, 0.0) / 1500.0)
 
 # each frame: the engines about, heard by a listener at `ear` moving at `ear_vel`
-hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec3, t: f64):
+hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec3, t: f64, precise_ear:WorldPoint?=none):
+    listener=precise_ear ?? world_point(ear)
     if not h.ready: return
     # keep each aircraft's recent path (a sample every twentieth of a second, twelve seconds back)
     loop src in sources:
@@ -136,13 +172,13 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
             k = h.heard.len() - 1
         h.heard[k].seen = t
         tr = h.heard[k].trail
-        if tr.len() == 0 or t - f64(tr[tr.len() - 1].w) >= 0.05: h.heard[k].trail.push(vec4(src.pos.x, src.pos.y, src.pos.z, f32(t)))
-        loop h.heard[k].trail.len() > 2 and t - f64(h.heard[k].trail[0].w) > 12.0: h.heard[k].trail.remove_at(0)
+        if tr.len() == 0 or t - tr[tr.len() - 1].time >= 0.05: h.heard[k].trail.push(SoundSample(src.point ?? world_point(src.pos),t))
+        loop h.heard[k].trail.len() > 2 and t - h.heard[k].trail[0].time > 12.0: h.heard[k].trail.remove_at(0)
     # the nearest few, by where their sound comes from now
     dist: (f64, int)[]
     loop i in 0..h.heard.len():
         p, _ = _was(h.heard[i].trail, t)
-        dist.push((f64(length(p - ear)), i))
+        dist.push((f64(length(world_delta(p,listener))), i))
     sort(dist, (x: (f64, int)) -> f64: x.0)
     keep = fill(false, h.heard.len())
     loop j in 0..min(VOICES, dist.len()): keep[dist[j].1] = true
@@ -170,7 +206,7 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
             h.heard[i].voice = src.voice
             hd = h.heard[i]
         near = h.near[int(src.voice)]; far_sound = h.far[int(src.voice)]
-        p, v, d, doppler = heard_from(hd.trail, ear, ear_vel, t)
+        p, v, d, doppler = heard_from(hd.trail, listener, ear_vel, t)
         power = 0.45 + 0.55 * src.throttle
         level = power * _carry(d)
         far = smoothstep(150.0, 2000.0, d)
@@ -178,10 +214,10 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
         base = src.tone * engine_note(src.throttle, src.true_speed)
         pitch = base * doppler
         # (its image under the sea: the reflected sound, weaker, with its own path and Doppler)
-        img = vec3(p.x, -p.y, p.z)
+        img = WorldPoint(p.x, -p.y, p.z)
         vimg = vec3(v.x, -v.y, v.z)
-        d2 = max(f64(length(img - ear)), 1.0)
-        u2 = (ear - img) / f32(d2)
+        d2 = max(f64(length(world_delta(img,listener))), 1.0)
+        u2 = world_delta(listener,img) / f32(d2)
         doppler2 = clamp((SOUND_SPEED - f64(dot(ear_vel, u2))) / max(SOUND_SPEED - f64(dot(vimg, u2)), 30.0), 0.5, 2.2)
         level2 = power * _carry(d2) * 0.55
         far2 = smoothstep(150.0, 2000.0, d2)
@@ -196,10 +232,10 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
             h.heard[i].near_r = ids[2]
             h.heard[i].far_r = ids[3]
         hd2 = h.heard[i]
-        move_sound(hd2.near_v, p, level * cos(far * PI * 0.5), 1000000000.0)
-        move_sound(hd2.far_v, p, level * sin(far * PI * 0.5), 1000000000.0)
-        move_sound(hd2.near_r, img, level2 * cos(far2 * PI * 0.5), 1000000000.0)
-        move_sound(hd2.far_r, img, level2 * sin(far2 * PI * 0.5), 1000000000.0)
+        move_world_sound(hd2.near_v, p, level * cos(far * PI * 0.5), 1000000000.0)
+        move_world_sound(hd2.far_v, p, level * sin(far * PI * 0.5), 1000000000.0)
+        move_world_sound(hd2.near_r, img, level2 * cos(far2 * PI * 0.5), 1000000000.0)
+        move_world_sound(hd2.far_r, img, level2 * sin(far2 * PI * 0.5), 1000000000.0)
         set_pitch(hd2.near_v, pitch)
         set_pitch(hd2.far_v, pitch)
         set_pitch(hd2.near_r, base * doppler2)
@@ -211,3 +247,11 @@ hush_engines = (h: Hearing):
     loop hd in h.heard:
         loop id in [hd.near_v, hd.far_v, hd.near_r, hd.far_r]:
             if id >= 0: set_volume(id, 0.0)
+
+# Spatialize after subtracting in f64; never reconstruct an absolute f32 source
+# just for the audio API. Match its gain and camera-axis pan exactly.
+move_world_sound=(id:int,point:WorldPoint,volume:f64,reach:f64):
+    eye=world_offset(world_point(scene_camera()),render_eye_low)
+    d=world_delta(point,eye);right=cross(__cam_target-__cam_pos,__cam_up)
+    pan=if length(right)>0.0001 and length(d)>0.0001:f64(dot(normalize(d),normalize(right)))*0.8 else:0.0
+    set_volume(id,volume*__reach_gain(f64(length(d)),reach));set_pan(id,pan)
