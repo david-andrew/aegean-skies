@@ -16,13 +16,30 @@ struct Chart:
     tex: Texture
     world_tex: Texture
 
-build_chart_texture = (extent: f64, depth: f64) -> Texture:
-    n = CHART_PX
+# One paper map the player owns, as the chart lays it down: its sheet covers this much ground.
+struct ChartSheet:
+    copy: int
+    edition: str
+    title: str
+    west: f64
+    north: f64
+    east: f64
+    south: f64
+
+# What the chart shows: none, every sheet (the pause menu's place-picking); otherwise only the
+# ground the owned sheets cover. chart_focus: the copy centred on (-1: all of them together).
+chart_sheets: ChartSheet[]? = none
+chart_focus = -1
+sheet_textures: {str: Texture}
+const SHEET_PX = 384
+const SHEET_DETAIL = 30000.0        # sheets narrower than this get their own finer painting
+
+build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n: int = CHART_PX) -> Texture:
     rows = parallel_map([0..n), (j: int) -> f64[]:
-        z = (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
+        z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
         row: f64[]
         loop i in 0..n:
-            x = (f64(i)+0.5)/f64(n)*extent-extent*0.5
+            x = cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5
             # Whole-world pixels span ~780 m; don't calculate metre-scale erosion.
             row.push(if extent > CHART_EXTENT and (abs(x) >= LEGACY_RESERVE or abs(z) >= LEGACY_RESERVE): new_land_base(x,z).0 else: height(x,z))
         row
@@ -68,30 +85,136 @@ build_chart = () -> Chart:
     local = build_chart_texture(CHART_EXTENT,CHART_EXTENT)
     Chart(local,if geography_enabled: build_chart_texture(WORLD_WIDTH,WORLD_DEPTH) else: local)
 
+# the ground the chart spans: its middle and its width and depth, in metres
+struct ChartView:
+    cx: f64
+    cz: f64
+    w: f64
+    d: f64
+
+chart_view = () -> ChartView:
+    if let sheets = chart_sheets:
+        west = 1.0e9; east = -1.0e9; north = 1.0e9; south = -1.0e9
+        loop round in 0..2:
+            loop s in sheets:
+                if round == 0 and s.copy != chart_focus: continue
+                west = min(west,s.west); east = max(east,s.east); north = min(north,s.north); south = max(south,s.south)
+            if east > west: break
+        if east > west:
+            # (a margin of blank paper round the sheets; no wider than the whole world)
+            w = min(max((east-west)*1.12,1500.0),chart_extent()*1.12); d = min(max((south-north)*1.12,1500.0),chart_depth()*1.12)
+            return ChartView((west+east)*0.5,(north+south)*0.5,w,d)
+    ChartView(0.0,0.0,chart_extent(),chart_depth())
+
 # where a world point is on the chart drawn in rect r
 chart_point = (r: Rect, x: f64, z: f64) -> vec2:
-    vec2(f32(r.x + (x / chart_extent() + 0.5) * r.w), f32(r.y + (z / chart_depth() + 0.5) * r.h))
+    v = chart_view()
+    vec2(f32(r.x + ((x-v.cx) / v.w + 0.5) * r.w), f32(r.y + ((z-v.cz) / v.d + 0.5) * r.h))
 
 # where the chart lies on the screen
 chart_rect = () -> Rect:
+    v = chart_view()
     sw=screen_width();sh=screen_height()
     size = min(sw, sh) - 80.0
-    w = min(sw-80.0,size*chart_extent()/chart_depth())
-    h = w*chart_depth()/chart_extent()
+    w = min(sw-80.0,size*v.w/v.d)
+    h = w*v.d/v.w
     Rect((sw-w)*0.5,(sh-h)*0.5,w,h)
 
 # the place (x, z) under a point on the chart (none: off it)
 chart_place = (p: vec2) -> vec2?:
-    r = chart_rect()
+    r = chart_rect(); v = chart_view()
     u = (f64(p.x) - r.x) / r.w
     w = (f64(p.y) - r.y) / r.h
     if u < 0.0 or u > 1.0 or w < 0.0 or w > 1.0: return none
-    vec2(f32((u - 0.5) * chart_extent()), f32((w - 0.5) * chart_depth()))
+    vec2(f32(v.cx + (u - 0.5) * v.w), f32(v.cz + (w - 0.5) * v.d))
+
+# is (x, z) on one of the sheets laid down (everything is, with no sheets given)
+charted = (x: f64, z: f64) -> bool:
+    if let sheets = chart_sheets:
+        loop s in sheets:
+            if x >= s.west and x <= s.east and z >= s.north and z <= s.south: return true
+        return false
+    true
+
+# a small sheet is painted once, finer than the whole chart, when it is first laid down
+sheet_texture = (s: ChartSheet) -> Texture?:
+    if s.east-s.west > SHEET_DETAIL or s.south-s.north > SHEET_DETAIL: return none
+    if not (s.edition in sheet_textures):
+        sheet_textures[s.edition] = build_chart_texture(s.east-s.west,s.south-s.north,(s.west+s.east)*0.5,(s.north+s.south)*0.5,SHEET_PX)
+    sheet_textures[s.edition]
+
+# the screen rectangle of ground [west, east] x [north, south] on the chart in r
+_ground_rect = (r: Rect, west: f64, north: f64, east: f64, south: f64) -> Rect:
+    a = chart_point(r,west,north); b = chart_point(r,east,south)
+    Rect(f64(a.x),f64(a.y),f64(b.x-a.x),f64(b.y-a.y))
+
+_overlap = (a: Rect, b: Rect) -> Rect:
+    x0 = max(a.x,b.x); y0 = max(a.y,b.y); x1 = min(a.x+a.w,b.x+b.w); y1 = min(a.y+a.h,b.y+b.h)
+    Rect(x0,y0,max(0.0,x1-x0),max(0.0,y1-y0))
+
+# the owned sheets, laid on blank paper: the larger underneath, each with its paper edge
+_draw_sheets = (ch: Chart, r: Rect, sheets: ChartSheet[]):
+    paper = rgb(0.9, 0.86, 0.75)
+    rect(r.x, r.y, r.w, r.h, paper)
+    # (the blank paper's own faint grain, so it reads as paper rather than as a hole)
+    loop k in 0..9:
+        y = r.y + r.h*(f64(k)+0.5)/9.0
+        line(vec2(f32(r.x+8.0),f32(y)),vec2(f32(r.x+r.w-8.0),f32(y)),0.6,rgba(0.55,0.45,0.32,0.06))
+    order = sheets
+    order.sort((s: ChartSheet): -(s.east-s.west)*(s.south-s.north))
+    world = _ground_rect(r,-chart_extent()*0.5,-chart_depth()*0.5,chart_extent()*0.5,chart_depth()*0.5)
+    local = _ground_rect(r,-CHART_EXTENT*0.5,-CHART_EXTENT*0.5,CHART_EXTENT*0.5,CHART_EXTENT*0.5)
+    loop s in order:
+        sr = _ground_rect(r,s.west,s.north,s.east,s.south)
+        shown = _overlap(sr,r)
+        if shown.w < 1.0 or shown.h < 1.0: continue
+        rect(shown.x+2.0,shown.y+3.0,shown.w,shown.h,rgba(0.3,0.22,0.14,0.18))
+        clip(shown)
+        if let tex = sheet_texture(s): sprite(tex,vec2(f32(sr.x),f32(sr.y)),vec2(f32(sr.w),f32(sr.h)))
+        else if geography_enabled and (s.west < -CHART_EXTENT*0.5 or s.east > CHART_EXTENT*0.5 or s.north < -CHART_EXTENT*0.5 or s.south > CHART_EXTENT*0.5): sprite(ch.world_tex,vec2(f32(world.x),f32(world.y)),vec2(f32(world.w),f32(world.h)))
+        else: sprite(ch.tex,vec2(f32(local.x),f32(local.y)),vec2(f32(local.w),f32(local.h)))
+        no_clip()
+        edge = rgba(0.36,0.27,0.18,0.45)
+        a = vec2(f32(shown.x),f32(shown.y)); b = vec2(f32(shown.x+shown.w),f32(shown.y+shown.h))
+        line(a,vec2(b.x,a.y),1.0,edge); line(vec2(b.x,a.y),b,1.0,edge); line(b,vec2(a.x,b.y),1.0,edge); line(vec2(a.x,b.y),a,1.0,edge)
+
+# the sheets one owns, as a list beside the chart: the one clicked is centred on, "All sheets"
+# lays them all out together. Returns the copy picked (-1: all), or -2 when nothing was picked.
+chart_sheet_list = (sheets: ChartSheet[], text_size: f64 = 15.0) -> int:
+    global hud_style
+    r = chart_rect()
+    lw = 250.0; row = 28.0; gap = 4.0
+    x = r.x - 14.0 - lw - 14.0
+    if x < 12.0: x = r.x + 10.0
+    h = 40.0 + f64(sheets.len()+1)*(row+gap) + 6.0
+    y = max(12.0, r.y - 14.0)
+    saved = hud_style
+    hud_style.text_size = text_size
+    hud_style.panel = rgba(0.06, 0.08, 0.12, 0.82)
+    hud_style.button = rgba(0.14, 0.17, 0.22, 1)
+    hud_style.hover = rgba(0.22, 0.27, 0.34, 1)
+    h = min(h, f64(screen_height()) - y - 12.0)
+    hud_panel(Rect(x, y, lw, h))
+    text("Maps", vec2(f32(x + 12.0), f32(y + 10.0)), 17, rgba(1, 0.97, 0.9, 0.9))
+    picked = -2
+    box = Rect(x, y + 36.0, lw, h - 40.0)
+    off = hud_scroll(box, f64(sheets.len()+1)*(row+gap), "chart-maps")
+    clip(box)
+    yy = box.y + 2.0 - off
+    if hud_button(Rect(x+8.0,yy,lw-16.0,row),"All sheets",selected=chart_focus < 0,align=.left): picked = -1
+    yy += row + gap
+    loop s in sheets:
+        if hud_button(Rect(x+8.0,yy,lw-16.0,row),s.title,selected=chart_focus == s.copy,align=.left): picked = s.copy
+        yy += row + gap
+    no_clip()
+    hud_style = saved
+    picked
 
 draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, others: vec4[] = [], ships: Vessel[] = [], lanes: SeaLane[] = [],player_point:WorldPoint?=none,other_points:WorldPoint[]=[]):
     r = chart_rect()
     rect_rounded(r.x - 14, r.y - 14, r.w + 28, r.h + 28, 6, rgb(0.42, 0.3, 0.2))
-    sprite(if chart_local or not geography_enabled: ch.tex else: ch.world_tex, vec2(f32(r.x), f32(r.y)), vec2(f32(r.w), f32(r.h)))
+    if let sheets = chart_sheets: _draw_sheets(ch,r,sheets)
+    else: sprite(if chart_local or not geography_enabled: ch.tex else: ch.world_tex, vec2(f32(r.x), f32(r.y)), vec2(f32(r.w), f32(r.h)))
     ink = rgba(0.22, 0.17, 0.13, 0.95)
     # a compass rose
     cr = vec2(f32(r.x + r.w - 70), f32(r.y + 70))
@@ -99,21 +222,28 @@ draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, o
     triangle(cr + vec2(0, -46), cr + vec2(-7, 0), cr + vec2(7, 0), ink)
     triangle(cr + vec2(0, 46), cr + vec2(-7, 0), cr + vec2(7, 0), rgba(0.22, 0.17, 0.13, 0.4))
     text_centered("N", cr + vec2(0, -58), 16, ink)
-    text_centered(if chart_local or not geography_enabled: "THE KALAMOS ARCHIPELAGO" else: "THE AEGEAN", vec2(f32(r.x + r.w * 0.5), f32(r.y + 26)), 22, ink)
-    if geography_enabled:
+    heading_text = if chart_local or not geography_enabled: "THE KALAMOS ARCHIPELAGO" else: "THE AEGEAN"
+    if let sheets = chart_sheets:
+        loop s in sheets:
+            if s.copy == chart_focus or sheets.len() == 1: heading_text = s.title
+    text_centered(heading_text, vec2(f32(r.x + r.w * 0.5), f32(r.y + 26)), if heading_text.len() > 34: 18 else: 22, ink)
+    if geography_enabled and chart_sheets == none:
         text("Tab: " + (if chart_local: "whole world" else: "local archipelago"),vec2(f32(r.x+14),f32(r.y+r.h-52)),15,ink)
-    if geography_enabled and not chart_local:
+    whole = geography_enabled and (not chart_local or chart_sheets != none)
+    clip(r)
+    if whole:
         prepare_settlement_roads(player.xz,true)
         loop road in settlement_roads:
             loop k in 0..road.points.len()-1:
                 a = road.points[k]; b = road.points[k+1]
+                if not charted(f64(a.x),f64(a.z)) or not charted(f64(b.x),f64(b.z)): continue
                 line(chart_point(r,f64(a.x),f64(a.z)),chart_point(r,f64(b.x),f64(b.z)),0.7,rgba(0.36,0.27,0.19,0.3))
         labels: vec4[]
         # Capitals first; smaller names yield when their labels would overlap.
         loop tier in 0..3:
             loop s in world_settlements:
                 st = if s.kind == .capital: 0 else: (if s.size >= 100: 1 else: 2)
-                if st != tier: continue
+                if st != tier or not charted(f64(s.center.x),f64(s.center.z)): continue
                 p = chart_point(r,f64(s.center.x),f64(s.center.z))
                 circle(p,if tier == 0: 3.5 else: (if tier == 1: 2.0 else: 0.8),ink)
                 if tier == 2 and s.legacy < 0: continue
@@ -127,34 +257,34 @@ draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, o
                 labels.push(vec4(label.x,label.y,f32(width),f32(font)))
                 text(s.name,label,font,ink)
     loop tw in towns:
-        if geography_enabled and not chart_local: continue
+        if whole or not charted(f64(tw.center.x),f64(tw.center.z)): continue
         p = chart_point(r, f64(tw.center.x), f64(tw.center.z))
         circle(p, 4, ink)
         text(tw.name, p + vec2(7, -9), 15, ink)
     # Registered major sea lanes only; no navigation work or new ships on opening.
-    clip(r)
     loop lane in lanes:
         if lane.status != .ready or lane.distance < 10000: continue
         loop k in 0..lane.points.len()-1:
             a = lane.points[k]; b = lane.points[k+1]
+            if not charted(a.x,a.y) or not charted(b.x,b.y): continue
             line(chart_point(r,a.x,a.y),chart_point(r,b.x,b.y),0.65,rgba(0.18,0.36,0.45,0.32))
     loop ship in ships:
         if ship.status == .sunk or length(ship.position-player) > 20000: continue
         point=vessel_point(ship)
         at = chart_point(r,point.x,point.z)
-        if at.x < r.x or at.x > r.x+r.w or at.y < r.y or at.y > r.y+r.h: continue
+        if at.x < r.x or at.x > r.x+r.w or at.y < r.y or at.y > r.y+r.h or not charted(point.x,point.z): continue
         forward = vec2(f32(sin(ship.yaw)),f32(cos(ship.yaw)))
         side = vec2(-forward.y,forward.x)
         triangle(at+forward*4.0,at-forward*3.0+side*2.0,at-forward*3.0-side*2.0,rgb(0.12,0.29,0.37))
-    no_clip()
     # other aircraft aloft: small grey arrows (x, z, heading)
     loop i in 0..others.len():
         o=others[i];point=if i<other_points.len():other_points[i] else:WorldPoint(o.x,o.y,o.z)
         op = chart_point(r,point.x,point.z)
-        if abs(f64(o.x)) > chart_extent()*0.5 or abs(f64(o.z)) > chart_depth()*0.5: continue
+        if abs(f64(o.x)) > chart_extent()*0.5 or abs(f64(o.z)) > chart_depth()*0.5 or not charted(point.x,point.z): continue
         of = vec2(f32(sin(f64(o.w))), f32(-cos(f64(o.w))))
         os = vec2(-of.y, of.x)
         triangle(op + of * 7.0, op - of * 5.0 + os * 4.0, op - of * 5.0 - os * 4.0, rgba(0.25, 0.22, 0.2, 0.75))
+    no_clip()
     # where one is (which way one faces is the compass's to tell)
     point=player_point ?? world_point(player)
     pp = chart_point(r,point.x,point.z)
