@@ -10,56 +10,126 @@ use 'living_transaction.jo'
 use 'living_place_context.jo'
 use 'living_far_checks.jo'
 use 'living_far_news.jo'
+use 'living_war_access.jo'
+use 'living_far_orders.jo'
+use 'living_work_types.jo'
+use 'living_work.jo'
 
 _far_depart = (w: mut World, vehicle: int) -> bool:
     if vehicle<0 or vehicle>=w.far.vehicles.len(): return false
     v = w.far.vehicles[vehicle]
-    if v.scene_owned or v.journey>=0 or v.route<0 or v.route>=w.far.links.len() or w.minute<v.next_departure or v.hull<=0: return false
+    if v.duty!=.merchant or not v.service_agreement or v.journey>=0 or v.route<0 or v.route>=w.far.links.len() or w.minute<v.next_departure or v.hull<=0: return false
     link = w.far.links[v.route]
     if v.place!=link.a and v.place!=link.b: return false
     destination = if v.place==link.a: link.b else: link.a
-    origin = w.far.districts[v.place]; dest = w.far.districts[destination]
+    local_block=blockade_unit(w,v.place)
+    if (local_block>=0 and length(v.pos-w.far.vehicles[w.war.units[local_block].vehicle].pos)<850) or known_blockade(w,v.place,destination):
+        w.far.vehicles[vehicle].next_departure=w.minute+120
+        return false
+    origin = w.far.districts[v.place]
+    survey_fee=service_freight_quote(w,vehicle,v.place)
     best_good = -1; best_qty = 0; best_score = 0
-    loop g in 0..9:
-        if g==8: continue # ordinary carriers do not acquire contraband by default
-        reserve = max(1000,origin.target[g]/3)
-        surplus = max(0,far_market_qty(w,v.place,g)-reserve)
-        need = max(0,dest.target[g]-far_market_qty(w,destination,g))
-        qty = min(min(surplus,need),v.capacity_grams*1000/w.goods[g].package_grams)
-        qty = min(qty,max(0,w.accounts[dest.market_account].cents-40)*1000/max(1,origin.prices[g]))
-        score = qty*1000/max(1000,dest.target[g])
-        if qty>=100 and score>best_score: best_good=g; best_qty=qty; best_score=score
+    travel_minutes=(link.length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    if let order=v.buying_order:
+        if order.place==destination and w.minute+travel_minutes<=order.due:
+            loop g in 0..9:
+                if g==8 or origin.prices[g]>order.price[g] or w.minute+travel_minutes>order_due(order,g) or v.place in order_path(order,g): continue
+                reserve = max(1000,origin.target[g]/3)
+                surplus = max(0,far_market_qty(w,v.place,g)-reserve)
+                qty = min(min(surplus,order.quantity[g]),v.capacity_grams*1000/w.goods[g].package_grams)
+                qty = min(qty,max(0,w.accounts[order.account].cents-order.freight)*1000/max(1,origin.prices[g]))
+                # A tiny fuel tin must not always outrank a financed wagon of grain just
+                # because it fills a larger percentage of a much smaller reserve.
+                score = qty*origin.prices[g]
+                if qty>=100 and score>best_score: best_good=g; best_qty=qty; best_score=score
     w.far.vehicles[vehicle].next_departure = w.minute+30
-    if best_good<0: return false
-    if not far_provision(w,vehicle): return false
-    batch = far_take_market(w,v.place,best_good,best_qty)
+    survey=best_good<0
+    if survey and ((v.place==v.home and w.minute-v.last_survey_minute<1440) or w.accounts[origin.market_account].cents<survey_fee): return false
+    # Empty counters must not trap their existing crews forever. After two hungry days
+    # they may attempt home, or a counter whose carried quote actually listed grain.
+    # This is a risky traveled leg, with real remaining rations and continued hunger,
+    # not an invented meal or knowledge of the destination's present inventory.
+    known_food=false
+    if let order=v.buying_order:
+        known_food=order.place==destination and order.observed[3]>0 and order_due(order,3)>=w.minute
+    emergency=v.hungry_days>=2 and (destination==v.home or known_food)
+    supplied=far_provision(w,vehicle)
+    if not supplied and not emergency: return false
+    if not supplied: far_provision(w,vehicle,true)
+    ration_note=""
+    if not supplied:
+        motive=if destination==v.home: "return home" else: "seek grain listed in the counter's carried quote, dated {work_date(v.buying_order!.minute)}"
+        ration_note=" After {v.hungry_days} hungry days, the crew chose to {motive} on {f64(w.far.vehicles[vehicle].provisions.qty[3])/1000.0:.2} packages of actual remaining grain; a full crossing ration was unavailable."
+    if not survey:
+        # The paid ration purchase can consume the same local grain considered above.
+        # Recheck the real sale surplus before withdrawing or invoicing that cargo.
+        reserve=max(1000,origin.target[best_good]/3)
+        best_qty=min(best_qty,max(0,far_market_qty(w,v.place,best_good)-reserve))
+        if best_qty<100: return false
+    batch = if survey: FarStock() else: far_take_market(w,v.place,best_good,best_qty)
     if not far_market_accepts(w,destination,batch):
         far_put_market(w,v.place,batch); return false
-    cents = max(1,(best_qty*origin.prices[best_good]+999)/1000)
-    freight = 40
-    if not transfer(w,dest.market_account,origin.market_account,cents,.trade,vehicle):
+    cents = if survey: 0 else: max(1,(best_qty*origin.prices[best_good]+999)/1000)
+    freight = if survey: survey_fee else: v.buying_order!.freight
+    buyer=if survey: origin.market_account else: v.buying_order!.account
+    if cents>0 and not transfer(w,buyer,origin.market_account,cents,.trade,vehicle):
         far_put_market(w,v.place,batch); return false
-    if not transfer(w,dest.market_account,v.account,freight,.wage,vehicle):
+    if freight>0 and not transfer(w,buyer,v.account,freight,.wage,vehicle):
         living_fault("far.freight_payment",guard_context(w)+" vehicle={vehicle}")
         return false
-    far_local_news(w,v.place,"cargo_departure","A {if v.kind==.cart: "cart" else: "coaster"} left {life_place_name(w,v.place)} for {life_place_name(w,destination)} with {f64(best_qty)/1000.0:.1} packages of {w.goods[best_good].key}.")
+    why=if survey: "The {life_place_name(w,v.place)} counter paid carrier {vehicle} to bring its buying orders to {life_place_name(w,destination)} and collect that counter's actual quotes under their reciprocal service agreement. There is no sale cargo aboard." else: ""
+    provenance=if survey: WorkProvenance(cause=why,requester=origin.market_owner,requester_account=buyer,supplier_account=v.account,request_place=v.place,requested_minute=w.minute,heard_minute=w.minute,agreed_minute=w.minute,freight_cents=freight,freight_payer=buyer,deadline=w.minute+travel_minutes+1440,negotiated=true) else: trade_work_provenance(w,v.buying_order!,vehicle,v.place,best_good,best_qty,cents,batch)
+    if not survey: why=provenance.cause
+    why+=ration_note; provenance.cause=why
+    if not survey: serve_counter_order(w,v.place,vehicle,v.buying_order!.minute,best_good,best_qty)
+    far_local_news(w,v.place,if survey: "order_departure" else: "cargo_departure",why)
     id = w.far.next_journey; w.far.next_journey += 1
-    w.far.journeys[id] = FarJourney(id,vehicle,v.place,destination,link.id,v.place==link.a,.merchant,w.tick,w.tick,speed_mm_sec=v.speed_mm_sec,cargo_owner=dest.market_account,seller=origin.market_account,buyer=dest.market_account,good=best_good,quantity=best_qty,news=w.far.districts[v.place].recent_news)
-    w.far.vehicles[vehicle].cargo = batch; w.far.vehicles[vehicle].cargo_owner = dest.market_account
+    w.far.journeys[id] = FarJourney(id,vehicle,v.place,destination,link.id,v.place==link.a,.merchant,w.tick,w.tick,speed_mm_sec=v.speed_mm_sec,cargo_owner=buyer,seller=origin.market_account,buyer=buyer,good=best_good,quantity=best_qty,news=w.far.districts[v.place].recent_news,reports=far_departing_accounts(w,v.place,vehicle),return_order=counter_restock_order(w,vehicle,v.place),provenance=provenance,survey=survey)
+    w.far.vehicles[vehicle].cargo = batch; w.far.vehicles[vehicle].cargo_owner = buyer
     w.far.vehicles[vehicle].journey = id; w.far.vehicles[vehicle].place = -1
     w.far.vehicles[vehicle].freight_earned += freight
+    if survey: w.far.vehicles[vehicle].last_survey_minute=w.minute
     true
 
 _far_arrive = (w: mut World, journey: int):
     j = w.far.journeys[journey]; v = w.far.vehicles[j.vehicle]
+    far_arriving_accounts(w,j.destination,j.reports+v.reports)
+    if j.duty!=.merchant:
+        w.far.vehicles[j.vehicle].journey= -1; w.far.vehicles[j.vehicle].place=j.destination
+        w.far.vehicles[j.vehicle].velocity=vec3(0,0,0)
+        w.far.completed_journeys+=1
+        loop c in 0..3:
+            w.far.districts[j.destination].dependents[c]+=j.refugees[c]
+            w.far.districts[j.destination].pending_workers[c]+=j.refugee_workers[c]
+            if j.refugee_workers[c]>0: w.far.districts[j.destination].workers_ready_hour[c]=w.minute/60+1
+        if j.passenger_account>=0:
+            cash=w.accounts[j.passenger_account].cents
+            if cash>0: transfer(w,j.passenger_account,w.far.districts[j.destination].household_account,cash,.wage,j.id)
+        loop news in j.news:
+            if news in w.far.news and not (news in w.far.districts[j.destination].recent_news):
+                w.far.districts[j.destination].recent_news.push(news)
+                if w.far.districts[j.destination].recent_news.len()>12: w.far.districts[j.destination].recent_news.remove_at(0)
+        if w.war.arrivals.len()<128: w.war.arrivals.push(j.vehicle)
+        far_local_news(w,j.destination,"service_arrival","A {j.duty} service reached {life_place_name(w,j.destination)} from {life_place_name(w,j.origin)}.")
+        w.far.journeys.remove(journey)
+        return
     if not far_market_accepts(w,j.destination,v.cargo): return
     far_put_market(w,j.destination,v.cargo)
     w.far.vehicles[j.vehicle].cargo = FarStock(); w.far.vehicles[j.vehicle].cargo_owner = -1
     w.far.vehicles[j.vehicle].journey = -1; w.far.vehicles[j.vehicle].place = j.destination
     w.far.vehicles[j.vehicle].velocity = vec3(0,0,0)
     w.far.vehicles[j.vehicle].next_departure = w.minute+30
-    w.far.transported[j.good] += j.quantity; w.far.completed_journeys += 1
-    far_local_news(w,j.destination,"cargo_arrival","{f64(j.quantity)/1000.0:.1} packages of {w.goods[j.good].key} reached {life_place_name(w,j.destination)} from {life_place_name(w,j.origin)} by {if v.kind==.cart: "cart" else: "coaster"}.")
+    w.far.vehicles[j.vehicle].buying_order=j.return_order
+    if let order=j.return_order: remember_counter_order(w,j.destination,j.vehicle,order)
+    if w.war.arrivals.len()<128: w.war.arrivals.push(j.vehicle)
+    w.far.completed_journeys += 1
+    if j.survey:
+        w.far.order_rounds+=1
+        far_local_news(w,j.destination,"order_arrival","Carrier {v.id} brought {life_place_name(w,j.origin)}'s dated buying orders to the actual counter at {life_place_name(w,j.destination)}. It will take this counter's orders back on its next departure.")
+    else:
+        w.far.transported[j.good] += j.quantity
+        if j.quantity>0: w.far.cargo_deliveries+=1
+        far_local_news(w,j.destination,if j.quantity>0: "cargo_arrival" else: "cargo_missing","{f64(j.quantity)/1000.0:.1} packages of {w.goods[j.good].key} reached {life_place_name(w,j.destination)} from {life_place_name(w,j.origin)} by {if v.kind==.cart: "cart" else: "coaster"}. {j.provenance.cause}")
     # Only actual arrivals bring their carried accounts to the receiving community.
     loop id in j.news:
         if not (id in w.far.news) or id in w.far.districts[j.destination].recent_news: continue
@@ -67,49 +137,102 @@ _far_arrive = (w: mut World, journey: int):
         if w.far.districts[j.destination].recent_news.len()>12: w.far.districts[j.destination].recent_news.remove_at(0)
     w.far.journeys.remove(journey)
 
-far_advance_transport = (w: mut World, tick: int):
-    ids = w.far.journeys.keys(); ids.sort()
+journey_route_point = (points: vec3[], forward: bool, index: int) -> vec3:
+    points[if forward: index else: points.len()-1-index]
+
+journey_progress_mm = (w: World, j: FarJourney) -> int:
+    points=w.far.links[j.link].points
+    result=j.progress_mm
+    loop k in 0..j.segment:
+        result+=int(round(f64(length(journey_route_point(points,j.forward,k+1)-journey_route_point(points,j.forward,k)))*1000.0))
+    result
+
+far_advance_transport = (w: mut World, tick: int, only_vehicle: int = -1, scene_owner: bool = false, accepts: (vec3,vec3) -> bool = (p: vec3,v: vec3) -> bool: true):
+    ids: int[]
+    if only_vehicle>=0:
+        # A scene lease already names its one movement owner. Do not sort and inspect
+        # every far journey again for each visible hull on every physical frame.
+        if only_vehicle>=w.far.vehicles.len(): return
+        journey=w.far.vehicles[only_vehicle].journey
+        if journey>=0 and journey in w.far.journeys: ids.push(journey)
+    else:
+        ids=w.far.journeys.keys(); ids.sort()
     loop id in ids:
         j = w.far.journeys[id]; v = w.far.vehicles[j.vehicle]
-        if v.scene_owned: continue
+        if (only_vehicle>=0 and j.vehicle!=only_vehicle) or (v.scene_owned and not scene_owner) or v.hull<=0 or v.battle>=0 or v.motion_blocked!="": continue
+        if tick<=j.hold_until_tick:
+            w.far.journeys[id].last_tick=tick; w.far.vehicles[j.vehicle].velocity=vec3(0,0,0)
+            continue
+        block=if j.duty==.merchant: blockade_unit(w,j.destination) else: -1
+        if block<0 and j.duty==.merchant: block=blockade_unit(w,j.origin)
+        if block>=0:
+            guard=w.far.vehicles[w.war.units[block].vehicle]
+            if length(v.pos-guard.pos)<850:
+                w.far.journeys[id].last_tick=tick; w.far.journeys[id].blocked_by=block
+                w.far.vehicles[j.vehicle].velocity=vec3(0,0,0)
+                continue
+        w.far.journeys[id].blocked_by= -1
         elapsed = tick-j.last_tick
         if elapsed<=0: continue
         w.far.journeys[id].last_tick = tick
         link = w.far.links[j.link]; points = link.points
-        if not j.forward: points.reverse()
         raw = elapsed*j.speed_mm_sec+j.progress_remainder
         distance = raw/60; w.far.journeys[id].progress_remainder = raw%60
+        if j.follow_vehicle>=0:
+            leader=w.far.vehicles[j.follow_vehicle]
+            if leader.journey==j.follow_voyage:
+                lead=w.far.journeys[j.follow_voyage]
+                if lead.link!=j.link or lead.forward!=j.forward: distance=0
+                else: distance=min(distance,max(0,journey_progress_mm(w,lead)-journey_progress_mm(w,j)-150000))
+            else if leader.journey>=0 or leader.place!=j.destination: distance=0
+            if distance==0:
+                w.far.vehicles[j.vehicle].velocity=vec3(0,0,0)
+                continue
         segment = j.segment; progress = j.progress_mm+distance
         loop segment<points.len()-1:
-            span = int(round(f64(length(points[segment+1]-points[segment]))*1000.0))
+            span = int(round(f64(length(journey_route_point(points,j.forward,segment+1)-journey_route_point(points,j.forward,segment)))*1000.0))
             if progress<span: break
             progress -= span; segment += 1
+        at_end=segment>=points.len()-1
+        a=journey_route_point(points,j.forward,segment)
+        b=if at_end: a else: journey_route_point(points,j.forward,segment+1)
+        delta=b-a
+        velocity=if length(delta)>0.001: normalize(delta)*f32(f64(j.speed_mm_sec)/1000.0) else: vec3(0,0,0)
+        predicted=if at_end: a else: mix(a,b,f32(f64(progress)/max(1.0,f64(length(delta))*1000.0)))
+        if not accepts(predicted,velocity):
+            w.far.vehicles[j.vehicle].motion_blocked="The physical hull cannot clear the published approach."
+            w.far.vehicles[j.vehicle].velocity=vec3(0,0,0)
+            continue
         w.far.journeys[id].segment = segment; w.far.journeys[id].progress_mm = progress
-        if segment>=points.len()-1:
-            w.far.vehicles[j.vehicle].pos = points[points.len()-1]
+        if at_end:
+            w.far.vehicles[j.vehicle].pos = a
             _far_arrive(w,id)
             continue
-        delta = points[segment+1]-points[segment]; span = max(1.0,f64(length(delta))*1000.0)
-        w.far.vehicles[j.vehicle].pos = mix(points[segment],points[segment+1],f32(f64(progress)/span))
+        span = max(1.0,f64(length(delta))*1000.0)
+        w.far.vehicles[j.vehicle].pos = mix(a,b,f32(f64(progress)/span))
         w.far.vehicles[j.vehicle].velocity = if length(delta)>0.001: normalize(delta)*f32(f64(j.speed_mm_sec)/1000.0) else: vec3(0,0,0)
 
-_far_transport_minute = (w: mut World):
+_far_transport_minute = (w: mut World, checked_economy: bool = false):
     if not w.far.populated: return
-    error = validate_far(w)
-    if error!="":
-        living_fault("far.transport_state",guard_context(w)+" "+error); return
+    # The clock's immediately preceding economy phase checked these inputs in this
+    # same guarded transaction. It changes stocks/orders, never routes or journeys.
+    # Standalone calls and strict tests always run their own complete validation.
+    if living_strict() or not checked_economy:
+        error = validate_far(w,route_points=living_strict())
+        if error!="":
+            living_fault("far.transport_state",guard_context(w)+" "+error); return
     far_advance_transport(w,w.tick)
     far_crew_meals(w)
     if guard_blocked(): return
     loop v in w.far.vehicles:
         # Bounded departure decisions: at most one look per vehicle each half game hour.
-        if v.journey<0 and not v.scene_owned and w.minute>=v.next_departure: far_depart(w,v.id)
+        if v.journey<0 and w.minute>=v.next_departure: far_depart(w,v.id)
         if guard_blocked(): return
 
-far_transport_minute = (w: mut World):
+far_transport_minute = (w: mut World, checked_economy: bool = false):
     if guard_blocked(): return
     scope = guard_begin(w)
-    _far_transport_minute(w)
+    _far_transport_minute(w,checked_economy)
     guard_finish(w,scope)
 
 far_transport_views = (w: World, observer: vec3, radius: f64 = 6000.0) -> FarTransportView[]:
@@ -117,23 +240,55 @@ far_transport_views = (w: World, observer: vec3, radius: f64 = 6000.0) -> FarTra
     loop v in w.far.vehicles:
         if v.journey<0 or length(v.pos-observer)>radius: continue
         j = w.far.journeys[v.journey]
-        name = w.goods[j.good].key
-        reason = "{j.quantity/1000}.{(j.quantity%1000)/100} packages of {name} from {life_place_name(w,j.origin)} to {life_place_name(w,j.destination)}; the receiving market paid for this load."
+        name = if j.good>=0: w.goods[j.good].key else: "people and dispatches"
+        reason = if j.provenance.cause!="": j.provenance.cause else: "{j.quantity/1000}.{(j.quantity%1000)/100} packages of {name} from {life_place_name(w,j.origin)} to {life_place_name(w,j.destination)}; the receiving market paid for this load."
+        if j.duty!=.merchant and j.provenance.cause=="":
+            reason="A {j.duty} passage from {life_place_name(w,j.origin)} to {life_place_name(w,j.destination)}."
+            loop u in w.war.units:
+                if u.vehicle==v.id and u.order>=0: reason=w.war.orders[u.order].why
         result.push(FarTransportView(v.id,v.kind,j.origin,j.destination,v.pos,v.velocity,j.good,j.quantity,reason))
     result
 
-# Provisioning/consumption follows the crew, including during a multi-day crossing.
-far_provision = (w: mut World, vehicle: int) -> bool:
-    v = w.far.vehicles[vehicle]; crew = 0
-    loop n in v.crew: crew += n
-    days = max(1,(w.far.links[v.route].length_mm/v.speed_mm_sec/2+1439)/1440)+2
-    wanted = max(0,crew*28*days-v.provisions.qty[3])
+# Provisioning/consumption follows all the actual people aboard, including rescues.
+far_aboard_count = (w: World, vehicle: int) -> int:
+    v=w.far.vehicles[vehicle]; people=v.crew[0]+v.crew[1]+v.crew[2]+v.passengers.len()
+    if v.journey>=0:
+        loop n in w.far.journeys[v.journey].refugees: people+=n
+    loop _, s in w.war.survivors:
+        if s.riding_vehicle==vehicle:
+            loop n in s.passengers: people+=n
+    people
+
+# Count meal boundaries on the actual next leg, including a meal still due today.
+# The usual two-day safety reserve is desirable; it is not a departure permit when
+# the existing owned rations already cover this short crossing.
+far_leg_rations = (w: World, vehicle: int) -> int:
+    v=w.far.vehicles[vehicle]; link=w.far.links[v.route]
+    minutes=(link.length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    first=max(day_index(w.minute),v.last_meal_day+1)
+    meals=max(1,day_index(w.minute+minutes)-first+1)
+    far_aboard_count(w,vehicle)*28*meals
+
+far_provision = (w: mut World, vehicle: int, partial: bool = false) -> bool:
+    v = w.far.vehicles[vehicle]; crew=far_aboard_count(w,vehicle)
+    minutes=(w.far.links[v.route].length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    days=max(1,(minutes+1439)/1440)+2
+    minimum=far_leg_rations(w,vehicle)
+    wanted = max(0,max(minimum,crew*28*days)-v.provisions.qty[3])
     if wanted==0: return true
-    d = w.far.districts[v.place]; cents = max(1,(wanted*d.prices[3]+999)/1000)
+    d = w.far.districts[v.place]
+    available=min(far_market_qty(w,v.place,3),w.accounts[v.account].cents*1000/max(1,d.prices[3]))
+    wanted=min(wanted,available)
+    # Refusing a preferred refill must not strand a sufficiently provisioned crew.
+    # Ordinary departures still refuse an underfed leg; emergency callers explicitly
+    # accept that risk and continue consuming only their real purchased provisions.
+    if not partial and v.provisions.qty[3]+wanted<minimum: return false
+    if wanted<=0: return v.provisions.qty[3]>=minimum
+    cents = max(1,(wanted*d.prices[3]+999)/1000)
     if far_market_qty(w,v.place,3)<wanted or w.accounts[v.account].cents<cents: return false
     batch = far_take_market(w,v.place,3,wanted)
     if not far_stock_fits(v.provisions,batch):
-        far_put_market(w,v.place,batch); return false
+        far_put_market(w,v.place,batch); return v.provisions.qty[3]>=minimum
     if not transfer(w,v.account,d.market_account,cents,.trade,vehicle):
         far_put_market(w,v.place,batch); return false
     if not far_stock_add(w.far.vehicles[vehicle].provisions,batch): living_fault("far.provision_partition",guard_context(w)+" vehicle={vehicle}")
@@ -143,8 +298,7 @@ far_crew_meals = (w: mut World):
     loop vehicle in 0..w.far.vehicles.len():
         v = w.far.vehicles[vehicle]
         if v.last_meal_day==day_index(w.minute): continue
-        crew = 0
-        loop n in v.crew: crew += n
+        crew=far_aboard_count(w,vehicle)
         wanted = crew*28; qty = min(wanted,v.provisions.qty[3])
         if qty>0:
             batch = far_stock_take(w.far.vehicles[vehicle].provisions,w.cargo_sources,3,qty)
