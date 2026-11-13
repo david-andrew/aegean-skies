@@ -82,8 +82,9 @@ combat. After two actual hungry days, merchants may likewise attempt home or see
 still-current carried quote, recording the risk and continuing to consume their finite rations.
 A finite charter ends through actual return and demobilization.
 
-Provisioning prefers a two-day reserve beyond the next leg, but requires only the actual meals
-through arrival (including one still due today). Failure to refill that preferred reserve does
+Provisioning prefers a two-day reserve beyond the next leg. Its minimum covers actual daily
+meal boundaries through arrival, with at least one transit ration per person even on a short
+crossing. Failure to refill that preferred reserve does
 not strand a crew already carrying enough owned food. A smaller paid purchase may cover the
 leg; an ordinary underfed departure still refuses. Rescued people count in those meals. Cargo
 selection rechecks the remaining sale surplus after a grain ration purchase, so an earlier quote
@@ -121,6 +122,10 @@ At one completed tick, call `checkpoint_war_scene` for the full fleet and combat
 other scene owners, then call `save_world`. Restoring uses `restore_war_scene` and rebuilds visual
 bindings. No save operation belongs on the render path. Startup/save-menu presentation is owned
 by the game UI.
+The save owner must also persist the string returned by `snapshot_air_events(events,w)` at that
+same completed tick and restore it as `AirEvents`. This folds the race pilots into World but
+keeps their course, entries and lap/gate progress in the separate AirEvents value; the naval
+checkpoint does not contain race progress.
 
 Schema3 keeps readable metadata in each `-a`/`-b` bank and raw deflate bytes in its `-data` key.
 The body is written before its checksum/header commits. The other latest valid bank remains
