@@ -34,3 +34,11 @@ Run a native build headlessly with `SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1`, unset D
 - `SLOPPY_SCREENSHOT=/absolute/path.png SLOPPY_FRAMES=N` captures frame N with fixed 1/60-second updates. `SLOPPY_INPUT` can exercise the actual menu and flight controls.
 
 This is an in-situ battle fixture, not a national-war campaign or a new save-slot UI. No surrender/scoring screen or strategic fleet replacement has been added.
+
+`canal` — **Canal takeoff** starts a repaired gull with its engine running at
+Neravessa's workshop launch. The original winding canal has stone, iron and low
+pedestrian bridges, working barges, launches and moored rowing boats. Two real
+registered hostile aircraft approach behind the quarter; an allied courier is
+already departing ahead. Boats brake for the player's path, but remain physical
+obstacles. The builder resets the whole world, aircraft, finite combat state and
+vessel fleet through the existing Scenarios page loader.
