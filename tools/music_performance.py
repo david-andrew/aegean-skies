@@ -184,6 +184,12 @@ def apply_performance_map(notes, annotation):
   t,d,p,ins,g0,g1,track=n
   level=annotation['section_levels'].get(sections.get(track,''),[[0,1],[points[-1][0],1]])
   start=interpolate(points,t);stop=interpolate(points,t+d)
-  out.append([start,max(.001,stop-start),p,ins,g0,g1,track,interpolate(level,t),interpolate(level,t+d)])
+  gain=1.0
+  presence=annotation.get('harp_presence')
+  if ins==7 and presence:
+   upper=max(0,min(1,(p-presence['start_pitch'])/(presence['full_pitch']-presence['start_pitch'])))
+   opening=max(0,min(1,(presence['opening_end_seconds']-start)/(presence['opening_end_seconds']-presence['opening_hold_seconds'])))
+   gain=10**(upper*(presence['upper_db']+presence['opening_db']*opening)/20)
+  out.append([start,max(.001,stop-start),p,ins,g0,g1,track,interpolate(level,t)*gain,interpolate(level,t+d)*gain])
  out.sort()
  return out

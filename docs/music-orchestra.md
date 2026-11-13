@@ -50,3 +50,25 @@ energy normalization) and 0.35/s additional fast-component decay. Slow body comp
 are retained. These conservative targets come from transient-minus-background estimates
 in mixed orchestral passages, not confidently isolated harp tracks; the hall supplies
 its diffuse bloom. String oscillator models remain unchanged.
+
+## Harp presence and sustained ensemble sound
+
+The upper harp gains up to 3 dB above its existing section contour, tapering from MIDI
+48 to 60. Opening entries receive up to another 2 dB through 24 seconds, fading to the
+normal upper-register lift by 48 seconds. This is a separate mix adjustment; the source
+effort, decay and low register stay intact. Upper-register overtones receive a modest
+2 dB relative lift, with each spectral envelope's energy normalized.
+
+For the solo trumpet, six early arrivals at 12–74 ms feed the existing allpass diffusers
+at a stronger level. The late comb feedback, damping and tail lengths are unchanged.
+The orchestral room used by the Adagietto retains its previous settings.
+
+MUS4 retains MUS3's 16-byte event size, using the instrument byte's upper nibble for an
+optional section tag (zero means absent; low nibble remains the instrument). The packer
+assigns explicit desks: harp, first/second violins, viola, cello and bass. Only tagged
+bowed notes above a scored effort threshold change. Their desk-specific sharpward bias
+is bounded to 1.1–2.4 cents at maximum intensity, with small note/section variations in
+vibrato rate and depth. The existing three oscillators keep their unequal detune and
+vibrato depths; their modulation also supplies at most 0.35% amplitude tremor. No extra
+audio-rate oscillator or reference waveform is added. Quiet notes and untagged scores
+retain the previous source arithmetic. Station levelling and piano are unchanged.

@@ -24,6 +24,7 @@ struct MusicEvent:
     peak_fraction = 0.4
     mix_gain = 1.0
     mix_end_gain = 1.0
+    section = -1                  # optional score desk; -1 keeps the previous source
 
 struct MusicVoice:
     active = false
@@ -60,6 +61,7 @@ struct MusicVoice:
     noise_rng: u64 = 17
     noise_env = 1.0
     noise_decay = 1.0
+    tremor = 0.0
 
 struct MusicMode:
     y1 = 0.0
@@ -167,14 +169,14 @@ music_load = (s: mut MusicSynth, piece: int):
     balances = [0.70,0.90,0.40,0.70,0.22,1.2,0.55]
     s.gain = balances[s.piece]
     if let b = inflate(music_bytes(s.piece)):
-        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and (b[3] == 49 or b[3] == 50 or b[3] == 51))
+        assert(b.len() >= 16 and b[0] == 77 and b[1] == 85 and b[2] == 83 and (b[3] >= 49 and b[3] <= 52))
         count = music_u32(b,4)
-        stride = if b[3] == 51: 16 else: if b[3] == 50: 14 else: 12
+        stride = if b[3] >= 51: 16 else: if b[3] == 50: 14 else: 12
         assert(count <= 50000 and b.len() == 16+count*stride)
         s.frames = music_u32(b,8); s.lookback = music_u32(b,12)
         loop i in 0..count:
             at = 16+i*stride
-            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0,if b[3] == 50: f64(b[at+12])/100.0 else: -1.0,if b[3] == 50: f64(b[at+13])/100.0 else: 0.4,if b[3] == 51: f64(int(b[at+12])+int(b[at+13])*256)/4096.0 else: 1.0,if b[3] == 51: f64(int(b[at+14])+int(b[at+15])*256)/4096.0 else: 1.0))
+            s.events.push(MusicEvent(music_u32(b,at),music_u32(b,at+4),int(b[at+8]),if b[3] == 52:int(b[at+9]) & 15 else:int(b[at+9]),f64(b[at+10])/100.0,f64(b[at+11])/100.0,if b[3] == 50: f64(b[at+12])/100.0 else: -1.0,if b[3] == 50: f64(b[at+13])/100.0 else: 0.4,if b[3] >= 51: f64(int(b[at+12])+int(b[at+13])*256)/4096.0 else: 1.0,if b[3] >= 51: f64(int(b[at+14])+int(b[at+15])*256)/4096.0 else: 1.0,if b[3] == 52:int(b[at+9])/16-1 else:-1))
     assert(s.events.len() > 0)
 
 music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
@@ -225,6 +227,23 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
         noise=parameter(2),transient=parameter(3),noise_rng=u64(17+e.start+e.pitch*7919+slot*31),
         noise_env=exp(-f64(age)*(if mode == 0: 0.0 else: if kind == .drums or kind == .timpani: max(2.0,parameter(8)) else: 4.0)/f64(MUSIC_RATE)),
         noise_decay=exp(-(if mode == 0: 0.0 else: if kind == .drums or kind == .timpani: max(2.0,parameter(8)) else: 4.0)/f64(MUSIC_RATE)),noise_hz=if kind == .drums: 0.72 else: if kind == .strings: 0.28 else: 0.42)
+    if kind == .strings and e.section >= 1:
+        # Broad score effort drives a tiny sharpward desk bias. No new audio-rate
+        # oscillator: the existing unequal player vibratos also supply faint tremor.
+        intensity = clamp((max(e.gain*e.mix_gain,e.end_gain*e.mix_end_gain)-0.40)/0.40,0.0,1.0)
+        if intensity > 0.0:
+            desk = clamp(e.section,1,5)
+            seconds = f64(e.start)/f64(MUSIC_RATE)
+            cents = [0.0,2.0,2.4,1.4,1.8,1.1][desk]*intensity
+            ratio = pow(2.0,cents/1200.0)
+            n.increment *= ratio
+            n.phase = (phase*ratio+phase_offset)%1.0
+            n.phase2 = (phase*ratio*1.0031+phase_offset+0.31)%1.0
+            n.phase3 = (phase*ratio*0.9963+phase_offset+0.67)%1.0
+            n.vibrato = (n.vibrato+f64(desk)*0.113)%1.0
+            n.vibrato_step *= 0.97+0.012*f64(desk)+0.025*sin(seconds*0.27+f64(desk))
+            n.vibrato_depth *= 1.0+intensity*(0.10+0.08*sin(seconds*0.19+f64(desk)*0.8))
+            n.tremor = 0.0035*intensity
     cached = if s.cache_enabled: music_cached_key(if mode == 0: s.wave_keys else: s.bodies,e.instrument,e.pitch,velocity,if mode == 0: 0 else: age) else: -1
     if cached >= 0:
         s.body_clock += 1
@@ -423,14 +442,14 @@ music_wind_render = (s: mut MusicSynth, k: int, n: mut MusicVoice, count: int):
     phase = n.phase; phase2 = n.phase2; phase3 = n.phase3
     vibrato = n.vibrato; morph = n.morph
     age = n.age
-    increment = n.increment; vibrato_depth = n.vibrato_depth; vibrato_step = n.vibrato_step
+    increment = n.increment; vibrato_depth = n.vibrato_depth; vibrato_step = n.vibrato_step; tremor = n.tremor
     waves = s.waves; sine = s.sine
     loop i in 0..count:
         v = music_osc(waves,k,phase,morph)
         if kind == .strings or kind == .accordion or kind == .choir:
             v = (v+music_osc(waves,k,phase2,morph)+music_osc(waves,k,phase3,morph))*0.5773503
-        s.body_work[i] = v
         vib = music_sine(sine,vibrato)
+        s.body_work[i] = if tremor > 0.0:v*(1.0+tremor*vib) else:v
         depth = vibrato_depth*min(1.0,f64(age)/4000.0)
         scoop = if kind == .trumpet: 0.009*max(0.0,1.0-f64(age)/400.0) else: if kind == .brass or kind == .oboe: -0.004*max(0.0,1.0-f64(age)/500.0) else: 0.0
         inc = increment*(1.0+vib*depth+scoop)
@@ -542,6 +561,8 @@ music_concert_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
     write = s.reverb_at%2048
     s.hall_early[write] = value
     early = s.hall_early[(write+2048-417)%2048]*0.45+s.hall_early[(write+2048-683)%2048]*0.32+s.hall_early[(write+2048-1061)%2048]*0.23
+    if s.piece == 1:
+        early = s.hall_early[(write+2048-193)%2048]*0.25+s.hall_early[(write+2048-307)%2048]*0.20+s.hall_early[(write+2048-479)%2048]*0.18+s.hall_early[(write+2048-653)%2048]*0.15+s.hall_early[(write+2048-887)%2048]*0.12+s.hall_early[(write+2048-1187)%2048]*0.10
     hall = 0.0
     loop k in 0..4:
         at = s.reverb_at%s.delays[k].len()
@@ -549,6 +570,8 @@ music_concert_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
         s.damp[k] += (delayed-s.damp[k])*0.28
         s.delays[k][at] = value+s.damp[k]*s.hall_feedback[k]
         hall += delayed*0.25
+    # Diffuse the stronger early field under the solo; leave late feedback unchanged.
+    if s.piece == 1:hall = hall*1.8+early*2.4
     loop k in 4..6:
         at = s.reverb_at%s.delays[k].len()
         delayed = s.delays[k][at]
@@ -556,7 +579,8 @@ music_concert_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
         hall = delayed-v*0.5
         s.delays[k][at] = v+hall*0.5
     s.reverb_at += 1; s.cursor += 1; s.fade = min(160,s.fade+1)
-    mixed = (value+(hall*1.8+early*0.4)*s.wet)*s.gain
+    reflected = if s.piece == 1:hall else:hall*1.8+early*0.4
+    mixed = (value+reflected*s.wet)*s.gain
     mixed/(1.0+abs(mixed)*0.28)*f64(s.fade)/160.0
 
 music_hall_sample = (s: mut MusicSynth, value: f64) -> f64:
