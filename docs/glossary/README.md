@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
-- **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Coordinator](#coordinator)
+- **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -666,6 +666,19 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![A battle card](img/battle-card.png)
 
+### Game slots and autosave
+
+- **Definition:** three player-selected saved games, each with two recovery **banks**. A complete
+  checkpoint includes the living world, exact player/aircraft state, physical battle/fleet,
+  races, notebook, cat friendship and other presentation progress. **Autosave** updates the
+  active slot after reaching a safe mooring or town on foot, and on a safe timer.
+- **Code:** `src/game_session.jo`, `src/game_slots.jo`, `src/living_save.jo`; shell requests in
+  `aegean.jo`. API, format and failure rules: [Game saves](../game-saves.md).
+- **Rules:** a queued request is not a successful save. Browser completion means the IndexedDB
+  transaction committed. Never overwrite an unknown schema or the last intact bank on failure;
+  never attach a new story to a previous slot without a selection. Rendering handles are rebuilt,
+  not serialized. Slots are numbered 0–2 in the API; the menu chooses their displayed labels.
+
 ### Voices
 
 - **Definition:** the fourteen ways townsfolk talk, chosen from trade, age and temperament: salt,
@@ -983,6 +996,29 @@ No image: the tiers differ in budgets more than in any single view.
   page, off by default, so they can be compared with the approved baseline.
 - **Code:** `src/tweaks.jo` (`Tweaks`, `set_tweaks`); the page in `src/debugmenu.jo`.
 
+### Game page and Saved card
+
+- **Aliases:** the save menu, the slots page, the autosave toast.
+- **Definition:** the **Game page** is the pause menu's first tab: the three saved-game slots, each
+  with its world time, place and a short summary (aircraft, lire, day), a mark on the slot the
+  autosave writes to, and Save here, Load and Delete. Saving over a slot, loading and deleting
+  each ask first; a successful load closes the menu. A note under the slots says where the
+  autosave goes or why it is off. The **Saved card** is the quiet "Saved" that fades in and out
+  at the upper right, under the clock and the lire, when an autosave finishes.
+- **Code:** `src/debugmenu.jo game_page` (drawing, confirmation); `src/game_menu.jo game_row`
+  (slot header to words); `aegean.jo game_page_view` / `game_page_apply` (backend requests,
+  notes); `src/hud.jo saved_toast`. Backend contract in `docs/game-saves.md`.
+- **Rules:** reads only cached slot headers, never a World, so it is cheap to draw every frame.
+  Upright on a phone the panel spans the screen and the page's type and buttons are 1.45 times
+  bigger (1.15 on a phone on its side, where three slots must still fit); tabs grow with it.
+  There is no start screen, so there is no Continue: a fresh start with saves present plays on,
+  and the player loads from this page.
+- **Capture:** `AEGEAN_CAPTURE_PANEL=game` (or `game-confirm`, a load waiting on slot 2) with an
+  `SLOPPY_SAVE_DIR` holding slots, `SLOPPY_FRAMES=150`; `AEGEAN_CAPTURE_PANEL=saved` shows the
+  Saved card; add `AEGEAN_TOUCH=1` and `SLOPPY_WINDOW=390x844` for a phone.
+
+![The Game page, with a load waiting for its yes](img/game-page.png)
+
 ### Coordinator
 
 - **Definition:** the thread (Claude Opus) that plans, dispatches agents, merges their branches and
@@ -1005,7 +1041,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
 | `AEGEAN_AT='x z yaw'` | on foot at a spot |
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |
-| `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech` | open a panel |
+| `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |

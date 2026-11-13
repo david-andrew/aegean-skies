@@ -5,6 +5,7 @@ use 'living_money.jo'
 use 'living_guard.jo'
 use 'living_work.jo'
 use 'living_far_orders.jo'
+use 'living_field_checks.jo'
 
 validate_far = (w: World, route_points: bool = true) -> str:
     if not w.far.populated:
@@ -12,6 +13,7 @@ validate_far = (w: World, route_points: bool = true) -> str:
             if p.far_home>=0 or p.far_reports.len()>0: return "far person/report without a populated registry"
         return "" # stock primitive fixtures have no cohort registry
     f = w.far
+    if f.opening_minute< -1 or f.opening_minute>w.minute: return "invalid opening service register date"
     if f.version!=1 or f.registry_version<1 or f.place_ids.len()!=f.districts.len() or f.place_ids.len()>1024 or f.vehicles.len()>1280 or f.journeys.len()>f.vehicles.len(): return "invalid far dimensions/version"
     if f.news.len()>2048 or f.news_order.len()!=f.news.len(): return "unbounded far news journal"
     registered: {int: bool}
@@ -61,12 +63,43 @@ validate_far = (w: World, route_points: bool = true) -> str:
         seen_news[id]=true
     if f.core_people<26 or f.core_people>w.people.len() or f.people.len()!=w.people.len()-f.core_people or f.people.len()>3072 or f.near_people.len()>24: return "invalid far named population"
     previous = -1; population = f.named_core_population+f.people.len()+f.dead+f.evacuated
+    spare_wagons=0
+    field_ids: {int: bool}
+    if f.field_grain_harvested<0 or f.field_grain_harvested>f.produced[3] or f.field_seed_sown<0 or f.field_seed_sown>f.consumed[3] or f.field_labor_hours<0 or f.field_labor_paid<0: return "invalid field resource counters"
+    loop g in 0..9:
+        if f.field_foregone[g]<0 or f.household_consumed[g]<0 or f.household_consumed[g]>f.consumed[g] or f.household_need[g]<f.household_consumed[g]: return "invalid field/household production counters"
     loop c in 0..3:
         if f.crew_population[c]<0 or not account_valid(w,f.treasury[c]): return "invalid far treasury/crew"
         population += f.crew_population[c]
     loop id in f.place_ids:
         if id<=previous or not (id in f.districts) or not (id in w.place_contexts): return "invalid far place index"
         previous = id; d = f.districts[id]
+        if d.spare_wagons<0 or d.spare_wagons>64: return "invalid household wagon stock"
+        if d.cart_parts_target<0 or d.cart_parts_target>5000: return "invalid funded carriage parts target"
+        if d.staple_cover_days<0 or d.staple_cover_days>45 or d.staple_sources.len()>4: return "invalid staple lead time"
+        loop source in d.staple_sources:
+            if not (source in f.districts): return "invalid learned grain source"
+        if d.supplier_quotes.len()>FAR_SUPPLIER_QUOTES: return "unbounded received supplier quotes"
+        last_link= -1
+        loop q in d.supplier_quotes:
+            if q.link<=last_link or q.link<0 or q.link>=f.links.len() or q.service<0 or q.service>=f.vehicles.len() or not (q.place in f.districts) or q.minute<0 or q.minute>w.minute or q.seen<q.minute or q.seen>w.minute or q.until<q.minute: return "invalid received supplier quote"
+            if q.payload_grams<0 or q.payload_grams>1000000000: return "invalid observed carrier payload"
+            link=f.links[q.link]
+            # The named carrier can later be chartered onto a different route. Its
+            # dated report retains the historical local link, not its current order.
+            if not ((link.a==id and link.b==q.place) or (link.b==id and link.a==q.place)): return "supplier quote did not travel its actual local link"
+            last_link=q.link
+            loop g in 0..9:
+                if q.available[g]<0 or q.available[g]>1000000000000 or q.price[g]<0 or q.price[g]>1000000000 or q.delivered[g]<0 or q.delivered[g]>1000000000000 or q.delivered_minute[g]< -1 or q.delivered_minute[g]>w.minute: return "invalid supplier quote inventory/price"
+                if (q.available[g]>0 or q.delivered[g]>0) and q.price[g]<=0: return "supplier evidence missing its actual price"
+                if (q.delivered[g]==0)!=(q.delivered_minute[g]== -1): return "invalid actual supplier delivery date"
+        spare_wagons+=d.spare_wagons
+        if d.fields.len()>8 or d.field_workers<0 or d.field_workers>1000000 or d.field_seed_target<0 or d.field_seed_target>6000000 or d.field_reason.len()>4096 or d.field_reason_day>day_index(w.minute) or d.field_reason_minute< -1 or d.field_reason_minute>w.minute: return "unbounded household field state"
+        loop field in d.fields:
+            if field.land.id in field_ids: return "two districts own the same arable parcel"
+            field_ids[field.land.id]=true
+            error=validate_household_field(w,id,field)
+            if error!="": return error
         if d.id!=id or d.core< -1 or d.core>=w.places.len() or d.born_country<0 or d.born_country>=3 or d.controller<0 or d.controller>=3 or d.authority<0 or d.authority>=3: return "invalid far district identity/control"
         if not account_valid(w,d.market_account) or not account_valid(w,d.household_account) or d.output<0 or d.output>=9 or d.productivity<1 or d.raw_ore<0 or d.raw_crude<0: return "invalid far district economy"
         if d.core>=0 and (d.market_account!=w.places[d.core].market.account or d.stock.roots.len()>0): return "duplicate detailed gateway inventory"
@@ -130,6 +163,17 @@ validate_far = (w: World, route_points: bool = true) -> str:
     counted_crew: int[3]
     loop i in 0..f.vehicles.len():
         v = f.vehicles[i]
+        if v.cart_assets.len()>8 or (v.kind!=.cart and v.cart_assets.len()>0): return "invalid cart equipment record"
+        extra=0; purchases: (int,int)[]
+        loop asset in v.cart_assets:
+            if asset.why.len()>4096 or asset.parts_description.len()>16384: return "unbounded wagon provenance"
+            if asset.wagons<1 or asset.wagons>8 or not (asset.place in f.districts) or not account_valid(w,asset.owner) or asset.minute>w.minute or asset.minute<0 or asset.paid_cents<0 or asset.voyage<0 or asset.voyage>=f.next_journey or (asset.voyage,asset.place) in purchases or asset.parts_roots.len()<1 or asset.parts_roots.len()>64: return "invalid funded cart acquisition"
+            purchases.push((asset.voyage,asset.place))
+            loop root in asset.parts_roots:
+                if root<0 or root>=w.next_cargo_source: return "invalid wagon maintenance source"
+            extra+=asset.wagons
+        if extra>24: return "unbounded wagon caravan"
+        spare_wagons+=extra
         if v.id!=i or not account_valid(w,v.account) or v.route<0 or v.route>=f.links.len() or v.speed_mm_sec<=0 or v.capacity_grams<1 or not finite_living_point(v.pos) or not finite_living_point(v.velocity): return "invalid far vehicle"
         loop person in v.passengers:
             if person<0 or person>=w.people.len() or w.people[person].far_boat!=v.id: return "invalid named sea passenger"
@@ -145,6 +189,7 @@ validate_far = (w: World, route_points: bool = true) -> str:
             if v.crew[c]<0: return "negative far crew"
             counted_crew[c] += v.crew[c]
     if counted_crew!=f.crew_population: return "far crew conservation"
+    if f.opening_spare_wagons<0 or spare_wagons!=f.opening_spare_wagons: return "wagon equipment conservation"
     max_journey = -1
     loop id, j in f.journeys:
         if j.follow_vehicle< -1 or j.follow_vehicle>=f.vehicles.len() or j.follow_voyage< -1 or j.follow_voyage>=f.next_journey or (j.follow_vehicle<0)!=(j.follow_voyage<0): return "invalid convoy leader"
@@ -168,6 +213,7 @@ validate_far = (w: World, route_points: bool = true) -> str:
         if j.cargo_owner!=f.vehicles[j.vehicle].cargo_owner: return "far custody/title mismatch"
         if inventory_mass(w,f.vehicles[j.vehicle].cargo)+passengers*75000>f.vehicles[j.vehicle].capacity_grams: return "far freight capacity"
         l = f.links[j.link]
+        if j.opening_progress_mm<0 or j.opening_progress_mm>=l.length_mm: return "invalid declared opening voyage progress"
         if j.segment>l.points.len()-1 or j.origin!=(if j.forward: l.a else: l.b) or j.destination!=(if j.forward: l.b else: l.a): return "invalid far journey progress"
     if f.next_journey<=max_journey: return "far journey counter rewind"
     ""

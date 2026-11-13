@@ -10,6 +10,9 @@ use 'living_far_recipes.jo'
 
 const FAR_CUSTOMER_ORDERS = 8
 const FAR_ORDER_PATH = 12
+const FAR_EXTRA_ORDER_LINES = 8
+const FAR_SUPPLIER_QUOTES = 16
+const FAR_MIN_PURCHASE = 100
 
 order_due = (o: FarRestockOrder, good: int) -> int: if o.good_due[good]>0: o.good_due[good] else: o.due
 order_need_since = (o: FarRestockOrder, good: int) -> int: if o.need_since[good]>=0: o.need_since[good] else: o.minute
@@ -19,11 +22,286 @@ order_path = (o: FarRestockOrder, good: int) -> int[]:
     if not (o.place in result): result.push(o.place)
     result
 
+# A counter's own need is independent of the customer order it forwards. Legacy
+# papers default to zero local quantity and retain their original loop safeguards.
+order_local_quantity = (o: FarRestockOrder, good: int) -> int:
+    clamp(o.local_quantity[good],0,o.quantity[good])
+
+order_primary_quantity = (o: FarRestockOrder, good: int) -> int:
+    extra=0
+    loop line in o.extra_lines:
+        if line.good==good: extra+=line.quantity
+    max(0,o.quantity[good]-order_local_quantity(o,good)-extra)
+
+order_components = (o: FarRestockOrder, good: int, minute: int) -> FarRestockLine[]:
+    result: FarRestockLine[]
+    local=order_local_quantity(o,good)
+    local_urgent=good==3 and o.observed[3]<max(1000,o.food_floor)
+    if local>0 and o.due>=minute: result.push(FarRestockLine(good,local,[o.place],o.minute,o.due,urgent=local_urgent))
+    primary=order_primary_quantity(o,good)
+    primary_urgent=good==3 and (o.primary_food_urgent or (o.food_floor==0 and local_urgent))
+    if primary>0 and order_due(o,good)>=minute: result.push(FarRestockLine(good,primary,order_path(o,good),order_need_since(o,good),order_due(o,good),urgent=primary_urgent))
+    loop line in o.extra_lines:
+        if line.good==good and line.quantity>0 and line.due>=minute: result.push(line)
+    result
+
+order_urgent_food = (o: FarRestockOrder, supplier: int, minute: int) -> int:
+    result=0
+    loop line in order_components(o,3,minute):
+        if line.urgent and not (supplier in line.places): result+=line.quantity
+    result
+
+order_quantity_for_supplier = (o: FarRestockOrder, good: int, supplier: int, minute: int = -1) -> int:
+    if supplier==o.place or o.quantity[good]<=0: return 0
+    result=if o.due>=minute: order_local_quantity(o,good) else: 0
+    if order_due(o,good)>=minute and not (supplier in order_path(o,good)): result+=order_primary_quantity(o,good)
+    loop line in o.extra_lines:
+        if line.good==good and line.due>=minute and not (supplier in line.places): result+=line.quantity
+    result
+
+# This is a bounded description of eligible customers, NEVER a routing ancestry.
+order_need_places = (o: FarRestockOrder, good: int, supplier: int, minute: int = -1) -> int[]:
+    result=[o.place]
+    loop line in order_components(o,good,minute):
+        if supplier in line.places: continue
+        loop place in line.places:
+            if not (place in result) and result.len()<FAR_ORDER_PATH: result.push(place)
+    result.sort(); result
+
+order_current_due = (o: FarRestockOrder, good: int, minute: int, supplier: int = -1) -> int:
+    result=o.due
+    loop line in order_components(o,good,minute):
+        if not (supplier in line.places): result=min(result,line.due)
+    result
+
+order_current_since = (o: FarRestockOrder, good: int, minute: int, supplier: int = -1) -> int:
+    result=o.minute
+    loop line in order_components(o,good,minute):
+        if not (supplier in line.places): result=min(result,line.need_since)
+    result
+
 customer_order_current = (w: World, place: int, e: FarCustomerOrder, good: int) -> bool:
-    e.order.quantity[good]>0 and order_due(e.order,good)>=w.minute and not (place in order_path(e.order,good))
+    order_quantity_for_supplier(e.order,good,place,w.minute)>0
+
+staple_cover_days = (w: World, place: int) -> int:
+    # The counter knows its own service routes, not a remote stock oracle. Its food
+    # reserve must outlast carrying an order out and bringing a funded purchase back.
+    fastest=0
+    loop edge in w.far.districts[place].links:
+        link=w.far.links[edge]
+        speed=if link.mode==.cart: 1600 else: if link.mode==.ship: 6500 else: 0
+        if speed<=0: continue
+        round_trip=(link.length_mm+speed-1)/speed+60
+        if fastest==0 or round_trip<fastest: fastest=round_trip
+    local=if fastest==0: 3 else: clamp((fastest+1439)/1440+2,3,45)
+    max(local,w.far.districts[place].staple_cover_days)
+
+# Households keep their actual reordering reserve. A productive, funded farm can
+# replace its own meals and keeps two days; a factory cannot sell its pantry as if
+# it were a granary merely because its population makes that pantry look large.
+counter_feeds_households = (w: World, place: int) -> bool:
+    d=w.far.districts[place]; population=0; workers=0
+    loop c in 0..3: population+=d.workers[c]+d.dependents[c]; workers+=d.workers[c]
+    food_need=population*FAR_STAPLE_DAILY
+    wage=max(1,w.goods[3].base_cents*4/5)
+    d.output==3 and workers*d.productivity>=food_need and w.accounts[d.market_account].cents>=(food_need*wage+999)/1000
+
+counter_sale_reserve = (w: World, place: int, good: int) -> int:
+    d=w.far.districts[place]
+    if good!=3: return max(1000,d.target[good]/3)
+    population=0
+    loop c in 0..3: population+=d.workers[c]+d.dependents[c]
+    food_need=population*FAR_STAPLE_DAILY
+    days=if counter_feeds_households(w,place): 2 else: staple_cover_days(w,place)
+    max(1000,food_need*days)
+
+counter_sale_available = (w: World, place: int, good: int) -> int:
+    max(0,far_market_qty(w,place,good)-counter_sale_reserve(w,place,good))
+
+# Inventory observations are retained separately from customer debts: a well-stocked
+# farmer with no buying need is still a supplier. Never replace this with live reads
+# of another town's stock. Opening contacts are explicit construction data only.
+supplier_receipt_window = (w: World, link: int) -> int:
+    l=w.far.links[link]; speed=if l.mode==.cart: 1600 else: 6500
+    max(4320,l.length_mm/speed+2880)
+
+supplier_evidence = (w: World, q: FarSupplierQuote, good: int) -> int:
+    inventory=if q.until>=w.minute: q.available[good] else: 0
+    delivered=if q.delivered_minute[good]>=0 and w.minute-q.delivered_minute[good]<=supplier_receipt_window(w,q.link): q.delivered[good] else: 0
+    max(inventory,delivered)
+
+# Evidence is a past fact, not a ceiling on future buying. Order a return load and
+# its next replenishment; include only this counter's own real wagons committed
+# to the service. No current remote stock or other counter's assets are
+# inferred. The supplier must still own and invoice every actual departing good.
+supplier_order_allowance = (w: World, place: int, q: FarSupplierQuote, good: int) -> int:
+    inventory=if q.until>=w.minute: q.available[good] else: 0
+    recent=q.delivered_minute[good]>=0 and w.minute-q.delivered_minute[good]<=supplier_receipt_window(w,q.link)
+    if not recent: return inventory
+    received=q.delivered[good]; owned=0
+    # A partial remainder is not a promise that this carrier can only bring that
+    # remainder forever. Buying two observed carrier loads expresses a real stock
+    # gap; it neither asserts supplier stock nor commits an unpaid cargo.
+    if good==3 and q.payload_grams>0:
+        received=max(received,q.payload_grams*1000/w.goods[good].package_grams)
+    link=w.far.links[q.link]
+    if good==3 and link.mode==.cart:
+        payload=if link.road>=0 and not link.trail: 1500000 else: 500000
+        loop asset in w.far.vehicles[q.service].cart_assets:
+            if asset.place==place and asset.owner==w.far.districts[place].market_account: owned+=asset.wagons
+        if owned>0: received=max(received,(1+owned)*payload*1000/w.goods[good].package_grams)
+    max(inventory,2*received)
+
+_supplier_quote_alive = (w: World, q: FarSupplierQuote) -> bool:
+    if q.until>=w.minute: return true
+    loop g in 0..9:
+        if q.delivered_minute[g]>=0 and w.minute-q.delivered_minute[g]<=supplier_receipt_window(w,q.link): return true
+    false
+
+_store_supplier_quote = (w: mut World, place: int, quote: FarSupplierQuote):
+    kept=[loop old in w.far.districts[place].supplier_quotes: if old.link!=quote.link and _supplier_quote_alive(w,old): old]
+    kept.push(quote)
+    if kept.len()>FAR_SUPPLIER_QUOTES:
+        # Keep the sort independent of World: capturing it here would force a whole
+        # district-map copy on the write below for every ordinary counter receipt.
+        ranks: (int,int,int)[]
+        loop q in kept: ranks.push((supplier_evidence(w,q,3)*1000000/max(1,q.price[3]),q.seen,-q.link))
+        ranks.sort(descending=true)
+        chosen=[loop rank in ranks[0..FAR_SUPPLIER_QUOTES]: -rank.2]
+        kept=[loop q in kept: if q.link in chosen: q]
+    kept.sort((q: FarSupplierQuote): q.link)
+    w.far.districts[place].supplier_quotes=kept
+
+remember_supplier_quote = (w: mut World, place: int, service: int, order: FarRestockOrder):
+    if not order.stock_offer or not (place in w.far.districts) or service<0 or service>=w.far.vehicles.len(): return
+    route=w.far.vehicles[service].route
+    if route<0 or route>=w.far.links.len(): return
+    link=w.far.links[route]
+    peer=if link.a==place: link.b else: if link.b==place: link.a else: -1
+    if order.place!=peer or order.minute>w.minute: return
+    until=min(order.due,order.minute+supplier_receipt_window(w,route))
+    if until<w.minute: return
+    quote=FarSupplierQuote(route,service,peer,order.minute,w.minute,until,order.offered,order.price,payload_grams=w.far.vehicles[service].capacity_grams)
+    loop old in w.far.districts[place].supplier_quotes:
+        if old.link!=route: continue
+        if old.minute>order.minute or (old.minute==order.minute and old.seen>=w.minute): return
+        quote.delivered=old.delivered; quote.delivered_minute=old.delivered_minute
+    _store_supplier_quote(w,place,quote)
+
+# Actual collected goods also establish a supplier, even if the loading invoice used
+# its last advertised stock. This is recorded throughput, never invented availability.
+remember_supply_delivery = (w: mut World, j: FarJourney, received: int):
+    if j.good<0 or j.good>=9 or received<=0 or not j.provenance.negotiated or j.provenance.goods_cents<=0: return
+    empty: int[9]
+    quote=FarSupplierQuote(j.link,j.vehicle,j.origin,j.departed_tick/120,w.minute,j.departed_tick/120,empty,empty)
+    loop old in w.far.districts[j.destination].supplier_quotes:
+        if old.link==j.link: quote=old
+    quote.seen=w.minute; quote.delivered[j.good]=received; quote.delivered_minute[j.good]=w.minute
+    quote.payload_grams=w.far.vehicles[j.vehicle].capacity_grams
+    if quote.price[j.good]<=0 or quote.minute<j.departed_tick/120: quote.price[j.good]=max(1,(j.provenance.goods_cents*1000+received-1)/received)
+    _store_supplier_quote(w,j.destination,quote)
+
+# Only actual carried inventories or recent collected shipments guide bulk sourcing.
+# Unknown supply falls back to bounded exploration. No current remote stock is read.
+procurement_links = (w: World, place: int, good: int, excluded: int[] = []) -> int[]:
+    links: int[]
+    loop edge in w.far.districts[place].links:
+        l=w.far.links[edge]; peer=if l.a==place: l.b else: l.a
+        if not (peer in excluded): links.push(edge)
+    links.sort()
+    if good!=3 and good!=4 and good!=5: return links
+    known: int[]
+    loop q in w.far.districts[place].supplier_quotes:
+        if q.link in links and supplier_evidence(w,q,good)>=FAR_MIN_PURCHASE: known.push(q.link)
+    if known.len()>0: known.sort(); return known
+    links
+
+# A small known delivery must not monopolize a city's much larger order. Fill the
+# quantity supported by carried evidence, then let the unfilled need explore other
+# real service links. Weighted water filling saturates at most sixteen quote caps.
+procurement_share = (w: World, place: int, good: int, quantity: int, route: int, excluded: int[] = []) -> int:
+    links: int[]
+    loop edge in w.far.districts[place].links:
+        l=w.far.links[edge]; peer=if l.a==place: l.b else: l.a
+        if not (peer in excluded): links.push(edge)
+    links.sort()
+    if quantity<=0 or not (route in links): return 0
+    phase=place+good+w.minute/1440
+    if good!=3 and good!=4 and good!=5: return _inquiry_share(quantity,links,route,phase)
+    pending: (int,int,int)[]; capacity=0; known: int[]
+    loop q in w.far.districts[place].supplier_quotes:
+        if not (q.link in links): continue
+        evidence=supplier_evidence(w,q,good)
+        if evidence<FAR_MIN_PURCHASE: continue
+        l=w.far.links[q.link]; speed=if l.mode==.cart: 1600 else: 6500
+        trip=min(1000000000,l.length_mm/speed+60)
+        weight=clamp(evidence*1000000/max(1,q.price[good]*trip),1,1000000)
+        limit=min(quantity,supplier_order_allowance(w,place,q,good))
+        pending.push((q.link,weight,limit)); known.push(q.link); capacity+=limit
+    if pending.len()==0: return _inquiry_share(quantity,links,route,phase)
+    allocations: {int: int}; remaining=min(quantity,capacity)
+    loop pending.len()>0 and remaining>0:
+        total=0
+        loop pair in pending: total+=pair.1
+        saturated=[loop pair in pending: if pair.2*total<=remaining*pair.1: pair.0]
+        if saturated.len()>0:
+            loop pair in pending:
+                if pair.0 in saturated: allocations[pair.0]=pair.2; remaining-=pair.2
+            pending=[loop pair in pending: if not (pair.0 in saturated): pair]
+            continue
+        distributed=0; remainders: (int,int)[]
+        loop pair in pending:
+            allocations[pair.0]=remaining*pair.1/total
+            distributed+=allocations[pair.0]
+            remainders.push((remaining*pair.1%total,-pair.0))
+        remainders.sort(descending=true)
+        loop index in 0..remaining-distributed:
+            key= -remainders[index].1; allocations[key]+=1
+        remaining=0
+    unknown=[loop edge in links: if not (edge in known): edge]
+    if unknown.len()==0: unknown=links
+    allocations.get(route,0)+_inquiry_share(max(0,quantity-capacity),unknown,route,phase)
+
+learn_staple_source = (w: mut World, place: int, seller: int, batch: FarStock):
+    # A crate's actual producer label reveals a supply chain. A bounded map BFS finds
+    # a real usable route, without observing that producer's current stock or prices.
+    roots=batch.roots.keys(); roots.sort()
+    source=seller
+    loop root in roots:
+        if w.cargo_sources[root].good==3:
+            producer=w.cargo_sources[root].producer_place
+            if producer in w.far.districts: source=producer
+            break
+    if source==place or source in w.far.districts[place].staple_sources: return
+    previous: {int: (int,int)}; previous[source]=(source,-1)
+    queue=[source]; head=0
+    loop head<queue.len() and queue.len()<=1024:
+        at=queue[head]; head+=1
+        if at==place: break
+        edges=w.far.districts[at].links; edges.sort()
+        loop edge in edges:
+            link=w.far.links[edge]
+            if link.mode==.aircraft: continue
+            next=if link.a==at: link.b else: link.a
+            if next in previous: continue
+            previous[next]=(at,edge); queue.push(next)
+    if not (place in previous): return
+    minutes=0; at=place; legs=0
+    loop at!=source and legs<1024:
+        prior=previous[at]; link=w.far.links[prior.1]
+        speed=if link.mode==.cart: 1600 else: 6500
+        minutes+=(link.length_mm+speed-1)/speed+60
+        at=prior.0; legs+=1
+    w.far.districts[place].staple_cover_days=max(w.far.districts[place].staple_cover_days,clamp((minutes+1439)/1440+2,3,45))
+    if w.far.districts[place].staple_sources.len()>=4: w.far.districts[place].staple_sources.remove_at(0)
+    w.far.districts[place].staple_sources.push(source)
 
 counter_own_target = (w: World, place: int, good: int) -> int:
     d=w.far.districts[place]; result=d.target[good]
+    if good==3:
+        population=0
+        loop c in 0..3: population+=d.workers[c]+d.dependents[c]
+        result=max(result,population*FAR_STAPLE_DAILY*staple_cover_days(w,place))
     if far_input(d.output)==good:
         workers=d.workers[0]+d.workers[1]+d.workers[2]
         result=max(result,(workers*d.productivity*3+far_input_divisor(d.output)-1)/far_input_divisor(d.output))
@@ -32,14 +310,34 @@ counter_own_target = (w: World, place: int, good: int) -> int:
 counter_stock_target = (w: World, place: int, good: int) -> int:
     d=w.far.districts[place]; result=counter_own_target(w,place,good)
     loop e in d.customer_orders:
-        if customer_order_current(w,place,e,good): result=min(1000000000,result+e.order.quantity[good])
+        if customer_order_current(w,place,e,good): result=min(1000000000,result+order_quantity_for_supplier(e.order,good,place,w.minute))
+    result
+
+# Production fills an output warehouse. Buying papers fund actual household use,
+# industrial inputs, feasible maintenance and received customers; a fed farm must
+# not buy its grain back from those customers merely to fill its production store.
+counter_purchase_own_target = (w: World, place: int, good: int) -> int:
+    d=w.far.districts[place]
+    result=counter_own_target(w,place,good)
+    if d.output==good:
+        population=0
+        loop c in 0..3: population+=d.workers[c]+d.dependents[c]
+        result=if good==3: counter_sale_reserve(w,place,good) else: max(1000,min(counter_sale_reserve(w,place,good),population*FAR_DAILY_FOOD[good]*3))
+    if good==5: result=max(result,d.cart_parts_target)
+    if good==3: result+=d.field_seed_target
+    result
+
+counter_purchase_target = (w: World, place: int, good: int) -> int:
+    result=counter_purchase_own_target(w,place,good)
+    loop e in w.far.districts[place].customer_orders:
+        if customer_order_current(w,place,e,good): result=min(1000000000,result+order_quantity_for_supplier(e.order,good,place,w.minute))
     result
 
 counter_customers = (w: World, place: int, good: int) -> int[]:
     result: int[]
     loop e in w.far.districts[place].customer_orders:
         if not customer_order_current(w,place,e,good): continue
-        loop id in order_path(e.order,good):
+        loop id in order_need_places(e.order,good,place,w.minute):
             if id!=place and not (id in result) and result.len()<FAR_ORDER_PATH-1: result.push(id)
     result.sort(); result
 
@@ -53,11 +351,12 @@ order_customer_note = (w: World, places: int[], issuer: int) -> str:
 _counter_order_value = (minute: int, place: int, e: FarCustomerOrder) -> int:
     total=0
     loop g in 0..9:
-        if e.order.quantity[g]>0 and order_due(e.order,g)>=minute and not (place in order_path(e.order,g)): total+=e.order.quantity[g]*e.order.price[g]/1000
+        total+=order_quantity_for_supplier(e.order,g,place,minute)*e.order.price[g]/1000
     total
 
 remember_counter_order = (w: mut World, place: int, service: int, order: FarRestockOrder):
     if not (place in w.far.districts) or order.place==place: return
+    remember_supplier_quote(w,place,service,order)
     old=w.far.districts[place].customer_orders
     loop e in old:
         # A repeated arrival callback never restores already supplied quantities or changes
@@ -72,18 +371,42 @@ remember_counter_order = (w: mut World, place: int, service: int, order: FarRest
     kept.sort((e: FarCustomerOrder): e.service)
     w.far.districts[place].customer_orders=kept
 
-serve_counter_order = (w: mut World, place: int, service: int, issued: int, good: int, qty: int):
+serve_counter_order = (w: mut World, place: int, service: int, issued: int, good: int, qty: int, arrives: int = -1):
+    arrival=if arrives>=0: arrives else: w.minute
     loop k in 0..w.far.districts[place].customer_orders.len():
         e=w.far.districts[place].customer_orders[k]
-        if e.service==service and e.order.minute==issued:
-            w.far.districts[place].customer_orders[k].order.quantity[good]=max(0,e.order.quantity[good]-qty)
-            return
+        if e.service!=service or e.order.minute!=issued: continue
+        order=e.order; primary=order_primary_quantity(order,good)
+        remaining=min(max(0,qty),order_quantity_for_supplier(order,good,place,arrival)); supplied=remaining
+        if order.due>=arrival:
+            local=min(remaining,order_local_quantity(order,good))
+            remaining-=local; order.local_quantity[good]-=local
+        if order_due(order,good)>=arrival and not (place in order_path(order,good)):
+            remaining-=min(remaining,primary)
+        loop index in 0..order.extra_lines.len():
+            line=order.extra_lines[index]
+            if line.good!=good or line.due<arrival or place in line.places: continue
+            taken=min(remaining,line.quantity); order.extra_lines[index].quantity-=taken; remaining-=taken
+        order.quantity[good]-=supplied-remaining
+        order.extra_lines=[loop line in order.extra_lines: if line.quantity>0: line]
+        w.far.districts[place].customer_orders[k].order=order
+        return
 
 _order_share = (quantity: int, links: int[], route: int) -> int:
     if links.len()==0: return 0
     loop k in 0..links.len():
         if links[k]==route: return quantity/links.len()+(if k<quantity%links.len(): 1 else: 0)
     0
+
+# Do not split a real request into sixteen fragments that no carrier can accept.
+# Unknown routes take whole minimum-sized lots, with dated rotating coverage rather
+# than permanently ignoring the remaining real offices. Sub-lots can still aggregate
+# with other received needs at the chosen broker; no goods are rounded into existence.
+_inquiry_share = (quantity: int, links: int[], route: int, phase: int) -> int:
+    if quantity<=0 or links.len()==0: return 0
+    count=min(links.len(),max(1,quantity/FAR_MIN_PURCHASE))
+    chosen=[loop i in 0..count: links[(phase+i)%links.len()]]
+    _order_share(quantity,chosen,route)
 
 service_freight_quote = (w: World, vehicle: int, place: int) -> int:
     v=w.far.vehicles[vehicle]; crew=v.crew[0]+v.crew[1]+v.crew[2]
@@ -98,45 +421,86 @@ counter_restock_order = (w: World, vehicle: int, place: int, opening: bool = fal
     d=w.far.districts[place]; v=w.far.vehicles[vehicle]
     length_mm=w.far.links[v.route].length_mm
     travel_minutes=(length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
-    order=FarRestockOrder(place,d.market_account,w.minute,w.minute+max(43200,travel_minutes*3+2880),opening=opening)
+    order=FarRestockOrder(place,d.market_account,w.minute,w.minute+max(43200,travel_minutes*3+2880),opening=opening,stock_offer=true)
+    order.food_floor=max(1000,counter_sale_reserve(w,place,3)/2)
     order.freight=service_freight_quote(w,vehicle,place)
-    links=d.links; links.sort()
     route=w.far.links[v.route]; peer=if route.a==place: route.b else: route.a
-    loop g in 0..9:
+    loop quote in d.supplier_quotes:
+        if quote.link==v.route and supplier_evidence(w,quote,3)>=FAR_MIN_PURCHASE:
+            order.supply_source=quote.place
+            receipt=quote.delivered_minute[3]>=0 and w.minute-quote.delivered_minute[3]<=supplier_receipt_window(w,quote.link)
+            inventory=quote.until>=w.minute and quote.available[3]>=FAR_MIN_PURCHASE
+            order.supply_received=receipt and (not inventory or quote.delivered[3]>quote.available[3])
+            order.supply_minute=if order.supply_received: quote.delivered_minute[3] else: quote.minute
+    loop g in [3,0,1,2,4,5,6,7,8]:
         stock=far_market_qty(w,place,g)
-        order.observed[g]=stock; order.target[g]=counter_stock_target(w,place,g)
+        order.observed[g]=stock; order.target[g]=counter_purchase_target(w,place,g)
         order.price[g]=d.prices[g]
-        own=counter_own_target(w,place,g)
-        order.quantity[g]=_order_share(max(0,own-stock),links,v.route)
+        order.offered[g]=counter_sale_available(w,place,g)
+        own=counter_purchase_own_target(w,place,g)
+        order.quantity[g]=procurement_share(w,place,g,max(0,own-stock),v.route)
+        order.local_quantity[g]=order.quantity[g]
         order.paths[g].places=[place]; order.need_since[g]=w.minute; order.good_due[g]=order.due
         surplus=max(0,stock-own)
         customers=d.customer_orders
         customers.sort((e: FarCustomerOrder): (order_due(e.order,g),-e.order.price[g],e.service))
+        primary=false
         loop e in customers:
             if not customer_order_current(w,place,e,g): continue
-            want=e.order.quantity[g]; covered=min(surplus,want); surplus-=covered; want-=covered
-            trail=order_path(e.order,g)
-            if want<=0 or peer in trail: continue
-            eligible: int[]
-            loop edge in links:
-                l=w.far.links[edge]; other=if l.a==place: l.b else: l.a
-                if not (other in trail): eligible.push(edge)
-            share=_order_share(want,eligible,v.route)
-            if share<=0: continue
-            path=order.paths[g].places
-            loop id in trail:
-                if not (id in path): path.push(id)
-            if path.len()>FAR_ORDER_PATH: continue
-            path.sort(); order.paths[g].places=path
-            order.quantity[g]+=share
-            order.need_since[g]=min(order.need_since[g],order_need_since(e.order,g))
-            order.good_due[g]=min(order.good_due[g],order_due(e.order,g))
+            loop line in order_components(e.order,g,w.minute):
+                if place in line.places: continue
+                covered=min(surplus,line.quantity); surplus-=covered; want=line.quantity-covered
+                if want<=0 or peer in line.places: continue
+                share=procurement_share(w,place,g,want,v.route,line.places)
+                share=min(share,max(0,order.target[g]-stock-order.quantity[g]))
+                if share<=0: continue
+                path=[place]
+                loop id in line.places:
+                    if not (id in path): path.push(id)
+                if path.len()>FAR_ORDER_PATH: continue
+                path.sort()
+                if not primary:
+                    order.paths[g].places=path
+                    order.need_since[g]=min(order.need_since[g],line.need_since)
+                    order.good_due[g]=min(order.due,line.due); primary=true
+                    if g==3: order.primary_food_urgent=line.urgent
+                else:
+                    if order.extra_lines.len()>=FAR_EXTRA_ORDER_LINES: continue
+                    order.extra_lines.push(FarRestockLine(g,share,path,line.need_since,min(order.due,line.due),urgent=line.urgent))
+                order.quantity[g]+=share
         order.quantity[g]=min(order.quantity[g],max(0,order.target[g]-stock))
+        order.local_quantity[g]=min(order.local_quantity[g],order.quantity[g])
+        if g==3 and travel_minutes*2>=1440 and not counter_feeds_households(w,place):
+            # These meals occur while this very order goes out and its food returns.
+            # A fixed stock-gap quote repeatedly under-ordered on slow relay chains.
+            population=0
+            loop c in 0..3: population+=d.workers[c]+d.dependents[c]
+            future=population*FAR_STAPLE_DAILY*max(1,staple_cover_days(w,place)-2)
+            additional=max(0,order.target[g]+future-stock)-max(0,order.target[g]-stock)
+            order.target[g]+=future
+            added=procurement_share(w,place,g,additional,v.route)
+            order.quantity[g]+=added; order.local_quantity[g]+=added
     order
 
 restock_order_valid = (w: World, o: FarRestockOrder) -> bool:
+    if o.extra_lines.len()>FAR_EXTRA_ORDER_LINES: return false
+    if o.food_floor<0 or o.food_floor>1000000000: return false
+    if o.supply_received and o.supply_source<0: return false
+    if o.supply_source< -1 or (o.supply_source>=0 and (not (o.supply_source in w.far.districts) or o.supply_source==o.place or o.supply_minute<0 or o.supply_minute>o.minute)) or (o.supply_source<0 and o.supply_minute!=-1): return false
     if not (o.place in w.far.districts) or o.account!=w.far.districts[o.place].market_account or o.minute<0 or o.minute>w.minute or o.due<o.minute or o.freight<0: return false
+    extra: int[9]
+    loop line in o.extra_lines:
+        if line.urgent and line.good!=3: return false
+        if line.good<0 or line.good>=9 or line.quantity<=0 or line.quantity>1000000000 or line.need_since<0 or line.need_since>o.minute or line.due<o.minute or line.due>o.due or line.places.len()<1 or line.places.len()>FAR_ORDER_PATH or not (o.place in line.places): return false
+        extra[line.good]+=line.quantity
+        loop i in 0..line.places.len():
+            if not (line.places[i] in w.far.districts): return false
+            loop j in 0..i:
+                if line.places[i]==line.places[j]: return false
     loop g in 0..9:
+        if o.offered[g]<0 or o.offered[g]>o.observed[g] or o.offered[g]>1000000000000: return false
+        if not o.stock_offer and o.offered[g]!=0: return false
+        if o.local_quantity[g]<0 or o.local_quantity[g]>o.quantity[g] or extra[g]>o.quantity[g]-o.local_quantity[g]: return false
         if o.observed[g]<0 or o.target[g]<0 or o.quantity[g]<0 or o.quantity[g]>max(0,o.target[g]-o.observed[g]) or o.price[g]<=0: return false
         if o.need_since[g]< -1 or o.need_since[g]>o.minute or o.good_due[g]<0 or (o.good_due[g]>0 and (o.good_due[g]<o.minute or o.good_due[g]>o.due)) or o.paths[g].places.len()>FAR_ORDER_PATH: return false
         if o.paths[g].places.len()>0 and not (o.place in o.paths[g].places): return false
@@ -151,6 +515,13 @@ restock_order_valid = (w: World, o: FarRestockOrder) -> bool:
 
 trade_work_provenance = (w: World, order: FarRestockOrder, vehicle: int, origin: int, good: int, quantity: int, price: int, batch: FarStock) -> WorkProvenance:
     roots=batch.roots.keys(); roots.sort()
-    cause="{life_place_name(w,order.place)}'s counter ordered {w.goods[good].key}, {work_date(order.minute)}: its stock was down to {f64(order.observed[good])/1000.0:.2} packages against a {f64(order.target[good])/1000.0:.2}-package reserve. The supplier at {life_place_name(w,origin)} agreed {f64(price)/100.0:.2} lire for {f64(quantity)/1000.0:.2} packages; the buyer pays {f64(order.freight)/100.0:.2} lire freight."
-    places=order_path(order,good); cause+=order_customer_note(w,places,order.place)
-    WorkProvenance(cause=cause,requester=w.far.districts[order.place].market_owner,requester_account=order.account,supplier=w.far.districts[origin].market_owner,supplier_account=w.far.districts[origin].market_account,request_place=order.place,requested_minute=order.minute,heard_minute=w.minute,agreed_minute=w.minute,goods_cents=price,freight_cents=order.freight,freight_payer=order.account,deadline=order_due(order,good),supply_roots=roots,supply=work_supply(w,roots),negotiated=true,opening=order.opening,need_places=places,need_since=order_need_since(order,good))
+    cause="{life_place_name(w,order.place)}'s counter ordered {w.goods[good].key}, {work_date(order.minute)}: its stock was down to {f64(order.observed[good])/1000.0:.2} packages against a {f64(order.target[good])/1000.0:.2}-package buying target. The supplier at {life_place_name(w,origin)} agreed {f64(price)/100.0:.2} lire for {f64(quantity)/1000.0:.2} packages; the buyer pays {f64(order.freight)/100.0:.2} lire freight."
+    if good==3:
+        cause+=" The food target allows for household meals eaten while ordering and delivery take place."
+        if order.supply_source==origin:
+            if order.supply_received: cause+=" The buyer last collected this supplier's grain at {work_date(order.supply_minute)}."
+            else: cause+=" The buyer received this supplier's written grain inventory dated {work_date(order.supply_minute)}."
+    v=w.far.vehicles[vehicle]; link=w.far.links[v.route]
+    arrival=w.minute+(link.length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    places=order_need_places(order,good,origin,arrival); cause+=order_customer_note(w,places,order.place)
+    WorkProvenance(cause=cause,requester=w.far.districts[order.place].market_owner,requester_account=order.account,supplier=w.far.districts[origin].market_owner,supplier_account=w.far.districts[origin].market_account,request_place=order.place,requested_minute=order.minute,heard_minute=w.minute,agreed_minute=w.minute,goods_cents=price,freight_cents=order.freight,freight_payer=order.account,deadline=order_current_due(order,good,arrival,origin),supply_roots=roots,supply=work_supply(w,roots),negotiated=true,opening=order.opening,need_places=places,need_since=order_current_since(order,good,arrival,origin))
