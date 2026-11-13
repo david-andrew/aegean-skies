@@ -13,9 +13,15 @@ use 'render_space.jo'
 use 'world.jo'
 use 'look.jo'
 use 'objects.jo'
+use 'world_terrain.jo'
 
 const GRASS_RADIUS = 42.0
 const GRASS_STEP = 1.0
+
+struct GrassCell:
+    model:mat4
+    color:vec4
+    material:vec4 # normal.xyz, orchard coverage
 
 struct GrassChunk:
     center: vec3
@@ -23,18 +29,19 @@ struct GrassChunk:
     first: int
     count: int
 
-grass_tile_key=(i:Instance3D)->int:
+grass_tile_key=(i:GrassCell)->int:
     int(floor(f64(i.model[3].x)/8.0))*1048576+int(floor(f64(i.model[3].z)/8.0))
 
 struct GrassField:
     center: vec3
-    buf: InstanceBuffer[Instance3D]
+    buf: InstanceBuffer[GrassCell]
     count: int
     built = false
     chunks: GrassChunk[] = []
-    cells: Instance3D[] = []
+    cells: GrassCell[] = []
     road_stamp: int = 0
     resident_radius: f64 = 0.0
+    material_ready: bool = true
 
 # Approved full-field fade. Geometry detail and shading have separate budgets.
 grass_fade_range=(radius:f32)->vec2:
@@ -44,7 +51,7 @@ grass_curve_range=(radius:f32)->vec2:
     if radius<30.0:return vec2(5,8)
     vec2(8,12)
 
-grass_vs = (v: Vertex3D, inst: Instance3D, u: GroundParams) -> ObjOut:
+grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> ObjOut:
     root = (render_model(inst.model,u.origin) * vec4(v.uv.x,0,v.uv.y,1)).xyz
     tip = v.color.x
     range=grass_fade_range(u.grass_actor.w)
@@ -76,23 +83,22 @@ grass_vs = (v: Vertex3D, inst: Instance3D, u: GroundParams) -> ObjOut:
         offset = u.wind.xy*bend+(-u.grass_airflow.xy*cone+away*wing)*clearance*u.grass_airflow.z*curve*0.55
     w = vec4(w.x+offset.x*fade,root.y+(w.y-root.y)*(1.0-contact*0.8)*fade-bend*0.18*fade,w.z+offset.y*fade,1)
     drawn = render_warped(w.xyz,u.cam,u.warp_a,u.warp_b)
-    normal = normalize(vec3(-inst.model[0].y,1,-inst.model[2].y))
+    normal = inst.material.xyz
     clip=u.view_proj*vec4(drawn,1)
-    gi=GroundOut(clip,w.xyz,normal,inst.color)
+    gi=GroundOut(clip,root,normal,inst.color,inst.material.w)
     strata=vec3(0,0,0)
     if 1.0-normal.y>0.28:strata=ground_strata(gi,u)
     col=ground_surface(gi,u,abs(w.x+u.origin.x)>20000.0 or abs(w.z+u.origin.z)>20000.0,false,0.01,strata,0.08,0.015)
+    response=meadow_blade_tint(tip,wave)/meadow_mass_tint(root-u.cam,wave)
+    col=vec4(col.xyz*mix(vec3(1,1,1),response,smoothstep(0.0,0.7,fade)),1)
     ObjOut(clip,w.xyz,normal,col,vec3(tip,fade,wave))
 
 # The blades use the terrain's material and lighting, including its colour bands.
 # This also carries the distant wind wash after the geometry has faded away.
 grass_fs = (i: ObjOut,u: GroundParams) -> vec4:
-    col = i.color*vec4(vec3(paint_paper(i.pos.xy)),1)
-    # Preserve the terrain's actual pigment bands. Root occlusion is cooler;
-    # the translucent upper blade is lighter and warmer within the same pigment.
-    lit=col.xyz*meadow_blade_tint(i.surface.x,i.surface.z)
-    mass=col.xyz*meadow_mass_tint(i.world-u.cam,i.surface.z)
-    vec4(mix(mass,lit,smoothstep(0.0,0.7,i.surface.y)),1)
+    # Material, gradient and wind are vertex work; opaque fragments only add
+    # the same screen-space paper grain as the underlying ground.
+    i.color*vec4(vec3(paint_paper(i.pos.xy)),1)
 
 
 grass_sh: Shader
@@ -103,12 +109,12 @@ grass_blade_count=()->int:
     if density=="dense":return 3072
     count=to_int(density) ?? 0
     if count>0:return clamp(count/24,1,128)*24
-    if render_quality.tier==0:72 else:if render_quality.tier==1:216 else:3072
+    if render_quality.tier==0:72 else:if render_quality.tier==1:240 else:3072
 
 grass_visible_blades=0
 
 grass_draw_radius=()->f32:
-    f32(clamp(to_float(env("AEGEAN_GRASS_RADIUS") ?? "") ?? (if render_quality.tier==0:8.0 else:12.0),4.0,36.0))
+    f32(clamp(to_float(env("AEGEAN_GRASS_RADIUS") ?? "") ?? (if render_quality.tier==0:8.0 else:if render_quality.tier==1:11.0 else:12.0),4.0,36.0))
 
 build_tuft = (far:bool=false) -> Mesh:
     vs:Vertex3D[]
@@ -117,7 +123,7 @@ build_tuft = (far:bool=false) -> Mesh:
     loop k in 0..blades:
         angle=f64(k)*2.39996
         direction=vec3(f32(cos(angle)),0,f32(sin(angle)))
-        side=vec3(-direction.z,0,direction.x)*f32(if render_quality.tier==0:0.042 else:if render_quality.tier==1:0.026 else:0.009)
+        side=vec3(-direction.z,0,direction.x)*f32(if render_quality.tier==0:0.042 else:if render_quality.tier==1:0.0225 else:0.009)
         base=vec3((f32(k%columns)+hash21(vec2(f32(k),3)))/f32(columns)-0.5,0,(f32(k/columns)+hash21(vec2(f32(k),9)))/f32(blades/columns)-0.5)
         height=f32(0.30+0.25*f64(hash21(vec2(f32(k),7))))
         tip=base+vec3(0,height,0)+direction*0.11
@@ -168,13 +174,14 @@ grass_resident_radius=(center:vec3,eye:vec3)->f64:
     min(render_quality.grass_radius+16.0,ceil(f64(grass_draw_radius())+16.0+f64(length(eye.xz-center.xz))))
 
 grass_needs_refresh=(f:GrassField,center:vec3,eye:vec3)->bool:
+    if not f.material_ready and grass_ground_material(f64(center.x),f64(center.z),center.y).tint.w>=0.0:return true
     if not f.built or length(f.center.xz-center.xz)>12.0 or f.road_stamp!=grass_road_stamp(f.center.xz):return true
     # A camera orbit/zoom may leave a reduced resident field even while the
     # actor stands still. Grow it before the visible disk reaches its edge.
     f.resident_radius<render_quality.grass_radius+16.0 and f64(length(eye.xz-f.center.xz))+f64(grass_draw_radius())+3.0>f.resident_radius
 
 build_grass = (towns: Town[], center: vec3) -> GrassField:
-    list: Instance3D[]
+    list: GrassCell[]
     lanes=grass_road_lanes(center.xz,render_quality.grass_radius+18.0)
     loop tw in towns:
         if length(tw.center.xz-center.xz)>500.0:continue
@@ -207,10 +214,11 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
             m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
             m[1]=vec4(0,f32(k),0,0)
             m[0]=vec4(1,f32(hx),0,0);m[2]=vec4(0,f32(hz),1,0)
-            island=island_at(x,z)
-            seed=if island>=0:ISLANDS[island].seed else:0.0
-            tint=vec4(f32(fbm(x*0.004+seed,z*0.004,3)),f32(noise(x*0.0011-seed,z*0.0011)),f32(ridge_at(x,z)*0.5+0.5),1)
-            list.push(Instance3D(m,tint))
+            material=grass_ground_material(x,z,f32(h))
+            if material.tint.w<0.0:continue
+            normal=normalize(material.normal)
+            orchard=orchard_cover(vec2(f32(x),f32(z)),f32(h),length(normal.xz)/max(normal.y,0.1))
+            list.push(GrassCell(m,material.tint,vec4(normal,orchard)))
 
     # Stable 8 m batches retain all blades but avoid vertex work outside the view.
     list.sort(grass_tile_key)
@@ -223,7 +231,7 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
             at=list[finish].model[3].xyz;lo=min(lo,at);hi=max(hi,at);finish+=1
         chunks.push(GrassChunk((lo+hi)*0.5,length(hi-lo)*0.5+3.0,start,finish-start))
         start=finish
-    GrassField(center, instance_buffer(list), list.len(), true,chunks,list,grass_road_stamp(center.xz),radius)
+    GrassField(center, instance_buffer(list), list.len(), true,chunks,list,grass_road_stamp(center.xz),radius,grass_ground_material(f64(center.x),f64(center.z),center.y).tint.w>=0.0)
 
 grass_actor = vec3(0,0,0)
 grass_contact_radius: f32 = 1.2
@@ -251,8 +259,8 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     horizontal=0.68+0.468*length(gp.wind.xy)+contact_reach
     # Reject coarse tiles first, then upload only visible one-metre cells.
     # Keep their order front-to-back in a single instanced draw.
-    visible_cells:Instance3D[]
-    far_cells:Instance3D[]
+    visible_cells:GrassCell[]
+    far_cells:GrassCell[]
     loop chunk in f.chunks:
         center=render_world(chunk.center-gp.origin,gp.cam)
         if length(center.xz-gp.cam.xz)-chunk.radius>grass_fade_range(gp.grass_actor.w).y+1.5:continue
@@ -273,8 +281,8 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
             if keep:
                 if length(at.xz-gp.cam.xz)-0.71>=grass_curve_range(gp.grass_actor.w).y:far_cells.push(cell)
                 else:visible_cells.push(cell)
-    visible_cells.sort((cell:Instance3D)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
-    far_cells.sort((cell:Instance3D)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
+    visible_cells.sort((cell:GrassCell)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
+    far_cells.sort((cell:GrassCell)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
     grass_visible_blades=(visible_cells.len()+far_cells.len())*grass_blade_count()
     global grass_visible_buf,grass_far_buf
     if visible_cells.len()>0:
@@ -285,13 +293,13 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
         draw_instanced(grass_sh,grass_far_mesh,grass_far_buf,gp)
 
 
-grass_visible_buf:InstanceBuffer[Instance3D]
-grass_far_buf:InstanceBuffer[Instance3D]
+grass_visible_buf:InstanceBuffer[GrassCell]
+grass_far_buf:InstanceBuffer[GrassCell]
 grass_far_mesh:Mesh
 
 init_grass = ():
     global grass_sh,grass_visible_buf,grass_far_buf,grass_far_mesh
-    empty:Instance3D[]
+    empty:GrassCell[]
     grass_visible_buf=instance_buffer(empty)
     grass_far_buf=instance_buffer(empty)
     grass_far_mesh=build_tuft(true)
@@ -319,3 +327,20 @@ grass_road_lanes = (center:vec2,radius:f64)->TownLane[]:
             near=a+d*clamp(dot(center-a,d)/max(dot(d,d),0.01),0.0,1.0)
             if length(center-near)<f32(radius+road.width):result.push(TownLane(a,b,road.width))
     result
+
+# Material comes from the same resident texels as the surrounding terrain.
+grass_ground_material=(x:f64,z:f64,h:f32)->TerrainSample:
+    loop tile in terrain_tiles:
+        q=vec2(f32((x-tile.x)/14.0),f32((z-tile.z)/14.0))
+        if q.x>=0.0 and q.y>=0.0 and q.x<f32(tile.heights.width-1) and q.y<f32(tile.heights.height-1) and tile.cpu_materials.len()>0:
+            return land_cpu_material(tile.cpu_materials,tile.heights.width,q,h)
+    # The contact ring publishes level-zero mainland tiles before grass builds.
+    tx=int(floor((x-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+    tz=int(floor((z-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+    slot=world_cache.get(world_tile_key(tx,tz,0)) ?? -1
+    if slot>=0:
+        tile=world_tiles[slot]
+        ox,oz=world_tile_origin(tx,tz,0)
+        if tile.cpu_materials.len()>0:return land_cpu_material(tile.cpu_materials,17,vec2(f32((x-ox)/14.0),f32((z-oz)/14.0)),h)
+    # No published ground material yet: do not invent a contrasting grass field.
+    TerrainSample(h,vec3(0,1,0),vec4(0,0,0,-1))
