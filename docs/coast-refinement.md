@@ -41,7 +41,12 @@ needed. Selection is cached per canonical cell, independently of texture slots
 and render-chart origins. Levels use eighth-octave steps with a 0.09375-octave
 dead band; exact contact still snaps to level six. Shared edge keys contain only
 their endpoints and orientation. Source heights, boundary levels and selected
-local domains invalidate only the affected cell. The cache retains at most
+local domains invalidate only the affected cell. Each entry also retains a
+conservative camera-motion ball derived from the held levels' dead bands and
+the distance bound's 1-Lipschitz property. Motion inside that ball reuses the
+selection without repeating projection or root queries. Focal length, source,
+root-set generation and effective boundary limits still invalidate it.
+The cache retains at most
 16384 cells / 65536 instances, and the held-level map at most 32768 entries;
 old entries are pruned before those limits. Both terrain paths begin selection
 once per render frame; loading either source clears it. The effective focal length is capped at 1200
