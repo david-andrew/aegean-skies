@@ -36,21 +36,28 @@ endpoints, so independently streamed tiles agree even when their interior
 height bounds differ; dyadic b-c triangulation makes both sides coincide
 through morphs. The closest cells use four smaller domains, avoiding full-cell subdivision
 on their more distant halves while preserving their canonical outer edges.
-Canonical patches/tile atlases stay resident; there are no new
-per-frame mesh allocations or GPU geometry uploads. Instance lists are rebuilt for nearby replaced patches when the view or
-source identity changes. An exact previous-frame cache retains at most 64
-immutable patches / 8192 instances; camera/frustum, quality, atlas-slot and
-boundary changes invalidate it immediately. Both terrain paths begin this
-cache once per render frame; loading either source clears it. The effective focal length is capped at 1200
+Canonical patches/tile atlases stay resident; no per-frame mesh generation is
+needed. Selection is cached per canonical cell, independently of texture slots
+and render-chart origins. Levels use eighth-octave steps with a 0.09375-octave
+dead band; exact contact still snaps to level six. Shared edge keys contain only
+their endpoints and orientation. Source heights, boundary levels and selected
+local domains invalidate only the affected cell. The cache retains at most
+16384 cells / 65536 instances, and the held-level map at most 32768 entries;
+old entries are pruned before those limits. Both terrain paths begin selection
+once per render frame; loading either source clears it. The effective focal length is capped at 1200
 pixels (600 m maximum refinement radius), bounding work under extreme zoom;
 this cap takes priority over additional zoom detail. Distant terrain uses the
 original draw path and adds no detail triangles.
 
 The sea samples the actual selected shore mesh from two bounded, color-only
 RGBA8 height atlases: 640² at 0.21875 m spacing and 1024² at 0.875 m spacing.
-Rasterization happens only when the selected instances change (including LOD
-morphs, chart snaps and arriving terrain). Near and far grids align with the
-canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
+World-space 14 m tiles occupy toroidal slots. Scrolling only redraws exposed
+strips; changed or removed cell selections dirty their slots and shared boundary
+samples. Dirty rectangles clear with a batched draw, avoiding backend-dependent
+scissored clears. Render-chart snaps rebind coordinates without repainting the
+texture. Mixed source phases retain a conservative CPU membership fallback;
+GPU refreshes remain restricted to changed slots. Near and far grids align with
+the canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
 16-bit packed signed heights have 1/2048 m resolution, and alpha marks coverage.
 No floating-point framebuffer extension or depth attachment is required.
 The sea skips uncovered areas and falls back to its original depth map.
@@ -74,6 +81,15 @@ Each of the two caches reuses at most 129 mesh buffers (128 spatial blocks
 and one conservative overflow bucket); switching towns empties unused buffers.
 Curvature expands bounds, and active speed-warp trials bypass this culling.
 
+Placed town props retain their physical contact heights. Before terrain selection,
+town preparation supplies the active district and close-decoration roots. A
+fixed half-metre core around each root selects the finest triangles, blending
+out to the ordinary view budget over two metres. Only affected cells use 1.75 m
+local domains; uniform blocks merge back together. Explicit shared junction
+levels prevent corner cracks between different interiors. Root neighborhoods
+and stable domain selections are reused. Paving retains its separate physical
+clearance support. This adds no camera dependency to collision or placement.
+
 Streaming terrain retains its coarse fallback outside main's pinned 3×3
 contact neighborhood; ready contact tiles refine immediately. Rendering caches
 never become the collision authority.
@@ -81,13 +97,15 @@ never become the collision authority.
 Validation tools:
 
 - `sloppy test tests/coast_test.jo --release`: fixed vertices, contact triangles,
-  mixed edges, projection selection, sub-source bands, cached/pure agreement.
+  mixed edges, projection selection, sub-source bands, cached/pure agreement,
+  LOD hysteresis, cell reuse, actual-triangle prop contact and support seams.
 - `sloppy --release tools/coast_gpu_check.jo`: actual native GPU readback
   against CPU contact samples, including steep slopes and country coordinates.
 - `SLOPPY_SOFTWARE=1 sloppy --release tools/coast_check.jo`: CPU/texture parity,
   optimized GPU parent interpolation against the CPU mesh.
 - `sloppy --release tools/coast_atlas_check.jo`: native GPU atlas readback,
-  quantization/triangle agreement and unchanged-instance cache reuse.
+  quantization/triangle agreement, incremental/full byte parity, wrap/removal/
+  teleport cases, chart-only rebinding and depth-state restoration.
 - `sloppy --release tools/coast_paving_check.jo`: barycentric clearance audit
   across two legacy towns and two new ports (`COAST_PAVING_ASSERT=1` to enforce).
 - `tools/coast_capture.jo`: deterministic `COAST_SITE=legacy|new|beach|harbor`,
