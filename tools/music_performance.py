@@ -156,3 +156,40 @@ def interpret(notes, name, clock):
   ratios.append(length/d)
  out.sort()
  return out,dict(phrases=len(peaks),phrase_beats=[round(b,3) for b in bounds],peaks=[round(p,3) for p in peaks],duration_before=max(n[0]+n[1] for n in notes),duration_after=max(n[0]+n[1] for n in out),articulation_ratio_min=min(ratios),articulation_ratio_max=max(ratios),punctuated_notes=gaps,accented_notes=accents)
+
+
+def performance_signature(notes):
+ import hashlib,json
+ return hashlib.sha256(json.dumps([[round(v,6) for v in n] for n in notes],separators=(',',':')).encode()).hexdigest()
+
+def apply_performance_map(notes, annotation):
+ """Apply an explicitly annotated clock and section gains after the generic reading.
+
+ Gains are separate from effort: changing the section mix must not select a different
+ instrument spectrum or defeat exact note-body reuse. The fingerprint prevents an old
+ annotation silently attaching to changed score/rule output.
+ """
+ if annotation['version']!=1 or len(notes)!=annotation['input_note_count'] or performance_signature(notes)!=annotation['input_sha256']:
+  raise ValueError('performance annotation does not match the interpreted score')
+ points=annotation['time_map']
+ if len(points)<2 or any(b[0]<=a[0] or b[1]<=a[1] for a,b in zip(points,points[1:])):
+  raise ValueError('performance time map must increase strictly')
+ def interpolate(points,t):
+  i=max(0,min(len(points)-2,bisect_right([p[0] for p in points],t)-1))
+  a,x=points[i];b,y=points[i+1]
+  return x+(y-x)*max(0,min(1,(t-a)/(b-a)))
+ sections={track:name for name,tracks in annotation['section_tracks'].items() for track in tracks}
+ out=[]
+ for n in notes:
+  t,d,p,ins,g0,g1,track=n
+  level=annotation['section_levels'].get(sections.get(track,''),[[0,1],[points[-1][0],1]])
+  start=interpolate(points,t);stop=interpolate(points,t+d)
+  gain=1.0
+  presence=annotation.get('harp_presence')
+  if ins==7 and presence:
+   upper=max(0,min(1,(p-presence['start_pitch'])/(presence['full_pitch']-presence['start_pitch'])))
+   opening=max(0,min(1,(presence['opening_end_seconds']-start)/(presence['opening_end_seconds']-presence['opening_hold_seconds'])))
+   gain=10**(upper*(presence['upper_db']+presence['opening_db']*opening)/20)
+  out.append([start,max(.001,stop-start),p,ins,g0,g1,track,interpolate(level,t)*gain,interpolate(level,t+d)*gain])
+ out.sort()
+ return out

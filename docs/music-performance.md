@@ -100,7 +100,7 @@ The opening call has a dedicated trumpet model, leaving ensemble brass separate.
 upper-partial balance changes with effort, a short positive pitch transient marks the
 attack, and a level-dependent brightness stage softens the tone as support falls. The
 performed note targets have three effort points; `MUS2` extends the event format with a
-peak and its location. Other scores retain `MUS1` and their previous timing/dynamics.
+peak and its location. The Adagietto uses `MUS3` for independent section gains; other scores retain `MUS1`.
 Seeking reconstructs either part of the effort contour directly.
 
 `opening-performance.json` is a coarse annotation of the solo, not a general performance
@@ -113,5 +113,7 @@ Clarinet register targets now concentrate on the repertoire's throat/clarion tra
 and frequently played pitches, with an analytic closed-bore pulse and short reed noise.
 Piano and island-pluck decay fits balance relative error in the body/tail against the
 strike, rather than allowing the loud initial frames to dominate. The island voice has
-a sharper plectrum transient and shorter release. Adagietto's score, harp and string models
-are unchanged. See `music-playback-budget.md` for the bounded caching plan and its gates.
+a sharper plectrum transient and shorter release. The island pluck stays unchanged in the
+next orchestral pass. See `music-orchestra.md` for the annotated Adagietto, concert hall,
+trumpet, piano correction and station levelling; `music-playback-budget.md` records the
+bounded caching plan and its gates.

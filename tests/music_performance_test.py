@@ -2,7 +2,7 @@
 import unittest,sys,json,math,zlib,struct
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from music_performance import BeatMap,interpret
+from music_performance import BeatMap,interpret,apply_performance_map,performance_signature
 from music_timbres import pack_models,ROOT
 class Performance(unittest.TestCase):
  def score(self):
@@ -32,6 +32,28 @@ class Performance(unittest.TestCase):
   for i,n in enumerate(events):self.assertEqual(struct.unpack_from('<IIBBBBBB',raw,16+i*14),n)
   self.assertEqual(events[15][2],64);self.assertEqual(events[-1][2],73)
   self.assertLess(end/16000,20)
+ def test_annotated_clock_keeps_effort_separate_from_mix(self):
+  from music_pack import pack
+  notes=[[0,1,60,7,.5,.6,0],[1,1,64,0,.6,.5,2]]
+  a=dict(version=1,input_note_count=2,input_sha256=performance_signature(notes),time_map=[[0,0],[2,3]],section_tracks={'harp':[0]},section_levels={'harp':[[0,.5],[2,2]]})
+  out=apply_performance_map(notes,a)
+  self.assertEqual(out[0][:7],[0,1.5,60,7,.5,.6,0]);self.assertEqual(out[0][7:],[.5,1.25])
+  self.assertEqual(out[1][7:],[1,1])
+  blob,_,events=pack(out,mix_levels=True);raw=zlib.decompress(blob,-15)
+  self.assertEqual(raw[:4],b'MUS3');self.assertEqual(len(raw),48)
+  self.assertEqual(struct.unpack_from('<IIBBBBHH',raw,16),events[0])
+  with self.assertRaises(ValueError):apply_performance_map(notes[:-1],a)
+  a['time_map']=[[0,0],[2,0]]
+  with self.assertRaises(ValueError):apply_performance_map(notes,a)
+ def test_section_tags_and_harp_presence_preserve_effort(self):
+  from music_pack import pack
+  notes=[[0,1,60,7,.5,.6,0],[0,1,48,7,.5,.6,0]]
+  a=dict(version=1,input_note_count=2,input_sha256=performance_signature(notes),time_map=[[0,0],[2,3]],section_tracks={'harp':[0]},section_levels={},harp_presence=dict(start_pitch=48,full_pitch=60,upper_db=3,opening_db=2,opening_hold_seconds=24,opening_end_seconds=48))
+  out=apply_performance_map(notes,a);upper=next(n for n in out if n[2]==60);low=next(n for n in out if n[2]==48)
+  self.assertAlmostEqual(upper[7],10**(.25));self.assertEqual(low[7],1)
+  self.assertEqual(upper[4:6],[.5,.6])
+  blob,_,events=pack(out,mix_levels=True,sections={0:0});raw=zlib.decompress(blob,-15)
+  self.assertEqual(raw[:4],b'MUS4');self.assertEqual(events[0][3]&15,7);self.assertEqual((events[0][3]>>4)-1,0)
  def test_model_bank_rebuild_preserves_every_scalar(self):
   data=json.loads((ROOT/'data/music/instruments.json').read_text())
   actual=(ROOT/'data/music/instruments.z').read_bytes()

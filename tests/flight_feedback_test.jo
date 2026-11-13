@@ -1,0 +1,159 @@
+import '../src/flight_feedback.jo' as fx
+import '../src/flight.jo' as fl
+import '../src/planes.jo' as pl
+import '../src/tweaks.jo' as tw
+import '../src/trails.jo' as tr
+import '../src/flight_effects.jo' as view
+import '../src/pilot.jo' as pilot
+import '../src/look.jo' as lighting
+import '../src/world_point.jo' as world
+import '../src/world_particles.jo' as particles
+
+_spec = (kind: pl.Craft = .gull) -> fl.CraftSpec:
+    fl.set_speed_scale(3.3)
+    tw.set_tweaks(tw.Tweaks())
+    k=fl.craft_spec(kind,pl.build_craft(kind,pl.LIVERIES[0]).contacts)
+    k.player=true
+    k
+
+test "flight feedback cannot change the accepted flight trajectory":
+    k=_spec()
+    a=fl.CraftState(position=vec3(0,300,0),velocity=vec3(0,0,-90),fuel=k.fuel_capacity)
+    b=a; f=fx.FlightFeedback()
+    loop i in 0..900:
+        c=fl.Controls(throttle=if i<240: 1.0 else: 0.0,pitch=if i<400: 0.7 else: -0.4,roll=if i>150 and i<600: 0.9 else: 0.0,assist=0.0)
+        fl.step(k,a,c,fl.FlightEnv(),1.0/60.0)
+        fl.step(k,b,c,fl.FlightEnv(),1.0/60.0)
+        fx.feedback_step(f,k,b,3.0,1.0/60.0)
+        assert(a==b)
+        assert(abs(f.roll_lead)<=0.052 and f.buffet>=0 and f.buffet<=1)
+
+test "slow separated stall buffets without a hard pull and settles after recovery":
+    k=_spec(); f=fx.FlightFeedback()
+    s=fl.CraftState(position=vec3(0,300,0),velocity=vec3(0,0,-k.stall_speed*3.3),stalled=true,aoa=0.5,wing_separation=vec2(0.8,0.6))
+    loop i in 0..60: fx.feedback_step(f,k,s,1.0,1.0/60.0)
+    assert(f.buffet>0.5)
+    s.stalled=false;s.aoa=0.03;s.wing_separation=vec2(0,0)
+    loop i in 0..60: fx.feedback_step(f,k,s,1.0,1.0/60.0)
+    assert(f.buffet<0.001 and f.roll_lead==0)
+
+test "climb load glide whistle and snap camera are independent of frame rate":
+    k=_spec(); results: fx.FlightFeedback[]
+    loop hz in [30,60,120]:
+        f=fx.FlightFeedback()
+        s=fl.CraftState(position=vec3(0,300,0),velocity=vec3(0,16*3.3,-180),throttle=1.0)
+        loop i in 0..hz*2:
+            s.orientation=quat_euler(0,0,f64(i)*3.0/f64(hz))
+            fx.feedback_step(f,k,s,3.0,1.0/f64(hz))
+        assert(f.climb>0.95 and f.glide==0 and abs(f.roll_lead)>0.035)
+        assert(fx.loaded_engine_note(1.2,f.climb)<1.07)
+        s.throttle=0.0;s.velocity=vec3(0,-5,-220)
+        loop i in 0..hz*3: fx.feedback_step(f,k,s,1.0,1.0/f64(hz))
+        assert(f.glide>0.98 and f.climb<0.001 and abs(f.roll_lead)<0.001)
+        results.push(f)
+    assert(abs(results[0].glide-results[2].glide)<0.00001)
+
+test "water cues follow taxi scaling elastic slap and physical release":
+    k=_spec(); f=fx.FlightFeedback(); s=fl.water_start(k,vec3(0,0,0))
+    s.velocity=vec3(0,-2,-60)
+    assert(abs(fx.water_run_speed(k,s)-60.0/fl.pure_k(k))<0.001)
+    fx.feedback_step(f,k,s,1.0,1.0/60.0)
+    s.velocity.y=1
+    fx.feedback_step(f,k,s,1.0,1.0/60.0)
+    assert(f.slap_hit>0.5 and f.water>0.05 and f.lens>0)
+    s.on_water=false;s.velocity=vec3(0,1,-100)
+    loop i in 0..120: fx.feedback_step(f,k,s,1.0,1.0/60.0)
+    assert(f.water<0.001 and f.slap_hit==0 and f.slap<0.001)
+    s.moored=true;s.velocity=vec3(0,0,0)
+    fx.feedback_step(f,k,s,1.0,1.0/60.0)
+    assert(f.water<0.001 and f.buffet<0.001)
+
+test "stall-in remains destructive with default accepted handling":
+    loop kind in [pl.Craft.gull,pl.Craft.heron,pl.Craft.corsair,pl.Craft.falco]:
+        k=_spec(kind)
+        s=fl.CraftState(position=vec3(0,k.float_height+0.2,0),velocity=vec3(0,-14,-18),fuel=k.fuel_capacity)
+        f=fx.FlightFeedback(); peak=0.0; work=0.0
+        loop i in 0..120:
+            fl.step(k,s,fl.Controls(assist=0.0),fl.FlightEnv(),1.0/120.0)
+            fx.feedback_step(f,k,s,1.0,1.0/120.0)
+            peak=max(peak,f.slap_hit)
+            loop ev in s.damage.events: work+=ev.strength
+        print("stall-in {kind}: hull={s.hull_damage:.4} contact_work={work:.0}J debris={s.damage.debris.len()} slap={peak:.3}")
+        assert(s.hull_damage>0.1 and work>10000)
+
+test "wingtip ribbon history is bounded at 240 Hz and expires":
+    t=tr.Trail()
+    loop i in 0..240*10: tr.trail_step(t,vec3(f64(i)/2.0,0,0),0.8,f64(i)/240.0)
+    assert(t.pts.len()<=72 and t.pts.len()>35)
+    tr.trail_step(t,vec3(0,0,0),0.0,11.0)
+    assert(t.pts.len()==0 and not t.on)
+
+test "equal wave acceleration gives equal slap strength across frame rates":
+    k=_spec(); peaks: f64[]
+    loop hz in [30,60,120]:
+        f=fx.FlightFeedback(); s=fl.water_start(k,vec3(0,0,0)); s.velocity=vec3(0,-1,-70)
+        fx.feedback_step(f,k,s,1.0,1.0/f64(hz))
+        s.velocity.y+=f32(30.0/f64(hz))
+        fx.feedback_step(f,k,s,1.0,1.0/f64(hz))
+        peaks.push(f.slap_hit)
+    assert(peaks[0]>0.3 and abs(peaks[0]-peaks[2])<0.00001)
+
+
+test "airspeed cues include wind and engine state without touching motion":
+    k=_spec(); f=fx.FlightFeedback()
+    s=fl.CraftState(velocity=vec3(0,0,-100),throttle=0.7,fuel=10)
+    fx.feedback_step(f,k,s,1,1.0/60.0,vec3(0,0,-34))
+    assert(abs(f.speed-20.0)<0.00001 and f.powered)
+    s.fuel=0
+    fx.feedback_step(f,k,s,1,1.0/60.0)
+    assert(not f.powered and length(s.velocity)==100)
+
+
+test "prop and exhaust geometry retain submillimetre motion on far local charts":
+    k=_spec(); model=pl.build_craft(.gull,pl.LIVERIES[0])
+    reference: view.FlightFxVertex[]
+    loop origin in [vec3(0,0,0),vec3(240640,0,-190464),vec3(-240640,0,190464)]:
+        point=world.WorldPoint(f64(origin.x)+0.003,60,f64(origin.z)-0.005)
+        s=fl.CraftState(position=world.world_vec(point),velocity=vec3(0.03,0,0),throttle=1,fuel=10,precise=point,published=world.world_vec(point),precise_ready=true)
+        f=pilot.Flyer(.gull,0,k,s,cam_pos=s.position)
+        a=view.flight_fx_vertices(f,model,pilot.craft_transform(f),lighting.light_at(20),1,origin,vec3(15,65,15))
+        assert(a.len()>200 and a.len()<1000)
+        if reference.len()==0:reference=a
+        loop j in 0..a.len():
+            assert(length(a[j].pos-reference[j].pos)<0.00001)
+            assert(length(a[j].color-reference[j].color)<0.00001)
+        fl.craft_advance(f.state,1.0/60.0)
+        b=view.flight_fx_vertices(f,model,pilot.craft_transform(f),lighting.light_at(20),1,origin,vec3(15,65,15))
+        dx=b[0].pos.x-a[0].pos.x
+        assert(dx>0.00048 and dx<0.00052)
+
+
+test "water spray rate is bounded independently of refresh rate":
+    k=_spec(); model=pl.build_craft(.gull,pl.LIVERIES[0]);counts:int[]
+    loop hz in [30,60,120]:
+        s=fl.water_start(k,vec3(240000,-10,-190000))
+        s.velocity=vec3(0,0,-90);s.position.y= -10
+        f=pilot.Flyer(.gull,0,k,s,cam_pos=s.position);ps=particles.WorldParticles()
+        loop frame in 0..hz:pilot.spray(f,[model],ps,1.0/f64(hz))
+        assert(ps.items.len()>50 and ps.items.len()<900)
+        counts.push(ps.items.len())
+        # A long frame cannot create an unbounded catch-up burst.
+        pilot.spray(f,[model],ps,10)
+        assert(ps.items.len()<=900)
+        before=ps.items.len()
+        loop i in 0..7:f.state.damage.parts[i].attached=false
+        pilot.spray(f,[model],ps,0.1)
+        assert(ps.items.len()==before)
+    assert(abs(counts[0]-counts[2])<=4)
+
+
+test "wingtip condensation requires wet air and increases under load":
+    dry=fx.vapour_dampness(60,false,14,0,0,0)
+    wet=fx.vapour_dampness(60,true,18,0,0,0)
+    assert(fx.vapour_strength(70,8,dry)==0)
+    assert(fx.vapour_strength(70,2,wet)==0)
+    assert(fx.vapour_strength(70,6,wet)>0.1)
+    assert(fx.vapour_strength(70,6,wet)>fx.vapour_strength(70,4,wet))
+    assert(fx.vapour_strength(70,8,fx.vapour_dampness(2000,true,18,0,0,0))==0)
+    assert(fx.vapour_strength(70,6,fx.vapour_dampness(60,false,14,1,0,0))>0.9)
+    assert(tr.TRAIL_LIFE<=1.0)
