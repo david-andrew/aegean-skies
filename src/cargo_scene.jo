@@ -1,3 +1,4 @@
+use 'crowd_motion.jo'
 # Terrain-aware, visible carriage. Cargo IDs and saved Person poses are authoritative.
 use 'objects.jo'
 use 'world.jo'
@@ -23,12 +24,41 @@ _cargo_segment = (towns: Town[], from: vec3, to: vec3) -> bool:
         p = next
     true
 
-# Breadth-first navigation is only run on a new walking leg, never for frame steering.
+struct WalkFrontier:
+    id: int
+    score: f64
+
+_walk_enqueue = (heap: mut WalkFrontier[],entry: WalkFrontier):
+    heap.push(entry);i=heap.len()-1
+    loop i>0:
+        parent=(i-1)/2
+        if heap[parent].score<=entry.score:break
+        heap[i]=heap[parent];i=parent
+    heap[i]=entry
+
+_walk_dequeue = (heap: mut WalkFrontier[]) -> WalkFrontier:
+    first=heap[0];last=heap[heap.len()-1]
+    heap.remove_at(heap.len()-1)
+    if heap.len()==0:return first
+    i=0
+    loop i*2+1<heap.len():
+        child=i*2+1
+        if child+1<heap.len() and heap[child+1].score<heap[child].score:child+=1
+        if last.score<=heap[child].score:break
+        heap[i]=heap[child];i=child
+    heap[i]=last
+    first
+
+# Weighted A* prefers a prompt, valid street route over an optimal-length route.
+# Navigation is only run on a new walking leg, never for frame steering.
 # It obeys the same house, quay, sea and slope collision checks as the player.
 cargo_walk_path = (towns: Town[], from: vec3, target: vec3) -> vec3[]:
     if not finite_living_point(from) or not finite_living_point(target):
         living_fault("cargo_walk_path.nonfinite","from={from} target={target}")
         return []
+    # A destination inside a newly published prop cannot be reached from any
+    # direction. Reject it before exploring the surrounding street network.
+    if length(town_avoid_buildings(towns,target.xz,f64(target.y))-target.xz)>0.15:return []
     if _cargo_segment(towns, from, target): return [from, target]
     cell = 1.5
     dx = f64(target.x - from.x); dz = f64(target.z - from.z)
@@ -38,9 +68,13 @@ cargo_walk_path = (towns: Town[], from: vec3, target: vec3) -> vec3[]:
     start = -xmin - zmin * nx
     parent: {int: int}; parent[start] = -1
     positions: {int: vec3}; positions[start] = from
-    queue = [start]; at = 0; goal = -1
-    loop at < queue.len() and at < 40000:
-        id = queue[at]; at += 1
+    cost: {int:f64}={};cost[start]=0
+    closed: {int:bool}={}
+    queue=[WalkFrontier(start,f64(length(target.xz-from.xz)))];at=0;goal= -1
+    loop queue.len()>0 and at<40000:
+        id=_walk_dequeue(queue).id
+        if id in closed:continue
+        closed[id]=true;at+=1
         p = positions[id]
         if length(p.xz - target.xz) < 2.0 and _cargo_segment(towns, p, target): goal = id; break
         ix = id % nx + xmin; iz = id / nx + zmin
@@ -48,11 +82,14 @@ cargo_walk_path = (towns: Town[], from: vec3, target: vec3) -> vec3[]:
             x = ix + int(d.x); z = iz + int(d.y)
             if x < xmin or x > xmax or z < zmin or z > zmax: continue
             next_id = (x - xmin) + (z - zmin) * nx
-            if next_id in parent: continue
+            if next_id in closed: continue
             q = vec3(from.x + f32(f64(x) * cell), p.y, from.z + f32(f64(z) * cell))
+            next_cost=cost[id]+f64(length(q.xz-p.xz))
+            if next_cost>=cost.get(next_id,1e30):continue
             moved = walk_step(towns, p, q.xz - p.xz)
             if length(moved.xz - q.xz) > 0.15: continue
-            parent[next_id] = id; positions[next_id] = moved; queue.push(next_id)
+            cost[next_id]=next_cost;parent[next_id]=id;positions[next_id]=moved
+            _walk_enqueue(queue,WalkFrontier(next_id,next_cost+2.0*max(0.0,f64(length(target.xz-moved.xz))-2.0)))
     if goal < 0: return []
     result = [target]
     id = goal
@@ -163,7 +200,7 @@ step_cargo_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
             if w.carriage[id].waypoint >= task.route.len(): cargo_carriage_reached(w, id)
             continue
         move = delta * f32(min(1.0, speed * dt / distance))
-        pos = walk_step(towns, w.people[p].pose.pos, move)
+        pos = crowd_walk(w,towns,p,move)
         if length(pos.xz - w.people[p].pose.pos.xz) < 0.0001:
             w.carriage[id].blocked = "the walking route is obstructed"; continue
         w.people[p].pose.rot = facing(vec3(delta.x, 0, delta.y))
@@ -178,3 +215,9 @@ step_cargo_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
             continue
         if j.delivery_mode == .aircraft and not j.loaded and j.cargo_mode != .none and cargo_all_aboard(w, job): claims.load_job(w, job)
         if j.collected: delivery.deliver_job(w, job, j.carrier)
+
+test "walking frontier keeps minimum scores first after mixed insertions":
+    heap: WalkFrontier[]
+    loop k in [7,2,9,1,4,1,8]:_walk_enqueue(heap,WalkFrontier(k,f64(k)))
+    loop expected in [1,1,2,4,7,8,9]:assert(_walk_dequeue(heap).id==expected)
+    assert(heap.len()==0)

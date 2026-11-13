@@ -13,6 +13,8 @@ use 'render_space.jo'
 use 'world.jo'
 use 'look.jo'
 use 'objects.jo'
+use 'world_source.jo'
+use 'geography.jo'
 use 'world_terrain.jo'
 
 const GRASS_RADIUS = 42.0
@@ -150,6 +152,73 @@ build_tuft = (far:bool=false) -> Mesh:
 
 # where grass grows: gentle ground above the beach, green rather than bare (as the ground's
 # shader decides), and not on a quay or in a house
+# Grass is built on the main thread. Share the bounded, exact source memo used
+# by trees and walking instead of reconstructing the same 8 m corners for
+# every metre of grass, its coverage slope and its five contact samples.
+grass_cached_land = (x:f64,z:f64)->bool: geography_enabled and (abs(x)>=LEGACY_RESERVE or abs(z)>=LEGACY_RESERVE)
+grass_ecology_height = (x:f64,z:f64)->f64: if grass_cached_land(x,z):world_source_sample(x,z).0 else:height(x,z)
+# Each root's six-metre coverage and half-metre normal reuse samples from
+# neighboring roots. Memoize the exact half-metre lattice too, so a new strip
+# computes roughly three fine contact samples per cell rather than nine.
+const GRASS_HEIGHT_EDGE=256
+struct GrassHeight:
+    x:int
+    z:int
+    revision = -1
+    height:f64
+grass_height_cells:GrassHeight[]
+grass_height_misses=0
+grass_surface_height = (x:f64,z:f64)->f64:
+    global grass_height_cells,grass_height_misses
+    if not grass_cached_land(x,z):return surface_height(x,z)
+    hx=x*2.0;hz=z*2.0
+    if hx!=floor(hx) or hz!=floor(hz):return world_source_surface(x,z)
+    if grass_height_cells.len()==0:grass_height_cells=[loop i in 0..GRASS_HEIGHT_EDGE*GRASS_HEIGHT_EDGE:GrassHeight()]
+    ix=int(hx);iz=int(hz)
+    slot=(ix & (GRASS_HEIGHT_EDGE-1))+(iz & (GRASS_HEIGHT_EDGE-1))*GRASS_HEIGHT_EDGE
+    old=grass_height_cells[slot]
+    if old.x==ix and old.z==iz and old.revision==geography_revision:return old.height
+    h=world_source_surface(x,z)
+    grass_height_cells[slot]=GrassHeight(ix,iz,geography_revision,h);grass_height_misses+=1
+    h
+grass_hillside_slope=(x:f64,z:f64)->f64:
+    gx=(grass_surface_height(x+3.0,z)-grass_surface_height(x-3.0,z))/6.0
+    gz=(grass_surface_height(x,z+3.0)-grass_surface_height(x,z-3.0))/6.0
+    1.0-1.0/sqrt(1.0+gx*gx+gz*gz)
+
+# One bounded toroidal memo for the invariant terrain under one-metre cells.
+# Reusing overlapping cells avoids reconstructing fine coast contact six times
+# per cell on every 12 m refresh. Coverage/roads/paving are deliberately live.
+const GRASS_TERRAIN_EDGE = 128
+struct GrassTerrain:
+    x: int
+    z: int
+    revision = -1
+    ecology: f64
+    slope: f64
+    ground: f64
+    dx: f64
+    dz: f64
+grass_terrain_cells: GrassTerrain[]
+grass_terrain_misses = 0
+
+grass_terrain_sample = (x:f64,z:f64)->GrassTerrain:
+    h=grass_surface_height(x,z)
+    GrassTerrain(int(floor(x)),int(floor(z)),geography_revision,grass_ecology_height(x,z),grass_hillside_slope(x,z),h,
+        grass_surface_height(x+0.5,z)-grass_surface_height(x-0.5,z),grass_surface_height(x,z+0.5)-grass_surface_height(x,z-0.5))
+
+grass_terrain = (x:f64,z:f64)->GrassTerrain:
+    global grass_terrain_cells,grass_terrain_misses
+    if not grass_cached_land(x,z) or x!=floor(x) or z!=floor(z):return grass_terrain_sample(x,z)
+    if grass_terrain_cells.len()==0:grass_terrain_cells=[loop i in 0..GRASS_TERRAIN_EDGE*GRASS_TERRAIN_EDGE:GrassTerrain()]
+    ix=int(x);iz=int(z)
+    slot=(ix & (GRASS_TERRAIN_EDGE-1))+(iz & (GRASS_TERRAIN_EDGE-1))*GRASS_TERRAIN_EDGE
+    old=grass_terrain_cells[slot]
+    if old.x==ix and old.z==iz and old.revision==geography_revision:return old
+    value=grass_terrain_sample(x,z)
+    grass_terrain_cells[slot]=value;grass_terrain_misses+=1
+    value
+
 grass_cover = (towns: Town[], x: f64, z: f64) -> f64:
     p = vec2(f32(x),f32(z))
     farm=settlement_farm_cover(p)
@@ -166,6 +235,11 @@ grass_cover = (towns: Town[], x: f64, z: f64) -> f64:
             d=quay.b-quay.a
             nearest=quay.a+d*clamp(dot(p-quay.a,d)/max(dot(d,d),0.01),0.0,1.0)
             if length(p-nearest)<quay.width*0.5+1.5:return 0.0
+    if grass_cached_land(x,z):
+        cell=grass_terrain(x,z)
+        if cell.ecology<3.0:return 0.0
+        if walk_height_from_surface(towns,x,z,cell.ground)>cell.ground+0.2:return 0.0
+        return (1.0-smoothstep(0.15,0.4,cell.slope))*smoothstep(3.0,6.0,cell.ecology)
     h = height(x, z)
     if h < 3.0: return 0.0
     # Only actual raised geometry excludes blades. The meshed terrain itself
@@ -177,10 +251,7 @@ grass_cover = (towns: Town[], x: f64, z: f64) -> f64:
 # footprint carries the normal smoothly across canonical triangle boundaries.
 # The thresholds use 1-normal.y, exactly the terrain meadow material's slope.
 grass_hillside_cover=(x:f64,z:f64)->f64:
-    gx=(surface_height(x+3.0,z)-surface_height(x-3.0,z))/6.0
-    gz=(surface_height(x,z+3.0)-surface_height(x,z-3.0))/6.0
-    slope=1.0-1.0/sqrt(1.0+gx*gx+gz*gz)
-    1.0-smoothstep(0.15,0.4,slope)
+    1.0-smoothstep(0.15,0.4,grass_hillside_slope(x,z))
 
 # Keep the full noisy draw disk plus camera offset and the 12 m movement
 # reserve. Whole-metre radii keep every rebuild on the same world-root lattice.
@@ -223,9 +294,8 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
             if not grass_lane_clear(vec2(f32(x),f32(z)),lanes):continue
             k = grass_cover(towns, x, z)
             if k < 0.001: continue
-            h = surface_height(x, z)
-            hx = (surface_height(x+0.5,z)-surface_height(x-0.5,z))
-            hz = (surface_height(x,z+0.5)-surface_height(x,z-0.5))
+            cell=if grass_cached_land(x,z):grass_terrain(x,z) else:GrassTerrain(ground=surface_height(x,z),dx=surface_height(x+0.5,z)-surface_height(x-0.5,z),dz=surface_height(x,z+0.5)-surface_height(x,z-0.5))
+            h=cell.ground;hx=cell.dx;hz=cell.dz
             m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
             m[1]=vec4(0,f32(k),0,0)
             m[0]=vec4(1,f32(hx),0,0);m[2]=vec4(0,f32(hz),1,0)
@@ -234,6 +304,7 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
             normal=normalize(material.normal)
             orchard=orchard_cover(vec2(f32(x),f32(z)),f32(h),length(normal.xz)/max(normal.y,0.1))
             list.push(GrassCell(m,material.tint,vec4(normal,orchard)))
+
 
     # Stable 8 m batches retain all blades but avoid vertex work outside the view.
     list.sort(grass_tile_key)
