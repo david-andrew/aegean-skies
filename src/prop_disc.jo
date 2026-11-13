@@ -1,7 +1,7 @@
 # Spinning propellers as a film animator paints them on a cel: a flat pale disc with a crisp rim,
-# a band of short white pencil arcs along each blade's line from hub to rim, all redrawn on twos
-# at the blades' angle of the moment (so the bands precess with the shaft speed against the
-# redraws), and a bright arc on the sun side. Anchored in the propeller's own plane (no
+# a band of short white pencil arcs along each blade's line from hub to rim, all redrawn on twos,
+# the bands turning at a designed rate that cycles with the engine speed (prop_band_speed), and a
+# bright arc on the sun side. Anchored in the propeller's own plane (no
 # screen-space overlay). Every disc of a frame is one instanced draw of a 32-sided fan.
 use 'look.jo'
 use 'render_space.jo'
@@ -166,18 +166,60 @@ _prop_disc_lists = ():
         prop_disc_frame = frame_number()
         prop_discs = []; prop_discs_near = []
 
+# The bands' apparent turning (rad/s), designed rather than a physical strobe. Over the disc's
+# speeds (PROP_BLADES_BELOW up to full power) it runs through about two and a half cycles of a
+# smoothed sawtooth whose size grows as the engine slows: slow at full power; as the speed falls,
+# faster and faster one way, a quick reversal at speed, slowing back through still, and again;
+# at the lowest disc speed it peaks at exactly the blades' own speed, so the turning blades hand
+# over to the turning pattern without a jump. Below that the bands turn with the blades.
+PROP_TOP_SPEED = 78.0               # 8+70 rad/s at full throttle
+prop_band_speed = (rpm: f64) -> f64:
+    if rpm <= PROP_BLADES_BELOW: return rpm
+    x = clamp((PROP_TOP_SPEED-rpm)/(PROP_TOP_SPEED-PROP_BLADES_BELOW),0.0,1.0)
+    k = 0.9                         # how sharp the sawtooth's reversals are (1: a hard jump)
+    u = 0.03+(2.0+acos(-k)/TAU-0.03)*x
+    th = u*TAU
+    shape = atan2(k*sin(th),1.0+k*cos(th))/asin(k)
+    (5.0+(PROP_BLADES_BELOW-5.0)*x*x)*shape
+
+# Each aircraft's band angle, integrated frame by frame from prop_band_speed, keyed by its
+# persistent craft id (-1: aircraft drawn without one share an integrator).
+struct PropBand:
+    angle: f64
+    t: f64
+prop_bands: {int: PropBand} = {}
+
+prop_band_angle = (key: int, angle: f64, rpm: f64, blades: int, t: f64) -> f64:
+    global prop_bands
+    b = PropBand(angle,t)
+    if let old = prop_bands.get(key): b = old
+    dt = clamp(t-b.t,0.0,0.1)
+    b.angle += prop_band_speed(rpm)*dt
+    # Below the disc speeds the bands turn with the blades; draw them gently onto the blades too.
+    if rpm < PROP_BLADES_BELOW:
+        spacing = TAU/f64(max(blades,1))
+        off = ((angle-b.angle)%spacing+spacing*1.5)%spacing-spacing*0.5
+        b.angle += off*min(1.0,2.0*dt)
+    b.angle = b.angle%TAU
+    b.t = t
+    prop_bands[key] = b
+    if prop_bands.len() > 400:
+        stale: int[]
+        loop id, band in prop_bands:
+            if band.t < t-5.0: stale.push(id)
+        loop id in stale: prop_bands.remove(id)
+    b.angle
+
 # One disc. frame: the hub's frame in drawing space (rotation and position, no scale); to_eye:
-# from the hub toward the eye, world axes. angle: the prop's shaft angle; rpm: rad/s.
-prop_disc_instance = (frame: mat4, radius: f64, blades: int, to_eye: vec3, L: Light, angle: f64, rpm: f64, t: f64, seed: f64) -> PropDiscInstance:
+# from the hub toward the eye, world axes. angle: the prop's shaft angle; rpm: rad/s; band: the
+# bands' angle (prop_band_angle; by default with the blades).
+prop_disc_instance = (frame: mat4, radius: f64, blades: int, to_eye: vec3, L: Light, angle: f64, rpm: f64, t: f64, seed: f64, band: f64 = 1.0e30) -> PropDiscInstance:
     blur = smoothstep(PROP_DISC_FROM,PROP_DISC_FULL,rpm)
     streak = smoothstep(PROP_STREAK_FROM,PROP_STREAK_FULL,rpm)
-    # Redrawn on twos (12 drawings a second): each drawing new strokes, at its own blade angle.
+    # Redrawn on twos (12 drawings a second): each drawing all new strokes; the bands themselves
+    # turn smoothly at their designed rate.
     step_t = floor(t*12.0+seed)
-    # Stroboscopic precession: each drawing shows the blades where they are at its own instant,
-    # so from one drawing to the next the bands move by the shaft's turn in 1/12 s, seen modulo
-    # one blade spacing: they creep forward, stand still or creep back as the speed changes
-    # (still at multiples of 12 x blade spacing per second, e.g. 37.7 and 75.4 rad/s for two).
-    phase = angle+PI*0.5-rpm*fract(t*12.0+seed)/12.0
+    phase = (if band > 1.0e29: angle else: band)+PI*0.5
     half = normalize(normalize(to_eye+vec3(0.00001,0,0))+L.sun_dir)
     local = vec3(dot(half,frame[0].xyz),dot(half,frame[1].xyz),dot(half,frame[2].xyz))
     daylight = 0.12+0.88*smoothstep(-0.03,0.2,f64(L.sun_dir.y))
@@ -194,8 +236,9 @@ prop_disc_instance = (frame: mat4, radius: f64, blades: int, to_eye: vec3, L: Li
 
 # Called while drawing an aircraft (craft space `at` in the same chart as obj_params). Returns
 # whether the disc stands in for the blades.
-queue_prop_discs = (model: CraftModel, at: mat4, anchor: WorldPoint?, angle: f64, rpm: f64, L: Light, t: f64) -> bool:
+queue_prop_discs = (model: CraftModel, at: mat4, anchor: WorldPoint?, angle: f64, rpm: f64, L: Light, t: f64, key: int = -1) -> bool:
     global prop_discs
+    band = prop_band_angle(key,angle,rpm,model.prop_blades,t)
     if rpm < PROP_DISC_FROM: return false
     _prop_disc_lists()
     origin = render_origin(scene_camera())
@@ -207,17 +250,18 @@ queue_prop_discs = (model: CraftModel, at: mat4, anchor: WorldPoint?, angle: f64
         to_eye = eye-hub[3].xyz
         if length(to_eye) > PROP_DISC_RANGE: continue
         a = angle+f64(i)*0.8
-        prop_discs.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,to_eye,L,a,rpm,t,f64(i)*0.37+f64(model.prop_hubs[i].x)*0.11))
+        prop_discs.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,to_eye,L,a,rpm,t,f64(i)*0.37+f64(model.prop_hubs[i].x)*0.11,band+f64(i)*0.8))
     prop_disc_blurred(rpm)
 
 # The cockpit's own discs, in its camera-relative frame (eye at the origin).
-queue_cockpit_prop_discs = (model: CraftModel, relative: mat4, angle: f64, rpm: f64, L: Light, t: f64):
+queue_cockpit_prop_discs = (model: CraftModel, relative: mat4, angle: f64, rpm: f64, L: Light, t: f64, key: int = -1):
     global prop_discs_near
+    band = prop_band_angle(key,angle,rpm,model.prop_blades,t)
     if rpm < PROP_DISC_FROM: return
     _prop_disc_lists()
     loop i in 0..model.prop_hubs.len():
         hub = relative*translation(model.prop_hubs[i])
-        prop_discs_near.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,-hub[3].xyz,L,angle+f64(i)*0.8,rpm,t,f64(i)*0.37))
+        prop_discs_near.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,-hub[3].xyz,L,angle+f64(i)*0.8,rpm,t,f64(i)*0.37,band+f64(i)*0.8))
 
 # In a transparent pass after the aircraft and the sea.
 draw_prop_discs = (L: Light):
