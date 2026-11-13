@@ -74,12 +74,15 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
             r'^STUTTER_FRAME,\d+,([^,\n]+),([^,\n]+),([^,\n]+),([^,\n]+)', log, re.M)]
         intervals = sorted(f[1] for f in frames)
         end = re.search(r'STUTTER_END .*seconds=([\d.]+).*over50=(\d+)', log)
-        passed = code == 0 and end is not None and float(end[1]) >= 60 and int(end[2]) == 0 and bool(frames)
+        position = re.search(r'STUTTER_POSITION .*crashed=(true|false)', log)
+        flight_valid = args.mode != 'fly' or position is not None and position[1] == 'false'
+        passed = code == 0 and end is not None and float(end[1]) >= 60 and int(end[2]) == 0 and bool(frames) and flight_valid
         result = dict(host=socket.gethostname(), backend=backend, town=town, mode=args.mode,
                       started=started, ended=ended, exit_code=code, passed=passed, frames=len(frames),
                       max_ms=max(intervals, default=None),
                       p99_ms=intervals[int((len(intervals)-1)*.99)] if intervals else None,
-                      over50=sum(t > 50 for t in intervals), profiled=args.profile and backend == 'web', agl=args.agl)
+                      over50=sum(t > 50 for t in intervals), profiled=args.profile and backend == 'web', agl=args.agl,
+                      flight_valid=flight_valid)
         results.append(result)
         (args.out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
         print(json.dumps(result), flush=True)
