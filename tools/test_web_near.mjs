@@ -53,8 +53,8 @@ try {
     proto.linkProgram=function(p){link.call(this,p);quayLinks.push(this.getProgramParameter(p,this.LINK_STATUS));};
   `});
   const extraScenes=[
-    {id:'street',env:{AEGEAN_AT:'516.177 -6334.7266 2.0527',SLOPPY_INPUT:'60:w+ 179:w-'}},
-    {id:'pheryalara',env:{AEGEAN_AT:'14263.08 -170005.45 -1.176',SLOPPY_INPUT:'60:w+ 179:w-'}},
+    {id:'street',env:{AEGEAN_AT:'516.177 -6334.7266 2.0527',SLOPPY_INPUT:'60:w+ 239:w-'}},
+    {id:'pheryalara',env:{AEGEAN_AT:'14263.08 -170005.45 -1.176',SLOPPY_INPUT:'60:w+ 239:w-'}},
     {id:'cockpit',env:{AEGEAN_ABOARD:'1',SLOPPY_INPUT:'60:v+ 61:v-'}},
     {id:'orbit',env:{AEGEAN_CAPTURE_ORBIT:'9 0.8 0.35'}},
     {id:'cloud',env:{AEGEAN_FLYING:'950 190',AEGEAN_WEATHER:'overcast',SLOPPY_INPUT:'60:v+ 61:v-'}}
@@ -66,7 +66,7 @@ try {
   for(const {quality,full,id,env:sceneEnv} of cases.filter(c=>(!selected||selected.includes(c.id))&&(!process.env.WEB_NEAR_LINEAR||!c.full))) {
     const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'full-log':'split'}`;
     const query=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
-      AEGEAN_CAPTURE_READY:'1',AEGEAN_HOUR:'9.75',AEGEAN_QUALITY:quality,AEGEAN_STRESS_FRAME_DT:String(1/60),SLOPPY_FRAMES:'181',...sceneEnv});
+      AEGEAN_CAPTURE_READY:'1',AEGEAN_HOUR:'9.75',AEGEAN_QUALITY:quality,AEGEAN_STRESS_FRAME_DT:String(1/60),SLOPPY_FRAMES:'241',...sceneEnv});
     if(process.env.WEB_NEAR_LINEAR)query.set('AEGEAN_LINEAR_DEPTH','1');
     if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
     errors.length=0;loaded=false;
@@ -76,7 +76,7 @@ try {
       const r=await send('Runtime.evaluate',{returnByValue:true,expression:'globalThis.quayFrames||0'});
       return r.result?.value>=30;
     });
-    for(const frame of [120,180]) {
+    for(const frame of [180,240]) {
       await send('Runtime.evaluate',{expression:`nearAdvance(${frame})`});
       await until(async()=>{const r=await send('Runtime.evaluate',{returnByValue:true,expression:'quayFrames'});return r.result?.value>=frame;});
       const links=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayLinks'})).result.value;
