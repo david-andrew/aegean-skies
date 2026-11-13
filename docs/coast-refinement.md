@@ -61,8 +61,11 @@ World-space 14 m tiles occupy toroidal slots. Scrolling only redraws exposed
 strips; changed or removed cell selections dirty their slots and shared boundary
 samples. Dirty rectangles clear with a batched draw, avoiding backend-dependent
 scissored clears. Render-chart snaps rebind coordinates without repainting the
-texture. Mixed source phases retain a conservative CPU membership fallback;
-GPU refreshes remain restricted to changed slots. Atlas membership consumes the
+texture. An incremental owner index maps each actual cell bound to its atlas
+tiles, including mixed source phases and floating-point lattice roundoff. Only
+cell arrival/removal changes that index; height and LOD changes reuse it.
+Equivalent f32 sampling phases within 2 mm retain their origin; mesh vertices
+never snap. GPU refreshes remain restricted to changed slots. Atlas membership consumes the
 renderer’s per-cell selection revisions, flattening domains only when a cell
 changes. Cells beyond the conservative 480 m reach cannot contribute to either
 atlas and are excluded, so distant islands cannot force mixed-phase bookkeeping.

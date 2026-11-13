@@ -20,7 +20,7 @@ coast_height_previous: CoastInstance[][]
 coast_height_center = vec2(0,0)
 coast_height_chart = vec3(0,0,0)
 coast_height_cells: {vec2:CoastInstance[]} = {}
-coast_height_aligned = true
+coast_height_owners: {vec2:vec2[]} = {}
 coast_height_near: RenderTarget
 coast_height_far: RenderTarget
 coast_height_near_area = vec4(0,0,0,0) # local origin x,z, sample spacing, dimension
@@ -111,8 +111,23 @@ collect_coast_height = (batches: CoastInstance[][],from_selection: bool = false)
 # slot's selected geometry; missing/replaced slots must also clear old coverage.
 coast_wrap = (x: int,n: int) -> int: ((x%n)+n)%n
 
+coast_atlas_owner = (absolute:vec2,present:bool):
+    global coast_height_owners
+    q=(absolute-coast_height_phase)/14.0
+    lo=floor(q);hi=floor(q+vec2(1,1))
+    loop j in int(lo.y)..int(hi.y)+1:
+        loop i in int(lo.x)..int(hi.x)+1:
+            key=vec2(f32(i),f32(j))
+            owners=coast_height_owners.get(key,[])
+            if present:
+                owners.push(absolute)
+                owners.sort((p:vec2):(p.x,p.y))
+            else:owners=[loop p in owners:if p!=absolute:p]
+            if owners.len()>0:coast_height_owners[key]=owners
+            else if key in coast_height_owners:coast_height_owners.remove(key)
+
 refresh_coast_height = (cam: vec3):
-    global coast_height_near,coast_height_far,coast_height_shader,coast_clear_shader,coast_height_tiles,coast_height_phase,coast_height_roll,coast_height_dirty,coast_height_near_area,coast_height_far_area,coast_height_valid,coast_height_draws,coast_height_refreshes,coast_height_previous,coast_height_center,coast_height_chart,coast_height_cells,coast_height_aligned,coast_height_revisions
+    global coast_height_near,coast_height_far,coast_height_shader,coast_clear_shader,coast_height_tiles,coast_height_phase,coast_height_roll,coast_height_dirty,coast_height_near_area,coast_height_far_area,coast_height_valid,coast_height_draws,coast_height_refreshes,coast_height_previous,coast_height_center,coast_height_chart,coast_height_cells,coast_height_owners,coast_height_revisions
     coast_height_draws = 0; coast_height_dirty = 0
     count = 0; phase = vec2(0,0)
     loop group in coast_height_batches:
@@ -122,11 +137,17 @@ refresh_coast_height = (cam: vec3):
         coast_height_valid = false
         return
     phase -= floor(phase/14.0)*14.0
+    # Equivalent f32 lattice phases can differ by a few ULPs as a different
+    # cell becomes first. Keep the sampling origin stable; vertices never snap.
+    delta=phase-coast_height_phase
+    delta-=floor(delta/14.0+vec2(0.5,0.5))*14.0
+    if coast_height_valid and max(abs(delta.x),abs(delta.y))<0.002:phase=coast_height_phase
     if phase != coast_height_phase: coast_height_valid = false
     if not coast_height_valid:
         coast_height_phase = phase
         coast_height_tiles = [[],[]]
         coast_height_revisions = {}
+        coast_height_owners = {}
     if coast_height_near.fbo == 0:
         coast_height_near = coast_height_target(640)
         coast_height_far = coast_height_target(1024)
@@ -148,23 +169,19 @@ refresh_coast_height = (cam: vec3):
         loop absolute in coast_active_cells:
             entry=coast_cells[absolute]
             if not coast_atlas_cell_visible(absolute,entry.shape.heights,cam):continue
-            q=(absolute-coast_height_phase)/14.0
-            if q!=floor(q):indexed=false
-            revisions[q]=entry.revision; eligible+=entry.count
+            revisions[absolute]=entry.revision; eligible+=entry.count
         if eligible!=count:indexed=false
     cells: {vec2:CoastInstance[]} = {}
     changed: vec2[]
-    aligned = true
     if indexed:
         cells=coast_height_cells
-        loop q,revision in revisions.items():
-            if coast_height_revisions.get(q,-1)==revision:continue
-            absolute=q*14.0+coast_height_phase
+        loop absolute,revision in revisions.items():
+            if coast_height_revisions.get(absolute,-1)==revision:continue
             entry=coast_cells[absolute]
             parts: CoastInstance[]
             parts.reserve(entry.count)
             loop group in entry.parts:parts.extend(group)
-            cells[q]=parts; changed.push(q)
+            cells[absolute]=parts; changed.push(absolute)
         loop q,parts in coast_height_cells.items():
             if not (q in revisions):cells.remove(q);changed.push(q)
         coast_height_revisions=revisions
@@ -174,8 +191,7 @@ refresh_coast_height = (cam: vec3):
         coast_height_revisions={}
         loop group in coast_height_batches:
             loop inst in group:
-                q = (inst.absolute-coast_height_phase)/14.0
-                if q != floor(q): aligned = false
+                q = inst.absolute
                 part = inst; part.origin = vec2(0,0); part.texel = vec2(0,0)
                 if not (q in cells): cells[q] = []
                 cells[q].push(part)
@@ -183,8 +199,15 @@ refresh_coast_height = (cam: vec3):
             if not (key in coast_height_cells) or coast_height_cells[key] != parts: changed.push(key)
         loop key,parts in coast_height_cells.items():
             if not (key in cells): changed.push(key)
-    if aligned != coast_height_aligned: coast_height_valid = false
-    coast_height_aligned = aligned
+    # Ownership is by actual world bounds, not exact equality to one island's
+    # lattice. A 4.0000005 grid coordinate remains an ordinary adjacent cell.
+    # Height/LOD changes retain their bins; only arrival/removal changes membership.
+    if not coast_height_valid:
+        loop absolute,parts in cells.items():coast_atlas_owner(absolute,true)
+    else:
+        loop absolute in changed:
+            was=absolute in coast_height_cells; present=absolute in cells
+            if was!=present:coast_atlas_owner(absolute,present)
     coast_height_cells = cells
     coast_height_center = center; coast_height_chart = chart
     coast_height_previous = coast_height_batches
@@ -206,67 +229,39 @@ refresh_coast_height = (cam: vec3):
             coast_height_far_area = area
             coast_height_roll.z = roll.x; coast_height_roll.w = roll.y
         dirty = [loop k in 0..dim*dim: false]
-        current: CoastAtlasTile[]
-        if not aligned:
-            current = [loop k in 0..dim*dim: CoastAtlasTile()]
-            loop group in coast_height_batches:
-                loop inst in group:
-                    # Split cells need the same tile ownership as their parent.
-                    q = (inst.absolute-coast_height_phase)/14.0
-                    lo = max(floor(q),first)
-                    hi = min(floor(q+vec2(1,1))+vec2(1,1),first+vec2(f32(dim),f32(dim)))
-                    loop j in int(lo.y)..int(hi.y):
-                        loop i in int(lo.x)..int(hi.x):
-                            sx = coast_wrap(i,dim); sy = coast_wrap(j,dim)
-                            key = sy*dim+sx
-                            world = vec2(f32(i),f32(j))*14.0+coast_height_phase
-                            current[key].world = world
-                            part = inst
-                            part.origin = inst.absolute-world+vec2(f32(sx),f32(sy))*14.0
-                            part.texel = vec2(f32(sx*samples),f32(sy*samples))
-                            part.region.w = f32(samples)
-                            current[key].parts.push(part)
-            loop key in 0..current.len():
-                old = if coast_height_tiles[layer].len() == current.len(): coast_height_tiles[layer][key] else: CoastAtlasTile()
-                if current[key].parts.len() == 0 and old.parts.len() == 0: continue
-                if coast_height_valid and old == current[key]: continue
-                dirty[key] = true
-        else:
-            if coast_height_tiles[layer].len() != dim*dim:
-                coast_height_tiles[layer] = [loop k in 0..dim*dim: CoastAtlasTile()]
-            # A change affects its tile plus the positive neighbors which own
-            # samples exactly on the common triangle boundary.
-            loop q in changed:
-                loop j in int(q.y)..int(q.y)+2:
-                    loop i in int(q.x)..int(q.x)+2:
-                        if f32(i) < first.x or f32(j) < first.y or f32(i) >= first.x+f32(dim) or f32(j) >= first.y+f32(dim): continue
-                        dirty[coast_wrap(j,dim)*dim+coast_wrap(i,dim)] = true
-            old_first = old_center-vec2(f32(dim/2),f32(dim/2))
-            if not coast_height_valid or old_center != center:
-                loop j in int(first.y)..int(first.y)+dim:
-                    loop i in int(first.x)..int(first.x)+dim:
-                        if coast_height_valid and f32(i) >= old_first.x and f32(j) >= old_first.y and f32(i) < old_first.x+f32(dim) and f32(j) < old_first.y+f32(dim): continue
-                        dirty[coast_wrap(j,dim)*dim+coast_wrap(i,dim)] = true
-            loop key in 0..dim*dim:
-                if not dirty[key]: continue
-                sx = key%dim; sy = key/dim
-                q = first+vec2(f32(coast_wrap(sx-int(first.x),dim)),f32(coast_wrap(sy-int(first.y),dim)))
-                world = q*14.0+coast_height_phase
-                tile = CoastAtlasTile(world,[])
-                loop j in -1..1:
-                    loop i in -1..1:
-                        owner = q+vec2(f32(i),f32(j))
-                        if not (owner in cells): continue
-                        loop inst in cells[owner]:
-                            part = inst
-                            part.origin = inst.absolute-world+vec2(f32(sx),f32(sy))*14.0
-                            part.texel = vec2(f32(sx*samples),f32(sy*samples))
-                            part.region.w = f32(samples)
-                            tile.parts.push(part)
-                old = coast_height_tiles[layer][key]
-                if tile.parts.len() == 0 and old.parts.len() == 0: dirty[key] = false
-                coast_height_tiles[layer][key] = tile
-            current = coast_height_tiles[layer]
+        if coast_height_tiles[layer].len() != dim*dim:
+            coast_height_tiles[layer] = [loop k in 0..dim*dim: CoastAtlasTile()]
+        # Include samples on the positive cell boundary, also for mixed phases.
+        loop absolute in changed:
+            q=(absolute-coast_height_phase)/14.0
+            lo=max(floor(q),first)
+            hi=min(floor(q+vec2(1,1))+vec2(1,1),first+vec2(f32(dim),f32(dim)))
+            loop j in int(lo.y)..int(hi.y):
+                loop i in int(lo.x)..int(hi.x):
+                    dirty[coast_wrap(j,dim)*dim+coast_wrap(i,dim)] = true
+        old_first = old_center-vec2(f32(dim/2),f32(dim/2))
+        if not coast_height_valid or old_center != center:
+            loop j in int(first.y)..int(first.y)+dim:
+                loop i in int(first.x)..int(first.x)+dim:
+                    if coast_height_valid and f32(i) >= old_first.x and f32(j) >= old_first.y and f32(i) < old_first.x+f32(dim) and f32(j) < old_first.y+f32(dim): continue
+                    dirty[coast_wrap(j,dim)*dim+coast_wrap(i,dim)] = true
+        loop key in 0..dim*dim:
+            if not dirty[key]: continue
+            sx = key%dim; sy = key/dim
+            q = first+vec2(f32(coast_wrap(sx-int(first.x),dim)),f32(coast_wrap(sy-int(first.y),dim)))
+            world = q*14.0+coast_height_phase
+            tile = CoastAtlasTile(world,[])
+            loop owner in coast_height_owners.get(q,[]):
+                loop inst in cells[owner]:
+                    part = inst
+                    part.origin = inst.absolute-world+vec2(f32(sx),f32(sy))*14.0
+                    part.texel = vec2(f32(sx*samples),f32(sy*samples))
+                    part.region.w = f32(samples)
+                    tile.parts.push(part)
+            old = coast_height_tiles[layer][key]
+            if tile.parts.len() == 0 and old.parts.len() == 0: dirty[key] = false
+            coast_height_tiles[layer][key] = tile
+        current = coast_height_tiles[layer]
         selected: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
         loop key in 0..dim*dim:
             if not dirty[key]: continue
