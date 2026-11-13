@@ -1,3 +1,13 @@
+# Island access repair checkpoint
+
+Myrevilaki **301551** now has a **1,456.409 m / 91-point** wagon-width road to Ardevalanti **301550**, using its existing harbour and two moorings. Fine-grid routing checks the actual walking capsule/frontages as well as the older terrain/footprint validator. The first candidate failed precise contact 6 m outside the square; it was discarded. The replacement passes a continuous 25 cm walking sweep.
+
+Fresh audit: **749/794 served, 45 unresolved**, catalogue **1,239 links**. Migration from c767023 preserves all 1,238 previous links, identities, population, money, goods and ledger. Access-upgrade version 2 also adds this road to saves already upgraded to version 1. Three access-connection tests, working-land tests, flight tests and checks of all edited Sloppy files pass.
+
+No new quay or harbour geometry. Scenery consumes the same published cart path. Air/street render review and current-main integration remain pending; no Redfox started. Logs in `~/dev/tmp/aegean-skies/towns/inland/`: `road-301551-precise.log`, `test-301551.log`, `inland_access_audit-301551.log`, `validate_access_migration-301551.log`. The JSON inventory contains only the 45 still unresolved places, with Myrevilaki moved to `resolved`.
+
+## Original hand-off (historical 46-place inventory)
+
 # Unresolved island access: implementation 4331981
 
 **Hand-off, not a claim of completion.** The shipped manifest has 46 unserved small-island communities. All mainland communities are served. The fresh read-only probe `tools/audit_island_access.jo` reproduces the same 46 IDs as the earlier complete catalogue audit; no town, route or landing was changed in this resume. Exact coordinates, populations, categories and evidence hashes are in [the machine-readable inventory](inland-island-access.json).
