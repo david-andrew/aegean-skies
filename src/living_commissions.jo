@@ -9,15 +9,13 @@ use 'living_money.jo'
 use 'living_place_context.jo'
 use 'living_guard.jo'
 use 'living_transaction.jo'
+use 'living_work.jo'
+use 'living_work_types.jo'
+use 'living_far_orders.jo'
 
 const FAR_COMMISSION_LIMIT = 96
 
-far_counter = (w: World, place: int) -> vec3:
-    if not (place in w.place_contexts): return vec3(0,0,0)
-    loop v in w.place_contexts[place].venues:
-        if v.kind==.market: return v.pos
-    if place>=0 and place<w.cargo_harbors.len(): return w.cargo_harbors[place].warehouse
-    w.place_contexts[place].center
+far_counter = (w: World, place: int) -> vec3: far_counter_position(w,place)
 
 publish_far_harbors = (w: mut World, harbors: FarHarbor[]) -> bool:
     staged: {int: FarHarbor}
@@ -38,7 +36,15 @@ far_mooring = (w: World, craft: int, place: int) -> int:
         if length(c.pose.pos-h.docks[k])<22.0: return k
     -1
 
-commission_mass = (w: World, c: FarCommission) -> int: inventory_mass(w,c.cargo)
+commission_berth = (w: World, craft: int) -> FarBerth?:
+    if craft<0 or craft>=w.aircraft.len(): return none
+    ids=w.far.harbors.keys(); ids.sort()
+    loop place in ids:
+        dock=far_mooring(w,craft,place)
+        if dock>=0: return FarBerth(place,dock)
+    none
+
+commission_mass = (w: World, c: FarCommission) -> int: if c.paper!=none: 200 else: inventory_mass(w,c.cargo)
 
 commission_views = (w: World, place: int = -1, actor: int = -1) -> CommissionView[]:
     result: CommissionView[]
@@ -50,21 +56,23 @@ commission_views = (w: World, place: int = -1, actor: int = -1) -> CommissionVie
         result.push(CommissionView(id,c.kind,c.phase,c.origin,c.destination,c.poster,c.carrier,c.reward,c.deadline,commission_mass(w,c),c.pos,c.why))
     result
 
-_post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1) -> int:
+_post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1, request: FarReport? = none) -> int:
     if not w.far.populated or not (origin in w.far.districts) or not (destination in w.far.districts) or origin==destination or good<0 or good>=9 or qty<=0 or reward<0 or sponsor< -1 or sponsor>=3 or w.far.commissions.len()>=FAR_COMMISSION_LIMIT: return -1
     if qty*w.goods[good].package_grams/1000>25000 or far_market_qty(w,origin,good)<qty: return -1
     loop _, old in w.far.commissions:
-        if old.origin==origin and old.phase==.open: return -1
+        if old.origin==origin and old.phase==.open and w.minute<=old.deadline: return -1
     source=w.far.districts[origin]; dest=w.far.districts[destination]
+    if let bid=request:
+        if not received_supply_request(w,origin,bid) or bid.origin!=destination or bid.supply_good!=good or qty>bid.supply_qty or source.prices[good]>bid.supply_bid: return -1
+    distance=f64(length(w.place_contexts[origin].center-w.place_contexts[destination].center))
+    let reward=if request!=none and sponsor<0: request!.supply_reward else: if reward>0: reward else: max(180,int(ceil(distance*0.065)))
+    funder=if sponsor>=0: w.far.treasury[sponsor] else: dest.market_account
+    price=max(1,(qty*source.prices[good]+999)/1000)
+    if w.accounts[funder].cents<price+reward: return -1
     sender=source.market_owner
     if sender<0 and source.core>=0: sender=w.places[source.core].market_owner
     if sender<0: sender=promote_far_person(w,origin,.trader)
     if sender<0: return -1
-    distance=f64(length(w.place_contexts[origin].center-w.place_contexts[destination].center))
-    let reward=if reward>0: reward else: max(180,int(ceil(distance*0.065)))
-    funder=if sponsor>=0: w.far.treasury[sponsor] else: dest.market_account
-    price=max(1,(qty*source.prices[good]+999)/1000)
-    if w.accounts[funder].cents<price+reward: return -1
     id=w.far.next_commission
     escrow=new_account(w,"commission:{id}")
     batch=far_take_market(w,origin,good,qty)
@@ -72,21 +80,34 @@ _post_far_commission = (w: mut World, origin: int, destination: int, good: int, 
         living_fault("commission.funding",guard_context(w)+" id={id}"); return -1
     why="{f64(qty)/1000.0:.1} packages of {w.goods[good].key} from {life_place_name(w,origin)} to {life_place_name(w,destination)}; {if sponsor>=0: w.countries[sponsor].name else: "the receiving market"} has paid for the goods and set aside {f64(reward)/100.0:.2} lire for carriage."
     w.far.commissions[id]=FarCommission(id,kind,origin,destination,sender,funder,funder,escrow,reward,w.minute+max(1440,int(ceil(distance/60.0/2.0))*4+360),w.minute,cargo=batch,quantity=qty,good=good,pos=far_counter(w,origin),last_tick=w.tick,why=why,country=sponsor,news=source.recent_news)
+    roots=batch.roots.keys(); roots.sort()
+    cause="An explicit stock purchase; no received buyer request was attached."
+    if let bid=request:
+        cause="{life_place_name(w,destination)} requested {w.goods[good].key}: its stock was down to {f64(bid.supply_observed)/1000.0:.2} packages against a {f64(bid.supply_target)/1000.0:.2}-package reserve. The request was sent {work_date(bid.occurred_minute)} and reached this counter {work_date(bid.learned_minute)}. {w.people[sender].name} agreed the price and carriage."
+        w.far.accepted_requests[bid.id]=bid.supply_due
+        w.far.commissions[id].deadline=bid.supply_due
+    w.far.commissions[id].provenance=WorkProvenance(cause=cause,requester=dest.market_owner,requester_account=if request!=none: request!.supply_account else: funder,supplier=sender,supplier_account=source.market_account,request_place=destination,request_report=if request!=none: request!.id else: -1,requested_minute=if request!=none: request!.occurred_minute else: -1,heard_minute=if request!=none: request!.learned_minute else: -1,agreed_minute=w.minute,goods_cents=price,freight_cents=reward,freight_payer=funder,deadline=w.far.commissions[id].deadline,supply_roots=roots,supply=work_supply(w,roots),negotiated=request!=none)
+    if let bid=request:
+        w.far.commissions[id].provenance.cause+=order_customer_note(w,bid.supply_places,bid.origin)
+        w.far.commissions[id].provenance.need_places=bid.supply_places
+        w.far.commissions[id].provenance.need_since=if bid.supply_since>=0: bid.supply_since else: bid.occurred_minute
+        cause=w.far.commissions[id].provenance.cause
+    w.far.commissions[id].why=cause+" "+why
     w.far.next_commission+=1
-    far_local_news(w,origin,"commission",why,actor=sender,country=sponsor)
+    far_local_news(w,origin,"commission",w.far.commissions[id].why,actor=sender,country=sponsor)
     id
 
-post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1) -> int:
+post_far_commission = (w: mut World, origin: int, destination: int, good: int, qty: int, kind: CommissionKind = .freight, reward: int = 0, sponsor: int = -1, request: FarReport? = none) -> int:
     if guard_blocked(): return -1
     scope=guard_begin(w)
-    result=_post_far_commission(w,origin,destination,good,qty,kind,reward,sponsor)
+    result=_post_far_commission(w,origin,destination,good,qty,kind,reward,sponsor,request)
     failed=guard_failed(scope); guard_finish(w,scope)
     if failed: -1 else: result
 
 claim_far_commission = (w: mut World, id: int, actor: int = 0, loader: CarriageChoice = .player) -> bool:
     if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
     c=w.far.commissions[id]
-    if c.phase!=.open or w.minute>c.deadline or length(w.people[actor].pose.pos-c.pos)>40.0: return false
+    if c.phase!=.open or w.minute>c.deadline or length(person_world_position(w,actor)-c.pos)>40.0: return false
     loop _, old in w.far.commissions:
         if old.carrier==actor and old.phase!=.delivered and old.phase!=.expired and old.phase!=.cancelled: return false
     if w.people[actor].carrying>=0 or w.people[actor].carriage>=0: return false
@@ -97,12 +118,12 @@ claim_far_commission = (w: mut World, id: int, actor: int = 0, loader: CarriageC
 pickup_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
     if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
     c=w.far.commissions[id]
-    if c.carrier!=actor or (c.phase!=.claimed and c.phase!=.aboard) or person_has_load(w,actor) or w.people[actor].carriage>=0: return false
+    if c.carrier!=actor or c.porter>=0 or (c.phase!=.claimed and c.phase!=.aboard) or person_has_load(w,actor) or w.people[actor].carriage>=0: return false
     point=c.pos
     if c.phase==.aboard:
-        if far_mooring(w,c.craft,c.destination)<0: return false
+        if commission_berth(w,c.craft)==none: return false
         point=w.aircraft[c.craft].pose.pos
-    if length(w.people[actor].pose.pos-point)>18.0: return false
+    if length(person_world_position(w,actor)-point)>18.0: return false
     w.far.commissions[id].phase=if c.phase==.aboard: CommissionPhase.collecting else: .carrying
     w.far.commissions[id].pos=w.people[actor].pose.pos
     w.far.commissions[id].craft= -1
@@ -111,7 +132,7 @@ pickup_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
 load_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
     if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
     c=w.far.commissions[id]; craft=w.people[actor].craft
-    if c.carrier!=actor or c.phase!=.carrying or far_mooring(w,craft,c.origin)<0: return false
+    if c.carrier!=actor or (c.phase!=.carrying and c.phase!=.collecting) or commission_berth(w,craft)==none: return false
     holder=if c.porter>=0: c.porter else: actor
     if length(w.people[holder].pose.pos-w.aircraft[craft].pose.pos)>18.0 or craft_grams(w,craft)+commission_mass(w,c)>AIRFRAMES[int(w.aircraft[craft].kind)].cargo_grams: return false
     w.far.commissions[id].phase=.aboard; w.far.commissions[id].craft=craft
@@ -121,8 +142,12 @@ load_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
 collect_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
     if not (id in w.far.commissions) or actor<0 or actor>=w.people.len(): return false
     c=w.far.commissions[id]
-    if c.carrier!=actor or (c.phase!=.collecting and c.phase!=.carrying) or length(w.people[if c.porter>=0: c.porter else: actor].pose.pos-far_counter(w,c.destination))>6.0 or not far_market_accepts(w,c.destination,c.cargo): return false
+    if c.carrier!=actor or (c.phase!=.collecting and c.phase!=.carrying) or length(person_world_position(w,if c.porter>=0: c.porter else: actor)-far_counter(w,c.destination))>6.0 or not far_market_accepts(w,c.destination,c.cargo): return false
     far_put_market(w,c.destination,c.cargo)
+    if let paper=c.paper:
+        delivered=paper; delivered.learned_minute=w.minute
+        far_store_report(w,c.destination,delivered)
+    w.far.commissions[id].paper=none
     w.far.commissions[id].cargo=FarStock(); w.far.commissions[id].phase=.delivered
     w.far.commissions[id].collected_minute=w.minute; w.far.commissions[id].pos=far_counter(w,c.destination)
     cash=w.accounts[c.escrow].cents
@@ -140,54 +165,54 @@ collect_far_commission = (w: mut World, id: int, actor: int = 0) -> bool:
         if news in w.far.news and not (news in w.far.districts[c.destination].recent_news):
             w.far.districts[c.destination].recent_news.push(news)
             if w.far.districts[c.destination].recent_news.len()>12: w.far.districts[c.destination].recent_news.remove_at(0)
-    far_local_news(w,c.destination,"commission_delivered","{w.people[actor].name} brought {f64(c.quantity)/1000.0:.1} packages of {w.goods[c.good].key} from {life_place_name(w,c.origin)} to {life_place_name(w,c.destination)}.",actor=actor,country=c.country)
+    load=if c.good>=0: "{f64(c.quantity)/1000.0:.1} packages of {w.goods[c.good].key}" else: "the sealed dispatch"
+    far_local_news(w,c.destination,"commission_delivered","{w.people[actor].name} brought {load} from {life_place_name(w,c.origin)} to {life_place_name(w,c.destination)}.",actor=actor,country=c.country)
     true
 
 # Only a local counter can make new offers; preview/query functions never reserve stock.
 refresh_far_work = (w: mut World, place: int) -> int:
     if not (place in w.far.districts): return -1
     source=w.far.districts[place]
-    destinations: int[]
-    loop link in source.links:
-        l=w.far.links[link]; destinations.push(if l.a==place: l.b else: l.a)
-    if place in w.far.harbors:
-        loop id in w.far.place_ids:
-            if id==place or not (id in w.far.harbors): continue
-            distance=length(w.place_contexts[id].center-w.place_contexts[place].center)
-            if distance>3000 and distance<65000: destinations.push(id)
-    best= -1; good= -1; amount=0; score=0
-    destinations.sort()
-    loop dest in destinations:
-        d=w.far.districts[dest]
-        loop g in 0..8:
-            surplus=max(0,far_market_qty(w,place,g)-source.target[g]/2)
-            need=max(0,d.target[g]-far_market_qty(w,dest,g))
-            qty=min(min(surplus,need),25000*1000/w.goods[g].package_grams)
-            value=qty*1000/max(1000,d.target[g])
-            if qty>=100 and value>score: best=dest; good=g; amount=qty; score=value
-    if best<0: return -1
-    post_far_commission(w,place,best,good,amount)
+    # A remote inventory/price table is not a message. Only physically received signed
+    # buying bids permit an automatic commission. Supplier quote must fit the buyer's bid.
+    reports=source.reports
+    reports.sort((r: FarReport): (r.occurred_minute,r.id),descending=true)
+    loop r in reports:
+        g=r.supply_good
+        if r.kind!="supply_request" or r.origin==place or g<0 or g>=8 or r.hops!=0 or r.confidence<900 or w.minute>r.supply_due or r.id in w.far.accepted_requests: continue
+        if w.goods[g].shelf_hours>0: continue
+        surplus=max(0,far_market_qty(w,place,g)-source.target[g]/2)
+        qty=min(surplus,r.supply_qty)
+        if qty<100 or source.prices[g]>r.supply_bid: continue
+        result=post_far_commission(w,place,r.origin,g,qty,request=r)
+        if result>=0: return result
+    -1
 
 far_commissions_minute = (w: mut World):
     if not w.far.populated: return
+    expired=w.far.accepted_requests.keys()
+    loop request in expired:
+        if w.far.accepted_requests[request]<w.minute: w.far.accepted_requests.remove(request)
     ids=w.far.commissions.keys(); ids.sort()
     loop id in ids:
         c=w.far.commissions[id]
         if c.phase==.delivered or c.phase==.expired or c.phase==.cancelled:
-            if w.minute-max(c.created,max(c.collected_minute,c.failed_minute))>10080 and c.cargo.roots.len()==0: w.far.commissions.remove(id)
+            if w.minute-max(c.created,max(c.collected_minute,c.failed_minute))>1440 and c.cargo.roots.len()==0: w.far.commissions.remove(id)
             continue
         if w.minute>c.deadline and c.failed_minute<0:
             cents=max(0,w.accounts[c.escrow].cents-c.porter_fee)
             if cents>0: transfer(w,c.escrow,c.funder,cents,.refund,id)
             w.far.commissions[id].failed_minute=w.minute
-            if c.phase==.open:
-                if far_market_accepts(w,c.origin,c.cargo):
-                    # Title is still the buyer's; refund the purchase only by a real resale.
-                    origin=w.far.districts[c.origin]
-                    price=max(1,(c.quantity*origin.prices[c.good]+999)/1000)
-                    if w.accounts[origin.market_account].cents>=price and transfer(w,origin.market_account,c.owner,price,.trade,id):
-                        far_put_market(w,c.origin,c.cargo)
-                        w.far.commissions[id].cargo=FarStock(); w.far.commissions[id].phase=.expired
+        # A full warehouse or temporary lack of cash is a blocked resale, not a one-shot
+        # permanent freeze. The buyer retains title until a real purchase can take place.
+        if w.minute>c.deadline and c.phase==.open and c.paper!=none:
+            w.far.commissions[id].paper=none; w.far.commissions[id].phase=.expired
+        if w.minute>c.deadline and c.phase==.open and c.good>=0 and far_market_accepts(w,c.origin,c.cargo):
+            origin=w.far.districts[c.origin]
+            price=max(1,(c.quantity*origin.prices[c.good]+999)/1000)
+            if w.accounts[origin.market_account].cents>=price and transfer(w,origin.market_account,c.owner,price,.trade,id):
+                far_put_market(w,c.origin,c.cargo)
+                w.far.commissions[id].cargo=FarStock(); w.far.commissions[id].phase=.expired
         commission_portage(w,id)
         c=w.far.commissions[id]
         if c.phase==.carrying or c.phase==.collecting:
@@ -197,7 +222,10 @@ far_commissions_minute = (w: mut World):
     # One district per minute, rather than793 path/offer decisions per frame.
     place=w.far.place_ids[w.far.next_commission_place%w.far.place_ids.len()]
     w.far.next_commission_place=(w.far.next_commission_place+1)%w.far.place_ids.len()
-    if w.far.commissions.len()<FAR_COMMISSION_LIMIT/2: refresh_far_work(w,place)
+    active=0
+    loop _, c in w.far.commissions:
+        if c.phase!=.delivered and c.phase!=.expired and c.phase!=.cancelled: active+=1
+    if active<FAR_COMMISSION_LIMIT/2 and w.far.commissions.len()<FAR_COMMISSION_LIMIT: refresh_far_work(w,place)
 
 # Offscene walking shares the same named person's saved route and clock as daily life. Near
 # the camera far_scene walks that route against actual collision; this never moves a lease.
@@ -251,3 +279,27 @@ commission_portage = (w: mut World, id: int):
     else if c.phase==.collecting:
         commission_set_target(w,person,far_counter(w,c.destination),"commission:{id}:collect")
         if length(w.people[person].pose.pos-far_counter(w,c.destination))<=6: collect_far_commission(w,id,c.carrier)
+
+# A packet is an actual saved document, backed by a report the posting office already knows.
+# It is not fictional commodity stock: paper correspondence follows the core sealed-mail model.
+post_far_mail = (w: mut World, origin: int, destination: int, country: int, report: FarReport, reward: int) -> int:
+    if not w.far.populated or not (origin in w.far.districts) or not (destination in w.far.districts) or origin==destination or country<0 or country>=3 or reward<=0 or w.far.commissions.len()>=FAR_COMMISSION_LIMIT or not far_report_valid(w,report): return -1
+    known=false
+    loop r in w.far.districts[origin].reports:
+        if r.id==report.id: known=true
+    if not known: return -1
+    payer=w.far.treasury[country]
+    if w.accounts[payer].cents<reward: return -1
+    sender=w.far.districts[origin].market_owner
+    if sender<0 and w.far.districts[origin].core>=0: sender=w.places[w.far.districts[origin].core].market_owner
+    if sender<0: sender=promote_far_person(w,origin,.trader)
+    if sender<0: return -1
+    id=w.far.next_commission
+    escrow=new_account(w,"dispatch:{id}")
+    if not transfer(w,payer,escrow,reward,.escrow,id): living_fault("commission.mail_funding",guard_context(w)); return -1
+    distance=f64(length(w.place_contexts[origin].center-w.place_contexts[destination].center))
+    why="A sealed dispatch from {life_place_name(w,origin)} to the office at {life_place_name(w,destination)}; {w.countries[country].name} has reserved {f64(reward)/100.0:.2} lire for delivery."
+    w.far.commissions[id]=FarCommission(id=id,kind=.mail,origin=origin,destination=destination,poster=sender,funder=payer,owner=payer,escrow=escrow,reward=reward,deadline=w.minute+max(2880,int(ceil(distance/120.0))*5+720),created=w.minute,quantity=1,good=-1,pos=far_counter(w,origin),last_tick=w.tick,why=why,country=country,paper=report)
+    w.far.commissions[id].provenance=WorkProvenance(cause="The office at {life_place_name(w,origin)} needs its actually received report {report.id} carried to {life_place_name(w,destination)}.",requester=sender,requester_account=payer,supplier=sender,supplier_account=payer,request_place=origin,request_report=report.id,requested_minute=w.minute,heard_minute=w.minute,agreed_minute=w.minute,freight_cents=reward,freight_payer=payer,deadline=w.far.commissions[id].deadline,supply="Existing report {report.id}: {report.text}",negotiated=true)
+    w.far.next_commission+=1
+    id
