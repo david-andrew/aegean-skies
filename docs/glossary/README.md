@@ -17,7 +17,7 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
@@ -338,6 +338,21 @@ blue discs that stay in every frame are **speed flecks**.
   `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
 - **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
   spans. Landings must forgive firm touchdowns.
+
+### Altimeter hands
+
+- **Aliases:** the altimeter, the two dials (as the user asked for them), coarse and fine altitude.
+- **Definition:** the period altimeter: one face numbered 0 to 9 round the whole circle, a tick
+  every 20 m, with a long thin hand for the hundreds of metres (one turn per 1,000 m) and a short
+  broad hand for the thousands (one turn per 10,000 m). 1,250 m reads short hand a quarter past
+  1, long hand at 2½. The face says "×100 m" (on the panels "M X100").
+- **Code:** `src/hud.jo altimeter_dial` and `altimeter_hands` (the HUD gauge); in
+  `src/cockpit.jo` the full-circle face in `build_cockpit`, the `short_hand` mesh, and the long
+  hand from `cockpit_values` (index 1), drawn in `draw_cockpit`, on every aircraft's panel.
+- **Rules:** keep the brass dial style; the short hand sits under the long one.
+- **Capture:** `AEGEAN_FLYING='1250 60'` (HUD) and `AEGEAN_FLYING='1250 60 cockpit'`.
+
+![The altimeter at 1,250 m on the HUD and on the Gull's panel](img/altimeter.png)
 
 ---
 
@@ -1094,7 +1109,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 
 | Switch | What it does |
 |---|---|
-| `AEGEAN_FLYING='alt speed'` | start in the air off the home harbour (drawn speed, m/s) |
+| `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
