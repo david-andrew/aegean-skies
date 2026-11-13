@@ -60,7 +60,8 @@ for (const [cw,ch,dpr] of [[844,390,3],[390,844,3],[1280,720,1],[1920,1080,2],[3
       const old=cappedSize(w,h,cw,ch,budget);
       assert(p.scene[0]<=old[0] && p.scene[1]<=old[1]);
       assert(old[0]-p.scene[0]<=1 && old[1]-p.scene[1]<=1);
-      assert(p.display[0]*p.display[1]<= (mobile?Math.max(1300000,budget):2600000));
+      if(mobile) assert(p.display[0]*p.display[1]<=Math.max(1300000,budget));
+      else assert.deepEqual(p.display,[cw*dpr,ch*dpr]);
       if (previous) assert.deepEqual(p.display,previous);
       previous=p.display;
       assert(p.scale>0 && p.scale<=1);
@@ -77,3 +78,8 @@ assert.equal(resolutionPlan(1280,720,1280,720,1,2600000,false).scale,1);
 // Explicit High on a phone must retain its previous scene budget too.
 const highPhone=resolutionPlan(2372,1096,844,390,3,2600000,true);
 assert.deepEqual(highPhone.scene,[2372,1096]);
+
+// A desktop HUD follows real device pixels even above the scene's 2.6 MP cap.
+const desktop4k=resolutionPlan(2149,1209,1920,1080,2,518400,false);
+assert.deepEqual(desktop4k.display,[3840,2160]);
+assert.deepEqual(desktop4k.scene,[960,540]);

@@ -96,12 +96,12 @@
       Math.max(1,Math.floor(Math.sqrt(maxPixels/aspect)))];
   }
   // The world keeps the old adaptive pixel budget. Only the final 2D pass uses
-  // display pixels (1.3 MP on phones; explicit High and desktops 2.6 MP). A scalar target
+  // display pixels (1.3 MP on phones, or 2.6 MP for explicit High). A scalar target
   // can round one axis down by a pixel; it must never enlarge the scene.
   function resolutionPlan(width,height,cssWidth,cssHeight,dpr,maxPixels,mobile) {
     const scene = cappedSize(width,height,cssWidth,cssHeight,maxPixels);
     const display = cappedSize(Math.max(1,Math.round(cssWidth*dpr)),
-      Math.max(1,Math.round(cssHeight*dpr)),cssWidth,cssHeight,mobile ? Math.max(1300000,maxPixels) : 2600000);
+      Math.max(1,Math.round(cssHeight*dpr)),cssWidth,cssHeight,mobile ? Math.max(1300000,maxPixels) : Infinity);
     const lo = Math.max((scene[0]-.5)/display[0],(scene[1]-.5)/display[1]);
     const hi = Math.min(1,(scene[0]+.499)/display[0],(scene[1]+.499)/display[1]);
     const scale = scene[0]>=display[0] && scene[1]>=display[1] ? 1 :
