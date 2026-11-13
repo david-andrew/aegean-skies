@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
@@ -773,6 +773,25 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `tools/bar_music_clip.jo`; note sources and permissions in `data/music/SOURCES.md`.
 - **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
 
+### Live source
+
+- **Aliases:** positional live music, the band heard in place.
+- **Definition:** live music heard from where it is played rather than straight into the ears: a
+  constant-power pan from the camera's right with a little interaural delay and head shadow, a
+  softened top when the source is behind, level and treble falling with distance (the room's share
+  falling more slowly), muffled and quieter through walls and a shut door, and a room that depends
+  on where the listener stands (the terrace's open air and facade, the quay with a late slap off
+  the buildings, a small dense room indoors). Close by, the harbour's background ambience is
+  ducked (the cafe's own murmur excepted). For the bar's band now; for a gramophone or a street
+  musician later.
+- **Code:** `src/live_source.jo` (`live_hearing`, `live_targets`, `live_process`, `live_duck`,
+  `box_blocks`); the band's geometry in `src/bar_scene.jo` (`band_hearing`, `hotel_occlusion`,
+  `hotel_zone`); `Ambience.duck` in `src/ambience.jo`; the camera's look kept as `ear_forward` in
+  `aegean.jo`; `tests/live_source_test.jo`.
+- **Rules:** only a tenth of a second is queued ahead, so a turn of the head is heard at once.
+- **Capture:** `AEGEAN_LEISURE=listen-turn|listen-walk` with `AEGEAN_AUDIO_CAPTURE`; offline paths
+  with `BAR_PATH=turn|walk|room` in `tools/bar_music_clip.jo`.
+
 ### Plane work
 
 - **Aliases:** working on the aircraft, tinkering.
@@ -1080,7 +1099,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
-| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
 | `tools/prop_disc_frames.jo` | `PROP_VIEW`, `PROP_THROTTLE`, `PROP_SWEEP` |
 | `tools/coast_capture.jo` | `COAST_SITE`, `COAST_RANGE` |
