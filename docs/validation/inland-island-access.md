@@ -1,3 +1,7 @@
+# Second island road checkpoint
+
+Velyinanti **303831** → Thalvathavos **303830**: **1,893.861 m / 120 points**, using its existing harbour. Both new island roads pass the full precise-contact walk and dry wagon-width checks. Fresh audit: **750/794 served, 44 unresolved**, **1,240 links**. Real migration preserves all 1,238 c767023 links and economic/identity state. Save access version 3 upgrades version-2 checkpoints too. Evidence uses suffix `-303831.log` in the same scratch directory. Render review/main integration remain pending. No Redfox.
+
 # Island access repair checkpoint
 
 Myrevilaki **301551** now has a **1,456.409 m / 91-point** wagon-width road to Ardevalanti **301550**, using its existing harbour and two moorings. Fine-grid routing checks the actual walking capsule/frontages as well as the older terrain/footprint validator. The first candidate failed precise contact 6 m outside the square; it was discarded. The replacement passes a continuous 25 cm walking sweep.
