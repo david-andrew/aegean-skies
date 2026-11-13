@@ -1,0 +1,321 @@
+# The hotel's evening music, live: the procedural orchestra (src/music_synth.jo) playing the
+# period repertoire in small line-ups, heard in the open air of the terrace (the facade's
+# reflection and a short room, no radio filter), and a singer: a procedural voice (harmonic
+# formant synthesis with vowels, legato glides and a late vibrato) singing each tune's melody,
+# which the instrument that carried it then plays more softly under her. Nothing recorded.
+#
+# The set is scheduled on the living world's clock (from 19:00 to half past eleven), so it is
+# where it should be after resting or saving, and every listener hears the same bar of it.
+
+use 'music_data.jo'
+use 'music_synth.jo'
+
+struct SetPiece:
+    piece: int                      # MUSIC_PIECES index
+    lineup: int                     # 0 piano alone, 1 dance band, 2 tango trio, 3 island pair
+    lead: int                       # the instrument that carries the melody (MusicInstrument)
+    floor: int                      # (the lowest pitch of it that is melody, not accompaniment)
+    sung: vec2[]                    # the stretches (seconds) the singer sings
+
+# The evening's numbers, in order, played round until the band stops.
+BAR_SET: SetPiece[] = [
+    SetPiece(3, 2, 9, 62, [vec2(9, 64)]),
+    SetPiece(6, 0, 6, 67, [vec2(17, 96), vec2(150, 230)]),
+    SetPiece(2, 1, 4, 60, []),
+    SetPiece(5, 3, 8, 60, [vec2(6, 98)])
+]
+
+const BAR_GAP = 7.0                 # seconds between numbers
+const BAR_START = 1140              # 19:00, local minutes
+const BAR_END = 1410                # 23:30
+const BAR_TICKS_PER_SECOND = 60
+
+struct SetPosition:
+    playing = false
+    index = 0                       # into BAR_SET
+    seconds = 0.0                   # into the piece
+
+_piece_seconds = (k: int) -> f64: f64(MUSIC_PIECES[BAR_SET[k].piece].frames) / f64(MUSIC_RATE)
+
+# Where the band is at a given world tick (120 ticks a minute; the epoch is 09:30 local).
+bar_set_position = (tick: int) -> SetPosition:
+    minute = tick / 120
+    local = ((minute + 570) % 1440 + 1440) % 1440
+    if local < BAR_START or local >= BAR_END: return SetPosition()
+    day_start_tick = (minute - (local - BAR_START)) * 120
+    t = f64(tick - day_start_tick) / f64(BAR_TICKS_PER_SECOND)
+    total = 0.0
+    loop k in 0..BAR_SET.len(): total += _piece_seconds(k) + BAR_GAP
+    t = t - floor(t / total) * total
+    loop k in 0..BAR_SET.len():
+        d = _piece_seconds(k)
+        if t < d: return SetPosition(true, k, t)
+        t -= d
+        if t < BAR_GAP: return SetPosition(false, k, 0.0)
+        t -= BAR_GAP
+    SetPosition()
+
+bar_singing = (p: SetPosition) -> bool:
+    if not p.playing: return false
+    loop w in BAR_SET[p.index].sung:
+        if p.seconds >= f64(w.x) and p.seconds < f64(w.y): return true
+    false
+
+# ---------------- the singer ----------------
+
+struct SungNote:
+    start: int                      # frames at MUSIC_RATE
+    end: int
+    pitch: f64                      # MIDI
+    vowel: int
+
+struct Singer:
+    notes: SungNote[]
+    next = 0
+    cursor = 0
+    phase = 0.0
+    pitch = 60.0                    # the sung pitch now (MIDI), gliding
+    env = 0.0
+    vib = 0.0
+    note_start = -100000
+    current = -1
+    f1 = 800.0
+    f2 = 1200.0
+    f3 = 2800.0
+    amps: f64[]
+    harmonics = 0
+    rng: u64 = 99
+    jitter = 0.0
+    breath = 0.0
+    sine: f64[]
+
+# the vowels she sings on (women's formants, Hz): ah, oh, eh, ah, oo-ish, ah
+VOWELS: vec3[] = [vec3(830, 1250, 2850), vec3(560, 950, 2700), vec3(620, 1750, 2800), vec3(780, 1150, 2800), vec3(450, 900, 2650), vec3(760, 1300, 2900)]
+
+# The tune's line: of the lead instrument's notes above its floor, the highest at each onset,
+# held until the next; folded into a comfortable mezzo range. Sung stretches only.
+singer_line = (events: MusicEvent[], sp: SetPiece) -> SungNote[]:
+    lead: MusicEvent[]
+    loop e in events:
+        if e.instrument == sp.lead and e.pitch >= sp.floor:
+            seconds = f64(e.start) / f64(MUSIC_RATE)
+            inside = false
+            loop w in sp.sung:
+                if seconds >= f64(w.x) and seconds < f64(w.y): inside = true
+            if inside: lead.push(e)
+    lead.sort((e: MusicEvent): (e.start, -e.pitch))
+    picked: MusicEvent[]
+    loop e in lead:
+        if picked.len() > 0 and e.start - picked[picked.len() - 1].start < MUSIC_RATE / 40:
+            continue
+        picked.push(e)
+    if picked.len() == 0: return []
+    total = 0.0
+    loop e in picked: total += f64(e.pitch)
+    shift = 12.0 * round((67.0 - total / f64(picked.len())) / 12.0)
+    raw: SungNote[]
+    loop k in 0..picked.len():
+        e = picked[k]
+        p = f64(e.pitch) + shift
+        loop p > 79.0: p -= 12.0
+        loop p < 55.0: p += 12.0
+        end = e.start + max(e.duration, MUSIC_RATE / 10)
+        if k + 1 < picked.len(): end = min(end, picked[k + 1].start)
+        # (a rest shorter than a breath is sung through)
+        if k + 1 < picked.len() and picked[k + 1].start - end < MUSIC_RATE / 6: end = picked[k + 1].start
+        raw.push(SungNote(e.start, end, p, 0))
+    # A voice doesn't sing every ornament an accordion or a bouzouki plays: a quick note is folded
+    # into the longer one it decorates, and the syllables change on the notes that remain.
+    out: SungNote[]
+    shortest = MUSIC_RATE * 18 / 100
+    loop n in raw:
+        if out.len() > 0:
+            last = out[out.len() - 1]
+            joined = n.start - last.end < MUSIC_RATE / 20
+            if joined and n.end - n.start < shortest:
+                out[out.len() - 1].end = n.end
+                continue
+            if joined and last.end - last.start < shortest:
+                out[out.len() - 1] = SungNote(last.start, n.end, n.pitch, last.vowel)
+                continue
+        out.push(SungNote(n.start, n.end, n.pitch, out.len() % VOWELS.len()))
+    out
+
+make_singer = (notes: SungNote[]) -> Singer:
+    s = Singer(notes = notes)
+    s.sine = [loop i in 0..1024: sin(TAU * f64(i) / 1024.0)]
+    s.amps = fill(0.0, 48)
+    s
+
+singer_seek = (s: mut Singer, frame: int):
+    s.cursor = frame; s.next = 0; s.current = -1; s.env = 0.0
+    loop s.next < s.notes.len() and s.notes[s.next].end <= frame: s.next += 1
+
+_formant = (f: f64, centre: f64, width: f64) -> f64:
+    d = (f - centre) / (width * 0.5)
+    1.0 / (1.0 + d * d)
+
+_singer_spectrum = (s: mut Singer, hz: f64):
+    s.harmonics = clamp(int(5200.0 / max(hz, 60.0)), 1, s.amps.len())
+    # (high notes: the first formant rises with the voice, as singers open the vowel)
+    f1 = max(s.f1, hz * 1.08)
+    loop k in 0..s.harmonics:
+        f = hz * f64(k + 1)
+        g = 1.0 * _formant(f, f1, 120.0) + 0.55 * _formant(f, s.f2, 140.0) + 0.22 * _formant(f, s.f3, 200.0) + 0.07 * _formant(f, 3900.0, 280.0) + 0.004
+        # (the source falls away with frequency, and softly above four kilohertz)
+        s.amps[k] = g / pow(f64(k + 1), 0.95) / (1.0 + pow(f / 4200.0, 4.0))
+
+singer_render = (s: mut Singer, count: int) -> f64[]:
+    out = fill(0.0, count)
+    rate = f64(MUSIC_RATE)
+    glide = 1.0 - exp(-1.0 / (0.045 * rate))
+    attack = 1.0 - exp(-1.0 / (0.05 * rate))
+    release = 1.0 - exp(-1.0 / (0.11 * rate))
+    vowel_step = 1.0 - exp(-1.0 / (0.06 * rate))
+    loop i in 0..count:
+        frame = s.cursor + i
+        loop s.next < s.notes.len() and s.notes[s.next].start <= frame:
+            s.current = s.next
+            # (from silence she starts on the note; between notes she glides)
+            if s.env < 0.05: s.pitch = s.notes[s.next].pitch
+            s.note_start = frame
+            s.next += 1
+        on = s.current >= 0 and frame < s.notes[s.current].end
+        target = if s.current >= 0: s.notes[s.current].pitch else: s.pitch
+        s.pitch += (target - s.pitch) * glide
+        age = f64(frame - s.note_start) / rate
+        # a soft consonant at each new syllable: a dip in level and in the first formant
+        consonant = if on and age < 0.05: 0.55 + 0.45 * age / 0.05 else: 1.0
+        s.env += ((if on: 1.0 else: 0.0) * consonant - s.env) * (if on: attack else: release)
+        if s.env < 0.0005 and not on: continue
+        if s.current >= 0:
+            v = VOWELS[s.notes[s.current].vowel]
+            s.f1 += (f64(v.x) * (if age < 0.05: 0.7 else: 1.0) - s.f1) * vowel_step
+            s.f2 += (f64(v.y) - s.f2) * vowel_step
+            s.f3 += (f64(v.z) - s.f3) * vowel_step
+        # a late vibrato, and the small unsteadiness of a real voice
+        depth = 0.32 * clamp((age - 0.22) / 0.4, 0.0, 1.0)
+        s.vib += (5.3 + 0.4 * sin(f64(frame) / rate * 0.7)) / rate
+        s.rng = (s.rng * u64(6364136223846793005) + u64(1442695040888963407))
+        noise = f64((s.rng >> 33) & u64(0xffff)) / 32768.0 - 1.0
+        s.jitter += (noise * 0.06 - s.jitter) * 0.002
+        hz = 440.0 * pow(2.0, (s.pitch + depth * sin(TAU * s.vib) + s.jitter - 69.0) / 12.0)
+        if i % 32 == 0: _singer_spectrum(s, hz)
+        s.phase += hz / rate
+        s.phase -= floor(s.phase)
+        sum = 0.0
+        loop k in 0..s.harmonics:
+            p = s.phase * f64(k + 1)
+            j = int((p - floor(p)) * 1024.0) % 1024
+            sum += s.amps[k] * s.sine[j]
+        s.breath += (noise - s.breath) * 0.35
+        out[i] = (sum * 0.62 + s.breath * 0.02) * s.env
+    s.cursor += count
+    out
+
+# ---------------- the room and the stream ----------------
+
+struct BarRoom:
+    early: f64[]
+    combs: f64[][]
+    damp: f64[]
+    allpass: f64[][]
+    at = 0
+    air = 0.0                       # (a one-pole low-pass for distance)
+
+make_bar_room = () -> BarRoom:
+    BarRoom(fill(0.0, 1024), [fill(0.0, 557), fill(0.0, 677), fill(0.0, 811), fill(0.0, 947)], fill(0.0, 4), [fill(0.0, 113), fill(0.0, 173)])
+
+# The open terrace: the facade's reflection behind the band, a short room from the loggia, and the
+# air between the band and the listener.
+bar_room_sample = (r: mut BarRoom, x: f64, distance: f64) -> f64:
+    w = r.at % 1024
+    r.early[w] = x
+    early = r.early[(w + 1024 - 211) % 1024] * 0.32 + r.early[(w + 1024 - 467) % 1024] * 0.18 + r.early[(w + 1024 - 739) % 1024] * 0.1
+    tail = 0.0
+    loop k in 0..4:
+        c = r.combs[k]
+        at = r.at % c.len()
+        d = c[at]
+        r.damp[k] += (d - r.damp[k]) * 0.4
+        r.combs[k][at] = x + r.damp[k] * 0.62
+        tail += d * 0.25
+    loop k in 0..2:
+        a = r.allpass[k]
+        at = r.at % a.len()
+        d = a[at]
+        v = tail
+        tail = d - v * 0.5
+        r.allpass[k][at] = v + tail * 0.5
+    r.at += 1
+    near = 4.0 / max(4.0, distance)
+    wet = 0.12 + 0.18 * clamp((distance - 6.0) / 40.0, 0.0, 1.0)
+    y = x * near + early * near * 0.8 + tail * wet * 0.6
+    cut = clamp(1.0 - distance / 160.0, 0.12, 1.0)
+    r.air += (y - r.air) * cut
+    r.air
+
+struct BarMusic:
+    synth: MusicSynth = MusicSynth()
+    singer: Singer = Singer()
+    room: BarRoom = BarRoom()
+    ready = false
+    index = -1                      # the set piece loaded
+    voice = -1
+    distance = 30.0
+    volume = 0.8
+    rendered = 0                    # frames into the piece the stream has reached
+
+# Load a number from the set, its melody notes softened under the singer.
+bar_music_load = (m: mut BarMusic, index: int, seconds: f64):
+    if not m.ready:
+        m.synth = make_music_synth(); m.room = make_bar_room(); m.ready = true
+    sp = BAR_SET[index]
+    m.synth.piece = -1
+    music_load(m.synth, sp.piece)
+    m.synth.wet = 0.05
+    notes = singer_line(m.synth.events, sp)
+    starts: {int: bool}
+    loop n in notes: starts[n.start] = true
+    loop k in 0..m.synth.events.len():
+        e = m.synth.events[k]
+        if e.instrument == sp.lead and e.start in starts:
+            m.synth.events[k].mix_gain = 0.5; m.synth.events[k].mix_end_gain = 0.5
+    m.singer = make_singer(notes)
+    m.index = index
+    music_seek(m.synth, seconds)
+    singer_seek(m.singer, m.synth.cursor)
+    m.rendered = m.synth.cursor
+
+# The band and the singer together through the room: `count` frames of mono at MUSIC_RATE.
+bar_music_render = (m: mut BarMusic, count: int) -> f32[]:
+    band = music_render(m.synth, count)
+    voice = singer_render(m.singer, band.len())
+    out = fill(f32(0), band.len())
+    loop i in 0..band.len():
+        out[i] = f32(bar_room_sample(m.room, band[i] * 1.1 + voice[i] * 0.62, m.distance))
+    m.rendered += band.len()
+    out
+
+bar_music_stop = (m: mut BarMusic):
+    if m.voice >= 0: stop(m.voice)
+    m.voice = -1
+
+# Each frame: keep a quarter second queued while the band plays and the listener is within reach.
+bar_music_update = (m: mut BarMusic, tick: int, distance: f64, audio: bool):
+    p = bar_set_position(tick)
+    m.distance = distance
+    if not audio or not p.playing or distance > 150.0:
+        bar_music_stop(m)
+        if not p.playing: m.index = -1
+        return
+    want = int(p.seconds * f64(MUSIC_RATE))
+    if m.index != p.index or m.voice < 0 or abs(m.rendered - want) > MUSIC_RATE * 2:
+        bar_music_stop(m)
+        bar_music_load(m, p.index, p.seconds)
+        m.voice = sound_stream(MUSIC_RATE, 1, m.volume)
+    queued = queued_samples(m.voice)
+    need = clamp(MUSIC_RATE / 4 - queued, 0, 800)
+    left = m.synth.frames - m.synth.cursor
+    need = min(need, left)
+    if need > 0: push_samples(m.voice, bar_music_render(m, need))
