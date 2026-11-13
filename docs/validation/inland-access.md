@@ -17,5 +17,6 @@ Replay artifacts: `/var/home/david/dev/tmp/aegean-skies/towns/inland/market-seed
 | 0 | PASS, 30 days | 3311926c in, 1079835c out, balanced | `dbe742d6c015f859c1dbed876cba54566aa49cc2c5b0b5df0a043065ca695e29` |
 | 1 | PASS, 30 days | 3234889c in, 1099872c out, balanced | `0aa9a51c3eea62b43aed5a06de263253dd8c6ae3b74a798532c8761d0c7cb268` |
 | 7 | PASS, 30 days | 3305902c in, 1092342c out, balanced | `abac92151e1e0ae37c52460a1106c98d4d470ab34d852ac4d34f6b0ca50b2238` |
+| 42 | PASS, 30 days | 3373695c in, 1058070c out, balanced | `c2c88b7706ae6e2a53f2aa7fc7df4e12b7e4137447b062bea9ce37dbfbcac8a7` |
 
-Pending: seeds 42 and 127, then the classified island-access hand-off. No Redfox run is part of this resume.
+Pending: seed 127, then the classified island-access hand-off. No Redfox run is part of this resume.
