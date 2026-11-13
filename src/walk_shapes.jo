@@ -1,0 +1,112 @@
+# CPU-only collision cells; independent of visible districts and mesh LOD.
+use 'town_sites.jo'
+use 'settlements.jo'
+use 'geography.jo'
+use 'settlement_ports.jo'
+
+struct WalkCell:
+    sites: TownSite[]
+
+walk_cells: {str: WalkCell} = {}
+
+walk_cell = (at: vec2) -> WalkCell:
+    global walk_cells
+    x=int(floor(f64(at.x)/32));z=int(floor(f64(at.y)/32));key="{x}:{z}"
+    if key in walk_cells:return walk_cells[key]
+    # Bound memory while exploring the whole world. Eviction changes no geometry.
+    if walk_cells.len()>=256:walk_cells.clear()
+    sites: TownSite[];seen: {str: bool}={}
+    loop dz in [-24.0,0.0,24.0]:
+        loop dx in [-24.0,0.0,24.0]:
+            p=vec2(f32(f64(x)*32+16+dx),f32(f64(z)*32+16+dz))
+            loop index in settlement_bins.get(geography_bin(p.x,p.y),[]):
+                s=world_settlements[index]
+                if s.legacy>=0 or length(p-s.center.xz)>f32(s.radius+80):continue
+                square_key="square:{s.id}"
+                if not (square_key in seen):
+                    seen[square_key]=true
+                    yaw=atan2(f64(s.out.x),f64(s.out.y))
+                    loop prop in place_square(s).props:
+                        sites.extend(walk_prop_sites(prop.kind,place_to_world(s,prop.local),yaw+prop.yaw,prop.scale))
+                port_key="port:{s.id}"
+                if s.harbor.len()>0 and not (port_key in seen):
+                    seen[port_key]=true
+                    loop b in settlement_port(s).buildings:
+                        sites.push(TownSite(b.at,atan2(f64(s.out.x),f64(s.out.y)),b.width,b.depth,20.0,0))
+                loop cell in place_candidate_cells(s,place_to_local(s,p)):
+                    id="{s.id}:{cell.0}:{cell.1}"
+                    if id in seen:continue
+                    seen[id]=true
+                    if let lot=place_lot(s,cell.0,cell.1):
+                        if let parcel=place_ground_lot(s,lot):sites.push(site_from_parcel(parcel))
+    result=WalkCell(sites);walk_cells[key]=result
+    result
+
+walk_site_exclude = (site: TownSite,p: vec2,height: f64) -> vec2:
+    if height>=f64(site.at.y)+site.height+0.05:return p
+    result=site_exclude(site,p)
+    # Wall segments come from the same description that emits farm masonry;
+    # gaps between segments remain gates, with no special navigation exception.
+    loop wall in site_farm_walls(site):
+        mid=(wall.a+wall.b)*0.5
+        at=site_point(site,mid.x,mid.y)
+        ground=place_ground(at)
+        if height>=ground+wall.height:continue
+        box=TownSite(vec3(at.x,f32(ground),at.y),site.yaw,
+            f64(abs(wall.b.x-wall.a.x))+wall.width,
+            f64(abs(wall.b.y-wall.a.y))+wall.width,wall.height,0)
+        result=site_exclude_box(box,result)
+    result
+
+walk_far_exclude = (p: vec2,height: f64) -> vec2:
+    result=walk_published_exclude(p,height)
+    loop site in walk_cell(p).sites:result=walk_site_exclude(site,result,height)
+    result
+
+# Ground-level furniture bounds (awnings and tree crowns are deliberately absent).
+walk_prop_sites = (kind: int,p: vec2,yaw: f64,scale: f64) -> TownSite[]:
+    result: TownSite[]
+    root=TownSite(vec3(p.x,f32(place_ground(p)+0.04),p.y),yaw,1,1,1,0)
+    boxes: vec4[]
+    if kind==0:
+        loop x in [-2.0,2.0]:
+            boxes.push(vec4(f32(x),0,1.7,1.7))
+            loop z in [-1.25,1.25]:boxes.push(vec4(f32(x),f32(z),0.6,0.75))
+    else if kind==1:boxes=[vec4(0,0,5.6,1.2)]
+    else if kind==2:
+        loop x in [-3.0,3.0]:
+            loop z in [-2.0,2.0]:boxes.push(vec4(f32(x),f32(z),0.2,0.2))
+    else if kind==3:boxes=[vec4(0,0,2.4,0.72)]
+    else if kind==4:boxes=[vec4(0,0,0.7,0.7)]
+    else if kind==5:boxes=[vec4(0,0,6,0.2)]
+    else if kind==7:boxes=[vec4(0,0,6.4,6.4)]
+    else if kind==9:boxes=[vec4(0,0,5,5)]
+    else if kind==10 or kind==20 or kind==21:boxes=[vec4(0,0,1.2,1.2)]
+    else if kind==11:boxes=[vec4(0,0,2,3.9)]
+    else if kind==12:boxes=[vec4(0,0,0.35,2.1)]
+    else if kind==14:boxes=[vec4(0,0,2.4,7)]
+    loop box in boxes:
+        at=site_point(root,f64(box.x)*scale,f64(box.y)*scale)
+        result.push(TownSite(vec3(at.x,root.at.y,at.y),yaw,f64(box.z)*scale,f64(box.w)*scale,2.0*scale,0))
+    result
+
+# Geometry producers publish physical pieces once per area. Replacing a batch
+# supports regenerated groves and future canal districts without stale solids.
+walk_published: {str: {str: TownSite[]}} = {}
+walk_publish = (key: str,sites: TownSite[]):
+    global walk_published
+    cells: {str: TownSite[]}={}
+    loop s in sites:
+        radius=max(s.width,s.depth)*0.75+1
+        loop z in int(floor((f64(s.at.z)-radius)/32))..int(floor((f64(s.at.z)+radius)/32))+1:
+            loop x in int(floor((f64(s.at.x)-radius)/32))..int(floor((f64(s.at.x)+radius)/32))+1:
+                cell="{x}:{z}"
+                items=cells.get(cell,[]);items.push(s);cells[cell]=items
+    walk_published[key]=cells
+
+walk_published_exclude = (p: vec2,height: f64) -> vec2:
+    result=p
+    key="{int(floor(f64(p.x)/32))}:{int(floor(f64(p.y)/32))}"
+    loop cells in walk_published.values():
+        loop s in cells.get(key,[]):result=walk_site_exclude(s,result,height)
+    result
