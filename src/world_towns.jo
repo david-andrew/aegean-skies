@@ -1,3 +1,4 @@
+use 'world_point.jo'
 use 'depth_space.jo'
 # Bounded settlement streaming. Full 160 m districts are generated one per
 # frame; shared house/prop meshes and reused instance buffers bound GPU state.
@@ -12,6 +13,9 @@ use 'render_space.jo'
 use 'port_mesh.jo'
 use 'town_sites.jo'
 use 'town_architecture.jo'
+use 'town_visibility.jo'
+use 'town_paving.jo'
+use 'town_mesh.jo'
 use 'quality.jo'
 use 'settlement_ports.jo'
 
@@ -24,7 +28,8 @@ struct TownParams:
     origin: vec3
 
 town_project = (world: vec3,normal: vec3,color: vec4,u: TownParams,surface: vec3) -> ObjOut:
-    curved = render_warped(world,u.light.cam,u.light.warp_a,u.light.warp_b)
+    curved = render_world(world,u.light.cam)
+    if u.light.warp_b.x>0: curved=render_warped(world,u.light.cam,u.light.warp_a,u.light.warp_b)
     ObjOut(u.light.view_proj*vec4(curved,1),world,render_normal(normal,world,u.light.cam),color,surface)
 
 town_vertex = (v: Vertex3D,u: TownParams) -> ObjOut:
@@ -247,14 +252,14 @@ init_world_towns = (towns: Town[]):
         h: Vertex3D[]
         add_house(h,mat4(),12.0,12.0,f64(style%4+1)*4.0+1.0,if style >= 4: 0 else: 12)
         # Balconies belong to the close kit, aligned to actual window floors.
-        world_town_house.push(custom_mesh(h))
+        world_town_house.push(town_mesh(h))
     world_town_proxy = []
     loop style in 0..2:
         far: Vertex3D[]
         add_house_proxy(far,mat4(),12.0,12.0,9.0,if style == 0: 12 else: 0)
-        world_town_proxy.push(custom_mesh(far))
+        world_town_proxy.push(town_mesh(far))
     # (the plane tree's and the cypress's foliage marked to bend in the wind, uv.x 173)
-    world_town_props = [loop k in 0..TOWN_PROP_COUNT: custom_mesh([loop v in town_prop_vertices(k): (if k == 10 or k == 17: Vertex3D(v.pos,v.normal,vec2(173,v.pos.y),v.color) else: v)])]
+    world_town_props = [loop k in 0..TOWN_PROP_COUNT: town_mesh([loop v in town_prop_vertices(k): (if k == 10 or k == 17: Vertex3D(v.pos,v.normal,vec2(173,v.pos.y),v.color) else: v)])]
     empty: Instance3D[]; vertices: Vertex3D[]
     world_town_house_buffer = [loop k in 0..8: instance_buffer(empty)]
     world_town_far_buffer = [loop k in 0..2: instance_buffer(empty)]
@@ -404,6 +409,8 @@ draw_world_towns = (towns: Town[],L: Light,t: f64):
     origin = render_origin(cam)
     p.view_proj = render_view_proj(origin)
     tp = TownParams(p,origin)
+    # Opaque near frontages write depth before the large shared house meshes.
+    draw_close_town(towns,cam,L,t)
     if world_town_harbors.count > 0: draw(world_town_sh,world_town_harbors,tp)
     loop k in 0..2:
         if world_town_far_buffer[k].count > 0: draw_instanced(world_town_inst_sh,world_town_proxy[k],world_town_far_buffer[k],tp)
@@ -415,7 +422,6 @@ draw_world_towns = (towns: Town[],L: Light,t: f64):
     loop k in 0..TOWN_PROP_COUNT:
         tp.light.sway = if k == 10 or k == 17: 1.0 else: 0.0
         if world_town_prop_buffers[k].count > 0: draw_instanced(world_town_inst_sh,world_town_props[k],world_town_prop_buffers[k],tp)
-    draw_close_town(towns,cam,L,t)
 
 # Aerial harbor silhouettes have no bollards, windows, or decorative meshes.
 build_far_harbor = (s: WorldSettlement) -> Vertex3D[]:
@@ -424,6 +430,7 @@ build_far_harbor = (s: WorldSettlement) -> Vertex3D[]:
 # The close kit is created on the first walking-level visit, never at startup
 # or for a distant aerial town. Reused buffers and a capped nearest-site list.
 close_town_meshes: Mesh[]
+close_town_bounds: vec4[]
 close_town_buffers: InstanceBuffer[Instance3D][]
 close_town_props: InstanceBuffer[Instance3D][]
 close_town_paths: PavingDraw
@@ -437,6 +444,11 @@ close_town_instances=0
 close_town_prop_count=0
 close_town_prop_gap=0.0
 close_town_local_bound=0.0
+close_town_drawn_fixtures: vec4[]
+close_fixture_drawn = (kind: int,p: vec3) -> bool:
+    loop fixture in close_town_drawn_fixtures:
+        if int(fixture.w)==kind and length(fixture.xyz-world_local(world_point(p),close_town_origin))<0.08: return true
+    false
 
 close_site_limit = () -> int: if render_quality.tier==0: 24 else: if render_quality.tier==1: 48 else: 80
 close_site_radius = () -> f32: if render_quality.tier==0: 65.0 else: if render_quality.tier==1: 95.0 else: 130.0
@@ -464,20 +476,22 @@ close_sites = (towns: Town[],cam: vec3) -> TownSite[]:
     result
 
 prepare_close_town = (towns: Town[],cam: vec3):
-    global close_town_origin,close_town_meshes,close_town_buffers,close_town_props,close_town_paths,close_town_last,close_town_stamp,close_town_density,close_town_sites,close_town_instances
-    global close_town_prop_count,close_town_prop_gap,close_town_local_bound,close_town_prop_roots
+    global close_town_origin,close_town_prop_count,close_town_prop_gap,close_town_local_bound,close_town_prop_roots
+    global close_town_meshes,close_town_bounds,close_town_buffers,close_town_props,close_town_paths,close_town_last,close_town_stamp,close_town_density,close_town_sites,close_town_instances,close_town_drawn_fixtures
     stamp=world_town_slots.len()*4+render_quality.tier
     density=world_town_density
     if length(cam-close_town_last)<12 and stamp==close_town_stamp and density==close_town_density and world_town_generated==0: return
     close_town_last=cam; close_town_stamp=stamp; close_town_density=density
+    close_town_drawn_fixtures=[]
     origin=render_origin(cam);close_town_origin=origin
     sites=close_sites(towns,cam); close_town_sites=sites.len(); close_town_instances=0
     close_town_prop_count=0;close_town_prop_gap=0;close_town_local_bound=0;close_town_prop_roots=[]
     if close_town_meshes.len()==0:
         if sites.len()==0: return
-        close_town_meshes=[loop k in 0..ARCH_COUNT: custom_mesh(arch_vertices(k))]
-        empty: Instance3D[]
-        close_town_buffers=[loop k in 0..ARCH_COUNT: instance_buffer(empty)]
+        empty: Instance3D[]; vertices: Vertex3D[]
+        close_town_meshes=[loop lod in 0..3: loop k in 0..ARCH_COUNT: town_mesh(if lod==2 or arch_has_lod(k): arch_vertices(k,lod) else: vertices)]
+        close_town_bounds=[loop k in 0..ARCH_COUNT: town_mesh_bound(arch_vertices(k))]
+        close_town_buffers=[loop k in 0..ARCH_COUNT*3: instance_buffer(empty)]
         close_town_props=[loop k in 0..TOWN_PROP_COUNT: instance_buffer(empty)]
     lists: Instance3D[][]=[loop k in 0..ARCH_COUNT: []]
     props: Instance3D[][]=[loop k in 0..TOWN_PROP_COUNT: []]
@@ -493,14 +507,27 @@ prepare_close_town = (towns: Town[],cam: vec3):
         # Frontage paving and the side passage remain present at minimum density.
         a=site_point(s,-s.width*0.5-1.4,s.depth*0.5+2.5)
         b=site_point(s,s.width*0.5+1.4,s.depth*0.5+2.5)
-        town_path(paths,a,b,3.5,true,origin)
+        town_street(paths,a,b,3.5,origin)
         arch_side_lanes(lists,paths,s,sites,ornament,origin)
         if ornament: arch_courtyard(lists,props,paths,s,sites,origin)
+    local_sites: TownSite[]
+    loop s in sites:
+        local_site=s; local_site.at=world_local(world_point(s.at),origin)
+        local_sites.push(local_site)
+    local_cam=world_local(world_point(cam),origin)
+    detailed: Instance3D[][]=[loop k in 0..ARCH_COUNT*3: []]
     loop k in 0..ARCH_COUNT:
         close_town_instances+=lists[k].len()
-        if env("AEGEAN_WALK_TRACE")!=none:
-            loop inst in lists[k]:close_town_local_bound=max(close_town_local_bound,f64(length(inst.model[3].xz)))
-        set_instances(close_town_buffers[k],lists[k])
+        loop instance in lists[k]:
+            if env("AEGEAN_WALK_TRACE")!=none: close_town_local_bound=max(close_town_local_bound,f64(length(instance.model[3].xz)))
+            bound=close_town_bounds[k]
+            scale=max(length(instance.model[0].xyz),max(length(instance.model[1].xyz),length(instance.model[2].xyz)))
+            if town_hidden(local_sites,local_cam,transform_point(instance.model,bound.xyz),bound.w*scale): continue
+            if k==8 or k==10 or k==11: close_town_drawn_fixtures.push(vec4(instance.model[3].xyz,f32(k)))
+            distance=length(instance.model[3].xyz-local_cam)
+            lod=if not arch_has_lod(k) or distance<32: 2 else: if distance<65: 1 else: 0
+            detailed[k+lod*ARCH_COUNT].push(instance)
+    loop k in 0..detailed.len(): set_instances(close_town_buffers[k],detailed[k])
     loop k in 0..TOWN_PROP_COUNT:
         close_town_instances+=props[k].len()
         close_town_prop_count+=props[k].len()
@@ -522,7 +549,14 @@ draw_close_town = (towns: Town[],cam: vec3,L: Light,t: f64):
     p.model=translation(close_town_origin-origin)
     tp=TownParams(p,origin-close_town_origin)
     draw_paving(close_town_paths,world_town_sh,tp,cam,close_town_origin)
-    loop k in 0..ARCH_COUNT:
-        if close_town_buffers[k].count>0: draw_instanced(world_town_inst_sh,close_town_meshes[k],close_town_buffers[k],tp)
+    loop group in 0..5:
+        zone(["close openings","close balconies","close flowers","close structure","close domestic"][group])
+        loop k in 0..close_town_buffers.len():
+            kind=k%ARCH_COUNT
+            g=if kind<6 or kind==17: 0 else: if kind==6: 1 else: if kind==9: 2 else: if kind>=14: 3 else: 4
+            if g==group and close_town_buffers[k].count>0: draw_instanced(world_town_inst_sh,close_town_meshes[k],close_town_buffers[k],tp)
+        zone_end()
+    zone("close old props")
     loop k in 0..TOWN_PROP_COUNT:
         if close_town_props[k].count>0: draw_instanced(world_town_inst_sh,world_town_props[k],close_town_props[k],tp)
+    zone_end()
