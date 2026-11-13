@@ -666,6 +666,19 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![A battle card](img/battle-card.png)
 
+### Game slots and autosave
+
+- **Definition:** three player-selected saved games, each with two recovery **banks**. A complete
+  checkpoint includes the living world, exact player/aircraft state, physical battle/fleet,
+  races, notebook, cat friendship and other presentation progress. **Autosave** updates the
+  active slot after reaching a safe mooring or town on foot, and on a safe timer.
+- **Code:** `src/game_session.jo`, `src/game_slots.jo`, `src/living_save.jo`; shell requests in
+  `aegean.jo`. API, format and failure rules: [Game saves](../game-saves.md).
+- **Rules:** a queued request is not a successful save. Browser completion means the IndexedDB
+  transaction committed. Never overwrite an unknown schema or the last intact bank on failure;
+  never attach a new story to a previous slot without a selection. Rendering handles are rebuilt,
+  not serialized. Slots are numbered 0–2 in the API; the menu chooses their displayed labels.
+
 ### Voices
 
 - **Definition:** the fourteen ways townsfolk talk, chosen from trade, age and temperament: salt,

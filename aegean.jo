@@ -109,6 +109,10 @@ use 'src/fabric.jo'
 use 'src/debugmenu.jo'
 use 'src/music_audition.jo'
 use 'src/notebook.jo'
+use 'src/game_session.jo'
+use 'src/game_slots.jo'
+import 'src/living_save.jo' as save_types
+use 'src/war_checkpoint.jo'
 use 'src/leisure_menu.jo'
 use 'src/leisure.jo'
 use 'src/leisure_view.jo'
@@ -1150,6 +1154,7 @@ load_scenario = (key: str) -> bool:
     global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
+    global leisure,leisure_spent,leisure_had,skip
     load_started=time()
     fresh=key=="start"
     if fresh:
@@ -1168,6 +1173,7 @@ load_scenario = (key: str) -> bool:
         if loaded==none:return false
         scenario_templates[cache_key]=loaded!
     next=scenario_templates[cache_key]
+    detach_game_slot_context()
     seed_random(if fresh:5 else:1934);walkers=initial_walkers
     hush_audio(audio);hush_combat_audio(combat_audio);hush_battle_radio(battle_radio)
     audio.clock=0;audio.clock_cloth=0;audio.settled_at=0;audio.settled_load=1;audio.quiet=0.5;audio.next_gull=4;audio.flap_next=0;audio.flap_energy=1
@@ -1205,6 +1211,7 @@ load_scenario = (key: str) -> bool:
     if fresh:save_notebook(notebook)
     toast="";toast_until=0;show_chart=false;chart_local=false
     battle_card=BattleCard();war_chart=WarChart();presentation=lt.PresentationState();ui_mission= -1
+    leisure=LeisureState();leisure_spent=0;leisure_had=[];skip=TimeSkip();bar_music_stop(bar_music)
     talk_at_start=false;pad_talk=false;click_took_mouse=true
     t=0;hour=next.hour;wind_bias=0;wind_now=Wind()
     follow=follow_camera(distance=5.5,pitch=next.camera_pitch,height=1.6);follow.yaw=next.camera_yaw
@@ -1227,6 +1234,179 @@ load_scenario = (key: str) -> bool:
     if env("AEGEAN_RUNTIME_TRACE")!=none:print("SCENARIO_FEEL player={pc.spec.player} scale={pc.spec.handling_scale} pure={dbg.tweaks.pure_scale} grip={dbg.tweaks.quick_grip} trial={dbg.tweaks.chaotic_stalls} external={battle.actors[combat_index(battle,living_world.people[living_world.player].craft)].external}")
     print("SCENARIO {key}: {battle.actors.len()} aircraft, player {pc.state.position}, weather {living_world.weather.len()}")
     true
+
+# ---------------- complete game slots (pause-menu presentation lives elsewhere) ----------------
+game_saves=GameSlots()
+init_game_slots(game_saves)
+game_slot_views: GameSlotView[]
+game_slots_known=false
+game_active_slot= -1
+game_save_command=""
+game_save_requested= -1
+game_save_seen= -1
+game_session_epoch=0
+game_operation_epoch= -1
+game_save_error_logged=""
+game_autosave=AutosaveClock()
+
+# A new situation/story cannot silently attach itself to the previous save slot.
+# An already submitted browser transaction can finish, but its result belongs to its old epoch.
+detach_game_slot_context = ():
+    global game_session_epoch,game_active_slot,game_slots_known,game_save_command,game_autosave
+    game_session_epoch+=1;game_active_slot= -1;game_slots_known=false;game_save_command="";game_autosave=AutosaveClock()
+
+game_save_slots = () -> GameSlotView[]: game_slot_views
+game_save_status = () -> GameSaveStatus:
+    GameSaveStatus(game_saves.ready,game_saves.busy or game_save_command!="" or game_saves.loaded!=none,game_saves.operation,game_saves.slot,game_saves.sequence,game_saves.error,active_slot=game_active_slot)
+
+queue_game_slot = (command: str,slot: int) -> bool:
+    global game_save_command,game_save_requested
+    if not game_saves.ready or game_saves.busy or game_save_command!="" or game_saves.loaded!=none or not valid_slot(slot): return false
+    game_save_command=command;game_save_requested=slot
+    true
+request_game_save = (slot: int) -> bool: queue_game_slot("save",slot)
+request_game_load = (slot: int) -> bool: queue_game_slot("load",slot)
+request_game_delete = (slot: int) -> bool: queue_game_slot("delete",slot)
+
+# Registry bins bound this query; no full-world scan or terrain work on the frame path.
+game_place_at = (at: vec3) -> int:
+    best= -1;distance=1e20
+    loop index in settlement_registry.settlement_bins.get(geography_bin(f64(at.x),f64(at.z)),[]):
+        place=settlement_registry.world_settlements[index]
+        d=f64(length(at.xz-place.center.xz))
+        if d<f64(place.radius)+100 and d<distance:
+            best=(if place.legacy>=0:place.legacy else:place.id)
+            distance=d
+    best
+
+capture_running_game = () -> lt.SaveGame | save_types.LivingSaveError:
+    if active_scenario!="": return save_types.LivingSaveError("Situations are separate from saved games.")
+    if skip.active: return save_types.LivingSaveError("Finish resting or working before saving.")
+    if me.mode==.walking:sync_walker_point()
+    who=living_world.people[living_world.player]
+    at=if me.mode==.aboard:pc.state.position else:me.pos
+    place=game_place_at(at)
+    summary=lt.SaveSummary(minute=living_world.minute,place=place,place_name=if place>=0:living.place_name(living_world,place) else:"Away from a town",player_name=who.name,mode=str(me.mode))
+    session=GameSession(player_mode=int(me.mode),player_position=me.pos,player_point=walker_point,player_yaw=me.yaw,player_phase=me.phase,
+        flyer=pc,air=air_events,notes=notebook.notes,world_time=t,hour=hour,wind_bias=wind_bias,accumulator=traffic_scene.accumulator,
+        rope_anchor=rope.anchor,rope_loose=rope.loose,rope_tied=rope.tied,mooring=vessel_mooring,speed=speed_scale,lift=lift_scale,bullets=bullet_scale,
+        wind=wind_now,feel=dbg.tweaks,follow=follow,free=free,leisure=leisure,leisure_at=leisure_at,leisure_spent=leisure_spent,leisure_had=leisure_had,served_look_until=served_look_until)
+    capture_game(living_world,presentation,session,traffic,traffic_scene,vessels,battle,terrain_key(),summary)
+
+apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
+    global living_world,presentation,pc,me,traffic,traffic_scene,air_events,all_air_traffic,vessels,battle,vessel_bindings,vessel_mooring
+    global walker_point,walker_published,folks,folk_sync_t,notebook,my_jobs,t,hour,wind_bias,wind_now,follow,follow_frame,free,descent_camera
+    global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,ui_mission,battle_card,war_chart,view_target,target_scan,rope,was_moored
+    global wakes,vapor_trails,splashes,last_shots,plunge,plunge_v,active_scenario,judge_camera,talk_at_start,cat_scene,combat_visual,air_visual,guns
+    global fuel_pier_seen,fuel_pier_frame,fuel_offered_at,refuel_start,refuel_len,known_maps,toast,toast_until
+    global leisure,leisure_at,leisure_spent,leisure_had,leisure_ui,leisure_line,skip,served_look_until,served_pending
+    # Everything that can reject the load is checked before any running state is replaced.
+    if session_error(game,session)!="" or session.flyer.model<0 or session.flyer.model>=craft_models.len(): return false
+    fleet=VesselFleet();fight=Battle()
+    if not restore_war_scene(game.world,fleet,fight): return false
+    hush_audio(audio);hush_combat_audio(combat_audio);hush_battle_radio(battle_radio);hush_engines(hearing)
+    life_audio.hush_life_audio(life_sound);ambience_hush(world_ambience.sound);radio.radio_silence(cockpit_radio)
+    set_speed_scale(session.speed);lt.scale_airframes(session.speed);set_lift_scale(session.lift);set_bullet_scale(session.bullets)
+    dbg.tweaks=session.feel;set_tweaks(session.feel)
+    living_world=game.world;presentation=game.presentation;pc=session.flyer;air_events=session.air
+    traffic_scene=living_scene.SceneAdapter(accumulator=session.accumulator)
+    traffic=make_living_traffic(living_world,craft_models);bind_living_player(pc,living_world,traffic_scene)
+    loop pilot in air_events.pilots:
+        if pilot.active: living_world.aircraft[pilot.craft].move_owner=.scene
+    vessels=fleet;battle=fight;vessel_bindings=VesselBindings();vessel_mooring=session.mooring
+    loop ship in vessels.ships:
+        id=ship.id-FAR_VESSEL_BASE
+        if id>=0 and id<living_world.far.vehicles.len(): living_world.far.vehicles[id].scene_owned=true
+    me=Player(mode=Mode(session.player_mode),pos=session.player_position,yaw=session.player_yaw,phase=session.player_phase)
+    walker_point=session.player_point;walker_published=me.pos
+    t=session.world_time;hour=session.hour;wind_bias=session.wind_bias;wind_now=session.wind
+    follow=session.follow;follow_frame=FollowFrame();free=session.free;descent_camera=DescentCamera()
+    folks=[];sync_folk(folks,living_world,towns);folk_sync_t=t
+    my_jobs={}
+    loop id in living_world.active_jobs:
+        job=living_world.jobs[id]
+        if job.carrier==living_world.player and job.state==.claimed:my_jobs[id]=job.state
+    notebook=Notebook(storage_key=slot_prefix(game_saves.slot)+"-notebook",notes=session.notes)
+    known_maps={}
+    loop copy in living.owned_maps(living_world,living_world.player):known_maps[copy.id]=true
+    all_air_traffic=traffic;view_target=TargetView();target_scan=0;war_chart=WarChart();battle_card=BattleCard()
+    # Transient effects and interactions are rebuilt from restored positions, never old handles.
+    spray_ps.items.clear();spray_ps.billows.clear();smoke_ps.items.clear();dust_ps.items.clear()
+    wakes=[loop _ in 0..traffic.len()+1:WakeTrail()];vapor_trails=[Trail(),Trail()];splashes=[];last_shots=0;plunge=0;plunge_v=0
+    rope.anchor=session.rope_anchor;rope.loose=session.rope_loose;rope.tied=session.rope_tied;was_moored=pc.state.moored
+    ui=.none;ui_folk= -1;ui_place= -1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job= -1;ui_mission= -1
+    fuel_pier_seen=none;fuel_pier_frame= -100;fuel_offered_at=FUEL_NOWHERE;refuel_start= -100;refuel_len=0
+    if cat_scene.purr_voice>=0:stop(cat_scene.purr_voice)
+    cats=cat_scene
+    cat_scene=CatScene(meshes=cats.meshes,ready=cats.ready,purr=cats.purr,sound_ready=cats.sound_ready)
+    cv=combat_visual
+    combat_visual=CombatView(low=cv.low,low_parts=cv.low_parts,chute=cv.chute,hole=cv.hole,oil=cv.oil,pilot=cv.pilot,distant_pilot=cv.distant_pilot,
+        trails=BattleTrails(mesh=cv.trails.mesh,shader=cv.trails.shader))
+    av=air_visual
+    air_visual=AirView(silhouette=av.silhouette,exhaust=BattleTrails(mesh=av.exhaust.mesh,shader=av.exhaust.shader))
+    guns=Guns();life_sound.last_beat= -1
+    world_ambience.sound.pending=[];world_ambience.sound.sources=[];world_ambience.sound.last_time= -1;world_ambience.sound.refresh=0
+    world_ambience.previous_scan= -1
+    bar_music_stop(bar_music)
+    leisure=session.leisure;leisure_at=session.leisure_at;leisure_spent=session.leisure_spent;leisure_had=session.leisure_had
+    leisure_ui=0;leisure_line="";skip=TimeSkip();served_look_until=session.served_look_until;served_pending=false
+    if leisure.sitting!="":ui=.leisure
+    active_scenario="";judge_camera=none;talk_at_start=false;toast="";toast_until=0
+    weather_scene_step(living_world,if me.mode==.aboard:pc.state.position else:me.pos,hour,0)
+    update_player_follow(0,input=false)
+    mouse_lock(false)
+    true
+
+# At update entry the previous frame is complete, including drawing-time purchases.
+# This runs while paused too. Loaded World values are consumed before the next simulation step.
+process_game_saves = () -> bool:
+    global game_save_seen,game_active_slot,game_slots_known,game_slot_views,game_save_command,game_save_requested,game_save_error_logged,game_operation_epoch
+    poll_game_slots(game_saves)
+    if game_saves.ready and not game_saves.busy and (not game_slots_known or game_save_seen!=game_saves.sequence):
+        game_slot_views=list_game_slots(game_saves,terrain_key())
+        if not game_slots_known:
+            loop view in game_slot_views:
+                if not view.exists and game_active_slot<0:game_active_slot=view.slot
+            game_slots_known=true
+    if not game_saves.busy and game_save_seen!=game_saves.sequence:
+        game_save_seen=game_saves.sequence
+        if game_saves.operation=="save" and game_operation_epoch==game_session_epoch:
+            ack_autosave(game_autosave,game_saves.error=="")
+            if game_saves.error=="":game_active_slot=game_saves.slot
+        if game_saves.operation=="delete" and game_operation_epoch==game_session_epoch and game_saves.error=="" and game_active_slot==game_saves.slot:game_active_slot= -1
+        if game_saves.error!="" and game_saves.error!=game_save_error_logged:
+            game_save_error_logged=game_saves.error
+            eprint("[game save] {game_saves.operation} slot={game_saves.slot} minute={living_world.minute}: {game_saves.error}")
+    if let game=take_game_slot(game_saves):
+        if game_operation_epoch!=game_session_epoch:return false
+        runtime=read_game_session(game)
+        if runtime is GameSession and apply_saved_game(game,runtime):
+            game_active_slot=game_saves.slot;ack_autosave(game_autosave,true)
+            return true
+        game_saves.error="The saved player could not be restored; the running game is unchanged."
+    if game_saves.busy or game_save_command=="":return false
+    game_operation_epoch=game_session_epoch
+    command=game_save_command;slot=game_save_requested;game_save_command="";game_save_requested= -1
+    if command=="load":_=load_game_slot(game_saves,slot,terrain_key())
+    else if command=="delete":_=delete_game_slot(game_saves,slot)
+    else:
+        ack_autosave(game_autosave,false)
+        game=capture_running_game()
+        if game is lt.SaveGame:_=save_game_slot(game_saves,slot,game)
+        else:
+            game_saves.operation="save";game_saves.slot=slot;finish_slot_operation(game_saves,game.message)
+    false
+
+queue_autosave = (dt: f64):
+    safe=active_scenario=="" and not skip.active and not refueling() and (ui==.none or (ui==.leisure and leisure_ui==0)) and not notebook.open and not cat_busy(cat_scene)
+    safe=safe and ((me.mode==.aboard and pc.state.moored and not pc.state.crashed) or (me.mode==.walking and game_place_at(me.pos)>=0))
+    if safe:
+        at=if me.mode==.aboard:pc.state.position else:me.pos
+        if autosave_combat_near(living_world,at):safe=false
+        ci=combat_index(battle,living_world.people[living_world.player].craft)
+        if ci>=0 and battle.actors[ci].pilot.trigger:safe=false
+    if step_autosave(game_autosave,dt,safe,game_saves.ready and not game_saves.busy and game_active_slot>=0 and living_world.far.populated):
+        _=request_game_save(game_active_slot)
 
 # what the debugging panel changed or asked for
 debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
@@ -1911,6 +2091,7 @@ stage_capture_rescue = (stage: str):
         notebook.fresh = true
 
 update = (dt: f64):
+    if process_game_saves(): return
     global air_visual,air_events,all_air_traffic,view_target,target_scan
     global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused, descent_camera, vessel_mooring, was_moored
     # (the touch screen's stick and buttons, read as keys below; mode: 0 flying, 1 on the water,
@@ -2462,6 +2643,7 @@ update = (dt: f64):
         if tr.flying and tr.state.throttle < 0.05: 0.7 else: f64(tr.state.throttle),
         not tr.state.moored and (tr.flying or tr.state.throttle > 0.02 or f64(length(tr.state.velocity)) > 0.5),
         engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))), voice = aircraft_profile(tr.kind).voice,point=craft_point(tr.state))], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t,world_offset(world_point(scene_camera()),render_eye_low))
+    queue_autosave(dt)
     set_tweaks(dbg.tweaks)
     set_options(dbg.opts)
     audio.air_on = dbg.snd_air

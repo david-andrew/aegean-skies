@@ -316,3 +316,91 @@
     throw Error(`Shader link failed: ${this.getProgramInfoLog(program) || "(driver returned an empty link log)"}\n${limits}\n${stages.join("\n")}`);
   };
 })(globalThis);
+
+// Game slot storage (independent of graphics).
+// Three complete slots need more than localStorage's UTF-16 quota. IndexedDB stores raw
+// compressed bytes, with each header/body pair committed by one atomic transaction.
+(function(root) {
+  class GameSlotStore {
+    constructor(idb, name="aegean-skies-game-v1") { this.idb=idb; this.name=name; this.db=null; this.headers=new Map(); }
+    async open() {
+      if (!this.idb) throw Error("This browser cannot keep game slots (IndexedDB unavailable).");
+      this.db=await new Promise((resolve,reject)=>{
+        const r=this.idb.open(this.name,1);
+        r.onupgradeneeded=()=>{r.result.createObjectStore("headers");r.result.createObjectStore("banks");};
+        r.onerror=()=>reject(r.error); r.onblocked=()=>reject(Error("Close the other game tab to open saved games."));
+        r.onsuccess=()=>resolve(r.result);
+      });
+      this.db.onversionchange=()=>{this.db.close();this.db=null;};
+      const tx=this.db.transaction("headers","readonly"), store=tx.objectStore("headers");
+      const [keys,values]=await Promise.all([this.request(store.getAllKeys()),this.request(store.getAll())]);
+      this.headers=new Map(keys.map((k,i)=>[k,values[i]]));
+    }
+    request(r) { return new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);}); }
+    key(slot,bank) { if(!Number.isInteger(slot)||slot<0||slot>2||bank<0||bank>1)throw Error("Invalid game slot.");return `${slot}:${bank}`; }
+    header(slot,bank) { return this.headers.get(this.key(slot,bank))?.text || ""; }
+    async read(slot) {
+      const tx=this.db.transaction("banks","readonly"), store=tx.objectStore("banks");
+      const result=await Promise.all([0,1].map(bank=>this.request(store.get(this.key(slot,bank)))));
+      for(const bank of result) if(bank && (typeof bank.text!=="string" || bank.text.length>8000000 || !(bank.body instanceof ArrayBuffer) || bank.body.byteLength>16000000))throw Error("Saved game exceeds storage bounds.");
+      result.forEach((v,b)=>{const k=this.key(slot,b);if(v)this.headers.set(k,{text:v.text,generation:v.generation});else this.headers.delete(k);});
+      return result;
+    }
+    async write(slot,bank,text,body,generation,expected) {
+      const key=this.key(slot,bank);
+      if(typeof text!=="string" || text.length>8000000 || !(body instanceof Uint8Array) || !body.length || body.length>16000000)throw Error("Saved game exceeds storage bounds.");
+      const value={text,body:body.slice().buffer,generation};
+      await new Promise((resolve,reject)=>{
+        const tx=this.db.transaction(["headers","banks"],"readwrite"), h=tx.objectStore("headers");
+        let count=0, current=0, failure=null;
+        for(let b=0;b<2;b++) {
+          const r=h.get(this.key(slot,b));
+          r.onsuccess=()=>{
+            current=Math.max(current,r.result?.generation||0);
+            if(++count!==2)return;
+            if(current!==expected){failure=Error("Another tab changed this slot; reload it before saving.");tx.abort();return;}
+            try {tx.objectStore("banks").put(value,key);h.put({text,generation},key);}
+            catch(e){failure=e;try{tx.abort();}catch{}}
+          };
+        }
+        tx.oncomplete=()=>resolve(); tx.onabort=()=>reject(failure||tx.error||Error("Game save was not committed."));tx.onerror=()=>{};
+      });
+      this.headers.set(key,{text,generation});
+    }
+    async delete(slot) {
+      await new Promise((resolve,reject)=>{
+        const tx=this.db.transaction(["headers","banks"],"readwrite");
+        for(let b=0;b<2;b++)for(const name of ["headers","banks"])tx.objectStore(name).delete(this.key(slot,b));
+        tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error||Error("Game slot was not deleted."));tx.onerror=()=>{};
+      });
+      for(let b=0;b<2;b++)this.headers.delete(this.key(slot,b));
+    }
+  }
+  root.AegeanSlots={GameSlotStore};
+  if(typeof module!=="undefined")module.exports.GameSlotStore=GameSlotStore;
+  if(typeof sloppy==="undefined")return;
+  const store=new GameSlotStore(root.indexedDB), enc=new TextEncoder();
+  let state=0, buffers=[], error="";
+  function start(work) {
+    if(state===1)return;
+    state=1;buffers=[];error="";
+    Promise.resolve().then(work).then(()=>{state=2;},e=>{error=String(e?.message||e);state=-1;});
+  }
+  function copy(value,p,n){const dst=sloppy.bytes(p,n);if(dst.length!==value.length)throw Error("Save bridge length mismatch.");dst.set(value);}
+  sloppy.env.aegean_slots_open=()=>start(()=>store.open());
+  sloppy.env.aegean_slots_status=()=>BigInt(state);
+  sloppy.env.aegean_slots_header_size=(slot,bank)=>BigInt(enc.encode(store.header(Number(slot),Number(bank))).length);
+  sloppy.env.aegean_slots_header_copy=(slot,bank,p,n)=>copy(enc.encode(store.header(Number(slot),Number(bank))),p,n);
+  sloppy.env.aegean_slots_read=slot=>start(async()=>{
+    const banks=await store.read(Number(slot));
+    buffers=banks.flatMap(v=>v?[enc.encode(v.text),new Uint8Array(v.body)]:[new Uint8Array(),new Uint8Array()]);
+  });
+  sloppy.env.aegean_slots_write=(slot,bank,generation,expected,p,n,b,k)=>{
+    const text=sloppy.text(p,n), body=sloppy.bytes(b,k).slice();
+    start(()=>store.write(Number(slot),Number(bank),text,body,Number(generation),Number(expected)));
+  };
+  sloppy.env.aegean_slots_delete=slot=>start(()=>store.delete(Number(slot)));
+  sloppy.env.aegean_slots_size=index=>BigInt((Number(index)===4?enc.encode(error):buffers[Number(index)]||[]).length);
+  sloppy.env.aegean_slots_copy=(index,p,n)=>copy(Number(index)===4?enc.encode(error):buffers[Number(index)]||new Uint8Array(),p,n);
+  sloppy.env.aegean_slots_release=()=>{buffers=[];};
+})(typeof globalThis!=="undefined"?globalThis:this);

@@ -1,0 +1,135 @@
+# Capacity responses to actual paid sales or collections, funded by their real counter.
+# Household wagons and adult drivers already exist; parts and cash have real owners.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_far_orders.jo'
+use 'living_money.jo'
+use 'living_far_news.jo'
+use 'living_place_context.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+use 'living_work.jo'
+use 'living_caravan_audit.jo'
+
+cart_wagons = (v: FarVehicle) -> int:
+    result=1
+    loop asset in v.cart_assets: result+=asset.wagons
+    result
+
+cart_payload = (w: World, vehicle: int) -> int:
+    link=w.far.links[w.far.vehicles[vehicle].route]
+    if link.road>=0 and not link.trail: 1500000 else: 500000
+
+_cart_team_limit = (w: World, vehicle: int, place: int, wanted: int) -> int:
+    v=w.far.vehicles[vehicle]; d=w.far.districts[place]
+    if v.cart_assets.len()>=8 or v.hull<=350: return 0
+    units=min(min(min(8,wanted),25-cart_wagons(v)),min(d.spare_wagons,max(0,d.workers[d.born_country]-3)))
+    if d.output==3:
+        population=0
+        loop c in 0..3: population+=d.workers[c]+d.dependents[c]
+        farming=max(3,(population*28+d.productivity-1)/d.productivity)
+        units=min(units,max(0,d.workers[d.born_country]-farming))
+    max(0,min(units,w.accounts[d.market_account].cents/6300))
+
+_request_cart_parts = (w: mut World, place: int, wanted: int):
+    if wanted<=0: return
+    target=wanted*500+1000; old=w.far.districts[place].cart_parts_target
+    w.far.districts[place].cart_parts_target=max(old,target)
+    w.far.districts[place].target[5]=max(w.far.districts[place].target[5],target)
+    if target>old and far_market_qty(w,place,5)<target:
+        far_local_news(w,place,"carriage_parts_need","The {life_place_name(w,place)} counter is seeking replacement parts to prepare up to {wanted} existing household wagons for its outstanding grain orders.")
+
+_buy_cart_teams = (w: mut World, vehicle: int, place: int, wanted: int, voyage: int, cause: str) -> int:
+    v=w.far.vehicles[vehicle]; d=w.far.districts[place]
+    if v.kind!=.cart or v.duty!=.merchant or v.journey>=0 or v.place!=place or v.cart_assets.len()>=8 or v.hull<=350 or v.route<0 or v.route>=w.far.links.len(): return 0
+    loop asset in v.cart_assets:
+        if asset.voyage==voyage and asset.place==place: return 0
+    units=min(_cart_team_limit(w,vehicle,place,wanted),far_market_qty(w,place,5)/500)
+    if units<=0: caravan_audit("refit.no_parts"); return 0
+    caravan_audit("refit.hired",units)
+    batch=far_take_market(w,place,5,units*500); roots=batch.roots.keys(); roots.sort()
+    if not transfer(w,d.market_account,d.household_account,units*5100,.trade,vehicle):
+        far_put_market(w,place,batch); return 0
+    if not transfer(w,d.market_account,v.account,units*1200,.rent,vehicle):
+        living_fault("far.cart_working_cash",guard_context(w)+" vehicle={vehicle}"); return 0
+    far_use(w,batch)
+    w.far.districts[place].spare_wagons-=units
+    w.far.districts[place].workers[d.born_country]-=units
+    w.far.crew_population[d.born_country]+=units
+    w.far.vehicles[vehicle].crew[d.born_country]+=units
+    w.far.vehicles[vehicle].capacity_grams+=units*cart_payload(w,vehicle)
+    w.far.vehicles[vehicle].revision+=1
+    why=cause+" The {life_place_name(w,place)} counter agreed to buy {units} existing household wagons, hire {units} local drivers and advance their expenses for carrier {vehicle}: {f64(units*6300)/100.0:.0} lire, using its own maintenance parts. This counter owns the wagons."
+    w.far.vehicles[vehicle].cart_assets.push(CartInvestment(place,d.market_account,units,w.minute,units*6300,roots,voyage=voyage,why=why,parts_description=work_supply(w,roots)))
+    far_local_news(w,place,"carriage_investment",why)
+    units
+
+_grow_cart_service = (w: mut World, voyage: int) -> int:
+    if not (voyage in w.far.journeys): return 0
+    receipt=w.far.journeys[voyage]; vehicle=receipt.vehicle
+    if vehicle<0 or vehicle>=w.far.vehicles.len() or receipt.good!=3 or receipt.survey: return 0
+    v=w.far.vehicles[vehicle]
+    if v.kind!=.cart or v.duty!=.merchant or v.journey>=0 or v.place!=receipt.destination or v.route<0 or v.route>=w.far.links.len(): return 0
+    caravan_audit("receive.grain")
+    receipt_mass=receipt.quantity*w.goods[3].package_grams/1000
+    if receipt_mass<v.capacity_grams*4/5: caravan_audit("receive.partial"); return 0
+    d=w.far.districts[v.place]
+    wholesale=max(0,counter_purchase_target(w,v.place,3)-counter_purchase_own_target(w,v.place,3))
+    payload=cart_payload(w,vehicle)
+    if d.output==3 and wholesale*w.goods[3].package_grams/1000<payload: caravan_audit("receive.farm_no_customer"); return 0
+    missing=max(0,counter_purchase_target(w,v.place,3)-far_market_qty(w,v.place,3))
+    mass=max(0,receipt_mass+missing*w.goods[3].package_grams/1000-v.capacity_grams)
+    if mass<payload: caravan_audit("receive.no_extra_load"); return 0
+    wanted=_cart_team_limit(w,vehicle,v.place,(mass+payload-1)/payload)
+    if wanted==0: caravan_audit("receive.no_team_budget")
+    _request_cart_parts(w,v.place,wanted)
+    cause="At {work_date(w.minute)}, the counter collected grain from actual voyage {voyage}, but its recorded reserve and received customer orders were still short by {f64(missing)/1000.0:.1} packages."
+    _buy_cart_teams(w,vehicle,v.place,wanted,voyage,cause)
+
+# Called within the departure transaction AFTER the actual paid invoice and loading,
+# BEFORE its one motion owner leaves. The seller can use its own existing teams rather
+# than depend on adults/equipment at a tiny receiving hamlet. No remote stock oracle.
+grow_paid_cart_sale = (w: mut World, voyage: int) -> int:
+    if not (voyage in w.far.journeys): return 0
+    sale=w.far.journeys[voyage]
+    if sale.good!=3 or sale.survey or not sale.provenance.negotiated or sale.vehicle<0 or sale.vehicle>=w.far.vehicles.len(): return 0
+    v=w.far.vehicles[sale.vehicle]
+    if v.kind!=.cart or v.duty!=.merchant or v.place!=sale.origin or v.journey>=0 or v.route<0 or v.route>=w.far.links.len(): return 0
+    caravan_audit("sell.grain")
+    sale_mass=sale.quantity*w.goods[3].package_grams/1000
+    if sale_mass<v.capacity_grams*4/5: caravan_audit("sell.partial"); return 0
+    if v.cart_assets.len()>=8 or cart_wagons(v)>=25: caravan_audit("sell.group_limit"); return 0
+    order=v.buying_order ?? return 0
+    if order.place!=sale.destination or order.account!=sale.buyer: return 0
+    leg=(w.far.links[v.route].length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    # Extra teams load now, so the signed deadline is the current arrival, not a
+    # hypothetical third crossing after a future return.
+    later=w.minute+leg
+    remaining=max(0,order_quantity_for_supplier(order,3,v.place,later)-sale.quantity)
+    available=counter_sale_available(w,v.place,3)
+    mass=max(0,min(remaining,available)*w.goods[3].package_grams/1000-(v.capacity_grams-sale_mass))
+    payload=cart_payload(w,v.id)
+    if mass<payload: caravan_audit("sell.no_extra_load"); return 0
+    wanted=_cart_team_limit(w,v.id,v.place,(mass+payload-1)/payload)
+    if wanted<=0: caravan_audit("sell.no_team_budget"); return 0
+    # A real paid full load and still-open signed demand justify a workshop order.
+    # Missing parts stay missing until an actual supplier/worker can sell them.
+    _request_cart_parts(w,v.place,wanted)
+    cause="At {work_date(w.minute)}, grain sale {voyage} to {life_place_name(w,sale.destination)} was actually paid and filled carrier {v.id}. Its received order still requested at least {f64(min(remaining,available))/1000.0:.1} available packages beyond this load, within the original deadline."
+    _buy_cart_teams(w,v.id,v.place,wanted,voyage,cause)
+
+grow_cart_service = (w: mut World, voyage: int) -> int:
+    if guard_blocked(): return 0
+    scope=guard_begin(w)
+    result=_grow_cart_service(w,voyage)
+    failed=guard_failed(scope); guard_finish(w,scope)
+    if failed: 0 else: result
+
+caravan_provenance = (w: World, vehicle: int) -> str[]:
+    result: str[]
+    if vehicle<0 or vehicle>=w.far.vehicles.len(): return result
+    loop asset in w.far.vehicles[vehicle].cart_assets:
+        result.push(asset.why)
+        if asset.parts_description!="": result.push(asset.parts_description)
+    result
