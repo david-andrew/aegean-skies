@@ -1,5 +1,10 @@
 # Aegean-sized world: renderer design
 
+2026-11-12 extension: [sub-source coastal refinement](coast-refinement.md) adds
+fixed fine contact triangles and view-dependent subdivision near water. The
+14 m compatibility surface below is still the unchanged base and far fallback;
+it is no longer the finest coastal contact surface.
+
 Phase 1 completed 2026-11-11. Implementation branch `t3/world-renderer`, baseline `97eda0d`, measurement checkpoint `5ecb453`. This document replaces the initial notebook, retained as `design-initial-notebook.md` in scratch. Main checkout is untouched. No scaling of the existing islands, flight physics, clouds, or sea appearance is proposed.
 
 ## Decision

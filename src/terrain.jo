@@ -1,13 +1,20 @@
+use 'depth_space.jo'
 # The islands' ground: error-bounded nested patches and the original painted shader
 # (white limestone with its strata on steep ground, dark green maquis on the gentle slopes, pale
 # sand at the water's edge, wet sand and seabed below it).
 
 use 'world.jo'
 use 'look.jo'
+use 'paint.jo'
 use 'plants.jo'
 use 'terrain_data.jo'
 use 'terrain_lod.jo'
 use 'render_space.jo'
+use 'coast_field.jo'
+use 'coast_pattern.jo'
+use 'coast_mesh.jo'
+use 'coast_atlas.jo'
+use 'quality.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -27,6 +34,9 @@ struct GroundParams:
     flow: vec4                      # the near detail's extra drift (look.jo near_flow)
     warp_a: vec4                    # (the speed trial's warp, its anchor relative to origin)
     warp_b: vec4
+    pigment: Texture = Texture()
+    coast_pattern: Texture = Texture()
+    contact_rect: vec4 = vec4(0,0,0,0)
 
 struct GroundOut:
     pos: vec4
@@ -34,6 +44,52 @@ struct GroundOut:
     normal: vec3
     tint: vec4
     orchard: f32 = 0.0
+    tile_level: f32 = 0.0
+    relief_normal: vec3 = vec3(0,0,0)
+
+coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
+    p = inst.region.xy+v.cell*inst.region.z
+    # Filtering the continuous material channels needs two cached reads,
+    # rather than fetching/decoding all four full corner records per vertex.
+    uv = (inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.materials))
+    material = sample(u.materials,uv)
+    ridge = sample(u.heights,(inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.heights))).w
+    normal_xz = material.xy*2.0-vec2(1,1)
+    normal = vec3(normal_xz.x,sqrt(max(1.0-dot(normal_xz,normal_xz),0.001)),normal_xz.y)
+    s = TerrainSample(0,normal,vec4(material.z,material.w,ridge,1))
+    y = coast_gpu_height(inst,p,u.coast_pattern)
+    base_normal = s.normal
+    s.normal = coast_gpu_normal(inst.absolute,p,inst.heights,s.normal,smoothstep(0.0,3.0,coast_mesh_level(inst,p)),u.coast_pattern)
+    s.tint.w = 1.0-smoothstep(1700.0,2300.0,y)
+    local = vec3(inst.origin.x+p.x*14.0,y,inst.origin.y+p.y*14.0)
+    world = local+u.origin
+    bent = render_warped(local,u.cam,u.warp_a,u.warp_b)
+    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1)),0,s.normal)
+
+# The analytic detail gradient avoids derivative extensions and extra fragment
+# work on WebGL2. It converges to the same continuous field as the fine mesh.
+coast_fs = (i: GroundOut,u: GroundParams) -> vec4:
+    ground_material(i,u,false,true)
+
+coast_world_fs = (i: GroundOut,u: GroundParams) -> vec4:
+    ground_material(i,u,true,true)
+
+coast_sh: Shader
+coast_world_sh: Shader
+
+draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: bool = false):
+    global coast_triangles,coast_instances,coast_draws
+    collect_coast_height(batches)
+    loop level in 0..COAST_LEVELS:
+        if batches[level].len() == 0: continue
+        sh=if large:coast_world_sh else:coast_sh
+        near=false
+        when TARGET=="wasm":
+            near=world_split_depth_active() and params.warp_b.x==0 and coast_batch_near(batches[level],params.cam)
+        draw_instanced(world_bounded_shader(sh,near),coast_grids[level],batches[level],params)
+        coast_triangles += coast_grids[level].index_count/3*batches[level].len()
+        coast_instances += batches[level].len()
+        coast_draws += 1
 
 ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> GroundOut:
     p = v.cell
@@ -45,43 +101,50 @@ ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> Ground
     # Edges already use the shared record, independently of either interior.
     local = vec3(inst.origin.x + p.x * 14.0, sample.h, inst.origin.y + p.y * 14.0)
     world = local + u.origin
-    camera_local = u.cam - u.origin
+    camera_local = u.cam
     bent = render_warped(local, camera_local, u.warp_a, u.warp_b)
-    GroundOut(u.view_proj * vec4(bent, 1), world, sample.normal, sample.tint,orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1)))
+    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1)))
 
 # Band-limit the original limestone pattern to the pixel footprint. Retain
 # resolved strata nearby; distant slopes use each pattern's mean, not aliasing.
 ground_band_visibility = (phase: f32) -> f32: 1.0-smoothstep(PI,TAU,fwidth(phase))
 
-ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
+ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: bool = false) -> vec4:
     if behind_sea(i.world, u.cam): discard()
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
     if i.world.y < -40.0: return vec4(u.haze*0.2,1)
+    world = i.world+u.origin
     n = normalize(i.normal)
     y = i.world.y
     slope = 1.0 - n.y                                  # 0 flat, 1 a wall
-    # limestone, its strata: bands along the height, wavering a little
-    wav = sin(i.world.x * 0.013 + i.world.z * 0.009) * 2.5 + i.tint.y * 6.0
-    band = sin((y + wav) * 0.55) * 0.5 + 0.5
-    band2 = sin((y + wav * 0.6) * 1.9) * 0.5 + 0.5
-    groove = smoothstep(0.82,0.97,sin((y+wav)*0.31+1.3)*0.5+0.5)
-    streak_phase = i.world.x*0.21+i.world.z*0.17+sin(y*0.05)*3.0
-    streak = smoothstep(0.7,1.0,sin(streak_phase)*0.5+0.5)
-    if large_terrain:
-        band = mix(0.5,band,ground_band_visibility((y+wav)*0.55))
-        band2 = mix(0.5,band2,ground_band_visibility((y+wav*0.6)*1.9))
-        groove = mix(0.2074135,groove,ground_band_visibility((y+wav)*0.31))
-        streak = mix(0.2463980,streak,ground_band_visibility(streak_phase))
-    stone = mix(vec3(0.94, 0.9, 0.81), vec3(0.72, 0.68, 0.6), band * 0.5 + band2 * 0.2)
-    stone = mix(stone, vec3(0.5, 0.5, 0.5), groove * 0.45)
-    stone = mix(stone, vec3(0.66, 0.62, 0.55), streak * 0.25 * slope)
-    stone = mix(stone, vec3(0.84, 0.75, 0.6), i.tint.y * 0.35)
+    stone = vec3(0.84,0.79,0.69)
+    # Flat ground is fully vegetated, sand or scree below; do not shade hidden
+    # limestone strata there. Gentle orchard terraces use an even stone wash.
+    if slope > 0.28:
+        # Irregular limestone beds, painted as value shelves rather than smooth
+        # evenly spaced stripes. Oblique fractures stagger the bed boundaries.
+        pigment = sample(u.pigment,vec2((world.x+world.z*0.71)/192.0,y/96.0))
+        fracture = pigment.w-0.5
+        wav = sin(world.x * 0.013 + world.z * 0.009) * 2.5 + i.tint.y * 6.0 + fracture*34.0
+        phase = (y+wav)*0.55
+        edge = max(0.08,fwidth(phase))
+        band = smoothstep(-edge,edge,sin(phase))
+        # One bed phase gives both the broad wash and its narrow dark seam.
+        # Extra high-frequency sinusoids made limestone look striped and cost
+        # four derivative filters per pixel without adding a readable shape.
+        groove = (1.0-smoothstep(0.08,0.26,abs(sin(phase))))*smoothstep(0.4,0.7,pigment.x)
+        visible = ground_band_visibility(phase)
+        band = mix(0.5,band,visible)
+        groove = mix(0.055,groove,visible)
+        stone = mix(vec3(0.94,0.90,0.81),vec3(0.76,0.68,0.53),band*0.24+(fracture+0.2)*0.5)
+        stone = mix(stone,vec3(0.50,0.53,0.56),groove*0.18)
+        stone = mix(stone,vec3(0.86,0.70,0.46),i.tint.y*0.3)
     if large_terrain:
         # (the strata are cliffs' and steep slopes': on gentler bare ground they would draw the
         # height's contours like wood grain; there the stone is a mottled scree, greyer up high)
         flat_rock = 1.0 - smoothstep(0.3, 0.6, slope)
-        scree = mix(vec3(0.8, 0.77, 0.7), vec3(0.62, 0.6, 0.55), vnoise(i.world.xz * 0.004) * 0.6 + i.tint.y * 0.4)
+        scree = mix(vec3(0.8, 0.77, 0.7), vec3(0.62, 0.6, 0.55), vnoise(world.xz * 0.004) * 0.6 + i.tint.y * 0.4)
         stone = mix(stone, scree, flat_rock)
         stone = mix(stone, stone * vec3(0.86, 0.87, 0.9), smoothstep(1500.0, 2500.0, y))
     footprint = max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
@@ -89,42 +152,48 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
     sand = vec3(0.78,0.71,0.55)
     wet = vec3(0.78,0.72,0.56)
     c = stone
+    canopy = vec4(0.5,1,0.5,0.5)
+    woody: f32 = 0.0
     veg: f32 = 0.0
     dry: f32 = 0.0
     crease: f32 = 0.0
     # Underwater the wet sand/rock branch replaces every land contribution.
-    if y >= 0.6:
-        # maquis and pines on gentle ground: dark green with olive patches
-        green = mix(vec3(0.13, 0.3, 0.12), vec3(0.36, 0.45, 0.18), i.tint.x)
-        green = mix(green, vec3(0.2, 0.36, 0.1), smoothstep(0.55, 0.8, i.tint.y))
-        # what covers the ground: green unless steep (rock), or near the water (sand)
-        # the ridge map: water gathers in the creases (lush, dark), ridges are dry (pale grass, bare rock)
-        ridge = i.tint.z * 2.0 - 1.0
-        crease = smoothstep(0.05, -0.6, ridge)
-        dry = smoothstep(0.1, 0.75, ridge)
-        green = mix(green, vec3(0.07, 0.2, 0.09), crease * 0.75)
-        green = mix(green, vec3(0.55, 0.55, 0.3), dry * 0.55)
+    if y >= (if coastal: 0.25 else: 0.6):
+        canopy = sample(u.pigment,world.xz/320.0)
+        ridge = i.tint.z*2.0-1.0
+        crease = smoothstep(0.05,-0.6,ridge)
+        # Expand the baked field's narrow middle range into distinct patches;
+        # averaging the covers everywhere merely trades uniform green for tan.
+        patch = smoothstep(0.30,0.67,i.tint.x*0.65+canopy.w*0.35+(i.tint.y-0.5)*0.25)
+        cover = summer_cover(n,y,ridge,patch)
+        dry = cover.x; woody = cover.y+cover.z
+        grass = mix(vec3(0.49,0.47,0.30),vec3(0.69,0.57,0.35),dry)
+        maquis = mix(vec3(0.24,0.32,0.23),vec3(0.40,0.43,0.31),i.tint.y)
+        pine = mix(vec3(0.10,0.22,0.16),vec3(0.19,0.28,0.18),i.tint.x)
+        green = grass*(1.0-woody)+maquis*cover.y+pine*cover.z
         if large_terrain:
             # (the country's lowlands are a summer patchwork: dry golden grass and fields on the flats
             # among the olive and the maquis; up the mountains, dark pine and then fir)
             flats = (1.0 - smoothstep(0.04, 0.16, slope)) * (1.0 - smoothstep(300.0, 900.0, y))
-            fields = smoothstep(0.35, 0.65, vnoise(i.world.xz * 0.0011) * 0.7 + vnoise(i.world.xz * 0.006) * 0.3)
+            fields = smoothstep(0.35, 0.65, vnoise(world.xz * 0.0011) * 0.7 + vnoise(world.xz * 0.006) * 0.3)
             green = mix(green, mix(vec3(0.62, 0.55, 0.3), vec3(0.5, 0.48, 0.24), i.tint.x), flats * fields * (1.0 - crease * 0.7) * 0.75)
             forest = smoothstep(500.0, 1100.0, y) * (1.0 - smoothstep(1800.0, 2200.0, y))
             green = mix(green, mix(vec3(0.08, 0.2, 0.1), vec3(0.11, 0.24, 0.13), i.tint.x), forest * 0.8)
             alpine = smoothstep(1800.0, 2200.0, y)
             green = mix(green, vec3(0.5, 0.5, 0.33), alpine * 0.7)
-        # Break the material edge in world space, independently of the 14 m
-        # triangles. Metre-scale tufts and exposed rock cross the interpolated
-        # slope contour; fade their amplitude when the pixel cannot resolve them.
-        edge_noise: f32 = 0.0
-        if resolved > 0.0 and slope > 0.15 and slope < 0.8:
-            edge_noise = (vnoise(i.world.xz*0.5+vec2(y*0.22,y*0.16))-0.5)*0.24*resolved
-        veg = (1.0 - smoothstep(0.33 + crease * 0.2, 0.5 + crease * 0.2, slope + i.tint.y * 0.12 + dry * 0.12+edge_noise)) * smoothstep(0.6, 1.5, y)
+        # Broad outcrops on steep faces, not bright slivers tracing every
+        # eroded ridge. Intermediate slopes carry ochre scree; bare limestone
+        # is reserved for continuous cliff faces and irregular exposed patches.
+        outcrop = smoothstep(0.62,0.79,i.tint.y)*smoothstep(0.15,0.4,slope)
+        exposure = max(smoothstep(0.26,0.72,slope+(patch-0.5)*0.26),outcrop*0.78)
+        cliff = max(smoothstep(0.48,0.78,slope),outcrop*0.7)
+        scree = mix(vec3(0.60,0.54,0.40),stone,0.25+cliff*0.75)
+        stone = mix(scree,stone,cliff)
+        veg = (1.0-exposure)*smoothstep(0.6,1.5,y)
         if large_terrain: veg *= i.tint.w    # high land reuses bare limestone
         c = mix(stone, green, veg)
         # Parcels vary over hundreds of metres: vertex interpolation is sufficient
-        # here. The metre-scale cliff edge above remains per fragment.
+        # here. Broad rock/cover transitions above remain per fragment.
         orchard = i.orchard
         if orchard > 0.01:
             row = abs(fract(y/4.5+0.5)-0.5)*4.5
@@ -134,26 +203,33 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
         # with maquis immediately behind it, rather than flooding the basins.
         beach = (1.0 - smoothstep(0.65, 1.35, y)) * (1.0 - smoothstep(0.035, 0.12, slope))
         c = mix(c, sand, beach)
-    if y < 0.6:
-        c = mix(wet, sand * 0.9, clamp(y + 0.4, 0.0, 1.0))
-        c = mix(c, stone * 0.8, smoothstep(0.35, 0.6, slope))
+    if y < (if coastal: 0.9 else: 0.6):
+        shore_color = mix(wet, sand * 0.9, clamp(y + 0.4, 0.0, 1.0))
+        shore_color = mix(shore_color, stone * 0.8, smoothstep(0.35, 0.6, slope))
+        c = if coastal: mix(c,shore_color,1.0-smoothstep(0.25,0.9,y)) else: shore_color
         # Offshore opaque water hides this material. Restrict its extra work
         # to the shallow seabed and filter fine blades out in the distance.
         if y < -0.5 and y > -38.0 and length(i.world-u.cam) < 650.0:
-            patch = vnoise(i.world.xz*0.045)+vnoise(i.world.xz*0.23)*0.25
+            # Reuse the smooth procedural noise tile at broad and fine scales,
+            # rather than rebuilding five value-noise fields per seabed pixel.
+            bed = if coastal: sample(u.coast_pattern,world.xz/448.0)*2.0-vec4(0.5,0.5,0.5,0) else: vec4(0,0,0,0)
+            bed_fine = if coastal: sample(u.coast_pattern,world.xz/112.0)*3.0-vec4(1,1,1,0) else: vec4(0,0,0,0)
+            patch = if coastal: bed.x+bed.y*0.25 else: vnoise(world.xz*0.045)+vnoise(world.xz*0.23)*0.25
             grass_bed = smoothstep(0.57,0.76,patch)*smoothstep(0.5,2.5,-y)*(1.0-smoothstep(22.0,38.0,-y))
             blades: f32 = 0.96
-            if resolved > 0.0: blades += (vnoise(i.world.xz*1.7+vec2(u.time*0.02,0))-0.5)*0.08*resolved
+            if resolved > 0.0:
+                fine = if coastal: bed_fine.x else: vnoise(world.xz*1.7+vec2(u.time*0.02,0))
+                blades += (fine-0.5)*0.08*resolved
             c = mix(c,vec3(0.12,0.23,0.12)*blades,grass_bed*0.8)
-            rocks = smoothstep(0.76,0.86,vnoise(i.world.xz*0.18+vec2(17,9)))
-            c = mix(c,stone*0.65,rocks*0.7)
+            rocks = smoothstep(0.76,0.86,if coastal: bed_fine.z else: vnoise(world.xz*0.18+vec2(17,9)))
+            c = mix(c,stone*0.65,rocks*(if coastal: 0.18 else: 0.7))
     # close up: patches of lighter and darker growth, bare earth, small stones
     near = 1.0 - smoothstep(60.0, 260.0, length(i.world - u.cam))
     if near > 0.0:
         # (the fine growth streams past faster than the ground when going fast, as the sea's
         # detail does: two copies slid and crossfaded)
-        q = i.world.xz
-        pn = vnoise(q * 0.35) * 0.6 + vnoise(q * 1.3) * 0.4
+        q = world.xz
+        pn = sample(u.pigment,q/24.0).w
         if length(u.flow.xy) > 0.01:
             ph = u.time / u.flow.z
             pa = ph - floor(ph)
@@ -162,22 +238,37 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
             wa = 1.0 - abs(2.0 * pa - 1.0)
             qa = q + u.flow.xy * ((pa - 0.5) * u.flow.z)
             qb = q + u.flow.xy * ((pb2 - 0.5) * u.flow.z)
-            na = vnoise(qa * 0.35) * 0.6 + vnoise(qa * 1.3) * 0.4
-            nb = vnoise(qb * 0.35) * 0.6 + vnoise(qb * 1.3) * 0.4
+            na = sample(u.pigment,qa/24.0).w
+            nb = sample(u.pigment,qb/24.0).w
             pn = 0.5 + ((na - 0.5) * wa + (nb - 0.5) * (1.0 - wa)) / sqrt(wa * wa + (1.0 - wa) * (1.0 - wa))
-        pb = vnoise(i.world.xz * 0.11 + vec2(7, 1))
+        pb = sample(u.pigment,world.xz/96.0+vec2(7,1)).w*2.0-0.5
         detail = mix(vec3(0.82, 0.86, 0.78), vec3(1.15, 1.12, 0.95), pn)
         earth = smoothstep(0.68, 0.8, pb) * veg
         c = mix(c, c * detail, near)
         c = mix(c, vec3(0.55, 0.45, 0.32), earth * near * 0.55)
     # light: a painted two-tone, with the sky's fill and a cool shade
-    ndl = dot(render_normal(n, i.world, u.cam), normalize(u.sun_dir))
-    lit = cel(ndl)
-    light = u.sun * lit + mix(u.shade, u.sky, 0.35) * (1.0 - lit * 0.6) * 0.75
+    # Microrelief changes light, not the broad sand/grass/rock classification.
+    # Reclassifying every tiny tilted facet produced hard, flat rubble decals
+    # and ran the cliff material over otherwise gentle beach ground.
+    light_normal = if coastal: normalize(i.relief_normal) else: n
+    ndl = dot(render_normal(light_normal, i.world, u.cam), normalize(u.sun_dir))
+    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,if coastal: 0.08 else: 0.015))
+    # Dappled rounded tree/maquis masses continue beyond individual grove meshes.
+    # The shared procedural tile varies crown radius/spacing, fading before aliasing.
+    if veg*woody > 0.02:
+        cap = canopy
+        visible = 1.0-smoothstep(3.0,12.0,footprint)
+        lobe = paint_ramp(dot(cap.xyz*2.0-vec3(1,1,1),normalize(u.sun_dir)),max(0.04,footprint/144.0))
+        # Separate cool rounded undersides from warm crown tops. Broad value
+        # masses carry the foliage at aerial scale, without extra tree geometry.
+        crown = mix(vec3(0.66,0.79,0.83),vec3(1.12,1.10,0.92),lobe)
+        c *= mix(vec3(1,1,1),crown+(cap.w-0.5)*0.16,veg*woody*visible)
+    shade = mix(u.shade,vec3(dot(u.shade,vec3(0.22,0.62,0.16))),(1.0-veg)*0.28)
+    light = mix(shade*vec3(0.94,1.08,1.1)+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
     col = c * light
     # seabed: caustic shimmer in the shallows
     if y < 0.0:
-        cx = sin(i.world.x * 0.35 + u.time * 1.3 + sin(i.world.z * 0.27 + u.time)) + sin(i.world.z * 0.41 - u.time * 1.1 + sin(i.world.x * 0.3))
+        cx = sin(world.x * 0.35 + u.time * 1.3 + sin(world.z * 0.27 + u.time)) + sin(world.z * 0.41 - u.time * 1.1 + sin(world.x * 0.3))
         col = col * (0.9 + 0.25 * smoothstep(1.1, 1.9, cx) * clamp(1.0 + y * 0.15, 0.0, 1.0))
     # the wind over the grass: gusts sweep across the meadows as waves of paler, bent blades
     meadow = veg * (1.0 - smoothstep(0.15, 0.4, slope)) * (0.45 + 0.55 * dry) * (1.0 - crease * 0.6)
@@ -185,12 +276,14 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool) -> vec4:
     # Retain the original height envelope for the animated grass wash.
     if meadow > 0.0 and y > 3.0:
         meadow *= smoothstep(3.0,9.0+i.tint.x*8.0,y)
-        g = gust(i.world.xz, u.drift)
-        along = dot(i.world.xz, u.wind.xy)
+        # Advect the broad pigment wash with the same wind drift. Two layers
+        # of per-fragment hash noise read as digital mottling at aerial scale.
+        g = smoothstep(0.32,0.68,sample(u.pigment,(world.xz-u.drift)/256.0).w)
+        along = dot(world.xz, u.wind.xy)
         ripple = sin(along * 0.35 - u.time * (1.5 + u.wind.z * 0.35)) * 0.5 + 0.5
         wave = g * (0.55 + 0.45 * ripple) * clamp(u.wind.z / 8.0, 0.0, 1.2)
         col = mix(col, col * vec3(1.25, 1.22, 1.05) + vec3(0.05, 0.05, 0.02) * u.sun, meadow * wave * 0.6)
-    vec4(aerial(col, i.world, u.cam, u.haze, u.fog), 1)
+    vec4(aerial(col, i.world, u.cam, u.haze, u.fog)*paint_paper(i.pos.xy), 1)
 
 # Both terrain paths share the same coastal and vegetation material rules.
 ground_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false)
@@ -199,6 +292,8 @@ ground_sh: Shader
 
 draw_ground = (L: Light, t: f64):
     global terrain_draws, terrain_triangles, terrain_visible, terrain_upload, terrain_report, terrain_prepare
+    global coast_triangles,coast_instances,coast_draws
+    begin_coast_frame()
     zone("terrain")
     prepare_start = time()
     terrain_prepare = 0.0
@@ -210,12 +305,15 @@ draw_ground = (L: Light, t: f64):
     select_terrain(cam, vp, focal, t)
     planes = land_planes(vp)
     origin = render_origin(cam)
-    relative_vp = vp * translation(origin)
+    relative_vp = render_view_proj(origin)
     terrain_draws = 0; terrain_triangles = 0; terrain_visible = 0; terrain_upload = 0
     loop tile in terrain_tiles:
         batches: TerrainInstance[][] = [loop i in 0..96: []]
+        coastal: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
         loop patch in tile.patches:
-            if not land_visible(tile, patch.data, cam, planes): continue
+            p = patch.data
+            refined = coast_enabled and patch.lod == 0.0 and p.low < 192.0 and p.high > -10.0 and coast_patch_near(tile.x+f64(p.x)*14.0,tile.z+f64(p.z)*14.0,448.0,cam,focal/render_quality.terrain_error)
+            if not land_visible(tile, p, cam, planes,refined): continue
             lev = min(int(floor(patch.lod)), 5)
             edges = vec4(f32(patch.lod), f32(patch.lod), f32(patch.lod), f32(patch.lod))
             mask = 0
@@ -230,13 +328,19 @@ draw_ground = (L: Light, t: f64):
                     2: edges.z = e
                     _: edges.w = e
                 if int(floor(other)) < lev: mask = mask | (1 << side)
-            p = patch.data
+            if refined:
+                coast_add_patch(coastal,tile.cpu_heights,tile.heights.width,tile.heights.height,tile.x,tile.z,p.x,p.z,32,vec2(0,0),cam,origin,focal/render_quality.terrain_error,planes,source_id=tile.heights.id)
+                terrain_visible += 1
+                continue
             at = vec2(f32(tile.x + f64(p.x) * MESH_STEP - f64(origin.x)), f32(tile.z + f64(p.z) * MESH_STEP - f64(origin.z)))
             batches[lev * 16 + mask].push(TerrainInstance(at, vec2(f32(p.x), f32(p.z)), vec2(f32(1 << lev), f32(patch.lod - f64(lev))), edges))
             terrain_visible += 1
-        params = GroundParams(relative_vp, cam, L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t),
+        params = GroundParams(relative_vp, render_eye(origin), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t),
             vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift, origin, tile.heights, tile.materials, scene_flow, vec4(scene_warp_a.x - origin.x, scene_warp_a.y - origin.z, scene_warp_a.z, scene_warp_a.w), scene_warp_b)
+        params.pigment = paint_surface()
+        params.coast_pattern = coast_pattern_texture
         terrain_prepare += time() - prepare_start
+        draw_coast_batches(coastal,params)
         loop i in 0..96:
             if batches[i].len() == 0: continue
             draw_instanced(ground_sh, terrain_grids[i], batches[i], params)
@@ -245,10 +349,14 @@ draw_ground = (L: Light, t: f64):
             terrain_upload += batches[i].len() * 40
         prepare_start = time()
     if env("AEGEAN_LOD_STATS") != none and (terrain_report < 0.0 or t - terrain_report > 1.0):
-        print("LOD patches={terrain_visible} draws={terrain_draws} triangles={terrain_triangles} instance_bytes={terrain_upload} select_us={terrain_selection * 1000000.0:.1} prepare_us={terrain_prepare * 1000000.0:.1}")
+        print("LOD patches={terrain_visible} draws={terrain_draws} triangles={terrain_triangles} coast_triangles={coast_triangles} coast_cells={coast_instances} instance_bytes={terrain_upload} select_us={terrain_selection * 1000000.0:.1} prepare_us={terrain_prepare * 1000000.0:.1}")
         terrain_report = t
     zone_end()
 
 init_terrain = ():
-    global ground_sh
-    ground_sh = make_shader(shader(ground_vs, ground_fs))
+    global ground_sh,coast_sh,coast_world_sh
+    ground_sh = make_world_shader(shader(ground_vs, ground_fs))
+    init_coast_mesh()
+    reset_coast_selection()
+    coast_sh = make_world_bounded_shader(shader(coast_vs,coast_fs))
+    coast_world_sh = make_world_bounded_shader(shader(coast_vs,coast_world_fs))

@@ -1,9 +1,12 @@
+use 'world_point.jo'
+use 'depth_space.jo'
 # Painted 3D cloud bodies and analytic weather layers. The distance atlas holds
 # shape and normals only: lighting follows the real sun, never a camera-facing card.
 use 'cloud_density.jo'
 use 'sky_air.jo'
 use 'cloud_depth.jo'
 use 'look.jo'
+use 'paint.jo'
 use 'render_space.jo'
 use 'quality.jo'
 use 'weather_scene.jo'
@@ -17,6 +20,7 @@ struct CloudVolume:
     tone: f32 = 0.5
     weather: vec2 = vec2(1,0)       # opacity envelope, storm shading
     growth: vec4 = vec4(0,0,0,0)    # erosion distance, rolling phase, roll, shear
+    precise:WorldPoint?=none
     thermal: f32 = 0.0             # cached land heating, CPU only
 
 struct VolumeVertex:
@@ -103,8 +107,17 @@ cloud_layer_noise = (p: vec2) -> vec3:
 
 volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
     if max(abs(p.x), max(abs(p.y), abs(p.z))) > 1.0: return vec4(0.5, 1, 0.5, 0)
-    if kind == 4.0 or kind >= 6.0:
-        # Continuous decks / rain curtains / sea fog. No atlas fetches; their
+    if kind == 6.0:
+        # Slanted, vertically coherent curtains below the deck. Their broad
+        # density groups read from the air; fine rain remains the near streaks.
+        rim = 1.0-smoothstep(0.6,1.0,length(p.xz/vec2(0.83,0.64)))
+        q = p.xz+vec2(p.y*0.002,p.y*0.001)
+        field = vnoise(q*vec2(175,31))*0.7+vnoise(q*vec2(57,19))*0.3
+        curtains = smoothstep(0.26,0.72,field)
+        body = smoothstep(-0.5,-0.35,p.y)*(1.0-smoothstep(0.62,0.85,p.y))
+        return vec4(0.5,0,0.5,body*rim*(0.006+curtains*0.052))
+    if kind == 4.0 or kind == 7.0:
+        # Continuous decks / sea fog. No atlas fetches; their
         # horizontal scales are kilometres, so a 64-voxel stamp would repeat.
         rim = 1.0-smoothstep(0.6,1.0,length(p.xz/vec2(0.83,0.64)))
         broad_field = cloud_layer_noise(p.xz*35.0)
@@ -115,7 +128,6 @@ volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
         body = smoothstep(bottom,bottom+0.12,p.y)*(1.0-smoothstep(top-0.18,top,p.y))
         density = body*rim*(0.35+n*0.65)
         if kind == 4.0: density *= smoothstep(0.27,0.43,n)
-        if kind == 6.0: density *= 0.035*(0.3+0.7*smoothstep(0.35,0.7,n))
         if kind == 7.0: density *= 0.22
         normal = vec3(0,if p.y < 0.0: -1.0 else: 1.0,0)
         if kind == 4.0 and density > 0.005:
@@ -218,8 +230,8 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
     leave = min(hi.x, min(hi.y, hi.z))
     # A sampled depth is an endpoint along this pixel's ray, not a cloud layer.
     depth = sample(u.depth, i.ndc * 0.5 + vec2(0.5, 0.5)).x
-    if depth < 0.9999999:
-        view_depth = u.depth_ab.y / (depth * 2.0 - 1.0 + u.depth_ab.x)
+    if world_has_depth(depth,u.depth_ab):
+        view_depth = world_depth_decode(depth,u.depth_ab)
         leave = min(leave, view_depth / max(dot(ray, u.forward), 0.0001))
     sea = sea_intersection(ray, u.cam.y)
     if sea > 0.0: leave = min(leave, sea)
@@ -283,7 +295,7 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         p = cloud_to_local(world - i.center, i.meta.xy) / i.extent
         form = volume_sample(u.atlas, p, i.meta.z)
         density = form.w*i.weather.x
-        if density > 0.005:
+        if density > (if i.meta.z == 6.0: 0.0005 else: 0.005):
             normal = cloud_to_world((form.xyz * 2.0 - vec3(1, 1, 1)) / i.extent, i.meta.xy)
             normal = normal / max(length(normal), 0.000001)
             under = smoothstep(-0.58, 0.05, p.y)
@@ -296,7 +308,7 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
             if i.meta.z == 6.0: light = mix(u.shade,u.haze,0.35)*0.85
             if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
             forward = pow(max(dot(ray, sun), 0.0), 12.0)
-            light += u.sun * (forward * 0.28 * (1.0 - density))
+            light += u.sun * (forward * (if i.meta.z == 6.0: 0.07 else: 0.28) * (1.0 - density))
             light = aerial(light, world, u.cam, u.haze, u.fog)
             opacity = 1.0 - exp(-density * dt * 0.009)
             color += light * (trans * opacity)
@@ -347,7 +359,7 @@ volume_composite_vs = (v: VolumeVertex, u: VolumeCompositeParams) -> VolumeCompo
     uv = mix(u.rect.xy,u.rect.zw,v.corner)
     VolumeCompositeOut(vec4(uv * 2.0 - vec2(1, 1), 0, 1), uv)
 
-volume_view_depth = (d: f32, ab: vec2) -> f32: min(1000000.0, ab.y / min(d * 2.0 - 1.0 + ab.x, -0.0000001))
+volume_view_depth = (d: f32, ab: vec2) -> f32: world_depth_decode(d,ab)
 
 volume_nearest_resolves = (center: f32, nearest: f32) -> bool:
     abs(nearest-center) <= max(8.0,center*0.025)*7.0
@@ -396,11 +408,7 @@ volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
     # with the half/third/quarter resolution cloud target. Premultiplied RGB
     # keeps empty sky pixels untouched. No extra texture or history.
     if u.grain_gain <= 0.0 or result.w < 0.001: return result
-    paper_pixel = floor(i.uv*u.screen_size*0.65)
-    # Decorrelate both axes; a linear dither hash leaves visible diagonal rows.
-    grain = fract(vec3(paper_pixel.x,paper_pixel.y,paper_pixel.x)*0.1031)
-    grain += vec3(dot(grain,grain.yzx+vec3(33.33,33.33,33.33)))
-    paper = fract((grain.x+grain.y)*grain.z)-0.5
+    paper = (paint_paper(i.pos.xy)-1.0)/0.06
     vec4(result.xyz*(1.0+paper*u.grain_gain),result.w)
 
 # Mark resolved pixels in the scene target's spare depth renderbuffer. Hardware
@@ -467,10 +475,11 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     global volume_visible, volume_color, volume_weather_small,volume_rain_small,volume_occluders
     if not __post_active or cloud_scene_depth.id == 0: return
     zone("cloud volumes")
-    cam = scene_camera(); vp = scene_view_proj(); planes = __frustum(vp)
+    cam = scene_camera(); chart = render_origin(cam)
+    vp = render_view_proj(chart); planes = __frustum(vp)
     selected: CloudVolume[]
     loop v in clouds:
-        center = render_world(v.center, cam)
+        center = render_world(world_local(cloud_point(v),chart), render_eye(chart))
         reach = length(v.extent.xz)
         distance_xz = length(v.center.xz - cam.xz)
         radius = cloud_support_radius(v) + world_drop(vec2(distance_xz + reach, 0)) - world_drop(vec2(distance_xz, 0))
@@ -486,7 +495,8 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     paint_coverage: f32 = 0.0
     deck_coverage: f32 = 0.0; rain_coverage: f32 = 0.0
     loop v in selected:
-        rect = volume_bounds(v, cam, vp)
+        local = v; local.center = world_local(cloud_point(v),chart)
+        rect = volume_bounds(local, render_eye(chart), vp)
         if rect.x >= rect.z or rect.y >= rect.w: continue
         area = (rect.z-rect.x)*(rect.w-rect.y)*v.weather.x*0.25
         if v.shape < 4.0: paint_coverage += area
@@ -498,7 +508,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         if v.shape == 5.0 and area > 0.03: weather_coverage = max(weather_coverage,0.31)
         composite_low = min(composite_low,rect.xy); composite_high = max(composite_high,rect.zw)
         air = sky_air_color(normalize(render_world(v.center,cam)-cam).y,cam.y,L.sun_dir.y,L.sky_top,L.sky_horizon,L.haze)
-        instances.push(VolumeInstance(rect, v.center, v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air))
+        instances.push(VolumeInstance(rect, world_local(cloud_point(v),chart), v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air))
     volume_visible = instances.len()
     set_instances(volume_instances, instances)
     rays = render_rays(vp)
@@ -519,7 +529,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     # edge repair stay at output resolution, preserving thin aircraft/trails.
     divisor = if volume_rain_small: 4 else: 3
     w = max(1, cloud_scene_depth.width / divisor); h = max(1, cloud_scene_depth.height / divisor)
-    p = VolumeParams(rays, cam, normalize(rays[2].xyz), L.sun_dir, L.sun, L.shade, L.haze, f32(L.fog_density), vec2(__proj3[2].z, __proj3[3].z), volume_atlas, cloud_scene_depth, steps, if render_quality.tier == 0: 0.0 else: 1.0, vec2(f32(w), f32(h)), 0.0)
+    p = VolumeParams(rays, render_eye(chart), normalize(rays[2].xyz), L.sun_dir, L.sun, L.shade, L.haze, f32(L.fog_density), world_depth_params(), volume_atlas, cloud_scene_depth, steps, if render_quality.tier == 0: 0.0 else: 1.0, vec2(f32(w), f32(h)), 0.0)
     if weather_active:
         # The cloud blocks sunlight for the observer, not for its own exposed top.
         # Surface normals/self-shadowing handle that; camera weather dimming would
@@ -529,7 +539,10 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     p.paint_light = volume_paint_light; p.paint_shade = volume_paint_shade
     sun_clip = vp * vec4(L.sun_dir, 0)
     sun_uv = sun_clip.xy / max(sun_clip.w, 0.0001) * 0.5 + vec2(0.5, 0.5)
-    shaft = smoothstep(-0.03, 0.05, L.sun_dir.y) * (1.0 - smoothstep(0.15, 0.55, L.sun_dir.y)) * 0.12
+    # Moist air makes breaks visible outside the golden hour too. The same
+    # bounded depth/transmittance taps occlude them; no fair-noon extra pass.
+    moist = if weather_active: weather_here.rain*(1.0-smoothstep(weather_here.ceiling+450.0,weather_here.ceiling+900.0,cam.y)) else: 0.0
+    shaft = smoothstep(-0.03,0.05,L.sun_dir.y)*max((1.0-smoothstep(0.15,0.55,L.sun_dir.y))*0.12,moist*0.18)
     if sun_clip.w <= 0.0 or sun_uv.x < -0.25 or sun_uv.x > 1.25 or sun_uv.y < -0.25 or sun_uv.y > 1.25: shaft = 0.0
     # The laptop bound rejected native-resolution cards (~4ms). Reuse the
     # reduced target; full-resolution grain and scene-edge repair remain intact.
@@ -586,6 +599,10 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     zone("cloud edges")
     draw_instanced(volume_sh, volume_quad, volume_instances, p)
     zone_end()
-    glDepthFunc(GL_LEQUAL)
+    glDepthFunc(world_depth_compare())
     restore_cloud_depth()
     zone_end()
+
+cloud_point=(v:CloudVolume)->WorldPoint:
+    p=v.precise ?? world_point(v.center)
+    WorldPoint(p.x,f64(v.center.y),p.z)

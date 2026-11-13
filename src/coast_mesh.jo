@@ -1,0 +1,268 @@
+# Subdivide canonical cells only in selected coastal patches. One resident grid
+# per level, instanced in seven batches; no per-frame mesh/texture generation.
+use 'coast_field.jo'
+use 'coast_pattern.jo'
+use 'terrain_lod.jo'
+use 'render_space.jo'
+
+struct CoastInstance:
+    origin: vec2                   # render-chart local x,z
+    absolute: vec2                 # fixed procedural phase / CPU parity
+    texel: vec2
+    heights: vec4
+    level: f32
+    edges: vec4                    # shared global subdivision levels
+    region: vec4 = vec4(0,0,1,0)    # canonical UV origin and span
+
+# Conservative whole-batch bounds for the WebGL near-depth variant. No new
+# partitions/uploads: fine grids already form small nearby instance batches.
+coast_batch_near=(xs:CoastInstance[],cam:vec3)->bool:
+    loop inst in xs:
+        lo=min(min(inst.heights.x,inst.heights.y),min(inst.heights.z,inst.heights.w))
+        hi=max(max(inst.heights.x,inst.heights.y),max(inst.heights.z,inst.heights.w))
+        relief=2.0+1.616*(hi-lo)/14.0
+        a=inst.origin+inst.region.xy*14.0;span=inst.region.z*14.0
+        x=max(abs(a.x-cam.x),abs(a.x+span-cam.x))
+        z=max(abs(a.y-cam.z),abs(a.y+span-cam.z))
+        y=max(abs(lo-relief-cam.y),abs(hi+relief-cam.y))
+        if x*x+y*y+z*z>=126.0*126.0:return false
+    true
+
+coast_grids: Mesh[]
+coast_triangles = 0
+coast_instances = 0
+coast_draws = 0
+coast_enabled = true
+
+init_coast_mesh = ():
+    global coast_grids,coast_enabled,coast_pattern_texture
+    coast_enabled = (env("AEGEAN_COAST") ?? "1") != "0"
+    if coast_grids.len() > 0: return
+    coast_pattern_texture = texture(coast_pattern_image,true)
+    set_repeat(coast_pattern_texture,true)
+    loop level in 0..COAST_LEVELS:
+        n = 1<<level
+        vertices: TerrainVertex[]
+        indices: u32[]
+        loop j in 0..n+1:
+            loop i in 0..n+1: vertices.push(TerrainVertex(vec2(f32(i)/f32(n),f32(j)/f32(n))))
+        loop j in 0..n:
+            loop i in 0..n:
+                a = u32(j*(n+1)+i); b = a+1; c = a+u32(n+1); d = c+1
+                indices.extend([a,c,b,b,c,d])
+        coast_grids.push(mesh(vertices,indices))
+
+coast_corners = (values: f32[],nx: int,nz: int,x: int,z: int) -> vec4:
+    a = clamp(z,0,nz-1)*nx+clamp(x,0,nx-1)
+    b = clamp(z,0,nz-1)*nx+clamp(x+1,0,nx-1)
+    c = clamp(z+1,0,nz-1)*nx+clamp(x,0,nx-1)
+    d = clamp(z+1,0,nz-1)*nx+clamp(x+1,0,nx-1)
+    vec4(values[a],values[b],values[c],values[d])
+
+coast_cell_visible = (x: f64,z: f64,h: vec4,cam: vec3,planes: vec4[]) -> bool:
+    low = min(min(h.x,h.y),min(h.z,h.w))
+    high = max(max(h.x,h.y),max(h.z,h.w))
+    # Includes both vertical rubble and the bounded contour perturbation.
+    extra = 2.0+1.616*(high-low)/14.0
+    center = render_world(vec3(f32(x+7.0),(low+high)*0.5,f32(z+7.0)),cam)
+    half = vec3(7,(high-low)*0.5+extra,7)
+    loop plane in planes:
+        if dot(plane.xyz,center)+plane.w+dot(abs(plane.xyz),half) < 0.0: return false
+    true
+
+# A shared edge uses only its two endpoints, never either owner's interior.
+# The contour term is zero there; vertical relief is bounded by 1.01 m.
+# Its bounds lie inside both cell bounds, so its level cannot exceed either
+# owner's interior level. This also works across independently streamed tiles.
+coast_edge_level = (cache: mut f32[],at: int,x: f64,z: f64,a: f32,b: f32,vertical: bool,cam: vec3,focal: f64) -> f32:
+    if cache[at] >= 0.0: return cache[at]
+    low = f64(min(a,b)); high = f64(max(a,b))
+    level = 0.0
+    if low < 192.0 and high > -10.0:
+        dx = max(max(x-f64(cam.x),f64(cam.x)-x-(if vertical: 0.0 else: 14.0)),0.0)
+        dz = max(max(z-f64(cam.z),f64(cam.z)-z-(if vertical: 14.0 else: 0.0)),0.0)
+        dy = max(max(low-1.01-f64(cam.y),f64(cam.y)-high-1.01),0.0)
+        distance = max(sqrt(dx*dx+dy*dy+dz*dz),0.25)
+        level = clamp(log2(14.0*min(focal,COAST_MAX_FOCAL)/(COAST_RESOLVE_PIXELS*distance)),0.0,6.0)
+    cache[at] = f32(level)
+    f32(level)
+
+coast_region_level = (x: f64,z: f64,h: vec4,region: vec2,cam: vec3,focal: f64) -> f32:
+    a = coast_triangle(h,region); b = coast_triangle(h,region+vec2(0.5,0))
+    c = coast_triangle(h,region+vec2(0,0.5)); d = coast_triangle(h,region+vec2(0.5,0.5))
+    low = f64(min(min(a,b),min(c,d))); high = f64(max(max(a,b),max(c,d)))
+    span = f64(max(max(h.x,h.y),max(h.z,h.w))-min(min(h.x,h.y),min(h.z,h.w)))
+    extra = 2.0+1.616*span/14.0
+    dx = max(max(x-f64(cam.x),f64(cam.x)-x-7.0),0.0)
+    dz = max(max(z-f64(cam.z),f64(cam.z)-z-7.0),0.0)
+    dy = max(max(low-extra-f64(cam.y),f64(cam.y)-high-extra),0.0)
+    distance = max(sqrt(dx*dx+dy*dy+dz*dz),0.25)
+    f32(clamp(log2(14.0*min(focal,COAST_MAX_FOCAL)/(COAST_RESOLVE_PIXELS*distance)),1.0,6.0))
+
+coast_emit_cell = (batches: mut CoastInstance[][],inst: CoastInstance,x: f64,z: f64,cam: vec3,focal: f64):
+    if inst.level <= 4.0:
+        batches[int(ceil(inst.level))].push(inst)
+        return
+    # A cell touching the eye otherwise gives its distant half the same 64²
+    # grid. Four local domains retain the shared canonical edges, while each
+    # interior follows its own conservative projected distance.
+    levels: f32[]
+    loop j in 0..2:
+        loop i in 0..2:
+            level = min(inst.level,coast_region_level(x+f64(i)*7.0,z+f64(j)*7.0,inst.heights,vec2(f32(i),f32(j))*0.5,cam,focal))
+            level = max(level,if i == 0: inst.edges.x else: inst.edges.y)
+            level = max(level,if j == 0: inst.edges.z else: inst.edges.w)
+            levels.push(level)
+    loop j in 0..2:
+        loop i in 0..2:
+            level = levels[j*2+i]
+            edge = vec4(
+                if i == 0: inst.edges.x else: min(level,levels[j*2]),
+                if i == 1: inst.edges.y else: min(level,levels[j*2+1]),
+                if j == 0: inst.edges.z else: min(level,levels[i]),
+                if j == 1: inst.edges.w else: min(level,levels[2+i]))
+            part = inst
+            part.level = level; part.edges = edge
+            part.region = vec4(f32(i)*0.5,f32(j)*0.5,0.5,0)
+            batches[int(ceil(level))-1].push(part)
+
+# Retain only the previous frame's selected immutable source patches. A changed
+# camera, frustum, quality, atlas slot or boundary state rebuilds immediately.
+struct CoastPatchCache:
+    source: int
+    ox: f64
+    oz: f64
+    px: int
+    pz: int
+    cells: int
+    texel: vec2
+    cam: vec3
+    origin: vec3
+    focal: f64
+    planes: vec4[]
+    limits: vec4
+    batches: CoastInstance[][]
+coast_cache_previous: CoastPatchCache[]
+coast_cache_current: CoastPatchCache[]
+coast_selection_builds = 0
+coast_cache_instances = 0
+
+reset_coast_selection = ():
+    global coast_cache_previous,coast_cache_current,coast_cache_instances
+    coast_cache_previous = []; coast_cache_current = []; coast_cache_instances = 0
+
+begin_coast_selection = ():
+    global coast_cache_previous,coast_cache_current,coast_cache_instances
+    coast_cache_previous = coast_cache_current
+    coast_cache_current = []
+    coast_cache_instances = 0
+
+store_coast_selection = (entry: CoastPatchCache):
+    global coast_cache_current,coast_cache_instances
+    count = 0
+    loop group in entry.batches: count += group.len()
+    if coast_cache_current.len() >= 64 or coast_cache_instances+count > 8192: return
+    coast_cache_current.push(entry)
+    coast_cache_instances += count
+
+coast_add_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,ox: f64,oz: f64,px: int,pz: int,cells: int,texel: vec2,cam: vec3,origin: vec3,focal: f64,planes: vec4[],limits: vec4 = vec4(6,6,6,6),source_id: int = 0):
+    global coast_cache_current
+    loop entry in coast_cache_previous:
+        if entry.source == source_id and entry.ox == ox and entry.oz == oz and entry.px == px and entry.pz == pz and entry.cells == cells and entry.texel == texel and entry.cam == cam and entry.origin == origin and entry.focal == focal and entry.planes == planes and entry.limits == limits:
+            store_coast_selection(entry)
+            loop k in 0..COAST_LEVELS: batches[k].extend(entry.batches[k])
+            return
+    selected: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+    coast_build_patch(selected,values,nx,nz,ox,oz,px,pz,cells,texel,cam,origin,focal,planes,limits)
+    store_coast_selection(CoastPatchCache(source_id,ox,oz,px,pz,cells,texel,cam,origin,focal,planes,limits,selected))
+    loop k in 0..COAST_LEVELS: batches[k].extend(selected[k])
+
+coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,ox: f64,oz: f64,px: int,pz: int,cells: int,texel: vec2,cam: vec3,origin: vec3,focal: f64,planes: vec4[],limits: vec4 = vec4(6,6,6,6)):
+    global coast_selection_builds
+    coast_selection_builds += 1
+    vertical = [loop k in 0..cells*(cells+1): f32(-1)]
+    horizontal = [loop k in 0..cells*(cells+1): f32(-1)]
+    # Cull first. Only visible cells and their shared edges need projected
+    # levels; a shoreline view often sees a small fraction of a 448 m patch.
+    loop j in 0..cells:
+        loop i in 0..cells:
+            x = ox+f64(px+i)*14.0; z = oz+f64(pz+j)*14.0
+            h = coast_corners(values,nx,nz,px+i,pz+j)
+            if not coast_cell_visible(x,z,h,cam,planes): continue
+            low = f64(min(min(h.x,h.y),min(h.z,h.w)))
+            high = f64(max(max(h.x,h.y),max(h.z,h.w)))
+            level = f32(coast_level(x,z,low,high,cam,focal))
+            edges = vec4(
+                coast_edge_level(vertical,j*(cells+1)+i,x,z,h.x,h.z,true,cam,focal),
+                coast_edge_level(vertical,j*(cells+1)+i+1,x+14.0,z,h.y,h.w,true,cam,focal),
+                coast_edge_level(horizontal,j*cells+i,x,z,h.x,h.y,false,cam,focal),
+                coast_edge_level(horizontal,(j+1)*cells+i,x,z+14.0,h.z,h.w,false,cam,focal))
+            if i == 0: edges.x = min(edges.x,limits.x)
+            if i == cells-1: edges.y = min(edges.y,limits.y)
+            if j == 0: edges.z = min(edges.z,limits.z)
+            if j == cells-1: edges.w = min(edges.w,limits.w)
+            inst = CoastInstance(vec2(f32(x-f64(origin.x)),f32(z-f64(origin.z))),vec2(f32(x),f32(z)),texel+vec2(f32(px+i),f32(pz+j)),h,level,edges)
+            coast_emit_cell(batches,inst,x,z,cam,focal)
+
+# Reconstruct a vertex on a dyadic grid, then interpolate its parent. Since all
+# triangles use b-c, each finer grid is a subdivision of the same base surface.
+coast_at_level = (h: vec4,f: vec2,origin: vec2,level: f32) -> f32:
+    if level <= 0.0: return coast_triangle(h,f)
+    n = pow(2.0,level)
+    if fract(f.x*n) == 0.0 and fract(f.y*n) == 0.0: return coast_vertex_height(h,f,origin)
+    a = min(floor(f*n),vec2(n-1.0,n-1.0))/n
+    s = 1.0/n
+    corners = vec4(coast_vertex_height(h,a,origin),coast_vertex_height(h,a+vec2(s,0),origin),coast_vertex_height(h,a+vec2(0,s),origin),coast_vertex_height(h,a+vec2(s,s),origin))
+    coast_triangle(corners,(f-a)*n)
+
+coast_morphed = (h: vec4,f: vec2,origin: vec2,level: f32) -> f32:
+    if level <= 0.0: return coast_triangle(h,f)
+    lo = floor(level)
+    a = coast_at_level(h,f,origin,lo)
+    if level == lo: return a
+    mix(a,coast_at_level(h,f,origin,lo+1.0),level-lo)
+
+coast_mesh_level = (inst: CoastInstance,p: vec2) -> f32:
+    level = inst.level
+    let p = (p-inst.region.xy)/inst.region.z
+    if p.x == 0.0: level = min(level,inst.edges.x)
+    if p.x == 1.0: level = min(level,inst.edges.y)
+    if p.y == 0.0: level = min(level,inst.edges.z)
+    if p.y == 1.0: level = min(level,inst.edges.w)
+    level
+
+coast_mesh_height = (inst: CoastInstance,p: vec2) -> f32:
+    coast_morphed(inst.heights,p,inst.absolute,coast_mesh_level(inst,p))
+
+# GPU mirror uses the same quantized pattern; no hash loops in a frame.
+coast_gpu_level = (h: vec4,f: vec2,origin: vec2,level: f32,pattern: Texture) -> f32:
+    if level <= 0.0: return coast_triangle(h,f)
+    n = pow(2.0,level)
+    if fract(f.x*n) == 0.0 and fract(f.y*n) == 0.0: return coast_gpu_vertex(h,f,origin,pattern)
+    a = min(floor(f*n),vec2(n-1.0,n-1.0))/n
+    s = 1.0/n
+    q = (f-a)*n
+    # Interior vertices of the next dyadic grid lie on a parent edge: only
+    # its two endpoints contribute. Shared edges can span several levels,
+    # so retain the general barycentric case with zero-weight taps skipped.
+    b = coast_gpu_vertex(h,a+vec2(s,0),origin,pattern)
+    c = coast_gpu_vertex(h,a+vec2(0,s),origin,pattern)
+    if q.x+q.y <= 1.0:
+        w = 1.0-q.x-q.y
+        v: f32 = 0.0
+        if w > 0.0: v = coast_gpu_vertex(h,a,origin,pattern)*w
+        return v+b*q.x+c*q.y
+    w = q.x+q.y-1.0
+    v: f32 = 0.0
+    if w > 0.0: v = coast_gpu_vertex(h,a+vec2(s,s),origin,pattern)*w
+    v+b*(1.0-q.y)+c*(1.0-q.x)
+
+coast_gpu_morphed = (h: vec4,f: vec2,origin: vec2,level: f32,pattern: Texture) -> f32:
+    if level <= 0.0: return coast_triangle(h,f)
+    lo = floor(level)
+    a = coast_gpu_level(h,f,origin,lo,pattern)
+    if level == lo: return a
+    mix(a,coast_gpu_level(h,f,origin,lo+1.0,pattern),level-lo)
+
+coast_gpu_height = (inst: CoastInstance,p: vec2,pattern: Texture) -> f32:
+    coast_gpu_morphed(inst.heights,p,inst.absolute,coast_mesh_level(inst,p),pattern)

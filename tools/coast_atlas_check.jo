@@ -1,0 +1,136 @@
+use '../src/depth_space.jo'
+# Native GPU readback of the cached rendered mesh, including local charts.
+use '../src/coast_atlas.jo'
+use '../src/coast_mesh.jo'
+use '../src/coast_field.jo'
+use '../src/coast_pattern.jo'
+use '../src/render_space.jo'
+struct AtlasProbeVertex:
+    pos: vec2
+struct AtlasProbeOut:
+    pos: vec4
+struct AtlasProbeParams:
+    t: Texture
+    area: vec4
+    origin: vec2
+atlas_probe_fraction = (k: int) -> vec2: vec2((f32(k%31)+0.31)/31.0,(f32(k%29)+0.73)/29.0)
+atlas_probe_vs = (v: AtlasProbeVertex,u: AtlasProbeParams) -> AtlasProbeOut: AtlasProbeOut(vec4(v.pos,0,1))
+atlas_probe_fs = (i: AtlasProbeOut,u: AtlasProbeParams) -> vec4:
+    p = u.origin+atlas_probe_fraction(int(floor(i.pos.x)))*14.0
+    sample = coast_height_read(u.t,u.area,p)
+    packed = int(round((sample.x+16.0)*2048.0))
+    vec4(f32(packed & 255),f32(packed>>8),0,sample.y*255.0)/255.0
+window("Coast GPU check",32,32)
+assert(not __soft)
+enable_world_depth()
+init_coast_mesh()
+program = make_shader(shader(atlas_probe_vs,atlas_probe_fs))
+tri = mesh([AtlasProbeVertex(vec2(-1,-1)),AtlasProbeVertex(vec2(3,-1)),AtlasProbeVertex(vec2(-1,3))])
+target = render_target(1024,1,false)
+worst = 0.0
+loop probe in 0..6:
+    absolute = if probe%2 == 0: vec2(-5012.125,-2436.25) else: vec2(219996,-120008)
+    far_probe = probe >= 2 and probe < 4
+    split_probe = probe >= 4
+    __cam_pos = vec3(absolute.x+7,2,absolute.y+7)
+    local = absolute-render_origin(scene_camera()).xz
+    if split_probe: __cam_pos = vec3(absolute.x-4,2,absolute.y+3)
+    level: f32 = if split_probe: 6.0 else: (if far_probe: 3.23 else: 4.23)
+    inst = CoastInstance(local,absolute,vec2(0,0),vec4(-4,6,-2,8),level,vec4(3.1,level,2.3,level))
+    if split_probe: inst.edges = vec4(4.2,4.2,4.2,4.2)
+    center_parts: CoastInstance[]
+    begin_coast_height()
+    # Populate neighbors too: uncovered atlas pixels intentionally trigger the
+    # optical-depth fallback, rather than extrapolating an isolated cell.
+    loop j in -1..2:
+        loop i in -1..2:
+            neighbor = inst
+            neighbor.origin += vec2(f32(i),f32(j))*14.0
+            neighbor.absolute += vec2(f32(i),f32(j))*14.0
+            neighbor.heights += vec4(1,1,1,1)*f32(i*10+j*2)
+            neighbor.edges = vec4(level,level,level,level)
+            if i == 0 and j == 0: neighbor = inst
+            if i == -1 and j == 0: neighbor.edges.y = inst.edges.x
+            if i == 0 and j == -1: neighbor.edges.w = inst.edges.z
+            if i == 1 and j == 0: neighbor.edges.x = inst.edges.y
+            if i == 0 and j == 1: neighbor.edges.z = inst.edges.w
+            if split_probe and i == 0 and j == 0:
+                coast_emit_cell(coast_height_batches,inst,f64(absolute.x),f64(absolute.y),scene_camera(),600)
+                loop group in coast_height_batches:
+                    loop part in group:
+                        if part.region.z < 1.0: center_parts.push(part)
+            else: coast_height_batches[int(ceil(level))].push(neighbor)
+    refresh_coast_height(scene_camera())
+    assert(coast_height_valid)
+    draw_to(target)
+    glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST)
+    clear(BLACK)
+    atlas = if far_probe: coast_height_far else: coast_height_near
+    area = if far_probe: coast_height_far_area else: coast_height_near_area
+    draw(program,tri,AtlasProbeParams(atlas.texture,area,local))
+    img = screenshot(); draw_to_screen()
+    probe_worst = 0.0
+    loop k in 0..1024:
+        f = atlas_probe_fraction(k)
+        # Match the exact f32 coordinate sent through the atlas sampler.
+        f = (local+f*14.0-local)/14.0
+        owner = inst
+        loop part in center_parts:
+            if f.x >= part.region.x and f.y >= part.region.y and f.x <= part.region.x+part.region.z and f.y <= part.region.y+part.region.z: owner = part
+        n = pow(2.0,ceil(owner.level))
+        a = floor(f*n)/n; s: f32 = 1.0/n
+        h = vec4(coast_mesh_height(owner,a),coast_mesh_height(owner,a+vec2(s,0)),coast_mesh_height(owner,a+vec2(0,s)),coast_mesh_height(owner,a+vec2(s,s)))
+        expected = coast_triangle(h,(f-a)*n)
+        offset = k*4
+        assert(img.pixels[offset+3] == 255)
+        actual = f64(int(img.pixels[offset])+int(img.pixels[offset+1])*256)/2048.0-16.0
+        error = abs(actual-f64(expected))
+        probe_worst = max(probe_worst,error)
+        worst = max(worst,error)
+    print("atlas probe {probe}: far={far_probe}, split={split_probe}, maximum={probe_worst} m")
+    previous = coast_height_refreshes
+    refresh_coast_height(scene_camera())
+    assert(coast_height_refreshes == previous)
+    old_area = coast_height_near_area
+    __cam_pos += vec3(28,0,0)
+    refresh_coast_height(scene_camera())
+    assert(coast_height_refreshes == previous+1)
+    assert(coast_height_near_area.x == old_area.x+28.0)
+print("shore atlas/GPU mesh height maximum {worst} m; unchanged instances skip refresh")
+assert(worst < 0.002)
+free_render_target(target)
+
+
+# A color-only atlas refresh must return to the caller's depth convention and
+# framebuffer. The farther red quad must fail both reversed and logarithmic Z.
+struct AtlasDepthParams:
+    distance:f32
+    color:vec4
+atlas_depth_vs=(v:AtlasProbeVertex,u:AtlasDepthParams)->AtlasProbeOut:AtlasProbeOut(vec4(v.pos*u.distance,0,u.distance))
+atlas_depth_fs=(v:AtlasProbeOut,u:AtlasDepthParams)->vec4:u.color
+depth_program=make_world_shader(shader(atlas_depth_vs,atlas_depth_fs))
+depth_target=render_target(32,32,false)
+draw_to(depth_target)
+clear(BLACK);clear_world_depth();glDisable(GL_BLEND);glDisable(GL_CULL_FACE)
+draw(depth_program,tri,AtlasDepthParams(10,vec4(0,1,0,1)))
+coast_height_valid=false
+refresh_coast_height(scene_camera())
+glDepthMask(1);glDisable(GL_BLEND)
+draw(depth_program,tri,AtlasDepthParams(20,vec4(1,0,0,1)))
+result=screenshot();draw_to_screen()
+red=0;green=0;black=0
+loop k in 0..32*32:
+    if result.pixels[k*4]>0:red+=1
+    if result.pixels[k*4+1]>0:green+=1
+    if result.pixels[k*4]==0 and result.pixels[k*4+1]==0:black+=1
+print("atlas depth state: reverse={world_reverse_depth_active()} red={red} green={green} black={black}")
+loop k in 0..32*32:
+    assert(result.pixels[k*4]==0 and result.pixels[k*4+1]==255)
+print("world depth ordering survives color-only shore atlas refresh")
+free_render_target(depth_target)
+
+# Web pages enter the frame loop after the one-shot readback. Supply empty
+# callbacks there; native probes have finished and can close immediately.
+update=(dt:f64):pass
+draw=():pass
+when TARGET!="wasm":quit()

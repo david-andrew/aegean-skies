@@ -1,11 +1,14 @@
 # Player-only effects, one small transparent mesh; no additional render target or texture.
 use 'pilot.jo'
+use 'flight.jo'
 use 'planes.jo'
 use 'flight_feedback.jo'
 use 'sea.jo'
 use 'damage.jo'
 use 'render_space.jo'
 use 'look.jo'
+use 'depth_space.jo'
+use 'world_point.jo'
 
 struct FlightFxVertex:
     pos: vec3
@@ -29,14 +32,21 @@ flight_fx_shader: Shader
 flight_fx_mesh: Mesh
 init_flight_effects = ():
     global flight_fx_shader,flight_fx_mesh
-    flight_fx_shader = make_shader(shader(flight_fx_vs,flight_fx_fs))
+    flight_fx_shader = make_world_shader(shader(flight_fx_vs,flight_fx_fs))
     flight_fx_mesh = mesh([FlightFxVertex(vec3(0,0,0),vec4(0,0,0,0))])
 
 fx_tri = (vs: mut FlightFxVertex[],a: vec3,b: vec3,c: vec3,color: vec3,alpha: vec3):
     vs.extend([FlightFxVertex(a,vec4(color,alpha.x)),FlightFxVertex(b,vec4(color,alpha.y)),FlightFxVertex(c,vec4(color,alpha.z))])
 
-# Called before cloud compositing, so a cloud can hide the prop, spray and exhaust together.
-draw_flight_effects = (f: Flyer, model: CraftModel, at: mat4,L: Light,t: f64):
+# Keep the physical anchor precise until it is subtracted from the render chart.
+# The supplied matrix contributes orientation and the existing visual plunge/bob only.
+flight_fx_anchor=(f:Flyer,at:mat4)->WorldPoint:
+    world_offset(craft_point(f.state),at[3].xyz-f.state.position)
+
+flight_fx_vertices = (f: Flyer, model: CraftModel, pose: mat4,L: Light,t: f64,origin:vec3,eye:vec3) -> FlightFxVertex[]:
+    anchor=flight_fx_anchor(f,pose)
+    rotation=pose;rotation[3]=vec4(0,0,0,1)
+    at=rotation;at[3]=vec4(world_local(anchor,origin),1)
     vs: FlightFxVertex[]
     s = f.state; cue = f.feedback
     right = quat_rotate(s.orientation,vec3(1,0,0))
@@ -48,10 +58,11 @@ draw_flight_effects = (f: Flyer, model: CraftModel, at: mat4,L: Light,t: f64):
         # contact points: dry bows disappear first; the aft wet footprint remains visible.
         loop p in model.contacts:
             if run < 0.01 or part_health(s.damage,PartId(contact_part(f.kind,p))) <= 0: continue
-            root = transform_point(at,p)
-            sea = swell_at(f64(root.x),f64(root.z),f.sea_t)
-            if root.y > sea.x+0.18: continue
-            root.y = sea.x+0.07
+            contact = world_offset(anchor,transform_point(rotation,p))
+            sea = swell_at(contact.x,contact.z,f.sea_t)
+            if contact.y > f64(sea.x)+0.18: continue
+            contact.y = f64(sea.x)+0.07
+            root = world_local(contact,origin)
             side = if p.x < 0: -1.0 else: 1.0
             outward = right*f32(side)
             color = mix(L.shade,L.sun,0.60)*0.8+vec3(0.18,0.21,0.23)
@@ -73,8 +84,8 @@ draw_flight_effects = (f: Flyer, model: CraftModel, at: mat4,L: Light,t: f64):
         night = 1.0-smoothstep(-0.08,0.08,f64(L.sun_dir.y))
         loop hub in model.prop_hubs:
             center = transform_point(at,hub)
-            normal = normalize(transform_point(at,hub+vec3(0,0,1))-center)
-            view = normalize(scene_camera()-center+vec3(0.0001,0,0))
+            normal = normalize(transform_point(rotation,vec3(0,0,1)))
+            view = normalize(eye-center+vec3(0.0001,0,0))
             glint = pow(abs(f64(dot(normal,normalize(view+L.sun_dir+vec3(0.0001,0,0))))),18.0)*smoothstep(0.0,0.2,f64(L.sun_dir.y))
             color = mix(L.shade*0.55+vec3(0.16,0.17,0.18),L.sun,f32(glint*0.7))
             loop j in 0..(if f.cockpit_view: 0 else: 40):
@@ -93,18 +104,24 @@ draw_flight_effects = (f: Flyer, model: CraftModel, at: mat4,L: Light,t: f64):
                     color = vec3(1.0,0.35+flicker*0.2,0.08)
                     a=transform_point(at,root+vec3(0,0.07,0)); b=transform_point(at,root-vec3(0,0.07,0)); c=transform_point(at,root+vec3(side*0.08,-0.04,length))
                     fx_tri(vs,a,b,c,color,vec3(f32(night*0.8),f32(night*0.8),0))
-    if vs.len() == 0: return
+    vs
+
+# Before cloud compositing, with the same local chart and depth convention as the craft.
+draw_flight_effects=(f:Flyer,model:CraftModel,at:mat4,L:Light,t:f64):
+    origin=render_origin(scene_camera())
+    vs=flight_fx_vertices(f,model,at,L,t,origin,render_eye(origin))
+    if vs.len()==0:return
     glDepthMask(0); glDisable(GL_CULL_FACE)
     m=flight_fx_mesh
     update_mesh(m,vs)
-    draw(flight_fx_shader,m,FlightFxParams(scene_view_proj(),scene_camera(),L.haze,f32(L.fog_density),scene_warp_a,scene_warp_b))
+    draw(flight_fx_shader,m,FlightFxParams(render_view_proj(origin),render_eye(origin),L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b))
 
 # Tiny edge droplets, no full-screen blur and no obstruction of the gunsight. Rain and actual
 # water slaps supply the exposure. Deterministic phases never consume the simulation RNG.
 draw_flight_lens = (f: Flyer,rain: f64,t: f64):
     if f.state.moored: return
     cam = scene_camera()
-    water_height = f64(swell_at(f64(cam.x),f64(cam.z),f.sea_t).x)
+    water_height = f64(swell_at(f64(cam.x)+f64(render_eye_low.x),f64(cam.z)+f64(render_eye_low.z),f.sea_t).x)
     spray = f.feedback.lens*(1.0-smoothstep(3.0,8.0,f64(cam.y)-water_height))
     wet = max(rain*0.32,spray*0.65)
     if wet < 0.015: return

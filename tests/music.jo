@@ -1,0 +1,152 @@
+use '../src/music_synth.jo'
+use '../src/music_data.jo'
+use '../src/music_models.jo'
+use '../src/radio_synth.jo'
+use '../src/music_audition.jo'
+use '../src/radio.jo'
+
+test "every shipped score loads sorted bounded note data":
+    s = make_music_synth()
+    loop piece in 0..MUSIC_PIECES.len():
+        music_load(s,piece)
+        assert(s.events.len() > 0 and s.frames == MUSIC_PIECES[piece].frames)
+        previous = -1
+        loop e in s.events:
+            assert(e.start >= previous and e.duration > 0)
+            assert(e.start+e.duration < s.frames)
+            assert(e.pitch >= 0 and e.pitch < 128 and e.instrument < MUSIC_KINDS)
+            previous = e.start
+        music_seek(s,f64(s.frames)/32000.0)
+        energy = 0.0
+        loop i in 0..4000:
+            v = music_sample(s)
+            assert(v == v and abs(v) < 4)
+            energy += v*v
+        assert(energy > 0.001)
+        assert(s.voices.len() == MUSIC_VOICES)
+
+test "seek restores a sustained note and drops expired notes without replay":
+    s = make_music_synth()
+    s.events = [MusicEvent(0,16000,60,0,0.7,0.8),MusicEvent(32000,16000,67,1,0.7,0.8)]
+    s.frames = 80000; s.lookback = 48000
+    music_seek(s,0.5)
+    assert(s.next == 1 and s.voices[0].active and s.voices[0].age == 8000)
+    music_seek(s,4.0)
+    loop v in s.voices: assert(not v.active)
+    music_seek(s,2.25)
+    assert(s.next == 2)
+    found = false
+    loop v in s.voices:
+        if v.active and v.age == 4000 and v.instrument == .brass: found = true
+    assert(found)
+    music_seek(s,1000)
+    assert(s.cursor == s.frames and music_sample(s) == 0)
+
+test "audition no audio path never opens or allocates a synthesizer":
+    a = MusicAudition(playing=true)
+    music_audition_update(a,0.1,false)
+    assert(a.voice == -1 and not a.ready and a.position == 0.1 and a.generated == 0)
+    music_audition_select(a,3)
+    assert(a.position == 0 and a.dirty and a.playing)
+    music_audition_seek(a,10000)
+    music_audition_update(a,0.1,false)
+    assert(not a.playing and a.position == music_duration(a))
+    music_audition_stop(a)
+    assert(a.voice == -1 and not a.playing)
+
+test "held tuning accelerates independent of frame partition and resets on release":
+    a = Radio(khz=600); b = Radio(khz=600)
+    assert(radio_hold_tune(a,1,0) and radio_hold_tune(b,1,0))
+    assert(a.khz == 605)
+    loop i in 0..400: _ = radio_hold_tune(a,1,0.01)
+    loop i in 0..80: _ = radio_hold_tune(b,1,0.05)
+    assert(a.khz == b.khz and a.khz > 840)
+    _ = radio_hold_tune(a,0,0)
+    assert(a.tune_held == 0 and a.tune_travel == 0)
+    before = a.khz
+    _ = radio_hold_tune(a,-1,0.01)
+    assert(a.khz == before-5 and a.tune_held == 0)
+    loop i in 0..20: _ = radio_hold_tune(a,-1,0.01)
+    assert(a.khz == before-5)
+
+test "audition queued audio flushes on seek and stops at end":
+    # Engine's headless stream API; SLOPPY_NO_AUDIO is mandatory for this test command.
+    assert(env("SLOPPY_NO_AUDIO") != none)
+    a = MusicAudition(piece=1,playing=true)
+    music_audition_update(a,0.016,true)
+    assert(a.generated <= RADIO_BLOCK and queued_samples(a.voice) <= 4000)
+    old = a.voice
+    music_audition_seek(a,10)
+    music_audition_update(a,0.016,true)
+    assert(queued_samples(old) == 0 and abs(a.position-10) < 0.001)
+    assert(a.synth.music.cursor >= 160000 and a.synth.music.piece == 1)
+    music_audition_seek(a,music_duration(a))
+    music_audition_update(a,0.016,true)
+    assert(not a.playing and a.voice == -1)
+
+test "acoustic models contain finite bounded scalar parameters across the keyboard":
+    m=make_music_models()
+    loop kind in 0..MUSIC_KINDS:
+        loop pitch in [24,36,60,84,108]:
+            loop velocity in [1.0,45.0,80.0,115.0,127.0]:
+                b=music_blend(m,kind,pitch,velocity)
+                loop field in 0..MUSIC_MODEL_WIDTH:
+                    x=music_parameter(m,b,field)
+                    assert(x==x and x>=0 and x<400)
+
+test "decaying string modes retain concert pitch and deterministic seek":
+    loop kind in [6,7,8,10,13]:
+        s=make_music_synth(); s.wet=0
+        s.events=[MusicEvent(0,48000,60,kind,0.65,0.65)]
+        s.frames=64000; s.lookback=64000
+        music_seek(s,0.1)
+        real=0.0; imag=0.0; wrong_r=0.0; wrong_i=0.0
+        loop i in 0..8000:
+            v=music_sample(s)
+            phase=TAU*261.625565*f64(i)/16000.0
+            real+=v*cos(phase); imag+=v*sin(phase)
+            wrong_r+=v*cos(phase*1.06); wrong_i+=v*sin(phase*1.06)
+        assert(real*real+imag*imag>(wrong_r*wrong_r+wrong_i*wrong_i)*3)
+        music_seek(s,1.25)
+        first=[loop i in 0..400: music_sample(s)]
+        music_seek(s,1.25)
+        second=[loop i in 0..400: music_sample(s)]
+        assert(first==second)
+
+test "opening call keeps fast pickups and tied tones with a shaped effort contour":
+    s=make_music_synth(); music_load(s,1)
+    assert(s.events.len()==24 and s.frames<20*MUSIC_RATE)
+    loop group in 0..6:
+        at=group*4
+        loop i in 0..3:
+            gap=f64(s.events[at+i+1].start-s.events[at+i].start)/f64(MUSIC_RATE)
+            assert(gap>0.075 and gap<0.14)
+        assert(s.events[at+3].duration>MUSIC_RATE)
+    assert(s.events[15].pitch==64 and s.events[23].pitch==73)
+    e=MusicEvent(0,16000,64,15,0.4,0.5,0.9,0.4)
+    s.events=[e];s.frames=32000;s.lookback=32000;s.wet=0
+    music_seek(s,0)
+    loop i in 0..6400: _=music_sample(s)
+    peak=s.voices[0].gain
+    music_seek(s,0.4)
+    assert(abs(s.voices[0].gain-peak)<0.00000001)
+    assert(s.voices[0].gain_step<0)
+    music_seek(s,0.1)
+    assert(s.voices[0].gain<peak and s.voices[0].gain_step>0)
+
+
+test "annotated Adagietto has independent section mix and an extended common clock":
+    s=make_music_synth();music_load(s,0)
+    assert(s.frames>640*MUSIC_RATE and s.frames<680*MUSIC_RATE)
+    assert(s.events.len()==1528)
+    changed=false
+    loop e in s.events:
+        assert(e.mix_gain>0 and e.mix_gain<=4 and e.mix_end_gain>0 and e.mix_end_gain<=4)
+        if e.mix_gain!=1:changed=true
+    assert(changed)
+    a=make_music_synth();b=make_music_synth()
+    a.wet=0;b.wet=0
+    music_start(a,MusicEvent(0,32000,60,7,0.6,0.6),0)
+    music_start(b,MusicEvent(0,32000,60,7,0.6,0.6,mix_gain=0.5,mix_end_gain=0.5),0)
+    assert(a.bodies[0].velocity==b.bodies[0].velocity)
+    assert(abs(b.voices[0].gain*2-a.voices[0].gain)<0.000000001)

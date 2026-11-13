@@ -1,3 +1,5 @@
+use 'world_point.jo'
+use 'frame_budget.jo'
 use 'ports_scene.jo'
 # Living-world aircraft. Identity and intent belong to World; only leased craft run physics.
 use 'world.jo'
@@ -103,6 +105,8 @@ _restore_common = (tr: mut Traffic, w: living.World):
         throttle = f64(c.pose.throttle) / 1000.0, fuel = f64(c.fuel_ml) / 1000.0,
         hull_damage = 1.0 - f64(c.hull) / 1000.0, engine_damage = 1.0 - f64(c.engine) / 1000.0,
         on_water = wet, water_age = if wet: 0.0 else: 1.0)
+    tr.state.precise=data.pose_point(c.pose);tr.state.precise.y=f64(pos.y)
+    tr.state.published=pos;tr.state.precise_ready=true
     _seed_condition(tr.state, tr.spec, c.hull, c.engine)
     if c.state == .moored or c.state == .workshop: moor(tr.state, pos, heading(tr.state))
 
@@ -146,6 +150,8 @@ bind_living_player = (player: mut Flyer, w: mut living.World, adapter: mut scene
     record = w.aircraft[c]
     player.state.position = record.pose.pos
     if record.pose.pos.y == 0 and record.state == .moored: player.state.position.y = f32(player.spec.float_height)
+    player.state.precise=data.pose_point(record.pose);player.state.precise.y=f64(player.state.position.y)
+    player.state.published=player.state.position;player.state.precise_ready=true
     player.state.velocity = record.pose.vel; player.state.orientation = record.pose.rot
     restored=false
     if record.scene_extension_tick == w.tick and record.scene_extension != "":
@@ -162,6 +168,7 @@ bind_living_player = (player: mut Flyer, w: mut living.World, adapter: mut scene
         _restore_snapshot_health(player.state,player.spec,w,c)
         if abs(player.state.fuel*1000.0-f64(record.fuel_ml))>1: player.state.fuel=f64(record.fuel_ml)/1000.0
     w.aircraft[c].pose = data.Pose(pos = player.state.position, vel = player.state.velocity, rot = player.state.orientation)
+    data.place_pose(w.aircraft[c].pose,craft_point(player.state))
     if w.aircraft[c].move_owner != .scene: w.aircraft[c].revision += 1
     w.aircraft[c].move_owner = .scene
     if not scene.scene_bound(adapter, c): adapter.handles[c] = adapter.bodies.add(scene.SceneLease(c))
@@ -193,6 +200,7 @@ commit_player_motion = (w: mut living.World, state: CraftState, before: data.Pos
     if length(v) > 900.0: v = normalize(v) * 900.0
     pose = data.Pose(pos = lerp(before.pos, state.position, f32(alpha)), vel = v,
         rot = normalize(lerp(before.rot, rotation, f32(alpha))), throttle = clamp(int(round(state.throttle * 1000.0)), 0, 1000))
+    data.place_pose(pose,world_lerp(data.pose_point(before),craft_point(state),alpha))
     fuel = min(w.aircraft[c].fuel_ml, max(0, int(round(lerp(f64(before_fuel), state.fuel * 1000.0, alpha)))))
     phase: data.CraftState = if state.moored: data.CraftState.moored else: if state.on_water: data.CraftState.taxi else: data.CraftState.airborne
     hull = min(w.aircraft[c].hull, max(0, int(round((1.0 - state.hull_damage) * 1000.0))))
@@ -392,7 +400,7 @@ commit_traffic_motion = (tr: mut Traffic,w: mut living.World,arrival: bool = tru
     engine = min(c.engine, max(0, int(round((1.0 - tr.state.engine_damage) * 1000.0))))
     velocity = tr.state.velocity
     if length(velocity)>900.0: velocity = normalize(velocity)*900.0
-    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position, vel = velocity, rot = tr.state.orientation, throttle = clamp(int(round(tr.state.throttle * 1000.0)), 0, 1000)), fuel, hull, engine, phase,arrival)
+    revision = scene.scene_motion(w, tr.craft, c.revision, data.Pose(pos = tr.state.position,precise=craft_point(tr.state),published=tr.state.position,precise_ready=true, vel = velocity, rot = tr.state.orientation, throttle = clamp(int(round(tr.state.throttle * 1000.0)), 0, 1000)), fuel, hull, engine, phase,arrival)
     if revision < 0:
         living_fault("traffic.npc_motion.refused",guard_context(w)+" craft={tr.craft} revision={c.revision} last_tick={c.last_scene_tick} pos={tr.state.position} velocity={tr.state.velocity} fuel={fuel} hull={hull} engine={engine}")
         return
@@ -405,11 +413,12 @@ commit_traffic_motion = (tr: mut Traffic,w: mut living.World,arrival: bool = tru
             living.commit_arrival(w, tr.trip, tr.town, tr.dock, revision)
 
 update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = [], battle: mut Battle = Battle(), effects: (CombatEvent[]) -> void = (events: CombatEvent[]): pass, contact: (int,CraftSpec,CraftState,vec3) -> CraftState = (id: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState: state,ships:AirShip[] = [],other_air:AirContact[] = []):
-    accepted = clamp(dt, 0.0, 0.25)
+    accepted = frame_dt(dt)
     velocity = (observer - adapter.observer) / f32(max(accepted, 1.0 / 60.0))
     if length(velocity) > 200: velocity = normalize(velocity) * 200.0
     adapter.observer = observer; adapter.observer_velocity = velocity
-    adapter.accumulator += accepted
+    adapter.accumulator = frame_spare(adapter.accumulator,accepted)
+    adapter.frame_ticks = 0
     player_craft = w.people[w.player].craft
     # Saving folds all owners. The same human body claims its lease before the next step.
     if player != none and not scene.scene_bound(adapter, player_craft):
@@ -433,6 +442,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
         cargo_scene.step_cargo_scene(w,towns,observer,1.0/60.0)
         life_nav_budget -= daily_scene.step_life_scene(w,towns,observer,1.0/60.0,life_nav_budget)
         stepped += 1
+        adapter.frame_ticks += 1
         alpha=f64(stepped)/f64(steps)
         if not battle.enabled:
             if let body=player:commit_player_motion(w,body,player_before,player_fuel,alpha)
@@ -448,8 +458,11 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                 if pi>=0 and not battle.actors[pi].bailed:
                     old=battle.actors[pi].state
                     battle.actors[pi].previous=old.position
+                    battle.actors[pi].previous_point=craft_point(old)
                     battle.actors[pi].state=body
-                    battle.actors[pi].state.position=lerp(player_before.pos,body.position,f32(alpha))
+                    battle.actors[pi].state.precise=world_lerp(data.pose_point(player_before),craft_point(body),alpha)
+                    battle.actors[pi].state.position=world_vec(battle.actors[pi].state.precise)
+                    battle.actors[pi].state.published=battle.actors[pi].state.position; battle.actors[pi].state.precise_ready=true
                     loop part in 0..7:
                         if old.damage.parts[part].health<body.damage.parts[part].health:
                             battle.actors[pi].state.damage.parts[part]=old.damage.parts[part]
@@ -480,6 +493,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                 ci=combat_index(battle,tr.craft)
                 if battle.enabled and ci>=0 and battle.actors[ci].external:
                     battle.actors[ci].previous=battle.actors[ci].state.position
+                    battle.actors[ci].previous_point=craft_point(battle.actors[ci].state)
                     battle.actors[ci].state=tr.state
             traffic[i] = tr
         if battle.enabled:
@@ -525,6 +539,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
         ci=combat_index(battle,tr.craft)
         if battle.enabled and ci>=0 and battle.actors[ci].external:
             battle.actors[ci].present=tr.materialized and tr.visible
+    battle.render_alpha=clamp(adapter.accumulator/FIXED_DT,0.0,1.0)
 
 # Synchronize NPCs at a completed fixed tick. Use fold_living_scene_for_save for a bound player.
 # On reload only an exact matching tick restores hidden state; abstract motion invalidates it.
@@ -565,7 +580,9 @@ draw_traffic = (traffic: Traffic[], models: CraftModel[], L: Light, t: f64, batt
         if not tr.visible or length(tr.state.position - cam) > detail_distance: continue
         m = models[tr.model]
         at = translation(tr.state.position) * quat_to_mat4(tr.state.orientation)
-        if tr.state.moored: at = afloat(tr.state.position, t) * at
-        draw(obj_sh, m.body, obj_params(L, t, at))
-        draw_craft_props(m, L, t, at, tr.prop_angle)
-        draw_craft_gear(m, L, t, at, tr.state.gear)
+        if tr.state.moored: at = afloat_transform(at,t)
+        anchor=world_offset(craft_point(tr.state),at[3].xyz-tr.state.position)
+        at[3]=vec4(0,0,0,1)
+        draw(obj_sh,m.body,obj_params(L,t,at,anchor=anchor))
+        draw_craft_props(m,L,t,at,tr.prop_angle,anchor)
+        draw_craft_gear(m,L,t,at,tr.state.gear,anchor)

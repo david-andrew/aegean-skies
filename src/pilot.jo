@@ -1,3 +1,6 @@
+use 'world_point.jo'
+use 'world_particles.jo'
+use 'targets.jo'
 use 'settlement_ports.jo'
 use 'render_space.jo'
 # The player at the controls: keys to controls for the flight model, the chase camera, and the
@@ -12,6 +15,7 @@ use 'weather_scene.jo'
 use 'world.jo'
 use 'planes.jo'
 use 'flight.jo'
+use 'flight_ground.jo'
 use 'touch.jo'
 use 'motion.jo'
 use 'options.jo'
@@ -21,6 +25,8 @@ use 'trails.jo'
 use 'sea.jo'
 use 'flight_feedback.jo'
 use 'damage.jo'
+use 'frame_budget.jo'
+use 'flight_instruments.jo'
 
 # (the chase camera rises as it falls back with speed: the pause menu's switch)
 camera_rises = false
@@ -38,6 +44,8 @@ struct Flyer:
     guns_locked = true
     safety_zone = false
     gear_down = false
+    cam_point = WorldPoint()
+    cam_ready = false
     cam_pos: vec3
     cam_fwd: vec3 = vec3(0, 0, -1)
     cam_up: vec3 = vec3(0, 1, 0)
@@ -81,6 +89,7 @@ struct Flyer:
     a_fast = 0.0
     a_slow = 0.0
     feedback: FlightFeedback = FlightFeedback()
+    instruments: FlightInstruments = FlightInstruments()
     cam_vel: vec3 = vec3(0, 0, 0)   # the camera's own motion (it rides a spring behind the aircraft)
 
 make_flyer = (kind: Craft, model: int, contacts: vec3[], dock: vec3, heading: f64) -> Flyer:
@@ -93,8 +102,8 @@ make_flyer = (kind: Craft, model: int, contacts: vec3[], dock: vec3, heading: f6
 flight_env = (t: f64, pos: vec3 = vec3(0,0,0)) -> FlightEnv:
     w = wind_now
     # (the sea the floats meet is the sea that is drawn: its swells, at the game's time)
-    FlightEnv(wind = if weather_active: weather_flight_wind(pos) else: vec3(w.dir.x, 0, w.dir.y) * f32(w.speed * 0.7), wave_height = 0.0, wave_time = 0.0, ground = surface_height,
-        swell = (x: f64, z: f64) -> vec3: swell_at(x, z, t), has_swell = true)
+    FlightEnv(wind = if weather_active: weather_flight_wind(pos) else: vec3(w.dir.x, 0, w.dir.y) * f32(w.speed * 0.7), wave_height = 0.0, wave_time = 0.0, ground = flight_surface_height,
+        swell = (x: f64, z: f64) -> vec3: swell_at(x, z, t), has_swell = true, swell_ceiling=swell_height_bound())
 
 # where the aircraft is pointing: its heading and how far its nose is above the horizon
 _attitude = (st: CraftState) -> (f64, f64, f64):
@@ -155,7 +164,7 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
         # the wheel brings it nearer or farther; it starts where the follow camera was)
         if not f.orbiting and length(md) > 0.5:
             f.orbiting = true
-            rel = f.cam_pos - st.position
+            rel = world_delta(if f.cam_ready:f.cam_point else:world_point(f.cam_pos),craft_point(st))
             f.orbit_yaw = atan2(f64(rel.x), -f64(rel.z))
             f.orbit_pitch = clamp(asin(clamp(f64(rel.y) / max(f64(length(rel)), 0.1), -1.0, 1.0)), -0.05, 1.35)
             f.orbit_dist = clamp(f64(length(rel)), 9.0, 90.0)
@@ -167,7 +176,7 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
     else: f.orbiting = false
     f.slow = slow
     # (as it was: slow, the mouse looks around the aircraft)
-    looking = mouse_down(.right) or vdown(.c) or (slow and not tweaks.orbit_camera)
+    looking = mouse_down(.right) or (slow and not tweaks.orbit_camera)
     if looking:
         f.look_yaw = clamp(f.look_yaw - f64(md.x) * 0.004, -PI, PI)
         f.look_pitch = clamp(f.look_pitch - f64(md.y) * 0.004, -1.2, 1.2)
@@ -233,7 +242,7 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
         c.yaw = ky
     c.assist = 0.0
     # (the controls ease toward what is asked: a stick is not a switch)
-    rate = if f.mouse_mode: 30.0 else: 7.0
+    rate = if f.mouse_mode: 30.0 else: if tweaks.skybarons_response:9.0 else:7.0
     k = 1.0 - exp(-rate * dt)
     c.pitch = f.last.pitch + (c.pitch - f.last.pitch) * k
     c.roll = f.last.roll + (c.roll - f.last.roll) * k
@@ -244,13 +253,12 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
 # vapor off the wingtips: pulling hard at speed in damp air (morning, evening, near the clouds);
 # the two wingtips' trails (strength 0 when there is none)
 vapor = (f: Flyer, trails: mut Trail[], hour: f64, t: f64):
-    sp = true_speed(f.spec,f64(length(f.state.velocity)))
+    sp = f.feedback.speed
     damp = max(1.0 - smoothstep(8.0, 11.0, hour), smoothstep(16.5, 19.0, hour))
     damp = max(damp, smoothstep(450.0, 680.0, f64(f.state.position.y)))
     if weather_active: damp = max(damp,f64(weather_here.rain))
     need = 3.4 - 1.2 * damp
     strength = if f.state.on_water or sp < 40.0: 0.0 else: smoothstep(need, need + 1.5, f.load)
-    m = translation(f.state.position) * quat_to_mat4(f.state.orientation)
     # the outermost wingtips: left and right
     tips = f.spec.wing_contacts
     left = tips[0]
@@ -258,17 +266,18 @@ vapor = (f: Flyer, trails: mut Trail[], hour: f64, t: f64):
     loop p in tips:
         if p.x < left.x: left = p
         if p.x > right.x: right = p
-    trail_step(trails[0], transform_point(m, left), if part_health(f.state.damage,.left_wing) > 0: strength else: 0.0, t)
-    trail_step(trails[1], transform_point(m, right), if part_health(f.state.damage,.right_wing) > 0: strength else: 0.0, t)
+    trail_step(trails[0], craft_offset(f.state,quat_rotate(f.state.orientation,left)), if part_health(f.state.damage,.left_wing) > 0: strength else: 0.0, t)
+    trail_step(trails[1], craft_offset(f.state,quat_rotate(f.state.orientation,right)), if part_health(f.state.damage,.right_wing) > 0: strength else: 0.0, t)
 
 # a step of the player's aircraft
 fly = (f: mut Flyer, dt: f64, t: f64):
     c = key_controls(f, dt)
     if f.state.moored and f.throttle > 0.05: unmoor(f.state)
-    if not f.state.moored: step(f.spec, f.state, c, flight_env(t,f.state.position), dt)
-    f.prop_angle += dt * (8.0 + 70.0 * f.state.throttle)
+    e=flight_env(t,f.state.position)
+    if not f.state.moored: step(f.spec, f.state, c, e, dt)
+    f.prop_angle += dt * prop_rotation_speed(f.state,f.feedback.speed)
     f.sea_t = t
-    feel(f, dt)
+    feel(f, dt,e.wind)
 
 craft_transform = (f: Flyer) -> mat4: translation(f.state.position) * quat_to_mat4(f.state.orientation)
 
@@ -299,7 +308,8 @@ _cam_shape = (kind: Craft) -> vec4:
 chase = (f: mut Flyer, dt: f64):
     if dt <= 0.0: return
     st = f.state
-    P = st.position
+    base = craft_point(st)
+    P = vec3(0,st.position.y,0)
     v = st.velocity
     sp = f64(length(v))
     nose = quat_rotate(st.orientation, vec3(0, 0, -1))
@@ -311,13 +321,14 @@ chase = (f: mut Flyer, dt: f64):
         if not f.wreck_cam:
             f.wreck_cam = true
             f.jolt = clamp(sp / 45.0, 0.25, 1.6)
-        c = f.cam_pos
+        c = world_delta(if f.cam_ready:f.cam_point else:world_point(f.cam_pos),WorldPoint(base.x,0,base.z))
         d = f64(length(c - P))
         if d > 55.0: c = P + (c - P) * f32(55.0 / d)
-        c.y = max(c.y, f32(max(f64(swell_at(f64(c.x), f64(c.z), f.sea_t).x), surface_height(f64(c.x), f64(c.z))) + 2.0))
-        f.cam_pos = c
+        c.y = max(c.y, f32(max(f64(swell_at(base.x+f64(c.x), base.z+f64(c.z), f.sea_t).x), surface_height(base.x+f64(c.x), base.z+f64(c.z))) + 2.0))
+        f.cam_point=WorldPoint(base.x+f64(c.x),f64(c.y),base.z+f64(c.z));f.cam_ready=true
+        f.cam_pos=world_vec(f.cam_point)
         f.jolt = f.jolt * exp(-2.2 * dt)
-        sea = f64(swell_at(f64(P.x), f64(P.z), f.sea_t).x)
+        sea = f64(swell_at(base.x+f64(P.x), base.z+f64(P.z), f.sea_t).x)
         at = if f64(P.y) < sea: vec3(P.x, f32(sea), P.z) else: P
         want = normalize(at - c + vec3(0, 0.0001, 0))
         f.look = normalize(f.look + (want - f.look) * f32(1.0 - exp(-7.0 * dt)))
@@ -340,7 +351,7 @@ chase = (f: mut Flyer, dt: f64):
     rh = cross(fh, uh)
     shape = _cam_shape(f.kind)
     sfrac = smoothstep(f.spec.stall_speed, f.spec.max_speed, sp)
-    below = max(surface_height(f64(P.x), f64(P.z)), 0.0)
+    below = max(surface_height(base.x+f64(P.x), base.z+f64(P.z)), 0.0)
     a = f64(P.y) - f.spec.float_height * 0.5 - below
     low = 1.0 - smoothstep(6.0, 40.0, a)
     # (the camera is pushed back by the air as it chases: well behind at rest, and the faster it
@@ -367,19 +378,25 @@ chase = (f: mut Flyer, dt: f64):
     if not f.placed:
         f.cam_e = vec3(0, 0, 0)
         f.cam_ev = vec3(0, 0, 0)
-    n = max(1, int(ceil(dt * 240.0)))
-    h = f32(dt / f64(n))
-    loop k in 0..n:
-        acc_e = -(w * w) * f.cam_e - (z * w * 2.0) * f.cam_ev - g * ah
-        f.cam_ev += acc_e * h
-        f.cam_e += f.cam_ev * h
+    # Independent exact axis springs: acceleration is constant for this sample. Work is
+    # bounded even after a long pause; no Euler velocity can accumulate unseen by soft limits.
+    loop axis in 0..3:
+        wi = if axis==0: f64(w.x) else: if axis==1: f64(w.y) else: f64(w.z)
+        zi = if axis==0: f64(z.x) else: if axis==1: f64(z.y) else: f64(z.z)
+        force = if axis==0: -g.x*ah.x else: if axis==1: -g.y*ah.y else: -g.z*ah.z
+        old_p = if axis==0: f.cam_e.x else: if axis==1: f.cam_e.y else: f.cam_e.z
+        old_v = if axis==0: f.cam_ev.x else: if axis==1: f.cam_ev.y else: f.cam_ev.z
+        pos,vel = spring_vector(vec3(old_p,0,0),vec3(old_v,0,0),vec3(f64(force)/(wi*wi),0,0),wi,zi,dt)
+        if axis==0: f.cam_e.x=pos.x; f.cam_ev.x=vel.x
+        else if axis==1: f.cam_e.y=pos.x; f.cam_ev.y=vel.x
+        else: f.cam_e.z=pos.x; f.cam_ev.z=vel.x
     # (bounded softly: the offsets fade toward their limits rather than stopping at them; it
     # comes in closer only a little)
     soft = (x: f32, m: f32) -> f32: m * f32(tanh(f64(x / m)))
     e = vec3(soft(f.cam_e.x, 3.0), soft(f.cam_e.y, 1.2), if f.cam_e.z > 0.0: soft(f.cam_e.z, 1.0) else: soft(f.cam_e.z, 6.0))
     c = A + rh * e.x + uh * e.y + fh * e.z
-    sw = swell_at(f64(c.x), f64(c.z), f.sea_t)
-    c.y = max(c.y, f32(max(f64(sw.x) + 1.3, surface_height(f64(c.x), f64(c.z)) + 1.3)))
+    sw = swell_at(base.x+f64(c.x), base.z+f64(c.z), f.sea_t)
+    c.y = max(c.y, f32(max(f64(sw.x) + 1.3, surface_height(base.x+f64(c.x), base.z+f64(c.z)) + 1.3)))
     # (looking around: the camera swung about the aircraft)
     if abs(f.look_yaw) + abs(f.look_pitch) > 0.001:
         rel = c - P
@@ -387,9 +404,8 @@ chase = (f: mut Flyer, dt: f64):
         side = normalize(cross(rel, vec3(0, 1, 0)))
         rel = quat_rotate(quat_axis_angle(side, f.look_pitch), rel)
         c = P + rel
-        g2 = max(f64(swell_at(f64(c.x), f64(c.z), f.sea_t).x), surface_height(f64(c.x), f64(c.z))) + 1.3
+        g2 = max(f64(swell_at(base.x+f64(c.x), base.z+f64(c.z), f.sea_t).x), surface_height(base.x+f64(c.x), base.z+f64(c.z))) + 1.3
         c.y = max(c.y, f32(g2))
-    f.cam_pos = c
     # where it looks: ahead along the path, leading into the turn, down a little when low
     yaw_rate = f64(dot(cross(fh, vdir), uh)) * 6.0
     T = P + fh * f32(22.0 + D * 0.4) + rh * f32(clamp(yaw_rate * sp * 0.2, -8.0, 8.0)) - uh * f32(4.0 * low)
@@ -400,8 +416,9 @@ chase = (f: mut Flyer, dt: f64):
     if not f.placed: f.look = want
     # (the aim keeps the aircraft well in the picture: stiff enough that it never runs to the edge)
     lw = 11.0
-    f.look_v += ((want - f.look) * f32(lw * lw) - f.look_v * f32(2.0 * 0.85 * lw)) * f32(dt)
-    f.look = normalize(f.look + f.look_v * f32(dt))
+    look,look_v = spring_vector(f.look,f.look_v,want,lw,0.85,dt)
+    f.look = if length(look)>0.00001: normalize(look) else: want
+    f.look_v = look_v-f.look*dot(look_v,f.look)
     _, _, bank = _attitude(st)
     want_roll = if st.on_water or st.moored: 0.0 else: 0.2 * bank
     f.roll = f.roll + (want_roll - f.roll) * (1.0 - exp(-3.0 * dt))
@@ -419,9 +436,9 @@ chase = (f: mut Flyer, dt: f64):
         cp = cos(f.orbit_pitch)
         dir = heading_vector(f.orbit_yaw) * f32(cp) + vec3(0, f32(sin(f.orbit_pitch)), 0)
         oc = piv + dir * f32(f.orbit_dist)
-        oc.y = max(oc.y, f32(max(f64(swell_at(f64(oc.x), f64(oc.z), f.sea_t).x), surface_height(f64(oc.x), f64(oc.z))) + 1.3))
+        oc.y = max(oc.y, f32(max(f64(swell_at(base.x+f64(oc.x), base.z+f64(oc.z), f.sea_t).x), surface_height(base.x+f64(oc.x), base.z+f64(oc.z))) + 1.3))
         ow = f32(f.orbit_w)
-        f.cam_pos = f.cam_pos + (oc - f.cam_pos) * ow
+        c = c + (oc - c) * ow
         f.look = normalize(f.look + (normalize(piv - oc) - f.look) * ow)
         f.cam_up = normalize(f.cam_up + (vec3(0, 1, 0) - f.cam_up) * ow)
     # (on a touch screen, Sky Barons' view: from behind the aircraft along the aim, following the
@@ -433,17 +450,20 @@ chase = (f: mut Flyer, dt: f64):
         f.cam_aim = normalize(f.cam_aim + (ad - f.cam_aim) * f32(1.0 - exp(-25.0 * dt)))
         d = f.cam_aim
         behind = P - d * f32(D) + vec3(0, f32(f64(shape.y) * 0.95), 0)
-        behind.y = max(behind.y, f32(max(f64(swell_at(f64(behind.x), f64(behind.z), f.sea_t).x), surface_height(f64(behind.x), f64(behind.z))) + 1.3))
+        behind.y = max(behind.y, f32(max(f64(swell_at(base.x+f64(behind.x), base.z+f64(behind.z), f.sea_t).x), surface_height(base.x+f64(behind.x), base.z+f64(behind.z))) + 1.3))
         ahead = P + d * 40.0 + vec3(0, 2.5, 0)
-        f.cam_pos = behind
+        c = behind
         f.look = normalize(ahead - behind)
         f.cam_up = vec3(0, 1, 0)
+    f.cam_point=WorldPoint(base.x+f64(c.x),f64(c.y),base.z+f64(c.z));f.cam_ready=true
+    f.cam_pos=world_vec(f.cam_point)
     f.placed = true
 
 # how it feels to be going: the load on the wings (from how fast the way it goes is turning), the
 # field of view opening with speed, a buffet when fast and low, or pulling hard
-feel = (f: mut Flyer, dt: f64):
+feel = (f: mut Flyer, dt: f64,wind:vec3=vec3(0,0,0)):
     if dt <= 0: return
+    instrument_step(f.instruments,f.spec,f.state,dt)
     v = f.state.velocity
     sp = f64(length(v))
     dir = if sp > 1.0: v / f32(sp) else: f.prev_dir
@@ -451,21 +471,25 @@ feel = (f: mut Flyer, dt: f64):
     f.prev_dir = dir
     g = 1.0 + turn * true_speed(f.spec, sp) / 9.81
     f.load = f.load + (min(g, 8.0) - f.load) * (1.0 - exp(-6.0 * dt))
-    feedback_step(f.feedback,f.spec,f.state,f.load,dt)
+    feedback_step(f.feedback,f.spec,f.state,f.load,dt,wind)
     f.shake = f.feedback.buffet
 
-place_chase_camera = (f: Flyer, t: f64):
+place_chase_camera = (f: Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64 = 0.0):
+    view=blend_bearing(f.look,tracking,weight)
+    camera_up=f.cam_up
+    if abs(dot(view,camera_up))>0.98:camera_up=normalize(cross(view,vec3(1,0,0)))
     # the view hums only once it is really fast (the airframe itself shakes sooner), and shakes in a
     # buffet or a crash
     sp = f64(length(f.state.velocity))
     hum = if f.state.on_water: 0.0 else: smoothstep(75.0, 125.0, true_speed(f.spec, sp)) * 0.12
-    side = normalize(cross(f.look, f.cam_up) + vec3(0.0001, 0, 0))
-    up = normalize(cross(side, f.look))
-    target = f.cam_pos + f.look * 50.0 + side * f32(sin(t * 61.0) * hum) + up * f32(sin(t * 53.0 + 1.3) * hum)
+    side = normalize(cross(view, camera_up) + vec3(0.0001, 0, 0))
+    up = normalize(cross(side, view))
+    target = view * 50.0 + side * f32(sin(t * 61.0) * hum) + up * f32(sin(t * 53.0 + 1.3) * hum)
     a = f.shake * f.shake * 0.35 + f.jolt * 0.8 + f.feedback.slap * 0.12
     # (shaken about the camera's own axes, whichever way it faces)
-    jitter = (side * f32(noise(t * 9.0, 1.0) - 0.5) + up * f32(noise(t * 11.0, 7.0) - 0.5) + f.look * f32(noise(t * 8.0, 13.0) - 0.5)) * f32(a)
-    camera3d(f.cam_pos + jitter * 0.3, target + jitter * 5.0, f.fov, 0.5, world_far(f64(f.cam_pos.y)), f.cam_up)
+    jitter = (side * f32(noise(t * 9.0, 1.0) - 0.5) + up * f32(noise(t * 11.0, 7.0) - 0.5) + view * f32(noise(t * 8.0, 13.0) - 0.5)) * f32(a)
+    eye=if f.cam_ready:f.cam_point else:world_point(f.cam_pos)
+    precise_camera(world_offset(eye,jitter*0.3),target+jitter*4.7,f.fov,0.5,world_far(eye.y),camera_up)
 
 # the dock nearest the aircraft, when it is slow and close enough to moor there
 mooring_spot = (f: Flyer, towns: Town[]) -> vec3?:
@@ -483,28 +507,29 @@ mooring_spot = (f: Flyer, towns: Town[]) -> vec3?:
     best ?? port_mooring(f.state.position)
 
 # spray off the floats as they cut the water, and a wake
-spray = (f: mut Flyer, models: CraftModel[], ps: mut Particles3D, dt: f64):
+spray = (f: mut Flyer, models: CraftModel[], ps: mut WorldParticles, dt: f64):
     if not f.state.on_water or f.state.moored or dt <= 0:
         f.feedback.spray_credit = 0.0
         return
     v = water_run_speed(f.spec,f.state)
-    if v < 3.0: return
+    if v < 3.0:
+        f.feedback.spray_credit=0.0
+        return
     # Time-based emission, capped independently of refresh rate and long frames.
     f.feedback.spray_credit += min(dt,0.1)*(18.0+75.0*smoothstep(3.0,30.0,v))
     n = min(10,int(f.feedback.spray_credit))
     f.feedback.spray_credit -= f64(n)
     if n == 0: return
-    m = craft_transform(f)
     loop p in models[f.model].contacts:
         if p.z > 0.0 or part_health(f.state.damage,PartId(contact_part(f.kind,p))) <= 0: continue
-        w = transform_point(m,p)
+        w = craft_offset(f.state,quat_rotate(f.state.orientation,p))
         sea = swell_at(f64(w.x),f64(w.z),f.sea_t)
         if w.y > sea.x+0.18: continue
         w.y = sea.x+0.08
         side = if p.x < 0: -1.0 else: 1.0
         dir = normalize(quat_rotate(f.state.orientation,vec3(side,0.5,0.6))+vec3(0,0.2,0))
         if ps.items.len() < 900:
-            emit(ps,w,n,min(11.0,v*0.22),rgba(0.95,0.97,1,0.65),0.65,0.2+v*0.008,0.38,dir)
+            emit(ps,w,min(n,900-ps.items.len()),min(11.0,v*0.22),rgba(0.95,0.97,1,0.65),0.65,0.2+v*0.008,0.38,dir)
 
 # a flight heading (0 north, east PI/2) as the world's turn (faces (sin, cos))
 heading_to_turn = (h: f64) -> f64: PI - h

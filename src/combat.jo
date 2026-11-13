@@ -1,3 +1,4 @@
+use 'world_point.jo'
 # Deterministic physical engagements. IDs refer to living-world people/aircraft; no economy,
 # rescue, spawning of inhabitants, device reads or random() calls occur here.
 use 'flight.jo'
@@ -7,8 +8,8 @@ use 'bailout.jo'
 from 'planes.jo' import Craft, aircraft_profile, PartId
 
 const COMBAT_DT = 1.0/60.0
-const COMBAT_MAX_CRAFT = 64
-const COMBAT_MAX_ROUNDS = 512
+const COMBAT_MAX_CRAFT = 128
+const COMBAT_MAX_ROUNDS = 2048
 
 enum CombatRole: fighter, wingman, strike, escort, flee
 enum CombatMode: pursuit, scissors, breakaway, regroup, evade, strafe, withdrawing, down
@@ -132,7 +133,10 @@ struct Combatant:
     model = -1
     engagement = -1
     rally: vec3 = vec3(0,300,0)     # this engagement's origin, independent of other contacts
+    previous_point:WorldPoint?=none
     previous: vec3 = vec3(0,0,0)
+    previous_rotation: vec4 = vec4(0,0,0,1)
+    render_ready = false
     fire = 0.0
     fire_age = 0.0
     last_attacker = -1
@@ -164,7 +168,14 @@ struct Round:
     damage: f64
     age = 0.0
     tracer = true
+    point:WorldPoint?=none
     serial = -1                    # stable shot identity for one-shot presentation feedback
+
+struct RoundSweep:
+    owner: int
+    serial: int
+    start: vec3
+    end: vec3
 
 struct Battle:
     enabled = false
@@ -177,15 +188,30 @@ struct Battle:
     actors: Combatant[]
     boats: CombatBoat[]
     rounds: Round[]
+    sweeps: RoundSweep[]           # this tick, including rounds consumed by a collision
     descents: Descent[]
     events: CombatEvent[]           # presentation drains each fixed tick
     outcomes: CombatOutcome[]       # durable until the world acknowledges them
+    render_alpha = 1.0              # presentation only; never used by hit tests or flight
     next_serial = 0
     pair_tests = 0
     narrow_tests = 0
     brain_steps = 0
     physics_steps = 0
     finished = false
+
+# One fixed tick of visual latency removes held/advanced-frame alternation. Human/external
+# owners retain their own pose. This copy never feeds back into simulation or collision sweeps.
+combat_render_state = (a:Combatant,alpha:f64) -> CraftState:
+    s=a.state
+    if a.external or not a.render_ready:return s
+    t=f32(clamp(alpha,0.0,1.0))
+    previous=a.previous_point ?? world_point(a.previous)
+    if world_vec(previous)!=a.previous:previous=world_point(a.previous)
+    s.precise=world_lerp(previous,craft_point(s),f64(t));s.position=world_vec(s.precise);s.published=s.position;s.precise_ready=true
+    q=if dot(a.previous_rotation,s.orientation)<0:-s.orientation else:s.orientation
+    s.orientation=normalize(lerp(a.previous_rotation,q,t))
+    s
 
 combat_index = (b: Battle, craft: int) -> int:
     loop i in 0..b.actors.len():
@@ -204,8 +230,10 @@ start_engagement = (id: int, seed: int, center: vec3, actors: Combatant[], boats
     loop i in 0..b.actors.len():
         assert(b.actors[i].craft >= 0 and b.actors[i].person >= 0)
         loop j in 0..i: assert(b.actors[i].craft != b.actors[j].craft and b.actors[i].person != b.actors[j].person)
+        b.actors[i].spec.combat_flight=not b.actors[i].human
         b.actors[i].engagement = id
         b.actors[i].rally = center
+        b.actors[i].previous_point=craft_point(b.actors[i].state)
         b.actors[i].previous = b.actors[i].state.position
         b.actors[i].gun.locked = b.actors[i].external
         b.actors[i].pilot.skill = clamp(b.actors[i].pilot.skill,0.0,1.0)
@@ -399,7 +427,7 @@ bail_combatant = (b: mut Battle, i: int) -> bool:
     if i < 0 or i >= b.actors.len() or b.actors[i].bailed or b.actors[i].state.moored: return false
     a = b.actors[i]; p = aircraft_profile(a.spec.kind)
     seat = vec3(0,p.width+0.4,p.cockpit_z)
-    b.descents.push(leave_aircraft(a.person,a.craft,a.state.position,a.state.orientation,a.state.velocity,seat))
+    b.descents.push(leave_aircraft(a.person,a.craft,craft_point(a.state),a.state.orientation,a.state.velocity,seat))
     a.bailed = true; a.external = false; a.status = .disabled; a.gun.locked = true; a.pilot.trigger = false
     b.actors[i] = a
     _event(b,.bailed,a,a.state.position,a.last_attacker,outcome=true)
@@ -450,11 +478,12 @@ _fire_round = (b: mut Battle, i: int):
         if a.gun.heat < 0.35: a.gun.jammed = false
     if a.status == .flying and not a.bailed and a.pilot.trigger and not a.gun.locked and not a.gun.jammed and (endless or a.gun.ammo > 0) and a.gun.cool <= 0 and b.rounds.len() < COMBAT_MAX_ROUNDS:
         mounts = gun_mounts(a.spec.kind,gun.mounts); local = mounts[a.gun.shots%mounts.len()]
-        at = a.state.position+quat_rotate(a.state.orientation,local)
+        point=craft_offset(a.state,quat_rotate(a.state.orientation,local))
+        at=world_vec(point)
         jitter = vec3(combat_noise(b.seed,a.craft,a.gun.shots,0),combat_noise(b.seed,a.craft,a.gun.shots,1),0)*f32(gun.spread)
         # Convergence is physical: no target seeking or bending after the round is fired.
         dir = quat_rotate(a.state.orientation,normalize(vec3(0,0,-450)-local+jitter*450.0))
-        b.rounds.push(Round(at,a.state.velocity+dir*f32(420.0*b.bullet_scale),a.craft,a.side,gun.damage,tracer=rapid or a.gun.shots%3==0,serial=b.next_serial))
+        b.rounds.push(Round(at,a.state.velocity+dir*f32(420.0*b.bullet_scale),a.craft,a.side,gun.damage,tracer=rapid or a.gun.shots%3==0,serial=b.next_serial,point=point))
         a.gun.shots += 1
         if not endless:a.gun.ammo -= 1
         a.gun.heat += 0.035
@@ -463,17 +492,54 @@ _fire_round = (b: mut Battle, i: int):
         _event(b,.shot,a,at,direction=dir,strength=f64(gun.voice))
     b.actors[i] = a
 
-_step_rounds = (b: mut Battle, e: FlightEnv):
+struct RoundCell:
+    x:int
+    z:int
+
+# Swept AABBs in a 128m XZ grid. Y and the actual swept ellipsoids still decide hits.
+# Exceptionally long sweeps use the bounded full list; teleports cannot grow a huge grid.
+step_combat_rounds = (b: mut Battle, e: FlightEnv, broad_phase:bool = true):
+    b.sweeps.clear()
+    indexed=broad_phase and b.actors.len()>24 and b.rounds.len()>0
+    cells:{RoundCell:int[]};wide:int[]
+    indices=[loop i in 0..b.actors.len():i]
+    if indexed:
+        loop i in indices:
+            a=b.actors[i]
+            if not a.present or a.status==.escaped:continue
+            r=a.spec.span
+            x0=int(floor((min(f64(a.previous.x),f64(a.state.position.x))-r)/128.0))
+            x1=int(floor((max(f64(a.previous.x),f64(a.state.position.x))+r)/128.0))
+            z0=int(floor((min(f64(a.previous.z),f64(a.state.position.z))-r)/128.0))
+            z1=int(floor((max(f64(a.previous.z),f64(a.state.position.z))+r)/128.0))
+            if (x1-x0+1)*(z1-z0+1)>64:wide.push(i);continue
+            loop x in x0..x1+1:
+                loop z in z0..z1+1:
+                    key=RoundCell(x,z);bucket=cells.get(key,[]);bucket.push(i);cells[key]=bucket
+    seen=fill(-1,b.actors.len());serial=0
     n = 0
     loop n < b.rounds.len():
         r = b.rounds[n]; r.age += COMBAT_DT
         r.velocity.y -= f32(9.81*COMBAT_DT)
-        end = r.position+r.velocity*f32(COMBAT_DT)
+        next_point=world_offset(r.point ?? world_point(r.position),r.velocity*f32(COMBAT_DT))
+        end=world_vec(next_point)
         best = 2.0; victim = -1; boat_id = -1; part = PartId.body
-        loop i in 0..b.actors.len():
+        candidates=indices
+        if indexed:
+            x0=int(floor(min(f64(r.position.x),f64(end.x))/128.0));x1=int(floor(max(f64(r.position.x),f64(end.x))/128.0))
+            z0=int(floor(min(f64(r.position.z),f64(end.z))/128.0));z1=int(floor(max(f64(r.position.z),f64(end.z))/128.0))
+            if (x1-x0+1)*(z1-z0+1)<=64:
+                candidates=wide
+                loop i in wide:seen[i]=serial
+                loop x in x0..x1+1:
+                    loop z in z0..z1+1:
+                        loop i in cells.get(RoundCell(x,z),[]):
+                            if seen[i]!=serial:candidates.push(i);seen[i]=serial
+            serial+=1
+        loop i in candidates:
+            if not b.actors[i].present:continue
+            if b.actors[i].craft==r.owner or b.actors[i].side==r.side or b.actors[i].status==.escaped:continue
             a = b.actors[i]
-            if not a.present:continue
-            if a.craft == r.owner or a.side == r.side or a.status == .escaped: continue
             b.pair_tests += 1
             mid = (r.position+end)*0.5-a.state.position
             radius = a.spec.span+f64(length(end-r.position))*0.5+f64(length(a.state.position-a.previous))
@@ -511,8 +577,9 @@ _step_rounds = (b: mut Battle, e: FlightEnv):
                     _event(b,.boat_disabled,b.actors[owner],b.boats[boat_id].position,b.boats[boat_id].id,outcome=true)
                     b.outcomes[b.outcomes.len()-1].boat=b.boats[boat_id].id
                     b.outcomes[b.outcomes.len()-1].attacker=r.owner
+        b.sweeps.push(RoundSweep(r.owner,r.serial,r.position,lerp(r.position,end,f32(min(1.0,min(best,surface))))))
         if best <= 1 or surface <= 1 or r.age > 2.5: b.rounds.remove_at(n)
-        else: r.position=end; b.rounds[n]=r; n+=1
+        else: r.position=end;r.point=next_point; b.rounds[n]=r; n+=1
 
 # Observer changes only simulation detail, never faction/intent. Fixed inputs + the same LOD
 # schedule are deterministic. Near bodies use full 120 Hz flight/contact physics; far bodies
@@ -523,7 +590,13 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
     b.tick += 1
     loop i in 0..b.actors.len():
         a = b.actors[i]
-        if not a.external: a.previous = a.state.position
+        # Presentation has finished sinking this wreck. Keep its identity/outcomes and
+        # independent pilot descent, but stop invisible water contacts and bullet tests.
+        if a.status==.wreck and a.wreck_age>90:a.present=false
+        if not a.external:a.spec.combat_flight=true
+        if not a.external:
+            a.previous_point=craft_point(a.state)
+            a.previous = a.state.position;a.previous_rotation=a.state.orientation;a.render_ready=true
         if a.status == .escaped or not a.present: b.actors[i]=a; continue
         distance = length(a.state.position-observer)
         a.lod = if distance > 2800: 2 else: if distance > 1200: 1 else: 0
@@ -566,10 +639,12 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
             a.status=.escaped; a.external=true; _event(b,.fled,a,a.state.position,a.last_attacker,outcome=true)
         b.actors[i]=a
         if hopeless and not a.external and not a.bailed: bail_combatant(b,i)
-        _fire_round(b,i)
+    # Rotate launch order when the hard round budget is full, so the first faction in the
+    # array cannot monopolize it. Each gun still advances exactly once per fixed tick.
+    loop offset in 0..b.actors.len():_fire_round(b,(b.tick+offset)%b.actors.len())
     loop mut boat in b.boats:
         if not boat.disabled and not boat.external: boat.position+=boat.velocity*f32(COMBAT_DT)
-    _step_rounds(b,e)
+    step_combat_rounds(b,e)
     loop i in 0..b.descents.len():
         d=b.descents[i]; step_descent(d,e.wind,e.ground,0.0,COMBAT_DT,d.steering,d.open_requested)
         b.descents[i]=d

@@ -1,11 +1,19 @@
+use 'world_point.jo'
+use 'world_point.jo'
+use 'depth_space.jo'
 # Things on the islands: trees (instanced, by island), and the towns (houses, chapels, quays, one
 # mesh per settlement), drawn with the same painted light as the ground.
 
 use 'quality.jo'
 use 'terrain_lod.jo'
 use 'world.jo'
+use 'geography.jo'
+use 'world_source.jo'
 use 'settlements.jo'
+use 'town_sites.jo'
+use 'settlement_ports.jo'
 use 'look.jo'
+use 'paint.jo'
 use 'weather_scene.jo'
 use 'plants.jo'
 use 'render_space.jo'
@@ -31,21 +39,37 @@ struct ObjParams:
     warp_a: vec4                    # (the speed trial's warp: render_space.jo)
     warp_b: vec4
     wet: f32 = 0.0
+    pigment: Texture = Texture()
+    origin: vec3 = vec3(0,0,0)
+    instance_origin:vec3=vec3(0,0,0)
+    pigment_phase: vec4 = vec4(0,0,0,0)
+    sway_phase: vec4 = vec4(0,0,0,0)
 
 struct ObjOut:
     pos: vec4
     world: vec3
     normal: vec3
     color: vec4
+    surface: vec3 = vec3(0,0,0) # opening UV / material: 1 foliage, 2 recess, 3 plaster
 
-obj_light = (i: ObjOut, u: ObjParams) -> vec4:
-    n = normalize(i.normal)
-    ndl = dot(n, normalize(u.sun_dir))
-    lit = cel(ndl)
-    light = u.sun * lit + (mix(u.shade, u.sky, 0.35) * 1.2 + vec3(0.1, 0.1, 0.12)) * (1.0 - lit * 0.7)
+# Shared by the original and streamed-town vertex paths as well as groves.
+obj_surface = (v: Vertex3D, sway: f32 = 0.0) -> vec3:
+    material = if v.uv.x == 183.0: 4.0 else: if v.uv.x == 182.0: 3.0 else: if v.uv.x >= 180.0 and v.uv.x <= 181.0: 2.0 else: if (sway > 0.0 or v.uv.x == 173.0) and v.color.y > v.color.x*1.15: 1.0 else: 0.0
+    vec3(v.uv.x-180.0,v.uv.y,material)
+
+obj_base_light = (i: ObjOut,u: ObjParams,n: vec3,ndl: f32) -> vec3:
+    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,0.015))
+    light = mix(u.shade*1.12+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
+    if i.surface.z > 2.5:
+        # Plaster scatters a broad neutral fill. Blue skylight cools the shade
+        # without dyeing an entire white wall cobalt; liveries keep their light.
+        light = mix(paint_plaster_fill(u.sun,u.shade),u.sun*vec3(1.02,1.0,0.94),lit)
     # a little light from below, off the sea
-    light = light + vec3(0.03, 0.06, 0.08) * clamp(-n.y, 0.0, 1.0)
-    c = i.color.xyz * light
+    light = light + vec3(0.03, 0.06, 0.08) * min(u.sun,vec3(1,1,1)) * clamp(-n.y, 0.0, 1.0)
+    i.color.xyz * light
+
+obj_finish_light = (color: vec3,i: ObjOut,u: ObjParams,n: vec3) -> vec4:
+    c = color
     if u.wet > 0.001:
         wet = u.wet*smoothstep(0.2,0.8,n.y)
         view = normalize(u.cam-i.world)
@@ -56,7 +80,52 @@ obj_light = (i: ObjOut, u: ObjParams) -> vec4:
         # (by the sun's height, not its brightness: a rainy morning is dim, but nobody lights lamps)
         night = 1.0 - smoothstep(-0.04, 0.1, normalize(u.sun_dir).y)
         c = mix(c, vec3(1.0, 0.72, 0.38) * (1.6 + 0.4 * i.color.w), night)
-    vec4(aerial(c, i.world, u.cam, u.haze, u.fog), 1.0)
+    vec4(aerial(c, i.world, u.cam, u.haze, u.fog)*paint_paper(i.pos.xy), 1.0)
+
+obj_light = (i: ObjOut,u: ObjParams) -> vec4:
+    n = normalize(i.normal)
+    ndl = dot(n,normalize(u.sun_dir))
+    c = obj_base_light(i,u,n,ndl)
+    # Subpixel crowns and distant roof washes converge to the base material.
+    # Keep their texture work out of the heavily instanced distant groves.
+    paint_near = 1.0-smoothstep(120.0,300.0,length(i.world-u.cam))
+    if paint_near > 0.0:
+        # A broad pigment wash rather than per-pixel speckle on walls and roofs.
+        uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0+u.pigment_phase.xy
+        foliage = i.surface.z > 0.5 and i.surface.z < 1.5
+        if foliage: uv = i.world.xz/12.0+u.pigment_phase.zw+vec2(i.world.y*0.08,0)
+        pigment = sample(u.pigment,uv)
+        wash = pigment.w-0.5
+        resolved = (1.0-smoothstep(0.04,0.14,max(fwidth(uv.x),fwidth(uv.y))))*paint_near
+        roof = step(i.color.y*1.4,i.color.x)*step(i.color.z*1.3,i.color.x)
+        c *= 1.0+wash*(0.28+roof*0.45)*resolved
+        if foliage:
+            # Existing rounded crown geometry, with smaller painted lobes inside it.
+            leaf = pigment.xyz*2.0-vec3(1,1,1)
+            # The crown's silhouette carries the crisp light boundary; soften
+            # the small dabs inside it so adjacent lobes do not look cracked.
+            dap = paint_ramp(dot(leaf,normalize(u.sun_dir)),0.18)
+            c *= mix(vec3(1,1,1),vec3(mix(0.88,1.12,dap))*vec3(1.04,1.0,0.95),resolved)
+    if i.surface.z > 1.5 and i.surface.z < 2.5:
+        # A painted top/side recess on the existing door/window triangles.
+        edge = max(fwidth(i.surface.x),fwidth(i.surface.y))*1.2+0.015
+        inset = smoothstep(0.10-edge,0.10+edge,i.surface.x)*(1.0-smoothstep(0.82-edge,0.82+edge,i.surface.y))
+        c = mix(c*vec3(0.34,0.43,0.58),c,inset)
+    if i.surface.z > 3.5 and paint_near > 0.0:
+        # Fine, staggered paving joints fade before they become subpixel stripes.
+        uv=i.world.xz/vec2(0.8,0.5)
+        aa=max(fwidth(uv.x),fwidth(uv.y))
+        uv.x+=floor(uv.y)*0.5
+        edge=min(fract(uv),vec2(1,1)-fract(uv))
+        mortar=1.0-smoothstep(0.018,0.018+aa,min(edge.x,edge.y))
+        variation=fract(dot(floor(uv),vec2(0.0625,0.21875)))-0.5
+        fade=(1.0-smoothstep(0.1,0.5,aa))*paint_near
+        c*=1.0+fade*(variation*0.13-mortar*0.17)
+    if u.flex.w > 0.0:
+        view = normalize(u.cam-i.world)
+        rim = smoothstep(0.72,0.94,1.0-max(dot(n,view),0.0))*smoothstep(-0.15,0.25,ndl)
+        c += i.color.xyz*u.sun*(rim*0.16)
+    obj_finish_light(c,i,u,n)
 
 obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
     p = v.pos
@@ -76,26 +145,55 @@ obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
     if v.uv.x == 173.0 and v.color.y > v.color.x*1.15:
         bend = max(v.uv.y,0.0)*u.wind.z*0.006*(0.3+0.7*gust(w.xz,u.drift))
         w += vec4(u.wind.x*bend,0,u.wind.y*bend,0)
-    ObjOut(u.view_proj * w, w.xyz, (u.model * vec4(v.normal, 0)).xyz, v.color * u.tint)
+    ObjOut(u.view_proj * w, w.xyz, (u.model * vec4(v.normal, 0)).xyz, v.color * u.tint,obj_surface(v))
 
 obj_vs_inst = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
-    w = inst.model * vec4(v.pos, 1)
-    # trees bend with the wind, more in a gust, and sway: more toward the top
-    g = gust(w.xz, u.drift)
-    lean = u.sway * max(v.pos.y, 0.0) * 0.0035 * u.wind.z * (0.25 + 0.75 * g)
-    ph = u.time * (1.1 + 0.15 * u.wind.z) + w.x * 0.05 + w.z * 0.04
-    sw = u.sway * max(v.pos.y, 0.0) * 0.004 * (0.5 + u.wind.z * 0.2) * (0.4 + g)
-    w = w + vec4(u.wind.x * lean + sin(ph) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8) * sw * 0.6, 0)
-    ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, v.color * inst.color)
+    w = render_model(inst.model,u.instance_origin) * vec4(v.pos, 1)
+    # Fade centimetres of crown motion before they become subpixel; distant
+    # grove batches need neither gust noise nor sway trigonometry.
+    sway = u.sway*(1.0-smoothstep(180.0,420.0,length(w.xyz-u.cam)))
+    if sway > 0.0:
+        g = gust(w.xz, u.drift)
+        lean = sway * max(v.pos.y, 0.0) * 0.0035 * u.wind.z * (0.25 + 0.75 * g)
+        ph = w.x * 0.05 + w.z * 0.04
+        phase = ph+u.sway_phase.x
+        sw = sway * max(v.pos.y, 0.0) * 0.004 * (0.5 + u.wind.z * 0.2) * (0.4 + g)
+        w = w + vec4(u.wind.x * lean + sin(phase) * sw, -lean * 0.15, u.wind.y * lean + cos(ph * 0.8+u.sway_phase.y) * sw * 0.6, 0)
+    ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, v.color * inst.color,obj_surface(v,u.sway))
+
+# A separate pipeline lets the driver eliminate unused pigment/recess varyings
+# and all wind work for cells wholly beyond the resolved animation range.
+obj_far_vs = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
+    w = render_model(inst.model,u.instance_origin) * vec4(v.pos, 1)
+    ObjOut(u.view_proj*w,w.xyz,(inst.model*vec4(v.normal,0)).xyz,v.color*inst.color)
+obj_far_fs = (i: ObjOut, u: ObjParams) -> vec4:
+    n = normalize(i.normal)
+    c = obj_base_light(i,u,n,dot(n,normalize(u.sun_dir)))
+    obj_finish_light(c,i,u,n)
 
 obj_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_light(i, u)
 
 obj_sh: Shader
 obj_inst_sh: Shader
+obj_far_sh: Shader
 
-obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0)) -> ObjParams:
-    ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t), f32(sway),
+obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0), anchor: WorldPoint? = none) -> ObjParams:
+    p = ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t), f32(sway),
         vec4(wind_now.dir.x, wind_now.dir.y, f32(wind_now.speed), 0), wind_now.drift, flex, scene_warp_a, scene_warp_b,if weather_active: weather_here.rain else: 0.0)
+    p.origin = render_origin(p.cam)
+    p.instance_origin=p.origin
+    p.view_proj = render_view_proj(p.origin)
+    p.cam = render_eye(p.origin)
+    p.model = render_model(model,p.origin)
+    if let point=anchor:p.model=translation(world_local(point,p.origin))*model
+    p.warp_a = render_anchor(p.warp_a,p.origin)
+    p.drift -= p.origin.xz
+    p.pigment_phase = vec4(render_phase(f64(p.origin.x)/18.0,1),render_phase(f64(p.origin.z)/18.0,1),render_phase(f64(p.origin.x)/12.0,1),render_phase(f64(p.origin.z)/12.0,1))
+    phase = t*(1.1+0.15*f64(p.wind.z))+f64(p.origin.x)*0.05+f64(p.origin.z)*0.04
+    grass_phase = t*(2.2+0.2*f64(p.wind.z))+f64(p.origin.x)*0.4+f64(p.origin.z)*0.3
+    p.sway_phase = vec4(render_phase(phase,TAU),render_phase(phase*0.8,TAU),render_phase(grass_phase,TAU),0)
+    p.pigment = paint_surface()
+    p
 
 # ---------------- building blocks ----------------
 
@@ -129,20 +227,37 @@ WALLS = [vec4(0.95, 0.93, 0.88, 1), vec4(0.93, 0.9, 0.82, 1), vec4(0.91, 0.76, 0
 ROOFS = [vec4(0.74, 0.34, 0.2, 1), vec4(0.68, 0.3, 0.19, 1), vec4(0.78, 0.42, 0.26, 1), vec4(0.62, 0.28, 0.2, 1)]
 DOORS = [vec4(0.18, 0.38, 0.62, 1), vec4(0.2, 0.45, 0.32, 1), vec4(0.45, 0.25, 0.15, 1), vec4(0.55, 0.62, 0.7, 1)]
 
+# Mark the existing opening geometry; no extra draw calls or triangles.
+add_painted_opening = (vs: mut Vertex3D[], c: vec3, size: vec3, color: vec4, m: mat4):
+    opening: Vertex3D[]
+    add_box(opening,c,size,color)
+    loop source in opening:
+        v = source
+        v.uv = vec2(180.0+clamp((v.pos.x-c.x)/size.x+0.5,0.0,1.0),clamp((v.pos.y-c.y)/size.y+0.5,0.0,1.0))
+        v.pos = transform_point(m,v.pos)
+        v.normal = (m*vec4(v.normal,0)).xyz
+        vs.push(v)
+
+# Tag only plaster geometry; preserve existing positions, normals and colour.
+add_plaster_box = (vs: mut Vertex3D[], c: vec3, size: vec3, color: vec4, m: mat4):
+    start = vs.len()
+    add_box(vs,c,size,color,m)
+    loop k in start..vs.len(): vs[k].uv = vec2(182,0)
+
 # a house: whitewashed or ochre walls, a terracotta roof, a door and windows on its front (+z)
 add_house = (vs: mut Vertex3D[], m: mat4, w: f64, d: f64, h: f64, rng: int):
     wall = WALLS[rng % WALLS.len()]
     roof = ROOFS[(rng / 7) % ROOFS.len()]
     door = DOORS[(rng / 3) % DOORS.len()]
-    add_box(vs, vec3(0, f32(h * 0.5 - 1.0), 0), vec3(f32(w), f32(h + 2.0), f32(d)), wall, m)
+    add_plaster_box(vs, vec3(0, f32(h * 0.5 - 1.0), 0), vec3(f32(w), f32(h + 2.0), f32(d)), wall, m)
     if (rng / 11) % 4 == 0:
         # a flat roof with a low parapet
-        add_box(vs, vec3(0, f32(h + 0.15), 0), vec3(f32(w + 0.3), 0.3, f32(d + 0.3)), wall, m)
+        add_plaster_box(vs, vec3(0, f32(h + 0.15), 0), vec3(f32(w + 0.3), 0.3, f32(d + 0.3)), wall, m)
     else:
         add_gable(vs, vec3(0, f32(h), 0), w, d, min(w, d) * 0.22, roof, m)
     # door and windows on the front, shutters on the floors above
     fz = f32(d * 0.5 + 0.06)
-    add_box(vs, vec3(f32(-w * 0.2), 0.0, fz), vec3(1.7, 3.0, 0.12), door, m)
+    add_painted_opening(vs, vec3(f32(-w * 0.2), 0.0, fz), vec3(1.7, 3.0, 0.12), door, m)
     floors = max(1, int(h / 4.0))
     loop fl in 0..floors:
         y = f32(2.0 + f64(fl) * 4.0)
@@ -151,14 +266,21 @@ add_house = (vs: mut Vertex3D[], m: mat4, w: f64, d: f64, h: f64, rng: int):
             if fl == 0 and abs(f64(x) + w * 0.2) < 1.9: continue
             lit = (rng / 13 + k * 7 + fl * 3) % 3 == 0
             win = if lit: vec4(0.15, 0.17, 0.22, 0.5) else: (if fl == 0: vec4(0.15, 0.17, 0.22, 1) else: door)
-            add_box(vs, vec3(x, y, fz), vec3(1.4, 1.9, 0.12), win, m)
+            add_painted_opening(vs, vec3(x, y, fz), vec3(1.4, 1.9, 0.12), win, m)
 
 # a chapel: white, a dome or a bell tower
 add_chapel = (vs: mut Vertex3D[], m: mat4):
     white = vec4(0.97, 0.96, 0.93, 1)
-    add_box(vs, vec3(0, 3.0, 0), vec3(9, 10, 14), white, m)
+    add_plaster_box(vs, vec3(0, 3.0, 0), vec3(9, 10, 14), white, m)
     add_gable(vs, vec3(0, 8.0, 0), 9.0, 14.0, 2.6, ROOFS[0], m * rotation_y(PI / 2))
-    add_box(vs, vec3(0, 7.5, -8.5), vec3(4, 15, 4), white, m)
+    add_plaster_box(vs, vec3(0, 5.8, -8.5), vec3(4, 11.6, 4), white, m)
+    # Open belfry, with a bronze bell visible from the lane below.
+    loop x in [-1.65,1.65]:
+        loop z in [-10.15,-6.85]: add_plaster_box(vs,vec3(f32(x),13.3,f32(z)),vec3(0.7,3.4,0.7),white,m)
+    add_plaster_box(vs,vec3(0,15,-8.5),vec3(4.2,0.35,4.2),white,m)
+    add_cylinder(vs,vec3(0,12.0,-8.5),0.85,1.25,rgb(0.38,0.30,0.17),10,0.34,m)
+    add_cylinder(vs,vec3(0,11.8,-8.5),0.95,0.16,rgb(0.38,0.30,0.17),10,-1.0,m)
+    add_cylinder(vs,vec3(0,11.5,-8.5),0.12,2.1,rgb(0.24,0.22,0.17),6,-1.0,m)
     add_cylinder(vs, vec3(0, 15.0, -8.5), 2.2, 3.5, vec4(0.25, 0.45, 0.72, 1), 10, 0.0, m)
     add_box(vs, vec3(0, 1.4, 7.06), vec3(2.2, 3.6, 0.12), vec4(0.35, 0.22, 0.12, 1), m)
 
@@ -315,6 +437,7 @@ struct Town:
     boats: Boat[]                   # moored along the quays, each its own mesh, to ride the swell
     far_mesh: Mesh                  # same house footprints, no doors/shutters at long range
     chapels: vec3[]                 # presentation anchors, not new simulation places
+    sites: TownSite[]               # exact existing footprints and near architectural anchors
 
 struct Quay:
     a: vec2
@@ -334,6 +457,7 @@ build_town = (s: Settlement) -> Town:
     far_vs: Vertex3D[]
     houses: vec3[]
     chapels: vec3[]
+    sites: TownSite[]
     docks: vec3[]
     # the main quay: out from the shore, a seaplane moors on either side near its end
     qa = coast - out * 12.0
@@ -360,7 +484,8 @@ build_town = (s: Settlement) -> Town:
         ic = ISLANDS[s.island].center
         m = translation(vec3(ic.x, f32(surface_height(f64(ic.x), f64(ic.y))), ic.y)) * rotation_y(atan2(f64(out.x), f64(out.y)))
         add_house(vs, m, 22.0, 16.0, 13.0, 3)
-        add_box(vs, vec3(0, 16.0, 0), vec3(8, 6, 8), WALLS[3], m)
+        sites.push(TownSite(transform_point(m,vec3(0,0,0)),atan2(f64(out.x),f64(out.y)),22,16,13,3,3,true))
+        add_plaster_box(vs, vec3(0, 16.0, 0), vec3(8, 6, 8), WALLS[3], m)
         add_gable(vs, vec3(0, 19.0, 0), 8.0, 8.0, 2.4, ROOFS[2], m)
         houses.push(vec3(ic.x, 0, ic.y))
         blocks.push(vec3(ic.x, ic.y, 11.5))
@@ -404,6 +529,7 @@ build_town = (s: Settlement) -> Town:
                 if not chapel_done and row == 1 and along > -10.0:
                     add_chapel(vs, m * scaling(1.4))
                     chapels.push(vec3(c.x,f32(lo),c.y))
+                    sites.push(TownSite(vec3(c.x,f32(lo),c.y),yaw,12.6,19.6,21.0,0,2,false,false,true))
                     add_house_proxy(far_vs,m*scaling(1.4),9.0,14.0,10.0,0)
                     chapel_done = true
                     houses.push(vec3(c.x, f32(lo), c.y))
@@ -413,6 +539,8 @@ build_town = (s: Settlement) -> Town:
                 storeys = if s.kind == .port and row < 2: random_int(2, 3) else: random_int(1, 2)
                 hh = f64(storeys) * 4.0 + random(0.4, 1.5) + (h - lo)
                 add_house(vs, m, w, d, hh, _hash(s.seed, houses.len()))
+                seed=_hash(s.seed,houses.len())
+                sites.push(TownSite(vec3(c.x,f32(lo),c.y),yaw,w,d,hh,seed,max(1,int(hh/4.0)),(seed/11)%4==0))
                 add_house_proxy(far_vs,m,w,d,hh,_hash(s.seed,houses.len()))
                 houses.push(vec3(c.x, f32(h), c.y))
                 blocks.push(vec3(c.x, c.y, f32(min(w, d) * 0.55)))
@@ -458,7 +586,7 @@ build_town = (s: Settlement) -> Town:
         m = translation(vec3(p.x, f32(max(h, 1.0)), p.y)) * rotation_y(atan2(f64(out.x), f64(out.y)))
         add_box(vs, vec3(0, 4.0, 0), vec3(24, 10, 4), vec4(0.1, 0.09, 0.08, 1), m)
         add_box(vs, vec3(0, 9.5, 2.2), vec3(26, 1.2, 0.8), vec4(0.45, 0.3, 0.18, 1), m)
-    Town(s.name, vec3(coast.x, f32(QUAY_TOP), coast.y), out, docks, houses, quays, blocks, custom_mesh(vs), boats, custom_mesh(if s.kind == .hotel: vs else: far_vs),chapels)
+    Town(s.name, vec3(coast.x, f32(QUAY_TOP), coast.y), out, docks, houses, quays, blocks, custom_mesh(vs), boats, custom_mesh(if s.kind == .hotel: vs else: far_vs),chapels,sites)
 
 # ---------------- trees ----------------
 
@@ -649,8 +777,9 @@ draw_groves = (meshes: Mesh[], groves: Grove[], L: Light, t: f64):
         # Beyond 900 m a crown spans only a few pixels. Keep every tree and
         # every crown lobe, but use the low-tier rings for distant cells.
         distant = g.bounds.w > 0 and length(cam-g.bounds.xyz)-g.bounds.w > 900.0 and grove_far_meshes.len() == meshes.len()
+        still = g.bounds.w > 0 and length(cam-g.bounds.xyz)-g.bounds.w > 420.0
         loop k in 0..g.kinds.len():
-            if g.kinds[k].count > 0: draw_instanced(obj_inst_sh,if distant: grove_far_meshes[k] else: meshes[k],g.kinds[k],p)
+            if g.kinds[k].count > 0: draw_instanced(if still: obj_far_sh else: obj_inst_sh,if distant: grove_far_meshes[k] else: meshes[k],g.kinds[k],p)
     zone_end()
 
 draw_towns = (towns: Town[], L: Light, t: f64):
@@ -662,15 +791,17 @@ draw_towns = (towns: Town[], L: Light, t: f64):
 
 # (the GPU programs: made once the window is open)
 init_objects = ():
-    global obj_sh, obj_inst_sh
-    obj_sh = make_shader(shader(obj_vs, obj_fs))
-    obj_inst_sh = make_shader(shader(obj_vs_inst, obj_fs))
+    global obj_sh, obj_inst_sh, obj_far_sh
+    obj_sh = make_world_bounded_shader(shader(obj_vs, obj_fs))
+    obj_inst_sh = make_world_shader(shader(obj_vs_inst, obj_fs))
+    obj_far_sh = make_world_shader(shader(obj_far_vs,obj_far_fs))
 
 # ---------------- walking ----------------
 
 # the height one stands at, on the ground or on a quay
 walk_height = (towns: Town[], x: f64, z: f64) -> f64:
-    h = surface_height(x, z)
+    # Main-thread walking shares the exact canonical source memo used by towns.
+    h = if geography_enabled and (abs(x)>=LEGACY_RESERVE or abs(z)>=LEGACY_RESERVE):world_source_surface(x,z) else:surface_height(x,z)
     p = vec2(f32(x), f32(z))
     loop tw in towns:
         if length(vec2(tw.center.x, tw.center.z) - p) > 400.0: continue
@@ -681,18 +812,19 @@ walk_height = (towns: Town[], x: f64, z: f64) -> f64:
             if u < 0.0 or u > 1.0: continue
             off = abs(dot(p - q.a, vec2(-d.y, d.x) / l))
             if off <= q.width * 0.5: h = max(h, QUAY_TOP)
-    settlement_quay_height(p,h)
+        loop site in tw.sites:
+            q=site_local(site,p)
+            if site.flat and site.floors<=2:
+                if abs(q.x)<f32(site.width*0.5) and abs(q.y)<f32(site.depth*0.5): h=max(h,f64(site.at.y)+site.height+0.3)
+                if abs(q.x-f32(site.width*0.5+0.85))<1.0 and abs(q.y)<f32(site.depth*0.5+0.6):
+                    if let roof=site_roof_entry(site,tw.sites): h=entry_height(roof,p,h)
+            if abs(q.x+f32(if site.chapel: 0.0 else: site.width*0.2))<1.5 and q.y>f32(site.depth*0.5) and q.y<f32(site.depth*0.5+2.6): h=entry_height(site_entry(site),p,h)
+    settlement_entry_height(p,port_quay_height_at(x,z,h))
 
 # a step from p toward p + move, kept out of houses and out of the sea (deeper than the ankles)
 walk_step = (towns: Town[], p: vec3, move: vec2) -> vec3:
     np = vec2(p.x, p.z) + move
-    loop tw in towns:
-        if length(vec2(tw.center.x, tw.center.z) - np) > 400.0: continue
-        loop b in tw.blocks:
-            d = np - vec2(b.x, b.y)
-            l = length(d)
-            if l < b.z + 0.35 and l > 0.001: np = vec2(b.x, b.y) + d / l * (b.z + 0.35)
-    np = settlement_avoid_buildings(np)
+    np=town_avoid_buildings(towns,np,f64(p.y))
     h = walk_height(towns, f64(np.x), f64(np.y))
     if h < -0.3: return p
     if h - f64(p.y) > 0.8: return p                # a wall or a quay's edge from below
@@ -729,6 +861,42 @@ add_beached_hull = (vs: mut Vertex3D[],m: mat4):
     _hull(vs,m,7.0,2.4,rgb(0.28,0.48,0.6),WALLS[0],ROOFS[0],rgb(0.55,0.42,0.28))
 
 add_house_proxy = (vs: mut Vertex3D[],m: mat4,w: f64,d: f64,h: f64,seed: int):
-    add_box(vs,vec3(0,f32(h*0.5-1.0),0),vec3(f32(w),f32(h+2.0),f32(d)),WALLS[seed%WALLS.len()],m)
+    add_plaster_box(vs,vec3(0,f32(h*0.5-1.0),0),vec3(f32(w),f32(h+2.0),f32(d)),WALLS[seed%WALLS.len()],m)
     if (seed/11)%4 != 0: add_gable(vs,vec3(0,f32(h),0),w,d,min(w,d)*0.22,ROOFS[(seed/7)%ROOFS.len()],m)
     add_box(vs,vec3(0,f32(h*0.55),f32(d*0.5+0.05)),vec3(f32(w*0.35),1.5,0.08),rgba(0.15,0.17,0.22,0.5),m)
+
+# An articulated/dynamic model composed entirely inside the current chart.
+obj_local_params = (L: Light,t: f64,model: mat4) -> ObjParams:
+    p=obj_params(L,t)
+    p.model=model
+    p
+
+# Keep the fractional step through legacy collision broad-phase rounding. Only
+# a real collision replaces that candidate; ground is queried at precise x/z.
+walk_step_precise = (towns: Town[],p: WorldPoint,move: vec2) -> WorldPoint:
+    x=p.x+f64(move.x);z=p.z+f64(move.y)
+    candidate=vec2(f32(x),f32(z));np=candidate
+    np=town_avoid_buildings(towns,np,p.y)
+    if np.x!=candidate.x:x=f64(np.x)
+    if np.y!=candidate.y:z=f64(np.y)
+    h=walk_height(towns,x,z)
+    if h < -0.3 or h-p.y > 0.8:return p
+    WorldPoint(x,h,z)
+
+local_instance_params=(L:Light,t:f64)->ObjParams:
+    p=obj_params(L,t);p.instance_origin=vec3(0,0,0);p
+
+town_avoid_buildings = (towns: Town[],at: vec2,height: f64) -> vec2:
+    np=at
+    loop tw in towns:
+        if length(vec2(tw.center.x, tw.center.z) - np) > 400.0: continue
+        if tw.sites.len()>0:
+            loop s in tw.sites:
+                if length(np-s.at.xz)<f32(max(s.width,s.depth)+1) and not (s.flat and s.floors<=2 and height>=f64(s.at.y)+s.height+0.05): np=site_exclude(s,np)
+        else:
+            loop b in tw.blocks:
+                d = np - vec2(b.x, b.y)
+                l = length(d)
+                if l < b.z + 0.35 and l > 0.001: np = vec2(b.x, b.y) + d / l * (b.z + 0.35)
+    np = settlement_avoid_buildings(np)
+    np

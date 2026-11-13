@@ -1,10 +1,13 @@
-# Original scores and instruments; no recordings, soundfonts or borrowed voice data.
+# Licensed scores and procedural instruments; see data/music/SOURCES.md.
+use 'music_synth.jo'
+use 'radio_chain.jo'
+use 'radio_station.jo'
 # One mono 16 kHz stream, bounded blocks. No game/global RNG is touched.
 const RADIO_RATE = 16000
 const RADIO_TABLE = 1024
 const RADIO_BLOCK = 800             # <= 50 ms per render call
 
-enum RadioStyle: foxtrot, tango, waltz, bouzouki, march, choir, morse
+enum RadioStyle: foxtrot, tango, waltz, bouzouki, march, choir, morse, classical
 
 struct RadioFilter:
     b0 = 0.0
@@ -28,29 +31,13 @@ radio_filter_sample = (f: mut RadioFilter, x: f64) -> f64:
     f.x2 = f.x1; f.x1 = x; f.y2 = f.y1; f.y1 = y
     y
 
-struct RadioNote:
-    instrument = 0
-    phase = 0.0
-    increment = 0.0
-    age = 0
-    duration = 1
-    attack = 160
-    release = 400
-    gain = 0.0
-    decay = 1.0
-    level = 1.0
-
 struct RadioSynth:
-    tables: f32[][]
-    pitches: f64[]
-    notes: RadioNote[]
+    sine: f32[]
+    music: MusicSynth = MusicSynth()
+    music_ready = false
     style: RadioStyle = .foxtrot
     seed = 0
     cursor = 0
-    last_step = -1
-    step_frames = 4000
-    swing = false
-    beats = 4
     rng: u64 = 1729
     hp: RadioFilter = radio_filter(300, true)
     lp: RadioFilter = radio_filter(3000, false)
@@ -62,140 +49,89 @@ struct RadioSynth:
     crackle = 0.0
     fade_phase = 0.0
     whistle_phase = 0.0
+    chain: RadioChain = RadioChain()
+    station: StationLevel = StationLevel()
+    record_mix = 0.0
+    night = 0.0
 
-# Small band-limited harmonic tables: reed, plucked string, brass, wordless vowel, sine.
-# Highest score note is limited to MIDI 79 (~784 Hz), eight harmonics fit below 8 kHz.
+# The receiver only needs a sine for its Morse tone, fading and tuning whistle.
 make_radio_synth = () -> RadioSynth:
-    s = RadioSynth()
-    loop kind in 0..5:
-        table: f32[]
-        loop i in 0..RADIO_TABLE:
-            p = TAU * f64(i) / f64(RADIO_TABLE)
-            v = 0.0
-            loop h in 1..9:
-                weight = match kind:
-                    0: (if h % 2 == 1: 1.0 else: 0.12) / f64(h)
-                    1: 1.0 / pow(f64(h),1.5)
-                    2: 1.0 / pow(f64(h),1.1)
-                    3: (if h == 1: 0.7 else: if h == 3: 0.5 else: if h == 5: 0.18 else: 0.035) / sqrt(f64(h))
-                    else: if h == 1: 1.0 else: 0.0
-                v += sin(p*f64(h))*weight
-            table.push(f32(v*0.48))
-        s.tables.push(table)
-    s.pitches = [loop n in 0..128: 440.0 * pow(2.0, f64(n-69)/12.0)]
-    s.notes = [loop i in 0..6: RadioNote()]
-    s
+    RadioSynth(sine=[loop i in 0..RADIO_TABLE: f32(sin(TAU*f64(i)/f64(RADIO_TABLE))*0.48)])
 
-# Each list is an original melodic phrase, not a transcription. Two phrases alternate;
-# seed changes harmonic starting position, cadence and register between stations/days.
-RADIO_MELODIES: int[][] = [
-    [0,4,7,9,7,4,-99,2,5,4,2,0,2,4,7,5,9,7,4,2,0,-99,4,7,5,2,4,2,0,-99,-99,-99],
-    [0,-99,7,3,2,0,-1,2,3,-99,7,8,7,3,2,-99,0,3,7,10,8,7,3,2,-1,2,3,-1,0,-99,-99,-99],
-    [0,4,7,12,11,7,5,9,7,4,2,0,4,7,12,9,7,4,5,2,4,2,0,-99],
-    [0,1,4,5,7,8,7,5,4,1,2,0,7,5,4,-99,0,4,5,7,8,11,8,7,5,4,1,4,0,-99,-99,-99],
-    [0,0,4,7,12,-99,9,7,5,5,9,12,11,-99,7,5,4,4,7,9,7,4,2,-99,7,5,4,2,0,-99,-99,-99],
-    [0,4,7,5,4,2,0,-1,0,5,9,7,5,4,2,0]
-]
+# Prepare bounded storage and hot paths during world loading, before first play.
+# Discard the tiny procedural warmup; subsequent programme selection resets all audible
+# state. This opens no stream/device and retains no reference or pre-rendered programme.
+radio_synth_prepare = (s: mut RadioSynth):
+    if s.music_ready: return
+    s.music = make_music_synth(); s.music_ready = true
+    s.music.events = [MusicEvent(0,1600,60,0,0.6,0.6),MusicEvent(0,1600,60,6,0.6,0.6)]
+    s.music.frames = 128
+    s.chain = make_radio_chain(0,0)
+    _ = radio_render(s,128,1,0)
+    s.music.piece = -1; s.music.events = []; s.music.frames = 1
+    music_seek(s.music,0)
+    s.strength = 0
+    radio_synth_program(s,.morse,0,0)
+
+# The legacy choir slot now carries quiet instrumental island music, never fake speech.
+radio_piece = (style: RadioStyle, seed: int) -> int:
+    match style:
+        .classical: if (max(0,seed)/336)%2 == 0: 0 else: 1
+        .foxtrot: 2
+        .tango: 3
+        .march: 4
+        .bouzouki, .choir: 5
+        .waltz: 6
+        else: 0
+
+radio_music_program = (s: mut RadioSynth, piece: int, seconds: f64):
+    if not s.music_ready:
+        s.music = make_music_synth(); s.music_ready = true
+    music_load(s.music,piece)
+    record_levels = [0.35,0.15,0.80,0.70,0.50,0.10,0.60]
+    s.record_mix = record_levels[clamp(piece,0,record_levels.len()-1)]
+    music_seek(s.music,seconds%(f64(s.music.frames)/f64(MUSIC_RATE)))
 
 radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds: f64, morse: bool[] = []):
     s.style = style; s.seed = max(0,seed)
     s.cursor = max(0,int(seconds*f64(RADIO_RATE)))
-    s.last_step = -1
-    s.beats = if style == .waltz: 3 else: 4
-    bpm = match style:
-        .foxtrot: 116.0
-        .tango: 108.0
-        .waltz: 144.0
-        .bouzouki: 132.0
-        .march: 120.0
-        else: 68.0
-    s.step_frames = int(f64(RADIO_RATE)*30.0/bpm)
-    s.swing = style == .foxtrot
     s.morse = morse
     s.hp = radio_filter(300,true); s.lp = radio_filter(3000,false)
     s.rng = u64(1729 + s.seed*31 + s.cursor%1000003)
     s.crackle = 0; s.fade_phase = 0; s.whistle_phase = 0
-    loop k in 0..s.notes.len(): s.notes[k] = RadioNote()
-
-radio_start_note = (s: mut RadioSynth, voice: int, note: int, instrument: int, start: int, duration: int, gain: f64, decay: f64 = 0.4):
-    if note < 0:
-        s.notes[voice].gain = 0
-        return
-    f = s.pitches[clamp(note,36,79)]
-    age = max(0,s.cursor-start)
-    s.notes[voice] = RadioNote(instrument=instrument,phase=(f64(age)*f/f64(RADIO_RATE))%1.0,
-        increment=f/f64(RADIO_RATE),age=age,duration=duration,
-        attack=if instrument == 3: 900 else: 100,release=if instrument == 3: 1800 else: 350,
-        gain=gain,decay=exp(-decay/f64(RADIO_RATE)),level=exp(-decay*f64(age)/f64(RADIO_RATE)))
-
-radio_score_step = (s: mut RadioSynth):
-    step = s.cursor/s.step_frames
-    start = step*s.step_frames
-    dur = s.step_frames
-    if s.swing:
-        pair = s.cursor/(s.step_frames*2)
-        offset = s.cursor%(s.step_frames*2)
-        long = s.step_frames*4/3
-        step = pair*2 + (if offset >= long: 1 else: 0)
-        start = pair*s.step_frames*2 + (if step%2 == 1: long else: 0)
-        dur = if step%2 == 0: long else: s.step_frames*2-long
-    if step == s.last_step: return
-    s.last_step = step
-    bar = step/(s.beats*2)
-    roots = [0,5,0,7,0,5,7,0]
-    root = roots[(bar+s.seed)%roots.len()]
-    minor = s.style == .tango or s.style == .bouzouki
-    third = if minor: 3 else: 4
-    key = if minor: 62 else: 60
-    phrase = RADIO_MELODIES[int(s.style)]
-    interval = phrase[step%phrase.len()]
-    lead = if interval == -99: -1 else: key+interval
-    instr = match s.style:
-        .tango, .bouzouki: 1
-        .march: 2
-        .choir: 3
-        else: 0
-    if s.style == .choir:
-        # Long overlapping-in-time parts with soft onsets, no fake speech syllables.
-        start = (step/8)*s.step_frames*8; dur = s.step_frames*8
-        if step%8 == 0 or s.notes[0].gain == 0:
-            lead = key+phrase[(step/8)%phrase.len()]
-            radio_start_note(s,0,lead,3,start,dur,0.17,0.08)
-            radio_start_note(s,1,key-12+root,3,start,dur,0.13,0.08)
-            radio_start_note(s,2,key+root+third,3,start,dur,0.09,0.08)
-            radio_start_note(s,3,key+root+7,3,start,dur,0.08,0.08)
-        return
-    radio_start_note(s,0,lead,instr,start,dur,0.27,if instr == 1: 5.5 else: 0.6)
-    beat_step = step%(s.beats*2)
-    # Bass on the beat; offbeats banjo/guitar or brass chords. Waltz: oom-pah-pah.
-    if step%2 == 0:
-        bass = key-24+root+(if beat_step == 4 and s.beats == 4: 7 else: 0)
-        radio_start_note(s,1,bass,1,start,dur*2,0.22,5.0)
-    chord = if s.style == .waltz: step%2 == 0 and beat_step > 0 else: step%2 == 1
-    if chord:
-        loop k in 0..3:
-            n = key-12+root+(if k == 0: 0 else: if k == 1: third else: 7)
-            radio_start_note(s,k+2,n,if s.style == .march: 2 else: 1,start,dur,0.08,7.0)
-    # A brushed/tapped percussion pulse, generated from local noise below.
-    s.notes[5] = RadioNote(age=max(0,s.cursor-start),duration=dur,gain=if step%2 == 1: 0.025 else: 0.012,
-        level=exp(-45.0*f64(max(0,s.cursor-start))/f64(RADIO_RATE)),decay=exp(-45.0/f64(RADIO_RATE)))
+    s.chain = make_radio_chain(seed,seconds)
+    s.station = StationLevel()
+    s.chain.strength = clamp(s.strength,0.0,1.0)
+    s.record_mix = 0
+    if style != .morse: radio_music_program(s,radio_piece(style,seed),seconds)
 
 radio_noise = (s: mut RadioSynth) -> f64:
     s.rng = (s.rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
     f64(s.rng)/2147483648.0-1.0
 
-radio_osc = (s: RadioSynth, phase: f64, instrument: int) -> f64:
+radio_osc = (s: RadioSynth, phase: f64) -> f64:
     p = phase*f64(RADIO_TABLE)
     k = int(p)%RADIO_TABLE
-    a = f64(s.tables[instrument][k]); b = f64(s.tables[instrument][(k+1)%RADIO_TABLE])
+    a = f64(s.sine[k]); b = f64(s.sine[(k+1)%RADIO_TABLE])
     a+(b-a)*(p-floor(p))
 
 # Return raw mono PCM for either a live stream or an offline file. Work is always bounded.
-radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f64 = 0.0, dry: bool = false) -> f32[]:
+radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f64 = 0.0, dry: bool = false, levelling: bool = true) -> f32[]:
     out = fill(f32(0),clamp(count,0,RADIO_BLOCK))
+    if out.len() == 0: return out
     target = clamp(strength,0.0,1.0)
+    programme: f64[]
+    if s.style != .morse:
+        if not s.music_ready: radio_music_program(s,radio_piece(s.style,s.seed),f64(s.cursor)/f64(RADIO_RATE))
+        if s.music.cursor >= s.music.frames: music_seek(s.music,0)
+        first = min(out.len(),s.music.frames-s.music.cursor)
+        programme = music_render(s.music,first)
+        if first < out.len():
+            music_seek(s.music,0)
+            tail = music_render(s.music,out.len()-first)
+            loop v in tail: programme.push(v)
+    if not dry and levelling and s.style != .morse:station_level_block(s.station,programme)
     loop i in 0..out.len():
-        white = radio_noise(s)
         value = 0.0
         if s.style == .morse:
             morse_cursor = max(0,s.cursor-s.morse_origin)
@@ -208,33 +144,13 @@ radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f6
                 attack = if s.morse[previous]: 1.0 else: min(1.0,f64(a)/80.0)
                 release = if s.morse[next]: 1.0 else: min(1.0,f64(s.morse_unit-a)/80.0)
                 envelope = min(attack,release)
-                value = radio_osc(s,(f64(s.cursor)*720.0/f64(RADIO_RATE))%1.0,4)*0.65*envelope
+                value = radio_osc(s,(f64(s.cursor)*720.0/f64(RADIO_RATE))%1.0)*0.65*envelope
         else:
-            radio_score_step(s)
-            loop k in 0..5:
-                n = s.notes[k]
-                if n.age < n.duration and n.gain > 0:
-                    env = min(1.0,min(f64(n.age)/f64(n.attack),f64(n.duration-n.age)/f64(n.release)))
-                    value += radio_osc(s,n.phase,n.instrument)*n.gain*n.level*max(0.0,env)
-                    s.notes[k].phase = (n.phase+n.increment)%1.0
-                    s.notes[k].level *= n.decay
-                    s.notes[k].age += 1
-            if s.style != .choir:
-                value += white*s.notes[5].gain*s.notes[5].level
-                s.notes[5].level *= s.notes[5].decay
+            value = programme[i]
         s.strength += (target-s.strength)*0.002
         if not dry:
-            s.fade_phase = (s.fade_phase+0.7/f64(RADIO_RATE))%1.0
-            fading = 1.0-(1.0-s.strength)*0.25*(0.5+radio_osc(s,s.fade_phase,4))
-            wanted_whistle = min(1.0,abs(detuning)/8.0)*(1.0-min(1.0,abs(detuning)/30.0))
-            s.whistle += (wanted_whistle-s.whistle)*0.003
-            s.whistle_phase = (s.whistle_phase+(380.0+min(2500.0,abs(detuning)*130.0))/f64(RADIO_RATE))%1.0
-            if white > 0.9996: s.crackle = (1.0-s.strength)*0.4
-            s.crackle *= 0.92
-            value = value*s.strength*fading + white*(0.004+0.065*(1.0-s.strength)) + s.crackle*white
-            value += radio_osc(s,s.whistle_phase,4)*s.whistle*0.045
-            value = value/(1.0+abs(value)*0.9)
-            value = radio_filter_sample(s.lp,radio_filter_sample(s.hp,value))*2.2
+            if levelling and s.style == .morse:value=station_level(s.station,value)
+            value = radio_chain_sample(s.chain,value,target,detuning,if s.style == .morse: 0.0 else: s.record_mix,s.night)
         out[i] = f32(clamp(value,-0.95,0.95))
         s.cursor += 1
     out

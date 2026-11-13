@@ -1,0 +1,83 @@
+use '../src/music_synth.jo'
+use '../src/music_models.jo'
+use '../src/radio_synth.jo'
+
+test "exact modal cache survives releases eviction stealing and analytic seeks":
+    a=make_music_synth();a.cache_enabled=false
+    b=make_music_synth()
+    # Many distinct keys force eviction; repeated notes share bodies while their
+    # attack lengths, releases, noise seeds and live expression remain independent.
+    loop i in 0..240:
+        pitch=36+(i%72)
+        kind=[6,7,8,10,11,12,13][i%7]
+        e=MusicEvent(i*137,1600+(i%13)*700,pitch,kind,0.4+f64(i%11)*0.05,0.8)
+        a.events.push(e);b.events.push(e)
+    loop i in 0..80:
+        e=MusicEvent(40000+i*89,40000,60,6,0.7,0.4)
+        a.events.push(e);b.events.push(e)
+    a.frames=96000;b.frames=a.frames;a.lookback=96000;b.lookback=a.lookback
+    loop seek in [0.0,0.431,2.5,0.0]:
+        music_seek(a,seek);music_seek(b,seek)
+        loop a.cursor<a.frames:
+            count=min(799,a.frames-a.cursor)
+            expected=music_render(a,count)
+            # A different partition exercises both cache hits and prefix boundaries.
+            actual: f64[]
+            loop actual.len()<count:
+                n=min(31,count-actual.len())
+                actual+=music_render(b,n)
+            assert(expected==actual)
+        assert(a.stolen==b.stolen)
+    assert(b.body_hits>0 and b.body_misses>MUSIC_BODY_SLOTS)
+    assert(b.body_samples.len()==MUSIC_BODY_SLOTS*MUSIC_BODY_FRAMES)
+    assert(b.body_modes.len()==MUSIC_BODY_SLOTS*MUSIC_PARTIALS)
+
+test "modal cutoff fast path keeps the exact recurrence and quiet tail":
+    loop amplitude in [0.0,0.000000999999,0.000001,0.000002,0.0001,1.0]:
+        loop decay in [0.0,0.1,0.98,0.9999,1.0]:
+            loop slow_part in [0.0,0.3,1.0]:
+                a=[loop h in 0..5: MusicMode(0.7,0.1,1.82-0.02*f64(h),amplitude*(1.0+0.1*f64(h))*(1.0-slow_part),amplitude*slow_part,decay,0.999)]
+                b=a
+                expected=fill(0.0,128)
+                loop i in 0..128:
+                    loop h in 0..a.len():
+                        m=a[h]
+                        if m.fast+m.slow<0.000001: continue
+                        y=m.coefficient*m.y1-m.y2
+                        m.y2=m.y1;m.y1=y
+                        expected[i]+=y*(m.fast+m.slow)
+                        m.fast*=m.decay_fast;m.slow*=m.decay_slow
+                        a[h]=m
+                actual=fill(0.0,128)
+                music_modes_render(b,0,b.len(),actual,0,128)
+                assert(expected==actual and a==b)
+
+test "radio render partition preserves receiver and score loop boundaries":
+    a=make_radio_synth();b=make_radio_synth()
+    radio_synth_program(a,.classical,336,16.97)
+    radio_synth_program(b,.classical,336,16.97)
+    loop chunk in 0..30:
+        expected=radio_render(a,800,0.43,7)
+        actual: f32[]
+        loop i in 0..8:actual+=radio_render(b,100,0.43,7)
+        assert(expected==actual)
+    assert(a.cursor==b.cursor and a.music.cursor==b.music.cursor)
+
+test "bulk model decoder retains every stored scalar bit":
+    packed=inflate(embed('../data/music/instruments.z'))!
+    m=make_music_models()
+    roundtrip=to_bytes([loop value in m.values:f32(value)])
+    assert(roundtrip==packed[(11+MUSIC_MODEL_KINDS*7)..])
+
+
+test "loading warmup leaves the first programme sample identical":
+    a=make_radio_synth();b=make_radio_synth()
+    radio_synth_prepare(b)
+    assert(b.music_ready and b.cursor==0 and b.music.piece == -1)
+    loop piece in 0..7:
+        radio_synth_program(a,.morse,0,1.234);a.style=.classical
+        radio_synth_program(b,.morse,0,1.234);b.style=.classical
+        radio_music_program(a,piece,1.234);radio_music_program(b,piece,1.234)
+        loop chunk in 0..10:
+            same = radio_render(a,800,0.6,2)==radio_render(b,800,0.6,2)
+            assert(same)
