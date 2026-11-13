@@ -54,6 +54,7 @@ use 'src/flight.jo'
 use 'src/pilot.jo'
 use 'src/flight_feedback.jo'
 use 'src/flight_effects.jo'
+use 'src/splash.jo'
 use 'src/frame_budget.jo'
 use 'src/traffic.jo'
 use 'src/air_view.jo'
@@ -63,6 +64,8 @@ use 'src/air_meet_view.jo'
 use 'src/race_view.jo'
 use 'src/war_view.jo'
 use 'src/map_counter.jo'
+use 'src/fuel_counter.jo'
+import 'src/living_refuel.jo' as refuel
 use 'src/rescue_view.jo'
 use 'src/air_pilot.jo'
 use 'src/distant.jo'
@@ -136,7 +139,7 @@ init_wake()
 init_boat_scene()
 init_shadow()
 init_trails()
-init_flight_effects()
+init_flight_effects();init_splashes()
 init_birds()
 init_curved_world()
 
@@ -239,7 +242,7 @@ folks: Folk[]
 sync_folk(folks, living_world, towns)
 life_meshes = life_view.build_life_meshes(living_world)
 folk_sync_t = 0.0
-enum Ui: none, talk, board, handling, trade, contract, maps
+enum Ui: none, talk, board, handling, trade, contract, maps, fuel
 ui = Ui.none
 ui_folk = -1
 ui_place = -1
@@ -333,7 +336,7 @@ deliver_here = (place: int):
         before = player_cents()
         if living.deliver_job(living_world, id, living_world.player):
             say_toast("Delivered for {living_world.people[j.poster].name}: {(player_cents() - before) / 100} lire")
-spray_ps = WorldParticles(gravity = vec3(0, -9.8, 0), drag = 1.5)
+spray_ps = WorldParticles(gravity = vec3(0, -9.8, 0), drag = 1.5,billowing=true)
 smoke_ps = WorldParticles(gravity = vec3(0, 1.5, 0), drag = 2.0)
 vapor_trails = [Trail(), Trail()]
 air_visual=make_air_view()
@@ -863,7 +866,7 @@ load_scenario = (key: str) -> bool:
         trails=BattleTrails(mesh=cv.trails.mesh,shader=cv.trails.shader))
     av=air_visual
     air_visual=AirView(silhouette=av.silhouette,exhaust=BattleTrails(mesh=av.exhaust.mesh,shader=av.exhaust.shader))
-    spray_ps.items.clear();smoke_ps.items.clear();dust_ps.items.clear()
+    spray_ps.items.clear();spray_ps.billows.clear();spray_ps.emission_serial=0;smoke_ps.items.clear();dust_ps.items.clear()
     wakes=[loop k in 0..traffic.len()+1:WakeTrail()];vapor_trails=[Trail(),Trail()]
     guns=Guns();splashes=[];last_shots=0;plunge=0;plunge_v=0
     rope=Rope();was_moored=false
@@ -1247,6 +1250,149 @@ race_offer_here = () -> int:
         return if k >= 0: k else: race_withdraw_offer(air_events, living_world, st.position)
     -1
 
+# ---------------- taking on fuel (living_refuel sells it; fuel_counter is the panel) ----------------
+# Aboard, moored or slow on the water within reach of a harbour's fuel pier, with room in the tank,
+# the card offers fuel once at each stop; F moors alongside (if not already) and opens the panel.
+# A sale starts the refuelling moment: the pump works and the gauge runs up to the new reading.
+FUEL_NOWHERE = vec3(1.0e9, 0, 1.0e9)
+fuel_pier_seen: refuel.FuelPier? = none     # the pier within reach, looked up every few frames
+fuel_pier_frame = -100
+fuel_offered_at = FUEL_NOWHERE              # where the card was last answered
+fuel_panel_pier = refuel.FuelPier()         # the pier whose panel is open
+fuel_notice = ""
+refuel_from = 0.0
+refuel_to = 0.0
+refuel_start = -100.0
+refuel_len = 0.0
+
+fuel_pier_near = () -> refuel.FuelPier?:
+    global fuel_pier_seen, fuel_pier_frame
+    st = pc.state
+    if me.mode != .aboard or st.crashed or st.capsized or st.beached or vessel_mooring.vessel >= 0: return none
+    if not st.moored and (not st.on_water or length(vec3(st.velocity.x, 0, st.velocity.z)) > 2.0): return none
+    if frame_number() - fuel_pier_frame >= 10 or frame_number() < fuel_pier_frame:
+        fuel_pier_seen = refuel.fuel_pier_at(living_world, st.position)
+        fuel_pier_frame = frame_number()
+    fuel_pier_seen
+
+# the fuel card's words, or "" when there is none to show
+fuel_offer_text = () -> str:
+    if paused or show_chart or ui != .none or notebook.open or rescue_act == 1: return ""
+    if length((pc.state.position - fuel_offered_at).xz) < 30.0: return ""
+    c = living_world.people[living_world.player].craft
+    if c < 0 or lt.AIRFRAMES[int(living_world.aircraft[c].kind)].tank_ml - living_world.aircraft[c].fuel_ml < 1000: return ""
+    if let p = fuel_pier_near(): return "F  take on fuel, {fuel_litre_price(refuel.fuel_price(living_world, p))} lire a litre"
+    ""
+
+open_fuel_pier = ():
+    global ui, fuel_offered_at, fuel_panel_pier, fuel_notice
+    p = fuel_pier_near()
+    if p == none: return
+    if not pc.state.moored:
+        if let d = mooring_spot(pc, towns):
+            if not dock_taken(d, others_at()):
+                moor(pc.state, vec3(d.x, f32(pc.spec.float_height), d.z), heading(pc.state))
+                pc.throttle = 0.0
+                tie_up()
+                th = town_here(d)
+                if th >= 0: deliver_here(th)
+    fuel_panel_pier = p!
+    fuel_offered_at = pc.state.position
+    fuel_notice = ""
+    ui = .fuel
+    mouse_lock(false)
+
+refueling = () -> bool: t < refuel_start + refuel_len
+
+# (stepping ashore and back aboard is a new stop: the card may offer fuel again)
+fuel_stop_step = ():
+    global fuel_offered_at
+    if me.mode != .aboard: fuel_offered_at = FUEL_NOWHERE
+
+# what the fuel gauges read: the tank, or the rising reading while the pump works
+fuel_reading = () -> f64: if refueling(): refuel_gauge(refuel_from, refuel_to, t - refuel_start, refuel_len) else: pc.state.fuel
+
+# a sale at the open panel's pier: 0 fills up, 1 adds 10 litres, 2 adds 20
+fuel_take = (choice: int):
+    global fuel_notice, refuel_from, refuel_to, refuel_start, refuel_len
+    w = living_world; who = w.player; c = w.people[who].craft
+    if c < 0: return
+    p = fuel_panel_pier
+    cap = lt.AIRFRAMES[int(w.aircraft[c].kind)].tank_ml
+    before = f64(w.aircraft[c].fuel_ml) / 1000.0
+    got = refuel.buy_tank_fuel(living_world, p, who, [cap, 10000, 20000][choice], choice == 0)
+    if got.ml > 0:
+        pc.state.fuel = f64(living_world.aircraft[c].fuel_ml) / 1000.0
+        refuel_from = before; refuel_to = pc.state.fuel; refuel_start = t; refuel_len = refuel_seconds(f64(got.ml) / 1000.0)
+        pump_sound(audio)
+        fuel_notice = "Took on {fuel_litres_text(got.ml)} for {fuel_lire_text(got.cents)}."
+        log_note(notebook, "Took on {fuel_litres_text(got.ml)} of fuel at {p.name}, {fuel_lire_text(got.cents)}.", clock_text(living_world, living_world.minute))
+    else: fuel_notice = got.reason
+
+# the panel, each frame it is open: the sale goes through the living world's books
+fuel_panel = ():
+    global ui, fuel_notice
+    w = living_world; who = w.player; c = w.people[who].craft
+    p = fuel_panel_pier
+    if c < 0 or me.mode != .aboard or (not refueling() and length((pc.state.position - p.dock).xz) > 45.0):
+        ui = .none
+        return
+    cap = lt.AIRFRAMES[int(w.aircraft[c].kind)].tank_ml
+    fill = refuel.fuel_quote(w, p, who, cap, partial = true)
+    q10 = refuel.fuel_quote(w, p, who, 10000)
+    q20 = refuel.fuel_quote(w, p, who, 20000)
+    options = [FuelOption("Fill up", fill.ml, fill.cents, fill.reason), FuelOption("Add 10 litres", q10.ml, q10.cents, q10.reason), FuelOption("Add 20 litres", q20.ml, q20.cents, q20.reason)]
+    res = fuel_counter(fonts, p.name, refuel.fuel_price(w, p), fuel_reading(), f64(cap) / 1000.0, fill.stock_ml, player_cents(), options, refueling(), fuel_notice, dues = p.core >= 0 and p.core != 5)
+    if res.choice >= 0: fuel_take(res.choice)
+    if res.refused >= 0: fuel_notice = options[res.refused].reason
+    if res.closed: ui = .none
+
+# (AEGEAN_CAPTURE_FUEL=prompt|panel|pumping|after|done|empty|poor: aboard at the home pier with
+# the card, the panel, filling up (mid-pump, after, and the panel closed again), the pier bought
+# dry, the purse nearly empty.
+# Captures only; every change goes through the books.)
+capture_fuel = env("AEGEAN_CAPTURE_FUEL")
+capture_fuel_open = -1
+stage_capture_fuel = (stage: str):
+    global fuel_offered_at, fuel_pier_seen, capture_fuel_open, ui
+    n = frame_number()
+    c = living_world.people[living_world.player].craft
+    if n == 2:
+        me.mode = .aboard
+        fuel_offered_at = FUEL_NOWHERE
+        if stage == "poor": debug_cents(300)
+        if stage == "empty":
+            debug_cents(100000)
+            loop k in 0..12:
+                if let p = refuel.fuel_pier_at(living_world, living_world.aircraft[c].pose.pos):
+                    if refuel.buy_tank_fuel(living_world, p, living_world.player, 80000, true).ml == 0: break
+                debug_fuel_ml(c, 24000)
+            debug_cents(12000)
+            pc.state.fuel = f64(living_world.aircraft[c].fuel_ml) / 1000.0
+    if capture_fuel_open < 0 and n >= 4 and stage != "prompt" and fuel_offer_text() != "":
+        open_fuel_pier()
+        if ui == .fuel: capture_fuel_open = n
+    if capture_fuel_open > 0 and n == capture_fuel_open + 2 and (stage == "pumping" or stage == "after" or stage == "done"): fuel_take(0)
+    if capture_fuel_open > 0 and n == capture_fuel_open + 240 and stage == "done": ui = .none
+
+# How far the player's aircraft can go to a meet on the fuel aboard, keeping the entry's fuel.
+player_meet_reach = () -> f64: meet_reach_m(pc.state.fuel, pc.spec.fuel_burn, pc.spec.cruise_speed)
+
+# Aboard at a home harbour with a fuel pier, a meet in the next two days beyond the fuel aboard
+# shows the race card once, pointing to the pier.
+meet_fuel_shown: {int: bool}
+meet_fuel_card = ""
+meet_fuel_until = 0.0
+meet_fuel_step = ():
+    global meet_fuel_shown, meet_fuel_card, meet_fuel_until
+    st = pc.state
+    if st.crashed or st.capsized or st.beached or not st.on_water or length(st.velocity) > 8.0: return
+    if fuel_pier_here(living_world, st.position) == none: return
+    hint = meet_fuel_hint(air_events, living_world, st.position, player_meet_reach())
+    if hint.0 == "" or hint.1 in meet_fuel_shown: return
+    meet_fuel_shown[hint.1] = true
+    meet_fuel_card = hint.0; meet_fuel_until = t + 9.0
+
 # A townsperson greeting the player mentions the nearest air meet ahead, once a day each.
 meet_remarked: {int: int}
 # (the remark goes after what they say, before any question they ask)
@@ -1549,7 +1695,10 @@ update = (dt: f64):
     if let stage = capture_maps:
         if frame_number() == 3: stage_capture_maps(stage)
     if let stage = capture_rescue: stage_capture_rescue(stage)
+    if let stage = capture_fuel: stage_capture_fuel(stage)
+    fuel_stop_step()
     update_rescue()
+    if me.mode == .aboard and frame_number() % 30 == 15 and not paused and not show_chart and ui == .none: meet_fuel_step()
     race_k = race_offer_here()
     if race_k >= 0 and vpressed(.f) and not typing:
         if player_air_entry(air_events.meets[race_k], living_world.player) != none:
@@ -1725,7 +1874,9 @@ update = (dt: f64):
                 # (the camera feels it: a jolt in its spring)
                 pc.cam_ev += normalize(ev.impulse + vec3(0, 0.001, 0)) * f32(-3.0 * hard)
             vapor(pc, vapor_trails, hour, t)
-            if vpressed(.f) and rescue_act == 1: do_rescue()
+            if vpressed(.f) and ui != .none: pass
+            else if vpressed(.f) and rescue_act == 1: do_rescue()
+            else if vpressed(.f) and not typing and fuel_offer_text() != "": open_fuel_pier()
             else if vpressed(.f):
                 if let ship_mooring = find_vessel_mooring(vessels,pc.state,pc.spec.span):
                     vessel_mooring = ship_mooring
@@ -2097,7 +2248,7 @@ draw_world = (L: Light):
     draw_custom((): draw_vessel_smoke(vessel_view,L,t), transparent = true)
     if me.mode == .aboard: draw_custom((): draw_flight_effects(pc,craft_models[pc.model],pc_at(),L,t),transparent=true)
     draw_custom((): draw_prop_discs(L),transparent=true)
-    draw_curved_particles(spray_ps, false)
+    draw_splashes(pc,craft_models[pc.model],pc_at(),spray_ps,L,t,me.mode==.aboard)
     draw_curved_particles(smoke_ps, false)
     draw_curved_particles(dust_ps, false)
     draw_combat_particles(combat_visual,battle)
@@ -2211,6 +2362,8 @@ draw = ():
         .aboard:
             if pc.state.crashed or pc.state.capsized: prompt_card(fonts, "Wrecked.  R  to be towed home", 180.0)
             else if pc.state.beached: prompt_card(fonts, "Run aground.  R  to be towed home", 180.0)
+            else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
+            else if fuel_offer_text() != "": prompt_card(fonts, fuel_offer_text(), 180.0)
             else if pc.state.moored: prompt_card(fonts, "F  step onto the quay      Shift  open the throttle", 180.0)
             else if rescue_act == 1: prompt_card(fonts, rescue_prompt(), 180.0)
             else if mooring_spot(pc, towns) != none: prompt_card(fonts, "F  moor here", 180.0)
@@ -2224,8 +2377,8 @@ draw = ():
         st = pc.state
         # (the speedometer reads the true speed)
         if show_chart: pass
-        else if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale,pc.instruments)
-        else if not pc.cockpit_view: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, st.fuel / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed,pc.instruments)
+        else if not pc.cockpit_view and (tweaks.true_curve or tweaks.pure_scale): instruments(fonts, true_speed(pc.spec, f64(length(st.velocity))), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, fuel_reading() / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed / pc.spec.handling_scale,pc.instruments)
+        else if not pc.cockpit_view: instruments(fonts, f64(length(st.velocity)), f64(st.position.y) - pc.spec.float_height, st.throttle, pc.throttle, fuel_reading() / pc.spec.fuel_capacity, (heading(st) + TAU) % TAU, pc.spec.stall_speed, pc.spec.max_speed,pc.instruments)
     if (me.mode == .aboard or me.mode == .walking) and not show_chart and ui == .none and not notebook.open:
         race_k = race_shown(air_events, living_world)
         if race_k >= 0: draw_race_hud(fonts, air_events, living_world, race_k, if me.mode == .aboard: pc.state.position else: me.pos, me.mode == .aboard)
@@ -2393,7 +2546,7 @@ draw_ui = ():
                 l = reason_line(living_world, r)
                 if l != "": yesterday.push(l)
             district = core_district(living_world, ui_place)
-            res = notice_board(fonts, SETTLEMENTS[ui_place].name, military_notices(living_world, district, living_world.player, presentation.declined_missions, (m: int) -> str: clock_text(living_world, m)) + job_notices(living_world, ui_place) + air_meet_notices(air_events, living_world, me.pos, (m: int) -> str: clock_text(living_world, m)), yesterday)
+            res = notice_board(fonts, SETTLEMENTS[ui_place].name, military_notices(living_world, district, living_world.player, presentation.declined_missions, (m: int) -> str: clock_text(living_world, m)) + job_notices(living_world, ui_place) + air_meet_notices(air_events, living_world, me.pos, (m: int) -> str: clock_text(living_world, m), reach = player_meet_reach(), pier_sells = ui_place < living_world.harbors.len() and fuel_pier_here(living_world, living_world.harbors[ui_place].center) != none), yesterday)
             if mission_of_notice(res.take) >= 0:
                 ui_mission = mission_of_notice(res.take)
                 if let m = find_mission(living_world, ui_mission): ui_line = "{m.why} Due {clock_text(living_world, m.deadline)}. {contract_status(living_world, m)}"
@@ -2480,4 +2633,5 @@ draw_ui = ():
                     notice_new_maps()
                 else: say_toast(got.message)
             if res.closed: ui = .none
+        .fuel: fuel_panel()
         _: pass

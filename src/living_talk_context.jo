@@ -1,5 +1,7 @@
 # Speech particulars. This module reads the speaker's own work, local observations and saved
 # knowledge; it never turns an unseen remote event into a fact just to fill a sentence.
+# People open with something short from their own day. Figures are rounded and times are said as
+# parts of the day (living_talk_words.jo); exact records stay in panels and the notebook.
 use 'living_types.jo'
 use 'life_types.jo'
 use 'living_conditions.jo'
@@ -7,26 +9,55 @@ use 'living_place_context.jo'
 use 'living_questions.jo'
 use 'living_schedule.jo'
 use 'living_voice_lines.jo'
+use 'living_talk_words.jo'
+
+# Candidate tiers. The first answer on a subject is personal; asking again brings particulars;
+# then a referral to someone who would know; then an honest end. Noise is under 50.
+const TIER_PERSONAL = 200
+const TIER_DETAIL = 150
+const TIER_REFERRAL = 100
+# How long a person remembers what they themselves just said (matches the speech ledger window).
+const TALK_WINDOW_MINUTES = 240
+
+# The speaker's last spoken line still in mind (a question entry is part of the line before it).
+last_spoken = (w: World, speaker: int) -> SpokenLine?:
+    ledger = w.speech.get(speaker,SpeechLedger())
+    loop k in 0..ledger.recent.len():
+        line = ledger.recent[ledger.recent.len()-1-k]
+        if w.minute-line.minute >= TALK_WINDOW_MINUTES: return none
+        if line.key.starts_with("question:"): continue
+        return line
+    none
+
+# The first five words, without case or punctuation: how a listener hears a sentence's frame.
+opening_words = (text: str) -> str:
+    t = lower(text)
+    loop mark in [".",",","!","?",";",":"]: t = t.replace(mark," ")
+    words = [loop word in split(t," "): if word != "": word]
+    words[0..min(5,words.len())].join(" ")
+
+# An interjection ("Well!", "Oh,", "Poor souls:") is said once to a listener, not every turn.
+_INTERJECTIONS: str[] = ["Well! ","Well, ","Oh! ","Oh, ","Ah. ","Ah, ","Poor souls: "]
+
+fresh_opener = (w: World, speaker: int, listener: int, text: str) -> str:
+    loop prefix in _INTERJECTIONS:
+        if not text.starts_with(prefix): continue
+        word = opening_words(prefix)
+        loop line in w.speech.get(speaker,SpeechLedger()).recent:
+            if line.listener == listener and w.minute-line.minute < TALK_WINDOW_MINUTES and opening_words(line.text).starts_with(word):
+                rest = text[prefix.len()..]
+                return if rest == "": text else: upper(rest[0..1])+rest[1..]
+        return text
+    text
 
 ctx_name = (w: World, person: int) -> str:
     if person == w.player: return "pilot"
     if person < 0 or person >= w.people.len(): return "the harbour office"
-    parts = split(w.people[person].name," ")
-    if parts.len()>1 and parts[0] == "Father": parts[0]+" "+parts[1] else: parts[0]
+    short_name(w,person)
 
-ctx_money = (cents: int) -> str:
-    if cents%100 == 0: "{cents/100} {if cents == 100: "lira" else: "lire"}" else: "{f64(cents)/100.0:.2} lire"
-
-ctx_time = (w: World, minute: int) -> str:
-    t = local_minute(minute); days = day_index(w.minute)-day_index(minute)
-    time = "{t/60:02}:{t%60:02}"
-    if days == 0: time else: if days == 1: "yesterday at {time}" else: if days == -1: "tomorrow at {time}" else: if days < -1: "in {abs(days)} days at {time}" else: "{days} days ago at {time}"
-
-ctx_load = (w: World, good: int, amount: int) -> str:
-    if good < 0: return "the sealed dispatch bag"
-    if good == 1 and amount == 100: return "a bottle of wine"
-    unit = if good == 1 or good == 2: "barrel" else: if good == 3: "sack" else: if good == 6: "box" else: if good == 4: "tin" else: "crate"
-    if amount == 1000: "a {unit} of {w.goods[good].key}" else: "{f64(amount)/1000.0:.1} {if unit == "box": "boxes" else: unit+"s"} of {w.goods[good].key}"
+ctx_money = (cents: int) -> str: say_money(cents)
+ctx_time = (w: World, minute: int) -> str: say_ago(w,minute)
+ctx_load = (w: World, good: int, amount: int) -> str: say_load(w,good,amount)
 
 ctx_bank = (lines: str[], key: str, priority: int = 100) -> SpeechCandidate[]:
     [loop k in 0..lines.len(): SpeechCandidate("{key}:{k}",lines[k],priority)]
@@ -47,199 +78,303 @@ ctx_venue = (venue: VenueKind) -> str: match venue:
     .oven: "the courtyard oven"
     .alley: "the alley"
 
+# Where someone is going, as they'd say it: "I'm on my way down to the quay."
+venue_errand = (venue: VenueKind) -> str: match venue:
+    .home: "home"
+    .quay: "down to the quay"
+    .market: "to the market"
+    .cafe: "to the cafe"
+    .church: "to the church"
+    .square: "to the square"
+    .fields: "out to the fields"
+    .workshop: "back to the workshop"
+    .shelter: "in out of the sun"
+    .school: "over to the school"
+    .seat: "to sit outside a while"
+    .laundry: "to see to the washing"
+    .oven: "to the oven with the bread"
+    .alley: "round the back way"
+
 ctx_direction = (wind: vec3) -> str:
     # Weather stores velocity toward; people name the direction it comes from.
     angle = atan2(f64(-wind.x),f64(wind.z))
     names = ["north","north-east","east","south-east","south","south-west","west","north-west"]
     names[(int(round(angle/(PI/4.0)))+8)%8]
 
-context_work = (w: World, speaker: int) -> SpeechCandidate[]:
+join_said = (a: str, b: str) -> str: if a == "": b else: if b == "": a else: a+" "+b
+
+cap_first = (s: str) -> str: if s == "": s else: upper(s[0..1])+s[1..]
+
+# What a person says of their own work, in their own words.
+work_lines = (w: World, person: int) -> str[]:
+    p = w.people[person]
+    if p.far_home >= 0 and person in w.far.people:
+        return match w.far.people[person].role:
+            .trader: ["Folk have been in and out of the market all day.","Minding the market; somebody has to."]
+            .farmer: ["Out in the fields since first light.","The fields won't wait for me."]
+            .fisher: ["Nets to mend before evening.","Just back from the boats."]
+            .artisan: ["The forge has been hot all day.","I've a cart wheel to finish."]
+            .keeper: ["Minding the shop.","Stock to count, as always."]
+            .clerk: ["Papers, always papers.","The town's books don't keep themselves."]
+            .pilot: ["Waiting on the mail bags.","The mail goes out when the bags are full."]
+            .sailor: ["Loading the boat.","The boat wants caulking again."]
+    match p.occupation:
+        .merchant: ["Minding the store.","Stock to count, as always."]
+        .courier: ["Waiting on the post bag.","Another bag to fly out later."]
+        .mechanic: ["I've an engine in pieces back there.","Grease to the elbows today."]
+        .clerk: ["Papers, always papers.","The harbour books don't keep themselves."]
+        .innkeeper: ["Rooms to do and lunch to cook.","The inn's been busy."]
+        .fisher: ["Nets to mend before evening.","Just back from the boats."]
+        .patrol: ["On watch today.","I'm flying the patrol later."]
+        .telegraphist: ["The wire's been busy all morning.","Messages to copy out."]
+        .oil_presser: ["Pressing oil all week; my hands smell of it.","The press wants a new screw."]
+        .miller: ["The mill's been going since dawn.","Flour in my hair again."]
+        .teacher: ["The children are a handful today.","Lessons all morning, marking tonight."]
+        .nurse: ["The clinic's been busy.","I've rounds to finish."]
+        .priest: ["Parish visits all morning.","There's always someone needing a word."]
+        .hotelier: ["The hotel's half full and every guest wants something.","Linen to count."]
+        .racer: ["Tuning the engine for the next race.","Trying to get a few more knots out of her."]
+        .pirate: ["Seeing to the boat.","There's a hose on the engine wants mending."]
+        .quartermaster: ["Counting stores.","Stores to check."]
+        .farmer: ["Out in the fields since first light.","The fields won't wait for me."]
+        .sailor: ["Loading the boat.","The boat wants caulking."]
+        .player: []
+
+# How someone introduces their own work to a stranger: "I keep the inn".
+self_role = (w: World, person: int) -> str:
+    p = w.people[person]
+    if p.far_home >= 0 and person in w.far.people:
+        return match w.far.people[person].role:
+            .trader: "I keep the market"
+            .farmer: "I farm outside town"
+            .fisher: "I fish"
+            .artisan: "I'm the smith"
+            .keeper: "I keep a shop"
+            .clerk: "I keep the town's books"
+            .pilot: "I fly the mail"
+            .sailor: "I work the boats"
+    match p.occupation:
+        .merchant: "I keep a store here"
+        .courier: "I fly the post"
+        .mechanic: "I mend engines"
+        .clerk: "I'm at the harbour office"
+        .innkeeper: "I keep the inn"
+        .fisher: "I fish"
+        .patrol: "I fly patrol"
+        .telegraphist: "I work the telegraph"
+        .oil_presser: "I run the oil press"
+        .miller: "I run the mill"
+        .teacher: "I teach at the school"
+        .nurse: "I'm the nurse here"
+        .priest: "I look after the parish"
+        .hotelier: "I run the hotel"
+        .racer: "I race"
+        .quartermaster: "I keep the stores"
+        .farmer: "I farm"
+        .sailor: "I work the boats"
+        _: ""
+
+activity_lines = (w: World, speaker: int, intent: DailyIntent) -> str[]:
+    if intent.companion >= 0:
+        who = short_name(w,intent.companion)
+        return ["Waiting for {who}; we said we'd meet here.","{who} and I are meeting here. They'll be along."]
+    match intent.activity:
+        .rest, .sleep: ["Just resting a minute.","Sitting down while I can."]
+        .pray: if weekday_name(w.minute) == "Sunday": ["It's Sunday; I've come for the service.","I'm here for church. We can talk after."] else: ["I came to light a candle.","I'm here for a quiet minute in the church."]
+        .talk, .listen: ["Just catching up with the neighbours.","Hearing the news from next door."]
+        .stroll: ["Stretching my legs.","Just walking a while."]
+        .wait: ["Just passing the time.","Waiting on nothing in particular."]
+        .sit: ["Sitting in the shade a while.","Taking the air."]
+        .wash: ["Doing the washing while the sun's out.","Washing day."]
+        .bake: ["The bread's in the oven; I can't go far.","Baking day."]
+        .play: ["Playing a little before the evening.","Just practising."]
+        .work: work_lines(w,speaker)
+
+walking_lines = (voice: VoiceKind, errand: str) -> str[]:
+    match voice:
+        .salt: ["Going {errand}.","Off {errand}. The legs are slower than they were."]
+        .plain: ["Off {errand}.","Going {errand}."]
+        .formal: ["I'm on my way {errand}.","I have to go {errand}."]
+        .guarded: ["Going {errand}. That's all.","On my way {errand}."]
+        .anxious: ["I'm late going {errand} already.","I have to get {errand}."]
+        .wry: ["Going {errand}, if I don't get stopped again.","On my way {errand}, slowly."]
+        .chatty: ["Just going {errand}; walk with me, I'll talk as I go.","Off {errand}, and I'll hear all the news on the way."]
+        .brisk: ["Going {errand}; I can't stop long.","On my way {errand}."]
+        .eager: ["Off {errand}, then back to the aeroplane.","Going {errand}!"]
+        .elder: ["Going {errand}. Slowly, these days.","Off {errand}, one step at a time."]
+        _: ["On my way {errand}.","I'm going {errand}. Walk with me if you like."]
+
+carriage_lines = (w: World, speaker: int) -> SpeechCandidate[]:
     p = w.people[speaker]; place = life_place_name(w,person_place(w,speaker))
-    if p.carriage >= 0 and p.carriage in w.carriage:
-        task = w.carriage[p.carriage]
-        if task.job in w.jobs:
-            j = w.jobs[task.job]; owner = ctx_name(w,j.poster)
-            cargo = ctx_load(w,j.good,if task.cargo in w.cargo: w.cargo[task.cargo].quantity else: j.quantity)
-            end = if task.unloading or j.delivery_mode == .foot: (if j.drop_store == .boat: "the boat at {place}'s quay" else: "the delivery point in {place}") else: "the aircraft at {place}"
-            pickup = if task.unloading: "the aircraft" else: "the warehouse"
-            lines = if task.phase == .fetch: ["I'm fetching {owner}'s {cargo} from {pickup} at {place}.","{owner} has {cargo} waiting by {pickup}. That's where I'm going.","Let me get to {pickup} first: {owner}'s {cargo} won't walk to {end}."] else: ["This is {owner}'s {cargo}, for {end}. Mind your elbow.","I'm taking {cargo} to {end} for {owner}. Walk on this side.","{owner} is waiting for {cargo} at {end}. I'll talk when I've set it down."]
-            if task.blocked != "": lines = ["I can't get {owner}'s {cargo} through to {end}. The walking route is blocked.","{cargo} for {owner}, and no clear way to {end}. I need a clear way through before I lift it again."]
-            return ctx_bank(lines,"carriage:{task.id}:{task.phase}",150)
+    if p.carriage < 0 or not (p.carriage in w.carriage): return []
+    task = w.carriage[p.carriage]
+    if not (task.job in w.jobs): return []
+    j = w.jobs[task.job]; owner = ctx_name(w,j.poster)
+    cargo = say_load(w,j.good,if task.cargo in w.cargo: w.cargo[task.cargo].quantity else: j.quantity)
+    # "Despina's dispatch bag", not "Despina's the sealed dispatch bag".
+    owned = if j.good < 0: "dispatch bag" else: cargo
+    end = if task.unloading or j.delivery_mode == .foot: (if j.drop_store == .boat: "the boat at the quay" else: "the house in {place}") else: "the aircraft"
+    pickup = if task.unloading: "the aircraft" else: "the warehouse"
+    lines = if task.phase == .fetch: ["Fetching {owner}'s {owned} from {pickup}.","{owner}'s {owned} is waiting at {pickup}. I'm on my way.","I've to get {owner}'s {owned} out of {pickup} first."] else: ["This is {owner}'s {owned}, for {end}. Mind your elbow.","Taking {cargo} to {end} for {owner}.","{owner} is waiting on {cargo} at {end}. I'll talk once it's down."]
+    if task.blocked != "": lines = ["Can't get {owner}'s {owned} through to {end}. The way's blocked.","{cargo} for {owner}, and no way through to {end}. I need a clear road first."]
+    ctx_bank(lines,"carriage:{task.id}:{task.phase}",TIER_PERSONAL+50)
+
+context_work = (w: World, speaker: int) -> SpeechCandidate[]:
+    carrying = carriage_lines(w,speaker)
+    if carrying.len() > 0: return carrying
     result: SpeechCandidate[]
-    loop id in p.obligations:
+    loop id in w.people[speaker].obligations:
         if not (id in w.obligations): continue
         o = w.obligations[id]
         if o.debtor != speaker or (o.state != .open and o.state != .blocked): continue
         if o.kind == .delivery:
-            cargo = ctx_load(w,o.reason.good,o.reason.quantity); to = life_place_name(w,o.reason.destination)
-            who = ctx_name(w,o.reason.beneficiary); by = ctx_time(w,o.due_minute)
-            result += ctx_bank(["{who} wants {cargo} in {to} by {by}. That's what I've given my word on.","I've {cargo} for {who} at {to}, promised by {by}. That is the promise I have to keep.", "{to}, {by}: {who}'s {cargo}. I keep going over it so I don't forget."],"promise:{id}",135)
+            cargo = say_load(w,o.reason.good,o.reason.quantity); to = life_place_name(w,o.reason.destination)
+            who = ctx_name(w,o.reason.beneficiary)
+            by = if o.due_minute <= w.minute: "and I'm late with it" else: say_by(w,o.due_minute)
+            result += ctx_bank(["I've promised {who} {cargo} at {to}, {by}.","{who}'s expecting {cargo} at {to}, {by}. I gave my word.","{cargo} to {to} for {who}, {by}. It's on my mind."],"promise:{id}",TIER_PERSONAL)
     loop id in w.open_obligations:
         o = w.obligations[id]
         if o.kind != .repair or o.mechanic != speaker or o.state == .fulfilled or o.state == .cancelled: continue
         who = ctx_name(w,o.debtor)
-        result += ctx_bank(["{who}'s engine needs my attention in {place}. There's {ctx_money(o.amount_cents)} on the bill.","I've {who}'s aircraft to see to here at {place}. Ask me after I've finished with it.","It's {who}'s engine I have to finish here at {place}. Tell me if you've brought another job."],"repair-work:{id}",130)
+        result += ctx_bank(["I've {who}'s engine to finish.","{who}'s aircraft is in my workshop. I'll be at it a while.","Can't stop long; {who}'s engine is half apart."],"repair-work:{id}",TIER_PERSONAL)
     result
 
-context_day = (w: World, speaker: int, voice: VoiceKind, listener: int = -1) -> SpeechCandidate[]:
-    p = w.people[speaker]; place = life_place_name(w,person_place(w,speaker))
-    own = context_work(w,speaker)
-    if own.len()>0: return own
-    result: SpeechCandidate[]
+# What somebody might say first about their own day, in a few words.
+greeting_notes = (w: World, speaker: int, listener: int) -> str[]:
+    p = w.people[speaker]; notes: str[]
+    if p.carriage >= 0: notes.push("Can't stop; I've a load on.")
+    if p.injured_until > w.minute: notes.push("I'm laid up, more or less.")
+    if p.fatigue > 750: notes.push("Long day. I'm dead on my feet.")
     if speaker in w.daily_life:
-        intent = w.daily_life[speaker]; where = ctx_venue(intent.venue)
-        if not intent.arrived:
-            lines = match voice:
-                .salt: ["I'm for {where} in {place}. Tell me while we walk.","{where} at {place}. The feet are slower than the mouth; come along.","I've not reached {where} yet. {place} won't move it any nearer for me."]
-                .anxious: ["I meant to be at {where} in {place} already. I've let myself get stopped on the way again.", "Walk this way with me. I'm trying to reach {where} at {place}.","{where}, {place}. I say it aloud, or I find another thing to do on the way."]
-                .formal: ["My business takes me to {where} in {place}. We may speak as far as the corner.","If you require me, I am bound for {where} at {place}.","The walk to {where} is not the whole business of {place}, though one might think so today."]
-                .wry: ["I'm going to {where} in {place}. I shall look indispensable when I get there.","{where} at {place}. If I reach it before remembering another errand, applaud.","You can improve the walk to {where}, if you've a story from {place}."]
-                _: ["Come as far as {where} with me. I've things to see to in {place}.","I'm on my way to {where} in {place}. Walk with me if you've a question.", "Try {where} at {place} if you don't find me here again."]
-            result += ctx_bank(lines,"walk:{intent.anchor}")
-        else:
-            time = ctx_time(w,w.minute)
-            if intent.activity == .rest or intent.activity == .sleep:
-                result += ctx_bank(["It's {time} at {place}. I'm keeping a little quiet at {where}.","At {time} I mean to rest here in {place}. The quay can have me later.","Leave a little of {time} to me. I came to {where} at {place} to rest."],"rest:{intent.anchor}")
-            else if intent.activity == .pray:
-                result += ctx_bank(["I'm at the church in {place}. We can speak after the service.","It's Sunday at {place}; I came here for the service, not the price of oil.","If it isn't urgent, wait outside {place}'s church. I'll come out to you."],"church:{intent.anchor}")
-            else if intent.companion >= 0:
-                who = ctx_name(w,intent.companion)
-                result += ctx_bank(["I came to {where} to meet {who}. We have until {ctx_time(w,intent.until_minute)}.","{who} and I arranged to meet at {where}. Don't let me miss them while we're talking.","I'm waiting for {who} at {where}. Stay here and we'll have three voices instead of two."],"companion:{intent.companion}",120)
-    # Operators know their own fuel and damage; bystanders do not read a hidden aircraft record.
-    if p.craft >= 0:
-        c = w.aircraft[p.craft]; kind = str(c.kind); fuel = f64(c.fuel_ml)/1000.0
-        lines=[voice_craft(voice,kind,"{fuel:.1}",place)]
-        if c.engine<500 or c.hull<500:
-            lines=["My {kind} at {place} needs work; I've {fuel:.1} litres aboard."]
-        result += ctx_bank(lines,"own-craft:{c.id}:{c.fuel_ml}",108)
-    if p.occupation == .fisher:
-        loop b in p.prices:
-            if b.good != 0 or b.place != p.place or b.confidence < 300 or w.minute-b.observed_minute>1440: continue
-            price = ctx_money(b.cents); quoted_at = ctx_time(w,b.observed_minute)
-            result += ctx_bank([voice_price(voice,"fish",price,place,quoted_at)],"catch-price:{b.observed_minute}",110)
-    until=current_shift_end(p.occupation,w.minute)
-    if until>w.minute and p.place==p.home and p.trip<0:
-        line=match voice:
-            .salt: "My shift off {place} ends at {ctx_time(w,until)}; there's time for a word."
-            .shop: "I'm at the {place} counter until {ctx_time(w,until)}."
-            .formal: "My shift here in {place} ends at {ctx_time(w,until)}."
-            .guarded: "{ctx_time(w,until)} ends my shift at {place}; don't keep me past it."
-            .anxious: "I have to be at work in {place} until {ctx_time(w,until)}."
-            .warm: "I'm working here in {place} until {ctx_time(w,until)}; we can talk between callers."
-            .wry: "{ctx_time(w,until)} is when {place} gets rid of me for this shift."
-            .measured: "My work here in {place} runs until {ctx_time(w,until)}."
-        result += ctx_bank([line],"shift:{day_index(w.minute)}:{until}",112)
-    if p.place >= 0 and p.place < w.places.len() and (p.occupation == .merchant or p.occupation == .quartermaster):
-        m = w.places[p.place].market
-        g = (speaker+day_index(w.minute))%GOOD_COUNT
-        amount = m.inventory.qty[g]-m.inventory.reserved[g]
-        if amount > 0:
-            result += ctx_bank(["I've {ctx_load(w,g,amount)} free in the {place} warehouse. The rest is already promised.","If you've come for {w.goods[g].key}, I can point to {ctx_load(w,g,amount)} in the {place} warehouse.","There's {ctx_load(w,g,amount)} at {place} that hasn't a carrier yet. Ask about the price before lifting it."],"own-stock:{g}",110)
-    loop child in w.households:
-        if child.guardian == speaker:
-            result += ctx_bank(["{child.name} is {child.age}.","{child.name} gets the time after my work in {place}.","I have {child.name} to look after here in {place}."],"child:{child.id}",109)
-    # Visible quay craft are observed locally, never a remote timetable pulled from hidden state.
-    loop c in w.aircraft:
-        if c.place != p.place or c.state != .moored or length(c.pose.pos-p.pose.pos)>90: continue
-        owner = ctx_possessive(w,c.owner,speaker,listener); kind = str(c.kind); kind=upper(kind[0..1])+kind[1..]
-        if c.owner != speaker:
-            lines=match voice:
-                .salt: ["{owner} {kind} is on a line at {place}; ask its pilot about the crossing."]
-                .shop: ["{owner} {kind} is alongside at {place}; talk to its owner before you book a load."]
-                .formal: ["At {place}, {owner} {kind} is moored alongside; its pilot can answer about passage."]
-                .guarded: ["{owner} {kind}, there at {place}. I don't answer for another pilot's cargo."]
-                .anxious: ["Is that {owner} {kind} at {place}?" ]
-                .wry: ["{owner} {kind} has found a berth at {place}. The pilot can do the promising."]
-                .warm: ["You can see {owner} {kind} from here at {place}. Go and speak to the pilot if you need passage."]
-                .measured: ["{owner} {kind} is alongside at {place}. Its pilot is the one to ask about a load."]
-            # This is an observation, not a question for the listener to answer.
-            if voice==.anxious: lines=["{owner} {kind} is still at {place}'s quay; I look for the pilot before I promise a crossing."]
-            if c.owner==listener:
-                lines=match voice:
-                    .salt: ["Your {kind} is on a line at {place}. You've shore under your feet for a moment."]
-                    .shop: ["Your {kind} has a berth here at {place}; we can talk at the counter before you leave."]
-                    .formal: ["Your {kind} is moored at {place}; its line is visible from here."]
-                    .guarded: ["That's your {kind} at {place}. Your hold is your business."]
-                    .anxious: ["I can still see your {kind} from here at {place}; stand beside me a minute."]
-                    .warm: ["Your {kind} is alongside here at {place}. I'm glad you've stopped ashore."]
-                    .wry: ["Your {kind} has found a line at {place}; at least it knows where to wait."]
-                    .measured: ["Here at {place}, your {kind} is tied up beside the quay we're standing on."]
-            result += ctx_bank(lines,"visible-craft:{c.id}",102)
-    result
+        intent = w.daily_life[speaker]
+        if not intent.arrived: notes.push("I'm on my way {venue_errand(intent.venue)}.")
+        else: notes += activity_lines(w,speaker,intent)
+    knots = f64(length(wind_at(w,p.pose.pos)))*1.94384
+    if p.place >= 0 and p.place < w.places.len() and w.places[p.place].harbor_closed: notes.push("Harbour's shut, so here I am.")
+    else if knots >= 18.0: notes.push("Wild out there today.")
+    if current_shift_end(p.occupation,w.minute) > w.minute and notes.len() < 2: notes += work_lines(w,speaker)
+    if listener >= 0 and listener < w.people.len() and w.people[listener].craft >= 0 and w.people[listener].craft < w.aircraft.len():
+        c = w.aircraft[w.people[listener].craft]
+        if c.owner == listener and c.state == .moored and c.place == p.place and p.place >= 0 and length(c.pose.pos-p.pose.pos) < 90.0:
+            notes.push("You'll be the one with the {cap_first(str(c.kind))}.")
+    notes
 
-context_greeting = (w: World, speaker: int, listener: int, voice: VoiceKind, known: bool) -> SpeechCandidate[]:
-    name = ctx_name(w,listener); own = ctx_name(w,speaker)
-    hour = local_minute(w.minute)/60
-    hello = if hour < 5: "A late hour" else: if hour < 12: "Good morning" else: if hour < 18: "Good afternoon" else: "Good evening"
-    lines=if known:
-        match voice:
-            .salt: ["{name}. You've found the same old mooring.","Come alongside, {name}. I know that face.","{hello}, {name}. A word before the tide turns."]
-            .shop: ["{hello}, {name}. Back at my counter.","{name}, I remember you. What brings you in today?","Good to see you again, {name}. We can leave the prices a moment."]
-            .formal: ["{hello}, {name}. We have spoken before.","I remember our last conversation, {name}. Please go on.","{name}, thank you for calling again."]
-            .guarded: ["{name}. I remember you; keep your voice down.","Back again, {name}. Listening is still all I've promised.","I know you, {name}. Don't crowd me."]
-            .anxious: ["{name}. I'm glad you came back.","There you are, {name}. I was watching the quay.","{hello}, {name}. Stand here; I can hear you better."]
-            .warm: ["{hello}, {name}. Come and stand beside me.","You've come back, {name}. Sit if you're stopping.","{name}, you needn't introduce yourself twice."]
-            .wry: ["{name}. We meet again, before either of us looks busy.","{hello}, {name}. I haven't forgotten the voice.","You know where to find me now, {name}."]
-            .measured: ["{hello}. It's {name} again.","We met here before, {name}. I've time to listen.","{name}, I remember where we left off."]
-    else:
-        match voice:
-            .salt: ["{own}. That's my name, {name}; come alongside.","{hello}. Call me {own}, if we haven't met.","A new face, {name}. I'm {own}."]
-            .shop: ["{hello}, {name}. I'm {own}; this is my counter.","{own}, {name}. Tell me what you've come looking for.","We haven't done business yet, {name}. I'm {own}."]
-            .formal: ["{hello}. {own}; I don't believe we've been introduced.","My name is {own}, {name}. Please come within earshot.","{name}, I am {own}. You have my attention."]
-            .guarded: ["I don't know you, {name}. {own}. Listening is all I've promised.","{name}. You can call me {own}; keep the quay out of this.","{own}, if you need a name. Say what you came to say."]
-            .anxious: ["{hello}. I'm {own}; have we spoken before?","{name}. {own}. Come this side, where I can hear.","I don't know your voice yet, {name}. Mine's {own}."]
-            .warm: ["{hello}. I'm {own}. We haven't spoken before.","Come closer, {name}. I'm {own}; I can spare a word.","You can call me {own}, {name}. No need to stand so far away."]
-            .wry: ["We haven't quarrelled yet, {name}. I'm {own}.","{name}. {own}. That's the introductions done.","I'm {own}, {name}. Speak before somebody gives me work."]
-            .measured: ["{hello}, {name}. {own} is my name.","I don't know you yet, {name}. Call me {own}.","{own}. A first conversation needn't be a formal one, {name}."]
+_hellos = (voice: VoiceKind, hour: int, known: bool, listener: str) -> str[]:
+    part = if hour < 5: "" else: if hour < 12: "morning" else: if hour < 18: "afternoon" else: "evening"
+    tw = if part == "": "You're up late" else: cap_first(part)
+    good = if part == "": "You're up late" else: "Good {part}"
     if known:
-        extra=match voice:
-            .salt: ["{name}. I know your step on these boards.","{hello}. You and I have traded words here before, {name}.","Back by my line, {name}. I remember you."]
-            .shop: ["{name}, I've kept your last visit in mind.","Your face is familiar at this counter, {name}.","Back for a word, {name}; I remember where we stopped."]
-            .formal: ["We have met, {name}; another introduction is unnecessary.","{name}, I recall your last call.","Please come closer, {name}; I recognise your voice."]
-            .guarded: ["We know one another, {name}; leave it at that.","{name}, you've had my ear before.","I remember what you said, {name}. Go on."]
-            .anxious: ["I'm relieved to see that face again, {name}.","You made it back, {name}; stand beside me a moment.","{name}, I haven't lost track of our last talk."]
-            .warm: ["Good to have you beside me again, {name}.","{name}, there is no need to stand on ceremony with me now.","It's your voice again, {name}; come and tell me how you are."]
-            .wry: ["{name}, we have survived a conversation before.","Back for another answer, {name}.","{hello}. I knew we'd find something else to discuss, {name}."]
-            .measured: ["I recognise you, {name}; we can begin where we stopped.","A familiar voice, {name}. Let us talk.","{name}, our last meeting is still in my mind."]
-        lines += extra
-    # Questions are added through the typed domain below, never hidden in an untyped greeting.
-    if not known and voice==.anxious: lines[0]="{hello}. I'm {own}; I don't believe we've spoken."
-    if known and voice==.shop: lines[1]="{name}, I remember you. Come out of the way of the counter."
-    result = ctx_bank(lines,"hello:{known}")
+        return match voice:
+            .salt: ["{tw}.","You again.","Back, are you."]
+            .shop: ["{good}. Good to see you back.","Ah, you again."]
+            .formal: ["{good}.","{good}. Back again, I see."]
+            .guarded: ["You.","Back again."]
+            .anxious: ["Oh, it's you. Good.","{good}. You're back."]
+            .warm: ["{good}! Lovely to see you.","There you are."]
+            .measured: ["{good}.","Hello again."]
+            .wry: ["You again. Things must be quiet.","{good}. Still flying, then."]
+            .plain: ["{tw}.","All right."]
+            .devout: ["{good}, and God bless.","Ah, {listener}. Good to see you."]
+            .brisk: ["Hello again.","{tw}."]
+            .chatty: ["Well, look who it is!","{good}! Back again!"]
+            .eager: ["Hello again!","Oh, it's you!"]
+            .elder: ["Ah. Good to see you again.","{good} to you."]
+    match voice:
+        .salt: ["{tw}.","{tw} to you."]
+        .shop: ["{good}.","{good} to you."]
+        .formal: ["{good}.","{good}. I don't believe we've met."]
+        .guarded: ["Yes.","What is it."]
+        .anxious: ["Oh! {good}.","{good}. Sorry, I was miles away."]
+        .warm: ["{good}, and welcome.","{good}. You're new here."]
+        .measured: ["{good}.","Hello."]
+        .wry: ["{good}.","Hello, stranger."]
+        .plain: ["{tw}.","Hello."]
+        .devout: ["God be with you.","{good}, friend."]
+        .brisk: ["{tw}.","Hello."]
+        .chatty: ["{good}! You'll be new here.","Well, hello."]
+        .eager: ["Hello!","{good}!"]
+        .elder: ["{good} to you.","{good}."]
+
+_intro = (w: World, speaker: int, voice: VoiceKind) -> str:
+    own = short_name(w,speaker); role = self_role(w,speaker)
+    match voice:
+        .guarded: "Name's {own}."
+        .formal: if role == "": "{w.people[speaker].name}." else: "{w.people[speaker].name}; {role}."
+        .plain: if role == "": "I'm {own}." else: "I'm {own}. {role}."
+        _: if role == "": "I'm {own}." else: "I'm {own}; {role}."
+
+# A greeting is short: hello, and something from the speaker's own day or a name for a stranger.
+context_greeting = (w: World, speaker: int, listener: int, voice: VoiceKind, known: bool, notes: str[] = []) -> SpeechCandidate[]:
+    hour = local_minute(w.minute)/60
+    hellos = _hellos(voice,hour,known,ctx_name(w,listener))
+    lines: str[]
+    if known:
+        # Each hello with each thing on their mind, so a repeat visit doesn't hear the same line.
+        loop i in 0..min(6,hellos.len()*max(1,notes.len())):
+            lines.push(join_said(hellos[i%hellos.len()],if notes.len() > 0: notes[(i/hellos.len()+i)%notes.len()] else: ""))
+        loop h in hellos: lines.push(h)
+    else:
+        intro = _intro(w,speaker,voice)
+        lines.push(join_said(hellos[0],intro))
+        if notes.len() > 0: lines.push(join_said(intro,notes[0]))
+        lines.push(join_said(hellos[1%hellos.len()],if notes.len() > 1: notes[1] else: if notes.len() > 0: notes[0] else: intro))
+    unique: str[]
+    loop line in lines:
+        if not (line in unique): unique.push(line)
+    result = ctx_bank(unique,"hello:{known}")
     # Greeting bodies and follow-ups use the same typed question contract.
     q = followup_questions(voice,.greeting)[0]
     result[0].text += " "+q.text; result[0].ask = q
     result
 
 context_farewell = (w: World, speaker: int, listener: int, voice: VoiceKind) -> SpeechCandidate[]:
-    name = ctx_name(w,listener)
     lines = match voice:
-        .salt: ["Safe home, {name}. Mind the water.","Till next time, {name}. Keep a line ashore.","Go on, {name}; I've kept you long enough.","{name}, don't hurry the sea on my account."]
-        .guarded: ["We're finished, {name}. Keep this conversation here.","Go carefully, {name}. I've said my piece.","Enough for now, {name}. Remember what I said.","You can go, {name}. Don't repeat my name over it."]
-        .formal: ["Good day, {name}. Thank you for calling.","I won't keep you, {name}. A safe journey.","Until our next conversation, {name}.","Good day to you, {name}. You know where to find me."]
-        .shop: ["Good day, {name}. The counter will still be here.","Till next time, {name}. Ask before you promise a load.","Go on, {name}. I have the shop to see to."]
-        .anxious: ["Take care on the crossing, {name}.","Come back safely, {name}. Leave word when you arrive.","Safe home, {name}. I'll look for you at the quay."]
-        .wry: ["Off you go, {name}, before we find another bill.","Till we next look busy, {name}.","Go well, {name}. I've kept you out of work long enough."]
-        .measured: ["Until another day, {name}.","A safe journey from here, {name}.","I'll let you get on, {name}. Thank you for stopping."]
-        .warm: ["Take care, {name}. Come back when you've time.","Safe journey, {name}. I'm glad you stopped.","Till next time, {name}. I must get on."]
+        .salt: ["Mind how you go.","Fair winds.","Go on, then."]
+        .shop: ["Good day to you.","Come back when you need anything.","Off you go; I've the shop to see to."]
+        .formal: ["Good day.","A safe journey.","Good day to you."]
+        .guarded: ["Right.","Go on, then.","We're done."]
+        .anxious: ["Take care up there.","Fly safely.","Come back safe."]
+        .warm: ["Take care, now.","Come back soon.","Safe journey, and come again."]
+        .measured: ["Until next time.","Safe journey.","Goodbye, then."]
+        .wry: ["Off you go, then.","Try to stay out of the water.","Till next time."]
+        .plain: ["Bye, then.","Go well.","See you."]
+        .devout: ["God go with you.","Go in peace.","God keep you safe up there."]
+        .brisk: ["Right, I must get on.","Goodbye.","Safe flying."]
+        .chatty: ["Off you go, then, and come and tell me what you hear!","Don't be a stranger.","Mind how you go, now."]
+        .eager: ["See you up there!","Good flying!","Go well!"]
+        .elder: ["Go carefully.","Come and see me again.","God bless."]
     ctx_bank(lines,"goodbye")
 
-
+# Weather in the speaker's own terms: how it is and what it means for their work.
 context_weather = (w: World, speaker: int, voice: VoiceKind) -> SpeechCandidate[]:
-    p = w.people[speaker]; place = life_place_name(w,person_place(w,speaker))
-    wind = wind_at(w,p.pose.pos); speed = f64(length(wind))*1.94384; from = ctx_direction(wind)
-    t = ctx_time(w,w.minute)
+    p = w.people[speaker]
+    wind = wind_at(w,p.pose.pos); knots = f64(length(wind))*1.94384; from = ctx_direction(wind)
+    said = cap_first(say_wind(knots,from))
     closed = p.place >= 0 and p.place < w.places.len() and w.places[p.place].harbor_closed
-    lines = if closed: ["{place}'s harbour is closed. That {from} wind is not a matter for arguing with the clerk.","The office has stopped departures at {place}. There's {speed:.1} knots coming from the {from}.","Stay ashore at {place} until they lift the closure. Look at that {from} wind before promising anyone a crossing."] else: match voice:
-        .salt: ["{from} wind off {place}, {speed:.1} knots. Watch what it does along the quay.","At {t} it's coming from the {from} here at {place}. The next headland can tell you its own story.","Look at the water off {place}. That {from} wind is doing {speed:.1} knots.","No need to ask my knees: {place} has a {from} wind at {t}."]
-        .anxious: ["From the {from} at {place}, at the quay. I make it {speed:.1} knots.","{from} wind here at {place}. If you're going out at {t}, leave word of your destination.","I've looked again: {from} at {place}, {speed:.1} knots. Look at the water beyond the moorings.", "It's {t}, with wind from the {from} at {place}. I can't promise it past the next headland."]
-        .formal: ["The wind off {place} is from the {from}, {speed:.1} knots at {t}. Watch the harbour mouth before casting off.","At {place}, {t}: {from} wind. I would check it again before fixing a departure time."]
-        .shop: ["If you're setting a load out of {place}, there's {speed:.1} knots from the {from} at {t}.","The {place} counter can promise a price; outside it's a {from} wind, {speed:.1} knots."]
-        .guarded: ["Choose your own crossing; {place} has {speed:.1} knots from the {from} at {t}.","You can feel the {from} wind here at {place}; I won't choose a departure for you."]
-        .warm: ["We've a {from} wind off {place} at {t}, {speed:.1} knots. Take care at the harbour mouth.","Look at the water here at {place}; the wind is from the {from}, {speed:.1} knots."]
-        .wry: ["{place}'s {from} wind hasn't read anyone's timetable; it's doing {speed:.1} knots at {t}.","From the {from}, {speed:.1} knots at {place}; no arguing it round to a better quarter."]
-        .measured: ["Here at {place}, I make the wind {speed:.1} knots from the {from} at {t}.","The wind at {t} is from the {from} off {place}; look again before you leave."]
-    ctx_bank(lines,"local-weather:{from}:{closed}")
+    if closed: return ctx_bank(["The harbour's shut. Nobody's going out in this.","They've closed the harbour; {say_wind(knots,from)}, and getting worse."],"local-weather:closed",TIER_PERSONAL)
+    islander = p.far_home < 0 or p.citizenship == 0
+    northerly = from == "north" or from == "north-east" or from == "north-west"
+    seafaring = p.occupation == .fisher or p.occupation == .sailor or voice == .salt
+    flying = p.occupation == .courier or p.occupation == .racer or p.occupation == .patrol or p.occupation == .pirate
+    lines: str[]
+    if seafaring:
+        sea = if knots < 12.0: "Good weather for the boats." else: if knots < 18.0: "A bit lively for the small boats." else: "The small boats are staying in."
+        lines = ["{said}, {round_knots(knots)}. {sea}"]
+        if islander and northerly and knots >= 12.0: lines.push("The meltemi's blowing. {sea}")
+        else: lines.push("{said}. {sea}")
+    else if flying:
+        air = if knots < 12.0: "Easy flying." else: if knots < 22.0: "Mind the harbour mouth when you take off." else: "I wouldn't put a light machine up in this."
+        lines = ["{said}, {round_knots(knots)}. {air}","{said}. {air}"]
+    else if p.occupation == .farmer or p.occupation == .miller or p.occupation == .oil_presser or voice == .plain:
+        land = if knots < 7.0: "Still and hot; no good for the threshing." else: if knots < 18.0: "Good drying wind." else: "It'll flatten the crops if it keeps up."
+        lines = ["{said}. {land}","{said} today. {land}"]
+    else if voice == .shop:
+        lines = ["{said}. Keeps folk indoors, which is no good for trade.","{said} today."]
+    else if voice == .elder:
+        lines = ["{said}. I feel it in my knees.","{said}. It'll turn by evening, you'll see."]
+    else:
+        lines = ["{said} today.","{said}. It could change by evening."]
+    ctx_bank(lines,"local-weather:{from}",TIER_PERSONAL)
 
 context_music = (w: World, speaker: int) -> SpeechCandidate[]:
     p = w.people[speaker]; place = life_place_name(w,person_place(w,speaker))
@@ -248,11 +383,11 @@ context_music = (w: World, speaker: int) -> SpeechCandidate[]:
         if other.place != p.place or not (other.id in w.daily_life): continue
         intent = w.daily_life[other.id]
         if intent.activity != .play or not intent.arrived or length(other.pose.pos-p.pose.pos)>25: continue
-        who = ctx_name(w,other.id)
-        lines=if other.id==speaker: ["I'm playing the mandolin here in {place}; let me finish this phrase."] else: [voice_music(voice_of_context(w,speaker),who,place)]
-        result += ctx_bank(lines,"heard-music:{other.id}",120)
+        who = short_name(w,other.id)
+        lines=if other.id==speaker: ["Let me finish this tune, then we'll talk."] else: [voice_music(voice_of_context(w,speaker),who,place)]
+        result += ctx_bank(lines,"heard-music:{other.id}",TIER_PERSONAL)
     if result.len()==0:
-        result=ctx_bank([voice_no_music(voice_of_context(w,speaker),place,ctx_time(w,w.minute))],"no-music")
+        result=ctx_bank([voice_no_music(voice_of_context(w,speaker),place,"")],"no-music",TIER_PERSONAL)
     result
 
 # Turning a question back answers that domain; a berth/fuel report is not an answer about food.
@@ -262,35 +397,47 @@ context_question_answer = (w: World, speaker: int, q: TalkQuestion) -> str[]:
         .route:
             if p.trip >= 0 and p.trip in w.trips:
                 trip = w.trips[p.trip]
-                return ["I'm bound for {life_place_name(w,trip.destination)} from {life_place_name(w,trip.origin)}. That's the crossing I've committed to.","{life_place_name(w,trip.destination)} is my destination. I left {life_place_name(w,trip.origin)} at {ctx_time(w,trip.departed_tick/TICKS_PER_MINUTE)}."]
+                return ["I'm bound for {life_place_name(w,trip.destination)}.","{life_place_name(w,trip.destination)}. I left {life_place_name(w,trip.origin)} {say_ago(w,trip.departed_tick/TICKS_PER_MINUTE)}."]
             if speaker in w.daily_life:
-                d = w.daily_life[speaker]
-                return ["My next few steps are to {ctx_venue(d.venue)} in {place}. I haven't arranged another crossing.","Here in {place}, as far as {ctx_venue(d.venue)}. I'm not booked for a sea crossing."]
-            return ["I haven't booked a crossing from {place}. Ask me when there's a journey to tell you about."]
+                errand = venue_errand(w.daily_life[speaker].venue)
+                return ["Only {errand}. No crossing for me today.","Nowhere far; just {errand}."]
+            return ["Nowhere. I'm staying in {place}."]
         .company:
             if speaker in w.daily_life:
-                d = w.daily_life[speaker]
-                return ["I have until {ctx_time(w,d.until_minute)} here at {ctx_venue(d.venue)}. Sit with me if you have as long.","{ctx_time(w,d.until_minute)} is when I mean to move on from {ctx_venue(d.venue)}. Until then, I'm listening."]
-            return ["I can give you a minute here in {place}. If somebody calls me away, we'll finish another time."]
+                until = say_hour(w.daily_life[speaker].until_minute)
+                return ["I've until {until} or so. Sit, if you like.","Till {until}, then I'm off."]
+            return ["A minute or two, if someone doesn't call me away."]
+        .day:
+            if p.injured_until > w.minute: return ["Not my best; I'm laid up.","I've had better days. I'm meant to be resting."]
+            if p.fatigue > 750: return ["Long. I'm worn out.","A long one, and it isn't over."]
+            work = work_lines(w,speaker)
+            if work.len() == 0: return ["Not bad, thanks.","Fair enough, thanks."]
+            return ["Not bad, thanks. {work[0]}","Fair enough. {work[work.len()-1]}"]
         .meal:
             # Individual meals aren't simulated: do not invent one in response to a legacy save.
-            return ["Don't fuss over my supper. Let me ask after you for once.","Leave my supper to me. I'll ask after yours; you can spare me that much."]
+            return ["Don't fuss about my supper.","I'll eat when I'm done here."]
         else: []
 
 context_reply = (w: World, speaker: int, listener: int, q: TalkQuestion, reply: TalkReply) -> str[]:
-    name=ctx_name(w,listener); voice=voice_of_context(w,speaker)
+    voice=voice_of_context(w,speaker)
     if reply==.discreet: return [voice_privacy(voice,life_place_name(w,person_place(w,speaker)))]
-    if reply==.tease: return ["{name}, you answered my question with a joke; I heard it."]
+    if reply==.tease: return ["Ha. All right, I deserved that."]
     if reply==.decline:
         line=match voice:
-            .salt: "No more needed, {name}; I'll let you get on."
-            .shop: "You needn't give me a longer answer, {name}."
-            .formal: "That will do, {name}; I won't press you."
-            .guarded: "Keep the rest to yourself, {name}."
-            .anxious: "All right, {name}; I won't keep you standing here."
-            .warm: "Another time will do, {name}."
-            .wry: "A short answer saves us both time, {name}."
-            .measured: "We can leave it there, {name}."
+            .salt: "Fair enough. Go on, then."
+            .shop: "Of course. I won't keep you."
+            .formal: "Of course; I won't press you."
+            .guarded: "Suit yourself."
+            .anxious: "Oh, of course. Sorry to keep you."
+            .warm: "Another time, then."
+            .wry: "Short and sweet. Fine by me."
+            .plain: "Right you are."
+            .devout: "Go with God, then."
+            .brisk: "Fine. I'm busy too."
+            .chatty: "Oh, go on then, I'll catch you later."
+            .eager: "All right, another time!"
+            .elder: "Off you go, then."
+            _: "We can leave it there."
         return [line]
     index=match q.kind:
         .day: 0
@@ -301,27 +448,60 @@ context_reply = (w: World, speaker: int, listener: int, q: TalkQuestion, reply: 
         .meal: 5
         _: 6
     lines=match voice:
-        .salt: ["Glad the day held for you, {name}.", "Come alongside, {name}; there's room for a little company.", "Keep my name with the news when you tell it, {name}.", "Settle your shore business first, {name}.", "Look at the cargo before giving your word, {name}.", "Good; no need to send you to the galley, {name}.", "I'll hear you, {name}."]
-        .shop: ["A good day's business is worth having, {name}.", "Stay at the counter a moment, {name}; we needn't spend the whole time on prices.", "If you pass on that price or account, say it came from me, {name}.", "Your business here comes first, {name}; we can talk before you leave.", "See the load and its terms before agreeing, {name}.", "Then you needn't leave the counter to eat, {name}.", "Tell me what you came for, {name}."]
-        .formal: ["I am pleased your day has gone well, {name}.", "Thank you for making time to speak, {name}.", "Please name your source when repeating that account, {name}.", "I won't delay your business here, {name}.", "Examine the cargo before making an agreement, {name}.", "Then I need not keep you from a meal, {name}.", "Please go on, {name}."]
-        .guarded: ["Good for you, {name}; leave my day to me.", "You can stay, {name}, but keep the other voices out of it.", "Don't turn my account into your own eyewitness story, {name}.", "Keep your destination until you've chosen it, {name}.", "Don't put your name to a load you haven't seen, {name}.", "Your supper is your business, {name}.", "I've promised to listen, {name}, nothing else."]
-        .anxious: ["I'm glad something has gone right today, {name}.", "Stay here where I can hear you, {name}.", "Tell them who told you, {name}; I don't want the account altered.", "Do what you must here first, {name}; tell me before casting off.", "Check the load again before promising it, {name}.", "Good, {name}; I needn't worry about keeping you from food.", "Say it again if I miss a word, {name}."]
-        .warm: ["I'm glad the day's been kind to you, {name}.", "Sit beside me, {name}; I wanted company rather than a customer.", "Pass it on as something I told you, {name}.", "Finish your business, {name}; I'll be glad of a word before you go.", "Have a look first, {name}; I won't hurry your answer about the load.", "Then sit a little, {name}; your meal needn't wait on me.", "You have my ear, {name}."]
-        .wry: ["Then I'll try not to spoil your good day, {name}.", "A minute stolen from work won't ruin us, {name}.", "Leave my name on the story, {name}; I can answer for my own mistakes.", "Business before the crossing, {name}; a sensible order for once.", "A look at the cargo is cheaper than a broken promise, {name}.", "Then you won't have to listen on an empty stomach, {name}.", "Go on, {name}; I haven't found a reason to object yet."]
-        .measured: ["It is good to hear the day has gone well for you, {name}.", "We have a little time to talk, then, {name}.", "Keep the original source with that news, {name}.", "There is business here to finish before another journey, {name}.", "The load can wait while you consider the terms, {name}.", "Then we can speak without delaying your food, {name}.", "I'm listening to you, {name}."]
+        .salt: ["Good. Glad to hear it.","Stand here, then; there's room.","Pass it on, and say where you heard it.","Business first. Quite right.","Have a look at it, then.","Good.","Go on."]
+        .shop: ["Glad to hear it. Good for business too.","Stay a minute, then.","If you pass that on, say it came from me.","Business first; quite right.","Have a look before you agree.","Good.","Go on, then."]
+        .formal: ["I'm pleased to hear it.","Thank you; I'd be glad of the company.","Please name your source if you repeat that.","Of course. Business comes first.","Examine the load before you agree.","Very good.","Please go on."]
+        .guarded: ["Good for you.","Stay, then. Keep your voice down.","Don't go saying you saw it yourself.","Keep it to yourself till you've decided.","Look before you put your name to it.","Your business.","I'm listening."]
+        .anxious: ["Oh, good. Something's gone right today.","Thank you. Stay where I can hear you.","Tell them who told you, won't you.","Do what you have to first. Tell me before you go.","Check the load first.","Good. I'd hate to keep you from your food.","Go on, I'm listening."]
+        .warm: ["I'm so glad.","Sit by me, then.","Tell them it came from me.","Finish your business, and come back for a word.","Take your time and look it over.","Good. Then sit a little.","Go on, dear."]
+        .measured: ["Good to hear.","Then we've a little time.","Keep the source with it when you tell it.","Business first, then.","Look at the load before you decide.","Good.","I'm listening."]
+        .wry: ["Then I'll try not to spoil it.","A minute stolen from work never hurt anyone.","Leave my name on it; I'll answer for my own mistakes.","Business before pleasure. Very sensible.","Looking is cheaper than promising.","Then you won't listen on an empty stomach.","Go on, then."]
+        .plain: ["Good.","Stay, then.","Say I told you.","Right.","Have a look.","Good.","Go on."]
+        .devout: ["Thank God for that.","Stay a while; you're welcome.","Say where you heard it, and tell it true.","Do what you must first.","Look it over; there's no hurry.","Good.","Go on, my friend."]
+        .brisk: ["Good.","Five minutes, then.","Say where you heard it.","Business first. Sensible.","Look it over and tell me.","Good.","Go on."]
+        .chatty: ["Oh, good! Tell me all about it later.","Lovely, stay and talk.","Do tell people it came from me.","Business first, then come and tell me everything.","Have a good look, there's no rush.","Good, good.","Go on, go on."]
+        .eager: ["Good!","Great, stay a bit.","Tell them I said so.","Right, business first.","Have a look at it!","Good.","Go on!"]
+        .elder: ["That's good to hear.","Sit down, then. My legs could do with it.","Tell it right when you pass it on.","Business first; that's how it should be.","Look before you promise. Always.","Good.","Go on, I'm listening."]
     [lines[index]]
+
+# A deterministic temperament for people the seed did not author (sparse-town residents keep
+# default traits), so neighbours in the same trade don't all sound alike.
+temperament = (w: World, person: int) -> int:
+    p = w.people[person]
+    if p.traits.honesty != 500 or p.traits.sociability != 500 or p.traits.boldness != 500: return -1
+    int(mix64(u64(p.appearance_seed)*u64(2654435761)+u64(97))%u64(1000))
 
 voice_of_context = (w: World, person: int) -> VoiceKind:
     p=w.people[person]
     if p.traits.honesty<400: return .guarded
+    t = temperament(w,person)
+    old = p.age >= 66
     match p.occupation:
-        .fisher: if p.age>=50: VoiceKind.salt else: VoiceKind.wry
-        .merchant, .quartermaster: .shop
-        .clerk, .patrol: .formal
-        .courier: if p.age<=32: VoiceKind.anxious else: VoiceKind.wry
-        .racer, .mechanic, .miller: .wry
-        .innkeeper, .hotelier, .teacher: .warm
-        _: .measured
+        .fisher: if p.age>=50: VoiceKind.salt else: if t >= 0 and t < 500: VoiceKind.plain else: VoiceKind.wry
+        .merchant, .quartermaster:
+            if old: VoiceKind.elder
+            else if t >= 700: VoiceKind.chatty
+            else if t >= 450 and t < 700 and p.far_home >= 0: VoiceKind.measured
+            else: VoiceKind.shop
+        .clerk, .patrol: if t >= 750: VoiceKind.measured else: VoiceKind.formal
+        .courier:
+            if p.age<=32: (if t >= 600: VoiceKind.eager else: VoiceKind.anxious)
+            else: VoiceKind.wry
+        .racer: if p.age<=28: VoiceKind.eager else: VoiceKind.wry
+        .mechanic, .miller:
+            if old: VoiceKind.elder
+            else if t >= 0 and t < 350: VoiceKind.plain
+            else if t >= 350 and t < 550: VoiceKind.measured
+            else: VoiceKind.wry
+        .innkeeper, .hotelier: if p.traits.sociability >= 950: VoiceKind.chatty else: VoiceKind.warm
+        .teacher: .warm
+        .priest: .devout
+        .nurse, .telegraphist: .brisk
+        .farmer, .sailor, .oil_presser:
+            if old: VoiceKind.elder
+            else if t >= 750: VoiceKind.wry
+            else: VoiceKind.plain
+        _: if old: VoiceKind.elder else: VoiceKind.measured
 
 ctx_possessive = (w: World, person: int, speaker: int, listener: int) -> str:
     if person==speaker: return "my"
@@ -334,3 +514,52 @@ ctx_after_name = (text: str) -> str:
     if text.starts_with("I ") or text.starts_with("I'"): return text
     if text=="": return text
     lower(text[0..1])+text[1..]
+
+# The person's own day when asked about it: what they're doing and why first, then their shift,
+# their aircraft and their children; strangers' cargo and warehouse stock belong to trade talk.
+context_day = (w: World, speaker: int, voice: VoiceKind, listener: int = -1) -> SpeechCandidate[]:
+    p = w.people[speaker]
+    own = context_work(w,speaker)
+    if own.len()>0 and p.carriage >= 0: return own
+    result: SpeechCandidate[] = own
+    if speaker in w.daily_life:
+        intent = w.daily_life[speaker]
+        if not intent.arrived: result += ctx_bank(walking_lines(voice,venue_errand(intent.venue)),"walk:{intent.anchor}",TIER_PERSONAL)
+        else: result += ctx_bank(activity_lines(w,speaker,intent),"doing:{intent.anchor}:{intent.activity}",TIER_PERSONAL)
+    if p.fatigue > 750: result += ctx_bank(["I'm worn out today.","I could sleep where I stand."],"tired",TIER_PERSONAL)
+    if result.len() == 0: result += ctx_bank(work_lines(w,speaker),"work-life",TIER_PERSONAL-20)
+    # Operators know their own fuel and damage; bystanders do not read a hidden aircraft record.
+    if p.craft >= 0 and p.craft < w.aircraft.len() and w.aircraft[p.craft].owner == speaker:
+        c = w.aircraft[p.craft]; kind = cap_first(str(c.kind)); litres = c.fuel_ml/1000
+        line = if c.engine<500 or c.hull<500: "My {kind} needs work before she flies again." else: if litres < 8: "The {kind}'s tank is nearly dry; I'll want fuel before I go anywhere." else: if litres < 40: "There's {num_words(((litres+2)/5)*5)} litres or so left in the {kind}." else: "The {kind}'s fuelled and ready."
+        result += ctx_bank([line],"own-craft:{c.id}:{c.fuel_ml/5000}",TIER_DETAIL)
+    until=current_shift_end(p.occupation,w.minute)
+    if until>w.minute and p.place==p.home and p.trip<0:
+        at = say_hour(until)
+        line=match voice:
+            .salt: "I'm working till {at}."
+            .shop: "I'm behind the counter till {at}."
+            .formal: "My shift ends at {at}."
+            .guarded: "I'm working till {at}. Don't keep me."
+            .anxious: "I have to be at work till {at}."
+            .warm: "I'm working till {at}; we can talk between callers."
+            .wry: "They let me go at {at}."
+            .plain: "Working till {at}."
+            .devout: "My duties keep me till {at}."
+            .brisk: "On till {at}."
+            .chatty: "I'm on till {at}, so talk to me while I work."
+            .eager: "I'm on till {at}, then I'm free."
+            .elder: "They keep me till {at}, even at my age."
+            _: "My work runs till {at}."
+        result += ctx_bank([line],"shift:{day_index(w.minute)}:{until}",TIER_DETAIL)
+    loop child in w.households:
+        if child.guardian == speaker:
+            result += ctx_bank(["{child.name} is {num_words(child.age)} now, and into everything.","I've {child.name} to see to after work.","{child.name} keeps me busy."],"child:{child.id}",TIER_PERSONAL-10)
+    # Visible quay craft are observed locally, never a remote timetable pulled from hidden state.
+    loop c in w.aircraft:
+        if c.place != p.place or c.state != .moored or length(c.pose.pos-p.pose.pos)>90: continue
+        kind = cap_first(str(c.kind))
+        if c.owner == speaker: continue
+        lines = if c.owner==listener: ["Your {kind}'s tied up just along there.","I saw your {kind} come in."] else: ["That's {ctx_possessive(w,c.owner,speaker,listener)} {kind} on the mooring.","{ctx_possessive(w,c.owner,speaker,listener)} {kind} is in; ask the pilot if you want passage."]
+        result += ctx_bank(lines,"visible-craft:{c.id}",TIER_REFERRAL)
+    result
