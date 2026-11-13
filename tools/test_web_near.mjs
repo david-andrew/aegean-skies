@@ -127,6 +127,20 @@ print(json.dumps({'mean_rgb_error':sum(ImageStat.Stat(im).mean)/3,'changed_over_
     assert(diff.mean_rgb_error<1.0 && diff.changed_over_16<0.01,`${full.name}: split/full depth disagreement ${JSON.stringify(diff)}`);
   }
   writeFileSync(join(out,'comparisons.json'),JSON.stringify(comparisons,null,2)+'\n');
+  const stability=[];
+  for(const first of results.filter(r=>r.id==='cockpit' && r.frame===180)) {
+    const last=results.find(r=>r.id===first.id && r.full===first.full && r.frame===240);
+    const drift=JSON.parse(execFileSync('python3',['-c',`
+import json,sys
+from PIL import Image,ImageChops,ImageStat
+a=Image.open(sys.argv[1]).convert('RGB');b=Image.open(sys.argv[2]).convert('RGB')
+boxes={'roof':(0,0,1280,270),'panel':(440,490,840,720)}
+print(json.dumps({name:sum(ImageStat.Stat(ImageChops.difference(a.crop(box),b.crop(box))).mean)/3 for name,box in boxes.items()}))
+`,first.file,last.file],{encoding:'utf8'}));
+    stability.push({name:first.name,...drift});
+    assert(drift.roof<3 && drift.panel<3,`${first.name}: cockpit moved away from its camera ${JSON.stringify(drift)}`);
+  }
+  writeFileSync(join(out,'stability.json'),JSON.stringify(stability,null,2)+'\n');
   console.log('PASS: close-camera coverage and split/full WebGL depth comparisons');
 } finally {
   ws?.close();
