@@ -22,6 +22,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Coordinator](#coordinator)
@@ -688,6 +689,72 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![A conversation: the greeting, numbered replies and topics to ask about](img/conversation.png)
 
+## Leisure
+
+Optional activities: eating, drinking, music, resting and working on the aircraft, for the pleasure
+of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
+
+### Leisure places
+
+- **Definition:** a spot in a town that offers activities: its keeper (a living-world person whose
+  purse takes the money), opening hours, menu, and rooms if any. Every order and room is one
+  `transfer` from the player to the keeper, so the money balance holds.
+- **Code:** `src/leisure.jo` (`LeisurePlace`, `leisure_order`, `leisure_take_room`,
+  `spare_room_hosts`, `leisure_tinker`); menus in `src/leisure_menu.jo` (`HOTEL_FOOD`,
+  `drinks_catalogue`, `keeper_remark`); panels in `src/leisure_view.jo`.
+- **Rules:** dishes and drinks made from a market good follow that good's price in the town; the
+  keeper's remarks never read out figures; a spare room is offered only by someone grateful (a
+  remembered delivery or rescue, or warmth enough) and is free.
+- **Capture:** `AEGEAN_LEISURE=menu|search|order|rest|coffee|tinker|spare` with
+  `AEGEAN_CAPTURE_MINUTES` for the hour.
+
+### Hotel Ancora
+
+- **Definition:** the pilots' bar: a two-storey hotel on a stone pier off the Porto Vecchio
+  waterfront, a plank terrace on piles over the water with four tables, a bar under a striped
+  awning, lanterns on wires and a bandstand; kept by Sofia Marinou. Pilots (couriers, racers, the
+  patrol) and its keeper go there of an evening as a living-world rule, so whoever is in town is
+  really there, seated at its tables.
+- **Code:** `src/bar_scene.jo` (`hotel_site`, `build_hotel`, `draw_band`, `draw_served`);
+  the venue rule in `src/living_life_seed.jo` (`choose_life_venue`, `life_aviator`) and
+  `src/living_life.jo`; seating in `src/townsfolk.jo`.
+- **Rules:** the walkable deck is published as quays; the building stands over water, so it
+  cannot be walked into. The terrace venue key ends with `TERRACE_VENUE_SUFFIX`.
+- **Capture:** `AEGEAN_LEISURE=exterior|harbour|terrace|sit`.
+
+![The Hotel Ancora from the water](img/hotel-ancora.png)
+
+### Lantern light
+
+- **Definition:** after dark, things near the hotel or the coffee house (the building, the people,
+  the band, the table) are drawn with a warm fill added to the shade, as if lit by its lanterns
+  and windows; the sea and the hills stay dark.
+- **Code:** `src/bar_scene.jo` `leisure_light`.
+
+### Bar set and singer
+
+- **Definition:** the hotel's evening music, live from 19:00 to 23:30: the procedural orchestra in
+  small line-ups (piano alone, dance band, tango trio, island pair), heard through the terrace's
+  room (the facade's reflection, a short tail, air by distance; no radio filter), and a singer: a
+  harmonic formant voice that sings each tune's melody (ornaments folded away, glides, a late
+  vibrato) while the instrument that carried it plays softer.
+- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_set_position`, `singer_line`, `singer_render`,
+  `bar_room_sample`); clips with `tools/bar_music_clip.jo`.
+- **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
+
+### Time skip
+
+- **Definition:** time passing at an inn, a table or the aircraft: the screen darkens to a card with
+  the clock, the scene's people and craft are folded back into the world, the world's clock runs
+  on in fifteen-minute steps, and the screen comes back.
+- **Code:** `leisure_time_step` in `aegean.jo`; `rest_minutes` in `src/leisure.jo`.
+
+### Tipsy sway
+
+- **Definition:** a gentle sway of the view after several strong drinks within three hours; it wears
+  off. Nothing else changes. Off with the Options page's "A gentle sway after a few drinks".
+- **Code:** `leisure_sway` in `src/leisure.jo`; `tipsy_sway` in `src/options.jo`.
+
 ---
 
 ## Rendering and engine
@@ -941,6 +1008,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech` | open a panel |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
+| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
 | `tools/prop_disc_frames.jo` | `PROP_VIEW`, `PROP_THROTTLE`, `PROP_SWEEP` |
 | `tools/coast_capture.jo` | `COAST_SITE`, `COAST_RANGE` |
