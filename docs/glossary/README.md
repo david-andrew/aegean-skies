@@ -237,9 +237,9 @@ On the rivers branch until it lands.
 
 - **Aliases:** bank vegetation, the riparian corridor, river trees and reeds.
 - **Definition:** poplars, plane trees, oleanders and waterline reeds along both banks, instanced
-  per prototype. Detail by distance: full trees to 300 m, then the simpler distant crowns, without
-  trunks past 600 m (or the grove distance); shrubs and reeds end at the grove distance, and past
-  150 m one reed stem in three is drawn. Distant trees end at the tier's reach (low 2 km, medium
+  per prototype. Detail by distance: full trees to the grove distance, then the simpler distant
+  crowns, without trunks past 600 m; shrubs and reeds end at the grove distance, and past 150 m one
+  reed stem in three is drawn. Distant trees end at the tier's reach (low 2 km, medium
   2.4 km, high 3.5 km), as groves do.
 - **Code:** `src/river_banks.jo` (`build_river_bank`, `draw_river_banks`, `river_bank_reach`).
 
