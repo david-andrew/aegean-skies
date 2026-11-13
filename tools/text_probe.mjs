@@ -1,7 +1,8 @@
 // Silent deterministic WebGL capture / resolution-cost probe. One browser at a time.
 // node tools/text_probe.mjs CHROME PAGE.html OUT_PREFIX [frames=180] [query]
 // TEXT_GPU=native: ANGLE/Vulkan on redfox; otherwise SwiftShader compatibility only.
-// TEXT_MOBILE=1: 844x390 CSS, DPR3. No actual phone-performance claim.
+// TEXT_MOBILE=1: 844x390 CSS, DPR3. TEXT_WIDTH/HEIGHT/DPR override metrics.
+// No actual phone-performance claim.
 import {spawn} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {dirname,join} from 'node:path';
@@ -33,7 +34,7 @@ try {
  const send=(method,params={})=>new Promise((resolve,reject)=>{const i=++id;pending.set(i,{resolve,reject});ws.send(JSON.stringify({id:i,method,params}));});
  await send('Runtime.enable');await send('Page.enable');
  const mobile=process.env.TEXT_MOBILE==='1';
- await send('Emulation.setDeviceMetricsOverride',{width:mobile?844:1280,height:mobile?390:720,deviceScaleFactor:mobile?3:1,mobile});
+ await send('Emulation.setDeviceMetricsOverride',{width:Number(process.env.TEXT_WIDTH||(mobile?844:1280)),height:Number(process.env.TEXT_HEIGHT||(mobile?390:720)),deviceScaleFactor:Number(process.env.TEXT_DPR||(mobile?3:1)),mobile});
  if(mobile){await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});await send('Emulation.setUserAgentOverride',{userAgent:'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36'});}
  await send('Page.addScriptToEvaluateOnNewDocument',{source:`
   globalThis.textProbe={frames:[],allocations:[],errors:[],links:[],liveTextures:new Map(),liveDepth:new Map()};
