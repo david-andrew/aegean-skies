@@ -5,6 +5,7 @@ use 'look.jo'
 use 'geography.jo'
 use 'river_field.jo'
 use 'water_field.jo'
+use 'water_types.jo'
 use 'river_data.jo'
 use 'render_space.jo'
 use 'depth_space.jo'
@@ -37,7 +38,12 @@ struct RiverBatch:
     # material is exactly opaque: the opaque depth prepass needs no discard.
     occluder:Mesh=Mesh()
     occluder_count:int=0
+    first:int=0
+    count:int=0
 river_batches:RiverBatch[]
+# Batches sharing one material anchor (16 stations), as single meshes. Far
+# groups and the opaque prepass draw these: far fewer draws and uniform uploads.
+river_groups:RiverBatch[]
 river_shader:Shader
 river_depth_shader:Shader
 river_far_shader:Shader
@@ -85,7 +91,7 @@ river_occlusion_fs=(i:SeaOut,u:SeaParams)->vec4:
     vec4(0,0,0,1)
 
 init_rivers=():
-    global river_batches,river_shader,river_depth_shader,river_occlusion_shader,river_far_shader,river_far_depth_shader
+    global river_batches,river_groups,river_shader,river_depth_shader,river_occlusion_shader,river_far_shader,river_far_depth_shader
     if not geography_enabled:return
     init_river_banks()
     river_shader=make_world_shader(shader(river_vs,river_fs))
@@ -96,6 +102,7 @@ init_rivers=():
     distances:f32[]=[0.0]
     loop node in 1..RIVER_NODES.len():
         distances.push(if RIVER_BREAKS.contains(node-1):0.0 else:distances[node-1]+length(RIVER_NODES[node].xy-RIVER_NODES[node-1].xy))
+    group_vs:RiverVertex[]
     loop first in 0..(RIVER_NODES.len()-2)/4+1:
         vs:RiverVertex[]
         begin=first*4; finish=min(begin+4,RIVER_NODES.len()-1)
@@ -146,7 +153,21 @@ init_rivers=():
             low=vs[0].pos;high=low
             loop vertex in vs:low=min(low,vertex.pos);high=max(high,vertex.pos)
             bounds=(low+high)*0.5;radius=f64(length(high-low))*0.5
-            river_batches.push(river_with_occluder(RiverBatch(mesh(vs),vec3(p.x,p.z,p.y),bounds,radius),vs))
+            center=vec3(p.x,p.z,p.y)
+            if river_groups.len()>0 and river_groups[river_groups.len()-1].center!=center:river_close_group(group_vs);group_vs=[]
+            if group_vs.len()==0:river_groups.push(RiverBatch(Mesh(),center,center,0.0,first=river_batches.len()))
+            group_vs.extend(vs)
+            river_batches.push(river_with_occluder(RiverBatch(mesh(vs),center,bounds,radius),vs))
+    if group_vs.len()>0:river_close_group(group_vs)
+river_close_group=(vs:RiverVertex[]):
+    global river_groups
+    g=river_groups[river_groups.len()-1]
+    low=vs[0].pos;high=low
+    loop vertex in vs:low=min(low,vertex.pos);high=max(high,vertex.pos)
+    g.mesh=mesh(vs);g.bounds=(low+high)*0.5;g.radius=f64(length(high-low))*0.5
+    g.count=river_batches.len()-g.first
+    river_groups[river_groups.len()-1]=river_with_occluder(g,vs)
+
 # Common optical state is identical across a scene's inland surface batches.
 inland_water_params=(depth:Texture,L:Light,t:f64,velocity:vec3)->SeaParams:
     global inland_depth_frame,inland_depth_snapshot
@@ -161,9 +182,13 @@ inland_water_params=(depth:Texture,L:Light,t:f64,velocity:vec3)->SeaParams:
         p.opaque_depth=inland_depth_snapshot;p.reject_depth=1
     p
 
+# Water surfaces are fixed: each anchor's sample is queried once.
+inland_anchor_samples:{vec3:WaterSample}={}
 inland_water_at=(source:SeaParams,center:vec3,velocity:vec3)->SeaParams:
+    global inland_anchor_samples
     p=source
-    water=water_at(f64(center.x),f64(center.z))
+    if not (center in inland_anchor_samples):inland_anchor_samples[center]=water_at(f64(center.x),f64(center.z))
+    water=inland_anchor_samples[center]
     p.rush=rush_of(velocity,water.level)
     d=normalize(water.current.xz+vec2(0.00001,0));side=vec2(-d.y,d.x)
     along=f64(p.origin.x)*f64(d.x)+f64(p.origin.z)*f64(d.y)
@@ -190,12 +215,20 @@ draw_rivers=(depth:Texture,L:Light,t:f64,velocity:vec3=vec3(0,0,0)):
     if cam.x < -180000 or cam.x > -65000 or cam.z < -182000 or cam.z > -120000:return
     zone("river water")
     planes=land_planes(scene_view_proj())
-    p:SeaParams;ready=false;previous=vec3(1e30,1e30,1e30)
-    loop batch in river_batches:
-        if not river_batch_visible(batch,cam,planes):continue
+    p:SeaParams;ready=false
+    loop group in river_groups:
+        if not river_batch_visible(group,cam,planes):continue
         if not ready:p=inland_water_params(depth,L,t,velocity);ready=true
-        if batch.center!=previous:p=inland_water_at(p,batch.center,velocity);previous=batch.center
-        draw_inland_prepared(batch.mesh,p,f64(length(cam-batch.bounds))-batch.radius>450.0)
+        p=inland_water_at(p,group.center,velocity)
+        # Marks and ripples are exactly zero beyond 450 m: a group wholly past
+        # that uses the far material in one draw.
+        if f64(length(cam-group.bounds))-group.radius>450.0:
+            draw_inland_prepared(group.mesh,p,true)
+            continue
+        loop index in group.first..group.first+group.count:
+            batch=river_batches[index]
+            if not river_batch_visible(batch,cam,planes):continue
+            draw_inland_prepared(batch.mesh,p,f64(length(cam-batch.bounds))-batch.radius>450.0)
     zone_end()
 
 # Native reversed depth supports early rejection of the expensive bed shader.
@@ -212,8 +245,8 @@ draw_river_occlusion=(depth:Texture,L:Light,t:f64):
     # Ribbon triangles are drawn from both sides in the transparent pass.
     # Match that here: their winding must not cull the opaque depth prepass.
     glDisable(GL_CULL_FACE)
-    loop batch in river_batches:
-        if batch.occluder_count==0 or not river_batch_visible(batch,cam,planes):continue
-        draw(river_occlusion_shader,batch.occluder,p)
+    loop group in river_groups:
+        if group.occluder_count==0 or not river_batch_visible(group,cam,planes):continue
+        draw(river_occlusion_shader,group.occluder,p)
     glEnable(GL_CULL_FACE)
     zone_end()
