@@ -6,6 +6,7 @@ use 'flight.jo'
 use 'planes.jo'
 use 'traffic.jo'
 use 'world.jo'
+use 'flight_ground.jo'
 import 'living_types.jo' as data
 import 'living_calendar.jo' as calendar
 import 'living_far_aircraft.jo' as registry
@@ -29,7 +30,7 @@ air_meet_index = (events: AirEvents, id: int) -> int:
 
 # Call once a minute after the world's clock. Failed purchases remain failures, not free
 # replacement aircraft. Two club purchases each spend at most 5% of today's household purse.
-prepare_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64 = surface_height):
+prepare_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64 = flight_surface_height):
     if events.last_minute == w.minute or not w.far.populated: return
     events.last_minute = w.minute
     day = data.day_index(w.minute)
@@ -172,7 +173,10 @@ air_display_task = (pilot: AirClubPilot, center: vec3, out: vec3, tick: int, spe
 
 # Commit one pose per world tick, after integrating any batched render-frame interval. These
 # sparse flights have no core Trip: the capital/meeting lives in AirEvents, not a core index.
-update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], observer: vec3, player_aboard: bool = true, other_air: AirContact[] = [], ground: (f64, f64) -> f64 = surface_height):
+# Club aircraft run on the same main thread as traffic. Share its exact bounded
+# contact memo: six active club aircraft otherwise reconstruct mainland source
+# corners on every physics substep, amplifying minute-boundary update spikes.
+update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], observer: vec3, player_aboard: bool = true, other_air: AirContact[] = [], ground: (f64, f64) -> f64 = flight_surface_height):
     prepare_air_events(events, w, models, ground)
     loop mut meet in events.meets:
         safe = conditions.weather_severity(w, meet.gates[0].center) < 650
@@ -185,6 +189,7 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
     contacts = other_air + [loop p in events.pilots: AirContact(p.craft, p.state.position, p.state.velocity, p.capital, p.state.on_water, p.state.moored)]
     pc = w.people[w.player].craft
     if pc >= 0: contacts.push(AirContact(pc, w.aircraft[pc].pose.pos, w.aircraft[pc].pose.vel, parked = w.aircraft[pc].state == .moored))
+    launches=0
     loop k in 0..events.pilots.len():
         p = events.pilots[k]; c = w.aircraft[p.craft]; h = w.far.harbors[p.capital]
         if c.owner != p.person or w.people[p.person].craft != p.craft:
@@ -203,6 +208,13 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
         practice = meeting < 0 and clock >= 600 and clock < 660 and p.practice_day != day
         launch_meet = meeting >= 0 and p.meet != events.meets[meeting].id
         if not p.active and (launch_meet or practice) and not p.state.crashed and c.engine > 700:
+            # Morning practice and meet preparation can make every club ready
+            # on the same minute boundary. Bound cold planning/refill work;
+            # keep it off the economic minute frame. Failed preparations back off
+            # so they cannot starve later pilots.
+            if launches>=1 or w.tick<p.launch_retry_tick or w.tick/data.TICKS_PER_MINUTE!=p.last_tick/data.TICKS_PER_MINUTE:
+                p.last_tick=w.tick;events.pilots[k]=p;continue
+            launches+=1;p.launch_retry_tick=w.tick+60
             funder = w.far.districts[p.capital].household_account
             # A finite refill from the market; fuel starvation cancels the sortie.
             registry.fill_far_tank(w, p.craft, p.capital, 45000 - c.fuel_ml, funder)
