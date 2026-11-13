@@ -32,7 +32,7 @@ funny or useful (time passes, people are met, the plane is looked after).
   existing paper style (menu with categories and a search line; rest choices; tinkering list), a
   short card while time passes. A gentle sway after several strong drinks, off in Options.
 
-## Built in this round
+## Built (first round)
 
 1. The Hotel Ancora: a pier hotel on the Porto Vecchio waterfront with a terrace over the water;
    pilots at tables; from 19:00 a live singer and a small band (procedural synth, room acoustic,
@@ -43,6 +43,16 @@ funny or useful (time passes, people are met, the plane is looked after).
    evening.
 4. Working on the plane at the mooring: wipe, inspect, tune; time passes; a small real effect
    only on light engine/hull wear (heavier damage stays the workshop's job).
+
+## Controls
+
+- On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
+  orders standing; **F** at the land-side door asks for a room. **F** at the coffee house's table
+  sits there. Near one's moored aircraft: **G** works on it. Every prompt card is tappable.
+- Seated: the bar along the bottom (keys 1-5 or taps): the menu, wait an hour, take a room, talk to
+  whoever is at the next table, get up (Escape). The menu: section chips, type to search, up/down
+  (wheel, arrow keys, page buttons), order.
+- A grateful family's member, at home: "Could I rest at yours a while?" in the conversation.
 
 ## Later (worth adding)
 
