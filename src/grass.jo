@@ -37,7 +37,7 @@ struct GrassField:
 
 # Approved full-field fade. Geometry detail and shading have separate budgets.
 grass_fade_range=(radius:f32)->vec2:
-    vec2(radius*0.45,radius*0.85)
+    vec2(max(1.0,radius-4.0),radius)
 
 grass_curve_range=(radius:f32)->vec2:
     if radius<30.0:return vec2(5,8)
@@ -47,16 +47,13 @@ grass_vs = (v: Vertex3D, inst: Instance3D, u: GroundParams) -> ObjOut:
     root = (render_model(inst.model,u.origin) * vec4(v.uv.x,0,v.uv.y,1)).xyz
     tip = v.color.x
     range=grass_fade_range(u.grass_actor.w)
-    fade = 1.0-smoothstep(range.x,range.y,length(root.xz-u.cam.xz))
+    edge=(vnoise((root.xz+u.origin.xz)*0.23)-0.5)*3.0
+    fade = 1.0-smoothstep(range.x,range.y,length(root.xz-u.cam.xz)+edge)
     # A fully faded blade has zero area. Skip its wind/contact work as a unit;
     # every vertex shares the root and therefore takes the same branch.
     if fade<=0.0:return ObjOut(vec4(2,2,2,1),root,vec3(0,1,0),inst.color,vec3(0,0,0))
-    curve_range=grass_curve_range(u.grass_actor.w)
-    lod=smoothstep(curve_range.x,curve_range.y,length(root.xz-u.cam.xz))
-    # Odd near-mesh rows converge onto the two-segment mesh before switching.
-    local=v.pos+vec3(v.color.y,0,v.color.z)*lod
-    w=render_model(inst.model,u.origin)*vec4(local,1)
-    curve=mix(tip*tip,v.color.w,lod)
+    w=render_model(inst.model,u.origin)*vec4(v.pos,1)
+    curve=tip
     wave = meadow_wave(root.xz-(u.drift-u.origin.xz),u.wind)
     bend = curve*(0.06+0.34*wave)
     delta = root.xz-u.grass_actor.xz
@@ -76,7 +73,7 @@ grass_vs = (v: Vertex3D, inst: Instance3D, u: GroundParams) -> ObjOut:
         ripple = 0.78+0.22*sin(behind*2.5-u.time*18.0+across*0.7)
         contact = clamp((cone+wing)*clearance*u.grass_airflow.z*ripple,0.0,1.0)
         offset = u.wind.xy*bend+(-u.grass_airflow.xy*cone+away*wing)*clearance*u.grass_airflow.z*curve*0.55
-    w = vec4(root.x+(w.x-root.x+offset.x)*fade,root.y+(w.y-root.y)*(1.0-contact*0.8)*fade-bend*0.18*fade,root.z+(w.z-root.z+offset.y)*fade,1)
+    w = vec4(w.x+offset.x*fade,root.y+(w.y-root.y)*(1.0-contact*0.8)*fade-bend*0.18*fade,w.z+offset.y*fade,1)
     drawn = render_warped(w.xyz,u.cam,u.warp_a,u.warp_b)
     normal = normalize(vec3(-inst.model[0].y,1,-inst.model[2].y))
     clip=u.view_proj*vec4(drawn,1)
@@ -92,10 +89,10 @@ grass_fs = (i: ObjOut,u: GroundParams) -> vec4:
     col = i.color*vec4(vec3(paint_paper(i.pos.xy)),1)
     # Preserve the terrain's actual pigment bands. Root occlusion is cooler;
     # the translucent upper blade is lighter and warmer within the same pigment.
-    gradient=mix(vec3(0.48,0.62,0.70),vec3(1.45,1.30,1.02),smoothstep(0.0,1.0,i.surface.x))
-    sheen=i.surface.z*i.surface.x*0.18
-    lit=col.xyz*(gradient+vec3(1.0,0.9,0.65)*sheen)
-    vec4(mix(col.xyz,lit,i.surface.y),1)
+    lit=col.xyz*meadow_blade_tint(i.surface.x,i.surface.z)
+    mass=col.xyz*meadow_mass_tint(i.world-u.cam,i.surface.z)
+    vec4(mix(mass,lit,smoothstep(0.0,0.7,i.surface.y)),1)
+
 
 grass_sh: Shader
 
@@ -105,9 +102,12 @@ grass_blade_count=()->int:
     if density=="dense":return 3072
     count=to_int(density) ?? 0
     if count>0:return clamp(count/24,1,128)*24
-    if render_quality.tier==0:96 else:384
+    3072
 
 grass_visible_blades=0
+
+grass_draw_radius=()->f32:
+    f32(clamp(to_float(env("AEGEAN_GRASS_RADIUS") ?? "") ?? (if render_quality.tier==0:8.0 else:12.0),4.0,36.0))
 
 build_tuft = (far:bool=false) -> Mesh:
     vs:Vertex3D[]
@@ -216,7 +216,7 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     if length(camera.xz-f.center.xz)>f32(render_quality.grass_radius*2.0+16.0) or camera.y-f.center.y>80.0:return
     p = obj_params(L,t,sway=1.0)
     gp = GroundParams(p.view_proj,p.cam,p.sun_dir,p.sun,p.sky,p.shade,p.haze,p.fog,p.time,p.wind,p.drift+p.origin.xz,p.origin,p.pigment,p.pigment,vec4(0,0,0,0),p.warp_a,p.warp_b,p.pigment)
-    gp.grass_actor = vec4(grass_actor-p.origin,f32(render_quality.grass_radius))
+    gp.grass_actor = vec4(grass_actor-p.origin,grass_draw_radius())
     gp.grass_airflow = vec4(grass_airflow,grass_contact_radius)
     if gp.warp_b.x>0.0:
         draw_instanced(grass_sh,tuft,f.buf,gp)
@@ -228,7 +228,7 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     far_cells:Instance3D[]
     loop chunk in f.chunks:
         center=render_world(chunk.center-gp.origin,gp.cam)
-        if length(center.xz-gp.cam.xz)-chunk.radius>grass_fade_range(gp.grass_actor.w).y:continue
+        if length(center.xz-gp.cam.xz)-chunk.radius>grass_fade_range(gp.grass_actor.w).y+1.5:continue
         visible=true
         loop plane in planes:
             if dot(plane.xyz,center)+plane.w < -chunk.radius:visible=false
@@ -238,7 +238,7 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
             at=render_world(cell.model[3].xyz-gp.origin,gp.cam)
             # The blade roots occupy a square of half-width 0.5 m. Fade
             # depends on root distance, not the displaced tip's position.
-            if length(at.xz-gp.cam.xz)>grass_fade_range(gp.grass_actor.w).y+0.71:continue
+            if length(at.xz-gp.cam.xz)>grass_fade_range(gp.grass_actor.w).y+2.21:continue
             keep=true
             loop plane in planes:
                 if dot(plane.xyz,at)+plane.w < -3.0:keep=false
