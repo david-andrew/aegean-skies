@@ -72,3 +72,10 @@ vibrato rate and depth. The existing three oscillators keep their unequal detune
 vibrato depths; their modulation also supplies at most 0.35% amplitude tremor. No extra
 audio-rate oscillator or reference waveform is added. Quiet notes and untagged scores
 retain the previous source arithmetic. Station levelling and piano are unchanged.
+
+The Adagietto's opening now gives the first harp entries a quieter string bed: a
+strings-only −12 dB gain holds through 4.5 seconds, then a smoothstep ramp returns to
+exact unity at 9 seconds. It uses performed time and applies after each string voice's
+source/envelope, retaining slot-order summation. Harp, note data and source effort are
+untouched. Two 128-sample temporary spans are used only while rendering this opening;
+subsequent audio follows the existing mixer. The room naturally retains its short history.
