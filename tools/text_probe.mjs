@@ -83,4 +83,4 @@ try {
   writeFileSync(out+'-resize.json',JSON.stringify(checks,null,2));
  }
  console.log('Saved '+out);
-} finally {clearTimeout(timeout);ws?.close();if(browser.exitCode===null){const exited=new Promise(r=>browser.once('exit',r));browser.kill();await exited;}rmSync(profile,{recursive:true,force:true});}
+} finally {clearTimeout(timeout);ws?.close();if(browser.exitCode===null&&browser.signalCode===null){const exited=new Promise(r=>browser.once('exit',r));browser.kill();await exited;}rmSync(profile,{recursive:true,force:true});}
