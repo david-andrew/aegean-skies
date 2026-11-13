@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
@@ -649,6 +649,30 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Rules:** speech gives short offers; the full provenance stays in the notebook and the contract
   panel. News is never silently refreshed: what people repeat are dated beliefs.
 
+### Phoenix (money)
+
+- **Aliases:** the money, the purse, phoenixes; in speech phoinix / phoinikes; small change in
+  lepta (one lepton). The old name, lire, is gone from the game.
+- **Definition:** the game's currency, after Greece's first modern currency (1828), whose coin
+  showed a phoenix rising from flames; a phoenix is 100 lepta. Written amounts are the phoenix
+  sign and the figure (`¤120`, `¤3.50`); an amount under one phoenix is written in lepta
+  (`30 λ`), everywhere: the purse, menus, notices, contracts, refuelling, the map shop, the Game
+  page's slots and the notebook. The sign is drawn, never an image: a stylised phoenix with its
+  wings raised over a flame, filled (gold over an amber flame on the purse) or in outline (the
+  bird drawn round, the flame solid), legible down to about 12 px.
+- **Code:** `src/phoenix.jo` (`phoenix_text` writes an amount; `draw_phoenix` draws the sign;
+  `ptext`, `ptext_centered` and `ptext_width` draw words with "¤" in them as the phoenix);
+  speech in `src/living_talk_words.jo say_money`.
+- **Rules:** the ledger keeps whole lepta (`cents` in the code; `12000` = ¤120), unchanged, so
+  saves load as before. Written words carry the sign as "¤" (the generic currency sign) and are
+  drawn with `ptext`, never `text`, so the phoenix shows. People say the money aloud ("near
+  enough nineteen phoinikes", "thirty lepta"), rounded; speech never shows the sign or exact
+  lepta. `tests/phoenix_test.jo` keeps the formats and finds any "lire" left in the sources.
+- **Capture:** the purse is in every HUD capture; `AEGEAN_LEISURE=menu`, `AEGEAN_UI=board`,
+  `AEGEAN_CAPTURE_PANEL=game` (with saved slots) show it on paper.
+
+![The phoenix sign, filled and in outline, from 12 px up, and in the purse and a menu](img/phoenix.png)
+
 ### Standing
 
 - **Aliases:** regard, reputation.
@@ -1036,11 +1060,11 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Aliases:** the save menu, the slots page, the autosave toast.
 - **Definition:** the **Game page** is the pause menu's first tab: the three saved-game slots, each
-  with its world time, place and a short summary (aircraft, lire, day), a mark on the slot the
+  with its world time, place and a short summary (aircraft, purse, day), a mark on the slot the
   autosave writes to, and Save here, Load and Delete. Saving over a slot, loading and deleting
   each ask first; a successful load closes the menu. A note under the slots says where the
   autosave goes or why it is off. The **Saved card** is the quiet "Saved" that fades in and out
-  at the upper right, under the clock and the lire, when an autosave finishes.
+  at the upper right, under the clock and the purse, when an autosave finishes.
 - **Code:** `src/debugmenu.jo game_page` (drawing, confirmation); `src/game_menu.jo game_row`
   (slot header to words); `aegean.jo game_page_view` / `game_page_apply` (backend requests,
   notes); `src/hud.jo saved_toast`. Backend contract in `docs/game-saves.md`.
