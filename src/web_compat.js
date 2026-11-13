@@ -95,7 +95,20 @@
     return [Math.max(1,Math.floor(Math.sqrt(maxPixels*aspect))),
       Math.max(1,Math.floor(Math.sqrt(maxPixels/aspect)))];
   }
-  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize };
+  // The world keeps the old adaptive pixel budget. Only the final 2D pass uses
+  // display pixels (up to 1.3 MP on phones, 2.6 MP elsewhere). A scalar target
+  // can round one axis down by a pixel; it must never enlarge the scene.
+  function resolutionPlan(width,height,cssWidth,cssHeight,dpr,maxPixels,mobile) {
+    const scene = cappedSize(width,height,cssWidth,cssHeight,maxPixels);
+    const display = cappedSize(Math.max(1,Math.round(cssWidth*dpr)),
+      Math.max(1,Math.round(cssHeight*dpr)),cssWidth,cssHeight,mobile ? 1300000 : 2600000);
+    const lo = Math.max((scene[0]-.5)/display[0],(scene[1]-.5)/display[1]);
+    const hi = Math.min(1,(scene[0]+.499)/display[0],(scene[1]+.499)/display[1]);
+    const scale = scene[0]>=display[0] && scene[1]>=display[1] ? 1 :
+      lo <= hi ? (lo+hi)*.5 : Math.min(1,scene[0]/display[0],scene[1]/display[1]);
+    return {display,scale,scene:display.map(v=>Math.max(1,Math.round(v*scale)))};
+  }
+  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize, resolutionPlan };
   if (typeof module !== "undefined") module.exports = root.AegeanWeb;
   if (typeof WebGL2RenderingContext === "undefined") return;
   const mobile = navigator.userAgentData?.mobile || /Android|iPhone|iPad/i.test(navigator.userAgent) ||
@@ -110,6 +123,8 @@
       options = {...options, antialias:false};
     return getContext.call(this, kind, options);
   };
+  let sceneScale = 1;
+  sloppy.env.__aegean_scene_scale = () => sceneScale;
   sloppy.env.__aegean_quality = () => {
     const canvas = document.querySelector("canvas"), gl = canvas.getContext("webgl2");
     const debug = gl.getExtension("WEBGL_debug_renderer_info");
@@ -120,9 +135,13 @@
     const originalFit = sloppy.res.fit;
     const fit = () => {
       originalFit();
-      const [w,h] = cappedSize(canvas.width,canvas.height,canvas.clientWidth,canvas.clientHeight,maxPixels);
+      const plan = resolutionPlan(canvas.width,canvas.height,canvas.clientWidth,canvas.clientHeight,
+        window.devicePixelRatio || 1,maxPixels,mobile);
+      sceneScale = plan.scale;
+      const [w,h] = plan.display;
       if (canvas.width !== w) canvas.width = w;
       if (canvas.height !== h) canvas.height = h;
+      root.AegeanWeb.resolution = plan;
     };
     sloppy.res.fit = fit;
     window.addEventListener("resize", fit);

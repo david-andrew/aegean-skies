@@ -45,3 +45,30 @@ for (const declaration of ['vec4[32] clouds', 'vec4 clouds[32]']) {
   assert.equal(audit(glsl).uniforms,32);
   assert.equal(audit(glsl.replace(/32/g,'240')).errors.length,1);
 }
+
+// Scene resolution still follows the old cap/adaptive scale, while the HUD
+// follows device pixels independently. Cover rotation, small windows and DPR.
+const {resolutionPlan}=require('../src/web_compat.js');
+for (const [cw,ch,dpr] of [[844,390,3],[390,844,3],[1280,720,1],[1920,1080,2],[320,240,1]]) {
+  for (const mobile of [false,true]) for (const budget of [230400,518400,2600000]) {
+    let previous;
+    for (const adaptive of [1,.85,.72,.61,.52,.44]) {
+      const top=Math.min(dpr,Math.sqrt(2600000/(cw*ch)));
+      const d=Math.max(Math.min(top,1),top*adaptive);
+      const w=Math.round(cw*d),h=Math.round(ch*d);
+      const p=resolutionPlan(w,h,cw,ch,dpr,budget,mobile);
+      const old=cappedSize(w,h,cw,ch,budget);
+      assert(p.scene[0]<=old[0] && p.scene[1]<=old[1]);
+      assert(p.display[0]*p.display[1]<= (mobile?1300000:2600000));
+      if (previous) assert.deepEqual(p.display,previous);
+      previous=p.display;
+      assert(p.scale>0 && p.scale<=1);
+    }
+  }
+}
+const phone=resolutionPlan(2372,1096,844,390,3,230400,true);
+assert.deepEqual(phone.scene,[706,326]);
+assert.deepEqual(phone.display,[1677,775]);
+console.log('Independent scene/HUD budgets passed');
+
+assert.equal(resolutionPlan(1280,720,1280,720,1,2600000,false).scale,1);
