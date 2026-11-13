@@ -1,0 +1,86 @@
+use 'coast_pattern.jo'
+# Sub-source coastal relief, shared by CPU queries and GPU terrain/sea.
+# Version 1: fixed world phases, no RNG or camera state. The largest band is
+# 7 m, below the unchanged 8 m erosion source. Vertical rubble <= 1.01 m;
+# cliff relief additionally moves the local contour by at most 1.15 m.
+const COAST_STEP = 0.21875          # 14 / 64: contact triangulation, all tiers
+const COAST_LEVELS = 7
+const COAST_RESOLVE_PIXELS = 36.0  # render spacing budget; contact remains fixed
+const COAST_MAX_FOCAL = 1200.0     # fixed work bound even with extreme zoom
+
+coast_weight = (h: f32) -> f32:
+    smoothstep(-10.0,-3.0,h)*(1.0-smoothstep(64.0,192.0,h))
+
+coast_triangle = (h: vec4,f: vec2) -> f32:
+    if f.x+f.y <= 1.0: h.x+f.x*(h.y-h.x)+f.y*(h.z-h.x)
+    else: h.w+(1.0-f.x)*(h.z-h.w)+(1.0-f.y)*(h.y-h.w)
+
+# The relief arithmetic is shared; only the lookup of deterministic pattern
+# bytes differs between the pure CPU query and its texture-backed GPU mirror.
+coast_height_detail = (h: vec4,f: vec2,detail: vec3) -> f32:
+    base = coast_triangle(h,f)
+    weight = coast_weight(base)
+    anchor = min(1.0,4.0*(f.x*(1.0-f.x)+f.y*(1.0-f.y)))
+    edge = smoothstep(0.0,0.12,f)*smoothstep(0.0,0.12,vec2(1,1)-f)
+    gradient = vec2(mix(h.y-h.x,h.w-h.z,f.y),mix(h.z-h.x,h.w-h.y,f.x))/14.0
+    base+(detail.x*anchor+dot(gradient,detail.yz)*0.8*edge.x*edge.y)*weight
+
+coast_vertex_height = (h: vec4,f: vec2,origin: vec2) -> f32:
+    base = coast_triangle(h,f)
+    if coast_weight(base) == 0.0 or ((f.x == 0.0 or f.x == 1.0) and (f.y == 0.0 or f.y == 1.0)): return base
+    coast_height_detail(h,f,coast_pattern_at(origin-floor(origin/COAST_PATTERN_SPAN)*COAST_PATTERN_SPAN+f*14.0))
+
+coast_gpu_vertex = (h: vec4,f: vec2,origin: vec2,pattern: Texture) -> f32:
+    base = coast_triangle(h,f)
+    if coast_weight(base) == 0.0 or ((f.x == 0.0 or f.x == 1.0) and (f.y == 0.0 or f.y == 1.0)): return base
+    coast_height_detail(h,f,coast_pattern_gpu(pattern,origin-floor(origin/COAST_PATTERN_SPAN)*COAST_PATTERN_SPAN+f*14.0))
+
+coast_gpu_normal = (p: vec2,f: vec2,h: vec4,normal: vec3,strength: f32,pattern: Texture) -> vec3:
+    if strength == 0.0 or coast_weight(coast_triangle(h,f)) == 0.0: return normal
+    e: f32 = 1.0/64.0
+    a = max(f-vec2(e,e),vec2(0,0)); b = min(f+vec2(e,e),vec2(1,1))
+    left = vec2(a.x,f.y); right = vec2(b.x,f.y)
+    top = vec2(f.x,a.y); bottom = vec2(f.x,b.y)
+    dx = (coast_gpu_vertex(h,right,p,pattern)-coast_triangle(h,right)-coast_gpu_vertex(h,left,p,pattern)+coast_triangle(h,left))/((b.x-a.x)*14.0)
+    dz = (coast_gpu_vertex(h,bottom,p,pattern)-coast_triangle(h,bottom)-coast_gpu_vertex(h,top,p,pattern)+coast_triangle(h,top))/((b.y-a.y)*14.0)
+    normalize(vec3(normal.x-dx*normal.y*strength,normal.y,normal.z-dz*normal.y*strength))
+
+# Same finest b-c triangles as rendering. Sampling needs only the caller's
+# four canonical corners; physics never allocates or depends on render caches.
+coast_contact = (a: f64,b: f64,c: f64,d: f64,u: f64,v: f64,x: f64,z: f64) -> f64:
+    h = vec4(f32(a),f32(b),f32(c),f32(d))
+    f = vec2(f32(u),f32(v))
+    base = coast_triangle(h,f)
+    if min(min(h.x,h.y),min(h.z,h.w)) >= 192.0 or max(max(h.x,h.y),max(h.z,h.w)) <= -10.0: return f64(base)
+    p = min(floor(f*64.0),vec2(63,63))/64.0
+    step: f32 = 1.0/64.0
+    origin = vec2(f32(x),f32(z))
+    q = (f-p)*64.0
+    if q.x == 0.0 and q.y == 0.0: return f64(coast_vertex_height(h,p,origin))
+    b0 = coast_vertex_height(h,p+vec2(step,0),origin)
+    c0 = coast_vertex_height(h,p+vec2(0,step),origin)
+    if q.x+q.y <= 1.0:
+        a0 = coast_vertex_height(h,p,origin)
+        return f64(a0+q.x*(b0-a0)+q.y*(c0-a0))
+    d0 = coast_vertex_height(h,p+vec2(step,step),origin)
+    f64(d0+(1.0-q.x)*(c0-d0)+(1.0-q.y)*(b0-d0))
+
+# Continuous subdivision level from projected feature size. A 14 m cell only
+# starts refining when it spans 36 pixels; a resolved band gets several samples.
+# Use the closest point of the cell's bounds for contact and oblique views.
+coast_level = (x: f64,z: f64,low: f64,high: f64,cam: vec3,focal: f64) -> f64:
+    if high <= -10.0 or low >= 192.0: return 0.0
+    dx = max(max(x-f64(cam.x),f64(cam.x)-x-14.0),0.0)
+    dz = max(max(z-f64(cam.z),f64(cam.z)-z-14.0),0.0)
+    # Distance to this cell's conservative displaced bounds. Neighbor levels
+    # are explicitly shared by coast_add_patch, including patch boundaries.
+    extra = 2.0+1.616*(high-low)/14.0
+    dy = max(max(low-extra-f64(cam.y),f64(cam.y)-high-extra),0.0)
+    distance = max(sqrt(dx*dx+dy*dy+dz*dz),0.25)
+    clamp(log2(14.0*min(focal,COAST_MAX_FOCAL)/(COAST_RESOLVE_PIXELS*distance)),0.0,6.0)
+
+coast_patch_near = (x: f64,z: f64,size: f64,cam: vec3,focal: f64) -> bool:
+    dx = max(max(x-f64(cam.x),f64(cam.x)-x-size),0.0)
+    dz = max(max(z-f64(cam.z),f64(cam.z)-z-size),0.0)
+    dy = max(max(-10.0-f64(cam.y),f64(cam.y)-192.0),0.0)
+    dx*dx+dy*dy+dz*dz < (min(focal,COAST_MAX_FOCAL)*0.5)^2

@@ -10,6 +10,10 @@ use 'plants.jo'
 use 'terrain_lod.jo'
 use 'look.jo'
 use 'render_space.jo'
+use 'coast_mesh.jo'
+use 'coast_atlas.jo'
+use 'coast_field.jo'
+use 'coast_pattern.jo'
 
 const WORLD_TILE_CELLS = 16
 const WORLD_TILE_SPAN = 224.0
@@ -32,6 +36,7 @@ struct WorldTile:
     high: f64
     lod: f64
     published: bool = false
+    cpu_heights: f32[] = []
 
 struct WorldInstance:
     origin: vec2
@@ -106,12 +111,14 @@ world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
     cell = 14.0*f64(1<<level)
     h = image(17,17); m = image(17,17)
     low = 1e9; high = -1e9
+    values: f32[]
     loop j in 0..17:
         loop i in 0..17:
             wx = ox + f64(i)*cell; wz = oz+f64(j)*cell
             sy,ridge = world_source_sample(wx,wz)
             y = round(sy*4096.0)/4096.0
             low = min(low,y); high = max(high,y)
+            values.push(f32(y))
             packed = int(round((y+64.0)*4096.0))
             a = (j*17+i)*4
             h.pixels[a] = u8(packed & 255)
@@ -126,7 +133,7 @@ world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
             m.set(i,j,vec4(normal.x*0.5+0.5,normal.z*0.5+0.5,f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011))))
     world_upload_tile(world_heights,h,slot)
     world_upload_tile(world_materials,m,slot)
-    WorldTile(world_tile_key(x,z,level),x,z,level,world_frame,world_clock,low,high,f64(level+1))
+    WorldTile(world_tile_key(x,z,level),x,z,level,world_frame,world_clock,low,high,f64(level+1),false,values)
 
 world_request_tile = (x: int,z: int,level: int) -> int:
     global world_tiles,world_cache,world_generated,world_uploaded
@@ -266,10 +273,12 @@ world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     ground_material(i,u,true)
 
 init_world_terrain = ():
+    reset_coast_selection()
     global world_tiles,world_heights,world_materials,world_ground_sh
+    if coast_grids.len() == 0: init_terrain()
     world_tiles = [loop i in 0..WORLD_CACHE_SLOTS: WorldTile()]
-    world_heights = texture(image(32*17,16*17),false)
-    world_materials = texture(image(32*17,16*17),false)
+    world_heights = texture(image(32*17,16*17),true)
+    world_materials = texture(image(32*17,16*17),true)
     world_ground_sh = make_world_shader(shader(world_vertex,world_fragment))
 
 world_edge_state = (slot: int) -> (vec4,int):
@@ -364,18 +373,28 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
 draw_world_terrain = (L: Light,t: f64):
     global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_draws,world_triangles
     if not geography_enabled: return
+    begin_coast_frame()
     zone("world terrain")
     cam = scene_camera(); vp = scene_view_proj()
     prepare_world_terrain(cam,vp,t)
     origin = render_origin(cam)
     batches: WorldInstance[][] = [loop i in 0..16: []]
+    coastal: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
+    planes = land_planes(vp)
+    focal = f64(length(vec3(vp[0].y,vp[1].y,vp[2].y)))*f64(screen_height())*0.5/render_quality.terrain_error
     loop slot in world_selected:
         node = world_tiles[slot]
         edges,mask = world_edge_state(slot)
         ox,oz = world_tile_origin(node.x,node.z,node.level)
+        if coast_enabled and node.level == 0 and node.lod == 0.0 and node.low < 192.0 and node.high > -10.0 and coast_patch_near(ox,oz,224.0,cam,focal):
+            limits = vec4(if edges.x > 0.0: 0.0 else: 6.0,if edges.y > 0.0: 0.0 else: 6.0,if edges.z > 0.0: 0.0 else: 6.0,if edges.w > 0.0: 0.0 else: 6.0)
+            coast_add_patch(coastal,node.cpu_heights,17,17,ox,oz,0,0,16,vec2(f32(slot%32*17),f32(slot/32*17)),cam,origin,focal,planes,limits,source_id=node.key)
+            continue
         batches[mask].push(WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),0),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level))))
     params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),0),wind_now.drift,origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
     params.pigment = paint_surface()
+    params.coast_pattern = coast_pattern_texture
+    draw_coast_batches(coastal,params,true)
     if world_contact_slots.len()==9:params.contact_rect=world_contact_rect-vec4(origin.x,origin.z,origin.x,origin.z)
     world_draws = 0; world_triangles = 0
     loop i in 0..16:
