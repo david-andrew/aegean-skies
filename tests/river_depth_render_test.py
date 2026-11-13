@@ -1,4 +1,4 @@
-"""The two-sided native river prepass hides deep bed shading, retaining shallows."""
+"""The two-sided native river prepass hides bed shading under deep triangles, retaining shallows."""
 import os
 from pathlib import Path
 import subprocess
