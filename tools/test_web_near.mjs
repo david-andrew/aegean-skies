@@ -1,4 +1,4 @@
-// Render the real Porto Vecchio start on foot, in its downward-looking follow camera.
+// Render real close-camera scenes: quay, moving streets, far port, cockpit, orbit and cloud.
 // Regression: nonlinear vertex depth cut away the quay under/in front of the feet.
 // Requires Node 22+, Chromium and Python/Pillow (also used by judge_pack.py).
 // Build: sloppy build aegean.jo --release --target wasm -o <scratch>/aegean.html
@@ -79,32 +79,55 @@ try {
     for(const frame of [120,180]) {
       await send('Runtime.evaluate',{expression:`nearAdvance(${frame})`});
       await until(async()=>{const r=await send('Runtime.evaluate',{returnByValue:true,expression:'quayFrames'});return r.result?.value>=frame;});
-    const links=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayLinks'})).result.value;
-    assert(links.length>20 && links.every(Boolean),`${name}: shaders did not link`);
-    assert.equal(errors.length,0,`${name}: JavaScript exception`);
-    const shot=await send('Page.captureScreenshot',{format:'png'}), file=join(out,name+'-'+frame+'.png');
-    writeFileSync(file,Buffer.from(shot.data,'base64'));
-    // Fixed daylight/seed/camera. Two boxes avoid the figure, aircraft and HUD.
-    // Warm limestone distinguishes the actual quay from the blue-green water below it.
-    // A separate sea box rejects blank/solid-color captures and globally missing water.
-    const metrics=JSON.parse(execFileSync('python3',['-c',`
+      const links=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayLinks'})).result.value;
+      assert(links.length>20 && links.every(Boolean),`${name}: shaders did not link`);
+      assert.equal(errors.length,0,`${name}: JavaScript exception`);
+      const shot=await send('Page.captureScreenshot',{format:'png'}), file=join(out,name+'-'+frame+'.png');
+      writeFileSync(file,Buffer.from(shot.data,'base64'));
+      // Semantic regions prevent two equally broken paths from passing the comparison.
+      // Warm ground differs from water; cockpit roof/panel and cloudy windshield are separate.
+      const metrics=JSON.parse(execFileSync('python3',['-c',`
 import json,sys
 from PIL import Image
 im=Image.open(sys.argv[1]).convert('RGB');w,h=im.size
 result={}
-for name,box in [('under_feet',(.47,.77,.54,.82)),('in_front',(.54,.66,.58,.73)),('sea',(.40,.29,.70,.36))]:
+boxes={'under_feet':(.47,.77,.54,.82),'in_front':(.54,.66,.58,.73),
+ 'sea':(.40,.29,.70,.36),'roof':(.42,.05,.58,.20),
+ 'airframe':(.46,.44,.49,.62),'panel':(.45,.64,.55,.70),'mist':(.43,.47,.55,.53)}
+for name,box in boxes.items():
  x0,y0,x1,y1=[int(v*d) for v,d in zip(box,[w,h,w,h])]
  pixels=[im.getpixel((x,y)) for y in range(y0,y1) for x in range(x0,x1)]
  result[name]=sum((r>b*1.2 and g>b*1.15) if name!='sea' else (b>r*1.2 and g>r*1.15) for r,g,b in pixels)/len(pixels)
 print(json.dumps(result))
 `,file],{encoding:'utf8'}));
-    const result={name,frame,linkedPrograms:links.length,...metrics};results.push(result);
-    writeFileSync(join(out,'results.json'),JSON.stringify(results,null,2)+'\n');
-    console.log(JSON.stringify(result));
-    if(id==='quay')assert(metrics.under_feet>.95 && metrics.in_front>.95 && metrics.sea>.95,`${name}: quay/sea coverage regression`);
+      const result={name,id,quality,full,frame,file,linkedPrograms:links.length,...metrics};results.push(result);
+      writeFileSync(join(out,'results.json'),JSON.stringify(results,null,2)+'\n');
+      console.log(JSON.stringify(result));
+      if(['quay','street','pheryalara'].includes(id))
+        assert(metrics.under_feet>.95 && metrics.in_front>.95,`${name}: ground coverage regression`);
+      if(id==='quay')assert(metrics.sea>.95,`${name}: sea control regression`);
+      if(['cockpit','cloud'].includes(id))assert(metrics.roof>.95 && metrics.panel>.65,`${name}: cockpit foreground missing`);
+      if(id==='orbit')assert(metrics.airframe>.9,`${name}: nearby airframe missing`);
+      if(id==='cloud')assert(metrics.mist>.9,`${name}: cloud volume missing`);
+    }
   }
+  // Optimized bounded-near + far-log rendering must agree with all-fragment log depth.
+  const comparisons=[];
+  for(const full of results.filter(r=>r.full)) {
+    const split=results.find(r=>r.id===full.id && r.quality===full.quality && r.frame===full.frame && !r.full);
+    assert(split,`missing split reference for ${full.name}`);
+    const diff=JSON.parse(execFileSync('python3',['-c',`
+import json,sys
+from PIL import Image,ImageChops,ImageStat
+im=ImageChops.difference(Image.open(sys.argv[1]).convert('RGB'),Image.open(sys.argv[2]).convert('RGB'))
+pixels=list(im.getdata())
+print(json.dumps({'mean_rgb_error':sum(ImageStat.Stat(im).mean)/3,'changed_over_16':sum(max(p)>16 for p in pixels)/len(pixels)}))
+`,split.file,full.file],{encoding:'utf8'}));
+    comparisons.push({id:full.id,frame:full.frame,...diff});
+    assert(diff.mean_rgb_error<1.0 && diff.changed_over_16<0.01,`${full.name}: split/full depth disagreement ${JSON.stringify(diff)}`);
   }
-  console.log('PASS: quay under/in front of the walker survives both WebGL depth paths');
+  writeFileSync(join(out,'comparisons.json'),JSON.stringify(comparisons,null,2)+'\n');
+  console.log('PASS: close-camera coverage and split/full WebGL depth comparisons');
 } finally {
   ws?.close();
   const exited=new Promise(r=>browser.once('exit',r));
