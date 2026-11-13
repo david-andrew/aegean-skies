@@ -4,6 +4,9 @@ use '../src/geography.jo'
 use '../src/settlements.jo'
 use '../src/living_far_catalog.jo'
 use '../src/living_far_types.jo'
+use '../src/vessel_types.jo'
+use '../src/sea_routes.jo'
+use '../src/living_feeder_bake.jo'
 assert(load_land(embed('../assets/terrain.bin')))
 assert(load_geography(embed('../assets/world.bin')))
 geography_enabled = true; init_settlements(true)
@@ -36,31 +39,67 @@ loop i in 0..settlement_roads.len():
     road = settlement_roads[i]
     if road.points.len()<2: continue
     links.push(FarLink(links.len(),road.a,road.b,.cart,road.points,length_mm(road.points),i))
-# Four nearest ports are candidates, not permission to cross an island. Dock-to-sea approach
-# and every 35m of each crossing must lie over canonical water. Rejected chords have no service.
-water = (a: vec3,b: vec3) -> bool:
-    count = max(1,int(ceil(f64(length(b-a))/35.0)))
-    loop n in 0..count+1:
-        p = mix(a,b,f32(f64(n)/f64(count)))
-        if height(p.x,p.z)>-0.5: return false
-    true
-seen: {int: bool}
-ports = [loop s in ordered: if s.harbor.len()>0: s]
+# All path finding happens here. Straight 0.5m-deep chords disconnected the capitals
+# and could not fit the actual trading hulls. The vessel navigator validates center and
+# clearance edges every7m, with real moorings or deep anchorages and headland detours.
+ports=[loop s in ordered: if s.harbor.len()>0 and vessel_berth(s.id,.trehantiri)!=none: s]
+requests: {int: (int,int)}
+add_pair = (a: int,b: int):
+    if a==b: return
+    key=(min(a,b)<<32)|max(a,b)
+    requests[key]=(min(a,b),max(a,b))
 loop s in ports:
-    others = [loop t in ports: if t.id!=s.id: t]
+    others=[loop t in ports: if t.id!=s.id: t]
     others.sort((t: WorldSettlement): (length(t.center-s.center),t.id))
-    loop n in 0..min(4,others.len()):
-        t = others[n]; lane_key = (min(s.id,t.id)<<32)|max(s.id,t.id)
-        if lane_key in seen: continue
-        seen[lane_key] = true
-        if length(t.center-s.center)>140000.0: continue
-        a = s.harbor[0].buoy; b = t.harbor[0].buoy
-        ap = a+vec3(s.out.x,0,s.out.y)*350.0; bp = b+vec3(t.out.x,0,t.out.y)*350.0
-        if not water(a,ap) or not water(ap,bp) or not water(bp,b): continue
-        points = [a,ap,bp,b]
-        links.push(FarLink(links.len(),s.id,t.id,.ship,points,length_mm(points)))
+    loop n in 0..min(4,others.len()): add_pair(s.id,others[n].id)
+# Also attempt the geographic minimum spanning tree: a local-neighbor limit must not
+# isolate a whole group merely because all four closest ports share its same coast.
+if ports.len()>0:
+    visited: {int: bool}; visited[ports[0].id]=true
+    best: {int: (f64,int)}
+    loop t in ports[1..]: best[t.id]=(f64(length(t.center-ports[0].center)),ports[0].id)
+    loop visited.len()<ports.len():
+        choice= -1; score=1e30
+        loop t in ports:
+            if t.id in visited: continue
+            d=best[t.id]
+            if d.0<score or (d.0==score and (choice<0 or t.id<choice)): choice=t.id; score=d.0
+        if choice<0: break
+        add_pair(choice,best[choice].1); visited[choice]=true
+        at=world_settlements[settlement_by_id[choice]].center
+        loop t in ports:
+            if t.id in visited: continue
+            d=f64(length(t.center-at))
+            if d<best[t.id].0: best[t.id]=(d,choice)
+keys=requests.keys(); keys.sort(); ready=0; refused=0
 key = hash([loop s in ordered: (s.id,s.center,s.out,s.country)])
-catalog = FarRouteCatalog(SETTLEMENT_VERSION,terrain_key(),geography_key(),key,seeds,links)
+reused=false
+if env("LIVING_REBAKE_SEA")==none:
+    if let packed=inflate(embed('../assets/living-routes.bin')):
+        old=from_text[FarRouteCatalog](str_from_bytes(packed))
+        if old is FarRouteCatalog and old.version==SETTLEMENT_VERSION and old.navigation_version==1 and old.terrain==terrain_key() and old.geography==geography_key() and old.places==key:
+            loop l in old.links:
+                if l.mode==.ship:
+                    copy=l; copy.id=links.len(); links.push(copy); ready+=1
+            reused=ready>0
+            if reused: eprint("SEA_BAKE reused={ready} matching-terrain/layout/draft; LIVING_REBAKE_SEA=1 forces navigation again")
+if not reused:
+    loop key in keys:
+        pair=requests[key]; fleet=VesselFleet()
+        id=request_harbor_lane(fleet,pair.0,pair.1,.trehantiri)
+        if id<0: refused+=1; continue
+        loop batch in 0..128:
+            step_sea_navigation(fleet,16384)
+            if fleet.lanes[0].status==.ready or fleet.lanes[0].status==.blocked: break
+        lane=fleet.lanes[0]
+        if lane.status!=.ready: refused+=1; continue
+        points=[loop p in lane.points: vec3(p.x,0,p.y)]
+        links.push(FarLink(links.len(),pair.0,pair.1,.ship,points,length_mm(points)))
+        ready+=1
+        if ready%10==0: eprint("SEA_BAKE ready={ready} refused={refused} attempted={ready+refused}/{keys.len()}")
+key = hash([loop s in ordered: (s.id,s.center,s.out,s.country)])
+append_feeder_tracks(links,ordered)
+catalog = FarRouteCatalog(SETTLEMENT_VERSION,terrain_key(),geography_key(),key,seeds,links,navigation_version=1)
 path = join_path(dir_name(args()[0]),'../assets/living-routes.bin')
 assert(write_bytes(path,deflate(bytes(to_text(catalog)))))
-print("LIVING ROUTES places={seeds.len()} road_candidates={settlement_roads.len()} roads={[loop l in links: if l.mode==.cart: l].len()} sea_lanes={[loop l in links: if l.mode==.ship: l].len()} verified-samples=35m key={key}")
+print("LIVING ROUTES places={seeds.len()} road_candidates={settlement_roads.len()} roads={[loop l in links: if l.mode==.cart and not l.trail: l].len()} feeders={[loop l in links: if l.trail: l].len()} sea_lanes={[loop l in links: if l.mode==.ship: l].len()} hull-verified-samples=7m key={key}")

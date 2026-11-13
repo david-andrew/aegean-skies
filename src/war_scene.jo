@@ -1,0 +1,86 @@
+# Naval guns use the same finite ballistic Round/hit/terrain/survival machinery as aircraft.
+# An existing vessel ID owns the shot; there is no invented dummy aircraft or pilot.
+use 'combat.jo'
+use 'vessel_types.jo'
+use 'vessels.jo'
+use 'far_transport_scene.jo'
+use 'living_types.jo'
+use 'living_war_types.jo'
+use 'living_war.jo'
+use 'living_war_contacts.jo'
+use 'living_war_rescue.jo'
+
+prepare_war_scene = (w: mut World, fleet: VesselFleet, b: mut Battle, observer: vec3):
+    if not b.enabled: return
+    b.next_serial=max(b.next_serial,w.war.round_serial)
+    loop r in w.war.rounds:
+        exists=false
+        loop old in b.rounds:
+            if old.serial==r.serial: exists=true
+        if not exists and b.rounds.len()<COMBAT_MAX_ROUNDS: b.rounds.push(Round(r.position,r.velocity,r.owner,r.side,r.damage,age=r.age,tracer=r.tracer,serial=r.serial))
+    ids=w.war.contacts.keys(); ids.sort()
+    loop id in ids:
+        c=w.war.contacts[id]
+        if c.state==.resolved: continue
+        ua=w.war.units[c.a]; ub=w.war.units[c.b]
+        if ua.vehicle<0 or ub.vehicle<0: continue
+        va=w.far.vehicles[ua.vehicle]; vb=w.far.vehicles[ub.vehicle]
+        a=vessel_index(fleet,FAR_VESSEL_BASE+va.id); z=vessel_index(fleet,FAR_VESSEL_BASE+vb.id)
+        near=length(c.pos-observer)<6000 and a>=0 and z>=0 and va.kind==.ship and vb.kind==.ship
+        if not near:
+            if c.state==.physical:
+                # Fold with actual damage and the same saved random variate, no second roll.
+                w.war.contacts[id].state=.pending
+                w.war.contacts[id].resolves=max(w.minute+5,c.resolves)
+            continue
+        w.war.contacts[id].state=.physical; w.war.contacts[id].physical_seen=true
+        ships=[fleet.ships[a],fleet.ships[z]]; units=[c.a,c.b]
+        loop k in 0..2:
+            u=w.war.units[units[k]]; ship=ships[k]; target=ships[1-k]
+            if ship.health<=0.35 or u.stock.qty[8]<3 or w.tick<c.next_shot_tick[k] or b.rounds.len()>=COMBAT_MAX_ROUNDS or w.war.rounds.len()>=128: continue
+            relative=target.position-ship.position
+            if length(relative)>850 or length(relative)<15: continue
+            origin=ship.position+vec3(0,3.5,0)
+            range=f64(length(relative)); flight=range/420.0
+            aim=target.position+target.velocity*f32(flight)+vec3(0,f32(2.0+4.905*flight*flight),0)
+            # Accuracy follows the same saved force readiness used for abstract odds.
+            precision=f64(war_power(w,units[k]))/f64(max(1,war_power(w,c.a)+war_power(w,c.b)))
+            spread=(1.0-precision)*max(24.0,range*0.04)
+            seed=int(c.seed%u64(1000000))
+            aim+=vec3(f32(combat_noise(seed,ship.id,c.shots[k],0)*spread),f32(combat_noise(seed,ship.id,c.shots[k],1)*spread*0.25),f32(combat_noise(seed,ship.id,c.shots[k],2)*spread))
+            if not war_spend(w,units[k],8,3): continue
+            dir=normalize(aim-origin)
+            b.rounds.push(Round(origin,ship.velocity+dir*420.0,ship.id,ship.side,0.075,serial=b.next_serial))
+            b.next_serial+=1
+            w.war.contacts[id].shots[k]+=1; w.war.contacts[id].next_shot_tick[k]=w.tick+45
+
+commit_war_scene = (w: mut World, fleet: VesselFleet, b: mut Battle):
+    if w.far.populated:
+        outcomes=take_combat_outcomes(b)
+        loop o in outcomes:
+            if o.kind!=.landed or o.person<0 or o.craft<0 or o.craft>=w.aircraft.len(): continue
+            country=w.people[o.person].citizenship
+            if country<0 and w.people[o.person].home>=0: country=w.place_country[w.people[o.person].home]
+            record_downed_airman(w,o.person,o.craft,o.position,max(0,country))
+    loop mut descent in b.descents:
+        loop _, s in w.war.survivors:
+            if s.person==descent.person and (s.riding_craft>=0 or s.resolved): descent.released=true
+    w.war.round_serial=max(w.war.round_serial,b.next_serial)
+    w.war.rounds=[]
+    loop r in b.rounds:
+        if r.owner>=FAR_VESSEL_BASE and r.owner<FAR_VESSEL_BASE+1280 and w.war.rounds.len()<128:
+            w.war.rounds.push(WarShot(r.position,r.velocity,r.owner,r.side,r.damage,r.age,r.tracer,r.serial))
+    ids=w.war.contacts.keys(); ids.sort()
+    loop id in ids:
+        c=w.war.contacts[id]
+        if c.state!=.physical: continue
+        ua=w.war.units[c.a]; ub=w.war.units[c.b]
+        if ua.vehicle<0 or ub.vehicle<0: continue
+        a=vessel_index(fleet,FAR_VESSEL_BASE+ua.vehicle); z=vessel_index(fleet,FAR_VESSEL_BASE+ub.vehicle)
+        if a<0 or z<0: continue
+        ah=fleet.ships[a].health; bh=fleet.ships[z].health
+        if ah>0.35 and bh>0.35 and w.minute<c.resolves: continue
+        if ah>0.35 and bh>0.35 and c.shots[0]==0 and c.shots[1]==0: continue
+        # Actual physical health decides the result; no abstract hull damage is applied again.
+        winner=if ah>bh: c.a else: if bh>ah: c.b else: if int(mix64(c.seed)%u64(1000000))<c.probability: c.a else: c.b
+        finish_war_contact(w,id,winner,true)

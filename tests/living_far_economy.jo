@@ -5,6 +5,7 @@ use '../src/living_seed.jo'
 use '../src/living_place_context.jo'
 use '../src/living_far_economy.jo'
 use '../src/living_far_transport.jo'
+use '../src/living_far_orders.jo'
 use '../src/living_far_stock.jo'
 use '../src/living_far_checks.jo'
 use '../src/living_money.jo'
@@ -27,6 +28,16 @@ far_fixture = () -> World:
 far_only_minutes = (w: mut World, minutes: int):
     loop _ in 0..minutes:
         step_minute(w)
+
+test "game save boundaries still fully reject a nonfinite published route":
+    set_living_strict(false)
+    w=far_fixture()
+    w.far.links[0].points[1].x=f32(sqrt(-1.0))
+    assert(validate_far(w)=="invalid far route point")
+    assert(validate_save_world(w)=="invalid far route point")
+    refused=save_game(w,PresentationState(),42,"phase4-rejected-route")
+    assert(refused is LivingSaveError)
+    set_living_strict(true)
 
 test "funded settlement opening population crew and stocks are owned and idempotent":
     w = far_fixture()
@@ -58,15 +69,19 @@ test "a cargo service pays before departure carries original roots and commits t
     assert(far_produce(w,100,3,10000))
     # Make the actual destination need grain, without deleting any of its stock.
     w.far.districts[200].target[3] += 20000
+    # The fixture hands over the receiving counter's signed order, not live remote stock.
+    w.far.vehicles[0].buying_order=counter_restock_order(w,0,200)
     roots = w.next_cargo_source; external = w.ledger.external_in_cents
     before = stock_totals(w)
     assert(far_depart(w,0)); j = w.far.journeys[w.far.vehicles[0].journey]
     assert(j.origin==100 and j.destination==200 and j.quantity>0 and w.far.vehicles[0].cargo_owner==j.buyer)
+    assert(j.provenance.negotiated and j.provenance.requester_account==j.buyer and j.provenance.supply_roots.len()>0)
     assert(w.far.vehicles[0].place== -1 and w.far.vehicles[0].cargo.qty[3]==j.quantity)
     assert(stock_totals(w)==before and w.next_cargo_source==roots and w.ledger.external_in_cents==external)
     w.tick += 6000; w.minute = w.tick/120; far_advance_transport(w,w.tick)
     assert(w.far.vehicles[0].place==200 and w.far.vehicles[0].journey== -1 and w.far.completed_journeys==1)
     assert(stock_totals(w)==before and invariant_errors(w).len()==0)
+    assert(w.far.cargo_deliveries==1 and w.far.order_rounds==0)
 
 test "week of staggered cohorts and journeys conserves cash goods provenance population and replay":
     a = far_fixture(); far_only_minutes(a,1440*3+17)
@@ -100,3 +115,32 @@ test "a broken far journey refuses a game minute without a panic or partial econ
     w.far.journeys[id].link=w.far.vehicles[0].route
     step_minute(w)
     assert(validate_save_world(w)=="")
+
+test "a household with its real staple ration does not starve solely for lack of fish":
+    w=far_fixture(); qty=far_market_qty(w,100,0)
+    if qty>0:
+        batch=far_take_market(w,100,0,qty); far_use(w,batch)
+    w.far.districts[100].hunger=10
+    far_household_hour(w,100)
+    assert(w.far.districts[100].unmet[0]>0 and w.far.districts[100].hunger==9)
+    assert(goods_balance(w) and money_balances(w) and far_stock_errors(w).len()==0)
+
+
+test "hourly work is spread across minute batches with every real district worked once":
+    w=build_world(u64(42)); contexts: LifePlaceContext[]; seeds: FarPlaceSeed[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k,"Core {k}",0,k,w.harbors[k].center,true,k))
+    loop k in 0..130:
+        id=100+k
+        contexts.push(LifePlaceContext(id,"District {id}",1,id,vec3(f32(k*100),0,0)))
+        seeds.push(FarPlaceSeed(id,80,1,3))
+    assert(publish_place_contexts(w,1,contexts,[-1,-1,-1]))
+    assert(populate_settlement_economy(w,1,seeds,[]))
+    visited=0
+    loop minute in 60..120:
+        w.minute=minute; w.tick=minute*120
+        before=[loop _, d in w.far.districts: if d.last_hour==1: d.id].len()
+        far_economy_minute(w)
+        after=[loop _, d in w.far.districts: if d.last_hour==1: d.id].len()
+        assert(after-before<=3,"One minute must not absorb the rest of the hour's work.")
+        visited+=after-before
+    assert(visited==130 and money_balances(w) and goods_balance(w))

@@ -1,0 +1,115 @@
+# Existing economic sea journeys materialized through the vessel API. The saved far journey
+# remains the motion owner; external=true prevents a second vessel integrator. Damage stops
+# that journey at its actual pose until the strategic outcome transaction consumes it.
+use 'vessel_types.jo'
+use 'vessels.jo'
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_transport.jo'
+use 'living_guard.jo'
+
+const FAR_VESSEL_BASE = 600000000
+const FAR_NEAR_SHIPS = 16
+
+far_scene_hull_radius = (kind: VesselKind) -> f64:
+    spec=vessel_spec(kind)
+    sqrt(spec.length*spec.length+spec.beam*spec.beam)*0.5
+
+# Several reciprocal services can share an abstract anchorage. Admit distinct physical
+# footprints, rather than drawing/colliding several hulls in the same berth. Waiting
+# services retain their actual goods and abstract ownership; no offset/teleport is made.
+far_scene_ship_candidates = (fleet: VesselFleet, w: World, observer: vec3, max_ships: int) -> int[]:
+    if max_ships<=0: return []
+    candidates: int[]
+    loop v in w.far.vehicles:
+        if v.kind==.ship and v.hull>0 and length(v.pos-observer)<12000: candidates.push(v.id)
+    positions=w.far.vehicles
+    # Keep both sides of an active nearby contact ahead of idle traffic.
+    last_contact=w.war.next_contact
+    candidates.sort((id: int): (
+        if positions[id].battle>=0 and length(positions[id].pos-observer)<6000: positions[id].battle else: last_contact,
+        length(positions[id].pos-observer),id))
+    occupied: (vec3,f64)[]
+    loop ship in fleet.ships:
+        if (ship.id<FAR_VESSEL_BASE or ship.id>=FAR_VESSEL_BASE+1280) and ship.status!=.sunk:
+            occupied.push((ship.position,far_scene_hull_radius(ship.kind)))
+    chosen: int[]; radius=far_scene_hull_radius(.trehantiri)
+    loop id in candidates:
+        clear=true
+        loop circle in occupied:
+            if f64(length(positions[id].pos.xz-circle.0.xz))<radius+circle.1+4.0: clear=false; break
+        if not clear: continue
+        chosen.push(id); occupied.push((positions[id].pos,radius))
+        if chosen.len()>=min(max_ships,FAR_NEAR_SHIPS): break
+    chosen
+
+sync_far_vessels = (fleet: mut VesselFleet, w: mut World, observer: vec3, max_ships: int = FAR_NEAR_SHIPS, refresh: bool = true):
+    if not w.far.populated: return
+    # Admission is a bounded quarter-second scene query in the game. Existing leases
+    # still move and commit damage every frame; leaving view always folds immediately.
+    candidates: int[]
+    if refresh: candidates=far_scene_ship_candidates(fleet,w,observer,max_ships)
+    else:
+        loop ship in fleet.ships:
+            id=ship.id-FAR_VESSEL_BASE
+            if candidates.len()<min(max_ships,FAR_NEAR_SHIPS) and id>=0 and id<w.far.vehicles.len() and w.far.vehicles[id].hull>0 and length(w.far.vehicles[id].pos-observer)<12000: candidates.push(id)
+    old: int[]
+    loop ship in fleet.ships:
+        if ship.id>=FAR_VESSEL_BASE and ship.id<FAR_VESSEL_BASE+1280 and not ((ship.id-FAR_VESSEL_BASE) in candidates): old.push(ship.id)
+    loop id in old:
+        k=vessel_index(fleet,id); v=id-FAR_VESSEL_BASE
+        if k<0 or v>=w.far.vehicles.len(): continue
+        ship=fleet.ships[k]; body=w.far.vehicles[v]
+        # Fold damage even when this is the first frame out of view. A newer explicit
+        # coarse repair still owns its revision over an older physical body.
+        if ship.seen_tick>=body.revision and ship.health*1000.0<f64(body.hull)-1:
+            w.far.vehicles[v].hull=max(0,int(round(ship.health*1000.0)))
+            w.far.vehicles[v].pos=ship.position; w.far.vehicles[v].velocity=vec3(0,0,0)
+            w.far.vehicles[v].motion_blocked="Physical damage stopped this same hull."
+        w.far.vehicles[v].scene_extension=to_text(fleet.ships[k])
+        w.far.vehicles[v].scene_owned=false
+        if w.far.vehicles[v].journey>=0: w.far.journeys[w.far.vehicles[v].journey].last_tick=w.tick
+        retire_vessel(fleet,id)
+    loop id in candidates:
+        v=w.far.vehicles[id]; body=FAR_VESSEL_BASE+id
+        k=vessel_index(fleet,body)
+        if k<0:
+            ship=Vessel(id=body,kind=.trehantiri,owner=v.account,side=200+v.citizen,position=v.pos,external=true,status=.anchored)
+            if v.scene_extension!="":
+                saved=from_text[Vessel](v.scene_extension)
+                if saved is Vessel and saved.id==body: ship=saved
+            if not vessel_footprint_wet(ship,v.pos.xz,ship.yaw): continue
+            # The hull is the economic coaster, with account-title ownership and cohort crew.
+            # No synthetic Person IDs are inserted into crew; strategic rescue retains cohorts.
+            if not spawn_vessel(fleet,ship): continue
+            k=vessel_index(fleet,body)
+        ship=fleet.ships[k]
+        if v.revision>ship.seen_tick:
+            ship.health=f64(v.hull)/1000.0; ship.seen_tick=v.revision
+            if v.motion_blocked=="": ship.fire=0; ship.flooding=0
+            fleet.ships[k]=ship
+        if ship.health*1000.0<f64(v.hull)-1:
+            w.far.vehicles[id].hull=max(0,int(round(ship.health*1000.0)))
+            w.far.vehicles[id].pos=ship.position
+            w.far.vehicles[id].velocity=vec3(0,0,0)
+            w.far.vehicles[id].motion_blocked="Physical damage stopped this same hull."
+            w.far.vehicles[id].scene_owned=true
+            if v.journey>=0: w.far.journeys[v.journey].last_tick=w.tick
+            w.far.vehicles[id].scene_extension=to_text(ship)
+            # A hit changes the same physical hull; the war/recovery layer owns its outcome.
+            continue
+        if v.motion_blocked=="":
+            if v.journey<0 and v.scene_owned and ship.position==v.pos and ship.velocity==v.velocity and ship.status==.anchored and ship.external: continue
+            w.far.vehicles[id].scene_owned=true
+            # The adapter owns the saved route interval near the player. The abstract minute
+            # skips this lease; the vessel is external and cannot integrate it a second time.
+            far_advance_transport(w,w.tick,id,true,(pos: vec3,velocity: vec3) -> bool:
+                yaw=if length(velocity)>0.01: atan2(f64(velocity.x),f64(velocity.z)) else: ship.yaw
+                vessel_footprint_wet(ship,pos.xz,yaw))
+            v=w.far.vehicles[id]
+            ship.position=v.pos; ship.velocity=v.velocity
+            ship.speed=f64(length(v.velocity))
+            if ship.speed>0.01: ship.yaw=atan2(f64(v.velocity.x),f64(v.velocity.z))
+            ship.status=if v.journey>=0: VesselStatus.underway else: .anchored
+            ship.external=true
+            fleet.ships[k]=ship

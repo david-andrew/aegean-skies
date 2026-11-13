@@ -95,8 +95,69 @@
     return [Math.max(1,Math.floor(Math.sqrt(maxPixels*aspect))),
       Math.max(1,Math.floor(Math.sqrt(maxPixels/aspect)))];
   }
-  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize };
+  // The world keeps the old adaptive pixel budget. Only the final 2D pass uses
+  // display pixels (1.3 MP on phones, or 2.6 MP for explicit High). A scalar target
+  // can round one axis down by a pixel; it must never enlarge the scene.
+  function resolutionPlan(width,height,cssWidth,cssHeight,dpr,maxPixels,mobile) {
+    const scene = cappedSize(width,height,cssWidth,cssHeight,maxPixels);
+    const display = cappedSize(Math.max(1,Math.round(cssWidth*dpr)),
+      Math.max(1,Math.round(cssHeight*dpr)),cssWidth,cssHeight,mobile ? Math.max(1300000,maxPixels) : Infinity);
+    const lo = Math.max((scene[0]-.5)/display[0],(scene[1]-.5)/display[1]);
+    const hi = Math.min(1,(scene[0]+.499)/display[0],(scene[1]+.499)/display[1]);
+    const scale = scene[0]>=display[0] && scene[1]>=display[1] ? 1 :
+      lo <= hi ? (lo+hi)*.5 : Math.min(1,scene[0]/display[0],scene[1]/display[1]);
+    return {display,scale,scene:display.map(v=>Math.max(1,Math.round(v*scale)))};
+  }
+  // Sloppy presents saves as base64 to localStorage, whose quota counts UTF-16 units.
+  // Only binary living-bank bodies use this reversible 15-bit alphabet (no surrogates).
+  // Native bytes and the independent world banks stay unchanged; legacy base64 reads too.
+  function livingStoreEncode(base64) {
+    if (base64.length < 64) return base64;
+    const raw = atob(base64), parts = [], codes = [];
+    let bits = 0, width = 0;
+    for (let i = 0; i < raw.length; ++i) {
+      bits |= raw.charCodeAt(i) << width; width += 8;
+      if (width >= 15) {
+        codes.push(256 + (bits & 32767)); bits >>>= 15; width -= 15;
+        if (codes.length === 8192) { parts.push(String.fromCharCode(...codes)); codes.length = 0; }
+      }
+    }
+    if (width) codes.push(256 + bits);
+    if (codes.length) parts.push(String.fromCharCode(...codes));
+    return `AS15:${raw.length}:` + parts.join("");
+  }
+  function livingStoreDecode(value) {
+    if (value === null || !value.startsWith("AS15:")) return value;
+    const colon = value.indexOf(":", 5), digits = value.slice(5, colon);
+    if (colon < 0 || !/^\d{1,8}$/.test(digits)) throw Error("Invalid living save byte length");
+    const length = Number(digits), start = colon + 1;
+    if (length > 64000000 || value.length - start !== Math.ceil(length * 8 / 15)) throw Error("Truncated living save byte store");
+    const parts = [], chunk = new Uint8Array(8192);
+    let bits = 0, width = 0, count = 0, used = 0;
+    for (let i = start; i < value.length; ++i) {
+      const code = value.charCodeAt(i) - 256;
+      if (code < 0 || code > 32767) throw Error("Invalid living save alphabet");
+      bits |= code << width; width += 15;
+      while (width >= 8 && count < length) {
+        chunk[used++] = bits & 255; bits >>>= 8; width -= 8; ++count;
+        if (used === chunk.length) { parts.push(String.fromCharCode(...chunk)); used = 0; }
+      }
+    }
+    if (count !== length || bits !== 0) throw Error("Invalid living save padding");
+    if (used) parts.push(String.fromCharCode(...chunk.subarray(0, used)));
+    return btoa(parts.join(""));
+  }
+  function installLivingStorage(proto) {
+    if (!proto || proto.__aegeanWideLivingStore) return;
+    const get = proto.getItem, set = proto.setItem;
+    const bodyKey = key => /^sloppy:.*-(?:a|b)-data$/.test(String(key));
+    proto.setItem = function(key, value) { return set.call(this, key, bodyKey(key) ? livingStoreEncode(String(value)) : value); };
+    proto.getItem = function(key) { const value = get.call(this, key); return bodyKey(key) ? livingStoreDecode(value) : value; };
+    Object.defineProperty(proto, "__aegeanWideLivingStore", {value:true});
+  }
+  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
   if (typeof module !== "undefined") module.exports = root.AegeanWeb;
+  if (typeof Storage !== "undefined") installLivingStorage(Storage.prototype);
   if (typeof WebGL2RenderingContext === "undefined") return;
   const mobile = navigator.userAgentData?.mobile || /Android|iPhone|iPad/i.test(navigator.userAgent) ||
     (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) <= 1024);
@@ -110,6 +171,8 @@
       options = {...options, antialias:false};
     return getContext.call(this, kind, options);
   };
+  let sceneScale = 1;
+  sloppy.env.__aegean_scene_scale = () => sceneScale;
   sloppy.env.__aegean_quality = () => {
     const canvas = document.querySelector("canvas"), gl = canvas.getContext("webgl2");
     const debug = gl.getExtension("WEBGL_debug_renderer_info");
@@ -120,9 +183,13 @@
     const originalFit = sloppy.res.fit;
     const fit = () => {
       originalFit();
-      const [w,h] = cappedSize(canvas.width,canvas.height,canvas.clientWidth,canvas.clientHeight,maxPixels);
+      const plan = resolutionPlan(canvas.width,canvas.height,canvas.clientWidth,canvas.clientHeight,
+        window.devicePixelRatio || 1,maxPixels,mobile);
+      sceneScale = plan.scale;
+      const [w,h] = plan.display;
       if (canvas.width !== w) canvas.width = w;
       if (canvas.height !== h) canvas.height = h;
+      root.AegeanWeb.resolution = plan;
     };
     sloppy.res.fit = fit;
     window.addEventListener("resize", fit);
