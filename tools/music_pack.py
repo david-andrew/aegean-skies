@@ -20,6 +20,12 @@ PIECES = [
  ('gladiators', 'Entry of the Gladiators (excerpt)', 'Julius Fucik; arr. Eric Russ', 'Orenthia National'),
  ('ikariotikos', 'Ikariotikos', 'Traditional Greek', 'Archipelago Radio'),
  ('bethena', 'Bethena: a concert waltz', 'Scott Joplin', 'Blue Lantern'),
+ # The Hotel Ancora's quiet evening set (piano, violin, guitar, mandolin): not on the radio.
+ ('gymnopedie', 'Gymnopedie No. 1', 'Erik Satie', 'Hotel Ancora'),
+ ('ave-maria', 'Ave Maria (on the first Prelude of Bach)', 'Charles Gounod', 'Hotel Ancora'),
+ ('clair-de-lune', 'Clair de lune', 'Claude Debussy', 'Hotel Ancora'),
+ ('adelita', 'Adelita', 'Francisco Tarrega', 'Hotel Ancora'),
+ ('berceuse', 'Berceuse (Dolly)', 'Gabriel Faure', 'Hotel Ancora'),
 ]
 
 def gm(program, drum=False):
@@ -88,6 +94,9 @@ def opening():
 
 def arrange(name,notes):
  out=[]
+ top={}
+ for start,dur,pitch,ins,g0,g1,track in notes:
+  key=(track,round(start,3));top[key]=max(top.get(key,-1),pitch)
  for start,dur,pitch,ins,g0,g1,track in notes:
   if name=='magnetic':
    start*=60/116;dur*=60/116
@@ -95,6 +104,16 @@ def arrange(name,notes):
    # Keep every original piano pitch; light banjo doubles the off-beat middle register.
    if track==2 and 48<=pitch<67:out.append([start,dur,pitch,BANJO,g0*.36,g1*.36,track])
   elif name=='el-choclo': ins=ACCORDION if track==0 else PIANO if pitch>=48 else BASS
+  elif name=='gymnopedie' and track==1:
+   # The right hand's top voice is the tune: the violin sings it; the chords stay on the piano.
+   ins=STRINGS if pitch>=67 and pitch==top.get((track,round(start,3)),-1) else PIANO
+  elif name=='adelita':
+   # Two guitars: the tune on a mandolin-like plucked voice, the accompaniment on a guitar.
+   ins=BOUZOUKI if track==1 else HARP
+   if track==1:g0*=.85;g1*=.85
+  elif name=='berceuse':
+   # Flute and guitar become violin and guitar.
+   ins=STRINGS if track==1 else HARP
   elif name=='ikariotikos':
    ins=BOUZOUKI
    # Unison octave accompaniment follows the traditional melody, no invented harmony.

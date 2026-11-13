@@ -119,6 +119,7 @@ use 'src/leisure.jo'
 use 'src/leisure_view.jo'
 use 'src/bar_scene.jo'
 use 'src/bar_band.jo'
+use 'src/plane_work.jo'
 use 'src/walk_shapes.jo'
 use 'src/music_data.jo'
 import 'src/cargo_scene.jo' as cargo_scene
@@ -462,7 +463,7 @@ band_words = () -> str:
     bp = bar_set_position(living_world.tick)
     if not bp.playing: return "The band is between numbers."
     sp = BAR_SET[bp.index]
-    who = if sp.lineup == 0: "The pianist is playing" else: if sp.lineup == 2: "The trio is playing" else: "The band is playing"
+    who = if sp.lineup == 0: "The pianist is playing" else: if sp.lineup == 2: "The trio is playing" else: if sp.lineup == 4: "The piano and the violin are playing" else: if sp.lineup == 5: "A guitar and a mandolin are playing" else: if sp.lineup == 6: "A violin and a guitar are playing" else: "The band is playing"
     "{who} {MUSIC_PIECES[sp.piece].title}{if bar_singing(bp): ", and the singer sings" else: ""}."
 
 draw_leisure = (L: Light):
@@ -554,10 +555,18 @@ leisure_panel = ():
             choices.push("That will do")
             r = choice_panel(fonts, "Your {CRAFT_NAMES[int(pc.kind)]}", "Moored at {living.place_name(w, w.people[w.player].place)}", leisure_line, choices)
             if r.choice >= 0 and r.choice < TINKER_JOBS.len():
-                out = leisure_tinker(w, c, TINKER_JOBS[r.choice].task)
-                leisure_line = out.line
-                if out.minutes > 0: leisure_skip(out.minutes, "Working on the aircraft")
+                if w.aircraft[c].state != .moored:
+                    leisure_line = "She has to be moored and still first."
+                else:
+                    leisure_line = ""
+                    start_plane_job(TINKER_JOBS[r.choice].task)
             else if r.choice >= 0 or r.closed: ui = .none
+        5:
+            # (at work on the aircraft: what he is doing, on a card; Escape stops)
+            if not job.active: leisure_ui = 3
+            else:
+                prompt_card(fonts, job.line, 150.0)
+                if vpressed(.escape): stop_plane_job()
         4:
             if leisure_host < 0:
                 ui = .none
@@ -602,6 +611,10 @@ leisure_capture_step = ():
         leisure_sit("coffee")
         _leisure_order("coffee", coffee_menu[coffee_menu.len() - 30])
         leisure_open_menu("coffee")
+    if stage.starts_with("work:"):
+        name = stage[5..stage.len()]
+        loop jb in TINKER_JOBS:
+            if "{jb.task}" == name: start_plane_job(jb.task)
     if stage == "tinker":
         ui = .leisure; leisure_ui = 3; leisure_line = ""
     if stage == "spare":
@@ -613,6 +626,9 @@ leisure_capture_step = ():
         me.pos = vec3(p.x, f32(walk_height(towns, f64(p.x), f64(p.z))), p.z)
         me.yaw = atan2(f64(-hotel.table_x.x), f64(-hotel.table_x.z))
         follow.yaw = me.yaw + PI
+    if stage == "band":
+        global judge_camera
+        judge_camera = JudgeView(hotel.stage + hotel.stage_out * 5.5 + hotel.table_z * 0.6 + vec3(0, 1.6, 0), hotel.stage + hotel.table_z * 0.6 + vec3(0, 1.0, 0), "Hotel Ancora, the band")
     if stage == "door" or stage == "board":
         global judge_camera
         if stage == "door": judge_camera = JudgeView(hotel.desk - hotel.table_z * 9.0 + hotel.table_x * 2.0 + vec3(0, 1.4, 0), hotel.desk + vec3(0, 2.6, 0) + hotel.table_z * 1.4, "Hotel Ancora, the door")
@@ -631,6 +647,255 @@ leisure_capture_step = ():
         ui = .none
         leisure_skip(rest_minutes(living_world, 420), "Asleep in a room at the Hotel Ancora", 1)
     if menu_view.query == "" and env("AEGEAN_LEISURE_SECTION") != none: menu_view.section = to_int(env("AEGEAN_LEISURE_SECTION") ?? "0") ?? 0
+
+
+# ---------------- working on the aircraft, by hand (src/plane_work.jo) ----------------
+# A job from the aircraft's panel: the pilot walks to the quay's edge, hauls the line in if she
+# lies off, steps aboard and climbs to where the job is (or does it from the quay when it's within
+# reach), works at it, and comes back ashore. Time passes while he works.
+
+struct PlaneJob:
+    active = false
+    task: TinkerTask = .wipe
+    legs: WorkLeg[]
+    leg = 0
+    clock = 0.0
+    point = 0
+    planned = false                 # (the job's own legs, after any hauling in)
+    minutes = 0
+    work_total = 1.0
+    aboard = false
+    local: vec3 = vec3(0, 0, 0)     # (the feet, in the craft frame, while aboard)
+    pose: WorkPose = .stand
+    line = ""
+    stall = 0.0
+    caught_up = false               # (the world's clock has run on for the job)
+    ashore: vec3 = vec3(0, 0, 0)    # (where he steps aboard from: the camera keeps that side)
+job = PlaneJob()
+
+cowling_panel = custom_mesh((): 
+    vs: Vertex3D[]
+    add_box(vs, vec3(0, -0.24, 0), vec3(0.03, 0.48, 0.5), rgb(0.55, 0.55, 0.56))
+    vs
+())
+
+plane_layout = () -> CraftLayout:
+    cm = craft_models[pc.model]
+    craft_layout(cm.shade, cm.prop_at, cm.prop_radius, cm.cockpit, cm.exit)
+
+# the nearest walkable quay (or ground) to a world point, within three metres, or none
+quay_point = (p: vec3) -> vec3?:
+    best: vec3? = none
+    bd = 1000.0
+    loop ring in 0..13:
+        r = f64(ring) * 0.25
+        n = if ring == 0: 1 else: 16
+        loop k in 0..n:
+            a = f64(k) / f64(n) * TAU
+            x = f64(p.x) + cos(a) * r; z = f64(p.z) + sin(a) * r
+            h = walk_height(towns, x, z)
+            if h < 0.6: continue
+            c = vec2(f32(x), f32(z))
+            if town_avoid_buildings(towns, c, h) != c: continue
+            if r < bd:
+                bd = r; best = vec3(f32(x), f32(h), f32(z))
+        if best != none: return best
+    best
+
+# the player put exactly here (on the airframe the ground's height doesn't apply)
+place_walker = (p: vec3):
+    global me, walker_point, walker_published
+    me.pos = p
+    walker_point = world_point(p)
+    walker_published = me.pos
+
+# the part most in need of a patch (the near lower wing if nothing is torn)
+damaged_part = (near: f64) -> int:
+    best = if near < 0.0: 2 else: 3
+    worst = 0.98
+    loop k in [0, 2, 3, 4, 5, 6]:
+        if k < pc.state.damage.parts.len() and pc.state.damage.parts[k].attached and pc.state.damage.parts[k].health < worst:
+            worst = pc.state.damage.parts[k].health; best = k
+    best
+
+# which side of the aircraft the player is on (-1 left, 1 right)
+player_side = () -> f64:
+    local = transform_point(inverse(pc_at()), me.pos)
+    if local.x < 0: -1.0 else: 1.0
+
+start_plane_job = (task: TinkerTask):
+    global job, ui, leisure_ui, follow
+    minutes = 15
+    loop j in TINKER_JOBS:
+        if j.task == task: minutes = j.minutes
+    l = plane_layout()
+    b = choose_boarding(l, pc_at(), quay_point)
+    if b.gap >= 999.0 and mooring_anchor() == none:
+        global leisure_line
+        leisure_line = "There's no quay alongside to work from."
+        return
+    job = PlaneJob(active = true, task = task, minutes = minutes)
+    # (lying off: to the bollard first, to haul her in)
+    if b.gap > 1.4:
+        if let a = mooring_anchor():
+            if let q = quay_point(a): job.legs = [WorkLeg(.walk, [q]), WorkLeg(.haul, [])]
+    ui = .leisure; leisure_ui = 5
+    mouse_lock(false)
+
+_plan_plane_job = ():
+    global job
+    l = plane_layout()
+    job.legs = plan_work(l, pc_at(), task_stops(l, job.task, damaged_part(player_side()), player_side()), quay_point)
+    job.leg = 0; job.clock = 0.0; job.point = 0; job.planned = true
+    loop g in job.legs:
+        if g.kind == .hop_on: job.ashore = g.from
+    total = 0.0
+    loop g in job.legs:
+        if g.kind == .work: total += g.seconds
+    job.work_total = max(1.0, total)
+
+_next_leg = ():
+    global job
+    job.leg += 1; job.clock = 0.0; job.point = 0; job.stall = 0.0
+
+_face = (p: vec3):
+    global me
+    d = p - me.pos
+    if length(d.xz) > 0.01: me.yaw = atan2(f64(d.x), f64(d.z))
+
+# A frame of the job: the current leg walked, climbed or worked.
+plane_job_step = (dt: f64):
+    global job, me, hour, leisure_ui, leisure_line, follow, pc, follow_steady
+    if not job.active: return
+    frame = pc_at()
+    # (the camera keeps a three-quarter view from behind, a little farther out)
+    # (on the quay, a three-quarter view from behind; aboard, from the quay's side of her, a little
+    # off the nose, steady while she rides the swell)
+    near_craft = job.aboard or (job.leg < job.legs.len() and (job.legs[job.leg].kind == .hop_on or job.legs[job.leg].kind == .hop_off))
+    follow.distance += ((if near_craft: 7.0 else: 6.0) - follow.distance) * min(1.0, dt * 2.0)
+    follow.pitch += ((if near_craft: 0.38 else: 0.3) - follow.pitch) * min(1.0, dt * 2.0)
+    if near_craft:
+        side = normalize((job.ashore - pc.state.position).xz + vec2(0.0001, 0))
+        nose = normalize(quat_rotate(pc.state.orientation, vec3(0, 0, -1)).xz + vec2(0.0001, 0))
+        look = normalize(side * 0.8 + nose * 0.6)
+        follow.yaw = approach_angle(follow.yaw, atan2(f64(look.x), f64(look.y)), 1.5, dt)
+        follow_steady = vec3(0, f32(swell_at(f64(pc.state.position.x), f64(pc.state.position.z), t).x * 0.9), 0)
+    else:
+        follow.yaw = approach_angle(follow.yaw, me.yaw + PI + 0.7, 1.2, dt)
+        follow_steady = vec3(0, 0, 0)
+    if job.leg >= job.legs.len():
+        if not job.planned:
+            _plan_plane_job()
+            return
+        out = leisure_tinker(living_world, living_world.people[living_world.player].craft, job.task)
+        leisure_line = out.line
+        job.active = false
+        job.pose = .stand
+        follow.distance = 5.5
+        follow_steady = vec3(0, 0, 0)
+        leisure_ui = 3
+        return
+    g = job.legs[job.leg]
+    job.clock += dt
+    me.stride = approach(me.stride, 0.0, 6.0, dt)
+    match g.kind:
+        .walk:
+            job.pose = .stand; job.line = "To the aircraft"
+            target = g.points[min(job.point, g.points.len() - 1)]
+            d = target.xz - me.pos.xz
+            if f64(length(d)) < 0.18:
+                job.point += 1
+                if job.point >= g.points.len(): _next_leg()
+                return
+            before = me.pos
+            dir = normalize(d)
+            step_player_walk(dir * f32(min(1.6 * dt, f64(length(d)))))
+            me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 10.0, dt)
+            me.stride = approach(me.stride, 0.7, 8.0, dt)
+            me.phase += dt * 1.6 * 5.0
+            # (blocked by something: go round it by the navigation grid, or at last step past)
+            if f64(length(me.pos.xz - before.xz)) < 0.2 * dt:
+                job.stall += dt
+                if job.stall > 0.6 and g.points.len() == 1:
+                    path = cargo_scene.cargo_walk_path(towns, me.pos, target)
+                    if path.len() > 1: job.legs[job.leg].points = path; job.point = 1
+                    job.stall = -1.0
+                else if job.stall > 1.5: place_walker(target); job.stall = 0.0
+            else: job.stall = max(0.0, job.stall)
+        .haul:
+            job.pose = .haul; job.line = "Hauling in the line"
+            p = pc.state.position
+            if let a = mooring_anchor():
+                _face(vec3(p.x, me.pos.y, p.z))
+                off = vec3(p.x - a.x, 0, p.z - a.z)
+                l = f64(length(off))
+                if l > 3.1 and job.clock < 8.0:
+                    np = p - off / f32(l) * f32(min(1.2 * dt, l - 3.1))
+                    pc.state.position = np; pc.state.mooring_point = np
+                else: _next_leg()
+            else: _next_leg()
+        .hop_on, .hop_off:
+            job.pose = .climb; job.line = if g.kind == .hop_on: "Stepping aboard" else: "Back onto the quay"
+            u = clamp(job.clock / 0.9, 0.0, 1.0)
+            a = if g.kind == .hop_on: g.from else: transform_point(frame, g.from)
+            b = if g.kind == .hop_on: transform_point(frame, g.to) else: g.to
+            arc = f32(sin(u * PI) * 0.35)
+            place_walker(a + (b - a) * f32(u * u * (3.0 - 2.0 * u)) + vec3(0, arc, 0))
+            _face(b)
+            if u >= 1.0:
+                job.aboard = g.kind == .hop_on
+                if job.aboard: job.local = g.to
+                else: place_walker(g.to)
+                _next_leg()
+        .craft:
+            target = g.points[min(job.point, g.points.len() - 1)]
+            d = target - job.local
+            climbing = abs(f64(d.y)) > 0.25
+            job.pose = if climbing: WorkPose.climb else: WorkPose.stand
+            job.line = if climbing: "Climbing up" else: "Along the aircraft"
+            dist = f64(length(d))
+            if dist < 0.05:
+                job.point += 1
+                if job.point >= g.points.len(): _next_leg()
+            else:
+                speed = if climbing: 0.6 else: 1.1
+                job.local = job.local + d / f32(dist) * f32(min(speed * dt, dist))
+                if not climbing:
+                    me.stride = approach(me.stride, 0.6, 8.0, dt)
+                    me.phase += dt * speed * 5.0
+                _face(transform_point(frame, target))
+            place_walker(transform_point(frame, job.local))
+        .work:
+            job.pose = g.pose; job.line = g.line
+            if job.aboard: place_walker(transform_point(frame, job.local))
+            aim = transform_point(frame, g.target)
+            _face(aim)
+            # (the propeller turned so a blade comes to his hand)
+            if job.task == .polish:
+                hub = craft_models[pc.model].prop_at
+                pc.prop_angle = atan2(-f64(g.target.x - hub.x), f64(g.target.y - hub.y))
+            # (the sun moves as he works; the world's clock catches up when the work is done)
+            hour = (hour + dt * f64(job.minutes) / 60.0 / job.work_total + 24.0) % 24.0
+            if job.clock >= g.seconds:
+                last = true
+                loop k in job.leg + 1..job.legs.len():
+                    if job.legs[k].kind == .work: last = false
+                if last and not job.caught_up:
+                    job.caught_up = true
+                    leisure_skip(job.minutes, "Working on the aircraft")
+                _next_leg()
+
+# Escape stops the job where it is: back onto the quay, nothing done.
+stop_plane_job = ():
+    global job, leisure_ui, follow, follow_steady
+    follow_steady = vec3(0, 0, 0)
+    if job.aboard:
+        loop k in job.leg..job.legs.len():
+            if job.legs[k].kind == .hop_off: place_walker(job.legs[k].to); break
+    job.active = false
+    job.pose = .stand
+    follow.distance = 5.5
+    leisure_ui = 3
 
 player_cents = () -> int:
     a = living_world.people[living_world.player].account
@@ -725,10 +990,13 @@ step_player_walk = (move: vec2):
     sync_walker_point()
     walker_point=walk_step_precise(towns,walker_point,move)
     me.pos=world_vec(walker_point);walker_published=me.pos
+# (follow_steady: taken off the camera's target, so it doesn't heave with a moored aircraft)
+follow_steady = vec3(0, 0, 0)
 update_player_follow = (dt: f64,input: bool = true):
     global follow,follow_frame,actor_render_offsets
     sync_walker_point()
-    update_local_follow(follow,follow_frame,walker_point,dt,input=input)
+    target = if follow_steady == vec3(0, 0, 0): walker_point else: world_point(world_vec(walker_point) - follow_steady)
+    update_local_follow(follow,follow_frame,target,dt,input=input)
     actor_render_offsets[living_world.player]=world_residual(walker_point)
 
 descent_camera = DescentCamera()
@@ -2300,6 +2568,7 @@ update = (dt: f64):
     match me.mode:
         .free: free.update(dt)
         .walking:
+          if job.active: plane_job_step(dt)
           if ui != .none: update_player_follow(dt)
           if ui == .none and not notebook.open:
               follow.distance = clamp(follow.distance * pow(0.93, clamp(mouse_wheel(), -3.0, 3.0)), 2.5, 14.0)
@@ -2807,7 +3076,7 @@ draw_world = (L: Light):
             draw(obj_sh, board_mesh, obj_params(L, t, translation(board_spots[k]) * rotation_y(atan2(f64(tw.out.x), f64(tw.out.y)))))
         loop w in walkers:
             if length(w.pos - scene_camera()) < 600.0: draw_figure(w.fig, w.pos, w.yaw, w.phase, if w.wait > 0.0: 0.0 else: 0.8, L, t)
-        if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, if cat_busy(cat_scene) or leisure.sitting != "": 0.0 else: me.stride, Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=if cat_busy(cat_scene): 4 else: if leisure.sitting != "": 1 else: 0)
+        if me.mode == .walking: draw_figure(me_fig, me.pos, me.yaw, me.phase, if cat_busy(cat_scene) or leisure.sitting != "": 0.0 else: me.stride, Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=if cat_busy(cat_scene): 4 else: if leisure.sitting != "": 1 else: if job.active: work_posture(job.pose) else: 0)
         draw_traffic(all_air_traffic,craft_models,L,t,battle,1800)
         draw_air_meets(air_meet_view,air_events,L,t)
         draw_air_far(air_visual,all_air_traffic,L,t,battle)
@@ -2826,6 +3095,11 @@ draw_world = (L: Light):
                     local_at[3]=vec4(0,0,0,1)
                 draw_craft_parts(pm,pc.state.damage,local_at,L,t,pc.prop_angle,airframe(pc),pc.state.gear,anchor,prop_speed=prop_rotation_speed(pc.state,pc.feedback.speed),prop_key=living_world.people[living_world.player].craft)
             draw_debris(pm,pc.state.damage,L,t)
+            # (tuning: a cowling panel swung open on the side he works)
+            if job.active and job.task == .tune and job.leg < job.legs.len() and job.legs[job.leg].kind == .work:
+                l = plane_layout()
+                side = if job.legs[job.leg].target.x < 0: -1.0 else: 1.0
+                draw(obj_sh, cowling_panel, obj_params(L, t, at * translation(l.engine + vec3(f32(side * l.engine_radius), f32(l.engine_radius * 0.55), 0)) * rotation_z(side * 2.0)))
             if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t,me.mode==.aboard and pc.cockpit_view)
             if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_rotation_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft)
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true,offset=world_residual(craft_point(pc.state)))
@@ -3081,6 +3355,11 @@ draw = ():
             if let band=prop_bands.get(living_world.people[living_world.player].craft):print("PROPFRAME {n} {pc.state.throttle:.4} {prop_rotation_speed(pc.state,pc.feedback.speed):.3} {band.angle:.5}")
     if let directory=env("AEGEAN_ATMOS_FRAMES"):
         if frame_number() in [2,360,780,1200,1800] or frame_number()%4==0 and (frame_number()<=120 or frame_number()>=720 and frame_number()<=960): save_png("{directory}/{frame_number()}.png",screenshot())
+    # AEGEAN_LEISURE_FRAMES=dir: every half second of a job on the aircraft, and its legs as they go
+    if let directory = env("AEGEAN_LEISURE_FRAMES"):
+        if job.active and frame_number() % 30 == 0:
+            save_png("{directory}/{frame_number()}.png", screenshot())
+            if job.leg < job.legs.len(): print("JOB frame {frame_number()} leg {job.leg}/{job.legs.len()} {job.legs[job.leg].kind} pose {job.pose} aboard {job.aboard} at {me.pos} hour {hour:.2}")
     if capture_audio:
         global captured_audio
         if frame_number()<=1800: captured_audio.extend(__mix_buf)

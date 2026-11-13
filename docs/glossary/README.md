@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
@@ -762,14 +762,34 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Bar set and singer
 
-- **Definition:** the hotel's evening music, live from 19:00 to 23:30: the procedural orchestra in
-  small line-ups (piano alone, dance band, tango trio, island pair), heard through the terrace's
-  room (the facade's reflection, a short tail, air by distance; no radio filter), and a singer: a
-  harmonic formant voice that sings each tune's melody (ornaments folded away, glides, a late
-  vibrato) while the instrument that carried it plays softer.
+- **Definition:** the hotel's evening music, live from 19:00 to 23:30: a quiet set of real
+  public-domain pieces (Satie's Gymnopédie No. 1, Gounod's Ave Maria, Debussy's Clair de lune,
+  Tárrega's Adelita, Fauré's Berceuse) arranged for the small band (piano, violin, guitar,
+  mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
+  distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
+  the violin plays softer. Each evening starts one number further on, so every piece comes round.
 - **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_set_position`, `singer_line`, `singer_render`,
-  `bar_room_sample`); clips with `tools/bar_music_clip.jo`.
+  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`draw_band`); clips with
+  `tools/bar_music_clip.jo`; note sources and permissions in `data/music/SOURCES.md`.
 - **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
+
+### Plane work
+
+- **Aliases:** working on the aircraft, tinkering.
+- **Definition:** a job on one's own moored aircraft done by hand: the pilot walks there, hauls the
+  line in if she lies off, does the job from the quay when it is within an arm's reach, else steps
+  aboard (onto a float or a flying boat's deck) and climbs a strut to the lower wing's root (over
+  the fuselage to the far side if need be), works in a pose that fits (reaching up, leaning in,
+  crouching), and comes back ashore. The sun moves while he works; the world's clock catches up at
+  the end.
+- **Code:** `src/plane_work.jo` (`craft_layout` from each model's flat parts, hub, head and
+  step-off point; `task_stops`, `choose_stand`, `choose_boarding`, `craft_route`, `plan_work`);
+  the stepper `plane_job_step` in `aegean.jo`; `tests/plane_work_test.jo`.
+- **Rules:** reach is 1.15 m from the feet, from 0.35 m below them to 2.1 m above; the quay is
+  preferred over climbing, and the near side over the far one. Small real effects only on light
+  wear (`leisure_tinker`).
+- **Capture:** `AEGEAN_LEISURE=work:wipe|inspect|oil|tune|patch|polish` with
+  `AEGEAN_LEISURE_FRAMES=<dir>` (and `AEGEAN_CRAFT` for another airframe).
 
 ### Time skip
 
@@ -1060,7 +1080,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
-| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
 | `tools/prop_disc_frames.jo` | `PROP_VIEW`, `PROP_THROTTLE`, `PROP_SWEEP` |
 | `tools/coast_capture.jo` | `COAST_SITE`, `COAST_RANGE` |
