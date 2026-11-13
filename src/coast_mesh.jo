@@ -14,7 +14,15 @@ struct CoastInstance:
     level: f32
     edges: vec4                    # shared global subdivision levels
     region: vec4 = vec4(0,0,1,0)    # canonical UV origin and span
-    corners: vec4 = vec4(-1,-1,-1,-1) # explicit shared support-domain junctions
+    corners: vec2 = vec2(-1,-1)     # two 12-bit words, each holding two levels
+
+coast_corner_value = (bits: vec2,corner: int) -> f32:
+    word = if corner < 2: bits.x else: bits.y
+    high = floor(word/64.0)
+    (if corner%2 == 0: word-high*64.0 else: high)*0.125
+
+coast_corner_pack = (levels: vec4) -> vec2:
+    vec2(levels.x*8.0+levels.y*512.0,levels.z*8.0+levels.w*512.0)
 
 # Conservative whole-batch bounds for the WebGL near-depth variant. No new
 # partitions/uploads: fine grids already form small nearby instance batches.
@@ -138,11 +146,11 @@ coast_merge_support = (batches: mut CoastInstance[][],parts: CoastInstance[],x: 
             if (i == x or i == x+n) and (j == z or j == z+n): continue
             ci = min(i,7); cj = min(j,7)
             q = parts[cj*8+ci]
-            actual = if i == 8: (if j == 8: q.corners.w else: q.corners.y) else: (if j == 8: q.corners.z else: q.corners.x)
+            actual = coast_corner_value(q.corners,if i == 8: (if j == 8: 3 else: 1) else: (if j == 8: 2 else: 0))
             expected = if i == x: edge.x else: if i == x+n: edge.y else: if j == z: edge.z else: if j == z+n: edge.w else: part.level
             if actual != expected: same = false
     if same or n == 1:
-        part.corners = vec4(parts[z*8+x].corners.x,parts[z*8+x+n-1].corners.y,parts[(z+n-1)*8+x].corners.z,parts[(z+n-1)*8+x+n-1].corners.w)
+        part.corners = coast_corner_pack(vec4(coast_corner_value(parts[z*8+x].corners,0),coast_corner_value(parts[z*8+x+n-1].corners,1),coast_corner_value(parts[(z+n-1)*8+x].corners,2),coast_corner_value(parts[(z+n-1)*8+x+n-1].corners,3)))
         part.region = vec4(f32(x)/8.0,f32(z)/8.0,f32(n)/8.0,0)
         part.edges = edge
         batches[coast_grid_level(part)].push(part)
@@ -183,7 +191,7 @@ coast_emit_support = (batches: mut CoastInstance[][],inst: CoastInstance,levels:
             if j == 0: edge.z = min(limits.z,max(edge.z,coast_support_level(supports,a,vec2(b.x,a.y))))
             if j == 7: edge.w = min(limits.w,max(edge.w,coast_support_level(supports,vec2(a.x,b.y),b)))
             part = inst; part.level = level; part.edges = edge
-            part.corners = vec4(coast_support_corner(inst,levels,supports,i,j,limits),coast_support_corner(inst,levels,supports,i+1,j,limits),coast_support_corner(inst,levels,supports,i,j+1,limits),coast_support_corner(inst,levels,supports,i+1,j+1,limits))
+            part.corners = coast_corner_pack(vec4(coast_support_corner(inst,levels,supports,i,j,limits),coast_support_corner(inst,levels,supports,i+1,j,limits),coast_support_corner(inst,levels,supports,i,j+1,limits),coast_support_corner(inst,levels,supports,i+1,j+1,limits)))
             part.region = vec4(f32(i)/8.0,f32(j)/8.0,0.125,0)
             parts.push(part)
     coast_merge_support(batches,parts,0,0,8)
@@ -253,6 +261,8 @@ coast_cells: {vec2:CoastCellSelection} = {}
 coast_cached_instances = 0
 coast_motion_cache = true
 coast_selection_reuses = 0
+coast_batch_capacity: int[7] = [0,0,0,0,0,0,0]
+coast_next_capacity: int[7] = [0,0,0,0,0,0,0]
 
 coast_hold_value = (previous: f32,raw: f32) -> f32:
     if raw == 0.0: return 0.0
@@ -274,7 +284,10 @@ reset_coast_selection = ():
     coast_levels = {}; coast_cells = {}; coast_cached_instances = 0
 
 begin_coast_selection = ():
-    global coast_selection_epoch,coast_levels,coast_cells,coast_cached_instances
+    global coast_selection_epoch,coast_levels,coast_cells,coast_cached_instances,coast_batch_capacity,coast_next_capacity
+    loop k in 0..COAST_LEVELS:
+        coast_batch_capacity[k] = min(8192,coast_next_capacity[k]+coast_next_capacity[k]/8)
+        coast_next_capacity[k] = 0
     coast_selection_epoch += 1
     # Rebuild bounded maps occasionally instead of shifting entries on removal.
     if coast_levels.len() > 24000:
@@ -298,7 +311,14 @@ coast_add_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,
     coast_build_patch(batches,values,nx,nz,ox,oz,px,pz,cells,texel,cam,origin,focal,planes,limits,source_id)
 
 coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,ox: f64,oz: f64,px: int,pz: int,cells: int,texel: vec2,cam: vec3,origin: vec3,focal: f64,planes: vec4[],limits: vec4 = vec4(6,6,6,6),source_id: int = 0):
-    global coast_selection_builds,coast_cells,coast_cached_instances,coast_selection_reuses
+    global coast_selection_builds,coast_cells,coast_cached_instances,coast_selection_reuses,coast_next_capacity
+    empty = true
+    loop group in batches:
+        if group.len() > 0: empty = false
+    if empty:
+        # Reuse last frame's size estimate, bounded to 8192 slots per grid.
+        # This avoids repeatedly growing and copying the moving instance lists.
+        loop k in 0..COAST_LEVELS: batches[k].reserve(coast_batch_capacity[k])
     vertical = [loop k in 0..cells*(cells+1): vec2(-1,0)]
     horizontal = [loop k in 0..cells*(cells+1): vec2(-1,0)]
     # Cull first. Only visible cells and their shared edges need projected
@@ -348,6 +368,7 @@ coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: in
             level = max(level,max(max(edges.x,edges.y),max(edges.z,edges.w)))
             inst = CoastInstance(vec2(f32(x-f64(origin.x)),f32(z-f64(origin.z))),vec2(f32(x),f32(z)),texel+vec2(f32(px+i),f32(pz+j)),h,level,edges)
             if level == 0.0:
+                coast_next_capacity[0] += 1
                 batches[0].push(inst)
                 continue
             # Compare shape only; chart origin and texture residency are bindings.
@@ -418,7 +439,9 @@ coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: in
             coast_bind_cell(batches,old.parts,inst.origin,inst.texel)
 
 coast_bind_cell = (batches: mut CoastInstance[][],parts: CoastInstance[][],origin: vec2,texel: vec2):
+    global coast_next_capacity
     loop k in 0..COAST_LEVELS:
+        coast_next_capacity[k] += parts[k].len()
         loop part in parts[k]:
             bound = part; bound.origin = origin; bound.texel = texel
             batches[k].push(bound)
@@ -445,10 +468,10 @@ coast_mesh_level = (inst: CoastInstance,p: vec2) -> f32:
     level = inst.level
     let p = (p-inst.region.xy)/inst.region.z
     if inst.corners.x >= 0.0:
-        if p.x == 0.0 and p.y == 0.0: return inst.corners.x
-        if p.x == 1.0 and p.y == 0.0: return inst.corners.y
-        if p.x == 0.0 and p.y == 1.0: return inst.corners.z
-        if p.x == 1.0 and p.y == 1.0: return inst.corners.w
+        if p.x == 0.0 and p.y == 0.0: return coast_corner_value(inst.corners,0)
+        if p.x == 1.0 and p.y == 0.0: return coast_corner_value(inst.corners,1)
+        if p.x == 0.0 and p.y == 1.0: return coast_corner_value(inst.corners,2)
+        if p.x == 1.0 and p.y == 1.0: return coast_corner_value(inst.corners,3)
     if p.x == 0.0: level = min(level,inst.edges.x)
     if p.x == 1.0: level = min(level,inst.edges.y)
     if p.y == 0.0: level = min(level,inst.edges.z)
