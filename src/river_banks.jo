@@ -22,8 +22,14 @@ struct RiverBankBatch:
     bounds:vec3=vec3(0,0,0)
     radius:f64=0.0
 river_bank_batches:RiverBankBatch[]
+# Instance buckets per material: near kinds 0-3, distant poplar/plane/reed 4-6,
+# distant crowns without trunks 7-8.
+RIVER_BANK_BUCKETS=9
+# How far distant bank trees are drawn, by quality tier (low, medium, high).
+river_bank_reach=()->f64:if render_quality.tier==0:2000.0 else:if render_quality.tier==1:2800.0 else:3500.0
 river_bank_near:Mesh[]
 river_bank_far:Mesh[]
+river_bank_crowns:Mesh[]
 river_bank_sh:Shader
 river_bank_far_sh:Shader
 river_bank_view:InstanceBuffer[RiverBankInstance][]
@@ -124,9 +130,9 @@ river_bank_mesh=(vertices:Vertex3D[])->Mesh:
     mesh(unique,indices)
 
 init_river_banks=():
-    global river_bank_batches,river_bank_near,river_bank_far,river_bank_sh,river_bank_far_sh,river_oleander_low,river_oleander_high,river_bank_view,river_bank_selection,river_bank_view_origin,river_bank_view_eye
+    global river_bank_batches,river_bank_near,river_bank_far,river_bank_crowns,river_bank_sh,river_bank_far_sh,river_oleander_low,river_oleander_high,river_bank_view,river_bank_selection,river_bank_view_origin,river_bank_view_eye
     empty:RiverBankInstance[]
-    river_bank_view=[loop i in 0..14:instance_buffer(empty)]
+    river_bank_view=[loop i in 0..RIVER_BANK_BUCKETS*2:instance_buffer(empty)]
     river_bank_selection=[];river_bank_view_origin=vec3(1e30,1e30,1e30);river_bank_view_eye=river_bank_view_origin
     river_bank_sh=make_world_shader(shader(river_bank_vs,river_bank_fs))
     river_bank_far_sh=make_world_shader(shader(river_bank_vs,river_bank_far_fs))
@@ -135,6 +141,11 @@ init_river_banks=():
         river_tree(near,vec3(0,0,0),kind,0.0,true,true)
         river_tree(far,vec3(0,0,0),kind,0.0,false,true)
         river_bank_near.push(river_bank_mesh(near));river_bank_far.push(river_bank_mesh(far))
+        # Beyond the trunk distance a 0.44 m trunk is a fraction of a pixel:
+        # the same distant crowns, without their aliased sliver of trunk.
+        trunk:Vertex3D[]
+        add_cylinder(trunk,vec3(0,0,0),0.22,9.0,rgb(0.38,0.36,0.28),4,0.08)
+        river_bank_crowns.push(river_bank_mesh([loop k in trunk.len()..far.len():far[k]]))
     reeds:Vertex3D[]
     add_cylinder(reeds,vec3(0,0,0),0.055,1.0,rgb(0.28,0.39,0.14),3,0.015)
     river_bank_near.push(river_bank_mesh(reeds))
@@ -226,6 +237,7 @@ river_bank_storage=()->(int,int,int):
             bytes+=count*size_of(RiverBankInstance)
             vertices=river_bank_near[kind].index_count+(if kind<2:river_bank_far[kind].index_count else:0)
             expanded+=count*vertices*size_of(Vertex3D)
+    loop mesh in river_bank_crowns:bytes+=mesh.count*size_of(Vertex3D)+mesh.index_count*4
     loop buffer in river_bank_view:bytes+=buffer.count*size_of(RiverBankInstance)
     (resident,bytes,expanded)
 
@@ -241,7 +253,7 @@ draw_river_banks=(L:Light,t:f64):
     loop i in 0..river_bank_batches.len():
         batch=river_bank_batches[i]
         d=length(cam.xz-batch.center.xz)
-        if d>=3500:continue
+        if d>=min(3500.0,river_bank_reach()+800.0):continue
         if not batch.ready:
             if generated:continue
             batch=build_river_bank(i);river_bank_batches[i]=batch;generated=true
@@ -266,7 +278,8 @@ draw_river_banks=(L:Light,t:f64):
     if changed:
         # Coalesce visible groups by prototype/LOD/material. Re-upload only when
         # that selection or the render chart changes, not on every moving frame.
-        lists:RiverBankInstance[][]=[loop i in 0..14:[]]
+        lists:RiverBankInstance[][]=[loop i in 0..RIVER_BANK_BUCKETS*2:[]]
+        reach=river_bank_reach();trunks=max(render_quality.grove_distance,600.0)
         loop key in selected:
             batch=river_bank_batches[key/4]
             delta=batch.center-origin
@@ -278,16 +291,19 @@ draw_river_banks=(L:Light,t:f64):
                     # beyond the centre's LOD, needlessly shading every lobe.
                     near=distance<render_quality.grove_distance
                     if not near and kind>=2:continue
+                    # Distant bank trees end at the tier's reach, as groves do.
+                    if f64(distance)>reach:continue
                     far_shader=distance>352.0
                     distant_reed=kind==2 and distance>80.0
-                    bucket=(if distant_reed:6 else:if near:kind else:4+kind)+(if far_shader:7 else:0)
+                    crown=not near and f64(distance)>trunks
+                    bucket=(if distant_reed:6 else:if near:kind else:if crown:7+kind else:4+kind)+(if far_shader:RIVER_BANK_BUCKETS else:0)
                     inst=source;inst.position+=delta;lists[bucket].push(inst)
-        loop i in 0..14:set_instances(river_bank_view[i],lists[i])
+        loop i in 0..RIVER_BANK_BUCKETS*2:set_instances(river_bank_view[i],lists[i])
         river_bank_selection=selected;river_bank_view_origin=origin;river_bank_view_eye=cam
     p=obj_params(L,t,anchor=world_point(origin))
-    loop i in 0..14:
+    loop i in 0..RIVER_BANK_BUCKETS*2:
         if river_bank_view[i].count==0:continue
-        kind=i%7
-        mesh=if kind<4:river_bank_near[kind] else:river_bank_far[kind-4]
-        draw_instanced(if i<7:river_bank_sh else:river_bank_far_sh,mesh,river_bank_view[i],p)
+        kind=i%RIVER_BANK_BUCKETS
+        mesh=if kind<4:river_bank_near[kind] else:if kind<7:river_bank_far[kind-4] else:river_bank_crowns[kind-7]
+        draw_instanced(if i<RIVER_BANK_BUCKETS:river_bank_sh else:river_bank_far_sh,mesh,river_bank_view[i],p)
     zone_end()
