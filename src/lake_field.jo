@@ -1,57 +1,83 @@
-# Pure settlement-water source. No terrain query here: carving calls this module.
+# Connected, terrain-shaped basins. The packed field contains signed depth in
+# 1/256 m units, sampled from original relief before any water carving.
 use 'water_types.jo'
 use 'lake_data.jo'
-const LAKE_VERSION=1
+const LAKE_VERSION=2
+lake_depth_field=embed('../assets/lake-basins.bin')
+lake_depth_hash=hash(lake_depth_field)
+
+lake_depth=(lake:SettlementLake,x:f64,z:f64)->f64:
+    u=(x-f64(lake.origin.x))/lake.step;v=(z-f64(lake.origin.y))/lake.step
+    if u<0 or v<0 or u>=f64(lake.nx-1) or v>=f64(lake.nz-1):return -32.0
+    ix=int(floor(u));iz=int(floor(v));fx=u-f64(ix);fz=v-f64(iz)
+    at=lake.offset+(iz*lake.nx+ix)*2
+    a=f64(get_le_signed(lake_depth_field,at,2))/256.0
+    b=f64(get_le_signed(lake_depth_field,at+2,2))/256.0
+    c=f64(get_le_signed(lake_depth_field,at+lake.nx*2,2))/256.0
+    d=f64(get_le_signed(lake_depth_field,at+(lake.nx+1)*2,2))/256.0
+    mix(mix(a,b,fx),mix(c,d,fx),fz)
+
+lake_bed_depth=(lake:SettlementLake,x:f64,z:f64)->f64:
+    depth=lake_depth(lake,x,z)
+    if depth<=0:return depth
+    dx=x-f64(lake.center.x);dz=z-f64(lake.center.y)
+    along=dx*f64(lake.axis.x)+dz*f64(lake.axis.y)
+    across= -dx*f64(lake.axis.y)+dz*f64(lake.axis.x)
+    # Only the marked navigation lane is dredged. Keep the natural lake bed and
+    # coves everywhere else, and feather dredging before the actual shore.
+    lane=(1.0-smoothstep(40.0,85.0,abs(across)))*(1.0-smoothstep(720.0,820.0,abs(along)))
+    harbor=vec2(f32(x),f32(z))-lake.shore-lake.out*80.0
+    berth=(1.0-smoothstep(32.0,58.0,abs(f64(dot(harbor,vec2(-lake.out.y,lake.out.x))))))*(1.0-smoothstep(25.0,60.0,abs(f64(dot(harbor,lake.out)))))
+    max(depth,max(5.0*lane,3.4*berth)*smoothstep(0.0,0.35,depth))
 
 lake_at=(x:f64,z:f64)->WaterSample:
     key=int(floor(x/4096.0))*1024+int(floor(z/4096.0))
     if not (key in LAKE_BINS):return NO_INLAND_WATER
-    loop i in LAKE_BINS[key]:
-        lake=SETTLEMENT_LAKES[i]
+    loop index in LAKE_BINS[key]:
+        lake=SETTLEMENT_LAKES[index];depth=lake_depth(lake,x,z)
+        if depth<= -4.0:continue
         dx=x-f64(lake.center.x);dz=z-f64(lake.center.y)
-        if abs(dx)>1200 or abs(dz)>1200:continue
-        u=(dx*f64(lake.axis.x)+dz*f64(lake.axis.y))/lake.half_length
-        v=(-dx*f64(lake.axis.y)+dz*f64(lake.axis.x))/lake.half_width
-        # Uneven coves, contained inside the surveyed ellipse. The straight central
-        # 1080 m lane stays clear even at its narrowest section; no islands in it.
-        side=0.92+0.08*sin(u*7.0+f64(lake.id%17))
-        q=sqrt(u*u+v*v/(side*side))
-        if q>=1.2:continue
-        r=WaterSample(found=true,wet=q<1.0,level=lake.level,distance=q*lake.half_width,width=lake.half_width,kind=.lake,id=lake.id)
-        r.along=u*lake.half_length;r.lateral=v*lake.half_width
+        r=WaterSample(found=true,wet=depth>0.0,level=lake.level,distance=32.0-depth,width=32.0,kind=.lake,id=lake.id)
+        r.along=dx*f64(lake.axis.x)+dz*f64(lake.axis.y)
+        r.lateral= -dx*f64(lake.axis.y)+dz*f64(lake.axis.x)
         return r
     NO_INLAND_WATER
 
 lake_carve=(x:f64,z:f64,h:f64)->f64:
-    r=lake_at(x,z)
-    if not r.found:return h
-    q=r.distance/r.width
-    # Coverage and the carved zero-depth contour coincide. The submerged shelf
-    # avoids vertical shoreline walls and abrupt grounding.
-    bed=r.level-5.0+5.0*smoothstep(0.68,1.0,q)
-    if q<=1.0:return bed
-    bank=r.level+3.0*smoothstep(1.0,1.12,q)
-    mix(bank,h,smoothstep(1.12,1.2,q))
+    key=int(floor(x/4096.0))*1024+int(floor(z/4096.0))
+    if not (key in LAKE_BINS):return h
+    loop index in LAKE_BINS[key]:
+        lake=SETTLEMENT_LAKES[index];depth=lake_depth(lake,x,z)
+        if depth<= -4.0:continue
+        bed=lake.level-lake_bed_depth(lake,x,z)
+        # Match the zero-depth contour exactly; retain original fine relief well
+        # below water and above the bank. No raised apron or sand-ring shelf.
+        if depth>0:return mix(bed,min(h,bed),smoothstep(0.4,2.0,depth))
+        return mix(bed,h,smoothstep(2.0,4.0,-depth))
+    h
 
 lake_key=()->u64:
     key=u64(LAKE_VERSION)
     loop lake in SETTLEMENT_LAKES:
-        loop value in [lake.id,int(lake.center.x*16.0),int(lake.center.y*16.0),int(lake.level*1000.0),int(lake.axis.x*1000000.0),int(lake.axis.y*1000000.0),int(lake.half_length),int(lake.half_width)]:
+        loop value in [lake.id,int(lake.level*1000.0),int(lake.origin.x),int(lake.origin.y),lake.nx,lake.nz,int(lake.step),int(lake.town.x*16.0),int(lake.town.z*16.0),int(lake.shore.x*16.0),int(lake.shore.y*16.0)]:
             key=(key xor u64(value))*u64(1099511628211)
+    key=key xor lake_depth_hash
     key
 
-# Quadtree bounds can contain a whole lake while their centre is dry. Do not rely
-# on a centre water query to preserve the shore when selecting terrain detail.
+lake_bounds=(lake:SettlementLake)->vec4:
+    vec4(lake.origin,lake.origin+vec2(f32(lake.nx-1),f32(lake.nz-1))*f32(lake.step))
+lake_intersects=(lake:SettlementLake,x:f64,z:f64,size:f64)->bool:
+    b=lake_bounds(lake)
+    f64(b.z)>=x and f64(b.x)<=x+size and f64(b.w)>=z and f64(b.y)<=z+size
 lake_touches=(x:f64,z:f64,size:f64)->bool:
     if size>4096.0:
         loop lake in SETTLEMENT_LAKES:
-            if f64(lake.center.x)+1200>=x and f64(lake.center.x)-1200<=x+size and f64(lake.center.y)+1200>=z and f64(lake.center.y)-1200<=z+size:return true
+            if lake_intersects(lake,x,z,size):return true
         return false
     loop iz in int(floor(z/4096.0))..int(floor((z+size)/4096.0))+1:
         loop ix in int(floor(x/4096.0))..int(floor((x+size)/4096.0))+1:
             key=ix*1024+iz
             if not (key in LAKE_BINS):continue
-            loop i in LAKE_BINS[key]:
-                lake=SETTLEMENT_LAKES[i]
-                if f64(lake.center.x)+1200>=x and f64(lake.center.x)-1200<=x+size and f64(lake.center.y)+1200>=z and f64(lake.center.y)-1200<=z+size:return true
+            loop index in LAKE_BINS[key]:
+                if lake_intersects(SETTLEMENT_LAKES[index],x,z,size):return true
     false
