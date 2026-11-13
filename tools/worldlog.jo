@@ -8,16 +8,22 @@ use '../src/life_scene.jo'
 use '../src/far_scene.jo'
 use '../src/living_far_economy.jo'
 use '../src/living_far_checks.jo'
+use '../src/living_caravans.jo'
 use '../src/living_war_checks.jo'
 use '../src/living_checks.jo'
 use '../src/living_save.jo'
 use '../src/living_sim.jo'
+use '../src/living_guard.jo'
 assert(load_land(embed('../assets/terrain.bin')))
 assert(load_geography(embed('../assets/world.bin')))
 geography_enabled=true; init_settlements(); finish_settlement_registry()
 w=build_world(u64(42)); publish_settlement_life(w)
 assert(configure_far_economy(w) and configure_far_harbors(w))
 assert(validate_save_world(w)=="")
+# Exercise the game's scheduling/validation path. Any recovered fault still fails this
+# acceptance run immediately; complete immutable-route scans remain at construction,
+# six-hour invariant checks and every daily canonical save/load boundary.
+set_living_strict(false)
 eprint("WORLD_OPEN places={w.far.place_ids.len()} harbors={w.far.harbors.len()} population={far_population(w)} links={w.far.links.len()} vehicles={w.far.vehicles.len()}")
 days=if let value=env("WORLD_DAYS"): to_int(value) ?? 30 else: 30
 prefix=env("WORLD_CHECKPOINT") ?? "worldlog-life4"
@@ -26,11 +32,32 @@ if env("WORLD_RESUME")!=none:
     assert(old is SaveGame,"No compatible worldlog checkpoint; choose a fresh checkpoint prefix.")
     w=old.world
 visited: {int: bool}
+capital_hours: int[3]; capital_unmet: int[3]
+loop c in w.countries:
+    if c.capital_id in w.far.districts:
+        capital_hours[c.id]=w.far.districts[c.capital_id].last_hour
+        capital_unmet[c.id]=w.far.districts[c.capital_id].unmet[3]
+late_grain=0; late_need=0; late_capital_missing: int[3]; late_capital_need: int[3]
 loop day in w.minute/1440..days:
     before=w.far.completed_journeys
     cargo_before=w.far.cargo_deliveries
+    grain_before=w.far.household_consumed[3]
+    need_before=w.far.household_need[3]
+    capital_missing: int[3]; capital_need: int[3]
     loop w.minute<(day+1)*1440:
         step_minute(w)
+        assert(living_faults().len()==0,"Game-mode recovery fired during the acceptance replay.")
+        loop c in w.countries:
+            if not (c.capital_id in w.far.districts): continue
+            d=w.far.districts[c.capital_id]
+            if d.last_hour==capital_hours[c.id]: continue
+            capital_hours[c.id]=d.last_hour
+            population=0
+            loop n in 0..3: population+=d.workers[n]+d.dependents[n]
+            capital_missing[c.id]+=max(0,d.unmet[3]-capital_unmet[c.id])
+            capital_unmet[c.id]=d.unmet[3]
+            # At most one milli-package/hour of rounding; this is an upper need bound.
+            capital_need[c.id]+=(population*28+23)/24
         if w.minute%360==0:
             errors=invariant_errors(w); assert(errors.len()==0,errors.join("; "))
     text=canonical_text(w); decoded=from_text[World](text)
@@ -38,11 +65,27 @@ loop day in w.minute/1440..days:
     air=[loop _, j in w.jobs: if j.delivery_mode==.aircraft and j.state==.delivered and j.status_minute>=day*1440: j.id].len()
     loop _, n in w.far.news:
         if n.kind=="cargo_arrival" and n.minute>=day*1440: visited[n.place]=true
+    if day>=days-3:
+        late_grain+=w.far.household_consumed[3]-grain_before; late_need+=w.far.household_need[3]-need_before
+        loop c in 0..3:
+            late_capital_missing[c]+=capital_missing[c]; late_capital_need[c]+=capital_need[c]
+    groups=0; wagons=0
+    loop v in w.far.vehicles:
+        if v.kind==.cart and cart_wagons(v)>1: groups+=1; wagons+=cart_wagons(v)
+    hungry_population=0; parcels=0; growing=0
+    loop _, d in w.far.districts:
+        parcels+=d.fields.len()
+        loop field in d.fields:
+            if field.crop!=none: growing+=1
+        if d.hunger>=350:
+            loop c in 0..3: hungry_population+=d.workers[c]+d.dependents[c]
+    eprint("WORLD_FOOD day={day+1} grain_consumed_today={w.far.household_consumed[3]-grain_before} ration_need_today={w.far.household_need[3]-need_before} population={far_population(w)} hungry_population={hungry_population} caravan_groups={groups} caravan_wagons={wagons} received_incidents={w.war.heard.len()} warnings={w.war.warnings.len()}")
+    eprint("WORLD_FIELDS day={day+1} parcels={parcels} growing={growing} grain_harvested={w.far.field_grain_harvested} seed_sown={w.far.field_seed_sown} labor_hours={w.far.field_labor_hours} paid_cents={w.far.field_labor_paid} foregone={w.far.field_foregone}")
     eprint("WORLD_COVERAGE day={day+1} goods_receiving_places={visited.len()} connected_places={[loop id in w.far.place_ids: if w.far.districts[id].links.len()>0: id].len()} live_convoys={[loop u in w.war.units: if u.convoy!=none: u.id].len()} produced={w.far.produced} consumed={w.far.consumed}")
     loop c in w.countries:
         if c.capital_id in w.far.districts:
             d=w.far.districts[c.capital_id]
-            eprint("WORLD_CAPITAL day={day+1} country={c.id} place={d.id} hunger={d.hunger} stock={d.stock.qty} customers={d.customer_orders.len()}")
+            eprint("WORLD_CAPITAL day={day+1} country={c.id} place={d.id} hunger={d.hunger} stock={d.stock.qty} customers={d.customer_orders.len()} missing_today={capital_missing[c.id]} need_bound_today={capital_need[c.id]}")
     eprint("WORLD_DAY {day+1} deliveries={w.far.completed_journeys} cargo_deliveries={w.far.cargo_deliveries} order_rounds={w.far.order_rounds} air_today={air} moving={w.far.journeys.len()} offers={w.far.commissions.len()} people={w.far.people.len()} units={w.war.units.len()} incidents={w.war.evidence.len()} contacts={w.war.contacts.len()} battles_total={w.war.next_contact} occupation_changes={w.war.occupations_total} hungry={[loop _, d in w.far.districts: if d.hunger>=350: d.id].len()} occupied={[loop _, d in w.far.districts: if d.controller!=d.born_country: d.id].len()} refugees={[loop _, j in w.far.journeys: if j.duty==.refugee: j.id].len()} diplomacy={[loop r in w.diplomacy: (r.a,r.b,r.stage,r.tension)]} bytes={text.len()} hash={canonical_hash(w)}")
     assert(w.far.completed_journeys>before,"Far delivery service stalled for a whole day.")
     assert(w.far.cargo_deliveries>cargo_before,"Only order rounds completed; actual cargo deliveries stalled for a whole day.")
@@ -58,3 +101,12 @@ loop day in w.minute/1440..days:
         if u.order>=0:
             o=w.war.orders[u.order]
             eprint("WORLD_ORDER task={o.task} target={o.target} leg={o.leg}/{o.route.len()} arrived={o.arrived} expires={o.expires}")
+
+if days>=30:
+    assert(w.war.next_contact>0,"A month of actual standing border policies produced no battles; inspect supply, routes and warning/dispatch records.")
+
+if days>=30 and env("WORLD_REQUIRE_FOOD")!=none:
+    eprint("WORLD_FOOD_GATE actual={late_grain} need_bound={late_need} capital_missing={late_capital_missing} capital_need={late_capital_need} last_days=3")
+    assert(late_grain*5>=late_need*4,"Late-month grain intake remains below80%of the population ration bound.")
+    loop c in 0..3:
+        assert(late_capital_missing[c]*5<=late_capital_need[c],"Capital{c} still misses more than20%of its actual late-month staple meals.")

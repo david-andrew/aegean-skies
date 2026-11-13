@@ -17,7 +17,40 @@ war_power = (w: World, unit: int) -> int:
     if crew<=0 or v.hull<=350 or v.motion_blocked!="" or u.supplied_until<w.minute: return 0
     max(1,crew*v.hull/1000)*max(1,min(300,u.stock.qty[8]))
 
+# Local rules of engagement precede distant diplomacy: a supplied official defender
+# can warn a foreign armed inspection at its own harbor, then act if it refuses to leave.
+# Ordinary passage, merchants and privateers never qualify. The warning and its original
+# eyewitness account are saved, so reloads cannot shorten the grace period or reroll it.
+war_intrusion_cause = (w: World, defender: int, intruder: int) -> int:
+    d=w.war.units[defender]; i=w.war.units[intruder]
+    v=w.far.vehicles[d.vehicle]; foreign=w.far.vehicles[i.vehicle]
+    if d.country==i.country or v.duty!=.patrol or foreign.duty!=.patrol or i.order<0: return -1
+    order=w.war.orders[i.order]
+    if order.task!=.patrol or not order.arrived or foreign.journey>=0 or foreign.place<0: return -1
+    port=foreign.place
+    if w.far.districts[port].controller!=d.country or length(v.pos-w.place_contexts[port].center)>2500: return -1
+    loop r in war_unit_reports(w,defender):
+        if r.kind=="armed_intrusion" and r.origin==port and r.aggressor==i.country and r.affected==d.country and r.state_backed and r.confidence>=600 and r.occurred_minute>=order.issued and far_report_current(w,r): return r.id
+    -1
+
+war_local_interception = (w: mut World, defender: int, intruder: int) -> int:
+    cause=war_intrusion_cause(w,defender,intruder)
+    if cause<0: return -1
+    key="{defender}:{intruder}:{cause}"
+    if not (key in w.war.warnings):
+        if w.war.warnings.len()>=64: return -1
+        w.war.warnings[key]=WarWarning(defender,intruder,cause,w.minute)
+        d=w.war.units[defender]; i=w.war.units[intruder]; v=w.far.vehicles[i.vehicle]
+        far_local_news(w,v.place,"border_warning","A {w.countries[d.country].name} guard signalled the armed {w.countries[i.country].name} inspection to leave {w.place_contexts[v.place].name}. The guard allowed time to withdraw.",country=d.country,other_country=i.country,severity=650)
+        return -1
+    if w.minute-w.war.warnings[key].since>=5: cause else: -1
+
 begin_war_contacts = (w: mut World):
+    # Warning history is bounded and expires independently of whether another contact starts.
+    stale: str[]
+    loop key, warning in w.war.warnings:
+        if w.minute-warning.since>1440: stale.push(key)
+    loop key in stale: w.war.warnings.remove(key)
     if w.war.contacts.len()>=64: return
     loop a in 0..w.war.units.len():
         ua=w.war.units[a]
@@ -26,10 +59,23 @@ begin_war_contacts = (w: mut World):
         if va.battle>=0: continue
         loop b in a+1..w.war.units.len():
             ub=w.war.units[b]
-            if ub.retired or ub.vehicle<0 or war_power(w,b)<=0 or not (war_unit_hostile(w,a,ub.country) or war_unit_hostile(w,b,ua.country)): continue
+            if ub.retired or ub.vehicle<0 or war_power(w,b)<=0 or ua.country==ub.country: continue
             vb=w.far.vehicles[ub.vehicle]
             range=if va.kind==.ship and vb.kind==.ship: 850.0 else: 250.0
             if vb.battle>=0 or length(va.pos-vb.pos)>range: continue
+            cause= -1
+            if not (war_unit_hostile(w,a,ub.country) or war_unit_hostile(w,b,ua.country)):
+                cause=war_local_interception(w,a,b)
+                if cause<0: cause=war_local_interception(w,b,a)
+                if cause<0: continue
+            initiator= -1
+            if cause>=0:
+                repeated=false
+                loop _, old in w.war.contacts:
+                    if old.cause==cause and old.a==a and old.b==b: repeated=true
+                if repeated: continue
+                loop _, warning in w.war.warnings:
+                    if warning.cause==cause: initiator=w.war.units[warning.intruder].country
             id=w.war.next_contact; w.war.next_contact+=1
             power_a=war_power(w,a); power_b=war_power(w,b)
             probability=clamp(power_a*1000000/max(1,power_a+power_b),100000,900000)
@@ -42,7 +88,7 @@ begin_war_contacts = (w: mut World):
                 if old.name==none or old.state==.resolved or w.minute-old.started>180 or length(old.pos-at)>3000: continue
                 ca=w.war.units[old.a].country; cb=w.war.units[old.b].country
                 if min(ca,cb)==min(ua.country,ub.country) and max(ca,cb)==max(ua.country,ub.country) and official_battle_force(w,a) and official_battle_force(w,b): name=old.name; engagement=old.engagement; break
-            w.war.contacts[id]=WarContact(id,a,b,w.minute,w.minute+45,mix64(w.seed xor u64(id+157)),probability,pos=at,reason="Hostile supplied units met along their actual routes.",name=name,engagement=engagement)
+            w.war.contacts[id]=WarContact(id,a,b,w.minute,w.minute+45,mix64(w.seed xor u64(id+157)),probability,pos=at,reason=if cause>=0: "An armed inspection remained after a local guard ordered it to withdraw." else: "Hostile supplied units met along their actual routes.",name=name,engagement=engagement,cause=cause,initiator=initiator)
             w.far.vehicles[ua.vehicle].battle=id; w.far.vehicles[ub.vehicle].battle=id
             w.far.vehicles[ua.vehicle].velocity=vec3(0,0,0); w.far.vehicles[ub.vehicle].velocity=vec3(0,0,0)
             # A contact is a local hazard, not a radio message to a distant home port.
@@ -106,8 +152,12 @@ finish_war_contact = (w: mut World, id: int, winner: int, physical: bool = false
     w.war.contacts[id].state=.resolved; w.war.contacts[id].winner=winner
     a=w.war.units[winner]; b=w.war.units[loser]
     title=if c.name!=none: c.name!+": " else: ""
-    news=war_unit_account(w,winner,"battle",title+"A {w.countries[a.country].name} charter defeated a {w.countries[b.country].name} unit near {c.pos.x:.0}, {c.pos.z:.0}.",900,a.country,b.country,100)
-    if news>=0: w.war.evidence[news]=WarEvidence(news,w.far.news[news].place,a.country,b.country,true,100,w.minute)
+    aggressor=a.country; affected=b.country
+    if c.initiator>=0:
+        # Preserve the initiating country even after the saved warning has aged out.
+        aggressor=c.initiator; affected=if a.country==aggressor: b.country else: a.country
+    news=war_unit_account(w,winner,"battle",title+"A {w.countries[a.country].name} charter defeated a {w.countries[b.country].name} unit near {c.pos.x:.0}, {c.pos.z:.0}.",900,aggressor,affected,100)
+    if news>=0: w.war.evidence[news]=WarEvidence(news,w.far.news[news].place,aggressor,affected,true,100,w.minute)
     true
 
 advance_war_contacts = (w: mut World):

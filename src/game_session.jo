@@ -1,0 +1,155 @@
+# A complete gameplay checkpoint, without graphics/audio handles. Scene folding happens on
+# a boundary-only copy: saving cannot release a live aircraft or move an NPC twice.
+use 'living_types.jo'
+use 'world_point.jo'
+use 'living_scene.jo'
+use 'combat.jo'
+use 'vessel_types.jo'
+use 'look.jo'
+use 'tweaks.jo'
+use 'leisure.jo'
+import 'living_portage.jo' as portage
+use 'living_save.jo'
+use 'pilot.jo'
+use 'traffic.jo'
+use 'air_events.jo'
+use 'air_race.jo'
+use 'war_checkpoint.jo'
+use 'notebook.jo'
+use 'vessel_scene.jo'
+
+struct GameSession:
+    version = 1
+    tick = -1
+    player_mode = 0                  # walking, aboard, descent, free (the shell's stable order)
+    player_position: vec3
+    player_point: WorldPoint
+    player_yaw = 0.0
+    player_phase = 0.0
+    flyer: Flyer
+    air: AirEvents
+    notes: Note[]
+    world_time = 0.0
+    hour = 9.5
+    wind_bias = 0.0
+    accumulator = 0.0
+    rope_anchor: vec3
+    rope_loose: vec3
+    rope_tied = false
+    mooring: VesselMooring
+    speed = 3.3
+    lift = 3.3
+    bullets = 5.0
+    wind: Wind
+    feel: Tweaks
+    follow: FollowCamera
+    free: FlyCamera
+    leisure: LeisureState
+    leisure_at = "hotel"
+    leisure_spent = 0
+    leisure_had: str[]
+    served_look_until = -1.0
+
+session_error = (game: SaveGame, session: GameSession, require_checkpoint: bool = true) -> str:
+    if session.version!=1 or session.tick!=game.world.tick: return "Unsupported or mismatched game session."
+    if session.player_mode<0 or session.player_mode>3: return "Invalid player mode."
+    w=game.world
+    if w.player<0 or w.player>=w.people.len(): return "Missing player."
+    craft=w.people[w.player].craft
+    if craft<0 or craft>=w.aircraft.len(): return "Missing player aircraft."
+    if int(session.flyer.kind)!=int(w.aircraft[craft].kind) or session.flyer.model!=w.aircraft[craft].model_index: return "Aircraft identity mismatch."
+    loop p in [session.player_position,session.flyer.state.position,session.flyer.state.velocity,session.rope_anchor]:
+        if not (is_finite(p.x) and is_finite(p.y) and is_finite(p.z)): return "Non-finite saved position."
+    loop x in [session.world_time,session.hour,session.wind_bias,session.accumulator,session.player_yaw,session.player_point.x,session.player_point.y,session.player_point.z,session.flyer.state.fuel,session.speed,session.lift,session.bullets]:
+        if not is_finite(x): return "Non-finite saved clock or aircraft."
+    if session.player_mode==0 and length(world_vec(session.player_point)-session.player_position)>0.1:return "Walking position disagrees with its precise point."
+    if session.world_time<0 or session.hour<0 or session.hour>=24 or session.accumulator<0 or session.accumulator>1: return "Invalid saved clock."
+    if session.speed<=0 or session.speed>100 or session.lift<=0 or session.lift>100 or session.bullets<=0 or session.bullets>100: return "Invalid flight calibration."
+    if abs(session.flyer.state.fuel*1000-f64(w.aircraft[craft].fuel_ml))>1.01: return "Aircraft fuel disagrees with its ledger."
+    if session.leisure.served.len()>6 or session.leisure.strong.len()>1024 or session.leisure_had.len()>1024 or session.leisure_spent<0: return "Invalid saved leisure state."
+    if session.air.version!=1:return "Unsupported air-event checkpoint."
+    if session.air.pilots.len()>16 or session.air.meets.len()>128 or session.notes.len()>10000: return "Game session exceeds its limits."
+    loop pilot in session.air.pilots:
+        if pilot.craft<0 or pilot.craft>=w.aircraft.len() or pilot.person<0 or pilot.person>=w.people.len() or w.aircraft[pilot.craft].owner!=pilot.person: return "Invalid air-club identity."
+    if not require_checkpoint:return ""
+    fleet=VesselFleet(); battle=Battle()
+    if not restore_war_scene(w,fleet,battle): return "Missing physical fleet/combat checkpoint."
+    ""
+
+read_game_session = (game: SaveGame) -> GameSession | LivingSaveError:
+    if game.session=="": return LivingSaveError("This world has no player checkpoint; it has been retained unchanged.")
+    session=from_text[GameSession](game.session)
+    if session is TextError: return LivingSaveError("Invalid player checkpoint: "+session.message)
+    error=session_error(game,session)
+    if error!="": return LivingSaveError(error)
+    session
+
+capture_game = (world: World, presentation: PresentationState, session: GameSession, traffic: Traffic[], adapter: SceneAdapter, fleet: VesselFleet, battle: Battle, terrain: int, summary: SaveSummary) -> SaveGame | LivingSaveError:
+    w=world; tr=traffic; leases=adapter; runtime=session
+    runtime.tick=w.tick
+    # Reject malformed identities before helpers index the supplied scene projections.
+    initial=validate_save_world(w)
+    if initial!="":return LivingSaveError(initial)
+    initial=session_error(SaveGame(world=w),runtime,false)
+    if initial!="":return LivingSaveError(initial)
+    loop body in tr:
+        if body.craft<0 or body.craft>=w.aircraft.len():return LivingSaveError("Invalid scene aircraft identity.")
+        if scene_bound(leases,body.craft) and (not (body.trip in w.trips) or body.trip!=w.aircraft[body.craft].trip):return LivingSaveError("Stale scene trip; retain the previous checkpoint.")
+    if runtime.player_mode==0:
+        portage.cargo_person_pose(w,w.player,runtime.player_position)
+        place_pose(w.people[w.player].pose,runtime.player_point)
+        w.people[w.player].pose.rot=facing(vec3(f32(sin(runtime.player_yaw)),0,f32(cos(runtime.player_yaw))))
+    # Club bodies have their own explicit owner, not a second traffic lease.
+    _=snapshot_air_events(runtime.air,w)
+    loop pilot in runtime.air.pilots:
+        w.aircraft[pilot.craft].move_owner=.abstract_world
+    fold_living_scene_for_save(tr,runtime.flyer,w,leases)
+    # The player's exact integrator, including fuel fractions and local wave time.
+    c=w.people[w.player].craft
+    w.aircraft[c].scene_extension=to_text(runtime.flyer.state)
+    w.aircraft[c].scene_extension_tick=w.tick
+    w.people[w.player].move_owner=.abstract_world
+    checkpoint_war_scene(w,fleet,battle)
+    error=validate_save_world(w)
+    if error!="": return LivingSaveError(error)
+    loop craft in w.aircraft:
+        if craft.move_owner==.scene: return LivingSaveError("An aircraft still owns an uncheckpointed scene lease.")
+    game=SaveGame(valid=true,terrain_key=terrain,world=w,presentation=presentation,session=to_text(runtime),summary=summary)
+    error=session_error(game,runtime)
+    if error!="": return LivingSaveError(error)
+    game
+
+# Per-frame eligibility has no World copy, serialization, storage or terrain search.
+struct AutosaveClock:
+    elapsed = 0.0
+    safe_for = 0.0
+    since_save = 180.0
+    was_safe = false
+    due = false
+
+step_autosave = (clock: mut AutosaveClock, dt: f64, safe: bool, enabled: bool) -> bool:
+    if not enabled: clock.safe_for=0; clock.was_safe=false; return false
+    step=clamp(dt,0.0,0.25)
+    clock.elapsed+=step; clock.since_save+=step
+    if safe:
+        if not clock.was_safe: clock.due=true
+        clock.safe_for+=step
+    else: clock.safe_for=0
+    clock.was_safe=safe
+    safe and clock.safe_for>=3 and clock.since_save>=30 and (clock.due or clock.since_save>=180)
+
+ack_autosave = (clock: mut AutosaveClock, success: bool):
+    # Failure gets a bounded retry interval too; it cannot serialize on every frame.
+    clock.since_save=0
+    clock.due=not success
+
+
+# Only actual unresolved encounters/physical contacts can defer a safe-place autosave.
+autosave_combat_near = (w: World,at: vec3) -> bool:
+    loop _,contact in w.war.contacts:
+        if contact.state==.physical and length(contact.pos-at)<10000:return true
+    loop _,encounter in w.encounters:
+        if encounter.resolved or not (encounter.raider_trip in w.trips):continue
+        craft=w.trips[encounter.raider_trip].craft
+        if craft>=0 and craft<w.aircraft.len() and length(w.aircraft[craft].pose.pos-at)<6000:return true
+    false

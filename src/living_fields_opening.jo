@@ -1,0 +1,106 @@
+# Explicit founding-register transactions for ALREADY sown fields. The seed comes from
+# existing opening inventories; neither seed nor a mature harvest is minted by this module.
+# This runs only during fresh catalog construction, before the first tick or save.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_far_orders.jo'
+use 'living_fields.jo'
+use 'living_crop_calendar.jo'
+use 'living_far_recipes.jo'
+use 'living_money.jo'
+use 'living_place_context.jo'
+use 'living_work.jo'
+use 'living_work_types.jo'
+use 'living_guard.jo'
+
+opening_seed_path = (w: World,source: int,destination: int,services: {int: int}) -> int[]:
+    previous: {int: (int,int)}; previous[source]=(source,-1)
+    queue=[source]; head=0
+    loop head<queue.len():
+        at=queue[head]; head+=1
+        if at==destination: break
+        edges=w.far.districts[at].links; edges.sort()
+        loop edge in edges:
+            if not (edge in services): continue
+            link=w.far.links[edge]; next=if link.a==at: link.b else: link.a
+            if next in previous: continue
+            previous[next]=(at,edge); queue.push(next)
+    if not (destination in previous): return []
+    result: int[]; at=destination
+    loop at!=source and result.len()<64:
+        prior=previous[at]; result.push(prior.1); at=prior.0
+    if at!=source: return []
+    result.reverse(); result
+
+opening_seed_supplier = (w: World,place: int,qty: int,services: {int: int}) -> (int,int[]):
+    candidates: (int,f64,int)[]
+    at=w.place_contexts[place].center
+    loop source in w.far.place_ids:
+        available=counter_sale_available(w,source,3)
+        if w.far.districts[source].output==3 and available>=CROP_SEED_PER_ARE:
+            candidates.push((-min(available,qty),f64(length(w.place_contexts[source].center-at)),source))
+    candidates.sort()
+    loop candidate in candidates:
+        route=opening_seed_path(w,candidate.2,place,services)
+        if candidate.2==place or route.len()>0: return (candidate.2,route)
+    (-1,[])
+
+opening_seed_freight = (w: World,place: int,qty: int,source: int,route: int[],services: {int: int}) -> int:
+    result=0; at=source
+    loop edge in route:
+        v=w.far.vehicles[services[edge]]
+        loads=max(1,(qty*w.goods[3].package_grams/1000+v.capacity_grams-1)/v.capacity_grams)
+        result+=loads*service_freight_quote(w,v.id,at)
+        link=w.far.links[edge]; at=if link.a==at: link.b else: link.a
+    result
+
+initialize_opening_fields = (w: mut World,seeds: FarPlaceSeed[]):
+    if w.far.populated: return
+    services: {int: int}
+    loop v in w.far.vehicles:
+        if v.duty==.merchant and v.service_agreement: services[v.route]=v.id
+    loop seed in seeds:
+        place=seed.id; d=w.far.districts[place]
+        if seed.opening_crop_per_mille<=0 or d.output==3 or d.fields.len()==0: continue
+        target=field_population(d)*FAR_STAPLE_DAILY*CROP_YEAR_DAYS*seed.opening_crop_per_mille/1000
+        area=(target+CROP_YIELD_PER_ARE-1)/CROP_YIELD_PER_ARE
+        loop index in 0..d.fields.len():
+            if area<=0: break
+            field=d.fields[index]
+            sown=crop_previous_sowing_day(day_index(w.minute)); ready=crop_ready_day(sown,field.land.id)
+            if day_index(w.minute)>ready+30: continue # the old harvest is over, not a new gift
+            planted=min(area,field.land.area_ares); quantity=field_seed_milli(planted)
+            source, route=opening_seed_supplier(w,place,quantity,services)
+            if source<0: continue # no real supplier: this plot remains fallow
+            planted=min(planted,counter_sale_available(w,source,3)/CROP_SEED_PER_ARE)
+            quantity=field_seed_milli(planted)
+            supplier=w.far.districts[source]
+            goods=(quantity*supplier.prices[3]+999)/1000
+            freight=opening_seed_freight(w,place,quantity,source,route,services)
+            sowing=crop_required_work(planted,CROP_SOW_HOURS_PER_HA)
+            tending=crop_required_work(planted,CROP_TEND_HOURS_PER_HA)*4/5
+            raw=(sowing+tending)*100; wages=raw/24
+            if w.accounts[d.market_account].cents<goods+freight+wages: continue
+            batch=far_take_market(w,source,3,quantity); roots=batch.roots.keys(); roots.sort()
+            if not transfer(w,d.market_account,supplier.market_account,goods,.trade,field.land.id):
+                living_fault("fields.opening_seed_payment","place={place} field={field.land.id}"); return
+            at=source
+            loop edge in route:
+                v=w.far.vehicles[services[edge]]
+                loads=max(1,(quantity*w.goods[3].package_grams/1000+v.capacity_grams-1)/v.capacity_grams)
+                fee=loads*service_freight_quote(w,v.id,at)
+                if not transfer(w,d.market_account,v.account,fee,.wage,field.land.id):
+                    living_fault("fields.opening_seed_freight","place={place} field={field.land.id}"); return
+                link=w.far.links[edge]; at=if link.a==at: link.b else: link.a
+            if wages>0 and not transfer(w,d.market_account,d.household_account,wages,.wage,field.land.id):
+                living_fault("fields.opening_labor_payment","place={place} field={field.land.id}"); return
+            learn_staple_source(w,place,source,batch)
+            far_use(w,batch); w.far.field_seed_sown+=quantity
+            w.far.field_labor_paid+=wages; w.far.field_labor_hours+=sowing+tending
+            why="Opening field register: the households at {life_place_name(w,place)} had {f64(planted)/100.0:.2} hectares of field {field.land.id} sown on {crop_date(sown)} for part of their year's food. The {life_place_name(w,source)} counter supplied {f64(quantity)/1000.0:.2} packages of actual seed for {f64(goods)/100.0:.2} lire; its recorded route has {route.len()} paid carrier legs ({f64(freight)/100.0:.2} lire). The local counter paid {f64(wages)/100.0:.2} lire for the recorded sowing and earlier care. Remaining fieldwork still needs real hands and pay; no grain can be harvested before {crop_date(ready)}."
+            p=WorkProvenance(cause=why,requester_account=d.household_account,supplier_account=supplier.market_account,request_place=place,requested_minute=w.minute,heard_minute=w.minute,agreed_minute=w.minute,goods_cents=goods,freight_cents=freight,freight_payer=d.market_account,deadline=(ready+31)*1440,supply_roots=roots,supply=work_supply(w,roots),negotiated=true,opening=true,need_places=[place],need_since=w.minute)
+            w.far.districts[place].fields[index].crop=FarCrop(planted,FarStock(),roots,quantity,goods,sowing_work=sowing,tending_work=tending,paid_cents=wages,wage_remainder=raw%24,sown_day=sown,ready_day=ready,harvest_until_day=ready+30,opening=true,agreement=p,stage=.growing,seed_source=source,seed_route=route)
+            w.far.districts[place].field_reason=why
+            w.far.districts[place].field_reason_minute=w.minute
+            area-=planted
