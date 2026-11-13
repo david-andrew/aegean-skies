@@ -60,6 +60,7 @@ use 'src/air_events.jo'
 use 'src/air_race.jo'
 use 'src/air_meet_view.jo'
 use 'src/race_view.jo'
+use 'src/war_view.jo'
 use 'src/air_pilot.jo'
 use 'src/distant.jo'
 use 'src/tweaks.jo'
@@ -232,7 +233,7 @@ folks: Folk[]
 sync_folk(folks, living_world, towns)
 life_meshes = life_view.build_life_meshes(living_world)
 folk_sync_t = 0.0
-enum Ui: none, talk, board, handling, trade
+enum Ui: none, talk, board, handling, trade, contract
 ui = Ui.none
 ui_folk = -1
 ui_place = -1
@@ -245,6 +246,12 @@ ui_turn = social.ConversationTurn(-1, -1, .greeting)
 # what a turn says aloud: the words, then any question
 turn_text = (turn: social.ConversationTurn) -> str: if turn.question != "": "{turn.text} {turn.question}" else: turn.text
 ui_job = -1
+ui_mission = -1                     # the military contract open at the office counter
+# the war as the player meets and hears of it: battle cards shown, the chart's war layer
+battle_card = BattleCard()
+war_chart = WarChart()
+war_layer_on = true
+declined_missions: {int: bool}
 toast = ""
 paused = false
 my_jobs: {int: lt.JobState} = {}       # the errands one carries, and how they stood last
@@ -794,7 +801,7 @@ scenario_templates: {str: ScenarioState}
 load_scenario = (key: str) -> bool:
     global living_world,pc,me,battle,traffic,traffic_scene,folks,folk_sync_t,air_events,all_air_traffic,view_target,target_scan
     global vessels,vessel_bindings,vessel_view,vessel_mooring,combat_visual,air_visual
-    global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,my_jobs,toast,toast_until,notebook
+    global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,my_jobs,toast,toast_until,notebook,battle_card,war_chart,declined_missions,ui_mission
     global t,hour,wind_bias,wind_now,follow,descent_camera,free,show_chart,chart_local
     global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
@@ -853,6 +860,7 @@ load_scenario = (key: str) -> bool:
     notebook=if fresh:Notebook() else:Notebook(storage_key="scenario-notebook:"+key)
     if fresh:save_notebook(notebook)
     toast="";toast_until=0;show_chart=false;chart_local=false
+    battle_card=BattleCard();war_chart=WarChart();declined_missions={};ui_mission= -1
     talk_at_start=false;pad_talk=false;click_took_mouse=true
     t=0;hour=next.hour;wind_bias=0;wind_now=Wind()
     follow=follow_camera(distance=5.5,pitch=next.camera_pitch,height=1.6);follow.yaw=next.camera_yaw
@@ -1052,6 +1060,8 @@ if let recipe=env("AEGEAN_CAPTURE"):
 if let minutes=env("AEGEAN_CAPTURE_MINUTES"):
     living.advance_minutes(living_world,max(0,to_int(minutes) ?? 0))
     sync_folk(folks,living_world,towns)
+if let stage=env("AEGEAN_CAPTURE_WAR"):
+    if stage == "board" or stage == "contract": living.advance_minutes(living_world,180)
 if env("AEGEAN_CAPTURE_PANEL")=="notebook":
     living.advance_minutes(living_world,180)
     loop id in living_world.active_jobs:
@@ -1077,6 +1087,57 @@ if let orbit=env("AEGEAN_CAPTURE_ORBIT"):
 
 if let scenario=env("AEGEAN_SCENARIO"):assert(load_scenario(scenario),"Unknown scenario")
 if env("AEGEAN_CAPTURE_PANEL")=="scenarios":dbg.page=5;set_paused(true)
+
+# AEGEAN_CAPTURE_WAR=card|chart|board|contract stages war news for headless captures of the
+# battle card, the chart's war layer and the military contracts (capture only: the living world
+# makes the real ones from its own forces and reports)
+import 'src/living_missions.jo' as war_missions
+import 'src/living_far_types.jo' as far_types
+import 'src/living_far_news.jo' as far_news_api
+stage_capture_war = (stage: str):
+    global battle_card, ui, ui_place, ui_mission, ui_line
+    w = living_world
+    home_d = core_district(w, 0)
+    if home_d < 0: return
+    at = w.place_contexts[home_d].center
+    # (the nearest other places to the home harbor, nearest first)
+    near: (f64, int)[]
+    loop id in w.far.place_ids:
+        if id != home_d and id in w.place_contexts: near.push((f64(length(w.place_contexts[id].center - at)), id))
+    near.sort((e: (f64, int)): e.0)
+    if near.len() < 4: return
+    if stage == "card":
+        battle_card.name = "Battle for {w.place_contexts[near[0].1].name}"
+        battle_card.line = "{w.place_contexts[near[0].1].name},  {war_date(w.minute, true)}"
+        battle_card.since = t - 2.4
+        return
+    me_ = w.player
+    m0 = w.minute
+    report = (rid: int, kind: str, place: int, text: str, country: int, other: int, ago: int, heard: int) -> far_types.FarReport:
+        far_types.FarReport(900000 + rid, max(0, m0 - ago), max(0, m0 - heard), place, text, kind, country = country, other_country = other, severity = if kind == "battle": 900 else: 1000, confidence = 850, hops = 1)
+    if stage == "chart":
+        p1 = near[0].1; p2 = near[1].1; p3 = near[2].1
+        c1 = w.place_contexts[p1].center; c3 = w.place_contexts[p3].center
+        reports = [
+            report(0, "war_declared", home_d, "Kalyra declared war on Orenthia.", 1, 2, 2900, 2700),
+            report(1, "occupation", p1, "A supplied Orenthia force arrived at {w.place_contexts[p1].name}.", 2, -1, 1500, 1300),
+            report(2, "blockade", p2, "A supplied Kalyra charter has established a cordon off {w.place_contexts[p2].name}.", 1, 2, 700, 300),
+            report(3, "battle", p1, "Battle for {w.place_contexts[p1].name}: A Orenthia charter defeated a Kalyra unit near {c1.x + 900.0:.0}, {c1.z - 1200.0:.0}.", 2, 1, 1450, 1250),
+            report(4, "battle", p3, "A Kalyra charter defeated a Orenthia unit near {c3.x - 1500.0:.0}, {c3.z + 700.0:.0}.", 1, 2, 400, 100)]
+        loop r in reports: w.people[me_].far_reports.push(r)
+        battle_card.seen.push(SeenBattle(-5, "Battle off {w.place_contexts[p3].name}", c3 + vec3(1800, 0, -900), max(0, m0 - 20)))
+        return
+    # board / contract: a reconnaissance contract posted at the home office over the nearest port
+    country = w.far.districts[home_d].controller
+    w.far.districts[near[0].1].controller = (country + 1) % 3
+    id = war_missions.post_mission(w, country, .reconnaissance, home_d, home_d, near[0].1, 1800 + int(near[0].0 * 0.12))
+    print("WAR STAGE mission {id} counter-board {length(far_news_api.far_counter_position(w, home_d) - board_spots[0]):.0} m")
+    ui_place = 0
+    if stage == "board": ui = .board
+    else if id >= 0:
+        ui = .contract; ui_mission = id
+        if let m = find_mission(w, id): ui_line = "{m.why} {contract_status(w, m)}"
+if let stage = env("AEGEAN_CAPTURE_WAR"): stage_capture_war(stage)
 
 # AEGEAN_CAPTURE_RACE=offer|countdown|start|racing|missed|finish stages a meet off the home
 # harbor for headless captures of the race screens (capture only; the living world makes real ones)
@@ -1220,6 +1281,13 @@ update = (dt: f64):
         notebook.fresh = true
         mouse_lock(false)
     if vpressed(.f2) and not typing: me.mode = if me.mode == .free: Mode.walking else: Mode.free
+    if (me.mode == .aboard or me.mode == .walking) and frame_number() % 20 == 0:
+        global battle_card
+        if battle_card_step(battle_card, living_world, if me.mode == .aboard: pc.state.position else: me.pos, t):
+            log_note(notebook, "Came upon the {battle_card.name}.", clock_text(living_world, living_world.minute))
+    if show_chart and war_chart.minute != living_world.minute:
+        global war_chart
+        war_chart = war_chart_data(living_world, living_world.player, battle_card.seen)
     race_k = race_offer_here()
     if race_k >= 0 and vpressed(.f) and not typing:
         entry = enter_player_air_meet(air_events, living_world, air_events.meets[race_k].id)
@@ -1849,6 +1917,7 @@ draw = ():
         race_k = race_shown(air_events, living_world)
         if race_k >= 0: draw_race_hud(fonts, air_events, living_world, race_k, if me.mode == .aboard: pc.state.position else: me.pos, me.mode == .aboard)
     if me.mode != .free and not paused and not judge_ready and active_scenario=="": title_card(fonts, t)
+    if (me.mode == .aboard or me.mode == .walking) and not paused and not show_chart and ui == .none: draw_battle_card(fonts, battle_card, t)
     if me.mode==.aboard and not paused and not show_chart and ui==.none and not notebook.open:draw_view_target(view_target,fonts)
     if vdown(.h): controls_card(fonts, me.mode == .aboard)
     else if t > 7.5 and t < 22.0 and not judge_ready and active_scenario=="": keys_hint(fonts)
@@ -1867,8 +1936,14 @@ draw = ():
         facing = if me.mode == .aboard: heading(pc.state) else: PI - me.yaw
         draw_chart(chart, towns, if me.mode == .aboard: pc.state.position else: me.pos, facing, hour,
             [loop tr in traffic: vec4(tr.state.position.x, tr.state.position.y, tr.state.position.z, f32(heading(tr.state)))],vessels.ships,vessels.lanes,if me.mode==.aboard:craft_point(pc.state) else:if me.mode==.walking:walker_point else:world_point(me.pos),[loop tr in traffic:craft_point(tr.state)])
-        # (the pocket compass, set down on the map's corner)
         cr = chart_rect()
+        if chart_sheets != none:
+            global war_layer_on
+            if war_layer_on: draw_war_layer(cr, war_chart)
+            set_font(fonts.ui)
+            war_layer_on = war_layer_button(cr, war_layer_on, war_chart.marks.len())
+            set_font()
+        # (the pocket compass, set down on the map's corner)
         rr = min(70.0, f64(screen_width()) * 0.11)
         pocket_compass(fonts, vec2(f32(cr.x + cr.w - rr * 0.6), f32(cr.y + cr.h - rr * 0.6)), rr, facing)
         if let sheets = chart_sheets:
@@ -1897,7 +1972,7 @@ draw = ():
 
 # the panels open over the scene: a conversation, a board, a ledger
 draw_ui = ():
-    global ui, ui_line, ui_news, ui_place, ui_job, ui_turn
+    global ui, ui_line, ui_news, ui_place, ui_job, ui_turn, ui_mission, declined_missions
     match ui:
         .talk:
             if ui_folk < 0 or ui_folk >= folks.len():
@@ -1987,7 +2062,12 @@ draw_ui = ():
             loop r in living_world.places[ui_place].yesterday:
                 l = reason_line(living_world, r)
                 if l != "": yesterday.push(l)
-            res = notice_board(fonts, SETTLEMENTS[ui_place].name, job_notices(living_world, ui_place) + air_meet_notices(air_events, living_world, me.pos, (m: int) -> str: clock_text(living_world, m)), yesterday)
+            district = core_district(living_world, ui_place)
+            res = notice_board(fonts, SETTLEMENTS[ui_place].name, military_notices(living_world, district, living_world.player, declined_missions, (m: int) -> str: clock_text(living_world, m)) + job_notices(living_world, ui_place) + air_meet_notices(air_events, living_world, me.pos, (m: int) -> str: clock_text(living_world, m)), yesterday)
+            if mission_of_notice(res.take) >= 0:
+                ui_mission = mission_of_notice(res.take)
+                if let m = find_mission(living_world, ui_mission): ui_line = "{m.why} {contract_status(living_world, m)}"
+                ui = .contract
             if res.take >= 0:
                 # Keep the notice, then review its actual handling terms before agreeing.
                 j = living_world.jobs[res.take]
@@ -1996,6 +2076,22 @@ draw_ui = ():
                 ui_line = "{living_world.people[j.poster].name} offers {f64(j.reward_cents)/100.0:.2} lire. The goods are at their existing warehouse spot. Who will carry them?"
                 ui = .handling
             if res.closed: ui = .none
+        .contract:
+            if let m = find_mission(living_world, ui_mission):
+                answers = contract_answers(living_world, m, living_world.player)
+                c = conversation(fonts, contract_title(living_world, m), "{SETTLEMENTS[ui_place].name}, the {country_name(living_world, m.country)} office", ui_line, answers.0)
+                code = if c >= 0: answers.1[c] else: -1
+                if code == 1:
+                    declined_missions[m.id] = true
+                    ui = .board
+                else if code == 6 or vpressed(.escape): ui = .board
+                else if code >= 0:
+                    said = contract_act(living_world, m.id, code, living_world.player)
+                    if code == 0 and living_world.war.missions[m.id].state == .claimed:
+                        log_note(notebook, "Signed for {contract_title(living_world, m).lower()}: {m.why}", clock_text(living_world, living_world.minute))
+                    ui_line = said
+                    if let after = find_mission(living_world, m.id): ui_line = "{said} {contract_status(living_world, after)}"
+            else: ui = .board
         .handling:
             if ui_job < 0 or not (ui_job in living_world.jobs): ui = .board; return
             j = living_world.jobs[ui_job]
