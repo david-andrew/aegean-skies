@@ -44,7 +44,8 @@ their endpoints and orientation. Source heights, boundary levels and selected
 local domains invalidate only the affected cell. Each entry also retains a
 conservative camera-motion ball derived from the held levels' dead bands and
 the distance bound's 1-Lipschitz property. Motion inside that ball reuses the
-selection without repeating projection or root queries. Focal length, source,
+selection without repeating projection or root queries. Focal changes consume an equivalent distance bound, so matrix rounding jitter
+does not discard reuse while actual zoom remains conservative. Source,
 root-set generation and effective boundary limits still invalidate it.
 The cache retains at most
 16384 cells / 65536 instances, and the held-level map at most 32768 entries;
@@ -61,7 +62,11 @@ strips; changed or removed cell selections dirty their slots and shared boundary
 samples. Dirty rectangles clear with a batched draw, avoiding backend-dependent
 scissored clears. Render-chart snaps rebind coordinates without repainting the
 texture. Mixed source phases retain a conservative CPU membership fallback;
-GPU refreshes remain restricted to changed slots. Near and far grids align with
+GPU refreshes remain restricted to changed slots. Atlas membership consumes the
+renderer’s per-cell selection revisions, flattening domains only when a cell
+changes. Cells beyond the conservative 480 m reach cannot contribute to either
+atlas and are excluded, so distant islands cannot force mixed-phase bookkeeping.
+Near and far grids align with
 the canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
 16-bit packed signed heights have 1/2048 m resolution, and alpha marks coverage.
 No floating-point framebuffer extension or depth attachment is required.
@@ -89,15 +94,20 @@ Curvature expands bounds, and active speed-warp trials bypass this culling.
 Placed town props retain their physical contact heights. Before terrain selection,
 town preparation supplies the active district and close-decoration roots. A
 fixed half-metre core around each root selects the finest triangles, blending
-out to the ordinary view budget over two metres. Only affected cells use 1.75 m
+out to the ordinary view budget at 1.5 metres. Only affected cells use 1.75 m
 local domains; uniform blocks merge back together. Explicit shared junction
 levels prevent corner cracks between different interiors. Root neighborhoods
-and stable domain selections are reused. Paving retains its separate physical
+and stable domain selections are reused. Static support floors use whole
+levels; shared corners use two exact 12-bit float words. Previous batch sizes
+reserve bounded upload capacity. Paving retains its separate physical
 clearance support. This adds no camera dependency to collision or placement.
 
 Streaming terrain retains its coarse fallback outside main's pinned 3×3
 contact neighborhood; ready contact tiles refine immediately. Rendering caches
-never become the collision authority.
+never become the collision authority. The flight-height cache applies the same
+finest contact reconstruction to its cached canonical vertices. Steep harbour
+service streets use a terrain-clearing, grade-limited profile shared by their
+mesh, walking support and door elevations.
 
 Validation tools:
 
