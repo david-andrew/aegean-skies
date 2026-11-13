@@ -322,6 +322,8 @@ _kind_word = (k: living.far_data.CommissionKind) -> str:
         .smuggling: "Blockade running"
         _: "Freight"
 
+_notice_title = (w: data.World, m: living.MissionView) -> str: if m.kind == .rescue: "Rescue of {rescue_target_name(w, m.target)}" else: _kind_word(m.kind)
+
 contract_title = (w: data.World, m: living.MissionView) -> str: "{_kind_word(m.kind)} for {country_name(w, m.country)}"
 
 find_mission = (w: data.World, id: int) -> living.MissionView?:
@@ -339,10 +341,10 @@ military_notices = (w: data.World, district: int, actor: int, declined: {int: bo
     office = "{_place_name(w, district)} office"
     loop m in living.military_work(w, district):
         if m.state != .open or w.minute > m.deadline or m.id in declined: continue
-        out.push(Notice(MILITARY_NOTICE_BASE - m.id, "{_cap(country_name(w, m.country))}, {office}", _kind_word(m.kind), m.why, m.reward / 100, _due(clock(m.deadline))))
+        out.push(Notice(MILITARY_NOTICE_BASE - m.id, "{_cap(country_name(w, m.country))}, {office}", _notice_title(w, m), m.why, m.reward / 100, _due(clock(m.deadline))))
     loop m in living.military_work(w, -1, actor):
         if m.state != .claimed or (m.destination != district and m.origin != district): continue
-        out.push(Notice(MILITARY_NOTICE_BASE - m.id, "your contract with {country_name(w, m.country)}", _kind_word(m.kind), m.why, m.reward / 100, _due(clock(m.deadline)), pay_text = "Yours: {m.reward / 100} lire"))
+        out.push(Notice(MILITARY_NOTICE_BASE - m.id, "your contract with {country_name(w, m.country)}", _notice_title(w, m), m.why, m.reward / 100, _due(clock(m.deadline)), pay_text = "Yours: {m.reward / 100} lire"))
     out
 
 # what can be said at the office about a contract: the words and their action codes
@@ -363,34 +365,58 @@ contract_answers = (w: data.World, m: living.MissionView, actor: int) -> (str[],
 
 # Where a claimed contract's packet is, and where it goes: for the contract panel, a mark in
 # flight and on the chart. From the commission's own saved position and offices.
-struct PacketMark:
+struct ContractMark:
     mission: int
     pos: vec3
     label: str                      # beside the mark: "Packet, Porto Vecchio office"
     line: str                       # a sentence for the contract panel
 
-packet_mark = (w: data.World, m: living.MissionView) -> PacketMark?:
+# who a rescue contract is for: "Dario Ferraro", or "the Kalyra crew"
+rescue_target_name = (w: data.World, survivor: int) -> str:
+    if not (survivor in w.war.survivors): return "the survivors"
+    s = w.war.survivors[survivor]
+    if s.person >= 0 and s.person < w.people.len(): w.people[s.person].name else: "the {country_name(w, s.country)} crew"
+
+# a rescue contract: the survivor in the water (where the office last had them), then, once
+# aboard the carrier's own aircraft, the harbour where they are to be landed
+_rescue_mark = (w: data.World, m: living.MissionView) -> ContractMark?:
+    if not (m.target in w.war.survivors) or not (m.id in w.war.missions): return none
+    s = w.war.survivors[m.target]
+    if s.resolved: return none
+    who = rescue_target_name(w, m.target); to = _place_name(w, m.destination)
+    carrier = w.war.missions[m.id].carrier
+    craft = if carrier >= 0 and carrier < w.people.len(): w.people[carrier].craft else: -1
+    if s.riding_craft >= 0 and s.riding_craft == craft:
+        at = if m.destination in w.far.harbors and w.far.harbors[m.destination].docks.len() > 0: w.far.harbors[m.destination].docks[0] else: far_news.far_counter_position(w, m.destination)
+        return ContractMark(m.id, at, "Land them, {to}", "{who} is aboard. Moor at {to}, help them ashore, then report at the office.")
+    if s.riding_craft >= 0 or s.riding_vehicle >= 0: return none
+    off = nearest_war_place(w, s.at)
+    near = if off >= 0: " off {_place_name(w, off)}" else: ""
+    ContractMark(m.id, s.at, who, "{who} is in the water{near}. Take them aboard and land them at {to}.")
+
+contract_mark = (w: data.World, m: living.MissionView) -> ContractMark?:
+    if m.state == .claimed and m.kind == .rescue: return _rescue_mark(w, m)
     if m.state != .claimed or m.commission < 0: return none
     loop v in living.commission_views(w):
         if v.id != m.commission: continue
         from = _place_name(w, v.origin); to = _place_name(w, v.destination)
         match v.phase:
-            .claimed: return PacketMark(m.id, v.pos, "Packet, {from} office", "The packet waits at the {from} office counter.")
-            .aboard: return PacketMark(m.id, far_news.far_counter_position(w, v.destination), "Hand over, {to} office", "The packet is aboard. Take it to the {to} office counter.")
-            .carrying, .collecting: return PacketMark(m.id, far_news.far_counter_position(w, v.destination), "Hand over, {to} office", "You carry the packet. Put it aboard, or hand it over at the {to} office counter.")
+            .claimed: return ContractMark(m.id, v.pos, "Packet, {from} office", "The packet waits at the {from} office counter.")
+            .aboard: return ContractMark(m.id, far_news.far_counter_position(w, v.destination), "Hand over, {to} office", "The packet is aboard. Take it to the {to} office counter.")
+            .carrying, .collecting: return ContractMark(m.id, far_news.far_counter_position(w, v.destination), "Hand over, {to} office", "You carry the packet. Put it aboard, or hand it over at the {to} office counter.")
             _: return none
     none
 
 # the packets of the player's own claimed contracts, nearest first
-packet_marks = (w: data.World, actor: int, from: vec3) -> PacketMark[]:
-    out: PacketMark[]
+contract_marks = (w: data.World, actor: int, from: vec3) -> ContractMark[]:
+    out: ContractMark[]
     loop m in living.military_work(w, -1, actor):
-        if let k = packet_mark(w, m): out.push(k)
-    out.sort((k: PacketMark): f64(length(k.pos - from)))
+        if let k = contract_mark(w, m): out.push(k)
+    out.sort((k: ContractMark): f64(length(k.pos - from)))
     out
 
 # a packet on the chart: a small sealed envelope and where it is to be taken
-draw_packet_marks = (r: Rect, marks: PacketMark[]):
+draw_contract_marks = (r: Rect, marks: ContractMark[]):
     ink = rgba(0.16, 0.2, 0.34, 0.95)
     clip(r)
     loop k in marks:
@@ -410,7 +436,7 @@ contract_status = (w: data.World, m: living.MissionView) -> str:
     match m.state:
         .open: ""
         .claimed:
-            if let k = packet_mark(w, m): "Accepted. {k.line} Payment {pay} on delivery."
+            if let k = contract_mark(w, m): "Accepted. {k.line} Payment {pay} on {if m.kind == .rescue: "report" else: "delivery"}."
             else if m.kind == .escort: "Accepted. Escorted {m.progress / 1000} of {m.required / 1000} m."
             else if m.kind == .reconnaissance: "Accepted. Observed {m.progress} of {m.required} ticks over the target."
             else: "Accepted. Payment {pay} on report."
