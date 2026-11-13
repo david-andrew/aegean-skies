@@ -11,8 +11,10 @@ use 'living_far_checks.jo'
 use 'living_far_news.jo'
 use 'living_far_orders.jo'
 use 'living_far_recipes.jo'
+use 'living_field_land.jo'
+use 'living_fields.jo'
+use 'living_fields_opening.jo'
 
-const FAR_DAILY_FOOD: int[9] = [35,8,8,28,0,0,1,2,0]
 const FAR_MAX_VEHICLES = 1280
 
 far_population = (w: World) -> int:
@@ -38,9 +40,15 @@ _far_populate = (w: mut World, version: int, seeds: FarPlaceSeed[], links: FarLi
     if w.far.populated: return w.far.registry_version==version
     if seeds.len()==0 or seeds.len()>1024 or w.far.districts.len()>0: return false
     seen: {int: bool}
+    fields: {int: bool}
     loop s in seeds:
         if s.id in seen or not (s.id in w.place_contexts) or s.population<1 or s.country<0 or s.country>=3 or s.output<0 or s.output>=9 or s.productivity<1 or s.raw_ore<0: return false
         seen[s.id] = true
+        if s.opening_crop_per_mille<0 or s.opening_crop_per_mille>1000: return false
+        if s.fields.len()>FIELD_PARCELS_PER_PLACE: return false
+        loop land in s.fields:
+            if not field_land_valid(land) or land.id in fields: return false
+            fields[land.id]=true
     loop c in 0..3:
         treasury = new_account(w,"national-treasury:{c}",6000000)
         w.far.treasury[c] = treasury
@@ -65,7 +73,14 @@ _far_populate = (w: mut World, version: int, seeds: FarPlaceSeed[], links: FarLi
         market = if core>=0: w.places[core].market.account else: new_account(w,"district-market:{s.id}",population*20000)
         home = new_account(w,"district-households:{s.id}",population*30000)
         d = FarDistrict(id=s.id,core=core,born_country=s.country,controller=s.country,authority=s.country,market_account=market,household_account=home,output=s.output,productivity=s.productivity,raw_ore=s.raw_ore,raw_crude=s.raw_crude,homes=s.homes,population=population,last_hour=w.minute/60)
+        d.fields=[loop land in s.fields: FarField(land)]
         d.workers[s.country] = max(1,population*3/5); d.dependents[s.country] = population-d.workers[s.country]
+        # Finite household equipment predates these records, including farm carts.
+        # Farm hiring later keeps enough actual labor to feed its existing households.
+        # Loading an old save never creates another equipment pool.
+        if core<0:
+            d.spare_wagons=min(if s.output==3: 32 else: 64,d.workers[s.country]/8)
+            w.far.opening_spare_wagons+=d.spare_wagons
         loop g in 0..9:
             d.target[g] = max(1000,population*(if g==s.output: s.productivity else: FAR_DAILY_FOOD[g])*3)
             d.prices[g] = w.goods[g].base_cents
@@ -97,6 +112,40 @@ _far_populate = (w: mut World, version: int, seeds: FarPlaceSeed[], links: FarLi
         v.crew[d.born_country] = crew
         w.far.vehicles.push(v)
         w.far.vehicles[id].buying_order=counter_restock_order(w,id,link.b,true)
+    initialize_opening_fields(w,ordered)
+    if guard_blocked(): return false
+    # Established reciprocal offices begin with dated catalogs from their actual
+    # counterpart, independently of whether that supplier currently wants to buy.
+    # This is explicit opening knowledge, not a runtime remote-inventory query.
+    loop v in w.far.vehicles:
+        l=w.far.links[v.route]
+        a=counter_restock_order(w,v.id,l.a,true); b=counter_restock_order(w,v.id,l.b,true)
+        remember_supplier_quote(w,l.a,v.id,b); remember_supplier_quote(w,l.b,v.id,a)
+    # These offices and their buying correspondence predate the opening scene.
+    # Publish reciprocal standing requests along actual service links, not a world
+    # where the capital has never sent a letter until its opening pantry runs out.
+    # Each synchronous generation carries only the previous generation's real needs;
+    # the normal ancestry/quantity/customer bounds still apply. No elapsed time,
+    # physical stock, payment or movement is manufactured by a letter.
+    previous=u64(0)
+    loop generation in 0..FAR_ORDER_PATH:
+        papers: (int,int,FarRestockOrder)[]
+        loop v in w.far.vehicles:
+            l=w.far.links[v.route]
+            papers.push((l.a,v.id,counter_restock_order(w,v.id,l.b,true)))
+            papers.push((l.b,v.id,counter_restock_order(w,v.id,l.a,true)))
+        stamp=hash(papers)
+        if generation>0 and stamp==previous: break
+        previous=stamp
+        loop place in w.far.place_ids: w.far.districts[place].customer_orders=[]
+        loop paper in papers: remember_counter_order(w,paper.0,paper.1,paper.2)
+    mandates: FarRestockOrder[]
+    loop v in w.far.vehicles:
+        l=w.far.links[v.route]; peer=if l.a==v.home: l.b else: l.a
+        mandates.push(counter_restock_order(w,v.id,peer,true))
+    loop id in 0..w.far.vehicles.len(): w.far.vehicles[id].buying_order=mandates[id]
+    w.far.fields_registered=true
+    w.far.opening_trade_pending=true; w.far.opening_minute=w.minute
     w.far.populated = true; w.far.last_minute = w.minute
     true
 
@@ -112,6 +161,20 @@ populate_settlement_economy = (w: mut World, version: int, seeds: FarPlaceSeed[]
     result and not failed
 
 # New output is paid work, constrained by actual labor, funds, raw material and owned inputs.
+far_work_quantity = (w: World,place: int,workers: int) -> int:
+    d=w.far.districts[place]; g=d.output
+    root=w.cargo_source_keys.get("far:{place}:{g}:false",-1)
+    if d.core<0 and not (root in d.stock.roots) and d.stock.roots.len()>=FAR_MAX_STOCK_ROOTS: return 0
+    qty=(workers*d.productivity+d.production_remainder)/24
+    qty=min(qty,max(0,counter_stock_target(w,place,g)*3-far_market_qty(w,place,g)))
+    rate=max(1,w.goods[g].base_cents*4/5)
+    qty=min(qty,w.accounts[d.market_account].cents*1000/rate)
+    input=far_input(g)
+    if input>=0: qty=min(qty,far_market_qty(w,place,input)*far_input_divisor(g))
+    if g==5: qty=min(qty,d.raw_ore)
+    if g==4: qty=min(qty,d.raw_crude)
+    qty
+
 far_work_hour = (w: mut World, place: int):
     loop c in 0..3:
         d=w.far.districts[place]
@@ -121,17 +184,15 @@ far_work_hour = (w: mut World, place: int):
             w.far.districts[place].pending_workers[c]=0
     d = w.far.districts[place]; workers = 0
     loop n in d.workers: workers += n
-    g = d.output; raw = workers*d.productivity+d.production_remainder
-    qty = raw/24; w.far.districts[place].production_remainder = raw%24
-    # Stops at a real warehouse ceiling instead of accumulating infinite unwanted output.
-    qty = min(qty,max(0,counter_stock_target(w,place,g)*3-far_market_qty(w,place,g)))
-    wage_rate = max(1,w.goods[g].base_cents*4/5)
-    qty = min(qty,w.accounts[d.market_account].cents*1000/wage_rate)
-    input = far_input(g)
-    divisor = far_input_divisor(g)
-    if input>=0: qty = min(qty,far_market_qty(w,place,input)*divisor)
-    if g==5: qty = min(qty,d.raw_ore)
-    if g==4: qty = min(qty,d.raw_crude)
+    full=far_work_quantity(w,place,workers)
+    diverted=household_fields_hour(w,place,workers)
+    d=w.far.districts[place]; workers-=diverted
+    g=d.output; raw=workers*d.productivity+d.production_remainder
+    qty=if diverted==0: full else: far_work_quantity(w,place,workers)
+    w.far.districts[place].production_remainder=raw%24
+    w.far.field_foregone[g]+=max(0,full-qty)
+    wage_rate=max(1,w.goods[g].base_cents*4/5)
+    input=far_input(g); divisor=far_input_divisor(g)
     if qty<=0: return
     key = "far:{place}:{g}:false"; root = w.cargo_source_keys.get(key,-1)
     if d.core<0 and not (root in d.stock.roots) and d.stock.roots.len()>=FAR_MAX_STOCK_ROOTS: return
@@ -151,6 +212,7 @@ far_household_hour = (w: mut World, place: int):
     loop g in 0..9:
         raw = population*FAR_DAILY_FOOD[g]+d.demand_remainder[g]
         wanted = raw/24; w.far.districts[place].demand_remainder[g] = raw%24
+        w.far.household_need[g]+=wanted
         quote = max(1,d.prices[g]); qty = min(wanted,min(far_market_qty(w,place,g),w.accounts[d.household_account].cents*1000/quote))
         if qty>0:
             key = "far-household:{place}:{g}"; cash_raw = qty*quote+w.quote_residual.get(key,0)
@@ -158,6 +220,7 @@ far_household_hour = (w: mut World, place: int):
             if cents>0 and not transfer(w,d.household_account,d.market_account,cents,.trade,place): continue
             w.quote_residual[key] = cash_raw%1000
             batch = far_take_market(w,place,g,qty); far_use(w,batch)
+            w.far.household_consumed[g]+=qty
         w.far.districts[place].unmet[g] = min(1000000000,d.unmet[g]+wanted-qty)
         # Grain (with the already-budgeted oil) is the staple caloric ration. A missing
         # fish dish is reduced variety, not starvation in a household with its grain.

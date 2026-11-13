@@ -193,7 +193,9 @@ issue_war_order = (w: mut World, unit: int, task: WarTask, target: int) -> int:
     if target!=v.place and route.len()==0: return -1
     id=w.war.next_order; w.war.next_order+=1
     why="{w.countries[u.country].name} ordered carrier {v.id} to {task} at {life_place_name(w,target)} with its existing crew and paid stores."
-    w.war.orders[id]=WarOrder(id,unit,u.country,task,target,route,issued=w.minute,expires=w.minute+20160,why=why)
+    travel=0
+    loop edge in route: travel+=w.far.links[edge].length_mm/max(1,v.speed_mm_sec)/2+60
+    w.war.orders[id]=WarOrder(id,unit,u.country,task,target,route,issued=w.minute,expires=w.minute+max(20160,travel+1440),why=why)
     w.war.units[unit].order=id
     far_local_news(w,v.place,"orders",why,country=u.country,severity=300)
     id
@@ -209,7 +211,26 @@ war_incident = (w: mut World, place: int, aggressor: int, affected: int, kind: s
     news
 
 # A capital must actually receive the account. Reading the global event map never informs it.
+war_report_after_settlement = (relation: DiplomaticRelation,minute: int,news: int) -> bool:
+    if minute!=relation.last_armistice_minute: return minute>relation.last_armistice_minute
+    relation.last_armistice_news>=0 and news>relation.last_armistice_news
+
 war_diplomacy = (w: mut World):
+    # Legacy banks can reconstruct a settlement from councils' actual retained notices.
+    # Their already-accepted incident date is also a lower bound on what was settled.
+    loop index in 0..w.diplomacy.len():
+        relation=w.diplomacy[index]
+        if relation.stage!=.armistice or (relation.last_armistice_minute>=0 and relation.last_armistice_news>=0): continue
+        cutoff=max(relation.last_incident_minute,relation.last_armistice_minute); last_news=relation.last_armistice_news
+        loop country in [relation.a,relation.b]:
+            c=w.countries[country]; place=if c.capital_id>=0: c.capital_id else: c.seat
+            if not (place in w.far.districts): continue
+            loop r in w.far.districts[place].reports:
+                if r.kind=="armistice" and r.state_backed and r.confidence>=600 and min(r.country,r.other_country)==relation.a and max(r.country,r.other_country)==relation.b:
+                    if r.occurred_minute>cutoff: cutoff=r.occurred_minute; last_news=r.id
+                    else if r.occurred_minute==cutoff: last_news=max(last_news,r.id)
+        w.diplomacy[index].last_armistice_minute=cutoff
+        w.diplomacy[index].last_armistice_news=last_news
     loop country in w.countries:
         place=if country.capital_id>=0: country.capital_id else: country.seat
         if not (place in w.far.districts): continue
@@ -226,20 +247,31 @@ war_diplomacy = (w: mut World):
             r=war_relation(w,e.aggressor,e.affected)
             if r<0: continue
             w.war.heard[key]=true
+            if not war_report_after_settlement(w.diplomacy[r],e.minute,news): continue
             w.diplomacy[r].tension=min(1000,w.diplomacy[r].tension+e.weight)
-            w.diplomacy[r].last_incident_minute=e.minute
+            w.diplomacy[r].last_incident_minute=max(w.diplomacy[r].last_incident_minute,e.minute)
             w.diplomacy[r].incident_news.push(news)
             if w.diplomacy[r].incident_news.len()>32: w.diplomacy[r].incident_news.remove_at(0)
             tension=w.diplomacy[r].tension
             if tension>=40 and w.diplomacy[r].stage==.calm: w.diplomacy[r].stage=.strained
             if tension>=100 and w.diplomacy[r].stage==.strained: w.diplomacy[r].stage=.mobilizing
+        # Readiness may recover after the last report arrived. Reconsider the council's
+        # actual retained receipts; no fourth incident or global event lookup is needed.
+        loop index in 0..w.diplomacy.len():
+            relation=w.diplomacy[index]
+            if relation.stage==.war or relation.tension<180: continue
+            incidents: {int: bool}; aggressor= -1
+            loop r in reports:
+                if not war_report_after_settlement(relation,r.occurred_minute,r.id): continue
+                if r.affected!=country.id or not r.state_backed or r.aggressor<0 or r.weight<=0 or r.confidence<600 or not far_report_current(w,r): continue
+                if min(r.aggressor,r.affected)!=relation.a or max(r.aggressor,r.affected)!=relation.b or not ("{country.id}:{r.id}" in w.war.heard): continue
+                incidents[r.id]=true; aggressor=r.aggressor
             forces=0
             loop u in w.war.units:
-                if not u.retired and (u.country==e.aggressor or u.country==e.affected) and u.supplied_until>=w.minute: forces+=1
-            # Three independent received incidents plus funded, supplied forces. No date gate.
-            if tension>=180 and w.diplomacy[r].incident_news.len()>=3 and forces>=2 and w.diplomacy[r].stage!=.war:
-                w.diplomacy[r].stage=.war
-                far_local_news(w,place,"war_declared","After three received border reports, {country.name} declared war on {w.countries[e.aggressor].name}.",country=country.id,severity=1000,other_country=e.aggressor)
+                if not u.retired and (u.country==relation.a or u.country==relation.b) and u.supplied_until>=w.minute: forces+=1
+            if incidents.len()>=3 and forces>=2:
+                w.diplomacy[index].stage=.war
+                far_local_news(w,place,"war_declared","After three received border reports, {country.name} declared war on {w.countries[aggressor].name}.",country=country.id,severity=1000,other_country=aggressor)
         # Heard evidence receipts are bounded by the retained causal incident journal.
     if w.war.evidence.len()>128:
         ids=w.war.evidence.keys(); ids.sort()
@@ -258,6 +290,7 @@ war_diplomacy = (w: mut World):
         w.war.heard=kept
 
 war_supply = (w: mut World, unit: int):
+    war_acknowledge_dispatch(w,unit)
     u=w.war.units[unit]
     if u.retired or u.vehicle<0: return
     v=w.far.vehicles[u.vehicle]
@@ -305,15 +338,25 @@ war_orders = (w: mut World):
         u=w.war.units[unit]
         if u.retired or u.vehicle<0: continue
         war_supply(w,unit)
+        u=w.war.units[unit]
         v=w.far.vehicles[u.vehicle]
         if u.convoy!=none: continue
         if u.order<0: continue
         order=w.war.orders[u.order]
+        if order.task==.patrol and v.place>=0 and v.place!=u.home and u.supplied_until<w.minute:
+            w.war.orders.remove(u.order); w.war.units[unit].order= -1
+            issue_war_order(w,unit,.repair,u.home)
+            continue
+        if order.task==.patrol and war_dispatch_needed(w,unit):
+            capital=if w.countries[u.country].capital_id>=0: w.countries[u.country].capital_id else: w.countries[u.country].seat
+            w.war.orders.remove(u.order); w.war.units[unit].order= -1
+            issue_war_order(w,unit,.dispatch,capital)
+            continue
         if (order.task==.blockade or order.task==.occupy) and not war_unit_hostile(w,unit,w.far.districts[order.target].born_country):
             w.war.orders.remove(u.order); w.war.units[unit].order= -1
             if v.place>=0 and v.place!=u.home: issue_war_order(w,unit,.withdraw,u.home)
             continue
-        if v.place>=0 and order.task!=.withdraw and order.task!=.repair and v.place!=u.home and v.place!=order.target:
+        if v.place>=0 and order.task!=.withdraw and order.task!=.repair and order.task!=.dispatch and v.place!=u.home and v.place!=order.target:
             home_path=war_path(w,v.place,u.home,v.kind)
             length_mm=0
             loop edge in home_path: length_mm+=w.far.links[edge].length_mm
@@ -330,7 +373,18 @@ war_orders = (w: mut World):
             w.war.orders[u.order].blockade_reported=true
         if v.journey>=0 or v.hull<=0 or w.minute<order.retry: continue
         if v.place==order.target:
+            first_arrival=not order.arrived
             w.war.orders[u.order].arrived=true
+            if order.task==.patrol and w.minute<u.charter_until:
+                if w.far.districts[v.place].controller==u.country:
+                    # A defender holds a real frontier station rather than wandering inland.
+                    if war_at_frontier(w,v.place,v.kind,u.country): continue
+                else if order.route.len()>0:
+                    if first_arrival:
+                        other=w.far.districts[v.place].controller
+                        war_incident(w,v.place,u.country,other,"armed_intrusion","An armed {w.countries[u.country].name} charter entered {life_place_name(w,v.place)} under orders to inspect its traffic.")
+                        w.war.orders[u.order].station_until=w.minute+180
+                    if w.minute<w.war.orders[u.order].station_until: continue
             if order.task==.blockade and w.minute<u.charter_until and w.far.districts[v.place].controller!=u.country:
                 if not order.blockade_reported:
                     far_local_news(w,v.place,"blockade","A supplied {w.countries[u.country].name} charter has established a cordon off {life_place_name(w,v.place)}. Merchant traffic is being stopped at its actual lane mouth.",country=u.country,severity=850,other_country=w.far.districts[v.place].controller)
@@ -351,9 +405,6 @@ war_orders = (w: mut World):
             if order.task==.occupy:
                 war_occupy(w,unit,v.place)
                 if w.far.districts[v.place].controller==u.country and w.minute<u.charter_until: continue
-            if order.task==.patrol and order.route.len()>0 and w.far.districts[v.place].controller!=u.country:
-                other=w.far.districts[v.place].controller
-                war_incident(w,v.place,u.country,other,"armed_intrusion","An armed {w.countries[u.country].name} charter entered {life_place_name(w,v.place)} under orders to inspect its traffic.")
             w.war.units[unit].order= -1
             w.war.orders.remove(order.id)
             continue
@@ -363,7 +414,7 @@ war_orders = (w: mut World):
         duty=if order.task==.blockade: FarDuty.patrol else: if order.task==.occupy: FarDuty.convoy else: FarDuty.patrol
         # An underfed force can attempt to get home with what it can buy. Lack of a
         # full fighting ration must not lock a withdrawal forever at an empty counter.
-        emergency=order.task==.withdraw or order.task==.repair
+        emergency=order.task==.withdraw or order.task==.repair or order.task==.dispatch
         if u.supplied_until>=w.minute or emergency: war_start_leg(w,u.vehicle,route[0],duty,emergency)
 
 war_decisions = (w: mut World):
@@ -376,6 +427,9 @@ war_decisions = (w: mut World):
         target= -1; task=WarTask.patrol
         if w.minute>=u.charter_until: target=u.home; task=.withdraw
         else if u.prize_return: target=u.home; task=.repair
+        else if war_dispatch_needed(w,unit):
+            target=if w.countries[u.country].capital_id>=0: w.countries[u.country].capital_id else: w.countries[u.country].seat
+            task=.dispatch
         else if u.supplied_until<w.minute:
             if v.place!=u.home: target=u.home; task=.repair
         else:
@@ -386,31 +440,37 @@ war_decisions = (w: mut World):
 war_minute = (w: mut World):
     if not w.far.populated or w.far.harbors.len()==0: return
     initialize_war(w)
-    if w.minute%60!=0 or w.war.last_hour==w.minute/60: return
+    if (w.minute%60!=0 and w.war.last_hour>=0) or w.war.last_hour==w.minute/60: return
     w.war.last_hour=w.minute/60
-    # Governments charter at most two real idle carriers each, paid from finite treasuries.
+    # Two standing paid roles per country, chosen before initial trade departures.
+    # An army needs an actual land frontier; island disputes require existing boats.
     loop country in 0..3:
-        count=0
-        loop u in w.war.units:
-            if u.country==country and not u.retired and w.minute<u.charter_until: count+=1
-        if count>=2: continue
-        wanted=FarMode.ship
-        if country!=0:
-            army=false
+        loop slot in 0..2:
+            count=0; army=false
             loop u in w.war.units:
-                if u.country==country and not u.retired and u.vehicle>=0 and w.far.vehicles[u.vehicle].kind==.cart: army=true
-            if not army: wanted=.cart
-        distances=war_frontier_hops(w,country,wanted)
-        candidate= -1; score=1000000
-        loop v in w.far.vehicles:
-            if v.kind!=wanted or v.citizen!=country or v.journey>=0 or v.duty!=.merchant or not (v.place in distances): continue
-            if w.far.districts[v.place].controller!=country or w.far.districts[v.place].workers[country]<7 or v.hull<=350 or v.motion_blocked!="": continue
-            old=false
-            loop u in w.war.units:
-                if u.vehicle==v.id and not u.retired: old=true
-            value=distances[v.place]
-            if not old and value<score: candidate=v.id; score=value
-        if candidate>=0: war_charter(w,candidate,country)
+                if u.country!=country or u.retired or w.minute>=u.charter_until: continue
+                count+=1
+                if u.vehicle>=0 and w.far.vehicles[u.vehicle].kind==.cart: army=true
+            if count>=2: break
+            wanted=FarMode.ship
+            if country!=0 and not army:
+                loop place in w.far.place_ids:
+                    if w.far.districts[place].born_country==country and war_at_frontier(w,place,.cart,country): wanted=.cart; break
+            distances=war_frontier_hops(w,country,wanted)
+            candidate= -1; score=1000000000000
+            loop v in w.far.vehicles:
+                if v.kind!=wanted or v.citizen!=country or v.journey>=0 or v.duty!=.merchant or not (v.place in distances): continue
+                if w.far.districts[v.place].controller!=country or w.far.districts[v.place].workers[country]<7 or v.hull<=350 or v.motion_blocked!="": continue
+                old=false
+                loop u in w.war.units:
+                    if u.vehicle==v.id and not u.retired: old=true
+                value=distances[v.place]*1000000+war_crossing_distance(w,v.place,wanted,country)
+                # A second paid hull should cover another reachable frontier, not
+                # duplicate the first station merely because its registry ID sorts first.
+                loop stationed in w.war.units:
+                    if stationed.country==country and not stationed.retired and stationed.home==v.place: value+=1000000000
+                if not old and value<score: candidate=v.id; score=value
+            if candidate<0 or war_charter(w,candidate,country)<0: break
     war_industry_minute(w)
     war_diplomacy(w)
     war_orders(w)
@@ -425,6 +485,7 @@ war_border_destination = (w: World, origin: int, mode: FarMode, country: int, un
     loop head<queue.len() and queue.len()<=1024:
         at=queue[head]; head+=1
         edges=w.far.districts[at].links; edges.sort()
+        target= -1; nearest=1000000000000
         loop edge in edges:
             l=w.far.links[edge]
             if l.mode!=mode: continue
@@ -432,13 +493,52 @@ war_border_destination = (w: World, origin: int, mode: FarMode, country: int, un
             if next in seen: continue
             other=if unit>=0: war_known_control(w,unit,next) else: w.far.districts[next].controller
             if other!=country:
-                if (if unit>=0: war_unit_hostile(w,unit,other) else: war_hostile(w,country,other)) or country==1: return next
-                if at!=origin: return at
-            else if not (next in seen):
+                if l.length_mm<nearest: target=next; nearest=l.length_mm
+            else:
                 seen[next]=true; queue.push(next)
+        if target>=0:
+            other=if unit>=0: war_known_control(w,unit,target) else: w.far.districts[target].controller
+            if (if unit>=0: war_unit_hostile(w,unit,other) else: war_hostile(w,country,other)) or country==1: return target
+            return at
     # No international frontier on this connected mode: patrol a different reachable home port.
     if queue.len()>1: return queue[queue.len()-1]
     -1
+
+# Charted crossing lengths are public geometry, not knowledge of an enemy's position.
+war_crossing_distance = (w: World, place: int, mode: FarMode, country: int) -> int:
+    result=1000000000
+    loop edge in w.far.districts[place].links:
+        link=w.far.links[edge]; other=if link.a==place: link.b else: link.a
+        if link.mode==mode and w.far.districts[other].born_country!=country: result=min(result,link.length_mm/1000)
+    result
+
+war_at_frontier = (w: World, place: int, mode: FarMode, country: int) -> bool:
+    loop edge in w.far.districts[place].links:
+        link=w.far.links[edge]; other=if link.a==place: link.b else: link.a
+        if link.mode==mode and w.far.districts[other].born_country!=country: return true
+    false
+
+# Take an actual signed account to the council aboard an existing paid carrier. No
+# distant inventory or journal is consulted; acknowledgements are learned at the council.
+war_acknowledge_dispatch = (w: mut World, unit: int):
+    u=w.war.units[unit]
+    if u.retired or u.vehicle<0: return
+    v=w.far.vehicles[u.vehicle]
+    capital=if w.countries[u.country].capital_id>=0: w.countries[u.country].capital_id else: w.countries[u.country].seat
+    if v.place!=capital or v.journey>=0 or not (capital in w.far.districts): return
+    loop r in w.far.districts[capital].reports:
+        if not r.state_backed or r.affected!=u.country or r.weight<=0 or r.confidence<600 or not far_report_current(w,r): continue
+        if not (r.id in w.war.units[unit].dispatch_receipts): w.war.units[unit].dispatch_receipts.push(r.id)
+        if w.war.units[unit].dispatch_receipts.len()>128: w.war.units[unit].dispatch_receipts.remove_at(0)
+
+war_dispatch_needed = (w: World, unit: int) -> bool:
+    u=w.war.units[unit]; v=w.far.vehicles[u.vehicle]
+    capital=if w.countries[u.country].capital_id>=0: w.countries[u.country].capital_id else: w.countries[u.country].seat
+    if v.place<0 or v.place==capital or not (capital in w.far.districts): return false
+    needed=false
+    loop r in war_unit_reports(w,unit):
+        if r.state_backed and r.affected==u.country and r.weight>0 and r.confidence>=600 and far_report_current(w,r) and not (r.id in u.dispatch_receipts): needed=true
+    needed and war_path(w,v.place,capital,v.kind).len()>0
 
 war_frontier_hops = (w: World, country: int, mode: FarMode) -> {int: int}:
     distance: {int: int}; queue: int[]

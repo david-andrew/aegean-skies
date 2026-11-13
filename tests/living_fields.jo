@@ -1,0 +1,262 @@
+use '../src/living_types.jo'
+use '../src/living_far_types.jo'
+use '../src/life_types.jo'
+use '../src/living_seed.jo'
+use '../src/living_place_context.jo'
+use '../src/living_far_economy.jo'
+use '../src/living_far_stock.jo'
+use '../src/living_far_orders.jo'
+use '../src/living_far_checks.jo'
+use '../src/living_fields.jo'
+use '../src/living_crop_calendar.jo'
+use '../src/living_field_land.jo'
+use '../src/living_money.jo'
+use '../src/living_save.jo'
+use '../src/living_checks.jo'
+use '../src/living_fields_opening.jo'
+use '../src/living_work.jo'
+use '../src/living_far_people.jo'
+use '../src/living_far_context.jo'
+use '../src/living_talk_context.jo'
+
+field_fixture = (standing: int = 0,producer_population: int = 8000,deferred_minute: int = 0) -> World:
+    w=build_world(u64(42)); contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k,"Core {k}",0,k,w.harbors[k].center,true,k))
+    loop id in [100,200]: contexts.push(LifePlaceContext(id,"Field village {id}",1,id,vec3(f32(id),0,0)))
+    assert(publish_place_contexts(w,1,contexts,[-1,200,-1]))
+    land=FarFieldLand(field_cell_id(0,0),vec3(500,5,500),1000,10000)
+    seeds=[FarPlaceSeed(100,producer_population,1,3,productivity=80),FarPlaceSeed(200,80,1,0,fields=[land],opening_crop_per_mille=standing)]
+    links=[FarLink(0,100,200,.cart,[vec3(100,0,0),vec3(200,0,0)],100000,road=0)]
+    w.minute=deferred_minute; w.tick=w.minute*120
+    assert(populate_settlement_economy(w,1,seeds,links))
+    w
+
+field_set_day = (w: mut World,day: int):
+    w.minute=day*1440; w.tick=w.minute*120
+
+field_supply_seed = (w: mut World):
+    d=w.far.districts[200]; workers=d.workers[1]
+    # Actual household consumption creates the shortage that motivates the plan.
+    far_household_hour(w,200)
+    assert(household_fields_hour(w,200,workers)==0)
+    qty=w.far.districts[200].field_seed_target
+    assert(qty>0)
+    cents=(qty*w.far.districts[100].prices[3]+999)/1000
+    assert(transfer(w,d.market_account,w.far.districts[100].market_account,cents,.trade))
+    batch=far_take_market(w,100,3,qty); far_put_market(w,200,batch)
+    assert(household_fields_hour(w,200,workers)>0)
+    assert(w.far.districts[200].fields[0].crop!=none)
+
+field_finish_sowing = (w: mut World):
+    loop hour in 0..200:
+        w.minute+=60; w.tick=w.minute*120
+        far_work_hour(w,200); far_household_hour(w,200)
+        if w.far.districts[200].fields[0].crop!.stage!=.sowing: return
+    panic("The actual paid sowing never finished")
+
+test "new fields wait for the real sowing season real seed and paid labor":
+    w=field_fixture(); grain=stock_totals(w)[3]; produced=w.far.produced[3]
+    far_household_hour(w,200); far_work_hour(w,200)
+    assert(w.far.districts[200].fields[0].crop==none and w.far.produced[3]==produced)
+    field_set_day(w,crop_month_start(1928,10)); field_supply_seed(w)
+    crop=w.far.districts[200].fields[0].crop!
+    assert(crop.stage==.sowing and crop.seed.qty[3]==crop.seed_milli and crop.harvested_milli==0)
+    assert(w.far.produced[3]==produced and stock_totals(w)[3]<=grain)
+    assert(money_balances(w) and goods_balance(w) and validate_far(w)=="",validate_far(w))
+    field_finish_sowing(w)
+    crop=w.far.districts[200].fields[0].crop!
+    assert(crop.stage==.growing and crop.ready_day-crop.sown_day>=180 and crop.seed.roots.len()==0)
+    assert(w.far.produced[3]==produced and w.far.field_seed_sown==crop.seed_milli)
+    assert(w.far.household_consumed[3]<w.far.consumed[3]) # Seed is not a meal.
+    text=canonical_text(w); copy=from_text[World](text)
+    assert(copy is World and canonical_text(copy)==text and validate_far(copy)=="",validate_far(w))
+
+test "diverted field hands reduce the same cohort's actual specialist output and release when food recovers":
+    w=field_fixture(); field_set_day(w,crop_month_start(1928,10)); field_supply_seed(w)
+    plain=w
+    far_put_market(plain,200,plain.far.districts[200].fields[0].crop!.seed)
+    plain.far.districts[200].fields=[]
+    assert(goods_balance(plain))
+    before=w.far.produced[0]; money=w.far.field_labor_paid; people=far_population(w)
+    far_work_hour(w,200); far_work_hour(plain,200)
+    used=w.far.districts[200].field_workers
+    assert(used>0 and used<=w.far.districts[200].workers[1]/2)
+    assert(w.far.produced[0]<plain.far.produced[0] and w.far.produced[0]>=before)
+    assert(w.far.field_foregone[0]==plain.far.produced[0]-w.far.produced[0])
+    assert(w.far.field_labor_paid>money and far_population(w)==people)
+    # A real, paid replenishment recovers the pantry; unplanted seed returns to stock.
+    qty=1000000; price=(qty*w.far.districts[100].prices[3]+999)/1000
+    assert(transfer(w,w.far.districts[200].market_account,w.far.districts[100].market_account,price,.trade))
+    batch=far_take_market(w,100,3,qty); far_put_market(w,200,batch)
+    seed=w.far.districts[200].fields[0].crop!.seed.qty[3]; stock=far_market_qty(w,200,3)
+    far_work_hour(w,200)
+    assert(w.far.districts[200].field_workers==0 and w.far.districts[200].fields[0].crop==none)
+    assert(far_market_qty(w,200,3)==stock+seed and goods_balance(w) and money_balances(w))
+
+test "no seed or money cannot become a sown crop and unripe growth cannot become grain":
+    w=field_fixture(); field_set_day(w,crop_month_start(1928,10))
+    far_household_hour(w,200)
+    market=w.far.districts[200].market_account
+    assert(transfer(w,market,w.far.districts[200].household_account,w.accounts[market].cents,.trade))
+    far_work_hour(w,200)
+    assert(w.far.districts[200].fields[0].crop==none and w.far.districts[200].field_seed_target==0)
+    w=field_fixture(); field_set_day(w,crop_month_start(1928,10)); field_supply_seed(w); field_finish_sowing(w)
+    crop=w.far.districts[200].fields[0].crop!; before=w.far.produced[3]
+    field_set_day(w,crop.ready_day-1)
+    far_work_hour(w,200)
+    assert(w.far.produced[3]==before and w.far.districts[200].fields[0].crop!.harvested_milli==0)
+    assert(validate_far(w)=="" and money_balances(w) and goods_balance(w),validate_far(w))
+
+
+test "standing opening crops consume real existing seed and settle actual supplier carrier and labor invoices once":
+    plain=field_fixture(); w=field_fixture(standing=200)
+    crop=w.far.districts[200].fields[0].crop!
+    assert(crop.opening and crop.sown_day<0 and crop.ready_day>=18 and crop.stage==.growing)
+    assert(crop.harvested_milli==0 and crop.potential_milli==0 and crop.seed.roots.len()==0)
+    assert(w.goods_ledger.opening==plain.goods_ledger.opening and w.far.produced==plain.far.produced)
+    assert(stock_totals(plain)[3]-stock_totals(w)[3]==crop.seed_milli*10)
+    assert(w.far.field_seed_sown==crop.seed_milli and w.far.household_consumed[3]==0)
+    seller=w.far.districts[100].market_account; buyer=w.far.districts[200].market_account
+    assert(w.accounts[seller].cents==plain.accounts[seller].cents+crop.seed_cents)
+    assert(w.accounts[buyer].cents==plain.accounts[buyer].cents-crop.seed_cents-crop.agreement.freight_cents-crop.paid_cents)
+    assert(w.accounts[w.far.vehicles[0].account].cents==plain.accounts[plain.far.vehicles[0].account].cents+crop.agreement.freight_cents)
+    assert(crop.seed_source==100 and crop.seed_route==[0] and crop.agreement.negotiated)
+    assert(validate_save_world(w)=="" and goods_balance(w) and money_balances(w),validate_save_world(w))
+    text=canonical_text(w); decoded=from_text[World](text); assert(decoded is World)
+    assert(populate_settlement_economy(decoded,1,[],[]))
+    initialize_opening_fields(decoded,[FarPlaceSeed(200,80,1,0,opening_crop_per_mille=200)])
+    assert(canonical_text(decoded)==text) # A played/loaded world never gets another founding crop.
+    poor=field_fixture(standing=200,producer_population=1)
+    assert(poor.far.districts[200].fields[0].crop==none and poor.far.field_seed_sown==0)
+
+
+test "only mature paid harvest creates traceable grain and a save keeps the exact remaining harvest":
+    w=field_fixture(standing=200); crop=w.far.districts[200].fields[0].crop!
+    field_set_day(w,crop.ready_day-1); far_work_hour(w,200)
+    assert(w.far.field_grain_harvested==0 and w.far.produced[3]==0)
+    field_set_day(w,crop.ready_day)
+    account=w.far.districts[200].market_account; household=w.far.districts[200].household_account
+    assert(transfer(w,account,household,w.accounts[account].cents,.trade))
+    far_work_hour(w,200)
+    assert(w.far.field_grain_harvested==0 and w.far.produced[3]==0) # Ripe is not free labor.
+    refused=canonical_text(w)
+    assert(not far_produce(w,200,3,1,field=w.far.districts[200].fields[0].land.id) and canonical_text(w)==refused)
+    assert(transfer(w,household,account,100000,.trade))
+    far_work_hour(w,200)
+    assert(w.far.field_grain_harvested>0 and w.far.districts[200].fields[0].crop!=none)
+    root=[loop id, source in w.cargo_sources: if source.field_id==w.far.districts[200].fields[0].land.id: id][0]
+    source=w.cargo_sources[root]
+    assert(source.producer_place==200 and source.born_tick==w.tick)
+    assert(source.crop_sown_day==crop.sown_day and source.crop_ready_day==crop.ready_day)
+    assert(source.field_seed_roots==crop.seed_roots and source.field_seed_milli==crop.seed_milli)
+    assert(work_supply(w,[root]).contains("registered field") and work_supply(w,[root]).contains("16 October 1927"))
+    text=canonical_text(w); decoded=from_text[World](text); assert(decoded is World); other=decoded
+    loop hour in 0..48:
+        if w.far.districts[200].fields[0].crop==none: break
+        w.minute+=60; w.tick=w.minute*120; other.minute=w.minute; other.tick=w.tick
+        far_work_hour(w,200); far_household_hour(w,200)
+        far_work_hour(other,200); far_household_hour(other,200)
+    assert(w.far.districts[200].fields[0].crop==none and canonical_text(w)==canonical_text(other))
+    record=w.far.districts[200].fields[0].last_harvest!
+    assert(record.grain_milli==w.far.field_grain_harvested and record.ready_day-record.sown_day>=180)
+    assert(record.seed_roots==crop.seed_roots and record.agreement.opening)
+    assert(validate_far(w)=="" and goods_balance(w) and money_balances(w),validate_far(w))
+    far_work_hour(w,200); assert(w.far.districts[200].field_workers==0)
+
+
+test "field validation rejects invented land and a forged early harvest date":
+    w=field_fixture(standing=200); bad=w
+    bad.far.districts[200].fields[0].land.center.x+=1
+    assert(validate_far(bad)=="invalid physical arable parcel")
+    bad=w; bad.far.districts[200].fields[0].crop!.ready_day=0
+    assert(validate_far(bad)=="invalid crop season/growing lag")
+
+
+test "a person retells a field agreement only after a real local visit and asking again":
+    w=field_fixture(standing=200)
+    person=promote_far_person(w,200,.farmer)
+    assert(person>=0)
+    unseen=far_speech_candidates(w,person,0,.troubles)
+    assert([loop line in unseen: if line.key.starts_with("household-field:"): line].len()==0)
+    # This fixture records the same observation performed by the normal counter visit.
+    w.far.people[person].prices_minute=w.minute
+    first=far_speech_candidates(w,person,0,.troubles)
+    assert([loop line in first: if line.key.starts_with("household-field:"): line].len()==0)
+    w.speech[person]=SpeechLedger()
+    w.speech[person].recent.push(SpokenLine("own-day","I've been busy in the fields.",w.minute,0,.troubles))
+    before=canonical_text(w)
+    seen=far_speech_candidates(w,person,0,.troubles)
+    notice=[loop line in seen: if line.key.starts_with("household-field:"): line]
+    assert(notice.len()==1 and notice[0].text.contains("sown last autumn") and notice[0].text.contains("market"))
+    assert(not notice[0].text.contains("1927") and not notice[0].text.contains("actual seed") and not notice[0].text.contains("register"))
+    assert(canonical_text(w)==before)
+    w.minute+=1; w.tick=w.minute*120
+    field_reason(w,200,"The households agreed a different dated field plan.")
+    newer=far_speech_candidates(w,person,0,.troubles)
+    assert([loop line in newer: if line.key.starts_with("household-field:"): line].len()==0)
+
+test "foregone specialist production reaches actual stock and prices rather than duplicating the workers":
+    w=field_fixture(); field_set_day(w,crop_month_start(1928,10)); field_supply_seed(w)
+    plain=w
+    far_put_market(plain,200,plain.far.districts[200].fields[0].crop!.seed)
+    plain.far.districts[200].fields=[]
+    # The comparison starts after the same previous fish stock was used. There is no
+    # minted replacement, changed labor rate, or different customer demand in either run.
+    a=far_take_market(w,200,0,far_market_qty(w,200,0)); far_use(w,a)
+    b=far_take_market(plain,200,0,far_market_qty(plain,200,0)); far_use(plain,b)
+    loop _ in 0..24:
+        w.minute+=60; w.tick=w.minute*120; plain.minute=w.minute; plain.tick=w.tick
+        far_work_hour(w,200); far_household_hour(w,200)
+        far_work_hour(plain,200); far_household_hour(plain,200)
+    assert(w.far.field_foregone[0]>0 and w.far.produced[0]<plain.far.produced[0])
+    assert(far_market_qty(w,200,0)<far_market_qty(plain,200,0))
+    assert(w.far.districts[200].prices[0]>plain.far.districts[200].prices[0])
+    assert(goods_balance(w) and goods_balance(plain) and money_balances(w) and money_balances(plain))
+
+test "a newly planted household crop traverses the whole winter without an early or free harvest":
+    w=field_fixture(); field_set_day(w,crop_month_start(1928,10)); field_supply_seed(w); field_finish_sowing(w)
+    crop=w.far.districts[200].fields[0].crop!; ready=crop.ready_day
+    assert(ready-crop.sown_day>=180)
+    before=w.far.produced[3]; checked=0
+    loop day_index(w.minute)<=ready+3 and w.far.districts[200].fields[0].crop!=none:
+        w.minute+=60; w.tick=w.minute*120
+        far_work_hour(w,200); far_household_hour(w,200)
+        if day_index(w.minute)<ready: assert(w.far.produced[3]==before)
+        if w.minute%1440==0:
+            assert(goods_balance(w) and money_balances(w) and validate_far(w)=="",validate_far(w))
+            checked+=1
+    assert(checked>=180 and w.far.districts[200].fields[0].crop==none)
+    record=w.far.districts[200].fields[0].last_harvest!
+    assert(record.sown_day==crop.sown_day and record.collected_day>=ready)
+    assert(w.far.field_grain_harvested>0 and w.far.field_seed_sown==crop.seed_milli)
+    assert(w.far.field_foregone[0]>0 and goods_balance(w) and money_balances(w))
+
+
+test "legacy land publication preserves actual goods money people and crops without a founding harvest or seed gift":
+    w=field_fixture(); land=w.far.districts[200].fields[0].land
+    w.far.districts[200].fields=[]; w.far.fields_registered=false
+    w.minute=60; w.tick=w.minute*120
+    money=[loop account in w.accounts: account.cents]; stock=stock_totals(w); population=far_population(w)
+    sources=w.next_cargo_source; seed=w.far.field_seed_sown; work=w.far.field_labor_hours
+    input=[FarPlaceSeed(200,80,1,0,fields=[land],opening_crop_per_mille=200)]
+    assert(register_household_land(w,input))
+    assert(w.far.districts[200].fields.len()==1 and w.far.districts[200].fields[0].crop==none)
+    assert(stock_totals(w)==stock and [loop account in w.accounts: account.cents]==money)
+    assert(far_population(w)==population and w.next_cargo_source==sources and w.far.field_seed_sown==seed and w.far.field_labor_hours==work)
+    text=canonical_text(w); assert(register_household_land(w,input) and canonical_text(w)==text)
+    active=field_fixture(standing=200); crop=active.far.districts[200].fields[0].crop!
+    active.far.fields_registered=false
+    assert(register_household_land(active,input))
+    assert(to_text(active.far.districts[200].fields[0].crop!)==to_text(crop))
+    assert(money_balances(w) and goods_balance(w) and validate_far(w)=="",validate_far(w))
+
+
+test "lazy scene publication preserves the current growing season without inventing an expired crop":
+    delayed=field_fixture(standing=200,deferred_minute=3)
+    crop=delayed.far.districts[200].fields[0].crop!
+    assert(crop.opening and crop.ready_day>=18 and crop.agreement.agreed_minute==3)
+    assert(crop.harvested_milli==0 and delayed.far.field_grain_harvested==0)
+    after_harvest=(crop_month_start(1928,8)+1)*1440
+    late=field_fixture(standing=200,deferred_minute=after_harvest)
+    assert(late.far.districts[200].fields[0].crop==none and late.far.field_seed_sown==0)
+    assert(money_balances(delayed) and goods_balance(delayed) and validate_far(delayed)=="",validate_far(delayed))
