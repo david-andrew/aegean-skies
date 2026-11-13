@@ -1,0 +1,147 @@
+# Each actual hostile contact has one saved random variate and one terminal commit. Watching
+# it can commit physical damage, never create a second fleet or reroll the abstract encounter.
+use 'living_types.jo'
+use 'living_war_types.jo'
+use 'living_war.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_far_news.jo'
+use 'living_guard.jo'
+use 'living_war_names.jo'
+
+war_power = (w: World, unit: int) -> int:
+    u=w.war.units[unit]
+    if u.retired or u.vehicle<0: return 0
+    v=w.far.vehicles[u.vehicle]
+    crew=v.crew[0]+v.crew[1]+v.crew[2]
+    if crew<=0 or v.hull<=350 or v.motion_blocked!="" or u.supplied_until<w.minute: return 0
+    max(1,crew*v.hull/1000)*max(1,min(300,u.stock.qty[8]))
+
+begin_war_contacts = (w: mut World):
+    if w.war.contacts.len()>=64: return
+    loop a in 0..w.war.units.len():
+        ua=w.war.units[a]
+        if ua.retired or ua.vehicle<0 or war_power(w,a)<=0: continue
+        va=w.far.vehicles[ua.vehicle]
+        if va.battle>=0: continue
+        loop b in a+1..w.war.units.len():
+            ub=w.war.units[b]
+            if ub.retired or ub.vehicle<0 or war_power(w,b)<=0 or not (war_unit_hostile(w,a,ub.country) or war_unit_hostile(w,b,ua.country)): continue
+            vb=w.far.vehicles[ub.vehicle]
+            range=if va.kind==.ship and vb.kind==.ship: 850.0 else: 250.0
+            if vb.battle>=0 or length(va.pos-vb.pos)>range: continue
+            id=w.war.next_contact; w.war.next_contact+=1
+            power_a=war_power(w,a); power_b=war_power(w,b)
+            probability=clamp(power_a*1000000/max(1,power_a+power_b),100000,900000)
+            at=(va.pos+vb.pos)*0.5
+            name=national_battle_name(w,a,b,at); engagement=NATIONAL_ENGAGEMENT_BASE+id
+            # Simultaneous contacts in the same national action share one card/name.
+            named_ids=w.war.contacts.keys(); named_ids.sort()
+            loop old_id in named_ids:
+                old=w.war.contacts[old_id]
+                if old.name==none or old.state==.resolved or w.minute-old.started>180 or length(old.pos-at)>3000: continue
+                ca=w.war.units[old.a].country; cb=w.war.units[old.b].country
+                if min(ca,cb)==min(ua.country,ub.country) and max(ca,cb)==max(ua.country,ub.country) and official_battle_force(w,a) and official_battle_force(w,b): name=old.name; engagement=old.engagement; break
+            w.war.contacts[id]=WarContact(id,a,b,w.minute,w.minute+45,mix64(w.seed xor u64(id+157)),probability,pos=at,reason="Hostile supplied units met along their actual routes.",name=name,engagement=engagement)
+            w.far.vehicles[ua.vehicle].battle=id; w.far.vehicles[ub.vehicle].battle=id
+            w.far.vehicles[ua.vehicle].velocity=vec3(0,0,0); w.far.vehicles[ub.vehicle].velocity=vec3(0,0,0)
+            # A contact is a local hazard, not a radio message to a distant home port.
+            # Only places close enough to witness/hear the action gain this danger.
+            loop place in w.far.place_ids:
+                if length(w.place_contexts[place].center-at)<=2500:
+                    w.far.districts[place].danger=min(1000,w.far.districts[place].danger+100)
+            break
+
+war_reverse_journey = (w: mut World, vehicle: int):
+    v=w.far.vehicles[vehicle]
+    if v.journey<0: return
+    j=w.far.journeys[v.journey]; l=w.far.links[j.link]
+    points=l.points
+    if not j.forward: points.reverse()
+    if j.segment>=points.len()-1: return
+    span=int(round(f64(length(points[j.segment+1]-points[j.segment]))*1000.0))
+    w.far.journeys[j.id].forward=not j.forward
+    w.far.journeys[j.id].origin=j.destination; w.far.journeys[j.id].destination=j.origin
+    w.far.journeys[j.id].segment=points.len()-2-j.segment
+    w.far.journeys[j.id].progress_mm=max(0,span-j.progress_mm)
+    w.far.journeys[j.id].last_tick=w.tick
+
+war_stranded = (w: mut World, unit: int):
+    if unit<0 or unit>=w.war.units.len() or w.war.survivors.len()>=64: return
+    u=w.war.units[unit]
+    loop _, old in w.war.survivors:
+        if old.unit==unit and not old.resolved: return
+    if u.vehicle<0: return
+    v=w.far.vehicles[u.vehicle]
+    id=w.war.next_survivor; w.war.next_survivor+=1
+    w.war.survivors[id]=WarSurvivor(id,unit,vehicle=u.vehicle,at=v.pos,country=u.country,since=w.minute,deadline=w.minute+1440)
+    war_unit_account(w,unit,"rescue_needed","Carrier {v.id} was disabled while serving {w.countries[u.country].name}; its existing crew need rescue at {v.pos.x:.0}, {v.pos.z:.0}.",850,rescue=id)
+
+finish_war_contact = (w: mut World, id: int, winner: int, physical: bool = false) -> bool:
+    if not (id in w.war.contacts): return false
+    c=w.war.contacts[id]
+    if c.state==.resolved or (winner!=c.a and winner!=c.b): return false
+    loser=if winner==c.a: c.b else: c.a
+    if not physical:
+        loop unit in [winner,loser]:
+            u=w.war.units[unit]; vehicle=u.vehicle
+            # Finite ammunition and actual hull loss from the single recorded contact.
+            ammo=min(100,u.stock.qty[8])
+            if ammo>0: war_spend(w,unit,8,ammo)
+            loss=if unit==loser: 650 else: 150
+            w.far.vehicles[vehicle].hull=max(0,w.far.vehicles[vehicle].hull-loss)
+            w.far.vehicles[vehicle].revision+=1
+    loop unit in [c.a,c.b]:
+        u=w.war.units[unit]; vehicle=u.vehicle
+        w.far.vehicles[vehicle].battle= -1
+        if w.far.vehicles[vehicle].journey>=0: w.far.journeys[w.far.vehicles[vehicle].journey].last_tick=w.tick
+        if w.far.vehicles[vehicle].hull<=350:
+            w.far.vehicles[vehicle].motion_blocked="The battle disabled this hull; its existing crew need assistance."
+            war_stranded(w,unit)
+        else:
+            w.far.vehicles[vehicle].motion_blocked=""
+        if unit==loser and w.far.vehicles[vehicle].hull>350:
+            war_reverse_journey(w,vehicle)
+            if u.order>=0: w.war.orders.remove(u.order); w.war.units[unit].order= -1
+    w.war.contacts[id].state=.resolved; w.war.contacts[id].winner=winner
+    a=w.war.units[winner]; b=w.war.units[loser]
+    title=if c.name!=none: c.name!+": " else: ""
+    news=war_unit_account(w,winner,"battle",title+"A {w.countries[a.country].name} charter defeated a {w.countries[b.country].name} unit near {c.pos.x:.0}, {c.pos.z:.0}.",900,a.country,b.country,100)
+    if news>=0: w.war.evidence[news]=WarEvidence(news,w.far.news[news].place,a.country,b.country,true,100,w.minute)
+    true
+
+advance_war_contacts = (w: mut World):
+    ids=w.war.contacts.keys(); ids.sort()
+    loop id in ids:
+        c=w.war.contacts[id]
+        if c.state==.resolved:
+            if w.minute-c.resolves>1440: w.war.contacts.remove(id)
+            continue
+        if c.state==.physical or w.minute<c.resolves: continue
+        roll=int(mix64(c.seed)%u64(1000000))
+        winner=if roll<c.probability: c.a else: c.b
+        finish_war_contact(w,id,winner)
+
+# A ship's crew can witness an offshore event without its distant home knowing immediately.
+# Geographic event indexing is not transmission: the account goes aboard until actual arrival.
+war_unit_account = (w: mut World, unit: int, kind: str, text: str, severity: int, aggressor: int = -1, affected: int = -1, weight: int = 0, rescue: int = -1) -> int:
+    u=w.war.units[unit]; v=w.far.vehicles[u.vehicle]
+    nearest= -1; distance=1e30
+    loop place in w.far.place_ids:
+        d=f64(length(w.place_contexts[place].center-v.pos))
+        if d<distance: nearest=place; distance=d
+    if nearest<0: return -1
+    id=far_local_news(w,nearest,kind,text,country=u.country,severity=severity,aggressor=aggressor,affected=affected,state_backed=aggressor>=0,weight=weight,rescue=rescue)
+    if id<0: return -1
+    if distance>2000:
+        w.far.districts[nearest].recent_news=[loop n in w.far.districts[nearest].recent_news: if n!=id: n]
+        w.far.districts[nearest].reports=[loop r in w.far.districts[nearest].reports: if r.id!=id: r]
+    report=far_news_snapshot(w.far.news[id],w.minute)
+    w.far.vehicles[u.vehicle].reports.push(report)
+    if w.far.vehicles[u.vehicle].reports.len()>12: w.far.vehicles[u.vehicle].reports.remove_at(0)
+    w.far.vehicles[u.vehicle].carried_news.push(id)
+    if w.far.vehicles[u.vehicle].carried_news.len()>12: w.far.vehicles[u.vehicle].carried_news.remove_at(0)
+    if v.journey>=0:
+        w.far.journeys[v.journey].news.push(id)
+        if w.far.journeys[v.journey].news.len()>12: w.far.journeys[v.journey].news.remove_at(0)
+    id

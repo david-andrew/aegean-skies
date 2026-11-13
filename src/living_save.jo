@@ -8,6 +8,9 @@ use 'living_money.jo'
 use 'living_life_checks.jo'
 use 'living_maps.jo'
 use 'living_far_checks.jo'
+use 'living_war_checks.jo'
+use 'living_save_codec.jo'
+use 'living_work.jo'
 
 error struct LivingSaveError:
     message: str
@@ -18,6 +21,7 @@ struct SaveHeader:
     generation = 0
     terrain_key = 0
     cargo_version = 0
+    encoding = 0
 
 type SaveResult = SaveGame | LivingSaveError
 
@@ -31,6 +35,18 @@ ordered_map[K,V,O] = (source: {K: V}, key: (K) -> O) -> {K: V}:
 # This copy exists only for canonical serialization at a save/test boundary.
 canonical_world = (w: World) -> World:
     result = w
+    result.war.peace_offers=ordered_map(w.war.peace_offers,(key: str): key)
+    result.war.occupations=ordered_map(w.war.occupations,(place: int): place)
+    result.war.missions = ordered_map(w.war.missions,(id: int): id)
+    result.war.orders = ordered_map(w.war.orders,(id: int): id)
+    result.war.contacts = ordered_map(w.war.contacts,(id: int): id)
+    result.war.evidence = ordered_map(w.war.evidence,(id: int): id)
+    result.war.heard = ordered_map(w.war.heard,(key: str): key)
+    result.war.survivors = ordered_map(w.war.survivors,(id: int): id)
+    result.war.reputation = ordered_map(w.war.reputation,(key: str): key)
+    loop i in 0..result.war.units.len(): result.war.units[i].stock.roots = ordered_map(w.war.units[i].stock.roots,(root: int): root)
+    result.far.accepted_requests=ordered_map(w.far.accepted_requests,(id: int): id)
+    result.far.core_reports = ordered_map(w.far.core_reports,(id: int): id)
     result.far.air_registrations = ordered_map(w.far.air_registrations,(key: str): key)
     result.far.air_homes = ordered_map(w.far.air_homes,(id: int): id)
     result.far.air_berths = ordered_map(w.far.air_berths,(id: int): id)
@@ -94,6 +110,8 @@ canonical_hash = (w: World) -> u64: hash(canonical_text(w))
 
 # Structural checks precede helpers that index arrays. Malformed saves return errors, not panics.
 validate_save_world = (w: World) -> str:
+    if w.far.populated and w.far.navigation_version!=1: return "old settlement routes require explicit migration; saved data retained"
+    if w.far.populated and w.far.procurement_version!=1: return "old distant service agreements require explicit migration; saved data retained"
     if w.far.version<0 or w.far.version>1: return "unsupported settlement economy version"
     if w.cargo_version != 1: return "cargo content requires migration; old save preserved"
     if w.route_key_version < 0 or w.route_key_version > 1: return "unsupported route key version"
@@ -111,7 +129,16 @@ validate_save_world = (w: World) -> str:
     loop i in 0..w.accounts.len():
         if w.accounts[i].id != i or w.accounts[i].key in seen_accounts: return "invalid account identity/key"
         seen_accounts[w.accounts[i].key] = true
+    loop _, j in w.jobs:
+        if j.carried_reports.len()>12 or (j.carried_reports.len()>0 and j.cargo_mode!=.sealed): return "invalid dispatch contents"
+        loop r in j.carried_reports:
+            if not far_report_valid(w,r): return "invalid sealed public account"
+        if j.buyer_account< -1 or j.buyer_account>=w.accounts.len() or j.sale_unit_cents<0 or j.sale_delivery_fee<0 or j.sale_payee< -1 or j.sale_payee>=w.accounts.len() or j.sale_revenue<0 or j.provenance.supply_roots.len()>64: return "invalid job agreement or supply provenance"
+        agreement_error=work_provenance_error(w,j.provenance)
+        if agreement_error!="": return agreement_error
     loop p in w.people:
+        if p.far_boat>=0 and (p.far_boat>=w.far.vehicles.len() or not (p.id in w.far.vehicles[p.far_boat].passengers)): return "invalid named sea passage"
+        if p.far_visit>=0 and (not (p.far_visit in w.far.districts) or p.far_home>=0 or p.place>=0): return "invalid sparse visitor"
         if p.id < 0 or p.id >= w.people.len() or p.account < 0 or p.account >= w.accounts.len() or p.place < -1 or p.place >= 6 or p.craft < -1 or p.craft >= w.aircraft.len() or p.faction < -1 or p.faction >= 4: return "invalid person reference"
         if p.far_home<0:
             if p.id>=core_person_count(w) or p.home<0 or p.home>=6: return "invalid core person home"
@@ -135,7 +162,7 @@ validate_save_world = (w: World) -> str:
         loop id in c.job_manifests:
             if not (id in w.jobs): return "aircraft has missing manifest"
         loop p in c.passengers:
-            if p < 0 or p >= 26: return "invalid passenger"
+            if p < 0 or p >= w.people.len(): return "invalid passenger"
     loop id in w.active_trips:
         if not (id in w.trips): return "missing scheduled trip"
     loop id in w.active_jobs:
@@ -185,6 +212,8 @@ validate_save_world = (w: World) -> str:
     if map_error != "": return map_error
     life_error = validate_life(w)
     if life_error != "": return life_error
+    war_error = validate_war(w)
+    if war_error!="": return war_error
     far_error = validate_far(w)
     if far_error != "": return far_error
     errors = invariant_errors(w)
@@ -198,14 +227,35 @@ header_for = (name: str) -> SaveHeader:
     if parsed is TextError: return SaveHeader()
     parsed
 
+supported_save_header = (header: SaveHeader) -> bool:
+    (header.schema==1 and header.encoding==0) or (header.schema==2 and header.encoding==1) or (header.schema==3 and (header.encoding==2 or header.encoding==3))
+
+read_game_slot = (name: str, header: SaveHeader) -> SaveGame:
+    if header.schema==1: return load_value(name,SaveGame())
+    text=load_data(name) ?? return SaveGame()
+    if header.schema==3:
+        metadata=from_text[BinaryLivingSave](text)
+        if metadata is TextError: return SaveGame()
+        body=load_data(name+"-data") ?? return SaveGame()
+        # Invalid pairs remain in place for diagnosis; don't duplicate a multi-megabyte
+        # damaged body into browser storage that may already be near its quota.
+        if let game=unpack_binary_living_save(metadata,body): return game
+        return SaveGame()
+    packed=from_text[PackedLivingSave](text)
+    if packed is TextError:
+        save_data(name+".bad",text); return SaveGame()
+    if let game=unpack_living_save(packed): return game
+    save_data(name+".bad",text)
+    SaveGame()
+
 load_game = (terrain_key: int, prefix: str = "world") -> SaveResult:
     a_name = "{prefix}-a"; b_name = "{prefix}-b"
     ah = header_for(a_name); bh = header_for(b_name)
     if (ah.valid and ah.cargo_version != 1) or (bh.valid and bh.cargo_version != 1): return LivingSaveError("cargo content requires migration; old slots left untouched")
-    if (ah.valid and ah.schema != 1) or (bh.valid and bh.schema != 1): return LivingSaveError("unsupported save schema; both slots left untouched")
-    a = load_value(a_name,SaveGame()); b = load_value(b_name,SaveGame())
-    av = a.valid and a.schema == 1 and a.terrain_key == terrain_key and validate_save_world(a.world) == ""
-    bv = b.valid and b.schema == 1 and b.terrain_key == terrain_key and validate_save_world(b.world) == ""
+    if (ah.valid and not supported_save_header(ah)) or (bh.valid and not supported_save_header(bh)): return LivingSaveError("unsupported save schema; both slots left untouched")
+    a = read_game_slot(a_name,ah); b = read_game_slot(b_name,bh)
+    av = a.valid and supported_save_header(ah) and a.terrain_key == terrain_key and validate_save_world(a.world) == ""
+    bv = b.valid and supported_save_header(bh) and b.terrain_key == terrain_key and validate_save_world(b.world) == ""
     if not av and not bv: return LivingSaveError("no valid save slot for this terrain/schema; corrupt data preserved by load_value, no new game created")
     if av and (not bv or a.generation >= b.generation): return a
     b
@@ -213,8 +263,12 @@ load_game = (terrain_key: int, prefix: str = "world") -> SaveResult:
 save_game = (w: World, presentation: PresentationState, terrain_key: int, prefix: str = "world") -> int | LivingSaveError:
     validation = validate_save_world(w)
     if validation != "": return LivingSaveError(validation)
+    loop _, contact in w.war.contacts:
+        if contact.state==.physical and w.war.scene_tick!=w.tick: return LivingSaveError("checkpoint the full physical fleet and battle at this tick before save")
     # Coordinator must synchronize and fold scene bodies at a fixed tick before this call.
     # Their extra physics state is the coordinator's schema extension, never regenerated here.
+    loop v in w.far.vehicles:
+        if v.scene_owned: return LivingSaveError("synchronize/fold scene transport before save")
     loop c in w.aircraft:
         if c.move_owner == .scene: return LivingSaveError("synchronize/fold scene aircraft before save")
     loop p in w.people:
@@ -222,7 +276,7 @@ save_game = (w: World, presentation: PresentationState, terrain_key: int, prefix
     a_name = "{prefix}-a"; b_name = "{prefix}-b"
     ah = header_for(a_name); bh = header_for(b_name)
     if (ah.valid and ah.cargo_version != 1) or (bh.valid and bh.cargo_version != 1): return LivingSaveError("cargo content requires migration; old slots left untouched")
-    if (ah.valid and ah.schema != 1) or (bh.valid and bh.schema != 1): return LivingSaveError("unsupported save schema; refusing to overwrite either slot")
+    if (ah.valid and not supported_save_header(ah)) or (bh.valid and not supported_save_header(bh)): return LivingSaveError("unsupported save schema; refusing to overwrite either slot")
     if (ah.valid and ah.terrain_key != terrain_key) or (bh.valid and bh.terrain_key != terrain_key): return LivingSaveError("terrain migration required; existing slots left untouched")
     old = load_game(terrain_key,prefix)
     generation = 1
@@ -240,5 +294,12 @@ save_game = (w: World, presentation: PresentationState, terrain_key: int, prefix
     state.bark_day = ordered_map(state.bark_day,(key: BarkKey): (key.speaker,key.event))
     state.hailed_jobs = ordered_map(state.hailed_jobs,(id: int): id)
     game = SaveGame(schema=1,valid=true,generation=generation,terrain_key=terrain_key,world=canonical_world(w),presentation=state)
-    if not save_value(target,game): return LivingSaveError("write failed: {file_error()}; previous slot retained")
+    packed=pack_binary_living_save(game)
+    target_header=if target==a_name: ah else: bh
+    if target_header.schema!=3:
+        # Free the older text bank before adding its new binary body. The latest valid
+        # bank is the OTHER one and is retained if either subsequent write fails.
+        if not save_value(target,BinaryLivingSave(valid=false)): return LivingSaveError("write failed: {file_error()}; previous slot retained")
+    if not save_data(target+"-data",packed.1): return LivingSaveError("write failed: {file_error()}; previous slot retained")
+    if not save_value(target,packed.0): return LivingSaveError("header write failed: {file_error()}; previous slot retained")
     generation

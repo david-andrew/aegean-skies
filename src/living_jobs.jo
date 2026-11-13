@@ -11,6 +11,10 @@ use 'living_events.jo'
 use 'living_content.jo'
 use 'living_text.jo'
 use 'living_seed.jo'
+use 'living_work.jo'
+use 'living_work_types.jo'
+use 'living_far_news.jo'
+use 'living_far_orders.jo'
 
 # All prerequisites checked before reward/cargo change hands. The poster is physically at source.
 _guarded_post_job = (w: mut World, poster: int, destination: int, mode: CargoMode, good: int, quantity: int, reward: int, due: int, passenger: int = -1, sealed_grams: int = 5000, delivery_mode: DeliveryMode = .aircraft, dropoff: vec3? = none, drop_store: CargoStore = .pocket) -> int:
@@ -65,6 +69,14 @@ _guarded_post_job = (w: mut World, poster: int, destination: int, mode: CargoMod
         return -1
     if dropoff != none: w.jobs[id].dropoff = dropoff!
     else if delivery_mode == .foot: w.jobs[id].dropoff = w.harbors[destination].center+w.harbors[destination].out*18.0+vec3(0,1.2,0)
+    roots=job_supply_roots(w,id)
+    w.jobs[id].provenance=WorkProvenance(cause="{w.people[poster].name} requested their paid goods at {place_name(destination)}.",requester=poster,requester_account=w.people[poster].account,supplier=w.places[origin].market_owner,supplier_account=w.places[origin].market.account,request_place=origin,requested_minute=w.minute,heard_minute=w.minute,agreed_minute=w.minute,goods_cents=cost,freight_cents=reward,freight_payer=w.people[poster].account,deadline=due,supply_roots=roots,supply=work_supply(w,roots),negotiated=true)
+    if mode==.sealed:
+        w.jobs[id].provenance.supplier=poster
+        w.jobs[id].provenance.supplier_account=w.people[poster].account
+    if mode==.sealed and origin in w.far.districts:
+        w.jobs[id].carried_reports=w.far.districts[origin].reports
+        w.jobs[id].provenance.cause="{w.people[poster].name} is sending this dispatch packet to {place_name(destination)}, with the public notices received at the source office."
     w.active_jobs.push(id)
     id
 
@@ -153,6 +165,9 @@ jobs_minute = (w: mut World):
 # Heard shortage facts are requests; no remote live stock reads generate a posting.
 maintain_supply_jobs = (w: mut World):
     if local_minute(w.minute)%60 != 0: return
+    if w.far.populated:
+        maintain_received_core_bids(w)
+        return
     loop origin in 0..5:
         poster = w.places[origin].market_owner
         if w.people[poster].place != origin: continue
@@ -160,21 +175,42 @@ maintain_supply_jobs = (w: mut World):
         loop n in w.places[origin].news:
             if made: break
             r = n.reason
-            if n.kind != .shortage or r.good < 0 or r.destination == origin or w.minute-n.occurred_minute > 720: continue
+            if n.kind != .shortage or r.good < 0 or r.destination == origin or w.minute-n.occurred_minute > 720 or r.offer_price_cents<=0 or w.minute>r.offer_until: continue
             g = r.good; destination = r.destination
             duplicate = false
+            loop _, old in w.jobs:
+                if old.provenance.request_event==n.event and old.provenance.negotiated: duplicate=true
             loop id in w.active_jobs:
                 if w.jobs[id].poster == poster and w.jobs[id].destination == destination and w.jobs[id].good == g and (not job_terminal(w.jobs[id].state) or w.minute-w.jobs[id].status_minute < 720): duplicate = true
             if duplicate: continue
             surplus = min(5000,max(0,available(w.places[origin].market.inventory,g)-w.places[origin].market.target[g]/2))
-            if surplus < 2000: continue
+            surplus=min(surplus,r.quantity)
+            if surplus < 100: continue
             route = route_geometry(w,origin,destination,w.harbors[origin].docks[0])
             duration = (route_duration(route,60000)+119)/120
             reward = max(800,8*duration)
             # Quote policy includes enough pay to cover known local fuel and a positive wage.
             reward = max(reward,route_fuel(route,.gull)*w.places[origin].market.price_cents[4]/10000+800)
-            id = post_job(w,poster,destination,.commodity,g,surplus,reward,w.minute+max(480,duration+180))
-            if id >= 0: made = true
+            cost=surplus*w.places[origin].market.price_cents[g]/1000
+            tax=if origin==5 or cost==0: 0 else: max(1,cost*2/100)
+            sale=surplus*r.offer_price_cents/1000
+            if sale<cost+tax+reward+100: continue # the supplier needs a real prospective margin
+            due=min(r.offer_until,w.minute+max(480,duration+180))
+            if due<=w.minute+duration: continue
+            id = post_job(w,poster,destination,.commodity,g,surplus,reward,due)
+            if id >= 0:
+                w.jobs[id].provenance.cause="{person_name(w,r.beneficiary)} at {place_name(destination)} reported a {w.goods[g].key} shortage {work_date(n.occurred_minute)}; the word reached this counter {work_date(n.learned_minute)}. The sender pays for the purchase and carriage."
+                w.jobs[id].provenance.request_event=n.event
+                w.jobs[id].provenance.requested_minute=n.occurred_minute; w.jobs[id].provenance.heard_minute=n.learned_minute
+                w.jobs[id].buyer_account=w.places[destination].market.account
+                w.jobs[id].sale_unit_cents=r.offer_price_cents
+                w.jobs[id].provenance.requester=r.beneficiary
+                w.jobs[id].provenance.requester_account=w.places[destination].market.account
+                w.jobs[id].provenance.goods_cents=sale
+                w.jobs[id].provenance.negotiated=true
+                w.jobs[id].provenance.cause+=" The agreed price is {f64(r.offer_price_cents)/100.0:.2} lire a package, payable on collection; {person_name(w,poster)} bought the stock for {f64(cost+tax)/100.0:.2} lire and pays the carrier {f64(reward)/100.0:.2} lire."
+                w.jobs[id].context=w.jobs[id].provenance.cause
+                made = true
 
 board_lines = (w: World, place: int) -> str[]:
     result: str[]
@@ -206,8 +242,15 @@ local_errands_minute = (w: mut World):
         good = if place == 0 or place == 4: 1 else: 2
         target = w.cargo_harbors[place].boat
         if place != 1 and place != 3 and w.cargo_harbors[place].homes.len() > 0: target = w.cargo_harbors[place].homes[poster%w.cargo_harbors[place].homes.len()]
-        job = post_job(w,poster,place,.commodity,good,1000,180,w.minute+720,delivery_mode=.foot,dropoff=target,drop_store=if place == 1 or place == 3: CargoStore.boat else: CargoStore.pocket)
-        if job >= 0: w.local_cargo_day[place] = day_index(w.minute)
+        boat_store=place==1 or place==3
+        held=if boat_store: w.boat_cargo.get(place,Inventory()).qty[good] else: w.people[poster].pocket.qty[good]
+        need=max(0,1000-held)
+        if need<100: continue
+        job = post_job(w,poster,place,.commodity,good,need,180,w.minute+720,delivery_mode=.foot,dropoff=target,drop_store=if place == 1 or place == 3: CargoStore.boat else: CargoStore.pocket)
+        if job >= 0:
+            w.local_cargo_day[place] = day_index(w.minute)
+            w.jobs[job].provenance.cause="{person_name(w,poster)} has {f64(held)/1000.0:.2} packages of {w.goods[good].key} in their {if boat_store: "boat store" else: "household store"}, below their one-package reserve. They bought the missing {f64(need)/1000.0:.2} from this counter's posted quote and reserved {f64(w.jobs[job].reward_cents)/100.0:.2} lire for delivery."
+            w.jobs[job].context=w.jobs[job].provenance.cause
     ids = w.active_jobs
     loop id in ids:
         j = w.jobs[id]
@@ -238,3 +281,42 @@ expire_job = (w: mut World, id: int, cancel: bool = false) -> bool:
     failed = guard_failed(scope)
     guard_finish(w,scope)
     if failed: false else: result
+
+# The detailed pilots can serve the same received, priced household orders as far carriers.
+# This is the bridge the funded far households lacked: no new synthetic core shortage is made.
+maintain_received_core_bids = (w: mut World):
+    loop origin in 0..5:
+        if not (origin in w.far.districts): continue
+        poster=w.places[origin].market_owner
+        if w.people[poster].place!=origin: continue
+        loop r in w.far.districts[origin].reports:
+            g=r.supply_good; destination=r.origin
+            if destination<0 or destination>=6 or destination==origin or g<0 or g>=8 or not received_supply_request(w,origin,r): continue
+            qty=min(r.supply_qty,min(5000,max(0,available(w.places[origin].market.inventory,g)-w.places[origin].market.target[g]/2)))
+            if qty<100 or w.goods[g].shelf_hours>0: continue
+            route=route_geometry(w,origin,destination,w.harbors[origin].docks[0]); duration=(route_duration(route,60000)+119)/120
+            reward=max(800,max(8*duration,route_fuel(route,.gull)*w.places[origin].market.price_cents[4]/10000+800))
+            cost=qty*w.places[origin].market.price_cents[g]/1000; tax=if cost>0: max(1,cost*2/100) else: 0
+            invoice=qty*r.supply_bid/1000+r.supply_reward
+            if invoice<cost+tax+reward+100 or w.minute+duration>=r.supply_due: continue
+            account=w.places[origin].market.account; advance=cost+tax+reward
+            if w.accounts[account].cents<advance: continue
+            if not transfer(w,account,w.people[poster].account,advance,.escrow): continue
+            id=post_job(w,poster,destination,.commodity,g,qty,reward,min(r.supply_due,w.minute+max(480,duration+180)))
+            if id<0:
+                transfer(w,w.people[poster].account,account,advance,.refund)
+                continue
+            w.jobs[id].buyer_account=r.supply_account; w.jobs[id].sale_unit_cents=r.supply_bid
+            w.jobs[id].sale_delivery_fee=r.supply_reward; w.jobs[id].sale_payee=account
+            w.jobs[id].reward_funder=account
+            p=w.jobs[id].provenance
+            p.cause="{place_name(destination)}'s counter requested {w.goods[g].key} when its stock was down to {f64(r.supply_observed)/1000.0:.2} packages against a {f64(r.supply_target)/1000.0:.2}-package reserve. {person_name(w,poster)} agreed {f64(r.supply_bid)/100.0:.2} lire a package, with {f64(r.supply_reward)/100.0:.2} lire towards delivery. The sender pays the carrier; the buyer pays the invoice on collection."
+            p.request_report=r.id; p.request_event= -1; p.requester=w.places[destination].market_owner
+            p.requester_account=r.supply_account; p.request_place=destination
+            p.requested_minute=r.occurred_minute; p.heard_minute=r.learned_minute
+            p.goods_cents=qty*r.supply_bid/1000; p.freight_cents=reward; p.freight_payer=account
+            p.need_places=r.supply_places; p.need_since=if r.supply_since>=0: r.supply_since else: r.occurred_minute
+            p.cause+=order_customer_note(w,r.supply_places,r.origin)
+            w.jobs[id].provenance=p; w.jobs[id].context=p.cause
+            w.far.accepted_requests[r.id]=r.supply_due
+            break
