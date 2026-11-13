@@ -37,7 +37,11 @@ def bake(directory, sites, output):
         town=np.array(site['town']); out=np.array(site['out']); old=np.array(s['town'])
         rec=dict(id=ident,name=s['name'],level=level,center=center.tolist(),axis=axis.tolist(),origin=field_origin.tolist(),nx=field.shape[1],nz=field.shape[0],step=step,offset=offset,old=old.tolist(),town=town.tolist(),out=out.tolist(),shore=site['shore'],area=float(wet.sum()*step**2),run=float(np.linalg.norm(end-start)))
         records.append(rec)
-        lo=field_origin;hi=lo+np.array([field.shape[1]-1,field.shape[0]-1])*step
+        lo=field_origin.copy();hi=lo+np.array([field.shape[1]-1,field.shape[0]-1])*step
+        for channel in site.get('channels',[]):
+            for node in channel:
+                lo=np.minimum(lo,np.array(node[:2])-12);hi=np.maximum(hi,np.array(node[:2])+12)
+        rec['bounds']=[*lo,*hi]
         for ix in range(int(np.floor(lo[0]/4096)),int(np.floor(hi[0]/4096))+1):
             for iz in range(int(np.floor(lo[1]/4096)),int(np.floor(hi[1]/4096))+1):bins.setdefault(ix*1024+iz,[]).append(len(records)-1)
     def v2(p):return f'vec2({p[0]:.6f},{p[1]:.6f})'
@@ -59,10 +63,11 @@ struct SettlementLake:
     town:vec3
     out:vec2
     shore:vec2
+    bounds:vec4
 SETTLEMENT_LAKES=[
 '''
     for r in records:
-        source+=f'    SettlementLake({r["id"]},"{r["name"]}",{v2(r["center"])},{r["level"]:.8f},{v2(r["axis"])},{v2(r["origin"])},{r["nx"]},{r["nz"]},{r["step"]},{r["offset"]},{v3(r["old"])},{v3(r["town"])},{v2(r["out"])},{v2(r["shore"])}),\n'
+        source+=f'    SettlementLake({r["id"]},"{r["name"]}",{v2(r["center"])},{r["level"]:.8f},{v2(r["axis"])},{v2(r["origin"])},{r["nx"]},{r["nz"]},{r["step"]},{r["offset"]},{v3(r["old"])},{v3(r["town"])},{v2(r["out"])},{v2(r["shore"])},vec4({v2(r["bounds"][:2])},{v2(r["bounds"][2:])})),\n'
     source+=']\nLAKE_BINS:{int:int[]}={\n'
     for key,value in sorted(bins.items()):source+=f'    {key}:{value},\n'
     source+='''}
@@ -70,6 +75,22 @@ const LAKE_CLEAR_RUN=1440.0
 const LAKE_CRAFT_MASK=2807
 lake_craft_allowed=(craft:int)->bool:craft>=0 and craft<16 and (LAKE_CRAFT_MASK & (1<<craft))!=0
 '''
+    channels=[];channel_bins={}
+    for site in sites:
+        for course in site.get('channels',[]):
+            for a,b in zip(course,course[1:]):
+                index=len(channels);channels.append((site['id'],a,b))
+                lo=np.minimum(a[:2],b[:2])-12;hi=np.maximum(a[:2],b[:2])+12
+                for ix in range(int(np.floor(lo[0]/256)),int(np.floor(hi[0]/256))+1):
+                    for iz in range(int(np.floor(lo[1]/256)),int(np.floor(hi[1]/256))+1):channel_bins.setdefault(ix*8192+iz,[]).append(index)
+    channel_source="# Basin inflows and spill channels, surveyed on original relief.\nstruct LakeChannel:\n    id:int\n    a:vec4\n    b:vec4\nLAKE_CHANNELS=[\n"
+    for ident,a,b in channels:
+        va=','.join(f'{v:.6f}' for v in a);vb=','.join(f'{v:.6f}' for v in b)
+        channel_source+=f'    LakeChannel({ident},vec4({va}),vec4({vb})),\n'
+    channel_source+=']\nLAKE_CHANNEL_BINS:{int:int[]}={\n'
+    for key,value in sorted(channel_bins.items()):channel_source+=f'    {key}:{value},\n'
+    channel_source+='}\n'
+    (output/'src/lake_channels_data.jo').write_text(channel_source)
     (output/'src/lake_data.jo').write_text(source)
     (output/'assets/lake-basins.bin').write_bytes(raw)
     (directory/'baked-sites.json').write_text(json.dumps(records,indent=2))
