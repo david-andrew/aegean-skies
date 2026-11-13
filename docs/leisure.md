@@ -41,8 +41,10 @@ funny or useful (time passes, people are met, the plane is looked after).
    drinks) with categories, search and the keeper's remarks; drinks arrive on the table.
 3. Rest: a hotel room (paid) and a helped family's spare room (free); sleep until morning or
    evening.
-4. Working on the plane at the mooring: wipe, inspect, tune; time passes; a small real effect
-   only on light engine/hull wear (heavier damage stays the workshop's job).
+4. Working on the plane at the mooring, by hand: the pilot walks to each job and does it (from
+   the quay when it is within reach, else aboard: onto the float or deck, up a strut to the wing's
+   root), with a pose that fits; time passes; a small real effect only on light engine/hull wear
+   (heavier damage stays the workshop's job). See "Plane work" in the glossary.
 
 ## Controls
 
