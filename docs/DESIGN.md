@@ -329,6 +329,17 @@ Speech must not quietly turn a guess into a verified Event or multiply reputatio
 Useful transaction details stay in structured data and notebook content; spoken lines do not
 recite minute counters, escrow rules or scheduler retries.
 
+People are not information kiosks. A greeting or a remark in passing is short and comes from the
+speaker's own day (where they're going, their work, their children, the wind on their trade).
+Asking about a subject brings a personal view first ("medicine has gone dear; I paid through the
+nose"), asking again brings a particular, rounded and dated the way people carry it ("near enough
+nineteen lire, yesterday evening, so Yannis said"), and after that a referral to a neighbour who
+would know ("ask Eleni at the store"), then an honest end. Speech never says centesimi, clock
+minutes, packages or record words; `living_talk_words.jo` turns figures into spoken forms and
+`tests/living_speech_style.jo` samples greetings and answers across towns to keep it that way.
+A notice is retold in a sentence with who it came from, never read out. Fourteen voices (by
+trade, age and temperament) carry the same facts differently.
+
 The coordinator owns conversation presentation: choosing topics, showing questions/replies,
 maintaining a short conversational pause, and deciding how much source/uncertainty information
 to show. The simulation supplies this material without prescribing a new panel or control.
