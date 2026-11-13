@@ -1,3 +1,13 @@
+# Follow-up survey checkpoint (runtime 26739b6)
+
+**44 gaps remain.** Two roads are committed separately: Myrevilaki in `ab604e7`, Velyinanti in `26739b6`. Native low-tier air/street captures are `inland/island-{301551,303831}-{air,street}.png`; native release build succeeds. These are functional captures, not timings or a visual gate. The thin tracks can be seen from the air. The street cameras also expose the existing steep village paving, so do not treat them as a sign-off on village presentation.
+
+The bounded precise 4 m search (300 m margin, 180,000 closed-node limit) finds no road for **Istrinatha 300321** or **Melavilerio 300381**. Both ends have dry clear exits; the bounded failure does not prove no route exists. Their old state is unchanged.
+
+A new **read-only** `tools/probe_island_shore.jo ID SCRATCH_FILE` preserves all shipped landings. It varies shore-root inset (8/12/18/25/35/50 m) and tip reach (60/90/110/140 m), retains the actual 5 m quay and mooring clearances, and surveys at most six ranked candidates with close-contact-aware pathfinding. It deduplicates tip choices for each root before spending a route search. It does not silently narrow the quay while leaving loading/contact positions wide.
+
+**Olythandra 301041:** old fixed survey found zero candidates; variable distances yield **7**, and the best has a verified **7-point** approach. Root **(-17378.625, 2.0101917, 81935.19)**; tip **(-17287.162, 1.2, 81874.07)**. The exact generated candidate is retained in the JSON inventory's `latest_survey.landing_source`. **Not installed, not counted served**: precise full walk, quay/loading contact, actual ship route, catalogue/manifest update and migration remain. This is the first next task. No Redfox was used.
+
 # Second island road checkpoint
 
 Velyinanti **303831** → Thalvathavos **303830**: **1,893.861 m / 120 points**, using its existing harbour. Both new island roads pass the full precise-contact walk and dry wagon-width checks. Fresh audit: **750/794 served, 44 unresolved**, **1,240 links**. Real migration preserves all 1,238 c767023 links and economic/identity state. Save access version 3 upgrades version-2 checkpoints too. Evidence uses suffix `-303831.log` in the same scratch directory. Render review/main integration remain pending. No Redfox.
