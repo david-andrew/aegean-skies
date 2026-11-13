@@ -25,6 +25,7 @@ parser.add_argument('--out', type=Path, required=True)
 parser.add_argument('--town', action='append')
 parser.add_argument('--mode', choices=['stay', 'fly'], default='stay')
 parser.add_argument('--profile', action='store_true', help='CPU attribution; exclude from final gates')
+parser.add_argument('--agl', type=float, default=0, help='Hold this terrain clearance during a flying stress trace')
 parser.add_argument('--lock', type=Path, default=Path.home() / 'dev/tmp/bench.lock')
 args = parser.parse_args()
 if not args.native and not args.web:
@@ -43,6 +44,7 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(('SLOPPY_', 'AEGEAN_', 'STUTTER_'))
                and k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
+        env['STUTTER_AGL'] = str(args.agl)
         if backend == 'native':
             env.update(SLOPPY_THREADS='1', SLOPPY_NO_AUDIO='1', SLOPPY_SEED='12345',
                        SLOPPY_SAVE_DIR=str(case / 'save'), SLOPPY_SCREENSHOT=str(case / 'end.png'),
@@ -77,7 +79,7 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
                       started=started, ended=ended, exit_code=code, passed=passed, frames=len(frames),
                       max_ms=max(intervals, default=None),
                       p99_ms=intervals[int((len(intervals)-1)*.99)] if intervals else None,
-                      over50=sum(t > 50 for t in intervals), profiled=args.profile)
+                      over50=sum(t > 50 for t in intervals), profiled=args.profile, agl=args.agl)
         results.append(result)
         (args.out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
         print(json.dumps(result), flush=True)
