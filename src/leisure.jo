@@ -1,0 +1,239 @@
+# Optional activities: places that offer them (a hotel bar, a coffee house, a spare room, one's
+# own mooring), what they cost through the living world's ledger, and how long they take. No
+# needs, no meters, no penalties: everything here is for the pleasure of it.
+#
+# Money only ever moves by `transfer`, from the player's purse to the keeper's, so the world's
+# money balance holds and the keeper can spend it. Time passes by advancing the living world's
+# clock (the game folds the scene first, then advances in steps: see aegean.jo).
+
+use 'living_types.jo'
+use 'life_types.jo'
+use 'living_money.jo'
+use 'leisure_menu.jo'
+
+enum LeisureKind: bar, coffee_house, spare_room, mooring
+
+struct LeisurePlace:
+    key: str
+    place: int                      # the core town it is in
+    kind: LeisureKind
+    name: str                       # "Hotel Ancora"
+    what: str                       # "hotel and terrace bar"
+    keeper: int                     # the living-world person whose purse takes the money
+    pos: vec3 = vec3(0,0,0)         # the player's seat
+    facing: vec3 = vec3(0,0,1)      # the way the seat looks
+    opens = 0                       # local minutes of the day; opens == closes: always open
+    closes = 0
+    room_cents = 0                  # a room for the night (0: no rooms)
+    menu = "hotel"                  # "hotel" or "coffee"
+
+struct LeisureResult:
+    ok: bool
+    message: str
+    cents = 0
+    remark = ""
+
+# What is on the table and how the evening has gone (presentation; not saved).
+struct Served:
+    item: MenuItem
+    minute: int                     # the world minute it arrived
+    seat = 0                        # (the spot on the table it was put down)
+
+struct LeisureState:
+    served: Served[]
+    orders = 0                      # orders this sitting (the remarks vary with it)
+    strong: int[]                   # world minutes of the strong drinks lately (wine and up)
+    sitting = ""                    # the key of the place one sits at, or ""
+
+const LEISURE_TERRACE_SUFFIX = ":terrace"
+
+# ---------------- opening hours and menus ----------------
+
+leisure_open = (w: World, lp: LeisurePlace) -> bool:
+    if lp.opens == lp.closes: return true
+    clock = local_minute(w.minute)
+    if lp.opens < lp.closes: clock >= lp.opens and clock < lp.closes
+    else: clock >= lp.opens or clock < lp.closes
+
+leisure_food = (lp: LeisurePlace) -> MenuItem[]: if lp.menu == "coffee": COFFEE_FOOD else: HOTEL_FOOD
+leisure_drinks = (lp: LeisurePlace) -> MenuItem[]: if lp.menu == "coffee": coffee_house_drinks() else: drinks_catalogue()
+
+# The whole menu as the panel lists it: food first, then the drinks.
+leisure_menu = (lp: LeisurePlace) -> MenuItem[]:
+    out: MenuItem[]
+    out.extend(leisure_food(lp))
+    out.extend(leisure_drinks(lp))
+    out
+
+# ---------------- prices ----------------
+
+# A dish or drink made from a good the town's market trades follows that good's price there (a
+# shortage makes the fish dearer); the rest keep the house's price. Rounded to 5 centesimi.
+item_cents = (w: World, place: int, d: MenuItem) -> int:
+    base = d.cents
+    if d.good >= 0 and d.good < GOOD_COUNT and place >= 0 and place < w.places.len():
+        now = w.places[place].market.price_cents[d.good]
+        was = w.goods[d.good].base_cents
+        if now > 0 and was > 0: base = d.cents * now / was
+    max(5, (base + 2) / 5 * 5)
+
+lire_words = (cents: int) -> str:
+    if cents % 100 == 0: "{cents / 100} lire" else: "{cents / 100}.{(cents % 100):02} lire"
+
+# ---------------- ordering ----------------
+
+_cash = (w: World, person: int) -> int:
+    a = w.people[person].account
+    if account_valid(w,a): w.accounts[a].cents else: 0
+
+_keeper_account = (w: World, lp: LeisurePlace) -> int:
+    if lp.keeper < 0 or lp.keeper >= w.people.len(): return -1
+    w.people[lp.keeper].account
+
+# The player buys a dish or a drink: one transfer to the keeper, or nothing at all.
+leisure_order = (w: mut World, lp: LeisurePlace, d: MenuItem, state: mut LeisureState) -> LeisureResult:
+    p = w.player
+    if w.people[p].place != lp.place: return LeisureResult(false, "You'd have to be there to order.")
+    if not leisure_open(w,lp): return LeisureResult(false, "The kitchen and the bar are closed now.")
+    keeper = _keeper_account(w,lp)
+    if not account_valid(w,keeper): return LeisureResult(false, "Nobody is serving just now.")
+    cents = item_cents(w,lp.place,d)
+    if _cash(w,p) < cents: return LeisureResult(false, "You haven't the money for that.", cents)
+    if not transfer(w,w.people[p].account,keeper,cents,.trade): return LeisureResult(false, "Nobody is serving just now.", cents)
+    remark = keeper_remark(d,state.orders)
+    state.orders += 1
+    state.served.push(Served(d,w.minute,state.orders % 6))
+    if state.served.len() > 6: state.served.remove_at(0)
+    if d.strength >= 2: state.strong.push(w.minute)
+    LeisureResult(true, "{d.name}, {lire_words(cents)}.", cents, remark)
+
+# Things finished get cleared away after a while (an hour for a plate, two for a bottle).
+leisure_clear_table = (w: World, state: mut LeisureState):
+    i = 0
+    loop i < state.served.len():
+        s = state.served[i]
+        keep = if s.item.serve == .bottle or s.item.serve == .pot: 120 else: 60
+        if w.minute - s.minute > keep: state.served.remove_at(i) else: i += 1
+
+# The gentle sway after several strong drinks in the last three hours: 0 (none) to 1. It wears off.
+leisure_sway = (w: World, state: LeisureState) -> f64:
+    recent = 0.0
+    loop m in state.strong:
+        age = f64(w.minute - m)
+        if age >= 0 and age < 180: recent += 1.0 - age / 180.0
+    clamp((recent - 2.5) * 0.3, 0.0, 1.0)
+
+# ---------------- rooms and rest ----------------
+
+# How long until the next time the clock reads `until` (local minutes): never less than half an hour.
+rest_minutes = (w: World, until: int) -> int:
+    clock = local_minute(w.minute)
+    wait = ((until - clock) % 1440 + 1440) % 1440
+    if wait < 30: wait += 1440
+    wait
+
+leisure_take_room = (w: mut World, lp: LeisurePlace) -> LeisureResult:
+    p = w.player
+    if lp.room_cents <= 0: return LeisureResult(false, "There are no rooms here.")
+    if w.people[p].place != lp.place: return LeisureResult(false, "You'd have to be there.")
+    keeper = _keeper_account(w,lp)
+    if not account_valid(w,keeper): return LeisureResult(false, "Nobody is at the desk.")
+    if _cash(w,p) < lp.room_cents: return LeisureResult(false, "A room is {lire_words(lp.room_cents)}, and you haven't got it.", lp.room_cents)
+    if not transfer(w,w.people[p].account,keeper,lp.room_cents,.rent): return LeisureResult(false, "Nobody is at the desk.")
+    LeisureResult(true, "A room on the sea side, {lire_words(lp.room_cents)}.", lp.room_cents)
+
+# Someone has reason to be grateful: a delivery or a rescue they remember, or warmth enough.
+grateful_to_player = (w: World, person: int) -> bool:
+    if person <= 0 or person >= w.people.len() or person == w.player: return false
+    key = RelationshipKey(person,w.player)
+    if not (key in w.relationship_index): return false
+    r = w.relationships[w.relationship_index[key]]
+    if r.grievance > 100 or r.affinity < 0: return false
+    if r.affinity >= 60: return true
+    loop m in r.memories:
+        if (m.kind == .rescue or m.kind == .delivery) and (m.reason.actor == w.player or m.reason.beneficiary == person): return true
+    false
+
+# A family at home in this town, grateful to the player, with a spare room (anyone with a home of
+# their own here who isn't on the road). Returns their person ids.
+spare_room_hosts = (w: World, place: int) -> int[]:
+    out: int[]
+    loop p in w.people:
+        if p.id == w.player or p.home != place or p.place != place or p.trip >= 0: continue
+        if p.occupation == .pirate or p.occupation == .patrol or p.occupation == .player: continue
+        if grateful_to_player(w,p.id): out.push(p.id)
+    out
+
+# ---------------- working on the aircraft ----------------
+
+enum TinkerTask: wipe, inspect, oil, tune, patch, polish
+
+struct TinkerJob:
+    task: TinkerTask
+    label: str
+    minutes: int
+
+TINKER_JOBS: TinkerJob[] = [
+    TinkerJob(.wipe, "Wipe the windscreen and the salt off the cowling", 10),
+    TinkerJob(.inspect, "Look her over: struts, wires, floats", 20),
+    TinkerJob(.oil, "Check the oil and grease the rocker arms", 15),
+    TinkerJob(.tune, "Tune the engine: plugs, timing, carburettor", 45),
+    TinkerJob(.patch, "Patch and dope the fabric", 40),
+    TinkerJob(.polish, "Polish the propeller and the brass", 25)
+]
+
+struct TinkerResult:
+    line: str
+    minutes: int
+    engine = 0                      # what changed in the world's record (per mille)
+    hull = 0
+
+_condition_words = (v: int, part: str) -> str:
+    if v >= 970: "The {part} is as good as new."
+    else if v >= 880: "The {part} shows a little wear."
+    else if v >= 750: "The {part} is tired; a careful hand would help."
+    else: "The {part} needs the workshop, not a spanner on the quay."
+
+# Small real effects only on light wear (a tune clears a little engine wear above three quarters,
+# a patch a little hull wear); anything heavier stays the workshop's job. The rest is for the
+# pleasure of it.
+leisure_tinker = (w: mut World, craft: int, task: TinkerTask) -> TinkerResult:
+    if craft < 0 or craft >= w.aircraft.len(): return TinkerResult("There's nothing to work on.", 0)
+    c = w.aircraft[craft]
+    job = TINKER_JOBS[0]
+    loop j in TINKER_JOBS:
+        if j.task == task: job = j
+    if c.state != .moored: return TinkerResult("She has to be moored and still first.", 0)
+    match task:
+        .wipe: TinkerResult("The windscreen is clear again, and the cowling shines.", job.minutes)
+        .inspect: TinkerResult("{_condition_words(c.engine, "engine")} {_condition_words(c.hull, "airframe")}", job.minutes)
+        .oil: TinkerResult("Oil topped up, the rockers greased. She'll start sweeter.", job.minutes)
+        .polish: TinkerResult("The propeller gleams. Nobody will notice but you.", job.minutes)
+        .tune:
+            if c.engine >= 1000: return TinkerResult("You fiddle with the timing and put it back where it was. It was right.", job.minutes)
+            if c.engine < 750: return TinkerResult(_condition_words(c.engine, "engine"), job.minutes / 3)
+            gain = min(40, 1000 - c.engine)
+            w.aircraft[craft].engine += gain; w.aircraft[craft].revision += 1
+            TinkerResult("New plugs, the timing set by ear. She runs a little smoother.", job.minutes, engine = gain)
+        .patch:
+            if c.hull >= 1000: return TinkerResult("You look for a tear to patch and find none.", job.minutes / 2)
+            if c.hull < 800: return TinkerResult(_condition_words(c.hull, "airframe"), job.minutes / 3)
+            gain = min(30, 1000 - c.hull)
+            w.aircraft[craft].hull += gain; w.aircraft[craft].revision += 1
+            TinkerResult("A patch, two coats of dope; the small tears are closed.", job.minutes, hull = gain)
+
+# ---------------- the terrace venue ----------------
+
+# The hotel terrace as a daily-life venue, published by the scene (idempotently): pilots and the
+# keeper find it in the evening (src/living_life.jo), so whoever is in town is really there.
+publish_leisure_venue = (w: mut World, venue: LifeVenue):
+    loop k in 0..w.life_venues.len():
+        if w.life_venues[k].key == venue.key:
+            if length(w.life_venues[k].pos - venue.pos) > 0.01 or length(w.life_venues[k].prop_pos - venue.prop_pos) > 0.01: w.life_venues[k] = venue
+            return
+    w.life_venues.push(venue)
+
+terrace_venue = (w: World, place: int) -> LifeVenue?:
+    loop v in w.life_venues:
+        if v.place == place and v.key.ends_with(LEISURE_TERRACE_SUFFIX): return v
+    none
