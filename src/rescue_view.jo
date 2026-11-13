@@ -1,0 +1,183 @@
+# People in the water to be picked up, as the player sees them: a mark toward survivors within
+# reach, the prompt to take them aboard and to set them ashore, the card afterwards, and the
+# player's standing with each country and port for the notebook. Reads the living world's rescue
+# projections (survivors_near) and leaves boarding and landing to its actual transactions.
+
+use 'hud.jo'
+use 'render_space.jo'
+use 'map_counter.jo'
+import 'living_types.jo' as data
+import 'living_war_rescue.jo' as war_rescue
+import 'living_commissions.jo' as commissions
+
+struct RescueView:
+    seen: {int: str}                # survivors noticed (id: who), to say what became of them
+    views: war_rescue.SurvivorView[]
+    card_title = ""
+    card_lines: str[]
+    card_until = 0.0
+
+# "Ilias Doukas", or "4 of the Kalyra crew"
+survivor_name = (w: data.World, s: war_rescue.SurvivorView) -> str:
+    if s.person >= 0 and s.person < w.people.len(): return w.people[s.person].name
+    n = max(s.people, s.aboard)
+    country = if s.country >= 0 and s.country < w.countries.len(): w.countries[s.country].name else: "a"
+    if n == 1: "a seaman of the {country} crew" else: "{n} of the {country} crew"
+
+_waiting = (s: war_rescue.SurvivorView) -> bool: s.people > 0 and s.vehicle < 0
+
+# Survivors still waiting in the water within `radius`, nearest first (the views cached by
+# rescue_scan; at most a few, by distance).
+rescue_marks = (r: RescueView, from: vec3, radius: f64 = 6000.0) -> war_rescue.SurvivorView[]:
+    out = [loop s in r.views: if _waiting(s) and f64(length(s.pos - from)) <= radius: s]
+    out.sort((s: war_rescue.SurvivorView): length(s.pos - from))
+    out
+
+# Refreshes the cached views; returns lines for what became of survivors one had noticed and
+# who are no longer waiting (picked up by others, or lost). The caller calls this a few times a
+# second, not every frame.
+rescue_scan = (r: mut RescueView, w: data.World, from: vec3) -> str[]:
+    r.views = war_rescue.survivor_views(w, from, 9000.0)
+    news: str[]
+    loop s in r.views:
+        if _waiting(s) and not (s.id in r.seen): r.seen[s.id] = survivor_name(w, s)
+    ids = r.seen.keys(); ids.sort()
+    loop id in ids:
+        if not (id in w.war.survivors):
+            r.seen.remove(id)
+            continue
+        s = w.war.survivors[id]
+        who = r.seen[id]
+        if s.rescuer == w.player and s.riding_craft >= 0: continue
+        if s.resolved and s.rescuer == w.player:
+            r.seen.remove(id)
+            continue
+        if s.resolved and s.person >= 0 and s.person < w.people.len() and w.people[s.person].state == .departed and s.rescued_total == 0:
+            news.push("{who} was not found in time.")
+            r.seen.remove(id)
+        else if s.resolved or s.riding_vehicle >= 0 or (s.riding_craft >= 0 and s.rescuer != w.player):
+            news.push("{who} was picked up by another boat.")
+            r.seen.remove(id)
+    news
+
+# A survivor waiting within the 30 m the boat must come to, with the aircraft on the water and
+# slow (-1: none).
+rescue_pickup = (r: RescueView, at: vec3, on_water: bool, speed: f64) -> int:
+    if not on_water or speed > 3.0: return -1
+    best = -1; bd = 30.0
+    loop s in r.views:
+        d = f64(length(s.pos - at))
+        if _waiting(s) and d < bd: best = s.id; bd = d
+    best
+
+# The survivors the player has aboard (their ids), oldest first.
+rescue_aboard = (w: data.World) -> int[]:
+    craft = w.people[w.player].craft
+    if craft < 0: return []
+    ids = w.war.survivors.keys(); ids.sort()
+    [loop id in ids: if not w.war.survivors[id].resolved and w.war.survivors[id].riding_craft == craft and w.war.survivors[id].rescuer == w.player: id]
+
+rescue_aboard_name = (w: data.World, id: int) -> str:
+    s = w.war.survivors[id]
+    if s.person >= 0: return w.people[s.person].name
+    n = 0
+    loop k in s.passengers: n += k
+    country = if s.country >= 0 and s.country < w.countries.len(): w.countries[s.country].name else: "a"
+    if n == 1: "the seaman of the {country} crew" else: "the {n} of the {country} crew"
+
+# The harbour the player's aircraft is moored at, where survivors can go ashore (-1: none).
+rescue_harbour = (w: data.World) -> int:
+    craft = w.people[w.player].craft
+    if let b = commissions.commission_berth(w, craft): return b.place
+    -1
+
+harbour_name = (w: data.World, place: int) -> str:
+    if place in w.place_contexts: w.place_contexts[place].name else: "the harbour"
+
+regard_words = (v: int) -> str:
+    if v >= 300: "trusted" else if v >= 10: "well regarded" else if v > -10: "little known" else if v > -150: "poorly regarded" else: "distrusted"
+
+# The player's standing, for the notebook: each country, then each port that has heard of them.
+standing_lines = (w: data.World) -> str[]:
+    out: str[]
+    loop c in 0..w.countries.len():
+        v = w.war.reputation.get("{w.player}:{c}", 0)
+        out.push("{w.countries[c].name}: {regard_words(v)} ({v})")
+    ports: (str, int)[]
+    loop key, v in w.reputation:
+        if key.subject_kind != .person or key.subject != w.player or v == 0: continue
+        ports.push((harbour_name(w, key.place), v))
+    ports.sort((p: (str, int)): p.0)
+    loop name, v in ports: out.push("{name}: {regard_words(v)} ({v})")
+    out
+
+rescue_card = (r: mut RescueView, title: str, lines: str[], now: f64):
+    r.card_title = title
+    r.card_lines = lines
+    r.card_until = now + 7.0
+
+draw_rescue_card = (fonts: Fonts, r: RescueView, now: f64):
+    if now >= r.card_until or r.card_title == "": return
+    alpha = clamp(r.card_until - now, 0.0, 1.0)
+    sw = f64(screen_width()); sh = f64(screen_height())
+    set_font(fonts.title)
+    tsize = min(34.0, 34.0 * (sw - 80.0) / max(1.0, text_width(r.card_title, 34)))
+    w = text_width(r.card_title, tsize)
+    set_font(fonts.ui)
+    loop l in r.card_lines: w = max(w, text_width(l, 20))
+    w = min(w, sw - 60.0)
+    h = tsize + 28.0 + f64(r.card_lines.len()) * 28.0
+    x = (sw - w) * 0.5 - 28; y = sh * 0.24
+    rect_rounded(x, y, w + 56, h, 10, rgba(0.08, 0.1, 0.14, f32(0.62 * alpha)))
+    set_font(fonts.title)
+    text_centered(r.card_title, vec2(f32(sw * 0.5), f32(y + 12 + tsize * 0.5)), tsize, rgba(1, 0.97, 0.9, f32(alpha)))
+    set_font(fonts.ui)
+    loop k in 0..r.card_lines.len(): text_centered(fit_text(r.card_lines[k], sw - 70, 20), vec2(f32(sw * 0.5), f32(y + tsize + 28 + f64(k) * 28.0)), 20, rgba(1, 0.97, 0.9, f32(alpha)))
+    set_font()
+
+_distance_text = (m: f64) -> str: if m < 950.0: "{int(m / 10.0) * 10} m" else: "{m / 1000.0:.1} km"
+
+# A mark over survivors in the water: a small ring where they are, or chevrons at the screen's
+# edge pointing their way, with who and how far.
+draw_rescue_mark = (fonts: Fonts, at: vec3, from: vec3, label: str):
+    eye = scene_camera()
+    p = render_warped(at + vec3(0, 1.5, 0), eye, scene_warp_a, scene_warp_b)
+    clip = scene_view_proj() * vec4(p, 1)
+    sw = f64(screen_width()); sh = f64(screen_height())
+    c = vec2(sw * 0.5, sh * 0.5)
+    d = vec2(clip.x, -clip.y) / max(abs(clip.w), 0.001) * vec2(sw * 0.5, sh * 0.5)
+    edge = clip.w <= 0 or abs(d.x) > sw * 0.5 - 55 or abs(d.y) > sh * 0.5 - 100
+    if clip.w <= 0: d = -d
+    if edge:
+        if length(d) < 0.001: d = vec2(0, 1)
+        d *= f32(min((sw * 0.5 - 55) / max(0.001, abs(f64(d.x))), (sh * 0.5 - 100) / max(0.001, abs(f64(d.y)))))
+    pos = c + d
+    color = rgba(1.0, 0.62, 0.42, 0.95)
+    if edge:
+        along = normalize(d); side = vec2(-along.y, along.x)
+        loop k in 0..2:
+            tip = pos - along * f32(f64(k) * 8.0)
+            line(tip, tip - along * 10 + side * 6, 2.0, color); line(tip, tip - along * 10 - side * 6, 2.0, color)
+    else:
+        ring(pos, 9, 2.0, color)
+        line(pos + vec2(0, 9), pos + vec2(0, 16), 2.0, color)
+    words = "{label}, {_distance_text(f64(length(at - from)))}"
+    set_font(fonts.ui)
+    tw = text_width(words, 14)
+    x = clamp(f64(pos.x), tw * 0.5 + 8, sw - tw * 0.5 - 8)
+    ty = clamp(f64(pos.y) + 26.0, 20.0, sh - 20.0)
+    text_centered(words, vec2(f32(x + 1), f32(ty + 1)), 14, rgba(0.03, 0.04, 0.05, 0.9))
+    text_centered(words, vec2(f32(x), f32(ty)), 14, color)
+    set_font()
+
+# AEGEAN_CAPTURE_RESCUE (captures only): an existing far pilot's aircraft brought down near
+# `near`, through the living world's own record of a downed airman (-1 when none could be).
+stage_rescue_survivor = (w: mut data.World, near: vec3) -> int:
+    if not w.far.populated: return -1
+    loop c in w.aircraft:
+        if c.id == w.people[w.player].craft or c.owner < 0 or c.owner == w.player or c.state == .wrecked or c.rescue_event >= 0: continue
+        if c.owner >= w.people.len() or w.people[c.owner].state == .departed: continue
+        country = max(0, min(2, w.people[c.owner].citizenship))
+        id = war_rescue.record_downed_airman(w, c.owner, c.id, near, country)
+        if id >= 0: return id
+    -1
