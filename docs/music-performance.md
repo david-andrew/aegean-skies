@@ -117,3 +117,26 @@ a sharper plectrum transient and shorter release. The island pluck stays unchang
 next orchestral pass. See `music-orchestra.md` for the annotated Adagietto, concert hall,
 trumpet, piano correction and station levelling; `music-playback-budget.md` records the
 bounded caching plan and its gates.
+
+## Clair de lune, shaped by a pianist's annotation
+
+The Mutopia transcription of Clair de lune plays every note at one velocity, in strict time.
+`data/music/clair-de-lune-performance.json` is its annotation, written by
+`tools/clair_performance.py` from a readable plan, bar by bar (72 bars of 9/8). The generic phrase
+rules are switched off for this piece (its `CONFIG` timing, dynamics and ritard are zero) so the
+annotation alone shapes it, through the same `apply_performance_map` as the Adagietto, which gains
+four optional layers (absent for the Adagietto, whose output is unchanged):
+
+* `time_map` on eighth notes: a phrase-level tempo arch with rubato, lingering into each phrase's
+  cadence, pushing through the Un poco mosso and En animant, broadening at the climax, Calmato,
+  Tempo I and a long morendo (about 346 s performed from 328 s of score);
+* `dynamics` in dB (pp opening, the swell through the arpeggios to the ff of En animant, a hushed
+  return, fading out), part of it as touch (`effort_share`, which darkens or brightens the piano's
+  tone) and the rest as level (`MUS3` mix gains);
+* `voicing`: the right hand's top note of each chord brought out over the inner notes and the
+  left hand;
+* `pedal`: sustain spans changed with each beat in the chordal sections and each bar through the
+  arpeggios (lifted 60 ms at each change), holding notes up to six seconds; `spread_seconds`: each
+  chord rolled 30 ms from the bass up.
+
+Rebuild: `python tools/clair_performance.py && python tools/music_pack.py`.

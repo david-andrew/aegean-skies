@@ -72,7 +72,9 @@ a small subset of metadata retained. This is not an endorsement by any source au
   Gymnopédie No. 1 puts the right hand's top voice (the tune, from bar 5) on the violin and leaves
   the chords and bass on the piano; Ave Maria keeps the source violin and piano (the bar's singer
   takes the violin's line, which then plays at half level); Clair de lune is the source piano
-  alone; Adelita's two guitars become a mandolin-like plucked voice (the tune) and a guitar;
+  alone, its rubato, dynamics, pedal and voicing from an annotated performance
+  (`clair-de-lune-performance.json`, written by `tools/clair_performance.py`; see
+  `docs/music-performance.md`); Adelita's two guitars become a mandolin-like plucked voice (the tune) and a guitar;
   the Berceuse's flute becomes the violin over the guitar. All source pitches and rhythms are
   kept; the interpretation pass adds gentle phrase timing and a final ritard. The Mutopia MIDI
   files play each piece once, without the printed repeats.
