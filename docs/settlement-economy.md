@@ -25,14 +25,14 @@ recomputes stores and partitions. Tier transfers keep the exact source, with no 
 consumption or new title created. Only unpromised, physically present market stock may leave a
 core gateway. Goods carried by a person are unavailable to abstract shipping.
 
-`tools/bake_living_routes.jo` produces `assets/living-routes.bin`:41KB compressed,516 canonical
-roads from606 candidates plus276 water-only sea lanes. Sea approaches/crossings are sampled every
+`tools/bake_living_routes.jo` produces `assets/living-routes.bin`:125KB compressed,516 canonical
+roads from606 candidates plus675 hull-verified sea lanes. Sea approaches/crossings are sampled every
 35m against canonical terrain. Rejected chords are not services. Runtime performs no route search;
 terrain, geography and sorted settlement layout fingerprints must match. After changing those
 inputs, run the baker headlessly and commit the updated catalog. Stale/corrupt data fails loudly
 in tools, logs once and leaves the far tier disabled in play.
 
-Up to768 saved reciprocal ship/cart services acquire cargo by paying the origin market from the
+Up to1280 saved reciprocal ship/cart services acquire cargo by paying the origin market from the
 receiving market's real purse and paying freight to the carrier. Title then belongs to that buyer;
 the vehicle owns custody of the same physical roots. Ships are sailing coasters, not fuel-free
 motor vessels. Crew are removed from cohorts and provision actual grain for the full crossing;
@@ -43,8 +43,9 @@ accounts; only actual arrival copies these to the destination's local news list.
 Per-minute work is staggered: approximately14 districts each minute, one hourly work/purchase step
 each. Transport advances active journeys once per minute and checks departures every30minutes.
 `living_world.far_transport_views(w,observer,radius=6000)` exposes saved service ID, kind, actual
-origin/destination/position/velocity, commodity/quantity and a factual reason. This is data for a
-scene consumer; this slice does not yet draw ships/carts or supply named far people or aircraft.
+origin/destination/position/velocity, commodity/quantity and a factual reason. Existing merchant
+ships are materialized through the vessel scene adapter; carts retain abstract journeys. Persistent
+named residents and callers registering real aircraft share the original World identity tables.
 The sparse IDs are keys, never indexes into `World.places` or the six original Towns.
 
 Stock fragments are capped at64 per store. Production roots aggregate by producer/good/origin;
@@ -92,7 +93,8 @@ and hop count. World journal<=2048; each person carries<=12 snapshots, surviving
 The shared conversation UI has three small data-wiring changes: sparse place-name lookup,
 Any-work dispatch through ask_for_work, and a guard against opening the six-port trade panel
 for a sparse counter. Its layout/controls stay the coordinator's. Far bulk trade, named aircraft,
-shipping/cart drawing, war and military contracts remain subsequent work.
+cart drawing and generic far airline services remain subsequent work; see the national logistics
+implementation and UI contracts in [living-logistics.md](living-logistics.md).
 
 ## Sparse harbor commissions and aircraft callers
 
@@ -107,8 +109,8 @@ The minute worker considers one district per minute, rather than all settlements
 `living_world.commission_views(w,place=-1,actor=-1)` exposes ID, kind/phase, real endpoints,
 poster/carrier, reward/deadline, owned mass/position and why. `claim_commission`,
 `pickup_commission`, `load_commission` and `collect_commission` implement actual custody.
-Pickup requires foot proximity, loading requires the player's own moored aircraft at the
-origin's real dock and free payload capacity, and payment requires collection at the actual
+Pickup requires foot proximity, loading requires the player's own moored aircraft at
+an actual published dock beside the holder and free payload capacity, and payment requires collection at the actual
 receiving counter. Those goods are a single FarStock partition while carried, included in
 `craft_grams` aboard; never copied into a second anonymous hold. A missed deadline refunds
 the reward but retains the buyer's title/cargo until collection or a funded local resale.
@@ -123,8 +125,54 @@ The UI should dispatch those IDs to the commission methods, not the six-port job
 `living_far_aircraft.register_far_aircraft(w,place,kind,funder,key)` is a guarded, idempotent
 registration for scene/event callers. It consumes two owned packages of parts and transfers
 the actual AIRFRAMES purchase price to the local yard. It reserves a real berth and promotes
-a worker into one of two pilot slots, alongside three ordinary resident slots. The same
-World.aircraft ID owns its empty tank, health and future payload. Saves accept8..64 bodies;
+a worker into one of the default two pilot slots, alongside three ordinary resident slots.
+Authored mobilizations may explicitly reserve up to64pilot slots from the same finite cohorts;
+ordinary settlements retain the two-pilot limit. The same
+World.aircraft ID owns its empty tank, health and future payload. Saves accept8..256 bodies;
 no duplicate far aircraft tank/hold is introduced. `fill_far_tank` purchases owned local fuel,
 `reserve_far_berth` and `release_far_berth` own sparse berth metadata. Scene callers still
 commit actual flight motion once; no headless flying or rendering is implied by registration.
+
+## Current logistics contract
+
+See [living-logistics.md](living-logistics.md) for the consolidated ownership, received-order,
+war and save contract. The earlier sections describe the staged implementation. Bulk cargo now
+requires a dated counter order actually carried back from a visit (initial orders are declared
+opening agreements). Each service carries new local orders on arrival. Counters procure for
+bounded, received downstream customer orders as well as their own households and factory inputs.
+Original per-good deadlines and ancestry survive forwarding; no echoed demand or renewal from
+repeated handling. Separate cargo_deliveries and order_rounds counters keep empty paid visits
+from being reported as goods deliveries. WorkProvenance exposes the real need, supplier, negotiated
+price/deadline/payer and existing opening/production/import batch references.
+
+National charters, supply/arsenals, received political evidence, convoy binding, finite naval
+contacts, occupation/withdrawal, refugees, rescue and player missions operate on those same
+accounts, population, goods, routes and vessels. War is contingent on received incidents and
+supplied forces; a date or camera does not spawn a fight. Significant national engagements alone
+can carry a saved optional title, exposed on WarContact.name and through war_engagements.
+
+Native/browser saves use schema3 readable metadata and a raw compressed body for each bank.
+Keep both banks and their -data keys together. Schema1/2 remain readable; incompatible old far
+procurement/navigation versions are explicitly refused without replacing the saved world.
+
+
+## Feeder tracks and opening rolling stock
+
+The offline living-route bake preserves every authored road and accepted sea lane, then tries
+at most2048 deterministic short links between disconnected transport components. An accepted
+unpaved feeder uses canonical dry terrain, a bounded grade and wagon-width building clearance;
+local detours use the same contact geometry as walking. The resulting samples are baked, never
+searched in the game minute or frame loop. These tracks belong to the living transport catalog,
+not the authored settlement road registry or chart. Unpassable candidates stay disconnected.
+
+The current catalog adds11tracks: the largest connected component grows483→674places.
+Opening services on authored roads own a1.5-ton horse wagon and one real cohort driver; narrow
+feeder tracks retain the500kgcart. The ship hold remains30tons. These are declared opening
+vehicles, with funded operating purses and actual crew removed from their households. Cargo
+still requires actual stock, received purchase terms, payment and carried original roots.
+Loading a populated save never enlarges its fleet, resizes its vehicles or replaces its routes.
+
+A connected graph alone does not establish adequate carrying capacity. An optimistic grain-only
+flow bound on the measured month snapshot improved61.6%→98.9%of import demand when route
+capacities were treated as unlimited. At finite capacities, wagons and multi-day route times
+remain important constraints; no claim of general economic equilibrium follows from that bound.

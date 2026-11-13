@@ -1,0 +1,88 @@
+# A letter funds an existing civilian charter, never a new hull or crew. An isolated unarmed
+# merchant surrenders a finite part of its actual load; the same prize rides home before sale.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_far_checks.jo'
+use 'living_far_news.jo'
+use 'living_money.jo'
+use 'living_war.jo'
+use 'living_war_contacts.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+
+issue_marque = (w: mut World, unit: int, enemy: int) -> bool:
+    if unit<0 or unit>=w.war.units.len() or enemy<0 or enemy>=3: return false
+    u=w.war.units[unit]
+    if u.retired or u.vehicle<0 or u.country!=1 or w.minute>=u.charter_until or not war_hostile(w,u.country,enemy) or not war_unit_hostile(w,unit,enemy): return false
+    v=w.far.vehicles[u.vehicle]
+    if v.kind!=.ship or v.place!=u.home or v.journey>=0 or w.far.districts[u.home].controller!=u.country or u.supplied_until<w.minute: return false
+    if u.letter_enemy==enemy and u.letter_until>=w.minute: return true
+    if not transfer(w,w.far.treasury[u.country],v.account,600,.rent,unit): return false
+    w.war.units[unit].letter_enemy=enemy; w.war.units[unit].letter_until=u.charter_until
+    w.far.vehicles[v.id].duty=.privateer
+    far_local_news(w,u.home,"letter_of_marque","{w.countries[u.country].name} paid charter {v.id} to intercept {w.countries[enemy].name} merchant cargo under a dated letter of marque.",country=u.country,other_country=enemy,severity=700)
+    true
+
+merchant_protected = (w: World, vehicle: int, country: int) -> bool:
+    at=w.far.vehicles[vehicle].pos
+    loop u in w.war.units:
+        if u.country!=country or u.vehicle<0 or war_power(w,u.id)<=0: continue
+        if length(w.far.vehicles[u.vehicle].pos-at)<1800: return true
+    false
+
+board_merchant = (w: mut World, unit: int, victim: int) -> int:
+    if unit<0 or unit>=w.war.units.len() or victim<0 or victim>=w.far.vehicles.len(): return 0
+    u=w.war.units[unit]
+    if u.vehicle<0 or u.vehicle>=w.far.vehicles.len(): return 0
+    raider=w.far.vehicles[u.vehicle]; v=w.far.vehicles[victim]
+    if u.retired or u.letter_enemy<0 or u.letter_until<w.minute or war_power(w,unit)<=0 or u.stock.qty[8]<3 or raider.battle>=0 or raider.cargo.roots.len()>0 or v.kind!=.ship or v.duty!=.merchant or v.battle>=0 or v.journey<0 or v.hull<=350 or w.minute-v.last_boarding_minute<1440 or length(raider.pos-v.pos)>120: return 0
+    j=w.far.journeys[v.journey]
+    if j.good<0 or j.quantity<=0 or w.far.districts[j.destination].born_country!=u.letter_enemy or not war_unit_hostile(w,unit,u.letter_enemy) or merchant_protected(w,victim,u.letter_enemy): return 0
+    attackers=raider.crew[0]+raider.crew[1]+raider.crew[2]; defenders=v.crew[0]+v.crew[1]+v.crew[2]
+    if attackers<max(4,defenders*2): return 0
+    room=max(0,raider.capacity_grams-inventory_mass(w,raider.provisions)-inventory_mass(w,u.stock))
+    qty=min(j.quantity,min(50000,room)*1000/w.goods[j.good].package_grams)
+    if qty<100: return 0
+    batch=far_stock_take(w.far.vehicles[victim].cargo,w.cargo_sources,j.good,qty)
+    if batch==none: living_fault("privateer.prize_partition",guard_context(w)+" victim={victim}"); return 0
+    if not far_stock_add(w.far.vehicles[raider.id].cargo,batch!): living_fault("privateer.hold_partition",guard_context(w)+" unit={unit}"); return 0
+    w.far.vehicles[raider.id].cargo_owner=raider.account
+    w.far.journeys[j.id].quantity-=qty
+    w.far.vehicles[victim].last_boarding_minute=w.minute
+    w.war.units[unit].prize_return=true; w.war.prizes_total+=1
+    war_spend(w,unit,8,3)
+    war_unit_account(w,unit,"prize","Charter {raider.id} stopped coaster {victim} and took {f64(qty)/1000.0:.1} packages of {w.goods[j.good].key} owned by the {w.place_contexts[j.destination].name} market. The cargo remains aboard the charter.",850,u.country,u.letter_enemy,60)
+    if u.order>=0: w.war.orders.remove(u.order); w.war.units[unit].order= -1
+    if raider.journey>=0: war_reverse_journey(w,raider.id)
+    qty
+
+sell_prize = (w: mut World, unit: int) -> bool:
+    if unit<0 or unit>=w.war.units.len() or w.war.units[unit].vehicle<0: return false
+    u=w.war.units[unit]; v=w.far.vehicles[u.vehicle]
+    if not u.prize_return or v.place!=u.home or v.journey>=0 or v.cargo.roots.len()==0 or not far_market_accepts(w,u.home,v.cargo): return false
+    d=w.far.districts[u.home]; price=0
+    loop g in 0..9: price+=(v.cargo.qty[g]*d.prices[g]+999)/1000
+    if price<=0 or not transfer(w,d.market_account,v.account,price,.trade,unit): return false
+    share=price/4
+    if share>0: transfer(w,v.account,w.far.treasury[u.country],share,.fine,unit)
+    far_put_market(w,u.home,v.cargo)
+    w.far.vehicles[v.id].cargo=FarStock(); w.far.vehicles[v.id].cargo_owner= -1
+    w.war.units[unit].prize_return=false; w.war.prizes_sold+=1
+    far_local_news(w,u.home,"prize_sale","Charter {v.id} brought its prize home to {w.place_contexts[u.home].name}. The local market paid {f64(price)/100.0:.2} lire for the actual cargo; a quarter went to the issuing treasury.",country=u.country,severity=600)
+    true
+
+privateers_minute = (w: mut World):
+    if not w.far.populated or w.minute%5!=0: return
+    loop unit in 0..w.war.units.len():
+        u=w.war.units[unit]
+        if u.retired or u.vehicle<0: continue
+        if u.prize_return: sell_prize(w,unit); continue
+        if u.letter_until<w.minute:
+            loop enemy in 0..3:
+                if enemy!=u.country and issue_marque(w,unit,enemy): break
+        u=w.war.units[unit]
+        if u.letter_enemy<0 or u.letter_until<w.minute: continue
+        loop victim in w.far.vehicles:
+            if victim.id==u.vehicle: continue
+            if board_merchant(w,unit,victim.id)>0: break

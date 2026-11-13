@@ -1,0 +1,156 @@
+# Counter visits are communication. A reciprocal service carries each office's orders back
+# to its supplier; an empty run collects the actual quotes under its paid service agreement.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_work.jo'
+use 'living_work_types.jo'
+use 'living_place_context.jo'
+use 'living_far_recipes.jo'
+
+const FAR_CUSTOMER_ORDERS = 8
+const FAR_ORDER_PATH = 12
+
+order_due = (o: FarRestockOrder, good: int) -> int: if o.good_due[good]>0: o.good_due[good] else: o.due
+order_need_since = (o: FarRestockOrder, good: int) -> int: if o.need_since[good]>=0: o.need_since[good] else: o.minute
+
+order_path = (o: FarRestockOrder, good: int) -> int[]:
+    result=o.paths[good].places
+    if not (o.place in result): result.push(o.place)
+    result
+
+customer_order_current = (w: World, place: int, e: FarCustomerOrder, good: int) -> bool:
+    e.order.quantity[good]>0 and order_due(e.order,good)>=w.minute and not (place in order_path(e.order,good))
+
+counter_own_target = (w: World, place: int, good: int) -> int:
+    d=w.far.districts[place]; result=d.target[good]
+    if far_input(d.output)==good:
+        workers=d.workers[0]+d.workers[1]+d.workers[2]
+        result=max(result,(workers*d.productivity*3+far_input_divisor(d.output)-1)/far_input_divisor(d.output))
+    result
+
+counter_stock_target = (w: World, place: int, good: int) -> int:
+    d=w.far.districts[place]; result=counter_own_target(w,place,good)
+    loop e in d.customer_orders:
+        if customer_order_current(w,place,e,good): result=min(1000000000,result+e.order.quantity[good])
+    result
+
+counter_customers = (w: World, place: int, good: int) -> int[]:
+    result: int[]
+    loop e in w.far.districts[place].customer_orders:
+        if not customer_order_current(w,place,e,good): continue
+        loop id in order_path(e.order,good):
+            if id!=place and not (id in result) and result.len()<FAR_ORDER_PATH-1: result.push(id)
+    result.sort(); result
+
+order_customer_note = (w: World, places: int[], issuer: int) -> str:
+    names: str[]
+    loop place in places:
+        if place!=issuer and names.len()<2: names.push(life_place_name(w,place))
+    if names.len()==0: return ""
+    " The counter is also filling received orders from {names.join(" and ")}."
+
+_counter_order_value = (minute: int, place: int, e: FarCustomerOrder) -> int:
+    total=0
+    loop g in 0..9:
+        if e.order.quantity[g]>0 and order_due(e.order,g)>=minute and not (place in order_path(e.order,g)): total+=e.order.quantity[g]*e.order.price[g]/1000
+    total
+
+remember_counter_order = (w: mut World, place: int, service: int, order: FarRestockOrder):
+    if not (place in w.far.districts) or order.place==place: return
+    old=w.far.districts[place].customer_orders
+    loop e in old:
+        # A repeated arrival callback never restores already supplied quantities or changes
+        # the date on which a counter first received that order.
+        if e.service==service and e.order.minute>=order.minute: return
+    kept=[loop e in old: if e.service!=service and _counter_order_value(w.minute,place,e)>0: e]
+    next=FarCustomerOrder(service,w.minute,order)
+    if _counter_order_value(w.minute,place,next)>0: kept.push(next)
+    now=w.minute
+    kept.sort((e: FarCustomerOrder): (_counter_order_value(now,place,e),e.order.minute,-e.service),descending=true)
+    if kept.len()>FAR_CUSTOMER_ORDERS: kept=kept[0..FAR_CUSTOMER_ORDERS]
+    kept.sort((e: FarCustomerOrder): e.service)
+    w.far.districts[place].customer_orders=kept
+
+serve_counter_order = (w: mut World, place: int, service: int, issued: int, good: int, qty: int):
+    loop k in 0..w.far.districts[place].customer_orders.len():
+        e=w.far.districts[place].customer_orders[k]
+        if e.service==service and e.order.minute==issued:
+            w.far.districts[place].customer_orders[k].order.quantity[good]=max(0,e.order.quantity[good]-qty)
+            return
+
+_order_share = (quantity: int, links: int[], route: int) -> int:
+    if links.len()==0: return 0
+    loop k in 0..links.len():
+        if links[k]==route: return quantity/links.len()+(if k<quantity%links.len(): 1 else: 0)
+    0
+
+service_freight_quote = (w: World, vehicle: int, place: int) -> int:
+    v=w.far.vehicles[vehicle]; crew=v.crew[0]+v.crew[1]+v.crew[2]
+    # A day of crew pay plus the actual local ration quote, prorated by physical route
+    # time, with a quarter for the operator. The service fee is finite and prepaid.
+    daily=crew*(100000+28*w.far.districts[place].prices[3])
+    numerator=w.far.links[v.route].length_mm*daily*5
+    denominator=v.speed_mm_sec*2*1440*1000*4
+    max(40,(numerator+denominator-1)/denominator)
+
+counter_restock_order = (w: World, vehicle: int, place: int, opening: bool = false) -> FarRestockOrder:
+    d=w.far.districts[place]; v=w.far.vehicles[vehicle]
+    length_mm=w.far.links[v.route].length_mm
+    travel_minutes=(length_mm+v.speed_mm_sec*2-1)/(v.speed_mm_sec*2)
+    order=FarRestockOrder(place,d.market_account,w.minute,w.minute+max(43200,travel_minutes*3+2880),opening=opening)
+    order.freight=service_freight_quote(w,vehicle,place)
+    links=d.links; links.sort()
+    route=w.far.links[v.route]; peer=if route.a==place: route.b else: route.a
+    loop g in 0..9:
+        stock=far_market_qty(w,place,g)
+        order.observed[g]=stock; order.target[g]=counter_stock_target(w,place,g)
+        order.price[g]=d.prices[g]
+        own=counter_own_target(w,place,g)
+        order.quantity[g]=_order_share(max(0,own-stock),links,v.route)
+        order.paths[g].places=[place]; order.need_since[g]=w.minute; order.good_due[g]=order.due
+        surplus=max(0,stock-own)
+        customers=d.customer_orders
+        customers.sort((e: FarCustomerOrder): (order_due(e.order,g),-e.order.price[g],e.service))
+        loop e in customers:
+            if not customer_order_current(w,place,e,g): continue
+            want=e.order.quantity[g]; covered=min(surplus,want); surplus-=covered; want-=covered
+            trail=order_path(e.order,g)
+            if want<=0 or peer in trail: continue
+            eligible: int[]
+            loop edge in links:
+                l=w.far.links[edge]; other=if l.a==place: l.b else: l.a
+                if not (other in trail): eligible.push(edge)
+            share=_order_share(want,eligible,v.route)
+            if share<=0: continue
+            path=order.paths[g].places
+            loop id in trail:
+                if not (id in path): path.push(id)
+            if path.len()>FAR_ORDER_PATH: continue
+            path.sort(); order.paths[g].places=path
+            order.quantity[g]+=share
+            order.need_since[g]=min(order.need_since[g],order_need_since(e.order,g))
+            order.good_due[g]=min(order.good_due[g],order_due(e.order,g))
+        order.quantity[g]=min(order.quantity[g],max(0,order.target[g]-stock))
+    order
+
+restock_order_valid = (w: World, o: FarRestockOrder) -> bool:
+    if not (o.place in w.far.districts) or o.account!=w.far.districts[o.place].market_account or o.minute<0 or o.minute>w.minute or o.due<o.minute or o.freight<0: return false
+    loop g in 0..9:
+        if o.observed[g]<0 or o.target[g]<0 or o.quantity[g]<0 or o.quantity[g]>max(0,o.target[g]-o.observed[g]) or o.price[g]<=0: return false
+        if o.need_since[g]< -1 or o.need_since[g]>o.minute or o.good_due[g]<0 or (o.good_due[g]>0 and (o.good_due[g]<o.minute or o.good_due[g]>o.due)) or o.paths[g].places.len()>FAR_ORDER_PATH: return false
+        if o.paths[g].places.len()>0 and not (o.place in o.paths[g].places): return false
+        # An ancestry has at most twelve entries. Avoid allocating nine tiny hash tables
+        # for every carried/counter order on each validation pass; retain every check.
+        loop i in 0..o.paths[g].places.len():
+            id=o.paths[g].places[i]
+            if not (id in w.far.districts): return false
+            loop j in 0..i:
+                if o.paths[g].places[j]==id: return false
+    true
+
+trade_work_provenance = (w: World, order: FarRestockOrder, vehicle: int, origin: int, good: int, quantity: int, price: int, batch: FarStock) -> WorkProvenance:
+    roots=batch.roots.keys(); roots.sort()
+    cause="{life_place_name(w,order.place)}'s counter ordered {w.goods[good].key}, {work_date(order.minute)}: its stock was down to {f64(order.observed[good])/1000.0:.2} packages against a {f64(order.target[good])/1000.0:.2}-package reserve. The supplier at {life_place_name(w,origin)} agreed {f64(price)/100.0:.2} lire for {f64(quantity)/1000.0:.2} packages; the buyer pays {f64(order.freight)/100.0:.2} lire freight."
+    places=order_path(order,good); cause+=order_customer_note(w,places,order.place)
+    WorkProvenance(cause=cause,requester=w.far.districts[order.place].market_owner,requester_account=order.account,supplier=w.far.districts[origin].market_owner,supplier_account=w.far.districts[origin].market_account,request_place=order.place,requested_minute=order.minute,heard_minute=w.minute,agreed_minute=w.minute,goods_cents=price,freight_cents=order.freight,freight_payer=order.account,deadline=order_due(order,good),supply_roots=roots,supply=work_supply(w,roots),negotiated=true,opening=order.opening,need_places=places,need_since=order_need_since(order,good))

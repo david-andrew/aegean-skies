@@ -516,7 +516,7 @@ At save, persist each aircraft's current common Pose plus any extra flight-integ
 
 ### 3.1 Clock, ordering, commands
 
-Run physics at 60 fixed ticks/physical second. Tick is the only clock. Every 120th tick runs one world minute; `minute=tick/120` and day/hour derive from it with a saved epoch of day 0, 09:30. For a headless abstract run, advance directly to each minute boundary and process all intervening scheduled incidents in `(scheduled_tick, event_priority, ID)` order. Do not take a 120-tick jump through a materialized encounter. A pause pauses both clocks. On frame stalls use a bounded accumulator (at most .25 physical seconds accepted/frame); discard excess real time rather than fast-forwarding only the economy. A time-speed debug key must scale physics and world together or be visual lighting only.
+Run physics at 60 fixed ticks/physical second. Tick is the only clock. Every 120th tick runs one world minute; `minute=tick/120` and day/hour derive from it with a saved epoch of day 0, 09:30. For a headless abstract run, advance directly to each minute boundary and process all intervening scheduled incidents in `(scheduled_tick, event_priority, ID)` order. Do not take a 120-tick jump through a materialized encounter. A pause pauses both clocks. On frame stalls use a bounded accumulator (at most .05 physical seconds (three fixed ticks) accepted/frame); discard excess real time rather than fast-forwarding only the economy. A time-speed debug key must scale physics and world together or be visual lighting only.
 
 Fixed-tick order:
 
