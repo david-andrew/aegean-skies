@@ -49,7 +49,7 @@ try {
     proto.linkProgram=function(p){link.call(this,p);quayLinks.push(this.getProgramParameter(p,this.LINK_STATUS));};
   `});
   const results=[];
-  for(const full of [false,true]) for(const mode of ['front','behind']) {
+  for(const full of (process.env.WEB_CLOUD_SKY_ONLY?[]:[false,true])) for(const mode of ['front','behind']) {
     const name=`${full?'log':'split'}-${mode}`;
     const query=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',CLOUD_TEST_MODE:mode,AEGEAN_QUALITY:'low'});
     if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
@@ -69,10 +69,10 @@ try {
   const sky=process.argv[5];
   if(sky) {
     const probes=[];
-    for(const full of [false,true]) for(const target of ['moon','venus']) for(const cloud of [false,true]) {
-      const name=`sky-${full?'log':'split'}-${target}-${cloud?'cloud':'clear'}`;
+    for(const full of [false,true]) for(const target of ['moon','venus']) for(const cloud of [false,true,'empty']) {
+      const name=`sky-${full?'log':'split'}-${target}-${cloud==='empty'?'cloud-empty':cloud?'cloud':'clear'}`;
       const q=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SKY_TARGET:target,SKY_HOUR:target==='moon'?'0':'5.8',SKY_DAY:target==='moon'?String(29.53059/2-10):'0'});
-      if(full)q.set('AEGEAN_FULL_LOG_DEPTH','1');if(cloud)q.set('SKY_CLOUD','1');
+      if(full)q.set('AEGEAN_FULL_LOG_DEPTH','1');if(cloud)q.set('SKY_CLOUD','1');if(cloud==='empty')q.set('SKY_HIDE_BODY','1');
       errors.length=0;loaded=false;await send('Page.navigate',{url:'file://'+resolve(sky)+'?'+q});
       await until(()=>loaded);await until(async()=>{const r=await send('Runtime.evaluate',{returnByValue:true,expression:'globalThis.quayFrames||0'});return r.result?.value>=4;});
       const links=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayLinks'})).result.value;
@@ -88,9 +88,18 @@ print(json.dumps({'peak':max(max(p) for p in center.getdata()),'contrast':max(ma
       probes.push({name,full,target,cloud,file,...pixels});
     }
     for(const clear of probes.filter(p=>!p.cloud)) {
-      const cloud=probes.find(p=>p.cloud&&p.full===clear.full&&p.target===clear.target);
+      const cloud=probes.find(p=>p.cloud===true&&p.full===clear.full&&p.target===clear.target);
+      const empty=probes.find(p=>p.cloud==='empty'&&p.full===clear.full&&p.target===clear.target);
       assert(clear.contrast>40,clear.name+': celestial body not visible');
-      assert(cloud.contrast<25,cloud.name+': celestial body leaked over cloud');
+      const difference=JSON.parse(execFileSync('python3',['-c',`
+import sys,json
+from PIL import Image,ImageChops,ImageStat
+a=Image.open(sys.argv[1]).convert('RGB');b=Image.open(sys.argv[2]).convert('RGB');x=a.width//2;y=a.height//2
+im=ImageChops.difference(a,b).crop((x-24,y-24,x+24,y+24))
+print(json.dumps({'max_error':max(v[1] for v in im.getextrema()),'mean_error':sum(ImageStat.Stat(im).mean)/3}))
+`,cloud.file,empty.file],{encoding:'utf8'}));
+      cloud.difference=difference;
+      assert(difference.max_error<=2,cloud.name+': celestial body leaked over cloud '+JSON.stringify(difference));
     }
     writeFileSync(join(out,'sky.json'),JSON.stringify(probes,null,2)+'\n');
     console.log('PASS: moon and Venus visibility and cloud occlusion on both WebGL2 depth paths');
