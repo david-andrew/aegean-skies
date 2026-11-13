@@ -8,7 +8,7 @@ use 'render_space.jo'
 use 'cloud_volume.jo'
 use 'cloud_density.jo'
 
-const TRAIL_LIFE = 2.2
+const TRAIL_LIFE = 0.95
 
 struct TrailPoint:
     pos: WorldPoint
@@ -25,11 +25,18 @@ trail_step = (tr: mut Trail, pos: WorldPoint, strength: f64, t: f64):
     if strength <= 0.0:
         if tr.on and tr.pts.len() > 0:
             p = tr.pts[tr.pts.len() - 1]
+            if tr.pts.len() >= 72: tr.pts.remove_at(0)
             tr.pts.push(TrailPoint(p.pos, p.born, 0.0))
         tr.on = false
         return
+    was_on = tr.on
     if not tr.on and tr.pts.len() > 0: tr.pts.push(TrailPoint(pos, t, 0.0))
     tr.on = true
+    # Bound both work and history at high refresh rates; preserve the moving endpoint.
+    if was_on and tr.pts.len() > 1 and t-tr.pts[tr.pts.len()-2].born < 1.0/60.0:
+        tr.pts[tr.pts.len()-1] = TrailPoint(pos,t,f32(strength))
+        return
+    loop tr.pts.len() >= 72: tr.pts.remove_at(0)
     tr.pts.push(TrailPoint(pos, t, f32(strength)))
 
 struct TrailVertex:
@@ -111,8 +118,8 @@ trail_transmittance = (world: vec3,u: TrailParams) -> f32:
 
 trail_fs = (i: TrailOut, u: TrailParams) -> vec4:
     across = abs(i.data.x)
-    fade = (1.0 - smoothstep(0.0, TRAIL_LIFE, i.data.y)) * i.data.z
-    a = (1.0 - smoothstep(0.2, 1.0, across)) * fade * 0.75
+    fade = pow(1.0 - smoothstep(0.0, TRAIL_LIFE, i.data.y),2.0) * i.data.z
+    a = (1.0 - smoothstep(0.2, 1.0, across)) * fade * (0.5+0.5*sin(i.data.w*32.0+i.data.y*9.0)) * 0.65
     if a < 0.01: discard()
     a *= trail_transmittance(i.world,u)
     if a < 0.001: discard()
@@ -134,30 +141,51 @@ draw_trails = (trails: Trail[], L: Light, t: f64):
     cam = scene_camera()
     origin = render_origin(cam)
     vs: TrailVertex[]
-    loop tr in trails:
+    loop ti in 0..trails.len():
+        tr=trails[ti]
         loop k in 0..tr.pts.len() - 1:
-            a = tr.pts[k]
-            b = tr.pts[k + 1]
-            if a.strength <= 0.0 and b.strength <= 0.0: continue
-            # At 3 km the oldest ribbon is subpixel even at desktop resolution.
-            # The active view segment is therefore local and its cloud list bounded.
-            if min(length(world_local(a.pos,cam)),length(world_local(b.pos,cam))) > 3000.0: continue
-            la_pos=world_local(a.pos,origin);lb_pos=world_local(b.pos,origin)
-            d = lb_pos-la_pos
-            if length(d) < 0.001: continue
-            view = normalize((la_pos+lb_pos)*0.5-render_eye(origin))
-            side = cross(d,view)
-            side /= max(length(side),0.00001)
-            la = t - a.born
-            lb = t - b.born
-            wa = f32(0.07 + la * 0.25)
-            wb = f32(0.07 + lb * 0.25)
-            a0 = TrailVertex(la_pos - side * wa, vec4(-1, f32(la), a.strength, 0))
-            a1 = TrailVertex(la_pos + side * wa, vec4(1, f32(la), a.strength, 0))
-            b0 = TrailVertex(lb_pos - side * wb, vec4(-1, f32(lb), b.strength, 0))
-            b1 = TrailVertex(lb_pos + side * wb, vec4(1, f32(lb), b.strength, 0))
-            vs.push(a0); vs.push(b0); vs.push(a1)
-            vs.push(a1); vs.push(b0); vs.push(b1)
+            start=tr.pts[k];end=tr.pts[k+1]
+            newest=tr.pts[tr.pts.len()-1].pos
+            if min(length(world_delta(start.pos,newest)),length(world_delta(end.pos,newest)))>12.0:continue
+            loop sub in 0..4:
+                blend=(u:f64)->TrailPoint:
+                    TrailPoint(world_offset(start.pos,world_delta(end.pos,start.pos)*f32(u)),mix(start.born,end.born,u),mix(start.strength,end.strength,f32(u)))
+                a=blend(f64(sub)/4.0);b=blend(f64(sub+1)/4.0)
+                if a.strength <= 0.0 and b.strength <= 0.0: continue
+                # At 3 km the oldest ribbon is subpixel even at desktop resolution.
+                # The active view segment is therefore local and its cloud list bounded.
+                if min(length(world_local(a.pos,cam)),length(world_local(b.pos,cam))) > 3000.0: continue
+                head=tr.pts[tr.pts.len()-1].pos
+                da=f64(length(world_delta(a.pos,head)));db=f64(length(world_delta(b.pos,head)))
+                # True-speed world travel is amplified. Keep visible condensation close to
+                # the wing instead of stretching one second of history across the whole sky.
+                sa=a.strength*f32(1.0-smoothstep(0.4,4.0,da))
+                sb=b.strength*f32(1.0-smoothstep(0.4,4.0,db))
+                if sa<0.005 and sb<0.005:continue
+                la_pos=world_local(a.pos,origin);lb_pos=world_local(b.pos,origin)
+                d = lb_pos-la_pos
+                if length(d) < 0.001: continue
+                la = t-a.born; lb = t-b.born
+                tangent=normalize(d)
+                curl_side=normalize(cross(tangent,vec3(0,1,0))+vec3(0.00001,0,0))
+                curl_up=normalize(cross(curl_side,tangent))
+                handed=if ti%2==0:-1.0 else:1.0
+                # Saved wingtip positions follow the actual turn. Older vapour rolls up around
+                # that path; the fresh endpoint stays exactly on the tip, on this local chart.
+                curl=(age:f64,born:f64)->vec3:
+                    radius=f32(min(1.4,age*36.0))
+                    phase=born*300.0+age*10.0
+                    curl_side*f32(sin(phase)*handed)*radius+curl_up*f32(cos(phase))*radius
+                la_pos+=curl(la,a.born);lb_pos+=curl(lb,b.born)
+                view=normalize((la_pos+lb_pos)*0.5-render_eye(origin))
+                side=normalize(cross(lb_pos-la_pos,view)+vec3(0.00001,0,0))
+                wa=f32(0.07+la*0.28);wb=f32(0.07+lb*0.28)
+                a0=TrailVertex(la_pos-side*wa,vec4(-1,f32(la),sa,f32(a.born%TAU)))
+                a1=TrailVertex(la_pos+side*wa,vec4(1,f32(la),sa,f32(a.born%TAU)))
+                b0=TrailVertex(lb_pos-side*wb,vec4(-1,f32(lb),sb,f32(b.born%TAU)))
+                b1=TrailVertex(lb_pos+side*wb,vec4(1,f32(lb),sb,f32(b.born%TAU)))
+                vs.push(a0); vs.push(b0); vs.push(a1)
+                vs.push(a1); vs.push(b0); vs.push(b1)
     if vs.len() < 3: return
     update_mesh(trail_mesh, vs)
     u = TrailParams(view_proj=render_view_proj(origin),cam=render_eye(origin),sun=L.sun,sky=L.sky_top,haze=L.haze,fog=f32(L.fog_density),warp_a=render_anchor(scene_warp_a,origin),warp_b=scene_warp_b,cloud_atlas=volume_atlas)
