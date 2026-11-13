@@ -164,10 +164,26 @@ blue discs that stay in every frame are **speed flecks**.
 ### Spray curtains
 
 - **Aliases:** side curtains, the left and right sheets.
-- **Definition:** two narrow, low, scalloped sheets of spray that peel outward and back from each
-  float's sides, leaving a clear track of water between them, instead of one broad fan.
-- **Code:** on `t3/splash-2` (`src/splash.jo` `splash_fan`, "Two narrow scalloped curtains"). Not
-  on main yet.
+- **Definition:** two narrow, scalloped sheets of spray that rise from each float's chines and peel
+  outward and back, leaving a clear trough of water between them, instead of one broad fan. Each
+  curtain is a solid volume: its inner face, toward the float, is a fairly flat thin sheet; its
+  outer face billows out, thickest along the curling crest and thinning to a knife edge at the root.
+  Rows of round **curtain billows** heap up on the outer face. While the float planes, the curtain
+  churns: billows are born small near the chine, swell as they roll aft along the sheet, rock
+  outward and back, and lift off the crest as shrinking blobs while new ones form behind; the sheet
+  lobes' scallops roll over the top and aft, each lobe swells on its own beat, and the whole curtain
+  breathes with chop and float bounce (the sheet's **heave**).
+- **Code:** `src/splash.jo` `splash_fan` (sheet lobes, kind 3; billows, kind 2, `CURTAIN_ROWS`),
+  `curtain_widths` (inner/outer half-widths), `splash_vs` (roll, spin, outer bulge), `splash_fs`
+  (curtain tones), `splash_targets` / `step_splash_motion` (heave).
+- **Rules:** two painted tones only, white lit side and pale blue-grey shadow: tops lit by the sky
+  stay white, overhanging undersides and a thin rim where each lobe turns from the eye take the
+  shadow tone (in bright sun the middle tone saturates to white, so curtains skip it). All motion
+  is continuous in time, never per-frame noise. Billows and crest drops use the small shared mesh
+  (40x24); sheet lobes and other bodies the 64x40 mesh.
+- **Capture:** `tools/splash_frames.jo` with `POLISH_CASE=planing` (a held planing run),
+  `POLISH_ORBIT="azimuth elevation distance [aim-x aim-z]"`, `POLISH_NOCRAFT=1` to hide the
+  aircraft, `POLISH_SEQUENCE=<dir>` for 30 fps strips.
 - **Not to be confused with:** rain curtains (under cloud decks).
 
 ![The splash on main, and the spray curtains on t3/splash-2, at the same moment](img/spray-curtains.png)
