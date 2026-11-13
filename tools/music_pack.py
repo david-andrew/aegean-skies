@@ -7,7 +7,7 @@ from bisect import bisect_right
 from collections import defaultdict, deque
 import json, math, struct, zlib
 import mido
-from music_performance import score_clock, interpret
+from music_performance import score_clock, interpret, apply_performance_map
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
 # Must agree with MusicInstrument in music_synth.jo.
@@ -106,18 +106,19 @@ def arrange(name,notes):
    out.append([i*beat,.12,36 if i%2==0 else 38,DRUMS,.25,.25,99])
  return sorted(out)
 
-def pack(notes):
+def pack(notes, mix_levels=False):
  events=[]
- extended=len(notes[0])>7
+ extended=len(notes[0])>7 and not mix_levels
  for n in notes:
   t,d,p,ins,g0,g1,_=n[:7]
   event=(round(t*RATE),max(1,round(d*RATE)),p,ins,min(127,round(g0*100)),min(127,round(g1*100)))
+  if mix_levels:event+=(min(65535,max(0,round(n[7]*4096))),min(65535,max(0,round(n[8]*4096))))
   if extended:event+=(min(127,round(n[7]*100)),round(n[8]*100))
   events.append(event)
  events.sort()
  end=max(t+d for t,d,*_ in events)+RATE*2
  longest=max(d for _,d,*_ in events)+RATE*2
- raw=(b'MUS2' if extended else b'MUS1')+struct.pack('<III',len(events),end,longest)+b''.join(struct.pack('<IIBBBBBB' if extended else '<IIBBBB',*n) for n in events)
+ raw=(b'MUS3' if mix_levels else b'MUS2' if extended else b'MUS1')+struct.pack('<III',len(events),end,longest)+b''.join(struct.pack('<IIBBBBHH' if mix_levels else '<IIBBBBBB' if extended else '<IIBBBB',*n) for n in events)
  return zlib.compress(raw,9,wbits=-15),end,events
 
 def main():
@@ -128,8 +129,12 @@ def main():
    performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
   else:
    notes,performance=interpret(arrange(name,notes),name,score_clock(ROOT/'data/music/source'/f'{name}.mid',name))
+  if name=='adagietto':
+   annotation=json.loads((ROOT/'data/music/adagietto-performance.json').read_text())
+   notes=apply_performance_map(notes,annotation)
+   performance.update(annotated_clock=True,time_points=len(annotation['time_map']),duration_after=max(n[0]+n[1] for n in notes),section_mix='independent start/end gains')
   performances[name]=performance
-  blob,end,events=pack(notes)
+  blob,end,events=pack(notes,mix_levels=name=='adagietto')
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
   meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob)))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
