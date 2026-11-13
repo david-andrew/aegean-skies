@@ -3,22 +3,30 @@ use 'river_banks.jo'
 use 'look.jo'
 use 'geography.jo'
 use 'river_field.jo'
+use 'water_field.jo'
 use 'river_data.jo'
 use 'render_space.jo'
 use 'depth_space.jo'
 use 'cloud_depth.jo'
 # Bounded ribbon batches, using the sea's optical material and world-depth path.
 use 'sea.jo'
-struct RiverVertex:
+struct InlandWaterVertex:
     pos:vec3
     current:vec2=vec2(0,0)
     depth:f32=5.0
     chart:vec2=vec2(0,0)
     impact:f32=0.0
+    chart_flow:vec2=vec2(0,0)
+type RiverVertex=InlandWaterVertex
 river_vertex=(p:vec3,flow:vec2,chart:vec2=vec2(0,0))->RiverVertex:
-    r=river_at(f64(p.x),f64(p.z))
+    r=water_at(f64(p.x),f64(p.z))
     impact=f32(clamp(-r.bend*r.lateral/r.width*3.0,0.0,1.0))
-    RiverVertex(p,flow,f32(max(0.0,f64(p.y)-world_source_surface(f64(p.x),f64(p.z)))),chart,impact)
+    InlandWaterVertex(p,flow,f32(max(0.0,f64(p.y)-world_source_surface(f64(p.x),f64(p.z)))),chart,impact,vec2(length(flow),0))
+# Lake meshes use world-metric chart coordinates and the source's physical current.
+# All inland water shares the same material, marks, scale and opacity treatment.
+inland_water_vertex=(p:vec3)->InlandWaterVertex:
+    water=water_at(f64(p.x),f64(p.z))
+    InlandWaterVertex(p,water.current.xz,f32(max(0.0,f64(p.y)-world_source_surface(f64(p.x),f64(p.z)))),p.xz,0.0,water.current.xz)
 struct RiverBatch:
     mesh:Mesh
     center:vec3
@@ -27,10 +35,10 @@ river_shader:Shader
 river_depth_shader:Shader
 river_vs=(v:RiverVertex,u:SeaParams)->SeaOut:
     p=v.pos-u.origin
-    SeaOut(u.view_proj*vec4(render_warped(p,u.cam,u.warp_a,u.warp_b),1),p,v.current,v.depth,v.chart,v.impact)
+    SeaOut(u.view_proj*vec4(render_warped(p,u.cam,u.warp_a,u.warp_b),1),p,v.current,v.depth,v.chart,v.impact,v.chart_flow)
 river_depth_vs=(v:RiverVertex,u:SeaParams)->SeaDepthOut:
     i=river_vs(v,u)
-    SeaDepthOut(i.pos,i.world,i.pos,i.current,i.water_depth,i.water_chart,i.bank_impact)
+    SeaDepthOut(i.pos,i.world,i.pos,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow)
 init_rivers=():
     global river_batches,river_shader,river_depth_shader
     if not geography_enabled:return
@@ -74,29 +82,32 @@ init_rivers=():
         if vs.len()>0:
             p=RIVER_NODES[(begin+finish)/2]
             river_batches.push(RiverBatch(mesh(vs),vec3(p.x,p.z,p.y)))
-draw_rivers=(depth:Texture,L:Light,t:f64,velocity:vec3=vec3(0,0,0)):
+# Stable rendering seam for lake meshes as well as river batches. Init via init_rivers;
+# the caller owns geometry/residency/culling. No river bounds or sea-level assumptions here.
+draw_inland_water=(surface:Mesh,center:vec3,depth:Texture,L:Light,t:f64,velocity:vec3=vec3(0,0,0)):
     if not geography_enabled:return
-    cam=scene_camera()
-    # Whole-system rejection keeps legacy harbours/open sea off the river path.
-    if cam.x < -180000 or cam.x > -65000 or cam.z < -182000 or cam.z > -120000:return
     p=sea_params(depth,L,t,wind_now,velocity,SeaShadows())
     loop mark in 0..3:p.mark_phase[mark]=vec4(0,0,0,0)
     p.glint_phase=vec4(0,0,0,0)
     p.inland_depth=5.0;p.wind.w=0.0;p.wind.z=max(p.wind.z,2.0)
     p.deep=vec3(0.025,0.065,0.05);p.shallow=vec3(0.18,0.23,0.12)
     p.flow=vec4(0,0,0.6,0)
-    at=river_at(f64(cam.x),f64(cam.z))
-    p.rush=rush_of(velocity,at.level)
+    water=water_at(f64(center.x),f64(center.z))
+    p.rush=rush_of(velocity,water.level)
+    d=normalize(water.current.xz+vec2(0.00001,0));side=vec2(-d.y,d.x)
+    along=f64(p.origin.x)*f64(d.x)+f64(p.origin.z)*f64(d.y)
+    across=f64(p.origin.x)*f64(side.x)+f64(p.origin.z)*f64(side.y)
+    p.inland_phase=vec4(render_phase(along*8.0,TAU),render_phase(across*19.0,TAU),render_phase(along*0.7,TAU),render_phase(along*2.0,TAU))
     if world_log_depth_active() and cloud_scene_depth.id!=0:
         p.opaque_depth=snapshot_opaque_depth();p.reject_depth=1
     glDepthMask(1)
+    draw(if world_log_depth_active():river_depth_shader else:river_shader,surface,p)
+    glDepthMask(0)
+
+draw_rivers=(depth:Texture,L:Light,t:f64,velocity:vec3=vec3(0,0,0)):
+    if not geography_enabled:return
+    cam=scene_camera()
+    if cam.x < -180000 or cam.x > -65000 or cam.z < -182000 or cam.z > -120000:return
     loop batch in river_batches:
         if length(batch.center.xz-cam.xz)>18000:continue
-        r=river_at(f64(batch.center.x),f64(batch.center.z))
-        p.flow=vec4(0,0,0.6,0)
-        d=normalize(r.current.xz+vec2(0.00001,0));side=vec2(-d.y,d.x)
-        along=f64(p.origin.x)*f64(d.x)+f64(p.origin.z)*f64(d.y)
-        across=f64(p.origin.x)*f64(side.x)+f64(p.origin.z)*f64(side.y)
-        p.inland_phase=vec4(render_phase(along*8.0,TAU),render_phase(across*19.0,TAU),render_phase(along*0.7,TAU),render_phase(along*2.0,TAU))
-        draw(if world_log_depth_active():river_depth_shader else:river_shader,batch.mesh,p)
-    glDepthMask(0)
+        draw_inland_water(batch.mesh,batch.center,depth,L,t,velocity)
