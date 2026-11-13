@@ -34,6 +34,16 @@ set_camera_rises = (on: bool):
     global camera_rises
     camera_rises = on
 
+struct TargetChaseFrame:
+    ready = false
+    view = vec3(0,0,-1)
+    up = vec3(0,1,0)
+
+struct ChaseCamera:
+    eye: WorldPoint
+    view: vec3
+    up: vec3
+
 struct Flyer:
     kind: Craft
     model: int                      # which built model draws it
@@ -49,6 +59,8 @@ struct Flyer:
     cam_pos: vec3
     cam_fwd: vec3 = vec3(0, 0, -1)
     cam_up: vec3 = vec3(0, 1, 0)
+    target_frame = TargetChaseFrame()
+    target_camera_time = -1.0
     cam_lh = 0.0
     look_yaw = 0.0                  # (looking around while flying: offsets about the aircraft)
     look_pitch = 0.0
@@ -478,10 +490,63 @@ feel = (f: mut Flyer, dt: f64,wind:vec3=vec3(0,0,0)):
     feedback_step(f.feedback,f.spec,f.state,f.load,dt,wind)
     f.shake = f.feedback.buffet
 
-place_chase_camera = (f: Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64 = 0.0):
-    view=blend_bearing(f.look,tracking,weight)
-    camera_up=f.cam_up
-    if abs(dot(view,camera_up))>0.98:camera_up=normalize(cross(view,vec3(1,0,0)))
+# Carry the camera's frame through the poles instead of switching an up axis at 0.98.
+# Rodrigues transport uses only the small change since the preceding rendered frame.
+transport_camera_up=(up:vec3,old:vec3,view:vec3)->vec3:
+    axis=cross(old,view);c=clamp(dot(old,view),-1.0,1.0)
+    result=if c> -0.999:up+cross(axis,up)+cross(axis,cross(axis,up))/f32(1.0+c) else:up
+    result-=view*dot(result,view)
+    if length(result)<0.0001:result=cross(view,if abs(view.x)<0.8:vec3(1,0,0) else:vec3(0,0,1))
+    normalize(result)
+
+target_chase_camera=(f:mut Flyer,tracking:vec3,weight:f64,dt:f64=1.0/60.0)->ChaseCamera:
+    eye=if f.cam_ready:f.cam_point else:world_point(f.cam_pos)
+    w=clamp(weight,0.0,1.0)
+    if w<=0.00001:
+        f.target_frame.ready=false
+        return ChaseCamera(eye,f.look,f.cam_up)
+    normal=normalize(f.look)
+    normal_up=transport_camera_up(f.cam_up,normal,normal)
+    view=blend_bearing(normal,tracking,w)
+    if not f.target_frame.ready:f.target_frame=TargetChaseFrame(true,normal,normal_up)
+    view=blend_bearing(f.target_frame.view,view,1.0-exp(-10.0*max(0.0,dt)))
+    up=transport_camera_up(f.target_frame.up,f.target_frame.view,view)
+    # Smoothly recover the normal chase roll when leaving target view.
+    home=transport_camera_up(normal_up,normal,view)
+    roll=atan2(f64(dot(cross(home,up),view)),f64(dot(home,up)))
+    up=quat_rotate(quat_axis_angle(view,roll*w),home)
+    f.target_frame=TargetChaseFrame(true,view,up)
+    craft=craft_point(f.state);rel=world_delta(eye,craft)
+    reach=max(f64(length(rel)),8.0)
+    side=normalize(cross(view,up));normal_side=normalize(cross(normal,normal_up))
+    # Rotate around the craft throughout acquisition; a straight interpolation of eye positions
+    # would pass through the aircraft when the selected target is directly behind it.
+    offset= -view*f32(lerp(-f64(dot(rel,normal)),reach,w))+up*f32(lerp(f64(dot(rel,normal_up)),reach*0.28,w))+side*dot(rel,normal_side)*f32(1.0-w)
+    eye=world_offset(craft,offset)
+    floor=f64(swell_at(eye.x,eye.z,f.sea_t).x)+1.2
+    if eye.y<floor:
+        # Keep both wave clearance and chase distance; do not lift the eye into the airframe.
+        offset.y=f32(floor-craft.y)
+        horizontal=vec2(offset.x,offset.z)
+        if length(horizontal)<0.001:horizontal=vec2(normal.x,normal.z)+vec2(0.0001,0)
+        horizontal=normalize(horizontal)*f32(sqrt(max(1.0,reach*reach-f64(offset.y*offset.y))))
+        offset.x=horizontal.x;offset.z=horizontal.y
+        eye=world_offset(craft,offset)
+        # The sea can prevent a literal target->craft->eye line. Preserve the player's aircraft.
+        eye.y=max(eye.y,f64(swell_at(eye.x,eye.z,f.sea_t).x)+1.2)
+        to_craft=normalize(world_delta(craft,eye))
+        angle=acos(clamp(f64(dot(to_craft,view)),-1.0,1.0))
+        allowance=min(0.22,max(0.04,f.fov*PI/360.0-atan2(f.spec.span*0.6,reach)))
+        if angle>allowance:
+            fraction=allowance/angle
+            view=normalize(to_craft*f32(sin((1.0-fraction)*angle))+view*f32(sin(fraction*angle)))
+        up=transport_camera_up(up,f.target_frame.view,view)
+    ChaseCamera(eye,view,up)
+
+place_chase_camera = (f: mut Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64 = 0.0):
+    dt=if f.target_camera_time<0:1.0/60.0 else:clamp(t-f.target_camera_time,0.0,0.1)
+    frame=target_chase_camera(f,tracking,weight,dt);f.target_camera_time=t
+    view=frame.view;camera_up=frame.up;eye=frame.eye
     # the view hums only once it is really fast (the airframe itself shakes sooner), and shakes in a
     # buffet or a crash
     sp = f64(length(f.state.velocity))
@@ -492,16 +557,6 @@ place_chase_camera = (f: Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64
     a = f.shake * f.shake * 0.35 + f.jolt * 0.8 + f.feedback.slap * 0.12
     # (shaken about the camera's own axes, whichever way it faces)
     jitter = (side * f32(noise(t * 9.0, 1.0) - 0.5) + up * f32(noise(t * 11.0, 7.0) - 0.5) + view * f32(noise(t * 8.0, 13.0) - 0.5)) * f32(a)
-    eye=if f.cam_ready:f.cam_point else:world_point(f.cam_pos)
-    # looking at a target (as Sky Barons does): the camera swings round behind the aircraft, on the
-    # line from the target through it and a little above, so both stay in view
-    if weight>0.001:
-        craft=craft_point(f.state)
-        rel=world_delta(craft,eye)
-        reach=max(f64(length(rel)),8.0)
-        lift=normalize(camera_up-tracking*dot(camera_up,tracking)+vec3(0,0.0001,0))
-        behind=rel-tracking*f32(reach)+lift*f32(reach*0.28)
-        eye=world_offset(eye,behind*f32(clamp(weight,0.0,1.0)))
     precise_camera(world_offset(eye,jitter*0.3),target+jitter*4.7,f.fov,0.5,world_far(eye.y),camera_up)
 
 # the dock nearest the aircraft, when it is slow and close enough to moor there
