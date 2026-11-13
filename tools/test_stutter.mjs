@@ -32,7 +32,7 @@ try{
  await send('Page.navigate',{url:'file://'+resolve(page)+'?'+q});
  const result=await done;
  if(process.env.STUTTER_PROFILE==='1')writeFileSync(join(out,'cpu.json'),JSON.stringify(await send('Profiler.stop')));
- const probe=(await send('Runtime.evaluate',{expression:'stutterProbe',returnByValue:true})).result.value;
+ const probe=(await send('Runtime.evaluate',{expression:'({...stutterProbe,resolution:globalThis.AegeanWeb?.resolution,quality:globalThis.AegeanWeb?.quality})',returnByValue:true})).result.value;
  writeFileSync(join(out,'frames.json'),JSON.stringify({result,probe,errors},null,2));writeFileSync(join(out,'console.log'),logs.join('\n'));writeFileSync(join(out,'chrome.log'),stderr);
  const shot=await send('Page.captureScreenshot',{format:'png'});writeFileSync(join(out,'end.png'),Buffer.from(shot.data,'base64'));
  console.log(JSON.stringify({result,errors,frames:probe.frames.length,warp:probe.warp,finish:probe.finish,linked:probe.links.filter(Boolean).length,programs:probe.links.length}));
