@@ -37,6 +37,8 @@ struct GroundParams:
     pigment: Texture = Texture()
     coast_pattern: Texture = Texture()
     contact_rect: vec4 = vec4(0,0,0,0)
+    grass_actor: vec4 = vec4(0,0,0,0)
+    grass_airflow: vec4 = vec4(0,0,0,0)
 
 struct GroundOut:
     pos: vec4
@@ -109,8 +111,27 @@ ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> Ground
 # resolved strata nearby; distant slopes use each pattern's mean, not aliasing.
 ground_band_visibility = (phase: f32) -> f32: 1.0-smoothstep(PI,TAU,fwidth(phase))
 
-ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: bool = false) -> vec4:
-    if behind_sea(i.world, u.cam): discard()
+# Shared pigment/light evaluation can run at blade vertices. Derivative filters
+# and screen-space paper stay in the terrain fragment entry point.
+ground_strata=(i:GroundOut,u:GroundParams)->vec3:
+    world=i.world+u.origin
+    pigment=sample(u.pigment,vec2((world.x+world.z*0.71)/192.0,i.world.y/96.0))
+    fracture=pigment.w-0.5
+    wav=sin(world.x*0.013+world.z*0.009)*2.5+i.tint.y*6.0+fracture*34.0
+    vec3((i.world.y+wav)*0.55,fracture,pigment.x)
+
+ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false)->vec4:
+    if behind_sea(i.world,u.cam):discard()
+    if i.world.y < -40.0:return vec4(u.haze*0.2,1)
+    strata=vec3(0,0,0)
+    if 1.0-normalize(i.normal).y>0.28:strata=ground_strata(i,u)
+    footprint=max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
+    normal=if coastal:normalize(i.relief_normal) else:normalize(i.normal)
+    ndl=dot(render_normal(normal,i.world,u.cam),normalize(u.sun_dir))
+    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65)
+    vec4(col.xyz*paint_paper(i.pos.xy),col.w)
+
+ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32)->vec4:
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
     if i.world.y < -40.0: return vec4(u.haze*0.2,1)
@@ -124,17 +145,15 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: b
     if slope > 0.28:
         # Irregular limestone beds, painted as value shelves rather than smooth
         # evenly spaced stripes. Oblique fractures stagger the bed boundaries.
-        pigment = sample(u.pigment,vec2((world.x+world.z*0.71)/192.0,y/96.0))
-        fracture = pigment.w-0.5
-        wav = sin(world.x * 0.013 + world.z * 0.009) * 2.5 + i.tint.y * 6.0 + fracture*34.0
-        phase = (y+wav)*0.55
-        edge = max(0.08,fwidth(phase))
+        fracture=strata.y
+        phase=strata.x
+        edge=max(0.08,bed_width)
         band = smoothstep(-edge,edge,sin(phase))
         # One bed phase gives both the broad wash and its narrow dark seam.
         # Extra high-frequency sinusoids made limestone look striped and cost
         # four derivative filters per pixel without adding a readable shape.
-        groove = (1.0-smoothstep(0.08,0.26,abs(sin(phase))))*smoothstep(0.4,0.7,pigment.x)
-        visible = ground_band_visibility(phase)
+        groove = (1.0-smoothstep(0.08,0.26,abs(sin(phase))))*smoothstep(0.4,0.7,strata.z)
+        visible = 1.0-smoothstep(PI,TAU,bed_width)
         band = mix(0.5,band,visible)
         groove = mix(0.055,groove,visible)
         stone = mix(vec3(0.94,0.90,0.81),vec3(0.76,0.68,0.53),band*0.24+(fracture+0.2)*0.5)
@@ -147,7 +166,6 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: b
         scree = mix(vec3(0.8, 0.77, 0.7), vec3(0.62, 0.6, 0.55), vnoise(world.xz * 0.004) * 0.6 + i.tint.y * 0.4)
         stone = mix(stone, scree, flat_rock)
         stone = mix(stone, stone * vec3(0.86, 0.87, 0.9), smoothstep(1500.0, 2500.0, y))
-    footprint = max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
     resolved = 1.0-smoothstep(1.5,6.0,footprint)
     sand = vec3(0.78,0.71,0.55)
     wet = vec3(0.78,0.72,0.56)
@@ -252,7 +270,7 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: b
     # and ran the cliff material over otherwise gentle beach ground.
     light_normal = if coastal: normalize(i.relief_normal) else: n
     ndl = dot(render_normal(light_normal, i.world, u.cam), normalize(u.sun_dir))
-    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,if coastal: 0.08 else: 0.015))
+    lit = paint_ramp(ndl,max(light_width,if coastal: 0.08 else: 0.015))
     # Dappled rounded tree/maquis masses continue beyond individual grove meshes.
     # The shared procedural tile varies crown radius/spacing, fading before aliasing.
     if veg*woody > 0.02:
@@ -278,12 +296,9 @@ ground_material = (i: GroundOut, u: GroundParams, large_terrain: bool,coastal: b
         meadow *= smoothstep(3.0,9.0+i.tint.x*8.0,y)
         # Advect the broad pigment wash with the same wind drift. Two layers
         # of per-fragment hash noise read as digital mottling at aerial scale.
-        g = smoothstep(0.32,0.68,sample(u.pigment,(world.xz-u.drift)/256.0).w)
-        along = dot(world.xz, u.wind.xy)
-        ripple = sin(along * 0.35 - u.time * (1.5 + u.wind.z * 0.35)) * 0.5 + 0.5
-        wave = g * (0.55 + 0.45 * ripple) * clamp(u.wind.z / 8.0, 0.0, 1.2)
-        col = mix(col, col * vec3(1.25, 1.22, 1.05) + vec3(0.05, 0.05, 0.02) * u.sun, meadow * wave * 0.6)
-    vec4(aerial(col, i.world, u.cam, u.haze, u.fog)*paint_paper(i.pos.xy), 1)
+        wave = meadow_wave(world.xz-u.drift,u.wind)
+        col = mix(col,col*(0.78+0.65*wave)+vec3(0.045,0.038,0.018)*u.sun*wave,meadow)
+    vec4(aerial(col, i.world, u.cam, u.haze, u.fog), 1)
 
 # Both terrain paths share the same coastal and vegetation material rules.
 ground_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false)

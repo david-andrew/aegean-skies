@@ -1,6 +1,12 @@
+use 'terrain.jo'
+use 'plants.jo'
+use 'paint.jo'
+use 'town_sites.jo'
+use 'town_mesh.jo'
+use 'terrain_lod.jo'
+use 'settlements.jo'
 use 'depth_space.jo'
-# Tall grass around someone on foot: tufts of blades on the gentle, green ground near them, bent
-# by the wind in waves as the gusts pass. Rebuilt around them as they walk.
+# Short distributed meadow blades; persistent world-grid placement, shader wind and contact.
 
 use 'quality.jo'
 use 'render_space.jo'
@@ -11,65 +17,153 @@ use 'objects.jo'
 const GRASS_RADIUS = 42.0
 const GRASS_STEP = 1.0
 
+struct GrassChunk:
+    center: vec3
+    radius: f32
+    first: int
+    count: int
+
+grass_tile_key=(i:Instance3D)->int:
+    int(floor(f64(i.model[3].x)/8.0))*1048576+int(floor(f64(i.model[3].z)/8.0))
+
 struct GrassField:
     center: vec3
     buf: InstanceBuffer[Instance3D]
     count: int
     built = false
+    chunks: GrassChunk[] = []
+    cells: Instance3D[] = []
 
-grass_vs = (v: Vertex3D, inst: Instance3D, u: ObjParams) -> ObjOut:
-    w = render_model(inst.model,u.origin) * vec4(v.pos, 1)
-    hgt = max(v.pos.y, 0.0)
-    g = gust(w.xz, u.drift)
-    bend = hgt * hgt * (0.06 + 0.05 * u.wind.z) * (0.25 + 0.95 * g)
-    ph = u.sway_phase.z + w.x * 0.4 + w.z * 0.3
-    flutter = hgt * hgt * 0.05 * sin(ph) * (0.4 + g)
-    w = w + vec4(u.wind.x * (bend + flutter), -bend * 0.35, u.wind.y * (bend + flutter), 0)
-    # bent blades catch the light: paler in a gust
-    c = v.color * inst.color
-    c = vec4(mix(c.xyz, c.xyz * vec3(1.3, 1.28, 1.1), clamp(g * hgt * 1.2, 0.0, 1.0) * 0.6), c.w)
-    ObjOut(u.view_proj * w, w.xyz, (inst.model * vec4(v.normal, 0)).xyz, c)
+# Approved full-field fade. Geometry detail and shading have separate budgets.
+grass_fade_range=(radius:f32)->vec2:
+    vec2(radius*0.45,radius*0.85)
+
+grass_curve_range=(radius:f32)->vec2:
+    if radius<30.0:return vec2(5,8)
+    vec2(8,12)
+
+grass_vs = (v: Vertex3D, inst: Instance3D, u: GroundParams) -> ObjOut:
+    root = (render_model(inst.model,u.origin) * vec4(v.uv.x,0,v.uv.y,1)).xyz
+    tip = v.color.x
+    range=grass_fade_range(u.grass_actor.w)
+    fade = 1.0-smoothstep(range.x,range.y,length(root.xz-u.cam.xz))
+    # A fully faded blade has zero area. Skip its wind/contact work as a unit;
+    # every vertex shares the root and therefore takes the same branch.
+    if fade<=0.0:return ObjOut(vec4(2,2,2,1),root,vec3(0,1,0),inst.color,vec3(0,0,0))
+    curve_range=grass_curve_range(u.grass_actor.w)
+    lod=smoothstep(curve_range.x,curve_range.y,length(root.xz-u.cam.xz))
+    # Odd near-mesh rows converge onto the two-segment mesh before switching.
+    local=v.pos+vec3(v.color.y,0,v.color.z)*lod
+    w=render_model(inst.model,u.origin)*vec4(local,1)
+    curve=mix(tip*tip,v.color.w,lod)
+    wave = meadow_wave(root.xz-(u.drift-u.origin.xz),u.wind)
+    bend = curve*(0.06+0.34*wave)
+    delta = root.xz-u.grass_actor.xz
+    distance = length(delta)
+    contact = (1.0-smoothstep(0.25,1.25,distance))*(1.0-smoothstep(0.5,2.5,abs(u.grass_actor.y-root.y)))
+    away = delta/max(distance,0.1)
+    offset = u.wind.xy*bend+away*contact*tip*0.3
+    if u.grass_airflow.w>2.0:
+        # A widening slipstream trails behind the propeller; low wings push
+        # air outwards. Both weaken continuously with clearance and engine load.
+        behind = -dot(delta,u.grass_airflow.xy)
+        across = dot(delta,vec2(-u.grass_airflow.y,u.grass_airflow.x))
+        width = u.grass_airflow.w*0.3+max(behind,0.0)*0.22
+        cone = smoothstep(-2.0,1.0,behind)*(1.0-smoothstep(10.0,26.0,behind))*(1.0-smoothstep(width*0.45,width,abs(across)))
+        wing = (1.0-smoothstep(1.0,u.grass_airflow.w,distance))*0.6
+        clearance = 1.0-smoothstep(2.0,14.0,max(u.grass_actor.y-root.y,0.0))
+        ripple = 0.78+0.22*sin(behind*2.5-u.time*18.0+across*0.7)
+        contact = clamp((cone+wing)*clearance*u.grass_airflow.z*ripple,0.0,1.0)
+        offset = u.wind.xy*bend+(-u.grass_airflow.xy*cone+away*wing)*clearance*u.grass_airflow.z*curve*0.55
+    w = vec4(root.x+(w.x-root.x+offset.x)*fade,root.y+(w.y-root.y)*(1.0-contact*0.8)*fade-bend*0.18*fade,root.z+(w.z-root.z+offset.y)*fade,1)
+    drawn = render_warped(w.xyz,u.cam,u.warp_a,u.warp_b)
+    normal = normalize(vec3(-inst.model[0].y,1,-inst.model[2].y))
+    clip=u.view_proj*vec4(drawn,1)
+    gi=GroundOut(clip,w.xyz,normal,inst.color)
+    strata=vec3(0,0,0)
+    if 1.0-normal.y>0.28:strata=ground_strata(gi,u)
+    col=ground_surface(gi,u,abs(w.x+u.origin.x)>20000.0 or abs(w.z+u.origin.z)>20000.0,false,0.01,strata,0.08,0.015)
+    ObjOut(clip,w.xyz,normal,col,vec3(tip,fade,wave))
+
+# The blades use the terrain's material and lighting, including its colour bands.
+# This also carries the distant wind wash after the geometry has faded away.
+grass_fs = (i: ObjOut,u: GroundParams) -> vec4:
+    col = i.color*vec4(vec3(paint_paper(i.pos.xy)),1)
+    # Preserve the terrain's actual pigment bands. Root occlusion is cooler;
+    # the translucent upper blade is lighter and warmer within the same pigment.
+    gradient=mix(vec3(0.48,0.62,0.70),vec3(1.45,1.30,1.02),smoothstep(0.0,1.0,i.surface.x))
+    sheen=i.surface.z*i.surface.x*0.18
+    lit=col.xyz*(gradient+vec3(1.0,0.9,0.65)*sheen)
+    vec4(mix(col.xyz,lit,i.surface.y),1)
 
 grass_sh: Shader
 
-build_tuft = () -> Mesh:
+build_tuft = (far:bool=false) -> Mesh:
     vs: Vertex3D[]
-    loop k in 0..6:
-        a = f64(k) / 6.0 * TAU + f64(k) * 0.7
-        lean = 0.12 + 0.05 * f64(k % 3)
-        d = vec3(f32(cos(a)), 0, f32(sin(a)))
-        side = vec3(-d.z, 0, d.x) * 0.07
-        hgt = f32(0.6 + 0.12 * f64(k % 4))
-        base = d * 0.08
-        tip = d * f32(lean + 0.1) + vec3(0, hgt, 0)
-        low = vec4(0.16, 0.3, 0.1, 1)
-        top = vec4(0.62, 0.66, 0.32, 1)
-        n = normalize(vec3(d.x * 0.3, 1.0, d.z * 0.3))
-        loop flip in [false, true]:
-            p0 = base - side
-            p1 = base + side
-            if flip:
-                vs.push(Vertex3D(p1, n, vec2(0, 0), low)); vs.push(Vertex3D(p0, n, vec2(0, 0), low)); vs.push(Vertex3D(tip, n, vec2(0, 0), top))
-            else:
-                vs.push(Vertex3D(p0, n, vec2(0, 0), low)); vs.push(Vertex3D(p1, n, vec2(0, 0), low)); vs.push(Vertex3D(tip, n, vec2(0, 0), top))
-    custom_mesh(vs)
+    blades = if render_quality.tier == 0: 24 else: 48
+    segments=if far:2 else:4
+    loop k in 0..blades:
+        a = f64(k)*2.39996
+        d = vec3(f32(cos(a)),0,f32(sin(a)))
+        side = vec3(-d.z,0,d.x)*f32(if render_quality.tier==0:0.036 else:0.026)
+        hgt = f32(0.38+0.24*f64(hash21(vec2(f32(k),7))))
+        base = vec3((f32(k%6)+hash21(vec2(f32(k),3)))/6.0-0.5,0,(f32(k/6)+hash21(vec2(f32(k),9)))/f32(blades/6)-0.5)
+        uv = base.xz
+        n = vec3(0,1,0)
+        loop j in 0..segments:
+            t0=f32(j)/f32(segments);t1=f32(j+1)/f32(segments)
+            c0=base+vec3(0,hgt*t0,0)+d*(t0*t0*0.20)
+            c1=base+vec3(0,hgt*t1,0)+d*(t1*t1*0.20)
+            a0=c0-side*((0.35+1.6*t0)*(1.0-t0));b0=c0+side*((0.35+1.6*t0)*(1.0-t0))
+            a1=c1-side*((0.35+1.6*t1)*(1.0-t1));b1=c1+side*((0.35+1.6*t1)*(1.0-t1))
+            loop flip in [false]:
+                ps=if flip:[b0,a0,a1,b0,a1,b1] else:[a0,b0,a1,b0,b1,a1]
+                ts=if flip:[t0,t0,t1,t0,t1,t1] else:[t0,t0,t1,t0,t1,t1]
+                loop q in 0..6:
+                    if j==segments-1 and q>=3:continue # the tip has one triangle, not a zero-area second one
+                    t=ts[q]
+                    square=if t<=0.5:t*0.5 else:0.25+(t-0.5)*1.5
+                    sign=if q==0 or q==2 or q==5: -1.0 else:1.0
+                    coarse=base+vec3(0,hgt*t,0)+d*(square*0.20)+side*f32(sign)*(0.35+1.25*t-1.6*square)
+                    shift=coarse-ps[q]
+                    vs.push(Vertex3D(ps[q],n,uv,vec4(t,shift.x,shift.z,square)))
+    town_mesh(vs)
 
 # where grass grows: gentle ground above the beach, green rather than bare (as the ground's
 # shader decides), and not on a quay or in a house
 grass_cover = (towns: Town[], x: f64, z: f64) -> f64:
+    if settlement_urban(vec2(f32(x),f32(z))) or settlement_on_road(vec2(f32(x),f32(z))): return 0.0
+    p = vec2(f32(x),f32(z))
+    # Keep a blade-width margin around old town plots and quay shoulders.
+    loop tw in towns:
+        if length(tw.center.xz-p)>400.0:continue
+        loop site in tw.sites:
+            q=site_local(site,p)
+            if abs(q.x)<f32(site.width*0.5+4.0) and abs(q.y)<f32(site.depth*0.5+5.0):return 0.0
+        loop quay in tw.quays:
+            d=quay.b-quay.a
+            nearest=quay.a+d*clamp(dot(p-quay.a,d)/max(dot(d,d),0.01),0.0,1.0)
+            if length(p-nearest)<quay.width*0.5+1.5:return 0.0
     h = height(x, z)
     if h < 3.0: return 0.0
     if walk_height(towns, x, z) > h + 0.2: return 0.0
-    sl = slope_at(x, z)
-    if sl > 0.6: return 0.0
-    r = ridge_at(x, z)
-    dens = fbm(x * 0.03, z * 0.03, 2) * 1.3 - 0.15 + r * 0.15
-    edge = if sl > 0.4 and h > 9.0: smoothstep(0.5,0.75,fbm(x*0.35,z*0.35,2))*0.4 else: 0.0
-    clamp(dens, 0.0, 1.0) * max(edge,1.0 - smoothstep(0.3, 0.45, sl)) * (1.0-smoothstep(0.52,0.6,sl))*smoothstep(3.0, 6.0, h)
+    sl = slope_at(x,z)
+    return (1.0-smoothstep(0.45,0.85,sl))*smoothstep(3.0,6.0,h)
 
 build_grass = (towns: Town[], center: vec3) -> GrassField:
     list: Instance3D[]
-    radius = render_quality.grass_radius
+    lanes: TownLane[]
+    loop tw in towns:
+        if length(tw.center.xz-center.xz)>500.0:continue
+        lanes.extend(site_lanes(tw.sites))
+        tangent=vec2(-tw.out.y,tw.out.x)
+        loop k in 0..tw.houses.len():
+            front=tw.houses[k].xz+tw.out*8.0
+            lanes.push(TownLane(front-tangent*6.0,front+tangent*6.0,2.0))
+            if k>0:
+                prev=tw.houses[k-1].xz+tw.out*8.0
+                if length(prev-front)<25.0:lanes.push(TownLane(prev,front,2.0))
+    radius = render_quality.grass_radius + 16.0
     n = int(radius * 2.0 / GRASS_STEP)
     cx = floor(f64(center.x) / GRASS_STEP) * GRASS_STEP
     cz = floor(f64(center.z) / GRASS_STEP) * GRASS_STEP
@@ -77,27 +171,105 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
         loop i in 0..n:
             gx = cx + (f64(i) - f64(n) * 0.5) * GRASS_STEP
             gz = cz + (f64(j) - f64(n) * 0.5) * GRASS_STEP
-            # (a fixed jitter per grid point, so the field does not change as it is rebuilt)
-            jx = f64(hash21(vec2(f32(gx * 0.7), f32(gz * 1.3)))) - 0.5
-            jz = f64(hash21(vec2(f32(gz * 0.9 + 3.0), f32(gx * 1.1)))) - 0.5
-            x = gx + jx * GRASS_STEP
-            z = gz + jz * GRASS_STEP
+            x = gx
+            z = gz
             d = sqrt((x - f64(center.x)) ^ 2.0 + (z - f64(center.z)) ^ 2.0)
             if d > radius: continue
+            if not grass_lane_clear(vec2(f32(x),f32(z)),lanes):continue
             k = grass_cover(towns, x, z)
-            if k < 0.25: continue
-            s = (0.6 + 0.7 * k) * (1.0 - smoothstep(radius * 0.7, radius, d))
-            if s < 0.15: continue
+            if k < 0.001: continue
             h = surface_height(x, z)
-            tone = f32(0.85 + 0.3 * f64(hash21(vec2(f32(x), f32(z)))))
-            m = translation(vec3(f32(x), f32(h - 0.05), f32(z))) * rotation_y(jx * 9.0) * scaling(vec3(f32(s), f32(s * (0.8 + 0.5 * k)), f32(s)))
-            list.push(Instance3D(m, vec4(tone, tone, tone * 0.95, 1)))
-    GrassField(center, instance_buffer(list), list.len(), true)
+            hx = (surface_height(x+0.5,z)-surface_height(x-0.5,z))
+            hz = (surface_height(x,z+0.5)-surface_height(x,z-0.5))
+            m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
+            m[1]=vec4(0,f32(smoothstep(0.0,0.22,k)),0,0)
+            m[0]=vec4(1,f32(hx),0,0);m[2]=vec4(0,f32(hz),1,0)
+            island=island_at(x,z)
+            seed=if island>=0:ISLANDS[island].seed else:0.0
+            tint=vec4(f32(fbm(x*0.004+seed,z*0.004,3)),f32(noise(x*0.0011-seed,z*0.0011)),f32(ridge_at(x,z)*0.5+0.5),1)
+            list.push(Instance3D(m,tint))
+
+    # Stable 8 m batches retain all blades but avoid vertex work outside the view.
+    list.sort(grass_tile_key)
+    chunks: GrassChunk[]
+    start=0
+    loop start<list.len():
+        key=grass_tile_key(list[start]);finish=start+1
+        lo=list[start].model[3].xyz;hi=lo
+        loop finish<list.len() and grass_tile_key(list[finish])==key:
+            at=list[finish].model[3].xyz;lo=min(lo,at);hi=max(hi,at);finish+=1
+        chunks.push(GrassChunk((lo+hi)*0.5,length(hi-lo)*0.5+3.0,start,finish-start))
+        start=finish
+    GrassField(center, instance_buffer(list), list.len(), true,chunks,list)
+
+grass_actor = vec3(0,0,0)
+grass_contact_radius: f32 = 1.2
+# Heading (x,z), strength: supplied by the simulation, never inferred from camera.
+grass_airflow = vec3(0,-1,0)
 
 draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     if not f.built or f.count == 0: return
-    draw_instanced(grass_sh, tuft, f.buf, obj_params(L, t, sway = 1.0))
+    # A stale field after departure must not spend vertex work behind the aircraft.
+    camera=scene_camera()
+    if length(camera.xz-f.center.xz)>f32(render_quality.grass_radius*2.0+16.0) or camera.y-f.center.y>80.0:return
+    p = obj_params(L,t,sway=1.0)
+    gp = GroundParams(p.view_proj,p.cam,p.sun_dir,p.sun,p.sky,p.shade,p.haze,p.fog,p.time,p.wind,p.drift+p.origin.xz,p.origin,p.pigment,p.pigment,vec4(0,0,0,0),p.warp_a,p.warp_b,p.pigment)
+    gp.grass_actor = vec4(grass_actor-p.origin,f32(render_quality.grass_radius))
+    gp.grass_airflow = vec4(grass_airflow,grass_contact_radius)
+    if gp.warp_b.x>0.0:
+        draw_instanced(grass_sh,tuft,f.buf,gp)
+        return
+    planes=land_planes(gp.view_proj)
+    # Reject coarse tiles first, then upload only visible one-metre cells.
+    # Keep their order front-to-back in a single instanced draw.
+    visible_cells:Instance3D[]
+    far_cells:Instance3D[]
+    loop chunk in f.chunks:
+        center=render_world(chunk.center-gp.origin,gp.cam)
+        if length(center.xz-gp.cam.xz)-chunk.radius>grass_fade_range(gp.grass_actor.w).y:continue
+        visible=true
+        loop plane in planes:
+            if dot(plane.xyz,center)+plane.w < -chunk.radius:visible=false
+        if not visible:continue
+        loop k in chunk.first..chunk.first+chunk.count:
+            cell=f.cells[k]
+            at=render_world(cell.model[3].xyz-gp.origin,gp.cam)
+            # The blade roots occupy a square of half-width 0.5 m. Fade
+            # depends on root distance, not the displaced tip's position.
+            if length(at.xz-gp.cam.xz)>grass_fade_range(gp.grass_actor.w).y+0.71:continue
+            keep=true
+            loop plane in planes:
+                if dot(plane.xyz,at)+plane.w < -3.0:keep=false
+            if keep:
+                if length(at.xz-gp.cam.xz)-0.71>=grass_curve_range(gp.grass_actor.w).y:far_cells.push(cell)
+                else:visible_cells.push(cell)
+    visible_cells.sort((cell:Instance3D)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
+    far_cells.sort((cell:Instance3D)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
+    global grass_visible_buf,grass_far_buf
+    if visible_cells.len()>0:
+        set_instances(grass_visible_buf,visible_cells)
+        draw_instanced(grass_sh,tuft,grass_visible_buf,gp)
+    if far_cells.len()>0:
+        set_instances(grass_far_buf,far_cells)
+        draw_instanced(grass_sh,grass_far_mesh,grass_far_buf,gp)
+
+
+grass_visible_buf:InstanceBuffer[Instance3D]
+grass_far_buf:InstanceBuffer[Instance3D]
+grass_far_mesh:Mesh
 
 init_grass = ():
-    global grass_sh
-    grass_sh = make_world_shader(shader(grass_vs, obj_fs))
+    global grass_sh,grass_visible_buf,grass_far_buf,grass_far_mesh
+    empty:Instance3D[]
+    grass_visible_buf=instance_buffer(empty)
+    grass_far_buf=instance_buffer(empty)
+    grass_far_mesh=build_tuft(true)
+    grass_sh = make_world_shader(shader(grass_vs, grass_fs))
+
+# Test the whole patch footprint, including the sideways reach of a bent blade.
+grass_lane_clear=(p:vec2,lanes:TownLane[])->bool:
+    loop lane in lanes:
+        d=lane.b-lane.a
+        nearest=lane.a+d*clamp(dot(p-lane.a,d)/max(dot(d,d),0.01),0.0,1.0)
+        if length(p-nearest)<f32(lane.width*0.5+1.0):return false
+    true
