@@ -79,7 +79,7 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
                       started=started, ended=ended, exit_code=code, passed=passed, frames=len(frames),
                       max_ms=max(intervals, default=None),
                       p99_ms=intervals[int((len(intervals)-1)*.99)] if intervals else None,
-                      over50=sum(t > 50 for t in intervals), profiled=args.profile, agl=args.agl)
+                      over50=sum(t > 50 for t in intervals), profiled=args.profile and backend == 'web', agl=args.agl)
         results.append(result)
         (args.out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
         print(json.dumps(result), flush=True)
