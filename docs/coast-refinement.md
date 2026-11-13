@@ -67,11 +67,16 @@ cell arrival/removal changes that index; height and LOD changes reuse it.
 Equivalent f32 sampling phases within 2 mm retain their origin; mesh vertices
 never snap. GPU refreshes remain restricted to changed slots. Atlas membership consumes the
 renderer’s per-cell selection revisions, flattening domains only when a cell
-changes. Cells beyond the conservative 480 m reach cannot contribute to either
+changes. Lightweight active-cell records retain their order and revisions; when
+membership is unchanged, the atlas reuses its revision map and reads full cached
+geometry only for changed cells. Dirty slots are visited through a sparse list.
+Cells beyond the conservative 480 m reach cannot contribute to either
 atlas and are excluded, so distant islands cannot force mixed-phase bookkeeping.
 Near and far grids align with
 the canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
 16-bit packed signed heights have 1/2048 m resolution, and alpha marks coverage.
+The three texel taps share one bounded toroidal-coordinate calculation; the
+positive neighbour wraps explicitly at each physical texture edge.
 No floating-point framebuffer extension or depth attachment is required.
 The sea skips uncovered areas and falls back to its original depth map.
 An uncovered first texel returns immediately; the lookup runs at the foam
@@ -116,7 +121,8 @@ Validation tools:
 
 - `sloppy test tests/coast_test.jo --release`: fixed vertices, contact triangles,
   mixed edges, projection selection, sub-source bands, cached/pure agreement,
-  LOD hysteresis, cell reuse, actual-triangle prop contact and support seams.
+  LOD hysteresis, cell reuse (including a first all-zero cell), actual-triangle
+  prop contact and support seams.
 - `sloppy --release tools/coast_gpu_check.jo`: actual native GPU readback
   against CPU contact samples, including steep slopes and country coordinates.
 - `SLOPPY_SOFTWARE=1 sloppy --release tools/coast_check.jo`: CPU/texture parity,
