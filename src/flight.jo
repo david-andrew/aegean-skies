@@ -1,3 +1,4 @@
+use 'world_point.jo'
 # Deterministic, SI-unit seaplane simulation. No graphics, devices, clock, or random input.
 # Sky Barons sim.jo fly_air/steer inspired the rate controls, low-speed authority floor,
 # stall nose drop, bank coordination and pull drag. Forces replace its velocity steering:
@@ -67,7 +68,10 @@ struct Controls:
     gear = false                   # amphibian wheels; presentation may expose a lever
 
 struct CraftState:
-    position = vec3(0, 3, 0)
+    position = vec3(0, 3, 0)       # compatibility snapshot, not an accumulator
+    precise = WorldPoint()
+    published = vec3(0,0,0)
+    precise_ready = false
     velocity = vec3(0, 0, 0)
     orientation = vec4(0, 0, 0, 1)
     angular_velocity = vec3(0, 0, 0) # body axes, rad/s
@@ -96,6 +100,19 @@ struct CraftState:
     buffet = 0.0                    # trial: pre-break flow unsteadiness, 0..1
     trim_held = false               # (auto-trim, a trial: the stick let go, the way it went held)
     trim_path = 0.0                 # (the climb or descent held, radians)
+
+# External teleports through the snapshot reset the precise owner. Saved states
+# retain both halves; old snapshots default to the compatibility position.
+craft_point = (s: CraftState) -> WorldPoint:
+    if s.precise_ready and s.position==s.published:s.precise else:world_point(s.position)
+craft_offset = (s: CraftState,offset: vec3) -> WorldPoint:world_offset(craft_point(s),offset)
+craft_advance = (s: mut CraftState,dt: f64):
+    base=craft_point(s)
+    delta=s.velocity*f32(dt)
+    # Preserve the established vertical/contact integrator. Height is already
+    # a small sea-level value; x/z need the large-world accumulator.
+    s.precise=WorldPoint(base.x+f64(delta.x),f64(s.position.y+delta.y),base.z+f64(delta.z))
+    s.position=world_vec(s.precise);s.published=s.position;s.precise_ready=true
 
 struct FlightEnv:
     wind = vec3(0, 0, 0)            # air velocity in world frame, m/s
@@ -263,7 +280,7 @@ cruise_throttle = (spec: CraftSpec, speed: f64, density: f64 = 1.225) -> f64:
 
 moor = (state: mut CraftState, point: vec3, h: f64):
     state.moored = true; state.mooring_point = point; state.mooring_orientation = quat_euler(0, -h, 0)
-    state.position = point; state.orientation = state.mooring_orientation
+    state.position = point; state.precise_ready=false; state.orientation = state.mooring_orientation
     state.velocity = vec3(0, 0, 0); state.angular_velocity = vec3(0, 0, 0); state.throttle = 0
 unmoor = (state: mut CraftState): state.moored = false
 
@@ -565,7 +582,7 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     air += sv * f32(dt)
     air.y += f32((noise(tt * 3.3, 41.0) - 0.5) * rough * 6.0 * dt)
     s.velocity = air + wind
-    s.position += s.velocity * f32(dt)
+    craft_advance(s,dt)
 
 # The stall trial augments the arcade flight path with two lifting panels and a flying tail.
 # No random draws or attitude targets: local flow includes roll/yaw velocity at each panel.
@@ -697,7 +714,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     if k.gear_contacts.len() > 0: s.gear = move_toward(s.gear,if c.gear: 1.0 else: 0.0,dt*0.4)
     if c.anchor and s.on_water and length(s.velocity) < 0.8 and not s.crashed: moor(s, s.position, heading(s))
     if s.moored:
-        s.position = s.mooring_point; s.orientation = s.mooring_orientation
+        s.position = s.mooring_point; s.precise_ready=false; s.orientation = s.mooring_orientation
         s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
         return
     if _clear_of_water(k, s, e, max(0.6, f64(length(s.velocity)) * dt + f64(length(s.angular_velocity)) * k.span * dt)):
@@ -817,9 +834,10 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         id = contact_part(k.kind, k.contacts[i])
         if not s.damage.parts[id].attached: continue
         arm = quat_rotate(s.orientation, k.contacts[i])
-        p = s.position + arm
-        sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
-        land = e.ground(f64(p.x), f64(p.z))
+        precise_contact = craft_offset(s,arm)
+        p = world_vec(precise_contact)
+        sea = sea_surface(e, precise_contact.x, precise_contact.z, s.time)
+        land = e.ground(precise_contact.x, precise_contact.z)
         if land >= sea.height - 0.05 and f64(p.y) < land:
             _terrain_contact(k, s, e, id, arm, p, land, force, torque, dt)
             ground_hit = true
@@ -856,9 +874,10 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             loop point in group:
                 if not s.damage.parts[id].attached: break
                 arm = quat_rotate(s.orientation, point)
-                p = s.position + arm
-                sea = sea_surface(e, f64(p.x), f64(p.z), s.time)
-                land = e.ground(f64(p.x), f64(p.z))
+                precise_contact = craft_offset(s,arm)
+                p = world_vec(precise_contact)
+                sea = sea_surface(e, precise_contact.x, precise_contact.z, s.time)
+                land = e.ground(precise_contact.x, precise_contact.z)
                 if land >= sea.height - 0.05 and f64(p.y) < land:
                     _terrain_contact(k, s, e, id, arm, p, land, force, torque, dt)
                     ground_hit = true
@@ -917,7 +936,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         s.orientation = normalize(quat_mul(s.orientation, quat_axis_angle(s.angular_velocity, f64(rotation) * dt)))
     s.velocity += force * f32(dt / mass)
     if pk > 1.0001 and not halted: s.velocity = v_vis + (s.velocity - v_true0)
-    s.position += s.velocity * f32(dt)
+    craft_advance(s,dt)
 
 # Plan is the autopilot's only mutable memory; state is read-only. Call once per game tick,
 # then step with the returned controls. A new FlightPlan starts a new trip; unmoor first.
@@ -1059,7 +1078,9 @@ autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, env: Flig
             return Controls(water_brake = 1.0, anchor = true)
         h = atan2(f64(delta.x), -f64(delta.z)); err = angle_delta(h, heading(state))
         want = min(5.0, sqrt(max(d - 1.0, 0.0) * 1.2))
-        if abs(err) > 0.7: want = min(want, 1.8)
+        # Tighten the turn as the dock gets close. A fixed 1.8 m/s can
+        # circle forever outside the capture radius after small trajectory changes.
+        if abs(err) > 0.7: want = min(want, clamp(d*0.025,0.15,1.8))
         c = Controls(assist = 0.0)
         c.yaw = clamp(err * 2.0, -1.0, 1.0)
         c.throttle = clamp((want - v) * 0.12 + 0.08, 0.0, 0.25)

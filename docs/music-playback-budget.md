@@ -87,3 +87,20 @@ not establish that gate. Phrase caching is not a substitute for cold-play perfor
 a rolling phrase buffer moves deadlines and helps replay, but cannot eliminate the
 work of rendering a phrase for the first time. It must also preserve exact note phases,
 expression, noise, stealing and hall state, not merely match a sequence of pitches.
+
+## Orchestral and station follow-up
+
+The larger classical room adds roughly 57 KiB only while selected; the station's 4 ms
+lookahead adds 512 bytes. MUS3 section gains are applied outside the exact body cache,
+so expressive mix contours do not multiply cache keys. The fast-modal piano correction
+and conservative harp parameters are synthesis changes, not approximations in the cache.
+
+Station processing uses block-local detector/envelope scalars for music, with exactly
+the scalar path's operation order. `tests/radio_station.jo` compares block and scalar
+outputs through rests, transients and crescendos, including irregular block sizes.
+Receiver filters, noise and their sample ordering remain unchanged. First-play and
+steady-play gates must include the station stage enabled, not just the dry renderer.
+The receiver also uses truncation for its nonnegative sine-table phase and a single
+256-sample subtraction for its bounded fractional-delay address. These replace general
+floor/remainder operations without altering any sample; differential native and wasm
+checks exercise 2.88 million samples across varying tuning, reception, wear and night.
