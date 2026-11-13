@@ -36,22 +36,47 @@ endpoints, so independently streamed tiles agree even when their interior
 height bounds differ; dyadic b-c triangulation makes both sides coincide
 through morphs. The closest cells use four smaller domains, avoiding full-cell subdivision
 on their more distant halves while preserving their canonical outer edges.
-Canonical patches/tile atlases stay resident; there are no new
-per-frame mesh allocations or GPU geometry uploads. Instance lists are rebuilt for nearby replaced patches when the view or
-source identity changes. An exact previous-frame cache retains at most 64
-immutable patches / 8192 instances; camera/frustum, quality, atlas-slot and
-boundary changes invalidate it immediately. Both terrain paths begin this
-cache once per render frame; loading either source clears it. The effective focal length is capped at 1200
+Canonical patches/tile atlases stay resident; no per-frame mesh generation is
+needed. Selection is cached per canonical cell, independently of texture slots
+and render-chart origins. Levels use eighth-octave steps with a 0.09375-octave
+dead band; exact contact still snaps to level six. Shared edge keys contain only
+their endpoints and orientation. Source heights, boundary levels and selected
+local domains invalidate only the affected cell. Each entry also retains a
+conservative camera-motion ball derived from the held levels' dead bands and
+the distance bound's 1-Lipschitz property. Motion inside that ball reuses the
+selection without repeating projection or root queries. Focal changes consume an equivalent distance bound, so matrix rounding jitter
+does not discard reuse while actual zoom remains conservative. Source,
+root-set generation and effective boundary limits still invalidate it.
+The cache retains at most
+16384 cells / 65536 instances, and the held-level map at most 32768 entries;
+old entries are pruned before those limits. Both terrain paths begin selection
+once per render frame; loading either source clears it. The effective focal length is capped at 1200
 pixels (600 m maximum refinement radius), bounding work under extreme zoom;
 this cap takes priority over additional zoom detail. Distant terrain uses the
 original draw path and adds no detail triangles.
 
 The sea samples the actual selected shore mesh from two bounded, color-only
 RGBA8 height atlases: 640² at 0.21875 m spacing and 1024² at 0.875 m spacing.
-Rasterization happens only when the selected instances change (including LOD
-morphs, chart snaps and arriving terrain). Near and far grids align with the
-canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
+World-space 14 m tiles occupy toroidal slots. Scrolling only redraws exposed
+strips; changed or removed cell selections dirty their slots and shared boundary
+samples. Dirty rectangles clear with a batched draw, avoiding backend-dependent
+scissored clears. Render-chart snaps rebind coordinates without repainting the
+texture. An incremental owner index maps each actual cell bound to its atlas
+tiles, including mixed source phases and floating-point lattice roundoff. Only
+cell arrival/removal changes that index; height and LOD changes reuse it.
+Equivalent f32 sampling phases within 2 mm retain their origin; mesh vertices
+never snap. GPU refreshes remain restricted to changed slots. Atlas membership consumes the
+renderer’s per-cell selection revisions, flattening domains only when a cell
+changes. Lightweight active-cell records retain their order and revisions; when
+membership is unchanged, the atlas reuses its revision map and reads full cached
+geometry only for changed cells. Dirty slots are visited through a sparse list.
+Cells beyond the conservative 480 m reach cannot contribute to either
+atlas and are excluded, so distant islands cannot force mixed-phase bookkeeping.
+Near and far grids align with
+the canonical dyadic lattice. Three nearest texels reconstruct its b-c triangle;
 16-bit packed signed heights have 1/2048 m resolution, and alpha marks coverage.
+The three texel taps share one bounded toroidal-coordinate calculation; the
+positive neighbour wraps explicitly at each physical texture edge.
 No floating-point framebuffer extension or depth attachment is required.
 The sea skips uncovered areas and falls back to its original depth map.
 An uncovered first texel returns immediately; the lookup runs at the foam
@@ -74,20 +99,37 @@ Each of the two caches reuses at most 129 mesh buffers (128 spatial blocks
 and one conservative overflow bucket); switching towns empties unused buffers.
 Curvature expands bounds, and active speed-warp trials bypass this culling.
 
+Placed town props retain their physical contact heights. Before terrain selection,
+town preparation supplies the active district and close-decoration roots. A
+fixed half-metre core around each root selects the finest triangles, blending
+out to the ordinary view budget at 1.5 metres. Only affected cells use 1.75 m
+local domains; uniform blocks merge back together. Explicit shared junction
+levels prevent corner cracks between different interiors. Root neighborhoods
+and stable domain selections are reused. Static support floors use whole
+levels; shared corners use two exact 12-bit float words. Previous batch sizes
+reserve bounded upload capacity. Paving retains its separate physical
+clearance support. This adds no camera dependency to collision or placement.
+
 Streaming terrain retains its coarse fallback outside main's pinned 3×3
 contact neighborhood; ready contact tiles refine immediately. Rendering caches
-never become the collision authority.
+never become the collision authority. The flight-height cache applies the same
+finest contact reconstruction to its cached canonical vertices. Steep harbour
+service streets use a terrain-clearing, grade-limited profile shared by their
+mesh, walking support and door elevations.
 
 Validation tools:
 
 - `sloppy test tests/coast_test.jo --release`: fixed vertices, contact triangles,
-  mixed edges, projection selection, sub-source bands, cached/pure agreement.
+  mixed edges, projection selection, sub-source bands, cached/pure agreement,
+  LOD hysteresis, cell reuse (including a first all-zero cell), actual-triangle
+  prop contact and support seams.
 - `sloppy --release tools/coast_gpu_check.jo`: actual native GPU readback
   against CPU contact samples, including steep slopes and country coordinates.
 - `SLOPPY_SOFTWARE=1 sloppy --release tools/coast_check.jo`: CPU/texture parity,
   optimized GPU parent interpolation against the CPU mesh.
 - `sloppy --release tools/coast_atlas_check.jo`: native GPU atlas readback,
-  quantization/triangle agreement and unchanged-instance cache reuse.
+  quantization/triangle agreement, incremental/full byte parity, wrap/removal/
+  teleport cases, chart-only rebinding and depth-state restoration.
 - `sloppy --release tools/coast_paving_check.jo`: barycentric clearance audit
   across two legacy towns and two new ports (`COAST_PAVING_ASSERT=1` to enforce).
 - `tools/coast_capture.jo`: deterministic `COAST_SITE=legacy|new|beach|harbor`,
