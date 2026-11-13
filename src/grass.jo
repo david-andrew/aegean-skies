@@ -2,6 +2,8 @@ use 'terrain.jo'
 use 'plants.jo'
 use 'paint.jo'
 use 'town_sites.jo'
+use 'town_mesh.jo'
+use 'terrain_lod.jo'
 use 'settlements.jo'
 use 'depth_space.jo'
 # Short distributed meadow blades; persistent world-grid placement, shader wind and contact.
@@ -15,11 +17,21 @@ use 'objects.jo'
 const GRASS_RADIUS = 42.0
 const GRASS_STEP = 1.0
 
+struct GrassChunk:
+    center: vec3
+    radius: f32
+    first: int
+    count: int
+
+grass_tile_key=(i:Instance3D)->int:
+    int(floor(f64(i.model[3].x)/8.0))*1048576+int(floor(f64(i.model[3].z)/8.0))
+
 struct GrassField:
     center: vec3
     buf: InstanceBuffer[Instance3D]
     count: int
     built = false
+    chunks: GrassChunk[] = []
 
 grass_vs = (v: Vertex3D, inst: Instance3D, u: GroundParams) -> ObjOut:
     w = render_model(inst.model,u.origin) * vec4(v.pos, 1)
@@ -81,11 +93,13 @@ build_tuft = () -> Mesh:
             c1=base+vec3(0,hgt*t1,0)+d*(t1*t1*0.20)
             a0=c0-side*((0.35+1.6*t0)*(1.0-t0));b0=c0+side*((0.35+1.6*t0)*(1.0-t0))
             a1=c1-side*((0.35+1.6*t1)*(1.0-t1));b1=c1+side*((0.35+1.6*t1)*(1.0-t1))
-            loop flip in [false,true]:
+            loop flip in [false]:
                 ps=if flip:[b0,a0,a1,b0,a1,b1] else:[a0,b0,a1,b0,b1,a1]
                 ts=if flip:[t0,t0,t1,t0,t1,t1] else:[t0,t0,t1,t0,t1,t1]
-                loop q in 0..6:vs.push(Vertex3D(ps[q],n,uv,vec4(ts[q],0,0,1)))
-    custom_mesh(vs)
+                loop q in 0..6:
+                    if j==3 and q>=3:continue # the tip has one triangle, not a zero-area second one
+                    vs.push(Vertex3D(ps[q],n,uv,vec4(ts[q],0,0,1)))
+    town_mesh(vs)
 
 # where grass grows: gentle ground above the beach, green rather than bare (as the ground's
 # shader decides), and not on a quay or in a house
@@ -147,7 +161,18 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
             tint=vec4(f32(fbm(x*0.004+seed,z*0.004,3)),f32(noise(x*0.0011-seed,z*0.0011)),f32(ridge_at(x,z)*0.5+0.5),1)
             list.push(Instance3D(m,tint))
 
-    GrassField(center, instance_buffer(list), list.len(), true)
+    # Stable 8 m batches retain all blades but avoid vertex work outside the view.
+    list.sort(grass_tile_key)
+    chunks: GrassChunk[]
+    start=0
+    loop start<list.len():
+        key=grass_tile_key(list[start]);finish=start+1
+        lo=list[start].model[3].xyz;hi=lo
+        loop finish<list.len() and grass_tile_key(list[finish])==key:
+            at=list[finish].model[3].xyz;lo=min(lo,at);hi=max(hi,at);finish+=1
+        chunks.push(GrassChunk((lo+hi)*0.5,length(hi-lo)*0.5+2.0,start,finish-start))
+        start=finish
+    GrassField(center, instance_buffer(list), list.len(), true,chunks)
 
 grass_actor = vec3(0,0,0)
 grass_contact_radius: f32 = 1.2
@@ -163,7 +188,17 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     gp = GroundParams(p.view_proj,p.cam,p.sun_dir,p.sun,p.sky,p.shade,p.haze,p.fog,p.time,p.wind,p.drift+p.origin.xz,p.origin,p.pigment,p.pigment,vec4(0,0,0,0),p.warp_a,p.warp_b,p.pigment)
     gp.grass_actor = vec4(grass_actor-p.origin,f32(render_quality.grass_radius))
     gp.grass_airflow = vec4(grass_airflow,grass_contact_radius)
-    draw_instanced(grass_sh,tuft,f.buf,gp)
+    if gp.warp_b.x>0.0:
+        draw_instanced(grass_sh,tuft,f.buf,gp)
+        return
+    planes=land_planes(gp.view_proj)
+    loop chunk in f.chunks:
+        center=render_world(chunk.center-gp.origin,gp.cam)
+        if length(center.xz-gp.cam.xz)-chunk.radius>gp.grass_actor.w*0.85:continue
+        visible=true
+        loop plane in planes:
+            if dot(plane.xyz,center)+plane.w < -chunk.radius:visible=false
+        if visible:draw_instanced(grass_sh,tuft,f.buf,gp,first=chunk.first,count=chunk.count)
 
 
 init_grass = ():
