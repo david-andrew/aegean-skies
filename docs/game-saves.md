@@ -37,6 +37,21 @@ The lower-level `src/game_slots.jo` API is for tools/tests: `GameSlots`, `init_g
 `take_game_slot`. Its caller supplies a folded `SaveGame`; `capture_game` in `game_session.jo`
 constructs that from the running scene. UI callers should use the shell requests instead.
 
+## The pause menu's Game page
+
+The pause menu opens on its **Game** tab (`src/debugmenu.jo game_page`, rows made by
+`src/game_menu.jo game_row` from the cached headers). Each slot shows its world time, place and a
+summary (aircraft, lire, day: `SaveSummary.craft` and `cents`, added for the menu; older headers
+decode with them empty and simply omit them), and marks the active autosave slot. Save here on an
+empty slot saves at once; saving over a slot, Load and Delete ask for a yes. Buttons are disabled
+while `busy`. A note under the slots says what the last request came to (`Saved in slot 2.`, an
+error text, `Slot 1 deleted.`) and where the autosave goes or why it is off. A successful load
+unpauses and closes the menu. A finished autosave shows only the quiet Saved card
+(`src/hud.jo saved_toast`), never a menu note. There is no start screen, so no Continue offer:
+a fresh start plays on and the player loads from the page. `tools/game_menu_probe.jo` drives the
+page's requests end to end (autosave and its card, save, change, load, delete; position, lire, a
+cat's friendship and a seen battle card restored).
+
 ## What persists
 
 - The canonical living World: original cargo roots/ownership, money and fuel ledgers, people,
