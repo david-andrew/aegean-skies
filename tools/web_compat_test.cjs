@@ -59,7 +59,8 @@ for (const [cw,ch,dpr] of [[844,390,3],[390,844,3],[1280,720,1],[1920,1080,2],[3
       const p=resolutionPlan(w,h,cw,ch,dpr,budget,mobile);
       const old=cappedSize(w,h,cw,ch,budget);
       assert(p.scene[0]<=old[0] && p.scene[1]<=old[1]);
-      assert(p.display[0]*p.display[1]<= (mobile?1300000:2600000));
+      assert(old[0]-p.scene[0]<=1 && old[1]-p.scene[1]<=1);
+      assert(p.display[0]*p.display[1]<= (mobile?Math.max(1300000,budget):2600000));
       if (previous) assert.deepEqual(p.display,previous);
       previous=p.display;
       assert(p.scale>0 && p.scale<=1);
@@ -72,3 +73,7 @@ assert.deepEqual(phone.display,[1677,775]);
 console.log('Independent scene/HUD budgets passed');
 
 assert.equal(resolutionPlan(1280,720,1280,720,1,2600000,false).scale,1);
+
+// Explicit High on a phone must retain its previous scene budget too.
+const highPhone=resolutionPlan(2372,1096,844,390,3,2600000,true);
+assert.deepEqual(highPhone.scene,[2372,1096]);
