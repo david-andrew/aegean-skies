@@ -12,17 +12,36 @@ use 'plants.jo'
 use 'look.jo'
 use 'render_space.jo'
 use 'quality.jo'
+struct RiverBankInstance:
+    position:vec3
+    phase:vec4
 struct RiverBankBatch:
     center:vec3
-    distant:Mesh
-    plants:Mesh
+    kinds:RiverBankInstance[][]
     ready=false
     bounds:vec3=vec3(0,0,0)
     radius:f64=0.0
 river_bank_batches:RiverBankBatch[]
+river_bank_near:Mesh[]
+river_bank_far:Mesh[]
+river_bank_sh:Shader
 river_bank_far_sh:Shader
+river_bank_view:InstanceBuffer[RiverBankInstance][]
+river_bank_selection:int[]
+river_bank_view_origin=vec3(1e30,1e30,1e30)
+river_oleander_low:vec3
+river_oleander_high:vec3
 
-river_tree=(vs:mut Vertex3D[],at:vec3,kind:int,seed:f64,detail:bool=true):
+# UVs in the shared tree meshes hold each moving crown's seed-zero centre.
+# Rotating only these centres preserves the original, world-aligned lobes.
+river_tree_tags=(vs:mut Vertex3D[],first:int,tags:(int,int,vec2)[]):
+    loop i in first..vs.len():vs[i].uv=vec2(0,0)
+    loop tag in tags:
+        a,b,uv=tag
+        loop i in a..b:vs[i].uv=uv
+
+river_tree=(vs:mut Vertex3D[],at:vec3,kind:int,seed:f64,detail:bool=true,basis:bool=false):
+    first=vs.len();tags:(int,int,vec2)[]
     wood=rgb(0.38,0.36,0.28)
     if not detail:
         add_cylinder(vs,at,0.22,if kind==0:9.0 else:5.0,wood,4,0.08)
@@ -31,13 +50,18 @@ river_tree=(vs:mut Vertex3D[],at:vec3,kind:int,seed:f64,detail:bool=true):
         else:
             loop j in 0..3:
                 angle=f64(j)*TAU/3.0+seed
+                start=vs.len()
                 add_sphere(vs,vec3(0,0,0),1.0,rgb(0.23,0.39,0.15),4,2,translation(at+vec3(cos(angle)*2.1,6,sin(angle)*2.1))*scaling(vec3(3.4,2.2,3.0)))
+                if basis:tags.push((start,vs.len(),vec2(cos(angle)*2.1,sin(angle)*2.1)))
+        if basis:river_tree_tags(vs,first,tags)
         return
     if kind==0:
         # Upright poplar, clustered narrow crowns and exposed pale trunk.
         add_cylinder(vs,at,0.20,10.0,wood,5,0.08)
         loop j in 0..3:
+            start=vs.len()
             add_sphere(vs,at+vec3(f32(sin(seed+f64(j))*0.5),f32(6+j*2),0),1.0,rgb(0.20+0.025*f64(j),0.37+0.02*f64(j),0.13),5,3,translation(at)*scaling(vec3(1,1,1))*translation(-at))
+            if basis:tags.push((start,vs.len(),vec2(sin(f64(j))*0.5,cos(f64(j))*0.5)))
             # Tall lobes retain a recognisable silhouette at low detail.
             add_sphere(vs,vec3(0,0,0),1.0,rgb(0.25,0.40,0.16),5,3,translation(at+vec3(0,f32(8+j),0))*scaling(vec3(1.6,3.0,1.4)))
     else:
@@ -46,20 +70,86 @@ river_tree=(vs:mut Vertex3D[],at:vec3,kind:int,seed:f64,detail:bool=true):
         loop j in 0..5:
             a=f64(j)*TAU/5.0+seed
             c=at+vec3(f32(cos(a)*2.4),f32(5.0+f64(j%2)),f32(sin(a)*2.4))
+            start=vs.len()
             add_sphere(vs,vec3(0,0,0),1.0,rgb(0.20+f64(j%3)*0.035,0.36+f64(j%3)*0.025,0.13),6,3,translation(c)*scaling(vec3(3.2,2.1,2.8)))
+            if basis:tags.push((start,vs.len(),c.xz-at.xz))
+    if basis:river_tree_tags(vs,first,tags)
+
+river_bank_point=(v:Vertex3D,phase:vec4)->vec3:
+    p=v.pos
+    if phase.z<0.5:
+        p.x+=v.uv.x*(phase.x-1.0)+v.uv.y*phase.y
+    else if phase.z<1.5:
+        p.x+=v.uv.x*(phase.x-1.0)-v.uv.y*phase.y
+        p.z+=v.uv.x*phase.y+v.uv.y*(phase.x-1.0)
+    else:p.y*=phase.x
+    p
+
+river_bank_normal=(v:Vertex3D,phase:vec4)->vec3:
+    n=v.normal
+    if phase.z>1.5:n.y/=phase.x
+    n
+
+river_bank_vs=(v:Vertex3D,inst:RiverBankInstance,u:ObjParams)->ObjOut:
+    p=river_bank_point(v,inst.phase)
+    w=u.model*vec4(p+inst.position,1)
+    surface=vec3(0,0,0)
+    if inst.phase.z>2.5:
+        # Keep the existing oleander's wind and painted foliage treatment.
+        if v.uv.x==173.0 and v.color.y>v.color.x*1.15:
+            bend=max(v.uv.y,0.0)*u.wind.z*0.006*(0.3+0.7*gust(w.xz,u.drift))
+            w+=vec4(u.wind.x*bend,0,u.wind.y*bend,0)
+        surface=obj_surface(v)
+    ObjOut(u.view_proj*vec4(render_warped(w.xyz,u.cam,u.warp_a,u.warp_b),1),w.xyz,render_normal(river_bank_normal(v,inst.phase),w.xyz,u.cam),v.color*u.tint,surface)
+
+river_bank_fs=(i:ObjOut,u:ObjParams)->vec4:
+    if behind_sea(i.world,u.cam):discard()
+    obj_fs(i,u)
+river_bank_far_fs=(i:ObjOut,u:ObjParams)->vec4:
+    if behind_sea(i.world,u.cam):discard()
+    obj_far_fs(i,u)
+
+river_bank_indices=(vertices:Vertex3D[])->(Vertex3D[],u32[]):
+    unique:Vertex3D[];indices:u32[];found:{Vertex3D:u32}={}
+    loop v in vertices:
+        if not (v in found):
+            found[v]=u32(unique.len());unique.push(v)
+        indices.push(found[v])
+    (unique,indices)
+
+river_bank_mesh=(vertices:Vertex3D[])->Mesh:
+    unique,indices=river_bank_indices(vertices)
+    mesh(unique,indices)
 
 init_river_banks=():
-    global river_bank_batches,river_bank_far_sh
-    river_bank_far_sh=make_world_shader(shader(obj_vs,obj_far_fs))
+    global river_bank_batches,river_bank_near,river_bank_far,river_bank_sh,river_bank_far_sh,river_oleander_low,river_oleander_high,river_bank_view
+    empty:RiverBankInstance[]
+    river_bank_view=[loop i in 0..12:instance_buffer(empty)]
+    river_bank_sh=make_world_shader(shader(river_bank_vs,river_bank_fs))
+    river_bank_far_sh=make_world_shader(shader(river_bank_vs,river_bank_far_fs))
+    loop kind in 0..2:
+        near:Vertex3D[];far:Vertex3D[]
+        river_tree(near,vec3(0,0,0),kind,0.0,true,true)
+        river_tree(far,vec3(0,0,0),kind,0.0,false,true)
+        river_bank_near.push(river_bank_mesh(near));river_bank_far.push(river_bank_mesh(far))
+    reeds:Vertex3D[]
+    add_cylinder(reeds,vec3(0,0,0),0.055,1.0,rgb(0.28,0.39,0.14),3,0.015)
+    river_bank_near.push(river_bank_mesh(reeds))
+    oleander=plant_vertices(OLEANDER)
+    river_bank_near.push(river_bank_mesh(oleander))
+    river_oleander_low=vec3(1e9,1e9,1e9);river_oleander_high=vec3(-1e9,-1e9,-1e9)
+    loop v in oleander:
+        river_oleander_low=min(river_oleander_low,v.pos-vec3(1,0,1))
+        river_oleander_high=max(river_oleander_high,v.pos+vec3(1,0,1))
     loop group in 0..(RIVER_NODES.len()-2)/4+1:
         c=RIVER_NODES[min(group*4+2,RIVER_NODES.len()-1)]
-        river_bank_batches.push(RiverBankBatch(vec3(c.x,0,c.y),Mesh(),Mesh()))
+        river_bank_batches.push(RiverBankBatch(vec3(c.x,0,c.y),[]))
 
 build_river_bank=(group:int)->RiverBankBatch:
     first=group*4;finish=min(first+4,RIVER_NODES.len()-1)
     c=RIVER_NODES[(first+finish)/2];origin=vec3(c.x,0,c.y)
-    plants:Vertex3D[]
-    distant:Vertex3D[]
+    kinds:RiverBankInstance[][]=[[],[],[],[]]
+    low=vec3(1e9,1e9,1e9);high=vec3(-1e9,-1e9,-1e9)
     loop i in first..finish:
         if RIVER_BREAKS.contains(i) or i>=CANAL_BEGIN:continue
         a=RIVER_NODES[i];b=RIVER_NODES[i+1]
@@ -75,11 +165,13 @@ build_river_bank=(group:int)->RiverBankBatch:
                 r=river_at(f64(p.x),f64(p.y))
                 at=vec3(p.x-origin.x,f32(h),p.y-origin.z)
                 if h>r.level+0.5:
-                    river_tree(plants,at,if i%3==0:0 else:1,seed)
-                    river_tree(distant,at,if i%3==0:0 else:1,seed,false)
+                    kind=if i%3==0:0 else:1
+                    kinds[kind].push(RiverBankInstance(at,vec4(cos(seed),sin(seed),f32(kind),1)))
+                    # Enclose both original near and distant crowns at every seed.
+                    low=min(low,at-vec3(6,0,6));high=max(high,at+vec3(6,15,6))
                 if h>r.level+0.1 and j%4==1:
-                    loop vertex in plant_vertices(OLEANDER):
-                        vtx=vertex;vtx.pos+=at;plants.push(vtx)
+                    kinds[3].push(RiverBankInstance(at,vec4(1,0,3,1)))
+                    low=min(low,at+river_oleander_low);high=max(high,at+river_oleander_high)
                 # Locate the actual waterline separately from the higher tree bank.
                 # The inside and outside of a bend have different carved profiles.
                 loop reed in 0..4:
@@ -96,22 +188,40 @@ build_river_bank=(group:int)->RiverBankBatch:
                     rat=vec3(rp.x-origin.x,f32(rh),rp.y-origin.z)
                     loop stem in 0..3:
                         off=vec3(f32(sin(seed+f64(stem)))*0.4,0,f32(cos(seed+f64(stem)))*0.4)
-                        add_cylinder(plants,rat+off,0.055,1.4+noise(seed,f64(reed)),rgb(0.28,0.39,0.14),3,0.015)
-    low=vec3(1e9,1e9,1e9);high=vec3(-1e9,-1e9,-1e9)
-    loop v in plants:low=min(low,v.pos);high=max(high,v.pos)
-    loop v in distant:low=min(low,v.pos);high=max(high,v.pos)
-    bounds=if plants.len()+distant.len()>0:(low+high)*0.5 else:vec3(0,0,0)
-    radius=if plants.len()+distant.len()>0:f64(length(high-low))*0.5 else:0.0
-    RiverBankBatch(origin,if distant.len()>0:mesh(distant) else:Mesh(),if plants.len()>0:mesh(plants) else:Mesh(),true,origin+bounds,radius)
+                        height=1.4+noise(seed,f64(reed));base=rat+off
+                        kinds[2].push(RiverBankInstance(base,vec4(f32(height),0,2,1)))
+                        low=min(low,base-vec3(0.06,0,0.06));high=max(high,base+vec3(0.06,f32(height),0.06))
+    populated=kinds[0].len()+kinds[1].len()+kinds[2].len()+kinds[3].len()>0
+    bounds=if populated:(low+high)*0.5 else:vec3(0,0,0)
+    radius=if populated:f64(length(high-low))*0.5 else:0.0
+    RiverBankBatch(origin,kinds,true,origin+bounds,radius)
+
+# Resident vertex/instance payload, and the same vegetation expanded as before.
+# Used by the capture harness; not part of the per-frame draw path.
+river_bank_storage=()->(int,int,int):
+    resident=0;bytes=0;expanded=0
+    loop mesh in river_bank_near:bytes+=mesh.count*size_of(Vertex3D)+mesh.index_count*4
+    loop mesh in river_bank_far:bytes+=mesh.count*size_of(Vertex3D)+mesh.index_count*4
+    loop batch in river_bank_batches:
+        if not batch.ready:continue
+        resident+=1
+        loop kind in 0..batch.kinds.len():
+            count=batch.kinds[kind].len()
+            bytes+=count*size_of(RiverBankInstance)
+            vertices=river_bank_near[kind].index_count+(if kind<2:river_bank_far[kind].index_count else:0)
+            expanded+=count*vertices*size_of(Vertex3D)
+    loop buffer in river_bank_view:bytes+=buffer.count*size_of(RiverBankInstance)
+    (resident,bytes,expanded)
 
 draw_river_banks=(L:Light,t:f64):
-    global river_bank_batches
+    global river_bank_batches,river_bank_selection,river_bank_view_origin,river_bank_view
     if not geography_enabled:return
     cam=scene_camera()
     if cam.x<RIVER_BOUNDS.x-8000 or cam.x>RIVER_BOUNDS.z+8000 or cam.z<RIVER_BOUNDS.y-8000 or cam.z>RIVER_BOUNDS.w+8000:return
     zone("river banks")
     generated=false
     planes=land_planes(scene_view_proj())
+    selected:int[]
     loop i in 0..river_bank_batches.len():
         batch=river_bank_batches[i]
         d=length(cam.xz-batch.center.xz)
@@ -124,11 +234,37 @@ draw_river_banks=(L:Light,t:f64):
         warped=render_world(batch.bounds,cam)
         radius=batch.radius+d*batch.radius/EARTH_RADIUS+batch.radius*batch.radius/EARTH_RADIUS+1.0
         visible=true
-        loop plane in planes:
-            if f64(dot(plane.xyz,warped)+plane.w)< -radius:visible=false
+        # The optional speed-stretch moves geometry beyond the unwarped bounds.
+        if scene_warp_b.x==0.0:
+            loop plane in planes:
+                if f64(dot(plane.xyz,warped)+plane.w)< -radius:visible=false
         if not visible:continue
-        p=obj_params(L,t,anchor=world_point(batch.center))
-        if d<3500:
-            geometry=if d<(if render_quality.tier==0:450 else:900):batch.plants else:batch.distant
-            if geometry.count>0:draw(if f64(length(cam-batch.bounds))-batch.radius>300.0:river_bank_far_sh else:obj_sh,geometry,p)
+        near=d<(if render_quality.tier==0:450 else:900)
+        far_shader=f64(length(cam-batch.bounds))-batch.radius>300.0
+        selected.push(i*4+(if near:2 else:0)+(if far_shader:1 else:0))
+    origin=render_origin(cam)
+    changed=origin!=river_bank_view_origin or selected.len()!=river_bank_selection.len()
+    if not changed:
+        loop i in 0..selected.len():
+            if selected[i]!=river_bank_selection[i]:changed=true;break
+    if changed:
+        # Coalesce visible groups by prototype/LOD/material. Re-upload only when
+        # that selection or the render chart changes, not on every moving frame.
+        lists:RiverBankInstance[][]=[loop i in 0..12:[]]
+        loop key in selected:
+            batch=river_bank_batches[key/4]
+            near=(key%4)>=2;far_shader=key%2==1
+            delta=batch.center-origin
+            loop kind in 0..(if near:4 else:2):
+                bucket=(if near:kind else:4+kind)+(if far_shader:6 else:0)
+                loop source in batch.kinds[kind]:
+                    inst=source;inst.position+=delta;lists[bucket].push(inst)
+        loop i in 0..12:set_instances(river_bank_view[i],lists[i])
+        river_bank_selection=selected;river_bank_view_origin=origin
+    p=obj_params(L,t,anchor=world_point(origin))
+    loop i in 0..12:
+        if river_bank_view[i].count==0:continue
+        kind=i%6
+        mesh=if kind<4:river_bank_near[kind] else:river_bank_far[kind-4]
+        draw_instanced(if i<6:river_bank_sh else:river_bank_far_sh,mesh,river_bank_view[i],p)
     zone_end()
