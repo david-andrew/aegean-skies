@@ -1,0 +1,194 @@
+# Taking on fuel at a harbour's fuel pier: a sale from the harbour market's own stock into the
+# aircraft's tank. The buyer pays the market (and the harbour dues at a home port, as any local
+# sale does); the market's stock and its lots give up exactly what the tank gains. Nothing is
+# made or lost: the fuel was imported or refined before it reached the pier.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_cargo.jo'
+use 'living_money.jo'
+use 'living_guard.jo'
+use 'living_transaction.jo'
+use 'living_war_access.jo'
+use 'living_content.jo'
+
+const FUEL_GOOD = 4
+const FUEL_PIER_REACH = 30.0          # metres from a dock
+const FUEL_PIER_SLOW = 3.0            # metres a second, on the water
+
+# A harbour that sells fuel, at one of its docks. A home port sells from its market (`core`, an
+# index into w.places); any other harbour from its district's market (`district`).
+struct FuelPier:
+    core = -1
+    district = -1
+    dock = vec3(0, 0, 0)
+    name = ""
+
+# What a sale would be, or was. Litres in millilitres; money in centesimi.
+struct FuelQuote:
+    price = 0              # a 10-litre can
+    stock_ml = 0           # what the pier can sell now
+    room_ml = 0            # what the tank still takes
+    ml = 0                 # what this sale puts in the tank (0: refused)
+    cents = 0              # what it costs, dues included
+    dues = 0               # the harbour dues within it
+    cash = 0               # the buyer's money
+    reason = ""            # why it was refused or cut short, in plain words
+
+_pier_name = (w: World, core: int, district: int) -> str:
+    if district in w.place_contexts: return w.place_contexts[district].name
+    if core >= 0 and core < PLACE_NAMES.len(): return PLACE_NAMES[core]
+    "the harbour"
+
+# The fuel pier within reach of a position on the water, nearest dock first, or none.
+fuel_pier_at = (w: World, position: vec3, reach: f64 = FUEL_PIER_REACH) -> FuelPier?:
+    best: FuelPier? = none
+    bd = reach
+    if w.far.populated:
+        loop id, h in w.far.harbors:
+            if not (id in w.far.districts) or h.docks.len() == 0: continue
+            if f64(length((h.docks[0] - position).xz)) > 600.0: continue
+            loop d in h.docks:
+                l = f64(length((d - position).xz))
+                if l < bd:
+                    core = w.far.districts[id].core
+                    if core >= 0 and core < w.places.len() and not w.places[core].has_fuel: continue
+                    bd = l
+                    best = FuelPier(core = core, district = id, dock = d, name = _pier_name(w, core, id))
+    if best != none: return best
+    loop k in 0..min(w.places.len(), w.harbors.len()):
+        if not w.places[k].has_fuel: continue
+        loop d in w.harbors[k].docks:
+            l = f64(length((d - position).xz))
+            if l < bd:
+                bd = l
+                best = FuelPier(core = k, district = -1, dock = d, name = _pier_name(w, k, -1))
+    best
+
+# The pier's price for a 10-litre can, in centesimi.
+fuel_price = (w: World, pier: FuelPier) -> int:
+    if pier.core >= 0 and pier.core < w.places.len(): return max(1, w.places[pier.core].market.price_cents[FUEL_GOOD])
+    if pier.district in w.far.districts: return max(1, w.far.districts[pier.district].prices[FUEL_GOOD])
+    0
+
+# Unpromised fuel physically at the pier, in milli-cans (10 ml each).
+_pier_stock = (w: World, pier: FuelPier) -> int:
+    if pier.core >= 0 and pier.core < w.places.len():
+        n = available(w.places[pier.core].market.inventory, FUEL_GOOD)
+        if w.cargo_version > 0:
+            lots = 0
+            loop id in cargo_ids(w, .market, pier.core, FUEL_GOOD):
+                if w.cargo[id].job < 0: lots += w.cargo[id].quantity
+            n = min(n, lots)
+        return max(0, n)
+    if pier.district in w.far.districts: return max(0, far_market_qty(w, pier.district, FUEL_GOOD))
+    0
+
+_market_account = (w: World, pier: FuelPier) -> int:
+    if pier.core >= 0 and pier.core < w.places.len(): return w.places[pier.core].market.account
+    if pier.district in w.far.districts: return w.far.districts[pier.district].market_account
+    -1
+
+_district_of = (w: World, pier: FuelPier) -> int:
+    if pier.district >= 0: return pier.district
+    loop id in w.far.place_ids:
+        if id in w.far.districts and w.far.districts[id].core == pier.core: return id
+    -1
+
+_at_war = (w: World, country: int) -> bool:
+    loop r in w.diplomacy:
+        if r.stage == .war and (r.a == country or r.b == country): return true
+    false
+
+# Why a pier has none, from what is actually happening there.
+_empty_reason = (w: World, pier: FuelPier) -> str:
+    district = _district_of(w, pier)
+    if district >= 0 and blockade_unit(w, district) >= 0: return "No fuel at {pier.name}: the blockade has kept the supply boats out."
+    if district in w.far.districts and _at_war(w, w.far.districts[district].controller): return "No fuel at {pier.name}: what came in has gone to the war."
+    "No fuel at {pier.name} just now; the next supply boat may bring some."
+
+_litres = (ml: int) -> str:
+    if ml == 1000: "1 litre" else: if ml % 1000 == 0: "{ml / 1000} litres" else: "{f64(ml) / 1000.0:.1} litres"
+
+_lire = (cents: int) -> str:
+    if cents % 100 == 0: "{cents / 100} lire" else: "{f64(cents) / 100.0:.2} lire"
+
+# What `person` would pay for `wanted_ml` into their aircraft's tank here. `partial` takes what
+# the pier has when it has less than asked (filling up); otherwise a short pier refuses.
+fuel_quote = (w: World, pier: FuelPier, person: int, wanted_ml: int, partial: bool = false) -> FuelQuote:
+    q = FuelQuote()
+    if person < 0 or person >= w.people.len(): return q
+    q.cash = if account_valid(w, w.people[person].account): w.accounts[w.people[person].account].cents else: 0
+    q.price = fuel_price(w, pier)
+    q.stock_ml = _pier_stock(w, pier) * 10
+    craft = w.people[person].craft
+    if craft < 0 or craft >= w.aircraft.len():
+        q.reason = "You have no aircraft here to fill."
+        return q
+    q.room_ml = max(0, AIRFRAMES[int(w.aircraft[craft].kind)].tank_ml - w.aircraft[craft].fuel_ml) / 10 * 10
+    if pier.core >= 0 and pier.core < w.places.len() and w.places[pier.core].harbor_closed:
+        q.reason = "The harbour at {pier.name} is shut in this weather; the pier opens when it clears."
+        return q
+    if q.room_ml <= 0:
+        q.reason = "The tank is full."
+        return q
+    if q.stock_ml <= 0:
+        q.reason = _empty_reason(w, pier)
+        return q
+    milli = min(max(0, wanted_ml) / 10, q.room_ml / 10)
+    if milli <= 0: return q
+    if milli * 10 > q.stock_ml:
+        if not partial:
+            q.reason = "The pier at {pier.name} has only {_litres(q.stock_ml)} left."
+            return q
+        milli = q.stock_ml / 10
+        q.reason = "The pier had only {_litres(q.stock_ml)}."
+    cents = (milli * q.price + 999) / 1000
+    dues = if pier.core >= 0 and pier.core != 5 and cents > 0: max(1, cents * 2 / 100) else: 0
+    if q.cash < cents + dues:
+        q.reason = "{_litres(milli * 10)} {if milli == 100: "comes" else: "come"} to {_lire(cents + dues)}; you have {_lire(q.cash)}."
+        q.cents = cents + dues; q.dues = dues
+        return q
+    q.ml = milli * 10; q.cents = cents + dues; q.dues = dues
+    q
+
+_guarded_buy_tank_fuel = (w: mut World, pier: FuelPier, person: int, wanted_ml: int, partial: bool) -> FuelQuote:
+    q = fuel_quote(w, pier, person, wanted_ml, partial)
+    if q.ml <= 0: return q
+    craft = w.people[person].craft
+    c = w.aircraft[craft]
+    if f64(length((c.pose.pos - pier.dock).xz)) > FUEL_PIER_REACH + 10.0 or f64(length(c.pose.vel)) > FUEL_PIER_SLOW:
+        q.ml = 0; q.reason = "Bring the aircraft alongside the fuel pier first."
+        return q
+    payer = w.people[person].account
+    market = _market_account(w, pier)
+    if not account_valid(w, market) or market == payer:
+        q.ml = 0; q.reason = "Nobody at the pier can sell fuel just now."
+        return q
+    milli = q.ml / 10
+    if not transfer(w, payer, market, q.cents - q.dues, .fuel, craft):
+        q.ml = 0; q.reason = "The sale fell through."
+        return q
+    if q.dues > 0 and not transfer(w, payer, w.factions[0].account, q.dues, .fine, craft):
+        living_fault("living_refuel.dues", guard_context(w) + " person={person} craft={craft} dues={q.dues}")
+        q.ml = 0
+        return q
+    if pier.core >= 0:
+        w.places[pier.core].market.inventory.qty[FUEL_GOOD] -= milli
+        cargo_consume(w, .market, pier.core, FUEL_GOOD, milli)
+    else:
+        batch = far_take_market(w, pier.district, FUEL_GOOD, milli)
+        far_use(w, batch, tank = true)
+    w.aircraft[craft].fuel_ml += q.ml
+    w.aircraft[craft].revision += 1
+    q
+
+# Sells fuel from the pier into `person`'s aircraft. The result's `ml` is what went in (0: refused,
+# with the reason); the whole sale rolls back if any part of it fails.
+buy_tank_fuel = (w: mut World, pier: FuelPier, person: int, wanted_ml: int, partial: bool = false) -> FuelQuote:
+    if guard_blocked(): return FuelQuote(reason = "The pier is busy.")
+    scope = guard_begin(w)
+    result = _guarded_buy_tank_fuel(w, pier, person, wanted_ml, partial)
+    failed = guard_failed(scope)
+    guard_finish(w, scope)
+    if failed: FuelQuote(reason = "The sale fell through.") else: result

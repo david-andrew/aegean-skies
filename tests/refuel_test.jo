@@ -1,0 +1,156 @@
+use '../src/living_refuel.jo'
+use '../src/living_types.jo'
+use '../src/living_seed.jo'
+use '../src/living_money.jo'
+use '../src/living_cargo.jo'
+use '../src/living_far_types.jo'
+use '../src/living_far_stock.jo'
+use '../src/living_far_economy.jo'
+use '../src/living_commissions.jo'
+use '../src/living_place_context.jo'
+use '../src/life_types.jo'
+use '../src/fuel_counter.jo'
+
+# The player's Gull alongside a home port's first dock, at rest.
+_alongside = (w: mut World, at: vec3) -> int:
+    c = w.people[w.player].craft
+    w.aircraft[c].pose.pos = at; w.aircraft[c].pose.vel = vec3(0, 0, 0)
+    c
+
+_cash = (w: World, person: int) -> int: w.accounts[w.people[person].account].cents
+
+_balanced = (w: World) -> bool: money_balances(w) and goods_balance(w)
+
+# A core market's fuel stock and its lots agree.
+_lots_agree = (w: World, place: int) -> bool:
+    cargo_stock(w, .market, place, 4) == w.places[place].market.inventory.qty[4]
+
+test "a home port's fuel pier sells from its own stock into the tank, nothing made or lost":
+    w = build_world(u64(42))
+    dock = w.harbors[0].docks[0]
+    c = _alongside(w, dock)
+    pier = fuel_pier_at(w, dock + vec3(8, 0, 6))
+    assert(pier != none and pier!.core == 0 and pier!.district == -1, "{pier}")
+    assert(fuel_pier_at(w, dock + vec3(400, 0, 0)) == none)
+    p = pier!
+    assert(_lots_agree(w, 0))
+    stock = w.places[0].market.inventory.qty[4]; fuel = w.aircraft[c].fuel_ml
+    cash = _cash(w, w.player); till = w.accounts[w.places[0].market.account].cents
+    authority = w.accounts[w.factions[0].account].cents
+    created = w.goods_ledger.created[4]; consumed = w.goods_ledger.consumed[4]
+    price = fuel_price(w, p)
+    q = fuel_quote(w, p, w.player, 20000)
+    assert(q.ml == 20000 and q.room_ml == 80000 - fuel and q.stock_ml == stock * 10 and q.reason == "", "{q}")
+    assert(q.cents - q.dues == (2000 * price + 999) / 1000 and q.dues == max(1, (q.cents - q.dues) * 2 / 100))
+    got = buy_tank_fuel(w, p, w.player, 20000)
+    assert(got.ml == 20000 and got.cents == q.cents, "{got}")
+    assert(w.aircraft[c].fuel_ml == fuel + 20000)
+    assert(w.places[0].market.inventory.qty[4] == stock - 2000 and _lots_agree(w, 0))
+    assert(_cash(w, w.player) == cash - got.cents)
+    assert(w.accounts[w.places[0].market.account].cents == till + got.cents - got.dues)
+    assert(w.accounts[w.factions[0].account].cents == authority + got.dues)
+    # (the fuel moved from the pier to the tank: the ledger neither created nor consumed any)
+    assert(w.goods_ledger.created[4] == created and w.goods_ledger.consumed[4] == consumed)
+    assert(_balanced(w))
+    last = w.ledger.recent[w.ledger.recent.len() - 2]
+    assert(last.kind == .fuel and last.debit == w.people[w.player].account and last.credit == w.places[0].market.account)
+
+test "filling up takes what the tank holds, or what the pier has left":
+    w = build_world(u64(7))
+    c = _alongside(w, w.harbors[0].docks[0])
+    p = fuel_pier_at(w, w.harbors[0].docks[0])!
+    assert(transfer(w, -1, w.people[w.player].account, 200000, .subsidy))
+    room = 80000 - w.aircraft[c].fuel_ml
+    full = buy_tank_fuel(w, p, w.player, 1000000, partial = true)
+    assert(full.ml == room and w.aircraft[c].fuel_ml == 80000 and full.reason == "", "{full}")
+    assert(_balanced(w) and _lots_agree(w, 0))
+    again = fuel_quote(w, p, w.player, 10000)
+    assert(again.ml == 0 and again.reason == "The tank is full.")
+    # Burn most of it, then leave the pier with a little: filling up takes the rest, a fixed
+    # request beyond it is refused, saying how much is left.
+    burn_fuel(w, c, 70000)
+    left = w.places[0].market.inventory.qty[4]
+    keep = 700
+    took = left - keep
+    w.places[0].market.inventory.qty[4] -= took
+    cargo_consume(w, .market, 0, 4, took)
+    record_consumption(w, 4, took)
+    assert(_balanced(w) and _lots_agree(w, 0))
+    short = buy_tank_fuel(w, p, w.player, 10000)
+    assert(short.ml == 0 and short.reason == "The pier at Porto Vecchio has only 7 litres left.", short.reason)
+    rest = buy_tank_fuel(w, p, w.player, 1000000, partial = true)
+    assert(rest.ml == 7000 and rest.reason == "The pier had only 7 litres.", "{rest}")
+    assert(w.places[0].market.inventory.qty[4] == 0 and _balanced(w) and _lots_agree(w, 0))
+    none_left = buy_tank_fuel(w, p, w.player, 10000)
+    assert(none_left.ml == 0 and none_left.reason.starts_with("No fuel at Porto Vecchio"), none_left.reason)
+
+test "the pier refuses kindly: no money, a shut harbour, an aircraft not alongside":
+    w = build_world(u64(42))
+    c = _alongside(w, w.harbors[1].docks[0])
+    p = fuel_pier_at(w, w.harbors[1].docks[0])!
+    assert(p.core == 1)
+    sink = new_account(w, "test-sink", 0)
+    cash = _cash(w, w.player)
+    assert(transfer(w, w.people[w.player].account, sink, cash - 300, .trade))
+    before = to_text(w)
+    poor = buy_tank_fuel(w, p, w.player, 20000)
+    assert(poor.ml == 0 and poor.reason.starts_with("20 litres come to ") and poor.reason.ends_with("; you have 3 lire."), poor.reason)
+    assert(to_text(w) == before)
+    # three lire still buy a few litres
+    small = buy_tank_fuel(w, p, w.player, 2000)
+    assert(small.ml == 2000 and _balanced(w), "{small}")
+    assert(transfer(w, sink, w.people[w.player].account, 5000, .trade))
+    w.places[1].harbor_closed = true
+    shut = buy_tank_fuel(w, p, w.player, 1000)
+    assert(shut.ml == 0 and shut.reason.contains("shut in this weather"), shut.reason)
+    w.places[1].harbor_closed = false
+    w.aircraft[c].pose.pos = w.harbors[1].docks[0] + vec3(200, 0, 0)
+    away = buy_tank_fuel(w, p, w.player, 1000)
+    assert(away.ml == 0 and away.reason == "Bring the aircraft alongside the fuel pier first.", away.reason)
+    w.aircraft[c].pose.pos = w.harbors[1].docks[0]; w.aircraft[c].pose.vel = vec3(9, 0, 0)
+    fast = buy_tank_fuel(w, p, w.player, 1000)
+    assert(fast.ml == 0 and _balanced(w))
+
+# A far capital with its own refinery output: the sale comes out of the district's stock.
+_capital = () -> World:
+    w = build_world(u64(42))
+    contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k, "Core {k}", 0, k, w.harbors[k].center, true, k))
+    contexts.push(LifePlaceContext(100, "Capital", 1, 100, vec3(0, 0, 0)))
+    assert(publish_place_contexts(w, 1, contexts, [-1, 100, -1]))
+    assert(populate_settlement_economy(w, 1, [FarPlaceSeed(100, 3200, 1, 3)], []))
+    assert(publish_far_harbors(w, [FarHarbor(100, vec3(0, 0, -1), [vec3(-70, 0, 0), vec3(70, 0, 0)], [vec3(-70, 2, 10), vec3(70, 2, 10)], vec3(0, 0, -100))]))
+    w
+
+test "a far harbour sells from its district's stock; in wartime an empty pier says why":
+    w = _capital()
+    c = _alongside(w, vec3(70, 0, 0))
+    p = fuel_pier_at(w, vec3(66, 0, 4))!
+    assert(p.district == 100 and p.core == -1 and p.name == "Capital", "{p}")
+    stock = far_market_qty(w, 100, 4)
+    till = w.accounts[w.far.districts[100].market_account].cents; cash = _cash(w, w.player)
+    fuel = w.aircraft[c].fuel_ml
+    got = buy_tank_fuel(w, p, w.player, 10000)
+    assert(got.ml == 10000 and got.dues == 0 and got.cents == (1000 * w.far.districts[100].prices[4] + 999) / 1000, "{got}")
+    assert(far_market_qty(w, 100, 4) == stock - 1000 and w.aircraft[c].fuel_ml == fuel + 10000)
+    assert(_cash(w, w.player) == cash - got.cents and w.accounts[w.far.districts[100].market_account].cents == till + got.cents)
+    assert(_balanced(w))
+    # The rest goes to the war (used up, as the arsenal uses it); the pier has none and says so.
+    far_use(w, far_take_market(w, 100, 4, far_market_qty(w, 100, 4)))
+    w.diplomacy.push(DiplomaticRelation(0, 1, stage = .war))
+    empty = buy_tank_fuel(w, p, w.player, 10000)
+    assert(empty.ml == 0 and empty.reason == "No fuel at Capital: what came in has gone to the war.", empty.reason)
+    assert(_balanced(w))
+    # A home port inside the far world still sells from its own market.
+    core = fuel_pier_at(w, w.harbors[2].docks[0])
+    assert(core != none and core!.core == 2)
+
+test "the gauge rises over the refuelling moment and ends at the new reading":
+    assert(refuel_gauge(24.0, 80.0, 0.0, 2.0) == 24.0 and refuel_gauge(24.0, 80.0, 2.0, 2.0) == 80.0)
+    last = 24.0
+    loop k in 1..20:
+        g = refuel_gauge(24.0, 80.0, f64(k) * 0.1, 2.0)
+        assert(g >= last and g <= 80.0); last = g
+    assert(refuel_gauge(24.0, 80.0, 1.0, 2.0) > 45.0 and refuel_gauge(24.0, 80.0, 1.0, 2.0) < 58.0)
+    assert(refuel_seconds(10.0) < refuel_seconds(56.0) and refuel_seconds(80.0) <= 3.2 and refuel_seconds(1.0) >= 1.0)
+    assert(fuel_litre_price(800) == "0.80" and fuel_litre_price(1440) == "1.44")
