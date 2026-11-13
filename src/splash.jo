@@ -34,6 +34,20 @@ struct SplashOut:
     pos:vec4
     world:vec3
     normal:vec3
+    body:f32
+# Half-widths of a spray curtain lobe across its sheet, as (width, d width / d y) for the
+# unit lobe's height y in -1..1. The inner face, toward the float and its trough, stays a
+# thin sheet; the outer face billows out, thickest along the curling crest and thinning to
+# a knife edge at the root in the water. outward is the unit x on the outer side (>0).
+const CURTAIN_BILLOW=1.6
+# Outer billows on each curtain: (fraction along, height in lobe heights, radius in lobe heights).
+CURTAIN_PUFFS=[vec3(0.20,1.62,0.36),vec3(0.33,1.74,0.46),vec3(0.47,1.80,0.52),vec3(0.61,1.74,0.48),vec3(0.75,1.62,0.40),vec3(0.88,1.45,0.30),vec3(0.27,1.10,0.30),vec3(0.43,1.20,0.36),vec3(0.59,1.18,0.34),vec3(0.75,1.05,0.28),vec3(0.38,0.55,0.24),vec3(0.56,0.60,0.26),vec3(0.72,0.50,0.22)]
+curtain_widths=(outward:f32,y:f32,thickness:f32,height:f32)->vec2:
+    r=clamp(0.5+0.5*y,0.0,1.0)
+    billow=height*CURTAIN_BILLOW
+    slope=if y> -1.0 and y<1.0:billow*0.75*sqrt(r) else:0.0
+    if outward>0.0:vec2(thickness+billow*r*sqrt(r),slope) else:vec2(thickness*0.55,0.0)
+
 splash_vs=(v:SplashVertex,b:SplashInstance,u:SplashParams)->SplashOut:
     # The closed surface and its analytic smooth normals are baked together. A gentle
     # whole-body breath keeps the lobes moving without folding triangles into facets.
@@ -49,22 +63,46 @@ splash_vs=(v:SplashVertex,b:SplashInstance,u:SplashParams)->SplashOut:
     up=cross(back,right)
     shape=n
     local=shape*scale
+    if b.center.w>2.5:
+        # Curtain lobes: turn each one about its own vertical so neighbours show
+        # different scallops, then build the outer face out into a billow.
+        spin=b.size.w*1.7;c=cos(spin);s=sin(spin)
+        shape=vec3(c*n.x-s*n.z,n.y,s*n.x+c*n.z)
+        normal=vec3(c*normal.x-s*normal.z,normal.y,s*normal.x+c*normal.z)
+        widths=curtain_widths(shape.x*sign(b.back.w),shape.y,scale.x,scale.y)
+        local=vec3(shape.x*widths.x,shape.y*scale.y,shape.z*scale.z)
+        # Inverse-transpose of x'=x*w(y): the normal tilts with the bulge's taper.
+        normal=vec3(normal.x/widths.x,normal.y/scale.y-normal.x*shape.x*widths.y/(widths.x*scale.y),normal.z/scale.z)
+        scale=vec3(1,1,1)
     # A thin curtain curls away from its chine. Shearing a closed smooth lobe
     # keeps a rounded crest and a thin two-sided sheet, rather than a flat tube.
     # back.w is signed outward lean; ordinary droplets/water marks keep zero.
-    rise=local.y+scale.y
-    curl=b.back.w*(0.65+0.35*rise/max(scale.y,0.001))
-    local.x+=b.back.w*(0.65*rise+0.175*rise*rise/max(scale.y,0.001))
+    height=b.size.y*breath.y
+    rise=local.y+height
+    curl=b.back.w*(0.65+0.35*rise/max(height,0.001))
+    local.x+=b.back.w*(0.65*rise+0.175*rise*rise/max(height,0.001))
     p=b.center.xyz+right*local.x+up*local.y+back*local.z
     normal=normal/max(scale,vec3(0.001,0.001,0.001))
     normal.y-=curl*normal.x
     normal=normalize(normal)
     normal=right*normal.x+up*normal.y+back*normal.z
-    SplashOut(u.vp*vec4(render_warped(p,u.eye,u.warp_a,u.warp_b),1),p,normal)
+    SplashOut(u.vp*vec4(render_warped(p,u.eye,u.warp_a,u.warp_b),1),p,normal,b.center.w)
 splash_fs=(i:SplashOut,u:SplashParams)->vec4:
-    facing=dot(normalize(i.normal),u.sun_dir)
+    n=normalize(i.normal)
+    facing=dot(n,u.sun_dir)
     # Flat painted regions, with a small soft terminator following each round lobe.
     tone=mix(vec3(0.68,0.80,0.86),vec3(0.84,0.91,0.94),smoothstep(-0.60,-0.48,facing))
+    if i.body>1.5:
+        # Spray curtains and their billows: two painted tones only. In bright sun the
+        # pale middle tone saturates to white, so the shadow side takes the blue-grey
+        # directly. Tops lit by the sky stay white; overhanging undersides and a thin
+        # rim where each lobe turns away from the eye join the shadow, so every billow
+        # shows a white cap over a grey belly and the outer mass reads from any side.
+        top=smoothstep(0.45,0.75,n.y)
+        under=smoothstep(0.05,0.45,-n.y)
+        rim=smoothstep(0.88,0.97,1.0-abs(dot(n,normalize(u.eye-i.world))))
+        facing=min(max(facing,mix(-1.0,0.30,top)),mix(1.0,-0.70,max(under,rim)))
+        tone=vec3(0.68,0.80,0.86)
     tone=mix(tone,vec3(1,1,0.99),smoothstep(-0.06,0.07,facing))
     vec4(aerial(u.white*tone,i.world,u.eye,u.haze,u.fog),1)
 
@@ -84,31 +122,40 @@ splash_vertex=(n:vec3)->SplashVertex:
 
 splash_shader:Shader
 splash_mesh:Mesh
-init_splashes=():
-    global splash_shader,splash_mesh
-    splash_shader=make_world_shader(shader(splash_vs,splash_fs))
+splash_small_mesh:Mesh
+# A latitude/longitude grid of the scalloped lobe; the poles coincide exactly. Shared
+# vertices let the vertex shader run once per grid point rather than per triangle corner.
+splash_grid=(rows:int,columns:int)->Mesh:
     indices:u32[]
-    # 64x40 resolves the scallops even close to the floats. The poles coincide exactly.
     point=(a:int,b:int)->SplashVertex:
-        latitude=PI*f64(a)/40.0;longitude=TAU*f64(b%64)/64.0
+        latitude=PI*f64(a)/f64(rows);longitude=TAU*f64(b%columns)/f64(columns)
         splash_vertex(vec3(sin(latitude)*cos(longitude),cos(latitude),sin(latitude)*sin(longitude)))
     grid:SplashVertex[]
-    loop a in 0..41:
-        loop b in 0..64:grid.push(point(a,b))
-    loop a in 0..40:
-        loop b in 0..64:
-            c=(b+1)%64
-            loop k in [a*64+b,(a+1)*64+b,a*64+c,a*64+c,(a+1)*64+b,(a+1)*64+c]:indices.push(u32(k))
-    # Identical triangle order and vertices; reuse the 2,624 shared vertices instead
-    # of running the vertex shader on 15,360 duplicated triangle corners per body.
-    splash_mesh=mesh(grid,indices)
+    loop a in 0..rows+1:
+        loop b in 0..columns:grid.push(point(a,b))
+    loop a in 0..rows:
+        loop b in 0..columns:
+            c=(b+1)%columns
+            loop k in [a*columns+b,(a+1)*columns+b,a*columns+c,a*columns+c,(a+1)*columns+b,(a+1)*columns+c]:indices.push(u32(k))
+    mesh(grid,indices)
+init_splashes=():
+    global splash_shader,splash_mesh,splash_small_mesh
+    splash_shader=make_world_shader(shader(splash_vs,splash_fs))
+    # 64x40 (2,624 vertices) resolves the scallops even close to the floats.
+    splash_mesh=splash_grid(40,64)
+    # Curtain billows and crest drops are small: 40x24 (1,000 vertices) holds their scallops.
+    splash_small_mesh=splash_grid(24,40)
+
+# Instance kinds in center.w: 1 droplets/billows/water marks, 1.25 curtain crest drops,
+# 2 curtain outer billows, 3 curtain sheet lobes. Drops and billows use the small mesh.
+splash_small=(b:SplashInstance)->bool:b.center.w>1.1 and b.center.w<2.5
 
 splash_heading=(back:vec3)->vec3:
     flat=vec3(back.x,0,back.z)
     if length(flat)>0.0001:normalize(flat) else:vec3(0,0,1)
 
-splash_add=(out:mut SplashInstance[],p:vec3,size:vec3,phase:f64,back:vec3=vec3(0,0,1)):
-    if min(size.x,min(size.y,size.z))>0.004:out.push(SplashInstance(vec4(p,1),vec4(size,f32(phase)),vec4(splash_heading(back),0)))
+splash_add=(out:mut SplashInstance[],p:vec3,size:vec3,phase:f64,back:vec3=vec3(0,0,1),kind:f32=1.0):
+    if min(size.x,min(size.y,size.z))>0.004:out.push(SplashInstance(vec4(p,kind),vec4(size,f32(phase)),vec4(splash_heading(back),0)))
 
 # Intersecting closed lobes make a continuous opaque volume with scalloped outer edges.
 # The thin roots touch the water; the spreading body peels out and rises behind the step.
@@ -132,13 +179,28 @@ splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phas
             h=height*arch
             center=edge+direction*f32(curtain_length*u)+up*f32(h*0.90)
             out.push(SplashInstance(vec4(center,3),vec4(thickness,h,curtain_length*0.18,f32(phase+u)),vec4(direction,f32(side*0.80))))
+        # Round billows heap up on the outer face only, biggest along the curling crest
+        # and smaller toward the root, so the sheet reads as a solid mass from any side.
+        loop j in 0..CURTAIN_PUFFS.len():
+            puff=CURTAIN_PUFFS[j]
+            u=f64(puff.x);lift=f64(puff.y)
+            h=height*sin(pow(u,0.72)*PI)
+            y=h*lift
+            rise=y+h*0.10
+            lean=0.80*(0.65*rise+0.175*rise*rise/max(h,0.001))
+            # Sit each billow just inside the curtain's own outer face at that height.
+            v=lift-0.90;r=clamp(0.5+0.5*v,0.0,1.0)
+            face=sqrt(max(0.0,1.0-v*v))*(f64(thickness)+h*f64(CURTAIN_BILLOW)*r*sqrt(r))
+            radius=h*f64(puff.z)*(0.92+0.08*sin(phase*0.43+f64(j)*2.1+side))
+            p=edge+direction*f32(curtain_length*u)+up*f32(y)+across*f32(side*(lean+face*0.8))
+            out.push(SplashInstance(vec4(p,2),vec4(radius*1.05,radius*0.92,radius*1.25,f32(phase*0.7+f64(j)*1.3)),vec4(direction,0)))
         # Small round drops peel off the curling crest, then descend behind it.
         loop j in 0..4:
             u=0.35+f64(j)*0.17
             h=height*sin(pow(u,0.72)*PI)
             radius=(0.075+run*0.055)*(0.9+0.1*sin(phase*0.55+u*5.0+side))
             p=edge+direction*f32(curtain_length*u)+across*f32(side*h*1.65)+up*f32(h*1.90+radius*1.5)
-            splash_add(out,p,vec3(radius,radius*1.15,radius),phase+u*3.0,direction)
+            splash_add(out,p,vec3(radius,radius*1.15,radius),phase+u*3.0,direction,1.25)
     # Tapered white marks touch the wet footprint; the sea shader is not changed.
     loop side in [-1.0,1.0]:
         loop j in 0..3:
@@ -261,7 +323,11 @@ draw_splashes=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,L:Light,t:f6
         if bodies.len()>0:
             glDepthMask(1);glDisable(GL_CULL_FACE)
             white=L.sun*0.75+L.shade*0.25+vec3(0.18,0.20,0.21)
-            draw_instanced(splash_shader,splash_mesh,bodies,SplashParams(render_view_proj(origin),render_eye(origin),L.sun_dir,white,L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b))
+            params=SplashParams(render_view_proj(origin),render_eye(origin),L.sun_dir,white,L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b)
+            large=[loop b in bodies:if not splash_small(b):b]
+            small=[loop b in bodies:if splash_small(b):b]
+            if large.len()>0:draw_instanced(splash_shader,splash_mesh,large,params)
+            if small.len()>0:draw_instanced(splash_shader,splash_small_mesh,small,params)
     ,transparent=true)
 
 draw_splash_dust=(ps:WorldParticles):
