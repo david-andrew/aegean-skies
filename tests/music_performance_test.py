@@ -45,6 +45,15 @@ class Performance(unittest.TestCase):
   with self.assertRaises(ValueError):apply_performance_map(notes[:-1],a)
   a['time_map']=[[0,0],[2,0]]
   with self.assertRaises(ValueError):apply_performance_map(notes,a)
+ def test_section_tags_and_harp_presence_preserve_effort(self):
+  from music_pack import pack
+  notes=[[0,1,60,7,.5,.6,0],[0,1,48,7,.5,.6,0]]
+  a=dict(version=1,input_note_count=2,input_sha256=performance_signature(notes),time_map=[[0,0],[2,3]],section_tracks={'harp':[0]},section_levels={},harp_presence=dict(start_pitch=48,full_pitch=60,upper_db=3,opening_db=2,opening_hold_seconds=24,opening_end_seconds=48))
+  out=apply_performance_map(notes,a);upper=next(n for n in out if n[2]==60);low=next(n for n in out if n[2]==48)
+  self.assertAlmostEqual(upper[7],10**(.25));self.assertEqual(low[7],1)
+  self.assertEqual(upper[4:6],[.5,.6])
+  blob,_,events=pack(out,mix_levels=True,sections={0:0});raw=zlib.decompress(blob,-15)
+  self.assertEqual(raw[:4],b'MUS4');self.assertEqual(events[0][3]&15,7);self.assertEqual((events[0][3]>>4)-1,0)
  def test_model_bank_rebuild_preserves_every_scalar(self):
   data=json.loads((ROOT/'data/music/instruments.json').read_text())
   actual=(ROOT/'data/music/instruments.z').read_bytes()
