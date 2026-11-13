@@ -142,3 +142,17 @@ economic ships at16 (the phone tier can choose6). Commissions are bounded96; pol
 reports, contacts, survivors, missions and ordnance have separate saved limits. Graph search for
 sea lanes is offline; force decisions and cohort work are staggered. Tests use strict invariant
 failures. The game opts into logged transaction recovery and retains the last sound state.
+
+`sync_far_vessels` still steps leased motion, commits damage and folds ships leaving view on
+every call. The game requests new admission four times per second with `refresh`; standalone
+callers default to a fresh admission scan. This adds no saved cache or second motion owner.
+An explicit vehicle lease looks up its own journey directly, and reverse travel indexes the
+immutable route without copying it. Identical idle poses need no repeated write.
+
+In game mode the minute clock validates mutable far-state inputs once before the guarded
+economy/transport pair; standalone transport calls validate their own inputs. Strict tests
+retain both full validations. Published route points have no game mutation path: construction,
+load and save always validate every point, and strict minute tests also retain that scan.
+Only that immutable point scan is omitted from the game minute's validation; route dimensions,
+endpoints, journey references and progress remain checked. Future route replacement must pass
+full validation before publication. The game-mode save-boundary test still refuses NaN routes.
