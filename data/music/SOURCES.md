@@ -17,6 +17,11 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Entry of the Gladiators, marching-band excerpt | Julius Fučík (1872–1916), 1897 | Eric Russ / imwoaheric, [score 5733627](https://musescore.com/user/34335505/scores/5733627), “Stands Tune” | CC0 1.0, including the modern arrangement |
 | Ikariotikos | Traditional Greek dance, anonymous | ekwesh62, [score 6124814](https://musescore.com/user/34984664/scores/6124814) | CC0 1.0 |
 | Bethena, a concert waltz | Joplin, 1905 | [Mutopia 463](https://www.mutopiaproject.org/ftp/JoplinS/bethena/), Magnus Lewis-Smith, original manuscript | Mutopia explicitly marks the transcription **Public Domain** |
+| Gymnopédie No. 1 | Erik Satie (1866–1925), 1888 | [Mutopia, SatieE/gymnopedie_1](https://www.mutopiaproject.org/ftp/SatieE/gymnopedie_1/), Evin Robertson, Dover edition | Mutopia explicitly marks the transcription **Public Domain** |
+| Ave Maria (Méditation sur le premier prélude de Bach) | Charles Gounod (1818–1893), 1853, on J. S. Bach's Prelude in C | [Mutopia, GounodC/AveMaria-PianoViolin](https://www.mutopiaproject.org/ftp/GounodC/AveMaria-PianoViolin/), Yann Leprince, Heugel 1856 | Mutopia explicitly marks the transcription **Public Domain** |
+| Suite bergamasque: Clair de lune | Claude Debussy (1862–1918), 1905 | [Mutopia, DebussyC/L75](https://www.mutopiaproject.org/ftp/DebussyC/L75/debussy_Ste_Bergamesq_Clair/), Keith OHara, Fromont 1905 | Mutopia explicitly marks the transcription **Public Domain** |
+| Adelita | Francisco Tárrega (1852–1909) | [Mutopia, TarregaF/adelita-duo](https://www.mutopiaproject.org/ftp/TarregaF/adelita-duo/), Jeffrey Olson's two-guitar arrangement, Antich y Tena | Mutopia explicitly marks the arrangement **Public Domain** |
+| Berceuse (Dolly, Op. 56) | Gabriel Fauré (1845–1924), 1894 | [Mutopia, FaureG/O56](https://www.mutopiaproject.org/ftp/FaureG/O56/faure_dolly_berceuse/), Mike Blackstock's flute-and-guitar adaptation, Hamelle | Mutopia explicitly marks the adaptation **Public Domain** |
 
 CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
 The named historical composers died more than 100 years ago and these compositions
@@ -31,7 +36,8 @@ Julian McAuley and Taylor Berg-Kirkpatrick. Dataset metadata is
 CSV row has `license_conflict=False`; the stored score metadata agrees with its public
 CC0 designation and lists no copyright claims. `source/licences.json` preserves the
 source URLs, named uploaders, licence URLs and SHA-256 hashes of the exact shipped MIDI.
-The two original Mutopia RDF permission records are included beside their MIDI files.
+The original Mutopia RDF permission records (two for the radio pieces, five for the Hotel
+Ancora's evening set, fetched 13 November 2026) are included beside their MIDI files.
 Dataset MIDI was converted, instrument assignments changed as described below, and only
 a small subset of metadata retained. This is not an endorsement by any source author.
 
@@ -61,6 +67,15 @@ a small subset of metadata retained. This is not an endorsement by any source au
   not interpreted; note release and hall decay supply a modest sustain tail.
 * Per-note start/end gain follows velocity and CC7/11. Controller curves within a note
   are approximated by a straight ramp, not reproduced exactly.
+
+* The Hotel Ancora's evening set (not on the radio) is arranged for its small band:
+  Gymnopédie No. 1 puts the right hand's top voice (the tune, from bar 5) on the violin and leaves
+  the chords and bass on the piano; Ave Maria keeps the source violin and piano (the bar's singer
+  takes the violin's line, which then plays at half level); Clair de lune is the source piano
+  alone; Adelita's two guitars become a mandolin-like plucked voice (the tune) and a guitar;
+  the Berceuse's flute becomes the violin over the guitar. All source pitches and rhythms are
+  kept; the interpretation pass adds gentle phrase timing and a final ritard. The Mutopia MIDI
+  files play each piece once, without the printed repeats.
 
 Rebuild: `python tools/music_pack.py`. Additional repertoire should meet the same
 composition **and** sequence permission checks. Do not substitute an unlicensed MIDI
