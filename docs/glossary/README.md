@@ -232,11 +232,12 @@ On the rivers branch until it lands.
 
 - **Aliases:** the river water, inland water, the canal water.
 - **Definition:** the raised water surface of the mainland river and Neravessa's canals: strips of
-  twelve quads across the channel between stations, in batches of four stations. It uses the sea's
+  twelve quads across the channel between stations, in batches of four stations grouped by
+  sixteen (one material anchor). It uses the sea's
   material with its inland options: the same [speed flecks](#speed-flecks) and
   [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water. A
-  batch wholly beyond 450 m (where flecks and ripples have faded out) uses the cheaper far material,
-  which is exact there.
+  group or batch wholly beyond 450 m (where flecks and ripples have faded out) uses the cheaper far
+  material in one draw, which is exact there.
 - **Code:** `src/river_render.jo` (`init_rivers`, `draw_rivers`, `draw_inland_water`);
   the material is `src/sea.jo sea_material` with `inland=true`.
 - **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
@@ -246,7 +247,8 @@ On the rivers branch until it lands.
 - **Definition:** a depth-only pass over the river ribbon's triangles that are at least 2 m deep
   at every vertex, where the water is exactly opaque. Drawn before the terrain, it spares the
   hidden riverbed its shading. It needs no discard, so early depth testing works.
-- **Code:** `src/river_render.jo` `river_with_occluder`, `draw_river_occlusion`; native
+- **Code:** `src/river_render.jo` `river_with_occluder`, `draw_river_occlusion` (one draw per
+  group); native
   reversed depth only. Checked by `tests/river_depth_render_test.py`.
 
 ### Bank plants
@@ -255,8 +257,8 @@ On the rivers branch until it lands.
 - **Definition:** poplars, plane trees, oleanders and waterline reeds along both banks, instanced
   per prototype. Detail by distance: full trees to the grove distance, then the simpler distant
   crowns, without trunks past 600 m; shrubs and reeds end at the grove distance, and past 150 m one
-  reed stem in three is drawn. Distant trees end at the tier's reach (low 2 km, medium
-  2.4 km, high 3.5 km), as groves do.
+  reed stem in three is drawn. Distant trees end at the tier's reach (low 1.6 km, medium
+  2 km, high 3.5 km), as groves do.
 - **Code:** `src/river_banks.jo` (`build_river_bank`, `draw_river_banks`, `river_bank_reach`).
 
 ### Riparian ground
