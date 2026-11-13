@@ -138,59 +138,94 @@ splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phas
             p.y=swell_at(f64(p.x)+f64(origin.x),f64(p.z)+f64(origin.z),t).x+0.035
             splash_add(out,p,vec3(0.04+run*0.025,0.018,0.6+run*0.55),phase,back)
 
-splash_instances=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,origin:vec3,t:f64,active:bool=true)->SplashInstance[]:
-    out:SplashInstance[];s=f.state
+# Presentation-only state: no forces, emission rates, RNG or damage changes.
+# 95% attack in 0.20 s, release in 0.36 s; exact exponential integration is
+# stable at 30/60/120 Hz and bridges momentary wet-contact changes in chop.
+struct SplashSheet:
+    root:WorldPoint
+    back:vec3=vec3(0,0,1)
+    right:vec3=vec3(1,0,0)
+    run:f64=0.0
+    reach:f64=0.0
+    amount:f64=0.0
+    phase:f64=0.0
+struct SplashMotion:
+    sheets:SplashSheet[7]
+    time:f64= -1.0
+    anchor:WorldPoint
+splash_motion=SplashMotion()
+splash_ramp=(value:f64,target:f64,dt:f64)->f64:
+    mix(value,target,1.0-exp(-max(0.0,dt)/(if target>value:0.065 else:0.12)))
+splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
+    s=f.state;out:SplashSheet[]
     rotation=pose;rotation[3]=vec4(0,0,0,1)
     anchor=flight_fx_anchor(f,pose)
     back=quat_rotate(s.orientation,vec3(0,0,1));right=quat_rotate(s.orientation,vec3(1,0,0))
-    if active and s.on_water and not s.moored and not s.crashed:
-        run=smoothstep(3.0,f.spec.stall_speed,water_run_speed(f.spec,s))
-        roots:{int:WorldPoint};aft:{int:f64};phases:{int:f64}
-        loop p in model.contacts:
-            if run<0.01 or part_health(s.damage,PartId(contact_part(f.kind,p)))<=0:continue
-            contact=world_offset(anchor,transform_point(rotation,p))
-            sea=swell_at(contact.x,contact.z,f.sea_t)
-            if contact.y>f64(sea.x)+0.18:continue
-            contact.y=f64(sea.x)+0.04
-            part=contact_part(f.kind,p)
-            if not (part in roots) or f64(p.z)>aft[part]:
-                roots[part]=contact;aft[part]=f64(p.z);phases[part]=f64(p.x)*1.7
-        loop part in 0..7:
-            if part in roots:splash_fan(out,world_local(roots[part],origin),back,right,run,t*2.0+phases[part],origin,t)
+    run=smoothstep(3.0,f.spec.stall_speed,water_run_speed(f.spec,s))
     gap=f64(s.position.y)-f.spec.float_height
     skim=if s.on_water or s.moored:0.0 else:(1.0-smoothstep(0.5,f.spec.span*0.6,gap))*smoothstep(28.0,60.0,f64(length(s.velocity))/pure_k(f.spec))
-    if active and skim>0.1:
-        # Start the visible sheet at each float, not at the remote downwash sample.
-        # Pitch/heave move the root with the craft; the trailing end settles onto water.
-        roots:{int:WorldPoint};aft:{int:f64}
+    loop part in 0..7:
+        sheet=SplashSheet(back=back,right=right)
+        aft= -1e30;wet= -1e30
         loop p in model.contacts:
-            part=contact_part(f.kind,p)
-            if part_health(s.damage,PartId(part))<=0:continue
-            if not (part in roots) or f64(p.z)>aft[part]:
-                roots[part]=world_offset(anchor,transform_point(rotation,p));aft[part]=f64(p.z)
-        loop part in 0..7:
-            if not (part in roots):continue
-            root=roots[part]
-            reach=4.0+skim*7.0
-            tail=world_offset(root,splash_heading(back)*f32(reach))
+            if contact_part(f.kind,p)!=part or part_health(s.damage,PartId(part))<=0:continue
+            contact=world_offset(anchor,transform_point(rotation,p))
+            sea=swell_at(contact.x,contact.z,f.sea_t)
+            if f64(p.z)>aft:
+                aft=f64(p.z);sheet.root=contact;sheet.phase=f64(p.x)*1.7
+            if active and s.on_water and not s.moored and not s.crashed and run>0.0 and contact.y<=f64(sea.x)+0.18 and f64(p.z)>wet:
+                wet=f64(p.z)
+        if wet> -1e29:
+            loop p in model.contacts:
+                if contact_part(f.kind,p)==part and f64(p.z)==wet:
+                    sheet.root=world_offset(anchor,transform_point(rotation,p))
+                    sheet.root.y=f64(swell_at(sheet.root.x,sheet.root.z,f.sea_t).x)+0.04
+            sheet.run=run;sheet.amount=smoothstep(0.0,0.04,run)
+        else if active and not s.crashed and skim>0.1 and aft> -1e29:
+            tail=world_offset(sheet.root,splash_heading(back)*f32(4.0+skim*7.0))
             tail.y=f64(swell_at(tail.x,tail.z,f.sea_t).x)+0.08
-            delta=vec3(tail.x-root.x,tail.y-root.y,tail.z-root.z)
-            direction=normalize(delta);at=world_local(root,origin)
-            start=out.len()
-            splash_fan(out,at,direction,right,skim*0.65,t*2.0+f64(part),origin,t,f64(length(delta)))
-            # Opaque volumes dissipate by shrinking to zero at the original skim gate.
-            fade=f32(smoothstep(0.1,0.25,skim))
-            loop i in start..out.len():
-                streak=out[i].size.y==f32(0.018)
-                center=at+(out[i].center.xyz-at)*fade
-                if streak:center.y=swell_at(f64(center.x)+f64(origin.x),f64(center.z)+f64(origin.z),t).x+0.035
-                out[i].center=vec4(center,out[i].center.w)
-                out[i].size=vec4(out[i].size.xyz*fade,out[i].size.w)
+            delta=world_delta(tail,sheet.root)
+            sheet.back=normalize(delta);sheet.reach=f64(length(delta))
+            sheet.run=skim*0.65;sheet.amount=smoothstep(0.1,0.25,skim)
+        out.push(sheet)
+    out
+
+step_splash_motion=(motion:mut SplashMotion,targets:SplashSheet[],anchor:WorldPoint,t:f64):
+    dt=if motion.time<0.0:0.0 else:max(0.0,t-motion.time)
+    if t<motion.time or length(world_delta(anchor,motion.anchor))>250.0:motion=SplashMotion()
+    loop part in 0..7:
+        next=targets[part];previous=motion.sheets[part]
+        # Track the live float, even while its release envelope drains away.
+        if next.amount>0.0:
+            previous.root=next.root;previous.back=next.back;previous.right=next.right;previous.phase=next.phase
+            previous.run=splash_ramp(previous.run,next.run,dt)
+            previous.reach=splash_ramp(previous.reach,next.reach,dt)
+        else if motion.time>=0.0:
+            previous.root=world_offset(previous.root,world_delta(anchor,motion.anchor))
+        previous.amount=splash_ramp(previous.amount,next.amount,dt)
+        motion.sheets[part]=previous
+    motion.anchor=anchor;motion.time=t
+
+splash_instances=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,origin:vec3,t:f64,active:bool=true,motion:SplashMotion?=none)->SplashInstance[]:
+    out:SplashInstance[]
+    sheets=splash_targets(f,model,pose,active)
+    if let m=motion:sheets=[loop sheet in m.sheets:sheet]
+    loop sheet in sheets:
+        if sheet.amount<0.0001:continue
+        at=world_local(sheet.root,origin);start=out.len()
+        splash_fan(out,at,sheet.back,sheet.right,sheet.run,t*2.0+sheet.phase,origin,t,sheet.reach)
+        fade=f32(sheet.amount)
+        loop i in start..out.len():
+            # Keep the user's water ovals/streaks in exactly the same places and
+            # proportions. Only their size envelope changes, never their placement.
+            streak=out[i].size.y==f32(0.018)
+            if not streak:out[i].center=vec4(at+(out[i].center.xyz-at)*fade,out[i].center.w)
+            out[i].size=vec4(out[i].size.xyz*fade,out[i].size.w)
     loop b in ps.billows:
         age=f64(b.age);life=f64(b.life)
         if age>=life:continue
         fade=1.0-smoothstep(life*0.50,life,age)
-        growth=0.55+0.45*smoothstep(0.0,0.12,age)
+        growth=smoothstep(0.0,min(0.18,life*0.3),age)
         radius=f64(b.radius)*pow(f64(b.count),0.25)*growth*fade
         # The original sampled velocity envelope expands the burst; drag limits its spread.
         spread=b.spread*f32((1.0-exp(-f64(ps.drag)*age))/max(0.01,f64(ps.drag))*0.45*fade)
@@ -203,14 +238,19 @@ splash_instances=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,origin:ve
     out
 
 draw_splashes=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,L:Light,t:f64,active:bool=true):
+    global splash_motion
+    step_splash_motion(splash_motion,splash_targets(f,model,pose,active),craft_point(f.state),t)
+    snapshot=splash_motion
     draw_custom(():
         origin=render_origin(scene_camera())
-        bodies=splash_instances(f,model,pose,ps,origin,t,active)
+        bodies=splash_instances(f,model,pose,ps,origin,t,active,snapshot)
         if bodies.len()>0:
             glDepthMask(1);glDisable(GL_CULL_FACE)
             white=L.sun*0.75+L.shade*0.25+vec3(0.18,0.20,0.21)
             draw_instanced(splash_shader,splash_mesh,bodies,SplashParams(render_view_proj(origin),render_eye(origin),L.sun_dir,white,L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b))
     ,transparent=true)
+
+draw_splash_dust=(ps:WorldParticles):
     # The shared impact system also carries brown dirt. Its existing rendering stays intact.
     dust=ps;dust.items=[loop p in ps.items:if p.color.x<=0.8 or p.color.y<=0.8:p]
     if dust.items.len()>0:draw_curved_particles(dust,false)

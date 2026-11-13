@@ -1,0 +1,103 @@
+# Shared visibility for every blended world pass. Opaque scene (including water and
+# splash bodies) is composed with clouds first. Blended fragments then attenuate only
+# by cloud material between the eye and THEIR position, not by the background cloud.
+# One buffer upload per frame, no uniform-array limit or silent cloud-list truncation.
+use 'cloud_volume.jo'
+use 'render_space.jo'
+use 'world_point.jo'
+use 'cloud_density.jo'
+use 'look.jo'
+struct CloudVeilRecord:
+    center:vec4
+    extent:vec4
+    meta:vec4
+    growth:vec4
+struct CloudVeil:
+    records:GpuBuffer[CloudVeilRecord]
+    atlas:Texture
+    cam:vec3
+    count:int=0
+    nearest:f32=1e30
+cloud_veil=CloudVeil()
+prepare_cloud_transparency=():
+    global cloud_veil
+    chart=render_origin(scene_camera());eye=render_eye(chart)
+    rows:CloudVeilRecord[]
+    nearest=f32(1e30)
+    loop v in volume_occluders:
+        center=world_local(cloud_point(v),chart)
+        reach=length(v.extent.xz);distance=length(center.xz-eye.xz)
+        radius=cloud_support_radius(v)+world_drop(vec2(distance+reach,0))-world_drop(vec2(distance,0))
+        near=max(0.0,length(render_world(center,eye)-eye)-radius)
+        nearest=min(nearest,near)
+        rows.push(CloudVeilRecord(vec4(center,near),vec4(v.extent,0),vec4(cos(v.heading),sin(v.heading),v.shape,v.weather.x),v.growth))
+    # Near records first: dense foreground terminates the walk before distant banks.
+    rows.sort((r:CloudVeilRecord)->f32:r.center.w)
+    if len(cloud_veil.records)<max(1,rows.len()):cloud_veil.records=gpu_buffer[CloudVeilRecord](max(16,rows.len()*2))
+    if rows.len()>0:upload(cloud_veil.records,rows)
+    cloud_veil.atlas=volume_atlas;cloud_veil.cam=eye;cloud_veil.count=rows.len();cloud_veil.nearest=nearest
+
+# Evaluate only the tiny ribbon's pixels, and only up to THEIR depth. Drawing
+# after the composite alone would incorrectly put a far trail over near clouds.
+cloud_transmittance = (world: vec3,u: CloudVeil) -> f32:
+    cloud_ray_transmittance(render_world(world,u.cam)-u.cam,u)
+
+cloud_ray_transmittance = (delta:vec3,u:CloudVeil) -> f32:
+    limit = length(delta); ray = delta/max(limit,0.0001)
+    if limit < u.nearest or u.count == 0: return 1.0
+    trans: f32 = 1.0
+    loop k in 0..u.count:
+        if trans < 0.005: break
+        record = u.records[k]
+        if limit < record.center.w: continue
+        center = record.center.xyz; extent = record.extent.xyz; meta = record.meta
+        bent = render_world(center,u.cam)
+        origin = cloud_to_local(u.cam-bent,meta.xy)
+        direction = cloud_to_local(ray,meta.xy)
+        reach = length(extent.xz); distance = length(center.xz-u.cam.xz)
+        pad = world_drop(vec2(distance+reach,0))-world_drop(vec2(distance,0))
+        inv = vec3(1.0/(if abs(direction.x) < 0.000001: 0.000001 else: direction.x),1.0/(if abs(direction.y) < 0.000001: 0.000001 else: direction.y),1.0/(if abs(direction.z) < 0.000001: 0.000001 else: direction.z))
+        a = (extent*(CLOUD_MIN-cloud_growth_padding(record.growth))-vec3(0,pad,0)-origin)*inv
+        b = (extent*(CLOUD_MAX+cloud_growth_padding(record.growth))+vec3(0,pad,0)-origin)*inv
+        lo = min(a,b); hi = max(a,b)
+        enter = max(0.0,max(lo.x,max(lo.y,lo.z))); leave = min(limit,min(hi.x,min(hi.y,hi.z)))
+        if meta.z == 4.0 or meta.z >= 6.0:
+            interval = cloud_layer_interval(ray.y,u.cam.y,center.y-extent.y*0.59,center.y+extent.y*0.87,vec2(enter,leave))
+            enter = interval.x; leave = interval.y
+        if leave <= enter: continue
+        scale = 1.0/max(length(direction/extent)+leave/(f32(EARTH_RADIUS)*extent.y),0.000001)
+        t = enter
+        if meta.z < 4.0 or meta.z == 5.0:
+            loop step in 0..80:
+                if t >= leave: break
+                at = u.cam+ray*t; at.y += world_drop(ray.xz*t)
+                p = cloud_growing_point(cloud_to_local(at-center,meta.xy)/extent,record.growth)
+                form = cloud_stamp_sample(u.atlas,p,meta.z)
+                d = (0.5-form.w)*0.5+record.growth.x
+                if d < 0.005:
+                    path = max(leave-t,0.0)
+                    if t < 0.01 and d < 0.0:
+                        normal = normalize(cloud_to_world((form.xyz*2.0-vec3(1,1,1))/extent,meta.xy))
+                        outward = dot(normal,ray)
+                        if outward > 0.05: path = min(path,-d*min(extent.x,min(extent.y,extent.z))/outward)
+                    trans *= 1.0-meta.w*(1.0-exp(-path*0.018))
+                    break
+                t += max((d-0.001)*scale*0.72,scale*0.0025)
+        else:
+            dt = (leave-enter)/f32(WEATHER_STEPS)
+            loop step in 0..WEATHER_STEPS:
+                at = u.cam+ray*(enter+(f32(step)+0.5)*dt); at.y += world_drop(ray.xz*(enter+(f32(step)+0.5)*dt))
+                p = cloud_to_local(at-center,meta.xy)/extent
+                density = volume_sample(u.atlas,p,meta.z).w*meta.w
+                trans *= exp(-density*dt*0.009)
+    trans
+
+
+# Queue this boundary after all depth writers (including sea and splash bodies),
+# before ALL alpha/additive world geometry. Opaque callbacks run earlier in the
+# engine queue regardless of source order. This boundary is also used by the test.
+draw_cloud_layer=(clouds:CloudVolume[],L:Light):
+    draw_custom(():
+        draw_cloud_volumes(clouds,L)
+        prepare_cloud_transparency()
+    ,transparent=true)
