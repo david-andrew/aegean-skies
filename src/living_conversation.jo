@@ -279,9 +279,10 @@ conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTop
                 discreet = false
                 break
     result: SpeechCandidate[]
+    used_openers:{str:bool}
     if p.far_home>=0 and topic!=.greeting and topic!=.farewell and topic!=.weather:
         far = far_speech_candidates(w,speaker,listener,topic)
-        loop k in 0..far.len(): far[k].text = fresh_opener(w,speaker,listener,cap_first(far[k].text))
+        loop k in 0..far.len(): far[k].text = fresh_opener_cached(w,speaker,listener,cap_first(far[k].text),used_openers)
         return far
     match topic:
         .greeting:
@@ -378,20 +379,20 @@ conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTop
             loop k in 0..lines.len(): result.push(SpeechCandidate("story:{id}:{story.stage}:{k}",lines[k],TIER_PERSONAL+10,private=story.kind == .courtship))
     loop k in 0..result.len():
         text = result[k].text
-        if text != "": result[k].text = fresh_opener(w,speaker,listener,upper(text[0..1])+text[1..])
+        if text != "": result[k].text = fresh_opener_cached(w,speaker,listener,upper(text[0..1])+text[1..],used_openers)
     result
 
 # Read-only projection for UI layout/testing; it cannot consume a phrase or create acquaintance.
-conversation_preview = (w: World, speaker: int, listener: int, topic: TalkTopic, private: bool = false) -> ConversationTurn:
+_conversation_selection = (w: World, speaker: int, listener: int, topic: TalkTopic, private: bool = false) -> (ConversationTurn,SpeechCandidate[]):
     turn = ConversationTurn(speaker,listener,topic)
-    if speaker < 0 or speaker >= w.people.len() or listener < 0 or listener >= w.people.len() or speaker == listener: turn.exhausted = true; return turn
-    if not people_can_talk(w,speaker,listener): turn.exhausted = true; return turn
+    if speaker < 0 or speaker >= w.people.len() or listener < 0 or listener >= w.people.len() or speaker == listener: turn.exhausted = true; return (turn,[])
+    if not people_can_talk(w,speaker,listener): turn.exhausted = true; return (turn,[])
     ledger = w.speech.get(speaker,SpeechLedger())
     active_lines = 0
     loop line in ledger.recent:
         if w.minute-line.minute < SPEECH_RECENT_MINUTES: active_lines += 1
     # A persistent click storm reaches silence instead of evicting an unexpired utterance.
-    if active_lines >= SPEECH_RECENT_LINES-1: turn.exhausted = true; return turn
+    if active_lines >= SPEECH_RECENT_LINES-1: turn.exhausted = true; return (turn,[])
     candidates = conversation_candidates(w,speaker,listener,topic,private)
     # An exhausted subject yields an honest refusal, then silence, never a fabricated new fact.
     if topic != .farewell: candidates += _bank(quiet_lines(voice_of(w,speaker)),"quiet",-100)
@@ -407,28 +408,36 @@ conversation_preview = (w: World, speaker: int, listener: int, topic: TalkTopic,
         noise = draw1000000(w.seed,110,speaker,ledger.sequence,i+int(topic)*1000)%50
         value = c.priority+noise
         if value > score: best = i; score = value
-    if best < 0: turn.exhausted = true; return turn
+    if best < 0: turn.exhausted = true; return (turn,[])
     c = candidates[best]
     turn.question_kind = c.ask.kind
     turn.text = c.text; turn.source_event = c.event; turn.source_person = c.source_person
     turn.far_news=c.far_news; turn.commission=c.commission; turn.mission=c.mission
     turn.confidence = c.confidence; turn.private = c.private; turn.job = c.job
-    turn
+    (turn,candidates)
+
+conversation_preview = (w: World, speaker: int, listener: int, topic: TalkTopic, private: bool = false) -> ConversationTurn:
+    _conversation_selection(w,speaker,listener,topic,private).0
 
 # Response labels are words the listener can say; presentation chooses how to lay them out.
 conversation_replies = (text: str) -> ReplyOption[]: question_replies(question_details(text))
 
 _guarded_converse = (w: mut World, speaker: int, listener: int, topic: TalkTopic, private: bool = false) -> ConversationTurn:
-    turn = conversation_preview(w,speaker,listener,topic,private)
+    turn,candidates = _conversation_selection(w,speaker,listener,topic,private)
     if turn.text == "": return turn
+    acquainted = RelationshipKey(speaker,listener) in w.relationship_index
     acquaintances.seed_relationship(w,speaker,listener)
     w.relationships[w.relationship_index[RelationshipKey(speaker,listener)]].last_contact_minute = w.minute
     if not (speaker in w.speech): w.speech[speaker] = SpeechLedger()
     ledger = w.speech[speaker]
     ledger.recent = [loop line in ledger.recent: if w.minute-line.minute < SPEECH_RECENT_MINUTES: line]
     previous_lines = ledger.recent
-    candidates = conversation_candidates(w,speaker,listener,topic,private)
-    if topic != .farewell: candidates += _bank(quiet_lines(voice_of(w,speaker)),"quiet",-100)
+    # Contact time and the local ledger trim do not change existing acquaintances'
+    # candidates. Retain the preview pool instead of formatting every line twice.
+    # A new relationship can affect introductions, so rebuild that uncommon case.
+    if not acquainted:
+        candidates = conversation_candidates(w,speaker,listener,topic,private)
+        if topic != .farewell: candidates += _bank(quiet_lines(voice_of(w,speaker)),"quiet",-100)
     key = ""; detail = TalkQuestion(.none,"","")
     loop c in candidates:
         if c.text == turn.text: key = c.key; detail = c.ask; break
