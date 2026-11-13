@@ -20,4 +20,4 @@ Replay artifacts: `/var/home/david/dev/tmp/aegean-skies/towns/inland/market-seed
 | 42 | PASS, 30 days | 3373695c in, 1058070c out, balanced | `c2c88b7706ae6e2a53f2aa7fc7df4e12b7e4137447b062bea9ce37dbfbcac8a7` |
 | 127 | PASS, 30 days | 3343364c in, 1084848c out, balanced | `a8e0d16adf0c9e29040fd4236b2de46f5871b0fe83de8f5fca92cc0c959975a1` |
 
-All five 30-day market seeds pass. Pending: the classified island-access hand-off. No Redfox run is part of this resume.
+All five 30-day market seeds pass. The 46 unresolved island gaps are explicitly handed off in [the classified inventory](inland-island-access.md); no access repair is claimed. No Redfox run is part of this resume.
