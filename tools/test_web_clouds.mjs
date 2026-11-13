@@ -66,6 +66,35 @@ try {
     results.push({name,file,linkedPrograms:links.length,pixels});
     console.log(JSON.stringify(results.at(-1)));
   }
+  const sky=process.argv[5];
+  if(sky) {
+    const probes=[];
+    for(const full of [false,true]) for(const target of ['moon','venus']) for(const cloud of [false,true]) {
+      const name=`sky-${full?'log':'split'}-${target}-${cloud?'cloud':'clear'}`;
+      const q=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SKY_TARGET:target,SKY_HOUR:target==='moon'?'0':'5.8',SKY_DAY:target==='moon'?String(29.53059/2-10):'0'});
+      if(full)q.set('AEGEAN_FULL_LOG_DEPTH','1');if(cloud)q.set('SKY_CLOUD','1');
+      errors.length=0;loaded=false;await send('Page.navigate',{url:'file://'+resolve(sky)+'?'+q});
+      await until(()=>loaded);await until(async()=>{const r=await send('Runtime.evaluate',{returnByValue:true,expression:'globalThis.quayFrames||0'});return r.result?.value>=4;});
+      const links=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayLinks'})).result.value;
+      assert(links.every(Boolean)&&errors.length===0,name+': sky shader/runtime failure');
+      const shot=await send('Page.captureScreenshot',{format:'png'}),file=join(out,name+'.png');writeFileSync(file,Buffer.from(shot.data,'base64'));
+      const pixels=JSON.parse(execFileSync('python3',['-c',`
+import json,sys
+from PIL import Image,ImageStat
+im=Image.open(sys.argv[1]).convert('RGB');w,h=im.size;x=w//2;y=h//2
+center=im.crop((x-3,y-3,x+3,y+3));rim=im.crop((x+35,y-3,x+45,y+3))
+print(json.dumps({'peak':max(max(p) for p in center.getdata()),'contrast':max(max(p) for p in center.getdata())-sum(ImageStat.Stat(rim).mean)/3}))
+`,file],{encoding:'utf8'}));
+      probes.push({name,full,target,cloud,file,...pixels});
+    }
+    for(const clear of probes.filter(p=>!p.cloud)) {
+      const cloud=probes.find(p=>p.cloud&&p.full===clear.full&&p.target===clear.target);
+      assert(clear.contrast>40,clear.name+': celestial body not visible');
+      assert(cloud.contrast<25,cloud.name+': celestial body leaked over cloud');
+    }
+    writeFileSync(join(out,'sky.json'),JSON.stringify(probes,null,2)+'\n');
+    console.log('PASS: moon and Venus visibility and cloud occlusion on both WebGL2 depth paths');
+  }
   writeFileSync(join(out,'results.json'),JSON.stringify(results,null,2)+'\n');
   console.log('PASS: every foreground material visible; background materials cloud-occluded on split and full log WebGL2 depth');
 } finally {
