@@ -8,12 +8,22 @@ use 'terrain_lod.jo'
 use 'render_space.jo'
 
 coast_height_batches: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
-coast_height_previous: CoastInstance[][] = []
+struct CoastAtlasTile:
+    world: vec2
+    parts: CoastInstance[]
+coast_height_tiles: {int:CoastAtlasTile}[] = [{},{}]
+coast_height_phase = vec2(0,0)
+coast_height_roll = vec4(0,0,0,0)
+coast_height_dirty = 0
+coast_height_previous: CoastInstance[][]
+coast_height_center = vec2(0,0)
+coast_height_chart = vec3(0,0,0)
 coast_height_near: RenderTarget
 coast_height_far: RenderTarget
 coast_height_near_area = vec4(0,0,0,0) # local origin x,z, sample spacing, dimension
 coast_height_far_area = vec4(0,0,0,0)
 coast_height_shader: Shader
+coast_clear_shader: Shader
 coast_height_valid = false
 coast_height_draws = 0
 coast_height_refreshes = 0
@@ -24,15 +34,29 @@ struct CoastHeightParams:
 struct CoastHeightOut:
     pos: vec4
     height: f32
+    clip: vec4
 
 coast_height_vs = (v: TerrainVertex,inst: CoastInstance,u: CoastHeightParams) -> CoastHeightOut:
     f = inst.region.xy+v.cell*inst.region.z
     p = inst.origin+f*14.0
     clip = ((p-u.area.xy)/u.area.z+vec2(0.5,0.5))/u.area.w*2.0-vec2(1,1)
-    CoastHeightOut(vec4(clip,0,1),coast_gpu_height(inst,f,u.pattern))
+    CoastHeightOut(vec4(clip,0,1),coast_gpu_height(inst,f,u.pattern),vec4(inst.texel,inst.texel+vec2(inst.region.w,inst.region.w)))
 coast_height_fs = (v: CoastHeightOut,u: CoastHeightParams) -> vec4:
+    if v.pos.x < v.clip.x or v.pos.y < v.clip.y or v.pos.x >= v.clip.z or v.pos.y >= v.clip.w: discard()
     packed = int(round(clamp((v.height+16.0)*2048.0,0.0,65535.0)))
     vec4(f32(packed & 255),f32(packed>>8),0,255)/255.0
+
+# Batched zero rectangles avoid backend-dependent scissored-clear behavior.
+struct CoastClearRect:
+    bounds: vec4
+struct CoastClearParams:
+    size: f32
+struct CoastClearOut:
+    pos: vec4
+coast_clear_vs = (v: TerrainVertex,inst: CoastClearRect,u: CoastClearParams) -> CoastClearOut:
+    p = mix(inst.bounds.xy,inst.bounds.zw,v.cell)
+    CoastClearOut(vec4(p/u.size*2.0-vec2(1,1),0,1))
+coast_clear_fs = (v: CoastClearOut,u: CoastClearParams) -> vec4: vec4(0,0,0,0)
 
 coast_height_target = (n: int) -> RenderTarget:
     tex = texture(image(n,n),false)
@@ -63,74 +87,141 @@ collect_coast_height = (batches: CoastInstance[][]):
             if lo-relief > 4.0 or hi+relief < -4.0: continue
             coast_height_batches[level].push(inst)
 
-coast_height_same = () -> bool:
-    if coast_height_previous.len() != COAST_LEVELS: return false
-    loop k in 0..COAST_LEVELS:
-        if coast_height_batches[k] != coast_height_previous[k]: return false
-    true
+# Physical slots are world tile indices modulo the bounded atlas width. A
+# scroll changes the logical window, not the texture. Compare each occupied
+# slot's selected geometry; missing/replaced slots must also clear old coverage.
+coast_wrap = (x: int,n: int) -> int: ((x%n)+n)%n
 
 refresh_coast_height = (cam: vec3):
-    global coast_height_near,coast_height_far,coast_height_shader,coast_height_previous,coast_height_near_area,coast_height_far_area,coast_height_valid,coast_height_draws,coast_height_refreshes
-    coast_height_draws = 0
+    global coast_height_near,coast_height_far,coast_height_shader,coast_clear_shader,coast_height_tiles,coast_height_phase,coast_height_roll,coast_height_dirty,coast_height_near_area,coast_height_far_area,coast_height_valid,coast_height_draws,coast_height_refreshes,coast_height_previous,coast_height_center,coast_height_chart
+    coast_height_draws = 0; coast_height_dirty = 0
     count = 0; phase = vec2(0,0)
     loop group in coast_height_batches:
         count += group.len()
-        if group.len() > 0: phase = group[0].origin
+        if group.len() > 0: phase = group[0].absolute
     if count == 0:
         coast_height_valid = false
         return
-    local = render_eye(render_origin(cam)).xz
-    center = floor((local-phase)/14.0)*14.0+phase
-    # Exact instance equality also catches LOD morphs, chart snaps and arrivals.
-    # Track atlas coverage even when moving across an unchanged coarse mesh.
-    if coast_height_valid and coast_height_same() and coast_height_near_area.xy == center-vec2(70,70): return
+    phase -= floor(phase/14.0)*14.0
+    if phase != coast_height_phase: coast_height_valid = false
+    if not coast_height_valid:
+        coast_height_phase = phase
+        coast_height_tiles = [{},{}]
     if coast_height_near.fbo == 0:
         coast_height_near = coast_height_target(640)
         coast_height_far = coast_height_target(1024)
         coast_height_shader = make_shader(shader(coast_height_vs,coast_height_fs))
+        coast_clear_shader = make_shader(shader(coast_clear_vs,coast_clear_fs))
     zone("shore atlas")
-    coast_height_near_area = vec4(center-vec2(70,70),0.21875,640)
-    coast_height_far_area = vec4(center-vec2(448,448),0.875,1024)
+    center = floor((cam.xz-coast_height_phase)/14.0)
+    chart = render_origin(cam)
+    if coast_height_valid and center == coast_height_center and chart == coast_height_chart and coast_height_batches == coast_height_previous:
+        zone_end()
+        return
+    coast_height_center = center; coast_height_chart = chart
+    coast_height_previous = coast_height_batches
     glDisable(GL_DEPTH_TEST); glDepthMask(0)
     glDisable(GL_BLEND); glDisable(GL_CULL_FACE)
     loop layer in 0..2:
         rt = if layer == 0: coast_height_near else: coast_height_far
-        area = if layer == 0: coast_height_near_area else: coast_height_far_area
+        dim = if layer == 0: 10 else: 64
+        samples = if layer == 0: 64 else: 16
+        spacing: f32 = 14.0/f32(samples)
+        first = center-vec2(f32(dim/2),f32(dim/2))
+        window = first*14.0+coast_height_phase
+        area = vec4(window-render_origin(cam).xz,spacing,f32(dim*samples))
+        roll = vec2(f32(coast_wrap(int(first.x),dim)*samples),f32(coast_wrap(int(first.y),dim)*samples))
+        if layer == 0:
+            coast_height_near_area = area
+            coast_height_roll.x = roll.x; coast_height_roll.y = roll.y
+        else:
+            coast_height_far_area = area
+            coast_height_roll.z = roll.x; coast_height_roll.w = roll.y
+        current: {int:CoastAtlasTile} = {}
+        loop group in coast_height_batches:
+            loop inst in group:
+                # Split cells need the same tile ownership as their parent.
+                q = (inst.absolute-coast_height_phase)/14.0
+                lo = max(floor(q),first)
+                hi = min(floor(q+vec2(1,1))+vec2(1,1),first+vec2(f32(dim),f32(dim)))
+                loop j in int(lo.y)..int(hi.y):
+                    loop i in int(lo.x)..int(hi.x):
+                        sx = coast_wrap(i,dim); sy = coast_wrap(j,dim)
+                        key = sy*dim+sx
+                        world = vec2(f32(i),f32(j))*14.0+coast_height_phase
+                        tile = current.get(key,CoastAtlasTile(world,[]))
+                        part = inst
+                        part.origin = inst.absolute-world+vec2(f32(sx),f32(sy))*14.0
+                        part.texel = vec2(f32(sx*samples),f32(sy*samples))
+                        part.region.w = f32(samples)
+                        tile.parts.push(part)
+                        current[key] = tile
+        previous = coast_height_tiles[layer]
+        dirty = [loop k in 0..dim*dim: false]
+        selected: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        loop key,tile in current.items():
+            if coast_height_valid and key in previous and previous[key] == tile: continue
+            dirty[key] = true
+            loop part in tile.parts:
+                level = max(0,int(ceil(part.level))-(if part.region.z < 1.0: 1 else: 0))
+                selected[level].push(part)
+        loop key,tile in previous.items():
+            if not (key in current): dirty[key] = true
         glBindFramebuffer(GL_FRAMEBUFFER,u32(rt.fbo))
         glViewport(0,0,i32(rt.texture.width),i32(rt.texture.height))
-        glClearColor(0,0,0,0); glClear(GL_COLOR_BUFFER_BIT)
+        glClearColor(0,0,0,0)
+        if not coast_height_valid: glClear(GL_COLOR_BUFFER_BIT)
+        else:
+            clears: CoastClearRect[]
+            loop j in 0..dim:
+                i = 0
+                loop i < dim:
+                    if not dirty[j*dim+i]:
+                        i += 1
+                        continue
+                    start = i
+                    loop i < dim and dirty[j*dim+i]: i += 1
+                    clears.push(CoastClearRect(vec4(f32(start*samples),f32(j*samples),f32(i*samples),f32((j+1)*samples))))
+            if clears.len() > 0:
+                draw_instanced(coast_clear_shader,coast_grids[0],clears,CoastClearParams(f32(dim*samples)))
+                coast_height_draws += 1
+        loop changed in dirty:
+            if changed: coast_height_dirty += 1
         loop level in 0..COAST_LEVELS:
-            if coast_height_batches[level].len() == 0: continue
-            draw_instanced(coast_height_shader,coast_grids[level],coast_height_batches[level],CoastHeightParams(area,coast_pattern_texture))
+            if selected[level].len() == 0: continue
+            draw_instanced(coast_height_shader,coast_grids[level],selected[level],CoastHeightParams(vec4(0,0,spacing,f32(dim*samples)),coast_pattern_texture))
             coast_height_draws += 1
+        coast_height_tiles[layer] = current
     __rebind_target()
     glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND)
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
-    coast_height_previous = coast_height_batches
+    if coast_height_dirty > 0 or not coast_height_valid: coast_height_refreshes += 1
     coast_height_valid = true
-    coast_height_refreshes += 1
     zone_end()
+
+coast_texel_wrap = (p: vec2,n: f32) -> ivec2: ivec2(p-floor(p/n)*n)
 
 coast_height_decode = (v: vec4) -> f32: dot(v.xy,vec2(255,65280))/2048.0-16.0
 
 # Three taps reconstruct the same b-c triangle; never filter coverage into water.
-coast_height_read = (t: Texture,area: vec4,p: vec2) -> vec2:
+coast_height_read = (t: Texture,area: vec4,p: vec2,roll: vec2 = vec2(0,0)) -> vec2:
     q = (p-area.xy)/area.z
     cell = floor(q); f = q-cell
     if cell.x < 1.0 or cell.y < 1.0 or cell.x >= area.w-2.0 or cell.y >= area.w-2.0: return vec2(0,0)
     lower = f.x+f.y <= 1.0
-    v = texel(t,ivec2(if lower: cell else: cell+vec2(1,1)))
+    wrapped = cell+roll
+    v = texel(t,coast_texel_wrap(if lower: wrapped else: wrapped+vec2(1,1),area.w))
     if v.w < 0.99: return vec2(0,0)
-    b = texel(t,ivec2(cell+vec2(1,0)))
-    c = texel(t,ivec2(cell+vec2(0,1)))
+    b = texel(t,coast_texel_wrap(wrapped+vec2(1,0),area.w))
+    c = texel(t,coast_texel_wrap(wrapped+vec2(0,1),area.w))
     y = if lower: coast_height_decode(v)*(1.0-f.x-f.y)+coast_height_decode(b)*f.x+coast_height_decode(c)*f.y else: coast_height_decode(v)*(f.x+f.y-1.0)+coast_height_decode(b)*(1.0-f.y)+coast_height_decode(c)*(1.0-f.x)
     vec2(y,min(v.w,min(b.w,c.w)))
 
-coast_height_lookup = (near: Texture,far: Texture,a: vec4,b: vec4,p: vec2) -> vec2:
+coast_height_lookup = (near: Texture,far: Texture,a: vec4,b: vec4,p: vec2,roll: vec4 = vec4(0,0,0,0)) -> vec2:
     q = (p-a.xy)/a.z
     if q.x >= 1.0 and q.y >= 1.0 and q.x < a.w-2.0 and q.y < a.w-2.0:
-        return coast_height_read(near,a,p)
-    coast_height_read(far,b,p)
+        return coast_height_read(near,a,p,roll.xy)
+    coast_height_read(far,b,p,roll.zw)
 
 # Optical depth is deliberately separate. Only the last 1.5 vertical metres of
 # contact change foam; broad color/clarity, breakers and speed marks stay intact.
