@@ -26,7 +26,7 @@ try{
  await send('Runtime.enable');await send('Page.enable');await send('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
  await send('Page.addScriptToEvaluateOnNewDocument',{source:`window.stutterProbe={frames:[],warp:0,finish:0,links:[]};const p=stutterProbe,raf=requestAnimationFrame,log=console.log;window.requestAnimationFrame=cb=>raf(t=>{const start=performance.now();cb(t);p.frames.push([t,start,performance.now()])});console.log=(...args)=>{const s=args.join(' ');if(s.includes('STUTTER_WARP'))p.warp=performance.now();if(s.includes('STUTTER_END'))p.finish=performance.now();log.apply(console,args)};const gl=WebGL2RenderingContext.prototype,link=gl.linkProgram;gl.linkProgram=function(prog){link.call(this,prog);p.links.push(this.getProgramParameter(prog,this.LINK_STATUS))};`});
  if(process.env.STUTTER_PROFILE==='1'){await send('Profiler.enable');await send('Profiler.setSamplingInterval',{interval:1000});await send('Profiler.start')}
- const q=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',AEGEAN_QUALITY:'low',AEGEAN_RUNTIME_TRACE:'1',STUTTER_TOWN:town,STUTTER_MODE:mode,STUTTER_WARMUP:'15',STUTTER_SECONDS:'60'});
+ const q=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',AEGEAN_QUALITY:'low',AEGEAN_RUNTIME_TRACE:'1',STUTTER_TOWN:town,STUTTER_MODE:mode,STUTTER_WARMUP:process.env.STUTTER_WARMUP??'30',STUTTER_SECONDS:'60'});
  if(process.env.STUTTER_AUDIO!=='0')q.delete('SLOPPY_NO_AUDIO');
  if(process.env.STUTTER_AGL)q.set('STUTTER_AGL',process.env.STUTTER_AGL);
  await send('Page.navigate',{url:'file://'+resolve(page)+'?'+q});

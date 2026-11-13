@@ -24,6 +24,7 @@ parser.add_argument('--node', default='node')
 parser.add_argument('--out', type=Path, required=True)
 parser.add_argument('--town', action='append')
 parser.add_argument('--mode', choices=['stay', 'fly'], default='stay')
+parser.add_argument('--warmup', type=float, default=30, help='Wall seconds for cold town streaming and shader compilation')
 parser.add_argument('--profile', action='store_true', help='CPU attribution; exclude from final gates')
 parser.add_argument('--agl', type=float, default=0, help='Hold this terrain clearance during a flying stress trace')
 parser.add_argument('--lock', type=Path, default=Path.home() / 'dev/tmp/bench.lock')
@@ -45,11 +46,12 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
                if not k.startswith(('SLOPPY_', 'AEGEAN_', 'STUTTER_'))
                and k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
         env['STUTTER_AGL'] = str(args.agl)
+        env['STUTTER_WARMUP'] = str(args.warmup)
         if backend == 'native':
             env.update(SLOPPY_THREADS='1', SLOPPY_NO_AUDIO='1', SLOPPY_SEED='12345',
                        SLOPPY_SAVE_DIR=str(case / 'save'), SLOPPY_SCREENSHOT=str(case / 'end.png'),
                        SLOPPY_FRAMES='100000000', AEGEAN_QUALITY='low', AEGEAN_RUNTIME_TRACE='1',
-                       STUTTER_TOWN=town, STUTTER_MODE=args.mode, STUTTER_WARMUP='15', STUTTER_SECONDS='60')
+                       STUTTER_TOWN=town, STUTTER_MODE=args.mode, STUTTER_WARMUP=str(args.warmup), STUTTER_SECONDS='60')
             command = [str(artifact.resolve())]
         else:
             env['STUTTER_PROFILE'] = '1' if args.profile else '0'
@@ -82,7 +84,7 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
                       max_ms=max(intervals, default=None),
                       p99_ms=intervals[int((len(intervals)-1)*.99)] if intervals else None,
                       over50=sum(t > 50 for t in intervals), profiled=args.profile and backend == 'web', agl=args.agl,
-                      flight_valid=flight_valid)
+                      flight_valid=flight_valid, warmup=args.warmup)
         results.append(result)
         (args.out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
         print(json.dumps(result), flush=True)
