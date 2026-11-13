@@ -1,3 +1,15 @@
+# Quota-stop checkpoint: Olythandra corrected survey
+
+Quota reached **100% used / 0% left**. No further runs were started. Runtime remains the tested `26739b6`; **44 gaps remain**. No new island is claimed connected in this resume.
+
+The original Olythandra candidate was installed provisionally and gained a hull-validated 3.682 km sea route to Olythenos (309890). Physical acceptance then **failed**: the ramp crossed a low rise, burying its deck; the approach clipped an olive-press wall that the old footprint survey omitted. The provisional landing, sea link and manifest were reverted before checkpointing.
+
+The corrected offline survey checks the full ramp centre profile and the player's complete walking query (including working buildings), not only settlement footprints. It finds **6 candidates**, selecting an **8-point** route to root **(-17422.355, 2.183593, 81806.64)** and tip **(-17333.969, 1.2, 81718.25)**. Exact data is in JSON `latest_survey.landing_source` and scratch `shore-301041-v2.txt`. The updated probe checks/executes successfully. It is still **not installed**: full quay/loading/mooring contact and sea-service validation remain.
+
+New offline tools: `install_island_landing.jo` preserves existing landings; `bake_island_sea_access.jo` appends a hull-verified route without renumbering old services. Both checked and executed on the rejected provisional candidate; their mutations were reverted. Keep them in the validation workflow, never treat installation alone as acceptance.
+
+A runtime migration issue also surfaced: the layout key omits catalogue links, so saves with unchanged town coordinates can miss a new ship service. The unfinished fix and regression checks are preserved in `~/dev/tmp/aegean-skies/towns/inland/olythandra-pending-runtime.patch`, **not in the tested runtime**. On resume, apply/review it, install the corrected landing, rebake its sea connection and manifest, then run access/contact and real-save migration before committing the island. Prior failing logs remain `test-301041.log`; successful stronger survey is `shore-301041-v2.log`. No Redfox or live jobs.
+
 # Follow-up survey checkpoint (runtime 26739b6)
 
 **44 gaps remain.** Two roads are committed separately: Myrevilaki in `ab604e7`, Velyinanti in `26739b6`. Native low-tier air/street captures are `inland/island-{301551,303831}-{air,street}.png`; native release build succeeds. These are functional captures, not timings or a visual gate. The thin tracks can be seen from the air. The street cameras also expose the existing steep village paving, so do not treat them as a sign-off on village presentation.
