@@ -1,0 +1,240 @@
+# Spinning propellers as a film animator paints them on a cel: a flat pale disc with a crisp rim,
+# two or three white pencil scribbles from the hub out to the rim, redrawn whole on twos, turning slowly
+# with the engine, and a bright arc on the sun side. Anchored in the propeller's own plane (no
+# screen-space overlay). Every disc of a frame is one instanced draw of a 32-sided fan.
+use 'look.jo'
+use 'render_space.jo'
+use 'depth_space.jo'
+use 'world_point.jo'
+use 'planes.jo'
+
+struct PropDiscVertex:
+    pos: vec3
+struct PropDiscInstance:
+    model: mat4                     # unit disc (+z its axis) to the drawing frame
+    spin: vec4                      # disc strength, streak strength, blade phase, streak phase
+    light: vec4                     # sun/view half vector in disc space, daylight
+    look: vec4                      # blades, redraw seed, hub radius, streak count
+struct PropDiscParams:
+    vp: mat4
+    cam: vec3
+    haze: vec3
+    fog: f32
+    warp_a: vec4
+    warp_b: vec4
+    white: vec3                     # the streaks' colour: white, warmed a little by the sun
+    shade: vec3
+struct PropDiscOut:
+    pos: vec4
+    world: vec3
+    local: vec2
+    spin: vec4
+    light: vec4
+    look: vec4
+
+# Speeds (rad/s of the shaft): the real blades show below PROP_BLADES_BELOW; the smear fades in
+# over PROP_DISC_FADE and the streaks over PROP_STREAK_FADE, so idle shows turning blades,
+# cruise a disc with faint streaks, full power the whole drawn effect.
+PROP_BLADES_BELOW = 40.0
+PROP_DISC_FROM = 16.0; PROP_DISC_FULL = 50.0
+PROP_STREAK_FROM = 26.0; PROP_STREAK_FULL = 64.0
+PROP_DISC_RANGE = 650.0             # beyond it a disc is a few pixels: neither disc nor blades
+
+prop_disc_blurred = (rpm: f64) -> bool: rpm > PROP_BLADES_BELOW
+
+_streak_white = (L: Light) -> vec3:
+    sun = vec3(min(L.sun.x,1.0),min(L.sun.y,1.0),min(L.sun.z,1.0))
+    mix(vec3(1.0,0.99,0.95),sun,0.25)
+
+# atan2 for shader code, within 0.0002 rad.
+_disc_angle = (y: f32, x: f32) -> f32:
+    ax = abs(x); ay = abs(y)
+    q = min(ax,ay)/max(max(ax,ay),0.000001)
+    s = q*q
+    r = ((-0.0464964749*s+0.15931422)*s-0.327622764)*s*q+q
+    if ay > ax: r = 1.5707963-r
+    if x < 0.0: r = 3.1415927-r
+    if y < 0.0: r = -r
+    r
+
+_disc_hash = (x: f32) -> f32: fract(sin(x*12.9898)*43758.547)
+
+# Cel edges: hard, with a pixel of antialiasing (d is a signed distance, positive inside).
+_cel = (d: f32) -> f32: clamp(d/max(fwidth(d),0.0015)+0.5,0.0,1.0)
+
+# Distance from q to the segment a..b, and where along it (0..1) the nearest point lies.
+_disc_segment = (q: vec2, a: vec2, b: vec2) -> vec2:
+    ab = b-a
+    t = clamp(dot(q-a,ab)/max(dot(ab,ab),0.000001),0.0,1.0)
+    vec2(length(q-a-ab*t),t)
+
+# One band as a white pencil scribble: a single loose line zig-zagging back and forth between
+# near the hub and the rim across the band, each pass a little further across, with ragged
+# turns, pen lifts and overshoots past the rim. Worked in band coordinates (radius, distance
+# across the band), so the passes follow the band's backward bow. `unit` is the disc's size of
+# one screen pixel: the line stays 1.5-3 px wide at any distance. A new seed redraws it whole.
+_disc_scribble = (r: f32, a: f32, theta0: f32, seed: f32, hub: f32, unit: f32) -> f32:
+    r0 = hub+0.05
+    r1 = 0.95
+    bow = 0.30+0.1*_disc_hash(seed+1.9)
+    u = clamp((r-r0)/(r1-r0),0.0,1.0)
+    off = a-(theta0-bow*u*u)
+    q = vec2(r,r*sin(off))
+    cover = 0.0
+    if cos(off) > 0.0 and abs(q.y) < 0.26:
+        prev = vec2(r0+0.1*_disc_hash(seed+0.37),-0.07)
+        loop j in 1..8:
+            jj = f32(j)
+            h1 = _disc_hash(seed+jj*1.618+0.37)
+            h2 = _disc_hash(seed+jj*2.414+0.91)
+            outer = step(0.5,fract(jj*0.5))
+            radial = mix(r0+0.14*h1,r1-0.07+0.13*h1,outer)
+            across = (-1.0+2.0*jj/7.0+0.5*(h2-0.5))*(0.06+0.11*clamp((radial-r0)/(r1-r0),0.0,1.0))
+            next = vec2(radial,across)
+            d = _disc_segment(q,prev,next)
+            # pen pressure: per pass, swelling a little mid-stroke; some passes start late or lift early
+            h3 = _disc_hash(seed+jj*3.303+0.13)
+            half = unit*(0.95+0.5*h3)*(0.8+0.3*sin(3.1415927*d.y))
+            lift = step(d.y,1.0-0.45*step(0.8,h3))*step(0.4*step(h3,0.15),d.y)
+            cover = max(cover,clamp((half-d.x)/unit+0.5,0.0,1.0)*lift)
+            prev = next
+        # the pencil's grain: the line breaks up a little, differently each redraw
+        cell = floor(q/(unit*2.5))
+        cover *= 0.84+0.16*_disc_hash(cell.x*0.731+cell.y*1.379+seed)
+    cover
+
+prop_disc_vs = (v: PropDiscVertex, inst: PropDiscInstance, u: PropDiscParams) -> PropDiscOut:
+    w = (inst.model*vec4(v.pos,1)).xyz
+    PropDiscOut(u.vp*vec4(render_warped(w,u.cam,u.warp_a,u.warp_b),1),w,v.pos.xy,inst.spin,inst.light,inst.look)
+
+prop_disc_fs = (i: PropDiscOut, u: PropDiscParams) -> vec4:
+    p = i.local
+    r = length(p)
+    hub = i.look.z
+    if r > 1.02 or r < hub*0.6: discard()
+    a = _disc_angle(p.y,p.x)
+    blur = i.spin.x
+    h = i.light.xyz
+    day = i.light.w
+    grey = u.shade*0.55+vec3(0.16,0.17,0.18)*day
+    pale = mix(grey,u.white,0.55*day)
+    # A flat pale disc with a clean rim line.
+    edge = _cel(1.0-r)*_cel(r-hub*0.6)
+    rim = _cel(0.025-abs(r-0.975))
+    color = pale
+    alpha = blur*(0.2+0.3*rim)*edge
+    # Pencil scribbles in white; the one facing the sun (the blades' twist) a step brighter.
+    unit = max(fwidth(p.x),fwidth(p.y))
+    if unit < 0.00001: unit = 0.004
+    seed = i.look.y
+    gap = 6.2831853/i.look.w
+    sw = 0.0
+    tone = 0.0
+    loop k in 0..3:
+        if f32(k) < i.look.w:
+            theta = i.spin.w+gap*f32(k)
+            c = _disc_scribble(r,a,theta,seed+7.13*f32(k),hub,unit)
+            face = abs(0.94*h.z+0.34*(cos(theta)*h.y-sin(theta)*h.x))
+            if c > sw: tone = 0.88+0.12*step(0.78,face)
+            sw = max(sw,c)
+    sw *= i.spin.y*day
+    color = mix(color,u.white*tone,sw)
+    alpha = mix(alpha,0.95,sw)
+    # A thin bright arc on the sun side of the rim.
+    toward = normalize(vec2(h.x,h.y)+vec2(0.0001,0))
+    arc = _cel(0.012-abs(r-0.972))*_cel(dot(p/max(r,0.0001),toward)-0.55)*blur*day*clamp(length(vec2(h.x,h.y))*2.5,0.0,1.0)
+    color = mix(color,u.white,arc)
+    alpha = max(alpha,0.9*arc)
+    if alpha < 0.002: discard()
+    vec4(aerial(color,i.world,u.cam,u.haze,u.fog),alpha)
+
+prop_disc_shader: Shader
+prop_disc_mesh: Mesh
+prop_discs: PropDiscInstance[]
+prop_discs_near: PropDiscInstance[]     # the player's own, in the cockpit's camera frame
+prop_disc_frame = -1
+prop_disc_ready = false
+
+_init_prop_discs = ():
+    global prop_disc_shader,prop_disc_mesh,prop_disc_ready
+    prop_disc_ready = true
+    prop_disc_shader = make_world_shader(shader(prop_disc_vs,prop_disc_fs))
+    vs: PropDiscVertex[]
+    # The fan's chords stay outside the unit circle; the fragment cuts the true rim.
+    rim = 1.0/cos(PI/32.0)
+    loop j in 0..32:
+        a = f64(j)*TAU/32.0; b = f64(j+1)*TAU/32.0
+        vs.extend([PropDiscVertex(vec3(0,0,0)),PropDiscVertex(vec3(f32(cos(a)*rim),f32(sin(a)*rim),0)),PropDiscVertex(vec3(f32(cos(b)*rim),f32(sin(b)*rim),0))])
+    prop_disc_mesh = mesh(vs)
+
+_prop_disc_lists = ():
+    global prop_disc_frame,prop_discs,prop_discs_near
+    if prop_disc_frame != frame_number():
+        prop_disc_frame = frame_number()
+        prop_discs = []; prop_discs_near = []
+
+# One disc. frame: the hub's frame in drawing space (rotation and position, no scale); to_eye:
+# from the hub toward the eye, world axes. angle: the prop's shaft angle; rpm: rad/s.
+prop_disc_instance = (frame: mat4, radius: f64, blades: int, to_eye: vec3, L: Light, angle: f64, rpm: f64, t: f64, seed: f64) -> PropDiscInstance:
+    blur = smoothstep(PROP_DISC_FROM,PROP_DISC_FULL,rpm)
+    streak = smoothstep(PROP_STREAK_FROM,PROP_STREAK_FULL,rpm)
+    # Film strobing: the streak pattern creeps round with the engine, redrawn on twos (12 a second).
+    step_t = floor(t*12.0+seed)
+    rate = rpm*0.022
+    phase = angle*0.022-rate*fract(t*12.0+seed)/12.0
+    half = normalize(normalize(to_eye+vec3(0.00001,0,0))+L.sun_dir)
+    local = vec3(dot(half,frame[0].xyz),dot(half,frame[1].xyz),dot(half,frame[2].xyz))
+    daylight = 0.12+0.88*smoothstep(-0.03,0.2,f64(L.sun_dir.y))
+    count = if blades == 3: 3.0 else: 2.0
+    # build_prop lays blade 0 along +y.
+    sweep = (angle+PI*0.5)%(TAU/f64(blades))
+    # Some cowling faces lie in the prop plane: lift the disc 6 cm along its axis toward the
+    # side it is seen from, so it never fights them for depth.
+    axis = frame[2].xyz
+    lifted = frame
+    lifted[3] = vec4(frame[3].xyz+axis*f32(if dot(axis,to_eye) >= 0.0: 0.06 else: -0.06),1)
+    PropDiscInstance(lifted*scaling(radius),vec4(f32(blur),f32(streak),f32(sweep),f32(phase%TAU)),vec4(local,f32(daylight)),
+        vec4(f32(blades),f32((step_t%97.0)*3.71),0.16,f32(count)))
+
+# Called while drawing an aircraft (craft space `at` in the same chart as obj_params). Returns
+# whether the disc stands in for the blades.
+queue_prop_discs = (model: CraftModel, at: mat4, anchor: WorldPoint?, angle: f64, rpm: f64, L: Light, t: f64) -> bool:
+    global prop_discs
+    if rpm < PROP_DISC_FROM: return false
+    _prop_disc_lists()
+    origin = render_origin(scene_camera())
+    frame = render_model(at,origin)
+    if let point = anchor: frame = translation(world_local(point,origin))*at
+    eye = render_eye(origin)
+    loop i in 0..model.prop_hubs.len():
+        hub = frame*translation(model.prop_hubs[i])
+        to_eye = eye-hub[3].xyz
+        if length(to_eye) > PROP_DISC_RANGE: continue
+        a = angle+f64(i)*0.8
+        prop_discs.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,to_eye,L,a,rpm,t,f64(i)*0.37+f64(model.prop_hubs[i].x)*0.11))
+    prop_disc_blurred(rpm)
+
+# The cockpit's own discs, in its camera-relative frame (eye at the origin).
+queue_cockpit_prop_discs = (model: CraftModel, relative: mat4, angle: f64, rpm: f64, L: Light, t: f64):
+    global prop_discs_near
+    if rpm < PROP_DISC_FROM: return
+    _prop_disc_lists()
+    loop i in 0..model.prop_hubs.len():
+        hub = relative*translation(model.prop_hubs[i])
+        prop_discs_near.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,-hub[3].xyz,L,angle+f64(i)*0.8,rpm,t,f64(i)*0.37))
+
+# In a transparent pass after the aircraft and the sea.
+draw_prop_discs = (L: Light):
+    global prop_discs,prop_discs_near
+    _prop_disc_lists()
+    if prop_discs.len() == 0 and prop_discs_near.len() == 0: return
+    if not prop_disc_ready: _init_prop_discs()
+    glDisable(GL_CULL_FACE)
+    origin = render_origin(scene_camera())
+    p = PropDiscParams(render_view_proj(origin),render_eye(origin),L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b,_streak_white(L),L.shade)
+    if prop_discs.len() > 0: draw_instanced(prop_disc_shader,prop_disc_mesh,prop_discs,p)
+    if prop_discs_near.len() > 0:
+        p.vp[3] = vec4(0,0,-0.07000001,0)
+        p.cam = vec3(0,0,0); p.warp_b = vec4(0,0,0,0)
+        draw_instanced(prop_disc_shader,prop_disc_mesh,prop_discs_near,p)
+    prop_discs = []; prop_discs_near = []
