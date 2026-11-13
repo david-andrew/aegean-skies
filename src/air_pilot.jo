@@ -73,10 +73,16 @@ air_runway = (center: vec3, out: vec3, wind: vec3, ground: (f64, f64) -> f64, al
 # A virtual landing fix uses the proven autopilot's steering/terrain lookahead for a waypoint.
 # The guide is disposable: only the real harbor FlightPlan is allowed to descend or moor.
 air_waypoint_controls = (spec: CraftSpec, state: CraftState, e: FlightEnv, aim: vec3, altitude: f64, speed: f64) -> Controls:
+    # Circuit/holding turns need banked-flight margin; straight final approach
+    # still uses the shared landing controller and its lower approach speed.
+    safe_speed=if tweaks.chaotic_stalls: max(speed,spec.stall_speed*pure_k(spec)*1.8) else: speed
     delta = aim - state.position; delta.y = 0
-    h = if length(delta) > 1: atan2(f64(delta.x), -f64(delta.z)) else: heading(state)
+    # Keep inertial NPC turns inside the near-direction steering regime; a
+    # 0.6 rad step selects the aerobatic roll-and-pull command and stalls racers.
+    desired = if length(delta) > 1: atan2(f64(delta.x), -f64(delta.z)) else: heading(state)
+    h = if tweaks.chaotic_stalls: heading(state)+clamp(angle_delta(desired,heading(state)),-0.2,0.2) else: desired
     distance = max(1800.0, altitude / 0.065 + 500.0)
-    guide = FlightPlan(target = state.position + heading_vector(h) * f32(distance + max(1600.0, f64(length(delta)))), altitude = altitude, speed = speed,
+    guide = FlightPlan(target = state.position + heading_vector(h) * f32(distance + max(1600.0, f64(length(delta)))), altitude = altitude, speed = safe_speed,
         phase = .cruise, initialized = true, approach_heading = h, approach_distance = distance, clearance_altitude = altitude)
     autopilot(spec, state, guide, e)
 
@@ -195,6 +201,16 @@ air_autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, e: Fl
         if clear and dot(forward(state), dir) > 0.95 and abs(quat_rotate(state.orientation, vec3(1, 0, 0)).y) < 0.18:
             along = f64(dot(plan.target - state.position, dir))
             if along < 400: plan.target += dir * f32(400 - along)
+    # A departure is still a climb above 100 m. Do not hand it to the landing
+    # fix controller halfway up: that commands a reversal, idle power and full
+    # airbrake at once. Reach clearance at departure speed before the cruise task.
+    if tweaks.chaotic_stalls and plan.phase == .climb and not state.on_water:
+        altitude=max(plan.altitude,plan.clearance_altitude)
+        aim=state.position+heading_vector(plan.takeoff_heading)*4000.0
+        c=air_waypoint_controls(spec,state,e,aim,min(altitude+5.0,f64(state.position.y)+20.0),min(spec.cruise_speed,140.0))
+        c.throttle=max(c.throttle,0.8); c.airbrake=0
+        if state.position.y>altitude-15.0: plan.phase=.cruise
+        return c
     c = autopilot(spec, state, plan, e)
     plan.target = original
     if tweaks.chaotic_stalls and plan.phase == .descend and (previous == .cruise or previous == .climb) and dot(forward(state), hdir) < 0.85:
@@ -202,12 +218,8 @@ air_autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, e: Fl
         # then return along the runway's centreline at a stable speed and height.
         plan.phase = .cruise; plan.arrival_setup = true
         return air_waypoint_controls(spec, state, e, fix - hdir * 1400.0, plan.altitude, max(spec.stall_speed * 1.7, min(spec.cruise_speed, 100.0)))
-    # The landing fix is behind a departing aircraft. First establish a safe straight climb
-    # before banking back toward it; an eight-metre-high reversal can drop a stalled wing.
-    if tweaks.chaotic_stalls and plan.phase == .climb and not state.on_water and state.position.y < max(100.0, e.ground(f64(state.position.x), f64(state.position.z)) + 100):
-        aim = state.position + heading_vector(plan.takeoff_heading) * 4000.0
-        c = air_waypoint_controls(spec, state, e, aim, f64(state.position.y) + 20.0, min(spec.cruise_speed, 140.0))
-        c.throttle = max(c.throttle, 0.8); c.airbrake = 0
+    if tweaks.chaotic_stalls and plan.phase == .cruise:
+        c=air_waypoint_controls(spec,state,e,fix,max(plan.altitude,plan.clearance_altitude),max(plan.speed,spec.stall_speed*pure_k(spec)*1.8))
     if plan.phase == .land and spec.handling_scale > 1.0:
         want = spec.stall_speed * 1.30 * pure_k(spec)
         speed = f64(length(state.velocity - e.wind))

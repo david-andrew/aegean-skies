@@ -1,5 +1,6 @@
 use '../src/coast_field.jo'
 use '../src/coast_mesh.jo'
+use '../src/coast_support.jo'
 use '../src/coast_atlas.jo'
 use '../src/world.jo'
 use '../src/world_source.jo'
@@ -102,15 +103,15 @@ test "independent tiles share edges despite different interior height bounds":
             assert(abs(coast_mesh_height(part,vec2(1,f))-coast_mesh_height(neighbor,vec2(0,f))) < 0.00002)
 
 
-test "stationary selection reuses immutable patches and invalidates on view or source changes":
+test "cell selections survive small camera moves and invalidate changed sources":
     reset_coast_selection()
     before = coast_selection_builds
     loop frame in 0..4:
         begin_coast_selection()
         batches: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
-        cam = vec3(if frame >= 2: 8.0 else: 7.0,2,7)
+        cam = vec3(if frame >= 2: 7.001 else: 7.0,2,7)
         coast_add_patch(batches,[-3,3,-2,4],2,2,0,0,0,0,1,vec2(0,0),cam,vec3(0,0,0),600,[],source_id=if frame == 3: 2 else: 1)
-        expected = if frame == 0: 1 else: frame
+        expected = if frame == 3: 2 else: 1
         assert(coast_selection_builds-before == expected)
     reset_coast_selection()
 
@@ -132,6 +133,59 @@ test "local near-cell domains preserve internal edges through their morphs":
                     p = vec2(a.region.x+f32(j)/64.0,b.region.y)
                     assert(abs(coast_mesh_height(a,p)-coast_mesh_height(b,p)) < 0.00002)
 
+test "LOD hysteresis holds on reversal and snaps to exact contact":
+    reset_coast_selection()
+    key = CoastLevelKey(0,0,vec4(-3,3,-2,4),0)
+    assert(coast_hold(key,2.0) == 2.0)
+    assert(coast_hold(key,2.08) == 2.0)
+    assert(coast_hold(key,2.10) == 2.125)
+    assert(coast_hold(key,2.04) == 2.125)
+    assert(coast_hold(key,2.02) == 2.0)
+    assert(coast_hold(key,6.0) == 6.0)
+    reset_coast_selection()
+
+test "cached cell geometry rebinds atlas slots and render charts":
+    reset_coast_selection()
+    before = coast_selection_builds
+    loop frame in 0..2:
+        begin_coast_selection()
+        batches: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        origin = vec3(f32(frame)*1024.0,0,0)
+        slot = vec2(f32(frame)*17.0,0)
+        coast_add_patch(batches,[-3,3,-2,4],2,2,0,0,0,0,1,slot,vec3(7,2,7),origin,600,[],source_id=1)
+        assert(coast_selection_builds == before+1)
+        loop group in batches:
+            loop part in group:
+                assert(part.origin == -origin.xz and part.texel == slot)
+    reset_coast_selection()
+
+coast_test_edge = (batches: CoastInstance[][],p: vec2) -> f32:
+    loop group in batches:
+        loop part in group:
+            r = part.region
+            if p.x >= r.x and p.y >= r.y and p.x <= r.x+r.z and p.y <= r.y+r.z:
+                n = f32(1<<coast_grid_level(part))
+                step = r.z/n
+                local = clamp(floor((p-r.xy)/step),vec2(0,0),vec2(n-1,n-1))
+                a = r.xy+local*step
+                h = vec4(coast_mesh_height(part,a),coast_mesh_height(part,a+vec2(step,0)),coast_mesh_height(part,a+vec2(0,step)),coast_mesh_height(part,a+vec2(step,step)))
+                return coast_triangle(h,(p-a)/step)
+    panic("missing edge owner")
+
+test "shared edges retain parity when a streamed neighbor arrives during motion":
+    reset_coast_selection()
+    loop step in 0..40:
+        begin_coast_selection()
+        cam = vec3(-80+f32(step)*4.0,5,7)
+        right: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        coast_add_patch(right,[3,2,4,7],2,2,14,0,0,0,1,vec2(0,0),cam,vec3(0,0,0),600,[],source_id=2)
+        if step%3 != 0: continue
+        left: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        coast_add_patch(left,[-3,3,-2,4],2,2,0,0,0,0,1,vec2(0,0),cam,vec3(0,0,0),600,[],source_id=1)
+        loop k in 0..65:
+            f = f32(k)/64.0
+            assert(abs(coast_test_edge(left,vec2(1,f))-coast_test_edge(right,vec2(0,f))) < 0.00002)
+    reset_coast_selection()
 
 test "near depth bounds contain every refined vertex and reject distant batches":
     inst=CoastInstance(vec2(-7,-7),vec2(219996,-120008),vec2(0,0),vec4(-4,6,-2,8),6,vec4(6,6,6,6))
@@ -149,3 +203,136 @@ test "near depth bounds contain every refined vertex and reject distant batches"
     # Translating the chart and camera leaves the safety decision unchanged.
     inst.origin+=vec2(256,-512)
     assert(coast_batch_near([inst],eye+vec3(256,0,-512)))
+
+coast_test_drawn = (batches: CoastInstance[][],p: vec2) -> f32:
+    loop k in 0..COAST_LEVELS:
+        loop inst in batches[k]:
+            f = (p-inst.absolute)/14.0
+            uv = inst.region.xy; end = uv+vec2(inst.region.z,inst.region.z)
+            if f.x < uv.x or f.y < uv.y or f.x >= end.x or f.y >= end.y: continue
+            step = inst.region.z/f32(1<<k)
+            cell = floor((f-uv)/step)*step+uv
+            hs = vec4(coast_mesh_height(inst,cell),coast_mesh_height(inst,cell+vec2(step,0)),coast_mesh_height(inst,cell+vec2(0,step)),coast_mesh_height(inst,cell+vec2(step,step)))
+            return coast_triangle(hs,(f-cell)/step)
+    panic("missing selected support triangle")
+
+test "placed prop roots keep physical contact through moving coast LOD and tier changes":
+    values = [loop j in 0..5: loop i in 0..5: f32(2.0+f64(i)*1.5+f64(j)*0.3)]
+    loop origin in [vec2(-28,-28),vec2(219996,-120008)]:
+        roots = [origin+vec2(14.03,14.01),origin+vec2(27.98,21.27),origin+vec2(21.13,22.19)]
+        set_coast_support(roots)
+        reset_coast_selection()
+        loop focal in [300.0,400.0,600.0]:
+            loop step in 0..20:
+                begin_coast_selection()
+                cam = vec3(origin.x+21.0+f32(step)*6.0,4,origin.y+21.0)
+                batches: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+                coast_add_patch(batches,values,5,5,f64(origin.x),f64(origin.y),0,0,4,vec2(0,0),cam,vec3(0,0,0),focal,[])
+                loop root in roots:
+                    local = (root-origin)/14.0; cell = floor(local); f = local-cell
+                    h = coast_corners(values,5,5,int(cell.x),int(cell.y))
+                    absolute = origin+cell*14.0
+                    physical = coast_contact(f64(h.x),f64(h.y),f64(h.z),f64(h.w),f64(f.x),f64(f.y),f64(absolute.x),f64(absolute.y))
+                    drawn = coast_test_drawn(batches,root)
+                    assert(abs(physical-f64(drawn)) < 0.001)
+    set_coast_support([])
+    reset_coast_selection()
+
+
+test "compact prop domains share canonical seams and merge uniform regions":
+    set_coast_support([vec2(14.03,7.11)])
+    reset_coast_selection()
+    loop step in 0..20:
+        begin_coast_selection()
+        cam = vec3(-100+f32(step)*12.0,4,7)
+        left: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        right: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        coast_add_patch(left,[1,3,2,4],2,2,0,0,0,0,1,vec2(0,0),cam,vec3(0,0,0),400,[])
+        coast_add_patch(right,[3,2,4,7],2,2,14,0,0,0,1,vec2(0,0),cam,vec3(0,0,0),400,[])
+        loop k in 0..129:
+            f = f32(k)/128.0
+            gap = abs(coast_test_edge(left,vec2(1,f))-coast_test_edge(right,vec2(0,f)))
+            if gap >= 0.00002:
+                print("SEAM step={step} f={f} gap={gap}")
+                loop group in left:
+                    loop part in group:
+                        if part.region.x+part.region.z == 1.0 and f >= part.region.y and f <= part.region.y+part.region.z: print("LEFT {part}")
+                loop group in right:
+                    loop part in group:
+                        if part.region.x == 0.0 and f >= part.region.y and f <= part.region.y+part.region.z: print("RIGHT {part}")
+            assert(gap < 0.00002)
+    selected: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+    inst = CoastInstance(vec2(0,0),vec2(0,0),vec2(0,0),vec4(1,3,2,4),6,vec4(6,6,6,6))
+    coast_emit_support(selected,inst,[loop k in 0..64: f32(6)],[])
+    assert(selected[6].len() == 1 and selected[6][0].region == vec4(0,0,1,0))
+    set_coast_support([])
+    reset_coast_selection()
+
+
+test "newly placed roots invalidate cached support before the next terrain draw":
+    reset_coast_selection()
+    roots = [vec2(7.31,7.14),vec2(21.43,8.21)]
+    values = [loop j in 0..3: loop i in 0..3: f32(2.0+f64(i)*1.5+f64(j)*0.3)]
+    loop root in roots:
+        set_coast_support([root])
+        begin_coast_selection()
+        batches: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+        coast_add_patch(batches,values,3,3,0,0,0,0,2,vec2(0,0),vec3(140,4,7),vec3(0,0,0),400,[])
+        cell = floor(root/14.0); f = root/14.0-cell
+        h = coast_corners(values,3,3,int(cell.x),int(cell.y))
+        p = cell*14.0
+        physical = coast_contact(f64(h.x),f64(h.y),f64(h.z),f64(h.w),f64(f.x),f64(f.y),f64(p.x),f64(p.y))
+        assert(abs(physical-f64(coast_test_drawn(batches,root))) < 0.001)
+    set_coast_support([])
+    reset_coast_selection()
+
+
+test "camera validity balls preserve every selection through motion and invalidation":
+    expected: CoastInstance[][][]
+    loop mode in 0..2:
+        coast_motion_cache = mode == 1
+        reuses = coast_selection_reuses
+        reset_coast_selection()
+        set_coast_support([vec2(14.03,14.01),vec2(21.13,22.19)])
+        values = [loop j in 0..5: loop i in 0..5: f32(2.0+f64(i)*1.5+f64(j)*0.3)]
+        loop frame in 0..128:
+            if frame == 70: values[0] += 0.1
+            if frame == 90: set_coast_support([vec2(7.31,7.14)])
+            begin_coast_selection()
+            cam = vec3(5.0+f32(frame)/15.0,4,10.0+sin(f32(frame)*0.1))
+            focal = (if frame < 42: 300.0 else: 400.0)+f64(frame%3)*0.000015
+            limits = if frame < 100: vec4(6,6,6,6) else: vec4(6,6,6,3)
+            batches: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+            coast_add_patch(batches,values,5,5,0,0,0,0,4,vec2(0,0),cam,vec3(0,0,0),focal,[],limits)
+            if mode == 0: expected.push(batches)
+            else: assert(batches == expected[frame])
+        if mode == 1: assert(coast_selection_reuses-reuses > 128)
+    coast_motion_cache = true
+    set_coast_support([])
+    reset_coast_selection()
+
+
+test "prop support retains the canonical boundary against coarse fallback tiles":
+    set_coast_support([vec2(14.03,7.11)])
+    reset_coast_selection()
+    begin_coast_selection()
+    batches: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
+    coast_add_patch(batches,[1,3,2,4],2,2,0,0,0,0,1,vec2(0,0),vec3(-100,4,7),vec3(0,0,0),400,[],vec4(6,0,6,6))
+    loop k in 0..129:
+        f = f32(k)/128.0
+        assert(abs(coast_test_edge(batches,vec2(1,f))-mix(3.0,4.0,f)) < 0.00002)
+    set_coast_support([])
+    reset_coast_selection()
+
+# Zero-valued source metadata can equal the default record. Revision zero is
+# reserved for a missing entry, so it must never bind nonexistent domain arrays.
+test "first zero-height cell with coarse boundaries initializes its cached geometry":
+    set_coast_support([]);reset_coast_selection()
+    before=coast_selection_builds
+    loop frame in 0..2:
+        begin_coast_selection()
+        batches:CoastInstance[][]=[loop k in 0..COAST_LEVELS:[]]
+        coast_add_patch(batches,[0.0,0.0,0.0,0.0],2,2,0,0,0,0,1,vec2(0,0),vec3(10000,10000,10000),vec3(0,0,0),600,[],vec4(0,0,0,0))
+        assert(batches[0].len()==1)
+        assert(coast_selection_builds==before+1)
+    reset_coast_selection()
