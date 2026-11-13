@@ -1,6 +1,7 @@
 # Subdivide canonical cells only in selected coastal patches. One resident grid
 # per level, instanced in seven batches; no per-frame mesh/texture generation.
 use 'coast_field.jo'
+use 'coast_support.jo'
 use 'coast_pattern.jo'
 use 'terrain_lod.jo'
 use 'render_space.jo'
@@ -88,19 +89,38 @@ coast_edge_level = (cache: mut f32[],at: int,x: f64,z: f64,a: f32,b: f32,vertica
     cache[at] = held
     held
 
-coast_region_level = (x: f64,z: f64,h: vec4,region: vec2,cam: vec3,focal: f64) -> f32:
-    a = coast_triangle(h,region); b = coast_triangle(h,region+vec2(0.5,0))
-    c = coast_triangle(h,region+vec2(0,0.5)); d = coast_triangle(h,region+vec2(0.5,0.5))
+coast_region_level = (x: f64,z: f64,h: vec4,region: vec2,cam: vec3,focal: f64,span: f32 = 0.5) -> f32:
+    a = coast_triangle(h,region); b = coast_triangle(h,region+vec2(span,0))
+    c = coast_triangle(h,region+vec2(0,span)); d = coast_triangle(h,region+vec2(span,span))
     low = f64(min(min(a,b),min(c,d))); high = f64(max(max(a,b),max(c,d)))
-    span = f64(max(max(h.x,h.y),max(h.z,h.w))-min(min(h.x,h.y),min(h.z,h.w)))
-    extra = 2.0+1.616*span/14.0
-    dx = max(max(x-f64(cam.x),f64(cam.x)-x-7.0),0.0)
-    dz = max(max(z-f64(cam.z),f64(cam.z)-z-7.0),0.0)
+    relief_span = f64(max(max(h.x,h.y),max(h.z,h.w))-min(min(h.x,h.y),min(h.z,h.w)))
+    extra = 2.0+1.616*relief_span/14.0
+    dx = max(max(x-f64(cam.x),f64(cam.x)-x-f64(span)*14.0),0.0)
+    dz = max(max(z-f64(cam.z),f64(cam.z)-z-f64(span)*14.0),0.0)
     dy = max(max(low-extra-f64(cam.y),f64(cam.y)-high-extra),0.0)
     distance = max(sqrt(dx*dx+dy*dy+dz*dz),0.25)
     f32(clamp(log2(14.0*min(focal,COAST_MAX_FOCAL)/(COAST_RESOLVE_PIXELS*distance)),1.0,6.0))
 
+coast_grid_level = (inst: CoastInstance) -> int:
+    max(0,int(ceil(inst.level))-(if inst.region.z == 1.0: 0 else: if inst.region.z == 0.5: 1 else: 3))
+
+coast_emit_support = (batches: mut CoastInstance[][],inst: CoastInstance,levels: f32[]):
+    loop j in 0..8:
+        loop i in 0..8:
+            level = levels[j*8+i]
+            edge = vec4(
+                if i == 0: inst.edges.x else: min(level,levels[j*8+i-1]),
+                if i == 7: inst.edges.y else: min(level,levels[j*8+i+1]),
+                if j == 0: inst.edges.z else: min(level,levels[(j-1)*8+i]),
+                if j == 7: inst.edges.w else: min(level,levels[(j+1)*8+i]))
+            part = inst; part.level = level; part.edges = edge
+            part.region = vec4(f32(i)/8.0,f32(j)/8.0,0.125,0)
+            batches[coast_grid_level(part)].push(part)
+
 coast_emit_cell = (batches: mut CoastInstance[][],inst: CoastInstance,x: f64,z: f64,cam: vec3,focal: f64,children: f32[] = []):
+    if children.len() == 64:
+        coast_emit_support(batches,inst,children)
+        return
     if inst.level <= 4.0:
         batches[int(ceil(inst.level))].push(inst)
         return
@@ -147,7 +167,11 @@ struct CoastCellSelection:
     source: int
     parts: CoastInstance[][]
     seen: int
+    count: int = 0
+    supports: vec2[]
+    support_levels: f32[]
 coast_cells: {vec2:CoastCellSelection} = {}
+coast_cached_instances = 0
 
 coast_hold = (key: CoastLevelKey,raw: f32) -> f32:
     global coast_levels
@@ -161,11 +185,11 @@ coast_hold = (key: CoastLevelKey,raw: f32) -> f32:
     level
 
 reset_coast_selection = ():
-    global coast_levels,coast_cells
-    coast_levels = {}; coast_cells = {}
+    global coast_levels,coast_cells,coast_cached_instances
+    coast_levels = {}; coast_cells = {}; coast_cached_instances = 0
 
 begin_coast_selection = ():
-    global coast_selection_epoch,coast_levels,coast_cells
+    global coast_selection_epoch,coast_levels,coast_cells,coast_cached_instances
     coast_selection_epoch += 1
     # Rebuild bounded maps occasionally instead of shifting entries on removal.
     if coast_levels.len() > 24000:
@@ -173,17 +197,20 @@ begin_coast_selection = ():
         loop key,value in coast_levels.items():
             if value.seen >= coast_selection_epoch-2: kept[key] = value
         coast_levels = kept
-    if coast_cells.len() > 12000:
+    if coast_cells.len() > 12000 or coast_cached_instances > 49152:
+        coast_cached_instances = 0
         kept: {vec2:CoastCellSelection} = {}
         loop key,value in coast_cells.items():
-            if value.seen >= coast_selection_epoch-2: kept[key] = value
+            if value.seen >= coast_selection_epoch-2:
+                kept[key] = value
+                coast_cached_instances += value.count
         coast_cells = kept
 
 coast_add_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,ox: f64,oz: f64,px: int,pz: int,cells: int,texel: vec2,cam: vec3,origin: vec3,focal: f64,planes: vec4[],limits: vec4 = vec4(6,6,6,6),source_id: int = 0):
     coast_build_patch(batches,values,nx,nz,ox,oz,px,pz,cells,texel,cam,origin,focal,planes,limits,source_id)
 
 coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: int,ox: f64,oz: f64,px: int,pz: int,cells: int,texel: vec2,cam: vec3,origin: vec3,focal: f64,planes: vec4[],limits: vec4 = vec4(6,6,6,6),source_id: int = 0):
-    global coast_selection_builds,coast_cells
+    global coast_selection_builds,coast_cells,coast_cached_instances
     vertical = [loop k in 0..cells*(cells+1): f32(-1)]
     horizontal = [loop k in 0..cells*(cells+1): f32(-1)]
     # Cull first. Only visible cells and their shared edges need projected
@@ -195,12 +222,20 @@ coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: in
             if not coast_cell_visible(x,z,h,cam,planes): continue
             low = f64(min(min(h.x,h.y),min(h.z,h.w)))
             high = f64(max(max(h.x,h.y),max(h.z,h.w)))
+            supports: vec2[] = if high > -10.0 and low < 192.0: coast_support_near(x,z) else: []
             level = coast_hold(CoastLevelKey(x,z,h,0),f32(coast_level(x,z,low,high,cam,focal)))
             edges = vec4(
                 coast_edge_level(vertical,j*(cells+1)+i,x,z,h.x,h.z,true,cam,focal),
                 coast_edge_level(vertical,j*(cells+1)+i+1,x+14.0,z,h.y,h.w,true,cam,focal),
                 coast_edge_level(horizontal,j*cells+i,x,z,h.x,h.y,false,cam,focal),
                 coast_edge_level(horizontal,(j+1)*cells+i,x,z+14.0,h.z,h.w,false,cam,focal))
+            a = vec2(f32(x),f32(z)); b = a+vec2(14,14)
+            if supports.len() > 0:
+                edges.x = max(edges.x,coast_support_level(supports,a,vec2(a.x,b.y)))
+                edges.y = max(edges.y,coast_support_level(supports,vec2(b.x,a.y),b))
+                edges.z = max(edges.z,coast_support_level(supports,a,vec2(b.x,a.y)))
+                edges.w = max(edges.w,coast_support_level(supports,vec2(a.x,b.y),b))
+                level = max(level,coast_support_level(supports,a,b))
             if i == 0: edges.x = min(edges.x,limits.x)
             if i == cells-1: edges.y = min(edges.y,limits.y)
             if j == 0: edges.z = min(edges.z,limits.z)
@@ -212,21 +247,56 @@ coast_build_patch = (batches: mut CoastInstance[][],values: f32[],nx: int,nz: in
                 continue
             # Compare shape only; chart origin and texture residency are bindings.
             shape = inst; shape.origin = vec2(0,0); shape.texel = vec2(0,0)
+            old = coast_cells.get(inst.absolute,CoastCellSelection())
+            old_count = old.count
             children: f32[]
-            if level > 4.0:
+            support_levels: f32[]
+            if supports.len() > 0:
+                support_levels = old.support_levels
+                if supports != old.supports or support_levels.len() != 64:
+                    support_levels = []
+                    loop cj in 0..8:
+                        loop ci in 0..8:
+                            a = vec2(f32(x+f64(ci)*1.75),f32(z+f64(cj)*1.75))
+                            support_levels.push(coast_support_level(supports,a,a+vec2(1.75,1.75)))
+                # Retain the ordinary four-domain projected budget outside the
+                # fixed support footprint; only the small contact domains need
+                # a finer grid. Static support distances are cached per cell.
+                quarters: f32[]
+                loop cj in 0..2:
+                    loop ci in 0..2:
+                        rx = x+f64(ci)*7.0; rz = z+f64(cj)*7.0
+                        raw = min(level,coast_region_level(rx,rz,h,vec2(f32(ci),f32(cj))*0.5,cam,focal))
+                        quarters.push(coast_hold(CoastLevelKey(rx,rz,h,3),raw))
+                loop cj in 0..8:
+                    loop ci in 0..8:
+                        selected = max(quarters[(cj/4)*2+ci/4],support_levels[cj*8+ci])
+                        if ci == 0: selected = max(selected,edges.x)
+                        if ci == 7: selected = max(selected,edges.y)
+                        if cj == 0: selected = max(selected,edges.z)
+                        if cj == 7: selected = max(selected,edges.w)
+                        children.push(selected)
+            else if level > 4.0:
                 loop cj in 0..2:
                     loop ci in 0..2:
                         rx = x+f64(ci)*7.0; rz = z+f64(cj)*7.0
                         raw = min(level,coast_region_level(rx,rz,h,vec2(f32(ci),f32(cj))*0.5,cam,focal))
                         children.push(coast_hold(CoastLevelKey(rx,rz,h,3),raw))
-            old = coast_cells.get(inst.absolute,CoastCellSelection())
             if old.source != source_id or old.shape != shape or old.children != children:
                 selected: CoastInstance[][] = [loop k in 0..COAST_LEVELS: []]
                 coast_emit_cell(selected,shape,x,z,cam,focal,children)
                 coast_selection_builds += 1
-                old = CoastCellSelection(shape,children,source_id,selected,coast_selection_epoch)
+                count = 0
+                loop group in selected: count += group.len()
+                old = CoastCellSelection(shape,children,source_id,selected,coast_selection_epoch,count)
             else: old.seen = coast_selection_epoch
-            if coast_cells.len() < 16384 or inst.absolute in coast_cells: coast_cells[inst.absolute] = old
+            old.supports = supports; old.support_levels = support_levels
+            if (coast_cells.len() < 16384 or inst.absolute in coast_cells) and coast_cached_instances-old_count+old.count <= 65536:
+                coast_cells[inst.absolute] = old
+                coast_cached_instances += old.count-old_count
+            else if inst.absolute in coast_cells:
+                coast_cells.remove(inst.absolute)
+                coast_cached_instances -= old_count
             loop k in 0..COAST_LEVELS:
                 loop part in old.parts[k]:
                     bound = part; bound.origin = inst.origin; bound.texel = inst.texel
