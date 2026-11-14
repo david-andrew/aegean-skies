@@ -1,0 +1,151 @@
+# World sanity audit: offline checks that every place a person or a seaplane is
+# meant to use is physically usable. Never runs in a frame or a minute update.
+# Findings are ranked; a test compares the severe ones with a reviewed allow-list.
+use 'world.jo'
+use 'geography.jo'
+use 'settlements.jo'
+use 'settlement_ports.jo'
+use 'objects.jo'
+use 'walk_shapes.jo'
+use 'water_field.jo'
+use 'thermal_sites.jo'
+use 'landing_access.jo'
+use 'world_point.jo'
+use 'town_sites.jo'
+
+struct AuditFinding:
+    severe:bool
+    score:f64                      # larger is worse; severe findings rank first
+    kind:str
+    place:int
+    name:str
+    at:vec3
+    detail:str
+    key:str                        # stable identity for the allow-list
+
+audit_key=(kind:str,place:int,index:int)->str:"{kind}:{place}:{index}"
+
+# Walking: a person climbs real steps and treads, never a slope steeper than 45°
+# over a couple of metres, and never wades deeper than the ankles.
+const AUDIT_CELL=2.0
+const AUDIT_GRADE=1.0
+
+audit_ground=(towns:Town[],x:f64,z:f64)->f64:walk_height(towns,x,z)
+
+audit_open=(towns:Town[],p:vec2,h:f64)->bool:
+    water=water_at(f64(p.x),f64(p.y))
+    level=if water.wet:water.level else:0.0
+    if h<level-0.3:return false
+    if length(walk_far_exclude(p,h)-p)>0.05:return false
+    length(town_avoid_buildings(towns,p,h)-p)<0.05
+
+audit_step=(towns:Town[],a:vec3,b:vec3)->bool:
+    run=f64(length(b.xz-a.xz))
+    if run<0.01:return true
+    mid=(a.xz+b.xz)*0.5;hm=audit_ground(towns,f64(mid.x),f64(mid.y))
+    limit=run*0.5*AUDIT_GRADE+0.2
+    abs(hm-f64(a.y))<=limit and abs(f64(b.y)-hm)<=limit and audit_open(towns,mid,hm)
+
+struct AuditReach:
+    reached:bool
+    nodes:int
+    closest:f64                    # nearest approach to the goal, metres
+    near:vec3                      # where that was
+
+# Bounded A* over a fine walking grid; budget bounds the explored area.
+audit_reach=(towns:Town[],start:vec3,goal:vec2,radius:f64=6.0,budget:int=9000,cell:f64=AUDIT_CELL)->AuditReach:
+    origin=start.xz
+    key=(i:int,j:int)->int:(i+4096)*8192+(j+4096)
+    pos=(i:int,j:int)->vec2:origin+vec2(f32(i),f32(j))*f32(cell)
+    height:{int:f64};cost:{int:f64};closed:{int:bool};queue:(f64,int,int)[]
+    s=key(0,0);height[s]=f64(start.y);cost[s]=0.0
+    queue.heap_push((f64(length(goal-origin)),0,0))
+    best=f64(length(goal-origin));near=start
+    loop queue.len()>0 and closed.len()<budget:
+        item=queue.heap_pop();i=item.1;j=item.2;k=key(i,j)
+        if k in closed:continue
+        closed[k]=true
+        p=pos(i,j);here=vec3(p.x,f32(height[k]),p.y)
+        d=f64(length(goal-p))
+        if d<best:best=d;near=here
+        if d<=radius:return AuditReach(true,closed.len(),d,here)
+        loop dj in -1..2:
+            loop di in -1..2:
+                if di==0 and dj==0:continue
+                ni=i+di;nj=j+dj;nk=key(ni,nj)
+                if nk in closed:continue
+                q=pos(ni,nj)
+                if not (nk in height):height[nk]=audit_ground(towns,f64(q.x),f64(q.y))
+                there=vec3(q.x,f32(height[nk]),q.y)
+                if not audit_open(towns,q,height[nk]) or not audit_step(towns,here,there):continue
+                c=cost[k]+f64(length(q-p))
+                if c>=cost.get(nk,1e30):continue
+                cost[nk]=c;queue.heap_push((c+f64(length(goal-q)),ni,nj))
+    AuditReach(false,closed.len(),best,near)
+
+# A placed object must stand on ground a person can reach: not floating, not
+# buried, not on a slope steeper than one can stand on.
+audit_prop=(towns:Town[],result:mut AuditFinding[],kind:str,place:int,name:str,index:int,at:vec3,footprint:f64=0.6):
+    g=audit_ground(towns,f64(at.x),f64(at.z))
+    float=f64(at.y)-g
+    lo=g;hi=g
+    loop d in [vec2(1,0),vec2(-1,0),vec2(0,1),vec2(0,-1)]:
+        q=at.xz+d*f32(footprint)
+        h=audit_ground(towns,f64(q.x),f64(q.y));lo=min(lo,h);hi=max(hi,h)
+    slope=(hi-lo)/(footprint*2.0)
+    if abs(float)>1.0:
+        result.push(AuditFinding(true,100.0+abs(float)*10.0,kind+(if float>0:" floating" else:" buried"),place,name,at,"{abs(float):.1f} m {if float>0:"above" else:"below"} the walking surface",audit_key(kind,place,index)))
+    else if slope>0.9:
+        result.push(AuditFinding(slope>2.0,(if slope>2.0:100.0 else:10.0)+slope*10.0,kind+" on a steep slope",place,name,at,"ground slope {slope:.2f} under it",audit_key(kind+"-slope",place,index)))
+
+# Water beside a mooring: deep enough for a hull and clear of rock around it.
+audit_mooring=(result:mut AuditFinding[],place:int,name:str,index:int,at:vec3,level:f64):
+    worst=1e9
+    loop k in 0..12:
+        a=f64(k)*TAU/12.0
+        q=at.xz+vec2(f32(cos(a)),f32(sin(a)))*6.0
+        worst=min(worst,level-place_ground(q))
+    centre=level-place_ground(at.xz)
+    if centre<1.0 or worst<0.3:
+        result.push(AuditFinding(true,150.0+max(0.0,1.0-min(centre,worst))*20.0,"mooring aground",place,name,at,"water {centre:.1f} m at the berth, {worst:.1f} m within 6 m",audit_key("mooring",place,index)))
+    else if centre<2.0:
+        result.push(AuditFinding(false,20.0+(2.0-centre)*10.0,"shallow mooring",place,name,at,"water {centre:.1f} m at the berth",audit_key("mooring-shallow",place,index)))
+
+# Land behind a quay root: a cliff with no built way up is a dock to nowhere.
+audit_cliff=(towns:Town[],root:vec3,inland:vec2)->f64:
+    rise=0.0
+    loop r in 1..9:
+        q=root.xz+inland*f32(f64(r)*1.5)
+        rise=max(rise,audit_ground(towns,f64(q.x),f64(q.y))-f64(root.y))
+    rise
+
+# Two building footprints overlap (oriented boxes, separating axes in plan).
+audit_overlap=(a:TownSite,b:TownSite)->f64:
+    if f64(length(a.at.xz-b.at.xz))>(max(a.width,a.depth)+max(b.width,b.depth))*0.75:return 0.0
+    axes=[vec2(f32(cos(a.yaw)),f32(-sin(a.yaw))),vec2(f32(sin(a.yaw)),f32(cos(a.yaw))),vec2(f32(cos(b.yaw)),f32(-sin(b.yaw))),vec2(f32(sin(b.yaw)),f32(cos(b.yaw)))]
+    least=1e9
+    loop axis in axes:
+        span=(s:TownSite)->vec2:
+            r=vec2(f32(cos(s.yaw)),f32(-sin(s.yaw)))*f32(s.width*0.5);f=vec2(f32(sin(s.yaw)),f32(cos(s.yaw)))*f32(s.depth*0.5)
+            c=f64(dot(s.at.xz,axis));e=abs(f64(dot(r,axis)))+abs(f64(dot(f,axis)))
+            vec2(f32(c-e),f32(c+e))
+        p=span(a);q=span(b)
+        least=min(least,f64(min(p.y,q.y)-max(p.x,q.x)))
+        if least<=0:return 0.0
+    least
+
+# The walkable quay edge nearest a mooring (the legacy cargo hand-over point).
+audit_quay_access=(tw:Town,point:vec3)->vec3:
+    best=vec3(0,0,0);distance=1e30
+    loop q in tw.quays:
+        line=q.b-q.a;u=clamp(dot(point.xz-q.a,line)/dot(line,line),0.0,1.0)
+        centre=q.a+line*u;across=point.xz-centre
+        side=if length(across)>0.01:normalize(across) else:vec2(1,0)
+        p=centre+side*max(0.0,q.width*0.5-0.9)
+        if f64(length(point.xz-p))<distance:distance=f64(length(point.xz-p));best=vec3(p.x,QUAY_TOP,p.y)
+    best
+
+audit_rank=(items:AuditFinding[])->AuditFinding[]:
+    result=items
+    result.sort((f:AuditFinding):(if f.severe:0 else:1,-f.score,f.key))
+    result
