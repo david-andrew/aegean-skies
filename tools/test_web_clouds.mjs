@@ -51,7 +51,7 @@ try {
   const results=[];
   for(const full of (process.env.WEB_CLOUD_SKY_ONLY?[]:[false,true])) for(const mode of ['front','behind']) {
     const name=`${full?'log':'split'}-${mode}`;
-    const query=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',CLOUD_TEST_MODE:mode,AEGEAN_QUALITY:'low'});
+    const query=new URLSearchParams({AEGEAN_TITLE:'0',SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',CLOUD_TEST_MODE:mode,AEGEAN_QUALITY:'low'});
     if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
     errors.length=0;loaded=false;
     await send('Page.navigate',{url:'file://'+page+'?'+query});
