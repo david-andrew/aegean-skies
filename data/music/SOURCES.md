@@ -94,3 +94,8 @@ pitch sequences. Its decisions are recorded in `performance.json`; see
 `docs/music-performance.md`. `instruments.json` contains scalar parameters for the game's
 procedural oscillators and envelopes, packed by `tools/music_timbres.py`. It contains no
 PCM, recorded sample loops, waveform phases or measured impulse responses.
+Its 17th family, the 1920s upright piano (`MUSIC_UPRIGHT`), was fitted the same way (per-partial
+amplitudes and two decay rates at three dynamics and seven pitches, inharmonicity, attack, loudness
+kept across the keyboard) to measurements of VS Upright Nr. 1 from the Versilian Studios Chamber
+Orchestra 2 Community Edition (https://github.com/sgossner/VSCO-2-CE, Keys/Upright Nr1), which is
+released under CC0 1.0. The recordings were measured in scratch and are not in this repository.

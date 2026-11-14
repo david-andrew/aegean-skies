@@ -62,6 +62,9 @@ struct MusicVoice:
     noise_env = 1.0
     noise_decay = 1.0
     tremor = 0.0
+    thump = 0.0                     # (the 1920s upright: key and damper thumps, their level)
+    thump_env = 0.0
+    thump_low = 0.0
 
 struct MusicMode:
     y1 = 0.0
@@ -131,6 +134,11 @@ struct MusicSynth:
     shelf_hz = 0.0
     shelf_db: f64[]
     shelf_fixed = false             # (tools: keep the shelf set by hand when a piece loads)
+    # the piano this piece is played on: the concert grand (false) or the 1920s hotel upright,
+    # a period instrument with its own fitted model, a slight unison detune and its mechanism heard
+    upright = false
+    piano_fixed = false             # (tools: keep the piano set by hand when a piece loads)
+    thump_level = 1.0               # (the upright's mechanism noise, for measuring it)
 
 music_u32 = (b: u8[], at: int) -> int:
     int(b[at])+int(b[at+1])*256+int(b[at+2])*65536+int(b[at+3])*16777216
@@ -174,8 +182,11 @@ music_load = (s: mut MusicSynth, piece: int):
         t60 = if s.piece == 1: 4.2 else: 3.0
         s.hall_feedback = [loop k in 0..4: exp(-6.907755278982137*f64(s.delays[k].len())/(t60*f64(MUSIC_RATE)))]
     # Fixed orchestra balances; retain each score's internal dynamic range.
-    balances = [0.70,0.90,0.40,0.70,0.22,1.2,0.55,0.75,0.60,0.38,0.85,0.30,0.70]
+    balances = [0.70,0.90,0.40,0.70,0.22,1.2,0.55,1.90,0.60,0.38,0.85,0.30,0.70]
     s.gain = balances[s.piece]
+    if not s.piano_fixed and (MUSIC_PIECES[s.piece].piano == 1) != s.upright:
+        s.upright = MUSIC_PIECES[s.piece].piano == 1
+        music_forget_timbres(s)
     if not s.shelf_fixed:
         piece_shelf = MUSIC_PIECES[s.piece].shelf_db
         if piece_shelf != s.shelf_db or MUSIC_PIECES[s.piece].shelf_hz != s.shelf_hz:
@@ -206,7 +217,8 @@ music_shelf = (s: MusicSynth, instrument: int, f: f64) -> f64:
 music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
     kind = MusicInstrument(e.instrument)
     velocity = clamp((if e.peak_gain >= 0: max(e.gain,max(e.peak_gain,e.end_gain)) else: e.gain)*127.0,1.0,127.0)
-    blend = music_blend(s.models,e.instrument,e.pitch,velocity)
+    upright = s.upright and kind == .piano
+    blend = music_blend(s.models,if upright: MUSIC_UPRIGHT else: e.instrument,e.pitch,velocity)
     models = s.models
     parameter = (field: int) -> f64: music_parameter(models,blend,field)
     release = max(400,int(parameter(1)*3.0*f64(MUSIC_RATE)))
@@ -295,17 +307,32 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
             if f > 7100 or ratio < 0.1: first = 0; second = 0
             if s.shelf_db.len() > 0:
                 k = music_shelf(s,e.instrument,f); first *= k; second *= k
+            if upright and velocity < 45.0:
+                # (struck more softly than its softest measured layer: duller as well as quieter)
+                dull = pow(clamp(velocity/45.0,0.25,1.0),0.06*f64(h))
+                first *= dull; second *= dull
             if mode == 1:
                 if first+second < 0.000001: continue
-                at = slot*MUSIC_PARTIALS+n.partials
-                n.partials += 1
-                s.modes[at] = MusicMode(
-                    sin(TAU*(f*f64(age-1)/f64(MUSIC_RATE)+phi)),
-                    sin(TAU*(f*f64(age-2)/f64(MUSIC_RATE)+phi)),
-                    2.0*cos(TAU*min(f,7100.0)/f64(MUSIC_RATE)),
-                    first*exp(-fast*f64(age)/f64(MUSIC_RATE)),
-                    second*exp(-slow*f64(age)/f64(MUSIC_RATE)),
-                    exp(-fast/f64(MUSIC_RATE)),exp(-slow/f64(MUSIC_RATE)))
+                # an old upright's unison is not quite in tune: the low partials sound as two
+                # strings a few cents apart, beating slowly (the second one in a spare mode)
+                twin = 0.0
+                if upright and h < 6 and n.partials < MUSIC_PARTIALS-1 and e.pitch >= 40:
+                    cents = 1.6+1.6*f64((e.pitch*37+h*11)%17)/16.0
+                    twin = f*(pow(2.0,cents/1200.0)-1.0)
+                    first *= 0.56; second *= 0.56
+                loop copy in 0..(if twin > 0.0: 2 else: 1):
+                    g = f+(if copy == 1: twin else: 0.0)
+                    at = slot*MUSIC_PARTIALS+n.partials
+                    n.partials += 1
+                    s.modes[at] = MusicMode(
+                        sin(TAU*(g*f64(age-1)/f64(MUSIC_RATE)+phi)),
+                        sin(TAU*(g*f64(age-2)/f64(MUSIC_RATE)+phi)),
+                        2.0*cos(TAU*min(g,7100.0)/f64(MUSIC_RATE)),
+                        first*(if copy == 1: 0.8 else: 1.0)*exp(-fast*f64(age)/f64(MUSIC_RATE)),
+                        second*(if copy == 1: 0.8 else: 1.0)*exp(-slow*f64(age)/f64(MUSIC_RATE)),
+                        exp(-fast/f64(MUSIC_RATE)),exp(-slow/f64(MUSIC_RATE)))
+                    if n.partials >= MUSIC_PARTIALS: break
+                if n.partials >= MUSIC_PARTIALS: break
             else if mode == 0:
                 if first+second < 0.0001: continue
                 offset = int(phi*f64(MUSIC_TABLE))
@@ -324,6 +351,11 @@ music_start = (s: mut MusicSynth, e: MusicEvent, age: int):
                 loop i in 0..2*MUSIC_TABLE: s.wave_cache[selected*2*MUSIC_TABLE+i] = s.waves[slot*2*MUSIC_TABLE+i]
     if kind == .trumpet:
         s.lips[slot] = MusicLip(u64(23+e.start+e.pitch*1543+slot*43),0,0)
+    if upright:
+        # The mechanism, very low: the key and hammer's knock on the way down, the damper's at
+        # the end (louder struck harder), as a low thump under the tone.
+        n.thump = 0.1*(0.45+0.55*clamp(velocity/100.0,0.0,1.2))*s.thump_level
+        n.thump_env = exp(-f64(age)/(0.022*f64(MUSIC_RATE)))
     s.voices[slot] = n
 
 # Binary search plus at most the longest note's overlap window. No replay from bar one.
@@ -536,6 +568,9 @@ music_voice_render = (s: mut MusicSynth, k: int, out: mut f64[], at: int, count:
     peak_age = n.peak_age
     gain_step = n.gain_step
     late_step = n.late_step
+    thump = n.thump
+    thump_env = n.thump_env
+    thump_low = n.thump_low
     # Check the two contiguous spans once. These arrays do not resize or escape
     # during the loop; only the destination span is written.
     assert(at >= 0 and at <= out.len() and count <= out.len()-at)
@@ -561,6 +596,11 @@ music_voice_render = (s: mut MusicSynth, k: int, out: mut f64[], at: int, count:
             tone_low += (v-tone_low)*0.42
             brightness = clamp(gain/max(peak_level,0.0001),0.4,1.0)
             v = tone_low+(v-tone_low)*(0.55+brightness*0.45)
+        if thump > 0.0:
+            thump_low += (noise_body-thump_low)*0.12
+            mixed[i] += thump_low*thump*thump_env*gain*6.0
+            thump_env *= 0.9971
+            if age == duration: thump_env = 0.55
         mixed[i] += v*attack_env*gate*gain
         attack_env = 1.0-(1.0-attack_env)*attack_rate
         noise_env *= noise_decay
@@ -578,6 +618,8 @@ music_voice_render = (s: mut MusicSynth, k: int, out: mut f64[], at: int, count:
     n.attack_env = attack_env
     n.gate = gate
     n.gain_step = gain_step
+    n.thump_env = thump_env
+    n.thump_low = thump_low
     if count < requested: n.active = false
     s.voices[k] = n
 

@@ -194,6 +194,26 @@ tempo (the final ritard apart), so a lament still flows whatever piece is given 
 reading slowed to 45–57 bpm and was too heavy.) The rest keep their current reading until their mood's result
 is shown to be better.
 
+## The pianos, and a gentler touch
+
+There are two pianos:
+- **The concert grand** (the original piano model). Clair de lune is played on it.
+- **The 1920s hotel upright** (`MUSIC_UPRIGHT`, the 17th timbre model). It was fitted the same way
+  to a CC0 upright's recordings (see `data/music/SOURCES.md`), keeping its natural loudness across
+  the keyboard (its top quieter than the grand's equal-energy notes). It adds:
+  - a slight unison detune on the low partials (1.6 to 3.2 cents);
+  - extra dulling below its softest layer;
+  - a key knock and a damper thump, very low;
+  - a quicker damper.
+
+A piece's piano is `MusicPiece.piano`, set from `UPRIGHT` in `tools/music_pack.py`: the bar
+pianist's numbers and the radio's period piano.
+
+`GENTLE` sets a gentler touch per piece (`gentle_touch`): a soft mean velocity per voice (the tune,
+the right hand's chords, the bass, the left hand's chords), keeping a third of the phrasing around
+it. The Gymnopédie is played this way. Its orchestral version (`gymnopedie-orchestra`) sets the
+tune about +1 LU over the accompaniment by its arrangement levels.
+
 ## Automatic balance (tools/music_balance.py)
 
 A build-time pass that balances the band and orchestra without a listener. The synthesizer renders
