@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Ambience](#ambience)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -1134,6 +1134,16 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `tools/voice_world/build_units.py` (made), the announcer data file named by
   `AEGEAN_VOICE_DATA` (outside the repository until a final voice is chosen),
   `src/voice_text.jo voice_half`, `voice_frames` (used).
+
+### Broadcast colour
+
+- **Aliases:** studio colour, the carbon mic.
+- **Definition:** the period sound put on the announcer before the station and the receiver: a
+  small studio (reflections, tail, room tone, mains hum), a carbon microphone (resonant narrow
+  band, granule distortion, signal-dependent hiss) and transmitter compression and limiting.
+- **Code:** `src/radio_studio.jo` (`Studio`, `studio_sample`, `studio_block`); amount from
+  `VoiceStyle.colour`, applied in `src/radio_synth.jo radio_render`.
+- **Rules:** amount 0 is exactly transparent; deterministic, own noise stream (`tests/voice_test.jo`).
 
 ### Ambience
 

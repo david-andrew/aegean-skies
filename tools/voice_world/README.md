@@ -33,11 +33,25 @@ The announcer data file (raw deflate, format `AVX1`, written by `pack.py`):
   reproduced in `CMUDICT-LICENSE.txt` beside this file; first pronunciation of each word) for the words the game's own text uses, plus hand-written
   entries for the world's place names (`pack.py MANUAL`);
 - 145 letter-to-sound rules (`lts.py`, written for this project) for words not in the lexicon,
-  mostly the living world's invented names.
+  mostly the living world's invented names;
+- the fitted **prosody model** (`prosody_fit.py`), as named number lists that
+  `src/voice_model.jo` reads (the repository only has neutral placeholder defaults):
+  - durations: per-phone base durations (stressed and reduced vowels separate: schwa AX is not the
+    vowel of "strut" AH; IX, AXR, IYX likewise) and multiplicative factors for function words,
+    word position, clusters, polysyllables, phrase-final rhymes and stress, with a separate rate
+    elasticity per class (how much stressed vowels, unstressed vowels, onsets and codas shrink as
+    the narrator speeds up), fitted by least squares on log duration and scored on held-out
+    phrases against per-phone medians;
+  - intonation: a least-squares superposition of a phrase arc over normalised time, accent shapes
+    aligned to each stressed content-word vowel (first, downstepped middle, nuclear with its fall)
+    and microprosody (inside voiced obstruents, after obstruents), scored on held-out phrases
+    (it fitted better than a Fujisaki command model and the first hat-bump model); phrase level
+    by position in the sentence and its spread;
+  - vocal effort: the mel-cepstral change per semitone as the narrator raises his voice;
+  - fricative caps (90th percentile by position) and pauses (comma, full stop, unpunctuated
+    breath).
 
-`src/voice_model.jo` holds the prosody numbers as constants with their provenance: per-phone
-median durations, phrase pitch level and spread, accent rise and its peak position, final fall,
-continuation rise, pauses and speaking rate.
+The measured values themselves are only in the data file and the scratch report.
 
 Sources of the measurements (analysed in scratch, never committed, listed in the scratch
 report): a modern recap narrator who deliberately imitates the period newsreel delivery (17
@@ -56,8 +70,8 @@ separated mono narration track and its phone alignment JSON (`phones`: `p`, `sta
 
 ```sh
 python analyse_corpus.py VOICE.wav PHONES.json OUT.npz --speakers SPEAKERS.json   # ~6 min / 17 min audio
-python prosody.py PHONES.json WORDS.json OUT.npz > prosody.json
-python pack.py --corpus OUT.npz PHONES.json --prosody prosody.json --castle period-prosody.json \
+python prosody_fit.py PHONES.json WORDS.json OUT.npz SPEAKERS.json fit.json     # ~3 min
+python pack.py --corpus OUT.npz PHONES.json --fit fit.json \
                --repo ../.. --out ~/dev/tmp/aegean-skies/radio/voice2/data/announcer.z --report report.json
 python -m unittest test_voice_world.py
 ```

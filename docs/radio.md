@@ -92,17 +92,27 @@ notices read actual closure orders; old news of a closure does not masquerade as
 ## The announcer
 
 One synthesized voice reads every spoken programme, each station with its own delivery
-(`radio_voice_style`: pitch, tempo, diction, accent size, pauses). It is a classical vocoder
-voice built WORLD-style, not a recording and not a neural model:
+(`radio_voice_style`: tempo, pitch register and range, vocal effort, tilt, pauses, broadcast
+colour). The newsreel default is 1.35 times the measured narrator's syllable rate; the national
+stations read their news (the war) at 1.45, three semitones higher, with a wider range and a
+raised-voice spectrum. It is a classical vocoder voice built WORLD-style, not a recording and not
+a neural model:
 
 * **Text** (`src/voice_text.jo`): words, numbers and clock times ("nine thirty", "nineteen hundred
   hours") become ARPAbet phones from a 2,921-word lexicon (CMUdict for the game's own vocabulary
   plus the world's place names), with letter-to-sound rules and a stress guess for invented
-  names. Durations are the measured narrator's per-phone medians, by stress, with phrase-final
-  lengthening and clearer word-final consonants.
-* **Pitch**: per-phrase baselines at the narrator's measured level and spread, accents on stressed
-  content words rising about 4 semitones and peaking late in the vowel, a terminal fall or a
-  continuation rise at punctuation, and slow wander. Numbers in `src/voice_model.jo`.
+  names; function words take their weak forms and unstressed vowels their reduced symbols.
+  Long phrases take a short breath before a conjunction.
+* **Rhythm**: a fitted duration model (per-phone base, factors for stress, function words, word
+  position, clusters, syllable count and phrase-final lengthening). Tempo is solved so that the
+  speech runs at the target syllable rate while each class compresses by its own measured
+  elasticity: unstressed vowels shrink most, consonants least. Fricatives are capped at the
+  narrator's long-but-normal length; a pause keeps only its measured 45 ms next to speech.
+* **Pitch**: a superposition fitted to the narrator: each phrase has its level and an arc over its
+  length; every stressed content-word vowel gets an accent shape (a dip, then a peak early in
+  the vowel; the first accent highest, later ones downstepped, the nuclear accent followed by
+  a fall); microprosody dips inside voiced obstruents. Shapes are widened 1.6 times to restore the
+  variance a mean model loses, with a soft limit of 7 semitones around the register.
 * **Spectra**: each pair of neighbouring phones takes its measured *diphone trajectory* (spectral
   envelope, band aperiodicity and voicing from the centre of one phone to the centre of the next,
   averaged over the narrator's tokens), so formant transitions, closures, bursts and frication are
@@ -113,14 +123,21 @@ voice built WORLD-style, not a recording and not a neural model:
   mixed per band by the aperiodicity (calibrated so that the synthetic voice re-analyses to the
   narrator's own), then shaped by a 24th-order lattice all-pole filter fitted to each 5 ms
   envelope frame (mel-cepstrum → power → autocorrelation → Levinson), interpolated each
-  millisecond. Output passes through station levelling and the receiver like music.
+  millisecond. Vocal effort moves each frame's envelope along the narrator's own raised-voice
+  direction, more on higher pitch.
+* **Broadcast colour** (`src/radio_studio.jo`): a small studio (early reflections, a short tail,
+  room tone, 50 Hz hum), a carbon microphone (resonant 300–3400 Hz band, granule distortion and
+  its signal-dependent hiss) and transmitter compression with a soft limiter; then station
+  levelling, and the receiver with some transcription-disc wear. It hides vocoder artefacts at
+  some cost in intelligibility; `VoiceStyle.colour` and `record` set how much.
 
 A bulletin repeats on the world clock: its period is the programme span (10 s, or 30 s for
 maritime) rounded up to fit the words plus a pause, so tuning in mid-bulletin joins it where it is.
-The voice data file (285 KB) is **not in the repository** until a final voice is chosen: the game
-reads it from the path in `AEGEAN_VOICE_DATA`, during world loading with the music (about 35 ms
-native, 75 ms in Chromium on redfox). Without it, speech is off and spoken programmes stay in
-Morse. How it is made: `tools/voice_world/README.md`.
+The voice data file (333 KB: spectra, lexicon, rules and the fitted prosody model) is **not in
+the repository** until a final voice is chosen: the game reads it from the path in
+`AEGEAN_VOICE_DATA`, during world loading with the music (about 43 ms native, 78 ms in Chromium on
+redfox). Without it, speech is off and spoken programmes stay in Morse; `src/voice_model.jo` holds
+only neutral placeholder numbers. How it is made: `tools/voice_world/README.md`.
 
 ## Audio, cost and validation
 

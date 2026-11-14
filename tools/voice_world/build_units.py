@@ -16,10 +16,17 @@ HALF = 6
 SIL = 'pau'
 SIL_SPAN = 0.045          # seconds of a pause used next to the boundary
 VOWELS = {'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'EH', 'ER', 'EY', 'IH', 'IY', 'OW', 'OY', 'UH', 'UW'}
+# Unstressed vowels the narrator says differently enough to need their own units: schwa (AX) is
+# not the vowel of "strut" (AH), and so on. Other vowels are rarely unstressed and share units.
+REDUCED = {'AH': 'AX', 'IH': 'IX', 'ER': 'AXR', 'IY': 'IYX'}
+
+
+def unit_label(p, stress=0):
+    return REDUCED[p] if p in REDUCED and stress == 0 else p
 
 
 def label(p):
-    return SIL if p['p'] == '[SIL]' else p['p']
+    return SIL if p['p'] == '[SIL]' else unit_label(p['p'], p.get('stress', 0))
 
 
 def segment_tracks(npz):
@@ -50,7 +57,7 @@ def tokens(phones, tracks, min_conf=0.2, min_dur=0.019):
     for si, ps in segs.items():
         tr = tracks[si]
         # relative gain reference: median c0 at vowel centres
-        vc = [sample(tr, 0, [(p['start'] + p['end']) / 2])[0, 0] for p in ps if p['p'] in VOWELS]
+        vc = [sample(tr, 0, [(p['start'] + p['end']) / 2])[0, 0] for p in ps if p['p'] in VOWELS and p.get('stress', 0) >= 1]
         if len(vc) < 3:
             continue
         ref = float(np.median(vc))
