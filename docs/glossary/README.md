@@ -362,7 +362,9 @@ On the rivers branch until it lands.
 - **Aliases:** band speed, band angle, the wagon-wheel drift.
 - **Definition:** the designed drift of the arc bands around the hub. Their turning rate cycles
   with engine speed (a smoothed sawtooth of about 2.5 cycles that grows as the engine slows), so
-  the arcs creep, reverse and creep back like a wagon wheel on film. At the lowest disc speed it
+  the arcs creep, reverse and creep back like a wagon wheel on film. The drift lingers near its
+  fast extremes over most of the range (`PROP_DRIFT_HOLD`), so the slow passages are brief blips;
+  full power keeps its slow creep. At the lowest disc speed it
   matches the blades' real speed, so the hand-over to idle blades is seamless.
 - **Code:** `src/prop_disc.jo:176 prop_band_speed` (with `PROP_TOP_SPEED`), `prop_band_angle`
   (integrated per craft); the shaft rate is `src/flight_feedback.jo prop_rotation_speed`.
