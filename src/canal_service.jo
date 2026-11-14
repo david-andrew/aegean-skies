@@ -1,0 +1,86 @@
+# Canal workshop services reuse saved obligations, funded escrow and real parts stock.
+# Presentation belongs to the normal service UI; these functions never move the player.
+use 'canal_geometry.jo'
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_stock.jo'
+use 'living_money.jo'
+use 'living_seed.jo'
+use 'living_guard.jo'
+
+canal_repair_berth=(p:vec3)->bool:length(p-canal_launch)<=25 or length(p-canal_workshop)<=22
+
+canal_repair_request=(w:mut World,owner:int)->int:
+    if owner<0 or owner>=w.people.len() or not (CANAL_CITY_ID in w.far.districts):return -1
+    c=w.people[owner].craft
+    if c<0 or c>=w.aircraft.len() or w.aircraft[c].owner!=owner:return -1
+    if not canal_repair_berth(w.aircraft[c].pose.pos) or length(w.people[owner].pose.pos-canal_workshop)>70:return -1
+    if w.aircraft[c].trip>=0 or (w.aircraft[c].state!=.moored and w.aircraft[c].state!=.workshop):return -1
+    loop id in w.open_obligations:
+        o=w.obligations[id]
+        if o.kind==.repair and o.craft==c and (o.state==.open or o.state==.blocked):return id
+    hull=w.aircraft[c].engine>=800
+    points=max(0,800-(if hull:w.aircraft[c].hull else:w.aircraft[c].engine))
+    if points==0:return -1
+    id=seed_obligation(w,"canal-service-{c}-{w.next_obligation}",owner,-1,.repair,w.minute,w.minute+2880,points*4,CANAL_CITY_ID)
+    w.obligations[id].craft=c;w.obligations[id].quantity=points;w.obligations[id].repair_hull=hull
+    id
+
+canal_repair_start=(w:mut World,id:int)->bool:
+    o=w.obligations[id];c=o.craft;owner=o.debtor
+    if o.repair_started_minute>=0 or c<0 or w.aircraft[c].state!=.moored or w.aircraft[c].trip>=0:return false
+    if not (CANAL_CITY_ID in w.far.districts) or not canal_repair_berth(w.aircraft[c].pose.pos):return false
+    if w.aircraft[c].owner!=owner or length(w.people[owner].pose.pos-canal_workshop)>70:return false
+    mechanic=-1
+    loop p in w.far.districts[CANAL_CITY_ID].named:
+        if w.far.people[p].role!=.artisan or w.people[p].injured_until>w.minute or length(w.people[p].pose.pos-canal_workshop)>70:continue
+        busy=false
+        loop other in w.open_obligations:
+            if w.obligations[other].mechanic==p and w.obligations[other].repair_started_minute>=0:busy=true
+        if not busy:mechanic=p;break
+    if mechanic<0:return false
+    # Core repairs use grams, sparse stock uses milli-packages (10 grams each).
+    parts=(o.quantity*500/200+9)/10;labor=o.quantity*800/200
+    d=w.far.districts[CANAL_CITY_ID];cost=(parts*d.prices[5]+999)/1000
+    if o.quantity<=0 or far_market_qty(w,CANAL_CITY_ID,5)<parts or w.accounts[w.people[owner].account].cents<cost+labor:return false
+    escrow=fund_escrow(w,w.people[owner].account,cost+labor,"repair-{id}")
+    if escrow<0:return false
+    if not transfer(w,escrow,d.market_account,cost,.repair,id):
+        living_fault("canal.repair_material_payment","obligation={id}");return false
+    batch=far_take_market(w,CANAL_CITY_ID,5,parts);far_use(w,batch)
+    w.obligations[id].labor_escrow=escrow;w.obligations[id].amount_cents=cost+labor
+    w.obligations[id].mechanic=mechanic;w.obligations[id].repair_started_minute=w.minute
+    w.obligations[id].reserved_until_minute=w.minute+120;w.obligations[id].state=.open
+    w.obligations[id].work_minutes=0
+    w.aircraft[c].repair_obligation=id;w.aircraft[c].state=.workshop;w.aircraft[c].revision+=1
+    w.people[mechanic].action=Action(activity=.work,purpose=.repair,reason=o.reason,end_minute=w.minute+2)
+    w.far.people[mechanic].route=[];w.far.people[mechanic].target=w.people[mechanic].pose.pos
+    true
+
+canal_repair_cancel=(w:mut World,id:int):
+    o=w.obligations[id]
+    if o.repair_started_minute<0:return
+    # Fitted materials remain consumed; only unearned labour is refundable.
+    if o.labor_escrow>=0 and w.accounts[o.labor_escrow].cents>0:
+        if not transfer(w,o.labor_escrow,w.people[o.debtor].account,w.accounts[o.labor_escrow].cents,.refund,id):
+            living_fault("canal.repair_refund","obligation={id}");return
+    w.aircraft[o.craft].repair_obligation=-1;w.aircraft[o.craft].state=.moored;w.aircraft[o.craft].revision+=1
+    w.obligations[id].repair_started_minute=-1;w.obligations[id].mechanic=-1
+    w.obligations[id].next_retry_minute=w.minute+60
+    w.obligations[id].state=.blocked;w.obligations[id].blocked_code="Workshop work interrupted; unused labour refunded."
+
+canal_repair_advance=(w:mut World,id:int):
+    o=w.obligations[id];p=o.mechanic;c=o.craft
+    if p<0 or w.people[p].injured_until>w.minute or length(w.people[p].pose.pos-canal_workshop)>70 or not canal_repair_berth(w.aircraft[c].pose.pos):
+        if w.minute>=o.reserved_until_minute:canal_repair_cancel(w,id)
+        return
+    w.people[p].action=Action(activity=.work,purpose=.repair,reason=o.reason,end_minute=w.minute+2)
+    w.obligations[id].work_minutes+=1;w.obligations[id].reserved_until_minute=w.minute+120
+    if w.obligations[id].work_minutes<(o.quantity*60+199)/200:return
+    labor=w.accounts[o.labor_escrow].cents
+    if not transfer(w,o.labor_escrow,w.people[p].account,labor,.repair,id):
+        living_fault("canal.repair_wage","obligation={id}");return
+    if o.repair_hull:w.aircraft[c].hull=min(1000,w.aircraft[c].hull+o.quantity)
+    else:w.aircraft[c].engine=min(1000,w.aircraft[c].engine+o.quantity)
+    w.aircraft[c].revision+=1;w.aircraft[c].state=.moored;w.aircraft[c].repair_obligation=-1
+    w.obligations[id].state=.fulfilled;w.obligations[id].repair_started_minute=-1

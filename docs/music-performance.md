@@ -117,3 +117,62 @@ a sharper plectrum transient and shorter release. The island pluck stays unchang
 next orchestral pass. See `music-orchestra.md` for the annotated Adagietto, concert hall,
 trumpet, piano correction and station levelling; `music-playback-budget.md` records the
 bounded caching plan and its gates.
+
+## Clair de lune, shaped by a pianist's annotation
+
+The Mutopia transcription of Clair de lune plays every note at one velocity, in strict time.
+`data/music/clair-de-lune-performance.json` is its annotation, written by
+`tools/clair_performance.py` from a readable plan, bar by bar (72 bars of 9/8). The generic phrase
+rules are switched off for this piece (its `CONFIG` timing, dynamics and ritard are zero) so the
+annotation alone shapes it, through the same `apply_performance_map` as the Adagietto, which gains
+four optional layers (absent for the Adagietto, whose output is unchanged):
+
+* `time_map` on eighth notes: a phrase-level tempo arch with rubato, lingering into each phrase's
+  cadence, pushing through the Un poco mosso and En animant, broadening at the climax, Calmato,
+  Tempo I and a long morendo (about 346 s performed from 328 s of score);
+* `dynamics` in dB (pp opening, the swell through the arpeggios to the ff of En animant, a hushed
+  return, fading out), part of it as touch (`effort_share`, which darkens or brightens the piano's
+  tone) and the rest as level (`MUS3` mix gains);
+* `voicing`: the right hand's top note of each chord brought out over the inner notes and the
+  left hand;
+* `pedal`: sustain spans changed with each beat in the chordal sections and each bar through the
+  arpeggios (lifted 60 ms at each change), holding notes up to six seconds; `spread_seconds`: each
+  chord rolled 30 ms from the bass up.
+
+Rebuild: `python tools/clair_performance.py && python tools/music_pack.py`.
+
+## Expressive timing from the score (tools/expressive_timing.py)
+
+A general system, not hand-drawn bars. For any piece it measures an intensity curve from the
+notes, on half beats: density (notes per beat), motion (distinct onsets per beat: runs and
+arpeggios), register and range, tension (how dissonant the sounding pitch classes are), dynamics
+(the score's markings when given, else velocities that vary), and the melody's rise; each is
+normalised against the piece itself, weighted and smoothed over about a bar. The tempo then:
+
+* moves on where the texture flows (motion, scaled by how loud the music is, so a quiet flowing
+  passage doesn't rush) and where intensity builds;
+* broadens at intensity peaks and lingers into phrase ends (phrases every few bars, moved to a
+  nearby rest or long note in the melody), with a final ritard;
+* takes the pace of each section from the score's printed tempo markings when given (Un poco
+  mosso, Calmato, Tempo I...), the intensity shaping the motion within them;
+* wanders a little by a seeded, bounded variation (slow waves and a small offset per phrase), so
+  it isn't mechanical yet every rebuild is identical;
+* is smoothed over a beat and eased into its range with a soft limit (no flat ceilings).
+
+Parameters per piece (`ExpressiveTiming`): base pace, range, sensitivity, the weights of flow,
+build, peaks and cadences, the variation and its seed, the phrase length, the tempo markings.
+Clair de lune uses it through its annotation (`tools/clair_performance.py`, with its dynamics plan
+as the markings); the Berceuse through `music_pack.EXPRESSIVE`. The Gymnopédie keeps its steady
+reading (the system pushes on with each entry of the tune, against its "Lent et douloureux"),
+and the Adagietto keeps its measured clock (the computed curve correlates only weakly with it,
+0.10).
+
+### Arpeggios as one gesture across the hands
+
+`arpeggio_gestures` follows each arpeggio line through the notes that are alone in their hand
+(a hand playing two notes at once is a chord or a melody in thirds), joining the line that has
+just sounded close in time and pitch, whichever hand plays it. Each sweep up and back gets one
+touch and one smooth contour rising to its highest note, so a figure passing from the left hand
+to the right is one continuous line in loudness. Clair de lune's voicing then brings the melody
+only a couple of dB over the accompaniment, the left hand lifted: hand-crossing steps fell from
+a mean of 9.2 dB to 1.6 dB, the right hand's average over the left from 7.3 to 3.2 dB.

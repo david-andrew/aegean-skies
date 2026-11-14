@@ -1,0 +1,138 @@
+# The workshop repair desk's round trip as the panel drives it: request, quote, start, progress
+# read from the saved obligation while the living world does the work, done; and cancel.
+use '../src/repair_desk.jo'
+use '../src/canal_geometry.jo'
+use '../src/living_money.jo'
+use '../src/living_types.jo'
+use '../src/life_types.jo'
+use '../src/living_far_types.jo'
+use '../src/living_far_people.jo'
+use '../src/living_far_economy.jo'
+use '../src/living_place_context.jo'
+use '../src/living_seed.jo'
+use '../src/living_duties.jo'
+use '../src/living_checks.jo'
+use '../src/living_save.jo'
+use '../src/living_far_stock.jo'
+import '../src/living_sim.jo' as sim
+
+desk_fixture = () -> World:
+    init_canal_geometry()
+    w = build_world(u64(42))
+    contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k, "Core {k}", 0, k, w.harbors[k].center, true, k))
+    contexts.push(LifePlaceContext(CANAL_CITY_ID, CANAL_CITY_NAME, 1, 1, canal_workshop))
+    assert(publish_place_contexts(w, 1, contexts, [-1, CANAL_CITY_ID, -1]))
+    assert(populate_settlement_economy(w, 1, [FarPlaceSeed(CANAL_CITY_ID, 80, 1, 5)], []))
+    p = promote_far_person(w, CANAL_CITY_ID, .artisan)
+    w.people[p].pose.pos = canal_workshop
+    w.people[0].place = -1; w.people[0].pose.pos = canal_workshop
+    w.aircraft[0].place = -1; w.aircraft[0].dock = -1; w.aircraft[0].pose.pos = canal_launch; w.aircraft[0].engine = 600
+    w
+
+# a living-world minute, as the simulation would run it
+_minute = (w: mut World):
+    w.minute += 1; w.tick = w.minute * 120; advance_repairs(w)
+
+test "the desk explains why it can't take an aircraft away from the slipway":
+    w = desk_fixture()
+    w.aircraft[0].pose.pos += vec3(100, 0, 0)
+    assert(desk_refusal(w, 0).contains("slipway"))
+    assert(desk_request(w, 0) < 0)
+    d = repair_desk(w, 0, -1)
+    assert(d.phase == .refused and d.reason.contains("slipway"), d.reason)
+    w.aircraft[0].pose.pos = canal_launch
+    w.people[0].pose.pos = canal_workshop + vec3(90, 0, 0)
+    assert(desk_refusal(w, 0).contains("Come to the workshop"))
+
+test "request, quote, start, progress and done read the saved repair":
+    w = desk_fixture()
+    assert(desk_refusal(w, 0) == "")
+    id = desk_request(w, 0)
+    assert(id >= 0)
+    # (asking again finds the same repair, not a second one)
+    assert(desk_request(w, 0) == id)
+    q = repair_desk(w, 0, id)
+    assert(q.phase == .quote and q.reason == "", q.reason)
+    assert(q.part == "engine" and q.now_pct == 60 and q.after_pct == 80 and q.quantity == 200)
+    price = w.far.districts[CANAL_CITY_ID].prices[5]
+    assert(q.parts_milli == 50 and q.labour_cents == 800 and q.work_total == 60)
+    assert(q.materials_cents == (50 * price + 999) / 1000)
+    assert(q.total_cents == q.materials_cents + q.labour_cents)
+    stock = far_market_qty(w, CANAL_CITY_ID, 5)
+    cash = w.accounts[w.people[0].account].cents
+    assert(desk_start(w, id) == "")
+    s = repair_desk(w, 0, id)
+    assert(s.phase == .underway and s.mechanic != "" and s.work_done == 0)
+    assert(s.charged_cents == q.total_cents and s.refundable_cents == q.labour_cents)
+    assert(w.accounts[w.people[0].account].cents == cash - q.total_cents)
+    assert(far_market_qty(w, CANAL_CITY_ID, 5) == stock - 50)
+    # (a second start is refused in words, with nothing charged again)
+    assert(desk_start(w, id) != "")
+    assert(w.accounts[w.people[0].account].cents == cash - q.total_cents)
+    # reading the desk changes nothing: the work advances only with the world's minutes
+    loop _ in 0..5: _ = repair_desk(w, 0, id)
+    assert(w.obligations[id].work_minutes == 0)
+    loop _ in 0..30: _minute(w)
+    half = repair_desk(w, 0, id)
+    assert(half.phase == .underway and half.work_done == 30 and half.work_total == 60)
+    loop _ in 0..30: _minute(w)
+    done = repair_desk(w, 0, id)
+    assert(done.phase == .done and done.part == "engine" and done.now_pct == 80, "{done.phase} {done.now_pct}")
+    assert(done.charged_cents == q.total_cents and done.refundable_cents == 0)
+    assert(w.aircraft[0].state == .moored and w.aircraft[0].pose.pos == canal_launch)
+    assert(money_balances(w) and goods_balance(w))
+    # the engine back to 80%, a worn hull is the next request
+    w.aircraft[0].hull = 700
+    assert(done.other_due == "" or done.other_due == "hull")
+    next = desk_request(w, 0)
+    assert(next >= 0 and next != id)
+    n = repair_desk(w, 0, next)
+    assert(n.phase == .quote and n.part == "hull" and n.now_pct == 70 and n.quantity == 100)
+
+test "start says why when the purse is short, and charges nothing":
+    w = desk_fixture()
+    id = desk_request(w, 0)
+    a = w.people[0].account
+    keep = w.accounts[a].cents
+    assert(transfer(w, a, w.far.districts[CANAL_CITY_ID].market_account, keep - 100, .trade))
+    q = repair_desk(w, 0, id)
+    assert(q.phase == .quote and q.reason.contains("you have"), q.reason)
+    assert(desk_start(w, id).contains("you have"))
+    assert(w.accounts[a].cents == 100 and w.obligations[id].repair_started_minute < 0)
+    assert(w.aircraft[0].state == .moored)
+
+test "cancel keeps the fitted parts used and refunds the unused labour":
+    w = desk_fixture()
+    id = desk_request(w, 0)
+    q = repair_desk(w, 0, id)
+    cash = w.accounts[w.people[0].account].cents
+    stock = far_market_qty(w, CANAL_CITY_ID, 5)
+    assert(desk_start(w, id) == "")
+    loop _ in 0..10: _minute(w)
+    assert(desk_cancel(w, id) == "")
+    c = repair_desk(w, 0, id)
+    assert(c.phase == .interrupted and c.note.contains("refunded"), c.note)
+    # materials stay spent, labour comes back; the engine is as it was
+    assert(w.accounts[w.people[0].account].cents == cash - q.materials_cents)
+    assert(far_market_qty(w, CANAL_CITY_ID, 5) == stock - 50)
+    assert(w.aircraft[0].engine == 600 and w.aircraft[0].state == .moored)
+    assert(desk_cancel(w, id) != "")
+    assert(money_balances(w) and goods_balance(w))
+    # (the interrupted repair can be quoted and started again)
+    assert(desk_request(w, 0) == id)
+    assert(repair_desk(w, 0, id).reason == "")
+
+test "the world's own minutes carry a quoted and a started repair without faults":
+    w = desk_fixture()
+    id = desk_request(w, 0)
+    # (a quote left waiting past its due minute is late, at the canal city, not a crash)
+    sim.advance_minutes(w, 3)
+    assert(desk_start(w, id) == "", repair_desk(w, 0, id).reason)
+    sim.advance_minutes(w, 30)
+    d = repair_desk(w, 0, id)
+    assert(d.phase == .underway or d.phase == .paused or d.phase == .done, "{d.phase}")
+    sim.advance_minutes(w, 120)
+    d = repair_desk(w, 0, id)
+    assert(d.phase == .done, "{d.phase} {d.reason}")
+    assert(money_balances(w) and goods_balance(w))

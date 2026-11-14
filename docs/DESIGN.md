@@ -136,7 +136,7 @@ salience: the gravest are kept).
 - **Speech**: people say things unprompted when one walks by (a line from the place's news or their
   own circumstances: "He should have been back before the wind turned"); a poster offers a job to
   whoever is in front of them; the harbor board lists the day's notices by name ("Marta Galli pays
-  40 lire for oil to Mikra by dusk") and, each morning, three lines of yesterday's news.
+  ¤40 for oil to Mikra by dusk") and, each morning, three lines of yesterday's news.
 
 ## Near and far
 
@@ -333,8 +333,8 @@ People are not information kiosks. A greeting or a remark in passing is short an
 speaker's own day (where they're going, their work, their children, the wind on their trade).
 Asking about a subject brings a personal view first ("medicine has gone dear; I paid through the
 nose"), asking again brings a particular, rounded and dated the way people carry it ("near enough
-nineteen lire, yesterday evening, so Yannis said"), and after that a referral to a neighbour who
-would know ("ask Eleni at the store"), then an honest end. Speech never says centesimi, clock
+nineteen phoinikes, yesterday evening, so Yannis said"), and after that a referral to a neighbour who
+would know ("ask Eleni at the store"), then an honest end. Speech never says exact lepta, clock
 minutes, packages or record words; `living_talk_words.jo` turns figures into spoken forms and
 `tests/living_speech_style.jo` samples greetings and answers across towns to keep it that way.
 A notice is retold in a sentence with who it came from, never read out. Fourteen voices (by

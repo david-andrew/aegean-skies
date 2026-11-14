@@ -1,0 +1,185 @@
+# The Neravessa workshop's repair desk, as the player sees it: whether the service can be offered
+# here, the quote for the next repair, and how a started repair stands. Everything is read from the
+# living world's saved obligation and accounts; the only changes go through the standard repair
+# dispatchers (request_repair, start_repair, cancel_repair in living_duties). The work itself is
+# done by the living world's normal advancement, never from here.
+use 'canal_geometry.jo'
+use 'phoenix.jo'
+import 'living_types.jo' as data
+import 'living_duties.jo' as duties
+import 'living_far_stock.jo' as far_stock
+import 'canal_service.jo' as canal
+
+const DESK_REACH = 70.0             # metres from the workshop (the backend's own limit)
+const DESK_RESTORES = 800           # the workshop brings a part back to 80%, no further
+
+# Money as the game writes it everywhere else: the phoenix sign and the figure, lepta under one.
+desk_money = (cents: int) -> str: phoenix_text(cents)
+
+# "500 g", "1.2 kg": parts stock is kept in milli-packages of 10 g each
+desk_weight = (milli: int) -> str:
+    g = milli * 10
+    if g < 1000: "{g} g" else: if g % 1000 == 0: "{g / 1000} kg" else: "{f64(g) / 1000.0:.1} kg"
+
+# "40 minutes", "1 hour 5 minutes"
+desk_minutes = (m: int) -> str:
+    if m < 60: return if m == 1: "1 minute" else: "{m} minutes"
+    h = m / 60; r = m % 60
+    hours = if h == 1: "1 hour" else: "{h} hours"
+    if r == 0: hours else: "{hours} {desk_minutes(r)}"
+
+enum DeskPhase: refused, quote, underway, paused, done, interrupted
+
+struct RepairDesk:
+    phase: DeskPhase = .refused
+    id = -1                         # the saved repair obligation (-1: none)
+    reason = ""                     # refused: why there is nothing to offer; quote: why it can't start
+    part = "engine"                 # "engine" or "hull"
+    now_pct = 0                     # the part's condition, in percent
+    after_pct = 80                  # what the repair brings it to
+    quantity = 0                    # condition points restored (of 1000)
+    parts_milli = 0                 # spare parts fitted, milli-packages
+    stock_milli = 0                 # the workshop's parts stock
+    materials_cents = 0
+    labour_cents = 0
+    total_cents = 0
+    work_total = 0                  # minutes of work the repair takes
+    work_done = 0
+    mechanic = ""                   # who does the work
+    charged_cents = 0               # what the started repair cost (from the obligation)
+    refundable_cents = 0            # unused labour still held for it
+    cash_cents = 0
+    note = ""                       # the obligation's own word, when it was interrupted
+    other_due = ""                  # done: the other part, if it is below 80% too
+
+desk_part = (o: data.Obligation) -> str: if o.repair_hull: "hull" else: "engine"
+
+# The backend's quote formulas, for `quantity` points at the canal city's current parts price.
+desk_parts = (quantity: int) -> int: (quantity * 500 / 200 + 9) / 10
+desk_labour = (quantity: int) -> int: quantity * 800 / 200
+desk_work_minutes = (quantity: int) -> int: (quantity * 60 + 199) / 200
+desk_materials = (w: data.World, quantity: int) -> int:
+    (desk_parts(quantity) * w.far.districts[CANAL_CITY_ID].prices[5] + 999) / 1000
+
+# Why the desk can't take the player's aircraft now, or "" when it can (the backend's checks for a
+# request, in the order it makes them, in plain words).
+desk_refusal = (w: data.World, owner: int) -> str:
+    init_canal_geometry()
+    if owner < 0 or owner >= w.people.len() or not (CANAL_CITY_ID in w.far.districts): return "The workshop is closed."
+    c = w.people[owner].craft
+    if c < 0 or c >= w.aircraft.len() or w.aircraft[c].owner != owner: return "The workshop works only on your own aircraft."
+    if length(w.people[owner].pose.pos - canal_workshop) > DESK_REACH: return "Come to the workshop to ask about repairs."
+    if not canal.canal_repair_berth(w.aircraft[c].pose.pos): return "Bring your aircraft to the workshop's slipway and moor her there first."
+    if w.aircraft[c].trip >= 0: return "Finish your trip first."
+    if w.aircraft[c].state != .moored and w.aircraft[c].state != .workshop: return "Moor your aircraft at the slipway first."
+    ""
+
+# a free mechanic for a repair at the workshop now, as canal_repair_start would choose (-1: none),
+# and why not, when there is none
+_desk_mechanic = (w: data.World) -> (int, str):
+    seen = false
+    loop p in w.far.districts[CANAL_CITY_ID].named:
+        if w.far.people[p].role != .artisan: continue
+        seen = true
+        if w.people[p].injured_until > w.minute or length(w.people[p].pose.pos - canal_workshop) > DESK_REACH: continue
+        busy = false
+        loop other in w.open_obligations:
+            if w.obligations[other].mechanic == p and w.obligations[other].repair_started_minute >= 0: busy = true
+        if not busy: return (p, "")
+    (-1, if seen: "No mechanic is free at the workshop just now. Come back later." else: "The workshop has no mechanic just now.")
+
+# Why start_repair would turn this quote down now, or "" when it would go ahead.
+desk_start_refusal = (w: data.World, id: int) -> str:
+    if id < 0 or not (id in w.obligations): return "There is nothing to repair."
+    o = w.obligations[id]
+    owner = o.debtor; c = o.craft
+    if o.repair_started_minute >= 0: return "The work has already started."
+    if o.state != .open and o.state != .blocked: return "This repair is closed."
+    if o.quantity <= 0: return "There is nothing to repair."
+    refusal = desk_refusal(w, owner)
+    if refusal != "": return refusal
+    if w.aircraft[c].state != .moored: return "Moor your aircraft at the slipway first."
+    found = _desk_mechanic(w)
+    if found.0 < 0: return found.1
+    parts = desk_parts(o.quantity)
+    stock = far_stock.far_market_qty(w, CANAL_CITY_ID, 5)
+    if stock < parts: return "The workshop is short of spare parts: it needs {desk_weight(parts)} and has {desk_weight(max(stock, 0))}."
+    cost = desk_materials(w, o.quantity) + desk_labour(o.quantity)
+    cash = w.accounts[w.people[owner].account].cents
+    if cash < cost: return "The repair costs {desk_money(cost)}; you have {desk_money(cash)}."
+    ""
+
+# how the repair `id` stands (or, with id < 0, why there is none), for the panel to show
+repair_desk = (w: data.World, owner: int, id: int) -> RepairDesk:
+    init_canal_geometry()
+    d = RepairDesk()
+    if owner >= 0 and owner < w.people.len(): d.cash_cents = w.accounts[w.people[owner].account].cents
+    c = if owner >= 0 and owner < w.people.len(): w.people[owner].craft else: -1
+    if id < 0 or not (id in w.obligations):
+        d.reason = desk_refusal(w, owner)
+        if d.reason == "" and c >= 0:
+            d.reason = "Your engine and hull are both at 80% or better. The workshop restores parts to 80%, so there is nothing for it to do."
+        if c >= 0:
+            d.now_pct = w.aircraft[c].engine / 10
+        return d
+    o = w.obligations[id]
+    c = o.craft
+    d.id = id
+    d.part = desk_part(o)
+    d.quantity = o.quantity
+    d.now_pct = (if o.repair_hull: w.aircraft[c].hull else: w.aircraft[c].engine) / 10
+    d.after_pct = DESK_RESTORES / 10
+    d.parts_milli = desk_parts(o.quantity)
+    d.labour_cents = desk_labour(o.quantity)
+    d.work_total = desk_work_minutes(o.quantity)
+    d.work_done = o.work_minutes
+    if CANAL_CITY_ID in w.far.districts:
+        d.materials_cents = desk_materials(w, o.quantity)
+        d.stock_milli = far_stock.far_market_qty(w, CANAL_CITY_ID, 5)
+    d.total_cents = d.materials_cents + d.labour_cents
+    if o.mechanic >= 0 and o.mechanic < w.people.len(): d.mechanic = w.people[o.mechanic].name
+    if o.labor_escrow >= 0 and o.labor_escrow < w.accounts.len(): d.refundable_cents = w.accounts[o.labor_escrow].cents
+    # (once started, the figures are what was charged, not today's price)
+    if o.repair_started_minute >= 0 or o.state == .fulfilled: d.materials_cents = max(0, o.amount_cents - d.labour_cents)
+    if o.state == .fulfilled:
+        d.phase = .done
+        d.charged_cents = o.amount_cents
+        d.work_done = d.work_total
+        other = if o.repair_hull: w.aircraft[c].engine else: w.aircraft[c].hull
+        if other < DESK_RESTORES: d.other_due = if o.repair_hull: "engine" else: "hull"
+        return d
+    if o.repair_started_minute >= 0:
+        d.charged_cents = o.amount_cents
+        p = o.mechanic
+        d.phase = .underway
+        if p < 0 or w.people[p].injured_until > w.minute or length(w.people[p].pose.pos - canal_workshop) > DESK_REACH:
+            d.phase = .paused
+            d.reason = if p < 0: "No mechanic is at the work." else: "{split(w.people[p].name, " ")[0]} has left the workshop; the work waits for {if w.people[p].injured_until > w.minute: "a recovery" else: "a return"}."
+        else if not canal.canal_repair_berth(w.aircraft[c].pose.pos):
+            d.phase = .paused
+            d.reason = "Your aircraft has left the slipway; the work waits for her return."
+        return d
+    if o.state == .blocked and o.blocked_code != "":
+        d.phase = .interrupted
+        d.note = o.blocked_code
+    else:
+        d.phase = .quote
+    d.reason = desk_start_refusal(w, id)
+    d
+
+# The service's actions, through the standard dispatchers. Each says how it went in plain words
+# ("" when it went through); the saved obligation is the record either way.
+desk_request = (w: mut data.World, owner: int) -> int: duties.request_repair(w, owner)
+
+desk_start = (w: mut data.World, id: int) -> str:
+    # (the quote is checked again against the stock, price and purse as they are now)
+    why = desk_start_refusal(w, id)
+    if why != "": return why
+    if not duties.start_repair(w, id): return "The workshop can't take the work just now."
+    ""
+
+desk_cancel = (w: mut data.World, id: int) -> str:
+    if id < 0 or not (id in w.obligations) or w.obligations[id].repair_started_minute < 0: return "There is no work under way to stop."
+    duties.cancel_repair(w, id)
+    if w.obligations[id].repair_started_minute >= 0: return "The workshop couldn't stop the work just now."
+    ""

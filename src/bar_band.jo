@@ -9,6 +9,7 @@
 
 use 'music_data.jo'
 use 'music_synth.jo'
+use 'live_source.jo'
 
 struct SetPiece:
     piece: int                      # MUSIC_PIECES index
@@ -218,63 +219,25 @@ singer_render = (s: mut Singer, count: int) -> f64[]:
     s.cursor += count
     out
 
-# ---------------- the room and the stream ----------------
-
-struct BarRoom:
-    early: f64[]
-    combs: f64[][]
-    damp: f64[]
-    allpass: f64[][]
-    at = 0
-    air = 0.0                       # (a one-pole low-pass for distance)
-
-make_bar_room = () -> BarRoom:
-    BarRoom(fill(0.0, 1024), [fill(0.0, 557), fill(0.0, 677), fill(0.0, 811), fill(0.0, 947)], fill(0.0, 4), [fill(0.0, 113), fill(0.0, 173)])
-
-# The open terrace: the facade's reflection behind the band, a short room from the loggia, and the
-# air between the band and the listener.
-bar_room_sample = (r: mut BarRoom, x: f64, distance: f64) -> f64:
-    w = r.at % 1024
-    r.early[w] = x
-    early = r.early[(w + 1024 - 211) % 1024] * 0.32 + r.early[(w + 1024 - 467) % 1024] * 0.18 + r.early[(w + 1024 - 739) % 1024] * 0.1
-    tail = 0.0
-    loop k in 0..4:
-        c = r.combs[k]
-        at = r.at % c.len()
-        d = c[at]
-        r.damp[k] += (d - r.damp[k]) * 0.4
-        r.combs[k][at] = x + r.damp[k] * 0.62
-        tail += d * 0.25
-    loop k in 0..2:
-        a = r.allpass[k]
-        at = r.at % a.len()
-        d = a[at]
-        v = tail
-        tail = d - v * 0.5
-        r.allpass[k][at] = v + tail * 0.5
-    r.at += 1
-    near = 8.0 / max(8.0, distance)
-    wet = 0.12 + 0.18 * clamp((distance - 6.0) / 40.0, 0.0, 1.0)
-    y = x * near + early * near * 0.8 + tail * wet * 0.6
-    cut = clamp(1.0 - distance / 160.0, 0.12, 1.0)
-    r.air += (y - r.air) * cut
-    r.air
+# ---------------- the stream, placed in the world ----------------
+# The band and singer make a dry mono signal; src/live_source.jo places it (direction, distance,
+# walls, the listener's surroundings) and the stream is stereo.
 
 struct BarMusic:
     synth: MusicSynth = MusicSynth()
     singer: Singer = Singer()
-    room: BarRoom = BarRoom()
+    space: LiveSpatial = LiveSpatial()
+    hearing: LiveHearing = LiveHearing()
     ready = false
     index = -1                      # the set piece loaded
     voice = -1
-    distance = 30.0
     volume = 1.0
     rendered = 0                    # frames into the piece the stream has reached
 
 # Load a number from the set, its melody notes softened under the singer.
 bar_music_load = (m: mut BarMusic, index: int, seconds: f64):
     if not m.ready:
-        m.synth = make_music_synth(); m.room = make_bar_room(); m.ready = true
+        m.synth = make_music_synth(); m.space = make_live_spatial(); m.ready = true
     sp = BAR_SET[index]
     m.synth.piece = -1
     music_load(m.synth, sp.piece)
@@ -292,25 +255,25 @@ bar_music_load = (m: mut BarMusic, index: int, seconds: f64):
     singer_seek(m.singer, m.synth.cursor)
     m.rendered = m.synth.cursor
 
-# The band and the singer together through the room: `count` frames of mono at MUSIC_RATE.
-bar_music_render = (m: mut BarMusic, count: int) -> f32[]:
+# The band and the singer as heard from where the listener is: `count` stereo frames.
+bar_music_dry = (m: mut BarMusic, count: int) -> f64[]:
     band = music_render(m.synth, count)
     voice = singer_render(m.singer, band.len())
-    out = fill(f32(0), band.len())
-    loop i in 0..band.len():
-        out[i] = f32(bar_room_sample(m.room, band[i] * 3.0 + voice[i] * 1.5, m.distance))
     m.rendered += band.len()
-    out
+    [loop i in 0..band.len(): band[i] * 3.0 + voice[i] * 1.5]
+
+bar_music_render = (m: mut BarMusic, count: int) -> f32[]: live_process(m.space, m.hearing, bar_music_dry(m, count))
 
 bar_music_stop = (m: mut BarMusic):
     if m.voice >= 0: stop(m.voice)
     m.voice = -1
 
-# Each frame: keep a quarter second queued while the band plays and the listener is within reach.
-bar_music_update = (m: mut BarMusic, tick: int, distance: f64, audio: bool):
+# Each frame: keep a little queued (a tenth of a second, so turning is heard at once) while the
+# band plays and the listener is within reach.
+bar_music_update = (m: mut BarMusic, tick: int, hearing: LiveHearing, audio: bool):
     p = bar_set_position(tick)
-    m.distance = distance
-    if not audio or not p.playing or distance > 150.0:
+    m.hearing = hearing
+    if not audio or not p.playing or hearing.distance > 150.0:
         bar_music_stop(m)
         if not p.playing: m.index = -1
         return
@@ -318,9 +281,9 @@ bar_music_update = (m: mut BarMusic, tick: int, distance: f64, audio: bool):
     if m.index != p.index or m.voice < 0 or abs(m.rendered - want) > MUSIC_RATE * 2:
         bar_music_stop(m)
         bar_music_load(m, p.index, p.seconds)
-        m.voice = sound_stream(MUSIC_RATE, 1, m.volume)
+        m.voice = sound_stream(MUSIC_RATE, 2, m.volume)
     queued = queued_samples(m.voice)
-    need = clamp(MUSIC_RATE / 4 - queued, 0, 800)
+    need = clamp(MUSIC_RATE / 9 - queued, 0, 800)
     left = m.synth.frames - m.synth.cursor
     need = min(need, left)
     if need > 0: push_samples(m.voice, bar_music_render(m, need))

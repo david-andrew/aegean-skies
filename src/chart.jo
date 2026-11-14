@@ -9,6 +9,9 @@ use 'geography.jo'
 use 'objects.jo'
 use 'settlements.jo'
 use 'vessel_types.jo'
+use 'river_data.jo'
+use 'lake_field.jo'
+use 'canal_geometry.jo'
 
 const CHART_PX = 640
 const CHART_EXTENT = 22000.0        # meters across the chart
@@ -46,6 +49,11 @@ build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n:
             row.push(if extent > CHART_EXTENT and (abs(x) >= LEGACY_RESERVE or abs(z) >= LEGACY_RESERVE): new_land_base(x,z).0 else: height(x,z))
         row
     )
+    # (inland lakes, from the lake source: painted as still water with their own inked shore)
+    lakes = parallel_map([0..n), (j: int) -> bool[]:
+        z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
+        [loop i in 0..n: lake_at(cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5,z).wet]
+    )
     img = image(n, n)
     paper = vec3(0.93, 0.88, 0.76)
     loop j in 0..n:
@@ -55,7 +63,11 @@ build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n:
             hz = rows[min(j + 1, n - 1)][i] - rows[max(j - 1, 0)][i]
             grain = f32(noise(f64(i) * 0.9, f64(j) * 0.9) * 0.06 + noise(f64(i) * 0.08, f64(j) * 0.08) * 0.08)
             c = paper
-            if h <= 0.0:
+            lake = lakes[j][i]
+            if lake:
+                # (a lake: one pale wash, a shade deeper than the shallows)
+                c = mix(mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), 0.3), paper, 0.25)
+            else if h <= 0.0:
                 # watercolor sea: paler near the coast, bands of depth
                 d = clamp(-h / 60.0, 0.0, 1.0)
                 band = f32(floor(d * 4.0) / 4.0)
@@ -74,6 +86,8 @@ build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n:
             coast = false
             loop q in hn:
                 if (q > 0.0) != (h > 0.0): coast = true
+            if not lake and h > 0.0:
+                if lakes[j][min(i + 1, n - 1)] or lakes[min(j + 1, n - 1)][i] or lakes[j][max(i - 1, 0)] or lakes[max(j - 1, 0)][i]: coast = true
             if coast: c = vec3(0.25, 0.2, 0.16)
             c = c * (1.0 - grain)
             img.set(i, j, vec4(c.x, c.y, c.z, 1))
@@ -94,7 +108,11 @@ struct ChartView:
     w: f64
     d: f64
 
+# (captures only: AEGEAN_CHART_VIEW="x z width" looks closer at a stretch of the sheets laid down)
+chart_view_override: ChartView? = none
+
 chart_view = () -> ChartView:
+    if let o = chart_view_override: return o
     if let sheets = chart_sheets:
         west = 1.0e9; east = -1.0e9; north = 1.0e9; south = -1.0e9
         loop round in 0..2:
@@ -227,6 +245,103 @@ chart_sheet_list = (sheets: ChartSheet[], text_size: f64 = 15.0) -> int:
     hud_style = saved
     picked
 
+# ---------------- rivers and canals ----------------
+# Drawn over the painted sheets in the chart's own hand, wherever the sheets cover them: a river is a
+# watercolour line that thickens from its source towards its mouth as the channel widens (drawn a
+# little wider than true at small scales, so it reads at all); Neravessa's canals are drawn in ink
+# between quays once the sheet is large enough to show them, and as a fine dark line before that.
+const CHART_RIVER_NAME = "River Nera"
+const _RIVER_INK = rgba(0.27, 0.43, 0.54, 1)
+const _RIVER_EDGE = rgba(0.45, 0.4, 0.32, 1)
+const _CANAL_WATER = rgba(0.62, 0.78, 0.8, 1)
+
+# (one segment's run of nodes: is the segment from node i to i + 1 a channel, not a gap between two)
+_river_joined = (i: int) -> bool: i >= 0 and i < RIVER_NODES.len() - 1 and not RIVER_BREAKS.contains(i)
+
+# The rivers and canals on the chart in r. Labels taken are added to `labels` (x, y, w, h).
+draw_chart_rivers = (r: Rect, labels: mut vec4[]):
+    v = chart_view()
+    sx = r.w / v.w
+    at = (x: f32, z: f32) -> vec2: vec2(f32(r.x + ((f64(x)-v.cx) / v.w + 0.5) * r.w), f32(r.y + ((f64(z)-v.cz) / v.d + 0.5) * r.h))
+    # (the river as a whole off this view: nothing to do)
+    lo = at(RIVER_BOUNDS.x, RIVER_BOUNDS.y); hi = at(RIVER_BOUNDS.z, RIVER_BOUNDS.w)
+    if f64(hi.x) < r.x or f64(lo.x) > r.x + r.w or f64(hi.y) < r.y or f64(lo.y) > r.y + r.h: return
+    shown: bool[] = [loop k in 0..RIVER_NODES.len(): charted(f64(RIVER_NODES[k].x), f64(RIVER_NODES[k].y))]
+    # rivers first, the main stream and its tributaries, edged in ink where they are wide enough
+    loop layer in 0..2:
+        loop i in 0..CANAL_BEGIN:
+            if not _river_joined(i) or not shown[i] or not shown[i + 1]: continue
+            a = RIVER_NODES[i]; b = RIVER_NODES[i + 1]
+            pa = at(a.x, a.y); pb = at(b.x, b.y)
+            if length(pb - pa) < 0.05: continue
+            true_w = f64(a.w + b.w) * sx
+            painted = max(true_w, 0.55 + 1.5 * clamp((f64(a.w + b.w) * 0.5 - 15.0) / 90.0, 0.0, 1.0))
+            if layer == 0:
+                if painted >= 2.2:
+                    line(pa, pb, painted + 1.4, _RIVER_EDGE)
+                    circle(pb, (painted + 1.4) * 0.5, _RIVER_EDGE)
+            else:
+                line(pa, pb, painted, _RIVER_INK)
+                if painted >= 1.6: circle(pb, painted * 0.5, _RIVER_INK)
+    # the canal city's canals and basins: quays in ink, the water between them pale
+    canal_scale = 20.0 * sx
+    loop layer in 0..2:
+        loop i in CANAL_BEGIN..RIVER_NODES.len() - 1:
+            if not _river_joined(i) or not shown[i] or not shown[i + 1]: continue
+            a = RIVER_NODES[i]; b = RIVER_NODES[i + 1]
+            pa = at(a.x, a.y); pb = at(b.x, b.y)
+            true_w = f64(a.w + b.w) * sx
+            if canal_scale < 1.0:
+                if layer == 1: line(pa, pb, max(true_w, 0.9), rgba(0.22, 0.24, 0.28, 0.85))
+                continue
+            if layer == 0:
+                line(pa, pb, true_w + 2.0, rgba(0.22, 0.17, 0.13, 0.9))
+                circle(pb, true_w * 0.5 + 1.0, rgba(0.22, 0.17, 0.13, 0.9))
+            else:
+                line(pa, pb, true_w, _CANAL_WATER)
+                circle(pb, true_w * 0.5, _CANAL_WATER)
+    # the names: the river along its middle reach, the canal city by its canals
+    _label_water(r, labels, CANAL_CITY_NAME, CANAL_BEGIN, CANAL_FINISH + 1, shown, at, 12.0, rgba(0.22, 0.17, 0.13, 0.95))
+    _label_water(r, labels, CHART_RIVER_NAME, 0, RIVER_MAIN_COUNT, shown, at, 12.0, _RIVER_INK)
+
+# a name beside the charted middle of the nodes [from, to), set below the line where it doesn't
+# collide with a name already placed (and off the compass rose)
+_label_water = (r: Rect, labels: mut vec4[], name: str, from: int, to: int, shown: bool[], at: (f32, f32) -> vec2, size: f64, ink: vec4):
+    seen: int[]
+    loop k in from..to:
+        if shown[k]:
+            p = at(RIVER_NODES[k].x, RIVER_NODES[k].y)
+            if f64(p.x) > r.x + 4.0 and f64(p.x) < r.x + r.w - 4.0 and f64(p.y) > r.y + 40.0 and f64(p.y) < r.y + r.h - 24.0: seen.push(k)
+    if seen.len() == 0: return
+    first = at(RIVER_NODES[seen[0]].x, RIVER_NODES[seen[0]].y); last = at(RIVER_NODES[seen[seen.len() - 1]].x, RIVER_NODES[seen[seen.len() - 1]].y)
+    width = text_width(name, size)
+    # (a river that shows long enough on the sheet for its name sits under or over its middle reach,
+    # else further along; a short one, such as the canals at a small scale, beside it)
+    long = length(last - first) >= f32(width)
+    tries: vec2[]
+    loop part in (if long: [2, 1, 3] else: [2]):
+        node = RIVER_NODES[seen[seen.len() * part / 4]]
+        p = at(node.x, node.y)
+        # (clear of the channel as drawn: its true width where the sheet is large enough to show it)
+        half = f32(max(1.5, f64(node.w) * r.w / chart_view().w))
+        if long:
+            tries.push(p + vec2(f32(-width * 0.5), half + 4))
+            tries.push(p + vec2(f32(-width * 0.5), -half - f32(size + 4.0)))
+        else:
+            tries.push(p + vec2(6, -f32(size * 0.5)))
+            tries.push(p + vec2(f32(-width - 6.0), -f32(size * 0.5)))
+            tries.push(p + vec2(f32(-width * 0.5), 6))
+    loop q in tries:
+        x = clamp(f64(q.x), r.x + 6.0, r.x + r.w - width - 6.0)
+        y = clamp(f64(q.y), r.y + 42.0, r.y + r.h - size - 8.0)
+        blocked = x > r.x + r.w - 115.0 and y < r.y + 120.0
+        loop o in labels:
+            if x < f64(o.x + o.z) + 4.0 and x + width + 4.0 > f64(o.x) and y < f64(o.y + o.w) + 4.0 and y + size + 4.0 > f64(o.y): blocked = true
+        if blocked: continue
+        labels.push(vec4(f32(x), f32(y), f32(width), f32(size)))
+        text(name, vec2(f32(x), f32(y)), size, ink)
+        return
+
 draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, others: vec4[] = [], ships: Vessel[] = [], lanes: SeaLane[] = [],player_point:WorldPoint?=none,other_points:WorldPoint[]=[]):
     r = chart_rect()
     rect_rounded(r.x - 14, r.y - 14, r.w + 28, r.h + 28, 6, rgb(0.42, 0.3, 0.2))
@@ -248,14 +363,15 @@ draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, o
         text("Tab: " + (if chart_local: "whole world" else: "local archipelago"),vec2(f32(r.x+14),f32(r.y+r.h-52)),15,ink)
     whole = geography_enabled and (not chart_local or chart_sheets != none)
     clip(r)
+    labels: vec4[]
     if whole:
+        draw_chart_rivers(r, labels)
         prepare_settlement_roads(player.xz,true)
         loop road in settlement_roads:
             loop k in 0..road.points.len()-1:
                 a = road.points[k]; b = road.points[k+1]
                 if not charted(f64(a.x),f64(a.z)) or not charted(f64(b.x),f64(b.z)): continue
                 line(chart_point(r,f64(a.x),f64(a.z)),chart_point(r,f64(b.x),f64(b.z)),0.7,rgba(0.36,0.27,0.19,0.3))
-        labels: vec4[]
         # Capitals first; smaller names yield when their labels would overlap.
         loop tier in 0..3:
             loop s in world_settlements:
