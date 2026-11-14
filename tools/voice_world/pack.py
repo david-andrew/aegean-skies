@@ -1,12 +1,17 @@
 """Step 4: pack the announcer for the game.
 
   python pack.py --corpus ANALYSIS.npz PHONES.json [--corpus ...] --prosody STATS.json \
-                 --repo REPO [--report OUT.json]
+                 --repo REPO --out ANNOUNCER.z [--report OUT.json]
 
-Writes, inside REPO:
-  data/voice/announcer.z   raw-deflate tables: phone set, diphone trajectories (int8 mel-cepstra,
-                           8-bit aperiodicity/voicing), pronunciation lexicon, letter-to-sound rules
-  src/voice_model.jo       the prosody numbers as readable constants, with their provenance
+Writes:
+  ANNOUNCER.z              raw-deflate tables: phone set, diphone trajectories (int8 mel-cepstra,
+                           8-bit aperiodicity/voicing), pronunciation lexicon, letter-to-sound rules.
+                           Kept OUTSIDE the repository (scratch) until a final voice is chosen; the
+                           game reads it from the AEGEAN_VOICE_DATA environment variable.
+  REPO/src/voice_model.jo  the prosody numbers as readable constants, with their provenance
+
+The lexicon comes from CMUdict (Carnegie Mellon University; licence in CMUDICT-LICENSE.txt,
+which must accompany any distributed copy of the tables).
 
 Only derived numbers leave the scratch analysis: averaged 5 ms spectral-envelope trajectories
 (no phase, no pitch, no waveform), and aggregate duration/F0 statistics.
@@ -195,6 +200,7 @@ def main():
     ap.add_argument('--prosody', required=True)
     ap.add_argument('--castle', required=True)
     ap.add_argument('--repo', required=True)
+    ap.add_argument('--out', required=True, help='announcer data file, outside the repository')
     ap.add_argument('--report')
     a = ap.parse_args()
     groups = {}
@@ -211,8 +217,10 @@ def main():
         units[k] = dict(frames=mean, count=n, left=float(np.median([m['left'] for m in meta[k]])),
                         right=float(np.median([m['right'] for m in meta[k]])))
     lex, unknown = lexicon(a.repo)
-    os.makedirs(os.path.join(a.repo, 'data/voice'), exist_ok=True)
-    raw, z, n = pack(units, lex, os.path.join(a.repo, 'data/voice/announcer.z'))
+    out = os.path.abspath(a.out)
+    if out.startswith(os.path.abspath(a.repo) + os.sep):
+        raise SystemExit('--out must be outside the repository until the final voice is chosen')
+    raw, z, n = pack(units, lex, out)
     model_jo(json.load(open(a.prosody)), json.load(open(a.castle)), os.path.join(a.repo, 'src/voice_model.jo'),
              'a modern recap narrator who imitates the period newsreel delivery, and a 1942 newsreel narrator')
     rep = dict(units=n, tokens=sum(len(v) for v in groups.values()), lexicon=len(lex), unknown=len(unknown),

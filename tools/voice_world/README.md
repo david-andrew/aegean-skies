@@ -11,9 +11,17 @@ No WORLD code is used (WORLD is BSD-3; its equations were read, the code here is
 nothing from verr-voice (no licence; its approach was studied for ideas only), and no audio or
 audio snippet enters the repository.
 
-## What is shipped and where it came from
+## The data file is not in the repository
 
-`data/voice/announcer.z` (raw deflate, format `AVX1`, written by `pack.py`):
+Until the final voice is chosen, the packed announcer data is kept out of git entirely (it is
+derived from reference recordings, and `/data/voice/` is ignored). `pack.py --out` refuses a path
+inside the repository. The game and tools read it from the path in **`AEGEAN_VOICE_DATA`**; without
+it the announcer is off and the radio keeps its Morse bulletins (`tests/voice_test.jo` checks
+both cases). Development listening is from WAV samples rendered in scratch.
+
+## What the data file holds and where it came from
+
+The announcer data file (raw deflate, format `AVX1`, written by `pack.py`):
 
 - the phone set (CMU ARPAbet, 39 phones + pause);
 - 783 **diphone trajectories** (centre of one phone to the centre of the next): each 12 points of
@@ -21,8 +29,8 @@ audio snippet enters the repository.
   voicing fraction, int8/uint8. Each is the mean of up to 12 tokens nearest the medoid of all
   tokens of that diphone, so it is a statistical description of the spectral envelope, without
   phase, pitch or waveform. Gain is relative to the speaker's own vowel level in the same phrase;
-- a 2,921-word pronunciation lexicon: CMUdict (Carnegie Mellon University, BSD-style licence;
-  first pronunciation of each word) for the words the game's own text uses, plus hand-written
+- a 2,921-word pronunciation lexicon: CMUdict (Carnegie Mellon University, BSD-style licence,
+  reproduced in `CMUDICT-LICENSE.txt` beside this file; first pronunciation of each word) for the words the game's own text uses, plus hand-written
   entries for the world's place names (`pack.py MANUAL`);
 - 145 letter-to-sound rules (`lts.py`, written for this project) for words not in the lexicon,
   mostly the living world's invented names.
@@ -50,7 +58,7 @@ separated mono narration track and its phone alignment JSON (`phones`: `p`, `sta
 python analyse_corpus.py VOICE.wav PHONES.json OUT.npz --speakers SPEAKERS.json   # ~6 min / 17 min audio
 python prosody.py PHONES.json WORDS.json OUT.npz > prosody.json
 python pack.py --corpus OUT.npz PHONES.json --prosody prosody.json --castle period-prosody.json \
-               --repo ../.. --report report.json
+               --repo ../.. --out ~/dev/tmp/aegean-skies/radio/voice2/data/announcer.z --report report.json
 python -m unittest test_voice_world.py
 ```
 

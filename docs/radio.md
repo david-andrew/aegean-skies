@@ -117,8 +117,10 @@ voice built WORLD-style, not a recording and not a neural model:
 
 A bulletin repeats on the world clock: its period is the programme span (10 s, or 30 s for
 maritime) rounded up to fit the words plus a pause, so tuning in mid-bulletin joins it where it is.
-The voice data (`data/voice/announcer.z`, 285 KB) loads during world loading with the music
-(about 35 ms native, 75 ms in Chromium on redfox). How it was made: `tools/voice_world/README.md`.
+The voice data file (285 KB) is **not in the repository** until a final voice is chosen: the game
+reads it from the path in `AEGEAN_VOICE_DATA`, during world loading with the music (about 35 ms
+native, 75 ms in Chromium on redfox). Without it, speech is off and spoken programmes stay in
+Morse. How it is made: `tools/voice_world/README.md`.
 
 ## Audio, cost and validation
 
