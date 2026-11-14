@@ -9,7 +9,9 @@ import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-const [chrome, page, out, secs = "6", query = ""] = process.argv.slice(2);
+const [chrome, page, out, secs = "6", given = ""] = process.argv.slice(2);
+// (straight into the game, past the title screen, unless the query asks for it: AEGEAN_TITLE=1)
+const query = /AEGEAN_TITLE=/i.test(given) ? given : (given ? given + "&" : "?") + "AEGEAN_TITLE=0";
 readFileSync(page); // Fail before opening Chromium when the requested build is missing.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dir = mkdtempSync(join(process.env.WEBSHOT_TMP || dirname(out), "webshot-"));

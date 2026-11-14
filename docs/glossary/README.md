@@ -898,6 +898,22 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   never attach a new story to a previous slot without a selection. Rendering handles are rebuilt,
   not serialized. Slots are numbered 0–2 in the API; the menu chooses their displayed labels.
 
+### Title screen
+
+- **Definition:** what the game starts on: the name alone over a live golden-hour view of the home
+  harbour, then Continue (the newest save), New game, Saved games and, quieter, Situations. No
+  tagline or subtitle, ever. The **loading card** is the web page's own "Loading the islands"
+  card shown while the world is built, before the first frame.
+- **Code:** `src/title_screen.jo` (`title_screen`, `title_camera`, `title_latest`); `aegean.jo`
+  (`title_wanted`, `title_update`, `draw_title_screen`); `src/web_compat.js` (the loading card).
+- **Rules:** the world loads once; the title only waits in front of it. Continue never asks;
+  New game asks only before it would save over a slot. Test and capture runs skip it
+  ([Game saves](../game-saves.md#the-title-screen)).
+- **Capture:** `AEGEAN_TITLE=1 SLOPPY_FRAMES=150` (with `SLOPPY_SAVE_DIR` holding saves for the
+  Continue state; `SLOPPY_WINDOW=390x844 SLOPPY_TOUCH=1` for a phone).
+
+![The title screen](img/title-screen.png)
+
 ### Voices
 
 - **Definition:** the fourteen ways townsfolk talk, chosen from trade, age and temperament: salt,
