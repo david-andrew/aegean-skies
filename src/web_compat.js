@@ -404,3 +404,30 @@
   sloppy.env.aegean_slots_copy=(index,p,n)=>copy(Number(index)===4?enc.encode(error):buffers[Number(index)]||new Uint8Array(),p,n);
   sloppy.env.aegean_slots_release=()=>{buffers=[];};
 })(typeof globalThis!=="undefined"?globalThis:this);
+// The title screen (src/title_screen.jo, aegean.jo title_wanted). A page whose URL stages a
+// capture (any AEGEAN_ option but quality, touch and title) starts straight in the game, as the
+// native runs with those environment variables do. While the world is built (one long step the
+// page cannot draw during), the game's own page shows a quiet card in the title's dusk colour,
+// its line moved by the compositor; the game takes it away when it has drawn its first frame.
+(function (root) {
+  if (typeof sloppy === "undefined" || typeof location === "undefined") return;
+  const keys = [...new URLSearchParams(location.search)].map(([k, v]) => [k.toUpperCase(), v]);
+  const title = keys.find(([k]) => k === "AEGEAN_TITLE")?.[1];
+  const staged = keys.some(([k]) => k.startsWith("AEGEAN_") && !["AEGEAN_QUALITY", "AEGEAN_TOUCH", "AEGEAN_TITLE"].includes(k));
+  sloppy.env.__aegean_staged = () => staged ? 1 : 0;
+  let card = null;
+  sloppy.env.__aegean_shown = () => { if (card) { card.remove(); card = null; } };
+  const wanted = title !== undefined ? title !== "0" : !staged;
+  if (!wanted || typeof document === "undefined" || document.title !== "Aegean Skies" || !document.body) return;
+  card = document.createElement("div");
+  card.id = "aegean-loading";
+  card.setAttribute("role", "status");
+  card.innerHTML = '<style>#aegean-loading{position:fixed;inset:0;z-index:5;background:#131a26;display:flex;flex-direction:column;' +
+    'align-items:center;justify-content:flex-end;padding-bottom:16vh;font:500 15px/1.4 Georgia,"Times New Roman",serif;color:#d9d4c4;' +
+    'letter-spacing:.18em;text-transform:uppercase}#aegean-loading .rule{width:180px;height:2px;margin-top:14px;overflow:hidden;' +
+    'background:rgba(217,212,196,.14)}#aegean-loading .rule i{display:block;width:60px;height:2px;background:#c79e52;' +
+    'animation:aegean-glide 1.8s ease-in-out infinite alternate;will-change:transform}' +
+    '@keyframes aegean-glide{from{transform:translateX(0)}to{transform:translateX(120px)}}</style>' +
+    '<div>Loading the islands</div><div class="rule"><i></i></div>';
+  document.body.appendChild(card);
+})(typeof globalThis !== "undefined" ? globalThis : this);
