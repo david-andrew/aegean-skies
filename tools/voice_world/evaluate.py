@@ -178,7 +178,8 @@ def synthesize(repo, lines, outdir, data=None, radio=True):
             env['VOICE_STATION'], env['VOICE_PROGRAMME'] = GENRE_STYLE[g]
         else:
             env['VOICE_SPEED'] = '1.0'
-        r = subprocess.run(['sloppy', '--release', 'tools/voicelab.jo'], cwd=repo, env=env, capture_output=True, text=True)
+        cmd = [env['VOICELAB_BIN']] if env.get('VOICELAB_BIN') else ['sloppy', '--release', 'tools/voicelab.jo']
+        r = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit('voicelab failed: ' + r.stderr[-2000:])
         for l in ls:
@@ -253,3 +254,41 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ------------------------------------------------------------------ intelligibility
+NUMS = {'0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four', '5': 'five', '6': 'six', '7': 'seven', '8': 'eight',
+        '9': 'nine', '10': 'ten', '11': 'eleven', '12': 'twelve', '15': 'fifteen', '20': 'twenty', '30': 'thirty'}
+SPELL = {'meters': 'metres', 'harbour': 'harbor', 'sea plane': 'seaplane', 'neighbor': 'neighbour', 'gray': 'grey'}
+
+
+def words_for_wer(s):
+    s = s.lower().replace('…', ' ').replace('—', ' ')
+    for a, b in SPELL.items():
+        s = s.replace(a, b)
+    return [NUMS.get(w, w) for w in re.sub(r"[^a-z0-9' ]", ' ', s).split()]
+
+
+def word_errors(ref, hyp):
+    r, h = words_for_wer(ref), words_for_wer(hyp)
+    d = np.zeros((len(r) + 1, len(h) + 1), int)
+    d[:, 0] = range(len(r) + 1); d[0, :] = range(len(h) + 1)
+    for i in range(1, len(r) + 1):
+        for j in range(1, len(h) + 1):
+            d[i, j] = min(d[i - 1, j] + 1, d[i, j - 1] + 1, d[i - 1, j - 1] + (r[i - 1] != h[j - 1]))
+    return int(d[-1, -1]), len(r)
+
+
+class Recognizer:
+    """Off-the-shelf speech recognizer (a local faster-whisper model directory), used only to
+    measure intelligibility; nothing of it reaches the game."""
+
+    def __init__(self, model_dir):
+        from faster_whisper import WhisperModel
+        self.m = WhisperModel(model_dir, device='cpu', compute_type='int8', cpu_threads=1, num_workers=1, local_files_only=True)
+
+    def accuracy(self, x16, text):
+        segs, _ = self.m.transcribe(x16.astype(np.float32), language='en', beam_size=5, condition_on_previous_text=False, vad_filter=False)
+        hyp = ' '.join(s.text.strip() for s in segs)
+        e, n = word_errors(text, hyp)
+        return 1 - e / max(1, n), hyp

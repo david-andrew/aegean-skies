@@ -85,10 +85,23 @@ to the recording, so the same aligner serves for fitting. It then reports mel-ce
 F0 RMSE and correlation, energy correlation, phone-duration error, speaking rate and voicing
 errors, and publishes loudness-matched comparisons for listening.
 
+`phone_align.py` labels a speaker's takes phone by phone: an acoustic phone classifier (the
+Charsiu wav2vec2 frame classifier, charsiu/en_w2v2_fc_10ms, loaded from a scratch copy; its code
+is MIT-licensed, the checkpoint's card states no licence, so it is an analysis tool only and never
+ships) scores 39 phones and silence every 10 ms, and our own Viterbi walks the line's
+pronunciation with accent variants (neighbouring vowels, reductions, common consonant swaps,
+optional drops), so a phone is labelled as spoken. It replaced the earlier DTW-to-synthesis
+alignment, which cut units in the wrong places across large rate and pitch differences.
+`voicefile.py` reads a packed voice back. `evaluate.py` can score word accuracy with a local
+speech recognizer (faster-whisper; scratch only).
+
 `tune_round.py` runs one tuning round on whatever the speaker has recorded. It caches the
-alignment and analysis of each take, fits voices to nested random subsets of the pool (falling
-back to a prior voice's prosody where the subset is too small), scores each on the held-out lines,
-and publishes the round with a learning curve. The voice studio's "Tune" button starts it. The
+alignment and analysis of each take and, for nested random subsets of the pool, builds three
+voices: the prior voice adapted toward the speaker (per-phone spectral offsets, the speaker's
+prosody), a blend (the speaker's own units where there are at least two tokens, adapted prior
+units elsewhere), and the speaker's units only. Each is scored on the held-out lines as they stand
+at the time of the run (with the starting voice and earlier rounds' voices scored again on the same
+lines), including word accuracy, and the round is published with a learning curve per kind. The voice studio's "Tune" button starts it. The
 recordings, voices and rounds all stay in scratch.
 
 ## Checks
