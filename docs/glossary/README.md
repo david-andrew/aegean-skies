@@ -1129,6 +1129,17 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `tests/fishing_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite`.
 
+### Venue piano
+
+- **Aliases:** the bar's upright, the honky-tonk, the concert grand.
+- **Definition:** the piano follows where the music is heard, not the piece.
+  - Live at the bar or any period venue: the 1920s honky-tonk upright, whatever the number.
+  - On the radio: the classical programme the grand; popular and dance programmes the upright.
+  - Elsewhere (auditions): the grand.
+- **Code:** `music_set_piano` (`src/music_synth.jo`), set by `bar_music_load` (`src/bar_band.jo`)
+  and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
+  piano, for the tools. See `docs/music-orchestra.md`.
+
 ### Time skip
 
 - **Definition:** time passing at an inn, a table or the aircraft: the screen darkens to a card with

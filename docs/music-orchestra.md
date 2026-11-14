@@ -79,3 +79,41 @@ exact unity at 9 seconds. It uses performed time and applies after each string v
 source/envelope, retaining slot-order summation. Harp, note data and source effort are
 untouched. Two 128-sample temporary spans are used only while rendering this opening;
 subsequent audio follows the existing mixer. The room naturally retains its short history.
+
+## Which piano: the venue decides
+
+There are two pianos, the concert grand and the 1920s honky-tonk upright (`MUSIC_UPRIGHT`). The
+piano follows where the music is heard, not the piece (`music_set_piano` in
+`src/music_synth.jo`):
+
+- **Live at the bar, or any period venue** (the hotel, a café, a dance hall): the honky-tonk
+  upright, whatever the number. Clair de lune requested at the Hotel Ancora is played on it.
+  `bar_music_load` sets it.
+- **On the radio, the programme decides.** The classical (concert) programme, orchestral pieces
+  included, uses the grand. The popular and dance programmes (foxtrot, tango, waltz, march, island
+  music) use the honky-tonk. `radio_music_program` sets it from the programme's style.
+- **Anywhere else** (auditions, a concert): the grand, the synth's default.
+
+A piece heard in two places is rendered on whichever piano suits each. A catalogue piece's
+`piano` (`MusicPiece.piano`, from `usual_piano` in `tools/music_pack.py`) is only the piano of the
+venue where it is usually heard. The tools (stems, the automatic balance) use it; the game doesn't.
+
+Where the current pieces are heard, and on which piano:
+
+| Piece | Heard | Piano there | Piano part? |
+|---|---|---|---|
+| Adagietto, Mahler opening call | radio, classical | grand | no piano |
+| Gymnopédie, orchestrated | radio, classical | grand | no piano |
+| Magnetic Rag | radio, foxtrot | honky-tonk | yes |
+| El Choclo | radio, tango | honky-tonk | yes |
+| Bethena | radio, waltz | honky-tonk | yes (piano alone) |
+| Entry of the Gladiators, Ikariotikos | radio, march / island | honky-tonk | no piano |
+| Gymnopédie | the bar | honky-tonk | yes (the pianist alone) |
+| Ave Maria | the bar | honky-tonk | yes (under the singer) |
+| Clair de lune | the bar | honky-tonk | yes (the pianist alone) |
+| Adelita, Berceuse | the bar | honky-tonk | no piano |
+
+Checked when the rule was made: every approved render is bit-for-bit unchanged. That covers
+Clair de lune on the grand, the Gymnopédie at the bar, Magnetic Rag, El Choclo and Bethena on the
+radio, and the orchestral Gymnopédie. The one change is Clair de lune at the bar, now on the
+upright.
