@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 import json, math, struct, zlib
 import mido
 from music_performance import score_clock, interpret, apply_performance_map
+from expressive_timing import ExpressiveTiming, timing_map, warp
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
 # Must agree with MusicInstrument in music_synth.jo.
@@ -31,6 +32,16 @@ PIECES = [
 # Pieces with an annotated performance (time map, levels; for the piano, dynamics, pedal and
 # voicing): data/music/<file>, made by its own tool (tools/clair_performance.py for Clair de lune).
 ANNOTATED = {'adagietto': 'adagietto-performance.json', 'clair-de-lune': 'clair-de-lune-performance.json'}
+
+# Pieces whose tempo comes from the expressive-timing system directly (tools/expressive_timing.py:
+# intensity measured from the score, shaped into tempo); their generic rubato is off in CONFIG.
+# Clair de lune uses the same system through its annotation. The Gymnopedie keeps its steady
+# reading (the system pushes on with each entry of the tune, against its "Lent"); the Adagietto
+# keeps its measured clock.
+EXPRESSIVE = {
+ 'berceuse': ExpressiveTiming(base=1.0, min_rate=0.88, max_rate=1.2, flow=0.25, build=0.1, peak=0.08, cadence=0.08,
+                              final_ritard=0.5, variation=0.02, seed=5, phrase_bars=4),
+}
 
 def gm(program, drum=False):
  if drum: return DRUMS
@@ -156,7 +167,12 @@ def main():
   if name=='mahler-opening':
    performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
   else:
-   notes,performance=interpret(arrange(name,notes),name,score_clock(ROOT/'data/music/source'/f'{name}.mid',name))
+   clock=score_clock(ROOT/'data/music/source'/f'{name}.mid',name)
+   notes,performance=interpret(arrange(name,notes),name,clock)
+   if name in EXPRESSIVE:
+    time_map,curves=timing_map(notes,clock,EXPRESSIVE[name])
+    notes=warp(notes,time_map)
+    performance.update(expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
   if name in ANNOTATED:
    annotation=json.loads((ROOT/'data/music'/ANNOTATED[name]).read_text())
    notes=apply_performance_map(notes,annotation)

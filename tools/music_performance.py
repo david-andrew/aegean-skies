@@ -23,7 +23,8 @@ CONFIG = {
  # Clair de lune's rubato, dynamics, pedal and voicing are its own annotation (clair-de-lune-performance.json)
  'clair-de-lune': (4.5,1.0,4,{1},0,0,0,0),
  'adelita': (3,1.0,4,{1},.06,.15,.24,0),
- 'berceuse': (2,1.0,4,{1},.05,.15,.24,0),
+ # the Berceuse's tempo comes from tools/expressive_timing.py (music_pack.EXPRESSIVE)
+ 'berceuse': (2,1.0,4,{1},0,.15,0,0),
 }
 
 class BeatMap:
@@ -168,6 +169,63 @@ def performance_signature(notes):
  import hashlib,json
  return hashlib.sha256(json.dumps([[round(v,6) for v in n] for n in notes],separators=(',',':')).encode()).hexdigest()
 
+def arpeggio_gestures(notes, settings):
+ """Arpeggios as single gestures across both hands. A line is followed through the notes that
+ are alone in their hand at their moment (a hand playing two at once is a chord or a melody in
+ thirds, not an arpeggio): each joins the line that has just sounded close in time and pitch,
+ whichever hand plays it. A line is cut into gestures at its low turning points (each sweep up
+ and back, at most `max_seconds`), and each gesture gets one smooth contour rising to its highest
+ note and falling after it, the same in either hand. Returns {note index: (dB, the gesture's
+ common touch)}."""
+ if not settings:return {}
+ gap=settings.get('gap',0.4);long=settings.get('long_seconds',1.0);least=settings.get('min_notes',4)
+ rise=settings.get('rise_db',2.0);base=settings.get('base_db',0.0);most=settings.get('max_seconds',4.5)
+ leap=settings.get('max_leap',9)
+ order=sorted(range(len(notes)),key=lambda i:notes[i][0])
+ moments=[]
+ for i in order:
+  if moments and notes[i][0]-notes[moments[-1][0]][0]<0.03:moments[-1].append(i)
+  else:moments.append([i])
+ lines=[];done=[]
+ for m in moments:
+  alone=[i for i in m if notes[i][1]<long and sum(1 for j in m if notes[j][6]==notes[i][6])==1]
+  taken=set()
+  for i in sorted(alone,key=lambda i:notes[i][2]):
+   best=None;best_d=leap+1
+   for k,line in enumerate(lines):
+    if k in taken:continue
+    last=notes[line[-1]]
+    if 0.03<=notes[i][0]-last[0]<=gap:
+     d=abs(notes[i][2]-last[2])
+     if d<best_d:best,best_d=k,d
+   if best is None:lines.append([i]);taken.add(len(lines)-1)
+   else:lines[best].append(i);taken.add(best)
+  # (lines that have gone quiet are finished)
+  now=notes[m[0]][0]
+  done.extend(l for l in lines if now-notes[l[-1]][0]>gap)
+  lines=[l for l in lines if now-notes[l[-1]][0]<=gap]
+ out={}
+ for run in done+lines:
+  if len(run)<least:continue
+  pieces=[];piece=[run[0]]
+  for k in range(1,len(run)):
+   p0=notes[run[k-1]][2];p1=notes[run[k]][2];nxt=notes[run[k+1]][2] if k+1<len(run) else p1
+   turn=p1<p0 and k+1<len(run) and nxt>p1 and len(piece)>=3
+   if turn or notes[run[k]][0]-notes[piece[0]][0]>most:pieces.append(piece);piece=[]
+   piece.append(run[k])
+  pieces.append(piece)
+  for g in pieces:
+   # (one touch for the whole gesture, whichever hand: the score reading's per-hand levels go)
+   touch=sum(notes[i][4] for i in g)/len(g)
+   if len(g)<3:
+    for i in g:out[i]=(base,touch)
+    continue
+   top=max(range(len(g)),key=lambda k:notes[g[k]][2])
+   for k,i in enumerate(g):
+    u=k/max(1,top) if k<=top else 1-(k-top)/max(1,len(g)-1-top)
+    out[i]=(base+rise*(math.sin(math.pi*0.5*u)**2-0.5),touch)
+ return out
+
 def apply_performance_map(notes, annotation):
  """Apply an explicitly annotated clock and section gains after the generic reading.
 
@@ -197,6 +255,7 @@ def apply_performance_map(notes, annotation):
   idx.sort(key=lambda i:notes[i][2])
   for r,i in enumerate(idx):rank[i]=(r,len(idx))
  pedal_starts=[a for a,_ in pedal] if pedal else []
+ gesture=arpeggio_gestures(notes,annotation.get('arpeggios')) if voicing else {}
  out=[]
  for i,n in enumerate(notes):
   t,d,p,ins,g0,g1,track=n
@@ -211,7 +270,10 @@ def apply_performance_map(notes, annotation):
    db=interpolate(dynamics,t);touch_db+=db*touch;level_db+=db*(1-touch)
   if voicing:
    r,count=rank[i]
-   if track in voicing['melody_tracks']:touch_db+=voicing['melody_db'] if r==count-1 else voicing['inner_db']
+   if i in gesture:
+    touch_db+=gesture[i][0]
+    g0=g1=gesture[i][1]
+   elif track in voicing['melody_tracks']:touch_db+=voicing['melody_db'] if r==count-1 or d>=voicing.get('held_seconds',1e9) else voicing['inner_db']
    elif track in voicing.get('lower_tracks',[]):touch_db+=voicing['lower_db']
   if spread and rank[i][1]>1:
    r,count=rank[i];start+=spread*r/(count-1);stop+=spread*r/(count-1)
