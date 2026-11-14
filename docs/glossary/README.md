@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
@@ -463,6 +463,17 @@ On the rivers branch until it lands.
 - **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
   path is held. The default stays the liked model until the user prefers v2.
 - **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+
+### Sky Barons port
+
+- **Aliases:** flight model 2, the Sky Barons model, fdmsb.
+- **Definition:** Sky Barons' own `fly_air` (examples/skybarons/sim.jo) flying this game's aircraft,
+  for reference beside the liked model and [flight model v2](#flight-model-v2): the nose turned at
+  fixed rates, the path following it, speed from thrust, drag on speed squared and gravity along the
+  path. Worked in true units with the catalog's figures and drawn at the [speed scale](#speed-scale).
+  The water, land and contacts stay on the liked solver; the player's aircraft only.
+- **Code:** `src/flight_sb.jo` `fly_air_sb`; chosen on the pause menu's Flight v2 page (or
+  `AEGEAN_TWEAKS=fdmsb`); `tests/flight_sb_test.jo`; a column of `tools/fdm_compare.jo`.
 
 ### Departure resistance
 
