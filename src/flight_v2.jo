@@ -27,17 +27,46 @@ from 'planes.jo' import aircraft_profile
 struct Fdm2Tuning:
     lift_boost = 1.35            # maximum lift coefficient over the catalog's 1 g stall
     energy = 0.4                 # induced drag taken (hard turns bleed less than real ones)
-    g_limit = 7.0                # the most the assist pulls (true g)
+    g_limit = 8.0                # the most the assist pulls (true g)
     power = 1.4                  # static thrust over the liked model's acceleration at 3.3x
     departure = 1.0              # 1: the stick never pulls past the stall; 0: a full stick goes 0.2 rad past
     coordination = 1.0           # rudder assist against side-slip
     roll = 1.0                   # steady roll rate over the catalog's (at and above 1.6 x stall)
     prop_brake = 0.5             # how much of a windmilling prop's negative thrust is felt
+    slow_lift = 1.3              # extra lift pulling hard when slow (fading out by 2.3 x stall); the
+                                 # extra lift pays its induced drag, so a hard slow turn still bleeds
+    skim = 1.0                   # the hold low over the water, hands off (0 off)
 
 fdm2 = Fdm2Tuning()
 set_fdm2_tuning = (t: Fdm2Tuning):
     global fdm2
     fdm2 = t
+
+# The tuning as one line ("lift=1.35,slow=1.3,..."), for the Flight v2 page's copy and AEGEAN_FDM2
+fdm2_tuning_text = (t: Fdm2Tuning) -> str:
+    "lift={t.lift_boost:.2},slow={t.slow_lift:.2},g={t.g_limit:.1},roll={t.roll:.2},departure={t.departure:.2},coordination={t.coordination:.2},skim={t.skim:.2},energy={t.energy:.2},power={t.power:.2},brake={t.prop_brake:.2}"
+
+# Read such a line over a tuning; unknown or malformed items are left as they were.
+fdm2_tuning_parse = (spec: str, base: Fdm2Tuning = Fdm2Tuning()) -> Fdm2Tuning:
+    t = base
+    loop item in split(spec, ","):
+        kv = split(trim(item), "=")
+        if kv.len() != 2: continue
+        x = to_float(trim(kv[1])) ?? -1.0
+        if x < 0.0: continue
+        match trim(kv[0]):
+            "lift": t.lift_boost = x
+            "slow": t.slow_lift = x
+            "g": t.g_limit = x
+            "roll": t.roll = x
+            "departure": t.departure = x
+            "coordination": t.coordination = x
+            "skim": t.skim = x
+            "energy": t.energy = x
+            "power": t.power = x
+            "brake": t.prop_brake = x
+            _: pass
+    t
 
 # whether this aircraft flies the trial model in the air (the player's only; NPCs keep the liked one)
 fdm2_active = (k: CraftSpec) -> bool: tweaks.flight_model == 1 and k.player
@@ -85,7 +114,7 @@ fdm2_params = (k: CraftSpec) -> Fdm2Params:
     # (true top and cruise: the drawn ones over the scale, so the drawn top speed is the catalog's)
     p.v_top = k.max_speed / max(p.scale, 1.0)
     p.v_cruise = k.cruise_speed / max(k.handling_scale, 1.0)
-    p.v_roll = k.stall_speed * 1.6
+    p.v_roll = k.stall_speed * 1.3
     p.q_cruise = 0.5 * FDM2_RHO * p.v_cruise * p.v_cruise
     p.v0 = 1.45 * p.v_top
     static_t = fdm2.power * k.mass * k.arc_thrust / FDM2_SCALE_REF
@@ -99,7 +128,7 @@ fdm2_params = (k: CraftSpec) -> Fdm2Params:
     p.disc = PI * prof.prop_radius * prof.prop_radius * engines
     p.wash = if engines > 1.0: 0.35 else: 0.6
     p.sp = k.response
-    p.roll_damp = k.response * 1.4
+    p.roll_damp = k.response * 3.5
     p.yaw_freq = k.response * 0.55
     p
 
@@ -191,8 +220,12 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     s.aoa = alpha
     s.stalled = sigma > 0.25
     s.buffet = smoothstep(p.alpha_stall * 0.8, p.alpha_stall, abs(alpha)) * (1.0 - 0.75 * sigma)
-    cl_total = f64(cls.x + cls.y) * 0.5 * cl_boost
-    attached_cl = (p.cl0 + p.slope * clamp(alpha, p.alpha_neg, p.alpha_stall)) * (1.0 - sigma)
+    # (forgiving: pulling when slow, the wing gives more, as in Sky Barons' turn at any speed. Only
+    # with the stick back, so the 1 g stall and the zooms are as they were; paid for in drag below)
+    stick = clamp(c.pitch, -1.0, 1.0)
+    maneuver = 1.0 + fdm2.slow_lift * max(stick, 0.0) * (1.0 - smoothstep(k.stall_speed * 1.2, k.stall_speed * 2.3, speed))
+    cl_total = f64(cls.x + cls.y) * 0.5 * cl_boost * maneuver
+    attached_cl = (p.cl0 + p.slope * clamp(alpha, p.alpha_neg, p.alpha_stall)) * (1.0 - sigma) * maneuver
     cd = p.cd0 * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0) + 0.5 * s.hull_damage + 1.6 * abs(left - right))
     cd += p.ki * fdm2.energy * (1.0 - 0.5 * ge) * attached_cl * attached_cl
     cd += sigma * 1.6 * sin(alpha) * sin(alpha) + 0.5 * sin(beta) * sin(beta)
@@ -219,19 +252,18 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     path_pitch = f64(dot(turning, r))
     path_yaw = -f64(dot(turning, u))
     # --- pitch: the stick asks for a rate of the path; the assist finds the alpha for it
-    stick = clamp(c.pitch, -1.0, 1.0)
     neutral = f64(lift_dir.y)
     n_cmd = neutral + stick * k.pitch_rate * speed / FLIGHT_G
     # (skimming, as the liked model's: low over the water, wings near level and the stick near its
     # middle, the hand holds her level (a touch up when very low), so it wants no babying)
     path_now = asin(clamp(f64(adir.y), -1.0, 1.0))
     low_w = (1.0 - smoothstep(k.span * 0.6, k.span * 2.5, gap)) * (1.0 - smoothstep(0.3, 0.6, abs(f64(r.y)))) * (1.0 - smoothstep(0.25, 0.5, abs(path_now)))
-    low_w *= 1.0 - clamp(abs(stick) / 0.3, 0.0, 1.0)
+    low_w *= (1.0 - clamp(abs(stick) / 0.3, 0.0, 1.0)) * clamp(fdm2.skim, 0.0, 1.0)
     skim_path = 0.03 * (1.0 - smoothstep(1.5, 4.0, gap))
     n_cmd += clamp((skim_path - path_now) * 2.0, -0.2, 0.2) * speed / FLIGHT_G * low_w
     n_cmd = clamp(n_cmd, -0.5 * fdm2.g_limit, fdm2.g_limit)
     q_floor = 0.5 * FDM2_RHO * (k.stall_speed * 0.5) * (k.stall_speed * 0.5)
-    a_cmd = (n_cmd * weight / (max(qbar, q_floor) * p.area * cl_boost) - p.cl0) / p.slope
+    a_cmd = (n_cmd * weight / (max(qbar, q_floor) * p.area * cl_boost * maneuver) - p.cl0) / p.slope
     # (departure resistance: the stick alone never takes the wing past its stall (a keyboard's full
     # stick is the usual one); it stalls only as speed runs out faster than the nose can follow.
     # Less resistance lets a full stick go past it)
@@ -252,9 +284,11 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     pitch_acc += (1.0 - tail) * sin(s.time * 5.0) * 2.0
     # --- roll: aileron against damping, both with the airspeed; a stalled wing's lift lost rolls her
     aileron = clamp(c.roll, -1.0, 1.0) * (1.0 - 0.6 * sigma) * (0.2 + 0.8 * min(left, right) / max(max(left, right), 0.01))
-    roll_d = p.roll_damp * vn * (1.0 - 0.8 * sigma)
+    # (a steady rate of the catalog's from 1.3 x stall up, less below; reached in about a tenth of a
+    # second at cruise, slower when slow; separated flow loses the aileron and the damping both)
+    roll_d = p.roll_damp * max(vn, 0.35) * (1.0 - 0.8 * sigma)
     roll_rate = k.roll_rate * fdm2.roll * min(speed / p.v_roll, 1.0)
-    roll_acc = roll_d * roll_rate * aileron
+    roll_acc = (roll_d + 0.8) * roll_rate * aileron
     roll_acc += f64(cls.x - cls.y) * qbar * p.area * 0.5 * k.span * 0.3 / k.inertia.z
     roll_acc -= 4.0 * qn * sin(beta) * (1.0 - sigma)
     roll_acc += (noise(tt * 1.7, 23.0) - 0.5) * rough * 1.6
