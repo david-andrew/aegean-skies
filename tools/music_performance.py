@@ -18,7 +18,9 @@ CONFIG = {
  'gladiators': (4,60/140,4,{0,5,6},.018,.10,.12,0),
  'ikariotikos': (2,.5,8,{0},.025,.14,.15,0),
  'bethena': (3,.4,8,{1},.065,.20,.24,0),
- 'gymnopedie': (3,1.0,4,{1},.05,.14,.28,0),
+ # the Gymnopedie is played in its mood (mournful) by tools/expressive_timing.py; the mood's
+ # touch sets its phrase dynamics
+ 'gymnopedie': (3,1.0,4,{1},0,.12,0,0),
  'ave-maria': (4,60/66,4,{1},.05,.16,.26,0),
  # Clair de lune's rubato, dynamics, pedal and voicing are its own annotation (clair-de-lune-performance.json)
  'clair-de-lune': (4.5,1.0,4,{1},0,0,0,0),

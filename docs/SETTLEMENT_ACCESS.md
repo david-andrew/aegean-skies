@@ -34,6 +34,26 @@ Offline generation, with the normal project headless/silent environment:
    the final catalogue. It may reuse existing ship lanes only for matching terrain/layout keys.
 6. `tools/inland_access_audit.jo` lists every settlement and its route to a water landing.
 
+Island communities on cliff-ringed plateaus, or so far inland on a large island that the narrow
+shore probe's bounded search gives up, are surveyed by `tools/survey_island_climb.jo`. It floods
+the whole island from the square on the stepped-path rules (8 m grid), then takes the cheaper of:
+a cove or beach jetty whose root the flood reaches (a stepped path), or a jetty at the foot of a
+sea cliff with a built landing cliff stair (`plan_cliff_stair`) climbing diagonally along the face
+to the reached ground. The chosen path is re-checked with full walking contact, and with
+`ALTERNATIVES` it also writes the next landings at least 1.5 km apart, for a jetty no ship lane
+reaches. `LandingAccess.stair_from` marks where the route becomes the stair: those points carry
+tread heights, are checked by `cliff_stair_clear`, give walking contact through
+`landing_stair_height`, and are not painted as road. Install with `install_island_landing.jo`,
+append the ship service with `bake_island_sea_access.jo ID`, then rerun
+`bake_access_manifest.jo` and the audits. `tools/access_gap_diag.jo` reports, per unserved
+place, how far down the stepped-path flood reaches (a sea cliff shows as a high lowest point).
+`tools/climb_capture.jo` walks the stair in the full game for captures.
+
+Every settlement is now reachable: the 16 left after e6f5710 (8 island monasteries, 6 hill
+villages, 2 chapels) have landings, 15 of them by a cliff stair 28-236 m high, and all 16 have a
+hull-verified ship service. Myrevavaki (300341) and Saryilasia (300581) use their second-best
+landing: no ship lane reaches the first.
+
 Existing saves append new cart links without replacing old link IDs or active journeys. No
 markets, money or carriers are created by this upgrade. New games seed their normal services
 from the complete catalogue. The saved fleet remains unchanged when an old game gains roads.

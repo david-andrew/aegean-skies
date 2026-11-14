@@ -1,3 +1,11 @@
+# Current state: no unserved places
+
+`tools/audit_island_access.jo` reports **0** gaps and `tools/inland_access_audit.jo`
+`isolated=0 no_road_to_harbour=0` (catalogue 1,281 links). The last 16 (after e6f5710) were served
+by `tools/survey_island_climb.jo`: Myrevavaki (300341) by a 5.4 km stepped path down to a west-shore
+cove, the other 15 by a jetty below a sea cliff and a landing cliff stair (28-236 m rise, 63-611 m
+long) with a stepped path on to the square; see `docs/SETTLEMENT_ACCESS.md`. The checkpoints below are history.
+
 # Quota-stop checkpoint: Olythandra corrected survey
 
 Quota reached **100% used / 0% left**. No further runs were started. Runtime remains the tested `26739b6`; **44 gaps remain**. No new island is claimed connected in this resume.
