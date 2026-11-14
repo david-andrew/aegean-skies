@@ -1,0 +1,121 @@
+"""Derive the first drainage route from the baked macro field; no external data."""
+import heapq, math, struct, re, sys
+from pathlib import Path
+root=Path(__file__).resolve().parent.parent
+b=(root/'assets/world.bin').read_bytes()
+nx,nz=561,449
+
+def point(i): return (-250880+(i%nx)*896,-200704+(i//nx)*896)
+def values(i):
+    h,d=struct.unpack_from('<Hh',b,16+5*i)
+    return h/4,d*2
+nodes={j*nx+i for j in range(nz) for i in range(nx) if -172000<=point(j*nx+i)[0]<=-78000 and -174000<=point(j*nx+i)[1]<=-130000}
+source=min(nodes,key=lambda i:math.dist(point(i),(-160000,-160000)))
+# Least excavation route, with positive length cost, resolves closed depressions.
+dist={source:0}; parent={}; heap=[(0,source)]; end=None
+while heap:
+    cost,i=heapq.heappop(heap)
+    if cost!=dist[i]:continue
+    h,d=values(i)
+    if d < -1800:end=i;break
+    for dx,dz in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]:
+        q=i+dx+dz*nx
+        if q not in nodes:continue
+        hh,_=values(q)
+        c=cost+math.hypot(dx,dz)*(1+hh/400)+max(0,hh-h)*0.12
+        if c<dist.get(q,1e99):dist[q]=c;parent[q]=i;heapq.heappush(heap,(c,q))
+assert end is not None
+path=[end]
+while path[-1]!=source:path.append(parent[path[-1]])
+path.reverse()
+p=[point(i) for i in path]
+# Chaikin subdivision rounds grid corners without introducing loops.
+for _ in range(3):
+    out=[p[0]]
+    for a,c in zip(p,p[1:]):out.extend([(a[0]*.75+c[0]*.25,a[1]*.75+c[1]*.25),(a[0]*.25+c[0]*.75,a[1]*.25+c[1]*.75)])
+    p=out+[p[-1]]
+# Uniform 160m station spacing; retain final sea outlet.
+s=[0]
+for a,c in zip(p,p[1:]):s.append(s[-1]+math.dist(a,c))
+pts=[];j=0
+for distance in [*range(0,int(s[-1]),160),s[-1]]:
+    while j+1<len(s)-1 and s[j+1]<distance:j+=1
+    u=(distance-s[j])/max(s[j+1]-s[j],1e-9)
+    x=p[j][0]*(1-u)+p[j+1][0]*u;z=p[j][1]*(1-u)+p[j+1][1]*u
+    # Sub-macro meanders stay inside the broad drainage corridor.
+    tangent=(p[j+1][0]-p[j][0],p[j+1][1]-p[j][1]);length=math.hypot(*tangent)
+    bend=(340*math.sin(distance/1450)+100*math.sin(distance/530))*min(1,distance/2000,(s[-1]-distance)/2000)
+    x-=tangent[1]/length*bend;z+=tangent[0]/length*bend
+    # Profile lies below surrounding macro terrain, descending to the estuary.
+    ix=round((x+250880)/896);iz=round((z+200704)/896)
+    floor=min(values((iz+dz)*nx+ix+dx)[0] for dx in [-1,0,1] for dz in [-1,0,1])
+    pts.append([x,z,max(0,floor-5),distance])
+# Downstream incision guarantees non-rising water; slope capped upstream from sea.
+for j in range(1,len(pts)):pts[j][2]=min(pts[j][2],max(0,pts[j-1][2]-.0003*(pts[j][3]-pts[j-1][3])))
+pts[-1][2]=0
+for j in range(len(pts)-2,-1,-1):pts[j][2]=min(pts[j][2],pts[j+1][2]+.004*(pts[j+1][3]-pts[j][3]))
+main_count=len(pts)
+widths=[(24+65*d/s[-1])*(1.0+.28*math.sin(d/780)+.14*math.sin(d/2100)) for x,z,h,d in pts]
+breaks=[]
+# Three original tributaries descend from neighbouring high ground into the trunk.
+for junction,sign in [(105,1),(175,-1),(285,1)]:
+    target=pts[junction];a=pts[junction-1];c=pts[junction+1]
+    dx,dz=c[0]-a[0],c[1]-a[1];length=math.hypot(dx,dz);dx/=length;dz/=length
+    nx,nz=-dz*sign,dx*sign
+    start=(target[0]+nx*5200-dx*1800,target[1]+nz*5200-dz*1800)
+    ix=round((start[0]+250880)/896);iz=round((start[1]+200704)/896)
+    rise=max(12,min(100,values(iz*561+ix)[0]-target[2]-8))
+    breaks.append(len(pts)-1)
+    for j in range(41):
+        u=j/40;v=1-u
+        bend=math.sin(u*math.pi)*math.sin(u*math.pi*3)*170
+        x=start[0]*v+target[0]*u+dx*bend;z=start[1]*v+target[1]*u+dz*bend
+        pts.append([x,z,target[2]+rise*v,0]);widths.append(22+10*u+3*math.sin(u*math.pi*4))
+# Keep the authored drainage stable when baking from an already carved world.
+# Explicit --reroute is only for regenerating against a pristine macro field.
+existing=root/'src/river_data.jo'
+if existing.exists() and '--reroute' not in sys.argv:
+ old=existing.read_text(); count=int(re.search(r'const CANAL_BEGIN = (\d+)',old)[1])
+ oldnodes=re.findall(r'vec4\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)',old)[:count]
+ pts=[[float(x),float(z),float(h),0] for x,z,h,w in oldnodes]
+ widths=[float(w) for x,z,h,w in oldnodes]
+ breaks=[int(x) for x in re.search(r'RIVER_BREAKS: int\[\] = \[(.*?)\]',old)[1].split(',') if int(x)<count-1]
+# Neravessa's mill canal bypasses a bend in the lower river.
+canal_begin=len(pts);breaks.append(canal_begin-1)
+a=pts[220];b=pts[232];dx,dz=b[0]-a[0],b[1]-a[1];length=math.hypot(dx,dz);dx/=length;dz/=length
+sx,sz=-dz,dx
+controls=[(0,0),(90,240),(240,370),(480,350),(690,520),(930,450),(1150,250),(length,0)]
+canal=[]
+for k in range(len(controls)-1):
+ p0=controls[max(0,k-1)];p1=controls[k];p2=controls[k+1];p3=controls[min(k+2,len(controls)-1)]
+ for j in range(10):
+  t=j/10
+  canal.append(tuple(.5*((2*p1[d])+(-p0[d]+p2[d])*t+(2*p0[d]-5*p1[d]+4*p2[d]-p3[d])*t*t+(-p0[d]+3*p1[d]-3*p2[d]+p3[d])*t*t*t) for d in range(2)))
+canal.append((length,0))
+for j,(x,z) in enumerate(canal):
+ u=j/(len(canal)-1);pts.append([a[0]+dx*x+sx*z,a[1]+dz*x+sz*z,a[2]*(1-u)+b[2]*u,0]);widths.append(20.0 if j<20 else 18.0)
+canal_finish=len(pts)-1
+# Two short commercial arms: a timber basin and a mill-water junction.
+for station,sign in [(32,-1),(48,1)]:
+ breaks.append(len(pts)-1)
+ start=pts[canal_begin+station];nxt=pts[canal_begin+station+1]
+ fx,fz=nxt[0]-start[0],nxt[1]-start[1];fl=math.hypot(fx,fz);fx/=fl;fz/=fl
+ for j in range(13):
+  u=j/12;cross=sign*210*u;along=45*math.sin(u*math.pi)
+  pts.append([start[0]-fz*cross+fx*along,start[1]+fx*cross+fz*along,start[2],0]);widths.append(14+8*math.sin(u*math.pi*.5))
+text='# Generated by tools/bake_river.py from macro terrain. Metres.\n'
+text+=f'const CANAL_BEGIN = {canal_begin}\nconst CANAL_FINISH = {canal_finish}\nconst RIVER_MAIN_COUNT = {main_count}\nRIVER_BREAKS: int[] = {breaks}\nRIVER_NODES = [\n'
+for (x,z,h,d),width in zip(pts,widths):text+=f'    vec4({x:.3f},{z:.3f},{h:.4f},{width:.3f}),\n'
+text+=']\n'
+text+=f'RIVER_BOUNDS = vec4({min(p[0] for p in pts)-1400:.3f},{min(p[1] for p in pts)-1400:.3f},{max(p[0] for p in pts)+1400:.3f},{max(p[1] for p in pts)+1400:.3f})\n'
+(root/'src/river_data.jo').write_text(text)
+print('stations',len(pts),'trunk length',round(s[-1]),'tributaries',len(breaks))
+bins={}
+for i,(a,c) in enumerate(zip(pts,pts[1:])):
+    if i in breaks:continue
+    for z in range(math.floor((min(a[1],c[1])-1400)/2048),math.floor((max(a[1],c[1])+1400)/2048)+1):
+        for x in range(math.floor((min(a[0],c[0])-1400)/2048),math.floor((max(a[0],c[0])+1400)/2048)+1):bins.setdefault(x*1024+z,[]).append(i)
+with (root/'src/river_data.jo').open('a') as f:
+    f.write('RIVER_BINS: {int:int[]} = {\n')
+    for key,ids in sorted(bins.items()):f.write(f'    {key}: [{",".join(map(str,ids))}],\n')
+    f.write('}\n')

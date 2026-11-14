@@ -1,3 +1,7 @@
+use 'src/canal_render.jo'
+use 'src/river_banks.jo'
+use 'src/river_data.jo'
+use 'src/river_render.jo'
 use 'src/depth_space.jo'
 use 'src/world_particles.jo'
 use 'src/world_point.jo'
@@ -89,6 +93,7 @@ use 'src/panels.jo'
 use 'src/mooring.jo'
 use 'src/vessel_types.jo'
 use 'src/vessels.jo'
+use 'src/canal_traffic.jo'
 use 'src/sea_routes.jo'
 use 'src/vessel_scene.jo'
 use 'src/far_transport_scene.jo'
@@ -177,6 +182,8 @@ if (env("AEGEAN_WORLD") ?? "1") == "1":
     geography_enabled = true
     init_world_terrain()
     if env("AEGEAN_WORLD_CHECK") != none: print("geography fingerprint {geography_fingerprint()}")
+init_rivers()
+init_canal()
 depth_tex = build_depth_texture()
 sea_mesh = build_sea_mesh()
 # The legacy instances are allocated only when that path is selected.
@@ -1092,6 +1099,15 @@ if let v = env("AEGEAN_FLYING"):
 if let v = env("AEGEAN_WIND"):
     w = split(v, " ")
     wind_now.speed = to_float(w[0]) ?? 6.0
+
+# Reproducible river fixture; ordinary flight controls and the owned player craft.
+if env("AEGEAN_RIVER") != none or env("AEGEAN_CANAL")!=none:
+    a=RIVER_NODES[85];b=RIVER_NODES[86]
+    if env("AEGEAN_CANAL")!=none:a=RIVER_NODES[CANAL_BEGIN+22];b=RIVER_NODES[CANAL_BEGIN+23]
+    h=atan2(f64(b.x-a.x),-f64(b.y-a.y))
+    pc.state=water_start(pc.spec,vec3(a.x,a.z,a.y),h)
+    pc.throttle=0.0;pc.aim_heading=h;pc.placed=false
+    me.mode=.aboard
 
 # ---------------- townsfolk wandering (until the world's people walk here themselves) ----------------
 
@@ -2853,14 +2869,15 @@ update = (dt: f64):
         global folk_sync_t
         folk_sync_t = t
     step_sea_navigation(vessels,if render_quality.tier == 0: 32 else: 64)
-    step_vessels(vessels,wind_now.dir*f32(wind_now.speed),dt)
+    sync_canal_traffic(vessels,living_world)
+    step_vessels(vessels,wind_now.dir*f32(wind_now.speed),dt,pc.state.position,pc.state.velocity)
     if vessel_mooring.vessel >= 0:
         point = vessel_mooring_point(vessels,vessel_mooring,pc.spec.span)
         if not pc.state.moored or point == none:
             vessel_mooring = VesselMooring(); rope.tied = false
             if pc.state.moored: unmoor(pc.state)
         else:
-            pc.state.position = vec3(point!.x,f32(pc.spec.float_height),point!.z)
+            pc.state.position = vec3(point!.x,point!.y+f32(pc.spec.float_height),point!.z)
             k = vessel_index(vessels,vessel_mooring.vessel)
             pc.state.velocity = vessels.ships[k].velocity
             spec = vessel_spec(vessels.ships[k].kind)
@@ -2964,9 +2981,10 @@ update = (dt: f64):
     loop wakes.len()<all_air_traffic.len()+1:wakes.push(WakeTrail())
     update_air_view(air_visual,all_air_traffic,wind_now_vec(),if me.mode==.aboard:pc.state.position else:me.pos,dt)
     # skimming: fast within about a span of the water, the downwash churns it and throws spray
-    gap = f64(pc.state.position.y) - pc.spec.float_height
+    water_under=f64(swell_at(craft_point(pc.state).x,craft_point(pc.state).z,t).x)
+    gap = f64(pc.state.position.y) - pc.spec.float_height - water_under
     skim = if pc.state.on_water or pc.state.moored: 0.0 else: (1.0 - smoothstep(0.5, pc.spec.span * 0.6, gap)) * smoothstep(28.0, 60.0, f64(length(pc.state.velocity)) / pure_k(pc.spec))
-    under = craft_offset(pc.state,vec3(-pc.state.velocity.x*0.15,0.1-pc.state.position.y,-pc.state.velocity.z*0.15))
+    under = craft_offset(pc.state,vec3(-pc.state.velocity.x*0.15,f32(water_under+0.1)-pc.state.position.y,-pc.state.velocity.z*0.15))
     wake_step(wakes[0], under, pc.state.velocity, pc.state.on_water and not pc.state.moored, 1.6, t, skim)
     if skim > 0.1 and me.mode == .aboard: emit(spray_ps, under, int(1.0 + skim * 4.0), 3.0 + 6.0 * skim, rgba(0.96, 0.98, 1.0, f32(0.5 + 0.4 * skim)), 1.2, 0.5 + 0.6 * skim, 0.7, normalize(vec3(-pc.state.velocity.x, 30.0, -pc.state.velocity.z)))
     loop k in 0..all_air_traffic.len():
@@ -3077,6 +3095,8 @@ draw_world = (L: Light):
     draw_custom((): draw_far_sea(depth_tex, L, t, wind_now))
     draw_custom(():
         prepare_town_view(towns,scene_camera())
+        draw_river_occlusion(depth_tex,L,t)
+        draw_river_banks(L,t);draw_canal(L,t)
         draw_ground(L, t)
         draw_world_terrain(L, t)
     )
@@ -3171,6 +3191,7 @@ draw_world = (L: Light):
         m = translation(st.position) * quat_to_mat4(st.orientation)
         loop j in 0..cm.shade.len() / 2: add_sea_shadow(sea_sh, m, cm.shade[j * 2], cm.shade[j * 2 + 1], L.sun_dir, a)
     draw_custom((): draw_sea(sea_mesh, depth_tex, L, t, wind_now, if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), sea_sh), transparent = true)
+    draw_custom((): draw_rivers(depth_tex,L,t,if me.mode==.aboard:pc.state.velocity else:vec3(0,0,0)),transparent=true)
     draw_custom(():
         loop sc in land:
             st, cm = sc
@@ -3232,7 +3253,7 @@ draw = ():
             ear_forward = forward(free)
         .aboard:
             if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil,view_target.bearing,view_target.weight,pc_at())
-            else:place_chase_camera(pc,t,view_target.bearing,view_target.weight)
+            else:place_chase_camera(pc,t,view_target.bearing,view_target.weight,towns)
             ear_forward = if pc.cockpit_view: quat_rotate(pc.state.orientation, vec3(0, 0, -1)) else: pc.look
         .descent:place_descent_camera(descent_camera,world_far(f64(me.pos.y)))
         _:

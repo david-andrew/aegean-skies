@@ -17,6 +17,7 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
@@ -220,6 +221,52 @@ blue discs that stay in every frame are **speed flecks**.
   `AEGEAN_NOWAKE` turns it off.
 
 ![Wake ridges spreading behind a Gull on its take-off run](img/wake.png)
+
+---
+
+## Rivers and canals
+
+On the rivers branch until it lands.
+
+### River ribbon
+
+- **Aliases:** the river water, inland water, the canal water.
+- **Definition:** the raised water surface of the mainland river and Neravessa's canals: strips of
+  twelve quads across the channel between stations, in batches of four stations grouped by
+  sixteen (one material anchor). It uses the sea's
+  material with its inland options: the same [speed flecks](#speed-flecks) and
+  [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water. A
+  group or batch wholly beyond 450 m (where flecks and ripples have faded out) uses the cheaper far
+  material in one draw, which is exact there.
+- **Code:** `src/river_render.jo` (`init_rivers`, `draw_rivers`, `draw_inland_water`);
+  the material is `src/sea.jo sea_material` with `inland=true`.
+- **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
+
+### Opaque river prepass
+
+- **Definition:** a depth-only pass over the river ribbon's triangles that are at least 2 m deep
+  at every vertex, where the water is exactly opaque. Drawn before the terrain, it spares the
+  hidden riverbed its shading. It needs no discard, so early depth testing works.
+- **Code:** `src/river_render.jo` `river_with_occluder`, `draw_river_occlusion` (one draw per
+  group); native
+  reversed depth only. Checked by `tests/river_depth_render_test.py`.
+
+### Bank plants
+
+- **Aliases:** bank vegetation, the riparian corridor, river trees and reeds.
+- **Definition:** poplars, plane trees, oleanders and waterline reeds along both banks, instanced
+  per prototype. Detail by distance: full trees to the grove distance, then the simpler distant
+  crowns, without trunks past 600 m; shrubs and reeds end at the grove distance, and past 150 m one
+  reed stem in three is drawn. Distant trees end at the tier's reach (low 1.6 km, medium
+  2 km, high 3.5 km), as groves do.
+- **Code:** `src/river_banks.jo` (`build_river_bank`, `draw_river_banks`, `river_bank_reach`).
+
+### Riparian ground
+
+- **Definition:** the greener moist and alluvial ground of the river corridor, from a baked river
+  mask. Its weight and the height above the river are worked out at terrain vertices, not per pixel.
+- **Code:** `src/terrain.jo` `ground_riparian` (called from `world_vertex` and `coast_vs`), used
+  in `ground_surface`; the mask is `src/river_material.jo`.
 
 ---
 
