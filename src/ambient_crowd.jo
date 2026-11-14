@@ -22,6 +22,7 @@ const AMBIENT_POSES = 5             # standing, step left, step right, seated, t
 const AMBIENT_REACH = 150.0         # drawn within this of the camera
 const AMBIENT_TOWN_REACH = 450.0    # a town is peopled while the camera is this near its square
 const AMBIENT_MIN_SIZE = 150        # ports and capitals
+const AMBIENT_STEP_BUDGET = 0.0015  # seconds of layout a frame while a town comes near
 
 enum AmbientKind: sit, stroll, pair, vendor
 
@@ -52,7 +53,18 @@ struct AmbientTown:
     figures: AmbientFigure[]
     paths: AmbientPath[]
     stalls: vec4[]                  # x, y, z, yaw
-    routes: AmbientRoute[]          # loops still to be laid (one a frame: no hitch on arrival)
+    # (laid out a little at a time as the town comes near, under a time budget a frame, so no
+    # frame pays for it all: ambient_layout_step)
+    routes: AmbientRoute[]          # loops still to be laid
+    pair_spots: vec4[]              # candidate pair centres (x, z, angle) still to be tried
+    pairs_left = 0
+    vendor_spots: vec4[]            # candidate stalls (x, z, facing) still to be set up
+    out: vec2
+    tangent: vec2
+    building: AmbientPath
+    build_k = -1                    # the next point of `building` to check (-1: none under way)
+    build_clear = true
+    done = false
     seed = 0
 
 ambient_meshes: Mesh[]
@@ -173,6 +185,18 @@ walk_cell_exclude = (p: vec2, height: f64) -> vec2:
     result = p
     loop site in walk_cell(p).sites: result = walk_site_exclude(site, result, height)
     result
+# (the collision cell under `at` is built already, or one may be built now: the crowd builds at
+# most one every half second, each a millisecond or two, so no frame pays for several)
+_amb_last_build = -1000
+_amb_pace = true
+ambient_cell_ready = (at: vec2) -> bool:
+    global _amb_last_build
+    if not _amb_pace: return true
+    if walk_cells_registry == world_settlements.len() and "{int(floor(f64(at.x) / 32.0))}:{int(floor(f64(at.y) / 32.0))}" in walk_cells: return true
+    if frame_number() - _amb_last_build < 30: return false
+    _amb_last_build = frame_number()
+    true
+
 ambient_open = (at: vec2, h: f64) -> bool:
     length(walk_cell_exclude(at, h + 0.5) - at) < 0.05
 
@@ -207,37 +231,25 @@ ambient_layout = (index: int) -> AmbientTown:
         loop prop in plan.props:
             if f64(length(q - place_to_world(s, prop.local))) < r + 2.6 * prop.scale: return false
         true
-    # pairs talking, here and there on the square
-    pairs = if town.capital: 6 else: 3
-    tries = 0
-    loop k in 0..pairs:
-        loop tries < 60:
-            tries += 1
-            c = square((_amb_hash(seed, 100 + tries) * 2.0 - 1.0) * (hw - 2.0), (_amb_hash(seed, 200 + tries) * 2.0 - 1.0) * (hd - 2.0))
-            if not clear(c, 1.2): continue
-            a = _amb_hash(seed, 300 + tries) * TAU
-            off = vec2(f32(sin(a) * 0.55), f32(cos(a) * 0.55))
-            _amb_add(town, seed, .pair, c + off, atan2(f64(-off.x), f64(-off.y)))
-            _amb_add(town, seed, .pair, c - off, atan2(f64(off.x), f64(off.y)))
-            break
+    town.seed = seed; town.out = s.out; town.tangent = tangent
+    # pairs talking, here and there on the square (tried later, one a step)
+    town.pairs_left = if town.capital: 6 else: 3
+    loop tries in 1..61:
+        c = square((_amb_hash(seed, 100 + tries) * 2.0 - 1.0) * (hw - 2.0), (_amb_hash(seed, 200 + tries) * 2.0 - 1.0) * (hd - 2.0))
+        if clear(c, 1.2): town.pair_spots.push(vec4(c.x, c.y, f32(_amb_hash(seed, 300 + tries) * TAU), 0))
     # a vendor or two, at stalls along the square's inland edge, facing across it
     loop k in 0..(if town.capital: 2 else: 1):
-        x = (if k == 0: -0.35 else: 0.35) * hw
-        stall = square(x, hd - 1.4)
-        if not clear(stall, 1.5): continue
-        facing = yaw0
-        town.stalls.push(vec4(stall.x, f32(place_ground(stall)), stall.y, f32(facing)))
-        behind = stall - s.out * 1.0
-        _amb_add(town, seed, .vendor, behind, facing + PI)
-        # (and someone at the stall)
-        _amb_add(town, seed, .pair, stall + s.out * 0.9 + tangent * 0.4, facing)
-    # strollers: round the square, along the waterfront, up and down the main streets; their
-    # loops are laid one a frame afterwards (ambient_layout_step)
-    town.seed = seed
+        stall = square((if k == 0: -0.35 else: 0.35) * hw, hd - 1.4)
+        if clear(stall, 1.5): town.vendor_spots.push(vec4(stall.x, stall.y, f32(yaw0), 0))
+    # strollers: round the square, along the waterfront, up and down the main streets
     town.routes.push(AmbientRoute([square(-hw + 1.5, -hd + 1.5), square(hw - 1.5, -hd + 1.5), square(hw - 1.5, hd - 1.5), square(-hw + 1.5, hd - 1.5)], true))
-    port = settlement_port(s)
+    # (the waterfront's quays, from the harbour already built for drawing: building it here would
+    # cost a frame several milliseconds)
     quays = 0
-    loop q in port.quays:
+    port_quays: PortQuay[]
+    loop p in port_cache:
+        if p.id == s.id: port_quays = p.quays
+    loop q in port_quays:
         if q.mole or f64(length((q.b - q.a).xz)) < 25.0 or quays >= 2: continue
         quays += 1
         side = vec2(-(q.b - q.a).z, (q.b - q.a).x) / f32(max(f64(length((q.b - q.a).xz)), 0.001))
@@ -246,37 +258,78 @@ ambient_layout = (index: int) -> AmbientTown:
             town.routes.push(AmbientRoute([q.a.xz + off, q.b.xz + off], false, f64(max(q.a.y, q.b.y))))
     # (the town plan's own main streets: from the square up to the old town, and the four
     # streets out of the old town's centre, as far as a stroll goes)
-    town.routes.push(AmbientRoute([square(0, 2), place_to_world(s, s.old)], false))
+    up = place_to_world(s, s.old) - square(0, 2)
+    town.routes.push(AmbientRoute([square(0, 2), square(0, 2) + up * f32(min(1.0, 120.0 / max(f64(length(up)), 1.0)))], false))
     centre = atan2(-f64(s.old.y) / 0.82, -f64(s.old.x))
     loop spoke in 0..(if town.capital: 4 else: 2):
         a = centre + f64(spoke) * TAU / 4.0
         town.routes.push(AmbientRoute([loop k in 1..8: place_to_world(s, place_ring(s, f64(k) * 15.0, a))], false))
     town
 
-# one loop laid: its ground sampled, refused if it runs through a building, its strollers set
-# going; the last also makes those who stand or sit solid to walk into
-ambient_layout_step = (town: mut AmbientTown):
-    if town.routes.len() == 0: return
-    r = town.routes[0]
-    town.routes = town.routes[1..town.routes.len()]
-    path = _amb_path(r.pts, r.ring, r.deck)
-    clear = path.pts.len() >= 2 and path.length > 10.0
-    loop k in 0..path.pts.len():
-        if clear and k % 2 == 0 and not ambient_open(path.pts[k].xz, f64(path.pts[k].y)): clear = false
-    if clear:
-        index = town.paths.len()
-        town.paths.push(path)
-        count = if index == 0: (if town.capital: 8 else: 4) else: max(1, int(path.length / (if town.capital: 9.0 else: 16.0)))
-        loop j in 0..min(count, 10):
-            n = town.figures.len() + 1
-            town.figures.push(AmbientFigure(.stroll, int(_amb_hash(town.seed, n * 3) * f64(AMBIENT_OUTFITS)) % AMBIENT_OUTFITS, vec3(0, 0, 0), 0.0, path = index, start = _amb_hash(town.seed, n * 11) * path.length * 2.0, speed = 0.9 + _amb_hash(town.seed, n * 13) * 0.6, rank = _amb_hash(town.seed, n * 5 + 1)))
-    if town.routes.len() == 0:
-        # (those who stand or sit are solid to walk into; strollers step round in their heads)
-        solids: TownSite[]
-        loop f in town.figures:
-            if f.kind != .stroll: solids.push(TownSite(f.at, f.yaw, 0.4, 0.4, 1.7, 0))
-        loop st in town.stalls: solids.push(TownSite(st.xyz, f64(st.w), 2.1, 1.0, 1.0, 0))
-        walk_publish("ambient-crowd", solids)
+# A little more of the layout, until `budget` seconds have gone this frame: a pair tried, a stall
+# set up, a loop started, a point of a loop checked against the buildings (the first look at a
+# piece of town can build its collision cell: the costliest single step, about a millisecond).
+# Refused spots and loops that run through a building are dropped; once all is laid, those who
+# stand or sit become solid to walk into.
+ambient_layout_step = (town: mut AmbientTown, budget: f64, pace: bool = true):
+    global _amb_pace
+    _amb_pace = pace
+    start = time()
+    loop not town.done and time() - start < budget:
+        if town.pairs_left > 0 and town.pair_spots.len() > 0:
+            spot = town.pair_spots[0]
+            c = spot.xy; a = f64(spot.z)
+            off = vec2(f32(sin(a) * 0.55), f32(cos(a) * 0.55))
+            if not ambient_cell_ready(c + off) or not ambient_cell_ready(c - off): break
+            town.pair_spots = town.pair_spots[1..town.pair_spots.len()]
+            if ambient_open(c + off, place_ground(c + off)) and ambient_open(c - off, place_ground(c - off)):
+                _amb_add(town, town.seed, .pair, c + off, atan2(f64(-off.x), f64(-off.y)))
+                _amb_add(town, town.seed, .pair, c - off, atan2(f64(off.x), f64(off.y)))
+                town.pairs_left -= 1
+            continue
+        if town.vendor_spots.len() > 0:
+            spot = town.vendor_spots[0]
+            stall = spot.xy; facing = f64(spot.z)
+            if not ambient_cell_ready(stall): break
+            town.vendor_spots = town.vendor_spots[1..town.vendor_spots.len()]
+            if ambient_open(stall, place_ground(stall)):
+                town.stalls.push(vec4(stall.x, f32(place_ground(stall)), stall.y, f32(facing)))
+                _amb_add(town, town.seed, .vendor, stall - town.out * 1.0, facing + PI)
+                # (and someone at the stall)
+                _amb_add(town, town.seed, .pair, stall + town.out * 0.9 + town.tangent * 0.4, facing)
+            continue
+        if town.build_k < 0:
+            if town.routes.len() == 0:
+                # (those who stand or sit are solid to walk into; strollers step round in their heads)
+                solids: TownSite[]
+                loop f in town.figures:
+                    if f.kind != .stroll: solids.push(TownSite(f.at, f.yaw, 0.4, 0.4, 1.7, 0))
+                loop st in town.stalls: solids.push(TownSite(st.xyz, f64(st.w), 2.1, 1.0, 1.0, 0))
+                walk_publish("ambient-crowd", solids)
+                town.done = true
+                continue
+            r = town.routes[0]
+            town.routes = town.routes[1..town.routes.len()]
+            town.building = _amb_path(r.pts, r.ring, r.deck)
+            town.build_k = 0
+            town.build_clear = town.building.pts.len() >= 2 and town.building.length > 10.0
+            continue
+        if town.build_clear and town.build_k < town.building.pts.len():
+            q = town.building.pts[town.build_k]
+            if not ambient_cell_ready(q.xz): break
+            if not ambient_open(q.xz, f64(q.y)): town.build_clear = false
+            town.build_k += 2
+            continue
+        # (a loop checked: if it's clear, its strollers set going)
+        if town.build_clear:
+            index = town.paths.len()
+            path = town.building
+            town.paths.push(path)
+            count = if index == 0: (if town.capital: 8 else: 4) else: max(1, int(path.length / (if town.capital: 9.0 else: 16.0)))
+            loop j in 0..min(count, 10):
+                n = town.figures.len() + 1
+                town.figures.push(AmbientFigure(.stroll, int(_amb_hash(town.seed, n * 3) * f64(AMBIENT_OUTFITS)) % AMBIENT_OUTFITS, vec3(0, 0, 0), 0.0, path = index, start = _amb_hash(town.seed, n * 11) * path.length * 2.0, speed = 0.9 + _amb_hash(town.seed, n * 13) * 0.6, rank = _amb_hash(town.seed, n * 5 + 1)))
+        town.build_k = -1
 
 # ---------------- each frame ----------------
 
@@ -299,9 +352,17 @@ ambient_tier_share = () -> f64: match render_quality.tier:
     _: 1.0
 
 # the big town near the camera, laid out once as it comes near; none when nowhere near one
+ambient_update_ms = 0.0             # (what the last update cost, for budgets)
 ambient_update = (cam: vec3):
+    global ambient_update_ms
+    started = time()
+    _ambient_update(cam)
+    ambient_update_ms = (time() - started) * 1000.0
+
+_ambient_update = (cam: vec3):
     global ambient_town
     best = -1; bd = AMBIENT_TOWN_REACH
+    if cam.y > 250.0: return       # (from the air: keep what's laid, lay out nothing new)
     loop k in 0..world_settlements.len():
         s = world_settlements[k]
         if s.legacy >= 0 or s.size < AMBIENT_MIN_SIZE: continue
@@ -313,8 +374,10 @@ ambient_update = (cam: vec3):
             walk_publish("ambient-crowd", [])
             ambient_town = AmbientTown()
         return
-    if ambient_town.settlement != best: ambient_town = ambient_layout(best)
-    ambient_layout_step(ambient_town)
+    if ambient_town.settlement != best:
+        ambient_town = ambient_layout(best)
+        return
+    ambient_layout_step(ambient_town, AMBIENT_STEP_BUDGET)
 
 ambient_draw = (cam: vec3, L: Light, t: f64, hour: f64):
     global ambient_drawn
