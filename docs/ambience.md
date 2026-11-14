@@ -83,6 +83,16 @@ env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1 \
 Create the sample directory first. The lab writes individual instruments, contextual quay/night/
 storm mixes, dry/reflected musician phrases, a softened quay and idle-engine comparisons. The
 storm fixture has a flash at t=1 and a source 1,029 m away; thunder begins at t=4.
+To hear the game's own mix at a start, a screenshot run writes it offline to a WAV file
+(`AEGEAN_AUDIO_SECONDS`, default 30, sets its length; a fresh save directory gives the normal
+new-game start on the Porto Vecchio jetty):
+
+```sh
+env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1 SLOPPY_SAVE_DIR=<empty dir> \
+  AEGEAN_AUDIO_CAPTURE=<out.wav> AEGEAN_AUDIO_SECONDS=40 SLOPPY_SCREENSHOT=<out.png> \
+  SLOPPY_FRAMES=2405 sloppy --release aegean.jo
+```
+
 `tools/ambience_cost.jo` is a silent adapter workload through a generated capital. Only enable
 `AMBIENCE_TIMING=1` on the quiet laptop under the shared benchmark lock; use instruction counts
 on the desktop. See `~/dev/tmp/aegean-skies/sound/report.md` for measured checks and limitations.
