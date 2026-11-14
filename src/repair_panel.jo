@@ -1,0 +1,226 @@
+# The Neravessa workshop's panel: the quote for a repair (the part, what it costs and how long it
+# takes), the work while it goes on, and the result. It draws from a RepairDesk (repair_desk.jo)
+# and says what was chosen; the game makes each change through the desk's start and cancel.
+
+use 'hud.jo'
+use 'panels.jo'
+use 'repair_desk.jo'
+use 'canal_geometry.jo'
+use 'touch.jo'
+
+_rp_over = (r: Rect) -> bool: contains(r, mouse_pos())
+_rp_click = (r: Rect) -> bool: mouse_pressed(.left) and contains(r, mouse_pos())
+
+enum DeskAction: none, start, stop, confirm_stop, keep, wait, again, close
+
+struct DeskButton:
+    label: str
+    action: DeskAction
+    primary = false
+    warn = false
+    enabled = true
+
+struct RepairPanelResult:
+    action: DeskAction = .none
+    refused = ""                    # a button that can't be used, tapped: its reason
+
+const RP_ROW = 27.0
+const RP_BUTTON = 44.0
+
+# what the panel shows: its rows, its words and its buttons, for one phase of the desk
+struct _DeskSheet:
+    heading = ""                    # the line under the divider
+    heading_warn = false
+    bar = -1.0                      # a progress or condition bar, 0..1 (-1: none)
+    bar_mark = -1.0                 # the 80% mark on a condition bar
+    bar_left = ""
+    bar_right = ""
+    rows: str[]                     # "label|value"
+    total = ""                      # the bottom line of the figures, "label|value"
+    notes: str[]                    # plain lines under the figures
+    warn = ""                       # a reason in red
+    buttons: DeskButton[]
+
+_cap = (s: str) -> str: if s.len() > 0: s[0..1].upper() + s[1..s.len()] else: s
+
+_quote_rows = (d: RepairDesk) -> str[]:
+    ["Spare parts|{desk_weight(d.parts_milli)} from the workshop's stock",
+     "Materials|{desk_money(d.materials_cents)}",
+     "Labour|{desk_money(d.labour_cents)}",
+     "Work|about {desk_minutes(d.work_total)}"]
+
+_desk_sheet = (d: RepairDesk, craft: str, confirming: bool) -> _DeskSheet:
+    s = _DeskSheet()
+    part = _cap(d.part)
+    match d.phase:
+        .refused:
+            s.heading = "No repair to offer"
+            s.notes = [d.reason]
+            s.buttons = [DeskButton("Close", .close)]
+        .quote, .interrupted:
+            s.heading = "{part}: {d.now_pct}% now, {d.after_pct}% after the repair"
+            s.bar = f64(d.now_pct) / 100.0; s.bar_mark = f64(d.after_pct) / 100.0
+            s.rows = _quote_rows(d)
+            s.total = "Total|{desk_money(d.total_cents)}"
+            if d.phase == .interrupted: s.notes.push("{d.note} The parts already fitted stayed used; starting again charges for new ones.")
+            s.notes.push("The workshop restores parts to {d.after_pct}%. Prices and stock are checked again when the work starts.")
+            s.warn = d.reason
+            s.buttons = [DeskButton(if d.phase == .interrupted: "Start again, {desk_money(d.total_cents)}" else: "Start the repair, {desk_money(d.total_cents)}", .start, primary = true, enabled = d.reason == ""),
+                         DeskButton("Not now", .close)]
+        .underway, .paused:
+            if confirming:
+                s.heading = "Stop the work?"
+                s.heading_warn = true
+                s.notes = ["The parts already fitted ({desk_money(d.materials_cents)}) stay used.",
+                           "The unused labour, {desk_money(d.refundable_cents)}, comes back to you.",
+                           "Your {d.part} stays at {d.now_pct}%."]
+                s.buttons = [DeskButton("Stop the work", .confirm_stop, warn = true), DeskButton("Keep working", .keep)]
+                return s
+            who = if d.mechanic != "": split(d.mechanic, " ")[0] else: "The mechanic"
+            s.heading = if d.phase == .paused: "The work has stopped for now" else: "{who} is working on the {d.part}"
+            s.heading_warn = d.phase == .paused
+            s.bar = f64(d.work_done) / f64(max(d.work_total, 1))
+            s.bar_left = "Work done"
+            s.bar_right = "{d.work_done} of {d.work_total} minutes"
+            s.rows = ["Charged|{desk_money(d.charged_cents)}", "{part}|{d.now_pct}% now, {d.after_pct}% when done"]
+            if d.phase == .paused: s.warn = d.reason
+            s.notes.push("Taking your {craft} off the slipway stops the work.")
+            s.buttons = [DeskButton("Wait until it's done", .wait, primary = true, enabled = d.phase == .underway),
+                         DeskButton("Stop the work", .stop),
+                         DeskButton("Close", .close)]
+        .done:
+            s.heading = "{part} repaired: now at {d.now_pct}%"
+            s.bar = f64(d.now_pct) / 100.0; s.bar_mark = f64(d.after_pct) / 100.0
+            s.rows = ["Charged|{desk_money(d.charged_cents)}", "Work|{desk_minutes(d.work_total)}"]
+            s.notes = ["Your {craft} is back on her mooring at the slipway. Board her as usual to leave."]
+            if d.other_due != "": s.buttons.push(DeskButton("Ask about the {d.other_due}", .again, primary = true))
+            s.buttons.push(DeskButton("Close", .close))
+    s
+
+# buttons along a row when they fit, one under another when they don't (a phone held upright)
+_desk_buttons = (b: DeskButton[], x: f64, w: f64, size: f64) -> Rect[]:
+    gap = 10.0
+    widths = [loop k in b: text_width(k.label, size) + 34.0]
+    sum = gap * f64(max(b.len() - 1, 0))
+    loop v in widths: sum += v
+    out: Rect[]
+    if sum <= w:
+        cx = x + w - sum
+        loop k in 0..b.len():
+            out.push(Rect(cx, 0, widths[k], RP_BUTTON))
+            cx += widths[k] + gap
+        return out
+    loop k in 0..b.len(): out.push(Rect(x, f64(k) * (RP_BUTTON + 8.0), w, RP_BUTTON))
+    out
+
+# `craft`: the aircraft's name ("Gull"); `confirming`: the stop is being asked about; `notice`: a
+# line over the footer (what just happened, or why not).
+repair_panel = (fonts: Fonts, d: RepairDesk, craft: str, confirming: bool, notice: str = "") -> RepairPanelResult:
+    res = RepairPanelResult()
+    sw = f64(screen_width()); sh = f64(screen_height())
+    w = min(580.0, sw - 24.0)
+    narrow = w < 460.0
+    pad_x = if narrow: 20.0 else: 30.0
+    inner = w - pad_x * 2.0
+    s = _desk_sheet(d, craft, confirming)
+    set_font(fonts.ui)
+    head_size = if narrow: 18.0 else: 20.0
+    head_lines = wrap_text(s.heading, inner, head_size)
+    note_lines: str[]
+    loop n in s.notes:
+        loop l in wrap_text(n, inner, 15): note_lines.push(l)
+    warn_lines = if s.warn != "": wrap_text(s.warn, inner, 15) else: []
+    notice_lines = if notice != "" and notice != s.warn: wrap_text(notice, inner, 15) else: []
+    brects = _desk_buttons(s.buttons, 0.0, inner, 17)
+    buttons_h = if brects.len() > 0: brects[brects.len() - 1].y + RP_BUTTON else: 0.0
+    body = f64(head_lines.len()) * (head_size + 6.0) + 8.0
+    if s.bar >= 0.0: body += (if s.bar_left != "": 26.0 else: 0.0) + 28.0
+    body += f64(s.rows.len()) * RP_ROW + (if s.total != "": RP_ROW + 8.0 else: 0.0)
+    if s.rows.len() > 0 or s.total != "": body += 6.0
+    body += f64(note_lines.len()) * 20.0 + f64(warn_lines.len() + notice_lines.len()) * 20.0
+    h = 104.0 + body + 14.0 + buttons_h + 24.0 + 44.0
+    # (too tall for a phone held sideways: the notes give way first)
+    if h > sh - 16.0 and note_lines.len() > 1:
+        drop = min(note_lines.len() - 1, int(ceil((h - sh + 16.0) / 20.0)))
+        note_lines = note_lines[0..note_lines.len() - drop]
+        h -= f64(drop) * 20.0
+    x = (sw - w) * 0.5
+    y = max(8.0, (sh - h) * 0.5)
+    rect(0, 0, sw, sh, rgba(0.03, 0.04, 0.06, 0.4))
+    rect_rounded(x + 4, y + 6, w, h, 8, rgba(0, 0, 0, 0.3))
+    rect_rounded(x, y, w, h, 8, PAPER)
+    rect_rounded_outline(x + 8, y + 8, w - 16, h - 16, 6, 1.5, PAPER_DARK)
+    set_font(fonts.title)
+    text(fit_text("{CANAL_CITY_NAME} workshop", w - 100, 26), vec2(f32(x + pad_x), f32(y + 22)), 26, INK)
+    set_font(fonts.ui)
+    text(fit_text("Repairs on the slipway: your {craft}", w - 80, 16), vec2(f32(x + pad_x), f32(y + 58)), 16, LIGHT_INK)
+    close = Rect(x + w - 50, y + 10, 40, 40)
+    text_centered("×", vec2(f32(close.x + 20), f32(close.y + 17)), 30, if _rp_over(close): INK else: LIGHT_INK)
+    if _rp_click(close) or key_pressed(.escape): res.action = if confirming: .keep else: .close
+    hy = y + 90.0
+    line(vec2(f32(x + 24), f32(hy)), vec2(f32(x + w - 24), f32(hy)), 1.5, PAPER_DARK)
+    cy = hy + 14.0
+    loop l in head_lines:
+        text(l, vec2(f32(x + pad_x), f32(cy)), head_size, if s.heading_warn: STAMP else: INK)
+        cy += head_size + 6.0
+    cy += 8.0
+    if s.bar >= 0.0:
+        if s.bar_left != "":
+            text(s.bar_left, vec2(f32(x + pad_x), f32(cy)), 16, LIGHT_INK)
+            text(s.bar_right, vec2(f32(x + w - pad_x - text_width(s.bar_right, 16)), f32(cy)), 16, LIGHT_INK)
+            cy += 26.0
+        gx = x + pad_x; gw = inner
+        rect_rounded(gx - 2, cy - 2, gw + 4, 18, 4, PAPER_DARK)
+        rect(gx, cy, gw, 14, rgba(0.18, 0.16, 0.13, 1))
+        f = clamp(s.bar, 0.0, 1.0)
+        good = s.bar_mark < 0.0 or f >= s.bar_mark - 0.001
+        rect(gx + 1, cy + 1, (gw - 2) * f, 12, if good: rgba(0.45, 0.62, 0.36, 1) else: rgba(0.78, 0.52, 0.22, 1))
+        if s.bar_mark >= 0.0:
+            mx = gx + gw * s.bar_mark
+            rect(mx - 1, cy - 4, 2, 22, INK)
+        loop k in 1..4: rect(gx + gw * f64(k) / 4.0, cy, 1, 14, rgba(0.95, 0.91, 0.8, 0.35))
+        cy += 28.0
+    loop r in s.rows:
+        p = split(r, "|")
+        text(p[0], vec2(f32(x + pad_x), f32(cy)), 17, INK)
+        v = fit_text(p[1], inner - text_width(p[0], 17) - 16.0, 17)
+        text(v, vec2(f32(x + w - pad_x - text_width(v, 17)), f32(cy)), 17, INK)
+        cy += RP_ROW
+    if s.total != "":
+        line(vec2(f32(x + pad_x), f32(cy + 1)), vec2(f32(x + w - pad_x), f32(cy + 1)), 1.0, PAPER_DARK)
+        cy += 8.0
+        p = split(s.total, "|")
+        set_font(fonts.title)
+        text(p[0], vec2(f32(x + pad_x), f32(cy)), 19, INK)
+        text(p[1], vec2(f32(x + w - pad_x - text_width(p[1], 19)), f32(cy)), 19, INK)
+        set_font(fonts.ui)
+        cy += RP_ROW
+    if s.rows.len() > 0 or s.total != "": cy += 6.0
+    loop l in note_lines:
+        text(l, vec2(f32(x + pad_x), f32(cy)), 15, LIGHT_INK)
+        cy += 20.0
+    loop l in warn_lines + notice_lines:
+        text(l, vec2(f32(x + pad_x), f32(cy)), 15, STAMP)
+        cy += 20.0
+    by = cy + 14.0
+    keys: Key[] = [.n1, .n2, .n3]
+    loop k in 0..s.buttons.len():
+        b = s.buttons[k]
+        r = Rect(x + pad_x + brects[k].x, by + brects[k].y, brects[k].w, brects[k].h)
+        hover = _rp_over(r)
+        fill = if not b.enabled: rgba(0.7, 0.68, 0.6, 1) else: if b.primary: (if hover: rgba(0.5, 0.65, 0.4, 1) else: rgba(0.42, 0.56, 0.34, 1)) else: if b.warn: (if hover: rgba(0.78, 0.26, 0.2, 1) else: rgba(0.68, 0.2, 0.15, 1)) else: (if hover: rgba(0.85, 0.74, 0.5, 0.7) else: PAPER_DARK)
+        rect_rounded(r.x, r.y, r.w, r.h, 6, fill)
+        ink = if b.primary or b.warn or not b.enabled: rgba(1, 0.97, 0.9, 1) else: INK
+        label = fit_text(b.label, r.w - 16.0, 17)
+        text_centered(label, vec2(f32(r.x + r.w * 0.5), f32(r.y + r.h * 0.5 - 1.0)), 17, ink)
+        chosen = _rp_click(r) or (not pad.on and k < keys.len() and key_pressed(keys[k]))
+        if chosen:
+            if b.enabled: res.action = b.action
+            else: res.refused = s.warn
+    fy = y + h - 44.0
+    line(vec2(f32(x + 24), f32(fy - 10)), vec2(f32(x + w - 24), f32(fy - 10)), 1.5, PAPER_DARK)
+    text(desk_money(d.cash_cents), vec2(f32(x + pad_x), f32(fy)), 20, INK)
+    hint = "in your purse"
+    text(hint, vec2(f32(x + pad_x + text_width(desk_money(d.cash_cents), 20) + 10.0), f32(fy + 3)), 15, LIGHT_INK)
+    set_font()
+    res
