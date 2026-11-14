@@ -50,6 +50,9 @@ on that unmerged branch so far.
   speed is completely gone". Every water surface you can take off from (rivers, canals, lakes)
   must use the same flecks at the same scale and density. Check a low fast pass over open water
   (`AEGEAN_FLYING='60 150'`) before and after any change to water, depth, quality tiers or sky.
+  Whatever moves the eye must pass its velocity to the sea (`view_velocity`): a moving camera over
+  a sea told it is still shows soft, faint marks (the title reel once did;
+  `tests/title_reel_detail_test.py` now guards it).
 - **Capture:** `AEGEAN_FLYING='8 190'` or `AEGEAN_FLYING='60 150'`; `tools/precision_view.jo`
   with `PRECISION_MARKS=1` isolates the fleck painter.
 
@@ -929,7 +932,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Code:** `src/title_shots.jo` (`title_next_shot`, `title_view`); `aegean.jo` (`title_cut`,
   `title_sound`, the free camera it flies).
 - **Rules:** never rain; never the same kind twice running; banks of 7 degrees at most; a town shot
-  never looks straight down into the streets. The world behind it is never saved: a new game puts
+  never looks straight down into the streets; the low pass's water reads as flight's at that speed
+  (the sea gets the reel camera's velocity; the eye at the chase camera's height, 13-16 m;
+  `tests/title_reel_detail_test.py`). The world behind it is never saved: a new game puts
   back the startup's world. It costs no more than ordinary play at each quality tier.
 - **Capture:** `AEGEAN_TITLE=1 AEGEAN_TITLE_SHOT=low-pass|high|city-Kalyrassa:arc|...`,
   `AEGEAN_TITLE_SEED`, `AEGEAN_TITLE_FRAMES=dir`; `tests/title_shots_test.jo` checks the rules.

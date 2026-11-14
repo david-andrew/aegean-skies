@@ -58,10 +58,13 @@ game-slot block) over the **title reel** (`src/title_shots.jo`): the live world,
 free camera the reel flies, in unordered shots of 18-28 seconds with a short dip to dusk between
 them, each with its own hour and fair weather (never rain):
 
-- **Low pass:** a few metres over open water at the top speed (about 450 km/h), the speed flecks
-  streaming past, banking gently (never past 7 degrees); flying free, chasing a Gull ahead, or
-  overtaken by one. The Gull is the player's own aircraft, drawn where the reel puts it for that
-  frame only.
+- **Low pass:** low over open water at the top speed (about 450 km/h), the speed flecks streaming
+  past as in flight, banking gently (never past 7 degrees); flying free, chasing a Gull ahead, or
+  overtaken by one. The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
+  large and sparse on the screen), the Gull 4-5 m below it. The sea, rivers and lakes are given the
+  reel camera's true velocity (`view_velocity`), so the flecks streak and keep their strength as
+  at that speed in flight. The Gull is the player's own aircraft, drawn where the reel puts it for
+  that frame only.
 - **High at sunset:** 2.7-3.4 km up, above the clouds, drifting towards the sun as it goes down.
 - **A town and its waterfront:** a low oblique run along the harbour front from just offshore
   (boats, the quay and the seaplanes in frame, the town rising behind); a higher, slow arc at
@@ -105,6 +108,11 @@ never stall for it and a new game starts populated.
 (with `:run` or `:arc`) repeats a kind; `AEGEAN_TITLE_SEED=n` fixes the order; `AEGEAN_TITLE_FRAMES=dir`
 saves every 10th frame (`AEGEAN_TITLE_FRAME_STEP=n`: every nth). `AEGEAN_FRAME_STATS=1` prints the
 frame statistics every 120 frames, in the title and in play alike, for timing runs.
+`AEGEAN_TITLE_BARE=1` draws the reel without the menu; `low-free@14` flies a low pass at that height.
+
+**Guard.** `python3 tests/title_reel_detail_test.py` (needs a GPU; too slow for the software
+renderer) renders the reel's low pass and real flight at 125 m/s at fixed frames and requires the
+reel's fine water detail to reach 0.7 of flight's (measured 0.79; a parked sea, 0.2).
 
 Test and capture runs start straight in the game: a program that imports `aegean.jo` (its
 `PROGRAM_NAME` is not "Aegean Skies"), a run with `SLOPPY_FRAMES` or `SLOPPY_SCREENSHOT`, and a run
