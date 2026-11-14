@@ -3,14 +3,17 @@
 The Mutopia transcription plays every note at one velocity, in strict time. This plan, bar by bar
 (72 bars of 9/8; quarter = 1 s in the MIDI, so a bar is 4.5 s of score time), gives it:
 
-* a phrase-level tempo arch with real rubato: lingering at phrase peaks and cadences, pushing
-  through the flowing middle (Un poco mosso, En animant), broadening at the climax, Calmato,
-  Tempo I and the long morendo to the end;
+* its tempo from the general expressive-timing system (tools/expressive_timing.py): an intensity
+  curve measured from the score (density, motion, register, tension, the dynamics below, the
+  melody's rise) moves it on where the music flows and builds and broadens it at peaks and
+  cadences, within the pace of the score's own tempo markings (Un poco mosso, En animant,
+  Calmato, Tempo I, morendo), with a bounded, seeded variation;
 * wide dynamics: a pp opening, the swell through the Un poco mosso arpeggios to the ff of En
   animant, a hushed return, fading to nothing;
 * the sustain pedal changed with each harmony (each beat in the chordal sections, each bar
   through the arpeggios);
-* the melody voiced over the accompaniment, and chords spread a little from the bass up.
+* the melody voiced a little over the accompaniment (the left hand kept up with it), each
+  arpeggio shaped as one gesture across both hands, and chords spread a little from the bass up.
 
 Run after any change to the score or the generic reading:
   python tools/clair_performance.py && python tools/music_pack.py
@@ -19,18 +22,25 @@ from pathlib import Path
 import json, math
 from music_pack import ROOT, read_midi, arrange
 from music_performance import score_clock, interpret, performance_signature
+from expressive_timing import ExpressiveTiming, timing_map
 
 NAME = 'clair-de-lune'
 BAR = 4.5                           # score seconds per bar
 BARS = 72
 
-# (bar, tempo factor: performed / score duration) anchors, interpolated between; the MIDI's
-# dotted quarter = 40 is a little brisk for the opening and slow for the Un poco mosso.
-TEMPO = [(1, 1.10), (8, 1.06), (9, 1.02), (12, 0.96), (14, 1.02), (15, 0.94), (18, 0.90),
-         (19, 0.92), (24, 0.88), (25, 1.00), (26, 1.10), (27, 0.84), (30, 0.82), (34, 0.78),
-         (36, 0.80), (37, 0.80), (39, 0.86), (41, 0.92), (42, 1.08), (43, 1.14), (44, 1.12),
-         (45, 1.00), (48, 0.96), (49, 1.06), (50, 1.20), (51, 1.10), (58, 1.06), (59, 1.04),
-         (62, 1.06), (63, 1.12), (65, 1.16), (66, 1.18), (70, 1.30), (72, 1.70)]
+# The timing: the score's tempo markings (rate factors: below 1 is faster) and the system's
+# few parameters; everything within a section comes from the measured intensity.
+TIMING = ExpressiveTiming(
+    base=0.98, min_rate=0.64, max_rate=1.5, sensitivity=1.0, flow=0.75, build=0.15, peak=0.1,
+    cadence=0.08, final_ritard=0.6, variation=0.03, seed=7, phrase_bars=2,
+    # only what the printed score marks; within each section the intensity shapes it
+    tempo_marks=[(1, 1.0),       # Andante très expressif
+                 (15, 0.94),     # peu à peu cresc. et animé
+                 (27, 0.84),     # Un poco mosso
+                 (37, 0.86),     # En animant
+                 (43, 1.12),     # Calmato
+                 (51, 1.0),      # Tempo I
+                 (66, 1.1)])     # morendo jusqu'à la fin
 
 # (bar, level in dB) anchors: 0 dB is a full forte.
 LEVEL = [(1, -17), (4, -15), (8, -17), (9, -14), (12, -11), (14, -8), (16, -6), (18, -3),
@@ -65,18 +75,6 @@ def phrase_at(bar):
     return math.floor(bar), math.floor(bar) + 1
 
 
-def tempo(bar):
-    """Performed seconds per score second at a fractional bar (1.0 = the first downbeat)."""
-    base = anchors(TEMPO, bar)
-    a, b = phrase_at(bar)
-    u = (bar - a) / (b - a)
-    # a breath in, a little push through the middle, and a lingering cadence
-    arch = 0.05 * (2 * u - 1) ** 2 - 0.02 + 0.30 * math.exp(-((u - 0.97) / 0.07) ** 2)
-    # a small lift onto each bar's first beat, as the hand settles
-    within = 0.03 * math.exp(-((bar - math.floor(bar)) / 0.06) ** 2)
-    return base * (1 + arch + within)
-
-
 # (heard across a terrace, not a concert hall: the plan's range is kept, three quarters of it)
 COMPRESS = 0.78
 
@@ -91,17 +89,13 @@ def main():
     source = ROOT / 'data/music/source' / f'{NAME}.mid'
     notes, _ = interpret(arrange(NAME, read_midi(source)), NAME, score_clock(source, NAME))
     end = max(n[0] + n[1] for n in notes)
-    # the time map: performed time accumulated over eighth notes (a ninth of a bar)
+    # the dynamics, as the score marks them, on eighth notes
     step = BAR / 9
-    times = [0.0]
-    performed = [0.0]
-    t = 0.0
-    while t < end + BAR:
-        bar = 1 + (t + step * 0.5) / BAR
-        t += step
-        times.append(round(t, 6))
-        performed.append(round(performed[-1] + step * tempo(bar), 6))
-    dynamics = [[round(t, 6), round(level(1 + t / BAR), 3)] for t in times]
+    times = [round(k * step, 6) for k in range(int((end + BAR) / step) + 1)]
+    dynamics = [[t, round(level(1 + t / BAR), 3)] for t in times]
+    # the tempo, from the intensity those and the notes make
+    time_map, curves = timing_map(notes, score_clock(source, NAME), TIMING, markings=dynamics)
+    performed = [p[1] for p in time_map]
     # the pedal: changed (lifted 60 ms) on each beat, or each bar through the arpeggios
     pedal = []
     beat = BAR / 3
@@ -116,12 +110,13 @@ def main():
         input_clock='deterministic interpreted score, v1 (no generic rubato or dynamics)',
         input_note_count=len(notes),
         input_sha256=performance_signature(notes),
-        time_map=[[a, b] for a, b in zip(times, performed)],
+        time_map=time_map,
         section_tracks={},
         section_levels={},
         dynamics=dynamics,
         effort_share=0.55,
-        voicing=dict(melody_tracks=[1], melody_db=3.5, inner_db=-3.0, lower_tracks=[2], lower_db=-2.5),
+        voicing=dict(melody_tracks=[1], melody_db=2.0, inner_db=-1.0, lower_tracks=[2], lower_db=0.5, held_seconds=0.9),
+        arpeggios=dict(gap=0.55, long_seconds=0.9, min_notes=5, rise_db=2.5, base_db=0.0),
         pedal=pedal,
         pedal_max_hold=6.0,
         spread_seconds=0.03,
@@ -129,7 +124,10 @@ def main():
               'see tools/clair_performance.py for the plan, bar by bar.')
     path = ROOT / 'data/music' / f'{NAME}-performance.json'
     path.write_text(json.dumps(annotation, indent=1) + '\n')
-    print(f'{path.name}: {len(times)} time points, {performed[-1]:.1f} s performed from {times[-1]:.1f} s; '
+    # (CLAIR_CURVES=path: the intensity and tempo curves, for plotting)
+    import os
+    if os.environ.get('CLAIR_CURVES'): Path(os.environ['CLAIR_CURVES']).write_text(json.dumps(dict(beats=curves['beats'], intensity=[round(v, 4) for v in curves['intensity']], rate=[round(v, 4) for v in curves['rate']], time_map=time_map)) + '\n')
+    print(f'{path.name}: {len(time_map)} time points, {performed[-1]:.1f} s performed from {time_map[-1][0]:.1f} s; '
           f'{len(pedal)} pedal spans; level {min(v for _, v in dynamics):.1f} to {max(v for _, v in dynamics):.1f} dB')
 
 
