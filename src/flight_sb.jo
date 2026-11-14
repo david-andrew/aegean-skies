@@ -1,0 +1,87 @@
+# Sky Barons' own flight model (examples/skybarons/sim.jo `fly_air`), a reference to fly beside the
+# liked model and flight model v2 (Tweaks: Flight v2 page, flight_model 2). The player's aircraft in
+# the air only; the water, land and contacts stay with flight.jo's solver.
+#
+# Its equations as they are, worked in the true units (the drawn velocity / the pure speed scale K) and
+# drawn K times faster, so the sense of speed is the same as the other two models'. Each aircraft's
+# catalog figures are already Sky Barons' Kind fields: stall, thrust (m/s² at full throttle), drag (on
+# speed squared, as designed, before the speed scale), pitch/roll/yaw rates, grip. So this is exactly
+# Sky Barons flying this game's aircraft. What differs from sim.jo: the throttle spools as the other
+# models' does (the controls ask for a setting), the engine fades by the same ceiling, damage weakens
+# the wings and the engine, and the wind carries it.
+use 'flight.jo'
+use 'tweaks.jo'
+use 'damage.jo'
+
+# whether this aircraft flies Sky Barons' model in the air (the player's only)
+fdmsb_active = (k: CraftSpec) -> bool: tweaks.flight_model == 2 and k.player
+
+const SB_G = 9.8
+
+fly_air_sb = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
+    s.on_water = false; s.on_ground = false; s.beached = false; s.planing = false
+    s.water_age += dt
+    kk = max(pure_k(k), 1.0)
+    # (Sky Barons' Kind, from the catalog: the drag as designed, before the speed scale divided it)
+    stall = k.stall_speed
+    thrust = k.arc_thrust
+    drag = k.arc_drag * k.handling_scale * k.handling_scale
+    wings = (wing_lift(s.damage, .left_wing) + wing_lift(s.damage, .right_wing)) * 0.5
+    engine = if s.fuel > 0 and not s.capsized: part_health(s.damage, .engine) else: 0.0
+    power = if engine <= 0.0: 0.0 else: 0.3 + 0.7 * engine
+    s.throttle = move_toward(s.throttle, clamp(c.throttle, 0.0, 1.0) * power, dt / k.spool_time)
+    s.throttle = min(s.throttle, power)
+    s.fuel = max(0.0, s.fuel - k.fuel_burn * s.throttle * dt)
+    wind = e.wind / f32(kk)
+    vel = s.velocity / f32(kk) - wind
+    speed = f64(length(vel))
+    s.airspeed = speed * kk
+    auth = clamp(speed / (stall * 1.45), 0.25, 1.0)
+    q = s.orientation
+    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp(c.pitch, -1.0, 1.0) * k.pitch_rate * auth * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), -clamp(c.roll, -1.0, 1.0) * k.roll_rate * auth * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * auth * dt))
+    fwd = quat_rotate(q, vec3(0, 0, -1))
+    vdir = fwd
+    if speed > 0.1: vdir = vel * f32(1.0 / speed)
+    # (stalled: the nose falls toward the way it is going, and down)
+    lift = smoothstep(stall * 0.75, stall * 1.15, speed) * clamp(wings / 0.8, 0.0, 1.0)
+    if lift < 1.0:
+        axis = cross(fwd, normalize(vdir + vec3(0, -0.7, 0)))
+        if length(axis) > 0.001: q = quat_mul(quat_axis_angle(axis, (1.0 - lift) * 1.6 * dt), q)
+    # (banked, the nose falls too, more the more the wings stand on their side; and it turns the way
+    # its wings lean, toward the lower one)
+    tilt = 1.0 - max(f64(quat_rotate(q, vec3(0, 1, 0)).y), 0.0)
+    axis = cross(quat_rotate(q, vec3(0, 0, -1)), vec3(0, -1, 0))
+    if length(axis) > 0.001: q = quat_mul(quat_axis_angle(normalize(axis), tilt * lift * 0.5 * k.yaw_rate * dt), q)
+    up_now = quat_rotate(q, vec3(0, 1, 0))
+    f_now = quat_rotate(q, vec3(0, 0, -1))
+    flat = vec3(f_now.x, 0, f_now.z)
+    if length(flat) > 0.05:
+        flat = normalize(flat)
+        lean = f64(dot(up_now, vec3(-flat.z, 0, flat.x)))
+        q = quat_mul(quat_axis_angle(vec3(0, 1, 0), -lean * lift * 0.5 * k.yaw_rate * dt), q)
+    s.orientation = normalize(q)
+    s.angular_velocity = vec3(0, 0, 0)
+    fwd = quat_rotate(s.orientation, vec3(0, 0, -1))
+    up = quat_rotate(s.orientation, vec3(0, 1, 0))
+    s.aoa = asin(clamp(f64(dot(cross(vdir, fwd), quat_rotate(s.orientation, vec3(1, 0, 0)))), -1.0, 1.0))
+    s.stalled = lift < 0.999
+    s.stall_blend = 0.0
+    s.wing_separation = vec2(0, 0); s.buffet = 0.0
+    # speed along the way it goes: the engine (fading up high), drag (more pulling hard), gravity
+    thin = clamp((2400.0 - f64(s.position.y)) / 800.0, 0.0, 1.0)
+    pull = abs(clamp(c.pitch, -1.0, 1.0)) * auth
+    resist = drag * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0)) * (1.0 + 0.5 * s.hull_damage) / mass_fraction(k.parts, s.damage)
+    acc = thrust * s.throttle * thin - resist * speed * speed * (1.0 + 0.9 * pull) - SB_G * f64(vdir.y)
+    speed = max(speed + acc * dt, 0.0)
+    # the way it goes turns toward the nose: hardly at all when stalled
+    t = min(k.arc_grip * lift * dt, 1.0)
+    vdir = normalize(vdir + (fwd - vdir) * f32(t))
+    vel = vdir * f32(speed)
+    # what the wings do not hold up falls
+    level = max(f64(up.y), 0.0)
+    sag = SB_G * (1.0 - lift) + SB_G * lift * (1.0 - level)
+    vel.y -= f32(sag * dt)
+    s.velocity = (vel + wind) * f32(kk)
+    craft_advance(s, dt)
