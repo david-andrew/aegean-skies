@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
@@ -286,6 +286,23 @@ On the rivers branch until it lands.
   `AEGEAN_CHART_VIEW="-129300 -146000 4200"` to look closer at Neravessa.
 
 ---
+
+### Lake shoreline shaping
+
+- **Definition:** a settlement lake's shore moved sideways along its own bank slope (coves and
+  points of a few hundred metres) and a drowned valley arm up the inflow, on top of the surveyed
+  basin. The takeoff lane, berths, jetty and town frontage stay as surveyed, and no cove comes
+  within 45 m of a road.
+- **Code:** `lake_depth` in `src/lake_field.jo` (shaped) over `lake_raw_depth`; road guard
+  `src/lake_road_guard_data.jo` from `tools/bake_lake_road_guard.jo` (rebake it after road
+  changes near lakes, then rebake the world and routes).
+
+### Lake chop
+
+- **Definition:** the short wind chop on open lake water: the sea's swell slopes and crest strokes,
+  scaled, with no height. It gives lakes the sky reflection, sheen and glints the sea has at a
+  distance. Rivers keep their own current marks.
+- **Code:** `SeaParams.inland_chop` in `src/sea.jo`; set by `draw_lakes` (`src/lake_render.jo`).
 
 ## Aircraft
 
@@ -611,12 +628,66 @@ On the rivers branch until it lands.
 
 ## Towns and people
 
+### Quay (code) and dock (player)
+
+- **Aliases:** dock, pier, wharf, harbour, waterfront (in what the player reads or hears).
+- **Definition:** "quay" is the code's word for the walkable stone edge of a harbour where aircraft
+  and boats moor and people step ashore: `Quay`, `Town.quays`, `QUAY_TOP`, `VenueKind.quay`,
+  `CargoWhere.quay`, and keys such as `legacy:{place}:scene:quay`.
+- **Rules:** never show "quay" to the player; many people won't know it. In prompts, panels, map
+  labels, notices, dialogue and scenario text, say **dock** for where you moor or step ashore (the
+  default), **pier** for a structure out into the water, **harbour** or **waterfront** for the
+  general place ("down to the harbour", "on the waterfront"), and occasionally **wharf** for a
+  working goods landing. Vary them in dialogue so it sounds natural. Don't rename the code
+  identifiers, keys or save fields.
+- **Code:** `ctx_venue` and `venue_errand` (`src/living_talk_context.jo`) speak `VenueKind.quay`
+  as "the harbour"; map mooring labels read "{town} dock {n}".
+
 ### Legacy towns
 
 - **Aliases:** the original six towns, the original archipelago.
 - **Definition:** the hand-placed first towns and islands, which predate the generated world.
 - **Rules:** their house, close-kit, prop and paving fingerprints must stay byte-identical through
   town work (checked by `tools/town_legacy_probe.jo`).
+
+### Cliff stair
+
+- **Aliases:** stairway, kalderimi (the stone-paved stepped path of the islands).
+- **Definition:** a built stone stair that climbs a steep shore from the foot of a quay to the
+  houses above: flights at a steady grade with flat landings, each tread standing on the slope,
+  masonry down to the ground and a parapet on the open side. Its treads are the walking surface.
+- **Code:** `src/stairways.jo` (`plan_cliff_stair`, `stair_height`, `add_stairway_mesh`,
+  `stair_top_reaches`); legacy harbours in `build_town` (`src/objects.jo`), contact in
+  `walk_height_from_surface`.
+- **Rules:** a harbour whose quay cannot reach its houses over ground no steeper than 45° gets one.
+  One direction only (no switchbacks): flights stacked over one another in plan cannot share
+  walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
+- **Where:** Kryfo Cove and Agios Nikolaos.
+
+### Stepped landing path
+
+- **Definition:** the approach from a clifftop chapel or hill village down to its own cove landing
+  where a wagon track cannot get there: one person wide (1.2 m), up to a 45° grade, with the same
+  dry, building and walking-contact rules. Never a cart route.
+- **Code:** `LandingAccess.stepped` (`src/landing_access_types.jo`), `stepped_segment_clear` and
+  `access_track(..., stepped=true)` in `src/access_path_bake.jo`; surveyed by
+  `tools/probe_island_shore.jo ... stepped`.
+
+### Lake waterfront
+
+- **Definition:** a lake town's houses lining the path from its square to the jetty, timber boat
+  sheds open to the water with slipways, and a dressed stone edge along the shore at the jetty root.
+- **Code:** `lake_waterfront` (`src/lake_ports.jo`), `lake_waterfront_mesh` (`src/lake_port_mesh.jo`).
+
+### Thermal terraces
+
+- **Definition:** a bath set into a hillside in three terraces: bathhouse and inn on the upper one
+  against the slope, the hot pool on the middle one, a cooler pool below, stone stairs between them
+  and a last flight down to the path from the town. The ground under the complex is cut to just
+  below the lowest terrace; the upper terraces stand on masonry walls. Steam is densest in the
+  cool of morning and evening and is visible from the air.
+- **Code:** `src/thermal_sites.jo` (`THERMAL_TERRACES`, `thermal_carve`, `thermal_contact`),
+  `src/thermal_render.jo`; layout and paths from `tools/thermal_layout.jo`.
 
 ### Close kit
 
@@ -1225,6 +1296,22 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Definition:** the thread (Claude Opus) that plans, dispatches agents, merges their branches and
   owns UI and UX; agents expose clean APIs and data and list the UI they need.
+
+---
+
+## World audit
+
+- **Definition:** the offline sanity check over every harbour, landing, placed prop, building, door,
+  bath and road: harbours that cannot be walked to their houses, landings whose approach is
+  blocked, props floating above or buried in the walking surface or on ground too steep to stand
+  on, berths aground or within 6 m of rock, cliffs behind quays, buildings built into one another,
+  doors that open onto nothing, and roads that end away from their places.
+- **Code:** `src/world_audit.jo` (checks, walking search), `src/world_audit_run.jo`
+  (enumeration), `tools/world_audit.jo OUT.txt [all|legacy|ID,...] [reach]` (ranked report),
+  `tests/world_audit_test.jo` with `tests/world_audit_allow.txt` (reviewed exceptions).
+- **Rules:** walking means the real contact (stairs, quays, bridges, baths) and the collision
+  grid, with steps allowed and no slope steeper than 45° over two metres. A new severe finding
+  fails the test unless its key is reviewed into the allow-list.
 
 ---
 

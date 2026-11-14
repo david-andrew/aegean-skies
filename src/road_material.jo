@@ -1,0 +1,124 @@
+# A bounded vector field paints the real transport routes onto terrain itself.
+# Each texel retains four clipped segments, not a blurred road-colour bitmap.
+# Analytical width survives aerial LOD without raised ribbons crossing hills.
+use 'settlements.jo'
+use 'settlement_access.jo'
+use 'quality.jo'
+
+const ROAD_FIELD_SPAN = 16384.0
+road_field:Texture
+road_field_rect=vec4(0,0,0,0)
+road_field_stamp = -1
+road_field_tier = -1
+road_material_enabled=env("AEGEAN_ACCESS_ROADS")!="0"
+
+road_clip = (a:vec2,b:vec2,lo:vec2,hi:vec2)->(vec2,vec2,bool):
+    delta=b-a;first=0.0;last=1.0
+    loop axis in 0..2:
+        p=if axis==0:a.x else:a.y
+        d=if axis==0:delta.x else:delta.y
+        low=if axis==0:lo.x else:lo.y
+        high=if axis==0:hi.x else:hi.y
+        if abs(d)<0.00001:
+            if p<low or p>high:return (a,b,false)
+        else:
+            x=f64((low-p)/d);y=f64((high-p)/d)
+            first=max(first,min(x,y));last=min(last,max(x,y))
+    (a+delta*f32(first),a+delta*f32(last),first<=last)
+
+road_line_distance = (p:vec2,a:vec2,b:vec2)->f32:
+    d=b-a
+    if dot(d,d)<0.000001:return 1e9
+    length(p-a-d*clamp(dot(p-a,d)/dot(d,d),0.0,1.0))
+
+road_encode = (a:vec2,b:vec2,cell:f32,wide:bool)->vec4:
+    value=(vec4(a.x,a.y,b.x,b.y)+vec4(2,2,2,2))/(cell+4.0)
+    value=vec4(f32(round(clamp(f64(value.x),0.0,1.0)*255.0)/255.0),f32(round(clamp(f64(value.y),0.0,1.0)*255.0)/255.0),f32(round(clamp(f64(value.z),0.0,1.0)*255.0)/255.0),f32(round(clamp(f64(value.w),0.0,1.0)*255.0)/255.0))
+    # The last byte's low bit carries the existing 1.8/3.4 m track class.
+    value.w=(floor(value.w*255.0/2.0)*2.0+(if wide:1.0 else:0.0))/255.0
+    value
+
+road_decode = (data:vec4,cell:f32)->vec4:
+    value=data
+    value.w=floor(value.w*255.0/2.0)*2.0/255.0
+    value*(cell+4.0)-vec4(2,2,2,2)
+
+road_raster_segment = (img:mut Image,origin:vec2,cell:f32,a:vec2,b:vec2,wide:bool):
+    n=img.width
+    aa,bb,ok=road_clip(a-origin,b-origin,vec2(-2,-2),vec2(f32(ROAD_FIELD_SPAN)+2,f32(ROAD_FIELD_SPAN)+2))
+    if not ok or length(bb-aa)<0.01:return
+    low=min(aa,bb)-vec2(2,2);high=max(aa,bb)+vec2(2,2)
+    loop z in max(0,int(floor(low.y/cell)))..min(n,int(floor(high.y/cell))+1):
+        loop x in max(0,int(floor(low.x/cell)))..min(n,int(floor(high.x/cell))+1):
+            corner=vec2(f32(x)*cell,f32(z)*cell)
+            pa,pb,hit=road_clip(aa-corner,bb-corner,vec2(-2,-2),vec2(cell+2,cell+2))
+            if not hit or length(pb-pa)<0.01:continue
+            encoded=road_encode(pa,pb,cell,wide)
+            slot = -1;worst = -1.0
+            loop k in 0..4:
+                old=img.get(x,z+k*n)
+                if old==vec4(0,0,0,0):slot=k;worst = -1.0;break
+                if old==encoded:slot = -2;break
+                line=road_decode(old,cell);d=f64(road_line_distance(vec2(cell*0.5,cell*0.5),line.xy,line.zw))
+                if d>worst:worst=d;slot=k
+            if slot<0:continue
+            if worst>=0 and f64(road_line_distance(vec2(cell*0.5,cell*0.5),pa,pb))>worst:continue
+            img.set(x,z+slot*n,encoded)
+
+build_road_field = (origin:vec2,n:int)->Image:
+    img=image(n,n*4)
+    # Empty is a sentinel, including alpha: image() starts with opaque black.
+    loop i in 0..img.pixels.len():img.pixels[i]=u8(0)
+    cell=f32(ROAD_FIELD_SPAN/f64(n))
+    ids:{int:bool}
+    loop z in int(floor(f64(origin.y)/2048.0))..int(floor((f64(origin.y)+ROAD_FIELD_SPAN)/2048.0))+1:
+        loop x in int(floor(f64(origin.x)/2048.0))..int(floor((f64(origin.x)+ROAD_FIELD_SPAN)/2048.0))+1:
+            loop id in settlement_road_bins.get((x+256)*512+z+256,[]):ids[id]=true
+    ordered=ids.keys();ordered.sort()
+    loop id in ordered:
+        road=settlement_roads[id]
+        loop k in 1..road.points.len():road_raster_segment(img,origin,cell,road.points[k-1].xz,road.points[k].xz,road.width>2.5)
+    img
+
+prepare_road_field = (cam:vec3):
+    global road_field,road_field_rect,road_field_stamp,road_field_tier
+    if road_field.id==0:road_field=texture(image(1,4),false)
+    if not road_material_enabled:return
+    if access_catalog_stamp!=settlement_generation:
+        if env("AEGEAN_ACCESS_TRACE")!=none and frame_number()%60==1:print("ROAD waiting stamp={access_catalog_stamp} generation={settlement_generation}")
+        return
+    center=vec2(floor(cam.x/1024.0)*1024.0,floor(cam.z/1024.0)*1024.0)
+    origin=center-vec2(f32(ROAD_FIELD_SPAN*0.5),f32(ROAD_FIELD_SPAN*0.5))
+    if road_field_rect.xy==origin and road_field_stamp==access_catalog_stamp and road_field_tier==render_quality.tier:return
+    n=if render_quality.tier==0:256 else:512
+    img=build_road_field(origin,n)
+    if road_field_tier!=render_quality.tier:
+        free_texture(road_field)
+        road_field=texture(img,false)
+    else:update_texture(road_field,img)
+    road_field_rect=vec4(origin.x,origin.y,f32(ROAD_FIELD_SPAN/f64(n)),f32(n))
+    road_field_stamp=access_catalog_stamp;road_field_tier=render_quality.tier
+    if env("AEGEAN_ACCESS_TRACE")!=none:
+        occupied=0
+        loop z in 0..n:
+            loop x in 0..n:
+                if img.get(x,z)!=vec4(0,0,0,0):occupied+=1
+        print("ROAD field={road_field_rect} cells={occupied}")
+
+# Shader-only lookup. Local coordinates preserve the far world's centimetres.
+road_coverage = (field:Texture,rect:vec4,p:vec2,footprint:f32)->f32:
+    if rect.z<=0.0:return 0.0
+    q=(p-rect.xy)/rect.z;index=floor(q)
+    if min(index.x,index.y)<0.0 or max(index.x,index.y)>=rect.w:return 0.0
+    local=(q-index)*rect.z;coverage:f32=0.0
+    loop k in 0..4:
+        data=texel(field,ivec2(i32(index.x),i32(index.y+f32(k)*rect.w)))
+        if data==vec4(0,0,0,0):break
+        line=road_decode(data,rect.z)
+        d=road_line_distance(local,line.xy,line.zw)
+        # Include the worn gravel verge inside the existing grass-clear margin.
+        width=if fract(data.w*255.0*0.5)>0.25:2.4 else:1.2
+        aa=max(footprint*0.65,0.22)
+        coverage=max(coverage,(1.0-smoothstep(width-aa,width+aa,d))*min(1.0,width/max(aa,0.001)))
+    edge=min(min(q.x,q.y),min(rect.w-q.x,rect.w-q.y))*rect.z
+    coverage*smoothstep(0.0,1024.0,edge)
