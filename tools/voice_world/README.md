@@ -85,6 +85,12 @@ to the recording, so the same aligner serves for fitting. It then reports mel-ce
 F0 RMSE and correlation, energy correlation, phone-duration error, speaking rate and voicing
 errors, and publishes loudness-matched comparisons for listening.
 
+`tune_round.py` runs one tuning round on whatever the speaker has recorded. It caches the
+alignment and analysis of each take, fits voices to nested random subsets of the pool (falling
+back to a prior voice's prosody where the subset is too small), scores each on the held-out lines,
+and publishes the round with a learning curve. The voice studio's "Tune" button starts it. The
+recordings, voices and rounds all stay in scratch.
+
 ## Checks
 
 - `tests/voice_test.jo`: tables load and cover every phone at a phrase edge; numbers and clock

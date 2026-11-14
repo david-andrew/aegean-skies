@@ -156,7 +156,7 @@ def level(x, target_db=-20.0):
     return y / peak * 0.95 if peak > 0.95 else y
 
 
-def synthesize(repo, lines, outdir):
+def synthesize(repo, lines, outdir, data=None, radio=True):
     """Render each line with the game's code in its genre's delivery; returns {id: (dry, radio, phones)}."""
     os.makedirs(outdir, exist_ok=True)
     groups = {}
@@ -169,6 +169,10 @@ def synthesize(repo, lines, outdir):
             for l in ls:
                 f.write(f"{l['id']}|{l['text']}\n")
         env = dict(os.environ, VOICE_TEXTS=txt, VOICE_DIR=outdir, VOICE_DUMP='1', SLOPPY_NO_AUDIO='1', SLOPPY_THREADS='1')
+        if data:
+            env['AEGEAN_VOICE_DATA'] = data
+        if not radio:
+            env['VOICE_DRY_ONLY'] = '1'
         env.pop('DISPLAY', None); env.pop('WAYLAND_DISPLAY', None)
         if g in GENRE_STYLE:
             env['VOICE_STATION'], env['VOICE_PROGRAMME'] = GENRE_STYLE[g]
@@ -181,7 +185,8 @@ def synthesize(repo, lines, outdir):
             ph = []
             for row in open(os.path.join(outdir, f"{l['id']}-phones.txt")):
                 c = row.split()
-                ph.append(dict(p=c[0], stress=int(c[1]), start=float(c[2]), dur=float(c[3]), content=c[4] == 'true'))
+                ph.append(dict(p=c[0], stress=int(c[1]), start=float(c[2]), dur=float(c[3]), content=c[4] == 'true',
+                               word_end=len(c) > 5 and c[5] == 'true'))
             res[l['id']] = (os.path.join(outdir, f"{l['id']}-dry.wav"), os.path.join(outdir, f"{l['id']}-strong.wav"), ph)
     return res
 
