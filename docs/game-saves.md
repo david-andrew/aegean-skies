@@ -41,7 +41,7 @@ constructs that from the running scene. UI callers should use the shell requests
 
 The pause menu opens on its **Game** tab (`src/debugmenu.jo game_page`, rows made by
 `src/game_menu.jo game_row` from the cached headers). Each slot shows its world time, place and a
-summary (aircraft, lire, day: `SaveSummary.craft` and `cents`, added for the menu; older headers
+summary (aircraft, purse, day: `SaveSummary.craft` and `cents`, added for the menu; older headers
 decode with them empty and simply omit them), and marks the active autosave slot. Save here on an
 empty slot saves at once; saving over a slot, Load and Delete ask for a yes. Buttons are disabled
 while `busy`. A note under the slots says what the last request came to (`Saved in slot 2.`, an
@@ -49,7 +49,7 @@ error text, `Slot 1 deleted.`) and where the autosave goes or why it is off. A s
 unpauses and closes the menu. A finished autosave shows only the quiet Saved card
 (`src/hud.jo saved_toast`), never a menu note. There is no start screen, so no Continue offer:
 a fresh start plays on and the player loads from the page. `tools/game_menu_probe.jo` drives the
-page's requests end to end (autosave and its card, save, change, load, delete; position, lire, a
+page's requests end to end (autosave and its card, save, change, load, delete; position, purse, a
 cat's friendship and a seen battle card restored).
 
 ## What persists
