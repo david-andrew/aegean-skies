@@ -21,6 +21,7 @@ CONFIG = {
  # the Gymnopedie is played in its mood (mournful) by tools/expressive_timing.py; the mood's
  # touch sets its phrase dynamics
  'gymnopedie': (3,1.0,4,{1},0,.12,0,0),
+ 'gymnopedie-orchestra': (3,1.0,4,{1},0,.12,0,0),
  'ave-maria': (4,60/66,4,{1},.05,.16,.26,0),
  # Clair de lune's rubato, dynamics, pedal and voicing are its own annotation (clair-de-lune-performance.json)
  'clair-de-lune': (4.5,1.0,4,{1},0,0,0,0),

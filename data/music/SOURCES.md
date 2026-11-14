@@ -68,9 +68,13 @@ a small subset of metadata retained. This is not an endorsement by any source au
 * Per-note start/end gain follows velocity and CC7/11. Controller curves within a note
   are approximated by a straight ramp, not reproduced exactly.
 
+* The radio's Gymnopédie No. 1 (`gymnopedie-orchestra`) is the same Mutopia source, scored by
+  `tools/music_pack.py` in the manner of Debussy's orchestration (1897, public domain): the tune on
+  the oboe and then, from bar 22, the flute; the second-beat chords on the harp with muted strings
+  holding them; the bass notes on the harp and the low strings. Only the instrumentation follows
+  Debussy; no notes are taken from his score.
 * The Hotel Ancora's evening set (not on the radio) is arranged for its small band:
-  Gymnopédie No. 1 puts the right hand's top voice (the tune, from bar 5) on the violin and leaves
-  the chords and bass on the piano; Ave Maria keeps the source violin and piano (the bar's singer
+  Gymnopédie No. 1 is Satie's piano texture, the pianist alone; Ave Maria keeps the source violin and piano (the bar's singer
   takes the violin's line, which then plays at half level); Clair de lune is the source piano
   alone, its rubato, dynamics, pedal and voicing from an annotated performance
   (`clair-de-lune-performance.json`, written by `tools/clair_performance.py`; see

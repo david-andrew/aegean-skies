@@ -253,8 +253,10 @@ class Touch:
 
 
 MOODS = {
-    'mournful': (dict(base=1.08, min_rate=0.94, max_rate=1.5, sensitivity=1.0, flow=0.0, build=-0.3, peak=0.18,
-                      cadence=0.2, lead_in=0.12, final_ritard=0.6, variation=0.025),
+    # (a lament's weight is in its easing back, not in a slow pace: the dips are shallow and
+    # capped, `max_slow` below the piece's own base, so it never stops flowing)
+    'mournful': (dict(base=1.0, min_rate=0.9, max_rate=1.12, max_slow=0.1, sensitivity=1.0, flow=0.0, build=-0.15,
+                      peak=0.08, cadence=0.1, lead_in=0.07, final_ritard=0.3, variation=0.02),
                  Touch(dynamic=0.12, legato=0.05, pedal='bar', lean=1.0)),
     'tender': (dict(base=1.02, min_rate=0.9, max_rate=1.25, flow=0.2, build=0.05, peak=0.06, cadence=0.1,
                     lead_in=0.03, final_ritard=0.5, variation=0.02),
@@ -283,6 +285,12 @@ MOODS = {
 def mood_timing(mood, **overrides):
     """The mood's timing preset, with a piece's own overrides (seed, phrase length, markings...)."""
     values = dict(MOODS[mood][0]); values.update(overrides)
+    # a mood may cap how far below the piece's base its easing goes (the preset's own limit, so a
+    # piece given the mood later can't be slowed past it); min_rate follows a piece's faster base
+    slow = values.pop('max_slow', None)
+    if slow is not None:
+        values['max_rate'] = min(values['max_rate'], values['base'] * (1 + slow))
+        values['min_rate'] = min(values['min_rate'], values['base'] * 0.94)
     return ExpressiveTiming(**values)
 
 

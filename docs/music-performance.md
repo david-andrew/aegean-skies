@@ -186,9 +186,12 @@ presses), the rubato's depth and where it lands (`lead_in` hesitates into each p
 lingers at its end), and the touch (`Touch`): the phrase dynamics, legato or detached lines, the
 piano's pedal and the melody's lean. Every piece's mood is classified by hand in
 `tools/music_pack.py` (`MOOD`, with its reason, copied into `data/music/catalogue.json`);
-`APPLY_MOOD` lists the pieces actually played in their mood. So far that is the Gymnopédie
-(mournful: about 45–57 quarter bpm against a steady 60 before, easing as each phrase of the tune
-swells, pedalled by the bar, legato). The rest keep their current reading until their mood's result
+`APPLY_MOOD` lists the pieces actually played in their mood. So far that is the Gymnopédie, in
+both its scorings (mournful: a base of about 69 quarter bpm, 63–70 in the body, easing back as
+each phrase of the tune swells and hesitating into each phrase, pedalled by the bar, legato). A
+mood may cap its own easing: mournful's `max_slow` keeps every dip within 10% of the piece's base
+tempo (the final ritard apart), so a lament still flows whatever piece is given the mood. (A first
+reading slowed to 45–57 bpm and was too heavy.) The rest keep their current reading until their mood's result
 is shown to be better.
 
 ## Automatic balance (tools/music_balance.py)
