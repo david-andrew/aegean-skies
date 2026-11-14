@@ -1,0 +1,137 @@
+# One-time geometry migration. People, accounts, cargo roots, reports, services
+# and journey/link IDs survive a town moving; only physical addresses change.
+# No terrain imports or pathfinding across unverified ground.
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_transport.jo'
+
+struct FarPlaceMove:
+    id:int
+    old:vec3
+    center:vec3
+    homes:FarHome[]                 # old semantic home keys, newly fitted doors
+
+layout_pair=(a:int,b:int,mode:FarMode)->str:"{int(mode)}:{min(a,b)}:{max(a,b)}"
+layout_length=(points:vec3[])->int:
+    result=0
+    loop k in 1..points.len():result+=int(round(f64(length(points[k]-points[k-1]))*1000.0))
+    result
+
+# Changed neighbor relationships may replace one old edge with several current
+# roads. Follow only verified catalogue edges; never invent a straight connector.
+layout_route=(links:FarLink[],a:int,b:int,mode:FarMode)->vec3[]:
+    adjacency:{int:int[]}
+    loop k in 0..links.len():
+        link=links[k]
+        if link.mode!=mode:continue
+        aa=adjacency.get(link.a,[]);aa.push(k);adjacency[link.a]=aa
+        bb=adjacency.get(link.b,[]);bb.push(k);adjacency[link.b]=bb
+    distance:{int:int}={a:0};parent:{int:(int,int)};closed:{int:bool}
+    queue:(int,int)[]=[(0,a)]
+    loop queue.len()>0:
+        item=queue.heap_pop();at=item.1
+        if at in closed:continue
+        closed[at]=true
+        if at==b:break
+        loop k in adjacency.get(at,[]):
+            link=links[k];next=if link.a==at:link.b else:link.a
+            cost=item.0+link.length_mm
+            if cost>=distance.get(next,0x7fffffffffffffff):continue
+            distance[next]=cost;parent[next]=(at,k);queue.heap_push((cost,next))
+    if not (b in closed):return []
+    backwards:(int,bool)[];at=b
+    loop at!=a:
+        previous,index=parent[at];backwards.push((index,links[index].a==previous));at=previous
+    backwards.reverse();result:vec3[]
+    loop edge in backwards:
+        points=links[edge.0].points
+        if not edge.1:points.reverse()
+        if result.len()>0:
+            if length(result[result.len()-1]-points[0])>1.0:
+                if env("AEGEAN_ACCESS_TRACE")!=none:print("LAYOUT GAP {a}/{b}: {length(result[result.len()-1]-points[0])}")
+                return []
+            result.extend(points[1..])
+        else:result=points
+        if result.len()>4096:
+            if env("AEGEAN_ACCESS_TRACE")!=none:print("LAYOUT SIZE {a}/{b}: {result.len()}")
+            return []
+    result
+
+upgrade_settlement_layout=(w:mut World,canonical:FarLink[],moves:FarPlaceMove[],key:u64)->bool:
+    if w.far.access_layout_key==key:return true
+    if not w.far.populated or key==u64(0):return false
+    # A newer geography can contain a district owned by another feature's
+    # migration. Do not fabricate its people/accounts while repairing old routes.
+    let canonical=[loop link in canonical:if link.a in w.far.districts and link.b in w.far.districts:link]
+    lookup:{str:int}
+    loop k in 0..canonical.len():lookup[layout_pair(canonical[k].a,canonical[k].b,canonical[k].mode)]=k
+    staged:FarLink[];seen:{str:bool}
+    loop old in w.far.links:
+        pair=layout_pair(old.a,old.b,old.mode);seen[pair]=true
+        link=old
+        if pair in lookup:
+            replacement=canonical[lookup[pair]]
+            link.points=replacement.points
+            if replacement.a!=old.a:link.points.reverse()
+            link.length_mm=replacement.length_mm;link.road=replacement.road;link.trail=replacement.trail
+            # Road indices describe oriented registry records. A reversed old
+            # semantic edge still renders through the canonical publication.
+        else:
+            path=layout_route(canonical,old.a,old.b,old.mode)
+            if path.len()<2:return false
+            link.points=path;link.length_mm=layout_length(path);link.road= -1;link.trail=old.mode==.cart
+        staged.push(link)
+    # Validate all replacements before changing any live entity or balance.
+    loop link in staged:
+        if link.points.len()<2 or link.length_mm<=0:return false
+    loop id in w.far.journeys.keys():
+        journey=w.far.journeys[id];old=w.far.links[journey.link];fresh=staged[journey.link]
+        traveled=journey_progress_mm(w,journey)
+        remaining=int(round(f64(traveled)/f64(max(1,old.length_mm))*f64(fresh.length_mm)))
+        remaining=clamp(remaining,0,max(0,fresh.length_mm-1));segment=0
+        loop segment<fresh.points.len()-2:
+            span=layout_length([journey_route_point(fresh.points,journey.forward,segment),journey_route_point(fresh.points,journey.forward,segment+1)])
+            if remaining<span:break
+            remaining-=span;segment+=1
+        w.far.journeys[id].segment=segment;w.far.journeys[id].progress_mm=remaining
+        a=journey_route_point(fresh.points,journey.forward,segment);b=journey_route_point(fresh.points,journey.forward,segment+1)
+        w.far.vehicles[journey.vehicle].pos=mix(a,b,f32(f64(remaining)/max(1.0,f64(length(b-a))*1000.0)))
+        w.far.vehicles[journey.vehicle].scene_owned=false
+    loop k in 0..staged.len():
+        road=w.far.links[k].road;feature="road:{road}"
+        if road<0 or not (feature in w.maps.features):continue
+        points=staged[k].points;stride=max(1,(points.len()-1+30)/31)
+        sampled=[loop j in 0,stride..points.len():points[j]]
+        if sampled[sampled.len()-1]!=points[points.len()-1]:sampled.push(points[points.len()-1])
+        w.maps.features[feature].points=sampled
+        w.maps.features[feature].position=sampled[sampled.len()/2]
+    w.far.links=staged
+    loop link in canonical:
+        pair=layout_pair(link.a,link.b,link.mode)
+        if pair in seen:continue
+        fresh=link;fresh.id=w.far.links.len();w.far.links.push(fresh);seen[pair]=true
+        w.far.districts[fresh.a].links.push(fresh.id);w.far.districts[fresh.b].links.push(fresh.id)
+    loop move in moves:
+        if not (move.id in w.far.districts):continue
+        w.far.districts[move.id].homes=move.homes
+        w.far.relocated_centers[move.id]=move.center
+        feature="town:{move.id}"
+        if feature in w.maps.features:w.maps.features[feature].position=move.center
+        loop id in w.far.people.keys():
+            if w.people[id].far_home!=move.id:continue
+            actor=w.far.people[id];home=move.center
+            loop door in move.homes:
+                if door.key==actor.home_key:home=door.door;break
+            w.far.people[id].home_pos=home
+            if w.people[id].far_place!=move.id or actor.journey>=0 or w.people[id].far_boat>=0:continue
+            w.people[id].pose.pos=home;w.people[id].pose.precise_ready=false
+            w.people[id].pose.vel=vec3(0,0,0)
+            w.far.people[id].target=home;w.far.people[id].route=[];w.far.people[id].waypoint=0
+            w.far.people[id].anchor="";w.far.people[id].planned_anchor="";w.far.people[id].blocked=""
+            w.far.people[id].scene_owned=false;w.far.people[id].last_tick=w.tick
+        loop k in 0..w.far.vehicles.len():
+            v=w.far.vehicles[k]
+            if v.place==move.id and v.journey<0 and v.kind==.cart:
+                w.far.vehicles[k].pos=move.center;w.far.vehicles[k].scene_owned=false
+    w.far.access_layout_key=key
+    true

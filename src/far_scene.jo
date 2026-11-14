@@ -1,4 +1,5 @@
 use 'crowd_motion.jo'
+use 'access_bridges.jo'
 # Publish a baked canonical road/water network only after the complete registry is available.
 # No path search, rendering mesh, random destination or invisible market inventory here.
 use 'living_types.jo'
@@ -16,32 +17,124 @@ use 'living_transaction.jo'
 use 'world.jo'
 use 'geography.jo'
 use 'settlements.jo'
+use 'settlement_access.jo'
+use 'living_access.jo'
+use 'living_relocation.jo'
+use 'lake_data.jo'
+use 'living_map_types.jo'
+use 'thermal_sites.jo'
+
+# Update the geographic feature registry only. Printed map editions keep their
+# historical surveys; no purchased copy, shop inventory or purse is replaced.
+refresh_access_map_features=(w:mut World):
+    loop lake in SETTLEMENT_LAKES:
+        s=world_settlements[settlement_by_id[lake.id]]
+        loop k in 0..s.harbor.len():
+            key="mooring:{s.id}:{k}"
+            w.maps.features[key]=MapFeature(key,.moorings,s.harbor[k].at,"{s.name} lake quay {k+1}")
+        loop k in 0.. and landmark in place_landmarks(s):
+            key="landmark:{s.id}:{k}"
+            if key in w.maps.features:w.maps.features[key].position=landmark.at
+    # The baths moved onto their hillsides: their inn, courtyard and map mark follow.
+    loop site in THERMAL_SITES:
+        key="spring:{site.place}"
+        if key in w.maps.features:w.maps.features[key].position=site.center
+        if not (site.place in w.place_contexts):continue
+        loop k in 0..w.place_contexts[site.place].venues.len():
+            v=w.place_contexts[site.place].venues[k]
+            if v.key=="registry:{site.place}:thermal-inn":w.place_contexts[site.place].venues[k].pos=thermal_inn(site)
+            if v.key=="registry:{site.place}:thermal-courtyard":w.place_contexts[site.place].venues[k].pos=thermal_courtyard(site)
 
 _far_catalog_rejected = false
+_far_active_layout_key:u64=0
+_far_canonical_links:FarLink[]
 
-configure_far_economy = (w: mut World) -> bool:
-    global _far_catalog_rejected
-    if w.far.populated and w.far.fields_registered: return true
-    if _far_catalog_rejected: return false
-    if not geography_enabled or not settlement_registry_ready or w.place_contexts.len()!=world_settlements.len(): return false
+relocated_contexts_current=(w:World)->bool:
+    loop lake in SETTLEMENT_LAKES:
+        if not (lake.id in w.place_contexts) or not (lake.id in settlement_by_id):return false
+        if length(w.place_contexts[lake.id].center-world_settlements[settlement_by_id[lake.id]].center)>0.1:return false
+    true
+
+scene_place_moves=(w:World,seeds:FarPlaceSeed[])->FarPlaceMove[]:
+    result:FarPlaceMove[]
+    loop lake in SETTLEMENT_LAKES:
+        if not (lake.id in w.far.districts):continue
+        s=world_settlements[settlement_by_id[lake.id]]
+        if s.id in w.far.relocated_centers and length(w.far.relocated_centers[s.id]-s.center)<0.1:continue
+        doors:{str:vec3};fallback:FarHome[]
+        loop seed in seeds:
+            if seed.id==s.id:fallback=seed.homes;break
+        loop lot in place_lots(s):
+            if let parcel=place_ground_lot(s,lot):
+                front=vec2(sin(parcel.yaw),cos(parcel.yaw))
+                at=place_point(parcel.at.xz+front*f32(parcel.depth*0.5+1.2))
+                doors["home:{s.id}:{parcel.seed}"]=at
+        homes=w.far.districts[s.id].homes
+        loop k in 0..homes.len():
+            homes[k].door=doors.get(homes[k].key,if fallback.len()>0:fallback[k%fallback.len()].door else:s.center)
+        if homes.len()==0:homes=fallback
+        result.push(FarPlaceMove(s.id,lake.old,s.center,homes))
+    result
+
+
+# The validated catalogue, decoded once per registry generation. Its road lines
+# are published before place contexts and printed surveys are built, so those
+# never depend on which roads an earlier world in this process had prepared.
+_far_catalog_generation= -1
+_far_catalog_cache:FarRouteCatalog?
+far_route_catalog=()->FarRouteCatalog?:
+    global _far_catalog_rejected,_far_catalog_generation,_far_catalog_cache
+    if _far_catalog_rejected:return none
+    if not geography_enabled or not settlement_registry_ready:return none
+    if _far_catalog_generation==settlement_generation:return _far_catalog_cache
     packed = inflate(embed('../assets/living-routes.bin'))
     if packed==none:
         _far_catalog_rejected = true
         living_fault("far.catalog_decode","corrupt living-routes.bin; run tools/bake_living_routes.jo")
-        return false
+        return none
     decoded = from_text[FarRouteCatalog](str_from_bytes(packed!))
     if decoded is TextError:
         _far_catalog_rejected = true
         living_fault("far.catalog_parse","invalid living-routes.bin; run tools/bake_living_routes.jo")
-        return false
+        return none
     ordered = world_settlements; ordered.sort((s: WorldSettlement): s.id)
     key = hash([loop s in ordered: (s.id,s.center,s.out,s.country)])
-    if decoded.navigation_version!=1 or decoded.version!=SETTLEMENT_VERSION or decoded.terrain!=terrain_key() or decoded.geography!=geography_key() or decoded.places!=key:
+    if decoded.navigation_version!=1 or decoded.version!=SETTLEMENT_VERSION or decoded.terrain!=terrain_key() or decoded.geography!=geography_key() or decoded.places!=key or decoded.access_key!=hash(ACCESS_BRIDGES):
         _far_catalog_rejected = true
         living_fault("far.catalog_stale","expected registry={SETTLEMENT_VERSION} places={key}; run tools/bake_living_routes.jo")
-        return false
-    if w.far.populated: return register_household_land(w,decoded.seeds)
-    populate_settlement_economy(w,decoded.version,decoded.seeds,decoded.links)
+        return none
+    _far_catalog_generation=settlement_generation;_far_catalog_cache=decoded
+    decoded
+
+publish_catalog_roads=():
+    if let catalog=far_route_catalog():publish_access_roads(catalog.links)
+
+configure_far_economy = (w: mut World) -> bool:
+    global _far_catalog_rejected,_far_active_layout_key,_far_canonical_links
+    if w.far.populated and w.far.fields_registered and _far_active_layout_key!=u64(0) and w.far.access_layout_key==_far_active_layout_key:
+        publish_access_roads(_far_canonical_links)
+        return true
+    if _far_catalog_rejected: return false
+    if not geography_enabled or not settlement_registry_ready or w.place_contexts.len()!=world_settlements.len(): return false
+    loaded=far_route_catalog()
+    if loaded==none:return false
+    decoded=loaded!
+    # New transport services must reach existing saves even when no town moves.
+    layout=hash((decoded.places,decoded.geography,decoded.terrain,decoded.access_key,hash(decoded.links)))
+    if w.far.populated:
+        if not upgrade_settlement_layout(w,decoded.links,scene_place_moves(w,decoded.seeds),layout):
+            living_fault("far.layout_migration","no verified replacement for a saved route; rebuild a connected living catalogue")
+            return false
+        configure_far_harbors(w)
+        refresh_access_map_features(w)
+        if not register_household_land(w,decoded.seeds):return false
+    else:
+        if not populate_settlement_economy(w,decoded.version,decoded.seeds,decoded.links):return false
+        w.far.access_layout_key=layout
+        loop lake in SETTLEMENT_LAKES:w.far.relocated_centers[lake.id]=world_settlements[settlement_by_id[lake.id]].center
+    _far_active_layout_key=layout;_far_canonical_links=decoded.links
+    publish_access_roads(decoded.links)
+    true
 
 # One bounded local materialization scan per physical second. Camera visibility may name a real
 # resident, but it cannot change their cohort/purse twice or return their identity on folding.
@@ -148,7 +241,8 @@ configure_far_harbors = (w: mut World) -> bool:
             if length(side)>0.001: near+=normalize(side)*f32(h.width*0.5-0.8)
             quays.push(vec3(near.x,f32(h.deck),near.y))
         if s.legacy>=0 and s.legacy<w.cargo_harbors.len() and w.cargo_harbors[s.legacy].loading.len()==docks.len(): quays=w.cargo_harbors[s.legacy].loading
-        harbors.push(FarHarbor(s.id,vec3(s.out.x,0,s.out.y),docks,quays,s.harbor[0].buoy))
+        heading=if s.remote_harbor:normalize(s.harbor[0].quay_b-s.harbor[0].quay_a) else:s.out
+        harbors.push(FarHarbor(s.id,vec3(heading.x,0,heading.y),docks,quays,s.harbor[0].buoy))
     ready=publish_far_harbors(w,harbors)
     if ready: initialize_opening_trade(w)
     ready

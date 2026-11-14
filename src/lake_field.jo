@@ -1,8 +1,189 @@
-# Stable lake-source seam, owned by the inland-town/lake implementation.
-# Keep this module pure: no renderer, terrain-source or unified-water imports.
-# The terrain source calls lake_carve, so sampling that source here would recurse.
+# Connected, terrain-shaped basins. The packed field contains signed depth in
+# 1/256 m units, sampled from original relief before any water carving.
 use 'water_types.jo'
-lake_at=(x:f64,z:f64)->WaterSample:NO_INLAND_WATER
-lake_carve=(x:f64,z:f64,h:f64)->f64:h
-# Include authored lake data/version in this key when the source is implemented.
-lake_key=()->u64:u64(0)
+use 'lake_data.jo'
+use 'lake_channels.jo'
+use 'lake_channels_data.jo'
+use 'lake_road_guard_data.jo'
+const LAKE_VERSION=3
+lake_depth_field=embed('../assets/lake-basins.bin')
+lake_depth_hash=hash(lake_depth_field)
+
+lake_raw_depth=(lake:SettlementLake,x:f64,z:f64)->f64:
+    u=(x-f64(lake.origin.x))/lake.step;v=(z-f64(lake.origin.y))/lake.step
+    if u<0 or v<0 or u>=f64(lake.nx-1) or v>=f64(lake.nz-1):return -32.0
+    ix=int(floor(u));iz=int(floor(v));fx=u-f64(ix);fz=v-f64(iz)
+    at=lake.offset+(iz*lake.nx+ix)*2
+    a=f64(get_le_signed(lake_depth_field,at,2))/256.0
+    b=f64(get_le_signed(lake_depth_field,at+2,2))/256.0
+    c=f64(get_le_signed(lake_depth_field,at+lake.nx*2,2))/256.0
+    d=f64(get_le_signed(lake_depth_field,at+(lake.nx+1)*2,2))/256.0
+    mix(mix(a,b,fx),mix(c,d,fx),fz)
+
+
+# The filled contour of smooth relief is a rounded blob. Natural lakes have coves,
+# points and a drowned valley arm where the inflow enters. Shift the shore band
+# only: the takeoff lane, the berths, the jetty and the town frontage stay exactly
+# as surveyed, and the field's outer cells stay dry. Every consumer (water,
+# carving, contact, rendering, banks) reads this one shaped depth.
+struct LakeArm:
+    points:vec2[]
+    low:vec2
+    high:vec2
+const LAKE_ARM_LENGTH=620.0
+build_lake_arm=(lake:SettlementLake)->LakeArm:
+    # Courses are contiguous channel segments; the inflow is the one that runs
+    # downhill into the basin. Its lowest stretch becomes a flooded valley arm.
+    courses:vec4[][]
+    loop c in LAKE_CHANNELS:
+        if c.id!=lake.id:continue
+        if courses.len()>0 and length(courses[courses.len()-1][courses[courses.len()-1].len()-1].xy-c.a.xy)<0.01:courses[courses.len()-1].push(c.b)
+        else:courses.push([c.a,c.b])
+    best:vec2[];longest=0.0
+    loop course in courses:
+        if course.len()<2 or course[0].z<=course[course.len()-1].z:continue
+        reversed:vec2[]=[loop k in 0..course.len():course[course.len()-1-k].xy]
+        if f64(length(reversed[0]-lake.center))>f64(length(course[0].xy-lake.center))+1:continue
+        span=0.0
+        loop k in 1..reversed.len():span+=f64(length(reversed[k]-reversed[k-1]))
+        if span>longest:longest=span;best=reversed
+    arm=LakeArm([],vec2(0,0),vec2(0,0))
+    if best.len()>1:
+        # Walk up from the mouth for the arm's length only.
+        walked=0.0;arm.points=[best[0]]
+        loop k in 1..best.len():
+            step=f64(length(best[k]-best[k-1]))
+            if walked+step>=LAKE_ARM_LENGTH:
+                arm.points.push(mix(best[k-1],best[k],f32((LAKE_ARM_LENGTH-walked)/step)));break
+            arm.points.push(best[k]);walked+=step
+        arm.low=arm.points[0];arm.high=arm.points[0]
+        loop q in arm.points:arm.low=min(arm.low,q);arm.high=max(arm.high,q)
+        arm.low-=vec2(90,90);arm.high+=vec2(90,90)
+    arm
+# Built once at load: lake_at runs on terrain worker threads and must not write.
+LAKE_ARMS:{int:LakeArm}={loop lake in SETTLEMENT_LAKES:lake.id:build_lake_arm(lake)}
+lake_arm=(lake:SettlementLake)->LakeArm:LAKE_ARMS[lake.id]
+
+lake_arm_depth=(lake:SettlementLake,x:f64,z:f64,raw:f64)->f64:
+    arm=lake_arm(lake);p=vec2(f32(x),f32(z))
+    if arm.points.len()<2 or p.x<arm.low.x or p.y<arm.low.y or p.x>arm.high.x or p.y>arm.high.y:return -32.0
+    best=1e9;at=0.0;walked=0.0
+    loop k in 1..arm.points.len():
+        a=arm.points[k-1];b=arm.points[k];d=b-a;span=f64(length(d))
+        u=clamp(f64(dot(p-a,d))/max(span*span,0.01),0.0,1.0)
+        gap=f64(length(p-(a+d*f32(u))))
+        if gap<best:best=gap;at=walked+u*span
+        walked+=span
+    t=clamp(at/LAKE_ARM_LENGTH,0.0,1.0)
+    # Wide and deep at the mouth, a narrow reedy inlet at its head; it floods the
+    # valley floor only, never a hillside more than a few metres above the water.
+    width=70.0-46.0*t+18.0*(noise(x*0.011,z*0.011)-0.5)
+    centre=3.2*(1.0-t)+0.6
+    depth=centre*(1.0-(best/width)*(best/width))
+    min(depth,raw+7.0)
+
+lake_depth=(lake:SettlementLake,x:f64,z:f64)->f64:
+    raw=lake_raw_depth(lake,x,z)
+    if raw< -14.0:return raw
+    u=(x-f64(lake.origin.x))/lake.step;v=(z-f64(lake.origin.y))/lake.step
+    edge=min(min(u,v),min(f64(lake.nx-1)-u,f64(lake.nz-1)-v))
+    frame=smoothstep(4.0,10.0,edge)
+    dx=x-f64(lake.center.x);dz=z-f64(lake.center.y)
+    along=dx*f64(lake.axis.x)+dz*f64(lake.axis.y)
+    across= -dx*f64(lake.axis.y)+dz*f64(lake.axis.x)
+    lane=(1.0-smoothstep(70.0,120.0,abs(across)))*(1.0-smoothstep(760.0,880.0,abs(along)))
+    shore=vec2(f32(x),f32(z))-lake.shore
+    frontage=1.0-smoothstep(150.0,300.0,f64(length(shore)))
+    # Roads leave the town along the shore: no cove may flood them.
+    town=1.0-smoothstep(450.0,700.0,f64(length(vec2(f32(x),f32(z))-lake.town.xz)))
+    keep=max(max(lane,frontage),town)
+    # Move the shoreline sideways by up to ~110 m, coves and points of a few
+    # hundred metres, in proportion to the bank's own slope (noise is 0..1).
+    gx=(lake_raw_depth(lake,x+8.0,z)-raw)/8.0;gz=(lake_raw_depth(lake,x,z+8.0)-raw)/8.0
+    slope=max(0.01,sqrt(gx*gx+gz*gz))
+    n=(noise(x*0.0036+lake.step,z*0.0036)-0.5)*1.4+(noise(x*0.0105,z*0.0105+7.0)-0.5)*0.6
+    shift=clamp(150.0*n*slope,-9.0,9.0)
+    band=1.0-smoothstep(9.0,14.0,abs(raw))
+    # Points and spits may reach well out into the lake; coves flood only the
+    # lowest strip of shore, so no road or field along it goes under water.
+    # Roads along the shore keep their ground: no cove within 45 m of one.
+    clear=1.0
+    gx0=int(floor(x/64.0));gz0=int(floor(z/64.0))
+    loop dz in -1..2:
+        loop dx in -1..2:
+            loop q in LAKE_ROAD_GUARD.get((gx0+dx)*65536+gz0+dz,[]):
+                clear=min(clear,smoothstep(30.0,45.0,f64(length(q-vec2(f32(x),f32(z))))))
+    shaped=raw+shift*band*(1.0-keep)*frame*clear
+    arm=lake_arm_depth(lake,x,z,raw)
+    if arm<=0.0:return shaped
+    max(shaped,arm*frame*(1.0-frontage)-(1.0-frame*(1.0-frontage))*2.0)
+
+lake_bed_depth=(lake:SettlementLake,x:f64,z:f64)->f64:
+    depth=lake_depth(lake,x,z)
+    if depth<=0:return depth
+    dx=x-f64(lake.center.x);dz=z-f64(lake.center.y)
+    along=dx*f64(lake.axis.x)+dz*f64(lake.axis.y)
+    across= -dx*f64(lake.axis.y)+dz*f64(lake.axis.x)
+    # Only the marked navigation lane is dredged. Keep the natural lake bed and
+    # coves everywhere else, and feather dredging before the actual shore.
+    lane=(1.0-smoothstep(40.0,85.0,abs(across)))*(1.0-smoothstep(720.0,820.0,abs(along)))
+    harbor=vec2(f32(x),f32(z))-lake.shore-lake.out*80.0
+    berth=(1.0-smoothstep(32.0,58.0,abs(f64(dot(harbor,vec2(-lake.out.y,lake.out.x))))))*(1.0-smoothstep(25.0,60.0,abs(f64(dot(harbor,lake.out)))))
+    max(depth,max(5.0*lane,3.4*berth)*smoothstep(0.0,0.35,depth))
+
+lake_at=(x:f64,z:f64)->WaterSample:
+    key=int(floor(x/4096.0))*1024+int(floor(z/4096.0))
+    if not (key in LAKE_BINS):return lake_channel_at(x,z)
+    loop index in LAKE_BINS[key]:
+        lake=SETTLEMENT_LAKES[index];depth=lake_depth(lake,x,z)
+        if depth<= -4.0:continue
+        dx=x-f64(lake.center.x);dz=z-f64(lake.center.y)
+        r=WaterSample(found=true,wet=depth>0.0,level=lake.level,distance=32.0-depth,width=32.0,kind=.lake,id=lake.id)
+        r.along=dx*f64(lake.axis.x)+dz*f64(lake.axis.y)
+        r.lateral= -dx*f64(lake.axis.y)+dz*f64(lake.axis.x)
+        if not r.wet:
+            channel=lake_channel_at(x,z)
+            if channel.wet:return channel
+        return r
+    lake_channel_at(x,z)
+
+lake_carve=(x:f64,z:f64,h:f64)->f64:
+    key=int(floor(x/4096.0))*1024+int(floor(z/4096.0))
+    if not (key in LAKE_BINS):return lake_channel_carve(x,z,h)
+    loop index in LAKE_BINS[key]:
+        lake=SETTLEMENT_LAKES[index];depth=lake_depth(lake,x,z)
+        if depth<= -4.0:continue
+        bed=lake.level-lake_bed_depth(lake,x,z)
+        # Match the zero-depth contour exactly; retain original fine relief well
+        # below water and above the bank. No raised apron or sand-ring shelf.
+        if depth>0:return mix(bed,min(h,bed),smoothstep(0.4,2.0,depth))
+        # A shaped point or spit over the old basin floor stands just clear of
+        # the water and rises with its signed distance; natural banks are higher.
+        return lake_channel_carve(x,z,max(mix(bed,h,smoothstep(2.0,4.0,-depth)),lake.level-depth*0.6+0.05))
+    lake_channel_carve(x,z,h)
+
+lake_key=()->u64:
+    key=u64(LAKE_VERSION)
+    loop lake in SETTLEMENT_LAKES:
+        loop value in [lake.id,int(lake.level*1000.0),int(lake.origin.x),int(lake.origin.y),lake.nx,lake.nz,int(lake.step),int(lake.town.x*16.0),int(lake.town.z*16.0),int(lake.shore.x*16.0),int(lake.shore.y*16.0)]:
+            key=(key xor u64(value))*u64(1099511628211)
+    key=key xor lake_depth_hash xor hash(LAKE_CHANNELS)
+    key
+
+lake_bounds=(lake:SettlementLake)->vec4:
+    lake.bounds
+lake_intersects=(lake:SettlementLake,x:f64,z:f64,size:f64)->bool:
+    b=lake_bounds(lake)
+    f64(b.z)>=x and f64(b.x)<=x+size and f64(b.w)>=z and f64(b.y)<=z+size
+lake_touches=(x:f64,z:f64,size:f64)->bool:
+    if size>4096.0:
+        loop lake in SETTLEMENT_LAKES:
+            if lake_intersects(lake,x,z,size):return true
+        return false
+    loop iz in int(floor(z/4096.0))..int(floor((z+size)/4096.0))+1:
+        loop ix in int(floor(x/4096.0))..int(floor((x+size)/4096.0))+1:
+            key=ix*1024+iz
+            if not (key in LAKE_BINS):continue
+            loop index in LAKE_BINS[key]:
+                if lake_intersects(SETTLEMENT_LAKES[index],x,z,size):return true
+    false

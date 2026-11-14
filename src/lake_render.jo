@@ -1,0 +1,102 @@
+use 'lake_field.jo'
+use 'lake_channels_data.jo'
+use 'lake_channels.jo'
+use 'look.jo'
+use 'geography.jo'
+use 'render_space.jo'
+use 'lake_data.jo'
+use 'river_render.jo'
+# Nearby meshes only. Optics, fine speed marks and logarithmic depth use the shared
+# inland material; no separate lake shader or wave scale.
+struct LakeBatch:
+    id:int= -1
+    mesh:Mesh=Mesh()
+lake_batches:LakeBatch[]=[LakeBatch(),LakeBatch(),LakeBatch(),LakeBatch()]
+lake_surface_vertex=(lake:SettlementLake,p:vec2)->InlandWaterVertex:
+    InlandWaterVertex(vec3(p.x,f32(lake.level),p.y),vec2(0,0),f32(max(0.0,lake_bed_depth(lake,f64(p.x),f64(p.y)))),p-lake.center)
+
+lake_triangle=(vs:mut InlandWaterVertex[],lake:SettlementLake,triangle:vec2[]):
+    # Clip against the sampled physical shore, including islands and narrow arms.
+    polygon:vec2[]
+    loop k in 0..3:
+        a=triangle[k];b=triangle[(k+1)%3]
+        da=lake_depth(lake,f64(a.x),f64(a.y));db=lake_depth(lake,f64(b.x),f64(b.y))
+        if da>=0:polygon.push(a)
+        if (da>0 and db<0) or (da<0 and db>0):polygon.push(mix(a,b,f32(da/(da-db))))
+    if polygon.len()<3:return
+    a=lake_surface_vertex(lake,polygon[0])
+    loop k in 1..polygon.len()-1:vs.extend([a,lake_surface_vertex(lake,polygon[k]),lake_surface_vertex(lake,polygon[k+1])])
+
+lake_channel_triangle=(vs:mut InlandWaterVertex[],lake:SettlementLake,triangle:InlandWaterVertex[]):
+    # A tributary stops at the lake contour. Two coplanar water passes must never
+    # overlap, including at a shallow inflow or the flat spill crest.
+    polygon:InlandWaterVertex[]
+    loop k in 0..3:
+        a=triangle[k];b=triangle[(k+1)%3]
+        da=lake_depth(lake,f64(a.pos.x),f64(a.pos.z));db=lake_depth(lake,f64(b.pos.x),f64(b.pos.z))
+        if da<=0:polygon.push(a)
+        if (da>0 and db<0) or (da<0 and db>0):
+            u=f32(da/(da-db));v=a
+            v.pos=mix(a.pos,b.pos,u);v.current=mix(a.current,b.current,u);v.depth=mix(a.depth,b.depth,u);v.chart=mix(a.chart,b.chart,u);v.chart_flow=mix(a.chart_flow,b.chart_flow,u)
+            polygon.push(v)
+    if polygon.len()<3:return
+    loop k in 1..polygon.len()-1:vs.extend([polygon[0],polygon[k],polygon[k+1]])
+
+build_lake_vertices=(lake:SettlementLake)->InlandWaterVertex[]:
+    vs:InlandWaterVertex[]
+    loop by in 0..(lake.nz-2)/4+1:
+        loop bx in 0..(lake.nx-2)/4+1:
+            x=bx*4;y=by*4;nx=min(4,lake.nx-1-x);ny=min(4,lake.nz-1-y)
+            low=32.0;high= -32.0
+            loop j in 0..ny+1:
+                loop i in 0..nx+1:
+                    p=lake.origin+vec2(f32(x+i),f32(y+j))*f32(lake.step)
+                    depth=lake_depth(lake,f64(p.x),f64(p.y));low=min(low,depth);high=max(high,depth)
+            if high<=0:continue
+            # Coarse interior, original survey resolution around every shore.
+            stride=if low>0.25:4 else:1
+            loop j in 0..(ny-1)/stride+1:
+                loop i in 0..(nx-1)/stride+1:
+                    a=lake.origin+vec2(f32(x+i*stride),f32(y+j*stride))*f32(lake.step)
+                    b=lake.origin+vec2(f32(x+min(nx,(i+1)*stride)),f32(y+min(ny,(j+1)*stride)))*f32(lake.step)
+                    lake_triangle(vs,lake,[a,vec2(a.x,b.y),vec2(b.x,a.y)])
+                    lake_triangle(vs,lake,[vec2(b.x,a.y),vec2(a.x,b.y),b])
+    loop channel in LAKE_CHANNELS:
+        if channel.id!=lake.id:continue
+        dir=normalize(channel.b.xy-channel.a.xy);side=vec2(-dir.y,dir.x)
+        loop strip in 0..6:
+            u=f32(strip)/6.0*2.0-1.0;v=f32(strip+1)/6.0*2.0-1.0
+            corners:InlandWaterVertex[]
+            loop node in [channel.a,channel.b]:
+                loop across in [u,v]:
+                    point=node.xy+side*node.w*f32(LAKE_STREAM_WIDTH)*across
+                    vert=inland_water_vertex(vec3(point.x,node.z,point.y));vert.chart=point-lake.center
+                    corners.push(vert)
+            lake_channel_triangle(vs,lake,[corners[0],corners[2],corners[1]])
+            lake_channel_triangle(vs,lake,[corners[1],corners[2],corners[3]])
+    vs
+
+draw_lakes=(depth:Texture,L:Light,t:f64,velocity:vec3=vec3(0,0,0)):
+    global lake_batches
+    if not geography_enabled:return
+    cam=scene_camera()
+    loop slot in 0..lake_batches.len():
+        id=lake_batches[slot].id
+        if id>=0 and length(SETTLEMENT_LAKES[id].center-cam.xz)>11000:lake_batches[slot].id= -1
+    loop i in 0..SETTLEMENT_LAKES.len():
+        lake=SETTLEMENT_LAKES[i]
+        if length(lake.center-cam.xz)>9500:continue
+        slot= -1
+        loop k in 0..lake_batches.len():
+            if lake_batches[k].id==i:slot=k;break
+        if slot<0:
+            loop k in 0..lake_batches.len():
+                if lake_batches[k].id<0:slot=k;break
+            if slot<0:continue
+            vertices=build_lake_vertices(lake)
+            if lake_batches[slot].mesh.vao==0:lake_batches[slot].mesh=mesh(vertices)
+            else:update_mesh(lake_batches[slot].mesh,vertices)
+            lake_batches[slot].id=i
+        # A lake reads like open water from the air: sky in its wind chop, a
+        # darker blue-green body and pale shallows over pebble at the edges.
+        draw_inland_water(lake_batches[slot].mesh,vec3(lake.center.x,f32(lake.level),lake.center.y),depth,L,t,velocity,vec3(0.035,0.115,0.15),vec3(0.30,0.42,0.34),1.4,chop=0.55)

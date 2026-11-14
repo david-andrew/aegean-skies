@@ -1,4 +1,7 @@
+use 'water_field.jo'
+use 'access_bridges.jo'
 use 'canal_geometry.jo'
+use 'lake_ports.jo'
 # Deterministic places, independent of rendering and living-world save state.
 # IDs 0..5 are reserved for the original harbors. Generated IDs derive from
 # geography and candidate coordinates, never a list length or the camera.
@@ -33,6 +36,7 @@ struct WorldSettlement:
     neighbors: int[]                # settlement IDs, never array indices
     roads: int[]                    # indices in settlement_roads
     legacy: int = -1
+    remote_harbor = false            # landing belongs to this town, outside its house layout
     old: vec2                       # old-quarter hill in local tangent/inland coordinates
 
 struct SettlementRoad:
@@ -53,7 +57,8 @@ settlement_by_id: {int: int} = {}
 settlement_bins: {int: int[]} = {}
 settlement_registry_ready = true
 settlement_island_cursor = 0
-const SETTLEMENT_VERSION = 3
+settlement_generation = 0
+const SETTLEMENT_VERSION = 4
 const PLACE_SPACING = 20.0
 SETTLEMENT_COUNTRIES = ["Archipelago", "Kalyra", "Orenthia"]
 
@@ -116,8 +121,22 @@ place_add = (id: int,kind: SettlementKind,region_id: int,p: vec2,out: vec2,coast
         tangent = vec2(-out.y,out.x)
         reach = if kind == .capital: 240.0 else: (if kind == .port: 110.0 else: 55.0)
         qa = p-out*40.0; qb = p+out*f32(reach)
+        # A berth needs water under the hull and a clear swing circle: no rock
+        # within a wing's reach. Step a little further out or wider if needed.
+        berth_clear = (q: vec2) -> bool:
+            if place_ground(q) >= -2.0: return false
+            loop k in 0..12:
+                if place_ground(q+vec2(f32(cos(f64(k)*TAU/12.0)),f32(sin(f64(k)*TAU/12.0)))*6.0) > -0.3: return false
+            true
         loop side in [-1.0,1.0]:
             at = p+out*f32(reach-20.0)+tangent*f32(side*14.0)
+            clear = berth_clear(at)
+            if not clear:
+                loop shift in [vec2(8,0),vec2(8,4),vec2(14,4)]:
+                    q = p+out*f32(reach-20.0+f64(shift.x))+tangent*f32(side*(14.0+f64(shift.y)))
+                    if berth_clear(q): at = q; clear = true; break
+            # A berth that cannot swing clear is dropped while the other one serves.
+            if not clear and (side < 0.0 or docks.len() > 0) and place_ground(p+out*f32(reach-20.0)-tangent*f32(side*14.0)) < -2.0: continue
             if place_ground(at) < -2.0:
                 docks.push(MooringPlace(vec3(at.x,0,at.y),qa,qb,if kind == .capital: 12.0 else: 7.0,vec3(at.x+out.x*38.0,0,at.y+out.y*38.0),deck=2.4))
         if docks.len() == 0: return
@@ -204,7 +223,7 @@ place_inside = (s: WorldSettlement,q: vec2) -> bool:
     f64(length(q)) <= edge
 
 place_reserved = (s: WorldSettlement,q: vec2) -> bool:
-    if s.legacy<0 and s.harbor.len()>0 and q.y>-48.0 and q.y<32.0 and abs(q.x)<f32(port_span(s)+20.0): return true
+    if s.legacy<0 and s.harbor.len()>0 and not s.remote_harbor and q.y>-48.0 and q.y<32.0 and abs(q.x)<f32(port_span(s)+20.0): return true
     if s.kind == .capital and q.y > -45.0 and q.y < 45.0 and q.x > -65.0 and q.x < 230.0: return true
     if s.kind == .monastery and abs(q.x) < 48.0 and q.y > 10.0 and q.y < 65.0: return true
     if s.size >= 100:
@@ -266,13 +285,22 @@ place_lot = (s: WorldSettlement,i: int,j: int) -> PlaceLot?:
         w = 12.0+f64(seed%7); d = 10.0+f64((seed/7)%5)
         floors = if q.y < 160.0: 3+seed%2 else: (if edge < 0.65: 2+seed%2 else: 1+seed%2)
     if not place_inside(s,q) or place_reserved(s,q): return none
-    if s.harbor.len() > 0 and q.y < -45.0: return none
+    if s.harbor.len() > 0 and not s.remote_harbor and q.y < -45.0: return none
     if s.size > 1 and length(q) < 23.0: return none
+    # The church (or lighthouse) at the head of the square has its own footprint;
+    # a house lot that reaches it would be built into its walls.
+    if s.kind != .farm:
+        scale = if s.kind == .capital: 1.6 else: 1.0
+        half = if s.kind == .lighthouse: vec2(3,3) else: vec2(f32(4.5*scale),f32(7.0*scale))
+        gap = max(abs(q-vec2(0,26))-half,vec2(0,0))
+        if f64(length(gap)) < 0.5*sqrt(w*w+d*d)+1.0: return none
     PlaceLot(q,yaw,w,d,floors,seed)
 
 place_ground_lot = (s: WorldSettlement,lot: PlaceLot,canonical: bool = true) -> PlaceParcel?:
     p = place_to_world(s,lot.local)
     h = if canonical: place_ground(p) else: place_base(p)
+    water=water_at(f64(p.x),f64(p.y))
+    if water.wet:return none
     if h < 2.0 or h > (if s.kind == .monastery: 1200.0 else: 850.0): return none
     yaw = atan2(f64(s.out.x),f64(s.out.y))-lot.yaw
     right = vec2(f32(cos(yaw)),f32(-sin(yaw))); forward = vec2(f32(sin(yaw)),f32(cos(yaw)))
@@ -392,6 +420,8 @@ place_landmarks = (s: WorldSettlement) -> PlaceLandmark[]:
     result
 
 init_settlements = (roads: bool = false,defer_islands: bool = false):
+    global settlement_generation
+    settlement_generation+=1
     global world_settlements,settlement_roads,settlement_by_id,settlement_road_bins,settlement_registry_ready,settlement_island_cursor,port_cache
     port_cache=[]
     settlement_registry_ready = not geography_enabled; settlement_island_cursor = 0
@@ -464,6 +494,7 @@ init_settlements = (roads: bool = false,defer_islands: bool = false):
     qa=canal_launch.xz+side*21.0-dir*12.0;qb=canal_launch.xz+side*21.0+dir*12.0
     harbor=[MooringPlace(canal_launch,qa,qb,3.0,canal_launch,deck=f64(canal_workshop.y))]
     world_settlements.push(WorldSettlement(CANAL_CITY_ID,CANAL_CITY_NAME,.port,80,1,1,canal_workshop,vec2(0,1),1100.0,CANAL_CITY_ID,harbor))
+    attach_lake_landings()
     plan_settlement_roads()
     index_settlement_bins()
     if not defer_islands or roads: finish_settlement_registry()
@@ -503,6 +534,7 @@ prepare_settlement_registry = () -> bool:
     stop = min(small_islands.len(),settlement_island_cursor+4)
     loop k in settlement_island_cursor..stop: append_island_settlements(small_islands[k])
     settlement_island_cursor = stop
+    attach_shore_landings(first)
     plan_settlement_roads(first)
     index_settlement_bins(first)
     settlement_registry_ready = stop == small_islands.len()
@@ -563,6 +595,7 @@ place_route = (a: vec2,b: vec2) -> vec3[]:
         loop j in 0..count:
             here = mix(p,q,f32(f64(j)/f64(count)))
             at = place_point(here)
+            at.y=f32(access_bridge_height(here,f64(at.y)))
             if at.y < 1.0: return []
             if path.len() > 0:
                 last = path[path.len()-1]
@@ -641,6 +674,7 @@ index_settlement_bins = (first: int = 0):
     if first == 0: settlement_bins = {}
     loop index in first..world_settlements.len():
         s = world_settlements[index]; r = s.radius+600.0
+        if s.remote_harbor:r=max(r,f64(length(s.harbor[0].quay_a-s.center.xz))+700.0)
         loop z in int(floor((f64(s.center.z)-r)/16000.0))..int(floor((f64(s.center.z)+r)/16000.0))+1:
             loop x in int(floor((f64(s.center.x)-r)/16000.0))..int(floor((f64(s.center.x)+r)/16000.0))+1:
                 key = (x+32)*128+z+32
@@ -687,7 +721,7 @@ settlement_avoid_buildings = (p: vec2) -> vec2:
     result = p
     loop index in settlement_bins.get(geography_bin(f64(p.x),f64(p.y)),[]):
         s = world_settlements[index]
-        if s.legacy >= 0 or length(p-s.center.xz) > f32(s.radius+20.0): continue
+        if s.legacy >= 0 or s.id == CANAL_CITY_ID or length(p-s.center.xz) > f32(s.radius+20.0): continue
         if s.harbor.len()>0 and length(p-s.center.xz)<f32(port_span(s)+120.0):
             loop b in settlement_port(s).buildings:
                 side=vec2(-s.out.y,s.out.x); delta=result-b.at.xz
@@ -742,7 +776,7 @@ place_streets = (s: WorldSettlement,x: int,z: int) -> PlaceStreet[]:
         if t1 <= t0: return
         p = a+d*f32(t0); q = a+d*f32(t1)
         if not place_inside(s,(p+q)*0.5): return
-        if s.harbor.len() > 0 and (p.y+q.y)*0.5 < -35.0: return
+        if s.harbor.len() > 0 and not s.remote_harbor and (p.y+q.y)*0.5 < -35.0: return
         streets.push(PlaceStreet(place_to_world(s,p),place_to_world(s,q),width,paved))
     if s.size >= 100:
         loop ring in 1..int(place_old_radius(s)/75.0)+1:
