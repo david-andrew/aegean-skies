@@ -4,6 +4,8 @@ use 'living_types.jo'
 use 'living_save.jo'
 use 'living_save_codec.jo'
 use 'game_session.jo'
+use 'living_save_stream.jo'
+use 'save_stream.jo'
 
 const GAME_SLOT_COUNT = 3
 struct GameSaveStatus:
@@ -23,6 +25,21 @@ struct GameSlotView:
     summary: SaveSummary
     error = ""
 
+# A save in progress: a checkpoint taken in one frame, then checked, written as text,
+# hashed and compressed a few milliseconds at a time (step_game_slots), then stored.
+const SAVE_DEFLATE_BLOCK = 4096
+const SAVE_STEP_BYTES = 8192
+struct SaveJob:
+    game: SaveGame
+    stage = 0                     # 0 checks, 1 template, 2 text, 3 world deflate, 4 session deflate, 5 packed
+    check = 0
+    build: WorldTextBuild
+    text: TextStream
+    world_bytes = 0
+    world_hash: u64 = 0
+    deflate: DeflateStream
+    session: DeflateStream
+
 struct GameSlots:
     ready = false
     phase = ""
@@ -34,7 +51,8 @@ struct GameSlots:
     busy = false
     loaded: SaveGame?
     pending: BinaryLivingSave
-    body = ""                     # compressed bytes only; no World held across frames
+    body = ""                     # compressed bytes only, once packed
+    job: SaveJob                  # while phase is "pack": the checkpoint being written
 
 slot_prefix = (slot: int) -> str: "game-slot-{slot}"
 valid_slot = (slot: int) -> bool: slot>=0 and slot<GAME_SLOT_COUNT
@@ -85,7 +103,7 @@ list_game_slots = (state: GameSlots,terrain: int) -> GameSlotView[]:
 
 finish_slot_operation = (state: mut GameSlots,error: str = ""):
     state.busy=false; state.phase=""; state.error=error; state.sequence+=1
-    state.body=""; state.pending=BinaryLivingSave(valid=false)
+    state.body=""; state.pending=BinaryLivingSave(valid=false); state.job=SaveJob()
     when TARGET=="wasm": aegean_slots_release()
 
 init_game_slots = (state: mut GameSlots):
@@ -100,32 +118,106 @@ begin_slot_operation = (state: mut GameSlots,slot: int,operation: str,terrain: i
     state.operation=operation;state.slot=slot;state.terrain=terrain;state.error="";state.loaded=none;state.busy=true
     true
 
-save_game_slot = (state: mut GameSlots,slot: int,game: SaveGame) -> bool:
+# Start saving `game` (a checkpoint: capture_game or capture_game_snapshot). With spread,
+# the work runs in step_game_slots a few milliseconds per frame; otherwise it completes here
+# (tests and tools; in a browser the storage write still finishes in poll_game_slots).
+save_game_slot = (state: mut GameSlots,slot: int,game: SaveGame,spread: bool = false) -> bool:
     if not begin_slot_operation(state,slot,"save",game.terrain_key): return false
-    problem=validate_save_world(game.world)
-    if problem=="" and not valid_game_session(game): problem="Invalid player checkpoint."
+    problem=""
     loop c in game.world.aircraft:
         if c.move_owner==.scene: problem="Fold aircraft scene ownership before saving."
     loop p in game.world.people:
         if p.move_owner==.scene: problem="Fold people scene ownership before saving."
-    loop v in game.world.far.vehicles:
-        if v.scene_owned: problem="Fold transport scene ownership before saving."
+    loop i in 0..game.world.far.vehicles.len():
+        if game.world.far.vehicles[i].scene_owned: problem="Fold transport scene ownership before saving."
     if problem!="": finish_slot_operation(state,problem); return true
     # Never overwrite unknown schemas or terrain by accident, even in the older bank.
     loop bank in 0..2:
         text=slot_header_text(slot,bank); h=slot_header(text)
         if text!="" and (not h.valid or h.schema!=3 or (h.encoding!=2 and h.encoding!=3) or h.terrain_key!=game.terrain_key):
             finish_slot_operation(state,"Incompatible or damaged slot retained; delete it explicitly before reuse."); return true
-    when TARGET=="wasm":
-        canonical=game; canonical.world=canonical_world(game.world)
-        canonical.presentation=canonical_presentation(game.world,game.presentation)
-        packed=pack_binary_living_save(canonical)
-        if not binary_save_fits(packed.0):finish_slot_operation(state,"Save exceeds the supported size; previous banks retained.");return true
-        state.pending=packed.0;state.body=packed.1;state.phase="save-read";aegean_slots_read(slot)
-    else:
-        saved=save_game(game.world,game.presentation,game.terrain_key,slot_prefix(slot),game.session,game.summary,valid_game_session)
-        finish_slot_operation(state,if saved is LivingSaveError: saved.message else: "")
+    checkpoint=game; checkpoint.presentation=canonical_presentation(game.world,game.presentation)
+    state.job=SaveJob(game=checkpoint,build=world_text_build(game.world)); state.phase="pack"
+    if not spread:
+        loop state.phase=="pack": step_game_slots(state,1e9)
     true
+
+# One short piece of the save: a check, a template stage, or about SAVE_STEP_BYTES of text
+# or compression. "" or the reason the save is refused (the previous banks stay).
+_save_job_unit = (j: mut SaveJob) -> str:
+    if j.stage==0:
+        if j.check<save_check_count():
+            error=save_check_step(j.game.world,j.check); j.check+=1
+            return error
+        if not valid_game_session(j.game): return "Invalid player checkpoint."
+        j.stage=1; return ""
+    if j.stage==1:
+        if world_text_build_step(j.build): j.text=j.build.stream; j.build=WorldTextBuild(world=World(),canonical=World()); j.stage=2
+        return ""
+    if j.stage==2:
+        if not text_step(j.text,SAVE_STEP_BYTES): return ""
+        if j.text.error!="":
+            # (a container the template could not place: the whole text at once, as before)
+            text=canonical_text(j.game.world); j.world_bytes=text.len(); j.world_hash=hash(text); j.deflate=deflate_begin(bytes(text),SAVE_DEFLATE_BLOCK)
+        else:
+            j.world_bytes=j.text.out.len(); j.world_hash=text_stream_hash(j.text); j.deflate=deflate_begin(j.text.out,SAVE_DEFLATE_BLOCK)
+        j.text=TextStream(); j.game.world=World(); j.stage=3
+        return ""
+    if j.stage==3:
+        if deflate_step(j.deflate,SAVE_STEP_BYTES): j.session=deflate_begin(bytes(j.game.session),SAVE_DEFLATE_BLOCK); j.stage=4
+        return ""
+    if j.stage==4:
+        if deflate_step(j.session,SAVE_STEP_BYTES): j.stage=5
+    ""
+
+# Advance a save for about budget_ms (at least one piece), then store it once packed.
+step_game_slots = (state: mut GameSlots,budget_ms: f64):
+    if state.phase!="pack": return
+    started=time()
+    loop state.job.stage<5:
+        error=_save_job_unit(state.job)
+        if error!="": finish_slot_operation(state,error); return
+        if state.job.stage<5 and (time()-started)*1000>=budget_ms: return
+    j=state.job
+    packed=deflate_output(j.deflate)
+    session=j.game.session
+    state.pending=BinaryLivingSave(generation=0,terrain_key=j.game.terrain_key,world_bytes=j.world_bytes,packed_bytes=packed.len(),world_hash=j.world_hash,presentation=j.game.presentation,summary=j.game.summary,session_deflate=if session=="": "" else: base64_encode(deflate_output(j.session)),session_bytes=session.len(),session_hash=hash(session))
+    state.body=str_from_bytes(packed); state.job=SaveJob()
+    if not binary_save_fits(state.pending): finish_slot_operation(state,"Save exceeds the supported size; previous banks retained."); return
+    when TARGET=="wasm":
+        # Only the banks' headers and body sizes are needed (no inflate, no parse): the full
+        # check of a stored game happens when it is loaded.
+        state.phase="save-read"; aegean_slots_read(state.slot)
+    else:
+        prefix=slot_prefix(state.slot)
+        headers=[slot_header_text(state.slot,0),slot_header_text(state.slot,1)]
+        sizes=[loop bank in ["-a","-b"]: (load_data(prefix+bank+"-data") ?? "").len()]
+        _store_save(state,headers,sizes)
+
+# The bank to write is the one not holding the newest intact generation. Intact here: a
+# compatible header and a body of its recorded size; loading checks the rest.
+_store_save = (state: mut GameSlots,headers: str[],sizes: int[]):
+    best= -1; best_generation=0; expected=0; exists=false
+    loop bank in 0..2:
+        if headers[bank]=="": continue
+        exists=true; h=slot_header(headers[bank]); expected=max(expected,h.generation)
+        if not h.valid or h.schema!=3 or (h.encoding!=2 and h.encoding!=3) or h.terrain_key!=state.terrain:
+            finish_slot_operation(state,"Incompatible slot retained unchanged."); return
+        if sizes[bank]==h.packed_bytes and (best<0 or h.generation>best_generation): best=bank; best_generation=h.generation
+    if exists and best<0: finish_slot_operation(state,"No intact previous generation; delete this damaged slot explicitly before reuse."); return
+    target=if best<0: 0 else: 1-best
+    state.pending.generation=expected+1
+    when TARGET=="wasm":
+        text=to_text(state.pending)
+        aegean_slots_release()
+        aegean_slots_write(state.slot,target,state.pending.generation,expected,data(text),text.len(),data(state.body),state.body.len())
+        state.body="";state.pending=BinaryLivingSave(valid=false);state.phase="save-write"
+    else:
+        name=slot_prefix(state.slot)+(if target==0: "-a" else: "-b")
+        # The header is committed last: until then the older header still names its own body.
+        if not save_data(name+"-data",state.body): finish_slot_operation(state,"write failed: {file_error()}; previous slot retained"); return
+        if not save_value(name,state.pending): finish_slot_operation(state,"header write failed: {file_error()}; previous slot retained"); return
+        finish_slot_operation(state)
 
 load_game_slot = (state: mut GameSlots,slot: int,terrain: int) -> bool:
     if not begin_slot_operation(state,slot,"load",terrain): return false
@@ -157,7 +249,8 @@ when TARGET=="wasm":
 
 poll_game_slots = (state: mut GameSlots):
     when TARGET=="wasm":
-        if not state.busy: return
+        # (while packing, storage is idle: its last status belongs to the previous operation)
+        if not state.busy or state.phase=="pack": return
         status=aegean_slots_status()
         if status==1: return
         if status<0:
@@ -165,34 +258,21 @@ poll_game_slots = (state: mut GameSlots):
             finish_slot_operation(state,if error!="": error else: "Browser storage is unavailable.");return
         if status!=2: return
         if state.phase=="opening": state.ready=true;finish_slot_operation(state);return
-        if state.phase=="load-read" or state.phase=="save-read":
-            best: SaveGame?; best_bank= -1; expected=0; exists=false
-            loop bank in 0..2:
-                text=slot_buffer(bank*2)
-                if text=="": continue
-                exists=true;h=slot_header(text);expected=max(expected,h.generation)
-                if state.phase=="save-read" and (not h.valid or h.schema!=3 or (h.encoding!=2 and h.encoding!=3) or h.terrain_key!=state.terrain):
-                    finish_slot_operation(state,"Incompatible slot retained unchanged.");return
-                if not h.valid or h.schema!=3 or (h.encoding!=2 and h.encoding!=3) or h.terrain_key!=state.terrain: continue
+        if state.phase=="save-read":
+            _store_save(state,[slot_buffer(0),slot_buffer(2)],[int(aegean_slots_size(1)),int(aegean_slots_size(3))])
+            return
+        if state.phase=="load-read":
+            best: SaveGame?
             # Read candidates in header order, keeping only one parsed World alive.
             a=slot_header(slot_buffer(0));b=slot_header(slot_buffer(2))
             banks=if b.generation>a.generation:[1,0] else:[0,1]
             loop bank in banks:
                 h=if bank==0:a else:b
-                if not h.valid or h.terrain_key!=state.terrain:continue
+                if not h.valid or h.schema!=3 or (h.encoding!=2 and h.encoding!=3) or h.terrain_key!=state.terrain:continue
                 if let game=unpack_binary_living_save(h,slot_buffer(bank*2+1)):
-                    if validate_save_world(game.world)=="" and valid_game_session(game):best=game;best_bank=bank;break
-            if state.phase=="load-read":
-                if best==none: finish_slot_operation(state,"No compatible intact game in this slot; the stored data is unchanged.")
-                else: state.loaded=best;finish_slot_operation(state)
-                return
-            if exists and best==none: finish_slot_operation(state,"No intact previous generation; delete this damaged slot explicitly before reuse.");return
-            target=if best_bank<0: 0 else: 1-best_bank
-            state.pending.generation=expected+1
-            text=to_text(state.pending)
-            aegean_slots_release()
-            aegean_slots_write(state.slot,target,state.pending.generation,expected,data(text),text.len(),data(state.body),state.body.len())
-            state.body="";state.pending=BinaryLivingSave(valid=false);state.phase="save-write"
+                    if validate_save_world(game.world)=="" and valid_game_session(game):best=game;break
+            if best==none: finish_slot_operation(state,"No compatible intact game in this slot; the stored data is unchanged.")
+            else: state.loaded=best;finish_slot_operation(state)
             return
         finish_slot_operation(state)
     else: pass

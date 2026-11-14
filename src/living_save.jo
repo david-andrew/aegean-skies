@@ -1,5 +1,7 @@
 use 'living_guard.jo'
 use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_map_types.jo'
 use 'living_content.jo'
 use 'living_checks.jo'
 use 'living_commands.jo'
@@ -59,15 +61,9 @@ canonical_world = (w: World) -> World:
     result.far.people = ordered_map(w.far.people,(id: int): id)
     result.far.journeys = ordered_map(w.far.journeys,(id: int): id)
     result.far.news = ordered_map(w.far.news,(id: int): id)
-    loop id in result.far.districts.keys():
-        result.far.districts[id].stock.roots = ordered_map(w.far.districts[id].stock.roots,(root: int): root)
-        loop k in 0..result.far.districts[id].fields.len():
-            if let crop=w.far.districts[id].fields[k].crop:
-                result.far.districts[id].fields[k].crop!.seed.roots=ordered_map(crop.seed.roots,(root: int): root)
+    loop id in result.far.districts.keys(): result.far.districts[id] = canonical_far_district(result.far.districts[id])
     loop id in result.far.people.keys(): result.far.people[id].stock.roots = ordered_map(w.far.people[id].stock.roots,(root: int): root)
-    loop i in 0..result.far.vehicles.len():
-        result.far.vehicles[i].cargo.roots = ordered_map(w.far.vehicles[i].cargo.roots,(root: int): root)
-        result.far.vehicles[i].provisions.roots = ordered_map(w.far.vehicles[i].provisions.roots,(root: int): root)
+    loop i in 0..result.far.vehicles.len(): result.far.vehicles[i] = canonical_far_vehicle(result.far.vehicles[i])
     result.maps.features = ordered_map(w.maps.features,(id: str): id)
     result.maps.editions = ordered_map(w.maps.editions,(id: str): id)
     result.maps.shops = ordered_map(w.maps.shops,(id: str): id)
@@ -104,11 +100,31 @@ canonical_world = (w: World) -> World:
     result.meetings = ordered_map(w.meetings,(id: int): id)
     result.stories = ordered_map(w.stories,(id: int): id)
     result.diplomatic_receipts = ordered_map(w.diplomatic_receipts,(id: int): id)
-    loop id in result.maps.editions.keys(): result.maps.editions[id].feature_keys = ordered_map(w.maps.editions[id].feature_keys,(key: str): key)
+    loop id in result.maps.editions.keys(): result.maps.editions[id] = canonical_map_edition(result.maps.editions[id])
     loop id in result.speech.keys():
         result.speech[id].acquaintance = ordered_map(w.speech[id].acquaintance,(other: int): other)
         result.speech[id].last_contact = ordered_map(w.speech[id].last_contact,(other: int): other)
     loop id in result.jobs.keys(): result.jobs[id].source_quantities = ordered_map(w.jobs[id].source_quantities,(source: int): source)
+    result
+
+# Per-record parts of canonical_world, shared with the save written in pieces (living_save_stream.jo).
+canonical_far_district = (d: FarDistrict) -> FarDistrict:
+    result = d
+    result.stock.roots = ordered_map(d.stock.roots,(root: int): root)
+    loop k in 0..result.fields.len():
+        if let crop=d.fields[k].crop:
+            result.fields[k].crop!.seed.roots=ordered_map(crop.seed.roots,(root: int): root)
+    result
+
+canonical_far_vehicle = (v: FarVehicle) -> FarVehicle:
+    result = v
+    result.cargo.roots = ordered_map(v.cargo.roots,(root: int): root)
+    result.provisions.roots = ordered_map(v.provisions.roots,(root: int): root)
+    result
+
+canonical_map_edition = (e: PaperMap) -> PaperMap:
+    result = e
+    result.feature_keys = ordered_map(e.feature_keys,(key: str): key)
     result
 
 canonical_text = (w: World) -> str: to_text(canonical_world(w))
@@ -116,6 +132,37 @@ canonical_hash = (w: World) -> u64: hash(canonical_text(w))
 
 # Structural checks precede helpers that index arrays. Malformed saves return errors, not panics.
 validate_save_world = (w: World) -> str:
+    structure_error = save_structure_error(w)
+    if structure_error != "": return structure_error
+    map_error = validate_maps(w)
+    if map_error != "": return map_error
+    life_error = validate_life(w)
+    if life_error != "": return life_error
+    war_error = validate_war(w)
+    if war_error!="": return war_error
+    far_error = validate_far(w)
+    if far_error != "": return far_error
+    errors = invariant_errors(w)
+    if errors.len() > 0: return errors.join("; ")
+    ""
+
+# The same rules as validate_save_world in short steps, for a save spread over frames: run
+# steps 0..save_check_count() in order and stop at the first error. Map, war and far checks
+# run once (invariant_errors' own copies of them would repeat the same verdict); the far
+# check runs in slices. On a valid World every step returns "", as validate_save_world does.
+const SAVE_CHECK_FAR_SLICES = 32
+save_check_count = () -> int: 8+SAVE_CHECK_FAR_SLICES
+save_check_step = (w: World, step: int) -> str:
+    if step==0: return save_structure_error(w)
+    if step==1: return validate_maps(w)
+    if step==2: return validate_life(w)
+    if step==3: return validate_war(w)
+    if step<4+SAVE_CHECK_FAR_SLICES: return validate_far(w,step==4,step-4,SAVE_CHECK_FAR_SLICES)
+    ledger=step-4-SAVE_CHECK_FAR_SLICES
+    errors = if ledger<3: invariant_ledger_errors(w,ledger) else: invariant_record_errors(w)
+    errors.join("; ")
+
+save_structure_error = (w: World) -> str:
     if w.player<0 or w.player>=w.people.len():return "invalid player reference"
     if w.far.populated and w.far.navigation_version!=1: return "old settlement routes require explicit migration; saved data retained"
     if w.far.populated and w.far.procurement_version!=1: return "old distant service agreements require explicit migration; saved data retained"
@@ -215,16 +262,6 @@ validate_save_world = (w: World) -> str:
         if task.phase != .done and task.phase != .cancelled:
             if not (task.cargo in w.cargo) or not (task.job in w.jobs): return "invalid active carriage cargo/job"
         if task.waypoint < 0 or task.waypoint > task.route.len() or task.fee < 0 or task.escrow >= w.accounts.len(): return "invalid carriage route/payment"
-    map_error = validate_maps(w)
-    if map_error != "": return map_error
-    life_error = validate_life(w)
-    if life_error != "": return life_error
-    war_error = validate_war(w)
-    if war_error!="": return war_error
-    far_error = validate_far(w)
-    if far_error != "": return far_error
-    errors = invariant_errors(w)
-    if errors.len() > 0: return errors.join("; ")
     ""
 
 header_for = (name: str) -> SaveHeader:
