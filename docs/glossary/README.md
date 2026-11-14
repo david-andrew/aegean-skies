@@ -23,9 +23,9 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -997,6 +997,49 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   wear (`leisure_tinker`).
 - **Capture:** `AEGEAN_LEISURE=work:wipe|inspect|oil|tune|patch|polish` with
   `AEGEAN_LEISURE_FRAMES=<dir>` (and `AEGEAN_CRAFT` for another airframe).
+
+### Tavli
+
+- **Aliases:** Portes, backgammon.
+- **Definition:** the board game at the coffee house, played against a townsperson for small stakes.
+  The rules are Portes: as many dice as can be played must be, the larger die when only one of two
+  can be, and a gammon counts double. Each opponent plays with a personality from their traits and
+  age: care (from fast and loose to careful), boldness, pace, and a voice for their remarks. The
+  stake moves by one `gambling` transfer. Wins and losses are kept per person, warm their regard a
+  little, and bring a word about the last game when one meets them.
+- **Code:** `src/tavli.jo` (rules, `tavli_choose`, `tavli_settle`, `tavli_partners`),
+  `src/tavli_view.jo` (the drawn board, dice physics, input); `tavli_frame` in `aegean.jo`;
+  `tests/tavli_test.jo`; `tools/tavli_board.jo` stages a position.
+- **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid`.
+
+### Band request
+
+- **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
+  to the house). It is played as soon as the number playing (and the pause after it) is over, or it
+  opens the evening. The set then carries on where it was. Only one request may wait at a time.
+- **Code:** `BandRequest` (`src/band_request.jo`), `bar_set_position(tick, requests)` and
+  `bar_request_start` in `src/bar_band.jo`; `leisure_request` in `src/leisure.jo`.
+- **Capture:** `AEGEAN_LEISURE=request|requested`.
+
+### The paper
+
+- **Aliases:** the newspaper, the Courier.
+- **Definition:** today's paper at the coffee house: a broadsheet column made from what the town
+  has heard. It carries the harbour's and its people's news, telegrams (far reports), shortages,
+  the market's prices with the latest word of them elsewhere, the harbour office's weather, and
+  posted work and air meets as notices. It is read-only, and bought once a day.
+- **Code:** `src/newspaper.jo`, `src/newspaper_view.jo`; `leisure_buy_paper` in `src/leisure.jo`.
+- **Capture:** `AEGEAN_LEISURE=paper` (`AEGEAN_PAPER_SCROLL=<px>`).
+
+### Dock fishing
+
+- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and strike
+  while it is under. Bites come livelier at dawn and dusk. The catch goes into the angler's pocket
+  at the fish market as production (`record_creation` and `cargo_mint`, exactly like a fisher's),
+  to be sold there or grilled by the hotel's kitchen (consumed and recorded so).
+- **Code:** `src/fishing.jo`; `fishing_frame` and `draw_fishing` in `aegean.jo`;
+  `tests/fishing_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite`.
 
 ### Time skip
 
