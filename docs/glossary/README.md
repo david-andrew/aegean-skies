@@ -593,7 +593,10 @@ On the rivers branch until it lands.
 - **Definition:** a bug from the first grass merge (071e319): the wind sheen was applied to the
   ground at every distance, so whole hills seen from the air were covered in regular stripes.
   Fixed in 3e2d530 by limiting it to the near-detail envelope (`meadow *= near` in
-  `src/terrain.jo`).
+  `src/terrain.jo`). A second form (2026-11-14): the pigment tile's alpha wash, a sum of
+  sinusoids repeating every 320 m, shifted the mainland's vegetation patch edges in a regular
+  diagonal herringbone seen from 1-4 km; the mainland now uses value noise there (`wash` in
+  `ground_surface`).
 - **Rules:** the original archipelago must stay pixel-identical through ground-shader fixes.
 - **Capture:** `tools/stripe_capture.jo STRIPE_SITE=mainland|islands STRIPE_ALTITUDE=300|1000|3000`.
 
