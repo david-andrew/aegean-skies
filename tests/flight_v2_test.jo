@@ -1,0 +1,191 @@
+# Flight model v2 (src/flight_v2.jo), a trial for the player's aircraft: stability, determinism and
+# the feel contracts it was built for. Headless, at the player's 3.3x scale.
+# env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 sloppy test tests/flight_v2_test.jo
+import '../src/flight.jo' as fl
+import '../src/flight_v2.jo' as v2
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+
+const K = 3.3
+
+_setup = (model: int):
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks(flight_model = model))
+    v2.set_fdm2_tuning(v2.Fdm2Tuning())
+
+_reset = ():
+    fl.set_speed_scale(1.0); fl.set_lift_scale(3.3)
+    tw.set_tweaks(tw.Tweaks())
+
+_spec = (kind: planes.Craft, player: bool = true) -> fl.CraftSpec:
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = player
+    k
+
+_air = (k: fl.CraftSpec, alt_drawn: f64, v_true: f64, throttle: f64) -> fl.CraftState:
+    s = fl.CraftState(position = vec3(0, f32(alt_drawn), 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
+    s.throttle = throttle; s.rpm = throttle
+    s
+
+_finite = (k: fl.CraftSpec, s: fl.CraftState):
+    assert(abs(f64(s.position.x)) < 1e7 and abs(f64(s.position.y)) < 1e7 and abs(f64(s.position.z)) < 1e7)
+    assert(abs(f64(length(s.orientation)) - 1.0) < 0.0001)
+    assert(f64(length(s.velocity)) < k.max_speed * 3.0)
+    assert(f64(length(s.angular_velocity)) < 25.0)
+    assert(s.rpm >= 0.0 and s.rpm < 3.0)
+
+_vt = (s: fl.CraftState) -> f64: f64(length(s.velocity)) / K
+_path = (s: fl.CraftState) -> f64: asin(clamp(f64(s.velocity.y) / max(f64(length(s.velocity)), 0.1), -1.0, 1.0))
+
+# A stick that wanders through everything a player might do: smooth, full deflections, reversals.
+_wild = (t: f64, seed: f64) -> fl.Controls:
+    fl.Controls(pitch = clamp(sin(t * 0.9 + seed) * 1.4, -1.0, 1.0), roll = clamp(sin(t * 1.7 + seed * 2.0) * 1.3, -1.0, 1.0),
+        yaw = clamp(sin(t * 0.6 + seed * 3.0) * 1.2, -1.0, 1.0), throttle = 0.5 + 0.5 * sin(t * 0.3 + seed))
+
+test "v2 stays finite under wild controls for every aircraft":
+    _setup(1)
+    loop id in 0..planes.CRAFT_NAMES.len():
+        k = _spec(planes.Craft(id))
+        s = _air(k, 2000.0, k.cruise_speed / K, 0.7)
+        low = 1e9
+        loop i in 0..60 * 30:
+            fl.step(k, s, _wild(s.time, f64(id)), fl.FlightEnv(), 1.0 / 60.0)
+            low = min(low, f64(s.position.y))
+            if s.position.y < 200.0: break
+        print("v2 wild {planes.CRAFT_NAMES[id]}: lowest {low:.0} m drawn, {_vt(s):.1} m/s true, crashed {s.crashed}")
+        _finite(k, s)
+        assert(not s.crashed)
+    _reset()
+
+test "v2 is deterministic and the frame rate does not change it":
+    _setup(1)
+    k = _spec(.corsair)
+    runs: fl.CraftState[]
+    loop hz in [60, 60, 30]:
+        s = _air(k, 2000.0, k.cruise_speed / K, 1.0)
+        # (controls held over a whole 1/30 s, so both rates see the same inputs at 120 Hz substeps)
+        loop i in 0..30 * 20:
+            c = _wild(f64(i) / 30.0, 0.7)
+            loop j in 0..hz / 30: fl.step(k, s, c, fl.FlightEnv(), 1.0 / f64(hz))
+        runs.push(s)
+    assert(runs[0].position == runs[1].position and runs[0].orientation == runs[1].orientation and runs[0].velocity == runs[1].velocity)
+    assert(length(runs[0].position - runs[2].position) < 0.01)
+    _reset()
+
+test "NPC aircraft and the default stay on the liked model":
+    _setup(1)
+    npc = _spec(.gull, false)
+    assert(not v2.fdm2_active(npc))
+    a = _air(npc, 1000.0, 50.0, 0.7)
+    _setup(0)
+    player = _spec(.gull)
+    assert(not v2.fdm2_active(player))
+    b = _air(player, 1000.0, 50.0, 0.7)
+    player.player = false
+    loop i in 0..600:
+        c = _wild(f64(i) / 60.0, 0.2)
+        _setup(1); fl.step(npc, a, c, fl.FlightEnv(), 1.0 / 60.0)
+        _setup(0); fl.step(player, b, c, fl.FlightEnv(), 1.0 / 60.0)
+    assert(a.position == b.position and a.orientation == b.orientation)
+    _reset()
+
+test "v2 hands off holds its path and speed settles":
+    _setup(1)
+    loop kind in [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]:
+        k = _spec(kind)
+        s = _air(k, 1000.0, k.cruise_speed / K, 0.8)
+        lo = 1e9; hi = -1e9
+        loop i in 0..60 * 60:
+            fl.step(k, s, fl.Controls(throttle = 0.8), fl.FlightEnv(), 1.0 / 60.0)
+            lo = min(lo, f64(s.position.y)); hi = max(hi, f64(s.position.y))
+        print("v2 hands off {kind}: {lo:.1}..{hi:.1} m drawn, {_vt(s):.1} m/s true")
+        _finite(k, s)
+        assert(hi - lo < 60.0 and not s.stalled)
+    _reset()
+
+test "v2 stall from an idle zoom falls ballistically and flies again":
+    _setup(1)
+    loop kind in [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]:
+        k = _spec(kind)
+        s = _air(k, 1000.0, k.cruise_speed / K, 0.0)
+        broke = -1.0; v_break = 0.0; flying = -1.0; v_low = 1e9; path_low = 0.0
+        loop i in 0..60 * 40:
+            c = fl.Controls(throttle = 0.0)
+            if broke < 0.0: c.pitch = clamp((0.87 - _path(s)) * 2.5 / k.pitch_rate, -1.0, 1.0)
+            else if not s.stalled and _vt(s) > k.stall_speed * 1.05: c.pitch = clamp((-0.1 - _path(s)) * 2.5 / k.pitch_rate, -1.0, 1.0); c.throttle = 1.0
+            fl.step(k, s, c, fl.FlightEnv(), 1.0 / 60.0)
+            if broke < 0.0 and (s.stalled or _vt(s) < k.stall_speed * 0.6): broke = s.time; v_break = _vt(s)
+            if broke >= 0.0:
+                v_low = min(v_low, _vt(s)); path_low = min(path_low, _path(s))
+                if flying < 0.0 and s.time > broke + 0.5 and not s.stalled and _path(s) > -0.14 and _vt(s) > k.stall_speed * 1.05:
+                    flying = s.time - broke
+                    break
+        print("v2 stall {kind}: break at {v_break:.1} m/s, slowest {v_low:.1}, steepest path {path_low * 57.3:.0} deg, flying again after {flying:.1} s")
+        _finite(k, s)
+        # (the path falls through the steep (ballistic), and it flies again within a few seconds)
+        assert(broke > 0.0 and path_low < -0.3 and flying > 0.0 and flying < 10.0)
+    _reset()
+
+test "v2 water takeoff and landing stay on the water solver":
+    _setup(1)
+    loop kind in [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]:
+        k = _spec(kind)
+        loop hz in [30, 60]:
+            s = fl.water_start(k, vec3(0, 0, 0))
+            off = -1.0; again = false
+            loop i in 0..hz * 70:
+                c = fl.Controls(throttle = 1.0)
+                if not s.on_water: c.pitch = clamp((0.12 - _path(s)) * 2.5 / k.pitch_rate, -1.0, 1.0)
+                fl.step(k, s, c, fl.FlightEnv(), 1.0 / f64(hz))
+                if off < 0.0 and not s.on_water and f64(s.position.y) > k.float_height + 1.0: off = s.time
+                if off >= 0.0 and s.on_water: again = true
+                if off >= 0.0 and f64(s.position.y) > 100.0: break
+            assert(off > 0.0 and not again and not s.stalled and s.hull_damage == 0.0)
+            # (an approach at 1.3 x stall, 3.5 degrees, flared from 5 m)
+            v = k.stall_speed * 1.3
+            s = _air(k, 40.0, v, fl.cruise_throttle(k, v))
+            touched = false; sink = 0.0
+            loop i in 0..hz * 60:
+                hgt = f64(s.position.y) - k.float_height
+                want = if hgt > 5.0: -0.061 else: -0.06 * hgt / 5.0 - 0.004
+                c = fl.Controls(throttle = if hgt > 5.0: fl.cruise_throttle(k, v) * 0.6 else: 0.0, pitch = clamp((want - _path(s)) * 6.0 / k.pitch_rate, -1.0, 1.0))
+                before = f64(s.velocity.y)
+                fl.step(k, s, c, fl.FlightEnv(), 1.0 / f64(hz))
+                if s.on_water and not touched: touched = true; sink = -before
+                if touched and _vt(s) < k.stall_speed * 0.4: break
+            print("v2 water {kind} {hz}Hz: liftoff {off:.1} s, touchdown sink {sink:.2} m/s drawn, harm {s.hull_damage:.3}")
+            assert(touched and not s.crashed and s.hull_damage < 0.1)
+    _reset()
+
+test "v2 loops from cruise and keeps its energy":
+    _setup(1)
+    loop kind in [planes.Craft.gull, planes.Craft.corsair]:
+        k = _spec(kind)
+        s = _air(k, 1000.0, k.cruise_speed / K, 1.0)
+        e = (st: fl.CraftState) -> f64: f64(st.position.y) / K + _vt(st) * _vt(st) / 19.62
+        e0 = e(s); turned = 0.0; prev = 0.0; done = -1.0
+        loop i in 0..60 * 20:
+            fl.step(k, s, fl.Controls(throttle = 1.0, pitch = 1.0), fl.FlightEnv(), 1.0 / 60.0)
+            a = atan2(f64(s.velocity.y), -f64(s.velocity.z))
+            turned += atan2(sin(a - prev), cos(a - prev)); prev = a
+            if turned >= 2.0 * PI: done = s.time; break
+        print("v2 loop {kind}: {done:.2} s, energy {e(s) / e0:.3} of the start")
+        assert(done > 0.0 and done < 12.0 and e(s) > e0 * 0.85 and not s.stalled)
+    _reset()
+
+test "v2 makes no energy gliding with the engine off":
+    _setup(1)
+    k = _spec(.gull)
+    s = _air(k, 1000.0, k.cruise_speed / K, 0.0)
+    s.fuel = 0.0
+    e = (st: fl.CraftState) -> f64: f64(st.position.y) / K + _vt(st) * _vt(st) / 19.62
+    last = e(s)
+    loop i in 0..60 * 30:
+        c = fl.Controls(pitch = clamp(sin(f64(i) / 60.0) * 0.8, -1.0, 1.0), roll = clamp(sin(f64(i) / 90.0) * 0.5, -1.0, 1.0))
+        fl.step(k, s, c, fl.FlightEnv(), 1.0 / 60.0)
+        if i % 60 == 59:
+            now = e(s)
+            # (rough air may lend a little; never more than half a metre a second)
+            assert(now <= last + 0.5)
+            last = now
+    _reset()
