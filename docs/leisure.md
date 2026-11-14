@@ -21,7 +21,7 @@ funny or useful (time passes, people are met, the plane is looked after).
   keeper's account (kind `trade`), so the money balance of the world is conserved and the keeper
   can spend it. Prices: drinks and dishes made from a living-world good (wine, fish, oil, grain)
   are priced from that town's market price for the good (a glass is a share of a package with the
-  house's markup); everything else has an invented period price in lire. Nothing is free except a
+  house's markup); everything else has an invented period price in phoenixes. Nothing is free except a
   helped family's spare room (they won't take money).
 - **People and standing**: pilots (people with aircraft or a flying trade) gather on the terrace
   in the evening as a living-world rule, so whoever is in town is really there and can be talked

@@ -18,11 +18,11 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
@@ -386,6 +386,21 @@ On the rivers branch until it lands.
 - **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
   spans. Landings must forgive firm touchdowns.
 
+### Altimeter hands
+
+- **Aliases:** the altimeter, the two dials (as the user asked for them), coarse and fine altitude.
+- **Definition:** the period altimeter: one face numbered 0 to 9 round the whole circle, a tick
+  every 20 m, with a long thin hand for the hundreds of metres (one turn per 1,000 m) and a short
+  broad hand for the thousands (one turn per 10,000 m). 1,250 m reads short hand a quarter past
+  1, long hand at 2½. The face says "×100 m" (on the panels "M X100").
+- **Code:** `src/hud.jo altimeter_dial` and `altimeter_hands` (the HUD gauge); in
+  `src/cockpit.jo` the full-circle face in `build_cockpit`, the `short_hand` mesh, and the long
+  hand from `cockpit_values` (index 1), drawn in `draw_cockpit`, on every aircraft's panel.
+- **Rules:** keep the brass dial style; the short hand sits under the long one.
+- **Capture:** `AEGEAN_FLYING='1250 60'` (HUD) and `AEGEAN_FLYING='1250 60 cockpit'`.
+
+![The altimeter at 1,250 m on the HUD and on the Gull's panel](img/altimeter.png)
+
 ---
 
 ## Sky
@@ -695,6 +710,30 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Code:** `src/living_work_types.jo:2 struct WorkProvenance`.
 - **Rules:** speech gives short offers; the full provenance stays in the notebook and the contract
   panel. News is never silently refreshed: what people repeat are dated beliefs.
+
+### Phoenix (money)
+
+- **Aliases:** the money, the purse, phoenixes; in speech phoinix / phoinikes; small change in
+  lepta (one lepton). The old name, lire, is gone from the game.
+- **Definition:** the game's currency, after Greece's first modern currency (1828), whose coin
+  showed a phoenix rising from flames; a phoenix is 100 lepta. Written amounts are the phoenix
+  sign and the figure (`¤120`, `¤3.50`); an amount under one phoenix is written in lepta
+  (`30 λ`), everywhere: the purse, menus, notices, contracts, refuelling, the map shop, the Game
+  page's slots and the notebook. The sign is drawn, never an image: a stylised phoenix with its
+  wings raised over a flame, filled (gold over an amber flame on the purse) or in outline (the
+  bird drawn round, the flame solid), legible down to about 12 px.
+- **Code:** `src/phoenix.jo` (`phoenix_text` writes an amount; `draw_phoenix` draws the sign;
+  `ptext`, `ptext_centered` and `ptext_width` draw words with "¤" in them as the phoenix);
+  speech in `src/living_talk_words.jo say_money`.
+- **Rules:** the ledger keeps whole lepta (`cents` in the code; `12000` = ¤120), unchanged, so
+  saves load as before. Written words carry the sign as "¤" (the generic currency sign) and are
+  drawn with `ptext`, never `text`, so the phoenix shows. People say the money aloud ("near
+  enough nineteen phoinikes", "thirty lepta"), rounded; speech never shows the sign or exact
+  lepta. `tests/phoenix_test.jo` keeps the formats and finds any "lire" left in the sources.
+- **Capture:** the purse is in every HUD capture; `AEGEAN_LEISURE=menu`, `AEGEAN_UI=board`,
+  `AEGEAN_CAPTURE_PANEL=game` (with saved slots) show it on paper.
+
+![The phoenix sign, filled and in outline, from 12 px up, and in the purse and a menu](img/phoenix.png)
 
 ### Standing
 
@@ -1102,11 +1141,11 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Aliases:** the save menu, the slots page, the autosave toast.
 - **Definition:** the **Game page** is the pause menu's first tab: the three saved-game slots, each
-  with its world time, place and a short summary (aircraft, lire, day), a mark on the slot the
+  with its world time, place and a short summary (aircraft, purse, day), a mark on the slot the
   autosave writes to, and Save here, Load and Delete. Saving over a slot, loading and deleting
   each ask first; a successful load closes the menu. A note under the slots says where the
   autosave goes or why it is off. The **Saved card** is the quiet "Saved" that fades in and out
-  at the upper right, under the clock and the lire, when an autosave finishes.
+  at the upper right, under the clock and the purse, when an autosave finishes.
 - **Code:** `src/debugmenu.jo game_page` (drawing, confirmation); `src/game_menu.jo game_row`
   (slot header to words); `aegean.jo game_page_view` / `game_page_apply` (backend requests,
   notes); `src/hud.jo saved_toast`. Backend contract in `docs/game-saves.md`.
@@ -1136,7 +1175,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 
 | Switch | What it does |
 |---|---|
-| `AEGEAN_FLYING='alt speed'` | start in the air off the home harbour (drawn speed, m/s) |
+| `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
