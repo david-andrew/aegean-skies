@@ -22,7 +22,7 @@ ambience_seconds = (kind: AmbienceKind) -> f64:
         .bell: 3.5
         .thunder: 4.5
         .beach, .cliff: 3.2
-        .murmur, .cafe: 2.4
+        .murmur, .cafe: 5.0
         .owl, .donkey, .whistle: 1.8
         .gull: 1.1
         .hammer, .goat, .dog: 0.75
@@ -31,6 +31,85 @@ ambience_seconds = (kind: AmbienceKind) -> f64:
 ambience_noise = (state: mut u64) -> f64:
     state = (state*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
     f64(state)/2147483648.0-1.0
+
+# (0..1, well mixed: neighbouring talkers' seeds give unrelated streams, unlike the LCG above)
+ambience_unit = (state: mut u64) -> f64:
+    state += (u64(0x9E3779B9)<<32 or u64(0x7F4A7C15))
+    z = state
+    z = (z xor (z>>30))*(u64(0xBF58476D)<<32 or u64(0x1CE4E5B9))
+    z = (z xor (z>>27))*(u64(0x94D049BB)<<32 or u64(0x133111EB))
+    f64((z xor (z>>31))>>11)/9007199254740992.0
+
+# A distant crowd: several talkers, each a buzzing voice through two moving formants, speaking
+# syllables of uneven length with uneven pauses, so the sum never settles into a beat or a held
+# pitch. (Pure sines gated on a fixed rate inside a 2.4 s loop read as a ticking machine.) With
+# `clinks`, glasses and cups touch at uneven times. Mono, n samples, unnormalized.
+ambience_crowd = (n: int,seed: int,talkers: int,clinks: bool) -> f64[]:
+    out = fill(0.0,n)
+    rate = f64(MIX_RATE)
+    loop who in 0..talkers:
+        rng = u64(seed*1000003+who*7919+17)
+        low = who%2 == 0
+        f0 = if low: 98.0+ambience_unit(rng)*40.0 else: 172.0+ambience_unit(rng)*60.0
+        level = 0.45+ambience_unit(rng)*0.55
+        f1 = Biquad(); f2 = Biquad(); tilt = 0.0; phase = ambience_unit(rng)
+        # (starts part-way through a phrase: talkers never begin together)
+        i = -int(ambience_unit(rng)*0.8*rate)
+        loop i < n:
+            if ambience_unit(rng) < 0.12:
+                i += int((0.25+ambience_unit(rng)*0.65)*rate)     # a breath between phrases
+                continue
+            length = int((0.09+ambience_unit(rng)*0.22)*rate)
+            bandpass(f1,330.0+ambience_unit(rng)*480.0,3.5)
+            bandpass(f2,900.0+ambience_unit(rng)*1400.0,5.0)
+            bend = 0.88+ambience_unit(rng)*0.26
+            loud = 0.55+ambience_unit(rng)*0.45
+            loop k in 0..length:
+                at = i+k
+                u = f64(k)/f64(length)
+                phase += f0*(1.0+(bend-1.0)*u)/rate
+                saw = 2.0*(phase-floor(phase))-1.0
+                tilt += (saw-tilt)*0.35
+                voice = tilt+(ambience_unit(rng)-0.5)*0.24
+                v = (filt(f1,voice)+filt(f2,voice)*0.55)*pow(sin(PI*u),1.5)*loud*level
+                if at >= 0 and at < n: out[at] += v
+            i += length+int((0.015+ambience_unit(rng)*0.07)*rate)
+    # Heard across a quay: a few soft reflections smear the syllables' edges, and the breath
+    # of the rest of the crowd keeps the bed from ever dropping to silence between them.
+    wet = fill(0.0,n)
+    loop tap in 0.. and delay in [0.023,0.041,0.067,0.097,0.131]:
+        offset = int(delay*rate); gain = [0.42,0.32,0.24,0.17,0.11][tap]
+        loop k in 0..n: wet[(k+offset)%n] += out[k]*gain
+    floor = Biquad(); bandpass(floor,520.0,0.8)
+    level = 0.0; total = 0.0
+    loop k in 0..n: total += out[k]*out[k]
+    level = sqrt(total/f64(max(n,1)))*0.35
+    rng = u64(seed*1000003+911)
+    loop k in 0..n: out[k] += wet[k]+filt(floor,ambience_unit(rng)-0.5)*level*3.0
+    if clinks:
+        rng = u64(seed*1000003+4243)
+        t = ambience_unit(rng)*0.4
+        loop t < f64(n)/rate:
+            hz = 2100.0+ambience_unit(rng)*1500.0
+            cup = ambience_unit(rng) < 0.3
+            if cup: hz *= 0.55
+            ring = 0.35+ambience_unit(rng)*0.55
+            twice = ambience_unit(rng) < 0.25
+            loop hit in 0..(if twice: 2 else: 1):
+                start = int((t+f64(hit)*(0.04+ambience_unit(rng)*0.05))*rate)
+                decay = if cup: 95.0 else: 55.0+ambience_unit(rng)*35.0
+                loop k in 0..int(rate*0.09):
+                    if start+k >= n: break
+                    e = f64(k)/rate
+                    out[start+k] += (sin(TAU*hz*e)+sin(TAU*hz*1.62*e)*0.5)*exp(-e*decay)*min(1.0,e*4000.0)*ring*0.5
+            t += 0.25+ambience_unit(rng)*1.3
+    # (crests rounded off at 3.5 times the bed's rms, under the shared hard bound once normalized)
+    total = 0.0
+    loop v in out: total += v*v
+    knee = sqrt(total/f64(max(n,1)))*3.5
+    if knee > 0.0:
+        loop k in 0..n: out[k] = knee*tanh(out[k]/knee)
+    out
 
 make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
     seconds = ambience_seconds(kind)
@@ -41,6 +120,7 @@ make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
     rng = u64(17+seed*1031+int(kind)*7919)
     low = 0.0; deep = 0.0; phase = 0.0
     band = Biquad(); bandpass(band,if kind == .cicada: 4200 else: if kind == .cricket: 3400 else: 1400,2.5)
+    crowd = if kind == .murmur or kind == .cafe: ambience_crowd(n,seed,if kind == .cafe: 12 else: 10,kind == .cafe) else: []
     loop i in 0..n:
         t = f64(i)/f64(MIX_RATE)
         noise = ambience_noise(rng)
@@ -56,14 +136,8 @@ make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
                     v += sin(TAU*hz*ratio*t)*exp(-t*(decay+f64(k)*0.28))/(1.0+f64(k)*0.6)
                 v *= min(1.0,t*500.0)
             .murmur, .cafe:
-                # Indistinct, asynchronous vowel hums; no intelligible invented dialogue.
-                loop k in 0..4:
-                    f = 105.0+f64(k)*39.0
-                    env = pow(max(0.0,sin(t*(4.1+f64(k)*0.51)+f64(k)*2.1)),2.0)
-                    v += env*(sin(TAU*f*t)*0.05+sin(TAU*f*3.0*t)*0.035+breath*0.12)
-                if kind == .cafe:
-                    hit = t%0.71
-                    v += (sin(TAU*2300*t)+sin(TAU*3710*t)*0.5)*exp(-hit*70.0)*0.15
+                # Indistinct voices (ambience_crowd); no intelligible invented dialogue.
+                v = crowd[i]
             .hammer:
                 v = (sin(TAU*180*t)*0.65+sin(TAU*413*t)*0.2+low*2.0)*exp(-t*19.0)*min(1.0,t*1500.0)
             .rope:
@@ -128,7 +202,8 @@ make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
         if not looped: v *= min(1.0,max(0.0,seconds-t)*25.0)
         mono[i] = v
     if looped:
-        s = seamless(mono,fade,0.11)
+        # (the crowd beds sit where the ear is keener: matched to the old beds A-weighted)
+        s = seamless(mono,fade,if kind == .murmur: 0.091 else: if kind == .cafe: 0.097 else: 0.11)
         # One common crest bound makes a strict combined mixer budget possible.
         loop i in 0..s.samples.len(): s.samples[i] = f32(clamp(f64(s.samples[i]),-0.45,0.45))
         return s

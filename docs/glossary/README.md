@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -1383,6 +1383,18 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/ambience.jo` (scheduler and mixer), `src/ambience_synth.jo` (instruments),
   `src/ambience_scene.jo`; `docs/ambience.md`.
 - **Rules:** sounds are synthesized, never recorded; ambient murmurs are never dialogue.
+
+### Crowd bed
+
+- **Aliases:** the harbour murmur, the café murmur.
+- **Definition:** the looped sound of a distant crowd under the harbour and café ambience: ten or
+  twelve synthesized talkers, each a buzzing voice through two moving vowel formants, speaking
+  syllables of uneven length with uneven pauses, smeared by a few soft reflections; the café's
+  adds glasses and cups touched at uneven times. Its loudness follows the people actually nearby.
+- **Code:** `src/ambience_synth.jo` (`ambience_crowd`).
+- **Rules:** at least 4.5 s long, no loudness rhythm shorter than its loop and no held pure pitch
+  (`tests/ambience.jo`). The first version, four gated pure hums in a 2.4 s loop, was heard as a
+  little repeating tune (A F# A A F#) on the quay.
 
 ---
 
