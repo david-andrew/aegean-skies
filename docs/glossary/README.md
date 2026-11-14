@@ -270,6 +270,23 @@ On the rivers branch until it lands.
 
 ---
 
+### Lake shoreline shaping
+
+- **Definition:** a settlement lake's shore moved sideways along its own bank slope (coves and
+  points of a few hundred metres) and a drowned valley arm up the inflow, on top of the surveyed
+  basin. The takeoff lane, berths, jetty and town frontage stay as surveyed, and no cove comes
+  within 45 m of a road.
+- **Code:** `lake_depth` in `src/lake_field.jo` (shaped) over `lake_raw_depth`; road guard
+  `src/lake_road_guard_data.jo` from `tools/bake_lake_road_guard.jo` (rebake it after road
+  changes near lakes, then rebake the world and routes).
+
+### Lake chop
+
+- **Definition:** the short wind chop on open lake water: the sea's swell slopes and crest strokes,
+  scaled, with no height. It gives lakes the sky reflection, sheen and glints the sea has at a
+  distance. Rivers keep their own current marks.
+- **Code:** `SeaParams.inland_chop` in `src/sea.jo`; set by `draw_lakes` (`src/lake_render.jo`).
+
 ## Aircraft
 
 ### Prop disc
@@ -608,6 +625,22 @@ On the rivers branch until it lands.
 - **Code:** `LandingAccess.stepped` (`src/landing_access_types.jo`), `stepped_segment_clear` and
   `access_track(..., stepped=true)` in `src/access_path_bake.jo`; surveyed by
   `tools/probe_island_shore.jo ... stepped`.
+
+### Lake waterfront
+
+- **Definition:** a lake town's houses lining the path from its square to the jetty, timber boat
+  sheds open to the water with slipways, and a dressed stone edge along the shore at the jetty root.
+- **Code:** `lake_waterfront` (`src/lake_ports.jo`), `lake_waterfront_mesh` (`src/lake_port_mesh.jo`).
+
+### Thermal terraces
+
+- **Definition:** a bath set into a hillside in three terraces: bathhouse and inn on the upper one
+  against the slope, the hot pool on the middle one, a cooler pool below, stone stairs between them
+  and a last flight down to the path from the town. The ground under the complex is cut to just
+  below the lowest terrace; the upper terraces stand on masonry walls. Steam is densest in the
+  cool of morning and evening and is visible from the air.
+- **Code:** `src/thermal_sites.jo` (`THERMAL_TERRACES`, `thermal_carve`, `thermal_contact`),
+  `src/thermal_render.jo`; layout and paths from `tools/thermal_layout.jo`.
 
 ### Close kit
 
