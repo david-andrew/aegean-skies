@@ -1,0 +1,159 @@
+# Saving a large value a few milliseconds at a time: its text written piece by piece, its
+# hash and its raw deflate stream computed as it goes. Each produces exactly what the
+# one-shot library call gives (to_text, hash, deflate), only spread over calls; the tests
+# hold them to that (tests/save_stream.jo).
+
+# ---------------- hash(text), over bytes as they arrive ----------------
+const TEXT_HASH_START: u64 = 14695981039346656037
+
+text_hash_feed = (h: u64, b: u8[], from: int, to: int) -> u64:
+    x=h
+    loop i in from..to: x=(x xor u64(b[i]))*1099511628211
+    x
+
+text_hash_finish = (h: u64) -> u64: h xor (h >> 29)
+
+# ---------------- deflate(src), resumable ----------------
+# The library's own loop and block writer, with its state kept between calls. With the
+# library's block size (32768 symbols) the bytes are exactly deflate(src); a game uses
+# smaller blocks, so no single block costs a frame: still a raw deflate stream that
+# inflate reads, a little larger.
+const DEFLATE_LIBRARY_BLOCK = 32768
+struct DeflateStream:
+    src: u8[]
+    bits: __Bits
+    hsize = 64
+    head: int[]
+    prev: int[]
+    lits: int[]
+    dists: int[]
+    bstart = 0
+    i = 0
+    block = DEFLATE_LIBRARY_BLOCK
+    done = false
+
+deflate_begin = (src: u8[], block: int = DEFLATE_LIBRARY_BLOCK) -> DeflateStream:
+    __deflate_tables()
+    s=DeflateStream(src=src,bits=__Bits([],0,0),block=clamp(block,256,DEFLATE_LIBRARY_BLOCK))
+    s.bits.out.reserve(src.len()/2+64)
+    n=src.len(); hsize=64
+    loop hsize<n and hsize<32768: hsize*=2
+    s.hsize=hsize; s.head=fill(-1,hsize); s.prev=fill(-1,hsize)
+    s
+
+# Consume at least `limit` more input bytes (or the rest); true once the stream is complete.
+deflate_step = (s: mut DeflateStream, limit: int) -> bool:
+    if s.done: return true
+    # (the tables move into locals, so writing them never copies a shared array)
+    src=s.src; head=s.head; prev=s.prev; lits=s.lits; dists=s.dists; bits=s.bits
+    s.head=[]; s.prev=[]; s.lits=[]; s.dists=[]; s.bits=__Bits([],0,0)
+    n=src.len(); hsize=s.hsize; i=s.i; bstart=s.bstart
+    stop=min(n,i+max(1,limit))
+    loop i<stop:
+        best, bdist = __lz_match(src, i, head, prev)
+        if i+2<n:
+            h=((int(src[i])<<10) xor (int(src[i+1])<<5) xor int(src[i+2])) & (hsize-1)
+            prev[i & (hsize-1)]=head[h]
+            head[h]=i
+        if best>=3 and best<32 and i+1<n:
+            nb, nd = __lz_match(src, i+1, head, prev)
+            if nb>best: best=0
+        if best>=3:
+            lits.push(256+best)
+            dists.push(bdist)
+            j=i+1; last=min(i+best,n-2)
+            loop j<last:
+                h=((int(src[j])<<10) xor (int(src[j+1])<<5) xor int(src[j+2])) & (hsize-1)
+                prev[j & (hsize-1)]=head[h]
+                head[h]=j
+                j+=1
+            i+=best
+        else:
+            lits.push(int(src[i]))
+            dists.push(0)
+            i+=1
+        if lits.len()>=s.block:
+            __deflate_block(bits, lits, dists, false, src, bstart, i)
+            lits.clear()
+            dists.clear()
+            bstart=i
+    if i>=n:
+        __deflate_block(bits, lits, dists, true, src, bstart, n)
+        if bits.cnt>0: bits.out.push(u8(bits.buf & 255))
+        s.done=true; lits=[]; dists=[]; head=[]; prev=[]
+    s.head=head; s.prev=prev; s.lits=lits; s.dists=dists; s.bits=bits; s.i=i; s.bstart=bstart
+    s.done
+
+deflate_output = (s: DeflateStream) -> u8[]: s.bits.out
+
+# ---------------- to_text(value), a container at a time ----------------
+# A template is to_text of the value with each large container cut to one element; that
+# one-element text (the marker) is replaced by the container's full text, element by element.
+struct TextPart:
+    marker = ""                   # the container's one-element text in the template
+    at = -1                       # where it sits there
+    open = "{"
+    close = "}"
+    count = 0
+    piece: (int) -> str = (i: int) -> str: ""   # element i: "key: value" in a map, "value" in an array
+
+struct TextStream:
+    template = ""
+    parts: TextPart[]
+    found = 0                     # parts located in the template so far
+    part = 0
+    element = 0
+    cursor = 0
+    out: u8[]
+    hash: u64 = TEXT_HASH_START
+    hashed = 0
+    error = ""
+    done = false
+
+text_stream = (template: str, parts: TextPart[], size_hint: int = 0) -> TextStream:
+    s=TextStream(template=template,parts=parts)
+    s.out.reserve(max(template.len(),size_hint))
+    s
+
+_text_append = (s: mut TextStream, text: str):
+    __buf_append_str(s.out,text)
+
+# Locate one marker per call, then write whole pieces until about `limit` bytes are added.
+# A marker that is missing or appears twice is an error: the caller falls back to to_text.
+text_step = (s: mut TextStream, limit: int) -> bool:
+    if s.done or s.error!="": return true
+    if s.found<s.parts.len():
+        p=s.parts[s.found]
+        at=index_of(s.template,p.marker) ?? -1
+        if at<0 or (index_of(s.template,p.marker,at+1) ?? -1)>=0: s.error="save text marker {s.found} not unique"; return true
+        s.parts[s.found].at=at; s.found+=1
+        if s.found==s.parts.len():
+            s.parts.sort((x: TextPart): x.at)
+            loop k in 1..s.parts.len():
+                if s.parts[k].at<s.parts[k-1].at+s.parts[k-1].marker.len(): s.error="save text markers overlap"; return true
+        return false
+    start=s.out.len()
+    loop s.out.len()-start<limit and not s.done:
+        if s.part>=s.parts.len():
+            _text_append(s,s.template[s.cursor..s.template.len()]); s.cursor=s.template.len(); s.done=true
+            continue
+        p=s.parts[s.part]
+        if s.cursor<p.at:
+            _text_append(s,s.template[s.cursor..p.at]); s.cursor=p.at
+        if s.element==0: _text_append(s,p.open)
+        if s.element<p.count:
+            if s.element>0: _text_append(s,", ")
+            _text_append(s,p.piece(s.element)); s.element+=1
+        if s.element>=p.count:
+            _text_append(s,p.close); s.cursor=p.at+p.marker.len(); s.part+=1; s.element=0
+    s.hash=text_hash_feed(s.hash,s.out,s.hashed,s.out.len()); s.hashed=s.out.len()
+    s.done
+
+text_stream_hash = (s: TextStream) -> u64: text_hash_finish(s.hash)
+
+# Map and array parts. `keys` are the map's keys in the order to_text writes them.
+map_text_part[K,V] = (marker: str, m: {K: V}, keys: K[], canon: (V) -> V) -> TextPart:
+    TextPart(marker=marker,count=keys.len(),piece=(i: int) -> str: to_text(keys[i])+": "+to_text(canon(m[keys[i]])))
+
+array_text_part[T] = (marker: str, xs: T[], canon: (T) -> T) -> TextPart:
+    TextPart(marker=marker,open="[",close="]",count=xs.len(),piece=(i: int) -> str: to_text(canon(xs[i])))

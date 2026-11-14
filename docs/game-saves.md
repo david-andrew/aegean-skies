@@ -41,7 +41,7 @@ constructs that from the running scene. UI callers should use the shell requests
 
 The pause menu opens on its **Game** tab (`src/debugmenu.jo game_page`, rows made by
 `src/game_menu.jo game_row` from the cached headers). Each slot shows its world time, place and a
-summary (aircraft, lire, day: `SaveSummary.craft` and `cents`, added for the menu; older headers
+summary (aircraft, purse, day: `SaveSummary.craft` and `cents`, added for the menu; older headers
 decode with them empty and simply omit them), and marks the active autosave slot. Save here on an
 empty slot saves at once; saving over a slot, Load and Delete ask for a yes. Buttons are disabled
 while `busy`. A note under the slots says what the last request came to (`Saved in slot 2.`, an
@@ -49,7 +49,7 @@ error text, `Slot 1 deleted.`) and where the autosave goes or why it is off. A s
 unpauses and closes the menu. A finished autosave shows only the quiet Saved card
 (`src/hud.jo saved_toast`), never a menu note. There is no start screen, so no Continue offer:
 a fresh start plays on and the player loads from the page. `tools/game_menu_probe.jo` drives the
-page's requests end to end (autosave and its card, save, change, load, delete; position, lire, a
+page's requests end to end (autosave and its card, save, change, load, delete; position, purse, a
 cat's friendship and a seen battle card restored).
 
 ## What persists
@@ -85,9 +85,28 @@ Autosave waits for three stable safe seconds after reaching a mooring or a town 
 30-second minimum between attempts. It then saves every 180 unpaused simulation seconds while
 safe. Idle sitting is safe; trading/dialogue/menu transactions, cat interaction, refuelling,
 rest/tinkering skips, flight/descent/free-camera and nearby fighting/raids defer it.
-Failures back off for at least 30 safe seconds instead of retrying every frame. Manual saves can
+Failures back off for at least 30 safe seconds instead of retrying every frame. Storage being
+busy (as during the save itself) is not leaving the safe place: only an actual departure re-arms
+the arrival save, so a successful autosave is followed by the 180-second one, not another after
+30 seconds. Manual saves can
 checkpoint flight/combat as well as the quay. No world or serialization work is done per frame
 by the eligibility check; it uses bounded registry bins and scene state.
+
+## Saving without a stall
+
+Saving a game is spread over frames (`save_game_slot(..., spread=true)`, stepped by
+`step_game_slots` after each frame's update, about 3 ms a frame, 12 ms while paused, standing
+aside on a frame that ran a world minute). The request frame only takes the checkpoint: the scene
+folded into a copy-on-write copy (`capture_game_snapshot`, with the structural check folding needs).
+The following frames run the save check in short steps (`save_check_step`: the same rules as
+`validate_save_world`, the far check in 32 slices), write the canonical World text a container
+element at a time from a small template (`src/living_save_stream.jo`, byte for byte
+`canonical_text`), hash it as it goes, compress it with a resumable deflate (`src/save_stream.jo`,
+4096-symbol blocks: a raw deflate stream as before), then store it. The format is unchanged.
+Choosing the bank to overwrite reads only the headers and body sizes; the full check of a stored
+game (inflate, parse, every World rule, the session) happens when it is loaded. A failing check
+refuses the save and keeps both banks. Tests and tools call `save_game_slot` without `spread`
+and get the same work done at once.
 
 ## Storage and failure handling
 
@@ -104,7 +123,8 @@ Three complete worlds plus recovery banks cannot fit localStorage's small UTF-16
 slots therefore use IndexedDB (`aegean-skies-game-v1`), with raw compressed ArrayBuffers and atomic
 header/body transactions. Only small slot headers are read at startup. A selected slot's bodies
 are read on demand; candidates are decoded newest first, keeping one parsed World at a time.
-Pending operations retain compressed bytes, never a live World projection across frames. A
+A save in progress holds its checkpoint (a copy-on-write World) until its text is written,
+then only compressed bytes. A
 stale-tab writer is refused. Browser denial/quota/transaction failures surface through `error`;
 there is no false success or silent fallback into an overfull localStorage store.
 
@@ -118,6 +138,12 @@ that much disk space. The existing legacy localStorage compact codec remains unc
 - `tests/game_session.jo`, `tests/game_slots.jo`: full snapshots, live-lease isolation, exact
   physics/fuel/presentation/clock, version/malformed refusal, three-slot isolation, corruption
   fallback, size/write preservation, deletion and bounded autosave retries.
+- `tests/save_stream.jo`, `tests/living_save_stream.jo`: streamed deflate and hash equal the
+  library's, streamed text equals `canonical_text` on living worlds, stepped checks match
+  `validate_save_world`, a save spread over many steps loads back identically, a failing world is
+  refused with both banks kept.
+- `tools/stutter_trace.jo` with `STUTTER_AUTOSAVE_AT` (`tools/test_stutter.py --autosave-at`): a
+  measured stay that spans a real autosave.
 - `tools/game_save_probe.jo`: actual game autosave, a real paid fuel purchase, paused manual
   save/load/delete, exact restoration, then 120 resumed frames and full conservation. `GAME_SAVE_CASE=flight`
   with `AEGEAN_FLYING='300 150'` also checks that flight is not autosaved and manual flight works.
