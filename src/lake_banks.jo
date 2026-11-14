@@ -13,17 +13,30 @@ use 'look.jo'
 use 'render_space.jo'
 use 'quality.jo'
 use 'world_point.jo'
+use 'terrain_lod.jo'
+# Reeds in 160 m cells, each drawn only when it is in view: the same reeds, where they were
+# drawn before (within 2.4 km of the lake), without sending the whole lake's half-million
+# stalk vertices through the GPU every frame (about 6 ms at Olythoria on redfox).
+LAKE_REED_CELL=160.0
+struct LakeReedCell:
+    center:vec3
+    full:Mesh=Mesh()
+# Bank trees in the same cells, also drawn only in view (as river bank batches are culled).
+struct LakeTreeCell:
+    center:vec3
+    kinds:InstanceBuffer[RiverBankInstance][]
 struct LakeBankBatch:
     id:int= -1
     tier:int= -1
     center:vec3
-    trees:InstanceBuffer[RiverBankInstance][]
-    reeds:Mesh=Mesh()
+    trees:LakeTreeCell[]
+    reeds:LakeReedCell[]
 lake_bank_batches:LakeBankBatch[]=[LakeBankBatch(),LakeBankBatch(),LakeBankBatch(),LakeBankBatch()]
 
 build_lake_bank=(id:int,old:LakeBankBatch)->LakeBankBatch:
     lake=SETTLEMENT_LAKES[id];center=vec3(lake.center.x,0,lake.center.y)
-    trees:RiverBankInstance[][]=[[],[]];reeds:Vertex3D[]
+    trees:RiverBankInstance[][]=[[],[]]
+    cells:{int:Vertex3D[]}
     # The same candidates exist on all tiers; low omits alternate trees and reed
     # stalks, not entire stretches of bank or every plant near a town.
     loop j in 1..lake.nz-1:
@@ -52,11 +65,15 @@ build_lake_bank=(id:int,old:LakeBankBatch)->LakeBankBatch:
                     if lake_depth(lake,f64(q.x+center.x),f64(q.z+center.z))> -0.3:continue
                     trees[kind].push(RiverBankInstance(q,vec4(cos(phase),sin(phase),f32(kind),1)))
             if depth> -0.14 and h<lake.level+0.3 and (seed%2==0 or patch>0.35):
+                key=int(floor(f64(at.x)/LAKE_REED_CELL))*100003+int(floor(f64(at.z)/LAKE_REED_CELL))
+                if not (key in cells): cells[key]=[]
+                reeds:Vertex3D[]
                 loop k in 0..(if render_quality.tier==0:4 else:9):
                     delta=vec3(sin(f64(seed+k)*1.7)*2.4,0,cos(f64(seed+k)*2.3)*2.4)
                     height=1.3+f64((seed+k)%9)*0.11
                     add_cylinder(reeds,at+delta,0.045,height,rgb(0.32,0.39,0.17),3,0.009)
                     if k%3==0:add_cylinder(reeds,at+delta+vec3(0,f32(height-0.2),0),0.07,0.23,rgb(0.32,0.22,0.12),3,0.065)
+                cells[key].extend(reeds)
     # The inflow and outflow streams are lined with trees, so their courses
     # read across the fields from the air.
     loop channel in LAKE_CHANNELS:
@@ -76,12 +93,39 @@ build_lake_bank=(id:int,old:LakeBankBatch)->LakeBankBatch:
                 phase=f64(seed%100)
                 trees[kind].push(RiverBankInstance(at,vec4(cos(phase),sin(phase),f32(kind),1)))
     batch=old;batch.id=id;batch.tier=render_quality.tier;batch.center=center
-    if batch.trees.len()==0:
-        batch.trees=[loop kind in 0..2:instance_buffer(trees[kind])]
-    else:
-        loop kind in 0..2:set_instances(batch.trees[kind],trees[kind])
-    if batch.reeds.vao==0:batch.reeds=mesh(reeds)
-    else:update_mesh(batch.reeds,reeds)
+    tree_cells:{int:RiverBankInstance[][]}
+    loop kind in 0..2:
+        loop inst in trees[kind]:
+            key=int(floor(f64(inst.position.x)/LAKE_REED_CELL))*100003+int(floor(f64(inst.position.z)/LAKE_REED_CELL))
+            if not (key in tree_cells): tree_cells[key]=[[],[]]
+            tree_cells[key][kind].push(inst)
+    tree_keys=tree_cells.keys(); tree_keys.sort()
+    loop k in 0..tree_keys.len():
+        lists=tree_cells[tree_keys[k]]
+        sum=vec3(0,0,0); n=0
+        loop kind in 0..2:
+            loop inst in lists[kind]: sum+=inst.position; n+=1
+        c=sum/f32(max(1,n))
+        if k<batch.trees.len():
+            batch.trees[k].center=c
+            loop kind in 0..2:set_instances(batch.trees[k].kinds[kind],lists[kind])
+        else:batch.trees.push(LakeTreeCell(c,[loop kind in 0..2:instance_buffer(lists[kind])]))
+    loop k in tree_keys.len()..batch.trees.len():
+        none_left:RiverBankInstance[]
+        loop kind in 0..2:set_instances(batch.trees[k].kinds[kind],none_left)
+    # (cell meshes are reused when a slot changes lake, as the tree buffers are)
+    keys=cells.keys(); keys.sort()
+    loop k in 0..keys.len():
+        full=cells[keys[k]]
+        sum=vec3(0,0,0)
+        loop v in full: sum+=v.pos
+        c=sum/f32(max(1,full.len()))
+        if k<batch.reeds.len():
+            batch.reeds[k].center=c;update_mesh(batch.reeds[k].full,full)
+        else:batch.reeds.push(LakeReedCell(c,mesh(full)))
+    loop k in keys.len()..batch.reeds.len():
+        empty:Vertex3D[]
+        update_mesh(batch.reeds[k].full,empty)
     batch
 
 draw_lake_banks=(L:Light,t:f64):
@@ -106,6 +150,26 @@ draw_lake_banks=(L:Light,t:f64):
         p=obj_params(L,t,anchor=world_point(batch.center))
         # Shared river vegetation uses an instanced vertex shader. Keep only
         # positions and crown phases here, never duplicate tree vertices.
-        loop kind in 0..batch.trees.len():
-            if batch.trees[kind].count>0:draw_instanced(river_bank_far_sh,river_bank_far[kind],batch.trees[kind],p)
-        if length(cam.xz-batch.center.xz)<2400 and batch.reeds.count>0:draw(obj_sh,batch.reeds,p)
+        planes=land_planes(scene_view_proj())
+        loop cell in batch.trees:
+            # (trees stand within their cell about its centroid, 5 m of offset, up to 16 m tall;
+            # Earth curvature adds well under a metre at a lake's 5.5 km reach)
+            warped=render_world(batch.center+cell.center,cam);radius=f64(LAKE_REED_CELL)*1.5+21.0
+            visible=true
+            if scene_warp_b.x==0.0:
+                loop plane in planes:
+                    if f64(dot(plane.xyz,warped)+plane.w)< -radius:visible=false
+            if not visible:continue
+            loop kind in 0..cell.kinds.len():
+                if cell.kinds[kind].count>0:draw_instanced(river_bank_far_sh,river_bank_far[kind],cell.kinds[kind],p)
+        if length(cam.xz-batch.center.xz)<2400:
+            loop cell in batch.reeds:
+                if cell.full.count==0:continue
+                # (a cell's reeds lie within its 160 m square, about the clump's centroid, plus
+                # 2.4 m of spread and 2 m of height: a conservative sphere)
+                warped=render_world(batch.center+cell.center,cam);radius=f64(LAKE_REED_CELL)*1.5+4.0
+                visible=true
+                if scene_warp_b.x==0.0:
+                    loop plane in planes:
+                        if f64(dot(plane.xyz,warped)+plane.w)< -radius:visible=false
+                if visible:draw(obj_sh,cell.full,p)
