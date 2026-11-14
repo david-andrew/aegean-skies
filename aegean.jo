@@ -141,6 +141,12 @@ use 'src/war_checkpoint.jo'
 use 'src/leisure_menu.jo'
 use 'src/leisure.jo'
 use 'src/leisure_view.jo'
+use 'src/tavli.jo'
+use 'src/tavli_view.jo'
+use 'src/newspaper.jo'
+use 'src/newspaper_view.jo'
+use 'src/fishing.jo'
+import 'src/living_talk_words.jo' as talk_words
 use 'src/bar_scene.jo'
 use 'src/bar_band.jo'
 use 'src/plane_work.jo'
@@ -372,7 +378,7 @@ hotel_menu = leisure_menu(hotel_place)
 coffee_menu = leisure_menu(coffee_place)
 leisure = LeisureState()
 menu_view = MenuView()
-leisure_ui = 0                  # (with ui == .leisure) 0 sitting, 1 the menu, 2 a room, 3 the aircraft, 4 a spare room
+leisure_ui = 0                  # (with ui == .leisure) 0 sitting, 1 the menu, 2 a room, 3 the aircraft, 4 a spare room, 6 who to play tavli with, 7 the tavli board, 8 asking the band for a number, 9 the paper, 10 fishing
 leisure_at = "hotel"            # whose menu or room is open
 leisure_line = ""               # (what was last said or done there)
 leisure_host = -1               # (the family offering a spare room)
@@ -380,6 +386,20 @@ leisure_spent = 0               # (this sitting: for the notebook when one gets 
 leisure_had: str[]
 served_look_until = -1.0        # (a look at the table while what was ordered arrives)
 served_pending = false
+# tavli at the coffee house (src/tavli.jo, src/tavli_view.jo)
+tavli_game = TavliGame()
+tavli_view = TavliView()
+tavli_with = -1                 # (the townsperson across the board)
+tavli_stake = 0
+tavli_games = 0                 # (games this session: each game's dice differ)
+tavli_choices: int[]            # (partners offered, then stakes)
+tavli_step = 0                  # (choosing: 0 a partner, 1 the stake)
+# the newspaper at the coffee house (src/newspaper.jo, src/newspaper_view.jo)
+paper_today = Paper(title = "", dateline = "")
+paper_view = PaperView()
+# fishing from a dock (src/fishing.jo)
+angling = Angling()
+fishing_frozen = false          # (captures: the float held where it is)
 
 struct TimeSkip:
     active = false
@@ -392,7 +412,7 @@ struct TimeSkip:
 skip = TimeSkip()
 
 # (the menu's search line has the keyboard: letters don't also work the game's keys)
-leisure_typing = () -> bool: ui == .leisure and leisure_ui == 1
+leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10)
 
 leisure_place = (key: str) -> LeisurePlace: if key == "coffee": coffee_place else: hotel_place
 leisure_items = (key: str) -> MenuItem[]: if key == "coffee": coffee_menu else: hotel_menu
@@ -435,6 +455,7 @@ leisure_prompt = () -> str:
     if f64(length(me.pos - hotel.counter)) < 2.4: return "F  order at the bar"
     if f64(length(me.pos - hotel.desk)) < 2.8: return "F  ask at the desk for a room"
     if coffee.ok and f64(length(me.pos - coffee.seat)) < 2.4: return "F  sit at the coffee house"
+    if fishing_here(): return "F  fish from the dock"
     ""
 
 leisure_act = ():
@@ -446,6 +467,7 @@ leisure_act = ():
         ui = .leisure; leisure_ui = 2; leisure_at = "hotel"; leisure_line = ""
         mouse_lock(false)
     else if said.contains("coffee"): leisure_sit("coffee")
+    else if said.contains("fish"): fishing_begin()
 
 # time passing: the screen darkens, the scene's people and craft are folded back into the world,
 # the world's clock runs on in steps, and the screen comes back
@@ -480,20 +502,240 @@ leisure_time_step = (dt: f64):
     if skip.fade <= 0.0: skip.active = false
 
 
+# ---------------- tavli ----------------
+
+tavli_open_choice = ():
+    global leisure_ui, leisure_line, tavli_choices, tavli_step
+    near: int[]
+    order = [loop k in 0..folks.len(): if folks[k].shown and folks[k].place == 0 and f64(length(folks[k].pos - coffee.seat)) < 14.0: k]
+    order.sort((k: int) -> f64: f64(length(folks[k].pos - coffee.seat)))
+    loop k in order: near.push(folks[k].person)
+    tavli_choices = tavli_partners(living_world, coffee_place.place, near)
+    tavli_step = 0
+    leisure_line = if tavli_choices.len() == 0: "Nobody is free for a game just now. The boards wait in their stack." else: "Who'll take you on?"
+    leisure_ui = 6
+
+tavli_begin = (person: int, stake: int):
+    global leisure_ui, tavli_game, tavli_view, tavli_with, tavli_stake, tavli_games
+    tavli_with = person; tavli_stake = stake
+    tavli_games += 1
+    tavli_game = tavli_new(living_world, person, stake, tavli_games + leisure.tavli.len() * 7)
+    tavli_view = TavliView()
+    tb_say(tavli_view, tavli_game, "start")
+    leisure_ui = 7
+    mouse_lock(false)
+
+tavli_face = () -> TavliFace:
+    w = living_world
+    name = split(w.people[tavli_with].name, " ")[0]
+    record = "Your first game with {name}"
+    if let r = tavli_record(leisure.tavli, tavli_with):
+        record = "Games with {name}: you {r.wins}, {name} {r.losses}"
+        if r.balance != 0: record = "{record}; you are {if r.balance > 0: "up" else: "down"} {phoenix_text(abs(r.balance))}"
+    TavliFace(name, w.people[tavli_with].name, "{talk_words.role_noun(w, tavli_with)}, who {tavli_style_words(tavli_game.style)}", tavli_stake_words(tavli_stake), record, player_cents())
+
+# choosing who to play tavli with, then for what
+tavli_choice_frame = ():
+    global leisure_ui, leisure_line, tavli_with, tavli_step
+    w = living_world
+    # who to play, then for what
+    if tavli_step == 0:
+        choices = [loop id in tavli_choices: "{w.people[id].name}, {talk_words.role_noun(w, id)}, who {tavli_style_words(tavli_style(w, id))}"]
+        choices.push("Not now")
+        r = choice_panel(fonts, "Tavli", "Portes, at the coffee house", leisure_line, choices)
+        if r.choice >= 0 and r.choice < tavli_choices.len():
+            tavli_with = tavli_choices[r.choice]
+            tavli_step = 1
+            leisure_line = "{split(w.people[tavli_with].name, " ")[0]} sets out the board. For what?"
+        else if r.choice >= 0 or r.closed:
+            leisure_ui = 0; leisure_line = ""
+    else:
+        stakes = tavli_stakes(w, tavli_with)
+        choices = [loop s in stakes: (if s == 0: "Just for the game" else: "{phoenix_text(s)} a point")]
+        choices.push("Back")
+        r = choice_panel(fonts, w.people[tavli_with].name, "A gammon counts double; giving up a game costs a single point", leisure_line, choices)
+        if r.choice >= 0 and r.choice < stakes.len(): tavli_begin(tavli_with, stakes[r.choice])
+        else if r.choice >= 0 or r.closed:
+            tavli_step = 0
+            leisure_line = "Who'll take you on?"
+
+# the board, each frame
+tavli_frame = ():
+    global leisure_ui, leisure_line
+    act = tavli_panel(fonts, tavli_game, tavli_view, tavli_face())
+    if act.resign: tavli_resign(tavli_game, 0)
+    if act.finished:
+        s = tavli_settle(living_world, tavli_game, leisure.tavli)
+        tavli_view.result = s.message
+        name = split(living_world.people[tavli_with].name, " ")[0]
+        log_note(notebook, "Tavli with {name} at the coffee house: {if tavli_game.winner == 0: "won" else: "lost"}{if tavli_game.points == 2: " a gammon" else: ""}{if s.cents != 0: ", " + (if s.cents > 0: "+" else: "-") + phoenix_text(abs(s.cents)) else: ""}.", clock_text(living_world, living_world.minute))
+    if act.again:
+        if tavli_stake in tavli_stakes(living_world, tavli_with): tavli_begin(tavli_with, tavli_stake)
+        else: tavli_begin(tavli_with, 0)
+    if act.leave:
+        leisure_ui = 0; leisure_line = ""
+
+# ---------------- fishing from a dock ----------------
+
+# the hotel's kitchen grills a plate of one's own catch, and it comes to the table
+grill_catch = ():
+    global leisure_spent, leisure_had, served_look_until
+    used = fishing_grill(living_world, living_world.people[hotel_place.keeper].account)
+    if used <= 0: return
+    plate = MenuItem("Your own catch, grilled", "Food", "From the grill", "with lemon and oil", GRILL_CENTS, serve = .plate, food = true)
+    leisure.served.push(Served(plate, living_world.minute, leisure.orders % 6))
+    if leisure.served.len() > 6: leisure.served.remove_at(0)
+    leisure.orders += 1
+    leisure_spent += GRILL_CENTS; leisure_had.push("one's own catch, grilled")
+    served_look_until = t + 4.0
+
+_ahead = () -> vec3: vec3(f32(sin(me.yaw)), 0, f32(cos(me.yaw)))
+
+# On a dock or quay in a harbour town, facing deep enough water, away from one's own mooring and
+# from anyone close enough to talk to.
+fishing_here = () -> bool:
+    if me.mode != .walking or living_world.people[living_world.player].place < 0: return false
+    if f64(me.pos.y) > 4.0 or f64(me.pos.y) < 0.3: return false
+    out = me.pos + _ahead() * 3.0
+    if surface_height(f64(out.x), f64(out.z)) > -0.6: return false
+    if nearest_folk(folks, me.pos, 3.5) >= 0 or near_own_craft(): return false
+    if let a = mooring_anchor():
+        if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 8.0: return false
+    true
+
+fishing_begin = ():
+    global ui, leisure_ui, leisure_line, angling, follow
+    angling = Angling(place = living_world.people[living_world.player].place)
+    ui = .leisure; leisure_ui = 10; leisure_line = ""
+    follow.yaw = me.yaw + PI + 0.35; follow.pitch = 0.18; follow.distance = 4.2
+    mouse_lock(false)
+
+fishing_end = ():
+    global ui, follow
+    if angling.caught.len() > 0:
+        log_note(notebook, "Fished from the dock at {living.place_name(living_world, angling.place)}: {fishing_tally(angling)}.", clock_text(living_world, living_world.minute))
+    follow.distance = 5.5
+    ui = .none
+
+# the rod's tip and where the float is (the scene draws them)
+fishing_tip = () -> vec3: me.pos + _ahead() * 1.9 + vec3(0, 2.05, 0) + vec3(f32(cos(me.yaw)), 0, f32(-sin(me.yaw))) * 0.3
+fishing_float = () -> vec3:
+    out = me.pos + _ahead() * 6.5
+    rest = vec3(out.x, f32(0.04 + sin(t * 1.7) * 0.025 - fishing_float_dip(angling) * 0.16), out.z)
+    if angling.stage == 1:
+        u = clamp(angling.clock / 0.8, 0.0, 1.0)
+        tip = fishing_tip()
+        p = tip + (rest - tip) * f32(u)
+        return p + vec3(0, f32(sin(u * PI) * 1.6), 0)
+    rest
+
+draw_fishing = ():
+    if not (ui == .leisure and leisure_ui == 10): return
+    hand = me.pos + _ahead() * 0.35 + vec3(0, 1.15, 0)
+    tip = fishing_tip()
+    draw_line3d(hand, tip, rgba(0.36, 0.24, 0.12, 1), 0.035)
+    if angling.stage == 0: return
+    f = fishing_float()
+    draw_line3d(tip, f + vec3(0, 0.06, 0), rgba(0.9, 0.9, 0.85, 0.7), 0.006)
+    draw_line3d(f, f + vec3(0, 0.11, 0), rgba(0.85, 0.12, 0.08, 1), 0.085)
+    draw_line3d(f - vec3(0, 0.05, 0), f, rgba(0.95, 0.94, 0.9, 1), 0.085)
+
+fishing_frame = ():
+    global leisure_line
+    w = living_world
+    strike_key = vpressed(.f) or key_pressed(.space) or key_pressed(.enter)
+    dt = clamp(frame_time(), 0.0, 0.05)
+    # the card along the bottom
+    set_font(fonts.ui)
+    actions: str[]
+    first = if angling.stage == 0: "Cast" else: if angling.stage == 4: "Cast again" else: "Strike"
+    actions.push(first)
+    if fishing_held(w) > 0: actions.push("Sell the catch, {phoenix_text(fishing_worth(w))}")
+    actions.push("Done")
+    status = if angling.stage == 1: "The float flies out." else: if angling.stage == 2: "Waiting. Watch the float." else: if angling.stage == 3: "It's under!" else: if angling.line != "": angling.line else: "{if leisure_line != "": leisure_line + " " else: ""}Cast when you're ready."
+    r = sitting_bar(fonts, "Fishing at {living.place_name(w, angling.place)}", "{status}  In the basket: {fishing_tally(angling).lower()}", actions)
+    pick = if r.choice >= 0: actions[r.choice] else: ""
+    strike = (pick == "Strike" or (strike_key and angling.stage >= 1 and angling.stage <= 3))
+    cast = pick == "Cast" or pick == "Cast again" or (strike_key and (angling.stage == 0 or angling.stage == 4))
+    if cast:
+        seed = lt.mix64(living_world.seed xor u64(living_world.minute * 31 + angling.casts))
+        fishing_cast(angling, seed, lt.local_minute(w.minute))
+        leisure_line = ""
+    else if not fishing_frozen:
+        if let c = fishing_step(angling, dt, strike): _ = fishing_land(living_world, angling, c)
+    if pick.starts_with("Sell"):
+        got = fishing_sell(living_world)
+        leisure_line = if got > 0: "The fish market takes it all for {phoenix_text(got)}." else: "The fish market can't take it just now."
+        if got > 0: log_note(notebook, "Sold the catch to the fish market at {living.place_name(w, angling.place)}, {phoenix_text(got)}.", clock_text(w, w.minute))
+    if pick == "Done" or vpressed(.escape): fishing_end()
+    set_font()
+
+# ---------------- the newspaper ----------------
+
+# Today's paper: the town's news, with the notices posted on its board and the air club's meets.
+paper_of = (place: int) -> Paper:
+    w = living_world
+    extra: PaperPiece[]
+    loop n in job_notices(w, place):
+        if n.taken_by != "": continue
+        extra.push(PaperPiece("Notices", "Wanted: {n.title}", "{n.body} Pays {phoenix_text(n.pay)}, {n.due}. Apply to {n.poster}.", 0))
+    loop n in air_meet_notices(air_events, w, w.harbors[clamp(place, 0, w.harbors.len() - 1)].center, (m: int) -> str: clock_text(w, m), limit = 3):
+        extra.push(PaperPiece("The air", n.title, "{n.body} {if n.pay_text != "": n.pay_text else: if n.pay > 0: "Prize " + phoenix_text(n.pay) + "." else: ""} {n.due}".replace("  ", " "), 50))
+    newspaper(w, place, extra)
+
+paper_open = ():
+    global leisure_ui, leisure_line, paper_today, paper_view, leisure_spent, leisure_had
+    o = leisure_buy_paper(living_world, coffee_place, leisure, PAPER_CENTS)
+    if not o.ok:
+        leisure_line = o.message
+        return
+    if o.cents > 0:
+        leisure_spent += o.cents; leisure_had.push("the paper")
+    paper_today = paper_of(coffee_place.place)
+    paper_view = PaperView()
+    leisure_ui = 9
+    mouse_lock(false)
+
 # what the band is doing, in a line for the table
 band_words = () -> str:
     local = lt.local_minute(living_world.minute)
     if local < BAR_START or local >= BAR_END: return "The band plays in the evening."
-    bp = bar_set_position(living_world.tick)
-    if not bp.playing: return "The band is between numbers."
+    bp = bar_set_position(living_world.tick, leisure.requests)
+    waiting = if let r = bar_request_waiting(living_world.tick, leisure.requests): " Your request, {MUSIC_PIECES[BAR_SET[r.index].piece].title}, is next." else: ""
+    if not bp.playing: return "The band is between numbers.{waiting}"
     sp = BAR_SET[bp.index]
     who = if sp.lineup == 0: "The pianist is playing" else: if sp.lineup == 2: "The trio is playing" else: if sp.lineup == 4: "The piano and the violin are playing" else: if sp.lineup == 5: "A guitar and a mandolin are playing" else: if sp.lineup == 6: "A violin and a guitar are playing" else: "The band is playing"
-    "{who} {MUSIC_PIECES[sp.piece].title}{if bar_singing(bp): ", and the singer sings" else: ""}."
+    yours = if bp.request: "your request, " else: ""
+    "{who} {yours}{MUSIC_PIECES[sp.piece].title}{if bar_singing(bp): ", and the singer sings" else: ""}.{waiting}"
+
+# the numbers one may ask for, as the band would offer them
+band_offer = () -> str[]:
+    [loop sp in BAR_SET: "{split(MUSIC_PIECES[sp.piece].title, " (")[0]} ({if sp.lineup == 0: "the pianist alone" else: if sp.lineup == 4: "piano and violin" else: if sp.lineup == 5: "guitar and mandolin" else: if sp.lineup == 6: "violin and guitar" else: "the band"}{if sp.sung.len() > 0: ", sung" else: ""})"]
+
+band_request_frame = ():
+    global leisure_ui, leisure_line
+    w = living_world
+    choices = band_offer()
+    choices.push("Not now")
+    r = choice_panel(fonts, "Ask the band for a number", "A phoenix in the hat; they play it next", leisure_line, choices)
+    if r.choice >= 0 and r.choice < BAR_SET.len():
+        title = MUSIC_PIECES[BAR_SET[r.choice].piece].title
+        o = leisure_request(w, hotel_place, leisure, r.choice, bar_request_start(w.tick, leisure.requests), title)
+        if o.ok:
+            global leisure_spent, leisure_had
+            leisure_spent += o.cents
+            leisure_had.push("{title} from the band")
+            log_note(notebook, "Asked the band at the Hotel Ancora for {title}; a phoenix in the hat.", clock_text(w, w.minute))
+            leisure_ui = 0; leisure_line = ""
+        else: leisure_line = o.message
+    else if r.choice >= 0 or r.closed:
+        leisure_ui = 0; leisure_line = ""
 
 draw_leisure = (L: Light):
+    draw_fishing()
     local = lt.local_minute(living_world.minute)
     if local >= BAR_START and local < BAR_END:
-        bp = bar_set_position(living_world.tick)
+        bp = bar_set_position(living_world.tick, leisure.requests)
         draw_band(hotel, band, L, t, BAR_SET[bp.index].lineup, bar_singing(bp))
     if leisure.served.len() > 0:
         if leisure.sitting == "coffee": draw_served(hotel, serve_meshes, leisure.served, L, t, coffee.table, coffee.table_x, coffee.table_z)
@@ -537,6 +779,10 @@ leisure_panel = ():
                 return
             lp = leisure_place(key)
             actions = ["See the menu", "Wait an hour"]
+            if key == "hotel" and fishing_held(w) > 0: actions.push("Have your catch grilled")
+            if key == "coffee": actions.push("Play tavli")
+            if key == "coffee": actions.push(if leisure.paper_day == lt.day_index(w.minute): "Read the paper" else: "Buy the paper")
+            if key == "hotel" and lt.local_minute(w.minute) >= BAR_START - 30 and lt.local_minute(w.minute) < BAR_END - 10: actions.push("Ask for a song")
             if lp.room_cents > 0: actions.push("Take a room")
             k_talk = nearest_folk(folks, me.pos, 7.0)
             if k_talk >= 0: actions.push("Talk to {split(w.people[folks[k_talk].person].name, " ")[0]}")
@@ -546,6 +792,11 @@ leisure_panel = ():
             pick = if r.choice >= 0: actions[r.choice] else: ""
             if pick == "See the menu": leisure_open_menu(key)
             else if pick == "Wait an hour": leisure_skip(60, "An hour passes at {lp.name}.")
+            else if pick == "Play tavli": tavli_open_choice()
+            else if pick == "Have your catch grilled": grill_catch()
+            else if pick == "Read the paper" or pick == "Buy the paper": paper_open()
+            else if pick == "Ask for a song":
+                leisure_ui = 8; leisure_line = ""
             else if pick == "Take a room":
                 leisure_ui = 2; leisure_at = key; leisure_line = ""
             else if pick.starts_with("Talk to"): _leisure_talk(k_talk)
@@ -606,6 +857,13 @@ leisure_panel = ():
                 log_note(notebook, "Rested in the spare room at {name}'s.", clock_text(w, w.minute))
                 leisure_skip(rest_minutes(w, if r.choice == 0: 420 else: 1110), "Asleep in the spare room at {split(name, " ")[0]}'s")
             else if r.choice == 2 or r.closed: ui = .none
+        6: tavli_choice_frame()
+        7: tavli_frame()
+        8: band_request_frame()
+        10: fishing_frame()
+        9:
+            if paper_panel(fonts, paper_today, paper_view):
+                leisure_ui = 0; leisure_line = ""
         _: ui = .none
 
 listen_mode = ""                # (captures: the camera turning by the band, or walking away)
@@ -631,7 +889,7 @@ listen_step = (dt: f64):
         me.stride = approach(me.stride, 0.7, 8.0, dt); me.phase += dt * 7.5
         follow.yaw = approach_angle(follow.yaw, me.yaw + PI, 3.0, dt)
 
-# AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace: stage a leisure panel at
+# AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|tavli-choose|tavli|tavli-mid|request|requested|paper|fishing|fishing-bite: stage a leisure panel at
 # the start, for captures (with AEGEAN_CAPTURE_MINUTES for the hour)
 leisure_capture = env("AEGEAN_LEISURE") ?? ""
 if leisure_capture != "": print("HOTEL at {hotel.origin} seat {hotel.seat} stage {hotel.stage} desk {hotel.desk} coffee {coffee.seat}")
@@ -662,6 +920,62 @@ leisure_capture_step = ():
         leisure_sit("coffee")
         _leisure_order("coffee", coffee_menu[coffee_menu.len() - 30])
         leisure_open_menu("coffee")
+    if stage == "request" or stage == "requested":
+        leisure_sit("hotel")
+        leisure_ui = 8; leisure_line = ""
+        if stage == "requested":
+            o = leisure_request(living_world, hotel_place, leisure, 2, bar_request_start(living_world.tick, leisure.requests), "Clair de lune")
+            print("REQUEST {o.message}")
+            leisure_ui = 0
+    if stage == "fishing" or stage == "fishing-bite":
+        # (on the waterfront quay below the hotel, facing the water)
+        q = hotel.desk - hotel.table_z * 7.0
+        me.pos = vec3(q.x, f32(walk_height(towns, f64(q.x), f64(q.z))), q.z)
+        out = -hotel.table_z
+        me.yaw = atan2(f64(out.x), f64(out.z))
+        print("FISHING here {fishing_here()} at {me.pos} ahead {surface_height(f64((me.pos + _ahead() * 3.0).x), f64((me.pos + _ahead() * 3.0).z))}")
+        fishing_begin()
+        global fishing_frozen
+        fishing_frozen = true
+        fishing_cast(angling, u64(5), 1140)
+        angling.caught = [Catch(1, 240), Catch(4, 610)]
+        if stage == "fishing-bite":
+            angling.stage = 3; angling.clock = 0.08
+        else:
+            angling.stage = 2; angling.clock = 0.5
+    if stage == "paper":
+        leisure_sit("coffee")
+        paper_open()
+        if (env("AEGEAN_PAPER_SCROLL") ?? "") != "": paper_view.scroll = to_float(env("AEGEAN_PAPER_SCROLL") ?? "0") ?? 0.0
+    if stage == "tavli-choose":
+        leisure_sit("coffee")
+        tavli_open_choice()
+    if stage == "tavli" or stage == "tavli-mid":
+        leisure_sit("coffee")
+        tavli_open_choice()
+        if tavli_choices.len() > 0:
+            tavli_begin(tavli_choices[0], 50)
+            if stage == "tavli-mid":
+                # (a few turns played by two careful hands, then the player's throw)
+                tavli_opening(tavli_game)
+                loop k in 0..14:
+                    if tavli_game.phase == .done: break
+                    if tavli_game.phase == .roll: tavli_throw(tavli_game)
+                    play = tavli_choose(tavli_game.board, tavli_game.turn, tavli_roll_dice(tavli_game.roll[0], tavli_game.roll[1]), TavliStyle(care = 0.8), tavli_game.rng xor u64(k))
+                    loop m in play.moves: _ = tavli_move(tavli_game, m)
+                    if tavli_game.turn == 1: tavli_view.last_theirs = play.moves
+                    tavli_pass(tavli_game)
+                if tavli_game.turn == 1:
+                    tavli_throw(tavli_game)
+                    play = tavli_choose(tavli_game.board, 1, tavli_roll_dice(tavli_game.roll[0], tavli_game.roll[1]), TavliStyle(care = 0.8), tavli_game.rng)
+                    loop m in play.moves: _ = tavli_move(tavli_game, m)
+                    tavli_view.last_theirs = play.moves
+                    tavli_pass(tavli_game)
+                tavli_throw(tavli_game)
+                loop k in 0..2:
+                    tb_throw_die(tavli_view.dice[k], 0, tavli_game.roll[k], f64(k) * 3.3 + 1.0)
+                    loop _ in 0..400: tb_dice_step(tavli_view.dice, 1.0 / 60.0)
+                tb_say(tavli_view, tavli_game, "hit")
     if stage.starts_with("work:"):
         name = stage[5..stage.len()]
         loop jb in TINKER_JOBS:
@@ -1923,6 +2237,8 @@ title_wanted = () -> bool:
     not staged
 title = TitleScreen(open = title_wanted())
 title_left_at = -100.0          # (when play began from the title: the scene comes up out of the dusk)
+names_at_play = 0               # (the game's name drawn so far when play began: no more after that)
+title_check = to_int(env("AEGEAN_TITLE_CHECK") ?? "") ?? -1   # (a frame to report on the name over play)
 page_shown = false              # (web: the page's loading card is taken away once the game has drawn)
 
 # the world waits behind the title; the sea and the sky move, and the saved games are read
@@ -1940,6 +2256,8 @@ title_begin = ():
     title.open = false
     title.loading = -1
     title_left_at = t
+    global names_at_play
+    names_at_play = title_name_draws
     game_ui_note = ""
     print("TITLE play: scenario '{active_scenario}', autosave slot {game_active_slot}")
 
@@ -2680,6 +2998,7 @@ with_meet_remark = (speaker: int, turn: social.ConversationTurn) -> str:
     day = lt.day_index(living_world.minute)
     if meet_remarked.get(speaker, -1) == day or turn.exhausted: return turn_text(turn)
     remark = air_meet_remark(air_events, living_world, speaker, me.pos)
+    if remark == "": remark = tavli_remark(living_world, leisure.tavli, speaker)
     if remark == "": return turn_text(turn)
     meet_remarked[speaker] = day
     said = if turn.text == "": remark else: "{turn.text} {remark}"
@@ -3459,9 +3778,9 @@ update_frame = (dt: f64):
     # (the band heard from where the camera is: which way it faces, the hotel's walls, the town in
     # between, the terrace or the quay; close by, the harbour's background hushes a little)
     heard = band_hearing(hotel, ear, ear_forward, if f64(length(ear - hotel.stage)) < 150.0: ambience_obstruction(hotel.stage + vec3(0, 1.6, 0), ear, towns) else: 0.0)
-    world_ambience.sound.duck = if bar_set_position(living_world.tick).playing: live_duck(heard) else: 1.0
-    bar_music_update(bar_music, living_world.tick, heard, audio_enabled)
-    if listen_mode != "" and frame_number() % 60 == 0: print("LISTEN frame {frame_number()} distance {heard.distance:.1f} pan {heard.pan:+.2f} front {heard.front:+.2f} occlusion {heard.occlusion:.2f} zone {heard.zone} duck {world_ambience.sound.duck:.2f} voice {bar_music.voice} playing {bar_set_position(living_world.tick).playing}")
+    world_ambience.sound.duck = if bar_set_position(living_world.tick, leisure.requests).playing: live_duck(heard) else: 1.0
+    bar_music_update(bar_music, living_world.tick, heard, audio_enabled, leisure.requests)
+    if listen_mode != "" and frame_number() % 60 == 0: print("LISTEN frame {frame_number()} distance {heard.distance:.1f} pan {heard.pan:+.2f} front {heard.front:+.2f} occlusion {heard.occlusion:.2f} zone {heard.zone} duck {world_ambience.sound.duck:.2f} voice {bar_music.voice} playing {bar_set_position(living_world.tick, leisure.requests).playing}")
     radio.radio_play(cockpit_radio,f64(living_world.tick)/60.0,me.mode == .aboard,
         not pc.state.moored,pc.state.throttle,audio_enabled)
     # the other aircraft's engines, heard from where their sound left them, Doppler and all
@@ -3751,6 +4070,7 @@ draw = ():
             global page_shown
             page_shown=true
             __aegean_shown()
+    if frame_number() == title_check: print("TITLE_CHECK frame {frame_number()} open {title.open} names {title_name_draws} over_play {if title.open: 0 else: title_name_draws - names_at_play}")
     if title.open:
         draw_title_screen()
         hour=world_hour
@@ -3846,11 +4166,10 @@ draw = ():
             loop k in 0..min(marks.len(), 3): draw_rescue_mark(fonts, marks[k].pos, pc.state.position, survivor_name(living_world, marks[k]))
             # (a claimed contract's packet or survivor: where to collect it, then where it is to go)
             if packets_now.len() > 0: draw_rescue_mark(fonts, packets_now[0].pos, pc.state.position, packets_now[0].label, rgba(0.78, 0.86, 1.0, 0.95))
-    if me.mode != .free and not paused and not judge_ready and active_scenario=="" and title_left_at<0: title_card(fonts, t)
     if (me.mode == .aboard or me.mode == .walking) and not paused and not show_chart and ui == .none: draw_battle_card(fonts, battle_card, t)
     if me.mode==.aboard and not paused and not show_chart and ui==.none and not notebook.open:draw_view_target(view_target,fonts)
     if vdown(.h) and not leisure_typing(): controls_card(fonts, me.mode == .aboard)
-    else if t-max(title_left_at,0.0) > (if title_left_at<0: 7.5 else: 1.5) and t-max(title_left_at,0.0) < 22.0 and not judge_ready and active_scenario=="": keys_hint(fonts)
+    else if t-max(title_left_at,0.0) > (if title_left_at<0: 7.5 else: 1.5) and t-max(title_left_at,0.0) < 22.0 and not judge_ready and active_scenario=="" and not leisure_typing(): keys_hint(fonts)
     draw_ui()
     notebook_panel(fonts, notebook, clock_text(living_world, living_world.minute))
     if skip.active: time_card(fonts, skip.doing, "{lt.local_minute(living_world.minute) / 60:02}:{lt.local_minute(living_world.minute) % 60:02}", skip.fade)
