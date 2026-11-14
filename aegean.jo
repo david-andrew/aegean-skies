@@ -143,6 +143,7 @@ use 'src/tavli.jo'
 use 'src/tavli_view.jo'
 use 'src/newspaper.jo'
 use 'src/newspaper_view.jo'
+use 'src/fishing.jo'
 import 'src/living_talk_words.jo' as talk_words
 use 'src/bar_scene.jo'
 use 'src/bar_band.jo'
@@ -375,7 +376,7 @@ hotel_menu = leisure_menu(hotel_place)
 coffee_menu = leisure_menu(coffee_place)
 leisure = LeisureState()
 menu_view = MenuView()
-leisure_ui = 0                  # (with ui == .leisure) 0 sitting, 1 the menu, 2 a room, 3 the aircraft, 4 a spare room, 6 who to play tavli with, 7 the tavli board, 8 asking the band for a number, 9 the paper
+leisure_ui = 0                  # (with ui == .leisure) 0 sitting, 1 the menu, 2 a room, 3 the aircraft, 4 a spare room, 6 who to play tavli with, 7 the tavli board, 8 asking the band for a number, 9 the paper, 10 fishing
 leisure_at = "hotel"            # whose menu or room is open
 leisure_line = ""               # (what was last said or done there)
 leisure_host = -1               # (the family offering a spare room)
@@ -394,6 +395,9 @@ tavli_step = 0                  # (choosing: 0 a partner, 1 the stake)
 # the newspaper at the coffee house (src/newspaper.jo, src/newspaper_view.jo)
 paper_today = Paper(title = "", dateline = "")
 paper_view = PaperView()
+# fishing from a dock (src/fishing.jo)
+angling = Angling()
+fishing_frozen = false          # (captures: the float held where it is)
 
 struct TimeSkip:
     active = false
@@ -406,7 +410,7 @@ struct TimeSkip:
 skip = TimeSkip()
 
 # (the menu's search line has the keyboard: letters don't also work the game's keys)
-leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9)
+leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10)
 
 leisure_place = (key: str) -> LeisurePlace: if key == "coffee": coffee_place else: hotel_place
 leisure_items = (key: str) -> MenuItem[]: if key == "coffee": coffee_menu else: hotel_menu
@@ -449,6 +453,7 @@ leisure_prompt = () -> str:
     if f64(length(me.pos - hotel.counter)) < 2.4: return "F  order at the bar"
     if f64(length(me.pos - hotel.desk)) < 2.8: return "F  ask at the desk for a room"
     if coffee.ok and f64(length(me.pos - coffee.seat)) < 2.4: return "F  sit at the coffee house"
+    if fishing_here(): return "F  fish from the dock"
     ""
 
 leisure_act = ():
@@ -460,6 +465,7 @@ leisure_act = ():
         ui = .leisure; leisure_ui = 2; leisure_at = "hotel"; leisure_line = ""
         mouse_lock(false)
     else if said.contains("coffee"): leisure_sit("coffee")
+    else if said.contains("fish"): fishing_begin()
 
 # time passing: the screen darkens, the scene's people and craft are folded back into the world,
 # the world's clock runs on in steps, and the screen comes back
@@ -567,6 +573,101 @@ tavli_frame = ():
     if act.leave:
         leisure_ui = 0; leisure_line = ""
 
+# ---------------- fishing from a dock ----------------
+
+# the hotel's kitchen grills a plate of one's own catch, and it comes to the table
+grill_catch = ():
+    global leisure_spent, leisure_had, served_look_until
+    used = fishing_grill(living_world, living_world.people[hotel_place.keeper].account)
+    if used <= 0: return
+    plate = MenuItem("Your own catch, grilled", "Food", "From the grill", "with lemon and oil", GRILL_CENTS, serve = .plate, food = true)
+    leisure.served.push(Served(plate, living_world.minute, leisure.orders % 6))
+    if leisure.served.len() > 6: leisure.served.remove_at(0)
+    leisure.orders += 1
+    leisure_spent += GRILL_CENTS; leisure_had.push("one's own catch, grilled")
+    served_look_until = t + 4.0
+
+_ahead = () -> vec3: vec3(f32(sin(me.yaw)), 0, f32(cos(me.yaw)))
+
+# On a dock or quay in a harbour town, facing deep enough water, away from one's own mooring and
+# from anyone close enough to talk to.
+fishing_here = () -> bool:
+    if me.mode != .walking or living_world.people[living_world.player].place < 0: return false
+    if f64(me.pos.y) > 4.0 or f64(me.pos.y) < 0.3: return false
+    out = me.pos + _ahead() * 3.0
+    if surface_height(f64(out.x), f64(out.z)) > -0.6: return false
+    if nearest_folk(folks, me.pos, 3.5) >= 0 or near_own_craft(): return false
+    if let a = mooring_anchor():
+        if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 8.0: return false
+    true
+
+fishing_begin = ():
+    global ui, leisure_ui, leisure_line, angling, follow
+    angling = Angling(place = living_world.people[living_world.player].place)
+    ui = .leisure; leisure_ui = 10; leisure_line = ""
+    follow.yaw = me.yaw + PI + 0.35; follow.pitch = 0.18; follow.distance = 4.2
+    mouse_lock(false)
+
+fishing_end = ():
+    global ui, follow
+    if angling.caught.len() > 0:
+        log_note(notebook, "Fished from the dock at {living.place_name(living_world, angling.place)}: {fishing_tally(angling)}.", clock_text(living_world, living_world.minute))
+    follow.distance = 5.5
+    ui = .none
+
+# the rod's tip and where the float is (the scene draws them)
+fishing_tip = () -> vec3: me.pos + _ahead() * 1.9 + vec3(0, 2.05, 0) + vec3(f32(cos(me.yaw)), 0, f32(-sin(me.yaw))) * 0.3
+fishing_float = () -> vec3:
+    out = me.pos + _ahead() * 6.5
+    rest = vec3(out.x, f32(0.04 + sin(t * 1.7) * 0.025 - fishing_float_dip(angling) * 0.16), out.z)
+    if angling.stage == 1:
+        u = clamp(angling.clock / 0.8, 0.0, 1.0)
+        tip = fishing_tip()
+        p = tip + (rest - tip) * f32(u)
+        return p + vec3(0, f32(sin(u * PI) * 1.6), 0)
+    rest
+
+draw_fishing = ():
+    if not (ui == .leisure and leisure_ui == 10): return
+    hand = me.pos + _ahead() * 0.35 + vec3(0, 1.15, 0)
+    tip = fishing_tip()
+    draw_line3d(hand, tip, rgba(0.36, 0.24, 0.12, 1), 0.035)
+    if angling.stage == 0: return
+    f = fishing_float()
+    draw_line3d(tip, f + vec3(0, 0.06, 0), rgba(0.9, 0.9, 0.85, 0.7), 0.006)
+    draw_line3d(f, f + vec3(0, 0.11, 0), rgba(0.85, 0.12, 0.08, 1), 0.085)
+    draw_line3d(f - vec3(0, 0.05, 0), f, rgba(0.95, 0.94, 0.9, 1), 0.085)
+
+fishing_frame = ():
+    global leisure_line
+    w = living_world
+    strike_key = vpressed(.f) or key_pressed(.space) or key_pressed(.enter)
+    dt = clamp(frame_time(), 0.0, 0.05)
+    # the card along the bottom
+    set_font(fonts.ui)
+    actions: str[]
+    first = if angling.stage == 0: "Cast" else: if angling.stage == 4: "Cast again" else: "Strike"
+    actions.push(first)
+    if fishing_held(w) > 0: actions.push("Sell the catch, {phoenix_text(fishing_worth(w))}")
+    actions.push("Done")
+    status = if angling.stage == 1: "The float flies out." else: if angling.stage == 2: "Waiting. Watch the float." else: if angling.stage == 3: "It's under!" else: if angling.line != "": angling.line else: "{if leisure_line != "": leisure_line + " " else: ""}Cast when you're ready."
+    r = sitting_bar(fonts, "Fishing at {living.place_name(w, angling.place)}", "{status}  In the basket: {fishing_tally(angling).lower()}", actions)
+    pick = if r.choice >= 0: actions[r.choice] else: ""
+    strike = (pick == "Strike" or (strike_key and angling.stage >= 1 and angling.stage <= 3))
+    cast = pick == "Cast" or pick == "Cast again" or (strike_key and (angling.stage == 0 or angling.stage == 4))
+    if cast:
+        seed = lt.mix64(living_world.seed xor u64(living_world.minute * 31 + angling.casts))
+        fishing_cast(angling, seed, lt.local_minute(w.minute))
+        leisure_line = ""
+    else if not fishing_frozen:
+        if let c = fishing_step(angling, dt, strike): _ = fishing_land(living_world, angling, c)
+    if pick.starts_with("Sell"):
+        got = fishing_sell(living_world)
+        leisure_line = if got > 0: "The fish market takes it all for {phoenix_text(got)}." else: "The fish market can't take it just now."
+        if got > 0: log_note(notebook, "Sold the catch to the fish market at {living.place_name(w, angling.place)}, {phoenix_text(got)}.", clock_text(w, w.minute))
+    if pick == "Done" or vpressed(.escape): fishing_end()
+    set_font()
+
 # ---------------- the newspaper ----------------
 
 # Today's paper: the town's news, with the notices posted on its board and the air club's meets.
@@ -629,6 +730,7 @@ band_request_frame = ():
         leisure_ui = 0; leisure_line = ""
 
 draw_leisure = (L: Light):
+    draw_fishing()
     local = lt.local_minute(living_world.minute)
     if local >= BAR_START and local < BAR_END:
         bp = bar_set_position(living_world.tick, leisure.requests)
@@ -675,6 +777,7 @@ leisure_panel = ():
                 return
             lp = leisure_place(key)
             actions = ["See the menu", "Wait an hour"]
+            if key == "hotel" and fishing_held(w) > 0: actions.push("Have your catch grilled")
             if key == "coffee": actions.push("Play tavli")
             if key == "coffee": actions.push(if leisure.paper_day == lt.day_index(w.minute): "Read the paper" else: "Buy the paper")
             if key == "hotel" and lt.local_minute(w.minute) >= BAR_START - 30 and lt.local_minute(w.minute) < BAR_END - 10: actions.push("Ask for a song")
@@ -688,6 +791,7 @@ leisure_panel = ():
             if pick == "See the menu": leisure_open_menu(key)
             else if pick == "Wait an hour": leisure_skip(60, "An hour passes at {lp.name}.")
             else if pick == "Play tavli": tavli_open_choice()
+            else if pick == "Have your catch grilled": grill_catch()
             else if pick == "Read the paper" or pick == "Buy the paper": paper_open()
             else if pick == "Ask for a song":
                 leisure_ui = 8; leisure_line = ""
@@ -754,6 +858,7 @@ leisure_panel = ():
         6: tavli_choice_frame()
         7: tavli_frame()
         8: band_request_frame()
+        10: fishing_frame()
         9:
             if paper_panel(fonts, paper_today, paper_view):
                 leisure_ui = 0; leisure_line = ""
@@ -782,7 +887,7 @@ listen_step = (dt: f64):
         me.stride = approach(me.stride, 0.7, 8.0, dt); me.phase += dt * 7.5
         follow.yaw = approach_angle(follow.yaw, me.yaw + PI, 3.0, dt)
 
-# AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|tavli-choose|tavli|tavli-mid|request|requested|paper: stage a leisure panel at
+# AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|tavli-choose|tavli|tavli-mid|request|requested|paper|fishing|fishing-bite: stage a leisure panel at
 # the start, for captures (with AEGEAN_CAPTURE_MINUTES for the hour)
 leisure_capture = env("AEGEAN_LEISURE") ?? ""
 if leisure_capture != "": print("HOTEL at {hotel.origin} seat {hotel.seat} stage {hotel.stage} desk {hotel.desk} coffee {coffee.seat}")
@@ -820,6 +925,22 @@ leisure_capture_step = ():
             o = leisure_request(living_world, hotel_place, leisure, 2, bar_request_start(living_world.tick, leisure.requests), "Clair de lune")
             print("REQUEST {o.message}")
             leisure_ui = 0
+    if stage == "fishing" or stage == "fishing-bite":
+        # (on the waterfront quay below the hotel, facing the water)
+        q = hotel.desk - hotel.table_z * 7.0
+        me.pos = vec3(q.x, f32(walk_height(towns, f64(q.x), f64(q.z))), q.z)
+        out = -hotel.table_z
+        me.yaw = atan2(f64(out.x), f64(out.z))
+        print("FISHING here {fishing_here()} at {me.pos} ahead {surface_height(f64((me.pos + _ahead() * 3.0).x), f64((me.pos + _ahead() * 3.0).z))}")
+        fishing_begin()
+        global fishing_frozen
+        fishing_frozen = true
+        fishing_cast(angling, u64(5), 1140)
+        angling.caught = [Catch(1, 240), Catch(4, 610)]
+        if stage == "fishing-bite":
+            angling.stage = 3; angling.clock = 0.08
+        else:
+            angling.stage = 2; angling.clock = 0.5
     if stage == "paper":
         leisure_sit("coffee")
         paper_open()
