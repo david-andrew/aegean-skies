@@ -17,11 +17,11 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
@@ -243,6 +243,19 @@ On the rivers branch until it lands.
   the material is `src/sea.jo sea_material` with `inland=true`.
 - **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
 
+### Confluence
+
+- **Aliases:** river junction, tributary mouth.
+- **Definition:** where one of the three tributaries meets its parent river. The tributary's last
+  segments flare along circular fillets, so each bank turns to run along the parent's instead of
+  meeting it at a square corner; the downstream corner is swept wider (1.3 x) than the upstream
+  (0.7 x). The flare is a width along the tributary, so the water field, carve, contact and the
+  ribbon (split 32 times along a flared segment) all read the same shape.
+- **Code:** `src/river_field.jo` (`RIVER_MOUTHS`, `river_mouth_flare`), `river_strip_end` in
+  `src/river_render.jo`.
+- **Rules:** a field change bumps `RIVER_VERSION`, which changes the geography key: rebake
+  `tools/bake.jo` and `assets/living-routes.bin`.
+
 ### Opaque river prepass
 
 - **Definition:** a depth-only pass over the river ribbon's triangles that are at least 2 m deep
@@ -318,6 +331,22 @@ On the rivers branch until it lands.
 - **Capture:** `tools/prop_disc_frames.jo` with `PROP_VIEW=side|front|close|rear|far|cockpit`,
   `PROP_THROTTLE=0..1`, `PROP_KIND=0..15`.
 
+### Navigation lights
+
+- **Aliases:** nav lights, wingtip lights, side lights, stern lamp, riding light.
+- **Definition:** lamps every aircraft and vessel shows after dark, as in the late 1920s: red on
+  the port wingtip, green on the starboard, white at the tail; ships red and green at the sides
+  and a white stern lamp underway, one white lamp when lying still, small boats (rowing boats,
+  dinghies, canal craft) one white lamp. Each is an additive glow point with a soft halo, kept a
+  few pixels across out to 12 km and veiled by clouds; all in one particle draw a frame.
+- **Code:** `src/nav_lights.jo` (`nav_light_level`, `nav_craft_points`, `nav_vessel_offsets`,
+  `draw_nav_lights`); the ships' small emissive lamp boxes in `src/vessel_models.jo`.
+- **Rules:** off by day (`nav_light_level` 0 above sun height 0.12), full by sun height -0.10.
+  Aircraft lamps sit on the outermost wing contact (biplanes: the wider wing) and are off when
+  moored or wrecked. Vessels' bow is +z, so port (red) is +x for them and -x for aircraft.
+- **Capture:** `AEGEAN_FLYING="200 190" AEGEAN_HOUR=22`; distance: add
+  `AEGEAN_VIEW="2433 210 -3365 0.5711 -0.01 22" SLOPPY_INPUT="2:f2+ 3:f2-"`.
+
 ### Prop arcs
 
 - **Aliases:** the short white concentric arcs, pencil arcs, bands, streaks.
@@ -334,7 +363,9 @@ On the rivers branch until it lands.
 - **Aliases:** band speed, band angle, the wagon-wheel drift.
 - **Definition:** the designed drift of the arc bands around the hub. Their turning rate cycles
   with engine speed (a smoothed sawtooth of about 2.5 cycles that grows as the engine slows), so
-  the arcs creep, reverse and creep back like a wagon wheel on film. At the lowest disc speed it
+  the arcs creep, reverse and creep back like a wagon wheel on film. The drift lingers near its
+  fast extremes over most of the range (`PROP_DRIFT_HOLD`), so the slow passages are brief blips;
+  full power keeps its slow creep. At the lowest disc speed it
   matches the blades' real speed, so the hand-over to idle blades is seamless.
 - **Code:** `src/prop_disc.jo:176 prop_band_speed` (with `PROP_TOP_SPEED`), `prop_band_angle`
   (integrated per craft); the shaft rate is `src/flight_feedback.jo prop_rotation_speed`.
@@ -418,6 +449,31 @@ On the rivers branch until it lands.
   `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
 - **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
   spans. Landings must forgive firm touchdowns.
+
+### Flight model v2
+
+- **Aliases:** v2, the trial flight model, fdm2; the liked model (its counterpart: the default).
+- **Definition:** a Tweaks option (off by default) that flies the player's aircraft in the air as a
+  rigid body with forces: lift from the angle of attack with a soft stall per wing, drag, a
+  fixed-pitch propeller with rpm, honest gravity, and assists (path hold, coordination, departure
+  resistance, a g limit). Water, land and contacts stay on the liked solver; NPCs stay on the liked
+  model. Worked in true units: the drawn world is the true one at the [speed scale](#speed-scale).
+- **Code:** `src/flight_v2.jo` `fly_air_v2`, `steer_v2`, `Fdm2Tuning`; dispatched from
+  `src/flight.jo` `_substep` and `steer` by `tweaks.flight_model`; `tools/fdm_compare.jo`,
+  `tools/fdm_plots.py`, `tools/fdm_frames.jo`, `tests/flight_v2_test.jo`. On `t3/flight-v2`.
+- **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
+  path is held. The default stays the liked model until the user prefers v2.
+- **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+
+### Departure resistance
+
+- **Aliases:** the AoA limit, the assist's stall margin.
+- **Definition:** in [flight model v2](#flight-model-v2), the pilot's assist never pulls the wing
+  past its stall angle with the stick alone, so a keyboard's full stick turns as hard as the wing
+  allows without snapping. The wing still stalls when speed runs out faster than the nose can
+  follow (a zoom), and then falls and recovers by its own aerodynamics.
+- **Code:** `src/flight_v2.jo` `Fdm2Tuning.departure` (1 = full resistance; 0 lets a full stick
+  go 0.2 rad past the stall).
 
 ### Altimeter hands
 
@@ -748,6 +804,16 @@ On the rivers branch until it lands.
 - **Code:** `src/town_regional_mesh.jo`, `src/town_architecture.jo` (comment above
   `arch_regional`); the statue plinth in `src/town_details.jo`.
 - **Rules:** no coplanar overlays (they z-fight).
+
+### Hill house
+
+- **Aliases:** stepped house, house cut into the hill.
+- **Definition:** a far-town house on a sloping lot. A drop of about a storey becomes a lower storey
+  with its own windows on the downhill side, taken out of the storeys seen from uphill, so the face
+  towards the sea keeps the designed height; under 2 m of plain wall is left below it, and a house
+  squeezed narrow by a steep lane stays low. Lots steeper than 5 m across stay empty.
+- **Code:** `place_ground_lot` in `src/settlements.jo`.
+- **Rules:** never stretch a house over the slope (that made blank towers seen from the sea).
 
 ### Regional character
 
