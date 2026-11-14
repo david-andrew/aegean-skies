@@ -17,15 +17,16 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
-- **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Coordinator](#coordinator)
+- **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -164,10 +165,26 @@ blue discs that stay in every frame are **speed flecks**.
 ### Spray curtains
 
 - **Aliases:** side curtains, the left and right sheets.
-- **Definition:** two narrow, low, scalloped sheets of spray that peel outward and back from each
-  float's sides, leaving a clear track of water between them, instead of one broad fan.
-- **Code:** on `t3/splash-2` (`src/splash.jo` `splash_fan`, "Two narrow scalloped curtains"). Not
-  on main yet.
+- **Definition:** two narrow, scalloped sheets of spray that rise from each float's chines and peel
+  outward and back, leaving a clear trough of water between them, instead of one broad fan. Each
+  curtain is a solid volume: its inner face, toward the float, is a fairly flat thin sheet; its
+  outer face billows out, thickest along the curling crest and thinning to a knife edge at the root.
+  Rows of round **curtain billows** heap up on the outer face. While the float planes, the curtain
+  churns: billows are born small near the chine, swell as they roll aft along the sheet, rock
+  outward and back, and lift off the crest as shrinking blobs while new ones form behind; the sheet
+  lobes' scallops roll over the top and aft, each lobe swells on its own beat, and the whole curtain
+  breathes with chop and float bounce (the sheet's **heave**).
+- **Code:** `src/splash.jo` `splash_fan` (sheet lobes, kind 3; billows, kind 2, `CURTAIN_ROWS`),
+  `curtain_widths` (inner/outer half-widths), `splash_vs` (roll, spin, outer bulge), `splash_fs`
+  (curtain tones), `splash_targets` / `step_splash_motion` (heave).
+- **Rules:** two painted tones only, white lit side and pale blue-grey shadow: tops lit by the sky
+  stay white, overhanging undersides and a thin rim where each lobe turns from the eye take the
+  shadow tone (in bright sun the middle tone saturates to white, so curtains skip it). All motion
+  is continuous in time, never per-frame noise. Billows and crest drops use the small shared mesh
+  (40x24); sheet lobes and other bodies the 64x40 mesh.
+- **Capture:** `tools/splash_frames.jo` with `POLISH_CASE=planing` (a held planing run),
+  `POLISH_ORBIT="azimuth elevation distance [aim-x aim-z]"`, `POLISH_NOCRAFT=1` to hide the
+  aircraft, `POLISH_SEQUENCE=<dir>` for 30 fps strips.
 - **Not to be confused with:** rain curtains (under cloud decks).
 
 ![The splash on main, and the spray curtains on t3/splash-2, at the same moment](img/spray-curtains.png)
@@ -204,6 +221,52 @@ blue discs that stay in every frame are **speed flecks**.
   `AEGEAN_NOWAKE` turns it off.
 
 ![Wake ridges spreading behind a Gull on its take-off run](img/wake.png)
+
+---
+
+## Rivers and canals
+
+On the rivers branch until it lands.
+
+### River ribbon
+
+- **Aliases:** the river water, inland water, the canal water.
+- **Definition:** the raised water surface of the mainland river and Neravessa's canals: strips of
+  twelve quads across the channel between stations, in batches of four stations grouped by
+  sixteen (one material anchor). It uses the sea's
+  material with its inland options: the same [speed flecks](#speed-flecks) and
+  [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water. A
+  group or batch wholly beyond 450 m (where flecks and ripples have faded out) uses the cheaper far
+  material in one draw, which is exact there.
+- **Code:** `src/river_render.jo` (`init_rivers`, `draw_rivers`, `draw_inland_water`);
+  the material is `src/sea.jo sea_material` with `inland=true`.
+- **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
+
+### Opaque river prepass
+
+- **Definition:** a depth-only pass over the river ribbon's triangles that are at least 2 m deep
+  at every vertex, where the water is exactly opaque. Drawn before the terrain, it spares the
+  hidden riverbed its shading. It needs no discard, so early depth testing works.
+- **Code:** `src/river_render.jo` `river_with_occluder`, `draw_river_occlusion` (one draw per
+  group); native
+  reversed depth only. Checked by `tests/river_depth_render_test.py`.
+
+### Bank plants
+
+- **Aliases:** bank vegetation, the riparian corridor, river trees and reeds.
+- **Definition:** poplars, plane trees, oleanders and waterline reeds along both banks, instanced
+  per prototype. Detail by distance: full trees to the grove distance, then the simpler distant
+  crowns, without trunks past 600 m; shrubs and reeds end at the grove distance, and past 150 m one
+  reed stem in three is drawn. Distant trees end at the tier's reach (low 1.6 km, medium
+  2 km, high 3.5 km), as groves do.
+- **Code:** `src/river_banks.jo` (`build_river_bank`, `draw_river_banks`, `river_bank_reach`).
+
+### Riparian ground
+
+- **Definition:** the greener moist and alluvial ground of the river corridor, from a baked river
+  mask. Its weight and the height above the river are worked out at terrain vertices, not per pixel.
+- **Code:** `src/terrain.jo` `ground_riparian` (called from `world_vertex` and `coast_vs`), used
+  in `ground_surface`; the mask is `src/river_material.jo`.
 
 ---
 
@@ -666,6 +729,19 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![A battle card](img/battle-card.png)
 
+### Game slots and autosave
+
+- **Definition:** three player-selected saved games, each with two recovery **banks**. A complete
+  checkpoint includes the living world, exact player/aircraft state, physical battle/fleet,
+  races, notebook, cat friendship and other presentation progress. **Autosave** updates the
+  active slot after reaching a safe mooring or town on foot, and on a safe timer.
+- **Code:** `src/game_session.jo`, `src/game_slots.jo`, `src/living_save.jo`; shell requests in
+  `aegean.jo`. API, format and failure rules: [Game saves](../game-saves.md).
+- **Rules:** a queued request is not a successful save. Browser completion means the IndexedDB
+  transaction committed. Never overwrite an unknown schema or the last intact bank on failure;
+  never attach a new story to a previous slot without a selection. Rendering handles are rebuilt,
+  not serialized. Slots are numbered 0–2 in the API; the menu chooses their displayed labels.
+
 ### Voices
 
 - **Definition:** the fourteen ways townsfolk talk, chosen from trade, age and temperament: salt,
@@ -733,14 +809,53 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Bar set and singer
 
-- **Definition:** the hotel's evening music, live from 19:00 to 23:30: the procedural orchestra in
-  small line-ups (piano alone, dance band, tango trio, island pair), heard through the terrace's
-  room (the facade's reflection, a short tail, air by distance; no radio filter), and a singer: a
-  harmonic formant voice that sings each tune's melody (ornaments folded away, glides, a late
-  vibrato) while the instrument that carried it plays softer.
+- **Definition:** the hotel's evening music, live from 19:00 to 23:30: a quiet set of real
+  public-domain pieces (Satie's Gymnopédie No. 1, Gounod's Ave Maria, Debussy's Clair de lune,
+  Tárrega's Adelita, Fauré's Berceuse) arranged for the small band (piano, violin, guitar,
+  mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
+  distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
+  the violin plays softer. Each evening starts one number further on, so every piece comes round.
 - **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_set_position`, `singer_line`, `singer_render`,
-  `bar_room_sample`); clips with `tools/bar_music_clip.jo`.
+  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`draw_band`); clips with
+  `tools/bar_music_clip.jo`; note sources and permissions in `data/music/SOURCES.md`.
 - **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
+
+### Live source
+
+- **Aliases:** positional live music, the band heard in place.
+- **Definition:** live music heard from where it is played rather than straight into the ears: a
+  constant-power pan from the camera's right with a little interaural delay and head shadow, a
+  softened top when the source is behind, level and treble falling with distance (the room's share
+  falling more slowly), muffled and quieter through walls and a shut door, and a room that depends
+  on where the listener stands (the terrace's open air and facade, the quay with a late slap off
+  the buildings, a small dense room indoors). Close by, the harbour's background ambience is
+  ducked (the cafe's own murmur excepted). For the bar's band now; for a gramophone or a street
+  musician later.
+- **Code:** `src/live_source.jo` (`live_hearing`, `live_targets`, `live_process`, `live_duck`,
+  `box_blocks`); the band's geometry in `src/bar_scene.jo` (`band_hearing`, `hotel_occlusion`,
+  `hotel_zone`); `Ambience.duck` in `src/ambience.jo`; the camera's look kept as `ear_forward` in
+  `aegean.jo`; `tests/live_source_test.jo`.
+- **Rules:** only a tenth of a second is queued ahead, so a turn of the head is heard at once.
+- **Capture:** `AEGEAN_LEISURE=listen-turn|listen-walk` with `AEGEAN_AUDIO_CAPTURE`; offline paths
+  with `BAR_PATH=turn|walk|room` in `tools/bar_music_clip.jo`.
+
+### Plane work
+
+- **Aliases:** working on the aircraft, tinkering.
+- **Definition:** a job on one's own moored aircraft done by hand: the pilot walks there, hauls the
+  line in if she lies off, does the job from the quay when it is within an arm's reach, else steps
+  aboard (onto a float or a flying boat's deck) and climbs a strut to the lower wing's root (over
+  the fuselage to the far side if need be), works in a pose that fits (reaching up, leaning in,
+  crouching), and comes back ashore. The sun moves while he works; the world's clock catches up at
+  the end.
+- **Code:** `src/plane_work.jo` (`craft_layout` from each model's flat parts, hub, head and
+  step-off point; `task_stops`, `choose_stand`, `choose_boarding`, `craft_route`, `plan_work`);
+  the stepper `plane_job_step` in `aegean.jo`; `tests/plane_work_test.jo`.
+- **Rules:** reach is 1.15 m from the feet, from 0.35 m below them to 2.1 m above; the quay is
+  preferred over climbing, and the near side over the far one. Small real effects only on light
+  wear (`leisure_tinker`).
+- **Capture:** `AEGEAN_LEISURE=work:wipe|inspect|oil|tune|patch|polish` with
+  `AEGEAN_LEISURE_FRAMES=<dir>` (and `AEGEAN_CRAFT` for another airframe).
 
 ### Time skip
 
@@ -983,6 +1098,29 @@ No image: the tiers differ in budgets more than in any single view.
   page, off by default, so they can be compared with the approved baseline.
 - **Code:** `src/tweaks.jo` (`Tweaks`, `set_tweaks`); the page in `src/debugmenu.jo`.
 
+### Game page and Saved card
+
+- **Aliases:** the save menu, the slots page, the autosave toast.
+- **Definition:** the **Game page** is the pause menu's first tab: the three saved-game slots, each
+  with its world time, place and a short summary (aircraft, lire, day), a mark on the slot the
+  autosave writes to, and Save here, Load and Delete. Saving over a slot, loading and deleting
+  each ask first; a successful load closes the menu. A note under the slots says where the
+  autosave goes or why it is off. The **Saved card** is the quiet "Saved" that fades in and out
+  at the upper right, under the clock and the lire, when an autosave finishes.
+- **Code:** `src/debugmenu.jo game_page` (drawing, confirmation); `src/game_menu.jo game_row`
+  (slot header to words); `aegean.jo game_page_view` / `game_page_apply` (backend requests,
+  notes); `src/hud.jo saved_toast`. Backend contract in `docs/game-saves.md`.
+- **Rules:** reads only cached slot headers, never a World, so it is cheap to draw every frame.
+  Upright on a phone the panel spans the screen and the page's type and buttons are 1.45 times
+  bigger (1.15 on a phone on its side, where three slots must still fit); tabs grow with it.
+  There is no start screen, so there is no Continue: a fresh start with saves present plays on,
+  and the player loads from this page.
+- **Capture:** `AEGEAN_CAPTURE_PANEL=game` (or `game-confirm`, a load waiting on slot 2) with an
+  `SLOPPY_SAVE_DIR` holding slots, `SLOPPY_FRAMES=150`; `AEGEAN_CAPTURE_PANEL=saved` shows the
+  Saved card; add `AEGEAN_TOUCH=1` and `SLOPPY_WINDOW=390x844` for a phone.
+
+![The Game page, with a load waiting for its yes](img/game-page.png)
+
 ### Coordinator
 
 - **Definition:** the thread (Claude Opus) that plans, dispatches agents, merges their branches and
@@ -1005,10 +1143,10 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
 | `AEGEAN_AT='x z yaw'` | on foot at a spot |
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |
-| `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech` | open a panel |
+| `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
-| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
 | `tools/prop_disc_frames.jo` | `PROP_VIEW`, `PROP_THROTTLE`, `PROP_SWEEP` |
 | `tools/coast_capture.jo` | `COAST_SITE`, `COAST_RANGE` |

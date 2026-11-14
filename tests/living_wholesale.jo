@@ -12,24 +12,37 @@ use '../src/living_far_news.jo'
 use '../src/living_money.jo'
 use '../src/living_save.jo'
 
-wholesale_fixture = () -> World:
+wholesale_fixture = (fork: bool = false, seller_teams: bool = false, city_population: int = 2000) -> World:
     w=build_world(u64(42)); contexts: LifePlaceContext[]
     loop k in 0..6: contexts.push(LifePlaceContext(k,"Core {k}",0,k,w.harbors[k].center,true,k))
     loop pair in [(100,1),(200,1),(300,2)]: contexts.push(LifePlaceContext(pair.0,"Port {pair.0}",pair.1,pair.0,vec3(f32(pair.0),0,0)))
+    if fork: contexts.push(LifePlaceContext(400,"Port 400",2,400,vec3(400,0,0)))
     assert(publish_place_contexts(w,1,contexts,[-1,100,300]))
-    seeds=[FarPlaceSeed(100,4000,1,3,productivity=80),FarPlaceSeed(200,80,1,0),FarPlaceSeed(300,2000,2,5,raw_ore=1000000)]
+    seeds=[FarPlaceSeed(100,4000,1,3,productivity=80),FarPlaceSeed(200,80,1,0),FarPlaceSeed(300,city_population,2,5,raw_ore=1000000)]
     links=[FarLink(0,100,200,.cart,[vec3(100,0,0),vec3(200,0,0)],100000),FarLink(1,200,300,.cart,[vec3(200,0,0),vec3(300,0,0)],100000)]
+    if fork:
+        seeds.push(FarPlaceSeed(400,city_population,2,5,raw_ore=1000000))
+        links.push(FarLink(2,200,400,.cart,[vec3(200,0,0),vec3(400,0,0)],200000))
+        links.push(FarLink(3,400,300,.cart,[vec3(400,0,0),vec3(300,0,0)],100000))
     assert(populate_settlement_economy(w,1,seeds,links))
+    if not seller_teams:
+        # Isolate these buyer/receipt tests from the independent paid-seller investment.
+        w.far.opening_spare_wagons-=w.far.districts[100].spare_wagons
+        w.far.districts[100].spare_wagons=0
     assert(far_provision(w,0) and far_provision(w,1))
     # Three days of real wages and household purchases deplete the city's opening grain.
     loop hour in 1..73:
         w.minute=hour*60; w.tick=w.minute*120
-        loop place in [100,200,300]: far_work_hour(w,place); far_household_hour(w,place)
+        places=[100,200,300]
+        if fork: places.push(400)
+        loop place in places: far_work_hour(w,place); far_household_hour(w,place)
     w
 
 finish_order_leg = (w: mut World, vehicle: int):
     assert(far_depart(w,vehicle))
-    w.tick+=6000; w.minute=w.tick/120; far_advance_transport(w,w.tick)
+    v=w.far.vehicles[vehicle]
+    w.tick+=max(6000,(w.far.links[v.route].length_mm*60+v.speed_mm_sec-1)/v.speed_mm_sec+120)
+    w.minute=w.tick/120; far_advance_transport(w,w.tick)
     assert(w.far.vehicles[vehicle].journey<0)
     w.tick+=3600; w.minute=w.tick/120
 
@@ -114,3 +127,79 @@ test "a factory's actual input needs are procured and a renewed upstream order c
     short=service_freight_quote(w,0,100)
     w.far.links[0].length_mm*=1000
     assert(service_freight_quote(w,0,100)>short)
+
+test "separate real customer branches cannot poison one another's upstream ancestry":
+    w=wholesale_fixture(true)
+    finish_order_leg(w,1); finish_order_leg(w,1)
+    finish_order_leg(w,2); finish_order_leg(w,2)
+    assert(w.far.districts[200].customer_orders.len()==2)
+    finish_order_leg(w,0); finish_order_leg(w,0)
+    order=w.far.vehicles[0].buying_order!; path=order_path(order,3)
+    assert(200 in path and 300 in path and not (400 in path))
+    # The other real branch also travels, with its OWN history rather than a union.
+    assert([loop line in order.extra_lines: if line.good==3 and 400 in line.places and not (300 in line.places): line.quantity].len()>0)
+    assert(order.quantity[3]>w.far.districts[200].target[3])
+    # Fulfilling the first real customer's request admits the next actual branch.
+    first=[loop e in w.far.districts[200].customer_orders: if e.service==1: e][0]
+    serve_counter_order(w,200,first.service,first.order.minute,3,first.order.quantity[3])
+    next=counter_restock_order(w,0,200); path=order_path(next,3)
+    assert(200 in path and 400 in path and not (300 in path))
+    assert(restock_order_valid(w,next) and money_balances(w) and goods_balance(w))
+
+test "an alternate supplier can meet a real local need without echoing its own forwarded demand":
+    w=wholesale_fixture(true)
+    finish_order_leg(w,1); finish_order_leg(w,1) #300's real request reaches200
+    finish_order_leg(w,2); finish_order_leg(w,2) #200's mixed request reaches400
+    request=[loop e in w.far.districts[400].customer_orders: if e.service==2: e.order][0]
+    assert(200 in order_path(request,3) and 300 in order_path(request,3))
+    assert(request.local_quantity[3]>0 and request.local_quantity[3]<request.quantity[3])
+    assert(order_quantity_for_supplier(request,3,300)==request.local_quantity[3])
+    #400 may ask300 for200's own meals, but must not echo300's demand back to it.
+    quote=counter_restock_order(w,3,400)
+    assert(200 in order_path(quote,3) and 400 in order_path(quote,3) and not (300 in order_path(quote,3)))
+    assert(quote.quantity[3]>quote.local_quantity[3])
+    finish_order_leg(w,3)
+    received=[loop e in w.far.districts[300].customer_orders: if e.service==3: e][0]
+    assert(customer_order_current(w,300,received,3))
+    assert(restock_order_valid(w,quote) and money_balances(w) and goods_balance(w))
+    malformed=quote; malformed.local_quantity[3]=malformed.quantity[3]+1
+    assert(not restock_order_valid(w,malformed))
+
+test "extra customer lines keep separate expiry and fulfillment without extending their source deadlines":
+    w=wholesale_fixture(true)
+    finish_order_leg(w,1); finish_order_leg(w,1)
+    finish_order_leg(w,2); finish_order_leg(w,2)
+    quote=counter_restock_order(w,0,200)
+    assert(quote.extra_lines.len()>0 and restock_order_valid(w,quote))
+    parsed=from_text[FarRestockOrder](to_text(quote))
+    assert(parsed is FarRestockOrder and parsed==quote)
+    malformed=quote; malformed.extra_lines[0].quantity=malformed.quantity[malformed.extra_lines[0].good]+1
+    assert(not restock_order_valid(w,malformed))
+    malformed=quote; malformed.extra_lines[0].places.push(malformed.extra_lines[0].places[0])
+    assert(not restock_order_valid(w,malformed))
+    # Losing one old customer's deadline must not expire a distinct local/other line.
+    primary=order_primary_quantity(quote,3)
+    quote.good_due[3]=w.minute
+    later=order_quantity_for_supplier(quote,3,100,w.minute+1)
+    assert(later==quote.quantity[3]-primary and later>0)
+    assert(money_balances(w) and goods_balance(w))
+
+
+test "established opening offices have reciprocal carried buying agreements across their actual supply chain":
+    w=build_world(u64(42)); contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k,"Core {k}",0,k,w.harbors[k].center,true,k))
+    loop pair in [(100,100),(200,3100),(300,6100)]: contexts.push(LifePlaceContext(pair.0,"Established {pair.0}",1,pair.0,vec3(f32(pair.1),0,0)))
+    assert(publish_place_contexts(w,1,contexts,[-1,300,-1]))
+    seeds=[FarPlaceSeed(100,4000,1,3,productivity=80),FarPlaceSeed(200,80,1,0),FarPlaceSeed(300,2000,1,5,productivity=80,raw_ore=10000000)]
+    links=[FarLink(0,100,200,.cart,[vec3(100,0,0),vec3(3100,0,0)],3000000,road=0),FarLink(1,200,300,.cart,[vec3(3100,0,0),vec3(6100,0,0)],3000000,road=1)]
+    assert(populate_settlement_economy(w,1,seeds,links))
+    mandate=w.far.vehicles[0].buying_order!
+    assert(mandate.place==200 and mandate.quantity[3]>counter_purchase_own_target(w,200,3))
+    assert(300 in order_path(mandate,3) and mandate.opening and mandate.minute==0)
+    assert(w.minute==0 and w.tick==0 and w.far.completed_journeys==0)
+    stock=stock_totals(w); people=far_population(w); roots=w.next_cargo_source
+    assert(far_depart(w,0)); j=w.far.journeys[w.far.vehicles[0].journey]
+    assert(not j.survey and j.good==3 and j.provenance.negotiated and 300 in j.provenance.need_places)
+    assert(far_population(w)==people and w.next_cargo_source==roots and goods_balance(w) and money_balances(w))
+    # Only actually consumed refit parts leave stock; no paper creates grain.
+    assert(stock_totals(w)[3]==stock[3] and validate_far(w)=="",validate_far(w))

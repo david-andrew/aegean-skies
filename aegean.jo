@@ -125,11 +125,18 @@ use 'src/fabric.jo'
 use 'src/debugmenu.jo'
 use 'src/music_audition.jo'
 use 'src/notebook.jo'
+use 'src/game_session.jo'
+use 'src/game_slots.jo'
+use 'src/game_menu.jo'
+import 'src/living_save.jo' as save_types
+use 'src/war_checkpoint.jo'
 use 'src/leisure_menu.jo'
 use 'src/leisure.jo'
 use 'src/leisure_view.jo'
 use 'src/bar_scene.jo'
 use 'src/bar_band.jo'
+use 'src/plane_work.jo'
+use 'src/live_source.jo'
 use 'src/walk_shapes.jo'
 use 'src/music_data.jo'
 import 'src/cargo_scene.jo' as cargo_scene
@@ -166,6 +173,11 @@ init_trails()
 init_flight_effects();init_splashes()
 init_birds()
 init_curved_world()
+# These effects first appear when a nearby aircraft starts, potentially long
+# after a walking scene has settled. Load their programs before the game loop.
+init_prop_discs()
+init_local_particles()
+effect_pipelines_ready = false
 
 # how many times faster than designed the aircraft truly fly (handling kept at the designed turn
 # rates; the pause menu's Speed scale, AEGEAN_SPEED_SCALE): set before any aircraft or trip is made
@@ -195,6 +207,8 @@ init_world_towns(towns)
 living_validation.set_living_strict(false)
 living_world = living.build_world(u64(0), harbors_from_towns(towns))
 traffic_scene = living_scene.SceneAdapter()
+import 'src/speech_warmup.jo' as speech_loading
+speech_warmup = speech_loading.SpeechWarmup()
 tree_meshes = build_tree_meshes()
 grove_far_meshes = build_tree_meshes(true)
 groves: Grove[]
@@ -467,7 +481,7 @@ band_words = () -> str:
     bp = bar_set_position(living_world.tick)
     if not bp.playing: return "The band is between numbers."
     sp = BAR_SET[bp.index]
-    who = if sp.lineup == 0: "The pianist is playing" else: if sp.lineup == 2: "The trio is playing" else: "The band is playing"
+    who = if sp.lineup == 0: "The pianist is playing" else: if sp.lineup == 2: "The trio is playing" else: if sp.lineup == 4: "The piano and the violin are playing" else: if sp.lineup == 5: "A guitar and a mandolin are playing" else: if sp.lineup == 6: "A violin and a guitar are playing" else: "The band is playing"
     "{who} {MUSIC_PIECES[sp.piece].title}{if bar_singing(bp): ", and the singer sings" else: ""}."
 
 draw_leisure = (L: Light):
@@ -559,10 +573,18 @@ leisure_panel = ():
             choices.push("That will do")
             r = choice_panel(fonts, "Your {CRAFT_NAMES[int(pc.kind)]}", "Moored at {living.place_name(w, w.people[w.player].place)}", leisure_line, choices)
             if r.choice >= 0 and r.choice < TINKER_JOBS.len():
-                out = leisure_tinker(w, c, TINKER_JOBS[r.choice].task)
-                leisure_line = out.line
-                if out.minutes > 0: leisure_skip(out.minutes, "Working on the aircraft")
+                if w.aircraft[c].state != .moored:
+                    leisure_line = "She has to be moored and still first."
+                else:
+                    leisure_line = ""
+                    start_plane_job(TINKER_JOBS[r.choice].task)
             else if r.choice >= 0 or r.closed: ui = .none
+        5:
+            # (at work on the aircraft: what he is doing, on a card; Escape stops)
+            if not job.active: leisure_ui = 3
+            else:
+                prompt_card(fonts, job.line, 150.0)
+                if vpressed(.escape): stop_plane_job()
         4:
             if leisure_host < 0:
                 ui = .none
@@ -575,6 +597,29 @@ leisure_panel = ():
                 leisure_skip(rest_minutes(w, if r.choice == 0: 420 else: 1110), "Asleep in the spare room at {split(name, " ")[0]}'s")
             else if r.choice == 2 or r.closed: ui = .none
         _: ui = .none
+
+listen_mode = ""                # (captures: the camera turning by the band, or walking away)
+listen_path: vec3[]
+listen_angle = 0.0
+listen_step = (dt: f64):
+    global follow, me, listen_path
+    if listen_mode == "listen-turn":
+        # (a head turning on the spot, 4.6 m in front of the band, a full circle every 16 s)
+        global judge_camera, listen_angle
+        listen_angle += dt * TAU / 16.0
+        eye = hotel.stage + hotel.stage_out * 4.6 + vec3(0, 1.45, 0)
+        toward = -hotel.stage_out
+        side = vec3(-toward.z, 0, toward.x)
+        look = toward * f32(cos(listen_angle)) + side * f32(sin(listen_angle))
+        judge_camera = JudgeView(eye, eye + look * 10.0, "turning by the band")
+    if listen_mode == "listen-walk" and listen_path.len() > 0:
+        d = listen_path[0].xz - me.pos.xz
+        if f64(length(d)) < 0.3: listen_path.remove_at(0); return
+        dir = normalize(d)
+        step_player_walk(dir * f32(1.5 * dt))
+        me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 6.0, dt)
+        me.stride = approach(me.stride, 0.7, 8.0, dt); me.phase += dt * 7.5
+        follow.yaw = approach_angle(follow.yaw, me.yaw + PI, 3.0, dt)
 
 # AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace: stage a leisure panel at
 # the start, for captures (with AEGEAN_CAPTURE_MINUTES for the hour)
@@ -607,6 +652,10 @@ leisure_capture_step = ():
         leisure_sit("coffee")
         _leisure_order("coffee", coffee_menu[coffee_menu.len() - 30])
         leisure_open_menu("coffee")
+    if stage.starts_with("work:"):
+        name = stage[5..stage.len()]
+        loop jb in TINKER_JOBS:
+            if "{jb.task}" == name: start_plane_job(jb.task)
     if stage == "tinker":
         ui = .leisure; leisure_ui = 3; leisure_line = ""
     if stage == "spare":
@@ -618,6 +667,21 @@ leisure_capture_step = ():
         me.pos = vec3(p.x, f32(walk_height(towns, f64(p.x), f64(p.z))), p.z)
         me.yaw = atan2(f64(-hotel.table_x.x), f64(-hotel.table_x.z))
         follow.yaw = me.yaw + PI
+    if stage == "listen-turn" or stage == "listen-walk":
+        # (for recording how the band is heard: by it, turning on the spot; or walking away)
+        l = hotel.stage + hotel.stage_out * 4.6
+        if stage == "listen-walk": l = hotel.stage + hotel.stage_out * 4.0 - hotel.table_z * 1.5
+        me.pos = vec3(l.x, f32(walk_height(towns, f64(l.x), f64(l.z))), l.z)
+        me.yaw = atan2(f64(-hotel.stage_out.x), f64(-hotel.stage_out.z))
+        follow.yaw = me.yaw + PI; follow.distance = 3.0; follow.pitch = 0.12
+        global listen_mode, listen_path
+        listen_mode = stage
+        if stage == "listen-walk":
+            corner = (x: f64, z: f64) -> vec3: transform_point(hotel.frame, vec3(f32(x), 1.2, f32(z)))
+            listen_path = [corner(12.5, 25), corner(13, 4), corner(13, -2), corner(-45, -2)]
+    if stage == "band":
+        global judge_camera
+        judge_camera = JudgeView(hotel.stage + hotel.stage_out * 5.5 + hotel.table_z * 0.6 + vec3(0, 1.6, 0), hotel.stage + hotel.table_z * 0.6 + vec3(0, 1.0, 0), "Hotel Ancora, the band")
     if stage == "door" or stage == "board":
         global judge_camera
         if stage == "door": judge_camera = JudgeView(hotel.desk - hotel.table_z * 9.0 + hotel.table_x * 2.0 + vec3(0, 1.4, 0), hotel.desk + vec3(0, 2.6, 0) + hotel.table_z * 1.4, "Hotel Ancora, the door")
@@ -636,6 +700,255 @@ leisure_capture_step = ():
         ui = .none
         leisure_skip(rest_minutes(living_world, 420), "Asleep in a room at the Hotel Ancora", 1)
     if menu_view.query == "" and env("AEGEAN_LEISURE_SECTION") != none: menu_view.section = to_int(env("AEGEAN_LEISURE_SECTION") ?? "0") ?? 0
+
+
+# ---------------- working on the aircraft, by hand (src/plane_work.jo) ----------------
+# A job from the aircraft's panel: the pilot walks to the quay's edge, hauls the line in if she
+# lies off, steps aboard and climbs to where the job is (or does it from the quay when it's within
+# reach), works at it, and comes back ashore. Time passes while he works.
+
+struct PlaneJob:
+    active = false
+    task: TinkerTask = .wipe
+    legs: WorkLeg[]
+    leg = 0
+    clock = 0.0
+    point = 0
+    planned = false                 # (the job's own legs, after any hauling in)
+    minutes = 0
+    work_total = 1.0
+    aboard = false
+    local: vec3 = vec3(0, 0, 0)     # (the feet, in the craft frame, while aboard)
+    pose: WorkPose = .stand
+    line = ""
+    stall = 0.0
+    caught_up = false               # (the world's clock has run on for the job)
+    ashore: vec3 = vec3(0, 0, 0)    # (where he steps aboard from: the camera keeps that side)
+job = PlaneJob()
+
+cowling_panel = custom_mesh((): 
+    vs: Vertex3D[]
+    add_box(vs, vec3(0, -0.24, 0), vec3(0.03, 0.48, 0.5), rgb(0.55, 0.55, 0.56))
+    vs
+())
+
+plane_layout = () -> CraftLayout:
+    cm = craft_models[pc.model]
+    craft_layout(cm.shade, cm.prop_at, cm.prop_radius, cm.cockpit, cm.exit)
+
+# the nearest walkable quay (or ground) to a world point, within three metres, or none
+quay_point = (p: vec3) -> vec3?:
+    best: vec3? = none
+    bd = 1000.0
+    loop ring in 0..13:
+        r = f64(ring) * 0.25
+        n = if ring == 0: 1 else: 16
+        loop k in 0..n:
+            a = f64(k) / f64(n) * TAU
+            x = f64(p.x) + cos(a) * r; z = f64(p.z) + sin(a) * r
+            h = walk_height(towns, x, z)
+            if h < 0.6: continue
+            c = vec2(f32(x), f32(z))
+            if town_avoid_buildings(towns, c, h) != c: continue
+            if r < bd:
+                bd = r; best = vec3(f32(x), f32(h), f32(z))
+        if best != none: return best
+    best
+
+# the player put exactly here (on the airframe the ground's height doesn't apply)
+place_walker = (p: vec3):
+    global me, walker_point, walker_published
+    me.pos = p
+    walker_point = world_point(p)
+    walker_published = me.pos
+
+# the part most in need of a patch (the near lower wing if nothing is torn)
+damaged_part = (near: f64) -> int:
+    best = if near < 0.0: 2 else: 3
+    worst = 0.98
+    loop k in [0, 2, 3, 4, 5, 6]:
+        if k < pc.state.damage.parts.len() and pc.state.damage.parts[k].attached and pc.state.damage.parts[k].health < worst:
+            worst = pc.state.damage.parts[k].health; best = k
+    best
+
+# which side of the aircraft the player is on (-1 left, 1 right)
+player_side = () -> f64:
+    local = transform_point(inverse(pc_at()), me.pos)
+    if local.x < 0: -1.0 else: 1.0
+
+start_plane_job = (task: TinkerTask):
+    global job, ui, leisure_ui, follow
+    minutes = 15
+    loop j in TINKER_JOBS:
+        if j.task == task: minutes = j.minutes
+    l = plane_layout()
+    b = choose_boarding(l, pc_at(), quay_point)
+    if b.gap >= 999.0 and mooring_anchor() == none:
+        global leisure_line
+        leisure_line = "There's no quay alongside to work from."
+        return
+    job = PlaneJob(active = true, task = task, minutes = minutes)
+    # (lying off: to the bollard first, to haul her in)
+    if b.gap > 1.4:
+        if let a = mooring_anchor():
+            if let q = quay_point(a): job.legs = [WorkLeg(.walk, [q]), WorkLeg(.haul, [])]
+    ui = .leisure; leisure_ui = 5
+    mouse_lock(false)
+
+_plan_plane_job = ():
+    global job
+    l = plane_layout()
+    job.legs = plan_work(l, pc_at(), task_stops(l, job.task, damaged_part(player_side()), player_side()), quay_point)
+    job.leg = 0; job.clock = 0.0; job.point = 0; job.planned = true
+    loop g in job.legs:
+        if g.kind == .hop_on: job.ashore = g.from
+    total = 0.0
+    loop g in job.legs:
+        if g.kind == .work: total += g.seconds
+    job.work_total = max(1.0, total)
+
+_next_leg = ():
+    global job
+    job.leg += 1; job.clock = 0.0; job.point = 0; job.stall = 0.0
+
+_face = (p: vec3):
+    global me
+    d = p - me.pos
+    if length(d.xz) > 0.01: me.yaw = atan2(f64(d.x), f64(d.z))
+
+# A frame of the job: the current leg walked, climbed or worked.
+plane_job_step = (dt: f64):
+    global job, me, hour, leisure_ui, leisure_line, follow, pc, follow_steady
+    if not job.active: return
+    frame = pc_at()
+    # (the camera keeps a three-quarter view from behind, a little farther out)
+    # (on the quay, a three-quarter view from behind; aboard, from the quay's side of her, a little
+    # off the nose, steady while she rides the swell)
+    near_craft = job.aboard or (job.leg < job.legs.len() and (job.legs[job.leg].kind == .hop_on or job.legs[job.leg].kind == .hop_off))
+    follow.distance += ((if near_craft: 7.0 else: 6.0) - follow.distance) * min(1.0, dt * 2.0)
+    follow.pitch += ((if near_craft: 0.38 else: 0.3) - follow.pitch) * min(1.0, dt * 2.0)
+    if near_craft:
+        side = normalize((job.ashore - pc.state.position).xz + vec2(0.0001, 0))
+        nose = normalize(quat_rotate(pc.state.orientation, vec3(0, 0, -1)).xz + vec2(0.0001, 0))
+        look = normalize(side * 0.8 + nose * 0.6)
+        follow.yaw = approach_angle(follow.yaw, atan2(f64(look.x), f64(look.y)), 1.5, dt)
+        follow_steady = vec3(0, f32(swell_at(f64(pc.state.position.x), f64(pc.state.position.z), t).x * 0.9), 0)
+    else:
+        follow.yaw = approach_angle(follow.yaw, me.yaw + PI + 0.7, 1.2, dt)
+        follow_steady = vec3(0, 0, 0)
+    if job.leg >= job.legs.len():
+        if not job.planned:
+            _plan_plane_job()
+            return
+        out = leisure_tinker(living_world, living_world.people[living_world.player].craft, job.task)
+        leisure_line = out.line
+        job.active = false
+        job.pose = .stand
+        follow.distance = 5.5
+        follow_steady = vec3(0, 0, 0)
+        leisure_ui = 3
+        return
+    g = job.legs[job.leg]
+    job.clock += dt
+    me.stride = approach(me.stride, 0.0, 6.0, dt)
+    match g.kind:
+        .walk:
+            job.pose = .stand; job.line = "To the aircraft"
+            target = g.points[min(job.point, g.points.len() - 1)]
+            d = target.xz - me.pos.xz
+            if f64(length(d)) < 0.18:
+                job.point += 1
+                if job.point >= g.points.len(): _next_leg()
+                return
+            before = me.pos
+            dir = normalize(d)
+            step_player_walk(dir * f32(min(1.6 * dt, f64(length(d)))))
+            me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 10.0, dt)
+            me.stride = approach(me.stride, 0.7, 8.0, dt)
+            me.phase += dt * 1.6 * 5.0
+            # (blocked by something: go round it by the navigation grid, or at last step past)
+            if f64(length(me.pos.xz - before.xz)) < 0.2 * dt:
+                job.stall += dt
+                if job.stall > 0.6 and g.points.len() == 1:
+                    path = cargo_scene.cargo_walk_path(towns, me.pos, target)
+                    if path.len() > 1: job.legs[job.leg].points = path; job.point = 1
+                    job.stall = -1.0
+                else if job.stall > 1.5: place_walker(target); job.stall = 0.0
+            else: job.stall = max(0.0, job.stall)
+        .haul:
+            job.pose = .haul; job.line = "Hauling in the line"
+            p = pc.state.position
+            if let a = mooring_anchor():
+                _face(vec3(p.x, me.pos.y, p.z))
+                off = vec3(p.x - a.x, 0, p.z - a.z)
+                l = f64(length(off))
+                if l > 3.1 and job.clock < 8.0:
+                    np = p - off / f32(l) * f32(min(1.2 * dt, l - 3.1))
+                    pc.state.position = np; pc.state.mooring_point = np
+                else: _next_leg()
+            else: _next_leg()
+        .hop_on, .hop_off:
+            job.pose = .climb; job.line = if g.kind == .hop_on: "Stepping aboard" else: "Back onto the quay"
+            u = clamp(job.clock / 0.9, 0.0, 1.0)
+            a = if g.kind == .hop_on: g.from else: transform_point(frame, g.from)
+            b = if g.kind == .hop_on: transform_point(frame, g.to) else: g.to
+            arc = f32(sin(u * PI) * 0.35)
+            place_walker(a + (b - a) * f32(u * u * (3.0 - 2.0 * u)) + vec3(0, arc, 0))
+            _face(b)
+            if u >= 1.0:
+                job.aboard = g.kind == .hop_on
+                if job.aboard: job.local = g.to
+                else: place_walker(g.to)
+                _next_leg()
+        .craft:
+            target = g.points[min(job.point, g.points.len() - 1)]
+            d = target - job.local
+            climbing = abs(f64(d.y)) > 0.25
+            job.pose = if climbing: WorkPose.climb else: WorkPose.stand
+            job.line = if climbing: "Climbing up" else: "Along the aircraft"
+            dist = f64(length(d))
+            if dist < 0.05:
+                job.point += 1
+                if job.point >= g.points.len(): _next_leg()
+            else:
+                speed = if climbing: 0.6 else: 1.1
+                job.local = job.local + d / f32(dist) * f32(min(speed * dt, dist))
+                if not climbing:
+                    me.stride = approach(me.stride, 0.6, 8.0, dt)
+                    me.phase += dt * speed * 5.0
+                _face(transform_point(frame, target))
+            place_walker(transform_point(frame, job.local))
+        .work:
+            job.pose = g.pose; job.line = g.line
+            if job.aboard: place_walker(transform_point(frame, job.local))
+            aim = transform_point(frame, g.target)
+            _face(aim)
+            # (the propeller turned so a blade comes to his hand)
+            if job.task == .polish:
+                hub = craft_models[pc.model].prop_at
+                pc.prop_angle = atan2(-f64(g.target.x - hub.x), f64(g.target.y - hub.y))
+            # (the sun moves as he works; the world's clock catches up when the work is done)
+            hour = (hour + dt * f64(job.minutes) / 60.0 / job.work_total + 24.0) % 24.0
+            if job.clock >= g.seconds:
+                last = true
+                loop k in job.leg + 1..job.legs.len():
+                    if job.legs[k].kind == .work: last = false
+                if last and not job.caught_up:
+                    job.caught_up = true
+                    leisure_skip(job.minutes, "Working on the aircraft")
+                _next_leg()
+
+# Escape stops the job where it is: back onto the quay, nothing done.
+stop_plane_job = ():
+    global job, leisure_ui, follow, follow_steady
+    follow_steady = vec3(0, 0, 0)
+    if job.aboard:
+        loop k in job.leg..job.legs.len():
+            if job.legs[k].kind == .hop_off: place_walker(job.legs[k].to); break
+    job.active = false
+    job.pose = .stand
+    follow.distance = 5.5
+    leisure_ui = 3
 
 player_cents = () -> int:
     a = living_world.people[living_world.player].account
@@ -737,10 +1050,16 @@ step_player_walk = (move: vec2):
     sync_walker_point()
     walker_point=walk_step_precise(towns,walker_point,move)
     me.pos=world_vec(walker_point);walker_published=me.pos
+# The way the camera looks, kept where each camera is placed (for hearing live music from it).
+ear_forward = vec3(0, 0, -1)
+
+# (follow_steady: taken off the camera's target, so it doesn't heave with a moored aircraft)
+follow_steady = vec3(0, 0, 0)
 update_player_follow = (dt: f64,input: bool = true):
     global follow,follow_frame,actor_render_offsets
     sync_walker_point()
-    update_local_follow(follow,follow_frame,walker_point,dt,input=input)
+    target = if follow_steady == vec3(0, 0, 0): walker_point else: world_point(world_vec(walker_point) - follow_steady)
+    update_local_follow(follow,follow_frame,target,dt,input=input)
     actor_render_offsets[living_world.player]=world_residual(walker_point)
 
 descent_camera = DescentCamera()
@@ -1123,6 +1442,7 @@ debug_view = () -> DebugView:
     v.lift_scale = lift_scale
     v.bullet_scale = bullet_scale
     v.sea_rough = sea_rough
+    game_page_view(v)
     v
 
 # the debugging panel's fuel and money, entered in the living world's books (fuel made or spent,
@@ -1183,6 +1503,7 @@ load_scenario = (key: str) -> bool:
     global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
+    global leisure,leisure_spent,leisure_had,skip
     load_started=time()
     fresh=key=="start"
     if fresh:
@@ -1201,6 +1522,7 @@ load_scenario = (key: str) -> bool:
         if loaded==none:return false
         scenario_templates[cache_key]=loaded!
     next=scenario_templates[cache_key]
+    detach_game_slot_context()
     seed_random(if fresh:5 else:1934);walkers=initial_walkers
     hush_audio(audio);hush_combat_audio(combat_audio);hush_battle_radio(battle_radio)
     audio.clock=0;audio.clock_cloth=0;audio.settled_at=0;audio.settled_load=1;audio.quiet=0.5;audio.next_gull=4;audio.flap_next=0;audio.flap_energy=1
@@ -1238,6 +1560,7 @@ load_scenario = (key: str) -> bool:
     if fresh:save_notebook(notebook)
     toast="";toast_until=0;show_chart=false;chart_local=false
     battle_card=BattleCard();war_chart=WarChart();presentation=lt.PresentationState();ui_mission= -1
+    leisure=LeisureState();leisure_spent=0;leisure_had=[];skip=TimeSkip();bar_music_stop(bar_music)
     talk_at_start=false;pad_talk=false;click_took_mouse=true
     t=0;hour=next.hour;wind_bias=0;wind_now=Wind()
     follow=follow_camera(distance=5.5,pitch=next.camera_pitch,height=1.6);follow.yaw=next.camera_yaw
@@ -1261,8 +1584,228 @@ load_scenario = (key: str) -> bool:
     print("SCENARIO {key}: {battle.actors.len()} aircraft, player {pc.state.position}, weather {living_world.weather.len()}")
     true
 
+# ---------------- complete game slots (pause-menu presentation lives elsewhere) ----------------
+game_saves=GameSlots()
+init_game_slots(game_saves)
+game_slot_views: GameSlotView[]
+game_slots_known=false
+game_active_slot= -1
+game_save_command=""
+game_save_requested= -1
+game_save_seen= -1
+game_session_epoch=0
+game_operation_epoch= -1
+game_save_error_logged=""
+game_autosave=AutosaveClock()
+game_save_auto=false            # (the request under way is the autosave's, not the player's)
+game_ui_note=""                 # the pause menu's Game page: what the player's last request came to
+saved_toast_at= -100.0          # (when the last autosave finished: the quiet "Saved" card)
+
+# A new situation/story cannot silently attach itself to the previous save slot.
+# An already submitted browser transaction can finish, but its result belongs to its old epoch.
+detach_game_slot_context = ():
+    global game_session_epoch,game_active_slot,game_slots_known,game_save_command,game_autosave
+    game_session_epoch+=1;game_active_slot= -1;game_slots_known=false;game_save_command="";game_autosave=AutosaveClock()
+    global game_save_auto,game_ui_note
+    game_save_auto=false;game_ui_note=""
+
+game_save_slots = () -> GameSlotView[]: game_slot_views
+game_save_status = () -> GameSaveStatus:
+    GameSaveStatus(game_saves.ready,game_saves.busy or game_save_command!="" or game_saves.loaded!=none,game_saves.operation,game_saves.slot,game_saves.sequence,game_saves.error,active_slot=game_active_slot)
+
+queue_game_slot = (command: str,slot: int) -> bool:
+    global game_save_command,game_save_requested
+    if not game_saves.ready or game_saves.busy or game_save_command!="" or game_saves.loaded!=none or not valid_slot(slot): return false
+    game_save_command=command;game_save_requested=slot
+    true
+request_game_save = (slot: int) -> bool: queue_game_slot("save",slot)
+request_game_load = (slot: int) -> bool: queue_game_slot("load",slot)
+request_game_delete = (slot: int) -> bool: queue_game_slot("delete",slot)
+
+# Registry bins bound this query; no full-world scan or terrain work on the frame path.
+game_place_at = (at: vec3) -> int:
+    best= -1;distance=1e20
+    loop index in settlement_registry.settlement_bins.get(geography_bin(f64(at.x),f64(at.z)),[]):
+        place=settlement_registry.world_settlements[index]
+        d=f64(length(at.xz-place.center.xz))
+        if d<f64(place.radius)+100 and d<distance:
+            best=(if place.legacy>=0:place.legacy else:place.id)
+            distance=d
+    best
+
+capture_running_game = () -> lt.SaveGame | save_types.LivingSaveError:
+    if active_scenario!="": return save_types.LivingSaveError("Situations are separate from saved games.")
+    if skip.active: return save_types.LivingSaveError("Finish resting or working before saving.")
+    if me.mode==.walking:sync_walker_point()
+    who=living_world.people[living_world.player]
+    at=if me.mode==.aboard:pc.state.position else:me.pos
+    place=game_place_at(at)
+    summary=lt.SaveSummary(minute=living_world.minute,place=place,place_name=if place>=0:living.place_name(living_world,place) else:"Away from a town",player_name=who.name,mode=str(me.mode),
+        craft=CRAFT_NAMES[clamp(int(pc.kind),0,CRAFT_NAMES.len()-1)],cents=player_cents())
+    session=GameSession(player_mode=int(me.mode),player_position=me.pos,player_point=walker_point,player_yaw=me.yaw,player_phase=me.phase,
+        flyer=pc,air=air_events,notes=notebook.notes,world_time=t,hour=hour,wind_bias=wind_bias,accumulator=traffic_scene.accumulator,
+        rope_anchor=rope.anchor,rope_loose=rope.loose,rope_tied=rope.tied,mooring=vessel_mooring,speed=speed_scale,lift=lift_scale,bullets=bullet_scale,
+        wind=wind_now,feel=dbg.tweaks,follow=follow,free=free,leisure=leisure,leisure_at=leisure_at,leisure_spent=leisure_spent,leisure_had=leisure_had,served_look_until=served_look_until)
+    capture_game(living_world,presentation,session,traffic,traffic_scene,vessels,battle,terrain_key(),summary)
+
+apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
+    global living_world,presentation,pc,me,traffic,traffic_scene,air_events,all_air_traffic,vessels,battle,vessel_bindings,vessel_mooring
+    global walker_point,walker_published,folks,folk_sync_t,notebook,my_jobs,t,hour,wind_bias,wind_now,follow,follow_frame,free,descent_camera
+    global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,ui_mission,battle_card,war_chart,view_target,target_scan,rope,was_moored
+    global wakes,vapor_trails,splashes,last_shots,plunge,plunge_v,active_scenario,judge_camera,talk_at_start,cat_scene,combat_visual,air_visual,guns
+    global fuel_pier_seen,fuel_pier_frame,fuel_offered_at,refuel_start,refuel_len,known_maps,toast,toast_until
+    global leisure,leisure_at,leisure_spent,leisure_had,leisure_ui,leisure_line,skip,served_look_until,served_pending
+    # Everything that can reject the load is checked before any running state is replaced.
+    if session_error(game,session)!="" or session.flyer.model<0 or session.flyer.model>=craft_models.len(): return false
+    fleet=VesselFleet();fight=Battle()
+    if not restore_war_scene(game.world,fleet,fight): return false
+    hush_audio(audio);hush_combat_audio(combat_audio);hush_battle_radio(battle_radio);hush_engines(hearing)
+    life_audio.hush_life_audio(life_sound);ambience_hush(world_ambience.sound);radio.radio_silence(cockpit_radio)
+    set_speed_scale(session.speed);lt.scale_airframes(session.speed);set_lift_scale(session.lift);set_bullet_scale(session.bullets)
+    dbg.tweaks=session.feel;set_tweaks(session.feel)
+    living_world=game.world;presentation=game.presentation;pc=session.flyer;air_events=session.air
+    traffic_scene=living_scene.SceneAdapter(accumulator=session.accumulator)
+    traffic=make_living_traffic(living_world,craft_models);bind_living_player(pc,living_world,traffic_scene)
+    loop pilot in air_events.pilots:
+        if pilot.active: living_world.aircraft[pilot.craft].move_owner=.scene
+    vessels=fleet;battle=fight;vessel_bindings=VesselBindings();vessel_mooring=session.mooring
+    loop ship in vessels.ships:
+        id=ship.id-FAR_VESSEL_BASE
+        if id>=0 and id<living_world.far.vehicles.len(): living_world.far.vehicles[id].scene_owned=true
+    me=Player(mode=Mode(session.player_mode),pos=session.player_position,yaw=session.player_yaw,phase=session.player_phase)
+    walker_point=session.player_point;walker_published=me.pos
+    t=session.world_time;hour=session.hour;wind_bias=session.wind_bias;wind_now=session.wind
+    follow=session.follow;follow_frame=FollowFrame();free=session.free;descent_camera=DescentCamera()
+    folks=[];sync_folk(folks,living_world,towns);folk_sync_t=t
+    my_jobs={}
+    loop id in living_world.active_jobs:
+        job=living_world.jobs[id]
+        if job.carrier==living_world.player and job.state==.claimed:my_jobs[id]=job.state
+    notebook=Notebook(storage_key=slot_prefix(game_saves.slot)+"-notebook",notes=session.notes)
+    known_maps={}
+    loop copy in living.owned_maps(living_world,living_world.player):known_maps[copy.id]=true
+    all_air_traffic=traffic;view_target=TargetView();target_scan=0;war_chart=WarChart();battle_card=BattleCard()
+    # Transient effects and interactions are rebuilt from restored positions, never old handles.
+    spray_ps.items.clear();spray_ps.billows.clear();smoke_ps.items.clear();dust_ps.items.clear()
+    wakes=[loop _ in 0..traffic.len()+1:WakeTrail()];vapor_trails=[Trail(),Trail()];splashes=[];last_shots=0;plunge=0;plunge_v=0
+    rope.anchor=session.rope_anchor;rope.loose=session.rope_loose;rope.tied=session.rope_tied;was_moored=pc.state.moored
+    ui=.none;ui_folk= -1;ui_place= -1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job= -1;ui_mission= -1
+    fuel_pier_seen=none;fuel_pier_frame= -100;fuel_offered_at=FUEL_NOWHERE;refuel_start= -100;refuel_len=0
+    if cat_scene.purr_voice>=0:stop(cat_scene.purr_voice)
+    cats=cat_scene
+    cat_scene=CatScene(meshes=cats.meshes,ready=cats.ready,purr=cats.purr,sound_ready=cats.sound_ready)
+    cv=combat_visual
+    combat_visual=CombatView(low=cv.low,low_parts=cv.low_parts,chute=cv.chute,hole=cv.hole,oil=cv.oil,pilot=cv.pilot,distant_pilot=cv.distant_pilot,
+        trails=BattleTrails(mesh=cv.trails.mesh,shader=cv.trails.shader))
+    av=air_visual
+    air_visual=AirView(silhouette=av.silhouette,exhaust=BattleTrails(mesh=av.exhaust.mesh,shader=av.exhaust.shader))
+    guns=Guns();life_sound.last_beat= -1
+    world_ambience.sound.pending=[];world_ambience.sound.sources=[];world_ambience.sound.last_time= -1;world_ambience.sound.refresh=0
+    world_ambience.previous_scan= -1
+    bar_music_stop(bar_music)
+    leisure=session.leisure;leisure_at=session.leisure_at;leisure_spent=session.leisure_spent;leisure_had=session.leisure_had
+    leisure_ui=0;leisure_line="";skip=TimeSkip();served_look_until=session.served_look_until;served_pending=false
+    if leisure.sitting!="":ui=.leisure
+    active_scenario="";judge_camera=none;talk_at_start=false;toast="";toast_until=0
+    weather_scene_step(living_world,if me.mode==.aboard:pc.state.position else:me.pos,hour,0)
+    update_player_follow(0,input=false)
+    mouse_lock(false)
+    true
+
+# At update entry the previous frame is complete, including drawing-time purchases.
+# This runs while paused too. Loaded World values are consumed before the next simulation step.
+process_game_saves = () -> bool:
+    global game_save_seen,game_active_slot,game_slots_known,game_slot_views,game_save_command,game_save_requested,game_save_error_logged,game_operation_epoch
+    global game_save_auto,game_ui_note,saved_toast_at
+    poll_game_slots(game_saves)
+    if game_saves.ready and not game_saves.busy and (not game_slots_known or game_save_seen!=game_saves.sequence):
+        game_slot_views=list_game_slots(game_saves,terrain_key())
+        if not game_slots_known:
+            loop view in game_slot_views:
+                if not view.exists and game_active_slot<0:game_active_slot=view.slot
+            game_slots_known=true
+    if not game_saves.busy and game_save_seen!=game_saves.sequence:
+        game_save_seen=game_saves.sequence
+        if game_saves.operation=="save" and game_operation_epoch==game_session_epoch:
+            ack_autosave(game_autosave,game_saves.error=="")
+            if game_saves.error=="":game_active_slot=game_saves.slot
+        if game_saves.operation=="delete" and game_operation_epoch==game_session_epoch and game_saves.error=="" and game_active_slot==game_saves.slot:game_active_slot= -1
+        if game_operation_epoch==game_session_epoch:
+            n=game_saves.slot+1
+            if game_saves.operation=="save" and game_save_auto:
+                if game_saves.error=="":saved_toast_at=t
+            else if game_saves.error!="":game_ui_note=game_saves.error
+            else if game_saves.operation=="save":game_ui_note="Saved in slot {n}."
+            else if game_saves.operation=="delete":game_ui_note="Slot {n} deleted."
+            if game_saves.operation=="save":game_save_auto=false
+        if game_saves.error!="" and game_saves.error!=game_save_error_logged:
+            game_save_error_logged=game_saves.error
+            eprint("[game save] {game_saves.operation} slot={game_saves.slot} minute={living_world.minute}: {game_saves.error}")
+    if let game=take_game_slot(game_saves):
+        if game_operation_epoch!=game_session_epoch:return false
+        runtime=read_game_session(game)
+        if runtime is GameSession and apply_saved_game(game,runtime):
+            game_active_slot=game_saves.slot;ack_autosave(game_autosave,true)
+            game_ui_note="Loaded slot {game_saves.slot+1}."
+            # (the loaded game carries on at once; the menu has done its work)
+            set_paused(false)
+            return true
+        game_saves.error="The saved player could not be restored; the running game is unchanged."
+        game_ui_note=game_saves.error
+    if game_saves.busy or game_save_command=="":return false
+    game_operation_epoch=game_session_epoch
+    command=game_save_command;slot=game_save_requested;game_save_command="";game_save_requested= -1
+    if command=="load":_=load_game_slot(game_saves,slot,terrain_key())
+    else if command=="delete":_=delete_game_slot(game_saves,slot)
+    else:
+        ack_autosave(game_autosave,false)
+        game=capture_running_game()
+        if game is lt.SaveGame:_=save_game_slot(game_saves,slot,game)
+        else:
+            game_saves.operation="save";game_saves.slot=slot;finish_slot_operation(game_saves,game.message)
+    false
+
+queue_autosave = (dt: f64):
+    safe=active_scenario=="" and not skip.active and not refueling() and (ui==.none or (ui==.leisure and leisure_ui==0)) and not notebook.open and not cat_busy(cat_scene)
+    safe=safe and ((me.mode==.aboard and pc.state.moored and not pc.state.crashed) or (me.mode==.walking and game_place_at(me.pos)>=0))
+    if safe:
+        at=if me.mode==.aboard:pc.state.position else:me.pos
+        if autosave_combat_near(living_world,at):safe=false
+        ci=combat_index(battle,living_world.people[living_world.player].craft)
+        if ci>=0 and battle.actors[ci].pilot.trigger:safe=false
+    if step_autosave(game_autosave,dt,safe,game_saves.ready and not game_saves.busy and game_active_slot>=0 and living_world.far.populated):
+        global game_save_auto
+        if request_game_save(game_active_slot):game_save_auto=true
+
+# the pause menu's Game page, as it stands: the slots from their cached headers, and what is under way
+game_page_view = (v: mut DebugView):
+    status=game_save_status()
+    v.games=game_rows(game_slot_views,game_active_slot)
+    v.game_ready=status.ready and game_slots_known
+    v.game_busy=status.busy
+    v.game_note=game_ui_note
+    if status.busy and not game_save_auto:
+        doing=if game_save_command!="":game_save_command else:status.operation
+        v.game_note=if doing=="load":"Loading..." else if doing=="delete":"Deleting..." else:"Saving..."
+    full=game_slot_views.len()>0
+    loop view in game_slot_views:
+        if not view.exists:full=false
+    v.autosave_note="Autosave is off until you save or load a slot."
+    if active_scenario!="":v.autosave_note="Situations are separate from saved games: nothing autosaves here."
+    else if game_active_slot>=0:v.autosave_note="The game autosaves to slot {game_active_slot+1} now and then, at a mooring or in a town."
+    else if full:v.autosave_note="Autosave is off while all three slots are full. Save or load one and the game autosaves there."
+
+# what the Game page asked for: one request, the backend's to finish (the note says how it went)
+game_page_apply = (r: DebugResult):
+    if r.game=="" or r.game_slot<0:return
+    global game_save_auto,game_ui_note
+    accepted=if r.game=="save":request_game_save(r.game_slot) else if r.game=="load":request_game_load(r.game_slot) else:request_game_delete(r.game_slot)
+    if accepted:game_save_auto=false
+    game_ui_note=if accepted:"" else:"The saved games are busy; try again in a moment."
+
 # what the debugging panel changed or asked for
 debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
+    game_page_apply(r)
     if r.scenario!="":load_scenario(r.scenario);return
     weather_anchor = if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos
     if r.weather >= 0: weather_choose(living_world,r.weather,weather_anchor)
@@ -1567,7 +2110,7 @@ if env("AEGEAN_CAPTURE_PANEL")=="notebook":
             pin_notice(notebook,id,j.poster,"{job_cargo(id)} to {SETTLEMENTS[j.destination].name}","{living_world.people[j.poster].name}; due {clock_text(living_world,j.due_minute)}; {j.reward_cents/100} lire",clock_text(living_world,living_world.minute))
     notebook.open=true
     print("NOTEBOOK {to_text(notebook.notes)}")
-if env("AEGEAN_CAPTURE_PANEL")=="options":dbg.page=4
+if env("AEGEAN_CAPTURE_PANEL")=="options":dbg.page=5
 if let attitude=env("AEGEAN_CAPTURE_ATTITUDE"):
     words=split(attitude," ")
     pitch=to_float(words[0]) ?? 0.0
@@ -1583,7 +2126,12 @@ if let orbit=env("AEGEAN_CAPTURE_ORBIT"):
     pc.orbit_pitch=clamp(to_float(words[2]) ?? 0.32,-0.05,1.35)
 
 if let scenario=env("AEGEAN_SCENARIO"):assert(load_scenario(scenario),"Unknown scenario")
-if env("AEGEAN_CAPTURE_PANEL")=="scenarios":dbg.page=5;set_paused(true)
+if env("AEGEAN_CAPTURE_PANEL")=="scenarios":dbg.page=6;set_paused(true)
+# AEGEAN_CAPTURE_PANEL=game|game-confirm opens the pause menu's Game page (with a load waiting for
+# its yes on slot 2); =saved shows the autosave's card at the captured frame (SLOPPY_FRAMES)
+# (paused a second in, once the camera has settled on the quay)
+game_capture_frame=if env("AEGEAN_CAPTURE_PANEL")=="game" or env("AEGEAN_CAPTURE_PANEL")=="game-confirm":60 else: -1
+if env("AEGEAN_CAPTURE_PANEL")=="saved":saved_toast_at=f64(to_int(env("SLOPPY_FRAMES") ?? "120") ?? 120)/60.0-1.2
 
 # AEGEAN_CAPTURE_WAR=card|chart|board|contract stages war news for headless captures of the
 # battle card, the chart's war layer and the military contracts (capture only: the living world
@@ -2014,6 +2562,7 @@ stage_capture_rescue = (stage: str):
         notebook.fresh = true
 
 update = (dt: f64):
+    if process_game_saves(): return
     global air_visual,air_events,all_air_traffic,view_target,target_scan
     global t, hour, show_chart, chart_local, pc, ui, ui_folk, ui_line, ui_news, ui_place, paused, descent_camera, vessel_mooring, was_moored
     # (the touch screen's stick and buttons, read as keys below; mode: 0 flying, 1 on the water,
@@ -2032,6 +2581,9 @@ update = (dt: f64):
     lay_out_screen()                # (upright or on its side, a phone gets its own units)
     update_pad(pad_mode, not pc.slow, pc.throttle, dt)
     # P (or F1) stops the world and its sounds, and opens the pause menu (the debugging panel)
+    if frame_number()==game_capture_frame:
+        set_paused(true);dbg.page=0
+        if env("AEGEAN_CAPTURE_PANEL")=="game-confirm":dbg.confirm="load";dbg.confirm_slot=1
     if (vpressed(.p) or vpressed(.f1)) and not notebook.open and not ui_typing() and not debug_typing() and not leisure_typing(): set_paused(not paused)
     if show_chart and geography_enabled and vpressed(.tab): chart_local = not chart_local
     global chart_sheets
@@ -2164,6 +2716,8 @@ update = (dt: f64):
     match me.mode:
         .free: free.update(dt)
         .walking:
+          if job.active: plane_job_step(dt)
+          if listen_mode != "": listen_step(dt)
           if ui != .none: update_player_follow(dt)
           thermal_handled=ui==.none and not notebook.open and not show_chart and thermal_walk(dt)
           if ui == .none and not notebook.open and not thermal_handled:
@@ -2449,6 +3003,7 @@ update = (dt: f64):
         ,ships=[loop ship in vessels.ships:if ship.health>0.2:AirShip(ship.id,ship.position,ship.velocity)]
         ,other_air=[loop p in air_events.pilots:AirContact(p.craft,p.state.position,p.state.velocity,p.capital,p.state.on_water,p.state.moored)]
     )
+    when TARGET == "wasm": speech_loading.step_speech_warmup(living_world,speech_warmup)
     if active_scenario!="":commit_scenario_aircraft(living_world,battle)
     receive_vessel_hits(vessels,battle,vessel_bindings)
     sync_workboat_vessels(vessels,vessel_bindings,living_world,dt)
@@ -2566,7 +3121,12 @@ update = (dt: f64):
     if me.mode == .aboard and not cockpit_radio.muted:
         radio.radio_receive(cockpit_radio,dt,living_world.minute,pc.state.position,height)
         broadcast.radio_update_content(cockpit_radio,radio_bulletin,living_world)
-    bar_music_update(bar_music, living_world.tick, f64(length(scene_camera() - hotel.stage)), audio_enabled)
+    # (the band heard from where the camera is: which way it faces, the hotel's walls, the town in
+    # between, the terrace or the quay; close by, the harbour's background hushes a little)
+    heard = band_hearing(hotel, ear, ear_forward, if f64(length(ear - hotel.stage)) < 150.0: ambience_obstruction(hotel.stage + vec3(0, 1.6, 0), ear, towns) else: 0.0)
+    world_ambience.sound.duck = if bar_set_position(living_world.tick).playing: live_duck(heard) else: 1.0
+    bar_music_update(bar_music, living_world.tick, heard, audio_enabled)
+    if listen_mode != "" and frame_number() % 60 == 0: print("LISTEN frame {frame_number()} distance {heard.distance:.1f} pan {heard.pan:+.2f} front {heard.front:+.2f} occlusion {heard.occlusion:.2f} zone {heard.zone} duck {world_ambience.sound.duck:.2f} voice {bar_music.voice} playing {bar_set_position(living_world.tick).playing}")
     radio.radio_play(cockpit_radio,f64(living_world.tick)/60.0,me.mode == .aboard,
         not pc.state.moored,pc.state.throttle,audio_enabled)
     # the other aircraft's engines, heard from where their sound left them, Doppler and all
@@ -2574,6 +3134,7 @@ update = (dt: f64):
         if tr.flying and tr.state.throttle < 0.05: 0.7 else: f64(tr.state.throttle),
         not tr.state.moored and (tr.flying or tr.state.throttle > 0.02 or f64(length(tr.state.velocity)) > 0.5),
         engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))), voice = aircraft_profile(tr.kind).voice,point=craft_point(tr.state))], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t,world_offset(world_point(scene_camera()),render_eye_low))
+    queue_autosave(dt)
     set_tweaks(dbg.tweaks)
     set_options(dbg.opts)
     audio.air_on = dbg.snd_air
@@ -2604,6 +3165,22 @@ craft_matrix = (m: Moored) -> mat4:
 pc_at = () -> mat4: translation(vec3(0, f32(plunge), 0)) * (if pc.state.moored: afloat_transform(craft_transform(pc),t) else: craft_transform(pc))
 
 draw_world = (L: Light):
+    if not effect_pipelines_ready:
+        # Prepare the actual transparent-pass blend/target variant once. Vulkan
+        # otherwise compiles it and serializes its pipeline cache on first use.
+        draw_custom(():
+            global effect_pipelines_ready
+            warm_up(prop_disc_shader)
+            warm_up(local_particle_sh)
+            when TARGET == "wasm":
+                # warm_up is a native API. WebGL also needs a real first draw
+                # to prepare ANGLE's pipeline, even after shader linking. These
+                # zero-area instances run the programs without covering pixels.
+                origin=render_origin(scene_camera());vp=render_view_proj(origin)
+                draw_instanced(prop_disc_shader,prop_disc_mesh,[PropDiscInstance(model=scaling(vec3(0,0,0)))],PropDiscParams(clouds=cloud_veil,vp=vp,cam=render_eye(origin)))
+                draw_instanced(local_particle_sh,local_particle_mesh,[LocalParticle(half=0)],LocalParticleParams(clouds=cloud_veil,vp=vp))
+            effect_pipelines_ready = true
+        ,transparent=true)
     draw_custom((): begin_cloud_depth())
     draw_custom(():
         bow = transform_point(afloat_transform(craft_transform(pc),t), vec3(1.4, -1.9, -2.6))
@@ -2659,7 +3236,7 @@ draw_world = (L: Light):
             draw(obj_sh, board_mesh, obj_params(L, t, translation(board_spots[k]) * rotation_y(atan2(f64(tw.out.x), f64(tw.out.y)))))
         loop w in walkers:
             if length(w.pos - scene_camera()) < 600.0: draw_figure(w.fig, w.pos, w.yaw, w.phase, if w.wait > 0.0: 0.0 else: 0.8, L, t)
-        if me.mode == .walking: draw_figure(player_figure(), me.pos, me.yaw, me.phase, if cat_busy(cat_scene) or presentation.thermal.active or leisure.sitting != "": 0.0 else: me.stride, Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=if presentation.thermal.active:1 else:if cat_busy(cat_scene): 4 else:if leisure.sitting != "":1 else:0)
+        if me.mode == .walking: draw_figure(player_figure(), me.pos, me.yaw, me.phase, if cat_busy(cat_scene) or presentation.thermal.active or leisure.sitting != "": 0.0 else: me.stride, Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=if presentation.thermal.active: 1 else: if cat_busy(cat_scene): 4 else: if leisure.sitting != "": 1 else: if job.active: work_posture(job.pose) else: 0)
         draw_traffic(all_air_traffic,craft_models,L,t,battle,1800)
         draw_air_meets(air_meet_view,air_events,L,t)
         draw_air_far(air_visual,all_air_traffic,L,t,battle)
@@ -2678,6 +3255,11 @@ draw_world = (L: Light):
                     local_at[3]=vec4(0,0,0,1)
                 draw_craft_parts(pm,pc.state.damage,local_at,L,t,pc.prop_angle,airframe(pc),pc.state.gear,anchor,prop_speed=prop_rotation_speed(pc.state,pc.feedback.speed),prop_key=living_world.people[living_world.player].craft)
             draw_debris(pm,pc.state.damage,L,t)
+            # (tuning: a cowling panel swung open on the side he works)
+            if job.active and job.task == .tune and job.leg < job.legs.len() and job.legs[job.leg].kind == .work:
+                l = plane_layout()
+                side = if job.legs[job.leg].target.x < 0: -1.0 else: 1.0
+                draw(obj_sh, cowling_panel, obj_params(L, t, at * translation(l.engine + vec3(f32(side * l.engine_radius), f32(l.engine_radius * 0.55), 0)) * rotation_z(side * 2.0)))
             if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t,me.mode==.aboard and pc.cockpit_view)
             if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_rotation_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft)
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true,offset=world_residual(craft_point(pc.state)))
@@ -2762,11 +3344,15 @@ draw = ():
     hide_sky()
     fog(L.haze, L.fog_density, 0.0012)
     post_effects(0.35, 0.85, 0.22, 1.08)
+    global ear_forward
     match me.mode:
-        .free: render_camera(free.pos, forward(free), 62.0, 1.0, world_far(f64(free.pos.y)))
+        .free:
+            render_camera(free.pos, forward(free), 62.0, 1.0, world_far(f64(free.pos.y)))
+            ear_forward = forward(free)
         .aboard:
             if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil,view_target.bearing,view_target.weight,pc_at())
             else:place_chase_camera(pc,t,view_target.bearing,view_target.weight,towns)
+            ear_forward = if pc.cockpit_view: quat_rotate(pc.state.orientation, vec3(0, 0, -1)) else: pc.look
         .descent:place_descent_camera(descent_camera,world_far(f64(me.pos.y)))
         _:
             # (after a few strong drinks, a gentle sway: Options can turn it off)
@@ -2779,10 +3365,13 @@ draw = ():
                 side = vec3(-across.z, 0, across.x)
                 eye = top + across * 1.3 + side * 0.4 + vec3(0, 0.72, 0)
                 render_camera(eye, top + vec3(0, 0.3, 0) - across * 0.25 - eye, 54.0, 0.05, world_far(f64(eye.y)))
+                ear_forward = top - eye
             else if sway > 0.0:
                 view.yaw += sway * 0.05 * sin(t * 0.61)
                 view.pitch += sway * 0.025 * sin(t * 0.47 + 1.3)
-            if not (leisure.sitting != "" and t < served_look_until and leisure_ui != 1): place_local_follow(view,follow_frame,58.0,0.3,world_far(f64(me.pos.y)))
+            if not (leisure.sitting != "" and t < served_look_until and leisure_ui != 1):
+                place_local_follow(view,follow_frame,58.0,0.3,world_far(f64(me.pos.y)))
+                ear_forward = aim(view) - position(view)
     if env("AEGEAN_TARGET_FRAMES")!=none and me.mode==.aboard:
         draw_custom(():
             origin=render_origin(scene_camera());vp=render_view_proj(origin)
@@ -2794,6 +3383,7 @@ draw = ():
     if let view=judge_camera:
         delta=if me.mode==.aboard:pc.state.position-judge_origin else:vec3(0,0,0)
         camera3d(view.eye+delta,view.target+delta,62.0,0.1,world_far(f64(view.eye.y+delta.y)))
+        ear_forward = view.target - view.eye
     if me.mode == .aboard:
         pp = pc.state.position
         hgt = f64(pp.y) - pc.spec.float_height - max(surface_height(f64(pp.x), f64(pp.z)), 0.0)
@@ -2905,6 +3495,7 @@ draw = ():
         debug_apply(was, v, debug_panel(dbg, v, [loop tw in towns: tw.name], CRAFT_NAMES))
     if dbg.picking and show_chart: prompt_card(fonts, "Click where to go  ({int(dbg.altitude)} m)", 60.0)
     if t < toast_until: prompt_card(fonts, toast, 260.0)
+    if t - saved_toast_at < SAVED_TOAST_SECONDS and not paused: saved_toast(fonts, t - saved_toast_at)
     if t < map_card_until and not show_chart and ui != .maps: prompt_card(fonts, map_card, 200.0)
     if not show_chart and ui == .none and not notebook.open: draw_rescue_card(fonts, rescue, t)
     if t < radio_card_until and me.mode == .aboard: prompt_card(fonts, radio_label(), if pc.cockpit_view: 120.0 else: 320.0)
@@ -2945,6 +3536,11 @@ draw = ():
             if let band=prop_bands.get(living_world.people[living_world.player].craft):print("PROPFRAME {n} {pc.state.throttle:.4} {prop_rotation_speed(pc.state,pc.feedback.speed):.3} {band.angle:.5}")
     if let directory=env("AEGEAN_ATMOS_FRAMES"):
         if frame_number() in [2,360,780,1200,1800] or frame_number()%4==0 and (frame_number()<=120 or frame_number()>=720 and frame_number()<=960): save_png("{directory}/{frame_number()}.png",screenshot())
+    # AEGEAN_LEISURE_FRAMES=dir: every half second of a job on the aircraft, and its legs as they go
+    if let directory = env("AEGEAN_LEISURE_FRAMES"):
+        if job.active and frame_number() % 30 == 0:
+            save_png("{directory}/{frame_number()}.png", screenshot())
+            if job.leg < job.legs.len(): print("JOB frame {frame_number()} leg {job.leg}/{job.legs.len()} {job.legs[job.leg].kind} pose {job.pose} aboard {job.aboard} at {me.pos} hour {hour:.2}")
     if capture_audio:
         global captured_audio
         if frame_number()<=1800: captured_audio.extend(__mix_buf)

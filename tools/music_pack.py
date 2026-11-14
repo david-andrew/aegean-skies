@@ -20,7 +20,17 @@ PIECES = [
  ('gladiators', 'Entry of the Gladiators (excerpt)', 'Julius Fucik; arr. Eric Russ', 'Orenthia National'),
  ('ikariotikos', 'Ikariotikos', 'Traditional Greek', 'Archipelago Radio'),
  ('bethena', 'Bethena: a concert waltz', 'Scott Joplin', 'Blue Lantern'),
+ # The Hotel Ancora's quiet evening set (piano, violin, guitar, mandolin): not on the radio.
+ ('gymnopedie', 'Gymnopedie No. 1', 'Erik Satie', 'Hotel Ancora'),
+ ('ave-maria', 'Ave Maria (on the first Prelude of Bach)', 'Charles Gounod', 'Hotel Ancora'),
+ ('clair-de-lune', 'Clair de lune', 'Claude Debussy', 'Hotel Ancora'),
+ ('adelita', 'Adelita', 'Francisco Tarrega', 'Hotel Ancora'),
+ ('berceuse', 'Berceuse (Dolly)', 'Gabriel Faure', 'Hotel Ancora'),
 ]
+
+# Pieces with an annotated performance (time map, levels; for the piano, dynamics, pedal and
+# voicing): data/music/<file>, made by its own tool (tools/clair_performance.py for Clair de lune).
+ANNOTATED = {'adagietto': 'adagietto-performance.json', 'clair-de-lune': 'clair-de-lune-performance.json'}
 
 def gm(program, drum=False):
  if drum: return DRUMS
@@ -88,6 +98,9 @@ def opening():
 
 def arrange(name,notes):
  out=[]
+ top={}
+ for start,dur,pitch,ins,g0,g1,track in notes:
+  key=(track,round(start,3));top[key]=max(top.get(key,-1),pitch)
  for start,dur,pitch,ins,g0,g1,track in notes:
   if name=='magnetic':
    start*=60/116;dur*=60/116
@@ -95,6 +108,16 @@ def arrange(name,notes):
    # Keep every original piano pitch; light banjo doubles the off-beat middle register.
    if track==2 and 48<=pitch<67:out.append([start,dur,pitch,BANJO,g0*.36,g1*.36,track])
   elif name=='el-choclo': ins=ACCORDION if track==0 else PIANO if pitch>=48 else BASS
+  elif name=='gymnopedie' and track==1:
+   # The right hand's top voice is the tune: the violin sings it; the chords stay on the piano.
+   ins=STRINGS if pitch>=67 and pitch==top.get((track,round(start,3)),-1) else PIANO
+  elif name=='adelita':
+   # Two guitars: the tune on a mandolin-like plucked voice, the accompaniment on a guitar.
+   ins=BOUZOUKI if track==1 else HARP
+   if track==1:g0*=.85;g1*=.85
+  elif name=='berceuse':
+   # Flute and guitar become violin and guitar.
+   ins=STRINGS if track==1 else HARP
   elif name=='ikariotikos':
    ins=BOUZOUKI
    # Unison octave accompaniment follows the traditional melody, no invented harmony.
@@ -134,13 +157,14 @@ def main():
    performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
   else:
    notes,performance=interpret(arrange(name,notes),name,score_clock(ROOT/'data/music/source'/f'{name}.mid',name))
-  if name=='adagietto':
-   annotation=json.loads((ROOT/'data/music/adagietto-performance.json').read_text())
+  if name in ANNOTATED:
+   annotation=json.loads((ROOT/'data/music'/ANNOTATED[name]).read_text())
    notes=apply_performance_map(notes,annotation)
    performance.update(annotated_clock=True,time_points=len(annotation['time_map']),duration_after=max(n[0]+n[1] for n in notes),section_mix='independent start/end gains')
+   if 'pedal' in annotation:performance.update(pedal_spans=len(annotation['pedal']),voicing=annotation['voicing'],spread_seconds=annotation['spread_seconds'],dynamic_range_db=[min(v for _,v in annotation['dynamics']),max(v for _,v in annotation['dynamics'])])
   performances[name]=performance
   sections={track:i for i,key in enumerate(['harp','violin_1','violin_2','viola','cello','bass']) for track in annotation['section_tracks'][key]} if name=='adagietto' else None
-  blob,end,events=pack(notes,mix_levels=name=='adagietto',sections=sections)
+  blob,end,events=pack(notes,mix_levels=name in ANNOTATED,sections=sections)
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
   meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob)))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')

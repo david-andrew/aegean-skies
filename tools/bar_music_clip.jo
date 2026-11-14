@@ -1,9 +1,19 @@
-# A clip of the Hotel Ancora's evening music, as heard from a table: renders the band and the singer
-# through the terrace's room to a WAV (48 kHz stereo), and prints the band's and the voice's levels.
-#   BAR_PIECE=0 BAR_FROM=10 BAR_SECONDS=30 BAR_DISTANCE=12 BAR_OUT=clip.wav sloppy --release tools/bar_music_clip.jo
-# BAR_VOICE=0 leaves the singer out (to compare).
+# Clips of the Hotel Ancora's evening music as a listener hears it, placed in the world
+# (src/live_source.jo): a stereo WAV (48 kHz), and the left/right levels second by second.
+#   BAR_PIECE=0 BAR_FROM=10 BAR_SECONDS=30 BAR_OUT=clip.wav sloppy --release tools/bar_music_clip.jo
+# BAR_PATH, in the hotel's own frame (the band's stand at x -12.5, z 27.8; the building x -11..11,
+# z 6..18; the terrace beyond it to z 31; the waterfront quay at z 0):
+#   front   (default) BAR_DISTANCE metres in front of the band, on the terrace, facing it
+#   turn    4.6 m in front of the band, turning a full circle every 16 s
+#   walk    from the band along the terrace, down the side walk, onto the quay and away behind
+#           the building, facing the way one walks
+#   room    from the terrace in through the door to the ground-floor room; the door shuts, then
+#           opens again
+# BAR_VOICE=0 leaves the singer out; BAR_VOICE=only, the band; BAR_GAIN=g a fixed gain instead of
+# normalising (so loud and soft passages keep their balance).
 use '../src/music_data.jo'
 use '../src/music_synth.jo'
+use '../src/live_source.jo'
 use '../src/bar_band.jo'
 
 index = clamp(to_int(env("BAR_PIECE") ?? "0") ?? 0, 0, BAR_SET.len() - 1)
@@ -11,38 +21,94 @@ from = to_float(env("BAR_FROM") ?? "10") ?? 10.0
 seconds = to_float(env("BAR_SECONDS") ?? "30") ?? 30.0
 distance = to_float(env("BAR_DISTANCE") ?? "12") ?? 12.0
 out_path = env("BAR_OUT") ?? "bar-clip.wav"
+path = env("BAR_PATH") ?? "front"
 voice_on = (env("BAR_VOICE") ?? "1") != "0"
 voice_only = env("BAR_VOICE") == "only"
 
+SOURCE = vec3(-12.1, 2.7, 27.8)
+EAR = 2.85
+BODY_LO = vec3(-11, -1, 6)
+BODY_HI = vec3(11, 12.4, 18)
+TERRACE_LO = vec3(-15.2, 0, 18)
+TERRACE_HI = vec3(15.2, 6.5, 31.3)
+
+# a point along a polyline, walked at `speed`, and the way it faces
+_along = (points: vec3[], t: f64, speed: f64) -> (vec3, vec3):
+    left = t * speed
+    loop k in 0..points.len() - 1:
+        seg = points[k + 1] - points[k]
+        l = f64(length(seg))
+        if left <= l: return (points[k] + seg * f32(left / l), normalize(seg))
+        left -= l
+    last = points[points.len() - 1] - points[points.len() - 2]
+    (points[points.len() - 1], normalize(last))
+
+_zone = (p: vec3) -> ListenZone:
+    if inside_box(p, BODY_LO, BODY_HI): return .indoors
+    if inside_box(p, TERRACE_LO, TERRACE_HI): return .terrace
+    .open
+
+# the listener at a time into the clip
+hearing_at = (t: f64) -> LiveHearing:
+    if path == "turn":
+        ear = SOURCE + vec3(4.6, 0.15, 0)
+        a = TAU * t / 16.0
+        return live_hearing(ear, vec3(f32(-cos(a)), 0, f32(-sin(a))), SOURCE, 0.0, .terrace)
+    if path == "walk":
+        p, f = _along([vec3(-8, EAR, 26), vec3(12.5, EAR, 25), vec3(13, EAR, 4), vec3(13, EAR, -2), vec3(-45, EAR, -2)], t, 1.5)
+        occ = if box_blocks(p, SOURCE, BODY_LO, BODY_HI): 0.85 else: 0.0
+        return live_hearing(p, f, SOURCE, occ, _zone(p))
+    if path == "room":
+        p, f = _along([vec3(0, EAR, 25), vec3(0, EAR, 19), vec3(0, EAR, 12)], t, 1.2)
+        # the door shuts behind him a second after he is in, and opens again eight seconds later
+        inside = inside_box(p, BODY_LO, BODY_HI)
+        shut = t > 12.5 and t < 20.5
+        occ = if inside: (if shut: 0.92 else: 0.5) else: 0.0
+        facing = if t > 11.0: vec3(0, 0, 1) else: f
+        return live_hearing(p, facing, SOURCE, occ, _zone(p))
+    live_hearing(SOURCE + vec3(f32(distance), 0.15, 0), vec3(-1, 0, 0), SOURCE, 0.0, .terrace)
+
 m = BarMusic()
 bar_music_load(m, index, from)
-m.distance = distance
 total = int(seconds * f64(MUSIC_RATE))
-mono: f32[]
-band_sq = 0.0; voice_sq = 0.0; n = 0
+stereo16: f32[]
 t0 = time()
-loop mono.len() < total:
-    count = min(512, total - mono.len())
-    band = music_render(m.synth, count)
+done = 0
+level_l: f64[]; level_r: f64[]
+sum_l = 0.0; sum_r = 0.0; count = 0
+loop done < total:
+    n = min(400, total - done)
+    band = music_render(m.synth, n)
     voice = singer_render(m.singer, band.len())
     if band.len() == 0: break
+    dry = [loop i in 0..band.len(): (if voice_only: 0.0 else: band[i] * 3.0) + (if voice_on: voice[i] * 1.5 else: 0.0)]
+    frames = live_process(m.space, hearing_at(f64(done) / f64(MUSIC_RATE)), dry)
     loop i in 0..band.len():
-        band_sq += band[i] * band[i] * 9.0
-        voice_sq += voice[i] * voice[i] * 2.25
-        n += 1
-        mono.push(f32(bar_room_sample(m.room, (if voice_only: 0.0 else: band[i] * 3.0) + (if voice_on: voice[i] * 1.5 else: 0.0), m.distance)))
+        l = f64(frames[i * 2]); r = f64(frames[i * 2 + 1])
+        sum_l += l * l; sum_r += r * r; count += 1
+        if count == MUSIC_RATE:
+            level_l.push(sqrt(sum_l / f64(count))); level_r.push(sqrt(sum_r / f64(count)))
+            sum_l = 0.0; sum_r = 0.0; count = 0
+    stereo16.extend(frames)
+    done += band.len()
 spent = time() - t0
 peak = 0.0
-loop v in mono: peak = max(peak, abs(f64(v)))
-gain = if peak > 0.0: 0.89 / peak else: 1.0
-# 16 kHz mono to 48 kHz stereo, by straight lines between samples
-stereo: f32[]
-loop i in 0..mono.len():
-    a = f64(mono[i]) * gain
-    b = if i + 1 < mono.len(): f64(mono[i + 1]) * gain else: a
+loop v in stereo16: peak = max(peak, abs(f64(v)))
+gain = to_float(env("BAR_GAIN") ?? "") ?? (if peak > 0.0: 0.89 / peak else: 1.0)
+# 16 kHz to 48 kHz, by straight lines between frames
+out: f32[]
+frames_count = stereo16.len() / 2
+loop i in 0..frames_count:
+    j = min(i + 1, frames_count - 1)
     loop k in 0..3:
-        v = f32(a + (b - a) * f64(k) / 3.0)
-        stereo.push(v); stereo.push(v)
-assert(save_wav(out_path, Sound(stereo)))
-print("{MUSIC_PIECES[BAR_SET[index].piece].title}: {f64(mono.len()) / f64(MUSIC_RATE):.1} s from {from:.1} s at {distance:.0} m -> {out_path}")
-print("band rms {sqrt(band_sq / f64(max(n, 1))):.4}  voice rms {sqrt(voice_sq / f64(max(n, 1))):.4}  peak {peak:.3}  sung notes {m.singer.notes.len()}  render {spent / seconds * 100.0:.1}% of real time")
+        u = f64(k) / 3.0
+        out.push(f32((f64(stereo16[i * 2]) * (1.0 - u) + f64(stereo16[j * 2]) * u) * gain))
+        out.push(f32((f64(stereo16[i * 2 + 1]) * (1.0 - u) + f64(stereo16[j * 2 + 1]) * u) * gain))
+assert(save_wav(out_path, Sound(out)))
+print("{MUSIC_PIECES[BAR_SET[index].piece].title}: {f64(frames_count) / f64(MUSIC_RATE):.1} s from {from:.1} s, path {path} -> {out_path}; peak {peak:.3}; render {spent / seconds * 100.0:.1}% of real time")
+# second by second: the level in dB and the balance (positive: louder on the right)
+line = ""
+loop k in 0..level_l.len():
+    l = 20.0 * log10(level_l[k] + 0.000001); r = 20.0 * log10(level_r[k] + 0.000001)
+    line = line + " {k}:{(l + r) * 0.5:.0}/{r - l:+.1}"
+print("level/balance dB:" + line)
