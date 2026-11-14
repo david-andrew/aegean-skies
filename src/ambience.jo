@@ -6,8 +6,8 @@ import 'living_conditions.jo' as conditions
 use 'vessel_types.jo'
 
 const AMBIENCE_LOOPS = 6
-const AMBIENCE_HITS = 4
-const AMBIENCE_PENDING = 24
+const AMBIENCE_HITS = 8
+const AMBIENCE_PENDING = 32
 struct AmbienceSource:
     key: int
     kind: AmbienceKind
@@ -16,6 +16,7 @@ struct AmbienceSource:
     reach: f64
     soft: f64 = 0.0
     pitch: f64 = 1.0
+    variant = 0                     # which take of an event (ambience_variants)
 struct AmbienceEvent:
     source: AmbienceSource
     due: f64
@@ -29,7 +30,8 @@ struct AmbienceVoice:
 struct Ambience:
     enabled: bool[] = fill(true,AMBIENCE_CATEGORIES)
     sounds: Sound[]
-    soft: Sound[]
+    soft: Sound[]                   # (at a quarter of the rate: ambience_soften_bank)
+    first: int[]                    # each kind's first take in sounds (empty: one take each, by kind)
     loops: AmbienceVoice[]
     hits: AmbienceVoice[]
     pending: AmbienceEvent[]
@@ -46,9 +48,35 @@ build_ambience = (render_only: bool = false) -> Ambience:
     a = Ambience(active=render_only or env("SLOPPY_NO_AUDIO") == none,playback=not render_only and env("SLOPPY_NO_AUDIO") == none)
     if not a.active: return a
     loop k in 0..AMBIENCE_KINDS:
-        s = make_ambience(AmbienceKind(k))
-        a.sounds.push(s); a.soft.push(ambience_soften(s))
+        a.first.push(a.sounds.len())
+        loop take in 0..ambience_variants(AmbienceKind(k)):
+            s = make_ambience(AmbienceKind(k),take+1)
+            a.sounds.push(ambience_decimate(s,ambience_rate_step(AmbienceKind(k)))); a.soft.push(ambience_soften_bank(s))
     a
+
+# the playback pitch of a take: the bank's rate made up (the muffled copies at a quarter)
+ambience_step = (a: Ambience,kind: AmbienceKind,muffled: bool) -> f64:
+    if a.first.len() == 0: return 1.0
+    if muffled: f64(AMBIENCE_SOFT_STEP) else: f64(ambience_rate_step(kind))
+ambience_take = (a: Ambience,s: AmbienceSource) -> int:
+    if a.first.len() == 0: return int(s.kind)
+    a.first[int(s.kind)]+s.variant%ambience_variants(s.kind)
+
+# 0..1 from a key, a count and a salt: the same answer every time, unrelated across keys
+ambience_hash = (key: int,n: int,salt: int) -> f64:
+    state = u64((key*1000003+n*7919+salt*104729+12345) and 0x7fffffffffffffff)
+    ambience_unit(state)
+
+# The cell of an uneven event if one falls between the last scan and this one, else -1. Time is
+# cut in cells of `seconds` and each holds one event at its own hashed moment, so the gaps run
+# from almost nothing to nearly twice `seconds`, never a beat (a fixed period, the old way, was
+# heard as a metronome: hull hammering every 4.7 s to the frame).
+ambience_due = (previous: f64,now: f64,key: int,seconds: f64) -> int:
+    if previous < 0 or now <= previous or now-previous > 1.5 or seconds <= 0: return -1
+    loop c in int(floor(previous/seconds))..int(floor(now/seconds))+1:
+        at = (f64(c)+ambience_hash(key,c,1))*seconds
+        if at > previous and at <= now: return c
+    -1
 
 ambience_score = (s: AmbienceSource,listener: vec3) -> f64:
     s.gain*pow(max(0.0,1.0-f64(length(s.pos-listener))/max(1.0,s.reach)),2.0)*(1.0-0.72*s.soft)
@@ -67,17 +95,20 @@ ambience_offer = (list: mut AmbienceSource[],s: AmbienceSource,listener: vec3,li
         if ambience_score(list[k],listener) < ambience_score(list[worst],listener): worst = k
     if ambience_score(s,listener) > ambience_score(list[worst],listener): list[worst] = s
 
+# Up, out and about: not the player, travelling, carried, gone, resting, asleep or at home.
+ambience_awake = (w: life.World,p: life.Person) -> bool:
+    if p.id == w.player or p.trip >= 0 or p.carriage >= 0 or p.state == .departed or p.state == .resting: return false
+    if p.id in w.far.people:
+        resident = w.far.people[p.id]
+        if resident.anchor == resident.home_key and length(p.pose.pos-resident.home_pos) < 4: return false
+    if p.id in w.daily_life:
+        a = w.daily_life[p.id]
+        if a.activity == .sleep or a.activity == .rest: return false
+    true
 ambience_people = (w: life.World,listener: vec3) -> vec3[]:
     points: vec3[]
     loop p in w.people:
-        if p.id == w.player or p.trip >= 0 or p.carriage >= 0 or p.state == .departed or p.state == .resting: continue
-        if length(p.pose.pos-listener) > 250: continue
-        if p.id in w.far.people:
-            resident = w.far.people[p.id]
-            if resident.anchor == resident.home_key and length(p.pose.pos-resident.home_pos) < 4: continue
-        if p.id in w.daily_life:
-            a = w.daily_life[p.id]
-            if a.activity == .sleep or a.activity == .rest: continue
+        if length(p.pose.pos-listener) > 250 or not ambience_awake(w,p): continue
         points.push(p.pose.pos)
     loop h in w.households:
         if h.activity != .sleep and h.activity != .rest and length(h.pose-listener) <= 250: points.push(h.pose)
@@ -179,8 +210,8 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         loop v in a.loops:
             if v.source.key == s.key and v.source.kind == s.kind: exists = true
         if exists or a.loops.len() >= AMBIENCE_LOOPS: continue
-        direct = play_at(a.sounds[int(s.kind)],s.pos,0.0,s.reach,pitch=s.pitch,looping=true)
-        soft = play_at(a.soft[int(s.kind)],s.pos,0.0,s.reach,pitch=s.pitch,looping=true)
+        direct = play_at(a.sounds[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,false),looping=true)
+        soft = play_at(a.soft[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,true),looping=true)
         a.loops.push(AmbienceVoice(s,direct,soft))
     total = 0.0
     loop v in a.loops: total += v.level
@@ -189,7 +220,7 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         gain = v.level*scale*(1.0-0.72*v.source.soft)*(if v.source.kind == .cafe: 1.0 else: a.duck)
         move_sound(v.direct,v.source.pos,gain*(1.0-v.source.soft),v.source.reach)
         move_sound(v.muffled,v.source.pos,gain*v.source.soft,v.source.reach)
-        set_pitch(v.direct,v.source.pitch); set_pitch(v.muffled,v.source.pitch)
+        set_pitch(v.direct,v.source.pitch*ambience_step(a,v.source.kind,false)); set_pitch(v.muffled,v.source.pitch*ambience_step(a,v.source.kind,true))
     live: AmbienceVoice[]
     loop v in a.hits:
         if now >= v.expires or not a.enabled[ambience_category(v.source.kind)]: ambience_stop_voice(v)
@@ -202,8 +233,9 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         if now-e.due > 0.3 or a.hits.len() >= AMBIENCE_HITS: continue
         s = e.source
         if ambience_score(s,listener) <= 0.00005: continue
-        sample = if s.soft > 0.45: a.soft[int(s.kind)] else: a.sounds[int(s.kind)]
-        voice = play_at(sample,s.pos,0.0,s.reach,pitch=s.pitch)
+        muffled = s.soft > 0.45
+        sample = if muffled: a.soft[ambience_take(a,s)] else: a.sounds[ambience_take(a,s)]
+        voice = play_at(sample,s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,muffled))
         a.hits.push(AmbienceVoice(s,voice,expires=now+ambience_seconds(s.kind)/s.pitch))
     a.pending = waiting
     # Update every active hit too: flight/teleport/mute cannot leave a loud old tail.

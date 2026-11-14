@@ -17,14 +17,23 @@ A clock rewind, load jump or large listener teleport also discards queued ambien
 | Source | Authority and conditions |
 |---|---|
 | Hour bells / service peals | Registry church/hill-church landmarks and original towns' visible chapel anchors. Nearest audible church strikes 1–12 on the hour; at 09:00 on Sundays/feasts a short three-pitch service peal replaces the hour count. No startup backlog. |
-| Harbour voices / ropes / rigging | Awake, non-travelling, non-carried people physically near the quay; the voices are the crowd bed (`ambience_crowd`: uneven synthesized talkers in a 5 s loop, no beat, no held pitch). Loudness saturates at six bodies. Wind drives ropes and rigging. Hull hammering also requires an arrived, working mechanic nearby. |
+| Harbour voices / ropes / rigging | Awake, non-travelling, non-carried people physically near the quay; the voices are the crowd bed (`ambience_crowd`: uneven synthesized talkers in a 5 s loop, no beat, no held pitch). Loudness saturates at six bodies. Wind drives single rope/fender creaks and halyard slaps at uneven moments, more often in a stronger wind. Hull hammering (a few blows at a time, then a pause) also requires an arrived, working mechanic nearby. |
+| Single voices | Awake people out and about within 40 m of the listener (calls from up to 90 m): now and then a greeting, a laugh, a call, or a question their companion answers, from where each stands. Vowel-only synthesis, no words; even ids are men's voices, odd women's (as `src/life_view.jo` dresses them); pitch follows age. About one a person every 75 s, rarer at night and at a distance. |
 | Cafe voices / clinks | Actual cafe landmarks/core life venues, nearby awake bodies, 17:00–23:00. The crowd bed with glasses and cups at uneven times. No settlement population multiplier. |
-| Musicians | Existing arrived performers and notes; square performances get four quiet early reflections baked into the note. Occlusion softens the note and its reflections. |
-| Beaches / cliffs | A nearby zero crossing of the canonical height field, classified by the same slope criterion as the terrain beach material. Wind increases wash/boom; sources stay at the coast. |
+| Musicians | Existing arrived performers and notes; square performances get four quiet early reflections baked into the note. Occlusion softens the note and its reflections. The tune is the theme every fourth phrase and variations on it between (`life_phrase_note`). |
+| Beaches / cliffs | A nearby zero crossing of the canonical height field, classified by the same slope criterion as the terrain beach material. A steady wash, and over it single waves (beach) or surges (cliff), each its own size, at uneven intervals that shorten as the wind rises; sources stay at the coast. |
 | Wind / insects / owl | Actual resident tree-stand bounds, plane-tree landmarks, olive ecology and the shared `grass_cover` query. Summer afternoon sun/low rain favours cicadas; dry, calm nights favour crickets and occasional owls. |
-| Dogs / goats / donkeys | Stable ambient habitat locations: inhabited quays, elevated farm/hill/hamlet sites, and occupied farms during daylight. These are ambient off-screen fauna, not new saved animal actors or livestock counts. Rain suppresses goats; calls are sparse deterministic events. |
+| Dogs / goats / donkeys | Stable ambient habitat locations: inhabited quays, elevated farm/hill/hamlet sites, and occupied farms during daylight. These are ambient off-screen fauna, not new saved animal actors or livestock counts. Rain suppresses goats; calls are sparse deterministic events at uneven moments, each a take of its own with a little pitch spread. |
 | Ships | Actual vessel pose, kind, status and speed. Powered ships thump underway; sailboats luff according to apparent wind/head-to-wind. Steam whistles follow observed departures/arrivals, never first discovery. Sunk/stopped craft have no propulsion sound. |
 | Rain / thunder | Saved spatial weather. Roof rain uses actual nearby houses/parcels; sea rain uses an open-water surface tile. Rain is silent above cloud base. Thunder follows the existing storm-ID/23-second lightning phase, once per double flash, delayed by source distance / 343 m/s. |
+
+No ambience repeats on a beat. Single events (hammering, creaks, slaps, waves, animals, birds,
+voices) come at uneven moments from `ambience_due`: time is cut into cells of the event's mean
+period and each cell holds one event at its own hashed moment. Each event plays one of a few
+takes with a little pitch spread. Beds that loop run 3.3-5 s with random, not periodic, swells;
+short textures (cicadas, rain) stay level; crickets and a ship's engine beat by nature.
+`tests/ambience.jo` checks all of this. The bank keeps most instruments at half the rate and the
+muffled copies at a quarter (`ambience_rate_step`, `AMBIENCE_SOFT_STEP`), about 35 MB in all.
 
 There is no animal simulation, air-temperature field or seasonal climate in main. Habitat and
 fixed-summer solar time are explicit proxies for animal presence and daytime heat. Civil dates

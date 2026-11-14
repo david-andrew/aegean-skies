@@ -149,8 +149,48 @@ ambience_obstruction = (source: vec3,listener: vec3,towns: Town[],ground_at: (f6
             if length(p.xz-block.xy) < block.z and p.y < f32(ground_at(f64(block.x),f64(block.y))+9): blocked = max(blocked,0.75)
     blocked
 
-ambience_period = (previous: f64,now: f64,key: int,seconds: f64) -> bool:
-    previous >= 0 and now > previous and now-previous <= 1.5 and floor((previous+f64(key%97))/seconds) != floor((now+f64(key%97))/seconds)
+# An event at an uneven moment (ambience_due), the take and a little of the pitch its own.
+ambience_event = (scene: mut AmbienceScene,s: AmbienceSource,cell: int,at: f64,listener: vec3,spread: f64 = 0.05):
+    e = s
+    e.variant = int(ambience_hash(s.key,cell,2)*64.0)
+    e.pitch = s.pitch*(1.0+(ambience_hash(s.key,cell,3)-0.5)*2.0*spread)
+    ambience_queue(scene.sound,e,at,listener)
+
+# A voice's pitch for a body: children high, the old a little lower.
+ambience_voice_pitch = (age: int) -> f64: if age < 14: 1.35 else: clamp(1.0+f64(35-age)*0.004,0.88,1.08)
+
+# Now and then one of the people about the listener says something: a greeting, a laugh, a call
+# across the quay, or a question that the person with them answers. From where they stand, a
+# few a minute in a crowd, none from those indoors, asleep or travelling; past 40 m only calls. (src/life_view.jo
+# dresses even ids as men, odd as women: their voices follow.)
+ambience_voices = (scene: mut AmbienceScene,w: life.World,listener: vec3,previous: f64,now: f64,hour: f64):
+    if previous < 0: return
+    quiet = if hour < 7 or hour >= 22: 2.5 else: 1.0
+    loop p in w.people:
+        far = f64(length(p.pose.pos-listener))
+        if far > 90 or not ambience_awake(w,p): continue
+        cell = ambience_due(previous,now,7700000+p.id,75.0*quiet*(if far > 40: 2.5 else: 1.0))
+        if cell < 0: continue
+        h = ambience_hash(p.id,cell,4)
+        at = p.pose.pos+vec3(0,1.6,0)
+        female = p.id%2 == 1
+        pitch = ambience_voice_pitch(p.age)
+        take = (if female: 2 else: 0)+int(ambience_hash(p.id,cell,5)*1.999)
+        other = -1
+        if p.id in w.daily_life:
+            c = w.daily_life[p.id].companion
+            if c >= 0 and c < w.people.len() and length(w.people[c].pose.pos-p.pose.pos) < 6 and ambience_awake(w,w.people[c]): other = c
+        if far > 40: h = 0.9            # (beyond 40 m only a call carries)
+        if other >= 0 and h < 0.5:
+            q = w.people[other]
+            ambience_event(scene,AmbienceSource(7700000+p.id,.ask,at,0.06,60,pitch=pitch,variant=take),cell,now,listener)
+            reply = (if q.id%2 == 1: 2 else: 0)+int(ambience_hash(q.id,cell,5)*1.999)
+            ambience_event(scene,AmbienceSource(7800000+q.id,.answer,q.pose.pos+vec3(0,1.6,0),0.06,60,pitch=ambience_voice_pitch(q.age),variant=reply),cell,now+0.8+ambience_hash(q.id,cell,6)*0.6,listener)
+        else:
+            kind = if h < 0.65: AmbienceKind.greet else: if h < 0.85: AmbienceKind.laugh else: AmbienceKind.call
+            gain = if kind == .call: 0.09 else: 0.065
+            ambience_event(scene,AmbienceSource(7700000+p.id,kind,at,gain,if kind == .call: 160 else: 70,pitch=pitch,variant=take),cell,now,listener)
+        return
 
 ambience_scene_offer = (sound: Ambience,sources: mut AmbienceSource[],s: AmbienceSource,listener: vec3):
     if sound.enabled[ambience_category(s.kind)]: ambience_offer(sources,s,listener)
@@ -181,8 +221,9 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
             if length(listener-spring.center)>180:continue
             source=thermal_world(spring,vec3(-13,0.6,-14.5))
             ambience_scene_offer(scene.sound,sources,AmbienceSource(9100000+spring.place,.spring,source,0.10,80),listener)
-            if daytime and rain<0.3 and ambience_period(scene.previous_scan,now,spring.place,19):
-                ambience_queue(scene.sound,AmbienceSource(9200000+spring.place,.songbird,thermal_world(spring,vec3(12,5,4)),0.075,130),now,listener)
+            cell = ambience_due(scene.previous_scan,now,9200000+spring.place,19)
+            if daytime and rain<0.3 and cell >= 0:
+                ambience_event(scene,AmbienceSource(9200000+spring.place,.songbird,thermal_world(spring,vec3(12,5,4)),0.075,130),cell,now,listener)
         people = ambience_people(w,listener)
         loop site in scene.sites:
             count = ambience_count(people,site.pos,if site.kind == 1: 55 else: 22)
@@ -191,19 +232,33 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
                 churches.push(AmbienceSource(site.key,.bell,site.pos,0.24,1600))
             else if site.kind == 1:
                 ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.murmur,site.pos,0.14*crowd,110),listener)
-                ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key+1,.rope,site.pos,0.025*crowd*clamp(wind_speed/5,0.0,1.0),65),listener)
-                ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key+2,.rigging,site.pos,0.025*crowd*clamp(wind_speed/8,0.0,1.0),80),listener)
+                # Moored hulls work their lines and fenders, halyards slap: single creaks and
+                # knocks at uneven moments, more often and harder as the wind rises.
+                ropes = clamp(wind_speed/5,0.0,1.0); halyards = clamp(wind_speed/8,0.0,1.0)
+                cell = ambience_due(scene.previous_scan,now,site.key+1,9.0-6.0*ropes)
+                if ropes > 0.15 and cell >= 0: ambience_event(scene,AmbienceSource(site.key+1,.rope,site.pos,0.035*(0.5+0.5*crowd)*ropes,65),cell,now,listener,0.12)
+                cell = ambience_due(scene.previous_scan,now,site.key+2,10.0-6.0*halyards)
+                if halyards > 0.15 and cell >= 0: ambience_event(scene,AmbienceSource(site.key+2,.rigging,site.pos,0.035*(0.5+0.5*crowd)*halyards,80),cell,now,listener,0.1)
                 # Hull work requires someone actually working nearby, not just a full population.
                 working = false
                 loop person, intent in w.daily_life:
                     if intent.arrived and intent.activity == .work and w.people[person].occupation == .mechanic and length(w.people[person].pose.pos-site.pos) < 65: working = true
-                if working and daytime and ambience_period(scene.previous_scan,now,site.key,4.7): ambience_queue(scene.sound,AmbienceSource(site.key,.hammer,site.pos,0.12,100),now,listener)
-                if count > 0 and ambience_period(scene.previous_scan,now,site.key,47): ambience_queue(scene.sound,AmbienceSource(site.key,.dog,site.pos,0.10,150),now,listener)
+                # A few blows at a time, at the worker's own pace, then a pause of any length.
+                cell = ambience_due(scene.previous_scan,now,site.key,9.0)
+                if working and daytime and cell >= 0:
+                    at = now
+                    loop blow in 0..2+int(ambience_hash(site.key,cell,7)*3.999):
+                        ambience_event(scene,AmbienceSource(site.key,.hammer,site.pos,0.12,100),cell*8+blow,at,listener,0.03)
+                        at += 0.32+ambience_hash(site.key,cell*8+blow,8)*0.45
+                cell = ambience_due(scene.previous_scan,now,site.key+3,47)
+                if count > 0 and cell >= 0: ambience_event(scene,AmbienceSource(site.key+3,.dog,site.pos,0.10,150),cell,now,listener)
             else if site.kind == 2:
                 if hour >= 17 and hour < 23: ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.cafe,site.pos,0.12*crowd,65),listener)
             else if site.kind == 3:
-                if daytime and rain < 0.2 and site.pos.y > 25 and ambience_period(scene.previous_scan,now,site.key,11): ambience_queue(scene.sound,AmbienceSource(site.key,.goat,site.pos,0.09,100),now,listener)
-                if daytime and count > 0 and ambience_period(scene.previous_scan,now,site.key,61): ambience_queue(scene.sound,AmbienceSource(site.key,.donkey,site.pos,0.12,200),now,listener)
+                cell = ambience_due(scene.previous_scan,now,site.key,11)
+                if daytime and rain < 0.2 and site.pos.y > 25 and cell >= 0: ambience_event(scene,AmbienceSource(site.key,.goat,site.pos,0.09,100),cell,now,listener)
+                cell = ambience_due(scene.previous_scan,now,site.key+1,61)
+                if daytime and count > 0 and cell >= 0: ambience_event(scene,AmbienceSource(site.key+1,.donkey,site.pos,0.12,200),cell,now,listener)
             else if site.kind == 4:
                 ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.rain_roof,site.pos,0.15*rain,70),listener)
             else if site.kind == 5: ambience_scene_offer(scene.sound,sources,AmbienceSource(site.key,.trees,site.pos,0.07*clamp(wind_speed/10,0.0,1.0),85),listener)
@@ -213,9 +268,17 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
             gain = min(1.0,f64(ambience_count(people,venue.pos,22))/6)*0.12
             ambience_scene_offer(scene.sound,sources,AmbienceSource(7000000+venue.place,.cafe,venue.pos,gain,65),listener)
         if scene.has_shore:
-            if daytime and rain < 0.5 and ambience_period(scene.previous_scan,now,int(scene.shore.x),23):
-                ambience_queue(scene.sound,AmbienceSource(-2,.gull,scene.shore+vec3(0,12,0),0.09,180),now,listener)
-            ambience_scene_offer(scene.sound,sources,AmbienceSource(-1,if scene.rocky: AmbienceKind.cliff else: .beach,scene.shore,0.06+clamp(wind_speed/15,0.0,1.0)*0.12,260),listener)
+            cell = ambience_due(scene.previous_scan,now,int(scene.shore.x),23)
+            if daytime and rain < 0.5 and cell >= 0:
+                ambience_event(scene,AmbienceSource(-2,.gull,scene.shore+vec3(0,12,0),0.09,180),cell,now,listener)
+            # The wash, and over it single waves: each its own size, at uneven intervals that
+            # shorten as the wind rises.
+            sea = clamp(wind_speed/15,0.0,1.0)
+            ambience_scene_offer(scene.sound,sources,AmbienceSource(-1,if scene.rocky: AmbienceKind.cliff else: .beach,scene.shore,0.045+sea*0.09,260),listener)
+            cell = ambience_due(scene.previous_scan,now,-5,if scene.rocky: 8.0-3.0*sea else: 6.5-2.5*sea)
+            if cell >= 0:
+                size = 0.6+0.4*ambience_hash(-5,cell,9)
+                ambience_event(scene,AmbienceSource(-5,if scene.rocky: AmbienceKind.surge else: .wave,scene.shore,(0.07+0.12*sea)*size,260),cell,now,listener,0.08)
         loop k in 0.. and p in scene.plants:
             ambience_scene_offer(scene.sound,sources,AmbienceSource(-100-k,.grass,p,0.045*clamp(wind_speed/10,0.0,1.0),80),listener)
             heat = smoothstep(9,12,hour)*(1-smoothstep(16,19,hour))*(1-rain)*(1-f64(air.deck)*0.8)
@@ -224,7 +287,8 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
             ambience_scene_offer(scene.sound,sources,AmbienceSource(-200-k,insect,p,gain,70),listener)
         loop k in 0.. and p in scene.trees:
             ambience_scene_offer(scene.sound,sources,AmbienceSource(-300-k,.trees,p,0.08*clamp(wind_speed/12,0.0,1.0),120),listener)
-            if night and rain < 0.2 and ambience_period(scene.previous_scan,now,k+int(p.x),37): ambience_queue(scene.sound,AmbienceSource(-300-k,.owl,p,0.10,180),now,listener)
+            cell = ambience_due(scene.previous_scan,now,k+int(p.x),37)
+            if night and rain < 0.2 and cell >= 0: ambience_event(scene,AmbienceSource(-300-k,.owl,p,0.10,180),cell,now,listener)
         # Rain hitting the actual airframe is audible in an open cockpit.
         # Reuse the existing granular rain bank and bounded weather voice pool;
         # the sea itself remains silent hundreds of metres below the listener.
@@ -241,6 +305,7 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
             if ship.id in scene.ships and scene.ships[ship.id] != ship.status and vessel_spec(ship.kind).steam and (ship.status == .underway or ship.status == .docked):
                 ambience_queue(scene.sound,AmbienceSource(8000000+ship.id,.whistle,ship.position+vec3(0,5,0),0.20,1200),now,listener)
         scene.ships = current
+        ambience_voices(scene,w,listener,scene.previous_scan,now,hour)
         # The scan can straddle the boundary by <=0.5s, so retain the hour edge until scanned.
         if scene.previous_scan >= 0 and now-scene.previous_scan <= 1.5:
             before = int(scene.previous_scan/2)
