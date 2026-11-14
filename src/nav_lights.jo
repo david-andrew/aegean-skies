@@ -1,0 +1,95 @@
+# Navigation lights after dark, as on late-1920s aircraft and ships: red on the port wingtip,
+# green on the starboard, white at the tail; ships red and green at the sides and a white stern
+# lamp, small boats one white lamp (also a vessel's anchor light when it lies still).
+# Each lamp is a small additive glow point with a soft halo, sized to stay a few pixels across
+# at distance; one instanced particle draw a frame, veiled by the clouds like the glints.
+use 'world_point.jo'
+use 'render_space.jo'
+use 'world_particles.jo'
+use 'curved_world.jo'
+use 'flight.jo'
+use 'planes.jo'
+use 'look.jo'
+use 'vessel_types.jo'
+use 'traffic.jo'
+use 'combat.jo'
+use 'pilot.jo'
+
+NAV_RED = vec3(1.0,0.20,0.10)
+NAV_GREEN = vec3(0.25,1.0,0.42)
+NAV_WHITE = vec3(1.0,0.94,0.80)
+NAV_RANGE = 12000.0
+
+# 0 in daylight, rising through dusk to 1 by night (the clear sky's own dusk ramp).
+nav_light_level = (sun_y: f64) -> f64: 1.0-smoothstep(-0.10,0.12,sun_y)
+
+# A lamp's core and halo, kept at least a few pixels across with distance and dimmed by haze.
+nav_lamp = (out: mut WorldParticles,point: WorldPoint,color: vec3,cam: vec3,level: f64,fog: f64):
+    at = world_vec(point)
+    d = f64(length(at-cam))
+    if d > NAV_RANGE or d < 0.5: return
+    seen = level*exp(-d*fog*0.6)
+    if seen < 0.01: return
+    core = max(0.30,d*0.0045); halo = max(1.6,d*0.010)
+    # (additive: an overbright core so the lamp reads as a light, not a coloured dot)
+    out.items.push(WorldParticle(at,vec3(0,0,0),1,1,f32(core),vec4(color*1.8,f32(min(1.0,seen*1.4))),precise=point,published=at,ready=true))
+    out.items.push(WorldParticle(at,vec3(0,0,0),1,1,f32(halo),vec4(color,f32(seen*0.30)),precise=point,published=at,ready=true))
+
+# The outermost wingtips on each side (biplanes: the wider wing) and the tail, in the craft's
+# own frame (+x starboard, -z forward).
+nav_craft_points = (spec: CraftSpec,kind: Craft) -> vec3[]:
+    port = vec3(0,0,0); starboard = vec3(0,0,0)
+    loop c in spec.wing_contacts:
+        if c.x < port.x: port = c
+        if c.x > starboard.x: starboard = c
+    if port.x == 0.0: port = vec3(-f32(spec.span*0.5),0,0)
+    if starboard.x == 0.0: starboard = vec3(f32(spec.span*0.5),0,0)
+    tail = vec3(0,0.45,f32(aircraft_profile(kind).length*0.48))
+    [port-vec3(0.12,0,0),starboard+vec3(0.12,0,0),tail]
+
+nav_craft_lamps = (out: mut WorldParticles,s: CraftState,spec: CraftSpec,kind: Craft,cam: vec3,level: f64,fog: f64):
+    if s.crashed or s.moored: return
+    if f64(length(s.position-cam)) > NAV_RANGE: return
+    p = nav_craft_points(spec,kind)
+    colors = [NAV_RED,NAV_GREEN,NAV_WHITE]
+    loop k in 0..3: nav_lamp(out,craft_offset(s,quat_rotate(s.orientation,p[k])),colors[k],cam,level,fog)
+
+# Vessels: the bow is +z, so starboard is -x. Ships carry side lights and a white stern lamp
+# underway; anything lying still, and every small boat, shows one white lamp. Offsets in world
+# axes from the vessel's point, with each lamp's colour.
+nav_vessel_offsets = (v: Vessel) -> (vec3,vec3)[]:
+    out: (vec3,vec3)[]
+    if v.status == .sunk or v.status == .sinking: return out
+    spec = vessel_spec(v.kind)
+    fwd = vec3(f32(sin(v.yaw)),0,f32(cos(v.yaw))); starboard = vec3(-fwd.z,0,fwd.x)
+    small = v.kind == .rowboat or v.kind == .dinghy or v.kind == .canal_barge or v.kind == .canal_launch
+    out.push((fwd*f32(-spec.length*0.40)+vec3(0,f32(spec.deck+(if small: 1.0 else: 3.0)),0),NAV_WHITE))
+    if small or v.status != .underway: return out
+    loop side in [-1.0,1.0]:
+        at = fwd*f32(spec.length*0.08)+starboard*f32(side*spec.beam*0.45)+vec3(0,f32(spec.deck+2.0),0)
+        out.push((at,if side > 0.0: NAV_GREEN else: NAV_RED))
+    out
+
+nav_vessel_lamps = (out: mut WorldParticles,v: Vessel,cam: vec3,level: f64,fog: f64):
+    if f64(length(v.position-cam)) > NAV_RANGE: return
+    base = vessel_point(v)
+    loop lamp in nav_vessel_offsets(v): nav_lamp(out,world_offset(base,lamp.0),lamp.1,cam,level,fog)
+
+# Every aircraft and vessel in view: the player's, traffic (including air meets and scenario
+# projections) and combatants not already flying as traffic.
+draw_nav_lights = (L: Light,player: Flyer,show_player: bool,traffic: Traffic[],battle: Battle,ships: Vessel[]):
+    level = nav_light_level(f64(L.sun_dir.y))
+    if level < 0.01: return
+    cam = scene_camera(); fog = L.fog_density
+    lamps = WorldParticles()
+    if show_player: nav_craft_lamps(lamps,player.state,player.spec,player.kind,cam,level,fog)
+    seen: {int: bool}
+    loop tr in traffic:
+        seen[tr.craft] = true
+        if tr.visible: nav_craft_lamps(lamps,tr.state,tr.spec,tr.kind,cam,level,fog)
+    if battle.enabled:
+        loop a in battle.actors:
+            if not a.present or a.external or a.human or a.status != .flying or a.craft in seen: continue
+            nav_craft_lamps(lamps,combat_render_state(a,battle.render_alpha),a.spec,a.spec.kind,cam,level,fog)
+    loop v in ships: nav_vessel_lamps(lamps,v,cam,level,fog)
+    draw_curved_particles(lamps,true)

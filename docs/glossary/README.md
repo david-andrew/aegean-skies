@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Path desk](#path-desk)
@@ -318,6 +318,22 @@ On the rivers branch until it lands.
   the real blades show. Disc and blades are not drawn beyond `PROP_DISC_RANGE` (650 m).
 - **Capture:** `tools/prop_disc_frames.jo` with `PROP_VIEW=side|front|close|rear|far|cockpit`,
   `PROP_THROTTLE=0..1`, `PROP_KIND=0..15`.
+
+### Navigation lights
+
+- **Aliases:** nav lights, wingtip lights, side lights, stern lamp, riding light.
+- **Definition:** lamps every aircraft and vessel shows after dark, as in the late 1920s: red on
+  the port wingtip, green on the starboard, white at the tail; ships red and green at the sides
+  and a white stern lamp underway, one white lamp when lying still, small boats (rowing boats,
+  dinghies, canal craft) one white lamp. Each is an additive glow point with a soft halo, kept a
+  few pixels across out to 12 km and veiled by clouds; all in one particle draw a frame.
+- **Code:** `src/nav_lights.jo` (`nav_light_level`, `nav_craft_points`, `nav_vessel_offsets`,
+  `draw_nav_lights`); the ships' small emissive lamp boxes in `src/vessel_models.jo`.
+- **Rules:** off by day (`nav_light_level` 0 above sun height 0.12), full by sun height -0.10.
+  Aircraft lamps sit on the outermost wing contact (biplanes: the wider wing) and are off when
+  moored or wrecked. Vessels' bow is +z, so port (red) is +x for them and -x for aircraft.
+- **Capture:** `AEGEAN_FLYING="200 190" AEGEAN_HOUR=22`; distance: add
+  `AEGEAN_VIEW="2433 210 -3365 0.5711 -0.01 22" SLOPPY_INPUT="2:f2+ 3:f2-"`.
 
 ### Prop arcs
 
