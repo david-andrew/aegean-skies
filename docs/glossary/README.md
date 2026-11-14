@@ -662,7 +662,19 @@ On the rivers branch until it lands.
 - **Rules:** a harbour whose quay cannot reach its houses over ground no steeper than 45° gets one.
   One direction only (no switchbacks): flights stacked over one another in plan cannot share
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
-- **Where:** Kryfo Cove and Agios Nikolaos.
+- **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
+  cliff stair).
+
+### Landing cliff stair
+
+- **Definition:** a cliff stair from the root of an island community's jetty up a sea cliff to the
+  ground above, where a plateau is ringed by cliffs and no path reaches the shore. It runs
+  diagonally along the face (no switchbacks), its walking width standing on masonry against the
+  rock; above it the stepped landing path carries on to the square.
+- **Code:** `LandingAccess.stair_from` (the route from that index down to the root is the stair,
+  with tread heights), `cliff_stair_clear` in `src/access_path_bake.jo`, `landing_stair_runs`
+  in `src/landing_stairs.jo`; surveyed by `tools/survey_island_climb.jo`. Drawn tread by tread
+  near any part of it, as one block per four treads without a parapet from the air.
 
 ### Stepped landing path
 
