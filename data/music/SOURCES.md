@@ -94,8 +94,12 @@ pitch sequences. Its decisions are recorded in `performance.json`; see
 `docs/music-performance.md`. `instruments.json` contains scalar parameters for the game's
 procedural oscillators and envelopes, packed by `tools/music_timbres.py`. It contains no
 PCM, recorded sample loops, waveform phases or measured impulse responses.
-Its 17th family, the 1920s upright piano (`MUSIC_UPRIGHT`), was fitted the same way (per-partial
-amplitudes and two decay rates at three dynamics and seven pitches, inharmonicity, attack, loudness
-kept across the keyboard) to measurements of VS Upright Nr. 1 from the Versilian Studios Chamber
-Orchestra 2 Community Edition (https://github.com/sgossner/VSCO-2-CE, Keys/Upright Nr1), which is
-released under CC0 1.0. The recordings were measured in scratch and are not in this repository.
+Its 17th family, the 1920s upright piano (`MUSIC_UPRIGHT`, a honky-tonk), was fitted the same
+way as the others (per-partial amplitudes, measured over the unison's beat, and two decay rates at
+three velocities and seven pitches; inharmonicity, attack, release; loudness kept across the
+keyboard), plus a body response fitted from a reference phrase and the unison's spacing (two equal
+strings 5 cents apart, `UPRIGHT_DETUNE_CENTS` in src/music_synth.jo), to FluidR3 GM's Honky-tonk
+Piano (bank 0, program 3; the same soundfont file, SHA-256 74594e8f...a1bc1cb0, as the measurements
+above; copyright Frank Wen, permissive licence). Its notes and phrases were rendered through
+FluidSynth offline in scratch for measurement only; no soundfont data or rendered audio is in this
+repository, only the fitted numbers.

@@ -198,11 +198,13 @@ is shown to be better.
 
 There are two pianos:
 - **The concert grand** (the original piano model). Clair de lune is played on it.
-- **The 1920s hotel upright** (`MUSIC_UPRIGHT`, the 17th timbre model). It was fitted the same way
-  to a CC0 upright's recordings (see `data/music/SOURCES.md`), keeping its natural loudness across
-  the keyboard (its top quieter than the grand's equal-energy notes). It adds:
-  - a slight unison detune on the low partials (1.6 to 3.2 cents);
-  - extra dulling below its softest layer;
+- **The 1920s hotel upright** (`MUSIC_UPRIGHT`, the 17th timbre model), a honky-tonk. It was
+  fitted the same way to FluidR3 GM's Honky-tonk Piano (see `data/music/SOURCES.md`), keeping its
+  natural loudness across the keyboard (its top quieter than the grand's equal-energy notes). It
+  adds:
+  - its unison: the first eight partials sound as two equal strings 5 cents apart, beating;
+  - duller hammers below velocity 90 (the reference has one velocity layer, so softer-is-darker
+    is the game's own rule);
   - a key knock and a damper thump, very low;
   - a quicker damper.
 
