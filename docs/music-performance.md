@@ -176,3 +176,34 @@ touch and one smooth contour rising to its highest note, so a figure passing fro
 to the right is one continuous line in loudness. Clair de lune's voicing then brings the melody
 only a couple of dB over the accompaniment, the left hand lifted: hand-crossing steps fell from
 a mean of 9.2 dB to 1.6 dB, the right hand's average over the left from 7.3 to 3.2 dB.
+
+## Moods
+
+`MOODS` in `tools/expressive_timing.py` are presets over the same intensity analysis: mournful,
+tender, dreamy, stately, dance-like, jaunty, triumphant and agitated. Each sets how intensity turns
+into tempo (in a lament building intensity weighs the music down, `build` < 0; when agitated it
+presses), the rubato's depth and where it lands (`lead_in` hesitates into each phrase, `cadence`
+lingers at its end), and the touch (`Touch`): the phrase dynamics, legato or detached lines, the
+piano's pedal and the melody's lean. Every piece's mood is classified by hand in
+`tools/music_pack.py` (`MOOD`, with its reason, copied into `data/music/catalogue.json`);
+`APPLY_MOOD` lists the pieces actually played in their mood. So far that is the Gymnopédie
+(mournful: about 45–57 quarter bpm against a steady 60 before, easing as each phrase of the tune
+swells, pedalled by the bar, legato). The rest keep their current reading until their mood's result
+is shown to be better.
+
+## Automatic balance (tools/music_balance.py)
+
+A build-time pass that balances the band and orchestra without a listener. The synthesizer renders
+stems (`tools/music_stems.jo`); the melody is the part with the top line most of the time;
+loudness is measured as ITU-R BS.1770 integrated loudness and as the melody's partial loudness
+over the accompaniment (Bark-band excitation, N = (Em + Ea)^0.23 − Ea^0.23); gains set the melody
+3 LU over the accompaniment (left alone within 1 LU). Harshness per part: the presence band
+(2–5 kHz) against the body (0.3–2 kHz), Zwicker-weighted sharpness and presence-band flux; a part
+past its instrument's allowance (set from the parts already approved by ear) gets a high shelf
+above 2.2 kHz in the synth (`MusicPiece.shelf_db`, applied to its partials). Pieces whose melody
+guess is doubtful, whose accompaniment only doubles the tune, or that are a single instrument are
+left alone; Clair de lune, the Adagietto and the trumpet call are locked as approved. Gains and
+shelves are written to `data/music/balance.json` and the catalogue.
+
+Rebuild: `MUSIC_BALANCE=0 python tools/music_pack.py && python tools/music_balance.py &&
+python tools/music_pack.py` (about a minute and a half; `--measure` re-measures the packed result).
