@@ -406,9 +406,11 @@
 })(typeof globalThis!=="undefined"?globalThis:this);
 // The title screen (src/title_screen.jo, aegean.jo title_wanted). A page whose URL stages a
 // capture (any AEGEAN_ option but quality, touch and title) starts straight in the game, as the
-// native runs with those environment variables do. While the world is built (one long step the
-// page cannot draw during), the game's own page shows a quiet card in the title's dusk colour,
-// its line moved by the compositor; the game takes it away when it has drawn its first frame.
+// native runs with those environment variables do. While the module loads and the world is built
+// (long steps the page cannot draw during), the page shows a small propeller turning on the
+// title's dusk colour, no words, turned by the compositor. The game then reports its own
+// preparation as a ring filling round it, and takes the card away when the title has drawn its
+// first frame; without the title, at the game's first frame.
 (function (root) {
   if (typeof sloppy === "undefined" || typeof location === "undefined") return;
   const keys = [...new URLSearchParams(location.search)].map(([k, v]) => [k.toUpperCase(), v]);
@@ -417,17 +419,28 @@
   sloppy.env.__aegean_staged = () => staged ? 1 : 0;
   let card = null;
   sloppy.env.__aegean_shown = () => { if (card) { card.remove(); card = null; } };
+  // (while the game prepares the world before its title: which step, and how far, 0..1: the ring fills)
+  sloppy.env.__aegean_progress = (stage, fraction) => {
+    if (!card) return;
+    const f = Math.max(0, Math.min(1, Number(fraction)));
+    card.querySelector(".fill").setAttribute("stroke-dashoffset", String(251.3 * (1 - f)));
+  };
   const wanted = title !== undefined ? title !== "0" : !staged;
   if (!wanted || typeof document === "undefined" || document.title !== "Aegean Skies" || !document.body) return;
+  // A small two-bladed propeller turning slowly, centred on the dusk, no words; a faint ring
+  // round it fills as the game reports its preparation. All drawn here, no image file.
   card = document.createElement("div");
   card.id = "aegean-loading";
-  card.setAttribute("role", "status");
-  card.innerHTML = '<style>#aegean-loading{position:fixed;inset:0;z-index:5;background:#131a26;display:flex;flex-direction:column;' +
-    'align-items:center;justify-content:flex-end;padding-bottom:16vh;font:500 15px/1.4 Georgia,"Times New Roman",serif;color:#d9d4c4;' +
-    'letter-spacing:.18em;text-transform:uppercase}#aegean-loading .rule{width:180px;height:2px;margin-top:14px;overflow:hidden;' +
-    'background:rgba(217,212,196,.14)}#aegean-loading .rule i{display:block;width:60px;height:2px;background:#c79e52;' +
-    'animation:aegean-glide 1.8s ease-in-out infinite alternate;will-change:transform}' +
-    '@keyframes aegean-glide{from{transform:translateX(0)}to{transform:translateX(120px)}}</style>' +
-    '<div>Loading the islands</div><div class="rule"><i></i></div>';
+  card.setAttribute("role", "progressbar");
+  card.setAttribute("aria-label", "Loading");
+  const blade = "M0,-3 C5,-6 7,-22 2,-33 C1,-35 -1,-35 -2,-33 C-7,-22 -5,-6 0,-3 Z";
+  card.innerHTML = '<style>#aegean-loading{position:fixed;inset:0;z-index:5;background:#131a26;display:flex;align-items:center;' +
+    'justify-content:center}#aegean-loading svg{width:88px;height:88px;overflow:visible}#aegean-loading .prop{transform-origin:0 0;' +
+    'animation:aegean-turn 2.6s linear infinite;will-change:transform}#aegean-loading .fill{transition:stroke-dashoffset .3s linear}' +
+    '@keyframes aegean-turn{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>' +
+    '<svg viewBox="-44 -44 88 88"><circle r="40" fill="none" stroke="rgba(217,212,196,.10)" stroke-width="1.5"/>' +
+    '<circle class="fill" r="40" fill="none" stroke="rgba(199,158,82,.55)" stroke-width="1.5" stroke-dasharray="251.3" ' +
+    'stroke-dashoffset="251.3" transform="rotate(-90)"/><g class="prop" fill="#c79e52" opacity=".85">' +
+    '<path d="' + blade + '"/><path d="' + blade + '" transform="rotate(180)"/><circle r="4.5" fill="#8a6a35"/></g></svg>';
   document.body.appendChild(card);
 })(typeof globalThis !== "undefined" ? globalThis : this);

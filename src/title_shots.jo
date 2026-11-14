@@ -1,0 +1,265 @@
+# The title screen's backdrop: a slow, unordered sequence of shots of the live world behind the
+# menu, each 15-30 seconds, each with its own hour and fair weather:
+#   low   a few metres over the open sea at the top speed (about 450 km/h), the speed flecks
+#         streaming past; flying free, or with an aircraft ahead to chase, or one overtaking
+#   high  far above the clouds, drifting slowly towards the sun as it goes down
+#   city  a big town (Porto Vecchio, Kalyrassa, Neravessa) and its waterfront life: a low oblique
+#         run along the harbour front from just offshore, the town rising behind; a high, slow
+#         arc at golden hour, the roofs a texture; or, in the canal city, along the canals
+# A shot is a pure function of its age: the camera, its up (for the gentle banks), its velocity
+# (the sea's flecks smear with it) and, in a low shot, where the paced aircraft is.
+# Its own random stream: the game's is never drawn on.
+
+enum TitleShotKind: low, high, city
+
+struct TitleRng:
+    s: u64 = u64(0x2545F4914F6CDD1D)
+
+_title_next = (r: mut TitleRng) -> f64:
+    r.s = r.s xor (r.s << u64(13))
+    r.s = r.s xor (r.s >> u64(7))
+    r.s = r.s xor (r.s << u64(17))
+    f64(r.s >> u64(11)) / 9007199254740992.0
+
+_title_range = (r: mut TitleRng, a: f64, b: f64) -> f64: a + (b - a) * _title_next(r)
+
+# a big town to fly over
+struct TitleSite:
+    name: str
+    center: vec3
+    radius: f64
+    out: vec2                       # the way out to sea from its harbour
+    route: vec3[]                   # (the canal city: its canals, to follow)
+
+struct TitleShot:
+    kind: TitleShotKind = .low
+    origin: vec3                    # where it begins (a city shot: the town's centre)
+    heading = 0.0                   # (radians: 0 north (-z), PI/2 east)
+    speed = 125.0                   # metres a second
+    height = 6.0                    # over the water (a city shot: over the roofs' ground)
+    length = 20.0                   # seconds
+    hour = 9.5                      # the light's hour as it begins
+    hour_rate = 0.0                 # (hours a second: the sun going down)
+    weather = 0                     # (WEATHER_LABELS: Fair, Towers, Meltemi or Calm, never rain)
+    turn = 0.0                      # (the most the heading turns, radians a second: gentle banks)
+    sway = 0.1                      # (how fast the turn comes and goes)
+    phase = 0.0
+    pitch = -0.07                   # (the camera looks this far below the way it goes)
+    glance = 0.0                    # (and this far to the side of it: along a waterfront, at the town)
+    pace = -1                       # low: -1 flying free, 0 an aircraft ahead to chase, 1 one overtaking
+    side = 1.0                      # (the paced aircraft's side, and a city pass's offset)
+    site = ""                       # (a city shot: the town)
+    style = 0                       # (0 a line, turning gently; 1 an arc about `origin`; 2 along `route`)
+    radius = 0.0                    # (an arc's)
+    route: vec3[]
+    start = 0.0                     # (how far along the route it begins, metres)
+
+struct TitleView:
+    eye: vec3
+    dir: vec3
+    up: vec3
+    velocity: vec3
+    height = 0.0                    # (the camera's height over the sea, for the flecks)
+    hour = 9.5
+    paced = false                   # (an aircraft in the shot, and where)
+    pace_at: vec3
+    pace_turn: vec4
+    pace_speed = 0.0
+
+const TITLE_G = 9.81
+
+_title_dir = (h: f64) -> vec3: vec3(f32(sin(h)), 0, f32(-cos(h)))
+
+# the heading's turn rate at time s (gentle banks that come and go)
+_title_turn = (shot: TitleShot, s: f64) -> f64: shot.turn * sin(shot.phase + s * shot.sway)
+
+# where the path is, and its heading, after `age` seconds (integrated in small steps)
+_title_path = (shot: TitleShot, age: f64) -> (vec3, f64):
+    at = shot.origin
+    h = shot.heading
+    steps = max(1, int(age / 0.05))
+    dt = age / f64(steps)
+    loop k in 0..steps:
+        s = f64(k) * dt
+        mid = h + _title_turn(shot, s) * dt * 0.5
+        at = at + _title_dir(mid) * f32(shot.speed * dt)
+        h += _title_turn(shot, s) * dt
+    (at, h)
+
+# the camera's bank: less than a coordinated turn would want, and never past 7 degrees
+_title_bank = (shot: TitleShot, s: f64) -> f64: clamp(0.45 * atan(shot.speed * _title_turn(shot, s) / TITLE_G), -0.12, 0.12)
+
+# a point `d` metres along a route (clamped to its ends)
+_title_along = (route: vec3[], d: f64) -> vec3:
+    left = max(0.0, d)
+    loop k in 0..route.len() - 1:
+        seg = f64(length(route[k + 1] - route[k]))
+        if left <= seg or k == route.len() - 2: return route[k] + (route[k + 1] - route[k]) * f32(clamp(left / max(seg, 0.001), 0.0, 1.0))
+        left -= seg
+    route[route.len() - 1]
+
+_title_route_length = (route: vec3[]) -> f64: [loop k in 0..route.len() - 1: f64(length(route[k + 1] - route[k]))].sum()
+
+# where the camera is and which way the path goes, by the shot's style
+_title_place = (shot: TitleShot, age: f64) -> (vec3, f64):
+    if shot.style == 1:
+        a = shot.phase + shot.side * shot.speed / max(shot.radius, 1.0) * age
+        at = shot.origin + vec3(f32(sin(a) * shot.radius), 0, f32(cos(a) * shot.radius))
+        # (the tangent: along the arc, the way it turns)
+        t = vec3(f32(cos(a)), 0, f32(-sin(a))) * f32(shot.side)
+        return (at, atan2(f64(t.x), -f64(t.z)))
+    if shot.style == 2 and shot.route.len() > 1:
+        d = shot.start + shot.speed * age
+        ahead = _title_along(shot.route, d + 70.0) - _title_along(shot.route, d - 40.0)
+        return (_title_along(shot.route, d), atan2(f64(ahead.x), -f64(ahead.z)))
+    _title_path(shot, age)
+
+title_view = (shot: TitleShot, age: f64, ground: (f64, f64) -> f64) -> TitleView:
+    p = _title_place(shot, age)
+    h = p.1
+    fwd = _title_dir(h)
+    right = vec3(-fwd.z, 0, fwd.x)
+    bank = _title_bank(shot, age)
+    eye = p.0
+    v = TitleView(hour = shot.hour + shot.hour_rate * age)
+    match shot.kind:
+        .low:
+            # (a little rise and fall over the swell, and the camera banking with the turn)
+            eye.y = f32(shot.height + 0.6 * sin(age * 0.7 + shot.phase))
+        .high:
+            eye.y = f32(shot.height + 20.0 * sin(age * 0.05))
+        _:
+            # (over the town: high enough over the ground about and ahead, never skimming a hill)
+            top = 0.0
+            loop k in 0..7:
+                q = eye + fwd * f32(f64(k) * 60.0 - 60.0)
+                top = max(top, ground(f64(q.x), f64(q.z)))
+            eye.y = f32(max(shot.height, top + (if shot.style == 1: 140.0 else: shot.height * 0.7)))
+    look = _title_dir(h + shot.glance) * f32(cos(shot.pitch)) + vec3(0, f32(sin(shot.pitch)), 0)
+    if shot.style == 1:
+        # (an arc looks across at the town, a little past its middle, never straight down)
+        aim = shot.origin + vec3(0, 25, 0) + fwd * f32(shot.radius * 0.18) - eye
+        look = normalize(aim)
+        if f64(look.y) < -0.42:
+            flat = normalize(vec3(look.x, 0, look.z))
+            look = vec3(flat.x * 0.907, -0.42, flat.z * 0.907)
+    v.eye = eye
+    v.dir = normalize(look)
+    v.up = normalize(vec3(0, f32(cos(bank)), 0) - right * f32(sin(bank)))
+    v.velocity = fwd * f32(shot.speed)
+    v.height = max(0.0, f64(eye.y) - max(ground(f64(eye.x), f64(eye.z)), 0.0))
+    if shot.kind == .low and shot.pace >= 0:
+        # chase: just ahead and a little to the side, holding station; overtake: from abeam
+        # to well ahead over the shot, a little faster
+        lead = if shot.pace == 0: 34.0 + 6.0 * sin(age * 0.4 + shot.phase) else: -18.0 + age * 5.5
+        q = _title_path(shot, max(0.0, age + lead / shot.speed))
+        qh = q.1
+        qf = _title_dir(qh)
+        qr = vec3(-qf.z, 0, qf.x)
+        off = shot.side * (if shot.pace == 0: 5.0 else: 11.0)
+        v.paced = true
+        v.pace_at = q.0 + qr * f32(off) + vec3(0, f32(shot.height + (if shot.pace == 0: 1.5 else: 0.8) + 0.5 * sin(age * 0.9)), 0)
+        v.pace_at.y = f32(max(f64(v.pace_at.y), 3.5))
+        v.pace_turn = quat_euler(0.02, -qh, -_title_bank(shot, age + lead / shot.speed))
+        v.pace_speed = shot.speed + (if shot.pace == 1: 5.5 else: 0.0)
+    v
+
+# open water under the whole of a low shot, and a margin to each side
+_title_open = (shot: TitleShot, ground: (f64, f64) -> f64) -> bool:
+    s = 0.0
+    loop s <= shot.length + 1.0:
+        p = _title_path(shot, s)
+        f = _title_dir(p.1)
+        r = vec3(-f.z, 0, f.x)
+        loop side in [-90.0, 0.0, 90.0]:
+            q = p.0 + r * f32(side) + f * f32(60.0)
+            if ground(f64(q.x), f64(q.z)) > -4.0: return false
+        s += 0.75
+    true
+
+# The next shot: never the same kind twice running; a low one over open water found near
+# `home` (islands on the horizon), a city one over one of `sites`.
+title_next_shot = (r: mut TitleRng, previous: TitleShotKind?, home: vec3, sites: TitleSite[], ground: (f64, f64) -> f64, sun: (f64) -> vec3, force: str = "") -> TitleShot:
+    kinds: TitleShotKind[]
+    loop k in [TitleShotKind.low, TitleShotKind.low, TitleShotKind.high, TitleShotKind.city, TitleShotKind.city]:
+        if previous == none or k != previous!: kinds.push(k)
+    kind = kinds[min(kinds.len() - 1, int(_title_next(r) * f64(kinds.len())))]
+    # (captures: "low", "low-free", "low-chase", "low-pass", "high", "city" or "city-<town>")
+    if force.starts_with("low"): kind = .low
+    if force == "high": kind = .high
+    if force.starts_with("city") and sites.len() > 0: kind = .city
+    length = _title_range(r, 18.0, 28.0)
+    if kind == .low:
+        # (bright morning or golden hour; a third of the time an aircraft to chase or one passing)
+        golden = _title_next(r) < 0.4
+        loop attempt in 0..400:
+            a = _title_range(r, 0.0, TAU)
+            d = _title_range(r, 1500.0, 14000.0)
+            shot = TitleShot(kind = .low, origin = home + vec3(f32(cos(a) * d), 0, f32(sin(a) * d)), heading = _title_range(r, 0.0, TAU),
+                speed = 125.0, height = _title_range(r, 4.0, 8.0), length = length, hour = if golden: _title_range(r, 16.6, 17.2) else: _title_range(r, 9.0, 11.5),
+                weather = if _title_next(r) < 0.5: 0 else: 7, turn = _title_range(r, 0.01, 0.025), sway = _title_range(r, 0.08, 0.16), phase = _title_range(r, 0.0, TAU),
+                pitch = -0.06, pace = if _title_next(r) < 0.45: -1 else: (if _title_next(r) < 0.5: 0 else: 1), side = if _title_next(r) < 0.5: -1.0 else: 1.0)
+            if attempt > 300: shot.turn = 0.0
+            if force == "low-free": shot.pace = -1
+            if force == "low-chase": shot.pace = 0
+            if force == "low-pass": shot.pace = 1
+            if _title_open(shot, ground): return shot
+        return TitleShot(kind = .high, origin = home + vec3(0, 0, 6000), heading = 4.7, speed = 24.0, height = 2900.0, length = length, hour = 17.7, hour_rate = 0.65 / length, weather = 0, turn = 0.0)
+    if kind == .high:
+        # (above the clouds, heading towards the sun as it sets: the light goes from gold to dusk)
+        start = _title_range(r, 17.55, 17.8)
+        s = sun(start)
+        towards = atan2(f64(s.x), -f64(s.z))
+        a = _title_range(r, 0.0, TAU)
+        d = _title_range(r, 0.0, 12000.0)
+        return TitleShot(kind = .high, origin = home + vec3(f32(cos(a) * d), 0, f32(sin(a) * d)), heading = towards + _title_range(r, -0.45, 0.45),
+            speed = _title_range(r, 18.0, 30.0), height = _title_range(r, 2700.0, 3400.0), length = length, hour = start, hour_rate = _title_range(r, 0.55, 0.75) / length,
+            weather = if _title_next(r) < 0.5: 0 else: 1, turn = _title_range(r, 0.003, 0.008), sway = 0.05, phase = _title_range(r, 0.0, TAU), pitch = -0.05)
+    # a town and its waterfront: a low run along the harbour front from just offshore (boats, the
+    # quay and the seaplanes in frame, the town rising behind), or a high slow arc at golden hour,
+    # or in the canal city along its canals; never looking straight down into the streets
+    site = sites[min(sites.len() - 1, int(_title_next(r) * f64(sites.len())))]
+    style = if site.route.len() > 1: (if _title_next(r) < 0.7: 2 else: 1) else: (if _title_next(r) < 0.6: 0 else: 1)
+    loop s in sites:
+        if force.starts_with("city-") and s.name.replace(" ", "_").starts_with(force[5..force.len()].split(":")[0]):
+            site = s
+            style = if site.route.len() > 1: 2 else: 0
+    if force.ends_with(":arc"): style = 1
+    if force.ends_with(":run"): style = if site.route.len() > 1: 2 else: 0
+    inland = atan2(-f64(site.out.x), f64(site.out.y))
+    golden = _title_range(r, 16.7, 17.25)
+    if style == 1:
+        # (from the sea side round towards the town, the light low across the roofs)
+        radius = clamp(site.radius * _title_range(r, 1.0, 1.3) + 450.0, 800.0, 1800.0)
+        speed = _title_range(r, 22.0, 30.0)
+        way = if _title_next(r) < 0.5: 1.0 else: -1.0
+        start = atan2(f64(site.out.x), f64(site.out.y)) - way * speed / radius * length * 0.5
+        return TitleShot(kind = .city, style = 1, origin = vec3(site.center.x, 0, site.center.z), radius = radius, phase = start, side = way, speed = speed,
+            height = _title_range(r, 220.0, 320.0), length = length, hour = golden, weather = 0, site = site.name)
+    if style == 2:
+        # (along a canal, low over the water, the houses either side)
+        total = _title_route_length(site.route)
+        speed = _title_range(r, 18.0, 26.0)
+        begin = _title_range(r, 0.0, max(0.0, total - speed * length - 50.0))
+        return TitleShot(kind = .city, style = 2, route = site.route, start = begin, speed = speed, height = _title_range(r, 32.0, 50.0), length = length,
+            hour = if _title_next(r) < 0.5: _title_range(r, 9.2, 10.8) else: golden, weather = if _title_next(r) < 0.6: 8 else: 0, pitch = -0.2, site = site.name,
+            origin = _title_along(site.route, begin))
+    # (along the harbour front: just far enough out to be over water the whole way)
+    speed = _title_range(r, 22.0, 32.0)
+    way = if _title_next(r) < 0.5: 1.0 else: -1.0
+    heading = inland + way * PI * 0.5 + _title_range(r, -0.12, 0.12)
+    out = vec3(site.out.x, 0, site.out.y)
+    run = TitleShot(kind = .city, heading = heading, speed = speed, height = _title_range(r, 26.0, 40.0), length = length,
+        hour = if _title_next(r) < 0.5: _title_range(r, 9.2, 10.8) else: golden, weather = if _title_next(r) < 0.6: 8 else: 0,
+        pitch = -0.1, glance = -way * _title_range(r, 0.55, 0.8), site = site.name)
+    offshore = 140.0
+    loop offshore < 900.0:
+        run.origin = site.center + out * f32(offshore) - _title_dir(heading) * f32(speed * length * 0.5)
+        run.origin.y = 0
+        wet = true
+        loop k in 0..9:
+            q = _title_path(run, f64(k) * length / 8.0).0
+            if ground(f64(q.x), f64(q.z)) > -2.0: wet = false
+        if wet: break
+        offshore += 60.0
+    run
