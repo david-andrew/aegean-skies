@@ -78,6 +78,13 @@ python -m unittest test_voice_world.py
 
 `vocoder.py` is the numpy reference of the game's synthesizer, used for copy-synthesis checks.
 
+`evaluate.py` scores the voice against held-out recordings of a real speaker (the user's own
+recordings, kept in scratch). It synthesizes each line in its genre's delivery and aligns the
+recording to the synthesis by dynamic time warping. The synthesis's phone boundaries carry over
+to the recording, so the same aligner serves for fitting. It then reports mel-cepstral distortion,
+F0 RMSE and correlation, energy correlation, phone-duration error, speaking rate and voicing
+errors, and publishes loudness-matched comparisons for listening.
+
 ## Checks
 
 - `tests/voice_test.jo`: tables load and cover every phone at a phrase edge; numbers and clock
