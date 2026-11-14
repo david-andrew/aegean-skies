@@ -28,7 +28,7 @@ on that unmerged branch so far.
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
-- **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
+- **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1206,6 +1206,21 @@ No image: the tiers differ in budgets more than in any single view.
 
 ![The Game page, with a load waiting for its yes](img/game-page.png)
 
+### Spread save
+
+- **Aliases:** incremental save, stepped save.
+- **Definition:** how the game saves without a frame stall: the request frame only takes a
+  copy-on-write checkpoint; then, a few milliseconds after each frame's update (more while paused,
+  none on a frame that ran a world minute), the save's checks run in steps, the World's text is
+  written a container element at a time from a small template, hashed as it goes and compressed
+  by a resumable deflate; the finished save is stored as before. Picking the bank to overwrite
+  reads only headers and body sizes; the full check of a stored game happens on load.
+- **Code:** `src/game_slots.jo save_game_slot` (spread) / `step_game_slots`;
+  `src/living_save_stream.jo world_text_build_step`; `src/save_stream.jo` (text, hash, deflate);
+  `src/living_save.jo save_check_step`; `aegean.jo step_game_save`.
+- **Rules:** same save format; the streamed text is byte for byte `canonical_text`
+  (`tests/living_save_stream.jo`). `tools/test_stutter.py --autosave-at` measures a stay that
+  spans one.
 ### Coordinator
 
 - **Definition:** the thread (Claude Opus) that plans, dispatches agents, merges their branches and

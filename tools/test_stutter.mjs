@@ -29,6 +29,7 @@ try{
  const q=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',AEGEAN_QUALITY:'low',AEGEAN_RUNTIME_TRACE:'1',STUTTER_TOWN:town,STUTTER_MODE:mode,STUTTER_WARMUP:process.env.STUTTER_WARMUP??'30',STUTTER_SECONDS:'60'});
  if(process.env.STUTTER_AUDIO!=='0')q.delete('SLOPPY_NO_AUDIO');
  if(process.env.STUTTER_AGL)q.set('STUTTER_AGL',process.env.STUTTER_AGL);
+ if(process.env.STUTTER_AUTOSAVE_AT)q.set('STUTTER_AUTOSAVE_AT',process.env.STUTTER_AUTOSAVE_AT);
  await send('Page.navigate',{url:'file://'+resolve(page)+'?'+q});
  const result=await done;
  if(process.env.STUTTER_PROFILE==='1')writeFileSync(join(out,'cpu.json'),JSON.stringify(await send('Profiler.stop')));
