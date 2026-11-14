@@ -47,7 +47,10 @@ tread heights, are checked by `cliff_stair_clear`, give walking contact through
 append the ship service with `bake_island_sea_access.jo ID`, then rerun
 `bake_access_manifest.jo` and the audits. `tools/access_gap_diag.jo` reports, per unserved
 place, how far down the stepped-path flood reaches (a sea cliff shows as a high lowest point).
-`tools/climb_capture.jo` walks the stair in the full game for captures.
+`tools/climb_capture.jo` walks the stair in the full game for captures (`stand` with
+`CLIMB_STATS=1` for timing). `tools/replan_cliff_stairs.jo` re-plans installed stairs from their
+own roots (flight length and landing size) and keeps the path above; rerun
+`bake_access_manifest.jo` (twice: its walking-time labels read the previous manifest) after it.
 
 Every settlement is now reachable: the 16 left after e6f5710 (8 island monasteries, 6 hill
 villages, 2 chapels) have landings, 15 of them by a cliff stair 28-236 m high, and all 16 have a

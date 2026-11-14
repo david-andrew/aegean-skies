@@ -10,6 +10,7 @@
 use 'music_data.jo'
 use 'music_synth.jo'
 use 'live_source.jo'
+use 'band_request.jo'
 
 struct SetPiece:
     piece: int                      # MUSIC_PIECES index
@@ -21,7 +22,7 @@ struct SetPiece:
 # The evening's numbers, in order, played round until the band stops: a quiet set for a harbour
 # terrace (src/music_data.jo; sources and permissions in data/music/SOURCES.md).
 BAR_SET: SetPiece[] = [
-    SetPiece(7, 4, 0, 67, []),                  # Satie, Gymnopedie No. 1: piano and violin
+    SetPiece(7, 0, 6, 67, []),                  # Satie, Gymnopedie No. 1: the pianist alone
     SetPiece(8, 4, 0, 55, [vec2(14, 268)]),     # Gounod, Ave Maria: the singer takes the violin's line
     SetPiece(9, 0, 6, 72, []),                  # Debussy, Clair de lune: the pianist alone
     SetPiece(10, 5, 8, 52, []),                 # Tarrega, Adelita: guitar and mandolin
@@ -37,16 +38,28 @@ struct SetPosition:
     playing = false
     index = 0                       # into BAR_SET
     seconds = 0.0                   # into the piece
+    left = 0.0                      # seconds until the next number starts
+    request = false                 # (a number someone asked for)
 
 _piece_seconds = (k: int) -> f64: f64(MUSIC_PIECES[BAR_SET[k].piece].frames) / f64(MUSIC_RATE)
 
-# Where the band is at a given world tick (120 ticks a minute; the epoch is 09:30 local).
-bar_set_position = (tick: int) -> SetPosition:
+# Where the band is at a given world tick (120 ticks a minute; the epoch is 09:30 local), with the
+# evening's requests played in where they were asked for.
+bar_set_position = (tick: int, requests: BandRequest[] = []) -> SetPosition:
     minute = tick / 120
     local = ((minute + 570) % 1440 + 1440) % 1440
     if local < BAR_START or local >= BAR_END: return SetPosition()
     day_start_tick = (minute - (local - BAR_START)) * 120
     t = f64(tick - day_start_tick) / f64(BAR_TICKS_PER_SECOND)
+    # (the requests of this evening, in order: each holds the set back by its length)
+    loop r in requests:
+        if r.start < day_start_tick or r.start > tick: continue
+        if r.index < 0 or r.index >= BAR_SET.len(): continue
+        into = f64(tick - r.start) / f64(BAR_TICKS_PER_SECOND)
+        d = _piece_seconds(r.index)
+        if into < d: return SetPosition(true, r.index, into, d - into + BAR_GAP, true)
+        if into < d + BAR_GAP: return SetPosition(false, r.index, 0.0, d + BAR_GAP - into, true)
+        t -= d + BAR_GAP
     total = 0.0
     loop k in 0..BAR_SET.len(): total += _piece_seconds(k) + BAR_GAP
     # (an evening is shorter than the whole set: each evening starts one number further on)
@@ -55,11 +68,34 @@ bar_set_position = (tick: int) -> SetPosition:
     t = t - floor(t / total) * total + 0.000001   # (a start landing exactly on a boundary is that piece's)
     loop k in 0..BAR_SET.len():
         d = _piece_seconds(k)
-        if t < d: return SetPosition(true, k, t)
+        if t < d: return SetPosition(true, k, t, d - t + BAR_GAP)
         t -= d
-        if t < BAR_GAP: return SetPosition(false, k, 0.0)
+        if t < BAR_GAP: return SetPosition(false, k, 0.0, BAR_GAP - t)
         t -= BAR_GAP
     SetPosition()
+
+# The tick a number asked for now would start: as soon as the one playing (or the pause after it)
+# is over, after any request already waiting. -1 when the band isn't playing tonight any more.
+bar_request_start = (tick: int, requests: BandRequest[]) -> int:
+    p = bar_set_position(tick, requests)
+    minute = tick / 120
+    local = ((minute + 570) % 1440 + 1440) % 1440
+    start = tick + int(ceil(p.left * f64(BAR_TICKS_PER_SECOND)))
+    # (asked before the evening starts: it opens the evening)
+    if local < BAR_START and local >= BAR_START - 180: start = (minute + BAR_START - local) * 120
+    else if not p.playing and p.left <= 0.0: return -1
+    # (after the requests still waiting their turn)
+    loop r in requests:
+        if r.start >= start and r.index >= 0 and r.index < BAR_SET.len(): start = r.start + int(ceil((_piece_seconds(r.index) + BAR_GAP) * f64(BAR_TICKS_PER_SECOND)))
+    at = (((start / 120) + 570) % 1440 + 1440) % 1440
+    if at < BAR_START or at >= BAR_END: return -1
+    start
+
+# A request still to come (the band has it and will play it next), or none.
+bar_request_waiting = (tick: int, requests: BandRequest[]) -> BandRequest?:
+    loop r in requests:
+        if r.start > tick: return r
+    none
 
 bar_singing = (p: SetPosition) -> bool:
     if not p.playing: return false
@@ -270,8 +306,8 @@ bar_music_stop = (m: mut BarMusic):
 
 # Each frame: keep a little queued (a tenth of a second, so turning is heard at once) while the
 # band plays and the listener is within reach.
-bar_music_update = (m: mut BarMusic, tick: int, hearing: LiveHearing, audio: bool):
-    p = bar_set_position(tick)
+bar_music_update = (m: mut BarMusic, tick: int, hearing: LiveHearing, audio: bool, requests: BandRequest[] = []):
+    p = bar_set_position(tick, requests)
     m.hearing = hearing
     if not audio or not p.playing or hearing.distance > 150.0:
         bar_music_stop(m)

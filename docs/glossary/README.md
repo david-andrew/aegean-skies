@@ -17,15 +17,13 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Path desk](#path-desk)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -247,6 +245,19 @@ On the rivers branch until it lands.
   the material is `src/sea.jo sea_material` with `inland=true`.
 - **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
 
+### Confluence
+
+- **Aliases:** river junction, tributary mouth.
+- **Definition:** where one of the three tributaries meets its parent river. The tributary's last
+  segments flare along circular fillets, so each bank turns to run along the parent's instead of
+  meeting it at a square corner; the downstream corner is swept wider (1.3 x) than the upstream
+  (0.7 x). The flare is a width along the tributary, so the water field, carve, contact and the
+  ribbon (split 32 times along a flared segment) all read the same shape.
+- **Code:** `src/river_field.jo` (`RIVER_MOUTHS`, `river_mouth_flare`), `river_strip_end` in
+  `src/river_render.jo`.
+- **Rules:** a field change bumps `RIVER_VERSION`, which changes the geography key: rebake
+  `tools/bake.jo` and `assets/living-routes.bin`.
+
 ### Opaque river prepass
 
 - **Definition:** a depth-only pass over the river ribbon's triangles that are at least 2 m deep
@@ -322,6 +333,22 @@ On the rivers branch until it lands.
 - **Capture:** `tools/prop_disc_frames.jo` with `PROP_VIEW=side|front|close|rear|far|cockpit`,
   `PROP_THROTTLE=0..1`, `PROP_KIND=0..15`.
 
+### Navigation lights
+
+- **Aliases:** nav lights, wingtip lights, side lights, stern lamp, riding light.
+- **Definition:** lamps every aircraft and vessel shows after dark, as in the late 1920s: red on
+  the port wingtip, green on the starboard, white at the tail; ships red and green at the sides
+  and a white stern lamp underway, one white lamp when lying still, small boats (rowing boats,
+  dinghies, canal craft) one white lamp. Each is an additive glow point with a soft halo, kept a
+  few pixels across out to 12 km and veiled by clouds; all in one particle draw a frame.
+- **Code:** `src/nav_lights.jo` (`nav_light_level`, `nav_craft_points`, `nav_vessel_offsets`,
+  `draw_nav_lights`); the ships' small emissive lamp boxes in `src/vessel_models.jo`.
+- **Rules:** off by day (`nav_light_level` 0 above sun height 0.12), full by sun height -0.10.
+  Aircraft lamps sit on the outermost wing contact (biplanes: the wider wing) and are off when
+  moored or wrecked. Vessels' bow is +z, so port (red) is +x for them and -x for aircraft.
+- **Capture:** `AEGEAN_FLYING="200 190" AEGEAN_HOUR=22`; distance: add
+  `AEGEAN_VIEW="2433 210 -3365 0.5711 -0.01 22" SLOPPY_INPUT="2:f2+ 3:f2-"`.
+
 ### Prop arcs
 
 - **Aliases:** the short white concentric arcs, pencil arcs, bands, streaks.
@@ -338,7 +365,9 @@ On the rivers branch until it lands.
 - **Aliases:** band speed, band angle, the wagon-wheel drift.
 - **Definition:** the designed drift of the arc bands around the hub. Their turning rate cycles
   with engine speed (a smoothed sawtooth of about 2.5 cycles that grows as the engine slows), so
-  the arcs creep, reverse and creep back like a wagon wheel on film. At the lowest disc speed it
+  the arcs creep, reverse and creep back like a wagon wheel on film. The drift lingers near its
+  fast extremes over most of the range (`PROP_DRIFT_HOLD`), so the slow passages are brief blips;
+  full power keeps its slow creep. At the lowest disc speed it
   matches the blades' real speed, so the hand-over to idle blades is seamless.
 - **Code:** `src/prop_disc.jo:176 prop_band_speed` (with `PROP_TOP_SPEED`), `prop_band_angle`
   (integrated per craft); the shaft rate is `src/flight_feedback.jo prop_rotation_speed`.
@@ -422,6 +451,31 @@ On the rivers branch until it lands.
   `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
 - **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
   spans. Landings must forgive firm touchdowns.
+
+### Flight model v2
+
+- **Aliases:** v2, the trial flight model, fdm2; the liked model (its counterpart: the default).
+- **Definition:** a Tweaks option (off by default) that flies the player's aircraft in the air as a
+  rigid body with forces: lift from the angle of attack with a soft stall per wing, drag, a
+  fixed-pitch propeller with rpm, honest gravity, and assists (path hold, coordination, departure
+  resistance, a g limit). Water, land and contacts stay on the liked solver; NPCs stay on the liked
+  model. Worked in true units: the drawn world is the true one at the [speed scale](#speed-scale).
+- **Code:** `src/flight_v2.jo` `fly_air_v2`, `steer_v2`, `Fdm2Tuning`; dispatched from
+  `src/flight.jo` `_substep` and `steer` by `tweaks.flight_model`; `tools/fdm_compare.jo`,
+  `tools/fdm_plots.py`, `tools/fdm_frames.jo`, `tests/flight_v2_test.jo`. On `t3/flight-v2`.
+- **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
+  path is held. The default stays the liked model until the user prefers v2.
+- **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+
+### Departure resistance
+
+- **Aliases:** the AoA limit, the assist's stall margin.
+- **Definition:** in [flight model v2](#flight-model-v2), the pilot's assist never pulls the wing
+  past its stall angle with the stick alone, so a keyboard's full stick turns as hard as the wing
+  allows without snapping. The wing still stalls when speed runs out faster than the nose can
+  follow (a zoom), and then falls and recovers by its own aerodynamics.
+- **Code:** `src/flight_v2.jo` `Fdm2Tuning.departure` (1 = full resistance; 0 lets a full stick
+  go 0.2 rad past the stall).
 
 ### Altimeter hands
 
@@ -675,12 +729,28 @@ On the rivers branch until it lands.
 
 - **Definition:** a cliff stair from the root of an island community's jetty up a sea cliff to the
   ground above, where a plateau is ringed by cliffs and no path reaches the shore. It runs
-  diagonally along the face (no switchbacks), its walking width standing on masonry against the
-  rock; above it the stepped landing path carries on to the square.
+  diagonally along the face (no switchbacks: on these 80-degree faces a hairpin's upper flight
+  would stand over the lower one, and walking contact has one height per place), with a landing
+  every 15-21 m of rise. Built against the rock: pale dressed treads notched against the face, a
+  rough-cut rock wall rising on the inner side, a short masonry skirt (1 m at the arch crowns,
+  2.5 m at the springing) carried by raking corbels back into the cliff, and a sloped limewashed
+  parapet on the open side. Monastery and chapel islands have a small limewashed wayside shrine
+  in the rock wall at alternate landings. Above it the stepped landing path carries on to the
+  square. From the air it is a pale thread: treads in blocks of four and the parapet line.
 - **Code:** `LandingAccess.stair_from` (the route from that index down to the root is the stair,
-  with tread heights), `cliff_stair_clear` in `src/access_path_bake.jo`, `landing_stair_runs`
-  in `src/landing_stairs.jo`; surveyed by `tools/survey_island_climb.jo`. Drawn tread by tread
-  near any part of it, as one block per four treads without a parapet from the air.
+  with tread heights), `cliff_stair_clear`/`cliff_stair_fault` in `src/access_path_bake.jo`,
+  `add_cliff_stair_mesh` and `add_stair_hexa` in `src/stairways.jo`, `landing_stair_runs` in
+  `src/landing_stairs.jo`; surveyed by `tools/survey_island_climb.jo`, re-planned by
+  `tools/replan_cliff_stairs.jo`. Stone surfaces carry the masonry/plaster surface tags so their
+  shade takes the neutral fill rather than blue skylight.
+
+### Landing walk time
+
+- **Definition:** at an island landing 1 km or more below its square, the pier's notice board
+  gives the distance and the time on foot, by the hill walkers' rule (5 km an hour plus ten
+  minutes for each 100 m of climb), rounded to words: "about an hour", "an hour and a half".
+- **Code:** `walk_time_text`, `landing_walk`, `landing_walk_text` and `access_notice_lines` in
+  `src/access_notices.jo`; the access manifest uses the same text.
 
 ### Stepped landing path
 
@@ -737,6 +807,16 @@ On the rivers branch until it lands.
   `arch_regional`); the statue plinth in `src/town_details.jo`.
 - **Rules:** no coplanar overlays (they z-fight).
 
+### Hill house
+
+- **Aliases:** stepped house, house cut into the hill.
+- **Definition:** a far-town house on a sloping lot. A drop of about a storey becomes a lower storey
+  with its own windows on the downhill side, taken out of the storeys seen from uphill, so the face
+  towards the sea keeps the designed height; under 2 m of plain wall is left below it, and a house
+  squeezed narrow by a steep lane stays low. Lots steeper than 5 m across stay empty.
+- **Code:** `place_ground_lot` in `src/settlements.jo`.
+- **Rules:** never stretch a house over the slope (that made blank towers seen from the sea).
+
 ### Regional character
 
 - **Definition:** each country's own architecture and street furniture. Kalyra has steep clay
@@ -780,6 +860,20 @@ On the rivers branch until it lands.
 - **Capture:** `tools/folkview.jo`; `tools/faceview.jo` (`FACEVIEW=pilot|follow|folk|cats`).
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
+
+### Camera wall check
+
+- **Aliases:** camera pull-in, keeping the view out of houses.
+- **Definition:** on foot, the follow camera is brought in to just short of the first building on
+  the line from the pilot's head out to where the camera would be, so a house never stands
+  between the view and the pilot and the camera never sits inside one (where its walls, culled
+  from inside, would show the street through them). It eases back out when the wall is passed.
+- **Code:** `aegean.jo follow_clear_of_walls` (called from `update_player_follow`), using
+  `town_avoid_buildings` (the walking solids) and the engine's `pull_in`.
+- **Rules:** only solids taller than the pilot count (benches, tables and garden walls do not);
+  never closer than a metre behind the head; samples every 0.45 m (about 0.02 ms a frame). A line
+  that only grazes a corner is left alone.
+- **Capture:** `AEGEAN_AT='461.50 -6325.68 -0.891'` (a Porto Vecchio house behind the pilot).
 
 ---
 
@@ -976,6 +1070,21 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   read the world, so rotation never changes what the simulation does; the test is
   `tests/living_far_check_rotation.jo`.
 
+
+### Spread minute
+
+- **Aliases:** world-minute slices, held clock.
+- **Definition:** a world minute's rules run as ordered pieces over a few frames (about 4 ms a
+  frame) instead of in one frame. While a minute is in progress the scene takes no new tick and
+  the frame's other World writers wait, so nothing else touches the World between its pieces: the
+  same rules, in the same order, on the same World. A frame with input, a menu or the pause
+  screen finishes the minute at once first; a save or load waits until it is done.
+- **Code:** `src/living_sim.jo` `MinuteRun`, `minute_run_step`, `_minute_unit`;
+  `src/living_scene.jo` `scene_clock_end_spread` / `scene_clock_resume`; `src/traffic.jo`
+  (the held tick); `aegean.jo` `update` (`world_held`, the frame budget).
+- **Rules:** headless runs and tests run each minute whole; a minute in pieces gives exactly the
+  World the whole minute gives (`tests/living_minute_spread.jo`). NPC aircraft, which move only on
+  scene ticks, pause for the held frames and catch up after.
 ## Leisure
 
 Optional activities: eating, drinking, music, resting and working on the aircraft, for the pleasure
@@ -1067,6 +1176,49 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   wear (`leisure_tinker`).
 - **Capture:** `AEGEAN_LEISURE=work:wipe|inspect|oil|tune|patch|polish` with
   `AEGEAN_LEISURE_FRAMES=<dir>` (and `AEGEAN_CRAFT` for another airframe).
+
+### Tavli
+
+- **Aliases:** Portes, backgammon.
+- **Definition:** the board game at the coffee house, played against a townsperson for small stakes.
+  The rules are Portes: as many dice as can be played must be, the larger die when only one of two
+  can be, and a gammon counts double. Each opponent plays with a personality from their traits and
+  age: care (from fast and loose to careful), boldness, pace, and a voice for their remarks. The
+  stake moves by one `gambling` transfer. Wins and losses are kept per person, warm their regard a
+  little, and bring a word about the last game when one meets them.
+- **Code:** `src/tavli.jo` (rules, `tavli_choose`, `tavli_settle`, `tavli_partners`),
+  `src/tavli_view.jo` (the drawn board, dice physics, input); `tavli_frame` in `aegean.jo`;
+  `tests/tavli_test.jo`; `tools/tavli_board.jo` stages a position.
+- **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid`.
+
+### Band request
+
+- **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
+  to the house). It is played as soon as the number playing (and the pause after it) is over, or it
+  opens the evening. The set then carries on where it was. Only one request may wait at a time.
+- **Code:** `BandRequest` (`src/band_request.jo`), `bar_set_position(tick, requests)` and
+  `bar_request_start` in `src/bar_band.jo`; `leisure_request` in `src/leisure.jo`.
+- **Capture:** `AEGEAN_LEISURE=request|requested`.
+
+### The paper
+
+- **Aliases:** the newspaper, the Courier.
+- **Definition:** today's paper at the coffee house: a broadsheet column made from what the town
+  has heard. It carries the harbour's and its people's news, telegrams (far reports), shortages,
+  the market's prices with the latest word of them elsewhere, the harbour office's weather, and
+  posted work and air meets as notices. It is read-only, and bought once a day.
+- **Code:** `src/newspaper.jo`, `src/newspaper_view.jo`; `leisure_buy_paper` in `src/leisure.jo`.
+- **Capture:** `AEGEAN_LEISURE=paper` (`AEGEAN_PAPER_SCROLL=<px>`).
+
+### Dock fishing
+
+- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and strike
+  while it is under. Bites come livelier at dawn and dusk. The catch goes into the angler's pocket
+  at the fish market as production (`record_creation` and `cargo_mint`, exactly like a fisher's),
+  to be sold there or grilled by the hotel's kitchen (consumed and recorded so).
+- **Code:** `src/fishing.jo`; `fishing_frame` and `draw_fishing` in `aegean.jo`;
+  `tests/fishing_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite`.
 
 ### Time skip
 
@@ -1399,6 +1551,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
 | `AEGEAN_AT='x z yaw'` | on foot at a spot |
+| `AEGEAN_SHOTS='dir 120 600'` | save those frames of a scripted (`SLOPPY_INPUT`) session as `dir/<frame>.png`, each with a `SHOT` line: mode, position, open panel, minute, purse, people within 40 m |
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |

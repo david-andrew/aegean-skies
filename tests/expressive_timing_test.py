@@ -83,6 +83,17 @@ class ExpressiveTimingTests(unittest.TestCase):
         self.assertLess(middle('agitated'), 1.0)
         self.assertEqual(set(MOODS), {'mournful', 'tender', 'dreamy', 'stately', 'dance-like', 'jaunty', 'triumphant', 'agitated'})
 
+    def test_a_lament_never_eases_back_far_below_its_own_pace(self):
+        # the preset's cap: whatever a mournful piece's base, its easing stays within 10% of it
+        # (the final ritard apart), so the music keeps flowing
+        for base in (0.8, 0.87, 1.0, 1.2):
+            params = mood_timing('mournful', base=base)
+            self.assertLessEqual(params.max_rate, base * 1.1 + 1e-9)
+            curves = timing_map(score(), CLOCK, params)[1]
+            body = [r for b, r in zip(curves['beats'], curves['rate']) if b < curves['beats'][-1] - CLOCK.meter * 2]
+            self.assertLessEqual(max(body), base * 1.1 + 1e-9)
+            self.assertGreater(min(body), base * 0.85)
+
     def test_a_moods_touch_joins_or_parts_the_line_and_leans_the_melody(self):
         notes = [[k * 1.0, 0.6, 60 + k, 6, 0.5, 0.5, 1] for k in range(4)]
         legato = mood_touch(notes, CLOCK, MOODS['mournful'][1])

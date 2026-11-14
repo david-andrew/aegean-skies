@@ -1,0 +1,423 @@
+# Side by side: the liked flight model and the trial (flight_v2.jo) flown through the same scripted
+# manoeuvres at the player's 3.3x scale. Headless and deterministic (no window, audio or clock).
+#   sloppy --release tools/fdm_compare.jo > out.txt
+# Lines starting "M," are the metrics table; "T," lines are time series for tools/fdm_plots.py.
+# FDM_KINDS="0,2" picks aircraft (default Gull, Heron, Corsair, Falco); FDM_TRACE=0 drops the series.
+import '../src/flight.jo' as fl
+import '../src/flight_v2.jo' as v2
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+
+const HZ = 60.0
+K = to_float(env("FDM_SCALE") ?? "3.3") ?? 3.3
+const G = 9.81
+trace = (env("FDM_TRACE") ?? "1") == "1"
+
+spec_for = (kind: planes.Craft, model: int) -> fl.CraftSpec:
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    # (FDM_NPC=1: as the game flies the other aircraft: not the player's, so no pure scale; with
+    # model 1 they fly v2 through tweaks.fdm2_npcs)
+    npc = env("FDM_NPC") == "1"
+    tw.set_tweaks(tw.Tweaks(pure_scale = true, flight_model = model, fdm2_npcs = npc))
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = not npc
+    k
+
+# (true units: the drawn / K)
+vt = (s: fl.CraftState) -> f64: f64(length(s.velocity)) / K
+ht = (s: fl.CraftState) -> f64: f64(s.position.y) / K
+energy = (s: fl.CraftState) -> f64: ht(s) + vt(s) * vt(s) / (2.0 * G)
+pitch_of = (s: fl.CraftState) -> f64: asin(clamp(f64(fl.forward(s).y), -1.0, 1.0))
+bank_of = (s: fl.CraftState) -> f64:
+    r = quat_rotate(s.orientation, vec3(1, 0, 0)); u = quat_rotate(s.orientation, vec3(0, 1, 0))
+    atan2(-f64(r.y), f64(u.y))
+path_of = (s: fl.CraftState) -> f64: if length(s.velocity) > 0.1: asin(clamp(f64(s.velocity.y) / f64(length(s.velocity)), -1.0, 1.0)) else: 0.0
+track_of = (s: fl.CraftState) -> f64: atan2(f64(s.velocity.x), -f64(s.velocity.z))
+
+start = (k: fl.CraftSpec, alt_true: f64, v_true: f64, throttle: f64) -> fl.CraftState:
+    s = fl.CraftState(position = vec3(0, f32(alt_true * K), 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
+    s.throttle = throttle
+    s.rpm = throttle
+    s.orientation = quat_euler(0.0, 0, 0)
+    s
+
+# Track a path angle with the stick: both models take the stick as a rate of the nose/path.
+path_stick = (k: fl.CraftSpec, s: fl.CraftState, want: f64) -> f64:
+    clamp((want - path_of(s)) * 2.5 / max(k.pitch_rate, 0.1), -1.0, 1.0)
+level_stick = (k: fl.CraftSpec, s: fl.CraftState, alt_true: f64) -> f64:
+    path_stick(k, s, clamp((alt_true - ht(s)) * 0.01, -0.15, 0.15))
+wings_level = (s: fl.CraftState) -> f64: clamp(-bank_of(s) * 2.0, -1.0, 1.0)
+
+struct Sample:
+    t = 0.0
+    x = 0.0
+    alt = 0.0
+    speed = 0.0
+    pitch = 0.0
+    bank = 0.0
+    path = 0.0
+    aoa = 0.0
+    n = 0.0
+    stalled = false
+    throttle = 0.0
+
+struct Rec:
+    name = ""
+    model = 0
+    kind = 0
+    prev: vec3 = vec3(0, 0, 0)
+    n = 1.0
+    dist = 0.0
+    last = vec3(0, 0, 0)
+
+# One step, recording the load factor from the change of velocity (true units)
+fly = (k: fl.CraftSpec, s: mut fl.CraftState, c: fl.Controls, rec: mut Rec):
+    v0 = s.velocity / f32(K)
+    fl.step(k, s, c, fl.FlightEnv(), 1.0 / HZ)
+    v1 = s.velocity / f32(K)
+    a = (v1 - v0) * f32(HZ) + vec3(0, f32(G), 0)
+    dir = if length(v1) > 0.5: normalize(v1) else: vec3(0, 0, -1)
+    rec.n = f64(length(a - dir * dot(a, dir))) / G
+    rec.dist += f64(length(vec3(v1.x, 0, v1.z))) / HZ
+    if trace and int(s.time * HZ + 0.5) % 6 == 0:
+        print("T,{rec.name},{rec.model},{rec.kind},{s.time:.3},{rec.dist:.2},{ht(s):.2},{vt(s):.3},{pitch_of(s):.4},{bank_of(s):.4},{path_of(s):.4},{s.aoa:.4},{rec.n:.3},{if s.stalled: 1 else: 0},{s.throttle:.3},{s.orientation.x:.5},{s.orientation.y:.5},{s.orientation.z:.5},{s.orientation.w:.5},{s.position.x / K:.2},{s.position.z / K:.2}")
+
+metric = (name: str, model: int, kind: int, key: str, value: f64):
+    print("M,{name},{model},{planes.CRAFT_NAMES[kind]},{key},{value:.3}")
+
+# ---- the manoeuvres ----
+
+top_speed = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "top", model = model, kind = int(kind))
+    s = start(k, 30.0, k.cruise_speed / K, 1.0)
+    loop i in 0..int(HZ * 90.0):
+        c = fl.Controls(throttle = 1.0, pitch = level_stick(k, s, 30.0), roll = wings_level(s))
+        fly(k, s, c, rec)
+    metric("top", model, int(kind), "true_ms", vt(s))
+    metric("top", model, int(kind), "drawn_kmh", vt(s) * K * 3.6)
+
+roll_rate = (kind: planes.Craft, model: int, v_true: f64, label: str):
+    k = spec_for(kind, model); rec = Rec(name = "roll_" + label, model = model, kind = int(kind))
+    s = start(k, 300.0, v_true, fl.cruise_throttle(k, v_true))
+    prev = bank_of(s); acc = 0.0; peak = 0.0; t90 = -1.0
+    loop i in 0..int(HZ * 2.0):
+        c = fl.Controls(throttle = s.throttle, roll = 1.0, pitch = 0.0)
+        fly(k, s, c, rec)
+        b = bank_of(s)
+        d = atan2(sin(b - prev), cos(b - prev)); prev = b
+        acc += d
+        peak = max(peak, d * HZ)
+        if t90 < 0.0 and acc >= PI * 0.5: t90 = s.time
+    metric("roll_" + label, model, int(kind), "peak_deg_s", peak * 180.0 / PI)
+    metric("roll_" + label, model, int(kind), "t90_s", t90)
+
+# Full pull, wings level, from a speed: the peak load and the turn rate it gives
+pull = (kind: planes.Craft, model: int, v_true: f64, label: str):
+    k = spec_for(kind, model); rec = Rec(name = "pull_" + label, model = model, kind = int(kind))
+    s = start(k, 300.0, v_true, 1.0)
+    peak_n = 0.0; peak_v = v_true
+    loop i in 0..int(HZ * 2.0):
+        fly(k, s, fl.Controls(throttle = 1.0, pitch = 1.0, roll = wings_level(s)), rec)
+        if rec.n > peak_n: peak_n = rec.n; peak_v = vt(s)
+    turn = G * sqrt(max(peak_n * peak_n - 1.0, 0.0)) / max(peak_v, 1.0)
+    metric("pull_" + label, model, int(kind), "speed", v_true)
+    metric("pull_" + label, model, int(kind), "peak_g", peak_n)
+    metric("pull_" + label, model, int(kind), "inst_turn_deg_s", turn * 180.0 / PI)
+
+# Level turn at a fixed bank, full throttle, the stick (a PI) holding the height; 45 s, from cruise.
+# Swept over banks; the steepest that holds its speed and height gives the sustained turn.
+sustained = (kind: planes.Craft, model: int):
+    best = 0.0; best_v = 0.0; best_n = 0.0; best_bank = 0.0; best_power = 0.0
+    loop power in [1.0, 0.85, 0.7]:
+      deg = 40.0
+      loop deg <= 86.0:
+          k = spec_for(kind, model); rec = Rec(name = "sustained", model = model, kind = int(kind))
+          s = start(k, 300.0, k.cruise_speed / K, power)
+          want = deg * PI / 180.0
+          h0 = 300.0; held = 0.0
+          track_acc = 0.0; prev = track_of(s); v_then = 0.0; h_then = 0.0
+          loop i in 0..int(HZ * 45.0):
+              err = clamp((h0 - ht(s)) * 0.02, -0.1, 0.1) - path_of(s)
+              held = clamp(held + err * 0.8 / HZ, -0.2, 1.0)
+              c = fl.Controls(throttle = power, pitch = clamp(held + err * 3.0, -1.0, 1.0), roll = clamp((want - bank_of(s)) * 3.0, -1.0, 1.0))
+              fly(k, s, c, rec)
+              tr = track_of(s)
+              if s.time > 30.0:
+                  track_acc += atan2(sin(tr - prev), cos(tr - prev))
+                  if v_then == 0.0: v_then = vt(s); h_then = ht(s)
+              prev = tr
+          rate = abs(track_acc) / 15.0
+          steady = abs(vt(s) - v_then) < 2.5 and abs(ht(s) - h_then) < 15.0 and abs(ht(s) - h0) < 40.0 and not s.stalled
+          print("S,{model},{planes.CRAFT_NAMES[int(kind)]},{power:.2},{deg:.0},{rate * 180.0 / PI:.2},{vt(s):.2},{vt(s) - v_then:.2},{ht(s) - h0:.2},{bank_of(s) * 180.0 / PI:.1},{rec.n:.2},{s.stalled},{steady}")
+          if steady and rate > best: best = rate; best_v = vt(s); best_n = rec.n; best_bank = deg; best_power = power
+          deg += if deg < 60.0: 10.0 else: (if deg < 76.0: 2.0 else: 1.0)
+    metric("sustained", model, int(kind), "turn_deg_s", best * 180.0 / PI)
+    metric("sustained", model, int(kind), "speed", best_v)
+    metric("sustained", model, int(kind), "g", best_n)
+    metric("sustained", model, int(kind), "bank_deg", best_bank)
+    metric("sustained", model, int(kind), "throttle", best_power)
+
+# A loop from cruise: full throttle, full pull, wings left alone
+loop_case = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "loop", model = model, kind = int(kind))
+    s = start(k, 300.0, k.cruise_speed / K, 1.0)
+    e0 = energy(s); h0 = ht(s); turned = 0.0; prev = path_of(s); vmin = 1e9
+    hmax = h0; done = -1.0
+    loop i in 0..int(HZ * 25.0):
+        fly(k, s, fl.Controls(throttle = 1.0, pitch = 1.0), rec)
+        # (the path's angle in the vertical plane of the start, unwrapped)
+        a = atan2(f64(s.velocity.y), -f64(s.velocity.z))
+        d = atan2(sin(a - prev), cos(a - prev)); prev = a
+        turned += d
+        vmin = min(vmin, vt(s)); hmax = max(hmax, ht(s))
+        if turned >= 2.0 * PI:
+            done = s.time; break
+    metric("loop", model, int(kind), "time_s", done)
+    metric("loop", model, int(kind), "turned_deg", turned * 180.0 / PI)
+    metric("loop", model, int(kind), "min_speed", vmin)
+    metric("loop", model, int(kind), "height_m", hmax - h0)
+    metric("loop", model, int(kind), "energy_kept", energy(s) / e0)
+
+# The stall: a zoom to 50 degrees until it breaks, then the stick let go and the throttle open, as a
+# player would; (and a level, power-off stall held with the stick)
+stall_zoom = (kind: planes.Craft, model: int, idle: bool = false):
+    name = if idle: "stall_idle" else: "stall_zoom"
+    k = spec_for(kind, model); rec = Rec(name = name, model = model, kind = int(kind))
+    power = if idle: 0.0 else: 0.7
+    s = start(k, 300.0, k.cruise_speed / K, power)
+    broke = -1.0; v_break = 0.0; h_break = 0.0; d_break = 0.0
+    nose_down = 0.0; recovered = -1.0; v_plus2 = -1.0; d_plus3 = -1.0; hmin = 1e9; regain = -1.0
+    loop i in 0..int(HZ * 30.0):
+        c = fl.Controls(throttle = power)
+        if broke < 0.0: c.pitch = path_stick(k, s, 0.87)
+        else:
+            c.throttle = if idle and s.stalled: 0.0 else: 1.0
+            # (after the break: hands off until flying again, then ease back to level)
+            if vt(s) > k.stall_speed * 1.05 and not s.stalled: c.pitch = path_stick(k, s, if vt(s) < k.stall_speed * 1.3: -0.1 else: 0.0)
+        c.roll = wings_level(s) * 0.5
+        fly(k, s, c, rec)
+        if broke < 0.0 and (s.stalled or vt(s) < k.stall_speed * 0.6):
+            broke = s.time; v_break = vt(s); h_break = ht(s); d_break = rec.dist
+        if broke >= 0.0:
+            hmin = min(hmin, ht(s))
+            if pitch_of(s) < -0.35: nose_down += 1.0 / HZ
+            if v_plus2 < 0.0 and s.time >= broke + 2.0: v_plus2 = vt(s)
+            if regain < 0.0 and vt(s) >= k.stall_speed * 1.3: regain = s.time - broke
+            if d_plus3 < 0.0 and s.time >= broke + 3.0: d_plus3 = rec.dist - d_break
+            if recovered < 0.0 and not s.stalled and path_of(s) > -0.14 and vt(s) > k.stall_speed * 1.05 and s.time > broke + 0.5:
+                recovered = s.time
+                break
+    metric(name, model, int(kind), "break_s", broke)
+    metric(name, model, int(kind), "speed_at_break", v_break)
+    metric(name, model, int(kind), "speed_gain_2s", v_plus2 - v_break)
+    metric(name, model, int(kind), "ground_dist_3s", d_plus3)
+    metric(name, model, int(kind), "nose_below_20deg_s", nose_down)
+    metric(name, model, int(kind), "to_1.3vs_s", regain)
+    metric(name, model, int(kind), "recovery_s", if recovered > 0.0: recovered - broke else: -1.0)
+    metric(name, model, int(kind), "height_lost", h_break - hmin)
+
+stall_level = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "stall_level", model = model, kind = int(kind))
+    s = start(k, 300.0, k.stall_speed * 1.5, 0.0)
+    broke = -1.0; recovered = -1.0; h_break = 0.0; hmin = 1e9; slowest = 1e9; sink_slow = 0.0
+    loop i in 0..int(HZ * 40.0):
+        c = fl.Controls(throttle = 0.0, roll = wings_level(s) * 0.5)
+        # (holding the height, power off; once slow, the stick hauled right back)
+        if broke < 0.0: c.pitch = if vt(s) < k.stall_speed * 1.1: 1.0 else: max(level_stick(k, s, 300.0), 0.0)
+        else:
+            c.throttle = 1.0
+            c.pitch = if s.time < broke + 1.0: -0.3 else: (if s.stalled: 0.0 else: path_stick(k, s, if vt(s) < k.stall_speed * 1.3: -0.1 else: 0.0))
+        fly(k, s, c, rec)
+        if broke < 0.0 and s.stalled: broke = s.time; h_break = ht(s)
+        if broke < 0.0 and vt(s) < slowest: slowest = vt(s); sink_slow = -f64(s.velocity.y) / K
+        if broke >= 0.0:
+            hmin = min(hmin, ht(s))
+            if recovered < 0.0 and not s.stalled and path_of(s) > -0.14 and vt(s) > k.stall_speed * 1.05 and s.time > broke + 0.5:
+                recovered = s.time
+                break
+    metric("stall_level", model, int(kind), "entry_s", broke)
+    metric("stall_level", model, int(kind), "slowest", slowest)
+    metric("stall_level", model, int(kind), "sink_when_slowest", sink_slow)
+    metric("stall_level", model, int(kind), "recovery_s", if recovered > 0.0: recovered - broke else: -1.0)
+    metric("stall_level", model, int(kind), "height_lost", h_break - hmin)
+
+# Power off, the stick hauled back and full right rudder held for 6 s from 1.3 x stall, then the
+# textbook recovery: power off, opposite rudder, stick forward until flying, wings level, ease out
+stall_rudder = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "stall_rudder", model = model, kind = int(kind))
+    s = start(k, 300.0, k.stall_speed * 1.3, 0.0)
+    yaw_peak = 0.0; prev = fl.heading(s); turned = 0.0; bank_peak = 0.0; recovered = -1.0; h0 = ht(s); hmin = 1e9
+    loop i in 0..int(HZ * 30.0):
+        c = fl.Controls(throttle = 0.0)
+        if s.time < 6.0: c.pitch = 1.0; c.yaw = 1.0
+        else:
+            if s.stalled or vt(s) < k.stall_speed * 1.1:
+                c.pitch = -0.6
+                c.yaw = clamp(f64(s.angular_velocity.y) * 3.0, -1.0, 1.0)
+            else:
+                # (wings level, then ease out; steeply down, bank means nothing: pull out first)
+                steep = pitch_of(s) < -1.0
+                c.roll = if steep: 0.0 else: wings_level(s)
+                c.pitch = if abs(bank_of(s)) < 0.5 or steep: path_stick(k, s, 0.0) else: 0.0
+                c.throttle = if steep: 0.0 else: 1.0
+        fly(k, s, c, rec)
+        h = fl.heading(s); d = atan2(sin(h - prev), cos(h - prev)); prev = h
+        hmin = min(hmin, ht(s))
+        if s.time < 6.0:
+            turned += d; yaw_peak = max(yaw_peak, abs(d) * HZ); bank_peak = max(bank_peak, abs(bank_of(s)))
+        else if recovered < 0.0 and not s.stalled and path_of(s) > -0.14 and vt(s) > k.stall_speed * 1.05 and abs(bank_of(s)) < 0.5:
+            recovered = s.time - 6.0
+            break
+    metric("stall_rudder", model, int(kind), "heading_turned_deg", turned * 180.0 / PI)
+    metric("stall_rudder", model, int(kind), "peak_yaw_deg_s", yaw_peak * 180.0 / PI)
+    metric("stall_rudder", model, int(kind), "peak_bank_deg", bank_peak * 180.0 / PI)
+    metric("stall_rudder", model, int(kind), "recovery_s", recovered)
+    metric("stall_rudder", model, int(kind), "height_lost", h0 - hmin)
+
+# Hands off at cruise, 6 m (drawn) over a calm sea, 20 s: does she hold her height without help?
+skim = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "skim", model = model, kind = int(kind))
+    v = k.cruise_speed / K
+    s = start(k, 0.0, v, fl.cruise_throttle(k, v))
+    s.position.y = f32(k.float_height + 6.0)
+    lo = 1e9; hi = -1e9; wet = false
+    loop i in 0..int(HZ * 20.0):
+        fly(k, s, fl.Controls(throttle = fl.cruise_throttle(k, v)), rec)
+        g = f64(s.position.y) - k.float_height
+        lo = min(lo, g); hi = max(hi, g)
+        if s.on_water: wet = true
+    metric("skim", model, int(kind), "lowest_m", lo)
+    metric("skim", model, int(kind), "highest_m", hi)
+    metric("skim", model, int(kind), "touched", if wet: 1.0 else: 0.0)
+
+# Dive and zoom: 45 degrees down until 150 m (true) lost (below the engines' ceiling, 485 m true), then up to 80 degrees until the apex
+dive_zoom = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "dive_zoom", model = model, kind = int(kind))
+    s = start(k, 460.0, k.cruise_speed / K, 1.0)
+    phase = 0; v_pull = 0.0; h_pull = 0.0; apex = -1.0; v_entry = vt(s); rising = false
+    loop i in 0..int(HZ * 40.0):
+        want = if phase == 0: -0.785 else: 1.4
+        fly(k, s, fl.Controls(throttle = 1.0, pitch = path_stick(k, s, want), roll = wings_level(s) * 0.5), rec)
+        if phase == 0 and ht(s) < 310.0:
+            phase = 1; v_pull = vt(s); h_pull = ht(s)
+        if phase == 1 and s.velocity.y > 0.0: rising = true
+        if phase == 1 and rising and s.velocity.y <= 0.0:
+            apex = ht(s); break
+    ideal = v_pull * v_pull / (2.0 * G)
+    metric("dive_zoom", model, int(kind), "speed_gain_dive", v_pull - v_entry)
+    metric("dive_zoom", model, int(kind), "zoom_m", apex - h_pull)
+    metric("dive_zoom", model, int(kind), "zoom_of_ideal", (apex - h_pull) / ideal)
+
+# Time to climb 50 -> 450 m (true) at the best fixed climb angle
+climb = (kind: planes.Craft, model: int):
+    best = 1e9; best_angle = 0.0
+    loop deg in [4.0, 7.0, 10.0, 14.0, 18.0, 24.0, 30.0, 38.0, 46.0, 55.0, 65.0]:
+        k = spec_for(kind, model); rec = Rec(name = "climb", model = model, kind = int(kind))
+        s = start(k, 50.0, k.cruise_speed / K * 0.85, 1.0)
+        loop i in 0..int(HZ * 240.0):
+            fly(k, s, fl.Controls(throttle = 1.0, pitch = path_stick(k, s, deg * PI / 180.0), roll = wings_level(s)), rec)
+            if ht(s) >= 450.0: break
+            if s.stalled: break
+        if ht(s) >= 450.0 and s.time < best: best = s.time; best_angle = deg
+    metric("climb", model, int(kind), "time_s", if best < 1e8: best else: -1.0)
+    metric("climb", model, int(kind), "angle_deg", best_angle)
+    metric("climb", model, int(kind), "rate_ms", if best < 1e8: 400.0 / best else: 0.0)
+
+# From rest on calm water: full throttle, the stick a little back once fast, a gentle climb once off
+takeoff = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "takeoff", model = model, kind = int(kind))
+    s = fl.water_start(k, vec3(0, 0, 0))
+    off = -1.0; dist = 0.0; touched_again = false; stalled = false; min_gap = 1e9; t30 = -1.0
+    loop i in 0..int(HZ * 80.0):
+        c = fl.Controls(throttle = 1.0)
+        if not s.on_water: c.pitch = path_stick(k, s, 0.12)
+        fly(k, s, c, rec)
+        if off < 0.0 and not s.on_water and f64(s.position.y) > k.float_height + 1.0:
+            off = s.time; dist = rec.dist
+        if off >= 0.0:
+            if s.on_water: touched_again = true
+            if s.stalled: stalled = true
+            min_gap = min(min_gap, f64(s.position.y) - k.float_height)
+            if t30 < 0.0 and ht(s) > 30.0: t30 = s.time; break
+    metric("takeoff", model, int(kind), "liftoff_s", off)
+    metric("takeoff", model, int(kind), "run_m", dist)
+    metric("takeoff", model, int(kind), "to_30m_s", t30)
+    metric("takeoff", model, int(kind), "touched_again", if touched_again: 1.0 else: 0.0)
+    metric("takeoff", model, int(kind), "stalled_after", if stalled: 1.0 else: 0.0)
+    metric("takeoff", model, int(kind), "hull_damage", s.hull_damage)
+
+# A powered approach at 1.3 x stall on 3.5 degrees from 40 m (drawn), flared from 5 m, the stick
+# worked firmly (the liked model's own hold near the water yields only to a firm stick)
+landing = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "landing", model = model, kind = int(kind))
+    v = k.stall_speed * 1.3
+    s = start(k, 40.0 / K, v, fl.cruise_throttle(k, v))
+    sink = -1.0; touched = false
+    loop i in 0..int(HZ * 60.0):
+        hgt = f64(s.position.y) - k.float_height
+        want = if hgt > 5.0: -0.061 else: -0.06 * hgt / 5.0 - 0.004
+        stick = clamp((want - path_of(s)) * 6.0 / max(k.pitch_rate, 0.1), -1.0, 1.0)
+        c = fl.Controls(throttle = if hgt > 5.0: fl.cruise_throttle(k, v) * 0.6 else: 0.0, pitch = stick, roll = wings_level(s))
+        before = f64(s.velocity.y)
+        fly(k, s, c, rec)
+        if s.on_water and not touched:
+            touched = true; sink = -before
+        if touched and vt(s) < k.stall_speed * 0.4: break
+    metric("landing", model, int(kind), "sink_drawn_ms", sink)
+    metric("landing", model, int(kind), "hull_damage", s.hull_damage)
+    metric("landing", model, int(kind), "crashed", if s.crashed: 1.0 else: 0.0)
+
+# The autopilot's whole trip (NPCs fly it; a robustness gate for the trial): off the water, 5 km out, down onto the water and to the dock (the
+# trial model flies the air part through steer_v2): the touchdown's sink rate (drawn m/s) and harm
+trip = (kind: planes.Craft, model: int):
+    k = spec_for(kind, model); rec = Rec(name = "trip", model = model, kind = int(kind))
+    s = fl.water_start(k, vec3(0, 0, 0)); plan = fl.FlightPlan()
+    sink = -1.0; was_air = false
+    loop i in 0..int(HZ * 600.0):
+        c = fl.autopilot(k, s, plan, fl.FlightEnv())
+        before = f64(s.velocity.y)
+        fly(k, s, c, rec)
+        if not s.on_water and f64(s.position.y) > k.float_height + 20.0: was_air = true
+        if was_air and s.on_water and sink < 0.0: sink = -before
+        if plan.phase == .done or plan.phase == .failed or s.crashed: break
+    metric("trip", model, int(kind), "sink_drawn_ms", sink)
+    metric("trip", model, int(kind), "trip_s", s.time)
+    metric("trip", model, int(kind), "docked", if plan.phase == .done: 1.0 else: 0.0)
+    metric("trip", model, int(kind), "go_arounds", f64(plan.go_arounds))
+    metric("trip", model, int(kind), "hull_damage", s.hull_damage)
+
+# FDM_TUNE="energy=0.4,power=1.4" (as the Flight v2 page copies them): the trial's scalars for a sweep
+tune = ():
+    v2.set_fdm2_tuning(v2.fdm2_tuning_parse(env("FDM_TUNE") ?? ""))
+    print("TUNE,{v2.fdm2_tuning_text(v2.fdm2)}")
+
+main = ():
+    tune()
+    kinds = [0, 1, 2, 3]
+    if let pick = env("FDM_KINDS"):
+        kinds = []
+        loop part in split(pick, ","): kinds.push(to_int(part) ?? 0)
+    print("T,case,model,kind,t,dist,alt,speed,pitch,bank,path,aoa,n,stalled,throttle,qx,qy,qz,qw,x,z")
+    loop id in kinds:
+        kind = planes.Craft(id)
+        loop model in [0, 1]:
+            top_speed(kind, model)
+            roll_rate(kind, model, kind_cruise(kind), "cruise")
+            roll_rate(kind, model, kind_stall(kind) * 1.3, "slow")
+            loop f in [1.3, 2.0, 2.6, 3.2]:
+                pull(kind, model, kind_stall(kind) * f, "{f:.1}vs")
+            sustained(kind, model)
+            loop_case(kind, model)
+            stall_zoom(kind, model)
+            stall_zoom(kind, model, true)
+            stall_level(kind, model)
+            stall_rudder(kind, model)
+            skim(kind, model)
+            dive_zoom(kind, model)
+            climb(kind, model)
+            takeoff(kind, model)
+            landing(kind, model)
+            if env("FDM_TRIP") == "1": trip(kind, model)
+
+kind_stall = (kind: planes.Craft) -> f64: spec_for(kind, 0).stall_speed
+kind_cruise = (kind: planes.Craft) -> f64: spec_for(kind, 0).cruise_speed / K
