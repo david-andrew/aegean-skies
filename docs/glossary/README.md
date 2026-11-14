@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Path desk](#path-desk)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
@@ -920,6 +920,21 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   read the world, so rotation never changes what the simulation does; the test is
   `tests/living_far_check_rotation.jo`.
 
+
+### Spread minute
+
+- **Aliases:** world-minute slices, held clock.
+- **Definition:** a world minute's rules run as ordered pieces over a few frames (about 4 ms a
+  frame) instead of in one frame. While a minute is in progress the scene takes no new tick and
+  the frame's other World writers wait, so nothing else touches the World between its pieces: the
+  same rules, in the same order, on the same World. A frame with input, a menu or the pause
+  screen finishes the minute at once first; a save or load waits until it is done.
+- **Code:** `src/living_sim.jo` `MinuteRun`, `minute_run_step`, `_minute_unit`;
+  `src/living_scene.jo` `scene_clock_end_spread` / `scene_clock_resume`; `src/traffic.jo`
+  (the held tick); `aegean.jo` `update` (`world_held`, the frame budget).
+- **Rules:** headless runs and tests run each minute whole; a minute in pieces gives exactly the
+  World the whole minute gives (`tests/living_minute_spread.jo`). NPC aircraft, which move only on
+  scene ticks, pause for the held frames and catch up after.
 ## Leisure
 
 Optional activities: eating, drinking, music, resting and working on the aircraft, for the pleasure
