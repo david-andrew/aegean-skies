@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
@@ -777,6 +777,50 @@ On the rivers branch until it lands.
 - **Capture:** `tools/folkview.jo`; `tools/faceview.jo` (`FACEVIEW=pilot|follow|folk|cats`).
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
+
+### Ambient crowd
+
+- **Aliases:** unnamed townsfolk, the crowd, passers-by.
+- **Definition:** unnamed people in a big town (ports and capitals): sitting at the square's
+  benches and café tables, talking in pairs, a vendor or two at striped market stalls in market
+  hours, strolling round the square, along the waterfront and up the main streets. Pure
+  presentation: no simulation, identity, money or saving; named residents ([Townsfolk](#townsfolk))
+  are unchanged. Fullest in the morning and for the evening walk, thin in the afternoon heat,
+  next to nobody at night; low and medium quality show about 35% and 60% of the high tier.
+- **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
+  `ambient_draw`, `ambient_density`); called from `aegean.jo update_frame` and `draw_world`.
+- **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
+  and pose through the town shader, within 150 m; laid out once per town as it comes within
+  450 m, a loop a frame (no arrival hitch); spots and loops that touch a building are refused;
+  those who stand or sit are walking solids, strollers are not.
+- **Capture:** `AEGEAN_AT='-117963.77 -84900.62 0' AEGEAN_HOUR=17 AEGEAN_CAPTURE_LIFE=1`
+  (Kalyrassa's square); `SHOT` lines report `crowd N`, the number drawn.
+
+### Action cards
+
+- **Aliases:** offers, prompts, what can be done here.
+- **Definition:** every action open to the pilot at once gets a card of its own, stacked above
+  the first: the first that wants F has it, one more that wants F takes R (stepping ashore on F,
+  fuel on R at a fuel pier); T talks and G works on the aircraft. Cards and keys come from one
+  list, so one press does one thing; on a touch screen the card is the button.
+- **Code:** `aegean.jo walk_offers`, `aboard_offers`, `offer_add`, `offer_pressed`, `draw_offers`.
+
+### Readable type
+
+- **Aliases:** minimum type size, readable().
+- **Definition:** no text is set smaller than 12.5 points on the screen (a page's CSS pixels):
+  on a phone on its side (about 0.54 points per 2D unit) speech bubbles, name tags, prompt
+  cards, the clock and purse, conversations, the ledger, the notice board and the fuel pier grow
+  until it reads; on a desktop window nothing changes. A bubble with no room above a head goes
+  beside it, never over the face.
+- **Code:** `src/hud.jo ui_points`, `readable`, `readable_k`, `READABLE_POINTS`.
+
+### Wading
+
+- **Definition:** a walker steps through water up to 0.85 m deep (a strip of shallows at a
+  beach or a dock's side), not into the sea. The world audit still checks every place is
+  reachable without wading at all.
+- **Code:** `src/objects.jo WALK_WADE_DEPTH`, `walk_step_precise`.
 
 ### Camera wall check
 
