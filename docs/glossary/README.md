@@ -672,12 +672,28 @@ On the rivers branch until it lands.
 
 - **Definition:** a cliff stair from the root of an island community's jetty up a sea cliff to the
   ground above, where a plateau is ringed by cliffs and no path reaches the shore. It runs
-  diagonally along the face (no switchbacks), its walking width standing on masonry against the
-  rock; above it the stepped landing path carries on to the square.
+  diagonally along the face (no switchbacks: on these 80-degree faces a hairpin's upper flight
+  would stand over the lower one, and walking contact has one height per place), with a landing
+  every 15-21 m of rise. Built against the rock: pale dressed treads notched against the face, a
+  rough-cut rock wall rising on the inner side, a short masonry skirt (1 m at the arch crowns,
+  2.5 m at the springing) carried by raking corbels back into the cliff, and a sloped limewashed
+  parapet on the open side. Monastery and chapel islands have a small limewashed wayside shrine
+  in the rock wall at alternate landings. Above it the stepped landing path carries on to the
+  square. From the air it is a pale thread: treads in blocks of four and the parapet line.
 - **Code:** `LandingAccess.stair_from` (the route from that index down to the root is the stair,
-  with tread heights), `cliff_stair_clear` in `src/access_path_bake.jo`, `landing_stair_runs`
-  in `src/landing_stairs.jo`; surveyed by `tools/survey_island_climb.jo`. Drawn tread by tread
-  near any part of it, as one block per four treads without a parapet from the air.
+  with tread heights), `cliff_stair_clear`/`cliff_stair_fault` in `src/access_path_bake.jo`,
+  `add_cliff_stair_mesh` and `add_stair_hexa` in `src/stairways.jo`, `landing_stair_runs` in
+  `src/landing_stairs.jo`; surveyed by `tools/survey_island_climb.jo`, re-planned by
+  `tools/replan_cliff_stairs.jo`. Stone surfaces carry the masonry/plaster surface tags so their
+  shade takes the neutral fill rather than blue skylight.
+
+### Landing walk time
+
+- **Definition:** at an island landing 1 km or more below its square, the pier's notice board
+  gives the distance and the time on foot, by the hill walkers' rule (5 km an hour plus ten
+  minutes for each 100 m of climb), rounded to words: "about an hour", "an hour and a half".
+- **Code:** `walk_time_text`, `landing_walk`, `landing_walk_text` and `access_notice_lines` in
+  `src/access_notices.jo`; the access manifest uses the same text.
 
 ### Stepped landing path
 
