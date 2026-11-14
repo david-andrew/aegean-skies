@@ -413,6 +413,8 @@
 // first frame; without the title, at the game's first frame.
 (function (root) {
   if (typeof sloppy === "undefined" || typeof location === "undefined") return;
+  // (Sloppy 0.34.1's own "loading..." words: nothing before the title has words)
+  if (typeof document !== "undefined") document.getElementById("sloppy-loading")?.remove();
   const keys = [...new URLSearchParams(location.search)].map(([k, v]) => [k.toUpperCase(), v]);
   const title = keys.find(([k]) => k === "AEGEAN_TITLE")?.[1];
   const staged = keys.some(([k]) => k.startsWith("AEGEAN_") && !["AEGEAN_QUALITY", "AEGEAN_TOUCH", "AEGEAN_TITLE"].includes(k));

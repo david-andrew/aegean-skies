@@ -13,7 +13,8 @@ import re
 
 def package(html: Path) -> Path:
     source = html.read_text()
-    pattern = re.compile(r'^const SLOPPY_WASM = "([A-Za-z0-9+/=]+)";\n', re.MULTILINE)
+    # (`const` up to Sloppy 0.34.0, `var` from 0.34.1)
+    pattern = re.compile(r'^(?:const|var) SLOPPY_WASM = "([A-Za-z0-9+/=]+)";\n', re.MULTILINE)
     matches = list(pattern.finditer(source))
     if len(matches) != 1 or source.count('</body>') != 1:
         raise ValueError('Expected one Sloppy Wasm payload and one HTML body')
@@ -26,6 +27,9 @@ def package(html: Path) -> Path:
     # The compiler's original bootstrap is guarded by typeof SLOPPY_WASM;
     # removing that declaration disables it. Keep the runtime itself unchanged.
     source = source[:match.start()] + source[match.end():]
+    # Sloppy 0.34.1 puts its own "loading..." words in the page; the game's own card (a turning
+    # propeller, src/web_compat.js) shows instead, and nothing before the title has words.
+    source = re.sub(r'<div id="sloppy-loading"[^>]*>[^<]*</div>\n?', '', source)
     bootstrap = '''<script>
 (() => {
   const fail = (e) => {

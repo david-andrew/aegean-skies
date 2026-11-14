@@ -53,7 +53,7 @@ function audit(source, raw = false) {
 function shaders(file) {
   let data=fs.readFileSync(file);
   if (path.extname(file)==='.html') {
-    const html=data.toString(), embedded=html.match(/const SLOPPY_WASM = "([^"]+)"/);
+    const html=data.toString(), embedded=html.match(/(?:const|var) SLOPPY_WASM = "([^"]+)"/);
     if(embedded) data=Buffer.from(embedded[1],'base64');
     else {
       const name=html.match(/fetch\("(aegean\.[a-f0-9]+\.wasm)"\)/)?.[1];
