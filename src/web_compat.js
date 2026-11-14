@@ -1,3 +1,24 @@
+// Sloppy's page start decodes the embedded module with
+// Uint8Array.from(atob(SLOPPY_WASM), c => c.charCodeAt(0)). TypedArray.from over a string first
+// gathers every element into an ordinary array: for this game's ~20 MB module about 490 MB of
+// heap garbage, which one full collection clears 30-40 s into play (a 50-60 ms frame), and about
+// 4 s of loading. This file runs before that boot code: the one call is decoded with a plain loop
+// instead (the same bytes, the same mapping function), and Uint8Array.from is put back at once.
+// Remove when Sloppy's boot decodes without TypedArray.from (see docs/diagnostics).
+(function () {
+  const from = Uint8Array.from;
+  Uint8Array.from = function (source, map, self) {
+    if (this === Uint8Array && typeof source === "string" && source.length > 1000000 && typeof map === "function") {
+      Uint8Array.from = from;
+      const out = new Uint8Array(source.length);
+      // (atob's result has only one-byte characters: one element per code unit, as from gives)
+      for (let i = 0; i < source.length; i++) out[i] = map.call(self, source[i], i);
+      return out;
+    }
+    return from.apply(this, arguments);
+  };
+})();
+
 // Sloppy 0.29.2 passes the complete uniform struct through every helper. Some
 // WebGL linkers consequently activate even unused fields (192 bone vectors in
 // the fragment stage). Specialize READ-ONLY uniform parameters to the global
