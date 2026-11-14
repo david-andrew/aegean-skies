@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
@@ -803,6 +803,20 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Capture:** `AEGEAN_TALK=1`; `tools/talklog.jo` for transcripts.
 
 ![A conversation: the greeting, numbered replies and topics to ask about](img/conversation.png)
+
+### Rotating far checks
+
+- **Aliases:** check slices, rotated validation.
+- **Definition:** how the game (recovery mode) checks the far world each minute without a frame
+  stall: every dimension, index, uniqueness and conservation check runs every minute, while the
+  per-record details (restocking orders, dated reports, field crops, supplier quotes, journey
+  agreements) run for one sixteenth of the districts, vehicles and journeys, a different sixteenth
+  each minute, so each record is checked at least every 16 game minutes.
+- **Code:** `src/living_far_checks.jo:11 FAR_CHECK_SLICES`, `validate_far(w, route_points, slice,
+  slices)`; chosen in `src/living_far_economy.jo` `far_economy_minute`.
+- **Rules:** strict runs (tests, tools), saves and loads always check everything. The checks only
+  read the world, so rotation never changes what the simulation does; the test is
+  `tests/living_far_check_rotation.jo`.
 
 ## Leisure
 

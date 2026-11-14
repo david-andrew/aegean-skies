@@ -7,7 +7,16 @@ use 'living_work.jo'
 use 'living_far_orders.jo'
 use 'living_field_checks.jo'
 
-validate_far = (w: World, route_points: bool = true) -> str:
+# Recovery-mode play spreads the per-record checks over this many minutes; see validate_far.
+FAR_CHECK_SLICES = 16
+
+# Every call checks all dimensions, indexes, uniqueness, conservation and the references
+# that the minute's movement and work index directly. With slices>1, the nested per-record
+# checks (restocking orders, dated reports, field crops, supplier quotes, journey provenance)
+# run only for the districts, vehicles and journeys whose index falls in this slice, so
+# consecutive minutes cover every record once per `slices` minutes. Strict callers, saves
+# and loads use the default single slice: everything, every call. Read-only either way.
+validate_far = (w: World, route_points: bool = true, slice: int = 0, slices: int = 1) -> str:
     if not w.far.populated:
         loop p in w.people:
             if p.far_home>=0 or p.far_reports.len()>0: return "far person/report without a populated registry"
@@ -65,13 +74,16 @@ validate_far = (w: World, route_points: bool = true) -> str:
     previous = -1; population = f.named_core_population+f.people.len()+f.dead+f.evacuated
     spare_wagons=0
     field_ids: {int: bool}
+    field_ids.reserve(8*f.place_ids.len())
     if f.field_grain_harvested<0 or f.field_grain_harvested>f.produced[3] or f.field_seed_sown<0 or f.field_seed_sown>f.consumed[3] or f.field_labor_hours<0 or f.field_labor_paid<0: return "invalid field resource counters"
     loop g in 0..9:
         if f.field_foregone[g]<0 or f.household_consumed[g]<0 or f.household_consumed[g]>f.consumed[g] or f.household_need[g]<f.household_consumed[g]: return "invalid field/household production counters"
     loop c in 0..3:
         if f.crew_population[c]<0 or not account_valid(w,f.treasury[c]): return "invalid far treasury/crew"
         population += f.crew_population[c]
+    district_index= -1
     loop id in f.place_ids:
+        district_index+=1; deep=slices<=1 or district_index%slices==slice
         if id<=previous or not (id in f.districts) or not (id in w.place_contexts): return "invalid far place index"
         previous = id; d = f.districts[id]
         if d.spare_wagons<0 or d.spare_wagons>64: return "invalid household wagon stock"
@@ -81,7 +93,7 @@ validate_far = (w: World, route_points: bool = true) -> str:
             if not (source in f.districts): return "invalid learned grain source"
         if d.supplier_quotes.len()>FAR_SUPPLIER_QUOTES: return "unbounded received supplier quotes"
         last_link= -1
-        loop q in d.supplier_quotes:
+        loop q in (if deep: d.supplier_quotes else: []):
             if q.link<=last_link or q.link<0 or q.link>=f.links.len() or q.service<0 or q.service>=f.vehicles.len() or not (q.place in f.districts) or q.minute<0 or q.minute>w.minute or q.seen<q.minute or q.seen>w.minute or q.until<q.minute: return "invalid received supplier quote"
             if q.payload_grams<0 or q.payload_grams>1000000000: return "invalid observed carrier payload"
             link=f.links[q.link]
@@ -98,8 +110,9 @@ validate_far = (w: World, route_points: bool = true) -> str:
         loop field in d.fields:
             if field.land.id in field_ids: return "two districts own the same arable parcel"
             field_ids[field.land.id]=true
-            error=validate_household_field(w,id,field)
-            if error!="": return error
+            if deep:
+                error=validate_household_field(w,id,field)
+                if error!="": return error
         if d.id!=id or d.core< -1 or d.core>=w.places.len() or d.born_country<0 or d.born_country>=3 or d.controller<0 or d.controller>=3 or d.authority<0 or d.authority>=3: return "invalid far district identity/control"
         if not account_valid(w,d.market_account) or not account_valid(w,d.household_account) or d.output<0 or d.output>=9 or d.productivity<1 or d.raw_ore<0 or d.raw_crude<0: return "invalid far district economy"
         if d.core>=0 and (d.market_account!=w.places[d.core].market.account or d.stock.roots.len()>0): return "duplicate detailed gateway inventory"
@@ -110,12 +123,14 @@ validate_far = (w: World, route_points: bool = true) -> str:
             if d.target[g]<0 or d.unmet[g]<0 or d.prices[g]<=0 or d.demand_remainder[g]<0 or d.demand_remainder[g]>=24: return "invalid far market projection"
         if d.reports.len()>12: return "unbounded district accounts"
         if d.customer_orders.len()>FAR_CUSTOMER_ORDERS: return "unbounded counter customer orders"
-        services: {int: bool}
+        # At most FAR_CUSTOMER_ORDERS entries: scan the earlier services, no table.
+        services: int[]
         loop e in d.customer_orders:
-            if e.service<0 or e.service>=f.vehicles.len() or e.service in services or e.heard>w.minute or e.heard<e.order.minute or e.order.place==id or not restock_order_valid(w,e.order): return "invalid received counter order"
-            services[e.service]=true
-        loop r in d.reports:
-            if not far_report_valid(w,r): return "invalid district account"
+            if e.service<0 or e.service>=f.vehicles.len() or e.service in services or e.heard>w.minute or e.heard<e.order.minute or e.order.place==id or (deep and not restock_order_valid(w,e.order)): return "invalid received counter order"
+            services.push(e.service)
+        if deep:
+            loop r in d.reports:
+                if not far_report_valid(w,r): return "invalid district account"
         if d.homes.len()>3: return "unbounded resident home anchors"
         loop h in d.homes:
             if h.key=="" or not finite_living_point(h.door): return "invalid resident doorway"
@@ -178,10 +193,11 @@ validate_far = (w: World, route_points: bool = true) -> str:
         loop person in f.vehicles[i].passengers:
             if person<0 or person>=w.people.len() or w.people[person].far_boat!=f.vehicles[i].id: return "invalid named sea passenger"
         if f.vehicles[i].reports.len()>12: return "unbounded carrier accounts"
-        if let order=f.vehicles[i].buying_order:
-            if not restock_order_valid(w,order): return "invalid carried restocking order"
-        loop r in f.vehicles[i].reports:
-            if not far_report_valid(w,r): return "invalid carrier account"
+        if slices<=1 or i%slices==slice:
+            if let order=f.vehicles[i].buying_order:
+                if not restock_order_valid(w,order): return "invalid carried restocking order"
+            loop r in f.vehicles[i].reports:
+                if not far_report_valid(w,r): return "invalid carrier account"
         if f.vehicles[i].journey>=0:
             if not (f.vehicles[i].journey in f.journeys) or f.journeys[f.vehicles[i].journey].vehicle!=i or f.vehicles[i].place>=0: return "far vehicle double location"
         else if not (f.vehicles[i].place in f.districts): return "far vehicle missing location"
@@ -193,15 +209,18 @@ validate_far = (w: World, route_points: bool = true) -> str:
     max_journey = -1
     loop id, j in f.journeys:
         if j.follow_vehicle< -1 or j.follow_vehicle>=f.vehicles.len() or j.follow_voyage< -1 or j.follow_voyage>=f.next_journey or (j.follow_vehicle<0)!=(j.follow_voyage<0): return "invalid convoy leader"
-        agreement_error=work_provenance_error(w,j.provenance)
-        if agreement_error!="": return agreement_error
+        deep=slices<=1 or (id%slices+slices)%slices==slice
+        if deep:
+            agreement_error=work_provenance_error(w,j.provenance)
+            if agreement_error!="": return agreement_error
         if let order=j.return_order:
-            if not restock_order_valid(w,order) or order.place!=j.origin: return "invalid return restocking order"
+            if order.place!=j.origin or (deep and not restock_order_valid(w,order)): return "invalid return restocking order"
         max_journey = max(id,max_journey)
         if id!=j.id or j.vehicle<0 or j.vehicle>=f.vehicles.len() or j.link<0 or j.link>=f.links.len() or j.last_tick>w.tick or j.last_tick<j.departed_tick or j.segment<0: return "invalid far journey"
         if j.reports.len()>12: return "unbounded journey accounts"
-        loop r in j.reports:
-            if not far_report_valid(w,r): return "invalid journey account"
+        if deep:
+            loop r in j.reports:
+                if not far_report_valid(w,r): return "invalid journey account"
         if not (j.origin in f.districts) or not (j.destination in f.districts) or j.origin==j.destination or j.good< -1 or j.good>=9 or j.quantity<0 or (j.duty==.merchant and ((j.survey and (j.good!=-1 or j.quantity!=0)) or (not j.survey and j.good<0))) or j.speed_mm_sec<=0 or j.speed_mm_sec!=f.vehicles[j.vehicle].speed_mm_sec: return "invalid far manifest"
         if f.vehicles[j.vehicle].journey!=id or (j.good>=0 and f.vehicles[j.vehicle].cargo.qty[j.good]!=j.quantity): return "far cargo custody mismatch"
         if not account_valid(w,j.buyer) or not account_valid(w,j.seller) or j.cargo_owner!=j.buyer: return "invalid far cargo title"
