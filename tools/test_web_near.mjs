@@ -65,7 +65,7 @@ try {
   const results=[];
   for(const {quality,full,id,env:sceneEnv} of cases.filter(c=>(!selected||selected.includes(c.id))&&(!process.env.WEB_NEAR_LINEAR||!c.full))) {
     const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'full-log':'split'}`;
-    const query=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
+    const query=new URLSearchParams({AEGEAN_TITLE:'0',SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
       AEGEAN_CAPTURE_READY:'1',AEGEAN_HOUR:'9.75',AEGEAN_QUALITY:quality,AEGEAN_STRESS_FRAME_DT:String(1/60),SLOPPY_FRAMES:'241',...sceneEnv});
     if(process.env.WEB_NEAR_LINEAR)query.set('AEGEAN_LINEAR_DEPTH','1');
     if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
