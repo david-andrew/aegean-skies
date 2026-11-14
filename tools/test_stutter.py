@@ -27,6 +27,7 @@ parser.add_argument('--mode', choices=['stay', 'fly'], default='stay')
 parser.add_argument('--warmup', type=float, default=30, help='Wall seconds for cold town streaming and shader compilation')
 parser.add_argument('--profile', action='store_true', help='CPU attribution; exclude from final gates')
 parser.add_argument('--agl', type=float, default=0, help='Hold this terrain clearance during a flying stress trace')
+parser.add_argument('--gpu-zones', type=float, default=0, help='Log every frame\'s zone CPU/GPU times for this many seconds of the measurement')
 parser.add_argument('--autosave-at', type=float, default=-1, help='Make an autosave due this many seconds into the measurement; the case fails unless it finishes inside it')
 parser.add_argument('--lock', type=Path, default=Path.home() / 'dev/tmp/bench.lock')
 args = parser.parse_args()
@@ -48,6 +49,8 @@ for town in args.town or ['Olythoria', 'Pheryalara', 'Kalyrassa']:
                and k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
         env['STUTTER_AGL'] = str(args.agl)
         env['STUTTER_WARMUP'] = str(args.warmup)
+        if args.gpu_zones > 0:
+            env['STUTTER_GPU_SECONDS'] = str(args.gpu_zones)
         if args.autosave_at >= 0:
             env['STUTTER_AUTOSAVE_AT'] = str(args.autosave_at)
         if backend == 'native':
