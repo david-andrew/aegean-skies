@@ -43,6 +43,7 @@ class ExpressiveTiming:
     build: float = 0.10             # forward motion where intensity rises
     peak: float = 0.10              # broadening at intensity peaks
     cadence: float = 0.22           # lingering into phrase ends
+    lead_in: float = 0.0            # hesitating into each phrase's first notes
     final_ritard: float = 0.45      # the last bars
     variation: float = 0.03         # the seeded wandering, as a fraction of the tempo
     seed: int = 1
@@ -182,6 +183,11 @@ def timing_map(notes, clock, params: ExpressiveTiming, step=0.5, markings=None):
         for e in bounds + [last]:
             u = (b - e) / (bar * 0.35)
             if -2.5 < u < 1.0: x += params.cadence * math.exp(-(u + 0.6) ** 2)
+        # (a hesitation into each phrase: the first notes held back a little)
+        if params.lead_in:
+            for e in [0.0] + bounds:
+                u = (b - e) / (bar * 0.3)
+                if -0.5 < u < 2.5: x += params.lead_in * math.exp(-(u - 0.4) ** 2)
         k = bisect_right(bounds, b)
         wander = sum(a * math.sin(math.tau * b / period + phase) for period, phase, a in waves) / 2.0
         x += params.variation * (0.6 * wander + 0.4 * phrase_offsets[k])
@@ -227,4 +233,91 @@ def warp(notes, points):
     for n in notes:
         s = at(n[0]); e = at(n[0] + n[1])
         out.append([s, max(0.02, e - s)] + list(n[2:]))
+    return out
+
+
+# ---------------- moods ----------------
+# A mood is a preset over the same intensity analysis: how intensity becomes tempo (in a lament,
+# building intensity weighs the music down instead of pushing it on; when agitated it presses),
+# how deep the rubato goes and where it lands (hesitating into phrases, or lingering at their ends),
+# and the touch: the dynamic range of the phrase arches, legato or detached playing (seconds of
+# overlap, negative to part the notes), the piano's pedal, and how far the melody leans out (dB).
+# Each piece's mood is classified by hand in tools/music_pack.py, with its reason.
+
+@dataclass
+class Touch:
+    dynamic: float = 0.14           # the phrase arches' depth (the score reading's `dynamic`)
+    legato: float = 0.0             # overlap into the next note of the line (s); negative parts them
+    pedal: str = ''                 # '' none, 'beat' or 'bar': the piano's sustain held that long
+    lean: float = 1.0               # the melody's lean over the rest (dB)
+
+
+MOODS = {
+    'mournful': (dict(base=1.08, min_rate=0.94, max_rate=1.5, sensitivity=1.0, flow=0.0, build=-0.3, peak=0.18,
+                      cadence=0.2, lead_in=0.12, final_ritard=0.6, variation=0.025),
+                 Touch(dynamic=0.12, legato=0.05, pedal='bar', lean=1.0)),
+    'tender': (dict(base=1.02, min_rate=0.9, max_rate=1.25, flow=0.2, build=0.05, peak=0.06, cadence=0.1,
+                    lead_in=0.03, final_ritard=0.5, variation=0.02),
+               Touch(dynamic=0.12, legato=0.03, pedal='beat', lean=1.0)),
+    'dreamy': (dict(base=1.0, min_rate=0.64, max_rate=1.5, flow=0.7, build=0.15, peak=0.1, cadence=0.08,
+                    final_ritard=0.6, variation=0.03),
+               Touch(dynamic=0.18, legato=0.02, pedal='beat', lean=2.0)),
+    'stately': (dict(base=1.0, min_rate=0.9, max_rate=1.2, flow=0.05, build=-0.05, peak=0.08, cadence=0.12,
+                     final_ritard=0.4, variation=0.01),
+                Touch(dynamic=0.1, legato=0.0, pedal='', lean=1.0)),
+    'dance-like': (dict(base=1.0, min_rate=0.95, max_rate=1.1, flow=0.1, build=0.05, peak=0.03, cadence=0.04,
+                        final_ritard=0.3, variation=0.01),
+                   Touch(dynamic=0.12, legato=-0.02, pedal='', lean=1.5)),
+    'jaunty': (dict(base=1.0, min_rate=0.97, max_rate=1.06, flow=0.05, build=0.05, peak=0.02, cadence=0.03,
+                    final_ritard=0.2, variation=0.008),
+               Touch(dynamic=0.1, legato=-0.03, pedal='', lean=2.0)),
+    'triumphant': (dict(base=0.98, min_rate=0.9, max_rate=1.25, flow=0.15, build=0.2, peak=0.15, cadence=0.1,
+                        final_ritard=0.5, variation=0.01),
+                   Touch(dynamic=0.2, legato=0.0, pedal='', lean=2.0)),
+    'agitated': (dict(base=0.92, min_rate=0.75, max_rate=1.15, flow=0.4, build=0.35, peak=-0.05, cadence=0.03,
+                      final_ritard=0.3, variation=0.03),
+                 Touch(dynamic=0.2, legato=-0.02, pedal='', lean=1.0)),
+}
+
+
+def mood_timing(mood, **overrides):
+    """The mood's timing preset, with a piece's own overrides (seed, phrase length, markings...)."""
+    values = dict(MOODS[mood][0]); values.update(overrides)
+    return ExpressiveTiming(**values)
+
+
+def mood_touch(notes, clock, touch: Touch, melody_tracks=(1,)):
+    """The mood's touch on notes in score time ([start, duration, pitch, instrument, g0, g1, track]):
+    legato or detached lines, the piano's pedal, and the melody leaning out of its chords."""
+    out = [list(n) for n in notes]
+    # the melody: the top of each moment in the melody tracks
+    moments = {}
+    for i, n in enumerate(out):
+        if n[6] in melody_tracks:
+            key = round(n[0], 2)
+            if key not in moments or n[2] > out[moments[key]][2]: moments[key] = i
+    top = set(moments.values())
+    up = 10 ** (touch.lean / 20); down = 10 ** (-touch.lean / 40)
+    for i, n in enumerate(out):
+        k = up if i in top else down
+        n[4] = min(1.25, n[4] * k); n[5] = min(1.25, n[5] * k)
+    # legato: each note of a line joined to (or parted from) its next in the same part
+    if touch.legato:
+        lines = {}
+        for i, n in enumerate(out): lines.setdefault((n[6], n[3]), []).append(i)
+        for idx in lines.values():
+            idx.sort(key=lambda i: out[i][0])
+            for a, b in zip(idx, idx[1:]):
+                n, m = out[a], out[b]
+                gap = m[0] - (n[0] + n[1])
+                if m[0] - n[0] < 0.02 or abs(m[2] - n[2]) > 9 or gap > 0.25: continue
+                n[1] = max(0.03, (m[0] - n[0]) + touch.legato)
+    # the pedal: piano notes held to the end of their beat or bar
+    if touch.pedal:
+        span = clock.meter if touch.pedal == 'bar' else 1.0
+        for n in out:
+            if n[3] != 6: continue
+            b = clock.beat(n[0])
+            end = clock.time((math.floor(b / span + 1e-6) + 1) * span) - 0.04
+            if end > n[0] + n[1]: n[1] = min(end - n[0], 6.0)
     return out

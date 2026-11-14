@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Path desk](#path-desk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
@@ -665,7 +665,19 @@ On the rivers branch until it lands.
 - **Rules:** a harbour whose quay cannot reach its houses over ground no steeper than 45° gets one.
   One direction only (no switchbacks): flights stacked over one another in plan cannot share
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
-- **Where:** Kryfo Cove and Agios Nikolaos.
+- **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
+  cliff stair).
+
+### Landing cliff stair
+
+- **Definition:** a cliff stair from the root of an island community's jetty up a sea cliff to the
+  ground above, where a plateau is ringed by cliffs and no path reaches the shore. It runs
+  diagonally along the face (no switchbacks), its walking width standing on masonry against the
+  rock; above it the stepped landing path carries on to the square.
+- **Code:** `LandingAccess.stair_from` (the route from that index down to the root is the stair,
+  with tread heights), `cliff_stair_clear` in `src/access_path_bake.jo`, `landing_stair_runs`
+  in `src/landing_stairs.jo`; surveyed by `tools/survey_island_climb.jo`. Drawn tread by tread
+  near any part of it, as one block per four treads without a parapet from the air.
 
 ### Stepped landing path
 
@@ -773,6 +785,20 @@ On the rivers branch until it lands.
 The living world is the simulation of people, goods, money, news and war that runs whether or not
 you watch (`docs/SIM_SPEC.md`, `src/living_*.jo`).
 
+
+### Path desk
+
+- **Aliases:** shared path search, walking-path budget.
+- **Definition:** how the scenes' people (far residents, daily life, households, carriers) get
+  their walking routes without a frame stall: one street search at a time, about 2 ms of it each
+  frame, stopping between single walk steps and resuming next frame; the walker waits where they
+  stand until the route is ready. The search visits the same nodes in the same order, so the path
+  is the one a search in one go finds.
+- **Code:** `src/cargo_scene.jo` `walk_search` / `walk_search_step` (the resumable search),
+  `scene_walk_path` / `walk_paths_frame` (the desk); `aegean.jo update` sets the frame budget.
+- **Rules:** keys name the leg (person and route revision or target); a request nobody asked for
+  since the last frame gives up the desk. Headless callers and tests (no frame budget) get the
+  path at once (`cargo_walk_path`). `tests/cargo_scene.jo` holds the sliced search to the same path.
 ### Far people
 
 - **Definition:** named residents of the far (non-core) towns, promoted from a town's population
