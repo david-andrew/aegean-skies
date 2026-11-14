@@ -17,13 +17,15 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Workshop repair desk](#workshop-repair-desk) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
@@ -267,6 +269,21 @@ On the rivers branch until it lands.
   mask. Its weight and the height above the river are worked out at terrain vertices, not per pixel.
 - **Code:** `src/terrain.jo` `ground_riparian` (called from `world_vertex` and `coast_vs`), used
   in `ground_surface`; the mask is `src/river_material.jo`.
+
+### Chart rivers
+
+- **Aliases:** rivers on the map, the canals on the chart.
+- **Definition:** inland water drawn on the paper chart wherever an owned sheet covers it: rivers
+  as watercolour lines that thicken from source to mouth with the channel (a little wider than
+  true at small scales so they read, ink-edged once wide), Neravessa's canals and basins in ink
+  between quays once the scale shows them (a fine dark line before that), lakes painted into the
+  sheet as a pale wash with an inked shore from the lake source. The river and the canal city are
+  named where the labels fit.
+- **Code:** `src/chart.jo` `draw_chart_rivers`, `_label_water`; lakes in `build_chart_texture`
+  through `lake_at` (`src/lake_field.jo`, a stub until lakes are authored).
+- **Rules:** respect coverage (`charted`); the river's name is `CHART_RIVER_NAME` in one place.
+- **Capture:** `AEGEAN_MAPS=all AEGEAN_CHART=1 AEGEAN_CHART_FOCUS=aegean-general-1898`, and
+  `AEGEAN_CHART_VIEW="-129300 -146000 4200"` to look closer at Neravessa.
 
 ---
 
@@ -926,6 +943,21 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ---
 
 ## Rendering and engine
+
+### Workshop repair desk
+
+- **Aliases:** the Neravessa workshop, the repair panel.
+- **Definition:** the paid repair service at Neravessa's canal workshop as the player meets it: on
+  foot within 70 m with one's own aircraft moored at the slipway, a card (or the aircraft's G
+  panel) asks for a quote (part, condition, parts, materials, labour, total, work time); starting
+  charges for the parts and holds the labour; a mechanic works through the world's own minutes
+  (waiting it out is the ordinary time skip); stopping keeps the fitted parts used and refunds the
+  unused labour. Repairs bring a part to 80%, the engine first, then the hull.
+- **Code:** `src/repair_desk.jo` (read-only view of the saved obligation; `desk_start`,
+  `desk_cancel` through the standard dispatchers), `src/repair_panel.jo`, `workshop_panel` in
+  `aegean.jo`; backend `src/canal_service.jo`; `tests/repair_desk_test.jo`.
+- **Rules:** never advance the work from the UI; read progress from the obligation.
+- **Capture:** `AEGEAN_CAPTURE_WORKSHOP=prompt|quote|underway|confirm|interrupted|done|refused|poor`.
 
 ### Render chart
 

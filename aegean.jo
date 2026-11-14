@@ -20,6 +20,7 @@ build:
 
 use 'src/world.jo'
 import 'src/settlements.jo' as settlement_registry
+import 'src/living_far_people.jo' as settlement_residents
 use 'src/quality.jo'
 use 'src/look.jo'
 use 'src/terrain.jo'
@@ -71,6 +72,9 @@ use 'src/race_view.jo'
 use 'src/war_view.jo'
 use 'src/map_counter.jo'
 use 'src/fuel_counter.jo'
+use 'src/repair_panel.jo'
+use 'src/repair_desk.jo'
+use 'src/canal_geometry.jo'
 import 'src/living_refuel.jo' as refuel
 use 'src/rescue_view.jo'
 use 'src/air_pilot.jo'
@@ -272,7 +276,7 @@ folks: Folk[]
 sync_folk(folks, living_world, towns)
 life_meshes = life_view.build_life_meshes(living_world)
 folk_sync_t = 0.0
-enum Ui: none, talk, board, handling, trade, contract, maps, fuel, leisure
+enum Ui: none, talk, board, handling, trade, contract, maps, fuel, leisure, workshop
 ui = Ui.none
 ui_folk = -1
 ui_place = -1
@@ -561,9 +565,13 @@ leisure_panel = ():
         3:
             c = w.people[w.player].craft
             choices = [loop j in TINKER_JOBS: "{j.label} ({j.minutes} min)"]
+            # (moored at the Neravessa workshop's slipway, its mechanics can do the work instead)
+            at_workshop = CANAL_CITY_ID in w.far.districts and length(w.people[w.player].pose.pos - canal_workshop) <= DESK_REACH
+            if at_workshop: choices.push("Ask the workshop to repair her")
             choices.push("That will do")
             r = choice_panel(fonts, "Your {CRAFT_NAMES[int(pc.kind)]}", "Moored at {living.place_name(w, w.people[w.player].place)}", leisure_line, choices)
-            if r.choice >= 0 and r.choice < TINKER_JOBS.len():
+            if at_workshop and r.choice == TINKER_JOBS.len(): open_workshop()
+            else if r.choice >= 0 and r.choice < TINKER_JOBS.len():
                 if w.aircraft[c].state != .moored:
                     leisure_line = "She has to be moored and still first."
                 else:
@@ -1055,6 +1063,11 @@ t = 0.0
 show_chart = env("AEGEAN_CHART") != none
 # (captures and the pause menu: every edition on the counters handed over at once)
 if env("AEGEAN_MAPS") == "all": _ = living.grant_every_map(living_world,living_world.player)
+if let v = env("AEGEAN_CHART_VIEW"):
+    f = split(v, " ")
+    if f.len() >= 3:
+        cw = to_float(f[2]) ?? 6000.0
+        chart_view_override = ChartView(to_float(f[0]) ?? 0.0, to_float(f[1]) ?? 0.0, cw, cw)
 if let focus = env("AEGEAN_CHART_FOCUS"):
     loop c in living.owned_maps(living_world,living_world.player):
         if c.edition == focus: chart_focus = c.id
@@ -2147,6 +2160,79 @@ race_offer_here = () -> int:
         return if k >= 0: k else: race_withdraw_offer(air_events, living_world, st.position)
     -1
 
+
+# ---------------- the Neravessa workshop (repair_desk reads the saved repair; repair_panel draws) ----------------
+# On foot within reach of the canal city's workshop, the card offers repairs; F (or the card) asks.
+# Asking requests the repair through the standard dispatcher once; the panel then reads the saved
+# obligation every frame. The living world's minutes do the work; the panel never advances it.
+workshop_id = -1                    # the repair the panel shows (-1: none)
+workshop_confirm = false            # asking whether to stop the work
+workshop_notice = ""
+workshop_logged = -1                # the finished repair already in the notebook
+
+workshop_prompt = () -> str:
+    if me.mode != .walking or ui != .none or holding_cargo() >= 0 or near_own_craft(): return ""
+    if not (CANAL_CITY_ID in living_world.far.districts): return ""
+    if length(living_world.people[living_world.player].pose.pos - canal_workshop) > DESK_REACH: return ""
+    "F  ask at the workshop about repairs"
+
+open_workshop = ():
+    global ui, workshop_id, workshop_confirm, workshop_notice
+    id = desk_request(living_world, living_world.player)
+    # (a repair finished since the panel last showed it is shown once more, done)
+    keep = workshop_id >= 0 and workshop_id in living_world.obligations and living_world.obligations[workshop_id].state == .fulfilled and workshop_logged != workshop_id
+    if id >= 0 or not keep: workshop_id = id
+    workshop_confirm = false
+    workshop_notice = ""
+    ui = .workshop
+    _ = mouse_lock(false)
+
+workshop_panel = ():
+    global ui, workshop_id, workshop_confirm, workshop_notice, workshop_logged
+    who = living_world.player
+    if skip.active: return
+    if me.mode != .walking or length(living_world.people[who].pose.pos - canal_workshop) > DESK_REACH + 10.0:
+        ui = .none
+        return
+    d = repair_desk(living_world, who, workshop_id)
+    now = clock_text(living_world, living_world.minute)
+    if d.phase == .done and workshop_logged != d.id:
+        workshop_logged = d.id
+        log_note(notebook, "The {CANAL_CITY_NAME} workshop repaired the {d.part}: now at {d.now_pct}%, {desk_money(d.charged_cents)}.", now)
+        # (the aircraft takes up her repaired condition through the usual reconciliation)
+        if pc.state.moored: sync_living_player(pc, living_world)
+    res = repair_panel(fonts, d, CRAFT_NAMES[int(pc.kind)], workshop_confirm, workshop_notice)
+    if res.refused != "": workshop_notice = res.refused
+    match res.action:
+        .start:
+            why = desk_start(living_world, workshop_id)
+            if why == "":
+                o = living_world.obligations[workshop_id]
+                log_note(notebook, "Left the {CANAL_CITY_NAME} workshop to repair the {desk_part(o)}, {desk_money(o.amount_cents)}.", now)
+                workshop_notice = "The work has started; {desk_money(o.amount_cents)} charged."
+            else: workshop_notice = why
+        .stop: workshop_confirm = true
+        .keep: workshop_confirm = false
+        .confirm_stop:
+            refund = d.refundable_cents
+            why = desk_cancel(living_world, workshop_id)
+            workshop_confirm = false
+            if why == "":
+                log_note(notebook, "Stopped the repair at the {CANAL_CITY_NAME} workshop; {desk_money(refund)} of labour refunded.", now)
+                workshop_notice = "The work stopped. {desk_money(refund)} of labour came back to you."
+            else: workshop_notice = why
+        .wait:
+            workshop_notice = ""
+            leisure_skip(max(1, d.work_total - d.work_done + 1), "Waiting at the {CANAL_CITY_NAME} workshop")
+        .again:
+            workshop_id = desk_request(living_world, who)
+            workshop_notice = ""
+        .close:
+            if d.phase == .done: workshop_id = -1
+            workshop_confirm = false
+            ui = .none
+        _: pass
+
 # ---------------- taking on fuel (living_refuel sells it; fuel_counter is the panel) ----------------
 # Aboard, moored or slow on the water within reach of a harbour's fuel pier, with room in the tank,
 # the card offers fuel once at each stop; F moors alongside (if not already) and opens the panel.
@@ -2271,6 +2357,62 @@ stage_capture_fuel = (stage: str):
         if ui == .fuel: capture_fuel_open = n
     if capture_fuel_open > 0 and n == capture_fuel_open + 2 and (stage == "pumping" or stage == "after" or stage == "done"): fuel_take(0)
     if capture_fuel_open > 0 and n == capture_fuel_open + 240 and stage == "done": ui = .none
+
+
+# (AEGEAN_CAPTURE_WORKSHOP=prompt|quote|underway|confirm|interrupted|done|refused|poor: on foot by
+# the Neravessa workshop with the aircraft moored at its slipway and its engine worn to 60%; the card,
+# the quote, the work under way (twenty minutes in), asking to stop it, stopped, finished, the
+# aircraft moored away from the slipway, the purse too thin. Captures only; the repair itself goes
+# through the desk, and the world's own minutes do the work.)
+capture_workshop = env("AEGEAN_CAPTURE_WORKSHOP")
+capture_workshop_from = -1         # (the frame the canal city's district was ready)
+stage_capture_workshop = (stage: str):
+    global me, follow, workshop_confirm, capture_workshop_from
+    c = living_world.people[living_world.player].craft
+    if frame_number() == 2:
+        settlement_registry.finish_settlement_registry()
+        init_canal_geometry()
+        berth = if stage == "refused": canal_launch + heading_vector(canal_heading) * 90.0 else: canal_launch
+        level = canal_launch.y
+        pc.state = water_start(pc.spec, vec3(berth.x, level, berth.z), canal_heading)
+        moor(pc.state, vec3(berth.x, level + f32(pc.spec.float_height), berth.z), canal_heading)
+        pc.throttle = 0.0
+        tie_up()
+        me.mode = .walking
+        # (on the quay between the slipway and the workshop, clear of the aircraft)
+        toward = normalize(vec3(canal_workshop.x - canal_launch.x, 0, canal_workshop.z - canal_launch.z))
+        spot = canal_launch + toward * 22.0
+        me.pos = vec3(spot.x, f32(walk_height(towns, f64(spot.x), f64(spot.z))), spot.z)
+        me.yaw = atan2(f64(canal_workshop.x - me.pos.x), f64(canal_workshop.z - me.pos.z))
+        follow.yaw = me.yaw + PI + 0.9; follow.placed = false
+        if stage == "poor": debug_cents(300) else: debug_cents(max(player_cents(), 5000))
+    if capture_workshop_from < 0:
+        if frame_number() > 2 and CANAL_CITY_ID in living_world.far.districts: capture_workshop_from = frame_number()
+        return
+    n = frame_number() - capture_workshop_from
+    if n == 0:
+        if c >= 0: living_world.aircraft[c].engine = 600
+        # (a mechanic at the bench)
+        found = false
+        loop p in living_world.far.districts[CANAL_CITY_ID].named:
+            if living_world.far.people[p].role == .artisan: found = true
+        if not found: _ = settlement_residents.promote_far_person(living_world, CANAL_CITY_ID, .artisan)
+        loop p in living_world.far.districts[CANAL_CITY_ID].named:
+            if living_world.far.people[p].role == .artisan: living_world.people[p].pose.pos = canal_workshop
+    if n == 2: print("WORKSHOP ready at frame {capture_workshop_from}; refusal='{desk_refusal(living_world, living_world.player)}' craft={c} state={living_world.aircraft[c].state} engine={living_world.aircraft[c].engine}")
+    if n == 4 and stage != "prompt": open_workshop()
+    if n == 6 and (stage == "underway" or stage == "confirm" or stage == "interrupted" or stage == "done"):
+        why = desk_start(living_world, workshop_id)
+        o = living_world.obligations[workshop_id]
+        print("WORKSHOP start='{why}' id={workshop_id} started={o.repair_started_minute} state={o.state} craft={living_world.aircraft[c].state} cash={living_world.accounts[living_world.people[living_world.player].account].cents}")
+    if n == 7 and (stage == "underway" or stage == "confirm" or stage == "interrupted"): living.advance_minutes(living_world, 20)
+    if n == 7 and stage == "done": living.advance_minutes(living_world, 75)
+    if n == 8 and (stage == "confirm" or stage == "interrupted"): workshop_confirm = true
+    if n == 9 and stage == "interrupted":
+        why = desk_cancel(living_world, workshop_id)
+        workshop_confirm = false
+        print("WORKSHOP cancel='{why}'")
+    if n == 10: print("WORKSHOP desk={to_text(repair_desk(living_world, living_world.player, workshop_id))}")
 
 # How far the player's aircraft can go to a meet on the fuel aboard, keeping the entry's fuel.
 player_meet_reach = () -> f64: meet_reach_m(pc.state.fuel, pc.spec.fuel_burn, pc.spec.cruise_speed)
@@ -2609,6 +2751,7 @@ update = (dt: f64):
         if frame_number() == 3: stage_capture_maps(stage)
     if let stage = capture_rescue: stage_capture_rescue(stage)
     if let stage = capture_fuel: stage_capture_fuel(stage)
+    if let stage = capture_workshop: stage_capture_workshop(stage)
     fuel_stop_step()
     update_rescue()
     if me.mode == .aboard and frame_number() % 30 == 15 and not paused and not show_chart and ui == .none: meet_fuel_step()
@@ -2712,6 +2855,9 @@ update = (dt: f64):
               if vpressed(.f) and not cargo_used and map_shop_here() != "":
                   cargo_used = true
                   open_map_counter(map_shop_here())
+              if vpressed(.f) and not cargo_used and near_map_find() < 0 and near_board() < 0 and leisure_prompt() == "" and workshop_prompt() != "":
+                  cargo_used = true
+                  open_workshop()
               if vpressed(.f) and not cargo_used and not cat_busy(cat_scene) and cat_prompt_here() != "":
                   cargo_used = true
                   me.yaw = cat_begin(cat_scene, cat_here(), cat_prompt_here().starts_with("F  give"), me.pos)
@@ -3345,6 +3491,7 @@ draw = ():
             else if leisure_prompt() != "": prompt_card(fonts, leisure_prompt())
             else if nearest_folk(folks, me.pos, 3.5) >= 0: prompt_card(fonts, "T  talk to {living_world.people[folks[nearest_folk(folks, me.pos, 3.5)].person].name}")
             else if map_shop_here() != "": prompt_card(fonts, map_shop_prompt(map_shop_here()))
+            else if workshop_prompt() != "": prompt_card(fonts, workshop_prompt())
             else if race_offer_here() >= 0: prompt_card(fonts, race_offer_text(air_events, living_world, race_offer_here()))
             else if cat_prompt_here() != "": prompt_card(fonts, cat_prompt_here())
             else if pc.state.moored:
@@ -3643,4 +3790,5 @@ draw_ui = ():
             if res.closed: ui = .none
         .fuel: fuel_panel()
         .leisure: leisure_panel()
+        .workshop: workshop_panel()
         _: pass
