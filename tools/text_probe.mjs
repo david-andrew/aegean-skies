@@ -6,7 +6,9 @@
 import {spawn} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {dirname,join} from 'node:path';
-const [chrome,page,out,frames='180',query='']=process.argv.slice(2);
+const [chrome,page,out,frames='180',given='']=process.argv.slice(2);
+// (straight into the game, past the title screen, unless the query asks for it: AEGEAN_TITLE=1)
+const query=/AEGEAN_TITLE=/i.test(given)?given:(given?given+'&':'?')+'AEGEAN_TITLE=0';
 const profile=mkdtempSync(join(dirname(out),'text-browser-'));
 const gpu=process.env.TEXT_GPU==='native' ? ['--use-angle=vulkan','--enable-features=Vulkan','--disable-vulkan-surface'] : ['--use-angle=swiftshader','--enable-unsafe-swiftshader'];
 const browser=spawn(chrome,['--headless=new','--no-sandbox','--mute-audio','--allow-file-access-from-files',...gpu,'--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});

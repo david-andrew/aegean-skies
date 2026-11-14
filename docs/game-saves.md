@@ -47,10 +47,40 @@ empty slot saves at once; saving over a slot, Load and Delete ask for a yes. But
 while `busy`. A note under the slots says what the last request came to (`Saved in slot 2.`, an
 error text, `Slot 1 deleted.`) and where the autosave goes or why it is off. A successful load
 unpauses and closes the menu. A finished autosave shows only the quiet Saved card
-(`src/hud.jo saved_toast`), never a menu note. There is no start screen, so no Continue offer:
-a fresh start plays on and the player loads from the page. `tools/game_menu_probe.jo` drives the
+(`src/hud.jo saved_toast`), never a menu note. `tools/game_menu_probe.jo` drives the
 page's requests end to end (autosave and its card, save, change, load, delete; position, purse, a
 cat's friendship and a seen battle card restored).
+
+## The title screen
+
+The game starts on a title screen (`src/title_screen.jo`, wired in `aegean.jo` beside the
+game-slot block). The world is built once, before the first frame, exactly as before; the title
+stands over that live scene (the home harbour from over the water, lit at `TITLE_HOUR`, the camera
+drifting slowly) while the world waits behind it: no simulation, autosave or sound runs until play
+begins. Its rows are the pause menu's (`game_rows` over the same cached headers) and it uses the
+same requests:
+
+- **Continue** loads the newest usable slot (`SaveSummary.saved_at`, the unix time of the save,
+  added for this; an older header without it falls back to its world time). It is the default:
+  Enter, or a tap, starts it with no second question. A successful load begins play.
+- **New game** plays the world as the startup built it. The autosave takes the first empty slot as
+  before; when all three hold games it asks first: choose a slot to save over (that slot becomes
+  the autosave's), or start without saving (autosave stays off, as the policy above says).
+- **Saved games** lists the slots to load (at once: nothing is unsaved yet) or delete (asks).
+- **Situations**, quieter, are the scenario picker's set pieces (the start one is New game).
+- With nothing saved there is only New game (and the quiet Situations). Until the slots have been
+  read the screen says "Reading saved games..."; a load says "Loading slot N...".
+
+In a browser the world is built in one long step the page cannot draw during, so the page itself
+(`src/web_compat.js`) shows a quiet "Loading the islands" card in the title's dusk colour, its
+line moved by the compositor, until the game has drawn its first frame.
+
+Test and capture runs start straight in the game: a program that imports `aegean.jo` (its
+`PROGRAM_NAME` is not "Aegean Skies"), a run with `SLOPPY_FRAMES` or `SLOPPY_SCREENSHOT`, and a run
+or page with any `AEGEAN_` option other than `AEGEAN_QUALITY`, `AEGEAN_TOUCH` and `AEGEAN_TITLE`.
+`AEGEAN_TITLE=0` (in a page, `?AEGEAN_TITLE=0`) skips it and `AEGEAN_TITLE=1` forces it.
+`tools/webshot.mjs`, `measure_web.mjs` and `text_probe.mjs` add `AEGEAN_TITLE=0` unless their
+query names it.
 
 ## What persists
 
