@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 import json, math, struct, zlib
 import mido
 from music_performance import score_clock, interpret, apply_performance_map
-from expressive_timing import ExpressiveTiming, timing_map, warp
+from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
 # Must agree with MusicInstrument in music_synth.jo.
@@ -28,6 +28,45 @@ PIECES = [
  ('adelita', 'Adelita', 'Francisco Tarrega', 'Hotel Ancora'),
  ('berceuse', 'Berceuse (Dolly)', 'Gabriel Faure', 'Hotel Ancora'),
 ]
+
+# The automatic balance (tools/music_balance.py writes it): per piece, a gain per instrument (dB)
+# so the melody sits a few loudness units over the accompaniment, and a high shelf where a part is
+# harsh. MUSIC_BALANCE=0 packs without it (for measuring).
+import os
+BALANCE = json.loads((ROOT/'data/music/balance.json').read_text()) if (ROOT/'data/music/balance.json').exists() and os.environ.get('MUSIC_BALANCE','1')!='0' else {}
+
+def balance_notes(name, notes):
+ """The piece's part gains as mix gains (notes gain the two mix fields if they had none)."""
+ gains=BALANCE.get(name,{}).get('gains_db')
+ if not gains:return notes,False
+ out=[]
+ for n in notes:
+  k=10**(gains.get(str(n[3]),0.0)/20)
+  m=list(n) if len(n)>7 else list(n)+[1.0,1.0]
+  m[7]*=k;m[8]*=k;out.append(m)
+ return out,True
+
+# Each piece's mood (tools/expressive_timing.py MOODS), classified by hand, with the reason.
+MOOD = {
+ 'adagietto': ('tender', "Mahler's wordless love letter: very slow strings and harp, intimate rather than grieving"),
+ 'mahler-opening': ('stately', "the trumpet's call opening a funeral march: measured, ceremonial, strictly paced"),
+ 'magnetic': ('jaunty', "a rag in foxtrot dress: syncopation over a steady oom-pah that must not drag"),
+ 'el-choclo': ('dance-like', "a tango for dancing: clipped, rhythmic, the pulse held"),
+ 'gladiators': ('triumphant', "a circus march: brass fanfare and drive"),
+ 'ikariotikos': ('dance-like', "a Greek island dance: quick, even and circling"),
+ 'bethena': ('dance-like', "Joplin's concert waltz: lilting, the waltz pulse kept under the sentiment"),
+ 'gymnopedie': ('mournful', "marked 'Lent et douloureux': slow and sorrowful over a rocking accompaniment"),
+ 'ave-maria': ('tender', "a devotional song over Bach's prelude: sustained, warm, unhurried"),
+ 'clair-de-lune': ('dreamy', "moonlight: floating, pedalled, flowing in its middle section"),
+ 'adelita': ('tender', "a small sentimental mazurka for guitar, wistful rather than danced"),
+ 'berceuse': ('tender', "a lullaby (Dolly): rocking, gentle, steady"),
+}
+
+# Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
+# the rest keep their current reading until their mood's result is shown to be better.
+APPLY_MOOD = {
+ 'gymnopedie': dict(seed=3, phrase_bars=4),
+}
 
 # Pieces with an annotated performance (time map, levels; for the piano, dynamics, pedal and
 # voicing): data/music/<file>, made by its own tool (tools/clair_performance.py for Clair de lune).
@@ -169,6 +208,12 @@ def main():
   else:
    clock=score_clock(ROOT/'data/music/source'/f'{name}.mid',name)
    notes,performance=interpret(arrange(name,notes),name,clock)
+   if name in APPLY_MOOD:
+    mood=MOOD[name][0];touch=MOODS[mood][1]
+    notes=mood_touch(notes,clock,touch)
+    time_map,curves=timing_map(notes,clock,mood_timing(mood,**APPLY_MOOD[name]))
+    notes=warp(notes,time_map)
+    performance.update(mood=mood,expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
    if name in EXPRESSIVE:
     time_map,curves=timing_map(notes,clock,EXPRESSIVE[name])
     notes=warp(notes,time_map)
@@ -180,14 +225,19 @@ def main():
    if 'pedal' in annotation:performance.update(pedal_spans=len(annotation['pedal']),voicing=annotation['voicing'],spread_seconds=annotation['spread_seconds'],dynamic_range_db=[min(v for _,v in annotation['dynamics']),max(v for _,v in annotation['dynamics'])])
   performances[name]=performance
   sections={track:i for i,key in enumerate(['harp','violin_1','violin_2','viola','cello','bass']) for track in annotation['section_tracks'][key]} if name=='adagietto' else None
-  blob,end,events=pack(notes,mix_levels=name in ANNOTATED,sections=sections)
+  notes,balanced=balance_notes(name,notes)
+  if balanced:performance.update(balance_db=BALANCE[name]['gains_db'])
+  blob,end,events=pack(notes,mix_levels=name in ANNOTATED or balanced,sections=sections)
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
-  meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob)))
+  meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
  (ROOT/'data/music/performance.json').write_text(json.dumps(performances,indent=2)+'\n')
  (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
- lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '', 'MUSIC_PIECES: MusicPiece[] = [']
- for r in meta:lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}),")
+ lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '    shelf_hz = 0.0                  # the automatic balance\'s high shelf (tools/music_balance.py)', '    shelf_db: f64[] = []            # (dB per instrument above shelf_hz)', '', 'MUSIC_PIECES: MusicPiece[] = [']
+ for r in meta:
+  shelf=BALANCE.get(r['id'],{}).get('shelf')
+  extra=f",{float(shelf['hz'])},["+','.join(f"{float(shelf['db'].get(str(k),0.0))}" for k in range(16))+"]" if shelf else ''
+  lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}{extra}),")
  lines+= [']','','music_bytes = (piece: int) -> u8[]:', '    match piece:']
  for i,r in enumerate(meta):lines.append(f'        {i}: embed(\'../data/music/{r["id"]}.z\')')
  lines+= ['        else: []','']

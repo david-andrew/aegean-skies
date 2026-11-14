@@ -30,6 +30,7 @@ try{
  if(process.env.STUTTER_AUDIO!=='0')q.delete('SLOPPY_NO_AUDIO');
  if(process.env.STUTTER_AGL)q.set('STUTTER_AGL',process.env.STUTTER_AGL);
  if(process.env.STUTTER_AUTOSAVE_AT)q.set('STUTTER_AUTOSAVE_AT',process.env.STUTTER_AUTOSAVE_AT);
+ if(process.env.STUTTER_GPU_SECONDS)q.set('STUTTER_GPU_SECONDS',process.env.STUTTER_GPU_SECONDS);
  await send('Page.navigate',{url:'file://'+resolve(page)+'?'+q});
  const result=await done;
  if(process.env.STUTTER_PROFILE==='1')writeFileSync(join(out,'cpu.json'),JSON.stringify(await send('Profiler.stop')));
