@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 import json, math, struct, zlib
 import mido
 from music_performance import score_clock, interpret, apply_performance_map
-from expressive_timing import ExpressiveTiming, timing_map, warp
+from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
 # Must agree with MusicInstrument in music_synth.jo.
@@ -28,6 +28,28 @@ PIECES = [
  ('adelita', 'Adelita', 'Francisco Tarrega', 'Hotel Ancora'),
  ('berceuse', 'Berceuse (Dolly)', 'Gabriel Faure', 'Hotel Ancora'),
 ]
+
+# Each piece's mood (tools/expressive_timing.py MOODS), classified by hand, with the reason.
+MOOD = {
+ 'adagietto': ('tender', "Mahler's wordless love letter: very slow strings and harp, intimate rather than grieving"),
+ 'mahler-opening': ('stately', "the trumpet's call opening a funeral march: measured, ceremonial, strictly paced"),
+ 'magnetic': ('jaunty', "a rag in foxtrot dress: syncopation over a steady oom-pah that must not drag"),
+ 'el-choclo': ('dance-like', "a tango for dancing: clipped, rhythmic, the pulse held"),
+ 'gladiators': ('triumphant', "a circus march: brass fanfare and drive"),
+ 'ikariotikos': ('dance-like', "a Greek island dance: quick, even and circling"),
+ 'bethena': ('dance-like', "Joplin's concert waltz: lilting, the waltz pulse kept under the sentiment"),
+ 'gymnopedie': ('mournful', "marked 'Lent et douloureux': slow and sorrowful over a rocking accompaniment"),
+ 'ave-maria': ('tender', "a devotional song over Bach's prelude: sustained, warm, unhurried"),
+ 'clair-de-lune': ('dreamy', "moonlight: floating, pedalled, flowing in its middle section"),
+ 'adelita': ('tender', "a small sentimental mazurka for guitar, wistful rather than danced"),
+ 'berceuse': ('tender', "a lullaby (Dolly): rocking, gentle, steady"),
+}
+
+# Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
+# the rest keep their current reading until their mood's result is shown to be better.
+APPLY_MOOD = {
+ 'gymnopedie': dict(seed=3, phrase_bars=4),
+}
 
 # Pieces with an annotated performance (time map, levels; for the piano, dynamics, pedal and
 # voicing): data/music/<file>, made by its own tool (tools/clair_performance.py for Clair de lune).
@@ -169,6 +191,12 @@ def main():
   else:
    clock=score_clock(ROOT/'data/music/source'/f'{name}.mid',name)
    notes,performance=interpret(arrange(name,notes),name,clock)
+   if name in APPLY_MOOD:
+    mood=MOOD[name][0];touch=MOODS[mood][1]
+    notes=mood_touch(notes,clock,touch)
+    time_map,curves=timing_map(notes,clock,mood_timing(mood,**APPLY_MOOD[name]))
+    notes=warp(notes,time_map)
+    performance.update(mood=mood,expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
    if name in EXPRESSIVE:
     time_map,curves=timing_map(notes,clock,EXPRESSIVE[name])
     notes=warp(notes,time_map)
@@ -182,7 +210,7 @@ def main():
   sections={track:i for i,key in enumerate(['harp','violin_1','violin_2','viola','cello','bass']) for track in annotation['section_tracks'][key]} if name=='adagietto' else None
   blob,end,events=pack(notes,mix_levels=name in ANNOTATED,sections=sections)
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
-  meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob)))
+  meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
  (ROOT/'data/music/performance.json').write_text(json.dumps(performances,indent=2)+'\n')
  (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
