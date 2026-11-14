@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
@@ -362,7 +362,9 @@ On the rivers branch until it lands.
 - **Aliases:** band speed, band angle, the wagon-wheel drift.
 - **Definition:** the designed drift of the arc bands around the hub. Their turning rate cycles
   with engine speed (a smoothed sawtooth of about 2.5 cycles that grows as the engine slows), so
-  the arcs creep, reverse and creep back like a wagon wheel on film. At the lowest disc speed it
+  the arcs creep, reverse and creep back like a wagon wheel on film. The drift lingers near its
+  fast extremes over most of the range (`PROP_DRIFT_HOLD`), so the slow passages are brief blips;
+  full power keeps its slow creep. At the lowest disc speed it
   matches the blades' real speed, so the hand-over to idle blades is seamless.
 - **Code:** `src/prop_disc.jo:176 prop_band_speed` (with `PROP_TOP_SPEED`), `prop_band_angle`
   (integrated per craft); the shaft rate is `src/flight_feedback.jo prop_rotation_speed`.
@@ -446,6 +448,31 @@ On the rivers branch until it lands.
   `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
 - **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
   spans. Landings must forgive firm touchdowns.
+
+### Flight model v2
+
+- **Aliases:** v2, the trial flight model, fdm2; the liked model (its counterpart: the default).
+- **Definition:** a Tweaks option (off by default) that flies the player's aircraft in the air as a
+  rigid body with forces: lift from the angle of attack with a soft stall per wing, drag, a
+  fixed-pitch propeller with rpm, honest gravity, and assists (path hold, coordination, departure
+  resistance, a g limit). Water, land and contacts stay on the liked solver; NPCs stay on the liked
+  model. Worked in true units: the drawn world is the true one at the [speed scale](#speed-scale).
+- **Code:** `src/flight_v2.jo` `fly_air_v2`, `steer_v2`, `Fdm2Tuning`; dispatched from
+  `src/flight.jo` `_substep` and `steer` by `tweaks.flight_model`; `tools/fdm_compare.jo`,
+  `tools/fdm_plots.py`, `tools/fdm_frames.jo`, `tests/flight_v2_test.jo`. On `t3/flight-v2`.
+- **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
+  path is held. The default stays the liked model until the user prefers v2.
+- **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+
+### Departure resistance
+
+- **Aliases:** the AoA limit, the assist's stall margin.
+- **Definition:** in [flight model v2](#flight-model-v2), the pilot's assist never pulls the wing
+  past its stall angle with the stick alone, so a keyboard's full stick turns as hard as the wing
+  allows without snapping. The wing still stalls when speed runs out faster than the nose can
+  follow (a zoom), and then falls and recovers by its own aerodynamics.
+- **Code:** `src/flight_v2.jo` `Fdm2Tuning.departure` (1 = full resistance; 0 lets a full stick
+  go 0.2 rad past the stall).
 
 ### Altimeter hands
 
