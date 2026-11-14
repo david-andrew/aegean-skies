@@ -27,6 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
+- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1446,6 +1447,61 @@ No image: the tiers differ in budgets more than in any single view.
 
 ---
 
+## Combat
+
+### Lead marker
+
+- **Aliases:** the lead ring, the deflection marker, "where to aim".
+- **Definition:** a small hostile-coloured ring with a dark rim and a centre dot showing where to put
+  the gunsight so the rounds meet a moving hostile. It follows Sky Barons' `lead_from`: time of
+  flight refined twice, the rounds keeping the aircraft's own velocity, drop added back as aim
+  above. It is drawn at the guns' 450 m convergence, so it lines up with the gunsight ring in any
+  view, with a faint tie back to the target. It fills when the gunsight sits on it.
+- **Code:** `src/lead_marker.jo` `gun_lead`, `lead_mark` (selected hostile, else the nearest in a
+  25° cone, within 1 km), `draw_lead_mark`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT="420 -160 20"`.
+
+### Ground fire
+
+- **Aliases:** ground posts, riflemen and machine-gun posts, the gunners on the roofs.
+- **Definition:** scenario-owned fixed guns (`GroundGun` in a Battle) with stable negative owner IDs.
+  Riflemen take aimed single shots; machine guns fire bursts behind sandbags. They lead with the
+  round's time of flight and drop, wander by skill, swing at a limited rate (a close crossing
+  outruns them and the fire falls in behind), and wait a reaction time after first sighting. Their
+  rounds are ordinary combat rounds: the same hits, damage, tracers, muzzle flashes, whizzes and
+  splashes. Posts can be shot and fall silent.
+- **Code:** `src/combat.jo` `step_ground_fire`, `ground_sight`; `src/canal_ground_fire.jo`
+  (the canal takeoff's posts); `src/ground_fire_view.jo` (figures, sandbags, guns).
+- **Rules:** they belong to the scenario, never to the living world's population; they hold fire
+  until the slipway hand-over. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run.
+
+### Screen aim
+
+- **Definition:** mouse and drag moves push the flight aim ring along the drawn camera's right
+  and up (chase, target or cockpit view, any roll), so the ring always moves the way the hand
+  did on the screen.
+- **Code:** `src/pilot.jo` `screen_aim`, `remember_screen_axes`.
+
+### Target view righting
+
+- **Definition:** the target-follow camera's up rolls back toward the horizon at a bounded rate
+  (never a snap; held when looking near the vertical), and every chase frame's up is carried
+  from the frame last drawn, so a look-at never flips. Before this, a target passing overhead
+  could leave the picture upside down for good.
+- **Code:** `src/pilot.jo` `camera_horizon_up`, `steady_camera_up`, `chase_frame`;
+  `tests/camera_mouse_test.jo`.
+
+### Slipway launch
+
+- **Definition:** the canal takeoff's opening: the aircraft on a timber cradle on the greased ways
+  inside Neravessa's workshop, engine running; the chocks come away, it slides down into the canal,
+  floats off the cradle with the ordinary splash bodies, and the yard swings it to the canal's
+  heading before handing over. The cradle stays at the foot of the ways.
+- **Code:** `src/slipway.jo` `step_slip_launch`, `draw_slip_cradle`; `src/canal_geometry.jo`
+  `slip_point` (the ramp); `src/canal_render.jo` (ways, sleepers, winch).
+
+---
+
 ## Capture switches
 
 The game and its tools take environment switches for repeatable headless captures. Run them with
@@ -1464,6 +1520,9 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
+| `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
+| `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
+| `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |

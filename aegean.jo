@@ -60,6 +60,8 @@ use 'src/targets.jo'
 use 'src/target_scene.jo'
 use 'src/target_view.jo'
 use 'src/lead_marker.jo'
+use 'src/slipway.jo'
+use 'src/ground_fire_view.jo'
 use 'src/options.jo'
 use 'src/chart.jo'
 use 'src/planes.jo'
@@ -1892,6 +1894,7 @@ debug_place = (x: f64, z: f64, alt: f64):
 # Apply one complete replacement only after its builder succeeded. GPU assets/options survive;
 # no old world identity, physics history, sound scheduler, UI reference or camera spring does.
 active_scenario = ""
+slip = SlipLaunch()                 # the canal takeoff's opening down the workshop's slipway
 scenario_templates: {str: ScenarioState}
 load_scenario = (key: str) -> bool:
     global living_world,pc,me,battle,traffic,traffic_scene,folks,folk_sync_t,air_events,all_air_traffic,view_target,target_scan
@@ -1901,7 +1904,7 @@ load_scenario = (key: str) -> bool:
     global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
-    global leisure,leisure_spent,leisure_had,skip
+    global leisure,leisure_spent,leisure_had,skip,slip,slip_cradle_z
     load_started=time()
     fresh=key=="start"
     if fresh:
@@ -1937,6 +1940,8 @@ load_scenario = (key: str) -> bool:
     broadcast.radio_place_transmitters(cockpit_radio,height)
     radio_bulletin=broadcast.RadioBulletinCache();radio_card_until=-1
     living_world=next.world;pc=next.flyer;battle=next.battle
+    if next.slipway:slip=start_slip_launch(pc)
+    else:slip=SlipLaunch();slip_cradle_z=SLIP_START
     traffic_scene=living_scene.SceneAdapter()
     traffic=make_living_traffic(living_world,craft_models)
     bind_living_player(pc,living_world,traffic_scene)
@@ -2633,6 +2638,15 @@ if let fight=env("AEGEAN_CAPTURE_DOGFIGHT"):
             a.previous=a.state.position;a.previous_point=craft_point(a.state);a.previous_rotation=a.state.orientation
             a.pilot.formation=false;a.pilot.target=mine
             battle.actors[best]=a
+
+# AEGEAN_CAPTURE_CANAL_RUN=1: after the slipway hand-over, the canal scenario's tests' steering
+# flies the run; AEGEAN_CAPTURE_POST=k watches it from behind ground post k. Captures only.
+capture_canal_run=env("AEGEAN_CAPTURE_CANAL_RUN")!=none
+capture_canal_plan=canal_run_plan()
+capture_post=to_int(env("AEGEAN_CAPTURE_POST") ?? "-1") ?? -1
+
+# AEGEAN_NO_GROUND_FIRE=1: the canal's posts removed, for an A/B of their cost in one binary.
+if env("AEGEAN_NO_GROUND_FIRE")!=none:battle.ground=[]
 
 if startup_aegean_capture_panel=="scenarios":dbg.page=6;set_paused(true)
 # AEGEAN_CAPTURE_PANEL=game|game-confirm opens the pause menu's Game page (with a load waiting for
@@ -3518,7 +3532,17 @@ update_frame = (dt: f64):
                 pc.throttle=1.0-clamp((f64(frame_number())-prop_sweep_from)/(prop_sweep_secs*60.0),0.0,1.0)
                 # a sound engine, so the sweep starts from true full power
                 pc.state.damage.parts[int(PartId.engine)].health=1.0;pc.state.engine_damage=0.0
-            if me.mode==.aboard:fly(pc, dt, t)
+            if me.mode==.aboard:
+                if slip.active and active_scenario=="canal":
+                    global slip
+                    _=step_slip_launch(slip,pc,dt,t)
+                    if slip.splash:slip_splash(pc,spray_ps)
+                else if capture_canal_run and active_scenario=="canal":
+                    # (capture runs only: the tests' canal steering instead of the keys)
+                    e=flight_env(t,pc.state.position)
+                    step(pc.spec,pc.state,canal_run_controls(pc,capture_canal_plan,e),e,dt)
+                    pc.prop_angle+=dt*prop_rotation_speed(pc.state,pc.feedback.speed);pc.sea_t=t;feel(pc,dt,e.wind)
+                else:fly(pc, dt, t)
             if not dbg.no_damage: collide_vessels(vessels,pc.spec,pc.state,previous_vessel_contact,living_world.people[living_world.player].craft)
             set_drag_scale(1.0)
             # into the water hard (falling fast): a column of spray thrown up all round, and the
@@ -3869,6 +3893,7 @@ draw_world = (L: Light):
         draw_river_banks(L,t)
         zone("lake banks");draw_lake_banks(L,t);zone_end()
         draw_canal(L,t)
+        draw_slip_cradle(L,t)
         zone("thermal");draw_thermal(L,t);zone_end()
         zone("access bridges");draw_access_bridges(L,t);zone_end()
         zone("working land");draw_working_land(tree_meshes,L,t);zone_end()
@@ -3923,6 +3948,7 @@ draw_world = (L: Light):
         ci=combat_index(battle,living_world.people[living_world.player].craft)
         left=ci>=0 and battle.actors[ci].bailed
         draw_combat_aircraft(combat_visual,battle,craft_models,L,t,if left:-1 else:living_world.people[living_world.player].craft)
+        draw_ground_fire(battle,L,t)
         pm = craft_models[pc.model]
         at = pc_at()
         if not left:
@@ -4037,6 +4063,11 @@ draw = ():
         .aboard:
             if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil,view_target.bearing,view_target.weight,pc_at());remember_screen_axes(pc)
             else:place_chase_camera(pc,t,view_target.bearing,view_target.weight,towns)
+            if capture_post>=0 and capture_post<battle.ground.len():
+                g=battle.ground[capture_post];toward=normalize(pc.state.position-g.position)
+                back=normalize(vec3(toward.x,0,toward.z)+vec3(0.0001,0,0))
+                eye=g.position-back*8.0+vec3(0,2.2,0)+normalize(cross(back,vec3(0,1,0)))*2.2
+                precise_camera(world_point(eye),pc.state.position-eye,55.0,0.3,world_far(f64(eye.y)))
             ear_forward = if pc.cockpit_view: quat_rotate(pc.state.orientation, vec3(0, 0, -1)) else: pc.look
         .descent:place_descent_camera(descent_camera,world_far(f64(me.pos.y)))
         _:
@@ -4171,8 +4202,9 @@ draw = ():
         .descent: pass
         .free: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if me.mode == .aboard:
-        aim_marks(pc,not pc.cockpit_view)
-        if not pc.state.on_water and not pc.state.moored and not show_chart:
+        on_ways=slip.active and active_scenario=="canal"
+        aim_marks(pc,not pc.cockpit_view and not on_ways)
+        if not pc.state.on_water and not pc.state.moored and not show_chart and not on_ways:
             picked=if view_target.selected>=0 and view_target.items[view_target.selected].kind==0:view_target.items[view_target.selected].id else:-1
             nose=quat_rotate(pc.state.orientation,vec3(0,0,-1))
             if let mark=lead_mark(battle,living_world.people[living_world.player].craft,picked,pc.state.position,pc.state.velocity,nose):draw_lead_mark(mark,pc.state.position+nose*f32(LEAD_CONVERGE))
