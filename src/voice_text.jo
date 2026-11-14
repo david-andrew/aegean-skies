@@ -1,0 +1,505 @@
+# The radio announcer's text stage: words -> phones -> durations and pitch -> 5 ms vocoder
+# frames. The voice's spectra are measured diphone trajectories (data/voice/announcer.z, built
+# by tools/voice_world/pack.py from a narrator analysed WORLD-style); nothing here is recorded
+# audio. Bounded: text is capped, every table is fixed after loading.
+use 'voice_model.jo'
+
+const VOICE_RATE = 16000
+const VOICE_HOP = 80                 # samples per 5 ms frame
+const VOICE_FRAME = 0.005
+const VOICE_MAX_WORDS = 160
+const VOICE_PAU = 0
+const VOICE_SMOOTH = 4               # frames either side of a join
+
+struct VoiceUnit:
+    left = 0.0                       # seconds of phone A inside the unit (median token)
+    right = 0.0                      # seconds of phone B inside the unit
+    count = 0
+    at = 0                           # first frame in VoiceBank.frames
+
+struct VoiceRule:
+    left: str
+    mid: str
+    right: str
+    phones: int[]
+
+struct VoiceBank:
+    ready = false
+    phones: str[]
+    width = 0                        # floats per frame: m + bands + 1
+    m = 0
+    bands = 0
+    half = 0
+    alpha = 0.0
+    unit_of: int[]                   # phones*phones -> unit index or -1
+    units: VoiceUnit[]
+    frames: f32[]
+    words: {str: int[]}
+    rules: VoiceRule[]
+
+voice_bank_bytes = () -> u8[]: embed('../data/voice/announcer.z')
+
+voice_load = () -> VoiceBank:
+    bank = VoiceBank()
+    b = inflate(voice_bank_bytes())!
+    assert(b.len() > 16 and b[0] == c'A' and b[1] == c'V' and b[2] == c'X' and b[3] == c'1')
+    at = 4
+    np = get_le(b,at,2); at += 2
+    loop i in 0..np:
+        n = int(b[at]); at += 1
+        bank.phones.push(str_from_bytes(b[at..at+n])); at += n
+    bank.m = get_le(b,at,2); bank.bands = get_le(b,at+2,2); bank.half = get_le(b,at+4,2)
+    bank.alpha = f64(f32_from_bits(u32(get_le(b,at+6,4)))); at += 10
+    scale = [loop k in 0..bank.m: f64(f32_from_bits(u32(get_le(b,at+4*k,4))))]
+    at += 4*bank.m
+    bank.width = bank.m+bank.bands+1
+    nu = get_le(b,at,2); at += 2
+    bank.unit_of = fill(-1,np*np)
+    per = 2*bank.half
+    bank.frames = fill(f32(0),nu*per*bank.width)
+    loop u in 0..nu:
+        a = int(b[at]); c = int(b[at+1])
+        unit = VoiceUnit(f64(get_le(b,at+4,2))/1000.0,f64(get_le(b,at+6,2))/1000.0,get_le(b,at+2,2),u*per)
+        at += 8
+        loop j in 0..per:
+            base = (u*per+j)*bank.width
+            loop k in 0..bank.m: bank.frames[base+k] = f32(f64(get_le_signed(b,at+k,1))*scale[k])
+            at += bank.m
+            loop k in 0..bank.bands: bank.frames[base+bank.m+k] = f32(f64(b[at+k])/255.0)
+            at += bank.bands
+            bank.frames[base+bank.m+bank.bands] = f32(f64(b[at])/255.0); at += 1
+        bank.units.push(unit)
+        bank.unit_of[a*np+c] = u
+    nw = get_le(b,at,4); at += 4
+    loop i in 0..nw:
+        n = int(b[at]); at += 1
+        word = str_from_bytes(b[at..at+n]); at += n
+        k = int(b[at]); at += 1
+        bank.words[word] = [loop j in 0..k: int(b[at+j])]
+        at += k
+    nr = get_le(b,at,2); at += 2
+    loop i in 0..nr:
+        parts: str[]
+        loop part in 0..3:
+            n = int(b[at]); at += 1
+            parts.push(str_from_bytes(b[at..at+n])); at += n
+        k = int(b[at]); at += 1
+        bank.rules.push(VoiceRule(parts[0],parts[1],parts[2],[loop j in 0..k: int(b[at+j])]))
+        at += k
+    assert(at == b.len())
+    bank.ready = true
+    bank
+
+# ---------------------------------------------------------------- numbers and words
+VOICE_ONES = ["zero","one","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
+VOICE_TENS = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"]
+
+voice_number = (n: int) -> str:
+    if n < 0: return "minus "+voice_number(-n)
+    if n < 20: return VOICE_ONES[n]
+    if n < 100: return VOICE_TENS[n/10]+(if n%10 > 0: " "+VOICE_ONES[n%10] else: "")
+    if n < 1000: return VOICE_ONES[n/100]+" hundred"+(if n%100 > 0: " and "+voice_number(n%100) else: "")
+    if n < 1000000: return voice_number(n/1000)+" thousand"+(if n%1000 > 0: (if n%1000 < 100: " and " else: " ")+voice_number(n%1000) else: "")
+    "a great many"
+
+# Clock times as an announcer of the period reads them: "nine thirty", "nine oh five",
+# "nine o'clock"; the afternoon and evening on the twenty-four hour clock, "nineteen hundred hours".
+voice_clock = (h: int, m: int) -> str:
+    if m == 0: return if h > 12 or h == 0: (if h == 0: "midnight" else: voice_number(h)+" hundred hours") else: voice_number(h)+" o'clock"
+    (if h == 0: "zero" else: voice_number(h))+" "+(if m < 10: "oh "+voice_number(m) else: voice_number(m))
+
+voice_is_digit = (c: u8) -> bool: c >= c'0' and c <= c'9'
+voice_is_letter = (c: u8) -> bool: (c >= c'a' and c <= c'z') or (c >= c'A' and c <= c'Z') or c == c'\''
+
+# Text -> lower-case words and the punctuation marks , . ; : ! ? (as their own tokens).
+voice_tokens = (text: str) -> str[]:
+    out: str[]
+    i = 0
+    n = text.len()
+    loop i < n and out.len() < VOICE_MAX_WORDS:
+        c = text[i]
+        if voice_is_letter(c):
+            j = i
+            loop j < n and voice_is_letter(text[j]): j += 1
+            w = trim(lower(text[i..j]),"'")
+            if w.len() > 0: out.push(w)
+            i = j
+        else if voice_is_digit(c):
+            j = i
+            loop j < n and voice_is_digit(text[j]): j += 1
+            whole = to_int(text[i..j]) ?? 0
+            if j+2 < n and text[j] == c':' and voice_is_digit(text[j+1]) and voice_is_digit(text[j+2]):
+                minutes = to_int(text[j+1..j+3]) ?? 0
+                loop w in split(voice_clock(whole%24,minutes)): out.push(w)
+                i = j+3
+                continue
+            negative = i > 0 and text[i-1] == c'-' and (i == 1 or text[i-2] == c' ')
+            spoken = voice_number(if negative: -whole else: whole)
+            if j+1 < n and text[j] == c'.' and voice_is_digit(text[j+1]):
+                k = j+1
+                spoken += " point"
+                loop k < n and voice_is_digit(text[k]):
+                    spoken += " "+VOICE_ONES[int(text[k]-c'0')]
+                    k += 1
+                j = k
+            loop w in split(spoken): out.push(w)
+            i = j
+        else:
+            if c == c',' or c == c'.' or c == c';' or c == c':' or c == c'!' or c == c'?':
+                out.push(byte_str(c))
+            i += 1
+    out
+
+# ---------------------------------------------------------------- letter-to-sound fallback
+voice_vowel = (c: u8) -> bool: c == c'A' or c == c'E' or c == c'I' or c == c'O' or c == c'U' or c == c'Y'
+voice_voiced = (c: u8) -> bool: c in "BDGJLMNRVWZ"
+
+voice_left = (ctx: str, w: str, i: int) -> bool:
+    j = i-1
+    k = ctx.len()-1
+    loop k >= 0:
+        c = ctx[k]
+        if c == c' ':
+            if j >= 0: return false
+        else if c == c'#':
+            if j < 0 or not voice_vowel(w[j]): return false
+            loop j >= 0 and voice_vowel(w[j]): j -= 1
+            k -= 1
+            continue
+        else if c == c':':
+            loop j >= 0 and not voice_vowel(w[j]) and w[j] != c'\'': j -= 1
+            k -= 1
+            continue
+        else if c == c'^':
+            if j < 0 or voice_vowel(w[j]) or w[j] == c'\'': return false
+        else if c == c'+':
+            if j < 0 or not (w[j] == c'E' or w[j] == c'I' or w[j] == c'Y'): return false
+        else if c == c'.':
+            if j < 0 or not voice_voiced(w[j]): return false
+        else:
+            if j < 0 or w[j] != c: return false
+        j -= 1
+        k -= 1
+    true
+
+VOICE_SUFFIXES = ["ELY","ING","ER","ES","ED","E"]
+
+voice_right = (ctx: str, w: str, i: int) -> bool:
+    j = i
+    n = w.len()
+    k = 0
+    loop k < ctx.len():
+        c = ctx[k]
+        if c == c' ':
+            if j < n: return false
+        else if c == c'#':
+            if j >= n or not voice_vowel(w[j]): return false
+            loop j < n and voice_vowel(w[j]): j += 1
+            k += 1
+            continue
+        else if c == c':':
+            loop j < n and not voice_vowel(w[j]): j += 1
+            k += 1
+            continue
+        else if c == c'^':
+            if j >= n or voice_vowel(w[j]): return false
+        else if c == c'+':
+            if j >= n or not (w[j] == c'E' or w[j] == c'I' or w[j] == c'Y'): return false
+        else if c == c'.':
+            if j >= n or not voice_voiced(w[j]): return false
+        else if c == c'%':
+            rest = w[j..n]
+            loop s in VOICE_SUFFIXES:
+                if rest == s: return true
+            return false
+        else:
+            if j >= n or w[j] != c: return false
+        j += 1
+        k += 1
+    true
+
+voice_is_vowel_phone = (p: int) -> bool: p >= 1 and p <= 15
+
+# Stressed vowel group of a spelling: two groups the first; longer ones the penultimate when it
+# is a digraph or closed by two consonant letters, else the antepenultimate (tools/voice_world/lts.py).
+voice_stress_group = (w: str) -> int:
+    starts: int[]
+    ends: int[]
+    i = 0
+    loop i < w.len():
+        if voice_vowel(w[i]) and not (i == 0 and w[i] == c'Y' and w.len() > 1 and voice_vowel(w[1])):
+            j = i
+            loop j < w.len() and voice_vowel(w[j]): j += 1
+            starts.push(i); ends.push(j)
+            i = j
+        else: i += 1
+    if starts.len() > 1 and starts[starts.len()-1] == w.len()-1 and w[w.len()-1] == c'E':
+        starts.pop(); ends.pop()
+    n = starts.len()
+    if n <= 2: return 0
+    if ends[n-2]-starts[n-2] >= 2 or starts[n-1]-ends[n-2] >= 2: return n-2
+    n-3
+
+voice_spell = (bank: VoiceBank, word: str) -> int[]:
+    w = upper(word)
+    out: int[]
+    i = 0
+    loop i < w.len():
+        matched = false
+        loop r in bank.rules:
+            if r.mid.len() == 0 or r.mid[0] != w[i]: continue
+            if i+r.mid.len() > w.len() or w[i..i+r.mid.len()] != r.mid: continue
+            if not voice_left(r.left,w,i) or not voice_right(r.right,w,i+r.mid.len()): continue
+            loop p in r.phones: out.push(p)
+            i += r.mid.len()
+            matched = true
+            break
+        if not matched: i += 1
+    target = voice_stress_group(w)
+    k = 0
+    loop mut p in out:
+        if voice_is_vowel_phone(p):
+            if k == target: p = p | 64
+            k += 1
+    out
+
+# Dictionary first (with plural and possessive endings on a known stem), then the rules.
+voice_pronounce = (bank: VoiceBank, word: str) -> int[]:
+    if let p = bank.words.get(word): return p
+    if word.ends_with("'s"):
+        if let p = bank.words.get(word[0..word.len()-2]): return voice_add_s(p)
+    if word.ends_with("s") and word.len() > 3:
+        if let p = bank.words.get(word[0..word.len()-1]): return voice_add_s(p)
+    voice_spell(bank,word)
+
+voice_add_s = (stem: int[]) -> int[]:
+    last = stem[stem.len()-1] & 63
+    out = stem
+    # S Z SH ZH CH JH take a vowel; voiceless P T K F TH take S; the rest Z.
+    if last == 31 or last == 38 or last == 32 or last == 39 or last == 17 or last == 23:
+        out.push(10); out.push(38)
+    else if last == 29 or last == 33 or last == 24 or last == 20 or last == 34:
+        out.push(31)
+    else:
+        out.push(38)
+    out
+
+VOICE_FUNCTION = ["a","an","the","and","or","but","of","to","in","on","at","by","for","from","with","as","is","are","was","were","be","been","it","its","this","that","he","she","they","we","you","i","his","her","their","our","your","my","me","him","them","us","has","have","had","do","does","did","will","would","shall","should","can","could","may","might","must","not","no","so","than","then","there","who","which","what","when","where","if","into","onto","over","up","out","off","about","all","any","some"]
+
+# ---------------------------------------------------------------- the plan
+# Delivery of one announcer; the defaults are the measured narrator.
+struct VoiceStyle:
+    speed = 1.0                       # tempo relative to the narrator's own pace
+    pitch = 0.0                       # semitones relative to the narrator
+    coda = 1.0                        # word-final consonant lengthening (clear diction)
+    pauses = 1.0                      # pause scale
+    accent = 1.0                      # accent size scale
+
+struct VoicePhone:
+    phone = 0
+    stress = 0
+    content = false
+    phrase = 0
+    punct = 0                         # 0 none, 1 comma, 2 stop (on pauses)
+    duration = 0.0
+    start = 0.0
+    word_end = false
+
+struct VoicePlan:
+    phones: VoicePhone[]
+    frames: f32[]                     # width floats per 5 ms frame
+    f0: f32[]                         # Hz per frame, 0 unvoiced
+    count = 0                         # frames
+    seconds = 0.0
+
+voice_duration = (p: VoicePhone) -> f64:
+    if p.phone == VOICE_PAU: return p.duration
+    ms = VOICE_DURATIONS[p.phone*2+(if p.stress > 0: 1 else: 0)]
+    if ms <= 0: ms = 70.0
+    d = ms/1000.0
+    if voice_is_vowel_phone(p.phone) and not p.content: d *= 0.85
+    d
+
+voice_phones = (bank: VoiceBank, text: str, style: VoiceStyle) -> VoicePhone[]:
+    out = [VoicePhone(VOICE_PAU,0,false,0,0,0.12)]
+    phrase = 0
+    loop tok in voice_tokens(text):
+        c = tok[0]
+        if not voice_is_letter(c):
+            if out[out.len()-1].phone == VOICE_PAU: continue
+            stop = c == c'.' or c == c'!' or c == c'?'
+            out.push(VoicePhone(VOICE_PAU,0,false,phrase,if stop: 2 else: 1,(if stop: VOICE_PAUSE_STOP else: VOICE_PAUSE_COMMA)*style.pauses))
+            phrase += 1
+            continue
+        content = not (tok in VOICE_FUNCTION)
+        loop code in voice_pronounce(bank,tok):
+            stress = if content: code >> 6 else: 0
+            out.push(VoicePhone(code & 63,stress,content,phrase))
+        out[out.len()-1].word_end = true
+    if out[out.len()-1].phone != VOICE_PAU: out.push(VoicePhone(VOICE_PAU,0,false,phrase,2,VOICE_PAUSE_STOP*style.pauses))
+    loop mut p in out:
+        if p.phone != VOICE_PAU:
+            p.duration = voice_duration(p)/max(0.5,style.speed)
+            if p.word_end and not voice_is_vowel_phone(p.phone): p.duration *= style.coda
+    # Phrase-final lengthening of the last vowel and what follows it.
+    loop i in 1..out.len():
+        if out[i].phone != VOICE_PAU: continue
+        k = i-1
+        loop k > 0 and out[k].phone != VOICE_PAU and not voice_is_vowel_phone(out[k].phone):
+            out[k].duration *= VOICE_FINAL_LENGTHENING; k -= 1
+        if k > 0 and voice_is_vowel_phone(out[k].phone): out[k].duration *= VOICE_FINAL_LENGTHENING
+    t = 0.0
+    loop mut p in out:
+        p.start = t; t += p.duration
+    out
+
+# ---------------------------------------------------------------- diphone frames
+# Broad classes for backing off to the nearest observed diphone half.
+# class, place, voicing per phone (indices as in the bank's phone list).
+VOICE_CLASS = [0, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 2,3,2,4,4,2,4,3,2,5,6,6,6,2,5,4,4,2,4,4,7,7,4,4]
+VOICE_PLACE = [0, 4,1,3,4,4,1,1,3,1,1,1,4,4,4,4, 1,3,2,5,1,4,6,3,4,2,1,2,4,1,3,2,3,2,5,1,1,3,2,3]
+VOICE_VOICE = [0, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 1,0,1,1,0,1,0,1,0,1,1,1,1,0,1,0,0,0,0,1,1,1,1,1]
+
+voice_similar = (a: int, b: int) -> f64:
+    if a == b: return 10.0
+    s = 0.0
+    if VOICE_CLASS[a] == VOICE_CLASS[b]: s += 3.0
+    if VOICE_PLACE[a] == VOICE_PLACE[b]: s += 1.5
+    if VOICE_VOICE[a] == VOICE_VOICE[b]: s += 1.0
+    s
+
+# One half of diphone (a, b): side 0 is a's second half, side 1 b's first half. A missing
+# diphone borrows the half from the observed unit whose other phone is most similar.
+voice_half = (bank: VoiceBank, a: int, b: int, side: int) -> (int, f64, int):
+    np = bank.phones.len()
+    u = bank.unit_of[a*np+b]
+    if u >= 0:
+        unit = bank.units[u]
+        return (unit.at+side*bank.half, if side == 0: unit.left else: unit.right, u)
+    best = -1; score = -1000.0
+    loop k in 0..np:
+        v = if side == 0: bank.unit_of[a*np+k] else: bank.unit_of[k*np+b]
+        if v < 0: continue
+        s = voice_similar(k,if side == 0: b else: a)+0.02*f64(min(bank.units[v].count,20))
+        if s > score: score = s; best = v
+    if best < 0:
+        # Nothing on this side at all: the pause unit of the same phone.
+        best = if side == 0: bank.unit_of[a*np+VOICE_PAU] else: bank.unit_of[VOICE_PAU*np+b]
+        if best < 0: best = 0
+    unit = bank.units[best]
+    (unit.at+side*bank.half, if side == 0: unit.left else: unit.right, best)
+
+struct VoiceSpan:
+    start = 0.0
+    end = 0.0
+    frame = 0                        # first of bank.half frames
+    unit = 0
+
+voice_frames = (bank: VoiceBank, plan: mut VoicePlan):
+    spans: VoiceSpan[]
+    ps = plan.phones
+    loop i in 0..ps.len():
+        p = ps[i]
+        a = p.start; d = p.duration
+        if i == 0:
+            f, _, u = voice_half(bank,p.phone,ps[i+1].phone,0)
+            spans.push(VoiceSpan(a,a+d,f,u))
+        else if i+1 == ps.len():
+            f, _, u = voice_half(bank,ps[i-1].phone,p.phone,1)
+            spans.push(VoiceSpan(a,a+d,f,u))
+        else:
+            fi, li, ui = voice_half(bank,ps[i-1].phone,p.phone,1)
+            fo, lo, uo = voice_half(bank,p.phone,ps[i+1].phone,0)
+            r = clamp(li/max(0.001,li+lo),0.25,0.75)
+            spans.push(VoiceSpan(a,a+d*r,fi,ui))
+            spans.push(VoiceSpan(a+d*r,a+d,fo,uo))
+    last = ps[ps.len()-1]
+    plan.seconds = last.start+last.duration
+    n = int(plan.seconds/VOICE_FRAME)+1
+    w = bank.width
+    h = bank.half
+    plan.count = n
+    plan.frames = fill(f32(0),n*w)
+    edges: int[]
+    loop s in spans:
+        j0 = int(ceil(s.start/VOICE_FRAME)); j1 = min(n,int(ceil(s.end/VOICE_FRAME)))
+        loop j in j0..j1:
+            u = (f64(j)*VOICE_FRAME-s.start)/max(0.000001,s.end-s.start)*f64(h)-0.5
+            k = int(floor(u)); fr = f32(u-floor(u))
+            k0 = clamp(k,0,h-1); k1 = clamp(k+1,0,h-1)
+            a0 = (s.frame+k0)*w; a1 = (s.frame+k1)*w; o = j*w
+            loop c in 0..w: plan.frames[o+c] = bank.frames[a0+c]*(1.0-fr)+bank.frames[a1+c]*fr
+        edges.push(j1)
+    # Smooth the step where halves of different units meet (phone centres; phone boundaries
+    # only when a borrowed half replaced the missing diphone).
+    loop e in 0..spans.len()-1:
+        if spans[e].unit == spans[e+1].unit: continue
+        at = edges[e]
+        if at <= 0 or at >= n: continue
+        loop c in 0..w:
+            delta = plan.frames[at*w+c]-plan.frames[(at-1)*w+c]
+            loop m in 0..VOICE_SMOOTH:
+                g = 0.5*(1.0-f32(m)/f32(VOICE_SMOOTH))
+                if at-1-m >= 0: plan.frames[(at-1-m)*w+c] += delta*g
+                if at+m < n: plan.frames[(at+m)*w+c] -= delta*g
+
+# ---------------------------------------------------------------- pitch
+voice_random = (state: mut u64) -> f64:
+    state = (state*u64(6364136223846793005)+u64(1442695040888963407))
+    f64((state >> 11) & u64(0xfffffffffffff))/4503599627370496.0
+
+# Semitone baseline per phrase (reset, declination) + raised-cosine accents on stressed
+# content-word vowels peaking late in the vowel + terminal fall or continuation rise.
+voice_pitch = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle, seed: int):
+    n = plan.count
+    w = bank.width
+    st = fill(0.0,n)
+    rng = u64(91+max(0,seed)*7919)
+    phrase_start: f64[]
+    loop p in plan.phones:
+        loop phrase_start.len() <= p.phrase: phrase_start.push(-1.0)
+        if p.phone != VOICE_PAU and phrase_start[p.phrase] < 0: phrase_start[p.phrase] = p.start
+    # Each phrase starts at its own level (the narrator's measured spread), a little higher at
+    # the start of a bulletin and lower in the phrase that ends a sentence.
+    level = [loop k in 0..phrase_start.len(): VOICE_PHRASE_START+VOICE_PHRASE_SPREAD*0.8*(voice_random(rng)-0.5)+(if k == 0: 1.0 else: 0.0)]
+    loop p in plan.phones:
+        if p.phone == VOICE_PAU and p.punct == 2 and p.phrase < level.len(): level[p.phrase] -= 0.8
+    loop p in plan.phones:
+        if p.phone == VOICE_PAU: continue
+        j0 = int(p.start/VOICE_FRAME); j1 = min(n,int((p.start+p.duration)/VOICE_FRAME)+1)
+        loop j in j0..j1:
+            st[j] = level[p.phrase]+VOICE_DECLINATION*(f64(j)*VOICE_FRAME-phrase_start[p.phrase])
+    accent = fill(0.0,n)
+    loop p in plan.phones:
+        if not (voice_is_vowel_phone(p.phone) and p.stress == 1 and p.content): continue
+        peak = p.start+p.duration*VOICE_ACCENT_PEAK
+        a = (VOICE_ACCENT+VOICE_ACCENT_SPREAD*(voice_random(rng)-0.5))*style.accent
+        j0 = max(0,int((peak-0.13)/VOICE_FRAME)); j1 = min(n,int((peak+0.17)/VOICE_FRAME)+1)
+        loop j in j0..j1:
+            u = f64(j)*VOICE_FRAME-peak
+            shape = if u < 0: 0.5+0.5*cos(PI*clamp(-u/0.12,0.0,1.0)) else: 0.5+0.5*cos(PI*clamp(u/0.16,0.0,1.0))
+            accent[j] = max(accent[j],a*shape)
+    loop j in 0..n: st[j] += accent[j]
+    loop p in plan.phones:
+        if p.phone != VOICE_PAU or p.punct == 0: continue
+        j1 = min(n,int(p.start/VOICE_FRAME)); j0 = max(0,j1-int(0.25/VOICE_FRAME))
+        tone = if p.punct == 2: VOICE_FINAL_FALL else: VOICE_CONTINUATION
+        loop j in j0..j1: st[j] += tone*f64(j-j0)/f64(max(1,j1-j0))
+    # Slow wander, then a 45 ms smoothing.
+    walk = 0.0; slow = 0.0
+    loop j in 0..n:
+        walk += (voice_random(rng)-0.5)*0.07
+        slow += (walk-slow)*0.0125
+        st[j] += walk-slow
+    plan.f0 = fill(f32(0),n)
+    loop j in 0..n:
+        acc = 0.0
+        loop k in -4..5: acc += st[clamp(j+k,0,n-1)]
+        voiced = plan.frames[j*w+w-1] > 0.5
+        if voiced: plan.f0[j] = f32(100.0*pow(2.0,(acc/9.0+style.pitch)/12.0))
+
+voice_plan = (bank: VoiceBank, text: str, style: VoiceStyle = VoiceStyle(), seed: int = 0) -> VoicePlan:
+    plan = VoicePlan(phones=voice_phones(bank,text,style))
+    voice_frames(bank,plan)
+    voice_pitch(bank,plan,style,seed)
+    plan

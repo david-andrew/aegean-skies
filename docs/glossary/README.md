@@ -24,7 +24,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Coordinator](#coordinator)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -954,8 +954,34 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Definition:** each station's half-hour schedule: five minutes of news, five of editorial,
   advertisement or quiz, then music; it runs on the living world's clock. There are six stations,
-  including the Aegean Maritime Service (Morse bulletins) and The Night Gull (19:00 to 03:00).
+  including the Aegean Maritime Service (spoken weather, Morse shipping notices) and The Night Gull
+  (19:00 to 03:00). Spoken bulletins repeat on this clock.
 - **Code:** `src/radio.jo` (`radio_stations`, `radio_tune`, `radio_receive`); `docs/radio.md`.
+
+### Announcer
+
+- **Aliases:** the radio voice, the newsreader, the WORLD voice.
+- **Definition:** the synthesized voice that reads radio bulletins: a classical vocoder voice
+  (WORLD-style source/filter: pulses and noise mixed by band aperiodicity, shaped by a measured
+  spectral envelope), driven by a rule-based text stage and a prosody model measured from a
+  newsreel-style narrator. One voice; each station gives it its own pitch, tempo and diction.
+- **Code:** `src/voice_text.jo` (`voice_load`, `voice_tokens`, `voice_pronounce`, `voice_plan`),
+  `src/voice_synth.jo` (`make_voice_synth`, `voice_start`, `voice_render`), `src/voice_model.jo`
+  (generated prosody numbers); in the radio `src/radio_synth.jo radio_speech_program` and
+  `src/radio.jo radio_spoken`, `radio_voice_style`. Tools: `tools/voice_world/`, `tools/voicelab.jo`.
+- **Rules:** nothing recorded or AI-generated is shipped, only averaged spectral and prosodic
+  numbers with their provenance; reference narration stays in scratch. The stream must be
+  identical however it is cut into blocks (`tests/voice_test.jo`).
+
+### Diphone trajectory
+
+- **Aliases:** diphone unit, unit.
+- **Definition:** the announcer's measured spectral path from the middle of one phone to the middle
+  of the next (12 points of mel-cepstrum, band aperiodicity and voicing), averaged over the
+  narrator's tokens of that pair. Consecutive trajectories meet at phone centres, where the step
+  is smoothed; a missing pair borrows each half from its nearest observed neighbour.
+- **Code:** `tools/voice_world/build_units.py` (made), `data/voice/announcer.z` (shipped),
+  `src/voice_text.jo voice_half`, `voice_frames` (used).
 
 ### Ambience
 
