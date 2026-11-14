@@ -160,6 +160,30 @@ struct CombatBoat:
     yaw = 0.0                     # bow +z; hull hitbox rotates with the vessel
     attacker = -1
 
+# Ground fire: riflemen and machine-gun posts that a scenario places. Each is a fixed physical gun
+# with a stable negative owner ID (never an aircraft or a person). Its rounds are ordinary Rounds:
+# the same hit tests, damage, events, tracers and near-pass sounds as an aircraft's. Posts are
+# hit too (a small ellipsoid each) and fall silent when their health runs out.
+enum GroundGunKind: rifle, machine_gun
+struct GroundGun:
+    id: int                        # stable and negative
+    side: int
+    position: vec3                 # the gun's pivot (a rifleman's shoulder, a tripod's head)
+    kind: GroundGunKind = .rifle
+    facing = 0.0                   # the yaw the post looks out along (drawing only)
+    reach = 650.0
+    skill = 0.45
+    health = 1.0
+    disabled = false
+    wake = 0                       # holds fire until this tick
+    target = -1                    # local actor index, chosen on its brain ticks
+    seen = -1                      # the tick it first had this target in sight
+    cool = 0.0
+    burst = 0
+    shots = 0
+    aim: vec3 = vec3(0,0,-1)       # where it points now
+    half: vec3 = vec3(0.45,0.9,0.45)
+
 struct Round:
     position: vec3
     velocity: vec3
@@ -188,6 +212,7 @@ struct Battle:
     actors: Combatant[]
     boats: CombatBoat[]
     rounds: Round[]
+    ground: GroundGun[]            # scenario ground fire; empty for ordinary engagements
     sweeps: RoundSweep[]           # this tick, including rounds consumed by a collision
     descents: Descent[]
     events: CombatEvent[]           # presentation drains each fixed tick
@@ -492,6 +517,80 @@ _fire_round = (b: mut Battle, i: int):
         _event(b,.shot,a,at,direction=dir,strength=f64(gun.voice))
     b.actors[i] = a
 
+# Clear sight from a post: terrain sampled along the line, and the environment's solids (the
+# canal city's buildings and bridges) swept in short pieces so each query stays local.
+ground_sight = (e: FlightEnv, from: vec3, to: vec3) -> bool:
+    span = f64(length(to-from))
+    if span < 1.0: return true
+    way = (to-from)/f32(span)
+    start = from+way*1.5; stop = to-way*12.0
+    run = f64(length(stop-start))
+    if run <= 0: return true
+    steps = max(1,int(run/40.0)+1)
+    loop k in 1..steps:
+        p = lerp(start,stop,f32(f64(k)/f64(steps)))
+        if f64(p.y) < e.ground(f64(p.x),f64(p.z)): return false
+    loop k in 0..steps:
+        a = lerp(start,stop,f32(f64(k)/f64(steps)))
+        z = lerp(start,stop,f32(f64(k+1)/f64(steps)))
+        if e.solid(a,z).w > 0: return false
+    true
+
+# Riflemen take aimed single shots; machine guns fire short bursts. Both lead with the round's
+# time of flight and drop (combat's intercept), wander by skill, scatter by stateless noise, and
+# wait a reaction time after first sighting. Deterministic: no random() calls.
+step_ground_fire = (b: mut Battle, e: FlightEnv):
+    speed = 420.0*b.bullet_scale
+    loop k in 0..b.ground.len():
+        g = b.ground[k]
+        if g.disabled or b.tick < g.wake: continue
+        g.cool = max(0.0,g.cool-COMBAT_DT)
+        valid = g.target >= 0 and g.target < b.actors.len() and b.actors[g.target].present and b.actors[g.target].status == .flying and not b.actors[g.target].bailed
+        if (b.tick+k)%6 == 0 or not valid:
+            best = -1; nearest = g.reach
+            loop i in 0..b.actors.len():
+                a = b.actors[i]
+                if not a.present or a.status != .flying or a.bailed or a.side == g.side: continue
+                d = f64(length(a.state.position-g.position))
+                if d < nearest and ground_sight(e,g.position,a.state.position): best=i; nearest=d
+            if best != g.target: g.seen = b.tick
+            g.target = best
+        if g.target < 0:
+            g.burst = 0; b.ground[k] = g; continue
+        t = b.actors[g.target]
+        delta = t.state.position-g.position; distance = f64(length(delta))
+        aim = intercept(delta,t.state.velocity,speed)
+        across = normalize(cross(aim,vec3(0,1,0))+vec3(0.0001,0,0)); over = normalize(cross(across,aim))
+        err = (1.0-g.skill)*min(distance*0.08,26.0)
+        phase = f64(b.tick)*0.021+f64(-g.id)*1.7
+        want = normalize(aim+across*f32(sin(phase)*err)+over*f32(cos(phase*0.83)*err*0.7))
+        # (a man swings a rifle or a gun on its tripod only so fast: a close crossing outruns it,
+        # and the gun's fire falls in behind)
+        rifle = g.kind == .rifle
+        swing = (if rifle: 1.3 else: 0.8)*COMBAT_DT
+        gap = acos(clamp(f64(dot(g.aim,want)),-1.0,1.0))
+        if gap <= swing: g.aim = want
+        else:
+            turn = normalize(want-g.aim*dot(g.aim,want)+vec3(0,0.000001,0))
+            g.aim = normalize(g.aim*f32(cos(swing))+turn*f32(sin(swing)))
+        on = gap < (if rifle: 0.03 else: 0.12)
+        react = if rifle: 55 else: 40
+        if b.tick-g.seen >= react and g.cool <= 0 and (on or (not rifle and g.burst > 0)) and b.rounds.len() < COMBAT_MAX_ROUNDS:
+            spread = if rifle: 0.010 else: 0.018
+            jitter = vec3(combat_noise(b.seed,g.id,g.shots,0),combat_noise(b.seed,g.id,g.shots,1),combat_noise(b.seed,g.id,g.shots,2))*f32(spread)
+            dir = normalize(g.aim+jitter)
+            muzzle = g.position+g.aim*f32(if rifle: 1.05 else: 0.98)
+            b.rounds.push(Round(muzzle,dir*f32(speed),g.id,g.side,if rifle: 0.03 else: 0.024,tracer=(not rifle and g.shots%2==0) or (rifle and g.shots%3==0),serial=b.next_serial))
+            b.events.push(CombatEvent(b.next_serial,.shot,g.id,-1,-1,muzzle,dir,if rifle: 0.0 else: 1.0)); b.next_serial += 1
+            g.shots += 1
+            pause = 0.5+0.5*combat_noise(b.seed,g.id,g.shots,3)
+            if rifle: g.cool = 1.5+1.3*pause
+            else:
+                if g.burst <= 0: g.burst = 8+int(pause*6.0)
+                g.burst -= 1
+                g.cool = if g.burst > 0: 1.0/9.0 else: 1.8+1.4*pause
+        b.ground[k] = g
+
 struct RoundCell:
     x:int
     z:int
@@ -556,6 +655,13 @@ step_combat_rounds = (b: mut Battle, e: FlightEnv, broad_phase:bool = true):
                 vec3(f32(f64(d.x)*c-f64(d.z)*sn),d.y,f32(f64(d.x)*sn+f64(d.z)*c))
             at = segment_ellipsoid(local(r.position),local(end),vec3(0,0,0),boat.half)
             if at < best: best=at; victim=-1; boat_id=j
+        post = -1
+        loop j in 0..b.ground.len():
+            g = b.ground[j]
+            if g.disabled or g.side == r.side: continue
+            if length(r.position-g.position) > 2200 and length(end-g.position) > 2200: continue
+            at = segment_ellipsoid(r.position,end,g.position-vec3(0,g.half.y*0.6,0),g.half)
+            if at < best: best=at; victim=-1; boat_id=-1; post=j
         # Swept terrain/sea sampling prevents a fast round passing through an intervening ridge.
         surface = 2.0
         loop j in 0..9:
@@ -577,6 +683,13 @@ step_combat_rounds = (b: mut Battle, e: FlightEnv, broad_phase:bool = true):
                     _event(b,.boat_disabled,b.actors[owner],b.boats[boat_id].position,b.boats[boat_id].id,outcome=true)
                     b.outcomes[b.outcomes.len()-1].boat=b.boats[boat_id].id
                     b.outcomes[b.outcomes.len()-1].attacker=r.owner
+        else if post >= 0:
+            g = b.ground[post]
+            g.health = max(0.0,g.health-r.damage*(if g.kind==.rifle: 3.0 else: 1.6))
+            point = lerp(r.position,end,f32(best))
+            b.events.push(CombatEvent(b.next_serial,.hit,g.id,-1,r.owner,point,r.velocity,r.damage));b.next_serial+=1
+            if g.health <= 0: g.disabled = true; g.target = -1; g.burst = 0
+            b.ground[post] = g
         b.sweeps.push(RoundSweep(r.owner,r.serial,r.position,lerp(r.position,end,f32(min(1.0,min(best,surface))))))
         if best <= 1 or surface <= 1 or r.age > 2.5: b.rounds.remove_at(n)
         else: r.position=end;r.point=next_point; b.rounds[n]=r; n+=1
@@ -642,6 +755,7 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
     # Rotate launch order when the hard round budget is full, so the first faction in the
     # array cannot monopolize it. Each gun still advances exactly once per fixed tick.
     loop offset in 0..b.actors.len():_fire_round(b,(b.tick+offset)%b.actors.len())
+    if b.ground.len() > 0: step_ground_fire(b,e)
     loop mut boat in b.boats:
         if not boat.disabled and not boat.external: boat.position+=boat.velocity*f32(COMBAT_DT)
     step_combat_rounds(b,e)
