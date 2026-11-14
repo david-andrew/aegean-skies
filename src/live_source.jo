@@ -1,0 +1,208 @@
+# Live music heard from where it is: a band on a terrace, a gramophone in a room, a street
+# musician. The source's dry mono signal (at MUSIC_RATE) becomes stereo as the listener hears it:
+#
+#   * which way: a constant-power pan from the camera's right, a little interaural delay (up to
+#     0.65 ms) and head shadow on the far ear, and a softened top when the source is behind;
+#   * how far: the level falls with distance (from 5 m), the treble with the air, and the room's
+#     share grows as the direct sound fades;
+#   * what is in between: through a wall or a shut door it is quieter and muffled;
+#   * where the listener is: the terrace's open air and facade (a short bright tail), out on the
+#     quay or the street (faint, with a late slap off the buildings), or inside a room (a small,
+#     dense room, the music leaking in).
+#
+# The game supplies a LiveHearing each frame (`live_hearing`), the source renders its samples, and
+# `live_process` turns them into stereo frames for a 2-channel stream. Nothing recorded.
+
+use 'music_synth.jo'
+
+enum ListenZone: open, terrace, indoors
+
+struct LiveHearing:
+    distance = 5.0                  # metres to the source
+    pan = 0.0                       # -1 to the camera's left .. 1 to its right
+    front = 1.0                     # 1 ahead of the camera .. -1 behind it
+    occlusion = 0.0                 # 0 a clear line .. 1 a solid wall or a shut door between
+    zone: ListenZone = .open
+
+# Where a source sits for a listener at `ear` whose camera looks along `forward`.
+live_hearing = (ear: vec3, forward: vec3, source: vec3, occlusion: f64 = 0.0, zone: ListenZone = .open) -> LiveHearing:
+    d = source - ear
+    flat = vec2(d.x, d.z)
+    distance = max(0.3, f64(length(d)))
+    ahead = normalize(vec2(forward.x, forward.z) + vec2(0.00001, 0))
+    right = vec2(-ahead.y, ahead.x)
+    pan = 0.0; front = 1.0
+    if length(flat) > 0.05:
+        dir = normalize(flat)
+        pan = f64(dot(dir, right)); front = f64(dot(dir, ahead))
+    # (very close, the source is all around: the pan narrows)
+    pan *= clamp(distance / 1.5, 0.0, 1.0)
+    LiveHearing(distance, pan, front, clamp(occlusion, 0.0, 1.0), zone)
+
+const LIVE_DELAY = 32               # samples of interaural delay line
+const LIVE_REF = 5.0                # full level within this many metres
+
+struct LiveSpatial:
+    ready = false
+    delay: f64[]                    # the dry signal's last few samples, for the far ear's delay
+    at = 0
+    low_l = 0.0                     # one-pole filters: air and occlusion per ear
+    low_r = 0.0
+    shelf_l = 0.0                   # (the split for the behind-softening of the top)
+    shelf_r = 0.0
+    combs: f64[][]                  # the room: four combs each side and two all-passes
+    damp: f64[]
+    pass_l: f64[][]
+    pass_r: f64[][]
+    early: f64[]
+    pos = 0
+    # the parameters now, eased toward their targets so turning never clicks
+    gain_l = 0.0
+    gain_r = 0.0
+    itd = 0.0
+    cut_l = 0.5
+    cut_r = 0.5
+    shelf = 1.0
+    wet = 0.0
+    slap = 0.0
+    feedback = 0.6
+
+make_live_spatial = () -> LiveSpatial:
+    s = LiveSpatial(ready = true)
+    s.delay = fill(0.0, LIVE_DELAY)
+    s.combs = [fill(0.0, 541), fill(0.0, 613), fill(0.0, 701), fill(0.0, 787), fill(0.0, 563), fill(0.0, 647), fill(0.0, 727), fill(0.0, 811)]
+    s.damp = fill(0.0, 8)
+    s.pass_l = [fill(0.0, 113), fill(0.0, 167)]
+    s.pass_r = [fill(0.0, 127), fill(0.0, 179)]
+    s.early = fill(0.0, 2048)
+    s
+
+_cut = (hz: f64) -> f64: 1.0 - exp(-TAU * clamp(hz, 200.0, 7900.0) / f64(MUSIC_RATE))
+
+struct LiveTargets:
+    gain_l: f64
+    gain_r: f64
+    itd: f64
+    cut_l: f64
+    cut_r: f64
+    shelf: f64
+    wet: f64
+    slap: f64
+    feedback: f64
+
+live_targets = (h: LiveHearing) -> LiveTargets:
+    direct = LIVE_REF / max(LIVE_REF, h.distance)
+    direct *= 1.0 - 0.72 * h.occlusion
+    # constant power: the centre at unity in each ear; a source at the side about 10 dB louder in
+    # the near ear than the far one (with the head's shadow taking more of the far ear's treble)
+    p = clamp(h.pan, -1.0, 1.0) * 0.62
+    theta = (p + 1.0) * PI * 0.25
+    gl = cos(theta) * 1.4142 * direct
+    gr = sin(theta) * 1.4142 * direct
+    # the air takes the treble with distance; a wall or a door takes most of it
+    hz = 7800.0 * exp(-h.distance / 140.0)
+    hz = hz + (650.0 - hz) * h.occlusion
+    # the ear away from the source, shadowed by the head
+    shadow = 1.0 - 0.5 * abs(p)
+    cl = _cut(if p > 0.0: hz * shadow else: hz)
+    cr = _cut(if p < 0.0: hz * shadow else: hz)
+    behind = clamp(-h.front, 0.0, 1.0)
+    # the room's share, by where the listener is; it fades more slowly than the direct sound
+    far = sqrt(LIVE_REF / max(LIVE_REF, h.distance))
+    wet = match h.zone:
+        .terrace: 0.16 * far
+        .indoors: 0.42 * far
+        _: 0.09 * far + 0.05 * clamp((h.distance - 15.0) / 60.0, 0.0, 1.0)
+    slap = if h.zone == .open: 0.12 * far else: if h.zone == .terrace: 0.2 * far else: 0.0
+    feedback = match h.zone:
+        .indoors: 0.68
+        .terrace: 0.58
+        _: 0.5
+    LiveTargets(gl, gr, p * 0.00065 * f64(MUSIC_RATE), cl, cr, 1.0 - 0.45 * behind, wet * (1.0 - 0.4 * h.occlusion), slap, feedback)
+
+# Mono dry samples to interleaved stereo frames, as heard. Parameters ease over the block.
+live_process = (s: mut LiveSpatial, h: LiveHearing, mono: f64[]) -> f32[]:
+    if not s.ready: s = make_live_spatial()
+    goal = live_targets(h)
+    out = fill(f32(0), mono.len() * 2)
+    ease = 1.0 - exp(-1.0 / (0.06 * f64(MUSIC_RATE)))
+    shelf_cut = _cut(2600.0)
+    loop i in 0..mono.len():
+        s.gain_l += (goal.gain_l - s.gain_l) * ease
+        s.gain_r += (goal.gain_r - s.gain_r) * ease
+        s.itd += (goal.itd - s.itd) * ease
+        s.cut_l += (goal.cut_l - s.cut_l) * ease
+        s.cut_r += (goal.cut_r - s.cut_r) * ease
+        s.shelf += (goal.shelf - s.shelf) * ease
+        s.wet += (goal.wet - s.wet) * ease
+        s.slap += (goal.slap - s.slap) * ease
+        s.feedback += (goal.feedback - s.feedback) * ease
+        x = mono[i]
+        s.delay[s.at % LIVE_DELAY] = x
+        # the far ear hears it a fraction of a millisecond later (fractional delay)
+        lag = abs(s.itd)
+        k = int(lag); f = lag - f64(k)
+        late = s.delay[(s.at - k + LIVE_DELAY * 4) % LIVE_DELAY] * (1.0 - f) + s.delay[(s.at - k - 1 + LIVE_DELAY * 4) % LIVE_DELAY] * f
+        xl = if s.itd > 0.0: late else: x
+        xr = if s.itd < 0.0: late else: x
+        s.at += 1
+        # air, walls and the head's shadow
+        s.low_l += (xl - s.low_l) * s.cut_l
+        s.low_r += (xr - s.low_r) * s.cut_r
+        # behind: the top softened (a high shelf down)
+        s.shelf_l += (s.low_l - s.shelf_l) * shelf_cut
+        s.shelf_r += (s.low_r - s.shelf_r) * shelf_cut
+        dl = s.shelf_l + (s.low_l - s.shelf_l) * s.shelf
+        dr = s.shelf_r + (s.low_r - s.shelf_r) * s.shelf
+        # the room: early reflections (the facade, the buildings across the quay) and a tail
+        e = s.pos % 2048
+        s.early[e] = x
+        er = s.early[(e + 2048 - 197) % 2048] * 0.35 + s.early[(e + 2048 - 431) % 2048] * 0.22
+        el = s.early[(e + 2048 - 251) % 2048] * 0.3 + s.early[(e + 2048 - 509) % 2048] * 0.2
+        slap = s.early[(e + 2048 - 1300) % 2048] * s.slap
+        tail_l = 0.0; tail_r = 0.0
+        loop c in 0..8:
+            line = s.combs[c]
+            at = s.pos % line.len()
+            v = line[at]
+            s.damp[c] += (v - s.damp[c]) * 0.42
+            s.combs[c][at] = x * 0.5 + s.damp[c] * s.feedback
+            if c < 4: tail_l += v * 0.25 else: tail_r += v * 0.25
+        loop c in 0..2:
+            a = s.pass_l[c]; at = s.pos % a.len(); v = a[at]; w = tail_l
+            tail_l = v - w * 0.5; s.pass_l[c][at] = w + tail_l * 0.5
+            b = s.pass_r[c]; bt = s.pos % b.len(); u = b[bt]; z = tail_r
+            tail_r = u - z * 0.5; s.pass_r[c][bt] = z + tail_r * 0.5
+        s.pos += 1
+        room_l = (tail_l + el * 0.7 + slap) * s.wet
+        room_r = (tail_r + er * 0.7 + slap * 0.8) * s.wet
+        out[i * 2] = f32(dl * s.gain_l + room_l)
+        out[i * 2 + 1] = f32(dr * s.gain_r + room_r)
+    out
+
+# How much a source this close should hush the harbour's background (1 none .. 0.55 at the band).
+live_duck = (h: LiveHearing) -> f64:
+    1.0 - 0.45 * (1.0 - smoothstep(6.0, 28.0, h.distance)) * (1.0 - 0.6 * h.occlusion)
+
+# ---------------- geometry in a source's own frame ----------------
+
+# Does the segment a-b pass through the box (min, max)? (a slab test, all in one frame)
+box_blocks = (a: vec3, b: vec3, lo: vec3, hi: vec3) -> bool:
+    t0 = 0.0; t1 = 1.0
+    loop k in 0..3:
+        s = f64(if k == 0: a.x else: if k == 1: a.y else: a.z)
+        e = f64(if k == 0: b.x else: if k == 1: b.y else: b.z)
+        l = f64(if k == 0: lo.x else: if k == 1: lo.y else: lo.z)
+        h = f64(if k == 0: hi.x else: if k == 1: hi.y else: hi.z)
+        d = e - s
+        if abs(d) < 0.000001:
+            if s < l or s > h: return false
+        else:
+            u = (l - s) / d; v = (h - s) / d
+            if u > v: w = u; u = v; v = w
+            t0 = max(t0, u); t1 = min(t1, v)
+            if t0 > t1: return false
+    true
+
+inside_box = (p: vec3, lo: vec3, hi: vec3) -> bool:
+    p.x >= lo.x and p.x <= hi.x and p.y >= lo.y and p.y <= hi.y and p.z >= lo.z and p.z <= hi.z

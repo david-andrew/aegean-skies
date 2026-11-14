@@ -1,3 +1,5 @@
+use 'water_field.jo'
+use 'geography.jo'
 # Closed, opaque splash bodies. One shared scalloped mesh, one instanced draw, no textures.
 # Continuous float fans and detached emission envelopes use the same painted material.
 use 'pilot.jo'
@@ -34,11 +36,29 @@ struct SplashOut:
     pos:vec4
     world:vec3
     normal:vec3
+    body:f32
+# Half-widths of a spray curtain lobe across its sheet, as (width, d width / d y) for the
+# unit lobe's height y in -1..1. The inner face, toward the float and its trough, stays a
+# thin sheet; the outer face billows out, thickest along the curling crest and thinning to
+# a knife edge at the root in the water. outward is the unit x on the outer side (>0).
+const CURTAIN_BILLOW=1.6
+# Rows of outer billows on each curtain: (count, height in lobe heights, radius in lobe
+# heights). The crest row is the biggest; the rows below thin toward the root.
+CURTAIN_ROWS=[vec3(6,1.74,0.50),vec3(4,1.15,0.35),vec3(3,0.56,0.25)]
+CURTAIN_BILLOWS=13
+curtain_widths=(outward:f32,y:f32,thickness:f32,height:f32)->vec2:
+    r=clamp(0.5+0.5*y,0.0,1.0)
+    billow=height*CURTAIN_BILLOW
+    slope=if y> -1.0 and y<1.0:billow*0.75*sqrt(r) else:0.0
+    if outward>0.0:vec2(thickness+billow*r*sqrt(r),slope) else:vec2(thickness*0.55,0.0)
+
 splash_vs=(v:SplashVertex,b:SplashInstance,u:SplashParams)->SplashOut:
     # The closed surface and its analytic smooth normals are baked together. A gentle
     # whole-body breath keeps the lobes moving without folding triangles into facets.
     radius=length(v.pos);sphere=v.pos/radius
-    lobes=if b.center.w>1.5:1.0 else:mix(0.16,1.0,smoothstep(0.8,1.6,max(b.size.x,max(b.size.y,b.size.z))))
+    # Curtain sheet lobes keep softer scallops than their billows, so the sheet's broad
+    # faces paint as large calm regions and the billows carry the cloud lumps.
+    lobes=if b.center.w>2.5:0.55 else:if b.center.w>1.5:1.0 else:mix(0.16,1.0,smoothstep(0.8,1.6,max(b.size.x,max(b.size.y,b.size.z))))
     radius2=mix(1.0,radius,lobes)
     n=sphere*radius2
     normal=normalize(sphere-(sphere-v.normal/max(0.01,dot(v.normal,sphere)))*(lobes*radius/radius2))
@@ -49,22 +69,54 @@ splash_vs=(v:SplashVertex,b:SplashInstance,u:SplashParams)->SplashOut:
     up=cross(back,right)
     shape=n
     local=shape*scale
+    if b.center.w>1.5:
+        # Curtain lobes and billows churn: their scallops roll over the top and aft with
+        # the flow (about the across axis) and rock outward and back (about the vertical),
+        # so the shading features travel along the sheet instead of standing still.
+        roll=b.size.w*1.6;c=cos(roll);s=sin(roll)
+        n=vec3(n.x,c*n.y-s*n.z,s*n.y+c*n.z)
+        normal=vec3(normal.x,c*normal.y-s*normal.z,s*normal.y+c*normal.z)
+        spin=b.size.w*0.37+0.6*sin(b.size.w*0.7);c=cos(spin);s=sin(spin)
+        n=vec3(c*n.x-s*n.z,n.y,s*n.x+c*n.z)
+        normal=vec3(c*normal.x-s*normal.z,normal.y,s*normal.x+c*normal.z)
+        shape=n
+        local=shape*scale
+    if b.center.w>2.5:
+        # Curtain lobes: build the outer face out into a billow.
+        widths=curtain_widths(shape.x*sign(b.back.w),shape.y,scale.x,scale.y)
+        local=vec3(shape.x*widths.x,shape.y*scale.y,shape.z*scale.z)
+        # Inverse-transpose of x'=x*w(y): the normal tilts with the bulge's taper.
+        normal=vec3(normal.x/widths.x,normal.y/scale.y-normal.x*shape.x*widths.y/(widths.x*scale.y),normal.z/scale.z)
+        scale=vec3(1,1,1)
     # A thin curtain curls away from its chine. Shearing a closed smooth lobe
     # keeps a rounded crest and a thin two-sided sheet, rather than a flat tube.
     # back.w is signed outward lean; ordinary droplets/water marks keep zero.
-    rise=local.y+scale.y
-    curl=b.back.w*(0.65+0.35*rise/max(scale.y,0.001))
-    local.x+=b.back.w*(0.65*rise+0.175*rise*rise/max(scale.y,0.001))
+    height=b.size.y*breath.y
+    rise=local.y+height
+    curl=b.back.w*(0.65+0.35*rise/max(height,0.001))
+    local.x+=b.back.w*(0.65*rise+0.175*rise*rise/max(height,0.001))
     p=b.center.xyz+right*local.x+up*local.y+back*local.z
     normal=normal/max(scale,vec3(0.001,0.001,0.001))
     normal.y-=curl*normal.x
     normal=normalize(normal)
     normal=right*normal.x+up*normal.y+back*normal.z
-    SplashOut(u.vp*vec4(render_warped(p,u.eye,u.warp_a,u.warp_b),1),p,normal)
+    SplashOut(u.vp*vec4(render_warped(p,u.eye,u.warp_a,u.warp_b),1),p,normal,b.center.w)
 splash_fs=(i:SplashOut,u:SplashParams)->vec4:
-    facing=dot(normalize(i.normal),u.sun_dir)
+    n=normalize(i.normal)
+    facing=dot(n,u.sun_dir)
     # Flat painted regions, with a small soft terminator following each round lobe.
     tone=mix(vec3(0.68,0.80,0.86),vec3(0.84,0.91,0.94),smoothstep(-0.60,-0.48,facing))
+    if i.body>1.5:
+        # Spray curtains and their billows: two painted tones only. In bright sun the
+        # pale middle tone saturates to white, so the shadow side takes the blue-grey
+        # directly. Tops lit by the sky stay white; overhanging undersides and a thin
+        # rim where each lobe turns away from the eye join the shadow, so every billow
+        # shows a white cap over a grey belly and the outer mass reads from any side.
+        top=smoothstep(0.55,0.82,n.y)
+        under=smoothstep(0.05,0.45,-n.y)
+        rim=smoothstep(0.88,0.97,1.0-abs(dot(n,normalize(u.eye-i.world))))
+        facing=min(max(facing,mix(-1.0,0.30,top)),mix(1.0,-0.70,max(under,rim)))
+        tone=vec3(0.68,0.80,0.86)
     tone=mix(tone,vec3(1,1,0.99),smoothstep(-0.06,0.07,facing))
     vec4(aerial(u.white*tone,i.world,u.eye,u.haze,u.fog),1)
 
@@ -84,40 +136,52 @@ splash_vertex=(n:vec3)->SplashVertex:
 
 splash_shader:Shader
 splash_mesh:Mesh
-init_splashes=():
-    global splash_shader,splash_mesh
-    splash_shader=make_world_shader(shader(splash_vs,splash_fs))
+splash_small_mesh:Mesh
+# A latitude/longitude grid of the scalloped lobe; the poles coincide exactly. Shared
+# vertices let the vertex shader run once per grid point rather than per triangle corner.
+splash_grid=(rows:int,columns:int)->Mesh:
     indices:u32[]
-    # 64x40 resolves the scallops even close to the floats. The poles coincide exactly.
     point=(a:int,b:int)->SplashVertex:
-        latitude=PI*f64(a)/40.0;longitude=TAU*f64(b%64)/64.0
+        latitude=PI*f64(a)/f64(rows);longitude=TAU*f64(b%columns)/f64(columns)
         splash_vertex(vec3(sin(latitude)*cos(longitude),cos(latitude),sin(latitude)*sin(longitude)))
     grid:SplashVertex[]
-    loop a in 0..41:
-        loop b in 0..64:grid.push(point(a,b))
-    loop a in 0..40:
-        loop b in 0..64:
-            c=(b+1)%64
-            loop k in [a*64+b,(a+1)*64+b,a*64+c,a*64+c,(a+1)*64+b,(a+1)*64+c]:indices.push(u32(k))
-    # Identical triangle order and vertices; reuse the 2,624 shared vertices instead
-    # of running the vertex shader on 15,360 duplicated triangle corners per body.
-    splash_mesh=mesh(grid,indices)
+    loop a in 0..rows+1:
+        loop b in 0..columns:grid.push(point(a,b))
+    loop a in 0..rows:
+        loop b in 0..columns:
+            c=(b+1)%columns
+            loop k in [a*columns+b,(a+1)*columns+b,a*columns+c,a*columns+c,(a+1)*columns+b,(a+1)*columns+c]:indices.push(u32(k))
+    mesh(grid,indices)
+init_splashes=():
+    global splash_shader,splash_mesh,splash_small_mesh
+    splash_shader=make_world_shader(shader(splash_vs,splash_fs))
+    # 64x40 (2,624 vertices) resolves the scallops even close to the floats.
+    splash_mesh=splash_grid(40,64)
+    # Curtain billows and crest drops are small: 40x24 (1,000 vertices) holds their scallops.
+    splash_small_mesh=splash_grid(24,40)
+
+# Instance kinds in center.w: 1 droplets/billows/water marks, 1.25 curtain crest drops,
+# 2 curtain outer billows, 3 curtain sheet lobes. Drops and billows use the small mesh.
+splash_small=(b:SplashInstance)->bool:b.center.w>1.1 and b.center.w<2.5
 
 splash_heading=(back:vec3)->vec3:
     flat=vec3(back.x,0,back.z)
     if length(flat)>0.0001:normalize(flat) else:vec3(0,0,1)
 
-splash_add=(out:mut SplashInstance[],p:vec3,size:vec3,phase:f64,back:vec3=vec3(0,0,1)):
-    if min(size.x,min(size.y,size.z))>0.004:out.push(SplashInstance(vec4(p,1),vec4(size,f32(phase)),vec4(splash_heading(back),0)))
+splash_add=(out:mut SplashInstance[],p:vec3,size:vec3,phase:f64,back:vec3=vec3(0,0,1),kind:f32=1.0):
+    if min(size.x,min(size.y,size.z))>0.004:out.push(SplashInstance(vec4(p,kind),vec4(size,f32(phase)),vec4(splash_heading(back),0)))
 
 # Intersecting closed lobes make a continuous opaque volume with scalloped outer edges.
 # The thin roots touch the water; the spreading body peels out and rises behind the step.
-splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phase:f64,origin:vec3,t:f64,reach:f64=0.0,bow:f64=0.0):
+splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phase:f64,origin:vec3,t:f64,reach:f64=0.0,bow:f64=0.0,heave:f64=1.0):
     length=if reach>0.0:reach else:1.0+run*6.0
     # Two narrow scalloped curtains peel outward/back from the float's sides.
     # No central lobe: the float carves a clear trough along its own track.
     curtain_length=length*0.72+bow
-    height=0.18+run*0.88*(1.0-run*0.30)
+    # Chop and float bounce breathe the whole curtain a little.
+    height=(0.18+run*0.88*(1.0-run*0.30))*heave
+    # Billows ride aft along the sheet at a painted fraction of the water's speed.
+    cycle=t*(2.0+3.0*run)/max(0.5,curtain_length*0.78)
     thickness=0.065+run*0.045
     loop side in [-1.0,1.0]:
         direction=normalize(back+right*f32(side*(0.18+run*0.16)))
@@ -129,16 +193,42 @@ splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phas
         loop segment in 0..4:
             u=0.14+f64(segment)*0.23
             arch=sin(pow(u,0.72)*PI)
-            h=height*arch
+            # Each lobe swells and settles on its own beat, so the crest line keeps changing.
+            h=height*arch*(1.0+0.09*sin(t*3.3+f64(segment)*1.9+side*0.7)+0.05*sin(t*5.7+f64(segment)*3.1))
             center=edge+direction*f32(curtain_length*u)+up*f32(h*0.90)
             out.push(SplashInstance(vec4(center,3),vec4(thickness,h,curtain_length*0.18,f32(phase+u)),vec4(direction,f32(side*0.80))))
+        # Round billows heap up on the outer face only, biggest along the curling crest
+        # and smaller toward the root, so the sheet reads as a solid mass from any side.
+        # Each billow is born small near the chine, swells as it rolls aft along the
+        # sheet, rocks outward and back, then lifts off the crest as a shrinking blob
+        # while the next one re-forms behind it: a continuous rolling boil.
+        loop row in 0..CURTAIN_ROWS.len():
+            spec=CURTAIN_ROWS[row];count=int(spec.x)
+            loop j in 0..count:
+                c=fract(cycle+(f64(j)+0.37*f64(row))/f64(count)+side*0.21)
+                u=0.14+0.78*c
+                k=f64(row*7+j)
+                h=height*sin(pow(u,0.72)*PI)
+                fling=smoothstep(0.70,1.0,c)
+                lift=f64(spec.y)+0.10*sin(c*TAU+k)+fling*0.45
+                y=h*lift
+                rise=y+h*0.10
+                lean=0.80*(0.65*rise+0.175*rise*rise/max(h,0.001))
+                # Sit each billow just inside the curtain's own outer face at that height.
+                v=min(lift,1.85)-0.90;r=clamp(0.5+0.5*v,0.0,1.0)
+                face=sqrt(max(0.0,1.0-v*v))*(f64(thickness)+h*f64(CURTAIN_BILLOW)*r*sqrt(r))
+                roll=0.10*h*sin(c*TAU*1.5+k*1.9+side)+fling*0.55*h
+                swell=0.86+0.14*sin(t*4.3+k*2.3+side*1.1)
+                radius=h*f64(spec.z)*swell*smoothstep(0.0,0.32,c)*mix(1.0,0.35,fling)*(1.0-smoothstep(0.86,1.0,c))
+                p=edge+direction*f32(curtain_length*u)+up*f32(y)+across*f32(side*(lean+face*0.8+roll))
+                if radius>0.004:out.push(SplashInstance(vec4(p,2),vec4(radius*1.05,radius*0.92,radius*1.25,f32(t*1.9+k*1.3)),vec4(direction,0)))
         # Small round drops peel off the curling crest, then descend behind it.
         loop j in 0..4:
             u=0.35+f64(j)*0.17
             h=height*sin(pow(u,0.72)*PI)
             radius=(0.075+run*0.055)*(0.9+0.1*sin(phase*0.55+u*5.0+side))
             p=edge+direction*f32(curtain_length*u)+across*f32(side*h*1.65)+up*f32(h*1.90+radius*1.5)
-            splash_add(out,p,vec3(radius,radius*1.15,radius),phase+u*3.0,direction)
+            splash_add(out,p,vec3(radius,radius*1.15,radius),phase+u*3.0,direction,1.25)
     # Tapered white marks touch the wet footprint; the sea shader is not changed.
     loop side in [-1.0,1.0]:
         loop j in 0..3:
@@ -159,6 +249,7 @@ struct SplashSheet:
     bow:f64=0.0
     amount:f64=0.0
     phase:f64=0.0
+    heave:f64=0.0 # extra curtain height from chop and float bounce, as a fraction
 struct SplashMotion:
     sheets:SplashSheet[7]
     time:f64= -1.0
@@ -172,11 +263,13 @@ splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
     anchor=flight_fx_anchor(f,pose)
     back=quat_rotate(s.orientation,vec3(0,0,1));right=quat_rotate(s.orientation,vec3(1,0,0))
     run=smoothstep(3.0,f.spec.stall_speed,water_run_speed(f.spec,s))
-    gap=f64(s.position.y)-f.spec.float_height
+    surface=water_at(f64(s.position.x),f64(s.position.z))
+    level=if geography_enabled and surface.wet:surface.level else:0.0
+    gap=f64(s.position.y)-f.spec.float_height-level
     skim=if s.on_water or s.moored:0.0 else:(1.0-smoothstep(0.5,f.spec.span*0.6,gap))*smoothstep(28.0,60.0,f64(length(s.velocity))/pure_k(f.spec))
     loop part in 0..7:
         sheet=SplashSheet(back=back,right=right)
-        aft= -1e30;wet= -1e30;front=1e30
+        aft= -1e30;wet= -1e30;front=1e30;dip=0.0
         loop p in model.contacts:
             if contact_part(f.kind,p)!=part or part_health(s.damage,PartId(part))<=0:continue
             contact=world_offset(anchor,transform_point(rotation,p))
@@ -184,7 +277,7 @@ splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
             if f64(p.z)>aft:
                 aft=f64(p.z);sheet.root=contact;sheet.phase=f64(p.x)*1.7
             if active and s.on_water and not s.moored and not s.crashed and run>0.0 and contact.y<=f64(sea.x)+0.18:
-                wet=max(wet,f64(p.z));front=min(front,f64(p.z))
+                wet=max(wet,f64(p.z));front=min(front,f64(p.z));dip=max(dip,f64(sea.x)-contact.y)
         if wet> -1e29:
             loop p in model.contacts:
                 if contact_part(f.kind,p)==part and f64(p.z)==wet:
@@ -192,6 +285,8 @@ splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
                     sheet.root.y=f64(swell_at(sheet.root.x,sheet.root.z,f.sea_t).x)+0.04
             sheet.run=run;sheet.amount=smoothstep(0.0,0.04,run)
             sheet.bow=(wet-front)*(1.0-run*0.55)
+            # A float pressed into a wave or dropping onto it throws a fuller curtain.
+            sheet.heave=clamp(dip*0.6-f64(s.velocity.y)/pure_k(f.spec)*0.05-0.08,-0.2,0.25)
         else if active and not s.crashed and skim>0.1 and aft> -1e29:
             tail=world_offset(sheet.root,splash_heading(back)*f32(4.0+skim*7.0))
             tail.y=f64(swell_at(tail.x,tail.z,f.sea_t).x)+0.08
@@ -212,6 +307,7 @@ step_splash_motion=(motion:mut SplashMotion,targets:SplashSheet[],anchor:WorldPo
             previous.run=splash_ramp(previous.run,next.run,dt)
             previous.reach=splash_ramp(previous.reach,next.reach,dt)
             previous.bow=splash_ramp(previous.bow,next.bow,dt)
+            previous.heave=splash_ramp(previous.heave,next.heave,dt)
         else if motion.time>=0.0:
             delta=world_delta(anchor,motion.anchor)
             previous.root=world_offset(previous.root,vec3(delta.x,0,delta.z))
@@ -226,7 +322,7 @@ splash_instances=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,origin:ve
     loop sheet in sheets:
         if sheet.amount<0.0001:continue
         at=world_local(sheet.root,origin);start=out.len()
-        splash_fan(out,at,sheet.back,sheet.right,sheet.run,t*2.0+sheet.phase,origin,t,sheet.reach,sheet.bow)
+        splash_fan(out,at,sheet.back,sheet.right,sheet.run,t*2.0+sheet.phase,origin,t,sheet.reach,sheet.bow,1.0+sheet.heave)
         fade=f32(sheet.amount)
         loop i in start..out.len():
             # Keep the user's water ovals/streaks in exactly the same places and
@@ -261,7 +357,11 @@ draw_splashes=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,L:Light,t:f6
         if bodies.len()>0:
             glDepthMask(1);glDisable(GL_CULL_FACE)
             white=L.sun*0.75+L.shade*0.25+vec3(0.18,0.20,0.21)
-            draw_instanced(splash_shader,splash_mesh,bodies,SplashParams(render_view_proj(origin),render_eye(origin),L.sun_dir,white,L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b))
+            params=SplashParams(render_view_proj(origin),render_eye(origin),L.sun_dir,white,L.haze,f32(L.fog_density),render_anchor(scene_warp_a,origin),scene_warp_b)
+            large=[loop b in bodies:if not splash_small(b):b]
+            small=[loop b in bodies:if splash_small(b):b]
+            if large.len()>0:draw_instanced(splash_shader,splash_mesh,large,params)
+            if small.len()>0:draw_instanced(splash_shader,splash_small_mesh,small,params)
     ,transparent=true)
 
 draw_splash_dust=(ps:WorldParticles):

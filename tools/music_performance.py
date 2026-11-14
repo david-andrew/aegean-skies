@@ -18,6 +18,12 @@ CONFIG = {
  'gladiators': (4,60/140,4,{0,5,6},.018,.10,.12,0),
  'ikariotikos': (2,.5,8,{0},.025,.14,.15,0),
  'bethena': (3,.4,8,{1},.065,.20,.24,0),
+ 'gymnopedie': (3,1.0,4,{1},.05,.14,.28,0),
+ 'ave-maria': (4,60/66,4,{1},.05,.16,.26,0),
+ # Clair de lune's rubato, dynamics, pedal and voicing are its own annotation (clair-de-lune-performance.json)
+ 'clair-de-lune': (4.5,1.0,4,{1},0,0,0,0),
+ 'adelita': (3,1.0,4,{1},.06,.15,.24,0),
+ 'berceuse': (2,1.0,4,{1},.05,.15,.24,0),
 }
 
 class BeatMap:
@@ -178,13 +184,40 @@ def apply_performance_map(notes, annotation):
   i=max(0,min(len(points)-2,bisect_right([p[0] for p in points],t)-1))
   a,x=points[i];b,y=points[i+1]
   return x+(y-x)*max(0,min(1,(t-a)/(b-a)))
- sections={track:name for name,tracks in annotation['section_tracks'].items() for track in tracks}
+ sections={track:name for name,tracks in annotation.get('section_tracks',{}).items() for track in tracks}
+ # Optional pianist's layer (absent for the Adagietto): a dynamic curve in dB, part of it as
+ # touch (effort, which colours the tone) and the rest as level; the melody voiced over its
+ # accompaniment; the sustain pedal's spans; chords spread a little from the bass up.
+ dynamics=annotation.get('dynamics');voicing=annotation.get('voicing');pedal=annotation.get('pedal')
+ spread=annotation.get('spread_seconds',0);touch=annotation.get('effort_share',0)
+ groups=defaultdict(list)
+ for i,n in enumerate(notes):groups[(n[6],round(n[0],3))].append(i)
+ rank={}
+ for idx in groups.values():
+  idx.sort(key=lambda i:notes[i][2])
+  for r,i in enumerate(idx):rank[i]=(r,len(idx))
+ pedal_starts=[a for a,_ in pedal] if pedal else []
  out=[]
- for n in notes:
+ for i,n in enumerate(notes):
   t,d,p,ins,g0,g1,track=n
-  level=annotation['section_levels'].get(sections.get(track,''),[[0,1],[points[-1][0],1]])
+  level=annotation.get('section_levels',{}).get(sections.get(track,''),[[0,1],[points[-1][0],1]])
   start=interpolate(points,t);stop=interpolate(points,t+d)
-  gain=1.0
+  if pedal:
+   j=bisect_right(pedal_starts,t+1e-6)-1
+   if j>=0 and pedal[j][0]<=t<pedal[j][1] and t+d<pedal[j][1]:
+    stop=max(stop,interpolate(points,min(pedal[j][1],t+annotation.get('pedal_max_hold',6.0))))
+  touch_db=0.0;level_db=0.0
+  if dynamics:
+   db=interpolate(dynamics,t);touch_db+=db*touch;level_db+=db*(1-touch)
+  if voicing:
+   r,count=rank[i]
+   if track in voicing['melody_tracks']:touch_db+=voicing['melody_db'] if r==count-1 else voicing['inner_db']
+   elif track in voicing.get('lower_tracks',[]):touch_db+=voicing['lower_db']
+  if spread and rank[i][1]>1:
+   r,count=rank[i];start+=spread*r/(count-1);stop+=spread*r/(count-1)
+  if touch_db:
+   k=10**(touch_db/20);g0=min(1.25,g0*k);g1=min(1.25,g1*k)
+  gain=10**(level_db/20) if level_db else 1.0
   presence=annotation.get('harp_presence')
   if ins==7 and presence:
    upper=max(0,min(1,(p-presence['start_pitch'])/(presence['full_pitch']-presence['start_pitch'])))
