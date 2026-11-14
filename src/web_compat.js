@@ -1,3 +1,24 @@
+// Sloppy's page start decodes the embedded module with
+// Uint8Array.from(atob(SLOPPY_WASM), c => c.charCodeAt(0)). TypedArray.from over a string first
+// gathers every element into an ordinary array: for this game's ~20 MB module about 490 MB of
+// heap garbage, which one full collection clears 30-40 s into play (a 50-60 ms frame), and about
+// 4 s of loading. This file runs before that boot code: the one call is decoded with a plain loop
+// instead (the same bytes, the same mapping function), and Uint8Array.from is put back at once.
+// Remove when Sloppy's boot decodes without TypedArray.from (see docs/diagnostics).
+(function () {
+  const from = Uint8Array.from;
+  Uint8Array.from = function (source, map, self) {
+    if (this === Uint8Array && typeof source === "string" && source.length > 1000000 && typeof map === "function") {
+      Uint8Array.from = from;
+      const out = new Uint8Array(source.length);
+      // (atob's result has only one-byte characters: one element per code unit, as from gives)
+      for (let i = 0; i < source.length; i++) out[i] = map.call(self, source[i], i);
+      return out;
+    }
+    return from.apply(this, arguments);
+  };
+})();
+
 // Sloppy 0.29.2 passes the complete uniform struct through every helper. Some
 // WebGL linkers consequently activate even unused fields (192 bone vectors in
 // the fragment stage). Specialize READ-ONLY uniform parameters to the global
@@ -404,3 +425,30 @@
   sloppy.env.aegean_slots_copy=(index,p,n)=>copy(Number(index)===4?enc.encode(error):buffers[Number(index)]||new Uint8Array(),p,n);
   sloppy.env.aegean_slots_release=()=>{buffers=[];};
 })(typeof globalThis!=="undefined"?globalThis:this);
+// The title screen (src/title_screen.jo, aegean.jo title_wanted). A page whose URL stages a
+// capture (any AEGEAN_ option but quality, touch and title) starts straight in the game, as the
+// native runs with those environment variables do. While the world is built (one long step the
+// page cannot draw during), the game's own page shows a quiet card in the title's dusk colour,
+// its line moved by the compositor; the game takes it away when it has drawn its first frame.
+(function (root) {
+  if (typeof sloppy === "undefined" || typeof location === "undefined") return;
+  const keys = [...new URLSearchParams(location.search)].map(([k, v]) => [k.toUpperCase(), v]);
+  const title = keys.find(([k]) => k === "AEGEAN_TITLE")?.[1];
+  const staged = keys.some(([k]) => k.startsWith("AEGEAN_") && !["AEGEAN_QUALITY", "AEGEAN_TOUCH", "AEGEAN_TITLE"].includes(k));
+  sloppy.env.__aegean_staged = () => staged ? 1 : 0;
+  let card = null;
+  sloppy.env.__aegean_shown = () => { if (card) { card.remove(); card = null; } };
+  const wanted = title !== undefined ? title !== "0" : !staged;
+  if (!wanted || typeof document === "undefined" || document.title !== "Aegean Skies" || !document.body) return;
+  card = document.createElement("div");
+  card.id = "aegean-loading";
+  card.setAttribute("role", "status");
+  card.innerHTML = '<style>#aegean-loading{position:fixed;inset:0;z-index:5;background:#131a26;display:flex;flex-direction:column;' +
+    'align-items:center;justify-content:flex-end;padding-bottom:16vh;font:500 15px/1.4 Georgia,"Times New Roman",serif;color:#d9d4c4;' +
+    'letter-spacing:.18em;text-transform:uppercase}#aegean-loading .rule{width:180px;height:2px;margin-top:14px;overflow:hidden;' +
+    'background:rgba(217,212,196,.14)}#aegean-loading .rule i{display:block;width:60px;height:2px;background:#c79e52;' +
+    'animation:aegean-glide 1.8s ease-in-out infinite alternate;will-change:transform}' +
+    '@keyframes aegean-glide{from{transform:translateX(0)}to{transform:translateX(120px)}}</style>' +
+    '<div>Loading the islands</div><div class="rule"><i></i></div>';
+  document.body.appendChild(card);
+})(typeof globalThis !== "undefined" ? globalThis : this);

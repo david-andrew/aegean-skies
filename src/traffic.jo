@@ -414,8 +414,26 @@ commit_traffic_motion = (tr: mut Traffic,w: mut living.World,arrival: bool = tru
         if not scene.encounter_active(w, tr.craft) and (tr.dock >= 0 or w.minute >= w.trips[tr.trip].hold_until_minute):
             living.commit_arrival(w, tr.trip, tr.town, tr.dock, revision)
 
+# The end of a scene tick after its clock: scene traffic that left, landed or is far away folds.
+_fold_after_tick = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, battle: Battle):
+    loop mut tr in traffic:
+        if scene.scene_bound(adapter, tr.craft):
+            c = w.aircraft[tr.craft]
+            safe = not combat_owns(battle,tr.craft) and not tr.state.stalled and not tr.state.beached and not tr.state.crashed and not tr.state.on_water
+            terminal = c.trip < 0
+            if terminal or scene.scene_should_fold(w, adapter, tr.craft, safe):
+                scene.release_scene(w, adapter, tr.craft, if terminal: [] else: _physical_remainder(tr, w))
+                tr.materialized = false
+
+# A frame that must not wait (input, a menu, a save or load): finish the minute in progress now.
+finish_held_minute = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, battle: Battle):
+    if adapter.holding and scene.scene_clock_resume(w,adapter,true): _fold_after_tick(traffic,w,adapter,battle)
+
 update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = [], battle: mut Battle = Battle(), effects: (CombatEvent[]) -> void = (events: CombatEvent[]): pass, contact: (int,CraftSpec,CraftState,vec3) -> CraftState = (id: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState: state,ships:AirShip[] = [],other_air:AirContact[] = []):
     accepted = frame_dt(dt)
+    # A world minute still in progress: continue it; no new tick until it and its tick end.
+    if adapter.holding:
+        if scene.scene_clock_resume(w,adapter): _fold_after_tick(traffic,w,adapter,battle)
     velocity = (observer - adapter.observer) / f32(max(accepted, 1.0 / 60.0))
     if length(velocity) > 200: velocity = normalize(velocity) * 200.0
     adapter.observer = observer; adapter.observer_velocity = velocity
@@ -423,7 +441,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
     adapter.frame_ticks = 0
     player_craft = w.people[w.player].craft
     # Saving folds all owners. The same human body claims its lease before the next step.
-    if player != none and not scene.scene_bound(adapter, player_craft):
+    if player != none and not adapter.holding and not scene.scene_bound(adapter, player_craft):
         w.aircraft[player_craft].move_owner = .scene; w.aircraft[player_craft].revision += 1
         adapter.handles[player_craft] = adapter.bodies.add(scene.SceneLease(player_craft))
     player_before = w.aircraft[player_craft].pose
@@ -431,7 +449,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
     steps = max(1, int(floor((adapter.accumulator + 1e-9) * 60.0)))
     stepped = 0
     life_nav_budget = 1
-    loop adapter.accumulator + 1e-9 >= 1.0 / 60.0:
+    loop not adapter.holding and adapter.accumulator + 1e-9 >= 1.0 / 60.0:
         adapter.accumulator = max(0.0, adapter.accumulator - 1.0 / 60.0)
         # Ownership is fixed before this whole step. New trips become eligible next step.
         loop i in 0..traffic.len():
@@ -526,15 +544,9 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                 else:commit_player_motion(w,body,player_before,player_fuel,alpha)
         if battle.enabled:resolve_scene_engagements(battle,w,physical)
         scene.scene_encounters(w,physical)
-        scene.scene_clock_end(w)
-        loop mut tr in traffic:
-            if scene.scene_bound(adapter, tr.craft):
-                c = w.aircraft[tr.craft]
-                safe = not combat_owns(battle,tr.craft) and not tr.state.stalled and not tr.state.beached and not tr.state.crashed and not tr.state.on_water
-                terminal = c.trip < 0
-                if terminal or scene.scene_should_fold(w, adapter, tr.craft, safe):
-                    scene.release_scene(w, adapter, tr.craft, if terminal: [] else: _physical_remainder(tr, w))
-                    tr.materialized = false
+        # A world minute may continue over the next frames; this tick's end waits for it.
+        if not scene.scene_clock_end_spread(w,adapter): break
+        _fold_after_tick(traffic,w,adapter,battle)
         # Abstract poses already interpolate at fixed ticks, rather than jumping by minutes.
     loop mut tr in traffic:
         traffic_projection(tr,w)

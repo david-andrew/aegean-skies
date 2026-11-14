@@ -31,6 +31,7 @@ Run a native build headlessly with `SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1`, unset D
 - `AEGEAN_CAPTURE_PANEL=scenarios` opens that pause page for a capture.
 - `AEGEAN_CAPTURE_TRACE=1` prints the initial world/battle hashes, flight poses and per-second battle counts. Equal initial hashes after a UI reload check the cached snapshot, not just the builder.
 - `AEGEAN_SCENARIO_TIMING=1` reports load milliseconds; benchmark only on the designated laptop.
+- `AEGEAN_SHOTS="/absolute/dir 120 600 900"` saves those frames as `dir/<frame>.png` and prints a `SHOT` line for each (mode, position, open panel, minute, purse): one scripted `SLOPPY_INPUT` session, many captures.
 - `SLOPPY_SCREENSHOT=/absolute/path.png SLOPPY_FRAMES=N` captures frame N with fixed 1/60-second updates. `SLOPPY_INPUT` can exercise the actual menu and flight controls.
 
 This is an in-situ battle fixture, not a national-war campaign or a new save-slot UI. No surrender/scoring screen or strategic fleet replacement has been added.
