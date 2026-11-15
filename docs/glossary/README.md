@@ -20,7 +20,7 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
@@ -1112,18 +1112,39 @@ On the rivers branch until it lands.
 
 ### Grass blades
 
-- **Aliases:** meadow blades, the tuft (the mesh).
-- **Definition:** single-triangle blades, instanced in 1 m cells on a fixed world grid, drawn at
-  full density within a short radius around the viewer. Wind, the prop's slipstream and contact
-  with the pilot are done in the vertex shader; blades are lit by the ground beneath them.
+- **Aliases:** meadow blades, the tuft (the mesh), the far tuft.
+- **Definition:** single-triangle blades, instanced in 1 m cells on a fixed world grid and drawn inside
+  the **grass egg**. A blade is about 0.6-1.1 m tall (twice the old height and width), so a cell holds a
+  third of the old blade count and covers the same ground. Cells past half way out use the **far tuft**
+  (about half as many blades, half again as wide) so the vertex work goes where the eye is. Wind, the
+  prop's slipstream and contact with the walker are done in the vertex shader. Blades are lit by the
+  ground beneath them: the cell carries the terrain's surface-detail slope (`grass_detail_slope`), so
+  hill shading and the soft sun shadows of the relief carry through the field; the cloud-shadow pass is a
+  screen-space multiply and covers blades like any other pixel.
+- **Clumps and turning:** each cell turns its tuft by its own angle (no one-metre lattice of rows), and
+  blades gather toward the centres of a jittered ~0.9 m world lattice. A clump has its own height, lean
+  and a slight tint; each blade also has its own height, lean and yaw off the wind's line.
 - **Code:** `src/grass.jo` (`grass_vs`, `grass_fs`, `build_tuft`, `build_grass`, `draw_grass`,
   `grass_cover` for where grass may grow).
-- **Rules:** blades per cell are 72 on low, 240 on medium and 3072 on high; the draw radius is 8,
-  11 and 12 m. No alpha fade or discard in the grass material. No grass on streets, plots, quays,
-  steep slopes or below 3 m above sea level.
+- **Rules:** blades per cell (near / far tuft) are 24 / 12 on low, 72 / 36 on medium and 1024 / 506 on
+  high; the base radius is 8, 11 and 12 m (see the egg for the reach). No alpha fade or discard in the
+  grass material. No grass on streets, plots, quays, steep slopes or below 3 m above sea level.
 - **Capture:** `tools/grass_sample.jo`; `AEGEAN_GRASS_DENSITY`, `AEGEAN_GRASS_RADIUS`.
 
 ![Grass blades, the grass frontier, and the ground tint beyond it](img/grass.png)
+
+### Grass egg
+
+- **Aliases:** the drawn region, the reach, the grass shape.
+- **Definition:** the region of cells that grow blades, shaped like an egg stretched along the view: it
+  reaches 2.5 times the base radius ahead of the camera (20, 27.5 and 30 m on low, medium and high), 1.2
+  times to each side and 0.8 times behind (so a quick turn does not show grass growing in). Looking steeply down, as from a low aircraft, it relaxes
+  toward a disc a little wider than the base radius. Chunks and cells outside it (or the view frustum)
+  are never uploaded.
+- **Code:** `src/grass.jo grass_shape`, `grass_view_shape`, `grass_reach_for`, `draw_grass`; the shader
+  reads it from `GroundParams.grass_view` and `grass_actor.w`.
+- **Rules:** the egg is centred on the camera, not the player, so a walker seen from behind stands well
+  inside it; one normalized distance (1.0 on the rim) drives culling, thinning and the near/far split.
 
 ### Prop wash on grass
 
@@ -1137,12 +1158,14 @@ On the rivers branch until it lands.
 
 ### Grass frontier
 
-- **Aliases:** the frontier, the growth edge, the noisy frontier.
-- **Definition:** the outer edge of the grass field. Over the last 4 m the blades shrink to
-  nothing, and value noise moves the edge by about ±1.5 m so it never reads as a circle.
-- **Code:** `src/grass.jo grass_fade_range` and the `edge` noise in `grass_vs`.
-- **Rules:** the last blades stay low so their silhouette never covers a differently coloured
-  ground band beyond the frontier.
+- **Aliases:** the frontier, the growth edge, the thinning, the noisy frontier.
+- **Definition:** the outer part of the grass egg, where the field thins out. From 30% of the way to the
+  rim, every blade has its own threshold and shrinks away to nothing (height and width) when the
+  field's density, which falls smoothly to zero at the rim, passes it; a little value noise moves the rim.
+  The field therefore scatters out over most of the reach instead of ending in a ring.
+- **Code:** `src/grass.jo grass_keep` and the `pick`/`fade` thinning in `grass_vs`.
+- **Rules:** the last blades are small and take the ground's own colour and value (their
+  root-to-tip contrast fades with their size), so no silhouette stands against a different ground band.
 - **Not to be confused with:** the war frontier (`war_frontier_hops` in `src/living_war.jo`).
 
 ### Ground tint
@@ -1158,13 +1181,18 @@ On the rivers branch until it lands.
 
 ### Wind sheen
 
-- **Aliases:** meadow wave, wind wash, gusts over the grass.
-- **Definition:** travelling waves of paler, bent grass that sweep across meadows with the wind,
-  shared by the blades and the ground under them. The sheen is additive: it brightens and never
-  darkens the base colour.
-- **Code:** `src/look.jo:137 meadow_wave`; used in `src/grass.jo grass_vs` and
-  `src/terrain.jo ground_material`.
-- **Rules:** like all ground detail it is full strength to 60 m and gone by 260 m (the near-detail
+- **Aliases:** meadow wave, wind wash, gusts over the grass, bands.
+- **Definition:** bands of paler, bent grass that roll downwind across meadows, shared by the blades and
+  the ground under them. The sheen is additive: it brightens and never darkens the base colour. The
+  bands have a fixed wavelength (5.5 m); wind speed raises how often a blade is swept (0.4 Hz in a calm,
+  about 1 Hz at 8 m/s, 3 Hz at 30 m/s) and the steady lean (and so how far the bands swing on top of
+  it), never the spacing. Each blade is sampled at its own root, with a few percent of flutter, so
+  neighbours never move in lockstep.
+- **Code:** `src/look.jo meadow_wave`, `meadow_step`, `meadow_wind`, `meadow_lean`; used in
+  `src/grass.jo grass_vs` and `src/terrain.jo ground_material`.
+- **Rules:** the phase is one scalar carried in f64 on the CPU (anchored at the viewer, turned with the
+  wind about the viewer) so a turning wind never swirls the pattern; it is passed to the shaders as
+  `wind.w`. Like all ground detail it is full strength to 60 m and gone by 260 m (the near-detail
   envelope); it must never repeat over whole hills seen from altitude (see terrain stripes).
 
 ### Terrain stripes (historical bug)
@@ -2120,7 +2148,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   | Cloud fields | 28 | 45 | 70 |
   | Tree stride, tree distance | 3, 2.5 km | 2, 5 km | 1, 9 km |
   | Grove distance | 450 m | 550 m | 700 m |
-  | Grass blades per cell, radius | 72, 8 m | 240, 11 m | 3072, 12 m |
+  | Grass blades per cell, base radius (reach ahead) | 24, 8 m (20 m) | 72, 11 m (27.5 m) | 1024, 12 m (30 m) |
   | Terrain error | 2.0 | 1.5 | 1.0 |
 
 - **Code:** `src/quality.jo` (`RenderQuality`, `quality_profile`, `init_quality`); per-feature
