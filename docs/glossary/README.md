@@ -2327,8 +2327,9 @@ No image: the tiers differ in budgets more than in any single view.
 - **Definition:** how combat pilots fight: Sky Barons' fighter (lead pursuit, target choice, break
   off when too close) with lag pursuit, defensive breaks and scissors, head-on passes, extending
   and coming back, unloading, zooming and wingmen's cover made explicit, shaped by skill,
-  aggression, caution and nerve, with deliberate mistakes.
-- **Code:** `src/combat.jo` `_dogfight`, `combat_controls`; personalities in `src/scenarios.jo`
+  aggression, caution and nerve, with deliberate mistakes. Gunners lead a turning target's swing
+  and keep aiming between thoughts when far from the player.
+- **Code:** `src/combat.jo` `_dogfight`, `_gun_aim`, `_retrack`, `combat_controls`; personalities in `src/scenarios.jo`
   `STRAIT_PILOTS`; tests `tests/dogfight_test.jo`; harness `tools/dogfight_lab.jo`.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
   (the brain flies the player's aircraft; frames for a clip).

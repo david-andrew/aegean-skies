@@ -74,7 +74,15 @@ seconds of sink above the water, with the terrain sampled along the path. `Battl
 soft top (the strait's cloud base). `Battle.tactics` counts each behaviour.
 `tools/dogfight_lab.jo` runs N strait battles headless (`DOGFIGHT_N`, `DOGFIGHT_SECONDS`,
 `DOGFIGHT_MODEL=default|skybarons|v2|sb`, `DOGFIGHT_TRACE="actor from every"`,
-`DOGFIGHT_DOWNS=1`) and writes a report.
+`DOGFIGHT_DOWNS=1`) and writes a report: time to first kill and kills per minute, the player
+seat's shots, hits and kills, how often NPCs are close to their target and lined up, and every
+round followed to its target (hit rate by range and crossing angle, misses by nearest pass).
+
+**Gunnery** (`_gun_aim`): the lead (`intercept`), misjudged by skill; the nose put where the aim
+is going, leading its swing by 0.12–0.24 s (a proportional steering law alone trails a turning
+target by a few degrees and misses by 5–20 m); fired within the pilot's reach and cone. A pilot
+on a gun run far from the player (LOD 1–2, whose full brain runs every 15 or 30 ticks) re-aims
+every six ticks between thoughts (`_retrack`: stick and trigger only, no actor scans).
 
 The **lead marks** (`src/lead_marker.jo`) are HUD only and drawn as Sky Barons draws its lead
 ring: a small ring (6 px radius, 2 px line) in the hostile colour where the rounds and the target
