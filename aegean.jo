@@ -1,4 +1,5 @@
 use 'src/runtime_options.jo'
+use 'src/build_slice.jo'
 use 'src/canal_render.jo'
 use 'src/river_banks.jo'
 use 'src/river_data.jo'
@@ -121,7 +122,7 @@ use 'src/speech.jo'
 use 'src/panels.jo'
 use 'src/mooring.jo'
 from 'src/aircraft_boats.jo' import big_boat, offshore_only, swing_radius, wake_width, boat_spray_scale
-from 'src/offshore_moorings.jo' import OffshoreMooring, offshore_moorings, nearest_harbour, harbour_docks, clear_water_near
+from 'src/offshore_moorings.jo' import OffshoreMooring, offshore_moorings, nearest_harbour, harbour_docks, clear_water_near, moored_centre, buoy_swing
 import 'src/harbour_launch.jo' as launches
 use 'src/vessel_types.jo'
 use 'src/vessels.jo'
@@ -2500,6 +2501,8 @@ battle_radio = BattleRadio()
 cockpit_model = build_cockpit()
 
 grass = GrassField(me.pos, instance_buffer([GrassCell(mat4(), vec4(1, 1, 1, 1),vec4(0,1,0,0))]), 0)
+grass_job = GrassBuild()        # the next field, made a slice a frame
+const GRASS_BUILD_SECONDS = 0.003
 
 follow = follow_camera(distance = 5.5, pitch = 0.25, height = 1.6)
 follow_frame = FollowFrame()
@@ -3098,7 +3101,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     global vessels,vessel_bindings,vessel_view,vessel_mooring,combat_visual,air_visual
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,my_jobs,toast,toast_until,notebook,battle_card,war_chart,presentation,ui_mission
     global t,hour,wind_bias,wind_now,follow,descent_camera,free,show_chart,chart_local
-    global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v,launch,buoys_at,offshore
+    global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v,launch,buoys_at,offshore,lighter,lighter_phase,swing_rate
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
     global leisure,leisure_spent,leisure_had,skip,slip,slip_cradle_z,combat_audio
@@ -3161,6 +3164,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     guns=Guns();splashes=[];last_shots=0;plunge=0;plunge_v=0
     rope=Rope();was_moored=false
     launch=launches.LaunchRide();buoys_at= -1;offshore=none
+    lighter=launches.LaunchRide();lighter_phase=0;swing_rate=0.0
     ui=.none;ui_folk=-1;ui_place=-1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job=-1;my_jobs={}
     if given==none:
         notebook=if fresh:Notebook() else:Notebook(storage_key="scenario-notebook:"+key)
@@ -3289,7 +3293,7 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     global walker_point,walker_published,folks,folk_sync_t,notebook,my_jobs,t,hour,wind_bias,wind_now,follow,follow_frame,free,descent_camera
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,ui_mission,battle_card,war_chart,view_target,target_scan,rope,was_moored
     global wakes,vapor_trails,splashes,last_shots,plunge,plunge_v,active_scenario,judge_camera,talk_at_start,cat_scene,combat_visual,air_visual,guns
-    global launch,buoys_at,offshore
+    global launch,buoys_at,offshore,lighter,lighter_phase,swing_rate
     global fuel_pier_seen,fuel_pier_frame,fuel_offered_at,refuel_start,refuel_len,known_maps,toast,toast_until
     global leisure,leisure_at,leisure_spent,leisure_had,leisure_ui,leisure_line,skip,served_look_until,served_pending
     global fish,fish_throws,fish_rings,fish_landed_at,fish_bucket_beside
@@ -3328,6 +3332,7 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     wakes=[loop _ in 0..traffic.len()+1:WakeTrail()];vapor_trails=[Trail(),Trail()];splashes=[];last_shots=0;plunge=0;plunge_v=0
     rope.anchor=session.rope_anchor;rope.loose=session.rope_loose;rope.tied=session.rope_tied;was_moored=pc.state.moored
     launch=launches.LaunchRide();buoys_at= -1;offshore=find_offshore_berth()
+    lighter=launches.LaunchRide();lighter_phase=0;swing_rate=0.0
     ui=.none;ui_folk= -1;ui_place= -1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job= -1;ui_mission= -1
     fuel_pier_seen=none;fuel_pier_frame= -100;fuel_offered_at=FUEL_NOWHERE;refuel_start= -100;refuel_len=0
     if cat_scene.purr_voice>=0:stop(cat_scene.purr_voice)
@@ -4018,6 +4023,99 @@ launch_step = (dt: f64, typing: bool):
             emit(spray_ps, world_point(bow), 1, 2.0, rgba(0.95, 0.97, 1, 0.85), 0.6, 0.22, 0.5, normalize(vec3(f32(side) * dir.z, 1.0, f32(-side) * dir.x)))
     if launches.launch_done(launch): finish_launch()
 
+# ---- lying to the wind on a buoy (and the fuel lighter that comes out to it) ----
+
+swing_rate = 0.0                    # (how fast the moored aircraft is turning on its buoy, rad/s)
+
+# moored on a buoy, the aircraft swings head to wind round it (src/offshore_moorings.jo buoy_swing);
+# the swing circle each buoy was chosen for holds it at any heading
+swing_on_buoy = (dt: f64):
+    global swing_rate
+    if offshore == none or not pc.state.moored or dt <= 0.0:
+        swing_rate = 0.0
+        return
+    f = quat_rotate(pc.state.mooring_orientation, vec3(0, 0, -1))
+    h = atan2(f64(f.x), -f64(f.z))
+    len = aircraft_profile(pc.kind).length
+    s = buoy_swing(h, swing_rate, wind_now.dir, wind_now.speed, len, dt)
+    swing_rate = s.1
+    c = moored_centre(offshore!.at, s.0, len)
+    pc.state.mooring_point = vec3(c.x, f32(pc.spec.float_height), c.z)
+    pc.state.mooring_orientation = quat_euler(0, -s.0, 0)
+    # (the moored aircraft is posed from these: held there, not flown)
+    pc.state.position = pc.state.mooring_point; pc.state.precise_ready = false
+    pc.state.orientation = pc.state.mooring_orientation
+
+lighter = launches.LaunchRide()
+lighter_phase = 0                   # 0 none, 1 putting out, 2 alongside (the fuel panel), 3 going home
+lighter_dock = vec3(0, 0, 0)
+lighter_pier = refuel.FuelPier()
+lighter_seen: refuel.FuelPier? = none
+lighter_seen_frame = -100
+
+# the fuel pier of the buoy's harbour, which the lighter carries the fuel and prices of (none where
+# the harbour sells no fuel); looked up every few frames
+lighter_pier_here = () -> refuel.FuelPier?:
+    global lighter_seen, lighter_seen_frame
+    if offshore == none: return none
+    if frame_number() - lighter_seen_frame >= 30 or frame_number() < lighter_seen_frame:
+        lighter_seen = refuel.fuel_pier_at(living_world, offshore!.dock, 60.0)
+        lighter_seen_frame = frame_number()
+    lighter_seen
+
+# the card's words aboard on a buoy with room in the tank, or ""
+lighter_offer = () -> str:
+    if offshore == none or not pc.state.moored or lighter_phase != 0 or launch.active or ui != .none: return ""
+    c = living_world.people[living_world.player].craft
+    if c < 0 or lt.AIRFRAMES[int(living_world.aircraft[c].kind)].tank_ml - living_world.aircraft[c].fuel_ml < 1000: return ""
+    if let p = lighter_pier_here(): return "call the fuel lighter out ({fuel_litre_price(refuel.fuel_price(living_world, p))} a litre, {phoenix_text(launches.LIGHTER_FEE)} to come out)"
+    ""
+
+# pay the call-out and send the lighter out from the dock to lie alongside
+call_lighter = ():
+    global lighter, lighter_phase, lighter_dock, lighter_pier
+    if offshore == none: return
+    p = lighter_pier_here()
+    if p == none: return
+    if launches.pay_harbour(living_world, offshore!.place, launches.LIGHTER_FEE) == 0:
+        say_toast("The lighterman wants {phoenix_text(launches.LIGHTER_FEE)} to come out; you have {phoenix_text(player_cents())}.")
+        return
+    lighter_pier = p!
+    alongside = launch_alongside()
+    lighter_dock = launch_dock(alongside)
+    lighter = launches.launch_ride(offshore!.place, lighter_dock, alongside, true)
+    lighter_phase = 1
+    say_toast("The fuel lighter is putting out from {p!.name}, {phoenix_text(launches.LIGHTER_FEE)} for the trip.")
+
+lighter_home = ():
+    global lighter, lighter_phase
+    at = launches.launch_pose(lighter).0
+    lighter = launches.launch_ride(lighter.place, lighter_dock, at, false)
+    lighter_phase = 3
+
+# each frame: out to the aircraft, the fuel panel once alongside (the sale is the pier's own,
+# through the ledger), home when it closes or the aircraft casts off
+lighter_step = (dt: f64):
+    global lighter, lighter_phase, ui, fuel_panel_pier, fuel_notice, fuel_offered_at
+    if lighter_phase == 0: return
+    if lighter_phase == 1 or lighter_phase == 3: lighter.t += dt
+    if lighter_phase == 1:
+        if offshore == none or not pc.state.moored or me.mode != .aboard: lighter_home()
+        else if launches.launch_done(lighter):
+            lighter_phase = 2
+            pier = lighter_pier
+            pier.dock = lighter.to
+            fuel_panel_pier = pier
+            fuel_notice = ""
+            fuel_offered_at = pc.state.position
+            ui = .fuel
+            mouse_lock(false)
+    else if lighter_phase == 2:
+        if ui != .fuel and not refueling(): lighter_home()
+    else if lighter_phase == 3 and launches.launch_done(lighter):
+        lighter_phase = 0
+        lighter.active = false
+
 # the buoys about (once in a while: a harbour's are found once, then kept)
 refresh_buoys = ():
     global buoys_near, buoys_at, offshore
@@ -4044,6 +4142,44 @@ if launch_capture == "buoy":
     ms = offshore_moorings(0, swing_radius(.hughes_h4))
     if ms.len() > 0: moor_on_buoy(ms[0])
 launch_capture_step = ():
+    # (lighter: at frame 60 the fuel lighter is called; once alongside, a full tank bought and the
+    # panel closed; LIGHTER lines say what happened, the fuel and the books)
+    if launch_capture == "lighter":
+        global ui
+        if frame_number() == 61:
+            # (a camera off the aircraft's boarding side, where the lighter comes alongside)
+            global judge_camera, judge_origin
+            judge_origin = pc.state.position
+            side = quat_rotate(pc.state.orientation, vec3(1, 0, 0)); fwd = forward(pc.state)
+            size = aircraft_profile(pc.kind).length
+            judge_camera = JudgeView(pc.state.position + side * f32(size * 0.9) + fwd * f32(size * 0.45) + vec3(0, f32(size * 0.12), 0), lighter.to + vec3(0, 2, 0), "the fuel lighter")
+        if frame_number() == 60:
+            c = living_world.people[living_world.player].craft
+            debug_fuel_ml(c, 1000)
+            pc.state.fuel = 1.0
+            purse0 = player_cents()
+            call_lighter()
+            print("LIGHTER called: phase {lighter_phase} purse {purse0} -> {player_cents()} ledger {launches.ledger_balances(living_world)}")
+        if lighter_phase == 2 and ui == .fuel and not refueling() and fuel_notice == "":
+            fuel_take(3)
+            print("LIGHTER alongside at frame {frame_number()}: {fuel_notice} fuel {pc.state.fuel:.0} purse {player_cents()} ledger {launches.ledger_balances(living_world)}")
+        if lighter_phase == 2 and ui == .fuel and fuel_notice != "" and not refueling(): ui = .none
+        if frame_number() % 60 == 0: print("LIGHTER frame {frame_number()} phase {lighter_phase} t {lighter.t:.1} ui {ui}")
+        return
+    # (swing: the wind held abeam of the moored aircraft at 8 m/s; it comes round head to wind)
+    if launch_capture == "swing":
+        if frame_number() == 31:
+            global judge_camera, judge_origin
+            judge_origin = pc.state.position
+            judge_camera = JudgeView(offshore!.at + vec3(0, 140, 30), offshore!.at, "on the buoy, from above")
+        if frame_number() >= 30:
+            f0 = heading_vector(offshore!.heading + PI / 2)
+            wind_now.dir = vec2(-f0.x, -f0.z); wind_now.speed = 8.0
+        if frame_number() % 120 == 0:
+            f = forward(pc.state)
+            fm = quat_rotate(pc.state.mooring_orientation, vec3(0, 0, -1))
+            print("SWING frame {frame_number()} moor {atan2(f64(fm.x), -f64(fm.z)):.3} heading {atan2(f64(f.x), -f64(f.z)):.3} target {atan2(-f64(wind_now.dir.x), f64(wind_now.dir.y)):.3} rate {swing_rate:.4} from buoy {length((pc.state.position - offshore!.at).xz):.1}")
+        return
     # (shot:water34|side|flight: the coordinator's model captures, a camera set off the aircraft
     # by its size, three-quarter ahead, abeam, or riding along in flight)
     if launch_capture.starts_with("shot:"):
@@ -4609,7 +4745,7 @@ fuel_panel = ():
         if most > 0:
             q = refuel.fuel_quote(w, p, who, most)
             options.push(FuelOption("Fill what {phoenix_text(fill.cash)} buys", q.ml, q.cents, q.reason))
-    res = fuel_counter(fonts, p.name, refuel.fuel_price(w, p), fuel_reading(), f64(cap) / 1000.0, fill.stock_ml, player_cents(), options, refueling(), fuel_notice, dues = p.core >= 0 and p.core != 5)
+    res = fuel_counter(fonts, p.name, refuel.fuel_price(w, p), fuel_reading(), f64(cap) / 1000.0, fill.stock_ml, player_cents(), options, refueling(), fuel_notice, dues = p.core >= 0 and p.core != 5, lighter = lighter_phase == 2)
     if res.choice >= 0: fuel_take(res.choice)
     if res.refused >= 0: fuel_notice = options[res.refused].reason
     if res.closed: ui = .none
@@ -5014,6 +5150,7 @@ aboard_offers = () -> Offer[]:
         else: offer_add(o, "ashore", "step ashore      Shift  open the throttle")
     if landplane_parked(): offer_add(o, "ashore", "climb down      Shift  open the throttle")
     if not st.moored and buoy_spot() != none: offer_add(o, "buoy", "make fast to the buoy")
+    offer_add(o, "lighter", lighter_offer())
     if not st.moored and (dock_spot() != none or find_vessel_mooring(vessels, st, pc.spec.span) != none): offer_add(o, "moor", "moor here")
     offer_add(o, "fuel", offer_words(fuel_offer_text(again = true)))
     race = race_offer_here()
@@ -5048,6 +5185,7 @@ update = (dt: f64):
     if let kept = title_kept:
         pc.state = kept
         title_kept = none
+    build_slice_tick()
     if title.open:
         title_update(dt)
         return
@@ -5458,6 +5596,7 @@ update_frame = (dt: f64, saves: bool = true):
             else if act == "buoy":
                 if let m = buoy_spot(): moor_on_buoy(m)
             else if act == "launch-ashore": start_launch(false)
+            else if act == "lighter": call_lighter()
             else if act == "fuel": open_fuel_pier()
             else if act == "ashore" and landplane_parked():
                 step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
@@ -5495,6 +5634,8 @@ update_frame = (dt: f64, saves: bool = true):
         rope.loose = rope.anchor + normalize(off + vec3(0.001, 0, 0)) * 3.0
     if frame_number() % 30 == 7: refresh_buoys()
     if launch_capture != "": launch_capture_step()
+    swing_on_buoy(dt)
+    lighter_step(dt)
     if not rope.tied and pc.state.moored and offshore == none: tie_up()
     dust_ps.update(dt)
     # debugging: F1 opens the panel; its standing switches
@@ -5562,6 +5703,7 @@ update_frame = (dt: f64, saves: bool = true):
             if pc.state.moored:sync_living_player(pc,living_world)
             battle.actors[pci].state=pc.state
             if dbg.no_damage:battle.actors[pci].fire=0;battle.actors[pci].fire_age=0
+    zone("traffic and world")
     update_traffic(traffic,living_world,traffic_scene,if me.mode == .free: free.pos else: if me.mode==.aboard:pc.state.position else:me.pos,t,dt,pc.state,towns,battle,
         (events:CombatEvent[]):
             combat_effect_events(combat_visual,events,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
@@ -5577,6 +5719,7 @@ update_frame = (dt: f64, saves: bool = true):
         ,ships=[loop ship in vessels.ships:if ship.health>0.2:AirShip(ship.id,ship.position,ship.velocity)]
         ,other_air=[loop p in air_events.pilots:AirContact(p.craft,p.state.position,p.state.velocity,p.capital,p.state.on_water,p.state.moored)]
     )
+    zone_end()
     when TARGET == "wasm": speech_loading.step_speech_warmup(living_world,speech_warmup)
     if active_scenario!="":commit_scenario_aircraft(living_world,battle)
     receive_vessel_hits(vessels,battle,vessel_bindings)
@@ -5733,9 +5876,23 @@ update_frame = (dt: f64, saves: bool = true):
     if me.mode == .aboard:
         direction = normalize(forward(pc.state).xz)
         grass_airflow = vec3(direction,f32(clamp(pc.state.throttle*(1.0-pc.state.engine_damage)+f64(length(pc.state.velocity))*0.006,0.0,1.3)))
-    if (me.mode == .walking or (me.mode == .aboard and f64(grass_actor.y)-surface_height(f64(grass_actor.x),f64(grass_actor.z))<25.0)) and grass_needs_refresh(grass,grass_actor,scene_camera()):
-        global grass
-        grass = build_grass(towns, grass_actor)
+    # The next field is made a slice a frame, begun 6 m on (half the old refresh distance) so it
+    # is whole before the walker nears the edge of the one drawn; at once the first time, or
+    # after a jump clean out of the old field.
+    global grass,grass_job
+    grass_moved = f64(length(grass.center.xz-grass_actor.xz))
+    if (me.mode == .walking or (me.mode == .aboard and f64(grass_actor.y)-surface_height(f64(grass_actor.x),f64(grass_actor.z))<25.0)) and (grass_needs_refresh(grass,grass_actor,scene_camera()) or (grass.built and grass_moved > 6.0)):
+        if not grass.built or grass_moved > grass.resident_radius:
+            grass_job = GrassBuild()
+            grass = build_grass(towns, grass_actor)
+        else if not grass_job.active: grass_job = grass_build_start(towns, grass_actor)
+    if grass_job.active:
+        zone("grass build")
+        # (a field falling behind a fast walker gets a wider slice before the drawn one runs out)
+        behind = grass_moved > max(12.0,grass.resident_radius-f64(grass_draw_radius())-6.0)
+        if grass_build_step(towns, grass_job, time()+(if behind: 0.008 else: build_slice(GRASS_BUILD_SECONDS))):
+            grass = grass_build_finish(grass_job); grass_job = GrassBuild()
+        zone_end()
 
 # ---------------- draw ----------------
 
@@ -5805,11 +5962,13 @@ draw_world = (L: Light):
         bow = transform_point(afloat_transform(craft_transform(pc),t), rope_bow())
         draw_rope(rope, pc.state.moored, bow, L, t)
         launches.draw_launch(launch_view, launch, L, t)
+        launches.draw_lighter(launch_view, lighter, L, t)
         loop m in buoys_near: launches.draw_buoy(launch_view, m.at, L, t))
     draw_custom((): zone("sky");draw_sky(L, t);zone_end())
     draw_custom((): zone("far sea");draw_far_sea(depth_tex, L, t, wind_now);zone_end())
     draw_custom(():
-        zone("inland prepare");prepare_inland_scenery(scene_camera());prepare_town_view(towns,scene_camera());zone_end()
+        zone("inland scenery prep");prepare_inland_scenery(scene_camera());zone_end()
+        zone("town view prep");prepare_town_view(towns,scene_camera());zone_end()
         zone("river occlusion");draw_river_occlusion(depth_tex,L,t);zone_end()
         draw_river_banks(L,t)
         zone("lake banks");draw_lake_banks(L,t);zone_end()
@@ -5860,8 +6019,8 @@ draw_world = (L: Light):
         draw_folk(folks, Lw, t, band.kit)
         draw_leisure(Lw)
         draw_cats(cat_scene, L, t)
-        life_view.draw_life(living_world,life_meshes,L,t)
-        cargo_view.draw_cargo(living_world,cargo_meshes,L,t)
+        zone("life");life_view.draw_life(living_world,life_meshes,L,t);zone_end()
+        zone("cargo");cargo_view.draw_cargo(living_world,cargo_meshes,L,t);zone_end()
         loop k in 0..board_spots.len():
             tw = towns[k]
             draw(obj_sh, board_mesh, obj_params(L, t, translation(board_spots[k]) * rotation_y(atan2(f64(tw.out.x), f64(tw.out.y)))))
@@ -5875,6 +6034,10 @@ draw_world = (L: Light):
             lean = if swim.diving >= 0.0: 1.2 + swim.diving * 0.4 else: 1.35 - 1.05 * swim_tread
             bob = vec3(0, f32(sin(t * 1.9) * 0.035 - 0.5 * swim_tread), 0)
             draw_figure(player_figure(), me.pos + bob, me.yaw, swim.stroke, swim.effort, Lw, t, offset=world_residual(walker_point), posture=5, lean=lean)
+        else if me.mode == .free and launch.active:
+            # (riding the harbour launch: seated on its foredeck, facing forward)
+            seat = launches.launch_seat(launch, t)
+            draw_figure(player_figure(), seat.0, seat.1, 0.0, 0.0, Lw, t, offset=world_residual(world_point(seat.0)), posture=1)
         else if me.mode == .walking: draw_figure(player_figure(), me.pos, me.yaw, me.phase, player_stride(), Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=player_posture(),arms=(if let ap = pilot_arm_pose(): vec2(-9, f32(ap.angle)) else: fish_arms()),elbows=vec2(0,f32(if let ap = pilot_arm_pose(): ap.bend else: 0.0)),reach=(if let ap = pilot_arm_pose(): ap.reach else: 0.0),twist=(if let ap = pilot_arm_pose(): ap.twist else: 0.0))
         draw_traffic(all_air_traffic,craft_models,L,t,battle,1800)
         draw_air_meets(air_meet_view,air_events,L,t)
