@@ -186,7 +186,14 @@ blue discs that stay in every frame are **speed flecks**.
   stay white, overhanging undersides and a thin rim where each lobe turns from the eye take the
   shadow tone (in bright sun the middle tone saturates to white, so curtains skip it). All motion
   is continuous in time, never per-frame noise. Billows and crest drops use the small shared mesh
-  (40x24); sheet lobes and other bodies the 64x40 mesh.
+  (40x24); sheet lobes and other bodies the 64x40 mesh. Spray only at the water: skimming
+  counts within 6 m of the sea whatever the span, and a sheet is never drawn between an aircraft
+  and the sea. The [big boats](#big-boats) throw theirs from **spray stations** (`_boat_targets`):
+  each hull, sponson and float's contacts, each wet or dry with hysteresis (wet on touching the
+  water, dry only well clear of it), the curtain's root sliding along the hull (eased, at most
+  12 m/s) to the aftmost wet station instead of jumping between contacts; the fans start at the
+  hull's chines; skimming low, the sheet is on the sea under the part
+  (`tests/boat_spray_test.jo`).
 - **Capture:** `tools/splash_frames.jo` with `POLISH_CASE=planing` (a held planing run),
   `POLISH_ORBIT="azimuth elevation distance [aim-x aim-z]"`, `POLISH_NOCRAFT=1` to hide the
   aircraft, `POLISH_SEQUENCE=<dir>` for 30 fps strips.
@@ -480,6 +487,10 @@ On the rivers branch until it lands.
   thick aerofoil wings, round nacelles) rather than the catalogue's boxes. The three over 30 m span
   (Do X, Sarafand, H-4) are **offshore-only**: they never use a dock, only an
   [offshore mooring](#offshore-mooring).
+- **Paints:** a type with more than one period paint shows a Paint button on the pause menu's
+  "Flying now" card (`boat_paints`); the S.55 wears Silver Dope or the **Greek Naval Air Service**
+  (aluminium dope, a dark hull bottom, light-blue and white roundels, blue-white-blue rudders),
+  saved with the aircraft. Paints are named, not numbered (`livery_named`).
 - **Code:** `src/aircraft_boats.jo` (`build_big_boat`, `big_boat`, `offshore_only`,
   `swing_radius`, `boat_parts`); profiles in `src/aircraft_catalog.jo` (`draft`, `engines`,
   `discs`); `tools/boats_view.jo` (four views of one model); tests in
