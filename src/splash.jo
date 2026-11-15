@@ -6,7 +6,7 @@ use 'pilot.jo'
 use 'flight.jo'
 use 'flight_feedback.jo'
 use 'planes.jo'
-from 'aircraft_boats.jo' import boat_spray_scale
+from 'aircraft_boats.jo' import boat_spray_scale, big_boat
 use 'damage.jo'
 use 'flight_effects.jo'
 use 'world_particles.jo'
@@ -245,7 +245,7 @@ curtain_back=(q:f64,thickness:f64,apex:f64)->f64:
 # further out; it reaches wider and stands taller with speed. A float's inner side (toward
 # a twin float, `inner` = that side's sign) throws only a low, short sheet with a few small
 # billows, so the gap between the floats stays clear.
-splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phase:f64,origin:vec3,t:f64,reach:f64=0.0,bow:f64=0.0,heave:f64=1.0,inner:f64=0.0):
+splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phase:f64,origin:vec3,t:f64,reach:f64=0.0,bow:f64=0.0,heave:f64=1.0,inner:f64=0.0,beam:f64=0.0):
     length=if reach>0.0:reach else:1.0+run*6.0
     curtain_length=length*0.72+bow
     # Low and short when just planing, wider and taller at speed. Chop and float bounce
@@ -263,7 +263,7 @@ splash_fan=(out:mut SplashInstance[],root:vec3,back:vec3,right:vec3,run:f64,phas
         direction=normalize(back+right*f32(side*(if low:0.02 else:0.18+run*0.16)))
         across=normalize(vec3(direction.z,0,-direction.x))
         up=cross(direction,across)
-        edge=root-back*f32(bow)+right*f32(side*(0.38+run*0.12))
+        edge=root-back*f32(bow)+right*f32(side*(beam+0.38+run*0.12))
         # Where along the fan (0 bow..1 tail) its arch stands how tall and reaches how far:
         # a half-cone opening aft from the bow, so from behind one looks into its open
         # crescent, settling a little at the very tail. Between twin floats only a low,
@@ -417,6 +417,7 @@ struct SplashSheet:
     phase:f64=0.0
     heave:f64=0.0 # extra curtain height from chop and float bounce, as a fraction
     inner:f64=0.0 # the float's side toward a twin float (-1 left, 1 right), 0 when central
+    beam:f64=0.0 # how far each side's fan starts out from the root (a broad hull's chines)
 struct SplashMotion:
     sheets:SplashSheet[7]
     time:f64= -1.0
@@ -425,6 +426,7 @@ splash_motion=SplashMotion()
 splash_ramp=(value:f64,target:f64,dt:f64)->f64:
     mix(value,target,1.0-exp(-max(0.0,dt)/(if target>value:0.065 else:0.12)))
 splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
+    if big_boat(f.kind): return _boat_targets(f,model,pose,active)
     s=f.state;out:SplashSheet[]
     rotation=pose;rotation[3]=vec4(0,0,0,1)
     anchor=flight_fx_anchor(f,pose)
@@ -433,7 +435,8 @@ splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
     surface=water_at(f64(s.position.x),f64(s.position.z))
     level=if geography_enabled and surface.wet:surface.level else:0.0
     gap=f64(s.position.y)-f.spec.float_height-level
-    skim=if s.on_water or s.moored:0.0 else:(1.0-smoothstep(0.5,f.spec.span*0.6,gap))*smoothstep(28.0,60.0,f64(length(s.velocity))/pure_k(f.spec))
+    # (skimming: within a few metres of the water, whatever the span; a big aircraft at 30 m is flying)
+    skim=if s.on_water or s.moored:0.0 else:(1.0-smoothstep(0.5,min(f.spec.span*0.6,6.0),gap))*smoothstep(28.0,60.0,f64(length(s.velocity))/pure_k(f.spec))
     loop part in 0..7:
         sheet=SplashSheet(back=back,right=right)
         aft= -1e30;wet= -1e30;front=1e30;dip=0.0
@@ -465,6 +468,103 @@ splash_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
         out.push(sheet)
     out
 
+# The big boats' spray stations: each hull, sponson and float throws its curtains from a fixed
+# set of points (its contacts along the hull), each wet or dry with hysteresis (wet on touching
+# the water, dry only once 0.25 m clear of it), and the curtain's root slides smoothly along the
+# hull to the aftmost wet station instead of jumping between contacts as the hull pitches. Each
+# part's centreline, beam and inner side are its own and fixed. Spray only at the water: a part
+# clear of it throws nothing (its curtain drains away where it was), and skimming low over the
+# sea roots its sheet on the sea, never at the aircraft.
+struct BoatSplash:
+    kind = -1
+    wet: bool[]
+    root_z: f64[]
+    seen: bool[]
+    dry: f64[]                      # how long each part has been clear of the water
+    time = -1.0
+boat_splash=BoatSplash()
+
+_boat_targets=(f:Flyer,model:CraftModel,pose:mat4,active:bool)->SplashSheet[]:
+    global boat_splash
+    s=f.state;out:SplashSheet[]
+    rotation=pose;rotation[3]=vec4(0,0,0,1)
+    anchor=flight_fx_anchor(f,pose)
+    back=quat_rotate(s.orientation,vec3(0,0,1));right=quat_rotate(s.orientation,vec3(1,0,0))
+    run=smoothstep(3.0,f.spec.stall_speed,water_run_speed(f.spec,s))
+    n=model.contacts.len()
+    if boat_splash.kind!=int(f.kind) or boat_splash.wet.len()!=n:
+        boat_splash=BoatSplash(kind=int(f.kind),wet=fill(false,n),root_z=fill(0.0,7),seen=fill(false,7),dry=fill(9.0,7))
+    dt=if boat_splash.time<0.0 or f.sea_t<boat_splash.time:0.0 else:min(0.1,f.sea_t-boat_splash.time)
+    boat_splash.time=f.sea_t
+    in_water=active and s.on_water and not s.moored and not s.crashed and run>0.0
+    # each station's height over the sea, and its wetness
+    rise:f64[]=fill(1e9,n)
+    loop i in 0..n:
+        p=model.contacts[i]
+        if part_health(s.damage,PartId(contact_part(f.kind,p)))<=0:
+            boat_splash.wet[i]=false
+            continue
+        c=world_offset(anchor,transform_point(rotation,p))
+        rise[i]=c.y-f64(swell_at(c.x,c.z,f.sea_t).x)
+        # (dry only well clear: the longer the hull, the further its stations ride up and down)
+        boat_splash.wet[i]=in_water and (if boat_splash.wet[i]:rise[i]<0.25+0.006*f.spec.span*0.5 else:rise[i]<0.0)
+    # (skimming low and fast, the sheet on the water under the part, not hanging from it)
+    lowest=1e9
+    loop r in rise:lowest=min(lowest,r)
+    skim=if s.on_water or s.moored or s.crashed:0.0 else:(1.0-smoothstep(0.3,4.0,lowest))*smoothstep(28.0,60.0,f64(length(s.velocity))/pure_k(f.spec))
+    loop part in 0..7:
+        sheet=SplashSheet(back=back,right=right)
+        idx:int[]
+        loop i in 0..n:
+            if contact_part(f.kind,model.contacts[i])==part and rise[i]<1e8:idx.push(i)
+        if idx.len()==0:
+            boat_splash.seen[part]=false
+            out.push(sheet)
+            continue
+        cx=0.0;bottom=1e9;aft= -1e30
+        loop i in idx:cx+=f64(model.contacts[i].x);bottom=min(bottom,f64(model.contacts[i].y));aft=max(aft,f64(model.contacts[i].z))
+        cx/=f64(idx.len())
+        beam=0.0
+        loop i in idx:beam=max(beam,abs(f64(model.contacts[i].x)-cx))
+        sheet.beam=beam;sheet.phase=cx*1.7
+        # (a hull or float off the centreline has its partner across from it: the low inner sheet)
+        sheet.inner=if abs(cx)>0.6: -sign(cx) else:0.0
+        wet_aft= -1e30;wet_front=1e30;dip=0.0
+        loop i in idx:
+            if boat_splash.wet[i]:
+                z=f64(model.contacts[i].z);wet_aft=max(wet_aft,z);wet_front=min(wet_front,z);dip=max(dip,-rise[i])
+        if wet_aft> -1e29:
+            boat_splash.dry[part]=0.0
+            # the root slides along the hull to the aftmost wet station (a third of a second); a
+            # part clear of the water for a moment keeps its place and slides on from it
+            if not boat_splash.seen[part]:boat_splash.root_z[part]=wet_aft
+            else:
+                # (eased, and never faster than 12 m/s along the hull)
+                step=(wet_aft-boat_splash.root_z[part])*(1.0-exp(-dt/0.35))
+                boat_splash.root_z[part]+=clamp(step,-12.0*dt,12.0*dt)
+            boat_splash.seen[part]=true
+            rz=boat_splash.root_z[part]
+            sheet.root=world_offset(anchor,transform_point(rotation,vec3(f32(cx),f32(bottom),f32(rz))))
+            sheet.root.y=f64(swell_at(sheet.root.x,sheet.root.z,f.sea_t).x)+0.04
+            sheet.run=run;sheet.amount=smoothstep(0.0,0.04,run)
+            sheet.bow=max(0.0,rz-wet_front)*(1.0-run*0.55)
+            sheet.heave=clamp(dip*0.6-f64(s.velocity.y)/pure_k(f.spec)*0.05-0.08,-0.2,0.25)
+        else:
+            boat_splash.dry[part]+=dt
+            skimming=active and skim>0.1
+            if boat_splash.dry[part]>1.0 and not skimming:boat_splash.seen[part]=false
+            if skimming:
+                # (on from where its curtain was, at the water under it)
+                if not boat_splash.seen[part]:boat_splash.root_z[part]=aft
+                boat_splash.seen[part]=true
+                at=world_offset(anchor,transform_point(rotation,vec3(f32(cx),f32(bottom),f32(boat_splash.root_z[part]))))
+                at.y=f64(swell_at(at.x,at.z,f.sea_t).x)+0.06
+                sheet.root=at
+                sheet.reach=4.0+skim*7.0
+                sheet.run=skim*0.65;sheet.amount=smoothstep(0.1,0.25,skim)
+        out.push(sheet)
+    out
+
 step_splash_motion=(motion:mut SplashMotion,targets:SplashSheet[],anchor:WorldPoint,t:f64):
     dt=if motion.time<0.0:0.0 else:max(0.0,t-motion.time)
     if t<motion.time or length(world_delta(anchor,motion.anchor))>250.0:motion=SplashMotion()
@@ -472,7 +572,7 @@ step_splash_motion=(motion:mut SplashMotion,targets:SplashSheet[],anchor:WorldPo
         next=targets[part];previous=motion.sheets[part]
         # Track the live float, even while its release envelope drains away.
         if next.amount>0.0:
-            previous.root=next.root;previous.back=next.back;previous.right=next.right;previous.phase=next.phase;previous.inner=next.inner
+            previous.root=next.root;previous.back=next.back;previous.right=next.right;previous.phase=next.phase;previous.inner=next.inner;previous.beam=next.beam
             previous.run=splash_ramp(previous.run,next.run,dt)
             previous.reach=splash_ramp(previous.reach,next.reach,dt)
             previous.bow=splash_ramp(previous.bow,next.bow,dt)
@@ -492,12 +592,13 @@ splash_instances=(f:Flyer,model:CraftModel,pose:mat4,ps:WorldParticles,origin:ve
     loop sheet in sheets:
         if sheet.amount<0.0001:continue
         at=world_local(sheet.root,origin);start=out.len()
-        splash_fan(out,at,sheet.back,sheet.right,sheet.run,t*2.0+sheet.phase,origin,t,sheet.reach,sheet.bow,1.0+sheet.heave,sheet.inner)
         # (the big boats' curtains as big as they are, fullest while the hull climbs over the
-        # hump onto the step: the Do X throws walls of water)
+        # hump onto the step: the Do X throws walls of water. Their fans start at the chines:
+        # the beam is given unscaled, so after the size envelope it lands on the hull's side)
         big=boat_spray_scale(f.kind)
         if big>1.0:big*=1.0+0.45*sin(PI*clamp(sheet.run,0.0,1.0))
         fade=f32(sheet.amount*big)
+        splash_fan(out,at,sheet.back,sheet.right,sheet.run,t*2.0+sheet.phase,origin,t,sheet.reach,sheet.bow,1.0+sheet.heave,sheet.inner,sheet.beam/max(f64(fade),0.05))
         loop i in start..out.len():
             # Keep the user's water ovals/streaks in exactly the same places and
             # proportions. Only their size envelope changes, never their placement.
