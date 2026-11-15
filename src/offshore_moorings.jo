@@ -1,0 +1,237 @@
+# Offshore moorings: where an aircraft too big for a harbour's seaplane docks lies on a buoy.
+# For each harbour (a settlement with a sea-level harbor) and swing radius, a few buoy positions
+# in open water off it: deep enough everywhere the aircraft can swing, clear of every quay, mole,
+# dock, the harbour's boats, its seaplane buoy and the ships' anchorage, out of the seaplanes'
+# approach lane, with a clear run for the launch from a dock, and as sheltered as the coast
+# allows. Pure and deterministic: terrain and port data only (no RNG, no camera, no living
+# state); cached per harbour and radius. The world audit re-checks every mooring found.
+use 'settlements.jo'
+use 'settlement_ports.jo'
+use 'sea_routes.jo'
+use 'geography.jo'
+
+struct OffshoreMooring:
+    place: int                      # settlement ID (the original six are 0..5)
+    at: vec3                        # the buoy, on the water
+    radius: f64                     # the swing circle it was found for
+    dock: vec3                      # the dock berth the harbour launch leaves from
+    shelter: f64                    # 0 open sea all round .. 1 land on every side
+    heading: f64                    # the way the aircraft lies at rest, nose to the buoy and the harbour (flight heading)
+
+# the depth kept under the whole swing circle, and beyond it to the margin (shoals)
+const MOORING_DEPTH = 3.0
+const MOORING_SHOAL_DEPTH = 1.2
+const MOORING_SHOAL_MARGIN = 15.0
+const MOORING_REACH = 1800.0        # furthest from the harbour's docks a mooring may lie
+const MOORING_LANE = 70.0           # half width of the seaplanes' approach lane off each dock
+
+mooring_cache: {int: OffshoreMooring[]} = {}
+
+# the settlement index of a harbour by its ID, or -1
+_harbour_index = (place: int) -> int:
+    if not (place in settlement_by_id): return -1
+    i = settlement_by_id[place]
+    s = world_settlements[i]
+    if s.harbor.len() == 0 or abs(f64(s.harbor[0].at.y)) > 0.5: return -1
+    i
+
+# Everything a moored aircraft must swing clear of near a harbour: points with their own
+# clearances (x, z, metres), and quay/mole segments (a, b, half width).
+struct MooringObstacles:
+    points: vec3[]
+    segments: vec4[]
+    widths: f64[]
+    lanes: vec4[]                   # dock -> dock + out * 600 (the approach lanes)
+
+_obstacles = (centre: vec2, reach: f64 = MOORING_REACH + 2500.0) -> MooringObstacles:
+    o = MooringObstacles()
+    loop s in world_settlements:
+        if s.harbor.len() == 0: continue
+        if f64(length(s.harbor[0].at.xz - centre)) > reach: continue
+        loop d in s.harbor:
+            o.points.push(vec3(d.at.x, d.at.z, 26.0))
+            o.points.push(vec3(d.buoy.x, d.buoy.z, 32.0))
+            o.segments.push(vec4(d.quay_a.x, d.quay_a.y, d.quay_b.x, d.quay_b.y)); o.widths.push(d.width * 0.5 + 6.0)
+            if s.kind == .capital:
+                tip = d.quay_b + vec2(-s.out.y, s.out.x) * 350.0
+                o.segments.push(vec4(d.quay_b.x, d.quay_b.y, tip.x, tip.y)); o.widths.push(11.0)
+            far = d.at.xz + s.out * 600.0
+            o.lanes.push(vec4(d.at.x, d.at.z, far.x, far.y))
+        if s.legacy < 0 and not s.remote_harbor and s.kind != .lighthouse:
+            p = settlement_port(s)
+            loop q in p.quays: o.segments.push(vec4(q.a.x, q.a.z, q.b.x, q.b.z)); o.widths.push(q.width * 0.5 + 6.0)
+            loop b in p.boats: o.points.push(vec3(b.x, b.z, 20.0))
+            o.points.push(vec3(p.anchorage.x, p.anchorage.z, 110.0))
+    o
+
+_segment_distance = (p: vec2, a: vec2, b: vec2) -> f64:
+    d = b - a
+    u = clamp(f64(dot(p - a, d)) / max(f64(dot(d, d)), 0.001), 0.0, 1.0)
+    f64(length(p - a - d * f32(u)))
+
+# Clear of every obstacle for a swing circle of radius r round c (no depth test).
+_clear_of = (o: MooringObstacles, c: vec2, r: f64) -> bool:
+    loop p in o.points:
+        if f64(length(c - p.xy)) < r + f64(p.z): return false
+    loop i in 0..o.segments.len():
+        g = o.segments[i]
+        if _segment_distance(c, g.xy, g.zw) < r + o.widths[i]: return false
+    true
+
+_in_lane = (o: MooringObstacles, c: vec2, r: f64) -> bool:
+    loop g in o.lanes:
+        if _segment_distance(c, g.xy, g.zw) < r + MOORING_LANE: return true
+    false
+
+# Deep water under the whole circle, and no shoal just beyond it. The sea lanes' own query.
+_deep_disc = (c: vec2, r: f64, rings: int = 3, margin: f64 = MOORING_SHOAL_MARGIN, depth: f64 = MOORING_DEPTH) -> bool:
+    if not sea_depth_ok(c, depth): return false
+    loop k in 1..rings + 1:
+        rr = r * f64(k) / f64(rings)
+        n = max(8, int(rr / 9.0))
+        loop j in 0..n:
+            a = TAU * (f64(j) + 0.5 * f64(k % 2)) / f64(n)
+            if not sea_depth_ok(c + vec2(f32(cos(a) * rr), f32(sin(a) * rr)), depth): return false
+    n = max(12, int((r + margin) / 9.0))
+    loop j in 0..n:
+        a = TAU * f64(j) / f64(n)
+        if not sea_depth_ok(c + vec2(f32(cos(a) * (r + margin)), f32(sin(a) * (r + margin))), MOORING_SHOAL_DEPTH): return false
+    true
+
+# The same on a square grid every `step` metres over the disc (the search's final gate: finer
+# than the audit's rings, so a mooring found is one the audit passes).
+_deep_grid = (c: vec2, r: f64, step: f64 = 6.0) -> bool:
+    n = int(ceil(r / step))
+    loop i in -n..n + 1:
+        loop j in -n..n + 1:
+            q = vec2(f32(f64(i) * step), f32(f64(j) * step))
+            if f64(length(q)) > r: continue
+            if not sea_depth_ok(c + q, MOORING_DEPTH): return false
+    true
+
+# The launch's straight run from a dock berth to the buoy, in water a motor launch floats in.
+launch_run_clear = (from: vec2, to: vec2) -> bool:
+    d = f64(length(to - from))
+    n = int(d / 8.0)
+    loop k in 2..n:
+        if not sea_depth_ok(from + (to - from) * f32(f64(k) / f64(n)), 0.9): return false
+    true
+
+# How sheltered a spot is: of 16 bearings, how many meet land within 1.5 km (nearer counts more).
+mooring_shelter = (c: vec2) -> f64:
+    total = 0.0
+    loop j in 0..16:
+        a = TAU * f64(j) / 16.0
+        dir = vec2(f32(cos(a)), f32(sin(a)))
+        loop step in 1..16:
+            if place_ground(c + dir * f32(f64(step) * 100.0)) > 0.0:
+                total += 1.0 - f64(step - 1) / 20.0
+                break
+    total / 16.0
+
+# The nearest dock berth of a harbour to a point.
+_nearest_dock = (s: WorldSettlement, p: vec2) -> vec3:
+    best = s.harbor[0].at; bd = 1e18
+    loop d in s.harbor:
+        l = f64(length(d.at.xz - p))
+        if l < bd: bd = l; best = d.at
+    best
+
+# The moorings of a harbour for a swing radius: up to three, the best first (none where no clear,
+# sheltered water lies within reach). Cached.
+offshore_moorings = (place: int, radius: f64) -> OffshoreMooring[]:
+    global mooring_cache
+    key = place * 1000 + int(ceil(radius))
+    if key in mooring_cache: return mooring_cache[key]
+    out: OffshoreMooring[]
+    index = _harbour_index(place)
+    if index < 0:
+        mooring_cache[key] = out
+        return out
+    s = world_settlements[index]
+    o = _obstacles(s.harbor[0].at.xz)
+    origin = s.harbor[0].at.xz
+    loop d in s.harbor: origin += d.at.xz
+    origin = (origin - s.harbor[0].at.xz) / f32(s.harbor.len())
+    # Candidates on rings round the docks, nearest first, ending a little beyond the first ring
+    # that had any clear one. The cheap tests first; the fine depth rings and the shelter only for
+    # the ten that would be best on distance alone.
+    found: (f64, vec2)[]
+    first_ring = -1.0
+    dist = radius + 60.0
+    loop dist <= MOORING_REACH:
+        if first_ring > 0 and dist > first_ring + 260.0: break
+        n = max(24, int(TAU * dist / max(radius * 0.6, 30.0)))
+        loop j in 0..n:
+            a = TAU * f64(j) / f64(n)
+            c = origin + vec2(f32(cos(a) * dist), f32(sin(a) * dist))
+            if not _clear_of(o, c, radius): continue
+            if not _deep_disc(c, radius, 2): continue
+            dock = _nearest_dock(s, c)
+            if not launch_run_clear(dock.xz, c): continue
+            if first_ring < 0: first_ring = dist
+            found.push((f64(length(c - dock.xz)) + (if _in_lane(o, c, radius): 500.0 else: 0.0), c))
+        dist += max(radius * 0.5, 25.0)
+    found.sort((x: (f64, vec2)) -> f64: x.0)
+    scored: (f64, vec2, f64)[]
+    loop f in found:
+        if scored.len() >= 10: break
+        if not _deep_disc(f.1, radius, 6) or not _deep_grid(f.1, radius): continue
+        shelter = mooring_shelter(f.1)
+        scored.push((f.0 + (1.0 - shelter) * 900.0, f.1, shelter))
+    scored.sort((x: (f64, vec2, f64)) -> f64: x.0)
+    loop f in scored:
+        if out.len() >= 3: break
+        apart = true
+        loop m in out:
+            if f64(length(m.at.xz - f.1)) < radius * 2.0 + 20.0: apart = false
+        if not apart: continue
+        dock = _nearest_dock(s, f.1)
+        out.push(OffshoreMooring(place, vec3(f.1.x, 0, f.1.y), radius, dock, f.2, atan2(-f64(s.out.x), f64(s.out.y))))
+    mooring_cache[key] = out
+    out
+
+# A finer, independent re-check of a mooring (the world audit's): denser depth rings, every
+# obstacle again, the launch's run. "" when clear, else what is wrong.
+verify_mooring = (m: OffshoreMooring) -> str:
+    c = m.at.xz
+    o = _obstacles(c)
+    if not _clear_of(o, c, m.radius - 1.0): return "swing circle reaches a quay, dock, buoy, boat or anchorage"
+    # (depth under the circle on rings of its own, a little more lenient than the search's 3 m:
+    # 2.5 m of water still clears the deepest hull by a metre; the shoal ring a little inside)
+    if not _deep_disc(c, m.radius - 1.0, 5, MOORING_SHOAL_MARGIN - 5.0, MOORING_DEPTH - 0.5): return "shoal or land inside the swing circle"
+    if not launch_run_clear(m.dock.xz, c): return "the launch's run from the dock crosses shallows or a quay"
+    ""
+
+# The harbour (sea level, with a harbor) whose docks are nearest a point within reach, or -1.
+nearest_harbour = (p: vec2, reach: f64 = 2500.0) -> int:
+    best = -1; bd = reach
+    loop s in world_settlements:
+        if s.harbor.len() == 0 or abs(f64(s.harbor[0].at.y)) > 0.5: continue
+        if f64(length(s.center.xz - p)) > reach + 1500.0: continue
+        loop d in s.harbor:
+            l = f64(length(d.at.xz - p))
+            if l < bd: bd = l; best = s.id
+    best
+
+# The dock berths of a harbour (on the water, beside its quays).
+harbour_docks = (place: int) -> vec3[]:
+    index = _harbour_index(place)
+    if index < 0: return []
+    [loop d in world_settlements[index].harbor: d.at]
+
+# Clear open water big enough for a swing circle of radius r, nearest a point: a spiral out to
+# 8 km. For placing a big aircraft where no harbour mooring is near.
+clear_water_near = (p: vec2, r: f64) -> vec2?:
+    o = _obstacles(p, 9000.0)
+    if _clear_of(o, p, r) and _deep_disc(p, r): return p
+    step = max(r * 0.5, 25.0)
+    dist = step
+    loop dist < 8000.0:
+        n = max(12, int(TAU * dist / step))
+        loop j in 0..n:
+            a = TAU * f64(j) / f64(n)
+            c = p + vec2(f32(cos(a) * dist), f32(sin(a) * dist))
+            if _clear_of(o, c, r) and _deep_disc(c, r): return c
+        dist += step
+    none
