@@ -1,0 +1,114 @@
+# The air arm at a save boundary: a game saved while a C.R.20 flies its sortie (holding the scene)
+# and again while it stands on its stand loads back exactly, with the money and the goods conserved,
+# and the loaded sortie flies on to the same end as the one never saved.
+# SLOPPY_THREADS=1 sloppy test tests/air_arm_save_test.jo --release
+use '../src/game_session.jo'
+use '../src/air_arm.jo'
+use '../src/air_events.jo'
+use '../src/air_race.jo'
+use '../src/airfields.jo'
+use '../src/living_commissions.jo'
+use '../src/life_types.jo'
+use '../src/living_far_types.jo'
+use '../src/living_far_economy.jo'
+use '../src/living_place_context.jo'
+use '../src/living_seed.jo'
+use '../src/living_save_codec.jo'
+use '../src/living_save.jo'
+use '../src/living_types.jo'
+use '../src/living_scene.jo'
+use '../src/traffic.jo'
+use '../src/pilot.jo'
+use '../src/flight.jo'
+use '../src/planes.jo'
+use '../src/world_point.jo'
+use '../src/combat.jo'
+use '../src/vessel_types.jo'
+import '../src/living_checks.jo' as checks
+
+const FIELD = 163.0
+_ground = (x: f64, z: f64) -> f64: FIELD
+
+# the aerodrome's town as a populated far place, its harbour and purse (as tests/air_arm_test.jo)
+_world = () -> World:
+    w = build_world(u64(42))
+    place = AIRFIELDS[0].place
+    contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k, "Core {k}", 0, k, w.harbors[k].center, true, k))
+    contexts.push(LifePlaceContext(place, "Kalyrassa", 1, place, vec3(AIRFIELDS[0].center.x + 2300.0, 0, AIRFIELDS[0].center.y - 2800.0)))
+    assert(publish_place_contexts(w, 1, contexts, [-1, place, -1]))
+    assert(populate_settlement_economy(w, 1, [FarPlaceSeed(place, 3200, 1, 3)], []))
+    h = vec3(AIRFIELDS[0].center.x + 3000.0, 0, AIRFIELDS[0].center.y - 3000.0)
+    assert(publish_far_harbors(w, [FarHarbor(place, vec3(0, 0, -1), [h + vec3(-70, 0, 0), h + vec3(70, 0, 0)], [h + vec3(-70, 2, 10), h + vec3(70, 2, 10)], h + vec3(0, 0, -100))]))
+    w.people[w.player].pose.pos = vec3(20000, 0, 0); w.aircraft[0].pose.pos = vec3(20000, 0, 0)
+    w
+
+# One world tick as the game runs it: the clock, the minute's rules when a minute turns, the air arm.
+_tick = (w: mut World, events: mut AirEvents, models: CraftModel[]):
+    clock = SceneAdapter()
+    scene_clock_begin(w)
+    if not scene_clock_end_spread(w, clock): _ = scene_clock_resume(w, clock, true)
+    update_air_arm(events, w, models, _ground)
+
+# The player's game around the world: their Gull bound to it (as tests/game_session.jo).
+_session = (w: mut World, events: AirEvents) -> (GameSession, SceneAdapter):
+    c = w.people[w.player].craft
+    w.aircraft[c].model_index = 0
+    flyer = make_flyer(.gull, 0, [], w.aircraft[c].pose.pos, 0)
+    flyer.state.fuel = f64(w.aircraft[c].fuel_ml) / 1000
+    flyer.state.position = w.aircraft[c].pose.pos
+    adapter = SceneAdapter(); bind_living_player(flyer, w, adapter)
+    (GameSession(flyer = flyer, air = events, player_position = w.people[w.player].pose.pos, player_point = world_point(w.people[w.player].pose.pos), world_time = 12.25), adapter)
+
+# Save, pack, unpack, read back: the world, its books and the air events exactly as they were.
+_round_trip = (w: World, events: AirEvents) -> (World, AirEvents):
+    live = w
+    s = _session(live, events)
+    game = capture_game(live, PresentationState(), s.0, [], s.1, VesselFleet(), Battle(), 123, SaveSummary())
+    assert(game is SaveGame, if game is LivingSaveError: game.message else: "")
+    packed = pack_binary_living_save(game); restored = unpack_binary_living_save(packed.0, packed.1)
+    assert(restored != none)
+    runtime = read_game_session(restored!)
+    assert(runtime is GameSession)
+    assert(runtime.air == events)
+    back = restored!.world
+    assert(validate_save_world(back) == "" and checks.money_balances(back) and checks.goods_balance(back))
+    loop p in events.arm:
+        assert(back.aircraft[p.craft].move_owner == .abstract_world)
+        assert(back.aircraft[p.craft].pose.pos == p.state.position and back.aircraft[p.craft].fuel_ml == w.aircraft[p.craft].fuel_ml)
+    assert(back.ledger.external_in_cents == w.ledger.external_in_cents)
+    (back, runtime.air)
+
+test "saved mid-sortie and on the stand, the air arm loads back with conservation intact":
+    set_speed_scale(3.3)
+    w = _world(); models = build_craft_models(); events = AirEvents()
+    prepare_air_arm(events, w, models, _ground)
+    assert(events.arm.len() == 2)
+    # the world starts at half past nine, the morning sortie's hour: into it
+    print("start at local minute {local_minute(w.minute)}")
+    flying = 0
+    loop i in 0..60 * 60 * 10:
+        _tick(w, events, models)
+        if events.arm[0].phase == .mission: flying += 1
+        if flying > 600: break
+    p = events.arm[0]
+    print("mid-sortie: phase={p.phase} y={p.state.position.y:.1f} owner={w.aircraft[p.craft].move_owner}")
+    assert(p.phase == .mission and not p.state.on_ground and w.aircraft[p.craft].move_owner == .scene)
+    # (the reported failure: a save here refused with an uncheckpointed scene lease)
+    loaded = _round_trip(w, events)
+    lw = loaded.0; le = loaded.1
+    restore_air_owners(le, lw)
+    assert(lw.aircraft[p.craft].move_owner == .scene and lw.aircraft[events.arm[1].craft].move_owner == .abstract_world)
+    # the saved world and the loaded one fly on alike, to the stand
+    loop i in 0..60 * 60 * 20:
+        _tick(w, events, models); _tick(lw, le, models)
+        if events.arm[0].phase == .parked and length(events.arm[0].state.velocity) < 0.05: break
+    a = events.arm[0]; b = le.arm[0]
+    print("after: saved-and-loaded {b.phase} at {b.state.position}, never saved {a.phase} at {a.state.position}, fuel {b.state.fuel:.3f}/{a.state.fuel:.3f}")
+    assert(a.phase == .parked and b.phase == .parked and a.state.position == b.state.position and a.state.fuel == b.state.fuel)
+    assert(lw.aircraft[b.craft].fuel_ml == w.aircraft[a.craft].fuel_ml and lw.aircraft[b.craft].move_owner == .abstract_world)
+    assert(checks.money_balances(lw) and checks.goods_balance(lw))
+    # standing on the stand: saved and loaded again
+    stand = _round_trip(lw, le)
+    assert(stand.1.arm[0].phase == .parked and stand.1.arm[0].state.position == b.state.position)
+    set_speed_scale(1.0)
