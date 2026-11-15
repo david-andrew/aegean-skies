@@ -8,8 +8,10 @@ import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {openPage} from './web_page.mjs';
 
 const [chrome, page, out, secs = "6", given = ""] = process.argv.slice(2);
+const served = await openPage(page);
 const query = /AEGEAN_TITLE=/i.test(given) ? given : (given ? given + "&" : "?") + "AEGEAN_TITLE=0";
 const [width, height] = (process.env.WEBSHOT_SIZE || "1280x720").split("x").map(Number);
 const touch = process.env.WEBSHOT_TOUCH === "1";
@@ -41,11 +43,12 @@ try {
     await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await send("Emulation.setUserAgentOverride", { userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 6a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36" });
   }
-  await send("Page.navigate", { url: "file://" + page + query });
+  await send("Page.navigate", { url: served.url + query });
   await sleep(parseFloat(secs) * 1000);
   const shot = await send("Page.captureScreenshot", { format: "png" });
   writeFileSync(out, Buffer.from(shot.data, "base64"));
   console.log("saved", out);
 } finally {
+  await served.close();
   b.kill();
 }
