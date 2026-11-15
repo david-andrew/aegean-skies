@@ -1018,8 +1018,8 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 - **Aliases:** the backdrop, the title's shots.
 - **Definition:** the live world behind the title in unordered shots of 18-28 s with a dip to dusk
-  between them: a **low pass** a few metres over open water at the top speed (free, chasing a Gull
-  or overtaken by one); **high at sunset** above the clouds; a **town and its waterfront** (a low
+  between them: a **low pass** over open water at the top speed (free, chasing a Gull, overtaken by
+  one, or a **race**: two Falcos overtake, round an air-race pylon and pull away); **high at sunset** above the clouds; a **town and its waterfront** (a low
   run along the harbour front from just offshore, a slow golden-hour arc, or along Neravessa's
   canals). Each shot sets its own hour and fair weather. The Adagietto plays as from a cockpit
   radio, the low pass's engine and air under it.

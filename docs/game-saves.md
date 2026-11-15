@@ -59,8 +59,11 @@ free camera the reel flies, in unordered shots of 18-28 seconds with a short dip
 them, each with its own hour and fair weather (never rain):
 
 - **Low pass:** low over open water at the top speed (about 450 km/h), the speed flecks streaming
-  past as in flight, banking gently (never past 7 degrees); flying free, chasing a Gull ahead, or
-  overtaken by one. The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
+  past as in flight, banking gently (never past 7 degrees); flying free, chasing a Gull ahead,
+  overtaken by one, or a **race**: two Falcos in two liveries come from behind, overtake close,
+  jockeying, open up, bank hard round an air-race pylon (the meets' banded pylon) and peel off,
+  shrinking ahead as the camera flies straight on, close past the pylon; their engines are heard
+  passing with Doppler (the engine hearing's own, at a `gain` under the music). The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
   large and sparse on the screen), the Gull 4-5 m below it. The sea, rivers and lakes are given the
   reel camera's true velocity (`view_velocity`), so the flecks streak and keep their strength as
   at that speed in flight. The Gull is the player's own aircraft, drawn where the reel puts it for
@@ -108,7 +111,8 @@ never stall for it and a new game starts populated.
 (with `:run` or `:arc`) repeats a kind; `AEGEAN_TITLE_SEED=n` fixes the order; `AEGEAN_TITLE_FRAMES=dir`
 saves every 10th frame (`AEGEAN_TITLE_FRAME_STEP=n`: every nth). `AEGEAN_FRAME_STATS=1` prints the
 frame statistics every 120 frames, in the title and in play alike, for timing runs.
-`AEGEAN_TITLE_BARE=1` draws the reel without the menu; `low-free@14` flies a low pass at that height.
+`AEGEAN_TITLE_BARE=1` draws the reel without the menu; `low-free@14` flies a low pass at that
+height; `low-race` the race.
 
 **Guard.** `python3 tests/title_reel_detail_test.py` (needs a GPU; too slow for the software
 renderer) renders the reel's low pass and real flight at 125 m/s at fixed frames and requires the
