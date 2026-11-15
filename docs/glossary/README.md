@@ -487,13 +487,18 @@ On the rivers branch until it lands.
 ### Prop torque
 
 - **Aliases:** torque swing, torque reaction.
-- **Definition:** a Tweaks trial (off by default): the propeller's reaction rolls the aircraft the
-  other way, about a fifth of the static thrust at the blade tip, with the throttle: on the take-off
-  run one float digs in, and in the air (flight model v2) the wings want to roll. A contra-rotating
-  pair or a push-pull tandem has none (`CraftSpec.torque_share` 0).
-- **Code:** `prop_torque` in `src/flight.jo`; `tweaks.prop_torque` in `src/tweaks.jo`.
+- **Definition:** a Tweaks trial (off by default): the propeller's reaction rolls the aircraft
+  against the propeller's turning, about a fifth of the static thrust at the blade tip, with the
+  throttle. A right-hand propeller (clockwise seen from the cockpit, as most engines of the period
+  turned) rolls her to port: on the take-off run the port float digs in, and in the air (flight
+  model v2) the left wing wants to drop. A left-hand one does the opposite. Each profile carries
+  the hand (`AircraftProfile.prop_hand`, 1 by default). A contra-rotating pair or a push-pull
+  tandem has none, and nor does a Schneider racer with its own torque swing (`CraftSpec.torque_share`
+  0).
+- **Code:** `prop_torque` in `src/flight.jo` (+ is to port); `tweaks.prop_torque` in
+  `src/tweaks.jo`.
 - **Test:** `tests/italian_racers_test.jo` "contra-rotating and push-pull pairs have no net torque
-  swing".
+  swing" and "the prop torque trial rolls against each propeller's turning".
 
 ### Speed scale
 
