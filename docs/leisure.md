@@ -71,14 +71,47 @@ funny or useful (time passes, people are met, the plane is looked after).
    Held and bucketed fish are outside the world's stock until sold or eaten, so conservation holds;
    saves keep them.
 
+## Built (round seven)
+
+11. **Table service and one's own pace.** What is ordered is brought, not conjured: the hotel's
+   waiter carries it on a tray from the end of the bar (three things at a time), the barkeep along
+   the counter to one standing at the bar, the coffee house's boy from the door. He sets each
+   thing down on a free spot and comes back for the empties after they have stood a while. Each
+   thing is eaten or drunk at the player's pace: hold its number (or its button) and the pilot
+   lifts the glass to his lips, bending his elbow, and the level goes down; with a plate, the
+   fork goes from plate to mouth with a bite on it. Let go and he holds the glass at his chest;
+   another item, or Escape, puts it down. Paid once, when ordered.
+12. **A bill of fare** per house: the hotel's printed card and the coffee house's chalk board,
+   each with a handful of dishes and drinks and their prices. The faint line at the foot ("Other
+   wines and spirits on request", or "and whatever else the house has") opens the house's whole
+   book, the deep drinks list as it was.
+13. **Tavli, polished.** The opponent sits across the coffee house table, seen through a window
+   the board leaves open, with gestures (a shrug, a checker slapped down, a laugh); dice and
+   checker sounds made in code; Plakoto as a second game, chosen with the stake.
+14. **The barber** at the Hotel Ancora's corner of the waterfront: a shave and a trim, or a new
+   shape for the mustache (clean-shaven, handlebar, walrus, chevron) seen in the mirror as one
+   chooses; one payment to the house; Stavros talks while he works. The style is saved.
+15. **Swimming** from a beach or the end of a dock: wade in, swim the crawl once it is deep, ride
+   the swell, dive off a dock, climb out onto one; the moon's glitter on the water at night.
+16. **Stargazing** at night on a hilltop or the end of the hotel's pier: lie back and the view
+   drifts round the sky; the brighter stars at their places on the game's celestial sphere, and
+   the names of stars, constellations, the planets and the moon in transliterated period Greek and
+   in English, shown faintly as one looks at them. An hour can pass under the stars.
+17. **Notes rising from music in the world** (not the radio): small notes float up from whoever
+   is playing, so the music can be found by looking round. See "Rising notes" in the glossary.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
   orders standing; **F** at the land-side door asks for a room. **F** at the coffee house's table
   sits there. Near one's moored aircraft: **G** works on it. Every prompt card is tappable.
-- Seated: the bar along the bottom (keys 1-5 or taps): the menu, wait an hour, take a room, talk to
-  whoever is at the next table, get up (Escape). The menu: section chips, type to search, up/down
-  (wheel, arrow keys, page buttons), order.
+- Seated (or standing at the bar): the bar along the bottom. What is on the table, 1 to 6 (or
+  their buttons): hold to drink or eat, let go to keep it in hand; another, or Escape, puts it
+  down. Then the actions, each on a letter: M the bill of fare, W wait an hour, G have one's catch
+  grilled, T tavli, P the paper, S ask for a song, R take a room, K talk to whoever is near, Escape
+  get up (with nothing in hand). The bill of fare: 1 to 9 or a click orders; 0 or the foot line
+  opens the house's whole book (section chips, type to search, up/down by wheel, arrows or page
+  buttons).
 - A grateful family's member, at home: "Could I rest at yours a while?" in the conversation.
 - At the coffee house: "Play tavli" and "Buy the paper" (then "Read the paper") on the bar.
 - Tavli: click a checker, then where it goes (or drag it; a single place to go moves at once).
@@ -94,13 +127,19 @@ funny or useful (time passes, people are met, the plane is looked after).
 - On foot with a catch: at the town's market, F sells it all; X at the water's edge throws the held
   fish back; B puts it in the carried bucket. Holding a fish he can't start fishing, stroke a cat, haul in the line, take the waters or work on the aircraft; carrying a bucket of fish, he can't haul, bathe or work on the aircraft either. At a chandler's or the market without a bucket: buy
   one. Near one's bucket set down: pick it up.
+- The barber: **F** at his chair on the waterfront by the hotel's corner.
+- Swimming: **G** at the water's edge of a beach or the end of a dock; walk to swim (Shift: a
+  strong stroke); out where the ground rises, or **F** to climb onto a dock.
+- Stargazing: **L** at night on a hilltop or the end of the hotel's pier; Q, E and the arrows (or a
+  finger) look round; **T** lets an hour pass; **L** gets up. On a phone both are buttons.
+- Options: "Musical notes rising from music played nearby" (on).
 
 ## Later (worth adding)
 
-- Take the waters at hot springs; sea bathing from the beach; a siesta in the shade.
+- Take the waters at hot springs; a siesta in the shade. (Swimming is built.)
 - Fishing from a hired boat (fishing from a dock is built).
 - Cards and dominoes with townsfolk at the coffee house, small stakes (tavli is built).
-- The barber and a shave; tailor for a new flying jacket; laundry.
+- A tailor for a new flying jacket; laundry. (The barber is built.)
 - A feast day dance in the square; a church service; the cinema in a capital (silent films).
 - Picnic flights to beaches; sightseeing passengers; a photographer on the quay.
 - Gardening a hotel garden; feeding the town cats (exists) and adopting one.
@@ -108,5 +147,5 @@ funny or useful (time passes, people are met, the plane is looked after).
 - Teaching a youngster to fly; a flying club evening; model aircraft with the children.
 - Music: learn the bouzouki; sing along (the crowd's call). (Requests are built.)
 - Cooking a meal for a family you stay with; bringing wine as a guest.
-- Stargazing from a hilltop (celestial.jo already has the sky); a lighthouse visit.
+- A lighthouse visit. (Stargazing is built.)
 - Night swimming; walking the hill paths; visiting monasteries.
