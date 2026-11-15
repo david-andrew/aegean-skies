@@ -90,6 +90,7 @@ use 'src/air_events.jo'
 use 'src/air_race.jo'
 use 'src/air_meet_view.jo'
 use 'src/race_view.jo'
+use 'src/air_classes.jo'
 use 'src/war_view.jo'
 use 'src/map_counter.jo'
 use 'src/fuel_counter.jo'
@@ -4493,19 +4494,74 @@ stage_capture_war = (stage: str):
         if let m = find_mission(w, id): ui_line = "{m.why} Due {clock_text(w, m.deadline)}. {contract_status(w, m)}"
 war_stage_pending = env("AEGEAN_CAPTURE_WAR")
 
-# AEGEAN_CAPTURE_RACE=offer|countdown|start|racing|missed|finish stages a meet off the home
+# AEGEAN_CAPTURE_RACE=offer|countdown|start|racing|missed|finish|schneider stages a meet off the home
 # harbor for headless captures of the race screens (capture only; the living world makes real ones)
 capture_race = env("AEGEAN_CAPTURE_RACE")
-stage_capture_race = (stage: str):
+capture_race_placed = false
+capture_racers: Traffic[] = []
+# (the staged Schneider race's opponents: each frame, the race task and the real flight model)
+_fly_capture_racers = (dt: f64):
+    k = -1
+    loop i in 0..air_events.meets.len(): if air_events.meets[i].id == -7: k = i
+    if k < 0: return
+    n = max(1, int(ceil(dt * 60.0)))
+    loop r in 0..capture_racers.len():
+        tr = capture_racers[r]
+        loop j in 0..n:
+            loop entry in air_events.meets[k].entries:
+                if entry.craft == tr.craft:
+                    if let task = air_race_task(air_events.meets[k], entry, tr.state.position):
+                        pace = air_class_pace(.schneider, tr.spec.cruise_speed, tr.spec.max_speed, air_events.meets[k].scale)
+                        # (each holds the height it was staged at, the player's, so all stay in the shot)
+                        c = air_waypoint_controls(tr.spec, tr.state, FlightEnv(), task.aim, tr.plan.altitude, pace * task.pace)
+                        step(tr.spec, tr.state, c, FlightEnv(), dt / f64(n))
+        tr.prop_angle += dt * 60.0
+        sample_air_entry(air_events.meets[k], tr.craft, tr.state.position, living_world.tick, not tr.state.crashed)
+        capture_racers[r] = tr
+stage_capture_race = (stage: str, dt: f64 = 1.0 / 60.0):
     global air_events
     tick = living_world.tick
-    gates = air_course(home.center, vec3(home.out.x, 0, home.out.y), surface_height)
+    # (schneider: the open class's long course, a race under way, the player at a gate's approach)
+    schneider = stage == "schneider"
+    race_scale = 1.0
+    gates: AirGate[]
+    loop k in (if schneider: air_class_scales(.schneider) else: [1.0]):
+        if gates.len() == 0:
+            gates = air_course(home.center, vec3(home.out.x, 0, home.out.y), surface_height, k); race_scale = k
     if gates.len() == 0: return
     capital = -1
     if stage == "offer" and me.mode == .aboard: pc.throttle = 0.0
     before = if stage == "offer": 600 * 60 else: (if stage == "countdown": 90 * 60 else: (if stage == "start": 2 * 60 + 30 else: -70 * 60))
     meet = AirMeet(-7, capital, lt.day_index(living_world.minute), home.name + " air meeting", gates, race_tick = tick + before, display_tick = tick + 100000, end_tick = tick + 200000)
     meet.phase = if before > 0: .registration else: .racing
+    if schneider:
+        global capture_race_placed, capture_racers
+        if capture_race_placed:
+            _fly_capture_racers(dt)
+            return
+        capture_race_placed = true
+        meet.race_class = .schneider; meet.scale = race_scale
+        craft = living_world.people[living_world.player].craft
+        # (the player at the third gate's approach; three opponents flown by the flight model
+        # round the same course: one just ahead, two behind)
+        g = gates[3]; h = atan2(f64(g.forward.x), -f64(g.forward.z)); side = vec3(-g.forward.z, 0, g.forward.x)
+        at = g.center - g.forward * 2600.0; at.y = 160
+        pc.state = CraftState(position = at, velocity = g.forward * 470.0, orientation = quat_euler(0, -h, 0), fuel = pc.spec.fuel_capacity, water_age = 1.0, throttle = 1.0)
+        pc.throttle = 1.0; pc.aim_heading = h; me.mode = .aboard
+        meet.entries.push(AirEntry(craft, living_world.player, true, gate = 3, laps = 0, started_tick = max(0, tick - 41 * 60), sampled = true, last_tick = tick, previous = at))
+        rivals = [(Craft.macchi_mc72, -11, 170.0, 30.0, 172.0), (Craft.sm_s65, -12, 70.0, -45.0, 158.0), (Craft.curtiss_r3c2, -13, -700.0, 50.0, 165.0)]
+        capture_racers = []
+        loop r in rivals:
+            model = default_craft_model(r.0)
+            spec = craft_spec(r.0, craft_models[model].contacts)
+            p = at + g.forward * f32(r.2) + side * f32(r.3); p.y = f32(r.4)
+            v = air_class_pace(.schneider, spec.cruise_speed, spec.max_speed, race_scale)
+            st = CraftState(position = p, velocity = g.forward * f32(v), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, water_age = 1.0, throttle = 1.0)
+            capture_racers.push(Traffic(craft = r.1, person = r.1, name = CRAFT_NAMES[int(r.0)], why = "Racing in the Schneider class", reason = lt.Reason(purpose = .visit, actor = r.1),
+                kind = r.0, model = model, spec = spec, state = st, plan = FlightPlan(altitude = f64(p.y)), town = -1, dock = -1, flying = true, materialized = true))
+            meet.entries.push(AirEntry(r.1, r.1, gate = if r.1 == -13: 2 else: 3, laps = 0, started_tick = max(0, tick - 40 * 60), sampled = true, last_tick = tick, previous = p))
+        air_events.meets = [loop m in air_events.meets: if m.id != -7: m] + [meet]
+        return
     if stage != "offer":
         craft = living_world.people[living_world.player].craft
         mine = AirEntry(craft, living_world.player, true, gate = 3, laps = 1, started_tick = tick - 64 * 60, sampled = true, last_tick = tick)
@@ -5732,7 +5788,7 @@ update_frame = (dt: f64, saves: bool = true):
             folks[k].line = passing_line(living_world,folks[k].person)
             folks[k].line_t = t
     if not world_held(): update_air_events(air_events,living_world,craft_models,pc.state.position,me.mode==.aboard,other_air=[loop tr in traffic:if tr.visible:AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored)])
-    if let stage = capture_race: stage_capture_race(stage)
+    if let stage = capture_race: stage_capture_race(stage, dt)
     if let stage = war_stage_pending:
         if living_world.far.populated and living_world.far.place_ids.len() > 6:
             global war_stage_pending
@@ -5742,7 +5798,7 @@ update_frame = (dt: f64, saves: bool = true):
             global war_chart
             war_chart = WarChart()
             print("WAR STAGE at frame {frame_number()}")
-    all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)+(if active_scenario!="":scenario_air_traffic(living_world,battle) else:[])
+    all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)+(if active_scenario!="":scenario_air_traffic(living_world,battle) else:[])+capture_racers
     # Relevance is refreshed at 2.5 Hz; selected moving bodies are followed every frame.
     if me.mode==.aboard:
         target_scan-=dt
