@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -339,6 +339,43 @@ On the rivers branch until it lands.
 
 ## Aircraft
 
+### Paint page
+
+- **Aliases:** repainting, the paint shop (later), liveries, colour schemes.
+- **Definition:** the pause menu's Paint tab (beside Aircraft and Plane): the player's aircraft
+  repainted. A livery valid for the type (its own first, its period paints, the civil ones and its
+  family's), its four colours (main, trim, wings, stripe) from period dopes, lacquers and trims or
+  any colour by hue, saturation and brightness, national insignia, operator bars, rudder stripes
+  and a tail number where the type wears them, and Reset to default. It applies at once (a model
+  of the player's own, built from the paint: other aircraft of the type keep theirs) and is saved
+  with the game. The Flying now card's Paint button opens it.
+- **Rules:** colours and drawn marks only, no textures. The session's `Paint` is the one save
+  field (the aircraft's record mirrors its livery); a game saved before it loads as built, or in
+  the period paint its record wore. A later paint shop prices `paint_changes` and draws the same
+  page; the model needs no change.
+- **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`,
+  `paint_support`, `paint_changes`), `src/aircraft_paint_view.jo` (`paint_page`); `set_player_paint`,
+  `paint_step`, `player_model` in `aegean.jo`; `tests/aircraft_paint_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_PANEL=paint`; `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1
+  number=K-AB3 body=0.2,0.3,0.6'` or a paint's name (`AEGEAN_PAINT='Greek Naval Air Service'`);
+  `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
+
+### Markings
+
+- **Definition:** what is painted on an aircraft besides its colours, all drawn by the kit
+  (`src/planes.jo`): national **insignia** on the upper wings (none; the game's two countries,
+  Kalyra and Orenthia; Italian, British, Greek, American (a star on a disc) and German (a straight
+  cross) for those nations' types), **operator bars** (the civil marking; inboard of an insignia
+  when both), **rudder stripes** (`kit_rudder`) and a **tail number** in block capitals on the
+  fin ahead of the rudder. What a type can wear is found by building it with and without each
+  mark; the first four types and the big boats wear wing marks only when repainted with them, so
+  as built every aircraft looks as it did.
+- **Extending:** append to `INSIGNIA` or `RUDDERS` (a `nation` limits them to that nation's
+  types), add a type to `TYPE_NATIONS`, a livery to `LIVERY_FAMILIES` or `TYPE_LIVERIES`
+  (`src/markings.jo`); indices are saved: append, never reorder.
+- **Code:** `src/markings.jo`; `livery_insignia`, `livery_bars`, `_wing_mark`, `_rudder`,
+  `_tail_number` in `src/planes.jo`; `_boat_marks` in `src/aircraft_boats.jo`.
+
 ### Prop disc
 
 - **Aliases:** the propeller disc, "spinning propellers as a film animator paints them".
@@ -487,10 +524,10 @@ On the rivers branch until it lands.
   thick aerofoil wings, round nacelles) rather than the catalogue's boxes. The three over 30 m span
   (Do X, Sarafand, H-4) are **offshore-only**: they never use a dock, only an
   [offshore mooring](#offshore-mooring).
-- **Paints:** a type with more than one period paint shows a Paint button on the pause menu's
-  "Flying now" card (`boat_paints`); the S.55 wears Silver Dope or the **Greek Naval Air Service**
-  (aluminium dope, a dark hull bottom, light-blue and white roundels, blue-white-blue rudders),
-  saved with the aircraft. Paints are named, not numbered (`livery_named`).
+- **Paints:** a type's period paints (`boat_paints`) are presets among the liveries on the
+  [Paint page](#paint-page); the S.55 wears Silver Dope or the **Greek Naval Air Service**
+  (aluminium dope, a dark hull bottom, light-blue and white roundels, blue-white-blue rudders).
+  Paints are named, not numbered (`livery_named`).
 - **Code:** `src/aircraft_boats.jo` (`build_big_boat`, `big_boat`, `offshore_only`,
   `swing_radius`, `boat_parts`); profiles in `src/aircraft_catalog.jo` (`draft`, `engines`,
   `discs`); `tools/boats_view.jo` (four views of one model); tests in
@@ -2398,7 +2435,9 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 |---|---|
 | `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
-| `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page |
+| `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page (the picker) |
+| `AEGEAN_CAPTURE_PANEL=plane` | the pause menu open on its Plane page (fuel, damage, mending, the scales) |
+| `AEGEAN_CAPTURE_PANEL=paint` | the pause menu open on its Paint page |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
