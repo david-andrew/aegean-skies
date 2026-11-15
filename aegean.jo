@@ -123,6 +123,9 @@ use 'src/townsfolk.jo'
 use 'src/ambient_crowd.jo'
 use 'src/cat_bonds.jo'
 use 'src/cats.jo'
+use 'src/wildlife.jo'
+use 'src/wildlife_view.jo'
+use 'src/wildlife_sound.jo'
 use 'src/speech.jo'
 use 'src/panels.jo'
 use 'src/mooring.jo'
@@ -2814,6 +2817,100 @@ update_walkers = (dt: f64):
 # by one's own aircraft, at rest on the water or moored
 # the wind as a velocity (for cloth)
 wind_now_vec = () -> vec3: vec3(wind_now.dir.x, 0, wind_now.dir.y) * f32(wind_now.speed)
+
+# ---------------- wildlife (src/wildlife.jo): geese, gulls, goats and sheep about the camera ----------------
+wildlife = Wildlife()
+wild_trace = env("AEGEAN_WILD_TRACE") != none
+wild_env = () -> WildEnv:
+    WildEnv(ground = (x: f64, z: f64) -> f64: surface_height(x, z), water = wild_world_water,
+        built = (x: f64, z: f64) -> bool: geography_enabled and settlement_registry.settlement_urban(vec2(f32(x), f32(z))),
+        wind = wind_now_vec(), hour = hour, day = lt.day_index(living_world.minute))
+# what they keep away from: the player's aircraft or the player on foot, and the other aircraft near
+wild_threats = () -> WildThreat[]:
+    out: WildThreat[]
+    if me.mode == .aboard: out.push(WildThreat(pc.state.position, pc.state.velocity, true))
+    else if me.mode == .walking: out.push(WildThreat(me.pos, vec3(0, 0, 0), false))
+    cam = scene_camera()
+    loop tr in all_air_traffic:
+        if tr.visible and length(tr.state.position - cam) < 2000.0: out.push(WildThreat(tr.state.position, tr.state.velocity, true))
+    out
+# AEGEAN_WILD_RAFT="x z" (or "ahead d s": d metres ahead of the aircraft's start and s to its
+# right): a raft of geese on the water there (captures of a raft, and of one put up by a taxi)
+if let v = env("AEGEAN_WILD_RAFT"):
+    w = split(v, " ")
+    at = vec2(0, 0)
+    if w.len() >= 3 and w[0] == "ahead":
+        f = forward(pc.state); fw = normalize(vec2(f.x, f.z))
+        at = pc.state.position.xz + fw * f32(to_float(w[1]) ?? 150.0) + vec2(-fw.y, fw.x) * f32(to_float(w[2]) ?? 0.0)
+    else if w.len() >= 2: at = vec2(f32(to_float(w[0]) ?? 0.0), f32(to_float(w[1]) ?? 0.0))
+    if let site = wild_raft_at(f64(at.x), f64(at.y), wild_env()): wildlife.extra.push(site)
+    else: print("AEGEAN_WILD_RAFT: no water deep enough at {at.x:.1f} {at.y:.1f}")
+# AEGEAN_WILD_WATCH="distance height bearing" (with AEGEAN_WILD_RAFT): whatever the player is doing,
+# the view is from a fixed point that far from the raft given, turned to follow its geese (a clip
+# of a raft put up by a taxiing aircraft)
+wild_watch: vec3? = none
+if let v = env("AEGEAN_WILD_WATCH"):
+    w = split(v, " ")
+    if w.len() >= 3 and wildlife.extra.len() > 0:
+        # (the bearing from the aircraft's heading at the start: 0 ahead of the raft, looking back)
+        c = wildlife.extra[0].at; d = to_float(w[0]) ?? 20.0; b = to_float(w[2]) ?? 0.0
+        f = forward(pc.state); fw = normalize(vec2(f.x, f.z)); right = vec2(-fw.y, fw.x)
+        p = c.xz + fw * f32(cos(b) * d) + right * f32(sin(b) * d)
+        wild_watch = vec3(p.x, c.y + f32(to_float(w[1]) ?? 1.5), p.y)
+wild_watch_target = () -> vec3:
+    if wildlife.extra.len() == 0: return vec3(0, 0, 0)
+    loop r in wildlife.rafts:
+        if r.site.key == wildlife.extra[0].key:
+            c = vec3(0, 0, 0)
+            loop g in r.geese: c += g.pos
+            return c / f32(max(1, r.geese.len())) + vec3(0, 0.4, 0)
+    wildlife.extra[0].at + vec3(0, 0.4, 0)
+# AEGEAN_WILD_LOOK="raft|gulls|herd distance height bearing": the free camera kept on the nearest
+# raft, colony or herd from that far, that high, from that bearing (radians; captures)
+wild_look = env("AEGEAN_WILD_LOOK")
+wild_look_step = ():
+    if wild_look == none or me.mode != .free: return
+    w = split(wild_look!, " ")
+    if w.len() < 4: return
+    pts: vec3[]
+    if w[0] == "raft" and wildlife.rafts.len() > 0:
+        loop g in wildlife.rafts[0].geese: pts.push(g.pos)
+    else if w[0] == "gulls":
+        loop c in wildlife.colonies:
+            if c.boat >= 0 or pts.len() > 0: continue
+            # (the perched gull with the most perched about it, and those)
+            best = -1; most = 0
+            loop k in 0..c.gulls.len():
+                if c.gulls[k].act != .perch: continue
+                n = 0
+                loop g in c.gulls:
+                    if g.act == .perch and length(g.pos - c.gulls[k].pos) < 20.0: n += 1
+                if n > most: most = n; best = k
+            if best >= 0:
+                loop g in c.gulls:
+                    if g.act == .perch and length(g.pos - c.gulls[best].pos) < 20.0: pts.push(g.pos)
+            if pts.len() == 0: pts.push(c.site.at)
+    else if w[0] == "flying":
+        loop c in wildlife.colonies:
+            if c.boat >= 0: continue
+            loop g in c.gulls:
+                if g.act != .perch: pts.push(g.pos)
+    else if w[0] == "herd" and wildlife.herds.len() > 0:
+        loop e in wildlife.herds[0].beasts: pts.push(e.pos)
+    if pts.len() == 0: return
+    c = vec3(0, 0, 0)
+    loop p in pts: c += p
+    c = c / f32(pts.len())
+    d = to_float(w[1]) ?? 12.0; hgt = to_float(w[2]) ?? 1.5; b = to_float(w[3]) ?? 0.0
+    # (gulls on a quay are seen from out on the water: the first bearing round from b that is)
+    if w[0] == "gulls":
+        loop k in 0..12:
+            bb = b + f64(k) * TAU / 12.0
+            if surface_height(f64(c.x) + sin(bb) * d, f64(c.z) + cos(bb) * d) < -1.0: b = bb; break
+    free.pos = c + vec3(f32(sin(b) * d), f32(hgt), f32(cos(b) * d))
+    to = c - free.pos
+    free.yaw = atan2(-f64(to.x), -f64(to.z))
+    free.pitch = atan2(f64(to.y), f64(length(to.xz)))
 
 # A landplane standing still on its wheels, throttle closed: one may climb down (and back up).
 landplane_parked = () -> bool: pc.spec.landplane and pc.state.on_ground and not pc.state.crashed and pc.throttle < 0.05 and length(pc.state.velocity) < 0.3
@@ -6187,6 +6284,28 @@ update_frame = (dt: f64, saves: bool = true):
     cat_at = if me.mode == .aboard: pc.state.position else: me.pos
     cat_said = update_cats(cat_scene, town_cat_homes(cat_at, f32(CAT_SEEN)), cat_at, me.mode == .walking, mooring_anchor(), pc.state.position, presentation.cat_bonds, living_world.minute, (x: f64, z: f64) -> f64: walk_height(towns, x, z), dt, t)
     if cat_said != "": say_toast(cat_said)
+    if not title.open:
+        zone("wildlife")
+        wildlife_step(wildlife, towns, scene_camera(), wild_threats(), vessels.ships, wild_env(), dt)
+        wild_look_step()
+        zone_end()
+        if wild_trace and floor(t * 2.0) != floor((t - dt) * 2.0):
+            up = 0; afloat = 0; feeding = 0
+            loop r in wildlife.rafts:
+                loop g in r.geese:
+                    if g.act == .fly or (g.act == .run and f64(g.pos.y) > r.site.level + 0.3): up += 1
+                    else if g.act == .upend: feeding += 1
+                    else: afloat += 1
+            gulls = 0; beasts = 0
+            loop c in wildlife.colonies: gulls += c.gulls.len()
+            loop h in wildlife.herds: beasts += h.beasts.len()
+            perched = 0; gat = vec3(0, 0, 0)
+            loop c in wildlife.colonies:
+                loop g in c.gulls:
+                    if g.act == .perch: perched += 1; gat = g.pos
+                    else: gat = if perched == 0: g.pos else: gat
+            print("WILD gulls perched={perched} at {gat.x:.1f} {gat.y:.1f} {gat.z:.1f} colonies={wildlife.colonies.len()}")
+            print("WILD t={t:.1f} sites={wildlife.sites.len()} rafts={wildlife.rafts.len()} afloat={afloat} feeding={feeding} up={up} gulls={gulls} beasts={beasts} marks={wildlife.marks.len()}")
     if cat_capture != "": cat_capture_update()
     # A contact/bark event commits words once; drawing the bubble only reads them.
     if me.mode == .walking and ui == .none and not world_held():
@@ -6278,6 +6397,7 @@ update_frame = (dt: f64, saves: bool = true):
         world_ambience.sound.enabled = dbg.snd_world
         ear = scene_camera()
         ambience_scene_step(world_ambience,living_world,vessels,towns,groves,ear,dt,flying,wind_now_vec(),if flying: pc.state.position else: none,time_lapse=presentation.thermal.active)
+        wildlife_voices(world_ambience,wildlife,ear)
         life_audio.update_life_audio(life_sound,living_world,ear,t,dbg.snd_world[3],flying,
             (a: vec3,b: vec3) -> f64: ambience_obstruction(a,b,towns))
         if me.mode == .aboard and not cockpit_radio.muted:
@@ -6470,6 +6590,8 @@ draw_world = (L: Light):
         zone_end()
     )
     draw_custom((): draw_birds(bird_mesh, flocks, L, t))
+    if not title.open: draw_custom(():
+        zone("wildlife");draw_wildlife(wildlife, L, t);zone_end())
     draw_custom(():
         draw_groves(tree_meshes, groves, L, t)
         draw_world_groves(tree_meshes,L,t))
@@ -6575,6 +6697,7 @@ draw_world = (L: Light):
     if startup_aegean_nowake == none:
         draw_custom((): draw_wakes(wakes, L, t), transparent = true)
         draw_custom((): draw_vessel_wakes(vessel_view,L,t), transparent = true)
+        draw_custom((): draw_wildlife_marks(wildlife, L), transparent = true)
     draw_custom((): draw_vessel_smoke(vessel_view,L,t), transparent = true)
     if me.mode == .aboard: draw_custom((): draw_flight_effects(pc,craft_models[pc.model],pc_at(),L,t),transparent=true)
     draw_custom((): draw_prop_discs(L),transparent=true)
@@ -6688,6 +6811,8 @@ draw = ():
             clearance=f64(scene_camera().y)-f64(swell_at(f64(scene_camera().x)+f64(render_eye_low.x),f64(scene_camera().z)+f64(render_eye_low.z),t).x)
             print("TARGET {frame_number()} {view_target.selected} {view_target.weight:.5} {ahead:.5} {view_target.bearing.y:.5} {clip.x/clip.w:.5} {clip.y/clip.w:.5} {clearance:.4}")
         )
+    if let eye=wild_watch:
+        render_camera(eye,wild_watch_target()-eye,50.0,0.1,world_far(f64(eye.y)))
     if let view=judge_camera:
         delta=if me.mode==.aboard:pc.state.position-judge_origin else:vec3(0,0,0)
         camera3d(view.eye+delta,view.target+delta,62.0,0.1,world_far(f64(view.eye.y+delta.y)))
