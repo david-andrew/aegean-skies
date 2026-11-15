@@ -1606,7 +1606,16 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/combat.jo` `step_ground_fire`, `ground_sight`; `src/canal_ground_fire.jo`
   (the canal takeoff's posts); `src/ground_fire_view.jo` (figures, sandbags, guns).
 - **Rules:** they belong to the scenario, never to the living world's population; they hold fire
-  until the slipway hand-over. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run.
+  until the slipway hand-over. A machine-gun nest swings only 110° either side of the way it faces
+  (its sandbag ring's open back stays behind the gunner). Rooftop posts stand on flat-roofed houses
+  only (their parapet slab), the iron bridge's gun at the head of its approach stair, clear of the
+  truss. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run; `tests/ground_fire_test.jo`
+  the arc, waking, silencing and the sounds.
+- **Sound:** a rifle's crack or a machine gun's duller report, dulled further with distance and
+  heard late by the sound's travel, then the canal's **flutter echo** (slaps off either wall in
+  turn, each duller) and a short tail; a ground round passing close makes a sharp supersonic snap;
+  each spout a short spit and plunk. `src/combat_sound.jo` `ground_report`, `bullet_snap`,
+  `spout_report`, `ground_shot_cue`; offline listening: `sloppy --release tools/groundfire_audio.jo DIR`.
 
 ### Water strikes
 
@@ -1665,6 +1674,8 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
+| `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
+| `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
