@@ -563,4 +563,18 @@
     layer("blades", '<g fill="#c79e52" opacity=".85"><path d="' + blade + '"/><path d="' + blade + '" transform="rotate(180)"/></g>') +
     '<svg viewBox="-44 -44 88 88"><circle r="' + P.HUB + '" fill="#8a6a35"/></svg></div>';
   document.body.appendChild(card);
+  // A program that fails to start, or panics, says so with a `sloppy:error` event (Sloppy 0.36.1;
+  // the text in its detail) and shows the page's log (#log): take the card away then, which would
+  // otherwise cover the error for good, leaving the propeller turning on nothing. (An exit() with
+  // a failing code only shows the log, with no event: watched for too.)
+  const drop = () => { if (card) { card.remove(); card = null; } };
+  window.addEventListener("sloppy:error", drop);
+  const log = document.getElementById("log");
+  if (log && typeof MutationObserver !== "undefined") {
+    const watch = new MutationObserver(() => {
+      if (!card) { watch.disconnect(); return; }
+      if (log.style.display === "block") { drop(); watch.disconnect(); }
+    });
+    watch.observe(log, {attributes: true, attributeFilter: ["style"]});
+  }
 })(typeof globalThis !== "undefined" ? globalThis : this);
