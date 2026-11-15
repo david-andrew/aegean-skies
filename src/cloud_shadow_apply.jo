@@ -1,0 +1,114 @@
+use 'cloud_shadow_map.jo'
+use 'render_space.jo'
+use 'depth_space.jo'
+use 'cloud_depth.jo'
+use 'quality.jo'
+# ---------------- applying the shadows: one screen-space pass ----------------
+# After the opaque scene and the water, before the clouds: each pixel's world
+# position comes from the scene depth (on water without depth, the curved sea)
+# and the map darkens it by a cool shadow tint. The ground, water, town and
+# object shaders stay untouched: on Intel GPUs any addition to them cost their
+# SIMD16 compile. Water keeps its hue (navy over deep water, deeper teal over
+# the shallows) and its small marks keep their contrast, being multiplied.
+struct ShadowApplyVertex:
+    corner: vec2
+
+struct ShadowApplyParams:
+    map: Texture
+    depth: Texture
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    depth_ab: vec2
+    area: vec4
+    slope: vec4
+
+struct ShadowApplyOut:
+    pos: vec4
+    ndc: vec2
+
+const CLOUD_SHADOW_LAND = vec3(0.52,0.58,0.70)
+const CLOUD_SHADOW_WATER = vec3(0.56,0.64,0.70)
+
+cloud_shadow_apply_vs = (v: ShadowApplyVertex, u: ShadowApplyParams) -> ShadowApplyOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    ShadowApplyOut(vec4(ndc,0,1),ndc)
+
+cloud_shadow_apply_fs = (i: ShadowApplyOut, u: ShadowApplyParams) -> vec4:
+    ray = normalize((u.rays*vec4(i.ndc,1,0)).xyz)
+    t: f32 = 1000000000.0
+    raw = sample(u.depth,i.ndc*0.5+vec2(0.5,0.5)).x
+    if world_has_depth(raw,u.depth_ab): t = world_depth_decode(raw,u.depth_ab)/max(dot(ray,u.forward),0.0001)
+    water: f32 = 0.0
+    sea = sea_intersection(ray,u.cam.y)
+    if sea > 0.0 and sea <= t+1.0:
+        t = sea; water = 1.0
+    if t > 900000000.0: return vec4(1,1,1,1)
+    p = u.cam+ray*t
+    p.y += world_drop(ray.xz*t)
+    shadow = cloud_shadow_at(u.map,u.area,u.slope,p)
+    vec4(mix(vec3(1,1,1),mix(CLOUD_SHADOW_LAND,CLOUD_SHADOW_WATER,water),shadow),1)
+
+# Full resolution: multiply the scene by the reduced-resolution factor. The
+# shadows are soft (35-73 m texels), so a bilinear factor is enough.
+struct ShadowBlendParams:
+    factor: Texture
+
+cloud_shadow_blend_vs = (v: ShadowApplyVertex, u: ShadowBlendParams) -> ShadowApplyOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    ShadowApplyOut(vec4(ndc,0,1),ndc)
+
+cloud_shadow_blend_fs = (i: ShadowApplyOut, u: ShadowBlendParams) -> vec4:
+    f = sample(u.factor,i.ndc*0.5+vec2(0.5,0.5))
+    if min(f.x,min(f.y,f.z)) > 0.998: discard()
+    vec4(f.xyz,1)
+
+cloud_shadow_apply_sh = Shader()
+cloud_shadow_blend_sh = Shader()
+cloud_shadow_apply_quad = Mesh()
+cloud_shadow_factor = RenderTarget()
+
+# Called by the cloud pass while the scene depth is detached for sampling (one
+# detach for both: each switch of attachments or targets costs a render pass).
+cloud_shadow_factor_ready = false
+
+# 1. The factor, into its own small target, just before the cloud colour pass
+# (it samples the scene depth from another target, as that pass does; the
+# scene's render pass is split there once for both, never a second time).
+cloud_shadow_factor_pass = (chart: vec3, vp: mat4):
+    global cloud_shadow_apply_sh,cloud_shadow_apply_quad,cloud_shadow_blend_sh,cloud_shadow_factor,cloud_shadow_factor_ready
+    cloud_shadow_factor_ready = false
+    if cloud_shadow_strength <= 0.0 or not __post_active or cloud_scene_depth.id == 0: return
+    if cloud_shadow_apply_sh.prog == 0:
+        cloud_shadow_apply_sh = make_shader(shader(cloud_shadow_apply_vs,cloud_shadow_apply_fs))
+        cloud_shadow_blend_sh = make_shader(shader(cloud_shadow_blend_vs,cloud_shadow_blend_fs))
+        cloud_shadow_apply_quad = mesh([ShadowApplyVertex(vec2(0,0)),ShadowApplyVertex(vec2(1,0)),ShadowApplyVertex(vec2(0,1)),ShadowApplyVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+    zone("cloud shadows apply")
+    rays = render_rays(vp)
+    # The factor at a quarter (low), a third (medium) or half (high) resolution:
+    # two dependent fetches a pixel are latency-bound on Intel GPUs, 0.87 ms at
+    # full resolution.
+    divisor = if render_quality.tier == 0: 4 else: if render_quality.tier == 1: 3 else: 2
+    w = max(1,cloud_scene_depth.width/divisor); h = max(1,cloud_scene_depth.height/divisor)
+    if cloud_shadow_factor.texture.width != w or cloud_shadow_factor.texture.height != h:
+        if cloud_shadow_factor.fbo != 0: free_render_target(cloud_shadow_factor)
+        tex = texture(image(w,h),true)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        cloud_shadow_factor = RenderTarget(tex,fbo,0)
+    glDisable(GL_CULL_FACE); glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST); glDepthMask(0)
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(cloud_shadow_factor.fbo))
+    glViewport(0,0,i32(w),i32(h))
+    draw(cloud_shadow_apply_sh,cloud_shadow_apply_quad,ShadowApplyParams(cloud_shadow_map(),cloud_scene_depth,rays,render_eye(chart),normalize(rays[2].xyz),world_depth_params(),cloud_shadow_area(chart),cloud_shadow_slope()))
+    cloud_shadow_factor_ready = true
+    zone_end()
+
+# 2. Multiplied into the scene at full resolution, in the cloud pass's
+# depth-detached window just before the clouds are composited.
+cloud_shadow_multiply = ():
+    if not cloud_shadow_factor_ready: return
+    glEnable(GL_BLEND); glBlendFunc(GL_DST_COLOR,GL_ZERO)
+    draw(cloud_shadow_blend_sh,cloud_shadow_apply_quad,ShadowBlendParams(cloud_shadow_factor.texture))
+    # (the cloud composite that follows blends premultiplied)
+    glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_ALPHA)

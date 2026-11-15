@@ -73,7 +73,7 @@ an air mass sits on its condensation level (`air.ceiling`).
 Each frame needs only some clouds: those that can be in view (a cone around
 the camera's forward, conservative for the cloud's size and the curved horizon)
 or that can shadow the shadow map (`cloud_needed`). Only these are evolved. On
-low and medium the list is rebuilt every second frame. Clouds less than about
+low and medium the list is rebuilt every third frame. Clouds less than about
 two pixels wide fade out (`smoothstep(0.0025, 0.005)` on half-width over
 distance). The small octave reaches 13 km.
 
@@ -116,9 +116,10 @@ Each frame the clouds near the camera are drawn into a coverage map in
 sun-projected coordinates: a point P maps to `P.xz - k*P.y`, with `k =
 sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 
-- **Map size by tier:** 384 px over 28 km on low (73 m texels, redrawn every
-  second frame), 1024 over 36 km on medium, 1536 over 48 km on high (about
-  35 m texels). It is centred ahead of the view and snapped to texels.
+- **Map size by tier:** 384 px over 28 km on low (73 m texels), 640 over 36 km
+  on medium (56 m), 1536 over 48 km on high (31 m). Each redraw draws every
+  cloud with four taps a texel: at 1024 px on medium that burst cost redfox about
+  0.4 ms a frame. It is centred ahead of the view and snapped to texels.
 - **Fill.** The map fades to nothing over its outer eighth, so receivers need
   no edge test. Flat forms take three slab taps instead of four.
 - **Drawing it.** One instanced quad per cloud covers its projected box. Four
@@ -126,21 +127,25 @@ sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 - **Edges.** The penumbra widens with the slab's height above the ground.
 - **Combining.** Overlapping clouds combine as coverage: `a + b(1 - a)`.
 
-Receivers sample it at their own projected point, so shadows fall offset by the
-sun's angle and land at the right place on hills and roofs. Terrain, grass, sea,
-rivers and lakes compute the map coordinate per vertex (`cloud_shadow_uv`).
-Being linear in position, it is exact at every pixel, which pays one fetch
-(`cloud_shadow_fetch`). Painted objects sample per pixel (`cloud_shadow_at`).
-The receivers are:
+The shadows are applied in screen space (`apply_cloud_shadows`), after the
+opaque scene and the water and before the clouds: a tint factor computed at a
+quarter (low), a third (medium) or half (high) resolution (the shadows are soft, and its two dependent
+fetches a pixel cost 0.87 ms at full resolution on redfox), then multiplied
+into the scene at full resolution. Each pixel's world position comes
+from the scene depth (on water that writes none, from the curved sea), so the shadow
+falls offset by the sun's angle and lands at the right place on hills and roofs. The
+map darkens it by a cool tint: navy over deep water, deeper teal over the shallows,
+land keeping its colour. A multiply keeps the sea's small marks at their contrast.
+The sea itself takes only a per-vertex value (`sun_lost`) to drop the sun's glints
+and sheen in shadow.
 
-- **ground and grass** (`ground_surface`): the shadow removes 85% of the direct
-  sun, leaving the cool fill and some of the ground's colour. On the seabed it
-  removes 55%.
-- **sea, rivers and lakes** (`sea_material`): deep water darkens towards navy,
-  clear shallows towards a deeper teal. One factor keeps the marks' contrast;
-  sheen and glints go.
-- **towns, buildings, boats and aircraft** (`obj_base_light`): 85% of the
-  direct sun.
+Why not in the receivers: main's ground, painted-object and blended-effect pixel
+shaders sit at the edge of what Intel GPUs (the UHD 620 on redfox) can compile at
+SIMD16. Any added live value, even one varying, made them fall back to SIMD8 and
+cost about 0.2 ms with shadows off. The screen pass leaves them untouched;
+`INTEL_DEBUG=fs` on redfox lists SIMD16 compiles to check this. For the same
+reason the transparency veil derives each form's atlas layout from one packed
+index (`cloud_stamp_value_of`) rather than carrying it.
 
 The fade:
 - Things well above the cloud bases are not shaded: 400 to 1800 m over the
@@ -148,16 +153,20 @@ The fade:
   and high peaks. The map holds coverage only, no heights.
 - Shadows fade out with a low sun, and at the map's edge.
 
-Cost: one texture and one vec4 per receiver shader. All shaders stay within
-WebGL2's guaranteed limits (`tools/check_web_shaders.cjs`).
+The map is redrawn every 8 frames on low and medium (2 on high), sooner when
+the camera has moved 600 m or the sun has turned. It is anchored in the world,
+so between redraws only the clouds' own centimetres of drift wait; no stepping
+shows and no second map is blended.
+
+All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs`).
 
 ## Developer controls
 
 These are not game UI.
 
 - `AEGEAN_CLOUD_SHADOWS=0` turns shadows off.
-- `AEGEAN_CLOUD_SHADOW_SKIP=ground,grass,obj,sea` leaves those receivers
-  unshaded, for cost measurements.
+- `AEGEAN_CLOUD_SHADOW_SKIP=sea` leaves the sea's glints in shadow (cost
+  measurements).
 - `AEGEAN_CLOUD_TIMELAPSE=k` runs the clouds' drift and lives k times faster.
 - `AEGEAN_CLOUD_FRAMES=dir` saves every second frame from frame 60. With `ffmpeg
   -framerate 30 -i dir/%05d.png -crf 18` it makes clips of moving shadows.
