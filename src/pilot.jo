@@ -95,6 +95,18 @@ struct Flyer:
     shake = 0.0                     # the buffet now (0..1)
     wreck_cam = false               # (the camera stopped dead when it was wrecked)
     jolt = 0.0                      # (the camera's shake from that, dying away)
+    # The pilot's head jostled against the airframe by its jolts (head_step): offset in the
+    # craft's frame (m: right, up, back) and turn (rad: pitch, yaw, roll), springing back.
+    head_pos: vec3 = vec3(0, 0, 0)
+    head_vel: vec3 = vec3(0, 0, 0)
+    head_rot: vec3 = vec3(0, 0, 0)
+    head_spin: vec3 = vec3(0, 0, 0)
+    head_v: vec3 = vec3(0, 0, 0)
+    head_w: vec3 = vec3(0, 0, 0)
+    head_fwd: vec3 = vec3(0, 0, -1)
+    head_right: vec3 = vec3(1, 0, 0)
+    head_rough = 0.0
+    head_ready = false
     load = 1.0                      # how many g the wings pull (smoothed)
     prev_dir: vec3 = vec3(0, 0, -1)
     last_speed = 0.0
@@ -381,9 +393,44 @@ fly = (f: mut Flyer, dt: f64, t: f64):
     if f.state.moored and f.throttle > 0.05: unmoor(f.state)
     e=flight_env(t,f.state.position)
     if not f.state.moored: step(f.spec, f.state, c, e, dt)
+    head_step(f, e.turbulence, dt)
     f.prop_angle += dt * prop_rotation_speed(f.state,f.feedback.speed)
     f.sea_t = t
     feel(f, dt,e.wind)
+
+# The head lags the airframe: a quick, damped spring in the craft's frame pushed against each
+# jolt the flight model gives it (the body's acceleration moves the head, its angular
+# acceleration turns it), so the cockpit knocks against the view on hard hits. Clamped to a
+# few centimetres and two degrees; a fine buzz in steady rough air comes with head_shake.
+const HEAD_STIFF = 180.0
+const HEAD_DAMP = 15.0
+head_step = (f: mut Flyer, rough: f64, dt: f64):
+    if dt <= 0.0: return
+    q = f.state.orientation
+    fwd = quat_rotate(q, vec3(0, 0, -1)); up = quat_rotate(q, vec3(0, 1, 0)); right = quat_rotate(q, vec3(1, 0, 0))
+    acc = (f.state.velocity - f.head_v) / f32(dt)
+    # (a teleport, a load or a crash is not a jolt: start again from rest)
+    if not f.head_ready or length(acc) > 300.0 or f.state.crashed:
+        f.head_pos = vec3(0, 0, 0); f.head_vel = vec3(0, 0, 0); f.head_rot = vec3(0, 0, 0); f.head_spin = vec3(0, 0, 0)
+        f.head_w = vec3(0, 0, 0)
+    else:
+        body = vec3(dot(acc, right), dot(acc, up), -dot(acc, fwd))
+        w = vec3(dot(f.head_fwd, up), -dot(f.head_fwd, right), dot(f.head_right, up)) / f32(dt)
+        alpha = (w - f.head_w) / f32(dt)
+        f.head_w = w
+        f.head_vel += (-f.head_pos * f32(HEAD_STIFF) - f.head_vel * f32(HEAD_DAMP) - body * 0.24) * f32(dt)
+        f.head_pos = clamp(f.head_pos + f.head_vel * f32(dt), vec3(-0.045, -0.045, -0.03), vec3(0.045, 0.045, 0.03))
+        f.head_spin += (-f.head_rot * f32(HEAD_STIFF) - f.head_spin * f32(HEAD_DAMP) + alpha * 0.2) * f32(dt)
+        f.head_rot = clamp(f.head_rot + f.head_spin * f32(dt), vec3(-0.035, -0.035, -0.035), vec3(0.035, 0.035, 0.035))
+    f.head_v = f.state.velocity; f.head_fwd = fwd; f.head_right = right; f.head_ready = true
+    f.head_rough = rough
+
+# The head's offset and turn now, with a fine buzz in rough air (scale: 1 in the cockpit,
+# less from the chase camera).
+head_shake = (f: Flyer, t: f64) -> (vec3, vec3):
+    b = f32(f.head_rough)
+    buzz = vec3(f32(noise(t * 17.0, 3.0) - 0.5), f32(noise(t * 19.0, 9.0) - 0.5), f32(noise(t * 15.0, 21.0) - 0.5))
+    (f.head_pos + buzz * (b * 0.006), f.head_rot + vec3(buzz.y, buzz.z, buzz.x) * (b * 0.006))
 
 craft_transform = (f: Flyer) -> mat4: translation(f.state.position) * quat_to_mat4(f.state.orientation)
 
@@ -698,7 +745,10 @@ place_chase_camera = (f: mut Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight
     a = f.shake * f.shake * 0.35 + f.jolt * 0.8 + f.feedback.slap * 0.12
     # (shaken about the camera's own axes, whichever way it faces)
     jitter = (side * f32(noise(t * 9.0, 1.0) - 0.5) + up * f32(noise(t * 11.0, 7.0) - 0.5) + view * f32(noise(t * 8.0, 13.0) - 0.5)) * f32(a)
-    precise_camera(world_offset(eye,jitter*0.3),target+jitter*4.7,f.fov,0.5,world_far(eye.y),camera_up)
+    # (the head's jolts, smaller from out here: a few tens of centimetres of knock)
+    head = head_shake(f, t)
+    knock = side * (head.0.x * 6.0 + head.1.y * 3.0) + up * (head.0.y * 6.0 + head.1.x * 3.0)
+    precise_camera(world_offset(eye,jitter*0.3+knock),target+jitter*4.7+knock*0.5,f.fov,0.5,world_far(eye.y),camera_up)
 
 # the dock nearest the aircraft, when it is slow and close enough to moor there
 mooring_spot = (f: Flyer, towns: Town[]) -> vec3?:
