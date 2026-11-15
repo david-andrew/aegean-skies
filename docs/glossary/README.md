@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -668,6 +668,42 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_FLYING='1250 60'` (HUD) and `AEGEAN_FLYING='1250 60 cockpit'`.
 
 ![The altimeter at 1,250 m on the HUD and on the Gull's panel](img/altimeter.png)
+
+### Cockpit arrangements and cabins
+
+- **Aliases:** the flight deck, the cabin, the bridge (the Do X's), open single / tandem / side by
+  side, the virtual seat (the cabin's drawing frame).
+- **Definition:** each type's cockpit as the real one was laid out. Open single and open tandem
+  keep the padded oval coaming; the S.55, Wal and Donnet-Lévêque are open for two side by side (a
+  shared opening, the Wal's and S.55's flown with wheels, a quadrant between the seats). The
+  Heron, Pelican, Albatross, Sarafand, Do X and H-4 have a glazed **cabin** modelled from inside:
+  framed windscreen and side windows, roof and rear bulkhead, every face wound toward the pilot so
+  it is solid at any head angle; the flying instruments set in its panel at the open cockpit's
+  distance, control wheels, a throttle quadrant, a second seat with its own airspeed and
+  altimeter, engine gauges, and on the H-4 the flight engineer's board. Outside, each cabin is a
+  matching deckhouse (`cabin_exterior`); the hull is cut away round the cabin in the cockpit view.
+- **Code:** `src/cockpit_cabins.jo` (`cockpit_layout` per type, `cockpit_look` the head-look's
+  limits, `cockpit_glass` the panes for rain on the glass, `cabin_interior`, `cabin_exterior`,
+  `fit_cockpit`); `src/cockpit.jo build_cockpit` and `draw_cockpit` (wheels, quadrant, the shifted
+  cluster).
+- **Rules:** the windscreen's foot sits 0.24 m under the eye and 1.27 m ahead, so the gauges stay
+  where the open panel has them and the forward view over the nose is the open cockpit's; nothing
+  but frames crosses the glass. `tests/cockpit_cabins_test.jo` casts rays from each cabin's eye:
+  every direction must meet a face turned toward it or leave through a pane.
+- **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
+  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='60 55 cockpit'`.
+
+### Cockpit lamp and luminous dials
+
+- **Aliases:** the panel lamp, instrument glow, night cockpit.
+- **Definition:** after dark the cockpit is lit by its lamp's warm light instead of the moon's
+  (fully in a cabin, which has a ceiling lamp; less in an open cockpit), and the dials' markings
+  and needles glow (their paint carries an alpha below 0.9, the object shader's after-dark glow).
+  The airframe outside the cockpit keeps the night's light. A cabin also keeps the sun to what
+  comes through its glass, and the rain off its interior.
+- **Code:** `src/cockpit.jo cockpit_params` (`cabin`, `lamp`), `COCKPIT_LUMINOUS`.
+- **Rules:** never scale a cockpit paint with `*` (it scales the alpha too and the paint glows at
+  night: the old panel grain did); use `paint_dim`.
 
 ### Schneider racers
 
