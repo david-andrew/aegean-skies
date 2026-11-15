@@ -1,0 +1,97 @@
+# The big flying boats (src/aircraft_boats.jo): models, flight on both flight models, water
+# handling, determinism.
+import '../src/planes.jo' as planes
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/aircraft_boats.jo' as boats
+
+BOATS = [planes.Craft.sm_s55, planes.Craft.dornier_wal, planes.Craft.dornier_dox, planes.Craft.hughes_h4, planes.Craft.short_sarafand]
+
+_finite = (s: fl.CraftState):
+    assert(abs(f64(s.position.x)) < 1e7 and abs(f64(s.position.y)) < 1e7 and abs(f64(s.position.z)) < 1e7)
+    assert(abs(f64(length(s.orientation)) - 1.0) < 0.0001)
+
+test "big boats build with their engines, hulls and parts":
+    loop kind in BOATS:
+        p = planes.aircraft_profile(kind)
+        m = planes.build_craft(kind, planes.LIVERIES[planes.DEFAULT_LIVERIES[int(kind)]])
+        k = fl.craft_spec(kind, m.contacts)
+        assert(boats.big_boat(kind) and m.parts.len() == 7 and m.prop_hubs.len() == p.engines)
+        assert(m.contacts == boats.big_boat_contacts(kind))
+        mass = 0.0
+        loop part in m.parts: mass += part.spec.mass_share
+        assert(abs(mass - 1.0) < 0.00001)
+        # every contact owned by the part that holds it; the S.55's hulls are its "floats"
+        loop c in m.contacts: assert(c in k.parts[planes.contact_part(kind, c)].contacts)
+        if kind == .sm_s55:
+            loop c in m.contacts: assert(planes.contact_part(kind, c) == 4 or planes.contact_part(kind, c) == 5)
+        # props clear of each other: a push-pull pair shares an axis, side by side they don't touch
+        loop i in 0..m.prop_hubs.len():
+            loop j in i + 1..m.prop_hubs.len():
+                a = m.prop_hubs[i]; b = m.prop_hubs[j]
+                if abs(f64(a.x - b.x)) > 0.01 or abs(f64(a.y - b.y)) > 0.01: assert(f64(length(a.xy - b.xy)) > p.prop_radius * 2.0 + 0.3)
+                else: assert(abs(f64(a.z - b.z)) > 3.0)
+        assert(boats.offshore_only(kind) == (p.span > 30.0))
+        print("{kind}: {m.body.count / 3} triangles, {m.prop_hubs.len()} props, swing {boats.swing_radius(kind):.0} m, float {k.float_height:.2}")
+
+_exercise = (kind: planes.Craft, player: bool, v2: bool = false):
+    fl.set_speed_scale(if player: 3.3 else: 1.0)
+    tw.set_tweaks(tw.Tweaks(flight_model = if v2: 1 else: 0))
+    m = planes.build_craft(kind, planes.LIVERIES[0])
+    k = fl.craft_spec(kind, m.contacts); k.player = player
+    e = fl.FlightEnv()
+    s = fl.water_start(k, vec3(0, 0, 0))
+    loop i in 0..900: fl.step(k, s, fl.Controls(), e, 1.0 / 30.0)
+    assert(abs(f64(s.position.y) - k.float_height) < 0.12 and length(s.velocity) < 0.1 and not s.crashed)
+    s = fl.water_start(k, vec3(0, 0, 0))
+    took_off = false; plan = fl.FlightPlan()
+    loop i in 0..60 * 150:
+        fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+        if not s.on_water and s.position.y > k.float_height + 5:
+            took_off = true; break
+    print("{kind} player={player} v2={v2} takeoff t={s.time:.1} run={length(s.position.xz):.0} m damage={s.hull_damage:.4}")
+    # (the heavy hulls slap a little at the 3.3 scale's takeoff speeds: a scratch, under 2%)
+    assert(took_off and not s.crashed and s.hull_damage < 0.02 and length(s.position.xz) < (if player: 9000 else: 4000))
+    before = s.position.y
+    loop i in 0..60 * 90:
+        fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+        if s.position.y > before + 60: break
+    _finite(s)
+    print("{kind} climb to {s.position.y:.0} by t={s.time:.0}")
+    assert(s.position.y > before + 15 and not s.crashed)
+    s = fl.CraftState(position = vec3(0, 500, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, throttle = 0.75)
+    loop i in 0..240: fl.step(k, s, fl.Controls(throttle = 0.75, roll = 0.15, yaw = 0.2), e, 1.0 / 60.0)
+    print("{kind} turn heading={fl.heading(s):.3} y={s.position.y:.1}")
+    assert(fl.heading(s) > 0.02 and fl.heading(s) < 1.4 and s.position.y > 440 and not s.crashed)
+    s = fl.CraftState(position = vec3(0, k.float_height + 3, 0), velocity = vec3(0, -0.6, -k.stall_speed * 1.15 * fl.pure_k(k)),
+        orientation = quat_euler(-0.02, 0, 0), fuel = k.fuel_capacity)
+    touched = false; rebound = 0.0
+    loop i in 0..60 * 180:
+        fl.step(k, s, fl.Controls(assist = 0, water_brake = 0.4), e, 1.0 / 60.0)
+        if s.on_water: touched = true
+        if touched: rebound = max(rebound, f64(s.velocity.y))
+    print("{kind} landing y={s.position.y:.3} speed={length(s.velocity):.3} rebound={rebound:.2} damage={s.hull_damage:.4}")
+    _finite(s)
+    assert(touched and not s.crashed and s.hull_damage < 0.05 and rebound < 2)
+    assert(abs(f64(s.position.y) - k.float_height) < 0.2 and length(s.velocity) < 0.3)
+    fl.set_speed_scale(1.0)
+    tw.set_tweaks(tw.Tweaks())
+
+test "S.55 flies": _exercise(.sm_s55, false); _exercise(.sm_s55, true)
+test "Wal flies": _exercise(.dornier_wal, false); _exercise(.dornier_wal, true)
+test "Do X flies": _exercise(.dornier_dox, false); _exercise(.dornier_dox, true)
+test "H-4 flies": _exercise(.hughes_h4, false); _exercise(.hughes_h4, true)
+test "Sarafand flies": _exercise(.short_sarafand, false); _exercise(.short_sarafand, true)
+test "big boats fly on flight model v2":
+    loop kind in BOATS: _exercise(kind, true, true)
+
+test "big boats are deterministic":
+    loop kind in BOATS:
+        m = planes.build_craft(kind, planes.LIVERIES[0])
+        runs: vec3[]
+        loop r in 0..2:
+            k = fl.craft_spec(kind, m.contacts); e = fl.FlightEnv(wave_height = 0.6)
+            s = fl.water_start(k, vec3(0, 0, 0)); plan = fl.FlightPlan()
+            loop i in 0..60 * 40: fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+            runs.push(s.position)
+        assert(runs[0] == runs[1])
