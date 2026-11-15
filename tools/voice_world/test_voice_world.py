@@ -109,5 +109,51 @@ class Pack(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<H', raw, 4)[0], len(pack.PHONES))
 
 
+
+class ModelGaps(unittest.TestCase):
+    """A small pool can leave a model class without examples; packing must still work."""
+
+    def fit(self):
+        import pack
+        sp = dict(weights={k: [0.1] * n for k, n in [('arc_stop', 10), ('arc_other', 10), ('accent_first', 13), ('accent_middle', 13),
+                                                     ('accent_nuclear', 13), ('micro', 3)]},
+                  lags=[round(-0.2 + 0.05 * i, 2) for i in range(13)], level_by_index={'0': -0.5, '1': 0.7}, level_spread=float('nan'))
+        fit = dict(durations=dict(intercept_ms={p: 70.0 for p in pack.PHONES if p != 'pau'},
+                                  factors={k: 1.0 for k in pack.DURATION_FACTORS}, elasticity={'stressed_vowel': -0.6, 'unstressed_vowel': -0.8},
+                                  reference_rate=5.0),
+                   fricatives={'S': dict(p90_ms=90.0, n=10)}, f0_st=dict(median=9.0), effort=dict(vector=[0.0] * 25),
+                   pauses={'comma': dict(median_ms=120.0, n=8)}, superposition=sp)
+        return fit, sp
+
+    def test_missing_level_class_uses_prior_then_mean(self):
+        import pack
+        fit, sp = self.fit()
+        prior = dict(superposition=dict(level_by_index={'0': 0.0, '1': 0.5, '2': 1.25}, level_spread=2.0),
+                     pauses={'stop': dict(median_ms=400.0), 'none': dict(median_ms=160.0)}, durations=dict(elasticity={'onset': -0.4, 'coda': -0.3}))
+        m = pack.model_numbers(fit, sp, prior)
+        self.assertEqual(m['level'][2:], [-0.5, 0.7, 1.25])          # class 2 from the prior
+        self.assertEqual(m['level'][1], 2.0)                         # NaN spread replaced by the prior's
+        self.assertEqual(m['elasticity'], [-0.6, -0.8, -0.4, -0.3])
+        self.assertAlmostEqual(m['pauses'][1], 0.4)
+        m2 = pack.model_numbers(fit, sp)                             # no prior: mean of the present classes
+        self.assertAlmostEqual(m2['level'][4], 0.1)
+        for k, v in m2.items():
+            self.assertTrue(all(np.isfinite(x) for x in v), k)
+
+    def test_pack_round_trip_with_missing_class(self):
+        import pack, voicefile
+        fit, sp = self.fit()
+        H = 6
+        W = wa.ORDER + 1 + len(wa.BANDS) + 1
+        f = np.zeros((2 * H, W)); f[:, wa.ORDER + 1:] = 0.5
+        units = {('pau', 'AA'): dict(frames=f, count=2, left=0.04, right=0.06), ('AA', 'pau'): dict(frames=f, count=2, left=0.05, right=0.04)}
+        path = os.path.join(os.environ.get('TMPDIR', '.'), 'gaps-test.z')
+        pack.pack(units, {'ah': ['AA1']}, path, pack.model_numbers(fit, sp))
+        v = voicefile.read(path)
+        os.remove(path)
+        self.assertEqual(len(v['model']['level']), 5)
+        self.assertTrue(all(np.isfinite(x) for x in v['model']['level']))
+
+
 if __name__ == '__main__':
     unittest.main()

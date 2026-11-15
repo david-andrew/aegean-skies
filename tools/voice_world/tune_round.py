@@ -147,7 +147,9 @@ def fit_user(subset, work, prior_fit):
                 lab = bu.unit_label(p['p'], p['stress'])
                 counts[lab] = counts.get(lab, 0) + 1
         prior_ms = prior_fit['durations']['intercept_ms']
-        shared = [l for l in d['intercept_ms'] if counts.get(l, 0) >= 5 and l in prior_ms]
+        ok = lambda v: isinstance(v, (int, float)) and np.isfinite(v) and v > 0
+        d['intercept_ms'] = {l: v for l, v in d['intercept_ms'].items() if ok(v)}
+        shared = [l for l in d['intercept_ms'] if counts.get(l, 0) >= 5 and ok(prior_ms.get(l))]
         ratio = float(np.exp(np.median([np.log(d['intercept_ms'][l] / prior_ms[l]) for l in shared]))) if shared else 1.0
         dur = dict(prior_fit['durations'])
         dur['intercept_ms'] = {l: (d['intercept_ms'][l] if counts.get(l, 0) >= 5 and l in d['intercept_ms'] else round(v * ratio, 1))
@@ -167,7 +169,12 @@ def fit_user(subset, work, prior_fit):
             fit['f0_st'] = dict(median=round(float(np.median(allf)), 2), p5=round(float(np.percentile(allf, 5)), 2), p95=round(float(np.percentile(allf, 95)), 2))
             notes.append(f"pitch level from your takes ({100 * 2 ** (fit['f0_st']['median'] / 12):.0f} Hz median)")
         if len(data) >= 60:
-            fit['superposition'] = pf.fit_superposition(data)
+            sp = pf.fit_superposition(data)
+            # a phrase-position class with no examples keeps the prior's level
+            lv = dict(prior_fit['superposition'].get('level_by_index', {}))
+            lv.update(sp.get('level_by_index', {}))
+            sp['level_by_index'] = lv
+            fit['superposition'] = sp
             notes.append('intonation shapes fitted to your takes')
         else:
             sp = dict(prior_fit['superposition'])
@@ -248,8 +255,8 @@ def blend_units(adapted, user, min_count=2):
     return out, own
 
 
-def pack_voice(units, fit, lex, out):
-    pack.pack(units, lex, out, pack.model_numbers(fit, fit['superposition']))
+def pack_voice(units, fit, lex, out, prior=None):
+    pack.pack(units, lex, out, pack.model_numbers(fit, fit['superposition'], prior))
 
 
 def evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr=None):
@@ -416,7 +423,7 @@ def main():
             for j, (kind, units, about) in enumerate(kinds):
                 voice = os.path.join(root, 'voices', f'{rnd_id}-{kind}-{n}.z')
                 os.makedirs(os.path.dirname(voice), exist_ok=True)
-                pack_voice(units, fit, lex, voice)
+                pack_voice(units, fit, lex, voice, prior_fit)
                 prog.set('evaluate', f'Scoring "{kind}" from {n} lines on {len(heldout)} held-out lines', 40 + 55 * (i + (j + 1) / 3) / len(sizes))
                 ents = evaluate_voice(a.repo, heldout, takes, voice, os.path.join(base_dir, f'{kind}-n{n}'), root, f'compare/{rnd_id}/{kind}-n{n}', full, asr)
                 curve.append(dict(lines=n, kind=kind, label=f'{kind}, {n} lines{share}', about=about, summary=summary(ents),

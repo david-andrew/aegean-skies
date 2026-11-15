@@ -17,7 +17,7 @@ which must accompany any distributed copy of the tables).
 Only derived numbers leave the scratch analysis: averaged 5 ms spectral-envelope trajectories
 (no phase, no pitch, no waveform), and aggregate duration/F0 statistics.
 """
-import argparse, glob, json, os, re, struct, zlib
+import argparse, glob, json, math, os, re, struct, zlib
 import numpy as np
 import build_units as bu
 import world_analysis as wa
@@ -144,29 +144,83 @@ DURATION_FACTORS = ['function', 'word_final', 'word_initial', 'cluster', 'syl2',
 FRICATIVES = ['F', 'V', 'TH', 'DH', 'S', 'Z', 'SH', 'ZH', 'HH']
 
 
-def model_numbers(fit, superposition):
-    """The fitted prosody as named number lists, in the order src/voice_model.jo expects."""
-    d = fit['durations']
+def _num(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _pick(sources, keys, default):
+    """The first finite number found at keys in the sources (a fit, then the prior), else default."""
+    for src in sources:
+        cur = src
+        for k in keys:
+            if not isinstance(cur, dict) or k not in cur:
+                cur = None
+                break
+            cur = cur[k]
+        v = _num(cur)
+        if v is not None:
+            return v
+    return default
+
+
+def _vector(sources, keys, n, default):
+    """A list of n finite numbers at keys in the first source that has one, else default."""
+    for src in sources:
+        cur = src
+        for k in keys:
+            cur = cur.get(k) if isinstance(cur, dict) else None
+        if isinstance(cur, (list, tuple)) and len(cur) == n and all(_num(x) is not None for x in cur):
+            return [float(x) for x in cur]
+    return list(default)
+
+
+NEUTRAL_LEVELS = {'0': 0.0, '1': 0.0, '2': 0.0}
+
+
+def model_numbers(fit, superposition, prior=None):
+    """The fitted prosody as named number lists, in the order src/voice_model.jo expects. Any
+    value the fit lacks (a class with no examples in a small pool, a non-finite estimate) comes
+    from the prior fit if given, else a neutral default; a missing phrase-level class takes the
+    mean of the classes that are present."""
+    prior = prior or {}
+    sp_prior = prior.get('superposition', {})
+    fits = [fit, prior]
     m = {}
-    m['duration_ms'] = [d['intercept_ms'].get(p, 0.0) for p in PHONES]
-    m['duration_factors'] = [d['factors'][k] for k in DURATION_FACTORS]
-    m['elasticity'] = [d['elasticity'][k] for k in ['stressed_vowel', 'unstressed_vowel', 'onset', 'coda']]
-    m['reference_rate'] = [d['reference_rate']]
+    m['duration_ms'] = [_pick(fits, ['durations', 'intercept_ms', p], 0.0) for p in PHONES]
+    m['duration_factors'] = [_pick(fits, ['durations', 'factors', k], 1.0) for k in DURATION_FACTORS]
+    m['elasticity'] = [_pick(fits, ['durations', 'elasticity', k], -0.5) for k in ['stressed_vowel', 'unstressed_vowel', 'onset', 'coda']]
+    m['reference_rate'] = [_pick(fits, ['durations', 'reference_rate'], 5.5)]
     caps = []
-    fr = fit['fricatives']
     for kind in ['', '_wordend', '_final']:
         for p in PHONES:
-            v = fr.get(p + kind) or fr.get(p + '_wordend') or fr.get(p)
-            caps.append(v['p90_ms'] if (p in FRICATIVES and v) else 0.0)
+            v = 0.0
+            if p in FRICATIVES:
+                for key in (p + kind, p + '_wordend', p):
+                    v = _pick(fits, ['fricatives', key, 'p90_ms'], None)
+                    if v is not None:
+                        break
+            caps.append(v or 0.0)
     m['fricative_cap_ms'] = caps
-    w = superposition['weights']
-    for k in ['arc_stop', 'arc_other', 'accent_first', 'accent_middle', 'accent_nuclear', 'micro']:
-        m[k] = w[k]
-    m['accent_lags'] = [superposition['lags'][0], superposition['lags'][1] - superposition['lags'][0]]
-    m['level'] = [fit['f0_st']['median'], superposition['level_spread']] + [superposition['level_by_index'][str(i)] for i in range(3)]
-    m['effort'] = fit['effort']['vector']
-    pz = fit['pauses']
-    m['pauses'] = [pz['comma']['median_ms'] / 1000, pz['stop']['median_ms'] / 1000, pz['none']['median_ms'] / 1000]
+    sps = [superposition, sp_prior]
+    for k, n in [('arc_stop', 10), ('arc_other', 10), ('accent_first', 13), ('accent_middle', 13), ('accent_nuclear', 13), ('micro', 3)]:
+        m[k] = _vector(sps, ['weights', k], n, [0.0] * n)
+    lags = _vector(sps, ['lags'], 13, [round(-0.2 + 0.05 * i, 2) for i in range(13)])
+    m['accent_lags'] = [lags[0], lags[1] - lags[0]]
+    present = {k: _num(v) for k, v in (superposition.get('level_by_index') or {}).items() if _num(v) is not None}
+    mean_present = sum(present.values()) / len(present) if present else None
+    levels = []
+    for i in range(3):
+        v = present.get(str(i))
+        if v is None:
+            v = _pick([sp_prior], ['level_by_index', str(i)], mean_present if mean_present is not None else 0.0)
+        levels.append(v)
+    m['level'] = [_pick(fits, ['f0_st', 'median'], 7.0), _pick(sps, ['level_spread'], 1.5)] + levels
+    m['effort'] = _vector(fits, ['effort', 'vector'], len((fit.get('effort') or prior.get('effort') or {}).get('vector') or []) or 25, [0.0] * 25)
+    m['pauses'] = [_pick(fits, ['pauses', k, 'median_ms'], d) / 1000 for k, d in (('comma', 150.0), ('stop', 450.0), ('none', 150.0))]
     return m
 
 
@@ -196,7 +250,7 @@ def main():
     if out.startswith(os.path.abspath(a.repo) + os.sep):
         raise SystemExit('--out must be outside the repository until the final voice is chosen')
     fit = json.load(open(a.fit))
-    model = model_numbers(fit, fit['superposition'])
+    model = model_numbers(fit, fit['superposition'], fit)
     raw, z, n = pack(units, lex, out, model)
     rep = dict(units=n, tokens=sum(len(v) for v in groups.values()), lexicon=len(lex), unknown=len(unknown),
                raw_bytes=raw, deflated_bytes=z, rules=len(lts.RULES))
