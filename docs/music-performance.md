@@ -208,8 +208,9 @@ There are two pianos:
   - a key knock and a damper thump, very low;
   - a quicker damper.
 
-A piece's piano is `MusicPiece.piano`, set from `UPRIGHT` in `tools/music_pack.py`: the bar
-pianist's numbers and the radio's period piano.
+Which piano plays follows the venue, not the piece: the bar's band always plays the upright; the
+radio's classical programme uses the grand and its popular and dance programmes the upright. See
+`docs/music-orchestra.md`, "Which piano: the venue decides".
 
 `GENTLE` sets a gentler touch per piece (`gentle_touch`): a soft mean velocity per voice (the tune,
 the right hand's chords, the bass, the left hand's chords), keeping a third of the phrasing around
