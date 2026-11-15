@@ -331,7 +331,12 @@ On the rivers branch until it lands.
 - **Code:** `src/prop_disc.jo` (`prop_disc_vs`, `prop_disc_fs`, `queue_prop_discs`,
   `queue_cockpit_prop_discs`, `draw_prop_discs`).
 - **Rules:** the disc fades in from 16 to 50 rad/s, the arcs from 26 to 64 rad/s; below 40 rad/s
-  the real blades show. Disc and blades are not drawn beyond `PROP_DISC_RANGE` (650 m).
+  the real blades show. Disc and blades are not drawn beyond `PROP_DISC_RANGE` (650 m). Blades and
+  disc turn in the aircraft's hand (`prop_turn`, see [Prop torque](#prop-torque)): the game's own
+  aircraft are drawn left-hand (counterclockwise from the cockpit), as they always were; a
+  right-hand prop's disc is the same disc with its own frame mirrored, so its arcs, their drift and
+  precession, the sun-facing band and the sun-side arc are an exact mirror image at the same
+  moments (`prop_disc_test` "a right-hand prop's disc is the original's mirror image").
 - **Capture:** `tools/prop_disc_frames.jo` with `PROP_VIEW=side|front|close|rear|far|cockpit`,
   `PROP_THROTTLE=0..1`, `PROP_KIND=0..15`.
 
@@ -477,23 +482,32 @@ On the rivers branch until it lands.
 - **Definition:** two propellers on one axis turning opposite ways. The Macchi M.C.72 has a
   **coaxial contra-rotating** pair at the nose (the Fiat AS.6 drives each from one of its halves);
   the Savoia-Marchetti S.65 has a **push-pull tandem**, a tractor at the nose and a pusher behind
-  the cockpit. Each hub carries a spin (+1 the original way, -1 the other); a -1 hub carries the
-  mirror-handed blades (`CraftModel.prop_alt`), and its prop disc's bands turn the other way too.
+  the cockpit. Each hub carries a spin against the aircraft's hand (+1 its hand, -1 the other); a -1
+  hub carries the mirror-handed blades (`CraftModel.prop_alt`) and its disc is drawn mirrored. The
+  M.C.72's front rotor and the S.65's tractor are right-hand.
   Their torque reactions cancel, so neither swings on its run (see [Prop torque](#prop-torque)).
-- **Code:** `CraftModel.prop_spins`, `prop_alt`, `prop_spin`, `prop_frame`, `prop_mesh` in
+- **Code:** `CraftModel.prop_spins`, `prop_alt`, `prop_spin`, `prop_turn`, `prop_frame`, `prop_mesh` in
   `src/planes.jo`; the hubs in `italian_racer_hubs` (`src/italian_racers.jo`); the discs in
   `queue_prop_discs` (`src/prop_disc.jo`).
 
 ### Prop torque
 
 - **Aliases:** torque swing, torque reaction.
-- **Definition:** a Tweaks trial (off by default): the propeller's reaction rolls the aircraft the
-  other way, about a fifth of the static thrust at the blade tip, with the throttle: on the take-off
-  run one float digs in, and in the air (flight model v2) the wings want to roll. A contra-rotating
-  pair or a push-pull tandem has none (`CraftSpec.torque_share` 0).
-- **Code:** `prop_torque` in `src/flight.jo`; `tweaks.prop_torque` in `src/tweaks.jo`.
+- **Definition:** a Tweaks trial (off by default): the propeller's reaction rolls the aircraft
+  against the propeller's turning, about a fifth of the static thrust at the blade tip, with the
+  throttle. A right-hand propeller (clockwise seen from the cockpit, as most engines of the period
+  turned) rolls her to port: on the take-off run the port float digs in, and in the air (flight
+  model v2) the left wing wants to drop. A left-hand one does the opposite. Each profile carries
+  the hand (`AircraftProfile.prop_hand`): the game's own sixteen are left-hand, as their props have
+  always been drawn; the historical types right-hand (the default), the S.6B's from the record (its
+  torque buried the port float, so it carried its fuel in the starboard float). The prop is drawn
+  turning in that hand, so the torque always rolls against what is seen. A contra-rotating pair or a push-pull
+  tandem has none, and nor does a Schneider racer with its own torque swing (`CraftSpec.torque_share`
+  0).
+- **Code:** `prop_torque` in `src/flight.jo` (+ is to port); `tweaks.prop_torque` in
+  `src/tweaks.jo`.
 - **Test:** `tests/italian_racers_test.jo` "contra-rotating and push-pull pairs have no net torque
-  swing".
+  swing" and "the prop torque trial rolls against each propeller's turning".
 
 ### Speed scale
 
