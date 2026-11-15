@@ -11,8 +11,27 @@ from pathlib import Path
 import re
 
 
+# Sloppy's newer pages carry the module in <script type="application/octet-stream" id="sloppy-wasm">
+# and fetch it themselves from that element's data-src when it has one.
+ELEMENT = re.compile(r'<script type="application/octet-stream" id="sloppy-wasm">([A-Za-z0-9+/=]+)</script>')
+
+
 def package(html: Path) -> Path:
     source = html.read_text()
+    element = list(ELEMENT.finditer(source))
+    if len(element) == 1:
+        wasm = base64.b64decode(element[0].group(1), validate=True)
+        if wasm[:8] != b'\x00asm\x01\x00\x00\x00':
+            raise ValueError('Invalid Wasm module header')
+        name = f'aegean.{hashlib.sha256(wasm).hexdigest()[:16]}.wasm'
+        module = html.with_name(name)
+        source = source[:element[0].start()] + f'<script type="application/octet-stream" id="sloppy-wasm" data-src="{name}"></script>' + source[element[0].end():]
+        # (Sloppy's own "loading..." words: the game's own card shows instead; nothing before the title has words)
+        source = re.sub(r'<div id="sloppy-loading"[^>]*>[^<]*</div>\n?', '', source)
+        module.write_bytes(wasm)
+        html.write_text(source)
+        print(f'{html.name}: {html.stat().st_size} bytes; {name}: {len(wasm)} bytes')
+        return module
     # (`const` up to Sloppy 0.34.0, `var` from 0.34.1)
     pattern = re.compile(r'^(?:const|var) SLOPPY_WASM = "([A-Za-z0-9+/=]+)";\n', re.MULTILINE)
     matches = list(pattern.finditer(source))
