@@ -526,7 +526,8 @@ On the rivers branch until it lands.
 
 - **Aliases:** the P.7's take-off, foil-borne, on the foils, the clutch, the water screw.
 - **Definition:** the Piaggio P.7 (1929) has no floats. Its sealed hull floats low with the wings
-  just clear of the water and the air propeller feathered and still, its lower blade in the sea.
+  just clear of the water and the air propeller feathered, declutched and windmilling slowly, its
+  lower blade in the sea.
   Two hydrofoils on struts just ahead of the wing and a third under the tail lift it; a small
   water screw under the tail, driven by the same engine, pushes it. The run goes in four phases:
   1. **Hull-borne:** the screw pushes the hull through the water (it needs nearly full throttle
@@ -550,6 +551,15 @@ On the rivers branch until it lands.
   in the water (it beats the sea, gives no thrust and hurts the engine); or the swell is big
   (wind over about 8 m/s: the wing tips catch the waves and tear). Closing the throttle at under
   5 m/s on the water puts the clutch back to the screw for another try.
+  **The air propeller as seen:** declutched, it windmills slowly (5 rad/s at rest, up to 13 with
+  speed: `windmill_speed`), always below the [Prop disc](#prop-disc)'s speeds, so its solid blades
+  show turning while a blade can touch the sea; where a blade cuts the water it flicks small
+  throws of spray (`_blade_cuts` in `src/pilot.jo`, the same particles and colour as the bow
+  spray). A blade windmilling through the sea drags a little and does no harm; driven by the
+  engine, it wrecks it. Once clutched in, out of the sea, its turn rises from the windmill's to the
+  engine's as it comes off its feather (`foil_prop_speed`), through the usual blades-to-disc
+  handover. The brass drive plate lights SCREW, FOILS or AIR PROP, and shows "propeller in the
+  sea" whenever a blade is in the water.
 - **Code:** `src/hydrofoil.jo` (the foils' lift and drag, `foil_force`; the screw,
   `screw_thrust`; the clutch, `clutch_step`; the P.7's foils and screw, `P7_FOILS`, `P7_SCREW`),
   `src/hydrofoil_solver.jo` `hydrofoil_contacts` (called from the water model in `src/flight.jo`
@@ -2350,6 +2360,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
 | `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
+| `AEGEAN_CAPTURE_TAKEOFF=1` | the player's aircraft at rest on the water off the home harbour, and the production take-off autopilot flying it off and up (with `AEGEAN_CRAFT`, `AEGEAN_CAPTURE_ORBIT`, `AEGEAN_FRAMES`; see [Hydrofoil take-off](#hydrofoil-take-off)) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
