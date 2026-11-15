@@ -284,6 +284,11 @@ def model_numbers(fit, superposition, prior=None):
         m['tune_pitch'], m['tune_slope'] = [float(x) for x in tune['pitch']], [float(x) for x in tune['slope']]
         if len(tune.get('energy') or []) == 43 and len(tune.get('intrinsic') or []) == len(PHONES):
             m['tune_energy'], m['tune_intrinsic'] = [float(x) for x in tune['energy']], [float(x) for x in tune['intrinsic']]
+    en = fit.get('energy') or {}
+    if len(en.get('effect') or []) == 4 and all(_num(x) is not None for x in en['effect']):
+        m['energy_effect'] = [float(x) for x in en['effect']]
+        for g, r in sorted((en.get('refs') or {}).items()):
+            m['energy_ref_' + g] = [float(r)]
     if _num(fit.get('sustain')) is not None:
         m['sustain'] = [float(fit['sustain'])]
     for g, v in sorted((fit.get('tilts') or {}).items()):

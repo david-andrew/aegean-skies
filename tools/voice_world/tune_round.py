@@ -564,6 +564,40 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
     return fit, report
 
 
+def energy_effect(lines, takes, aligned, root, lam=4.0):
+    """How the speaker's delivery moves with a line's intended energy (script 'energy', 1..5), from
+    their takes of the genres that vary in it: per energy step, pitch (st), log pitch spread, log
+    articulation rate and brightness, each a least-squares slope shared by the genres (each genre
+    its own intercept), shrunk toward none (ridge lam). Returns {'effect': [pitch, log range, log
+    speed, tilt dB/octave], 'refs': {genre: mean energy}, 'n': takes} or None when the energies
+    do not vary enough."""
+    rows = []
+    for l in lines:
+        g = GAME_GENRE.get(l['genre'])
+        e = l.get('energy') or 0
+        if not g or e <= 0:
+            continue
+        al, an = aligned[l['id']]
+        d = delivery(al['phones'], an['f0'])
+        sp = spectral(ev.trim(ev.load16(os.path.join(root, takes[l['id']]['file']))), an['f0'])
+        if d and sp and d['spread'] > 0.3:
+            rows.append((g, e, d['med'], np.log(d['spread']), np.log(d['rate']), sp['bright']))
+    levels = {}
+    for g, e, *_ in rows:
+        levels[e] = levels.get(e, 0) + 1
+    if len([k for k, n in levels.items() if n >= 3]) < 2:
+        return None
+    genres = sorted({r[0] for r in rows})
+    X = np.array([[1.0 if r[0] == g else 0.0 for g in genres] + [r[1]] for r in rows])
+    P = np.zeros((X.shape[1], X.shape[1])); P[-1, -1] = lam
+    slope = lambda col: float(np.linalg.solve(X.T @ X + P, X.T @ np.array([r[col] for r in rows]))[-1])
+    pitch, spread, rate, bright = slope(2), slope(3), slope(4), slope(5)
+    refs = {g: round(float(np.mean([r[1] for r in rows if r[0] == g])), 3) for g in genres}
+    return dict(effect=[round(float(np.clip(pitch, -3, 4)), 3), round(float(np.clip(spread, -0.4, 0.4)), 4),
+                        round(float(np.clip(rate, -0.3, 0.3)), 4), round(float(np.clip(bright / 2, -1.5, 1.5)), 3)],
+                refs=refs, n=len(rows), levels=levels)
+
+
 GUARD_FLOOR = 0.05     # word accuracy a choice with more of the speaker's data may give up; within it the user's ear decides     # word accuracy a choice with more of the speaker's data may give up
 
 
@@ -847,6 +881,13 @@ def main():
             # the delivery, fitted by synthesis against the speaker's takes of each genre
             prog.set('fit', f'Calibrating the delivery of the {n}-line voice against your takes', 38 + 55 * (i + 0.2) / len(sizes))
             fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
+            # a line's own energy within its genre, from the speaker's takes at each energy
+            fit['energy'] = energy_effect([l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, root)
+            if fit['energy']:
+                ee = fit['energy']['effect']
+                notes = notes + [f"per energy step (from {fit['energy']['n']} takes): pitch {ee[0]:+.1f} st, range x{np.exp(ee[1]):.2f}, "
+                                 f"tempo x{np.exp(ee[2]):.2f}, tilt {ee[3]:+.2f} dB/octave, about each genre's usual energy "
+                                 + ', '.join(f'{g} {r:.1f}' for g, r in fit['energy']['refs'].items())]
             last = cal[-1]
             notes = notes + ['delivery fitted to your takes: ' + '; '.join(
                 f"{g} {v[0]:.2f}x tempo, {v[1]:+.1f} st, range {v[2]:.2f}, pauses {v[3]:.2f}" for g, v in sorted(fit['styles'].items()) if g in last)

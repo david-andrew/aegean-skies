@@ -167,7 +167,7 @@ def synthesize(repo, lines, outdir, data=None, radio=True):
         txt = os.path.join(outdir, f'lines-{g}.txt')
         with open(txt, 'w') as f:
             for l in ls:
-                f.write(f"{l['id']}|{l['text']}\n")
+                f.write(f"{l['id']}|{l['text']}|{int(l.get('energy') or 0)}\n")
         env = dict(os.environ, VOICE_TEXTS=txt, VOICE_DIR=outdir, VOICE_DUMP='1', SLOPPY_NO_AUDIO='1', SLOPPY_THREADS='1')
         if data:
             env['AEGEAN_VOICE_DATA'] = data
