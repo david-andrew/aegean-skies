@@ -912,8 +912,13 @@ On the rivers branch until it lands.
   the **grass egg**. A blade is about 0.6-1.1 m tall (twice the old height and width), so a cell holds a
   third of the old blade count and covers the same ground. Cells past half way out use the **far tuft**
   (about half as many blades, half again as wide) so the vertex work goes where the eye is. Wind, the
-  prop's slipstream and contact with the walker are done in the vertex shader; blades are lit by the
-  ground beneath them.
+  prop's slipstream and contact with the walker are done in the vertex shader. Blades are lit by the
+  ground beneath them: the cell carries the terrain's surface-detail slope (`grass_detail_slope`), so
+  hill shading and the soft sun shadows of the relief carry through the field; the cloud-shadow pass is a
+  screen-space multiply and covers blades like any other pixel.
+- **Clumps and turning:** each cell turns its tuft by its own angle (no one-metre lattice of rows), and
+  blades gather toward the centres of a jittered ~0.9 m world lattice. A clump has its own height, lean
+  and a slight tint; each blade also has its own height, lean and yaw off the wind's line.
 - **Code:** `src/grass.jo` (`grass_vs`, `grass_fs`, `build_tuft`, `build_grass`, `draw_grass`,
   `grass_cover` for where grass may grow).
 - **Rules:** blades per cell (near / far tuft) are 24 / 12 on low, 72 / 36 on medium and 1024 / 506 on
@@ -928,7 +933,7 @@ On the rivers branch until it lands.
 - **Aliases:** the drawn region, the reach, the grass shape.
 - **Definition:** the region of cells that grow blades, shaped like an egg stretched along the view: it
   reaches 2.5 times the base radius ahead of the camera (20, 27.5 and 30 m on low, medium and high), 1.2
-  times to each side and 0.55 times behind. Looking steeply down, as from a low aircraft, it relaxes
+  times to each side and 0.8 times behind (so a quick turn does not show grass growing in). Looking steeply down, as from a low aircraft, it relaxes
   toward a disc a little wider than the base radius. Chunks and cells outside it (or the view frustum)
   are never uploaded.
 - **Code:** `src/grass.jo grass_shape`, `grass_view_shape`, `grass_reach_for`, `draw_grass`; the shader

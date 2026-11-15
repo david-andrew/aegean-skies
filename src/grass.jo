@@ -70,32 +70,54 @@ grass_keep = (d: f32) -> f32: 1.0 - smoothstep(0.30, 1.0, d)
 const GRASS_FAR_START = 0.5
 
 grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
-    root = (render_model(inst.model,u.origin) * vec4(v.uv.x,0,v.uv.y,1)).xyz
+    # Every cell turns its tuft by its own angle, so the blades never fall on a one-metre lattice (rows, combs).
+    cell = inst.model[3].xz
+    cell = cell-floor(cell/4096.0)*4096.0
+    angle = hash21(cell*0.37+vec2(11,5))*6.2832
+    cs = cos(angle)
+    sn = sin(angle)
+    uv = vec2(v.uv.x*cs-v.uv.y*sn,v.uv.x*sn+v.uv.y*cs)
+    pos = vec3(v.pos.x*cs-v.pos.z*sn,v.pos.y,v.pos.x*sn+v.pos.z*cs)
+    root = (render_model(inst.model,u.origin) * vec4(uv.x,0,uv.y,1)).xyz
     tip = v.color.x
+    # Clumps: blades gather toward the centres of a jittered ~0.9 m world lattice, and each clump has its
+    # own height, lean and tint. The lattice is not the cell grid, so no row of clumps lines up either.
+    clump_cell = floor((root.xz+u.origin.xz)*1.1)
+    clump_id = clump_cell-floor(clump_cell/4096.0)*4096.0
+    clump_at = (clump_cell+vec2(hash21(clump_id+vec2(1,2)),hash21(clump_id+vec2(5,9))))/1.1-u.origin.xz
+    clump = hash21(clump_id*1.3+vec2(17,3))
+    gather = (clump_at-root.xz)*0.2
+    root = vec3(root.x+gather.x,root.y,root.z+gather.y)
     # Thinning by distance along the egg: each blade has its own threshold and shrinks away when the
     # field's density falls below it, so the field thins out like a scatter, never as a ring.
     d = grass_shape(root.xz-u.cam.xz,u.grass_view,u.grass_actor.w)+(vnoise((root.xz+u.origin.xz)*0.23)-0.5)*0.12
     keep = grass_keep(d)
-    cellid = inst.model[3].xz
-    cellid = cellid-floor(cellid/64.0)*64.0
-    pick = hash21(cellid*1.7+v.uv*41.0+vec2(5,9))
+    pick = hash21(cell*1.7+v.uv*41.0+vec2(5,9))
+    pick2 = fract(pick*7.31+clump)
     fade = smoothstep(0.0,0.25,keep*1.25-pick)
     size = fade*(0.5+0.5*keep)
     # A fully shrunk blade has zero area. Skip its wind/contact work as a unit;
     # every vertex shares the root and therefore takes the same branch.
     if size<=0.0:return GrassOut(vec4(2,2,2,1),vec4(0,0,0,0))
-    w=render_model(inst.model,u.origin)*vec4(v.pos,1)
+    w=render_model(inst.model,u.origin)*vec4(pos,1)
+    w=vec4(w.x+gather.x,w.y,w.z+gather.y,1)
+    # per-blade and per-clump height
+    w.y = root.y+(w.y-root.y)*(0.8+0.4*clump)*(0.85+0.3*pick2)
     curve=tip
     wave = meadow_wave(root.xz,root.xz+u.origin.xz,u.wind)
     lean = meadow_lean(u.wind.z)
     # A small flutter per blade (a few percent of the steady lean) so neighbours never move in lockstep.
     flutter = 0.08*sin(u.time*(4.0+3.0*pick)+pick*40.0)
-    bend = curve*(lean.x*(1.0+flutter)+lean.y*wave)
+    # lean: each blade and clump leans a little more or less, and a little off the wind's line
+    sway = (0.6+0.8*pick2)*(0.85+0.3*clump)
+    bend = curve*sway*(lean.x*(1.0+flutter)+lean.y*wave)
+    yaw = (pick-0.5)*0.9
+    along = vec2(u.wind.x*cos(yaw)-u.wind.y*sin(yaw),u.wind.x*sin(yaw)+u.wind.y*cos(yaw))
     delta = root.xz-u.grass_actor.xz
     distance = length(delta)
     contact = (1.0-smoothstep(0.25,1.25,distance))*(1.0-smoothstep(0.5,2.5,abs(u.grass_actor.y-root.y)))
     away = delta/max(distance,0.1)
-    offset = u.wind.xy*bend+away*contact*tip*0.45
+    offset = along*bend+away*contact*tip*0.45
     if u.grass_airflow.w>2.0:
         # A widening slipstream trails behind the propeller; low wings push
         # air outwards. Both weaken continuously with clearance and engine load.
@@ -107,7 +129,7 @@ grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
         clearance = 1.0-smoothstep(2.0,14.0,max(u.grass_actor.y-root.y,0.0))
         ripple = 0.78+0.22*sin(behind*2.5-u.time*18.0+across*0.7)
         contact = clamp((cone+wing)*clearance*u.grass_airflow.z*ripple,0.0,1.0)
-        offset = u.wind.xy*bend+(-u.grass_airflow.xy*cone+away*wing)*clearance*u.grass_airflow.z*curve*0.55
+        offset = along*bend+(-u.grass_airflow.xy*cone+away*wing)*clearance*u.grass_airflow.z*curve*0.55
     rel = w.xz-root.xz
     w = vec4(root.x+(rel.x+offset.x)*size,root.y+((w.y-root.y)*(1.0-contact*0.8)-bend*0.18)*size,root.z+(rel.y+offset.y)*size,1)
     drawn = render_warped(w.xyz,u.cam,u.warp_a,u.warp_b)
@@ -123,11 +145,18 @@ grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
     ray=w.xyz-u.cam
     projection=clamp(dot(ground_normal,root-u.cam)/min(dot(ground_normal,ray),-0.001),1.0,4.0)
     shade_point=u.cam+ray*projection
-    gi=GroundOut(clip,shade_point,normal,inst.color,inst.material.w)
+    # The ground under the blades is lit by the fine relief normal (the terrain's coast-patch path); take the
+    # same one, sampled at the blade's root, so hill shading and soft sun shadows carry through the field.
+    # The terrain adds its surface detail's slope to the broad normal (coast_gpu_normal); the cell carries that
+    # detail slope in the spare w of its model columns, so the blade is lit like the ground under its root.
+    relief_normal=normalize(vec3(normal.x-inst.model[0].w*normal.y,normal.y,normal.z-inst.model[2].w*normal.y))
+    gi=GroundOut(clip,shade_point,normal,inst.color,inst.material.w,0.0,relief_normal)
     strata=vec3(0,0,0)
     if 1.0-normal.y>0.28:strata=ground_strata(gi,u)
-    col=ground_surface(gi,u,abs(root.x+u.origin.x)>20000.0 or abs(root.z+u.origin.z)>20000.0,false,0.01,strata,0.08,0.015,response)
-    GrassOut(clip,col)
+    col=ground_surface(gi,u,abs(root.x+u.origin.x)>20000.0 or abs(root.z+u.origin.z)>20000.0,true,0.01,strata,0.08,0.015,response)
+    # clump-to-clump tint, fading out with the field so the rim keeps the ground's own colour
+    tint = mix(vec3(0.95,0.975,0.93),vec3(1.05,1.03,0.985),clump)
+    GrassOut(clip,vec4(col.xyz*mix(vec3(1,1,1),tint,smoothstep(0.0,0.5,keep)),col.w))
 
 # The blades use the terrain's material and lighting, including its colour bands.
 # This also carries the distant wind wash after the geometry has faded away.
@@ -164,7 +193,7 @@ grass_ahead_scale=()->f32:f32(clamp(to_float(env("AEGEAN_GRASS_AHEAD") ?? "") ??
 # AEGEAN_GRASS_HIDE=1 draws no grass; AEGEAN_GRASS_FAR=x scales the far tuft's blade count (cost experiments)
 grass_hidden=env("AEGEAN_GRASS_HIDE")!=none
 const GRASS_SIDE_SCALE=1.2
-const GRASS_BACK_SCALE=0.55
+const GRASS_BACK_SCALE=0.8
 grass_forward_reach=()->f32:grass_draw_radius()*grass_ahead_scale()
 
 # The egg for a camera looking along `look` (3D unit vector). Looking steeply down (from the air, or at the
@@ -275,6 +304,22 @@ grass_terrain = (x:f64,z:f64)->GrassTerrain:
     value=grass_terrain_sample(x,z)
     grass_terrain_cells[slot]=value;grass_terrain_misses+=1
     value
+
+# The surface detail's own slope at a cell (the cell's metre-wide slope less its 14 m triangle's): what the terrain
+# adds to its normal near the coast patches, carried to the blades so they are lit like the ground under them.
+# Zero where the terrain has no such detail.
+grass_detail_slope = (x:f64,z:f64,hx:f64,hz:f64)->vec2:
+    if not grass_cached_land(x,z):return vec2(0,0)
+    ax=floor(x/14.0)*14.0;az=floor(z/14.0)*14.0
+    a=round(world_source_sample(ax,az).0*4096.0)/4096.0
+    b=round(world_source_sample(ax+14.0,az).0*4096.0)/4096.0
+    c=round(world_source_sample(ax,az+14.0).0*4096.0)/4096.0
+    d=round(world_source_sample(ax+14.0,az+14.0).0*4096.0)/4096.0
+    if not (min(min(a,b),min(c,d))<192.0 and max(max(a,b),max(c,d))>-10.0):return vec2(0,0)
+    u=(x-ax)/14.0;v=(z-az)/14.0
+    tx=if u+v<=1.0:(b-a)/14.0 else:(d-c)/14.0
+    tz=if u+v<=1.0:(c-a)/14.0 else:(d-b)/14.0
+    vec2(f32(hx-tx),f32(hz-tz))
 
 grass_cover = (towns: Town[], x: f64, z: f64) -> f64:
     if thermal_paved(vec2(f32(x),f32(z))) or working_paved(vec2(f32(x),f32(z))) or airfield_mown(vec2(f32(x),f32(z))):return 0.0
@@ -406,7 +451,8 @@ grass_build_step = (towns: Town[], b: mut GrassBuild, until: f64) -> bool:
         h=cell.ground;hx=cell.dx;hz=cell.dz
         m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
         m[1]=vec4(0,f32(k),0,0)
-        m[0]=vec4(1,f32(hx),0,0);m[2]=vec4(0,f32(hz),1,0)
+        detail=grass_detail_slope(x,z,hx,hz)
+        m[0]=vec4(1,f32(hx),0,f32(detail.x));m[2]=vec4(0,f32(hz),1,f32(detail.y))
         material=grass_ground_material(x,z,f32(h))
         if material.tint.w<0.0:continue
         normal=normalize(material.normal)
