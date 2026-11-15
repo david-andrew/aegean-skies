@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -699,6 +699,44 @@ On the rivers branch until it lands.
     speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s).
   - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
 
+
+### Race classes
+
+- **Aliases:** the club class, the Schneider class, the open class; club racers, the long course.
+- **Definition:** air races are held in classes so speeds are fair. The **club class** is for the
+  game's own types (the first sixteen); the **Schneider class** is open to the historical
+  racers (S.6B, M.C.72, S.65, P.7, M.33, R3C-2, Sea Lion II). On a capital's feast day it holds
+  one race of each: the Schneider race at eleven, the club race at five. Each capital's flying
+  club fields two club-class aircraft and up to three Schneider racers from its country's
+  tradition (Kalyrassa: M.C.72, S.65, M.33; Orenthessa: S.6B, R3C-2, Sea Lion II), each the
+  newest a twentieth of the club's purse allows, so a poorer club flies the older racers. The
+  player enters in their own aircraft if its class matches; the fee is the class's.
+- **Code:** `src/air_classes.jo` (classes, lines, the funding rule, pace, course scale, windows,
+  fees); `AirMeet.race_class` and `scale` in `src/air_race.jo`; the clubs and meets in
+  `src/air_events.jo` `prepare_air_events`; the club moorings along a capital's pier in
+  `src/far_scene.jo` `_club_moorings`; the cards in `src/race_view.jo`; tests in
+  `tests/air_events_test.jo`.
+- **Rules:**
+  - The Schneider class flies a **long course**: the club oval at three times the size (2.5 or 2
+    where open water is short), gates about 3.4 km apart, 660 m wide and 500 m high, so a racer at
+    600 m/s has the room to turn. Its pylons stand taller; its racing lasts 180 minutes (the
+    club's 120) for its slowest racers.
+  - NPC racing pace: the club class 140 m/s drawn as before; the Schneider class 80% of each
+    type's top speed up to 160 m/s times the course scale (480 m/s on the long course).
+  - A Schneider race is held only where the club fields a Schneider racer; the club class always.
+  - The race card names the class while racing; the results card lists the field (place, pilot,
+    aircraft, time or lap); the gate's label sits above or below its bracket, off the player's
+    aircraft. The chase camera's fall-back at speed is held at 1.9 times its rest distance for a
+    Schneider racer (3.4 for the rest), so the racer reads at 600 m/s.
+  - The capital club's pilot cohort (`AIR_CLUB_PILOTS`, five) and an aerodrome's air arm (two)
+    are reserved together.
+  - On the way home a clubmate yields the approach only to another coming home, and one already
+    down or on final keeps its landing. Under the chaotic-stalls trial the autopilot's arrival at
+    1.4 times the stall can stall a racer's sharp wing (default tweaks are fine).
+- **Capture:** `AEGEAN_CAPTURE_RACE=schneider` with `AEGEAN_CRAFT` a Schneider racer (the S.6B is
+  21): the long course off the home harbour, the player at the third gate's approach 41 s into the
+  race, five rivals flown by the flight model; `schneider-finish` the results card;
+  `schneider-empty` the same flight with no race (frame-time comparisons).
 
 ---
 
