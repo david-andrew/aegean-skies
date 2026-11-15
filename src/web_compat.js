@@ -469,4 +469,15 @@
     'stroke-dashoffset="251.3" transform="rotate(-90)"/><g class="prop" fill="#c79e52" opacity=".85">' +
     '<path d="' + blade + '"/><path d="' + blade + '" transform="rotate(180)"/><circle r="4.5" fill="#8a6a35"/></g></svg>';
   document.body.appendChild(card);
+  // A program that fails to start shows the page's log (#log, display block) with "error: ..."
+  // in it, which the card would cover for good, leaving the propeller turning on nothing: take
+  // the card away then.
+  const log = document.getElementById("log");
+  if (log && typeof MutationObserver !== "undefined") {
+    const watch = new MutationObserver(() => {
+      if (!card) { watch.disconnect(); return; }
+      if (log.style.display === "block") { card.remove(); card = null; watch.disconnect(); }
+    });
+    watch.observe(log, {attributes: true, attributeFilter: ["style"], childList: true});
+  }
 })(typeof globalThis !== "undefined" ? globalThis : this);
