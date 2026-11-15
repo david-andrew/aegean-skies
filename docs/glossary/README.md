@@ -1386,15 +1386,19 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Crowd bed
 
-- **Aliases:** the harbour murmur, the café murmur.
-- **Definition:** the looped sound of a distant crowd under the harbour and café ambience: ten or
-  twelve synthesized talkers, each a buzzing voice through two moving vowel formants, speaking
-  syllables of uneven length with uneven pauses, smeared by a few soft reflections; the café's
-  adds glasses and cups touched at uneven times. Its loudness follows the people actually nearby.
-- **Code:** `src/ambience_synth.jo` (`ambience_crowd`).
-- **Rules:** at least 4.5 s long, no loudness rhythm shorter than its loop and no held pure pitch
-  (`tests/ambience.jo`). The first version, four gated pure hums in a 2.4 s loop, was heard as a
-  little repeating tune (A F# A A F#) on the quay.
+- **Aliases:** the harbour murmur, the cafe murmur.
+- **Definition:** the looped sound of a crowd under the harbour and cafe ambience: three talkers
+  near and five across the square speaking invented syllables (consonants and vowels, never
+  words) in phrases whose pitch falls, conversations swelling and fading, the many beyond as a
+  breathing noise, low air under it, people walking past, a short outdoor reverb; stereo, the
+  ears partly alike. The cafe's has one more talker near, a smaller room and glasses and cups.
+  Its parameters are fitted to CC0 and public-domain recordings of real squares, promenades, a
+  wharf and cafes (`docs/crowd-reference.md`); nothing recorded ships.
+- **Code:** `src/ambience_crowd.jo` (`CrowdFit`, `crowd_bed`); `tools/crowdlab.jo`.
+- **Rules:** a 7 s loop with no loudness rhythm shorter than it and no held pure pitch; louder
+  single voices are events from real people, never baked into the loop (`tests/ambience.jo`).
+  The first version, four gated pure hums in a 2.4 s loop, was heard as a little repeating tune
+  (A F# A A F#) on the quay.
 
 ### Uneven events
 
