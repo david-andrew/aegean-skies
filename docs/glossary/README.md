@@ -1836,6 +1836,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 |---|---|
 | `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
+| `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
