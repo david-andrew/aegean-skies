@@ -1833,6 +1833,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
+| `AEGEAN_CRAFT_VIEW='yaw pitch distance'` | the free camera on the player's aircraft from that side (radians round from its nose and up, metres): moored with `AEGEAN_CRAFT`, or a few frames into `AEGEAN_FLYING` |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
