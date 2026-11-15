@@ -8,6 +8,9 @@ use 'damage.jo'
 use 'tweaks.jo'
 use 'flight_v2.jo'
 use 'flight_sb.jo'
+from 'racer_planes.jo' import racer_torque
+use 'hydrofoil.jo'
+use 'hydrofoil_solver.jo'
 
 const FLIGHT_G = 9.81
 
@@ -46,11 +49,23 @@ struct CraftSpec:
     fuel_burn = 0.025                # kg/s at full throttle
     water_drag = 1.0                # hull/float planing resistance, catalog-specific
     spool_time = 1.5
+    ground_lift = 1.0               # the wing's lift on and just off the water over the free air's
+    water_thrust = 1.0              # the pull at a standstill over the force model's (a racer's
+                                    # high-speed propeller is stalled at low speed), full by the stall
     # (the air, after Sky Barons' fly_air: thrust as an acceleration, drag on speed squared,
     # how quickly the way it goes turns to follow the nose)
     arc_thrust = 12.0
     arc_drag = 0.0031
     arc_grip = 2.3
+    # (the propellers: the first hub and radius, and the net share of one propeller's torque
+    # reaction (0 for a contra-rotating pair or a push-pull tandem); the prop torque trial's)
+    prop_hub = vec3(0, 0, -4.0)
+    prop_radius = 1.25
+    torque_share = 1.0
+    prop_hand = 1.0                 # 1 right-hand (clockwise from the cockpit), -1 left-hand
+    hull_planing = 1.0              # how much a planing hull lifts and sheds drag (a foil craft's hull little)
+    foils: FoilSpec[] = []          # hydrofoils (src/hydrofoil.jo); empty on every other craft
+    screw = vec3(0, 0, 0)           # the water screw's place, with foils
 
 # Positive pitch = nose up (+body x). Positive roll = right wing down (-body z).
 # Positive yaw = nose right (-body y). Heading 0 is north/-z, +PI/2 east/+x.
@@ -68,6 +83,7 @@ struct Controls:
     airbrake = 0.0                 # landing drag: abstracts a deliberate forward slip, no extra lift
     anchor = false
     gear = false                   # amphibian wheels; presentation may expose a lever
+    clutch = false                 # hydrofoil craft: hand the engine to the air propeller now
 
 struct CraftState:
     position = vec3(0, 3, 0)       # compatibility snapshot, not an accumulator
@@ -103,6 +119,7 @@ struct CraftState:
     trim_held = false               # (auto-trim, a trial: the stick let go, the way it went held)
     trim_path = 0.0                 # (the climb or descent held, radians)
     rpm = 0.0                       # (flight model v2: the propeller's rpm, a fraction of rated)
+    foil: FoilDrive = FoilDrive()   # hydrofoil craft: the screw/air propeller clutch, foil telemetry
 
 # External teleports through the snapshot reset the precise owner. Saved states
 # retain both halves; old snapshots default to the compatibility position.
@@ -214,6 +231,7 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
             s.pitch_rate = 1.8; s.roll_rate = 4.2; s.yaw_rate = 0.6
             s.arc_thrust = 22.0; s.arc_drag = 0.0014; s.arc_grip = 3.4
         _: pass
+    s.prop_hand = if aircraft_profile(kind).prop_hand < 0.0: -1.0 else: 1.0
     if int(kind) >= 4:
         p = aircraft_profile(kind)
         s.mass = p.mass; s.span = p.span; s.wing_area = p.area
@@ -223,6 +241,15 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         s.arc_thrust = p.thrust; s.arc_drag = p.drag; s.arc_grip = p.grip
         s.fuel_capacity = p.tank; s.fuel_burn = p.burn; s.water_drag = p.water_drag
         s.spool_time = if p.engine_x > 0: 2.4 else: 1.5
+        s.ground_lift = p.ground_lift
+        s.water_thrust = p.water_thrust
+        s.prop_radius = p.prop_radius
+        s.prop_hub = vec3(p.engine_x * -1.0, p.engine_y, p.engine_z + (if p.pusher: 0.65 else: -0.65))
+        # (a racer with its own torque swing (racer_planes.jo) takes no second torque here)
+        s.torque_share = if p.contra or p.push_pull or p.swing > 0.0: 0.0 else: 1.0
+        if p.hydrofoil:
+            s.foils = P7_FOILS; s.screw = P7_SCREW; s.hull_planing = 0.15
+            s.prop_hub = vec3(0, 0, -4.55)
     s.cl0 = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.cruise_speed * s.cruise_speed)
     s.cl_max = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.stall_speed * s.stall_speed)
     s.stall_angle = (s.cl_max - s.cl0) / s.lift_slope
@@ -261,13 +288,22 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
     s
 
 forward = (s: CraftState) -> vec3: quat_rotate(s.orientation, vec3(0, 0, -1))
+
+# The propellers' torque reaction about the thrust axis, the Tweaks trial's "prop torque": a fifth
+# of the static thrust at the blade tip for one propeller, against its turning: a right-hand
+# propeller (clockwise from the cockpit) rolls her to port, a left-hand one to starboard. N m about
+# the body's +z (aft) axis, so + is to port. None for a contra-rotating pair or a push-pull tandem,
+# whose two reactions cancel, nor for a racer with its own swing (racer_planes.jo).
+prop_torque = (k: CraftSpec, s: CraftState) -> f64:
+    k.prop_hand * k.torque_share * 0.22 * k.max_thrust * k.prop_radius * s.throttle * foil_air_share(k, s)
 heading = (s: CraftState) -> f64:
     f = forward(s)
     atan2(f64(f.x), -f64(f.z))
 heading_vector = (h: f64) -> vec3: vec3(sin(h), 0, -cos(h))
 angle_delta = (a: f64, b: f64) -> f64: atan2(sin(a - b), cos(a - b))
 water_start = (spec: CraftSpec, at: vec3, h: f64 = 0.0) -> CraftState:
-    CraftState(position = vec3(at.x, at.y + f32(spec.float_height), at.z), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, on_water = true, water_age = 0.0)
+    CraftState(position = vec3(at.x, at.y + f32(spec.float_height), at.z), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, on_water = true, water_age = 0.0,
+        foil = if spec.foils.len() > 0: water_drive() else: FoilDrive())
 
 trim_aoa = (spec: CraftSpec, speed: f64, density: f64 = 1.225) -> f64:
     cl = spec.mass * FLIGHT_G / max(0.5 * density * spec.wing_area * speed * speed, 1.0)
@@ -381,6 +417,9 @@ _clear_of_water = (k: CraftSpec, s: CraftState, e: FlightEnv, margin: f64) -> bo
                 if f64(p.y) < ceiling+margin:
                     sea=sea_surface(e,f64(p.x),f64(p.z),s.time)
                     if f64(p.y) < sea.height+margin:return false
+    loop foil in k.foils:
+        p = s.position + quat_rotate(s.orientation, foil.point)
+        if f64(p.y) < sea_surface(e,f64(p.x),f64(p.z),s.time).height+margin:return false
     true
 
 # Flight in the air, Sky Barons' fly_air as it is (sim.jo): the stick turns the aircraft at its
@@ -472,6 +511,8 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, g_lim) * (1.0 - trial) * dt))
     q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), -clamp(c.roll, -1.0, 1.0) * k.roll_rate * (if tweaks.skybarons_response:1.125 else:1.0) * auth * (1.0 - trial) * dt))
     q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash * (1.0 - trial) * dt))
+    # (a racer's propeller torque rolls it to port while slow, a tweak)
+    if tweaks.torque_swing and k.player: q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), racer_torque(k.kind, s.throttle, ts / k.stall_speed) * 0.25 * (1.0 - trial) * dt))
     fwd = quat_rotate(q, vec3(0, 0, -1))
     vdir = fwd
     if speed > 0.1: vdir = air * f32(1.0 / speed)
@@ -566,7 +607,7 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # The optional combat comparison restores true-speed engine acceleration. Scale thrust
     # AND drag together, retaining the same equilibrium speed and honest climb gravity.
     energy_scale=if tweaks.skybarons_response:pure_k(k) else:1.0
-    acc = (k.arc_thrust * s.throttle * thin / mass - drag * flight_drag_scale * speed * speed * (1.0 + 0.35 * pull))*energy_scale - FLIGHT_G * pure_k(k) * f64(vdir.y)
+    acc = (k.arc_thrust * s.throttle * thin * hydrofoil_air(k, s, c, dt) / mass - drag * flight_drag_scale * speed * speed * (1.0 + 0.35 * pull))*energy_scale - FLIGHT_G * pure_k(k) * f64(vdir.y)
     next_speed = speed + acc * dt
     if trial > 0.0 and next_speed < 0.0:
         # At the top of a vertical zoom, gravity reverses the flow. Clamping to zero here
@@ -768,9 +809,10 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     lift_dir = cross(r, adir)
     if length(lift_dir) > 0.001: lift_dir = normalize(lift_dir)
     else: lift_dir = u
-    force = lift_dir * f32(q * k.wing_area * cl) - adir * f32(q * k.wing_area * cd) + vec3(0, -mass * FLIGHT_G, 0)
+    force = lift_dir * f32(q * k.wing_area * cl * k.ground_lift) - adir * f32(q * k.wing_area * cd) + vec3(0, -mass * FLIGHT_G, 0)
     thin = clamp(1.0 - max(f64(s.position.y), 0.0) / 10000.0, 0.25, 1.0)
-    force += f * f32(k.max_thrust * s.throttle * thin / (1.0 + (speed / k.thrust_speed)^2))
+    pull_now = k.max_thrust * (k.water_thrust + (1.0 - k.water_thrust) * f64(smoothstep(0.0, k.stall_speed * 1.2, speed)))
+    force += f * f32(pull_now * s.throttle * thin * foil_air_share(k, s) / (1.0 + (speed / k.thrust_speed)^2))
     grip = f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.25, speed)) * (1.0 - 0.75 * f64(separation))
     force -= r * f32(vr * k.mass * k.grip * grip)
     auth = clamp(speed / (k.stall_speed * 1.45), 0.2, 1.0)
@@ -803,6 +845,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         pr += clamp((want - pitch) * 3.5, -0.45, 0.45) * lw
     pr *= 0.15 + 0.85 * tail; yr *= 0.15 + 0.85 * tail; rr *= 0.2 + 0.8 * wings
     torque = vec3((1.0 - tail) * sin(s.time * 5.0) * k.inertia.x, (right - left) * q * k.wing_area * 0.04, (right - left) * q * k.wing_area * k.span * 0.12)
+    if tweaks.prop_torque: torque.z += f32(prop_torque(k, s))
     wet = 0.0; ground_hit = false
     s.on_ground = false
     water_velocity = s.velocity - e.current - e.current_at(craft_point(s).x, craft_point(s).z)
@@ -835,11 +878,11 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # Each buoyant point carries its own normal, lateral and digging load. Removing a float
     # removes its support and drag. Undamaged forward planing retains the calibrated old force.
     hump = 1.0 + 0.8 * exp(-((abs(water_speed) - 9.0) / 5.0)^2)
-    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane) * k.water_drag * (1.0 + s.gear * 0.6)
+    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane * k.hull_planing) * k.water_drag * (1.0 + s.gear * 0.6)
     # (pure scale: the water's drag never more than about half what the engine can pull, so every
     # aircraft can always push through it to its liftoff speed)
     if pk0 > 1.0001:
-        cap = 0.45 * k.max_thrust / k.mass
+        cap = 0.45 * pull_now / k.mass
         drag = clamp(drag, -cap, cap)
     drag += clamp(c.water_brake, 0.0, 1.0) * water_speed * 0.65
     loop i in 0..k.contacts.len():
@@ -870,7 +913,8 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             shear = -flat_r * f32(k.mass * local_side * (3.0 + 0.10 * abs(water_speed)) * share)
             _contact_load(k, s, id, p, sea.normal, contact_v, shear * f32(dt), 8.0, .splash)
             # A bow/keel presented across the flow digs in. Level high-speed planing does not.
-            across = max(0.0, abs(f64(dot(contact_v, u))) - 5.5)
+            # (racers landing faster than the Falco have floats cut for it: more before they dig)
+            across = max(0.0, abs(f64(dot(contact_v, u))) - 5.5 - max(0.0, k.stall_speed - 38.0) * 0.4)
             dig = -contact_v * f32(min(k.mass * across * 0.12 * share, mass / dt * share))
             _contact_load(k, s, id, p, sea.normal, contact_v, dig * f32(dt), 5.5, .splash)
             force += b + shear + dig - flat_f * f32(k.mass * drag * share)
@@ -879,6 +923,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             catch = clamp((abs(local_side) - 8.0) / 12.0, 0.0, 1.0)
             torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b + shear * f32(catch) + dig))
             wet += share
+    wet += hydrofoil_contacts(k, s, c, e, omega_world, force, torque, dt)
     # Wing tips and exposed engine/body/tail also resolve actual contact impulses.
     loop id in 0..k.parts.len():
         if not s.damage.parts[id].attached: continue
@@ -925,12 +970,18 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     wet = min(wet, 1.0)
     if wet > 0:
         s.water_age = 0
-        force += vec3(0, k.mass * FLIGHT_G * 0.45 * plane * wet, 0)
+        force += vec3(0, k.mass * FLIGHT_G * 0.45 * plane * wet * k.hull_planing, 0)
         # Air pushes the exposed hull; small leeway, strong keel resistance, weathercock yaw.
         force += (e.wind - s.velocity) * f32(k.mass * 0.012 * wet)
         yr = -clamp(c.yaw, -1.0, 1.0) * 0.5 * clamp(abs(water_speed) / 3.0 + s.throttle * 0.4, 0.0, 1.0)
         wind_side = f64(dot(e.wind - e.current, flat_r))
         yr += wind_side * 0.008 * wet
+        # (a racer's propeller torque, a tweak: the port float pressed in, the nose swung to port
+        # until the rudder bites)
+        if tweaks.torque_swing and k.player:
+            tq = racer_torque(k.kind, s.throttle, abs(water_speed) / k.stall_speed)
+            yr += tq * 0.4 * (1.0 - plane)
+            torque.z += f32(tq * k.inertia.z * 0.5 * (1.0 - 0.7 * plane))
         # Water attitude damping stops porpoising; rate controls cannot roll a resting hull.
         pr *= plane * 0.6; rr *= 0.12
         pr -= pitch * 1.7 * wet

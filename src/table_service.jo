@@ -1,0 +1,190 @@
+# Table service and taking one's time over it: what is ordered is brought (the hotel's waiter from
+# the bar to the terrace table, the barkeep along the counter, the coffee house's boy from the
+# door), set down in front of the pilot, and eaten or drunk at the player's own pace: hold an
+# item's key and the pilot lifts it and sips (or takes a bite from the plate); let go and he keeps
+# it in hand; another item, or Esc, and it goes back on the table. What is finished stays, empty,
+# until the waiter comes by to clear it. Pure: the game says where the pass, the table and the
+# seat are, and draws the figures and the things.
+
+use 'leisure_menu.jo'
+use 'leisure.jo'
+
+# ---------------- the waiter ----------------
+
+struct Waiter:
+    stage = 0                       # 0 at the pass, 1 walking out with the tray, 2 setting things
+                                    # down, 3 walking back, 4 walking out to clear, 5 picking up
+    pos: vec3 = vec3(0, 0, 0)
+    yaw = 0.0
+    phase = 0.0                     # (his stride)
+    pending: Served[]               # ordered, waiting to be taken out
+    tray: Served[]                  # on his tray (out with the orders, or back with the empties)
+    clock = 0.0                     # (seconds in this stage)
+    placed = 0                      # (how many he has set down this trip)
+    ready = false                   # (placed at the pass once the venue is known)
+
+const WAITER_SPEED = 1.25           # m/s
+const SET_DOWN = 0.7                # seconds to set one thing down (or pick one up)
+const EMPTY_WAIT = 45.0             # seconds an empty glass or plate stands before he comes for it
+
+struct ServiceSpots:
+    station: vec3                   # where the waiter waits (the bar, the door)
+    serve: vec3                     # where he stands to set things down, beside the table
+    table: vec3                     # the table top's middle (or the counter's, in front of the pilot)
+    ax: vec3                        # (the table's axes, for the spots on it)
+    az: vec3
+
+# spots on the table for up to six things (as src/bar_scene.jo draws them)
+SERVE_SPOTS: vec2[] = [vec2(-0.2, -0.22), vec2(0.18, -0.2), vec2(-0.05, 0.05), vec2(0.22, 0.18), vec2(-0.24, 0.24), vec2(0.04, -0.32)]
+
+table_spot = (sp: ServiceSpots, seat: int) -> vec3:
+    s = SERVE_SPOTS[seat % SERVE_SPOTS.len()]
+    sp.table + sp.ax * s.x + sp.az * s.y
+
+_walk_to = (wt: mut Waiter, goal: vec3, dt: f64) -> bool:
+    d = vec3(goal.x - wt.pos.x, 0, goal.z - wt.pos.z)
+    l = f64(length(d))
+    if l < 0.05: return true
+    step = min(l, WAITER_SPEED * dt)
+    wt.pos = wt.pos + d / f32(l) * f32(step)
+    wt.yaw = atan2(f64(d.x), f64(d.z))
+    wt.phase += dt * WAITER_SPEED * 5.0
+    false
+
+# An order goes to the pass: the waiter takes it out when he is free.
+waiter_order = (wt: mut Waiter, s: Served):
+    wt.pending.push(s)
+
+# One step of the waiter's round. Things he sets down are added to `served`; empties he picks up
+# are taken from it. `now` is the world's clock in seconds (for how long an empty has stood).
+waiter_step = (wt: mut Waiter, sp: ServiceSpots, served: mut Served[], dt: f64, height: (f64, f64) -> f64):
+    if not wt.ready:
+        wt.pos = sp.station; wt.ready = true
+    wt.clock += dt
+    match wt.stage:
+        0:
+            wt.phase = 0.0
+            if wt.pending.len() > 0:
+                # (out with up to three things on the tray)
+                n = min(3, wt.pending.len())
+                wt.tray = wt.pending[0..n]
+                wt.pending = wt.pending[n..wt.pending.len()]
+                wt.stage = 1; wt.clock = 0.0
+            else if _empty_ready(served):
+                wt.stage = 4; wt.clock = 0.0
+        1:
+            if _walk_to(wt, sp.serve, dt):
+                wt.stage = 2; wt.clock = 0.0; wt.placed = 0
+                wt.yaw = atan2(f64(sp.table.x - wt.pos.x), f64(sp.table.z - wt.pos.z))
+        2:
+            if wt.clock >= SET_DOWN:
+                wt.clock = 0.0
+                if wt.tray.len() > 0:
+                    s = wt.tray[0]
+                    wt.tray.remove_at(0)
+                    s.seat = _free_spot(served, s.seat)
+                    served.push(s)
+                    if served.len() > 6: served.remove_at(0)
+                    wt.placed += 1
+                if wt.tray.len() == 0:
+                    # (and while he is there, the empties)
+                    taken = _take_empties(served, 3)
+                    wt.tray = taken
+                    wt.stage = 3
+        3:
+            if _walk_to(wt, sp.station, dt):
+                wt.tray = []; wt.stage = 0; wt.clock = 0.0
+        4:
+            if _walk_to(wt, sp.serve, dt):
+                wt.stage = 5; wt.clock = 0.0
+                wt.yaw = atan2(f64(sp.table.x - wt.pos.x), f64(sp.table.z - wt.pos.z))
+        5:
+            if wt.clock >= SET_DOWN:
+                wt.tray = _take_empties(served, 3)
+                wt.stage = 3; wt.clock = 0.0
+        else: wt.stage = 0
+    wt.pos = vec3(wt.pos.x, f32(height(f64(wt.pos.x), f64(wt.pos.z))), wt.pos.z)
+
+# Empties that have stood long enough for the waiter to come for them.
+_empty_ready = (served: Served[]) -> bool:
+    loop s in served:
+        if s.amount <= 0.0 and s.empty_for >= EMPTY_WAIT and not s.held: return true
+    false
+
+_take_empties = (served: mut Served[], most: int) -> Served[]:
+    out: Served[]
+    i = 0
+    loop i < served.len():
+        if out.len() < most and served[i].amount <= 0.0 and not served[i].held:
+            out.push(served[i]); served.remove_at(i)
+        else: i += 1
+    out
+
+_free_spot = (served: Served[], wanted: int) -> int:
+    loop k in 0..SERVE_SPOTS.len():
+        seat = (wanted + k) % SERVE_SPOTS.len()
+        taken = false
+        loop s in served:
+            if s.seat == seat: taken = true
+        if not taken: return seat
+    wanted
+
+# ---------------- taking one's time ----------------
+
+# How the pilot is with what is in front of him.
+struct Taking:
+    held = -1                       # the thing in hand (index into what is served), -1 none
+    lift = 0.0                      # 0 at rest .. 1 at the lips
+    busy = false                    # (the key is held: sipping, or biting)
+    bite = 0.0                      # (eating: the fork's way to the mouth and back, its phase)
+
+# how long a whole serving takes, held to the lips (seconds)
+take_seconds = (d: MenuItem) -> f64:
+    if d.food: return if d.serve == .bowl: 26.0 else: 34.0
+    match d.serve:
+        .small_glass, .coupe: 9.0
+        .cup: 14.0
+        .bottle, .pot: 60.0
+        else: 18.0
+
+# Which item the player's keys and buttons ask for this frame: `pressed` an item's key went down,
+# `down` the held item's key is still held, `put` Esc (put it down).
+take_step = (tk: mut Taking, served: mut Served[], dt: f64, pressed: int, down: bool, put: bool):
+    # empties tick on toward the waiter's visit
+    loop k in 0..served.len():
+        if served[k].amount <= 0.0 and not served[k].held: served[k].empty_for += dt
+    if put and tk.held >= 0:
+        _put_down(tk, served)
+    if pressed >= 0 and pressed < served.len() and pressed != tk.held:
+        _put_down(tk, served)
+        tk.held = pressed
+        served[pressed].held = true
+    if tk.held >= served.len(): tk.held = -1
+    if tk.held < 0:
+        tk.lift = max(0.0, tk.lift - dt * 2.5); tk.busy = false
+        return
+    s = served[tk.held]
+    tk.busy = down and s.amount > 0.0
+    if s.item.food:
+        # (eating: the plate stays; the fork goes to the mouth and back, a bite each way)
+        if tk.busy:
+            tk.bite += dt * 1.4
+            served[tk.held].amount = max(0.0, s.amount - dt / take_seconds(s.item))
+        tk.lift = if tk.busy: 0.5 + 0.5 * abs(sin(tk.bite * PI)) else: max(0.0, tk.lift - dt * 2.0)
+    else:
+        # (drinking: lifted to the lips while the key is held, the level going down; let go, and
+        # it is held at the chest)
+        target = if tk.busy: 1.0 else: 0.35
+        tk.lift = tk.lift + (target - tk.lift) * min(1.0, dt * 4.0)
+        if tk.busy and tk.lift > 0.85:
+            served[tk.held].amount = max(0.0, s.amount - dt / take_seconds(s.item))
+    if served[tk.held].amount <= 0.0 and not tk.busy and s.item.food: _put_down(tk, served)
+
+_put_down = (tk: mut Taking, served: mut Served[]):
+    if tk.held >= 0 and tk.held < served.len(): served[tk.held].held = false
+    tk.held = -1; tk.busy = false
+
+# What a thing is, briefly, for its button: "Ouzo", "Meze plate (half)", "Wine (empty)".
+take_label = (s: Served) -> str:
+    name = if s.item.name.len() > 22: s.item.name[0..21] + "." else: s.item.name
+    if s.amount <= 0.0: "{name} (empty)" else: if s.amount < 0.35: "{name} (the last of it)" else: if s.amount < 0.7: "{name} (half)" else: name

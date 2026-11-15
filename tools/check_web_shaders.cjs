@@ -53,12 +53,15 @@ function audit(source, raw = false) {
 function shaders(file) {
   let data=fs.readFileSync(file);
   if (path.extname(file)==='.html') {
-    const html=data.toString(), embedded=html.match(/(?:const|var) SLOPPY_WASM = "([^"]+)"/);
-    if(embedded) data=Buffer.from(embedded[1],'base64');
+    // (Sloppy 0.35: the module is in a #sloppy-wasm element, as base64, or beside the page with
+    // --wasm-file, named by the element's data-src)
+    const html=data.toString('latin1'), tag=html.match(/<script[^>]*id="sloppy-wasm"[^>]*>/);
+    if(!tag) throw Error('No #sloppy-wasm element: build the page with Sloppy 0.35 or later');
+    const src=tag[0].match(/data-src="([^"?]+)/);
+    if(src) data=fs.readFileSync(path.join(path.dirname(file),src[1]));
     else {
-      const name=html.match(/fetch\("(aegean\.[a-f0-9]+\.wasm)"\)/)?.[1];
-      if(!name) throw Error('No packaged or embedded Wasm module');
-      data=fs.readFileSync(path.join(path.dirname(file),name));
+      const start=tag.index+tag[0].length;
+      data=Buffer.from(html.slice(start,html.indexOf('</script>',start)).trim(),'base64');
     }
   }
   const all=[...data.toString('latin1').matchAll(/#version 300 es\n[\x09\x0a\x0d\x20-\x7e]+/g)].map(m=>m[0]);

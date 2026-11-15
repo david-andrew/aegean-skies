@@ -67,11 +67,11 @@ def build():
     if A.force or not output.exists() or not done.exists() or done.read_text()!=stamp:
         assert run([SLOPPY,'build','--release','--target','wasm','aegean.jo','-o',output],P/'logs/build-web.log')==0
         write(done,stamp)
-    # Keep the embedded build for file:// probing and the production split for byte counts.
+    # Keep the single-file build for file:// probing and the production build (page and
+    # index.wasm beside it, as Pages has it) for byte counts.
     web=P/'web';web.mkdir(exist_ok=True)
-    for old in web.glob('aegean.*.wasm'):old.unlink()
-    shutil.copy2(output,web/'index.html')
-    assert run(['python3','tools/package_web.py',web/'index.html'],P/'logs/package-web.log')==0
+    for old in web.glob('*.wasm'):old.unlink()
+    assert run([SLOPPY,'build','--release','--target','wasm','--wasm-file','aegean.jo','-o',web/'index.html'],P/'logs/build-web-split.log')==0
     assert all(digest(ROOT/'assets'/n)==digest(P/'assets'/n) for n in names),'An asset changed during the build; restore frozen assets and rerun build'
     write(P/'numbers/web-size.json',{str(f.relative_to(P)):dict(bytes=f.stat().st_size,gzip_bytes=len(gzip.compress(f.read_bytes(),mtime=0))) for f in [output,*web.glob('*.html'),*web.glob('*.wasm')]})
 

@@ -18,16 +18,16 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
+- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -50,6 +50,9 @@ on that unmerged branch so far.
   speed is completely gone". Every water surface you can take off from (rivers, canals, lakes)
   must use the same flecks at the same scale and density. Check a low fast pass over open water
   (`AEGEAN_FLYING='60 150'`) before and after any change to water, depth, quality tiers or sky.
+  Whatever moves the eye must pass its velocity to the sea (`view_velocity`): a moving camera over
+  a sea told it is still shows soft, faint marks (the title reel once did;
+  `tests/title_reel_detail_test.py` now guards it).
 - **Capture:** `AEGEAN_FLYING='8 190'` or `AEGEAN_FLYING='60 150'`; `tools/precision_view.jo`
   with `PRECISION_MARKS=1` isolates the fleck painter.
 
@@ -328,7 +331,12 @@ On the rivers branch until it lands.
 - **Code:** `src/prop_disc.jo` (`prop_disc_vs`, `prop_disc_fs`, `queue_prop_discs`,
   `queue_cockpit_prop_discs`, `draw_prop_discs`).
 - **Rules:** the disc fades in from 16 to 50 rad/s, the arcs from 26 to 64 rad/s; below 40 rad/s
-  the real blades show. Disc and blades are not drawn beyond `PROP_DISC_RANGE` (650 m).
+  the real blades show. Disc and blades are not drawn beyond `PROP_DISC_RANGE` (650 m). Blades and
+  disc turn in the aircraft's hand (`prop_turn`, see [Prop torque](#prop-torque)): the game's own
+  aircraft are drawn left-hand (counterclockwise from the cockpit), as they always were; a
+  right-hand prop's disc is the same disc with its own frame mirrored, so its arcs, their drift and
+  precession, the sun-facing band and the sun-side arc are an exact mirror image at the same
+  moments (`prop_disc_test` "a right-hand prop's disc is the original's mirror image").
 - **Capture:** `tools/prop_disc_frames.jo` with `PROP_VIEW=side|front|close|rear|far|cockpit`,
   `PROP_THROTTLE=0..1`, `PROP_KIND=0..15`.
 
@@ -428,6 +436,79 @@ On the rivers branch until it lands.
 
 ![A Gull planing on a landing run](img/planing.png)
 
+### Hydrofoil take-off
+
+- **Aliases:** the P.7's take-off, foil-borne, on the foils, the clutch, the water screw.
+- **Definition:** the Piaggio P.7 (1929) has no floats. Its sealed hull floats low with the wings
+  just clear of the water and the air propeller feathered and still, its lower blade in the sea.
+  Two hydrofoils on struts just ahead of the wing and a third under the tail lift it; a small
+  water screw under the tail, driven by the same engine, pushes it. The run goes in four phases:
+  1. **Hull-borne:** the screw pushes the hull through the water (it needs nearly full throttle
+     to get over the hump). The foils' lift grows with the square of the speed and the hull rises,
+     its wetted drag falling as it does.
+  2. **Foil-borne:** at about 12 m/s (true) the hull is clear and she rides on the foils alone. A
+     foil loses its lift as it nears the surface and all of it once it breaks through, so she
+     settles at a ride height by herself; the tail foil sits higher than the forward pair, so the
+     ride is a little nose-up. Fast, a foil's lift per square metre tops out (cavitation), which
+     keeps her from being pinned to the water.
+  3. **The clutch:** once the hull has been clear 0.4 s, the air propeller is out of the water,
+     the speed is 14 m/s and the throttle open, the clutch goes over by itself (or when
+     `Controls.clutch` asks): the screw is let go first, then the air propeller is clutched in and
+     comes off its feather over about 1.4 s. In that gap nothing much pushes and she slows.
+  4. **Into the air:** the air propeller pulls her along on the foils; as the wing takes her
+     weight the foils rise to the surface and break out, and she flies. Holding the stick back on
+     the foils gets her off at about 40 m/s; hands off it takes until about 60 m/s.
+  It is meant to be challenging but achievable. It fails when: the throttle is under about 85%
+  (she never gets over the hump on the screw); the nose is pushed down on the foils (the
+  propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
+  in the water (it beats the sea, gives no thrust and hurts the engine); or the swell is big
+  (wind over about 8 m/s: the wing tips catch the waves and tear). Closing the throttle at under
+  5 m/s on the water puts the clutch back to the screw for another try.
+- **Code:** `src/hydrofoil.jo` (the foils' lift and drag, `foil_force`; the screw,
+  `screw_thrust`; the clutch, `clutch_step`; the P.7's foils and screw, `P7_FOILS`, `P7_SCREW`),
+  `src/hydrofoil_solver.jo` `hydrofoil_contacts` (called from the water model in `src/flight.jo`
+  `_substep`) and `hydrofoil_air` (the clutch kept going in the air, all three flight models);
+  `CraftState.foil` holds the clutch and the telemetry (`foilborne`, `lift`, `screw`,
+  `prop_wet`). The model is `_p7` in `src/italian_racers.jo`.
+- **Rules:** the foils are not float contacts: they never set the waterline or the static
+  buoyancy, and only the hull's contacts decide "hull clear". The P.7's hull is not a planing
+  hull (`hull_planing` 0.15). The UI still needs a clutch key and an indicator (see the racers'
+  report).
+- **Test:** `tests/italian_racers_test.jo` "the P.7 takes off from her hull to her foils and into
+  the air".
+
+### Contra-rotating and push-pull props
+
+- **Definition:** two propellers on one axis turning opposite ways. The Macchi M.C.72 has a
+  **coaxial contra-rotating** pair at the nose (the Fiat AS.6 drives each from one of its halves);
+  the Savoia-Marchetti S.65 has a **push-pull tandem**, a tractor at the nose and a pusher behind
+  the cockpit. Each hub carries a spin against the aircraft's hand (+1 its hand, -1 the other); a -1
+  hub carries the mirror-handed blades (`CraftModel.prop_alt`) and its disc is drawn mirrored. The
+  M.C.72's front rotor and the S.65's tractor are right-hand.
+  Their torque reactions cancel, so neither swings on its run (see [Prop torque](#prop-torque)).
+- **Code:** `CraftModel.prop_spins`, `prop_alt`, `prop_spin`, `prop_turn`, `prop_frame`, `prop_mesh` in
+  `src/planes.jo`; the hubs in `italian_racer_hubs` (`src/italian_racers.jo`); the discs in
+  `queue_prop_discs` (`src/prop_disc.jo`).
+
+### Prop torque
+
+- **Aliases:** torque swing, torque reaction.
+- **Definition:** a Tweaks trial (off by default): the propeller's reaction rolls the aircraft
+  against the propeller's turning, about a fifth of the static thrust at the blade tip, with the
+  throttle. A right-hand propeller (clockwise seen from the cockpit, as most engines of the period
+  turned) rolls her to port: on the take-off run the port float digs in, and in the air (flight
+  model v2) the left wing wants to drop. A left-hand one does the opposite. Each profile carries
+  the hand (`AircraftProfile.prop_hand`): the game's own sixteen are left-hand, as their props have
+  always been drawn; the historical types right-hand (the default), the S.6B's from the record (its
+  torque buried the port float, so it carried its fuel in the starboard float). The prop is drawn
+  turning in that hand, so the torque always rolls against what is seen. A contra-rotating pair or a push-pull
+  tandem has none, and nor does a Schneider racer with its own torque swing (`CraftSpec.torque_share`
+  0).
+- **Code:** `prop_torque` in `src/flight.jo` (+ is to port); `tweaks.prop_torque` in
+  `src/tweaks.jo`.
+- **Test:** `tests/italian_racers_test.jo` "contra-rotating and push-pull pairs have no net torque
+  swing" and "the prop torque trial rolls against each propeller's turning".
+
 ### Speed scale
 
 - **Aliases:** drawn speed versus true speed, pure scale, `liked-speed-3.3x`.
@@ -501,6 +582,37 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_FLYING='1250 60'` (HUD) and `AEGEAN_FLYING='1250 60 cockpit'`.
 
 ![The altimeter at 1,250 m on the HUD and on the Gull's panel](img/altimeter.png)
+
+### Schneider racers
+
+- **Aliases:** the racers, the historical racers; the Macchi M.33, Curtiss R3C-2, Supermarine
+  S.6B and Sea Lion II (Craft `macchi_m33`, `curtiss_r3c2`, `supermarine_s6b`, `sea_lion_ii`).
+- **Definition:** four real racing seaplanes of the Schneider Trophy years (1922–1931), each built
+  to its own layout: the M.33's shoulder wing and engine nacelle on N-struts above the hull, the
+  R3C-2's tiny biplane wings with brass surface radiators, the S.6B's low wing with radiators over
+  the wings and float tops, the Sea Lion II's biplane boat with its pusher between the wings. Their
+  `top` is the real top speed in true m/s (the S.6B's 655 km/h record; 600 m/s drawn at the 3.3
+  scale), so they compare with one another as they did; the original fictional types sit faster
+  than real 1920s aircraft of their roles.
+- **Code:** models in `src/racer_planes.jo` (dispatched from `src/planes.jo`); profiles at the end
+  of `AIRCRAFT` in `src/aircraft_catalog.jo`; `tests/aircraft_racers_test.jo`;
+  `tools/racer_view.jo` (model check), `tools/racer_runs.jo` (every type's take-off run).
+- **Rules:**
+  - **Torque swing** (Tweaks: "Racers' propeller torque", on by default, the player's aircraft
+    only): `swing` in the profile, rad/s² of roll at full throttle. On the run the port float is
+    pressed in and the nose swings to port until the hull planes (rudder holds it); just off the
+    water a roll to port that fades out by 2.4 times the stall speed (the wings were rigged for
+    it at speed). Both flight models. These four take no [Prop torque](#prop-torque) (the
+    generic trial) on top: `torque_share` is 0 for any type with a `swing`.
+  - **Ground lift** (`ground_lift`, default 1): the wing's lift on and just off the water over the
+    free air's. The water model lets a hull or float pitch to about 0.1 rad before its tail digs
+    in at speed, so a wing as heavily loaded as the S.6B's (204 kg/m²) could not unstick at a sane
+    speed; 1.4 stands for the ground effect of a low wing near the water.
+  - **Water thrust** (`water_thrust`, default 1): the pull at a standstill over the force model's,
+    full by 1.2 times the stall. A fixed-pitch propeller made for 650 km/h is stalled at low
+    speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s).
+  - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
+
 
 ---
 
@@ -912,6 +1024,27 @@ On the rivers branch until it lands.
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
 
+### Pilot's scarf
+
+- **Aliases:** the scarf, its tails or ends, worn cloth.
+- **Definition:** the pilot's white silk scarf, wrapped round his neck (part of his figure) with
+  two loose ends made fresh each frame as ribbons ([Lantern light](#lantern-light) and all, lit
+  as he is). In flight's wind they stream and flutter back from the knot; ashore they blow in
+  the breeze and his own walking or running, or hang down his back. Worn, the ends stay
+  outside his torso (a box from the hips to the shoulders that each point is pushed out of) and
+  hang no lower than the small of his back, above the jacket's hem: what's left bends out
+  behind him. They go on with his torso as it bobs, sits, leans or kneels.
+- **Code:** `src/fabric.jo pilot_scarf`, `cloth_vertices`, `ClothWearer`, `_kept_off`,
+  `_two_sided`; `src/folk.jo figure_pose`, `Figure.back`; drawn from `aegean.jo` after the
+  wake and trails (`draw_cloths`).
+- **Rules:** the flutter in flight is untouched by the collider (`tests/fabric_test.jo`). Each
+  face of the ribbon is lit by its own normal toward the eye; after dark a face turned down is
+  lit as if turned up, since the sun below the horizon would otherwise light it from below,
+  cold and blue, as nothing on the wearer is (the change grows from nothing as the sun sets).
+- **Capture:** `AEGEAN_LEISURE=bar AEGEAN_CAPTURE_MINUTES=766` (at the bar at 22:16);
+  `AEGEAN_LEISURE=listen-walk|listen-run AEGEAN_CAPTURE_MINUTES=330` (walking or running away
+  across the terrace in the afternoon).
+
 ### Ambient crowd
 
 - **Aliases:** unnamed townsfolk, the crowd, passers-by.
@@ -1030,7 +1163,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   (`30 λ`), everywhere: the purse, menus, notices, contracts, refuelling, the map shop, the Game
   page's slots and the notebook. The sign is drawn, never an image: a stylised phoenix with its
   wings raised over a flame, filled (gold over an amber flame on the purse) or in outline (the
-  bird drawn round, the flame solid), legible down to about 12 px.
+  bird drawn round, the flame solid). Under 19 px tall (text up to about 25 px: the purse, the
+  ledger, menus, the Game page's slots) the bird would read as a yen sign, so the small sign is
+  the phoenix's letter instead: a Φ standing on three tongues of flame (`PHOENIX_SMALL`).
 - **Code:** `src/phoenix.jo` (`phoenix_text` writes an amount; `draw_phoenix` draws the sign;
   `ptext`, `ptext_centered` and `ptext_width` draw words with "¤" in them as the phoenix);
   speech in `src/living_talk_words.jo say_money`.
@@ -1092,19 +1227,42 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ### Title screen
 
-- **Definition:** what the game starts on: the name alone over a live golden-hour view of the home
-  harbour, then Continue (the newest save), New game, Saved games and, quieter, Situations. No
-  tagline or subtitle, ever. The **loading card** is the web page's own "Loading the islands"
-  card shown while the world is built, before the first frame.
-- **Code:** `src/title_screen.jo` (`title_screen`, `title_camera`, `title_latest`); `aegean.jo`
-  (`title_wanted`, `title_update`, `draw_title_screen`); `src/web_compat.js` (the loading card).
-- **Rules:** the world loads once; the title only waits in front of it. Continue never asks;
-  New game asks only before it would save over a slot. Test and capture runs skip it
+- **Definition:** what the game starts on: the name alone, then Continue (the newest save), New
+  game, Saved games and, quieter, Situations, over the **title reel**. No tagline or subtitle,
+  ever. The **loading propeller** shows before it, with no words: a small two-bladed propeller
+  turning slowly on the dusk, a faint ring round it filling as the islands and towns are prepared
+  (the web page's own card while the module loads; natively the game draws the same).
+- **Code:** `src/title_screen.jo` (`title_screen`, `title_latest`, `_soft_shade`); `aegean.jo`
+  (`title_wanted`, `title_prepare`, `title_update`, `draw_title_screen`); `src/web_compat.js`
+  (the loading card and its progress); `draw_loading_propeller`.
+- **Rules:** the world loads once; the title only stands in front of it. Continue never asks;
+  New game asks only before it would save over a slot. A soft radial shade behind the buttons and
+  a fainter one behind the name, no visible edge. Test and capture runs skip it
   ([Game saves](../game-saves.md#the-title-screen)).
-- **Capture:** `AEGEAN_TITLE=1 SLOPPY_FRAMES=150` (with `SLOPPY_SAVE_DIR` holding saves for the
+- **Capture:** `AEGEAN_TITLE=1 SLOPPY_FRAMES=600` (with `SLOPPY_SAVE_DIR` holding saves for the
   Continue state; `SLOPPY_WINDOW=390x844 SLOPPY_TOUCH=1` for a phone).
 
 ![The title screen](img/title-screen.png)
+
+### Title reel
+
+- **Aliases:** the backdrop, the title's shots.
+- **Definition:** the live world behind the title in unordered shots of 18-28 s with a dip to dusk
+  between them: a **low pass** over open water at the top speed (free, chasing a Gull, overtaken by
+  one, or a **race**: two Falcos, flown by the real flight model, overtake, bank hard round an
+  air-race pylon and pull away); **high at sunset** above the clouds; a **town and its waterfront** (a low
+  run along the harbour front from just offshore, a slow golden-hour arc, or along Neravessa's
+  canals). Each shot sets its own hour and fair weather. The Adagietto plays as from a cockpit
+  radio and leads; aircraft sounds are a faint bed about 20 dB under it.
+- **Code:** `src/title_shots.jo` (`title_next_shot`, `title_view`); `aegean.jo` (`title_cut`,
+  `title_sound`, the free camera it flies).
+- **Rules:** never rain; never the same kind twice running; banks of 7 degrees at most; a town shot
+  never looks straight down into the streets; the low pass's water reads as flight's at that speed
+  (the sea gets the reel camera's velocity; the eye at the chase camera's height, 13-16 m;
+  `tests/title_reel_detail_test.py`). The world behind it is never saved: a new game puts
+  back the startup's world. It costs no more than ordinary play at each quality tier.
+- **Capture:** `AEGEAN_TITLE=1 AEGEAN_TITLE_SHOT=low-pass|high|city-Kalyrassa:arc|...`,
+  `AEGEAN_TITLE_SEED`, `AEGEAN_TITLE_FRAMES=dir`; `tests/title_shots_test.jo` checks the rules.
 
 ### Voices
 
@@ -1262,7 +1420,13 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Code:** `src/tavli.jo` (rules, `tavli_choose`, `tavli_settle`, `tavli_partners`),
   `src/tavli_view.jo` (the drawn board, dice physics, input); `tavli_frame` in `aegean.jo`;
   `tests/tavli_test.jo`; `tools/tavli_board.jo` stages a position.
-- **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid`.
+- **Plakoto:** the second game, chosen with the stake: a single checker on a point is pinned, not
+  hit, and freed when the pinner leaves; pinning the other's last checker at home (the "mother")
+  wins double. The opponent sits across the table in the scene, framed in a window the board's
+  panel leaves open (`camera_into_window`), with gestures from the game (`src/tavli_view.jo`); the
+  dice's rattle and clacks and the checkers' clicks are made in code (`src/tavli_sound.jo`).
+- **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid|tavli-plakoto`
+  (`AEGEAN_TAVLI_GESTURE` for a gesture).
 
 ### Band request
 
@@ -1285,13 +1449,157 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Dock fishing
 
-- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and strike
-  while it is under. Bites come livelier at dawn and dusk. The catch goes into the angler's pocket
-  at the fish market as production (`record_creation` and `cargo_mint`, exactly like a fisher's),
-  to be sold there or grilled by the hotel's kitchen (consumed and recorded so).
-- **Code:** `src/fishing.jo`; `fishing_frame` and `draw_fishing` in `aegean.jo`;
-  `tests/fishing_test.jo`.
-- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite`.
+- **Aliases:** fishing from the dock, the catch, the bucket, the fish stall, the locker.
+- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and
+  strike while it is under. Bites come livelier at dawn and dusk.
+  - **The catch in hand:** a fish landed is in the pilot's hand, at its kind's size and colours,
+    flapping hard at first and then in fits. He walks with it.
+  - **No casting while holding one:** the fish goes into a bucket within reach (B) or back into
+    the sea (X, an arc and a small splash). No card offers what wants the hand he holds it in
+    (fishing again, a cat, hauling the line, the waters, work on the aircraft).
+  - **Buckets are objects in the world:** each belongs to someone and is always somewhere: in the
+    player's locker, at its owner's (by a fisherman's boat, a chandler's or office counter), set
+    down on a dock, or carried. Nothing appears in the hand; B picks a bucket up where it is and
+    puts it down where he stands, and a bucket left on a dock stays there and is saved.
+  - **Where buckets come from:**
+    - his own is in his locker at the home port;
+    - he can borrow one: ask a fisherman, the harbour office or the chandler; friendlier people
+      lend more readily, and they remember whether it came back, and how late;
+    - he can buy one at a chandler's or store, where it is put on the counter for him.
+  - **Returning:** a borrowed bucket goes back to its owner, handed over in talk or set at their
+    boat or counter.
+  - **Carrying:** a bucket of fish is carried by its handle: no running with fish in it. A crate
+    wants both hands, so the bucket goes down first.
+  - **The stock:** the catch is not in the living world's stock while held. It enters it only at
+    the town's fish stall, sold there through the ledger (production into his pocket at the
+    market, `record_creation` and `cargo_mint`, then `trade`), or at the Hotel Ancora, where the
+    kitchen grills a plate of it (production, then consumption, both recorded, and the cook's
+    charge to the house). The fish sold from a borrowed bucket are his own.
+  - **The stall:** each harbour town but the smugglers' cove has a fish stall on open quay ground
+    (or its square), found from the town's fixed geometry, clear of buildings, props, paths and
+    moorings. Its trestle and poles are solid to walk round. The world audit fails one in a
+    building or out of reach.
+  - **Saves** keep the fish in the hand and every bucket: where it is, whose, its fish, and the
+    loans remembered.
+- **Code:**
+  - `src/fishing.jo`: `Angling`, `FishHold`, `Bucket`, `BucketLoan`; `fish_take`,
+    `fish_into_bucket`, `fish_pick_up`, `fish_put_down`, `fish_ask_bucket`,
+    `fish_return_bucket`, `fish_sell`, `fish_grill`, `fish_buy_bucket`.
+  - `src/fish_buckets.jo`: where the world's buckets are kept.
+  - `src/fish_stall.jo`: the stall's and the locker's spots, and their solids.
+  - `src/fish_view.jo`: the fish, the bucket, the stall, the locker, and the held pose via
+    `figure_hand` in `src/folk.jo`.
+  - `fishing_frame`, `fish_offers` and `draw_catch_scene` in `aegean.jo`.
+  - Tests: `tests/fishing_test.jo`; the stall and locker checks in `tests/world_audit_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite|fish-dock|fish-hold|fish-walk|fish-market|fish-throw|fish-locker|fish-stow|fish-borrow|fish-borrowed`.
+  - `AEGEAN_FISH_KIND`: the kind held.
+  - `AEGEAN_FISH_AGE`: seconds since it was landed.
+  - `AEGEAN_FISH_VIEW`, `AEGEAN_FISH_DIST`, `AEGEAN_FISH_PITCH`: the camera's turn from behind, its
+    distance and its pitch.
+  - `AEGEAN_FISH_BACK`: the step back from the locker.
+  - `AEGEAN_FISH_WARM`: the lender's regard.
+
+### Venue piano
+
+- **Aliases:** the bar's upright, the honky-tonk, the concert grand.
+- **Definition:** the piano follows where the music is heard, not the piece.
+  - Live at the bar or any period venue: the 1920s honky-tonk upright, whatever the number.
+  - On the radio: the classical programme the grand; popular and dance programmes the upright.
+  - Elsewhere (auditions): the grand.
+- **Code:** `music_set_piano` (`src/music_synth.jo`), set by `bar_music_load` (`src/bar_band.jo`)
+  and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
+  piano, for the tools. See `docs/music-orchestra.md`.
+
+### Table service
+
+- **Aliases:** the waiter, the tray, drinking at one's own pace, holding a drink.
+- **Definition:** what is ordered is paid at once and brought: the hotel's waiter from the end of
+  the bar on a tray (three things a trip), the barkeep along the counter to one standing at the
+  bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
+  the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
+  finished. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
+  the elbow, the forearm turned in), the level going down only while it is there; a plate stays
+  on the table and the fork goes to the mouth with a bite. Let go: the glass is held at the chest.
+  Another item, or Escape, puts it down. Glasses and plates are drawn in two parts, the vessel
+  and what is in it, which goes down (a glass's level, a plate's food all round); the hotel's
+  china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was.
+- **Code:** `src/table_service.jo` (`Waiter`, `waiter_step`, `Taking`, `take_step`, `take_label`);
+  `Served.amount`, `held`, `empty_for` and `LeisureState.coming` in `src/leisure.jo`;
+  `build_serve_parts`, `draw_serving` in `src/bar_scene.jo`; `service_step`, `draw_service`,
+  `draw_table_things`, `pilot_arm_pose` in `aegean.jo`; the bent arm (`Figure.upper`, `fore`,
+  `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
+  `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
+  waiter brings it again after a load).
+- **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties`.
+
+### Bill of fare
+
+- **Aliases:** the menu card, the chalk board, the secret line.
+- **Definition:** what a house offers at a glance: the Hotel Ancora's printed card (double rule,
+  dotted leaders) and the coffee house's chalk board, a handful of things by section with their
+  prices, ordered by 1 to 9 or a click. The faint line at the foot ("Other wines and spirits on
+  request"; "and whatever else the house has"), or 0, opens the house's whole book: the deep
+  drinks list, searchable, unchanged. The line stays faint but is a finger's height on a phone.
+- **Code:** `BILL_HOTEL`, `BILL_COFFEE`, `leisure_bill` in `src/leisure.jo`; `bill_of_fare` in
+  `src/leisure_view.jo`; leisure stage 13 and `leisure_open_book` in `aegean.jo`.
+- **Capture:** `AEGEAN_LEISURE=bill|bill-coffee`; the book: `menu|search`.
+
+### The barber
+
+- **Definition:** Stavros's chair on the waterfront at the Hotel Ancora's corner, facing a gilt
+  mirror on the hotel wall: a shave and a trim, or a new mustache (clean-shaven, handlebar,
+  walrus, chevron) seen in the glass as one chooses, paid by one transfer to the house while time
+  passes and he talks in the dialogue's way. The style is saved with the game.
+- **Code:** `src/barber.jo`; `GameSession.mustache`, `set_pilot_mustache` in `aegean.jo`;
+  `tests/barber_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=barber|barber-walrus|barber-clean`.
+
+### Swimming
+
+- **Definition:** in from a beach or off the end of a dock (a dive): wading while one can stand,
+  then the crawl along the surface, riding the swell from the unified water query; quays and pier
+  stone are walls; out where the ground rises, or climbing onto a dock from deep water. Spray in
+  the approved splash look. At night the moon's glitter lies on the sea (silver and faint, only
+  once the sun is well down; the speed flecks untouched). Saving mid-swim keeps the pilot where he
+  went in.
+- **Code:** `src/swimming.jo`; the moon in `src/sea.jo`; `tests/swimming_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=swim-dock|swim-beach|swim-wade|swim-night`.
+
+### Stargazing
+
+- **Definition:** lying back at night on a hilltop or the end of the hotel's pier, the view drifting
+  slowly round the sky. The brighter stars stand at their places on the game's own celestial
+  sphere (its pole 20 degrees up toward the north, the summer sun at 6h on the equator, as
+  `src/celestial.jo` turns the sun and moon), and the names of stars, constellations, the
+  planets and the moon show faintly, in transliterated period Greek and in English, as one looks
+  at them. T lets an hour pass. The pilot's scarf is not drawn while he lies back (tied at a
+  standing neck, it hung over the view).
+- **Code:** `src/stargazing.jo` (`SKY_NAMES`, `sky_star`, `Gaze`, `name_alpha`); `gaze_*` and
+  `draw_gaze_sky` in `aegean.jo`; `tests/stargazing_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=stars|stars-hill` (`AEGEAN_GAZE_TURN` turns the view).
+
+### Rising notes
+
+- **Aliases:** the floating notes, musical notes over the band.
+- **Definition:** small notes float up from whoever plays music in the world (not the radio), bob
+  and fade, so music heard from afar can be found by looking round. Each is a real note: its
+  onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
+  closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
+  which show only when the tune has been quiet a while; no burst after a seek or a new number.
+  Higher notes rise from a little higher; louder ones are larger; a short note is an eighth with
+  its flag, a longer one a quarter. Ink by day, warm cream after dark; fainter with distance
+  about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
+  table or the bar), where the band is in view. Options: "Musical notes rising from music played
+  nearby" (on by default).
+- **Sources:** the Hotel Ancora's band (its feed `band_notes`, as `band_step` keeps it with what is
+  heard; each note from its part's player, `band_spots`) and the nearest street musician, the one
+  `src/life_audio.jo` plays (their phrase, `street_events`, loaded as a feed about now; heard to
+  70 m, so the fade runs over half the band's distance). A cue keeps its place in a feed by frame,
+  so a whole piece and a sliding window read alike, and it never steps the shared feed itself.
+- **Code:** `src/note_cue.jo` (`NoteCue`, `note_cue_pick`, `note_cue_rise`, `draw_note_cue`);
+  `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
+  `tools/note_cue_bench.jo` counts its work per frame.
+- **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
 
 ### Time skip
 
@@ -1484,15 +1792,91 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Crowd bed
 
-- **Aliases:** the harbour murmur, the café murmur.
-- **Definition:** the looped sound of a distant crowd under the harbour and café ambience: ten or
-  twelve synthesized talkers, each a buzzing voice through two moving vowel formants, speaking
-  syllables of uneven length with uneven pauses, smeared by a few soft reflections; the café's
-  adds glasses and cups touched at uneven times. Its loudness follows the people actually nearby.
-- **Code:** `src/ambience_synth.jo` (`ambience_crowd`).
-- **Rules:** at least 4.5 s long, no loudness rhythm shorter than its loop and no held pure pitch
-  (`tests/ambience.jo`). The first version, four gated pure hums in a 2.4 s loop, was heard as a
-  little repeating tune (A F# A A F#) on the quay.
+- **Aliases:** the harbour murmur, the cafe murmur.
+- **Definition:** the looped sound of a crowd under the harbour and cafe ambience: three talkers
+  near and five across the square speaking invented syllables (consonants and vowels, never
+  words) in phrases whose pitch falls, conversations swelling and fading, the many beyond as a
+  breathing noise, low air under it, people walking past, a short outdoor reverb; stereo, the
+  ears partly alike. The cafe's has one more talker near, a smaller room and glasses and cups.
+  Its parameters are fitted to CC0 and public-domain recordings of real squares, promenades, a
+  wharf and cafes (`docs/crowd-reference.md`); nothing recorded ships.
+- **Code:** `src/ambience_crowd.jo` (`CrowdFit`, `crowd_bed`); `tools/crowdlab.jo`.
+- **Rules:** a 7 s loop with no loudness rhythm shorter than it and no held pure pitch; louder
+  single voices are events from real people, never baked into the loop (`tests/ambience.jo`).
+  The first version, four gated pure hums in a 2.4 s loop, was heard as a little repeating tune
+  (A F# A A F#) on the quay.
+
+### Uneven events
+
+- **Definition:** single ambient sounds (hammering, creaks, halyard slaps, waves, animals, birds,
+  single voices) played at uneven moments: time is cut into cells of the event's mean period and
+  each cell holds one event at its own hashed moment, so gaps run from almost nothing to nearly
+  twice the period. Each event plays one of a few takes, its pitch spread a little.
+- **Code:** `src/ambience.jo` (`ambience_due`, `ambience_hash`, `ambience_take`);
+  `src/ambience_scene.jo` (`ambience_event`).
+- **Rules:** never a fixed period (hull hammering was once a blow every 4.7 s to the frame).
+
+### Single voices
+
+- **Definition:** now and then a greeting, a laugh, a call or a short exchange (a question and its
+  companion's answer) from a real person near the listener; vowel-only synthesis, never words.
+- **Code:** `src/ambience_scene.jo` (`ambience_voices`), `src/ambience_synth.jo`
+  (`ambience_voice_take`, `ambience_utter`).
+- **Rules:** from awake people out and about within 40 m (calls 90 m); even ids men's voices, odd
+  women's, as the figures are dressed; rarer at night. Not the radio announcer.
+
+### Note events
+
+- **Aliases:** the note feed, what the band is playing note by note.
+- **Definition:** a live music source's notes as they are heard, for anything that shows the music
+  rather than plays it: the musicians' hands and bows, notes floating over a source. A feed is
+  loaded with the note events the synthesizer plays when a piece starts (the bar's with the
+  singer's line as part 14) and stepped to the frame being heard: the audio stream's position
+  (what was pushed less what still waits to be heard) while the music plays, the schedule's when
+  it is silent. It gives the notes that started since the last step; a seek or a skip re-syncs it
+  without a burst of old ones. The live source has no travel delay, so neither has this.
+- **Code:** the shared feed `src/live_notes.jo` (`LiveNote`, `LiveNoteFeed`, `live_notes_load`,
+  `live_notes_step`, `live_notes_heard_frame`, `live_notes_clock_frame`; `feed.notes` sorted by
+  start; velocity against the piece's loudest note, as the scores' gains run past 1); the band's in `src/bar_band.jo` (`BandFeed`,
+  `bar_note_feed`, `bar_note_events`); the street phrase in `src/street_phrase.jo`; the players'
+  places in `src/bar_scene.jo` (`band_spots`); `band_notes` in `aegean.jo`.
+- **Rules:** one feed interface for every consumer, so what is seen and what is heard can't drift
+  apart. The scores carry no slur marks, so no note is slurred.
+
+### Musicians at play
+
+- **Aliases:** the players' motion, bowing, the musicians' poses.
+- **Definition:** the hotel band's players and the street musicians holding their instruments the
+  way they are held and playing what is heard (see [Note events](#note-events)). The violin under
+  the chin on the left shoulder, the left hand on the neck (higher up for the higher notes), the
+  bow across the strings by the bridge: a stroke per note, down and up in turn (down again to open
+  a phrase after a breath), as long as the note and as fast as it is loud, the bow tipped for the
+  string the note is on, the strokes shared out over the bow so none runs out of it (a short rest
+  lets the bow be lifted and set down again). The pianist at the keys, each hand over the part of
+  the keyboard its notes are in (below middle C the left), dipping on each onset, the body leaning
+  toward the hand furthest out. A guitar, a mandolin or a bouzouki across the body, the left hand
+  along the neck with the pitch, the right hand plucking at the sound hole, sweeping across for a
+  chord. The accordion's bellows opening through one phrase and closing through the next, the
+  right hand on the keys (high notes lower down). A clarinet to the mouth, the fingers moving on
+  the notes, the bell lifting into the phrases and the accents. The double bass plucked, the left
+  hand lower on the neck for the higher notes. The singer swaying, her mouth open on the sung
+  notes. The arms are two bones each, reaching for where the hands must be. The players' clock
+  runs with the frame and is drawn to the frame being heard, set outright a quarter second off.
+- **Code:** `src/musician_pose.jo` (`InstrumentKit`, `Rig`, `draw_rig`, `rig_elbow`,
+  `Performance`, `perform_follow`, `note_groups`, `bow_strokes`, `bow_at`, `bellows_strokes`, `hand_track`, `play_violin`,
+  `play_piano`, `play_plucked`, `play_accordion`, `play_clarinet`, `play_bass`, `play_singer`,
+  `play_street`); the stand's places in `src/bar_scene.jo` (`band_spots`, `draw_band`); the street
+  musicians in `src/townsfolk.jo` (`draw_folk`); `tests/musicians_test.jo`; every player side by
+  side in `tools/musician_view.jo`.
+- **Rules:** every number of the set and its players' motions are made when the game starts
+  (about 16 ms on the desktop, the violin's bow plan most of it), so a number starting costs
+  nothing; a piece forced for a capture is made when it starts. The piano's keys (white, the
+  black in their groups) are drawn within 25 m of the stand. The violin is drawn 1.4 times a
+  real one's size, as the figures' heads are large; the players' arm bones are a little longer
+  than the walking figures' so the hands reach (`tests/musicians_test.jo` checks the violinist's).
+- **Capture:** `AEGEAN_BAND='piece lineup [from]'` (a catalogue piece in a line-up, 0 the pianist
+  alone ... 6 violin and guitar, from that second, at any hour; not heard) with
+  `AEGEAN_LEISURE=band` and `AEGEAN_HOUR`.
 
 ---
 
@@ -1659,6 +2043,18 @@ No image: the tiers differ in budgets more than in any single view.
   each spout a short spit and plunk. `src/combat_sound.jo` `ground_report`, `bullet_snap`,
   `spout_report`, `ground_shot_cue`; offline listening: `sloppy --release tools/groundfire_audio.jo DIR`.
 
+### Dogfight brain
+
+- **Aliases:** the AI pilots, the enemy pilots' tactics.
+- **Definition:** how combat pilots fight: Sky Barons' fighter (lead pursuit, target choice, break
+  off when too close) with lag pursuit, defensive breaks and scissors, head-on passes, extending
+  and coming back, unloading, zooming and wingmen's cover made explicit, shaped by skill,
+  aggression, caution and nerve, with deliberate mistakes.
+- **Code:** `src/combat.jo` `_dogfight`, `combat_controls`; personalities in `src/scenarios.jo`
+  `STRAIT_PILOTS`; tests `tests/dogfight_test.jo`; harness `tools/dogfight_lab.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
+  (the brain flies the player's aircraft; frames for a clip).
+
 ### Water strikes
 
 - **Aliases:** bullet spouts, strikes on the water.
@@ -1702,7 +2098,7 @@ No image: the tiers differ in budgets more than in any single view.
 - **Definition:** while any menu, panel or overlay is open, the mouse wheel is the panel's (one
   that scrolls, scrolls) and never brings a camera nearer or farther: every `Ui` state
   (conversations, the board, handling, trade, contracts, the map counter, fuel, the leisure panels
-  with their table bar, menu, rooms, tavli, paper and fishing, the workshop), the
+  with their table bar, bill of fare, book, tavli, paper, barber and fishing, the workshop), the
   pause menu, the notebook, the chart and its maps, time passing, and sitting at a table or at the
   bar. A new panel is covered by being a `Ui` state.
 - **Code:** `src/ui_state.jo` (`Ui`, `Overlays`, `overlays_open`, `wheel_kept`); `menus_open()` in
@@ -1731,11 +2127,16 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
+| `AEGEAN_CRAFT_VIEW='yaw pitch distance'` | the free camera on the player's aircraft from that side (radians round from its nose and up, metres): moored with `AEGEAN_CRAFT`, or a few frames into `AEGEAN_FLYING` |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
+| `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
+| `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
+| `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|bar|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk|listen-run` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_BAND='piece lineup [from]'` | the hotel's band plays that catalogue piece in that line-up from that second, whatever the hour (not heard; see [Musicians at play](#musicians-at-play)) |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
 | `tools/prop_disc_frames.jo` | `PROP_VIEW`, `PROP_THROTTLE`, `PROP_SWEEP` |
