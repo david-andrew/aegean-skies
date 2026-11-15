@@ -83,8 +83,12 @@ class Vocoder(unittest.TestCase):
 
 class LetterToSound(unittest.TestCase):
     def test_rules_and_stress(self):
-        self.assertEqual(lts.pronounce('station'), ['S', 'T', 'EY1', 'SH', 'AH0', 'N'])
-        self.assertEqual(lts.pronounce('kalyrassa').count('AE1'), 1)
+        # names read Greek-style: a = ah, e = eh, i/y = ee, o = oh, ou = oo; penultimate stress; no reduction
+        self.assertEqual(lts.pronounce('kalyrassa'), ['K', 'AA0', 'L', 'IY0', 'R', 'AA1', 'S', 'AA0'])
+        self.assertEqual(lts.pronounce('souvlaki'), ['S', 'UW0', 'V', 'L', 'AA1', 'K', 'IY0'])
+        self.assertEqual(lts.pronounce('melav'), ['M', 'EH1', 'L', 'AA0', 'V'])
+        import pack
+        self.assertEqual(pack.MANUAL['kalamos'].split()[1], 'AA1')                 # Kálamos: the name's own stress
         for w in ['thalvery', 'melav', 'orenthessa', 'kryfo', 'nerav']:
             p = lts.pronounce(w)
             self.assertEqual(sum(1 for x in p if x.endswith('1')), 1, (w, p))

@@ -226,6 +226,12 @@ class Pronouncer:
             stem = w[:-len(suf)]
             if w.endswith(suf) and len(w) > longer and (stem in self.manual or stem in self.d):
                 return add_s(self.manual[stem] if stem in self.manual else self.d[stem][0])
+        # another form of a dictionary word (a British spelling, un-/re-, a compound...), as the
+        # voice's lexicon has it; the rules read only names (Greek-style)
+        from pack import derive
+        d = derive(w, self.d)
+        if d:
+            return d
         return self.lts.pronounce(w)
 
     def alternatives(self, w):

@@ -117,10 +117,34 @@ More of the speaker's data must never make the voice worse, so the fitter:
   out 3 semitones high);
 - guards the prosody: about ten training lines are kept out of the prosody fit, and at each pool
   size the new prosody, the new prosody with the previous intonation, and the previous choice
-  are scored on them by word accuracy. The one with the most of the speaker's data within two
-  points of the best is kept, so validation accuracy can fall by at most two points as data
-  grows. The round's note says which was kept and why. The voice studio's "Tune" button starts it. The
-recordings, voices and rounds all stay in scratch.
+  are scored on them by word accuracy. The one with the most of the speaker's data within five
+  points of the best is kept (two until round 4: how close the voice sounds to the speaker is
+  their call, so the guard only stops a real loss of intelligibility). The round's note reports
+  each candidate's word accuracy and pitch match side by side.
+
+Pronunciation and delivery follow the speaker (round 4):
+
+- a voice carries the dictionary entry of every word in the script, not only the game's own text
+  (held-out words used to fall to the letter-to-sound rules: "measured" came out /miːzjʊrd/);
+- the aligner chooses among the dictionary's alternative pronunciations of each word ("nobody"
+  reduced, "twenty" without its T, "wind" the noun), and the speaker's most frequent
+  realisation of each word they have said goes into their voice's lexicon; a dictionary phone
+  they systematically say as another (in half or more of at least 15 tokens) is changed in the
+  words they have not said;
+- the speaker's room noise (the room-tone take) is subtracted from every analysed frame: a stop's
+  closure in a home recording is room noise, which had entered the units and the adapted voice's
+  per-phone offsets about 20 dB too loud and was heard as a scratch at stops; consonant level
+  offsets also stay within 3 dB of the vowels';
+- delivery is fitted by synthesis: sample training lines of each genre are rendered and compared
+  with the speaker's takes (articulation rate, pitch median and spread, pauses, voicing), and each
+  genre's tempo, register, range and pause scale (`style_<genre>` in the data file, used through
+  `VoiceStyle.genre`), the plain reading's register, reference rate and pauses, and the shape
+  gain, pitch limit and voicing threshold (`shape`) are set so the synthesis matches; a genre with
+  few lines stays nearer the plain reading (n / (n + 1)), a genre with none keeps the station's
+  hand-set style.
+
+The voice studio's "Tune" button starts a round. The recordings, voices and rounds all stay in
+scratch.
 
 ## Checks
 

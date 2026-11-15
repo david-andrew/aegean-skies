@@ -712,7 +712,7 @@ def main():
             import phone_align as pa
             aligner = pa.Aligner(a.aligner, a.aligner_vocab)
             pron = pa.Pronouncer()
-            cache = os.path.join(root, 'tune', 'cache-phone2')     # 2: the dictionary's alternative pronunciations
+            cache = os.path.join(root, 'tune', 'cache-phone3')     # 3: Greek-style names, derived English words
         os.makedirs(cache, exist_ok=True)
         key = lambda l: f"{l['id']}-{takes[l['id']]['n']:02d}"
         todo = [l for l in pool if not os.path.exists(os.path.join(cache, key(l) + '.json'))]

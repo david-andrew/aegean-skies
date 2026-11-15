@@ -1,5 +1,5 @@
-"""Letter-to-sound rules for words the lexicon lacks (mostly the game's invented names), and the
-stress guess for them. Written for this project; the rule format is the classic context form
+"""Letter-to-sound rules for words the lexicon lacks (the world's names and other foreign words,
+read Greek-style), and the stress guess for them. Written for this project; the rule format is the classic context form
 
     (left context, letters, right context, phones)
 
@@ -25,61 +25,36 @@ def rule(letter, *rows):
         R.append((left, mid, right, out))
 
 
-rule('A',
-     (' ', 'A', ' ', 'AH'), ('', 'AR', '#', 'EH R'), ('', 'AR', '', 'AA R'), ('', 'AIR', '', 'EH R'),
-     ('', 'AI', '', 'EY'), ('', 'AY', '', 'EY'), ('', 'AU', '', 'AO'), ('', 'AW', '', 'AO'),
-     ('', 'ALL', '', 'AO L'), ('', 'ALK', '', 'AO K'), ('', 'AL', '^', 'AE L'),
-     ('', 'A', '^E ', 'EY'), ('', 'A', '^%', 'EY'), ('', 'A', '^+#', 'EY'),
-     ('', 'A', ' ', 'AH'), ('', 'A', '', 'AE'))
-rule('B', ('', 'BB', '', 'B'), ('M', 'B', ' ', ''), ('', 'B', '', 'B'))
+# Greek-style values (the user's decision, 2026-11-15): the rules read the world's names and
+# other words the dictionary lacks; ordinary English words come from the dictionary.
+#   a = ah, e = eh, i/y = ee, o = oh, ou = oo; ai = eh, ei/oi = ee, au/eu = av/ev; every vowel
+#   letter is its own syllable; no silent letters but h and doubled consonants; s stays s.
+rule('A', ('', 'AI', '', 'EH'), ('', 'AU', '', 'AA V'), ('', 'AY', '#', 'AA Y'), ('', 'AY', '', 'AY'), ('', 'A', '', 'AA'))
+rule('B', ('', 'BB', '', 'B'), ('', 'B', '', 'B'))
 rule('C', ('', 'CH', '', 'CH'), ('', 'CK', '', 'K'), ('', 'CC', '+', 'K S'), ('', 'CC', '', 'K'),
      ('', 'C', '+', 'S'), ('', 'C', '', 'K'))
-rule('D', ('', 'DD', '', 'D'), ('', 'DG', '+', 'JH'), ('#:', 'DED', ' ', 'D IH D'), ('', 'D', '', 'D'))
-rule('E',
-     (' ', 'E', ' ', 'IY'), ('#:', 'E', ' ', ''), (' :', 'E', ' ', 'IY'), ('', 'EAU', '', 'OW'),
-     ('', 'EA', 'SUR', 'EH'), ('', 'EA', 'THER', 'EH'), ('', 'EA', 'LTH', 'EH'), ('', 'EA', 'R', 'IY'), ('', 'EA', '', 'IY'), ('', 'EE', '', 'IY'), ('', 'EI', '', 'EY'),
-     ('', 'EY', ' ', 'IY'), ('', 'EY', '', 'EY'), ('', 'EU', '', 'Y UW'), ('', 'EW', '', 'Y UW'),
-     ('', 'ER', '#', 'EH R'), ('', 'ER', '', 'ER'), ('#:', 'ES', ' ', 'IH Z'), ('#:', 'ED', ' ', 'D'),
-     ('', 'E', '^E ', 'IY'), ('', 'E', '', 'EH'))
+rule('D', ('', 'DD', '', 'D'), ('', 'D', '', 'D'))
+rule('E', ('', 'EI', '', 'IY'), ('', 'EU', '', 'EH V'), ('', 'EY', '', 'EH Y'), ('', 'EE', '', 'IY'), ('', 'E', '', 'EH'))
 rule('F', ('', 'FF', '', 'F'), ('', 'F', '', 'F'))
-rule('G', ('', 'GG', '', 'G'), ('', 'GH', ' ', ''), ('', 'GH', '', 'G'), ('', 'GN', ' ', 'N'),
-     (' ', 'G', '+', 'JH'), ('', 'GE', ' ', 'JH'), ('', 'G', '', 'G'))
-rule('H', (' ', 'HOUR', '', 'AW ER'), ('', 'H', '#', 'HH'), ('', 'H', '', ''))
-rule('I',
-     ('', 'IGH', '', 'AY'), ('', 'IE', ' ', 'IY'), ('', 'IER', '', 'IY ER'), ('', 'IE', '', 'IY'),
-     ('', 'IRR', '', 'IH R'), ('', 'IR', '#', 'AY R'), ('', 'IR', '', 'ER'), ('', 'ION', '', 'Y AH N'),
-     ('', 'I', '^E ', 'AY'), ('', 'I', '^%', 'AY'), (' ', 'I', ' ', 'AY'), ('', 'I', ' ', 'IY'),
-     ('', 'I', '#', 'IY'), ('', 'I', '', 'IH'))
+rule('G', ('', 'GG', '', 'G'), ('', 'GH', '', 'G'), ('', 'G', '', 'G'))
+rule('H', ('', 'H', '#', 'HH'), ('', 'H', '', ''))
+rule('I', ('', 'I', '', 'IY'))
 rule('J', ('', 'J', '', 'JH'))
-rule('K', (' ', 'KN', '', 'N'), ('', 'KK', '', 'K'), ('', 'K', '', 'K'))
+rule('K', ('', 'KK', '', 'K'), ('', 'K', '', 'K'))
 rule('L', ('', 'LL', '', 'L'), ('', 'L', '', 'L'))
 rule('M', ('', 'MM', '', 'M'), ('', 'M', '', 'M'))
-rule('N', ('I', 'NGER', ' ', 'NG ER'), ('I', 'NGER', 'S ', 'NG ER'), ('O', 'NGER', '', 'NG G ER'), ('U', 'NGER', '', 'NG G ER'),
-     ('', 'NG', '+', 'N JH'), ('', 'NG', '', 'NG'), ('', 'NK', '', 'NG K'), ('', 'NN', '', 'N'), ('', 'N', '', 'N'))
-rule('O',
-     (' ', 'O', ' ', 'OW'), ('', 'OO', 'R', 'AO'), ('', 'OO', 'K', 'UH'), ('', 'OO', '', 'UW'),
-     ('', 'OA', '', 'OW'), ('', 'OI', '', 'OY'), ('', 'OY', '', 'OY'), ('', 'OU', 'GHT', 'AO'),
-     ('', 'OU', '', 'AW'), ('', 'OW', ' ', 'OW'), ('', 'OW', '', 'AW'), ('#:', 'OR', ' ', 'ER'), ('#:', 'OR', 'S ', 'ER'), ('', 'OR', '', 'AO R'),
-     ('', 'O', '^E ', 'OW'), ('', 'O', '^%', 'OW'), ('', 'O', ' ', 'OW'), ('', 'O', '#', 'OW'),
-     ('', 'O', '', 'AA'))
+rule('N', ('', 'NG', '', 'NG G'), ('', 'NK', '', 'NG K'), ('', 'NN', '', 'N'), ('', 'N', '', 'N'))
+rule('O', ('', 'OU', '', 'UW'), ('', 'OI', '', 'IY'), ('', 'OO', '', 'UW'), ('', 'OY', '', 'OY'), ('', 'O', '', 'OW'))
 rule('P', ('', 'PH', '', 'F'), ('', 'PP', '', 'P'), ('', 'P', '', 'P'))
 rule('Q', ('', 'QU', '', 'K W'), ('', 'Q', '', 'K'))
 rule('R', ('', 'RR', '', 'R'), ('', 'RH', '', 'R'), ('', 'R', '', 'R'))
-rule('S',
-     ('', 'SCH', '', 'S K'), ('', 'SH', '', 'SH'), ('', 'SS', '', 'S'), ('', 'SION', '', 'ZH AH N'), ('#', 'SURE', '', 'ZH ER'),
-     ('#', 'S', '#', 'Z'), ('.', 'S', ' ', 'Z'), ('#', 'S', ' ', 'Z'), ('', 'S', '', 'S'))
-rule('T',
-     ('', 'TCH', '', 'CH'), ('#', 'TH', 'ER', 'DH'), ('', 'TH', '', 'TH'), ('', 'TION', '', 'SH AH N'), ('', 'TT', '', 'T'),
-     ('', 'T', '', 'T'))
-rule('U',
-     ('', 'UR', '#', 'Y UH R'), ('', 'UR', '', 'ER'), ('', 'U', '^E ', 'UW'), ('', 'U', '^%', 'UW'),
-     ('', 'U', ' ', 'UW'), ('', 'U', '#', 'UW'), ('', 'U', '', 'AH'))
+rule('S', ('', 'SH', '', 'SH'), ('', 'SS', '', 'S'), ('', 'S', '', 'S'))
+rule('T', ('', 'TH', '', 'TH'), ('', 'TT', '', 'T'), ('', 'T', '', 'T'))
+rule('U', ('', 'U', '', 'UW'))
 rule('V', ('', 'V', '', 'V'))
-rule('W', ('', 'WH', '', 'W'), (' ', 'WR', '', 'R'), ('', 'W', '', 'W'))
-rule('X', (' ', 'X', '', 'Z'), ('', 'X', '', 'K S'))
-rule('Y',
-     (' ', 'Y', '#', 'Y'), ('', 'Y', '#', 'Y'), (' :', 'Y', ' ', 'AY'), ('#:', 'Y', ' ', 'IY'),
-     ('^', 'Y', '^', 'IH'), ('', 'Y', '', 'IY'))
+rule('W', ('', 'WH', '', 'W'), ('', 'W', '', 'W'))
+rule('X', ('', 'X', '', 'K S'))
+rule('Y', (' ', 'Y', '#', 'Y'), ('', 'Y', '', 'IY'))
 rule('Z', ('', 'ZZ', '', 'Z'), ('', 'Z', '', 'Z'))
 rule("'", ('', "'", '', ''))
 
@@ -180,36 +155,10 @@ LONG = {'AA', 'AO', 'AW', 'AY', 'EY', 'IY', 'OW', 'OY', 'UW'}
 
 
 def stress_syllable(word):
-    """Which vowel group of the spelling carries the stress. Two groups: the first. Longer:
-    the penultimate if it is a digraph or is closed by two consonant letters (the Latin/Greek
-    habit most invented names follow), else the antepenultimate. A final silent E is no group."""
-    w = ''.join(c for c in word.upper() if c.isalpha())
-    groups = []
-    i = 0
-    while i < len(w):
-        if w[i] in VOWEL and not (w[i] == 'Y' and i + 1 < len(w) and w[i + 1] in VOWEL and i == 0):
-            j = i
-            while j < len(w) and w[j] in VOWEL:
-                j += 1
-            groups.append((i, j))
-            i = j
-        else:
-            i += 1
-    if len(groups) > 1 and groups[-1][0] == len(w) - 1 and w[-1] == 'E':
-        groups.pop()
-    n = len(groups)
-    if n <= 2:
-        return 0
-    a, b = groups[-2]
-    nxt = groups[-1][0]
-    if b - a >= 2 or nxt - b >= 2:
-        return n - 2
-    return n - 3
-
-
-# Unstressed full vowels from the rules reduce to schwa, as an English reader would say them
-# ("compass", "balcony"); long vowels and diphthongs keep their quality. The game does the same.
-REDUCE = {'AE', 'AA', 'EH', 'AO', 'UH'}
+    """Which vowel phone carries the stress: the penultimate (a name's Greek pattern; the name
+    list overrides it where the name says otherwise), the only one in a one-vowel word."""
+    n = sum(1 for p in letters_to_phones(word) if p in VOW)
+    return max(0, n - 2)
 
 
 def pronounce(word):
@@ -219,7 +168,7 @@ def pronounce(word):
     k = 0
     for p in phones:
         if p in VOW:
-            out.append(p + '1' if k == target else ('AH' if p in REDUCE else p) + '0')
+            out.append(p + ('1' if k == target else '0'))
             k += 1
         else:
             out.append(p)

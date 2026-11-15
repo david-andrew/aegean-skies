@@ -28,20 +28,38 @@ PHONES = ['pau', 'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'EH', 'ER', 'EY', 'IH', 'IY
           'TH', 'V', 'W', 'Y', 'Z', 'ZH', 'AX', 'IX', 'AXR', 'IYX']
 
 # Pronunciations the dictionary lacks or gets wrong for this world (stress digit on vowels).
-MANUAL = {
-    'kalyra': 'K AH0 L IY1 R AH0', 'kalyran': 'K AH0 L IY1 R AH0 N', 'kalyrans': 'K AH0 L IY1 R AH0 N Z',
-    'kalyrassa': 'K AE2 L IH0 R AE1 S AH0', 'orenthia': 'AO0 R EH1 N TH IY0 AH0',
-    'orenthian': 'AO0 R EH1 N TH IY0 AH0 N', 'orenthians': 'AO0 R EH1 N TH IY0 AH0 N Z',
-    'orenthessa': 'AO2 R EH0 N TH EH1 S AH0', 'kalamos': 'K AA1 L AH0 M OW2 S', 'mikra': 'M IY1 K R AH0',
-    'agios': 'AA1 Y IY0 OW2 S', 'nikolaos': 'N IY2 K OW0 L AA1 OW0 S', 'selene': 'S EH0 L IY1 N IY0',
-    'kryfo': 'K R IY1 F OW0', 'wind': 'W IH1 N D', 'winds': 'W IH1 N D Z', 'vecchio': 'V EH1 K IY0 OW0', 'porto': 'P AO1 R T OW0',
+# Place and personal names of this world, read Greek-style (the user's decision, 2026-11-15):
+# a = ah, e = eh, i/y = ee, o = oh, ou = oo, no English reduction, stress on the penultimate
+# syllable unless the name's Greek says otherwise (Kálamos, Nikólaos, Mikrá, Kryfó). Names not
+# listed here are read by the same values from the letter-to-sound rules (lts.py).
+NAMES = {
+    'kalyra': 'K AA0 L IY1 R AA0', 'kalyran': 'K AA0 L IY1 R AA0 N', 'kalyrans': 'K AA0 L IY1 R AA0 N Z',
+    'kalyrassa': 'K AA0 L IY0 R AA1 S AA0', 'orenthia': 'OW0 R EH0 N TH IY1 AA0',
+    'orenthian': 'OW0 R EH0 N TH IY1 AA0 N', 'orenthians': 'OW0 R EH0 N TH IY1 AA0 N Z',
+    'orenthessa': 'OW0 R EH0 N TH EH1 S AA0', 'kalamos': 'K AA1 L AA0 M OW0 S', 'mikra': 'M IY0 K R AA1',
+    'agios': 'AA1 Y IY0 OW0 S', 'nikolaos': 'N IY0 K OW1 L AA0 OW0 S', 'selene': 'S EH0 L IY1 N EH0',
+    'kryfo': 'K R IY0 F OW1', 'vecchio': 'V EH1 K IY0 OW0', 'porto': 'P OW1 R T OW0',
+    'meltemi': 'M EH0 L T EH1 M IY0', 'lepta': 'L EH0 P T AA1',
+    # Greek words whose stress is not on the penultimate syllable
+    'tsipouro': 'T S IY1 P UW0 R OW0', 'laskaris': 'L AA1 S K AA0 R IY0 S', 'kleftiko': 'K L EH1 F T IY0 K OW0',
+    'galaktoboureko': 'G AA0 L AA0 K T OW0 B UW1 R EH0 K OW0', 'tyrnavos': 'T IY1 R N AA0 V OW0 S',
+    'ikariotikos': 'IY0 K AA0 R IY0 OW1 T IY0 K OW0 S', 'masticha': 'M AA1 S T IY0 K AA0', 'mastika': 'M AA1 S T IY0 K AA0',
+    'faskomilo': 'F AA0 S K OW1 M IY0 L OW0', 'phoinikes': 'F IY1 N IY0 K EH0 S', 'rakomelo': 'R AA0 K OW1 M EH0 L OW0',
+}
+# Hand-written English entries the dictionary lacks or gets wrong (stress digit on vowels).
+MANUAL = dict(NAMES, **{
+    'wind': 'W IH1 N D', 'winds': 'W IH1 N D Z',
     'seaplane': 'S IY1 P L EY2 N', 'seaplanes': 'S IY1 P L EY2 N Z', 'floatplane': 'F L OW1 T P L EY2 N',
     'aeroplane': 'EH1 R AH0 P L EY2 N', 'triplane': 'T R AY1 P L EY2 N', 'metres': 'M IY1 T ER0 Z',
     'metre': 'M IY1 T ER0', 'kilometres': 'K IH0 L AA1 M AH0 T ER0 Z', 'harbour': 'HH AA1 R B ER0',
-    'archipelago': 'AA2 R K AH0 P EH1 L AH0 G OW2', 'meltemi': 'M EH0 L T EH1 M IY0', 'caique': 'K AY0 IY1 K',
+    'archipelago': 'AA2 R K AH0 P EH1 L AH0 G OW2', 'caique': 'K AY0 IY1 K',
     'windscreen': 'W IH1 N D S K R IY2 N', 'privateers': 'P R AY2 V AH0 T IH1 R Z', 'privateer': 'P R AY2 V AH0 T IH1 R',
     'telegraphist': 'T AH0 L EH1 G R AH0 F IH0 S T', 'carburettor': 'K AA1 R B Y ER0 EH2 T ER0',
-}
+    'treacle': 'T R IY1 K AH0 L', 'scurvy': 'S K ER1 V IY0', 'kestrel': 'K EH1 S T R AH0 L', 'petrel': 'P EH1 T R AH0 L',
+    'claret': 'K L AE1 R AH0 T', 'convalescents': 'K AA2 N V AH0 L EH1 S AH0 N T S', 'patronal': 'P AH0 T R OW1 N AH0 L',
+    'cretans': 'K R IY1 T AH0 N Z', 'malmsey': 'M AA1 M Z IY0', 'lychee': 'L IY1 CH IY0', 'practising': 'P R AE1 K T IH0 S IH0 NG',
+    'tsars': 'Z AA1 R Z', 'aperitifs': 'AH0 P EH2 R IH0 T IY1 F S', 'courgette': 'K UH0 R ZH EH1 T',
+})
 
 NUMBER_WORDS = ('zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen '
                 'fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty '
@@ -75,9 +93,46 @@ def lexicon(repo, extra_text=''):
             out[w] = MANUAL[w].split()
         elif w in D:
             out[w] = D[w][0]
+        elif derive(w, D):
+            out[w] = derive(w, D)
         else:
             unknown.append(w)
     return out, unknown
+
+
+BRITISH = [(r'our(s?|ed|ing)$', r'or\1'), (r'([^aeiou])re(s?)$', r'\1er\2'), (r'lled$', 'led'), (r'lling$', 'ling'), (r'is(e|es|ed|ing)$', r'iz\1'),
+           (r'ys(e|es|ed|ing)$', r'yz\1'), (r'ogue$', 'og'), (r'oghurt$', 'ogurt'), (r'^aero', 'air')]
+
+
+def derive(w, D):
+    """An English word the dictionary has under another form: an American spelling, un-/re- on a
+    known word, two known words run together, -y/-ed/-ing on a known stem. Keeps ordinary words
+    out of the letter-to-sound rules, which read names (Greek-style)."""
+    L = lambda x: MANUAL[x].split() if x in MANUAL else D[x][0] if x in D else None
+    for a, b in BRITISH:
+        v = re.sub(a, b, w)
+        if v != w and L(v):
+            return L(v)
+    if w.endswith('s') and len(w) > 4 and L(w[:-1]):
+        stem = L(w[:-1]); last = re.sub(r'\d', '', stem[-1])
+        return stem + (['S'] if last in ('P', 'T', 'K', 'F', 'TH') else ['Z'])
+    for suf, add in (('y', ['IY0']), ('ing', ['IH0', 'NG'])):
+        if w.endswith(suf) and L(w[:-len(suf)]):
+            return L(w[:-len(suf)]) + add
+    if w.endswith('ed') and (L(w[:-2]) or L(w[:-1])):
+        stem = L(w[:-2]) or L(w[:-1])
+        last = re.sub(r'\d', '', stem[-1])
+        return stem + (['IH0', 'D'] if last in ('T', 'D') else ['T'] if last in ('P', 'K', 'F', 'S', 'SH', 'CH', 'TH') else ['D'])
+    for pre, ph in (('un', ['AH0', 'N']), ('re', ['R', 'IY0'])):
+        if w.startswith(pre) and len(w) > len(pre) + 3:
+            rest = w[len(pre):]
+            r = L(rest) or derive(rest, D)
+            if r:
+                return ph + r
+    for i in range(3, len(w) - 2):
+        if L(w[:i]) and L(w[i:]):
+            return L(w[:i]) + [p[:-1] + '2' if p.endswith('1') else p for p in L(w[i:])]
+    return None
 
 
 def quantise_units(units):
