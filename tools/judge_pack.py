@@ -413,10 +413,10 @@ These are private review references copied into scratch, not game assets or orig
 - The original islands' sizes and distances are right; the surrounding world is about 500×400 km.
 - Mobile controls follow Sky Barons: drag to aim and a Walk button. The user liked them.
 - Tilt for fine aiming was liked; it is available in Options.
-- Chaotic stalls were liked and are now the default.
+- Chaotic stalls (separated-wing stalls and spins) were tried and retired on 2026-11-15; the arcade stall is the game's.
 - Clouds are known not to match the film references yet. They are work in progress; judge them anyway.
-- Optional trials belong behind the pause menu's Tweaks checkboxes, off by default. The accepted
-  chaotic-stall behavior above is now a default, not a rejected trial.
+- Optional trials belong behind the pause menu's Tweaks checkboxes, off by default; a trial judged
+  bad is removed, not kept in the menu.
 - Read [FEEL.md](references/FEEL.md) and the user feedback in DESIGN.md before proposing to undo
   accepted work. Treat any older world-size wording there as superseded by the ruling above.
 

@@ -267,9 +267,7 @@ Combat NPC specs set `combat_flight` so their pure-scale lift, gravity and energ
 match the player. Ordinary route traffic keeps its existing calibration. The off-by-default
 **Sky Barons energy and response** Tweaks option raises the load limit to 8 g, roll authority
 by 1.125, key smoothing to 9/s, and scales both thrust and drag by the pure speed scale without
-changing equilibrium speed. It applies equally to player and combat NPCs. Chaotic stalls now
-contribute only near low airspeed, separation or reverse flow; attached flight retains normal
-kinematic response.
+changing equilibrium speed. It applies equally to player and combat NPCs.
 
 A swept 128 m spatial grid reduces bullet/body candidate tests while preserving narrow-phase
 hit ordering. Exceptional long sweeps fall back to the bounded complete list. Firing order
@@ -300,7 +298,7 @@ own attenuation. Synthesis uses Sky Barons' short two-band noise crack/whizz.
 
 `build_scenario(key,towns,models,per_side=8)` supports up to 64 per side. For captures use
 `AEGEAN_SCENARIO=strait AEGEAN_BATTLE_SIDE=64`; the normal button remains eight per side.
-`AEGEAN_TWEAKS=energy` or `stalls` enables the corresponding comparison. `Start of the game`
+`AEGEAN_TWEAKS=energy` enables the corresponding comparison. `Start of the game`
 rebuilds the initial seed, quay/player, weather, handling and title while preserving rendering
 options and loaded resources.
 

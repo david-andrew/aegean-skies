@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Velos and Fairey IIIF](#velos-and-fairey-iiif)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -457,6 +457,21 @@ On the rivers branch until it lands.
   How the pair's propellers turn and cancel their torque: [Contra-rotating and push-pull
   props](#contra-rotating-and-push-pull-props) (the big boats set `push_pull`).
 
+### One speed rule
+
+- **Aliases:** the speed rule; the historical speed rule.
+- **Definition:** a Tweaks trial (off by default: "One speed rule for historical aircraft") that
+  places every historical type by one curve from its real top speed: design top, true m/s = 80 ×
+  (real km/h ÷ 250)^0.76, the single curve closest to the three fleets' own scalings. Each type's
+  cruise moves with its top, its stall stays as designed, drag is set so thrust over drag makes the
+  new top, thrust is kept. The game's own sixteen designs are not changed. Switching it remakes every
+  aircraft's spec at once.
+- **Code:** `real_top_kmh`, `speed_rule`, `AIRCRAFT_RULED` in `src/aircraft_catalog.jo`;
+  `aircraft_profile` in `src/planes.jo`; `tests/speed_rule_test.jo`; `tools/speed_rule_table.jo`
+  (the table); `AEGEAN_TWEAKS=speedrule`, or `AEGEAN_SPEED_RULE=1` (also for running any test with it).
+- **Rules:** every historical profile must carry `real_top_kmh` (a test checks every type after the
+  sixteen). The living world's trip times (`AIRFRAMES` cruise) are not changed by it.
+
 ### Big boats
 
 - **Aliases:** the big flying boats; offshore-only aircraft (those over 30 m span).
@@ -497,6 +512,22 @@ On the rivers branch until it lands.
   need, so it settles low and does not float.
 - **Code:** `src/flight.jo` (the gear loop and the wet check in `_substep`; the belly volumes in
   `craft_spec`).
+
+### Greek service
+
+- **Definition:** aircraft flown in and around Greece: the Sopwith Greek Seaplane (1914, a
+  two-seat four-bay pusher on two long floats with a tail float, six built for the Hellenic Naval
+  Air Service), the Sopwith Bat Boat Type 2 (1914, a pusher flying boat with a sewn-plywood
+  "Consuta" hull, its tail on open booms; one went to Greece), here an **amphibian** whose wheels
+  fold up beside the hull (as the 1913 Type 1A's did; X, as on the Albatross), the Short Type 184
+  (1915, the three-bay torpedo seaplane flown from Ben-my-Chree and Mudros in the Aegean, with its
+  torpedo between the floats and air bags under its wing tips) and the KEA Chelidon (1927, the
+  Phaleron factory's own two-seat trainer, a landplane that flies from the aerodrome). Greek
+  naval liveries: the blue and white roundel, blue rudders with a white band. Their own group in
+  the aircraft picker.
+- **Code:** `src/aircraft_greek.jo` (models, wheels, contacts), profiles in
+  `src/aircraft_catalog.jo`, the picker group in `src/aircraft_picker.jo`;
+  `tests/aircraft_greek_test.jo`.
 
 ### Early aircraft
 
@@ -604,19 +635,21 @@ On the rivers branch until it lands.
 - **Code:** `set_speed_scale` in `src/flight.jo`; the `pure_scale` flag in `src/tweaks.jo`;
   `pure_k` converts back to true speed.
 - **Rules:** a plain scalar, not a curve; the approved version is tagged `liked-speed-3.3x`.
+  The "true speed on a curve", quick-grip, true-speed airframe and true-speed cloth trials (no
+  checkbox, only `AEGEAN_TWEAKS=curve|grip|airframe|cloth`) were retired 2026-11-15: nothing used them.
   Distance-dependent speed tricks (near boost, detail flow, whole-sea flow, axial stretch;
   `AEGEAN_SPEED_MODE`, `AEGEAN_NEAR_BOOST`) were rejected on 2026-11-10 and must not be revived.
 
 ### Chaotic stalls
 
 - **Aliases:** the stall trial.
-- **Definition:** the Tweaks option for a more physical stall, with left and right wing separation,
-  stall breaks and spins (the user's aim includes a hammerhead with prop-wash rudder authority).
-  With it off, the liked arcade flight model is unchanged.
-- **Code:** `chaotic_stalls` in `src/tweaks.jo`; `wing_separation` and `_stall_rotation` in
-  `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
-- **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
-  spans. Landings must forgive firm touchdowns.
+- **Definition:** retired 2026-11-15 (the user judged it not worth keeping): a Tweaks option for a
+  more physical stall, with left and right wing separation, stall breaks and spins. The option,
+  its checkbox, its `AEGEAN_TWEAKS=stalls` hook, its flight and autopilot code, and its tools and
+  tests are gone; the game flies the liked arcade stall as it always did with the option off.
+  Flight model v2 keeps a soft stall of its own.
+- **Code:** none left. `wing_separation`, `buffet` and `stall_blend` in `CraftState` are written
+  only by flight model v2 (`src/flight_v2.jo`, `src/flight_sb.jo`) and read by the flight feedback.
 
 ### Flight model v2
 
@@ -699,10 +732,31 @@ On the rivers branch until it lands.
     speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s). Above 1
     it is a **static pull** factor: a big, slow-turning propeller pulls far harder at a standstill
     than the force model's thrust (derived from the drag at the top speed) allows a slow, heavy
-    biplane; the Velos's 1.8 and the IIIF's 2.3 bring their runs to about 31 and 39 s as the
-    player (the Gull's is 18), heavy but not a slog.
+    biplane; the Fairey IIIF's 1.3 brings its run to about 31 s as the player (the Velos needs
+    none: 23 s, beside the Short 184's 25; the Gull's is 18).
   - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
 
+
+### Wing-strut streamers
+
+- **Aliases:** streamers, the ribbons on the struts.
+- **Definition:** a red-and-cream ribbon each side of the player's aircraft, streaming back in
+  the wind of flight (the same cloth as the [Pilot's scarf](#pilots-scarf)). Each is tied
+  halfway along that type's outermost strut that is clear of the water and no higher than its top
+  wing: an interplane strut on a biplane, a wing strut, a float strut on a twin-float
+  monoplane, or a tip-float strut on a boat. Of a fore-and-aft pair it takes the rear one. Found
+  from the type's own struts, so every type, and any added later, has them on its own structure.
+  The Supermarine S.6B and Macchi M.C.72 (cantilever wings) carry them on their float struts; the
+  Piaggio P.7, whose only struts are its hydrofoil legs under the water, has none.
+- **Code:** `src/craft_struts.jo` (`tag_strut`, `craft_struts`, `streamer_ties`); the strut helpers
+  in `src/planes.jo`, `src/racer_planes.jo`, `src/aircraft_boats.jo`, `src/italian_racers.jo`
+  tag their boxes; `src/planes.jo craft_tie_streamers` fills `CraftModel.struts` and
+  `CraftModel.streamers`; `src/fabric.jo cloths_for`; `tests/streamer_test.jo`.
+- **Rules:** a new aircraft's struts must be laid with a strut helper (`_strut`, `kit_strut`,
+  `_bstrut`, the racers' `_strut`/`_blade`, `_st`), or call `tag_strut` on the box just pushed;
+  the test fails for a type with no strut to tie to unless it's listed as having none.
+- **Capture:** `HANGAR_STREAMERS=1 HANGAR_YAW=2.3 HANGAR_KINDS="0,1,3,5,12,16,17,20,21,25,26,32"
+  sloppy tools/hangar.jo` (a contact sheet).
 
 ### Race classes
 
@@ -735,8 +789,7 @@ On the rivers branch until it lands.
   - The capital club's pilot cohort (`AIR_CLUB_PILOTS`, five) and an aerodrome's air arm (two)
     are reserved together.
   - On the way home a clubmate yields the approach only to another coming home, and one already
-    down or on final keeps its landing. Under the chaotic-stalls trial the autopilot's arrival at
-    1.4 times the stall can stall a racer's sharp wing (default tweaks are fine).
+    down or on final keeps its landing.
 - **Capture:** `AEGEAN_CAPTURE_RACE=schneider` with `AEGEAN_CRAFT` a Schneider racer (the S.6B is
   21): the long course off the home harbour, the player at the third gate's approach 41 s into the
   race, five rivals flown by the flight model; `schneider-finish` the results card;
@@ -756,11 +809,14 @@ On the rivers branch until it lands.
   rudder, pilot, observer and gunner; 209 km/h.
 - **Code:** `src/greek_planes.jo` (models; `greek_roundel`), built with the racer kit
   (`src/racer_planes.jo` `rk_*`); profiles in `src/aircraft_catalog.jo` (with `real_top_kmh`);
-  `tests/aircraft_greek2_test.jo`.
+  `tests/aircraft_greek2_test.jo`; listed beside greek-1's types in [Greek service](#greek-service).
 - **Rules:** Greek naval markings: the blue-white-blue roundel on the wings' upper and lower faces
   and the fuselage sides, blue-white-blue vertical stripes on the rudder; the "Hellenic Naval"
-  livery is a cool silver dope so it still reads silver in warm light. Both use a static pull
-  above 1 (see Schneider racers, water thrust). In the picker's Greek service group.
+  livery is a cool silver dope so it still reads silver in warm light. Their game speeds follow
+  the fleet's rule from `real_top_kmh` as the other Greek-service types' do (68 and 76 m/s); the
+  IIIF has a static pull of 1.3 (see Schneider racers, water thrust). Both are in the picker's
+  Greek service group, and their struts are tagged for streamers (the racer kit's `rk_strut` and
+  `rk_blade`).
 
 ---
 

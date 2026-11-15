@@ -8,13 +8,12 @@ Occupation/traits select the style: couriers keep a high, economical route; race
 lower and faster; pirates stay low. Social manoeuvres are disabled during final approach.
 An occupied berth is still resolved by the world's reservation/holding logic.
 
-Pilots operate the controls; they never assign an airborne attitude or position. With the
-inertial stall trial enabled, rate feedback and angle-of-attack feedback prevent the old
-instant-rate steering from overcorrecting. NPC departure and approach procedures also
-establish a safe climb, join the extended approach line before descending, reduce flare
-power at accelerated travel speeds, finish a clear-water flare beyond the nominal point,
-and brake the water run before turning toward a dock. `FlightPlan.arrival_setup` saves the
-approach-entry leg; the shared autopilot and player flight equations remain intact.
+Pilots operate the controls; they never assign an airborne attitude or position. NPC
+approach procedures reduce flare power at accelerated travel speeds, finish a clear-water
+flare beyond the nominal point, and brake the water run before turning toward a dock; waypoint
+flying limits each heading step so racers stay upright at the pylons. The shared autopilot and
+player flight equations remain intact. (The chaotic-stalls trial's rate feedback, climb handoff
+and approach-entry leg were retired 2026-11-15 with the trial.)
 
 ## Capital clubs
 
