@@ -866,7 +866,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   (`30 λ`), everywhere: the purse, menus, notices, contracts, refuelling, the map shop, the Game
   page's slots and the notebook. The sign is drawn, never an image: a stylised phoenix with its
   wings raised over a flame, filled (gold over an amber flame on the purse) or in outline (the
-  bird drawn round, the flame solid), legible down to about 12 px.
+  bird drawn round, the flame solid). Under 19 px tall (text up to about 25 px: the purse, the
+  ledger, menus, the Game page's slots) the bird would read as a yen sign, so the small sign is
+  the phoenix's letter instead: a Φ standing on three tongues of flame (`PHOENIX_SMALL`).
 - **Code:** `src/phoenix.jo` (`phoenix_text` writes an amount; `draw_phoenix` draws the sign;
   `ptext`, `ptext_centered` and `ptext_width` draw words with "¤" in them as the phoenix);
   speech in `src/living_talk_words.jo say_money`.
