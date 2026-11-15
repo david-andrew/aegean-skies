@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
 - **Reference:** [Capture switches](#capture-switches)
@@ -1452,6 +1452,53 @@ No image: the tiers differ in budgets more than in any single view.
   (`tests/ambience.jo`). The first version, four gated pure hums in a 2.4 s loop, was heard as a
   little repeating tune (A F# A A F#) on the quay.
 
+### Note events
+
+- **Aliases:** the note feed, what the band is playing note by note.
+- **Definition:** a live music source's notes as they are heard, for anything that shows the music
+  rather than plays it: the musicians' hands and bows, notes floating over a source. A feed is
+  loaded with the note events the synthesizer plays when a piece starts (the bar's with the
+  singer's line as part 14) and stepped to the frame being heard: the audio stream's position
+  (what was pushed less what still waits to be heard) while the music plays, the schedule's when
+  it is silent. It gives the notes that started since the last step; a seek or a skip re-syncs it
+  without a burst of old ones. The live source has no travel delay, so neither has this.
+- **Code:** the shared feed `src/live_notes.jo` (`LiveNote`, `LiveNoteFeed`, `live_notes_load`,
+  `live_notes_step`, `live_notes_heard_frame`, `live_notes_clock_frame`; on this branch its
+  stand-in `src/live_notes_shim.jo`); the band's in `src/bar_band.jo` (`BandFeed`,
+  `bar_note_feed`, `bar_note_events`); the street phrase in `src/street_phrase.jo`; the players'
+  places in `src/bar_scene.jo` (`band_spots`); `band_notes` in `aegean.jo`.
+- **Rules:** one feed interface for every consumer, so what is seen and what is heard can't drift
+  apart. The scores carry no slur marks, so no note is slurred.
+
+### Musicians at play
+
+- **Aliases:** the players' motion, bowing, the musicians' poses.
+- **Definition:** the hotel band's players and the street musicians holding their instruments the
+  way they are held and playing what is heard (see [Note events](#note-events)). The violin under
+  the chin on the left shoulder, the left hand on the neck (higher up for the higher notes), the
+  bow across the strings by the bridge: a stroke per note, down and up in turn (down again to open
+  a phrase after a breath), as long as the note and as fast as it is loud, the bow tipped for the
+  string the note is on, the strokes shared out over the bow so none runs out of it (a short rest
+  lets the bow be lifted and set down again). The pianist at the keys, each hand over the part of
+  the keyboard its notes are in (below middle C the left), dipping on each onset, the body leaning
+  toward the hand furthest out. A guitar, a mandolin or a bouzouki across the body, the left hand
+  along the neck with the pitch, the right hand plucking at the sound hole, sweeping across for a
+  chord. The accordion's bellows opening through one phrase and closing through the next, the
+  right hand on the keys (high notes lower down). A clarinet to the mouth, the fingers moving on
+  the notes, the bell lifting into the phrases and the accents. The double bass plucked, the left
+  hand lower on the neck for the higher notes. The singer swaying, her mouth open on the sung
+  notes. The arms are two bones each, reaching for where the hands must be. The players' clock
+  runs with the frame and is drawn to the frame being heard, set outright a quarter second off.
+- **Code:** `src/musician_pose.jo` (`InstrumentKit`, `Rig`, `draw_rig`, `rig_elbow`,
+  `Performance`, `perform_follow`, `note_groups`, `bow_strokes`, `bow_at`, `bellows_strokes`, `hand_track`, `play_violin`,
+  `play_piano`, `play_plucked`, `play_accordion`, `play_clarinet`, `play_bass`, `play_singer`,
+  `play_street`); the stand's places in `src/bar_scene.jo` (`band_spots`, `draw_band`); the street
+  musicians in `src/townsfolk.jo` (`draw_folk`); `tests/musicians_test.jo`; every player side by
+  side in `tools/musician_view.jo`.
+- **Capture:** `AEGEAN_BAND='piece lineup [from]'` (a catalogue piece in a line-up, 0 the pianist
+  alone ... 6 violin and guitar, from that second, at any hour; not heard) with
+  `AEGEAN_LEISURE=band` and `AEGEAN_HOUR`.
+
 ---
 
 ## Process
@@ -1666,6 +1713,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
+| `AEGEAN_BAND='piece lineup [from]'` | the hotel's band plays that catalogue piece in that line-up from that second, whatever the hour (not heard; see [Musicians at play](#musicians-at-play)) |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
 | `tools/prop_disc_frames.jo` | `PROP_VIEW`, `PROP_THROTTLE`, `PROP_SWEEP` |
