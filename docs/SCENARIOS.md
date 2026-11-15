@@ -36,10 +36,16 @@ Run a native build headlessly with `SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1`, unset D
 
 This is an in-situ battle fixture, not a national-war campaign or a new save-slot UI. No surrender/scoring screen or strategic fleet replacement has been added.
 
-`canal` — **Canal takeoff** starts a repaired gull with its engine running at
-Neravessa's workshop launch. The original winding canal has stone, iron and low
+`canal` — **Canal takeoff** starts a repaired gull with its engine running on the cradle at the
+head of Neravessa's workshop slipway (`ScenarioState.slipway`; the loader runs
+`start_slip_launch`). It slides down the ways, splashes in, and the yard swings it to the canal's
+heading before the pilot has it, about eleven seconds in, near the old launch point. The original winding canal has stone, iron and low
 pedestrian bridges, working barges, launches and moored rowing boats. Two real
 registered hostile aircraft approach behind the quarter; an allied courier is
 already departing ahead. Boats brake for the player's path, but remain physical
 obstacles. The builder resets the whole world, aircraft, finite combat state and
 vessel fleet through the existing Scenarios page loader.
+Orenthian riflemen and machine-gun posts hold roofs, the iron and pedestrian bridges and the
+promenades along the run (`src/canal_ground_fire.jo`). They are the scenario Battle's
+`ground` guns, not living-world people, and hold fire until the hand-over. The pursuers start far
+enough back to reach gun range a few seconds into the water run.

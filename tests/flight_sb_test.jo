@@ -1,0 +1,131 @@
+# Sky Barons' own flight model ported (src/flight_sb.jo, flight_model 2): stability, determinism, the
+# water through the shared solver, and v2's Sky Barons-like setting against it.
+# env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 sloppy test tests/flight_sb_test.jo
+import '../src/flight.jo' as fl
+import '../src/flight_v2.jo' as v2
+import '../src/flight_sb.jo' as sb
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+
+const K = 3.3
+
+_setup = (model: int):
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks(flight_model = model))
+    v2.set_fdm2_tuning(v2.Fdm2Tuning())
+
+_reset = ():
+    fl.set_speed_scale(1.0); fl.set_lift_scale(3.3)
+    tw.set_tweaks(tw.Tweaks())
+    v2.set_fdm2_tuning(v2.Fdm2Tuning())
+
+_spec = (kind: planes.Craft, player: bool = true) -> fl.CraftSpec:
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = player
+    k
+
+_air = (k: fl.CraftSpec, alt_drawn: f64, v_true: f64, throttle: f64) -> fl.CraftState:
+    s = fl.CraftState(position = vec3(0, f32(alt_drawn), 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
+    s.throttle = throttle
+    s
+
+_vt = (s: fl.CraftState) -> f64: f64(length(s.velocity)) / K
+_path = (s: fl.CraftState) -> f64: asin(clamp(f64(s.velocity.y) / max(f64(length(s.velocity)), 0.1), -1.0, 1.0))
+
+_wild = (t: f64, seed: f64) -> fl.Controls:
+    fl.Controls(pitch = clamp(sin(t * 0.9 + seed) * 1.4, -1.0, 1.0), roll = clamp(sin(t * 1.7 + seed * 2.0) * 1.3, -1.0, 1.0),
+        yaw = clamp(sin(t * 0.6 + seed * 3.0) * 1.2, -1.0, 1.0), throttle = 0.5 + 0.5 * sin(t * 0.3 + seed))
+
+test "the Sky Barons port stays finite under wild controls for every aircraft":
+    _setup(2)
+    loop id in 0..planes.CRAFT_NAMES.len():
+        k = _spec(planes.Craft(id))
+        assert(sb.fdmsb_active(k) and not v2.fdm2_active(k))
+        s = _air(k, 2000.0, k.cruise_speed / K, 0.7)
+        loop i in 0..60 * 30:
+            fl.step(k, s, _wild(s.time, f64(id)), fl.FlightEnv(), 1.0 / 60.0)
+            if s.position.y < 200.0: break
+        assert(abs(f64(length(s.orientation)) - 1.0) < 0.0001)
+        assert(abs(f64(s.position.x)) < 1e7 and abs(f64(s.position.y)) < 1e7 and abs(f64(s.position.z)) < 1e7)
+        assert(f64(length(s.velocity)) < k.max_speed * 3.0 and not s.crashed)
+    _reset()
+
+test "the Sky Barons port is deterministic and the frame rate does not change it":
+    _setup(2)
+    k = _spec(.corsair)
+    runs: fl.CraftState[]
+    loop hz in [60, 60, 30]:
+        s = _air(k, 2000.0, k.cruise_speed / K, 1.0)
+        loop i in 0..30 * 20:
+            c = _wild(f64(i) / 30.0, 0.7)
+            loop j in 0..hz / 30: fl.step(k, s, c, fl.FlightEnv(), 1.0 / f64(hz))
+        runs.push(s)
+    assert(runs[0].position == runs[1].position and runs[0].orientation == runs[1].orientation)
+    assert(length(runs[0].position - runs[2].position) < 0.01)
+    _reset()
+
+test "the Sky Barons port: NPCs untouched, catalog top speed, Sky Barons' turn":
+    _setup(2)
+    npc = _spec(.gull, false)
+    assert(not sb.fdmsb_active(npc))
+    loop kind in [planes.Craft.gull, planes.Craft.falco]:
+        k = _spec(kind)
+        s = _air(k, 100.0, k.cruise_speed / K, 1.0)
+        loop i in 0..60 * 90:
+            fl.step(k, s, fl.Controls(throttle = 1.0, pitch = clamp((0.0 - _path(s)) * 2.5 / k.pitch_rate, -1.0, 1.0)), fl.FlightEnv(), 1.0 / 60.0)
+        top = _vt(s)
+        # (a full pull at cruise: the nose's rate, the way Sky Barons turns at any speed)
+        s = _air(k, 1000.0, k.cruise_speed / K, 1.0)
+        prev = normalize(s.velocity); peak = 0.0
+        loop i in 0..60 * 2:
+            fl.step(k, s, fl.Controls(throttle = 1.0, pitch = 1.0), fl.FlightEnv(), 1.0 / 60.0)
+            d = normalize(s.velocity)
+            peak = max(peak, acos(clamp(f64(dot(d, prev)), -1.0, 1.0)) * 60.0); prev = d
+        print("Sky Barons port {kind}: top {top:.1} m/s true (catalog {k.max_speed / K:.1}), pull {peak * 57.3:.0} deg/s (pitch rate {k.pitch_rate * 57.3:.0})")
+        assert(abs(top - k.max_speed / K) < 2.0 and peak > k.pitch_rate * 0.85)
+    _reset()
+
+test "the Sky Barons port takes off and lands through the water solver":
+    _setup(2)
+    loop kind in [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]:
+        k = _spec(kind)
+        s = fl.water_start(k, vec3(0, 0, 0))
+        off = -1.0; again = false
+        loop i in 0..60 * 70:
+            c = fl.Controls(throttle = 1.0)
+            if not s.on_water: c.pitch = clamp((0.12 - _path(s)) * 2.5 / k.pitch_rate, -1.0, 1.0)
+            fl.step(k, s, c, fl.FlightEnv(), 1.0 / 60.0)
+            if off < 0.0 and not s.on_water and f64(s.position.y) > k.float_height + 1.0: off = s.time
+            if off >= 0.0 and s.on_water: again = true
+            if off >= 0.0 and f64(s.position.y) > 100.0: break
+        assert(off > 0.0 and not again and s.hull_damage == 0.0)
+        v = k.stall_speed * 1.3
+        s = _air(k, 40.0, v, fl.cruise_throttle(k, v))
+        touched = false
+        loop i in 0..60 * 60:
+            hgt = f64(s.position.y) - k.float_height
+            want = if hgt > 5.0: -0.061 else: -0.06 * hgt / 5.0 - 0.004
+            fl.step(k, s, fl.Controls(throttle = if hgt > 5.0: fl.cruise_throttle(k, v) * 0.6 else: 0.0, pitch = clamp((want - _path(s)) * 6.0 / k.pitch_rate, -1.0, 1.0)), fl.FlightEnv(), 1.0 / 60.0)
+            if s.on_water: touched = true
+            if touched and _vt(s) < k.stall_speed * 0.4: break
+        print("Sky Barons port water {kind}: liftoff {off:.1} s, landed {touched}, harm {s.hull_damage:.3}")
+        assert(touched and not s.crashed and s.hull_damage < 0.1)
+    _reset()
+
+test "v2's Sky Barons-like setting turns as hard as the port and still pays for it":
+    _setup(1)
+    v2.set_fdm2_tuning(v2.fdm2_skybarons_like())
+    k = _spec(.gull)
+    s = _air(k, 1000.0, k.stall_speed * 1.3, 1.0)
+    prev = normalize(s.velocity); peak = 0.0
+    e = (st: fl.CraftState) -> f64: f64(st.position.y) / K + _vt(st) * _vt(st) / 19.6
+    e0 = e(s)
+    loop i in 0..60 * 2:
+        fl.step(k, s, fl.Controls(throttle = 1.0, pitch = 1.0), fl.FlightEnv(), 1.0 / 60.0)
+        d = normalize(s.velocity)
+        peak = max(peak, acos(clamp(f64(dot(d, prev)), -1.0, 1.0)) * 60.0); prev = d
+    straight = _air(k, 1000.0, k.stall_speed * 1.3, 1.0)
+    loop i in 0..60 * 2: fl.step(k, straight, fl.Controls(throttle = 1.0), fl.FlightEnv(), 1.0 / 60.0)
+    print("v2 Sky Barons-like gull: slow pull {peak * 57.3:.0} deg/s, energy {e(s) - e0:.1} m against {e(straight) - e0:.1} m straight")
+    assert(peak * 57.3 > 75.0 and e(s) < e(straight) - 3.0)
+    _reset()
