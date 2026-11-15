@@ -116,9 +116,10 @@ Each frame the clouds near the camera are drawn into a coverage map in
 sun-projected coordinates: a point P maps to `P.xz - k*P.y`, with `k =
 sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 
-- **Map size by tier:** 384 px over 28 km on low (73 m texels, redrawn every
-  second frame), 1024 over 36 km on medium, 1536 over 48 km on high (about
-  35 m texels). It is centred ahead of the view and snapped to texels.
+- **Map size by tier:** 384 px over 28 km on low (73 m texels), 640 over 36 km
+  on medium (56 m), 1536 over 48 km on high (31 m). Each redraw draws every
+  cloud with four taps a texel: at 1024 px on medium that burst cost redfox about
+  0.4 ms a frame. It is centred ahead of the view and snapped to texels.
 - **Fill.** The map fades to nothing over its outer eighth, so receivers need
   no edge test. Flat forms take three slab taps instead of four.
 - **Drawing it.** One instanced quad per cloud covers its projected box. Four
