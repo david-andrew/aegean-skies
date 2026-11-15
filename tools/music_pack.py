@@ -36,10 +36,14 @@ PIECES = [
 # Gymnopedie's strings play muted (con sordino), darker and veiled.
 ARRANGED_SHELF = {'gymnopedie-orchestra': dict(hz=1500.0, db={'0': -7.0})}
 
-# Pieces played on the 1920s hotel upright (the synth's MUSIC_UPRIGHT model) rather than the
-# concert grand: the bar pianist's numbers, and the radio's period piano. Clair de lune keeps the
-# grand its performance was approved on.
-UPRIGHT = {'gymnopedie', 'ave-maria', 'magnetic', 'el-choclo', 'bethena'}
+# The piano follows the venue, not the piece (src/music_synth.jo music_set_piano): live at the bar
+# (or any period venue) the honky-tonk upright, whatever the number; on the radio the programme's
+# (the classical programme the grand, popular and dance the upright). A piece's `piano` in the
+# catalogue is the one of the venue where it is usually heard, for the tools and the automatic
+# balance: the Hotel Ancora's numbers and the radio's popular stations the upright, the classical
+# station (Voice of Kalyra) the grand.
+def usual_piano(station):
+ return 'grand' if station=='Voice of Kalyra' else 'upright'
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
@@ -310,7 +314,7 @@ def main():
   if balanced:performance.update(balance_db=BALANCE[name]['gains_db'])
   blob,end,events=pack(notes,mix_levels=name in ANNOTATED or balanced,sections=sections)
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
-  meta.append(dict(id=name,title=title,composer=composer,station=station,frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
+  meta.append(dict(id=name,title=title,composer=composer,station=station,piano=usual_piano(station),frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
  (ROOT/'data/music/performance.json').write_text(json.dumps(performances,indent=2)+'\n')
  (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
@@ -322,7 +326,7 @@ def main():
    for k,v in (shelf or {}).get('db',{}).items():merged[k]=min(v,merged.get(k,0.0))
    shelf=dict(hz=own['hz'],db=merged)
   extra=f",{float(shelf['hz'])},["+','.join(f"{float(shelf['db'].get(str(k),0.0))}" for k in range(16))+"]" if shelf else ''
-  piano=', piano = 1' if r['id'] in UPRIGHT else ''
+  piano=', piano = 1' if usual_piano(r['station'])=='upright' else ''
   lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}{extra}{piano}),")
  lines+= [']','','music_bytes = (piece: int) -> u8[]:', '    match piece:']
  for i,r in enumerate(meta):lines.append(f'        {i}: embed(\'../data/music/{r["id"]}.z\')')
