@@ -27,6 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
+- **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1458,6 +1459,24 @@ No image: the tiers differ in budgets more than in any single view.
   fails the test unless its key is reviewed into the allow-list.
 
 ---
+
+## Input
+
+### Panels own the wheel
+
+- **Aliases:** the wheel leak, the menu zooming the camera.
+- **Definition:** while any menu, panel or overlay is open, the mouse wheel is the panel's (one
+  that scrolls, scrolls) and never brings a camera nearer or farther: every `Ui` state
+  (conversations, the board, handling, trade, contracts, the map counter, fuel, the leisure panels
+  with their table bar, bill of fare, book, tavli, paper, barber and fishing, the workshop), the
+  pause menu, the notebook, the chart and its maps, time passing, and sitting at a table or at the
+  bar. A new panel is covered by being a `Ui` state.
+- **Code:** `src/ui_state.jo` (`Ui`, `Overlays`, `overlays_open`, `wheel_kept`); `menus_open()` in
+  `aegean.jo`, applied after every camera step that can read the wheel: the walking follow camera
+  (the library's zoom and the game's own), the aboard orbit camera (`fly`), the parachute camera.
+- **Tests:** `tests/camera_wheel_test.jo` (every state against the rule); `tools/wheel_probe.jo`
+  turns the real wheel (`SLOPPY_INPUT` `n:wheel=1`) in the running game with each state open in
+  turn, and once with nothing open to see it zoom (the command is at the top of the file).
 
 ## Capture switches
 
