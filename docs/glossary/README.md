@@ -2173,6 +2173,25 @@ No image: the tiers differ in budgets more than in any single view.
   windsocks), `src/airfield_audit.jo` (audit checks), `tools/airfield_survey.jo` (site search).
 - **Rules:** a field is axis-aligned and on the 14 m lattice; trees are cleared from the whole
   field, tall grass from the turf; no road or house may cross the field (the audit checks).
+- **In the living world:** a save made on the field is named after it and filed under its town;
+  the autosave counts it a safe place (parked on the wheels, or on foot there); the paper maps that
+  print airfields (the military sheets, the pilots' mooring sheet) list it, and the chart draws it
+  (a strip, a ring, its name) where the sheet prints it, survey error and all
+  (`publish_airfield_features` in `src/map_scene.jo`, `chart_fields` in `aegean.jo`). Stands 0 and
+  1 are the [air arm](#air-arm)'s, stand 2 the visitors' (the player's landplane).
+
+### Air arm
+
+- **Definition:** a country's fighters at an aerodrome: two C.R.20s bought once by the town the
+  field serves (its household purse, two pilots reserved over the civil cohort, no harbour berth:
+  their stands), each flying once a day by the flight model's controls alone: the first the
+  morning circuits at 09:30 (two laps of a racetrack round the field), the second a display over
+  the town at 16:00 (a figure eight). A sortie taxis out, lines up and runs, climbs away, flies its
+  mission, joins a long final, flares, rolls out on the brakes and taxis back to its stand. Fuel
+  comes from the town's market at the stand; bad weather, a hurt engine or a wreck keeps it down.
+- **Code:** `src/air_arm.jo` (`arm_tick`, `prepare_air_arm`, `update_air_arm`), `ArmPilot` in
+  `src/air_race.jo` (saved with the air events), the stand registration and fuel in
+  `src/living_far_aircraft.jo`; `tests/air_arm_test.jo`.
 
 ![Kalyrassa aerodrome from the air](img/airfield.png)
 
@@ -2305,6 +2324,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 |---|---|
 | `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
+| `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
