@@ -142,7 +142,7 @@ struct DistrictJob:
     lot: int = 0
     steps: DistrictStep[]
     step: int = 0
-    cell: int = 0
+    cursor: PaveCursor = PaveCursor()
     paths: Vertex3D[]
     active: bool = false
 
@@ -242,9 +242,8 @@ district_job_advance = (job: mut DistrictJob,until: f64) -> bool:
     loop job.step < job.steps.len():
         kind = job.steps[job.step].kind
         if kind == 0:
-            job.cell = town_path_part(job.paths,job.steps[job.step].a,job.steps[job.step].b,job.steps[job.step].width,job.steps[job.step].paved,vec3(0,0,0),job.cell,until)
-            if job.cell >= 0: return false
-            job.cell = 0
+            if not town_path_part(job.paths,job.steps[job.step].a,job.steps[job.step].b,job.steps[job.step].width,job.steps[job.step].paved,vec3(0,0,0),job.cursor,until): return false
+            job.cursor = PaveCursor()
         else if kind == 1: job.paths.extend(job.steps[job.step].verts)
         else if kind == 2: port_mesh_structures(job.paths,s,true)
         else: port_mesh_furniture(job.paths,s)
@@ -519,7 +518,7 @@ prepare_world_towns = (cam: vec3):
     roads_changed = length(cam-world_town_roads_cam) > 120.0 or density != world_town_last_density
     if density != world_town_last_density:
         world_town_slots = []; world_town_parked = []; world_town_job = DistrictJob(); world_town_paused = []
-    if prepare_settlement_roads(cam.xz): changed = true; roads_changed = true
+    if prepare_settlement_roads(cam.xz,until=until): changed = true; roads_changed = true
     range = 180.0+350.0*density
     world_town_heading(cam)
     desired: int[]; active: int[]; wants: DistrictWant[]
@@ -824,9 +823,18 @@ struct CloseJob:
     queued: TownPave[]
     queued_at: int[]
     queue: int = 0
-    cell: int = 0
+    cursor: PaveCursor = PaveCursor()
     paved: Vertex3D[]
     paved_end: int[]
+    # (publishing: see close_publish)
+    pub_stage: int = 0
+    pub_k: int = 0
+    pub_i: int = 0
+    local_sites: TownSite[]
+    local_cam: vec3 = vec3(0,0,0)
+    detailed: Instance3D[][]
+    supports: vec2[]
+    fixtures: vec4[]
 
 close_site_kits: {str: CloseSiteKit}
 close_job: CloseJob
@@ -882,7 +890,8 @@ prepare_close_town = (towns: Town[],cam: vec3):
         close_town_last=cam; close_town_stamp=stamp; close_town_density=density
         sites=close_sites(towns,cam)
         if sites.len()==0:
-            close_publish(towns,close_job_for(cam,density,sites))
+            empty=close_job_for(cam,density,sites)
+            _=close_publish(towns,empty,1e30)
             return
         if close_town_meshes.len()==0:
             empty: Instance3D[]; vertices: Vertex3D[]
@@ -909,14 +918,13 @@ prepare_close_town = (towns: Town[],cam: vec3):
             town_path_recording=false
             close_job.open=true; close_job.key=key; close_job.kit=kit
             close_job.queued=town_path_recorded; close_job.queued_at=town_path_recorded_at
-            close_job.queue=0; close_job.cell=0; close_job.paved=[]; close_job.paved_end=[]
+            close_job.queue=0; close_job.cursor=PaveCursor(); close_job.paved=[]; close_job.paved_end=[]
             town_path_recorded=[]; town_path_recorded_at=[]
             if time()>town_build_until: zone_end(); return
         loop close_job.queue<close_job.queued.len():
             pave=close_job.queued[close_job.queue]
-            close_job.cell=town_path_part(close_job.paved,pave.a,pave.b,pave.width,pave.paved,pave.origin,close_job.cell,town_build_until)
-            if close_job.cell>=0: zone_end(); return
-            close_job.cell=0; close_job.paved_end.push(close_job.paved.len()); close_job.queue+=1
+            if not town_path_part(close_job.paved,pave.a,pave.b,pave.width,pave.paved,pave.origin,close_job.cursor,town_build_until): zone_end(); return
+            close_job.cursor=PaveCursor(); close_job.paved_end.push(close_job.paved.len()); close_job.queue+=1
         # (the paved paths back in their places among the site's other paving)
         kit=close_job.kit
         joined: Vertex3D[]; from=0; piece=0
@@ -931,61 +939,77 @@ prepare_close_town = (towns: Town[],cam: vec3):
         close_job_take(close_job.key,kit)
         if time()>town_build_until and close_job.k<close_job.sites.len(): zone_end(); return
     zone_end()
+    if not close_publish(towns,close_job,town_build_until): return
     close_site_kits=close_job.used
-    close_publish(towns,close_job)
     close_job=CloseJob()
 
-# Draw the finished kit: its solids to walking, its pieces culled and sorted by detail.
-close_publish = (towns: Town[],job: CloseJob):
+# Draw the finished kit: its solids to walking, its pieces culled and sorted by detail, in
+# slices (stage 0 the solids, 1 the cull a few pieces at a time, 2 the kit swapped in at once).
+close_publish = (towns: Town[],job: mut CloseJob,until: f64) -> bool:
     global close_town_support_roots
     global close_cat_props
     global close_town_origin,close_town_prop_count,close_town_prop_gap,close_town_local_bound,close_town_prop_roots
     global close_town_meshes,close_town_bounds,close_town_buffers,close_town_props,close_town_paths,close_town_sites,close_town_instances,close_town_drawn_fixtures
-    cam=job.cam
-    close_town_drawn_fixtures=[]
-    origin=job.origin;close_town_origin=origin
-    sites=job.sites; close_town_sites=sites.len(); close_town_instances=0
-    close_town_prop_count=0;close_town_prop_gap=0;close_town_local_bound=0;close_town_prop_roots=[];close_town_support_roots=[]
-    if close_town_meshes.len()==0: return
-    lists=job.lists
-    props=job.props
-    paths=job.paths
-    # Publish ground-level close-kit solids before visibility culling. Stairs,
-    # door leaves, shutters, awnings and overhead balconies retain their gaps.
-    solids: TownSite[]
-    loop k in [8,13,20]:
-        vertices=arch_vertices(k)
-        low=vec3(1e9,1e9,1e9);high=vec3(-1e9,-1e9,-1e9)
-        loop v in vertices:low=min(low,v.pos);high=max(high,v.pos)
-        loop inst in lists[k]:
-            middle=transform_point(inst.model,(low+high)*0.5)+origin
-            sx=f64(length(inst.model[0].xyz));sy=f64(length(inst.model[1].xyz));sz=f64(length(inst.model[2].xyz))
-            height=f64(high.y-low.y)*sy
-            solids.push(TownSite(middle-vec3(0,f32(height*0.5),0),atan2(f64(inst.model[2].x),f64(inst.model[2].z)),f64(high.x-low.x)*sx,f64(high.z-low.z)*sz,height,0))
-    loop kind in 0..props.len():
-        loop inst in props[kind]:
-            at=inst.model[3].xyz+origin
-            solids.extend(walk_prop_sites(kind,at.xz,atan2(f64(inst.model[2].x),f64(inst.model[2].z)),f64(length(inst.model[0].xyz))))
-    walk_publish("close-kit",solids)
-    local_sites: TownSite[]
-    loop s in sites:
-        local_site=s; local_site.at=world_local(world_point(s.at),origin)
-        local_sites.push(local_site)
-    local_cam=world_local(world_point(cam),origin)
-    detailed: Instance3D[][]=[loop k in 0..ARCH_COUNT*3: []]
+    origin=job.origin
+    if close_town_meshes.len()==0:
+        close_town_drawn_fixtures=[];close_town_origin=origin;close_town_sites=job.sites.len();close_town_instances=0
+        close_town_prop_count=0;close_town_prop_gap=0;close_town_local_bound=0;close_town_prop_roots=[];close_town_support_roots=[]
+        return true
+    if job.pub_stage==0:
+        # Publish ground-level close-kit solids before visibility culling. Stairs,
+        # door leaves, shutters, awnings and overhead balconies retain their gaps.
+        solids: TownSite[]
+        loop k in [8,13,20]:
+            vertices=arch_vertices(k)
+            low=vec3(1e9,1e9,1e9);high=vec3(-1e9,-1e9,-1e9)
+            loop v in vertices:low=min(low,v.pos);high=max(high,v.pos)
+            loop inst in job.lists[k]:
+                middle=transform_point(inst.model,(low+high)*0.5)+origin
+                sx=f64(length(inst.model[0].xyz));sy=f64(length(inst.model[1].xyz));sz=f64(length(inst.model[2].xyz))
+                height=f64(high.y-low.y)*sy
+                solids.push(TownSite(middle-vec3(0,f32(height*0.5),0),atan2(f64(inst.model[2].x),f64(inst.model[2].z)),f64(high.x-low.x)*sx,f64(high.z-low.z)*sz,height,0))
+        loop kind in 0..job.props.len():
+            loop inst in job.props[kind]:
+                at=inst.model[3].xyz+origin
+                solids.extend(walk_prop_sites(kind,at.xz,atan2(f64(inst.model[2].x),f64(inst.model[2].z)),f64(length(inst.model[0].xyz))))
+        walk_publish("close-kit",solids)
+        job.local_sites=[]
+        loop site in job.sites:
+            local_site=site; local_site.at=world_local(world_point(site.at),origin)
+            job.local_sites.push(local_site)
+        job.local_cam=world_local(world_point(job.cam),origin)
+        job.detailed=[loop k in 0..ARCH_COUNT*3: []]
+        job.pub_stage=1;job.pub_k=0;job.pub_i=0
+        if time()>until: return false
+    if job.pub_stage==1:
+        loop job.pub_k<ARCH_COUNT:
+            k=job.pub_k
+            loop job.pub_i<job.lists[k].len():
+                if job.pub_i%64==0 and time()>until: return false
+                instance=job.lists[k][job.pub_i]; job.pub_i+=1
+                bound=close_town_bounds[k]
+                scale=max(length(instance.model[0].xyz),max(length(instance.model[1].xyz),length(instance.model[2].xyz)))
+                if town_hidden(job.local_sites,job.local_cam,transform_point(instance.model,bound.xyz),bound.w*scale): continue
+                if k == 8 or k == 9 or k == 11 or k == 12 or k == 13: job.supports.push(instance.model[3].xz+origin.xz)
+                if k==8 or k==10 or k==11: job.fixtures.push(vec4(instance.model[3].xyz,f32(k)))
+                distance=length(instance.model[3].xyz-job.local_cam)
+                lod=if not arch_has_lod(k) or distance<32: 2 else: if distance<65: 1 else: 0
+                job.detailed[k+lod*ARCH_COUNT].push(instance)
+            job.pub_k+=1;job.pub_i=0
+        job.pub_stage=2
+        if time()>until: return false
+    # (the new kit in at once: what is drawn and what walking asks of the drawn fixtures)
+    close_town_origin=origin
+    close_town_sites=job.sites.len(); close_town_instances=0
+    close_town_prop_count=0;close_town_prop_gap=0;close_town_local_bound=0;close_town_prop_roots=[]
+    close_town_drawn_fixtures=job.fixtures
+    close_town_support_roots=job.supports
     loop k in 0..ARCH_COUNT:
-        close_town_instances+=lists[k].len()
-        loop instance in lists[k]:
-            if startup_aegean_walk_trace!=none: close_town_local_bound=max(close_town_local_bound,f64(length(instance.model[3].xz)))
-            bound=close_town_bounds[k]
-            scale=max(length(instance.model[0].xyz),max(length(instance.model[1].xyz),length(instance.model[2].xyz)))
-            if town_hidden(local_sites,local_cam,transform_point(instance.model,bound.xyz),bound.w*scale): continue
-            if k == 8 or k == 9 or k == 11 or k == 12 or k == 13: close_town_support_roots.push(instance.model[3].xz+origin.xz)
-            if k==8 or k==10 or k==11: close_town_drawn_fixtures.push(vec4(instance.model[3].xyz,f32(k)))
-            distance=length(instance.model[3].xyz-local_cam)
-            lod=if not arch_has_lod(k) or distance<32: 2 else: if distance<65: 1 else: 0
-            detailed[k+lod*ARCH_COUNT].push(instance)
-    loop k in 0..detailed.len(): set_instances(close_town_buffers[k],detailed[k])
+        close_town_instances+=job.lists[k].len()
+        if startup_aegean_walk_trace!=none:
+            loop instance in job.lists[k]: close_town_local_bound=max(close_town_local_bound,f64(length(instance.model[3].xz)))
+    loop k in 0..job.detailed.len(): set_instances(close_town_buffers[k],job.detailed[k])
+    props=job.props
     loop k in 0..TOWN_PROP_COUNT:
         close_town_instances+=props[k].len()
         close_town_prop_count+=props[k].len()
@@ -999,7 +1023,8 @@ close_publish = (towns: Town[],job: CloseJob):
         loop inst in props[k]: close_town_support_roots.push(inst.model[3].xz+origin.xz)
         set_instances(close_town_props[k],props[k])
     close_cat_props=props[TOWN_CAT_PROP]
-    set_paving(close_town_paths,paths)
+    set_paving(close_town_paths,job.paths)
+    true
 
 draw_close_town = (towns: Town[],cam: vec3,L: Light,t: f64):
     if close_town_meshes.len()==0 or close_town_sites==0: return

@@ -303,35 +303,48 @@ world_side = (ax: int,az: int,asize: int,bx: int,bz: int,bsize: int) -> int:
         if az+asize == bz: return 3
     -1
 
-# (The pairs are read from plain integer rectangles taken once a round: the same pairs in the
-# same order as reading each tile, without copying a tile's samples for every pair.)
+# Each round finds the first pair (in selection order) of a tile and an adjacent tile at least
+# two levels coarser whose coarser-by-one ancestor is cached, and replaces what that ancestor
+# covers with it. A tile so much coarser always covers a whole side of its neighbour (quadtree
+# cells nest), so one look at the cell beside each side finds it: four lookups a tile, not a
+# comparison with every other selected tile, and the same pair as that full comparison.
 world_balance = ():
     global world_selected
     loop balance_round in 0..WORLD_CACHE_SLOTS:
-        changed = false
         n = world_selected.len()
-        tx: int[]; tz: int[]; tl: int[]; rx: int[]; rz: int[]; rs: int[]
-        loop slot in world_selected:
-            t = world_tiles[slot]
+        tx: int[]; tz: int[]; tl: int[]
+        at: {int: int} = {}
+        loop k in 0..n:
+            t = world_tiles[world_selected[k]]
             tx.push(t.x); tz.push(t.z); tl.push(t.level)
-            rx.push(t.x*(1<<t.level)); rz.push(t.z*(1<<t.level)); rs.push(1<<t.level)
+            at[world_tile_key(t.x,t.z,t.level)] = k
+        found_a = -1; found_b = -1
         loop ia in 0..n:
-            loop ib in 0..n:
-                if tl[ib] <= tl[ia]+1 or world_side(rx[ia],rz[ia],rs[ia],rx[ib],rz[ib],rs[ib]) < 0: continue
+            rs = 1 << tl[ia]; rx = tx[ia]*rs; rz = tz[ia]*rs
+            best = -1
+            loop side in 0..4:
+                cx = if side == 0: rx-1 else: if side == 1: rx+rs else: rx
+                cz = if side == 2: rz-1 else: if side == 3: rz+rs else: rz
+                if cx < 0 or cz < 0: continue
+                # (the selected tile covering that base cell, if any)
+                ib = -1
+                loop level in tl[ia]+2..WORLD_ROOT_LEVEL+1:
+                    if let k = at.get(world_tile_key(cx >> level,cz >> level,level)):
+                        ib = k; break
+                if ib < 0 or (best >= 0 and ib >= best): continue
                 level = tl[ib]-1
-                x = tx[ia] >> (level-tl[ia]); z = tz[ia] >> (level-tl[ia])
-                key = world_tile_key(x,z,level)
-                if not (key in world_cache): continue
-                parent = world_cache[key]
-                next: int[]
-                loop k in 0..n:
-                    if tl[k] <= level and (tx[k]>>(level-tl[k])) == x and (tz[k]>>(level-tl[k])) == z: continue
-                    next.push(world_selected[k])
-                next.push(parent); world_selected = next
-                changed = true
-                break
-            if changed: break
-        if not changed: break
+                if not (world_tile_key(tx[ia] >> (level-tl[ia]),tz[ia] >> (level-tl[ia]),level) in world_cache): continue
+                best = ib
+            if best >= 0: found_a = ia; found_b = best; break
+        if found_a < 0: break
+        level = tl[found_b]-1
+        x = tx[found_a] >> (level-tl[found_a]); z = tz[found_a] >> (level-tl[found_a])
+        parent = world_cache[world_tile_key(x,z,level)]
+        next: int[]
+        loop k in 0..n:
+            if tl[k] <= level and (tx[k]>>(level-tl[k])) == x and (tz[k]>>(level-tl[k])) == z: continue
+            next.push(world_selected[k])
+        next.push(parent); world_selected = next
 
 world_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> TerrainSample:
     if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return land_sample(u.heights,u.materials,base+p)
@@ -509,30 +522,24 @@ world_contact_budget = (cam: vec3) -> int:
 # Pin the camera's 3x3 contact neighbourhood before traversing the distant
 # tree. A newly arrived walker must never stand on a 14 m CPU surface while
 # the renderer morphs a kilometre-sized fallback under their feet.
-world_contact_last_cam = vec3(1e9,1e9,1e9)
 world_prepare_contact = (cam: vec3,enabled: bool = true):
-    global world_contact_slots,world_contact_rect,world_generate_budget,world_contact_requesting,world_contact_last_cam
+    global world_contact_slots,world_contact_rect,world_generate_budget,world_contact_requesting
     world_contact_slots=[];world_contact_rect=vec4(0,0,0,0)
     if not enabled:return
     if abs(cam.x)<LEGACY_RESERVE and abs(cam.z)<LEGACY_RESERVE:return
     ground=new_land_surface(f64(cam.x),f64(cam.z))
-    if ground < -40.0 or f64(cam.y)-ground>80.0:
-        world_contact_last_cam=cam
-        return
+    if ground < -40.0 or f64(cam.y)-ground>80.0:return
     cx=int(floor((f64(cam.x)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
     cz=int(floor((f64(cam.z)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
     # Nine uploads only on a cold arrival; walking across an edge adds three.
     ordinary_budget=world_generate_budget
     world_generate_budget=max(world_generate_budget,WORLD_CONTACT_GENERATE_LIMIT)
-    # After a jump (a teleport, a load) all nine are made at once. Arriving by moving there,
-    # only the tiles within 28 m of the camera are; the rest of the ring (made ahead on the
-    # way in, mostly) comes through the ordinary allowance, the contact area waiting for all nine.
-    jumped=length(cam-world_contact_last_cam)>200.0
-    world_contact_last_cam=cam
+    # All nine are made at once, never a slice at a time: until the nine are there the
+    # contact area is off and a coarser tile still draws under the walker beside the fine
+    # ones. (The ring the camera is heading into is made ahead, in slices: world_prefetch_contact.)
+    world_contact_requesting=true
     loop dz in [-1,0,1]:
         loop dx in [-1,0,1]:
-            ox,oz=world_tile_origin(cx+dx,cz+dz,0)
-            world_contact_requesting=jumped or (f64(cam.x)+28.0>=ox and f64(cam.x)-28.0<ox+WORLD_TILE_SPAN and f64(cam.z)+28.0>=oz and f64(cam.z)-28.0<oz+WORLD_TILE_SPAN)
             slot=world_request_tile(cx+dx,cz+dz,0)
             if slot>=0:world_contact_slots.push(slot)
     world_contact_requesting=false
