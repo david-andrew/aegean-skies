@@ -39,6 +39,7 @@ struct CraftSpec:
     parts: PartSpec[]
     contacts: vec3[]
     gear_contacts: vec3[]           # fully extended wheels, empty on water-only aircraft
+    landplane = false               # fixed wheels and a tail skid; water is a ditching (aircraft_early.jo)
     wing_contacts = [vec3(-4.7, -0.31, -0.3), vec3(4.7, -0.31, -0.3), vec3(-5.5, 1.55, -0.55), vec3(5.5, 1.55, -0.55)]
     volumes: f64[]                   # displaced m³ at 1 m immersion, per contact
     float_height = 2.0               # calm-water equilibrium CG height
@@ -223,6 +224,7 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         s.arc_thrust = p.thrust; s.arc_drag = p.drag; s.arc_grip = p.grip
         s.fuel_capacity = p.tank; s.fuel_burn = p.burn; s.water_drag = p.water_drag
         s.spool_time = if p.engine_x > 0: 2.4 else: 1.5
+        s.landplane = p.landplane
     s.cl0 = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.cruise_speed * s.cruise_speed)
     s.cl_max = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.stall_speed * s.stall_speed)
     s.stall_angle = (s.cl_max - s.cl0) / s.lift_slope
@@ -248,6 +250,10 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         depth = -s.float_height - f64(p.y)
         share = if p.z < 0: front_share / max(nf, 1) else: (1.0 - front_share) / max(na, 1)
         s.volumes.push(if depth > 0.04: s.mass / 1000.0 * share / depth else: s.mass / 1000.0 * 0.08)
+    # (a landplane's belly gives a fraction of the buoyancy it would need: on the water it settles
+    # and is lost, a ditching)
+    if s.landplane:
+        loop i in 0..s.volumes.len(): s.volumes[i] *= 0.15
     s.wing_contacts = craft_wing_contacts(kind)
     s.parts = craft_parts(kind, s.contacts)
     s.gear_contacts = craft_gear_contacts(kind)
@@ -268,6 +274,15 @@ heading_vector = (h: f64) -> vec3: vec3(sin(h), 0, -cos(h))
 angle_delta = (a: f64, b: f64) -> f64: atan2(sin(a - b), cos(a - b))
 water_start = (spec: CraftSpec, at: vec3, h: f64 = 0.0) -> CraftState:
     CraftState(position = vec3(at.x, at.y + f32(spec.float_height), at.z), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, on_water = true, water_age = 0.0)
+
+# A landplane at rest on its wheels and skid (its three-point attitude) on ground of height `ground`.
+ground_start = (spec: CraftSpec, at: vec3, h: f64 = 0.0) -> CraftState:
+    g = spec.gear_contacts
+    tilt = if g.len() >= 3: atan2(f64(g[2].y - g[0].y), f64(g[2].z - g[0].z)) else: 0.0
+    q = quat_mul(quat_euler(0, -h, 0), quat_axis_angle(vec3(1, 0, 0), tilt))
+    low = 0.0
+    loop p in g: low = min(low, f64(quat_rotate(q, p).y))
+    CraftState(position = vec3(at.x, f32(f64(at.y) - low - 0.08), at.z), orientation = q, fuel = spec.fuel_capacity, on_ground = true, water_age = 1.0, gear = 1.0)
 
 trim_aoa = (spec: CraftSpec, speed: f64, density: f64 = 1.225) -> f64:
     cl = spec.mass * FLIGHT_G / max(0.5 * density * spec.wing_area * speed * speed, 1.0)
@@ -719,9 +734,36 @@ steer = (k: CraftSpec, s: CraftState, want: vec3) -> Controls:
         c.yaw = clamp(c.yaw + hold, -1.0, 1.0)
     c
 
+# A landplane's wheel or tail skid on the ground: a stiff sprung leg with damping, rolling on
+# grass (the skid drags), brakes on the main wheels (the water-brake control; held when parked),
+# and grip across. Under the pure scale the run's slowing acts on the drawn speed, so a landing
+# rolls out in about the true time rather than the scale's times longer.
+_landplane_wheel = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, index: int, arm: vec3, p: vec3, land: f64, mass: f64, pk: f64, parked: bool, force: mut vec3, torque: mut vec3, dt: f64):
+    s.on_ground = true
+    rel = s.velocity+cross(quat_rotate(s.orientation,s.angular_velocity),arm)
+    normal = normalize(vec3(e.ground(f64(p.x)-0.25,f64(p.z))-e.ground(f64(p.x)+0.25,f64(p.z)),0.5,
+        e.ground(f64(p.x),f64(p.z)-0.25)-e.ground(f64(p.x),f64(p.z)+0.25)))
+    vn = f64(dot(rel,normal))
+    n = f64(k.gear_contacts.len())
+    load = max(0.0,mass/n*(110.0*min(land-f64(p.y),0.5)-14.0*vn))
+    f = forward(s); flat_f = vec3(f.x,0,f.z)
+    flat_f = if length(flat_f) < 0.001: vec3(0,0,-1) else: normalize(flat_f)
+    flat_r = vec3(-flat_f.z,0,flat_f.x)
+    longitudinal = f64(dot(rel,flat_f)); lateral = f64(dot(rel,flat_r))
+    skid = index >= 2
+    grip = if skid: 0.3 else: 0.04+0.41*(if parked: 1.0 else: clamp(c.water_brake,0.0,1.0))
+    slow = clamp(longitudinal*mass*0.3,-load*grip,load*grip)
+    friction = -flat_f*f32(slow)-flat_r*f32(clamp(lateral*mass/n,-load*0.7,load*0.7))
+    b = normal*f32(load)+friction
+    # (the scale's extra slowing goes to the speed alone: the wheels' pitching moment stays the
+    # true one, so braking hard does not stand it on its nose)
+    force += b-flat_f*f32(if skid: 0.0 else: slow*(max(pk,1.0)-1.0))
+    torque += quat_rotate(quat_inverse(s.orientation),cross(arm,b))
+    _contact_load(k,s,0,p,normal,normal*f32(min(vn,0.0)),normal*f32(load*dt),5.0,.crunch)
+
 _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
     s.time += dt
-    if k.gear_contacts.len() > 0: s.gear = move_toward(s.gear,if c.gear: 1.0 else: 0.0,dt*0.4)
+    if k.gear_contacts.len() > 0: s.gear = if k.landplane: 1.0 else: move_toward(s.gear,if c.gear: 1.0 else: 0.0,dt*0.4)
     if c.anchor and s.on_water and length(s.velocity) < 0.8 and not s.crashed: moor(s, s.position, heading(s))
     if s.moored:
         s.position = s.mooring_point; s.precise_ready=false; s.orientation = s.mooring_orientation
@@ -800,6 +842,8 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     if pk0 > 1.0001:
         lw = (1.0 - f64(smoothstep(0.25, 0.5, abs(pitch)))) * (1.0 - f64(smoothstep(0.3, 0.6, abs(bank)))) * (1.0 - clamp(abs(c.pitch) / 0.3, 0.0, 1.0))
         want = if s.on_water: 0.09 * f64(smoothstep(k.stall_speed * 0.45, k.stall_speed * 0.8, speed)) else: 0.06
+        # (a landplane just off its wheels keeps the rotation it lifted off with: no water to help)
+        if k.landplane and not s.on_water: want += 0.12 * f64(smoothstep(k.stall_speed * 0.85, k.stall_speed * 1.05, speed))
         pr += clamp((want - pitch) * 3.5, -0.45, 0.45) * lw
     pr *= 0.15 + 0.85 * tail; yr *= 0.15 + 0.85 * tail; rr *= 0.2 + 0.8 * wings
     torque = vec3((1.0 - tail) * sin(s.time * 5.0) * k.inertia.x, (right - left) * q * k.wing_area * 0.04, (right - left) * q * k.wing_area * k.span * 0.12)
@@ -810,11 +854,22 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     if length(flat_f) < 0.001: flat_f = vec3(0, 0, -1)
     else: flat_f = normalize(flat_f)
     flat_r = vec3(-flat_f.z, 0, flat_f.x)
+    # (a landplane at rest with the throttle closed holds its brakes: parked)
+    parked = k.landplane and c.throttle < 0.05 and length(s.velocity) < 2.0
     if s.gear > 0.95 and s.damage.parts[0].attached:
-        loop point in k.gear_contacts:
+        loop gi in 0..k.gear_contacts.len():
+            point = k.gear_contacts[gi]
             arm = quat_rotate(s.orientation,point); p = s.position+arm
             land = e.ground(f64(p.x),f64(p.z))
-            if land <= sea_surface(e,f64(p.x),f64(p.z),s.time).height or p.y >= land: continue
+            sea_here = sea_surface(e,f64(p.x),f64(p.z),s.time).height
+            # (a landplane's wheels in the water: ditched)
+            if k.landplane and land <= sea_here and f64(p.y) < sea_here and not s.crashed:
+                s.crashed = true
+                impact_event(s.damage,ImpactEvent(p,vec3(0,1,0),0.5*k.mass*f64(dot(s.velocity,s.velocity)),.splash,.body,s.velocity*f32(k.mass)))
+            if land <= sea_here or p.y >= land: continue
+            if k.landplane:
+                _landplane_wheel(k,s,c,e,gi,arm,p,land,mass,pk,parked,force,torque,dt)
+                continue
             s.on_ground = true
             rel = s.velocity+cross(quat_rotate(s.orientation,s.angular_velocity),arm)
             # A sprung rolling contact: vertical loads go to the hull, not to the tip floats.
@@ -937,13 +992,29 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         support = min(part_health(s.damage, .left_float), part_health(s.damage, .right_float))
         rr += bank * 2.0 * wet * support
     else: s.water_age += dt
-    if s.on_ground:
+    if s.on_ground and k.landplane:
+        # On its wheels: the rudder steers (with the slipstream, so a burst of throttle swings it
+        # at a crawl, less as it runs fast: no ground loop), the elevator lifts the tail as the
+        # speed comes and, stick near the middle, holds it a little nose up, then rotates near the
+        # stall (the pilot's ordinary takeoff); ailerons hardly act.
+        elev = f64(smoothstep(k.stall_speed * 0.3, k.stall_speed * 0.75, speed))
+        pr = clamp(c.pitch, -1.0, 1.0) * k.pitch_rate * 0.6 * elev
+        want = 0.05 + 0.13 * f64(smoothstep(k.stall_speed * 0.85, k.stall_speed * 1.05, speed))
+        # (braking, or the throttle closed rolling out: tail down, as a pilot holds the stick back)
+        down = max(clamp(c.water_brake, 0.0, 1.0), 1.0 - clamp(c.throttle / 0.3, 0.0, 1.0))
+        want += (0.3 - want) * down
+        lw = 1.0 - clamp(abs(c.pitch) / 0.3, 0.0, 1.0)
+        pr += clamp((want - pitch) * 3.0, -0.45, 0.45) * elev * lw
+        rr = -clamp(c.roll, -1.0, 1.0) * k.roll_rate * 0.15 * elev
+        yr = -clamp(c.yaw,-1.0,1.0)*0.7*clamp(abs(water_speed)/5.0+s.throttle*0.6,0.0,1.0)*(1.0-0.55*f64(smoothstep(15.0,35.0,abs(water_speed))))
+    else if s.on_ground:
         pr = 0; rr = 0
         yr = -clamp(c.yaw,-1.0,1.0)*0.45*clamp(abs(water_speed)/4.0,0.0,1.0)
     s.on_water = wet > 0 or (s.on_water and s.water_age < 0.12)
     s.planing = wet > 0 and plane > 0.5
     if wet > 0 and u.y < 0.0:
         s.capsized = true; s.crashed = true
+    if wet > 0 and k.landplane: s.crashed = true
     if s.capsized:
         pr = 0; rr = 0; yr = 0
     # Low-energy beaching settles; a moving wreck keeps its momentum and can tumble/slide.
