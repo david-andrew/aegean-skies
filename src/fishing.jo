@@ -1,8 +1,11 @@
-# Fishing from a dock: cast, wait for the float to bob, strike when it goes under. What is caught
-# goes into the living world's stock the way the fishers' catch does: into the angler's pocket at
-# the harbour's fish market, recorded as production (so the goods balance holds), to be sold to
-# the market or grilled at the Hotel Ancora's kitchen (consumed, and recorded as consumed).
-# Pure: the scene draws the rod, the line and the float; the game decides when the keys go.
+# Fishing from a dock: cast, wait for the float to bob, strike when it goes under. A fish landed
+# is in the angler's hand (FishHold): he can't cast again until it goes into his bucket or back
+# into the sea. The catch is not yet in the living world's stock: it enters it only at the end,
+# sold at the town's market (production into the angler's pocket there, then sold through the
+# ledger) or grilled at the Hotel Ancora's kitchen (production, then eaten, recorded as consumed),
+# so the goods balance holds at every step.
+# Pure: the scene draws the rod, the line, the float, the fish and the bucket; the game decides
+# when the keys go.
 
 use 'phoenix.jo'
 use 'living_types.jo'
@@ -44,7 +47,6 @@ struct Angling:
     line = ""                       # what just happened
     casts = 0
     caught: Catch[]                 # this outing
-    remainder = 0                   # (grams not yet a whole milli-package)
     place = -1
 
 _r = (seed: u64, k: int) -> f64: f64(mix64(seed xor u64(k * 7919 + 13)) % u64(1000000)) / 1000000.0
@@ -140,55 +142,176 @@ fishing_tally = (a: Angling) -> str:
         else if counts[k] > 1: parts.push("{counts[k]} {FISH_KINDS[k].plural}")
     "{join(parts, ", ")}: {_weight(total)}"
 
-# ---------------- into the world ----------------
+# ---------------- the catch in hand, and the bucket ----------------
 
-# A fish landed goes into the angler's pocket at the harbour's fish market, as production.
-fishing_land = (w: mut World, a: mut Angling, c: Catch) -> int:
-    p = w.player
-    place = w.people[p].place
-    if place < 0: return 0
-    a.caught.push(c)
+const BUCKET_FISH = 6               # a handful of fish
+const BUCKET_CENTS = 45             # a zinc bucket, at a chandler's or the fish market
+const GRILL_CENTS = 60              # the kitchen's charge for grilling one's own catch
+const PLATE_GRAMS = 250             # (a plate: one fish, or small ones until there's this much)
+
+# What the angler has of his catch: a fish in the hand (flapping a while after it is landed),
+# and, once bought, a bucket with a handful more. Saved with the game; none of it is the living
+# world's stock until it is sold or eaten.
+struct FishHold:
+    hand: Catch[]                   # (none or one)
+    bucket = false
+    pail: Catch[]                   # in the bucket
+    remainder = 0                   # (grams x 1000 not yet a whole milli-package, carried to the next sale)
+    down = false                    # (the bucket set down: on the dock while he fishes, or wherever he left it)
+    at: vec3                        # (where, then)
+    yaw = 0.0
+
+fish_in_hand = (h: FishHold) -> bool: h.hand.len() > 0
+fish_bucket_room = (h: FishHold) -> bool: h.bucket and h.pail.len() < BUCKET_FISH
+
+# A landed fish into the hand. (One at a time: false while the hand is full.)
+fish_take = (h: mut FishHold, c: Catch) -> bool:
+    if fish_in_hand(h): return false
+    h.hand = [c]
+    true
+
+fish_into_bucket = (h: mut FishHold) -> bool:
+    if not fish_in_hand(h) or not fish_bucket_room(h): return false
+    h.pail.push(h.hand[0])
+    h.hand = []
+    true
+
+# Back into the sea (the game makes the splash). Returns what went, if anything.
+fish_throw_back = (h: mut FishHold) -> Catch?:
+    if not fish_in_hand(h): return none
+    c = h.hand[0]
+    h.hand = []
+    c
+
+fish_all = (h: FishHold) -> Catch[]:
+    out: Catch[]
+    loop c in h.hand: out.push(c)
+    loop c in h.pail: out.push(c)
+    out
+
+fish_grams = (cs: Catch[]) -> int:
+    total = 0
+    loop c in cs: total += c.grams
+    total
+
+fish_count = (h: FishHold) -> int: h.hand.len() + h.pail.len()
+
+# Some fish, in words: "a red mullet", "3 sardines and a bream, 1.2 kilos".
+fish_words = (cs: Catch[]) -> str:
+    if cs.len() == 0: return "nothing"
+    counts = fill(0, FISH_KINDS.len())
+    loop c in cs: counts[c.kind] += 1
+    parts: str[]
+    loop k in 0..FISH_KINDS.len():
+        if counts[k] == 1: parts.push(FISH_KINDS[k].name)
+        else if counts[k] > 1: parts.push("{counts[k]} {FISH_KINDS[k].plural}")
+    said = if parts.len() == 1: parts[0] else: join(parts[0..parts.len() - 1], ", ") + " and " + parts[parts.len() - 1]
+    "{said}, {_weight(fish_grams(cs))}"
+
+fish_hand_words = (c: Catch) -> str: "{FISH_KINDS[c.kind].name}, {_weight(c.grams)}"
+fish_hand_line = (c: Catch) -> str: _cap(fish_hand_words(c))
+
+# grams into the ledger's milli-packages of fish, with the sub-package remainder carried
+_fish_milli = (w: World, h: FishHold, grams: int) -> int:
     pkg = w.goods[FISH].package_grams
     if pkg <= 0: return 0
-    whole = c.grams * 1000 + a.remainder
-    milli = whole / pkg
-    a.remainder = whole % pkg
-    if milli <= 0: return 0
+    (grams * 1000 + h.remainder) / pkg
+
+_fish_carry = (w: World, h: mut FishHold, grams: int):
+    pkg = w.goods[FISH].package_grams
+    if pkg > 0: h.remainder = (grams * 1000 + h.remainder) % pkg
+
+# The fish enters the world at the angler's feet as production: into his pocket, at this place.
+_fish_mint = (w: mut World, place: int, milli: int):
+    p = w.player
     w.people[p].pocket.qty[FISH] += milli
     record_creation(w, FISH, milli)
     _ = cargo_mint(w, .pocket, p, FISH, milli, p, place, .production)
-    milli
 
-# The fish one has (milli-packages), and what the market would pay for it.
-fishing_held = (w: World) -> int: available(w.people[w.player].pocket, FISH)
+# What the market here would pay for all one has (after its duty), 0 if it couldn't take it.
+fish_quote = (w: World, h: FishHold, place: int) -> int:
+    if place < 0 or place >= w.places.len() or fish_count(h) == 0: return 0
+    milli = _fish_milli(w, h, fish_grams(fish_all(h)))
+    if milli <= 0: return 0
+    p = w.player
+    raw = milli * w.places[place].market.price_cents[FISH] + w.quote_residual.get("{p}:{place}:{FISH}:false", 0)
+    cents = raw / 1000
+    if w.accounts[w.places[place].market.account].cents < cents: return 0
+    tax = if place == 5 or cents == 0: 0 else: max(1, cents * 2 / 100)
+    cents - tax
 
-fishing_worth = (w: World) -> int:
-    place = w.people[w.player].place
-    if place < 0: return 0
-    fishing_held(w) * w.places[place].market.price_cents[FISH] / 1000
-
-# Sell it all to the harbour's market (the market's price, through the ledger).
-fishing_sell = (w: mut World) -> int:
-    place = w.people[w.player].place
-    q = fishing_held(w)
-    if place < 0 or q <= 0: return 0
-    a = w.people[w.player].account
+# Sell everything in the hand and the bucket to the market here, at its price, through the
+# ledger: the fish enters the world's stock (production into the pocket at the market) and is
+# sold into the market's inventory at once. Returns what one was paid (0: not sold, nothing
+# changed).
+fish_sell = (w: mut World, h: mut FishHold) -> int:
+    p = w.player
+    place = w.people[p].place
+    if place < 0 or w.people[p].trip >= 0 or fish_count(h) == 0: return 0
+    if w.goods[FISH].illegal and place != 5: return 0
+    grams = fish_grams(fish_all(h))
+    milli = _fish_milli(w, h, grams)
+    if milli <= 0 or fish_quote(w, h, place) <= 0: return 0
+    a = w.people[p].account
     before = w.accounts[a].cents
-    if not trade(w, w.player, place, FISH, q, false): return 0
+    _fish_mint(w, place, milli)
+    if not trade(w, p, place, FISH, milli, false):
+        # (the market refused at the last: the fish stays in the pocket, honestly in the stock)
+        h.hand = []; h.pail = []
+        _fish_carry(w, h, grams)
+        return 0
+    h.hand = []; h.pail = []
+    _fish_carry(w, h, grams)
     w.accounts[a].cents - before
 
-const GRILL_CENTS = 60              # the kitchen's charge for grilling one's own catch
-const GRILL_MILLI = 120             # (a plate's worth of fish)
+# The plate the kitchen would grill: the fish in the hand, else from the bucket until there's
+# enough for one (indices into fish_all).
+fish_plate = (h: FishHold) -> int[]:
+    all = fish_all(h)
+    if all.len() == 0: return []
+    if fish_in_hand(h): return [0]
+    out: int[]
+    grams = 0
+    loop k in 0..all.len():
+        if grams >= PLATE_GRAMS: break
+        out.push(k); grams += all[k].grams
+    out
 
-# The kitchen grills a plate of one's own catch: the fish is eaten (consumed, and recorded so),
-# and the cook's charge goes to the house. Returns the fish used (milli-packages), or 0.
-fishing_grill = (w: mut World, keeper_account: int) -> int:
+# The kitchen grills a plate of one's own catch: the fish enters the world and is eaten at once
+# (production, then consumption, both recorded), and the cook's charge goes to the house.
+# Returns the grams eaten, or 0.
+fish_grill = (w: mut World, h: mut FishHold, keeper_account: int) -> int:
     p = w.player
-    q = min(fishing_held(w), GRILL_MILLI)
-    if q <= 0 or not account_valid(w, keeper_account): return 0
+    place = w.people[p].place
+    plate = fish_plate(h)
+    if plate.len() == 0 or place < 0 or not account_valid(w, keeper_account): return 0
     if w.accounts[w.people[p].account].cents < GRILL_CENTS: return 0
+    all = fish_all(h)
+    grams = 0
+    loop k in plate: grams += all[k].grams
     if not transfer(w, w.people[p].account, keeper_account, GRILL_CENTS, .trade): return 0
-    cargo_consume(w, .pocket, p, FISH, q)
-    w.people[p].pocket.qty[FISH] -= q
-    record_consumption(w, FISH, q)
-    q
+    milli = _fish_milli(w, h, grams)
+    _fish_carry(w, h, grams)
+    if milli > 0:
+        _fish_mint(w, place, milli)
+        cargo_consume(w, .pocket, p, FISH, milli)
+        w.people[p].pocket.qty[FISH] -= milli
+        record_consumption(w, FISH, milli)
+    if fish_in_hand(h): h.hand = []
+    else: h.pail = [loop k in 0..h.pail.len(): if not (k in plate): h.pail[k]]
+    grams
+
+# A bucket, bought for a few coins from whoever keeps the shop (their account gets the money).
+fish_buy_bucket = (w: mut World, h: mut FishHold, seller_account: int) -> bool:
+    if h.bucket or not account_valid(w, seller_account): return false
+    if not transfer(w, w.people[w.player].account, seller_account, BUCKET_CENTS, .trade): return false
+    h.bucket = true
+    true
+
+# (a saved hold that makes sense: "" when it does)
+fish_hold_error = (h: FishHold) -> str:
+    if h.hand.len() > 1 or h.pail.len() > BUCKET_FISH or (not h.bucket and h.pail.len() > 0) or h.remainder < 0: return "Invalid saved catch."
+    if not (is_finite(h.at.x) and is_finite(h.at.y) and is_finite(h.at.z) and is_finite(h.yaw)): return "Invalid saved catch."
+    loop c in fish_all(h):
+        if c.kind < 0 or c.kind >= FISH_KINDS.len() or c.grams <= 0 or c.grams > 10000: return "Invalid saved catch."
+    ""
