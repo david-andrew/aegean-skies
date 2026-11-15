@@ -418,6 +418,43 @@ On the rivers branch until it lands.
 
 ![A Gull's float](img/floats.png)
 
+### Landplane
+
+- **Aliases:** wheels, tail skid, three-point attitude.
+- **Definition:** an aircraft on fixed wheels that takes off from and lands on land only (the Fiat
+  C.R.20). At rest it sits on its two main wheels and its tail skid, nose up (its **three-point
+  attitude**). On the ground the rudder steers (helped by the slipstream, so a burst of throttle
+  swings it at a crawl, less as it runs fast), the elevator lifts the tail as speed comes and, with
+  the stick near the middle, holds it a little nose up and rotates it near the stall; the main
+  wheels brake (the water-brake control), the skid drags, and with the throttle closed and at rest
+  it holds its brakes. Under the pure speed scale the run's slowing acts on the drawn speed while
+  the wheels' pitching moment stays the true one, so a landing rolls out in about the true time
+  without standing it on its nose.
+- **Code:** `src/flight.jo` `CraftSpec.landplane`, `_landplane_wheel`, the landplane branch of the
+  ground controls in `_substep`, `ground_start`; the gear points `landplane_gear_contacts` in
+  `src/aircraft_early.jo`; `AircraftProfile.landplane` in `src/aircraft_catalog.jo`.
+- **Rules:** a landplane is never put on the water: the pause menu's switch, the tow after a wreck
+  and the start put it on an [airfield](#airfield)'s stand.
+
+### Ditching
+
+- **Definition:** a landplane meeting the water: wheels or belly in the sea, a river or a lake, it
+  is wrecked (towed home: to its airfield). Its belly gives only a sixth of the buoyancy it would
+  need, so it settles low and does not float.
+- **Code:** `src/flight.jo` (the gear loop and the wet check in `_substep`; the belly volumes in
+  `craft_spec`).
+
+### Early aircraft
+
+- **Definition:** the oldest types in the game, 1912–1926: the Donnet-Lévêque Type A pioneer boat,
+  the Macchi M.5 and M.7 and Hansa-Brandenburg CC flying-boat fighters (pusher inlines and a
+  Gnome rotary over single-step hulls, tip floats; the CC's **star struts**, four struts meeting in
+  the middle of each bay; the Donnet-Lévêque's tail on an open girder below the propeller), and the
+  Fiat C.R.20 landplane. Their speeds follow the fleet's rule, design m/s = 85 × (real km/h ÷
+  250)^0.6.
+- **Code:** `src/aircraft_early.jo` (models, contacts), profiles in `src/aircraft_catalog.jo`;
+  `tests/aircraft_early_test.jo`.
+
 ### Planing
 
 - **Aliases:** on the step.
@@ -1665,13 +1702,31 @@ No image: the tiers differ in budgets more than in any single view.
 
 ---
 
+## Airfield
+
+- **Aliases:** aerodrome, strip, turf, apron.
+- **Definition:** a grass military field for landplanes: a mown **strip** (bands of light and dark
+  turf, white boundary markers and threshold bars, a landing circle and a landing T), the **apron**
+  of worn grass before arched hangars, the office, a fuel point and windsocks that stream with the
+  wind. It lies on naturally flat ground, never regraded. The **turf** is laid on the terrain's own
+  14 m lattice cells and stands 0.2 m above them inside, meeting the ground over its edge cells;
+  the wheels and feet stand on the turf, the same surface that is drawn. The fuel point sells from
+  the stores of the town the field serves.
+- **Code:** `src/airfields.jo` (data, turf, contact, walls), `src/airfield_render.jo` (meshes,
+  windsocks), `src/airfield_audit.jo` (audit checks), `tools/airfield_survey.jo` (site search).
+- **Rules:** a field is axis-aligned and on the 14 m lattice; trees are cleared from the whole
+  field, tall grass from the turf; no road or house may cross the field (the audit checks).
+
+![Kalyrassa aerodrome from the air](img/airfield.png)
+
 ## World audit
 
 - **Definition:** the offline sanity check over every harbour, landing, placed prop, building, door,
-  bath and road: harbours that cannot be walked to their houses, landings whose approach is
+  bath, airfield and road: harbours that cannot be walked to their houses, landings whose approach is
   blocked, props floating above or buried in the walking surface or on ground too steep to stand
   on, berths aground or within 6 m of rock, cliffs behind quays, buildings built into one another,
-  doors that open onto nothing, and roads that end away from their places.
+  doors that open onto nothing, airfields whose strip is uneven or wet, whose approaches are blocked
+  or that a road crosses, and roads that end away from their places.
 - **Code:** `src/world_audit.jo` (checks, walking search), `src/world_audit_run.jo`
   (enumeration), `tools/world_audit.jo OUT.txt [all|legacy|ID,...] [reach]` (ranked report),
   `tests/world_audit_test.jo` with `tests/world_audit_allow.txt` (reviewed exceptions).
@@ -1780,6 +1835,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | Switch | What it does |
 |---|---|
 | `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
+| `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
