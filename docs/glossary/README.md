@@ -617,11 +617,18 @@ On the rivers branch until it lands.
      settles at a ride height by herself; the tail foil sits higher than the forward pair, so the
      ride is a little nose-up. Fast, a foil's lift per square metre tops out (cavitation), which
      keeps her from being pinned to the water.
-  3. **The clutch:** once the hull has been clear 0.4 s, the air propeller is out of the water
-     and the throttle open, the clutch goes over by itself at 14 m/s, or as soon as her speed on
-     the foils has stopped rising for a second (in a sea, or short of power, she settles below
-     14 m/s) (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then the air propeller is clutched in and
-     comes off its feather over about 1.4 s. In that gap nothing much pushes and she slows.
+  3. **The clutch:** as soon as the foils have held the hull and the air propeller clear of the
+     water for half a second (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can
+     carry her (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by
+     itself (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then
+     the air propeller is clutched in and comes off its feather over about 1.4 s. In that gap
+     nothing much pushes and she slows.
+  On her foils she drags far less than a float plane on its step: the foils' lift is square to
+  the flow over them, and at 14-25 m/s their drag with the struts' is 12-17% of her weight,
+  against a float plane's 19-40%. The hard part is the hump, on the water screw (8.2 kN,
+  falling with speed) where a float plane has its whole air propeller: in calm water at the
+  player's speed scale she is foil-borne at 14 s and airborne at 30 s (stick back) to 40 s
+  (hands off) at full power, 37-50 s at 85% and 50-68 s at 70%.
   4. **Into the air:** the air propeller pulls her along on the foils; as the wing takes her
      weight the foils rise to the surface and break out, and she flies. Holding the stick back on
      the foils gets her off at about 40 m/s; hands off it takes until about 60 m/s.
