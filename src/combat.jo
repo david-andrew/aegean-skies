@@ -125,6 +125,10 @@ struct CombatPilot:
     stalemate = 0                  # ticks of a turning fight with no angle gained
     best_angle = 3.2               # the smallest angle off the nose to the target lately
     breaking = 0                   # ticks spent breaking from an attacker without respite
+    close = false                  # in a gun fight (a target near): thinks every few ticks, however far
+    aim_dir: vec3                  # the gun aim's direction at the last look, and when, and at whom
+    aim_tick = -1
+    aim_of = -1
     formation_heading = 0.0
     formation_speed = 0.0
     formation_offset: vec3
@@ -384,6 +388,48 @@ _choose_target = (b: Battle, a: Combatant) -> int:
 # personality (aggression, caution) shape every choice; the mistakes are deliberate: a late
 # reaction, a break the wrong way, fixation on a shot with an enemy behind, an overshoot, the aim
 # misjudged. Returns the way to fly and the throttle; sets the mode and the trigger.
+# The guns' aim at target t: where the rounds meet it, misjudged by skill (Sky Barons' wander);
+# where the nose is put, leading the aim's swing (a pilot tracking a turning target puts the nose
+# where the aim is going, not where it was, or trails a few degrees behind it all through the
+# turn; the skilled anticipate more); and how far and how near the nose it fires.
+struct GunAim:
+    aim: vec3
+    track: vec3
+    wobble: vec3
+    reach: f64
+    cone: f64
+
+_gun_aim = (b: Battle, a: Combatant, p: mut CombatPilot, t: int) -> GunAim:
+    s = a.state; o = b.actors[t]
+    delta = o.state.position-s.position; dist = max(f64(length(delta)),0.01)
+    aim = intercept(delta,o.state.velocity-s.velocity,420.0*b.bullet_scale)
+    err = (1.0-p.skill)*min(dist*0.035,25.0)
+    wobble = vec3(sin(f64(b.tick)*0.021+f64(a.craft))*err,cos(f64(b.tick)*0.017+f64(a.craft))*err,0)
+    look = normalize(aim); track = aim
+    if p.aim_of == t and p.aim_tick >= 0 and b.tick-p.aim_tick > 0 and b.tick-p.aim_tick <= 20:
+        swing = (look-p.aim_dir)/f32(f64(b.tick-p.aim_tick)/60.0)
+        if length(swing) < 1.5: track = normalize(look+swing*f32(0.12+0.12*p.skill))*f32(dist)
+    p.aim_dir = look; p.aim_tick = b.tick; p.aim_of = t
+    GunAim(aim,track,wobble,420.0+380.0*p.aggression+150.0*p.skill,0.9995-(1.0-p.skill)*0.002-p.aggression*0.0008)
+
+# Between thoughts, a pilot on a gun run (pursuit or a head-on pass, the target near and ahead)
+# aims again: the stick put on the lead and the trigger decided, nothing else looked at.
+_retrack = (b: Battle, index: int) -> CombatPilot:
+    a = b.actors[index]; p = a.pilot; s = a.state; k = a.spec
+    t = p.target
+    if not p.close or t < 0 or t >= b.actors.len() or b.actors[t].status != .flying or not (p.mode == .pursuit or p.mode == .head_on): return p
+    g = _gun_aim(b,a,p,t)
+    fwd = quat_rotate(s.orientation,vec3(0,0,-1))
+    dist = f64(length(b.actors[t].state.position-s.position))
+    p.trigger = dist < g.reach and f64(dot(fwd,normalize(g.aim))) > g.cone
+    c = steer(k,s,normalize(g.track+g.wobble))
+    c.throttle = p.controls.throttle; c.airbrake = p.controls.airbrake
+    c.pitch *= 0.65+0.35*p.skill
+    st = k.stall_speed*pure_k(k)
+    c.pitch = min(c.pitch,0.15+0.85*smoothstep(st*1.1,st*1.45,f64(length(s.velocity))))
+    p.controls = c
+    p
+
 _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f64, elapsed: int, was: CombatMode) -> (vec3,f64):
     a = b.actors[index]; s = a.state; k = a.spec
     pos = s.position; fwd = quat_rotate(s.orientation,vec3(0,0,-1)); right = quat_rotate(s.orientation,vec3(1,0,0))
@@ -471,17 +517,16 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
     angle = acos(clamp(f64(dot(fwd,los)),-1.0,1.0))
     nose_on_me = f64(dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),-los))
     closure = f64(dot(s.velocity-o.state.velocity,los))
-    aim = intercept(delta,o.state.velocity-s.velocity,420.0*b.bullet_scale)
-    err = (1.0-p.skill)*min(dist*0.035,25.0)
-    wobble = vec3(sin(f64(b.tick)*0.021+f64(a.craft))*err,cos(f64(b.tick)*0.017+f64(a.craft))*err,0)
-    reach = 420.0+380.0*p.aggression+150.0*p.skill
-    cone = 0.9995-(1.0-p.skill)*0.002-p.aggression*0.0008
-    fire = (at: vec3) -> bool: dist < reach and f64(dot(fwd,normalize(at))) > cone
+    g = _gun_aim(b,a,p,t)
+    aim = g.aim; track = g.track; wobble = g.wobble; reach = g.reach
+    fire = (at: vec3) -> bool: dist < reach and f64(dot(fwd,normalize(at))) > g.cone
+    # (on a gun run: aimed again every few ticks between thoughts, however far from the player)
+    p.close = dist < reach and angle < 0.35
     if p.simple:
         p.mode = .pursuit
         if dist < 65 and closure > 0: p.mode = .breakaway; return (-los+vec3(0,0.8,0),1.0)
         p.trigger = fire(aim)
-        return (aim+wobble,if dist < 180 and closure > 8 and speed > stall*1.6: 0.4 else: 1.0)
+        return (track+wobble,if dist < 180 and closure > 8 and speed > stall*1.6: 0.4 else: 1.0)
     # Head-on: hold it by nerve, fire if it lines up, break right (as both sides were taught) or,
     # for a bold one, up; the cautious go away after it, the aggressive straight back round.
     if angle < 0.5 and nose_on_me > 0.8 and closure > 50.0 and dist < 1800.0:
@@ -490,7 +535,7 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
             if p.aggression > 0.75: return (fwd+vec3(0,1.2,0),1.0)
             return (right*1.6+fwd*0.3-vec3(0,0.1,0),1.0)
         p.mode = .head_on; p.trigger = fire(aim)
-        return (aim+wobble,1.0)
+        return (track+wobble,1.0)
     # Too close and closing: break off up and away (Sky Barons'); the fight goes on after.
     if dist < 65 and closure > 0:
         p.mode = .breakaway
@@ -539,13 +584,13 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
         return (flat(delta)+vec3(0,-0.1,0),1.0)
     p.trigger = fire(aim)
     throttle = if dist < 180 and closure > 8 and p.aggression < 0.85 and speed > stall*1.6: 0.4 else: 1.0
-    (aim+wobble,throttle)
+    (track+wobble,throttle)
 
 combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     a = b.actors[index]; p = a.pilot; s = a.state; k = a.spec
     elapsed = if p.brain_tick < 0: 6 else: b.tick-p.brain_tick
     was = p.mode
-    p.brain_tick = b.tick; p.trigger = false
+    p.brain_tick = b.tick; p.trigger = false; p.close = false
     if p.target < 0 or p.target >= b.actors.len() or b.actors[p.target].status != .flying or not b.actors[p.target].present or b.actors[p.target].side==a.side or (a.engagement>=0 and b.actors[p.target].engagement!=a.engagement) or b.tick-p.target_tick>=60:
         p.target = _choose_target(b,a)
         p.target_tick=b.tick
@@ -1020,6 +1065,10 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
             if a.pilot.mode!=was:
                 if b.tactics.len()<17:b.tactics=fill(0,17)
                 b.tactics[int(a.pilot.mode)]+=1
+        # (far from the player, a pilot on a gun run still aims every few ticks: held for half a
+        # second, its stick and trigger would spray past a target it should be tracking)
+        else if not a.external and a.status == .flying and a.lod > 0 and a.pilot.close and (b.tick+a.craft)%6==0:
+            a.pilot=_retrack(b,i)
         if a.status == .disabled or a.bailed:
             a.pilot.controls=Controls(throttle=0,assist=0,roll=0.15)
             a.pilot.trigger=false
