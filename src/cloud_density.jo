@@ -1,101 +1,372 @@
-# Original connected cumulus forms, baked into a small RGBA8 slice atlas.
-# RGB stores an outward form normal; A encodes a signed distance (.5 at the
-# surface, larger inside). No reference image pixels.
-const CLOUD_VOXELS = 64
-const CLOUD_STAMPS = 5
+# Procedural cumulus forms built at their true proportions. Each form is a union
+# of round lobes in metric space (x half-width 1): flat humilis caps, heaped
+# mediocris, congestus towers that grow more stacked lobes rather than taller
+# ones, ragged fractus, clustered cells, anvils. A group's voxel grid has the
+# aspect of its forms' box, so instances scale uniformly and nothing is
+# stretched. Four forms share each texel of the RGBA8 slice atlas (one form per
+# channel); the atlas stores only the encoded distance (.5 at the surface,
+# larger inside), and normals come from its gradient. No reference pixels.
+const CLOUD_GROUPS = 7
+const CLOUD_STAMPS = 28
+const CLOUD_ATLAS_W = 2048
+const CLOUD_BODY_H = 676
+const CLOUD_ATLAS_H = 734
 # Shared with placement/lifecycle so changes to the cut cannot move the base.
-const CLOUD_BASE = 0.54
+const CLOUD_BASE = 0.84
 # Conservative nonzero support, including one voxel of trilinear filtering.
 # The atlas test guards these bounds when the procedural forms change.
-const CLOUD_MIN = vec3(-0.85, -0.66, -0.66)
-const CLOUD_MAX = vec3(0.85, 0.95, 0.66)
-const CLOUD_SLICE = CLOUD_VOXELS + 2
-const CLOUD_TILES = 16
-const CLOUD_ATLAS_W = CLOUD_SLICE*CLOUD_TILES
-const CLOUD_ATLAS_H = CLOUD_SLICE*((CLOUD_STAMPS*CLOUD_VOXELS+CLOUD_TILES-1)/CLOUD_TILES)
+const CLOUD_MIN = vec3(-0.99, -0.99, -0.99)
+const CLOUD_MAX = vec3(0.99, 0.99, 0.99)
+# A distance of one unit is the form's x half-width (the instance's extent.x).
+const CLOUD_ENCODE = 2.0
+
+# Form kinds (placement chooses among them; one kind has several seeds).
+const CLOUD_HUMILIS = 0
+const CLOUD_FRACTUS = 1
+const CLOUD_CLUSTER = 2
+const CLOUD_MEDIOCRIS = 3
+const CLOUD_CONGESTUS = 4
+const CLOUD_ANVIL = 5
+const CLOUD_MASS = 6
+const CLOUD_TWIN = 7
 
 struct CloudLobe:
     center: vec3
     radius: vec3
 
-cloud_lobes = (kind: int) -> CloudLobe[]:
-    r = rng(7181 + kind * 103)
-    lobes: CloudLobe[]
-    # Round heads at several heights, rather than three stretched trunks.
-    # Each head carries exposed shoulders and those carry smaller cauliflower
-    # lobes. The small union radius preserves their individual shadow edges.
-    lobes.push(CloudLobe(vec3(0,-0.49,0),vec3(0.46,0.14,0.30)))
-    loop j in 0..7:
-        x = [-0.40,-0.13,0.23,0.44,-0.25,0.08,0.05][j]
-        y = [-0.25,-0.18,-0.22,-0.28,0.16,0.20,0.55][j]
-        z = [0.02,0.16,0.05,-0.03,-0.02,-0.06,0.01][j]
-        radius = [0.25,0.31,0.30,0.23,0.29,0.32,0.23][j]
-        if kind == 1: x *= 1.08; y = y*0.83-0.02
-        if kind == 2: x += y*0.28; z += sin(f64(j)*2.0)*0.09
-        if kind == 3: x *= 1.03; radius *= 1.08
-        lobes.push(CloudLobe(vec3(f32(x),f32(y),f32(z)),vec3(f32(radius),f32(radius*1.03),f32(radius))))
-    if kind == 4:
-        # A narrow rising trunk feeding a broad, flattened spreading crown.
-        loop mut l in lobes:
-            l.center.x *= 0.65; l.center.z *= 0.7
-            l.radius.x *= 0.78; l.radius.z *= 0.8
-        loop k in 0..5:
-            lobes.push(CloudLobe(vec3(-0.44+f32(k)*0.22,0.66,0),vec3(0.32,0.13,0.38)))
-    parents = lobes
-    loop j in 1..parents.len():
-        parent = parents[j]
-        loop k in 0..11:
-            a = f64(k)*2.399963+r.next_float()*0.3
-            lift = -0.55+f64(k)/10.0*1.5
-            ring = sqrt(1.0-lift*lift)
-            direction = vec3(f32(cos(a)*ring),f32(lift),f32(sin(a)*ring))
-            radius = 0.065+r.next_float()*0.08
-            pos = parent.center+parent.radius*direction*0.94
-            pos = clamp(pos,vec3(-0.79+f32(radius),-0.48,-0.62+f32(radius)),vec3(0.79-f32(radius),0.87-f32(radius),0.62-f32(radius)))
-            lobes.push(CloudLobe(pos,vec3(f32(radius),f32(radius*0.95),f32(radius))))
-    shoulders = lobes
-    loop j in 8..shoulders.len():
-        parent = shoulders[j]
-        loop k in 0..3:
-            a = r.next_float()*TAU
-            lift = -0.15+r.next_float()*1.1
-            ring = sqrt(1.0-lift*lift)
-            radius = 0.033+r.next_float()*0.024
-            pos = parent.center+parent.radius*vec3(f32(cos(a)*ring),f32(lift),f32(sin(a)*ring))*0.95
-            pos = clamp(pos,vec3(-0.80+f32(radius),-0.48,-0.63+f32(radius)),vec3(0.80-f32(radius),0.89-f32(radius),0.63-f32(radius)))
-            lobes.push(CloudLobe(pos,vec3(f32(radius),f32(radius),f32(radius))))
-    lobes
+# Voxels per axis of a group's grid: flat, heaped, tower, anvil/mass.
+cloud_group_dims = (g: int) -> vec3:
+    if g < 2: return vec3(64,26,48)
+    if g < 4: return vec3(64,44,56)
+    if g < 6: return vec3(48,64,48)
+    vec3(64,56,56)
 
-cloud_form_distance = (p: vec3, lobes: CloudLobe[], kind: int) -> f64:
-    d = 10.0
-    loop l in lobes:
-        q = (p - l.center) / l.radius
-        ld = f64(length(q) - 1.0) * f64(min(l.radius.x, min(l.radius.y, l.radius.z)))
-        # A narrow seam connects lobes without melting away their shoulders.
-        k = min(0.012,f64(min(l.radius.x,min(l.radius.y,l.radius.z)))*0.16)
-        h = clamp(0.5 + 0.5 * (ld - d) / k, 0.0, 1.0)
-        d = ld * (1.0 - h) + d * h - k * h * (1.0 - h)
-    n = noise(f64(p.x) * 7.0 + f64(kind) * 9.3, f64(p.y) * 7.0, f64(p.z) * 7.0)
-    fine = noise(f64(p.x) * 17.0, f64(p.y) * 17.0 + f64(kind) * 3.7, f64(p.z) * 17.0)
-    d += (n - 0.5) * 0.012 + (fine - 0.5) * 0.008
-    # Common condensation level; irregular edge, no row of rounded undersides.
-    max(d, -f64(p.y) - CLOUD_BASE + (noise(f64(p.x) * 6.0, f64(p.z) * 6.0) - 0.5) * 0.008)
+# The box's half extents in units of its x half-width (voxels are cubes).
+cloud_group_aspect = (g: int) -> vec3:
+    n = cloud_group_dims(g)
+    vec3(1,(n.y-1.0)/(n.x-1.0),(n.z-1.0)/(n.x-1.0))
+
+cloud_stamp_aspect = (s: int) -> vec3: cloud_group_aspect(s/4)
+
+cloud_stamp_kind = (s: int) -> int:
+    [CLOUD_HUMILIS,CLOUD_HUMILIS,CLOUD_HUMILIS,CLOUD_FRACTUS,
+     CLOUD_CLUSTER,CLOUD_CLUSTER,CLOUD_FRACTUS,CLOUD_HUMILIS,
+     CLOUD_MEDIOCRIS,CLOUD_MEDIOCRIS,CLOUD_MEDIOCRIS,CLOUD_CLUSTER,
+     CLOUD_MEDIOCRIS,CLOUD_MEDIOCRIS,CLOUD_CLUSTER,CLOUD_CLUSTER,
+     CLOUD_CONGESTUS,CLOUD_CONGESTUS,CLOUD_CONGESTUS,CLOUD_CONGESTUS,
+     CLOUD_CONGESTUS,CLOUD_CONGESTUS,CLOUD_CONGESTUS,CLOUD_TWIN,
+     CLOUD_ANVIL,CLOUD_ANVIL,CLOUD_MASS,CLOUD_MASS][s]
+
+# Stamps of one kind in one size class, for placement.
+cloud_stamps_of = (kind: int, group_lo: int, group_hi: int) -> int[]:
+    result: int[]
+    loop s in group_lo*4..group_hi*4:
+        if cloud_stamp_kind(s) == kind: result.push(s)
+    result
+
+# Atlas placement of a group's slices: (origin x, origin y, slices per row, slice count).
+cloud_group_slab = (g: int) -> vec4:
+    oy = 0
+    loop k in 0..g:
+        n = cloud_group_dims(k)
+        cols = CLOUD_ATLAS_W/(int(n.x)+2)
+        oy += (int(n.z)+cols-1)/cols*(int(n.y)+2)
+    n = cloud_group_dims(g)
+    vec4(0,f32(oy),f32(CLOUD_ATLAS_W/(int(n.x)+2)),n.z)
+
+cloud_slab_table: vec4[] = [loop s in 0..CLOUD_STAMPS: cloud_group_slab(s/4)]
+cloud_stamp_slab = (s: int) -> vec4: cloud_slab_table[s]
+# (voxels x, voxels y, channel, mirror +-1)
+cloud_stamp_voxels = (s: int, mirror: f32 = 1.0) -> vec4:
+    n = cloud_dims_table[s]
+    vec4(n.x,n.y,f32(s%4),if mirror < 0.0: -1.0 else: 1.0)
+cloud_dims_table: vec3[] = [loop s in 0..CLOUD_STAMPS: cloud_group_dims(s/4)]
+
+# Top-down coverage of four height slabs per form (shadow casting): tile origin.
+cloud_footprint_table: vec2[] = [loop s in 0..CLOUD_STAMPS: cloud_footprint_compute(s)]
+cloud_footprint_origin = (s: int) -> vec2: cloud_footprint_table[s]
+cloud_footprint_compute = (s: int) -> vec2:
+    x = 0
+    loop k in 0..s: x += int(cloud_group_dims(k/4).x)+2
+    vec2(f32(x),f32(CLOUD_BODY_H))
+
+# ---------------- building forms from lobes ----------------
+
+struct CloudForm:
+    lobes: CloudLobe[]
+    aspect: vec3
+    kind: int
+    seed: int
+    top_cut: f64 = 10.0       # a flat anvil top (metric y), or none
+    plate: vec4 = vec4(0,0,0,0)   # an anvil's spreading plate: center x, z, radius x, z
+    plate_thick: f64 = 0.0
+    rag: f64 = 0.0            # broken edges and a ragged base
+    bins: int[][]
+    bn: int[]
+
+cloud_put = (f: mut CloudForm, c: vec3, radius: f64):
+    a = f.aspect
+    # Whole lobes stay inside the box; a wide cap may sit below the base,
+    # where the condensation level cuts it flat.
+    r = min(radius,min(0.9,0.9*f64(a.z)))
+    lx = f32(0.92-r); lz = f32(0.92*f64(a.z)-r)
+    p = vec3(clamp(c.x,-lx,lx),min(c.y,f32(0.95*f64(a.y)-r)),clamp(c.z,-lz,lz))
+    f.lobes.push(CloudLobe(p,vec3(f32(r),f32(r),f32(r))))
+
+cloud_base_y = (a: vec3) -> f64: -CLOUD_BASE*f64(a.y)
+
+# Cauliflower: smaller round heads on the exposed upper surface of a parent,
+# and smaller heads again on those. Counts and sizes vary with the seed.
+cloud_cauliflower = (f: mut CloudForm, r: mut Rng, parent: CloudLobe, count: int, scale: f64, depth: int):
+    pr = f64(parent.radius.x)
+    loop k in 0..count:
+        a = r.next_float()*TAU
+        lift = 0.1+r.next_float()*0.9
+        ring = sqrt(1.0-lift*lift)
+        dir = vec3(f32(cos(a)*ring),f32(lift),f32(sin(a)*ring))
+        rc = pr*scale*(0.7+r.next_float()*0.6)
+        if rc < 0.04: continue
+        c = parent.center+dir*f32(pr*0.86)
+        # (a head hidden under the condensation level is cut away anyway)
+        if f64(c.y) < cloud_base_y(f.aspect)+rc*0.3: continue
+        cloud_put(f,c,rc)
+        if depth > 1:
+            child = f.lobes[f.lobes.len()-1]
+            cloud_cauliflower(f,r,child,2+r.next_int(0,3),0.42,depth-1)
+
+# One convective cell: a heap of round lobes filling an elliptical footprint
+# layer by layer. The profile narrows with height (a low dome for humilis, a
+# column with a rounded top for a tower); a taller cell has more layers of
+# lobes, not bigger ones. Lobes exposed at the top carry the cauliflower.
+cloud_heap = (f: mut CloudForm, r: mut Rng, cx: f64, cz: f64, rx: f64, rz: f64, height: f64, lobe: f64, profile: f64, cauli: int, head_scale: f64 = 0.45):
+    yb = cloud_base_y(f.aspect)
+    shear = (r.next_float()-0.5)*0.18
+    y = yb+lobe*0.3
+    heads: CloudLobe[]
+    loop layer in 0..80:
+        h = (y-yb)/height
+        if h > 1.0: break
+        width = sqrt(max(0.0,1.0-pow(h,profile)))
+        above = sqrt(max(0.0,1.0-pow(min(1.0,(y+lobe*0.7-yb)/height),profile)))
+        ex = rx*width; ez = rz*width
+        lr = lobe*(0.88+0.24*r.next_float())
+        x0 = cx+shear*(y-yb); z0 = cz
+        if layer > 0 and (max(ex,ez) < lr*0.95 or y+lr*1.4 > yb+height):
+            cloud_put(f,vec3(f32(x0+(r.next_float()-0.5)*lr*0.3),f32(min(y,yb+height-lr)),f32(z0)),lr)
+            heads.push(f.lobes[f.lobes.len()-1])
+            break
+        spacing = lr*1.15
+        nx = int(ceil(ex/spacing)); nz = int(ceil(ez/spacing))
+        jitter = r.next_float()
+        loop iz in -nz..nz+1:
+            loop ix in -nx..nx+1:
+                u = (f64(ix)+(if iz % 2 == 0: 0.0 else: 0.5)*jitter)*spacing+(r.next_float()-0.5)*lr*0.4
+                v = f64(iz)*spacing*0.87+(r.next_float()-0.5)*lr*0.4
+                # Inside the layer's ellipse, the outer lobes a little inset.
+                q = sqrt((u/max(ex,0.001))*(u/max(ex,0.001))+(v/max(ez,0.001))*(v/max(ez,0.001)))
+                if q > 1.0: continue
+                radius = lr*(0.8+0.35*r.next_float())*(if q > 0.7: 1.0 else: 1.1)
+                inset = if q > 0.6: lr*0.55 else: 0.0
+                px = x0+u*(1.0-inset/max(ex,0.001)); pz = z0+v*(1.0-inset/max(ez,0.001))
+                py = y+(r.next_float()-0.5)*lr*0.3
+                cloud_put(f,vec3(f32(px),f32(py),f32(pz)),radius)
+                # Exposed from above where the next layer is narrower.
+                if q*width > above*0.9-lr*0.3/max(rx,0.001): heads.push(f.lobes[f.lobes.len()-1])
+        y += lr*(0.62+0.16*r.next_float())
+    loop hd in heads:
+        cloud_cauliflower(f,r,hd,cauli+r.next_int(-1,2),head_scale,if hd.radius.x > 0.2: 2 else: 1)
+
+cloud_make_form = (s: int) -> CloudForm:
+    kind = cloud_stamp_kind(s)
+    f = CloudForm(aspect=cloud_stamp_aspect(s),kind=kind,seed=s)
+    r = rng(9173+s*7919)
+    a = f.aspect
+    az = f64(a.z)
+    avail = 1.79*f64(a.y)
+    if kind == CLOUD_HUMILIS:
+        # Flat-based domes of fair weather, wider than tall: one to three cells.
+        cells = 1+r.next_int(0,3)
+        loop c in 0..cells:
+            rx = if c == 0: 0.72+r.next_float()*0.2 else: 0.25+r.next_float()*0.2
+            ang = r.next_float()*TAU; d = if c == 0: (r.next_float()-0.5)*0.2 else: 0.45+r.next_float()*0.3
+            h = min(avail*0.92,rx*(0.32+r.next_float()*0.25))
+            # Lumpy tops: few large heads on the caps rather than fine texture.
+            cloud_heap(f,r,cos(ang)*d,sin(ang)*d*az,rx,rx*az*(0.7+0.3*r.next_float()),h,min(rx*(0.22+r.next_float()*0.1),h*0.6),1.5+r.next_float()*1.5,4,0.62)
+    if kind == CLOUD_FRACTUS:
+        # Torn pieces, not sharing an exact base; broken edges.
+        f.rag = 1.0
+        pieces = 10+r.next_int(0,8)
+        loop k in 0..pieces:
+            x = (r.next_float()*2.0-1.0)*0.78; z = (r.next_float()*2.0-1.0)*0.7*az
+            radius = 0.07+r.next_float()*0.13
+            y = cloud_base_y(a)+radius*0.4+r.next_float()*avail*0.3
+            loop j in 0..2+r.next_int(0,4):
+                cloud_put(f,vec3(f32(x+(r.next_float()-0.5)*radius*2.5),f32(y+(r.next_float()-0.3)*radius*0.8),f32(z+(r.next_float()-0.5)*radius*2.5)),radius*(0.6+0.5*r.next_float()))
+    if kind == CLOUD_CLUSTER:
+        # A clump or short street of cells of power-law sizes, one base.
+        big = s >= 8
+        cells = 3+r.next_int(0,4)
+        ang = r.next_float()*PI
+        loop c in 0..cells:
+            rx = (0.16+0.30*pow(r.next_float(),1.6))*(if big: 1.15 else: 1.0)
+            t = (f64(c)/f64(max(cells-1,1))*2.0-1.0)*0.6
+            x = cos(ang)*t+(r.next_float()-0.5)*0.3
+            z = (sin(ang)*t*0.8+(r.next_float()-0.5)*0.3)*az
+            h = min(avail*0.95,rx*(if big: 0.8+r.next_float()*0.9 else: 0.4+r.next_float()*0.4))
+            cloud_heap(f,r,x,z,rx,rx*(0.75+0.3*r.next_float()),h,rx*(0.28+r.next_float()*0.1),if big: 2.5 else: 1.8,2)
+    if kind == CLOUD_MEDIOCRIS:
+        rx = 0.62+r.next_float()*0.25
+        cloud_heap(f,r,(r.next_float()-0.5)*0.15,0,rx,rx*az*(0.8+0.2*r.next_float()),avail*(0.7+r.next_float()*0.28),rx*(0.26+r.next_float()*0.08),1.8+r.next_float()*1.4,3)
+        if r.next_float() < 0.7:
+            ang = r.next_float()*TAU
+            small = 0.22+r.next_float()*0.15
+            cloud_heap(f,r,cos(ang)*0.62,sin(ang)*0.5*az,small,small,avail*(0.25+r.next_float()*0.3),small*0.3,2.0,2)
+    if kind == CLOUD_CONGESTUS or kind == CLOUD_TWIN:
+        # A broad base cell; on it rising turrets as columns with rounded,
+        # cauliflowered heads. Lobe size follows the turret's width, so a
+        # taller tower stacks more lobes.
+        twin = kind == CLOUD_TWIN
+        base_h = avail*(0.12+r.next_float()*0.1)
+        base_r = 0.6+r.next_float()*0.25
+        cloud_heap(f,r,(r.next_float()-0.5)*0.2,0,base_r,base_r*az,base_h,0.22,1.3,3,0.6)
+        turrets = if twin: 2 else: 2+r.next_int(0,3)
+        main_rx = 0.5
+        loop t in 0..turrets:
+            ang = r.next_float()*TAU
+            # Twin towers stand shoulder to shoulder at different heights:
+            # apart, their heads would arch over a window between them.
+            d = if twin: 0.3 else: if t == 0: r.next_float()*0.15 else: 0.3+r.next_float()*0.3
+            if twin: ang = f64(t)*PI+0.2
+            rx = if t == 0: 0.48+r.next_float()*0.17 else: 0.28+r.next_float()*0.17
+            if twin: rx = 0.4
+            h = if t == 0: avail*(0.8+r.next_float()*0.12) else: avail*(if twin: 0.5+r.next_float()*0.15 else: 0.35+r.next_float()*0.35)
+            # Inside the box: a lobe pushed against its side builds a flat wall.
+            d = min(d,max(0.0,0.86-rx*1.2))
+            # A side turret leans on the main column: standing apart, the heads
+            # of the two would arch over a window between them.
+            if t > 0 and not twin: d = min(d,main_rx*0.7+rx*0.3)
+            if t == 0: main_rx = rx
+            # Domed heads: the column narrows over its upper third.
+            cloud_heap(f,r,cos(ang)*d,sin(ang)*d*az,rx,rx*(0.85+0.15*r.next_float()),h,rx*(0.4+r.next_float()*0.12),2.0+r.next_float()*1.6,3,0.55)
+    if kind == CLOUD_MASS:
+        cells = 3+r.next_int(0,3)
+        loop c in 0..cells:
+            ang = r.next_float()*TAU; d = if c == 0: 0.0 else: 0.35+r.next_float()*0.4
+            rx = if c == 0: 0.6 else: 0.28+r.next_float()*0.22
+            h = avail*(if c == 0: 0.82 else: 0.3+r.next_float()*0.4)
+            cloud_heap(f,r,cos(ang)*d,sin(ang)*d*az,rx,rx*az,h,rx*0.36,2.5+r.next_float()*1.5,3)
+    if kind == CLOUD_ANVIL:
+        # A leaning trunk under a wide flat plate spreading downwind at the
+        # tropopause: thick over the trunk, thinning to a ragged rim.
+        yb = cloud_base_y(a)
+        f.top_cut = yb+avail*0.95
+        lean = if s == 25: -1.0 else: 1.0
+        f.plate_thick = avail*(0.24+r.next_float()*0.06)
+        # A massive body, nearly as wide as the plate: the plate overhangs it
+        # downwind only (on a narrow stalk it reads as a mushroom).
+        f.plate = vec4(f32(lean*0.12),0,0.8,f32(0.86*az))
+        cloud_heap(f,r,-lean*0.08,0,0.78,0.72*az,avail*0.4,0.22,1.6,2,0.55)
+        cloud_heap(f,r,-lean*0.1,0,0.62,0.58*az,avail*0.86,0.22,3.5,2,0.5)
+    cloud_bin_form(f)
+    f
+
+const CLOUD_BIN = 0.125
+const CLOUD_REACH = 0.3
+
+cloud_bin_index = (f: CloudForm, p: vec3) -> int:
+    x = clamp(int(floor((f64(p.x)+1.0)/CLOUD_BIN)),0,f.bn[0]-1)
+    y = clamp(int(floor((f64(p.y)+f64(f.aspect.y))/CLOUD_BIN)),0,f.bn[1]-1)
+    z = clamp(int(floor((f64(p.z)+f64(f.aspect.z))/CLOUD_BIN)),0,f.bn[2]-1)
+    (z*f.bn[1]+y)*f.bn[0]+x
+
+# Lobes farther than CLOUD_REACH from a bin cannot change the saturated encoding.
+cloud_bin_form = (f: mut CloudForm):
+    f.bn = [int(ceil(2.0/CLOUD_BIN)),int(ceil(2.0*f64(f.aspect.y)/CLOUD_BIN)),int(ceil(2.0*f64(f.aspect.z)/CLOUD_BIN))]
+    f.bins = [loop k in 0..f.bn[0]*f.bn[1]*f.bn[2]: []]
+    loop i in 0..f.lobes.len():
+        l = f.lobes[i]
+        reach = f64(l.radius.x)+CLOUD_REACH
+        lo = vec3(f32(f64(l.center.x)-reach),f32(f64(l.center.y)-reach),f32(f64(l.center.z)-reach))
+        hi = vec3(f32(f64(l.center.x)+reach),f32(f64(l.center.y)+reach),f32(f64(l.center.z)+reach))
+        x0 = clamp(int(floor((f64(lo.x)+1.0)/CLOUD_BIN)),0,f.bn[0]-1); x1 = clamp(int(floor((f64(hi.x)+1.0)/CLOUD_BIN)),0,f.bn[0]-1)
+        y0 = clamp(int(floor((f64(lo.y)+f64(f.aspect.y))/CLOUD_BIN)),0,f.bn[1]-1); y1 = clamp(int(floor((f64(hi.y)+f64(f.aspect.y))/CLOUD_BIN)),0,f.bn[1]-1)
+        z0 = clamp(int(floor((f64(lo.z)+f64(f.aspect.z))/CLOUD_BIN)),0,f.bn[2]-1); z1 = clamp(int(floor((f64(hi.z)+f64(f.aspect.z))/CLOUD_BIN)),0,f.bn[2]-1)
+        loop z in z0..z1+1:
+            loop y in y0..y1+1:
+                loop x in x0..x1+1:
+                    cell = (z*f.bn[1]+y)*f.bn[0]+x
+                    # (box/sphere test keeps the bin lists short)
+                    cmin = vec3(f32(f64(x)*CLOUD_BIN-1.0),f32(f64(y)*CLOUD_BIN-f64(f.aspect.y)),f32(f64(z)*CLOUD_BIN-f64(f.aspect.z)))
+                    q = clamp(l.center,cmin,cmin+vec3(f32(CLOUD_BIN),f32(CLOUD_BIN),f32(CLOUD_BIN)))
+                    if f64(length(q-l.center)) <= reach: f.bins[cell].push(i)
+
+# Metric distance (units of the x half-width) to the form's surface; negative inside.
+cloud_form_distance = (f: CloudForm, p: vec3) -> f64:
+    d = 1.0
+    loop i in f.bins[cloud_bin_index(f,p)]:
+        l = f.lobes[i]
+        lr = f64(l.radius.x)
+        ld = f64(length(p-l.center))-lr
+        # A narrow seam joins lobes without melting away their shoulders.
+        k = min(0.05,lr*0.25)
+        h = clamp(0.5+0.5*(ld-d)/k,0.0,1.0)
+        d = ld*(1.0-h)+d*h-k*h*(1.0-h)
+    sx = f64(p.x)+f64(f.seed)*3.17; sy = f64(p.y); sz = f64(p.z)-f64(f.seed)*1.31
+    n = noise(sx*7.0,sy*7.0,sz*7.0)
+    fine = noise(sx*17.0,sy*17.0+5.3,sz*17.0)
+    d += (n-0.5)*(0.012+f.rag*0.05)+(fine-0.5)*(0.008+f.rag*0.03)
+    if f.rag > 0.0: d += (noise(sx*3.1+9.0,sy*3.1,sz*3.1)-0.45)*0.06*f.rag
+    # Common condensation level; a fractus base is torn rather than cut.
+    base = cloud_base_y(f.aspect)+(noise(sx*6.0,sz*6.0)-0.5)*(0.008+f.rag*0.06)
+    d = max(d,base-f64(p.y))
+    if f.plate.z > 0.0:
+        qx = (f64(p.x)-f64(f.plate.x))/f64(f.plate.z); qz = (f64(p.z)-f64(f.plate.y))/f64(f.plate.w)
+        rho = sqrt(qx*qx+qz*qz)
+        thick = f.plate_thick*(0.22+0.78*(1.0-smoothstep(0.0,1.0,rho)))
+        under = f.top_cut-thick+(noise(sx*5.0,sz*5.0)-0.5)*f.plate_thick*0.5
+        rim = (rho-1.0+(noise(sx*4.0+3.0,sz*4.0,sy*2.0)-0.5)*0.25)*f64(min(f.plate.z,f.plate.w))
+        pd = max(max(f64(p.y)-f.top_cut,under-f64(p.y)),rim)
+        k = 0.08
+        h = clamp(0.5+0.5*(pd-d)/k,0.0,1.0)
+        d = pd*(1.0-h)+d*h-k*h*(1.0-h)
+    max(d,f64(p.y)-f.top_cut)
+
+cloud_lobes = (s: int) -> CloudLobe[]: cloud_make_form(s).lobes
+
+cloud_encode = (d: f64) -> f32: f32(clamp(0.5-d*CLOUD_ENCODE,0.0,1.0))
+
+# Metric point of a voxel of group g.
+cloud_voxel_point = (g: int, x: int, y: int, z: int) -> vec3:
+    n = cloud_group_dims(g); a = cloud_group_aspect(g)
+    vec3(f32(x)/(n.x-1.0)*2.0-1.0,(f32(y)/(n.y-1.0)*2.0-1.0)*a.y,(f32(z)/(n.z-1.0)*2.0-1.0)*a.z)
 
 cloud_density_image = () -> Image:
     img = image(CLOUD_ATLAS_W, CLOUD_ATLAS_H)
-    loop kind in 0..CLOUD_STAMPS:
-        lobes = cloud_lobes(kind)
-        loop z in 0..CLOUD_VOXELS:
-            sx = ((kind*CLOUD_VOXELS+z)%CLOUD_TILES)*CLOUD_SLICE
-            sy = ((kind*CLOUD_VOXELS+z)/CLOUD_TILES)*CLOUD_SLICE
-            loop y in -1..CLOUD_VOXELS + 1:
-                loop x in -1..CLOUD_VOXELS + 1:
-                    p = vec3(f32(clamp(x, 0, CLOUD_VOXELS - 1)), f32(clamp(y, 0, CLOUD_VOXELS - 1)), f32(z)) * (2.0 / f32(CLOUD_VOXELS - 1)) - vec3(1, 1, 1)
-                    d = cloud_form_distance(p, lobes, kind)
-                    g = vec3(0, 1, 0)
-                    if d < 0.06:
-                        e: f32 = 0.4/f32(CLOUD_VOXELS)
-                        g = vec3(f32(cloud_form_distance(p + vec3(e, 0, 0), lobes, kind) - cloud_form_distance(p - vec3(e, 0, 0), lobes, kind)), f32(cloud_form_distance(p + vec3(0, e, 0), lobes, kind) - cloud_form_distance(p - vec3(0, e, 0), lobes, kind)), f32(cloud_form_distance(p + vec3(0, 0, e), lobes, kind) - cloud_form_distance(p - vec3(0, 0, e), lobes, kind)))
-                        g = g / max(length(g), 0.000001)
-                    img.set(sx + x + 1, sy + y + 1, vec4(g * 0.5 + vec3(0.5, 0.5, 0.5), f32(clamp(0.5-d*2.0, 0.0, 1.0))))
+    loop g in 0..CLOUD_GROUPS:
+        n = cloud_group_dims(g); nx = int(n.x); ny = int(n.y); nz = int(n.z)
+        slab = cloud_group_slab(g); cols = int(slab.z)
+        forms = [loop k in 0..4: cloud_make_form(g*4+k)]
+        values = fill(vec4(0,0,0,0),nx*ny*nz)
+        loop z in 0..nz:
+            loop y in 0..ny:
+                loop x in 0..nx:
+                    p = cloud_voxel_point(g,x,y,z)
+                    v = vec4(0,0,0,0)
+                    loop k in 0..4: v[k] = cloud_encode(cloud_form_distance(forms[k],p))
+                    values[(z*ny+y)*nx+x] = v
+        loop z in 0..nz:
+            sx = int(slab.x)+(z%cols)*(nx+2); sy = int(slab.y)+(z/cols)*(ny+2)
+            loop y in -1..ny+1:
+                loop x in -1..nx+1:
+                    img.set(sx+x+1,sy+y+1,values[(z*ny+clamp(y,0,ny-1))*nx+clamp(x,0,nx-1)])
+        # Footprints: the densest value of four height slabs per column.
+        loop k in 0..4:
+            o = cloud_footprint_origin(g*4+k)
+            loop z in -1..nz+1:
+                loop x in -1..nx+1:
+                    slabs = vec4(0,0,0,0)
+                    loop y in 0..ny:
+                        j = min(3,y*4/ny)
+                        slabs[j] = max(slabs[j],values[(clamp(z,0,nz-1)*ny+y)*nx+clamp(x,0,nx-1)][k])
+                    img.set(int(o.x)+x+1,int(o.y)+z+1,slabs)
     img
