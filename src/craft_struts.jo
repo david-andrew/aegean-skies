@@ -1,0 +1,110 @@
+# The struts an aircraft is built with, found again in its finished triangles, so that what is tied
+# to the airframe (the streamers) is tied to real structure on every type, whichever builder made
+# it (the original four, the catalog, the boats, the racers, the early types, any added later).
+# Every strut helper tags the box it lays down: each corner's texture coordinates say which end of
+# the strut it is at and carry a key of that strut's own, which the shaders ignore (material 0).
+
+const STRUT_TAG = 190.0             # (uv.x: 190 at the strut's first end, 191 at its second)
+
+struct StrutPiece:
+    a: vec3                         # its two ends, in the aircraft's frame
+    b: vec3
+    r: f64                          # its half thickness
+
+# (by both its ends: a crossed pair of bracing struts share their middle and their length)
+_strut_key = (a: vec3, b: vec3) -> f32:
+    h = sin(f64(a.x) * 12.9898 + f64(a.y) * 78.233 + f64(a.z) * 37.719 + f64(b.x) * 93.989 + f64(b.y) * 26.651 + f64(b.z) * 61.417) * 43758.5453
+    f32((h - floor(h)) * 1000.0)
+
+# mark the box a strut helper has just pushed (vs[from..]) as the strut from a to b
+tag_strut = (vs: mut Vertex3D[], from: int, a: vec3, b: vec3):
+    mid = (a + b) * 0.5
+    d = b - a
+    key = _strut_key(a, b)
+    loop i in from..vs.len():
+        v = vs[i]
+        end = if dot(v.pos - mid, d) > 0.0: 1.0 else: 0.0
+        vs[i] = Vertex3D(v.pos, v.normal, vec2(f32(STRUT_TAG + end), key), v.color)
+
+is_strut_vertex = (v: Vertex3D) -> bool: v.uv.x == f32(STRUT_TAG) or v.uv.x == f32(STRUT_TAG + 1.0)
+
+_key_index = (keys: f32[], key: f32) -> int:
+    loop j in 0..keys.len():
+        if keys[j] == key: return j
+    -1
+
+# the struts in an aircraft's triangles (its part bins), each from its tagged corners
+craft_struts = (bins: Vertex3D[][]) -> StrutPiece[]:
+    keys: f32[]
+    sums: vec3[]                    # (per strut: the sums of its corners at each end)
+    counts: f64[]
+    last = -1                       # (a strut's corners come together: try the last one first)
+    loop bin in bins:
+        loop v in bin:
+            if not is_strut_vertex(v): continue
+            k = if last >= 0 and keys[last] == v.uv.y: last else: _key_index(keys, v.uv.y)
+            if k < 0:
+                keys.push(v.uv.y)
+                sums.push(vec3(0, 0, 0)); sums.push(vec3(0, 0, 0))
+                counts.push(0.0); counts.push(0.0)
+                k = keys.len() - 1
+            last = k
+            e = k * 2 + (if v.uv.x > f32(STRUT_TAG + 0.5): 1 else: 0)
+            sums[e] += v.pos
+            counts[e] += 1.0
+    # (its half thickness: how far its corners stand off its line, the nearer way)
+    far: f64[] = [loop _ in keys: 1e9]
+    last = -1
+    loop bin in bins:
+        loop v in bin:
+            if not is_strut_vertex(v): continue
+            k = if last >= 0 and keys[last] == v.uv.y: last else: _key_index(keys, v.uv.y)
+            last = k
+            if counts[k * 2] < 1.0 or counts[k * 2 + 1] < 1.0: continue
+            a = sums[k * 2] / f32(counts[k * 2])
+            b = sums[k * 2 + 1] / f32(counts[k * 2 + 1])
+            off = f64(length(v.pos - nearest_on_segment(v.pos, a, b)))
+            far[k] = min(far[k], off)
+    out: StrutPiece[]
+    loop k in 0..keys.len():
+        if counts[k * 2] < 1.0 or counts[k * 2 + 1] < 1.0: continue
+        out.push(StrutPiece(sums[k * 2] / f32(counts[k * 2]), sums[k * 2 + 1] / f32(counts[k * 2 + 1]), far[k] / sqrt(2.0)))
+    out
+
+# the point of a segment nearest p
+nearest_on_segment = (p: vec3, a: vec3, b: vec3) -> vec3:
+    d = b - a
+    l2 = f64(dot(d, d))
+    if l2 < 1e-12: return a
+    a + d * f32(clamp(f64(dot(p - a, d)) / l2, 0.0, 1.0))
+
+# Where the streamers are tied, one each side (left, then right; none if a side has nothing to tie
+# to): halfway along the outermost strut on that side that is a strut proper (not a bracing wire,
+# not an engine's cylinder), stands clear of the water (`water`: the lowest the aircraft sits
+# on it) and no higher than its top wing (`top`: not the pylons engines stand on above it): an interplane strut, a wing strut, a float or tip float strut; of a fore-and-aft pair the
+# rear one, so the streamer doesn't blow back through its fellow; none at all if every strut is
+# under the water (the Piaggio P.7's hydrofoil legs). Each type's own struts decide it,
+# so a new aircraft built with the strut helpers has its streamers on its own structure.
+streamer_ties = (struts: StrutPiece[], water: f64, top: f64) -> vec3[]:
+    out: vec3[]
+    loop side in [-1.0, 1.0]:
+        best = -1
+        loop k in 0..struts.len():
+            s = struts[k]
+            mid = (s.a + s.b) * 0.5
+            if not _tie_strut(s, mid, side, water, top): continue
+            if best < 0: best = k; continue
+            o = (struts[best].a + struts[best].b) * 0.5
+            out_by = abs(f64(mid.x)) - abs(f64(o.x))
+            if out_by > 0.15: best = k; continue
+            if out_by < -0.15: continue
+            # (as far out: the rear of a pair; a strut well fore or aft of it, the one nearer the
+            # middle, not one out by the tail)
+            pair = abs(f64(mid.z - o.z)) < 2.0
+            if (pair and mid.z > o.z) or (not pair and abs(f64(mid.z)) < abs(f64(o.z))): best = k
+        if best < 0: return []
+        out.push((struts[best].a + struts[best].b) * 0.5)
+    out
+
+_tie_strut = (s: StrutPiece, mid: vec3, side: f64, water: f64, top: f64) -> bool:
+    f64(mid.x) * side >= 0.6 and s.r >= 0.02 and s.r <= 0.15 and f64(length(s.b - s.a)) >= 0.3 and f64(mid.y) >= water + 0.35 and f64(mid.y) <= top
