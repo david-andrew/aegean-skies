@@ -1,0 +1,172 @@
+use 'world_point.jo'
+# Cloud shadows on land, sea, rivers, lakes and towns. Once a frame the clouds
+# near the camera are drawn into a small coverage map in "sun-projected"
+# coordinates: a point P maps to P.xz - k*P.y, k = sun.xz/sun.y, i.e. where the
+# sunlight through it meets sea level. A receiver at any height samples its own
+# projected point, so the shadow falls offset from its cloud by the sun's angle,
+# at the right place on hills and roofs too, and moves with clouds and sun.
+# Each form's top-down coverage in four height slabs is baked beside the
+# volume atlas (cloud_density.jo): four taps per map texel, no extra texture.
+use 'cloud_volume.jo'
+use 'cloud_density.jo'
+use 'render_space.jo'
+use 'quality.jo'
+use 'cloud_depth.jo'
+use 'cloud_shadow_map.jo'
+use 'cloud_field.jo'
+use 'weather_scene.jo'
+use 'look.jo'
+
+struct ShadowVertex:
+    corner: vec2
+
+struct ShadowInstance:
+    rect: vec4                      # map uv rectangle of the projected footprint
+    center: vec3                    # cloud center: x, z from the map center (metres); y its height
+    extent: vec3
+    meta: vec4                      # cos yaw, sin yaw, erosion, opacity
+    foot: vec4                      # footprint tile origin (texels), voxels x, z
+    mirror: f32                     # +-1 mirrored, times the slabs holding cloud
+
+struct ShadowParams:
+    atlas: Texture
+    proj: vec4                      # k.x, k.z (sun.xz/sun.y), map half size (m), 0
+
+struct ShadowOut:
+    pos: vec4
+    map: vec2
+    center: vec3
+    extent: vec3
+    meta: vec4
+    foot: vec4
+    mirror: f32
+
+cloud_shadow_vs = (v: ShadowVertex, inst: ShadowInstance, u: ShadowParams) -> ShadowOut:
+    uv = mix(inst.rect.xy,inst.rect.zw,v.corner)
+    ShadowOut(vec4(uv*2.0-vec2(1,1),0,1),(uv-vec2(0.5,0.5))*(2.0*u.proj.z),inst.center,inst.extent,inst.meta,inst.foot,inst.mirror)
+
+cloud_shadow_fs = (i: ShadowOut, u: ShadowParams) -> vec4:
+    cover: f32 = 0.0
+    size = vec2(f32(CLOUD_ATLAS_W),f32(CLOUD_ATLAS_H))
+    # (|mirror| is the number of height slabs holding cloud: flat forms leave the top empty)
+    slabs = abs(i.mirror)
+    loop k in 0..4:
+        if f32(k) >= slabs: break
+        # Where the sunlight reaching this map point crosses the slab's middle.
+        y = i.center.y+i.extent.y*(-0.75+0.5*f32(k))
+        at = i.map+u.proj.xy*y-i.center.xz
+        p = cloud_to_local(vec3(at.x,0,at.y),i.meta.xy)/i.extent
+        if abs(p.x) > 1.0 or abs(p.z) > 1.0: continue
+        q = vec2((p.x*sign(i.mirror)*0.5+0.5)*(i.foot.z-1.0),(p.z*0.5+0.5)*(i.foot.w-1.0))+vec2(1.5,1.5)
+        texel = sample(u.atlas,(i.foot.xy+q)/size)
+        w = if k == 0: texel.x else: if k == 1: texel.y else: if k == 2: texel.z else: texel.w
+        # Penumbra: a hint of softness growing with the cloud's height above the
+        # ground (painterly, wider than the sun's 0.5 degree), in encoded units.
+        soft = min(0.2,(12.0+0.02*max(y,0.0))*f32(CLOUD_ENCODE)/i.extent.x)
+        cover = max(cover,smoothstep(0.52-soft,0.52+soft,w-2.0*i.meta.z))
+    # Fade to nothing over the map's outer eighth: receivers then need no edge test.
+    uv = i.map/(2.0*u.proj.z)
+    a = cover*i.meta.w*clamp((0.5-max(abs(uv.x),abs(uv.y)))*8.0,0.0,1.0)
+    vec4(a,a,a,a)
+
+cloud_shadow_sh = Shader()
+cloud_shadow_quad = Mesh()
+cloud_shadow_instances: InstanceBuffer[ShadowInstance]
+cloud_shadow_ready = false
+# AEGEAN_CLOUD_SHADOWS=0 turns them off (developer comparisons).
+cloud_shadow_enabled = env("AEGEAN_CLOUD_SHADOWS") != "0"
+cloud_frames_dir = env("AEGEAN_CLOUD_FRAMES")
+cloud_shadow_count = 0
+
+# The frame's cloud relevance: in view, or shadowing the map drawn this frame.
+cloud_frame_cull = (L: Light) -> CloudCull:
+    forward = normalize(render_rays(scene_view_proj())[2].xyz)
+    c = CloudCull(active=true,forward=forward)
+    s = normalize(L.sun_dir)
+    if __soft or not __post_active or not cloud_shadow_enabled or smoothstep(0.06,0.25,f64(s.y)) <= 0.0: return c
+    eye = world_point(scene_camera())
+    ahead = if length(forward.xz) > 0.001: normalize(forward.xz) else: vec2(0,0)
+    c.k = cloud_shadow_k(L.sun_dir)
+    c.shadow = cloud_shadow_center(eye.x,eye.z,ahead,render_quality.tier)
+    c.half = f32(cloud_shadow_half_for(render_quality.tier))
+    c
+
+render_cloud_shadows = (clouds: CloudVolume[], L: Light):
+    global cloud_shadow_x,cloud_shadow_z,cloud_shadow_half,cloud_shadow_strength,cloud_shadow_target,cloud_shadow_base,cloud_shadow_sun_k
+    global cloud_shadow_sh,cloud_shadow_quad,cloud_shadow_instances,cloud_shadow_ready,cloud_shadow_count
+    # On low the map is redrawn every second frame; between, the last map and its
+    # placement stand (clouds and sun move little in a frame).
+    if render_quality.tier == 0 and frame_number()%2 == 1 and cloud_shadow_strength > 0.0 and cloud_shadow_target.texture.width == cloud_shadow_res_for(0): return
+    cloud_shadow_strength = 0.0
+    if __soft or not __post_active or not cloud_shadow_enabled: return
+    s = normalize(L.sun_dir)
+    strength = f32(smoothstep(0.06,0.25,f64(s.y)))
+    if strength <= 0.0: return
+    if not cloud_shadow_ready:
+        cloud_shadow_sh = make_shader(shader(cloud_shadow_vs,cloud_shadow_fs))
+        cloud_shadow_quad = mesh([ShadowVertex(vec2(0,0)),ShadowVertex(vec2(1,0)),ShadowVertex(vec2(0,1)),ShadowVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+        empty: ShadowInstance[]
+        cloud_shadow_instances = instance_buffer(empty)
+        cloud_shadow_ready = true
+    zone("cloud shadows")
+    # About 35 m texels: crisp enough for a small cumulus's shadow outline.
+    res = cloud_shadow_res_for(render_quality.tier)
+    cloud_shadow_half = cloud_shadow_half_for(render_quality.tier)
+    if cloud_shadow_target.texture.width != res:
+        if cloud_shadow_target.fbo != 0: free_render_target(cloud_shadow_target)
+        tex = texture(image(res,res),true)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        cloud_shadow_target = RenderTarget(tex,fbo,0)
+    k = cloud_shadow_k(L.sun_dir)
+    cam = scene_camera()
+    eye = world_point(cam)
+    forward = render_rays(scene_view_proj())[2].xyz
+    ahead = if length(forward.xz) > 0.001: normalize(forward.xz) else: vec2(0,0)
+    center = cloud_shadow_center(eye.x,eye.z,ahead,render_quality.tier)
+    cloud_shadow_x = f64(center.x); cloud_shadow_z = f64(center.y)
+    rows: ShadowInstance[]
+    loop v in clouds:
+        if v.shape >= 4.0 and v.shape != 5.0: continue
+        if v.weather.x < 0.01: continue
+        point = cloud_point(v)
+        c = vec3(f32(point.x-cloud_shadow_x),v.center.y,f32(point.z-cloud_shadow_z))
+        # (cheap rejection before the eight projected corners)
+        reach = length(v.extent)*1.2*(1.0+length(k))
+        mc = c.xz-k*c.y
+        if max(abs(mc.x),abs(mc.y)) > f32(cloud_shadow_half)+reach: continue
+        yaw = vec2(cos(v.heading),sin(v.heading))
+        lo = vec2(1e9,1e9); hi = vec2(-1e9,-1e9)
+        loop corner in 0..8:
+            b = v.extent*vec3(if corner & 1 == 0: CLOUD_MIN.x else: CLOUD_MAX.x,if corner & 2 == 0: CLOUD_MIN.y else: CLOUD_MAX.y,if corner & 4 == 0: CLOUD_MIN.z else: CLOUD_MAX.z)
+            w = c+cloud_to_world(b,yaw)
+            m = w.xz-k*w.y
+            lo = min(lo,m); hi = max(hi,m)
+        span = f32(cloud_shadow_half*2.0)
+        rect = vec4(lo/span+vec2(0.5,0.5),hi/span+vec2(0.5,0.5))
+        if rect.z <= 0.0 or rect.w <= 0.0 or rect.x >= 1.0 or rect.y >= 1.0: continue
+        stamp = int(v.stamp)
+        n = cloud_dims_table[stamp]
+        foot = cloud_footprint_origin(stamp)
+        slabs: f32 = if stamp < 8: 3.0 else: 4.0
+        rows.push(ShadowInstance(rect,c,v.extent,vec4(yaw,v.growth.x,v.weather.x),vec4(foot.x,foot.y,n.x,n.z),v.mirror*slabs))
+    cloud_shadow_count = rows.len()
+    set_instances(cloud_shadow_instances,rows)
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(cloud_shadow_target.fbo))
+    glViewport(0,0,i32(res),i32(res))
+    glDisable(GL_DEPTH_TEST); glDepthMask(0); glDisable(GL_CULL_FACE)
+    glClearColor(0,0,0,0); glClear(GL_COLOR_BUFFER_BIT)
+    if rows.len() > 0:
+        # Overlapping clouds combine as coverage: a + b(1 - a).
+        glEnable(GL_BLEND); glBlendFunc(GL_ONE,u32(0x0301))  # (GL_ONE_MINUS_SRC_COLOR)
+        draw_instanced(cloud_shadow_sh,cloud_shadow_quad,cloud_shadow_instances,ShadowParams(volume_atlas,vec4(k.x,k.y,f32(cloud_shadow_half),0)))
+    rt = __scene_rt
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(rt.fbo))
+    glViewport(0,0,i32(rt.texture.width),i32(rt.texture.height))
+    glEnable(GL_DEPTH_TEST); glDepthMask(1)
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+    cloud_shadow_strength = strength
+    cloud_shadow_sun_k = k
+    cloud_shadow_base = if weather_active: weather_here.ceiling else: 950.0
+    zone_end()

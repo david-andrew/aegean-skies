@@ -16,12 +16,12 @@ on that unmerged branch so far.
 **Terms at a glance**
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
-- **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
+- **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
@@ -193,6 +193,16 @@ blue discs that stay in every frame are **speed flecks**.
 - **Not to be confused with:** rain curtains (under cloud decks).
 
 ![The splash on main, and the spray curtains on t3/splash-2, at the same moment](img/spray-curtains.png)
+
+### Bow sheets
+
+- **Definition:** the walls of water the heaviest boats (Do X, Sarafand, H-4) throw off the bow
+  and sponsons while the hull climbs over the hump onto the step: bursts of large drops thrown
+  sideways and up, drawn as billowing splash bodies, and the boat's [spray curtains](#spray-curtains)
+  scaled up by its weight. They thin as it planes and stop in the air.
+- **Code:** `src/pilot.jo` `_bow_sheets`; the curtains' scale is `boat_spray_scale` in
+  `src/aircraft_boats.jo`, applied in `src/splash.jo` `splash_instances`.
+- **Capture:** `AEGEAN_CRAFT=18 AEGEAN_CAPTURE_LAUNCH=takeoff-side` (a camera abeam on a takeoff run).
 
 ### Splash streaks
 
@@ -422,6 +432,45 @@ On the rivers branch until it lands.
 - **Capture:** `tools/hangar.jo` (contact sheet of all types), `AEGEAN_CAPTURE=dock`.
 
 ![A Gull's float](img/floats.png)
+
+### Sponsons
+
+- **Aliases:** stub wings, sea wings (Dornier's *Flossenstummel*).
+- **Definition:** short, thick aerofoil stubs at a flying boat's waterline, one each side of the
+  hull, in place of wing-tip floats: they keep the hull upright on the water and lift a little in
+  the air. The Dornier Wal and Do X have them.
+- **Code:** `src/aircraft_boats.jo` (`_build_wal`, `_build_dox`); they are the damage parts
+  `left_float` / `right_float` ("port sponson", "starboard sponson") and carry the outboard
+  contacts, which sit just above the calm waterline so they only bear load when the hull heels.
+
+### Push-pull pair
+
+- **Aliases:** tandem engines, push-pull, Tandem (Dornier).
+- **Definition:** two engines back to back in one nacelle, the front one pulling with a tractor
+  propeller and the rear one pushing with a pusher, on a common axis. The S.55 and the Wal have
+  one pair above the wing, the Sarafand three between its wings, the Do X six on an auxiliary wing.
+- **Code:** `src/aircraft_boats.jo` `_tandem_pair` (shared by the Do X and the Sarafand: radial or
+  cowled inline ends, both hubs); `AircraftProfile.discs` in `src/aircraft_catalog.jo` counts a
+  pair as one propeller disc for flight model v2.
+- **Rules:** the rear hub of a pair is always at least 3 m behind the front one; side-by-side
+  discs never touch (tests/aircraft_boats_test.jo).
+  How the pair's propellers turn and cancel their torque: [Contra-rotating and push-pull
+  props](#contra-rotating-and-push-pull-props) (the big boats set `push_pull`).
+
+### Big boats
+
+- **Aliases:** the big flying boats; offshore-only aircraft (those over 30 m span).
+- **Definition:** the Savoia-Marchetti S.55 (twin hulls), Dornier Wal, Dornier Do X, Short
+  Sarafand and Hughes H-4. They are built from lofted rings (hulls with flared chines and a step,
+  thick aerofoil wings, round nacelles) rather than the catalogue's boxes. The three over 30 m span
+  (Do X, Sarafand, H-4) are **offshore-only**: they never use a dock, only an
+  [offshore mooring](#offshore-mooring).
+- **Code:** `src/aircraft_boats.jo` (`build_big_boat`, `big_boat`, `offshore_only`,
+  `swing_radius`, `boat_parts`); profiles in `src/aircraft_catalog.jo` (`draft`, `engines`,
+  `discs`); `tools/boats_view.jo` (four views of one model); tests in
+  `tests/aircraft_boats_test.jo`.
+- **Rules:** `draft` (hull below the waterline at rest) stays under 1.5 m, where the water
+  model's buoyancy saturates. Engines over two add a second, detuned engine loop (`src/sound.jo`).
 
 ### Landplane
 
@@ -658,20 +707,59 @@ On the rivers branch until it lands.
 ### Cloud body
 
 - **Definition:** one cloud's volume: a heaped cumulus with crisp cream tops, slate-blue shaded
-  sides and a flat, darker base.
-- **Code:** population in `src/cloud_field.jo`, drawing in `src/cloud_volume.jo`, painting in
-  `src/cloud_paint.jo`; the paint atlas is baked by `tools/bake_clouds.jo` into the ignored
-  `assets/clouds.png`.
+  sides and a flat, darker base on its air mass's condensation level.
+- **Code:** forms in `src/cloud_density.jo`, placement in `src/cloud_field.jo`, drawing and
+  painted light in `src/cloud_volume.jo`; the atlas is baked by `tools/bake_clouds.jo` into the
+  ignored `assets/clouds.png`. See `docs/cloud-paint.md`.
 
-![Cloud bodies over the archipelago from 600 m](img/cloud-bodies.png)
+![Cloud bodies in towers weather from 300 m](img/cloud-bodies.png)
 
-### Cloud bank and tower
+### Cloud forms
 
-- **Definition:** a **bank** is a connected, low, broad mass of cloud (550 to 1550 m tall); a
-  **tower** is a tall building cumulus (up to 6500 m), as in the afternoon towers over the warm
-  islands.
-- **Code:** `src/cloud_field.jo:63 cloud_bank`; the bank-or-tower choice is in the same file.
-  Mesh banks and the opaque cloud field described in the clouds-7 reports are on `t3/clouds-7`.
+- **Definition:** the 28 procedural shapes a cloud body takes, built at their true proportions
+  and only ever scaled uniformly (never stretched): **humilis** (flat caps, wider than tall),
+  **fractus** (torn pieces), **cluster** (a clump or short street of cells on one base),
+  **mediocris** (heaped), **congestus** (towers of stacked lobes), **twin** towers, **anvil**
+  (a massive body under a flat plate spreading downwind) and **mass** (a large complex).
+- **Code:** `cloud_make_form`, `cloud_heap`, `cloud_stamp_kind` in `src/cloud_density.jo`;
+  `CLOUD_STAMP=n` in `tools/cloud_pilot.jo` shows one.
+- **Rules:** a taller tower gets more lobes, not taller ones. Side turrets lean on the main
+  column (apart, their heads arch over a window).
+
+![Humilis, mediocris, congestus and anvil forms (tools/cloud_pilot.jo)](img/cloud-forms.png)
+
+### Cumulus field
+
+- **Aliases:** the field, cloud streets.
+- **Definition:** the population of fair-weather clouds: clumps of small clouds, a main cloud
+  with satellites, and streets along a heading, gathered by a coarse clumping cascade and
+  wind-aligned rows with clear lanes between; power-law sizes in three octaves.
+- **Code:** `cloud_octave_group`, `world_clouds` in `src/cloud_field.jo`.
+
+### Tower growth
+
+- **Definition:** how a heaped cell becomes a towering cumulus while the air builds towers
+  (towers weather, or afternoon heating over land): the tower rises at its own proportions out
+  of the heaped cloud, which wears away inside it.
+- **Code:** `cloud_tall`, `cloud_forms_shown`, `cloud_evolve` in `src/cloud_field.jo`.
+
+### Cloud relief
+
+- **Definition:** the lumpy, broken edge of a cloud seen close: billowed noise in the cloud's
+  own metres that breaks the silhouette into rounded bulges, faded out with distance and kept
+  off the flat base; mostly not in the light, so faces keep their painted masses.
+- **Code:** `cloud_relief` in `src/cloud_volume.jo`.
+
+### Cloud shadows
+
+- **Definition:** the dark, soft-edged patches the clouds cast on land, sea, rivers, lakes and
+  towns, offset from each cloud by the sun's angle and moving with clouds and sun; deep water
+  goes navy, clear shallows a deeper teal, land keeps some colour.
+- **Code:** the map in `src/cloud_shadow.jo` (sun-projected coverage from each form's footprint
+  slabs), the sample `cloud_shadow_at` in `src/cloud_shadow_map.jo`; `AEGEAN_CLOUD_SHADOWS=0`
+  turns them off.
+
+![Towers and their shadows from 3000 m](img/cloud-shadows.png)
 
 ### Overcast deck
 
@@ -694,8 +782,10 @@ On the rivers branch until it lands.
 
 ### Anvil
 
-- **Definition:** the dark, flat-crowned top of a thunderstorm's column, at the storm centre.
-- **Code:** the storm branch of `src/cloud_field.jo` ("A dark anvil and rising column").
+- **Definition:** the dark, flat-crowned top of a thunderstorm's column, at the storm centre: a
+  plate flattened at the tropopause and spreading downwind over a massive body.
+- **Code:** the storm branch of `src/cloud_field.jo`; the form (`CLOUD_ANVIL`, its plate in
+  `cloud_form_distance`) in `src/cloud_density.jo`.
 - **Capture:** `AEGEAN_CAPTURE=weather-storm AEGEAN_WEATHER=storm
   AEGEAN_WEATHER_CENTER='0 -26000'`.
 
@@ -735,8 +825,8 @@ On the rivers branch until it lands.
 - **Definition:** large, coherent areas of cool shadow on clouds and foliage, taken from the big
   parent forms rather than from each small lobe, so shading reads as a few big shapes instead of
   "polka-dot shadows".
-- **Code:** `src/cloud_paint.jo` ("children inherit the parent's shadow mass"); the newer
-  version is on `t3/clouds-7`.
+- **Code:** `cloud_paint` in `src/cloud_volume.jo` (the mass normal mixed with a broad
+  distance gradient; no sunward self-shadow on lit faces).
 - **Rules:** cool shadow belongs to foliage and cloud masses, not a blue dye over every wall
   (`docs/ART.md`).
 
@@ -861,6 +951,39 @@ On the rivers branch until it lands.
   identifiers, keys or save fields.
 - **Code:** `ctx_venue` and `venue_errand` (`src/living_talk_context.jo`) speak `VenueKind.quay`
   as "the harbour"; map mooring labels read "{town} dock {n}".
+
+### Offshore mooring
+
+- **Aliases:** the buoy, a mooring buoy.
+- **Definition:** where a [big boat](#big-boats) too large for a harbour's docks lies: a red and
+  white buoy in open water off the harbour. Each sea harbour has up to three for each swing
+  radius, in water at least 3 m deep under the whole **swing circle** (the circle the moored
+  aircraft can sweep as it swings round its buoy), no shoal within 15 m of it, clear of every quay,
+  mole, dock, the seaplane buoy, the harbour's boats and the ships' anchorage, out of the
+  seaplanes' approach lanes, with a straight run for the [harbour launch](#harbour-launch) from a
+  dock, and as sheltered as the coast allows. The aircraft lies nose to the buoy, facing the
+  harbour.
+- **Code:** `src/offshore_moorings.jo` (`offshore_moorings`, `verify_mooring`,
+  `clear_water_near`); in play, `moor_on_buoy` / `settle_big_craft` in `aegean.jo`.
+- **Rules:** deterministic (terrain and port data only, cached per harbour and radius). The world
+  audit re-checks every mooring found with independent rings ("offshore mooring fouled" is severe)
+  and warns where a harbour has none. `tools/mooring_survey.jo` reports all 318 sea harbours.
+- **Capture:** `AEGEAN_CRAFT=19 AEGEAN_ABOARD=1` (the H-4 starts on its buoy off Porto Vecchio).
+
+### Harbour launch
+
+- **Aliases:** the launch, the boatman.
+- **Definition:** the small motor boat (the canal launch's model) that takes the pilot between a
+  dock and their aircraft on an [offshore mooring](#offshore-mooring): offered at the dock ("take
+  the harbour launch out to your Do X") and aboard ("call the harbour launch to go ashore"). The
+  ride is seen, the camera behind the launch, or cut short with F (a [time skip](#time-skip)). A
+  fare of ¤1.50 a trip goes to the harbour's market through the ledger; with an empty purse the
+  boatman lets it go.
+- **Code:** `src/harbour_launch.jo` (`launch_ride`, `launch_pose`, `pay_launch`, `draw_launch`,
+  `draw_buoy`); `start_launch` / `launch_step` / `finish_launch` in `aegean.jo`.
+- **Rules:** no saving during a ride; a saved game restores the aircraft on its buoy (found again
+  from the line's anchor).
+- **Capture:** `AEGEAN_CRAFT=18 AEGEAN_CAPTURE_LAUNCH=out|ashore|cut|save|switch:ID`.
 
 ### Legacy towns
 

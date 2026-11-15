@@ -54,6 +54,7 @@ use 'src/cloud_volume.jo'
 use 'src/cloud_field.jo'
 use 'src/cloud_depth.jo'
 use 'src/cloud_transparency.jo'
+use 'src/cloud_shadow.jo'
 use 'src/weather_scene.jo'
 use 'src/rain.jo'
 use 'src/sky.jo'
@@ -119,6 +120,9 @@ use 'src/cats.jo'
 use 'src/speech.jo'
 use 'src/panels.jo'
 use 'src/mooring.jo'
+from 'src/aircraft_boats.jo' import big_boat, offshore_only, swing_radius, wake_width, boat_spray_scale
+from 'src/offshore_moorings.jo' import OffshoreMooring, offshore_moorings, nearest_harbour, harbour_docks, clear_water_near
+import 'src/harbour_launch.jo' as launches
 use 'src/vessel_types.jo'
 use 'src/vessels.jo'
 use 'src/canal_traffic.jo'
@@ -607,6 +611,7 @@ leisure_time_step = (dt: f64):
         skip.left -= step
         hour = f64(lt.local_minute(living_world.minute)) / 60.0
         if skip.left == 0:
+            if skip.after == 2: finish_launch()
             if skip.after == 1:
                 me.pos = vec3(hotel.desk.x, f32(walk_height(towns, f64(hotel.desk.x), f64(hotel.desk.z))), hotel.desk.z)
                 # (facing along the waterfront, the camera behind on the quay, not in the hotel)
@@ -2965,8 +2970,13 @@ change_craft = (kind: Craft, model: int):
     living_world.aircraft[record].scene_extension_tick = -1
     living_world.aircraft[record].revision += 1
     pc = nf
+    # (too big for the dock it was at: out to the nearest clear buoy, or clear water; aboard)
+    global buoys_at
+    buoys_at = -1
+    if offshore_only(kind): settle_big_craft(true)
+    refresh_buoys()
     ci=combat_index(battle,record)
-    if ci>=0:battle.actors[ci]=Combatant(record,living_world.player,0,nf.spec,nf.state,external=true,human=true,previous=nf.state.position,model=model)
+    if ci>=0:battle.actors[ci]=Combatant(record,living_world.player,0,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=model)
 
 # paused (or not): the pause menu is the debugging panel
 set_paused = (on: bool):
@@ -3072,7 +3082,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     global vessels,vessel_bindings,vessel_view,vessel_mooring,combat_visual,air_visual
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,my_jobs,toast,toast_until,notebook,battle_card,war_chart,presentation,ui_mission
     global t,hour,wind_bias,wind_now,follow,descent_camera,free,show_chart,chart_local
-    global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
+    global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v,launch,buoys_at,offshore
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
     global leisure,leisure_spent,leisure_had,skip,slip,slip_cradle_z,combat_audio
@@ -3134,6 +3144,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     wakes=[loop k in 0..traffic.len()+1:WakeTrail()];vapor_trails=[Trail(),Trail()]
     guns=Guns();splashes=[];last_shots=0;plunge=0;plunge_v=0
     rope=Rope();was_moored=false
+    launch=launches.LaunchRide();buoys_at= -1;offshore=none
     ui=.none;ui_folk=-1;ui_place=-1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job=-1;my_jobs={}
     if given==none:
         notebook=if fresh:Notebook() else:Notebook(storage_key="scenario-notebook:"+key)
@@ -3227,6 +3238,7 @@ game_place_at = (at: vec3) -> int:
 capture_running_game = () -> lt.SaveGame | save_types.LivingSaveError:
     if active_scenario!="": return save_types.LivingSaveError("Situations are separate from saved games.")
     if skip.active: return save_types.LivingSaveError("Finish resting or working before saving.")
+    if launch.active: return save_types.LivingSaveError("Wait until the launch has arrived.")
     if me.mode==.walking:sync_walker_point()
     who=living_world.people[living_world.player]
     at=if me.mode==.aboard:pc.state.position else:me.pos
@@ -3258,6 +3270,7 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     global walker_point,walker_published,folks,folk_sync_t,notebook,my_jobs,t,hour,wind_bias,wind_now,follow,follow_frame,free,descent_camera
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,ui_mission,battle_card,war_chart,view_target,target_scan,rope,was_moored
     global wakes,vapor_trails,splashes,last_shots,plunge,plunge_v,active_scenario,judge_camera,talk_at_start,cat_scene,combat_visual,air_visual,guns
+    global launch,buoys_at,offshore
     global fuel_pier_seen,fuel_pier_frame,fuel_offered_at,refuel_start,refuel_len,known_maps,toast,toast_until
     global leisure,leisure_at,leisure_spent,leisure_had,leisure_ui,leisure_line,skip,served_look_until,served_pending
     global fish,fish_throws,fish_rings,fish_landed_at,fish_bucket_beside
@@ -3295,6 +3308,7 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     spray_ps.items.clear();spray_ps.billows.clear();smoke_ps.items.clear();dust_ps.items.clear()
     wakes=[loop _ in 0..traffic.len()+1:WakeTrail()];vapor_trails=[Trail(),Trail()];splashes=[];last_shots=0;plunge=0;plunge_v=0
     rope.anchor=session.rope_anchor;rope.loose=session.rope_loose;rope.tied=session.rope_tied;was_moored=pc.state.moored
+    launch=launches.LaunchRide();buoys_at= -1;offshore=find_offshore_berth()
     ui=.none;ui_folk= -1;ui_place= -1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job= -1;ui_mission= -1
     fuel_pier_seen=none;fuel_pier_frame= -100;fuel_offered_at=FUEL_NOWHERE;refuel_start= -100;refuel_len=0
     if cat_scene.purr_voice>=0:stop(cat_scene.purr_voice)
@@ -3834,6 +3848,247 @@ step_ashore = (near: vec3):
         me.mode = .walking
         follow.placed = false
 
+# ---------------- big aircraft: offshore buoys and the harbour launch ----------------
+# (src/offshore_moorings.jo finds the buoys; src/harbour_launch.jo is the launch and its fare)
+
+offshore: OffshoreMooring? = none   # the buoy the player's aircraft lies on, when it lies on one
+launch = launches.LaunchRide()
+launch_view = launches.LaunchView()
+buoys_near: OffshoreMooring[]       # (the buoys of the harbour about, for the player's aircraft: drawn)
+buoys_at = -1                       # (the harbour they belong to)
+
+# the buoys of the harbour nearest a point for the player's aircraft (none away from harbours)
+player_moorings = (p: vec3) -> OffshoreMooring[]:
+    h = nearest_harbour(p.xz, 2500.0)
+    if h < 0: return []
+    offshore_moorings(h, swing_radius(pc.kind))
+
+# where the line is made fast on the aircraft: the bow
+rope_bow = () -> vec3:
+    if big_boat(pc.kind): return vec3(0, 0.4, f32(-aircraft_profile(pc.kind).length * 0.48))
+    vec3(1.4, -1.9, -2.6)
+
+# lie on a buoy: head to seaward, the bow line to the buoy, at rest
+moor_on_buoy = (m: OffshoreMooring):
+    global offshore, was_moored
+    back = heading_vector(m.heading) * f32(-(aircraft_profile(pc.kind).length * 0.5 + 4.0))
+    at = m.at + back
+    pc.state = water_start(pc.spec, vec3(at.x, 0, at.z), m.heading)
+    moor(pc.state, pc.state.position, m.heading)
+    pc.throttle = 0.0
+    pc.placed = false
+    pc.aim_heading = m.heading
+    rope.anchor = launches.buoy_top(m.at); rope.tied = true; rope.loose = rope.anchor
+    was_moored = true
+    offshore = m
+
+# the buoy the moored aircraft's line is on (after loading a game: found again from the line)
+find_offshore_berth = () -> OffshoreMooring?:
+    if not pc.state.moored or not rope.tied: return none
+    loop m in player_moorings(pc.state.position):
+        if f64(length(launches.buoy_top(m.at) - rope.anchor)) < 1.0: return m
+    none
+
+# a buoy near the bow, when slow on the water: where a big aircraft can make fast
+buoy_spot = () -> OffshoreMooring?:
+    st = pc.state
+    if st.moored or not st.on_water or length(vec3(st.velocity.x, 0, st.velocity.z)) > 2.5: return none
+    bow = st.position + quat_rotate(st.orientation, vec3(0, 0, f32(-aircraft_profile(pc.kind).length * 0.5)))
+    loop m in buoys_near:
+        if f64(length(vec2(m.at.x - bow.x, m.at.z - bow.z))) < 30.0: return m
+    none
+
+# a dock for the aircraft: none for one too big for the docks
+dock_spot = () -> vec3?: if offshore_only(pc.kind): none else: mooring_spot(pc, towns)
+
+# A big aircraft just taken (from the pause menu, or at the start): where it was, unless it
+# doesn't fit there; then on the nearest clear buoy, or in clear open water. Never over land, a
+# dock or a building. Flying, it keeps flying. board: the pilot aboard.
+settle_big_craft = (board: bool):
+    global offshore
+    st = pc.state
+    if not st.on_water and not st.moored and f64(st.position.y) > 25.0:
+        if board: me.mode = .aboard
+        return
+    ms = player_moorings(st.position)
+    if ms.len() > 0: moor_on_buoy(ms[0])
+    else:
+        r = swing_radius(pc.kind)
+        if let c = clear_water_near(st.position.xz, r):
+            h = heading(st)
+            pc.state = water_start(pc.spec, vec3(c.x, 0, c.y), h)
+            pc.throttle = 0.0; pc.placed = false
+            rope.tied = false; offshore = none
+        else: say_toast("No clear water near enough for the {CRAFT_NAMES[int(pc.kind)]}")
+    if board:
+        me.mode = .aboard
+        pc.placed = false
+
+# alongside the moored aircraft, where the launch comes to (its boarding side, a little off)
+launch_alongside = () -> vec3:
+    m = craft_models[pc.model]
+    side = quat_rotate(pc.state.orientation, vec3(1, 0, 0))
+    world_vec(craft_offset(pc.state, quat_rotate(pc.state.orientation, m.exit))) + side * f32(aircraft_profile(pc.kind).width + 3.0)
+
+# the dock berth of the buoy's harbour nearest a point
+launch_dock = (near: vec3) -> vec3:
+    best = offshore!.dock; bd = 1e18
+    loop d in harbour_docks(offshore!.place):
+        l = f64(length(d.xz - near.xz))
+        if l < bd: bd = l; best = d
+    best
+
+# on foot by a dock of the harbour whose buoy the aircraft lies on
+by_launch_dock = () -> bool:
+    if offshore == none or not pc.state.moored or me.mode != .walking: return false
+    loop d in harbour_docks(offshore!.place):
+        if f64(length(d.xz - me.pos.xz)) < 16.0: return true
+    false
+
+# the harbour launch out to the aircraft (outward) or back to the dock: paid, then ridden
+start_launch = (outward: bool):
+    global launch
+    if offshore == none: return
+    alongside = launch_alongside()
+    dock = launch_dock(if outward: me.pos else: alongside)
+    fare = launches.pay_launch(living_world, offshore!.place)
+    launch = launches.launch_ride(offshore!.place, dock, alongside, outward)
+    launch.fare = fare
+    me.mode = .free
+    mouse_lock(false)
+    say_toast(if fare > 0: "The harbour launch, {phoenix_text(fare)}.  F  to skip the ride" else: "The boatman waves the fare away.  F  to skip the ride")
+
+# the ride's end: aboard the aircraft, or on the quay by the dock
+finish_launch = ():
+    global launch
+    if not launch.active: return
+    launch.active = false
+    if launch.outward:
+        me.mode = .aboard
+        pc.placed = false
+        pc.throttle = 0.0
+        mouse_lock(true)
+    else:
+        me.mode = .walking
+        step_ashore(launch.to)
+        follow.placed = false
+
+# each frame of a seen ride: the launch on its way, the camera behind it; F cuts it short
+launch_step = (dt: f64, typing: bool):
+    global launch
+    launch.t += dt
+    view = launches.launch_camera(launch)
+    free.pos = view.0
+    d = normalize(view.1 - view.0)
+    free.yaw = atan2(-f64(d.x), -f64(d.z)); free.pitch = asin(f64(d.y))   # (the fly camera looks (-sin yaw, -cos yaw))
+    if not typing and (vpressed(.f) or vpressed(.space)) and launch.t > 0.3:
+        left = max(1, int(f64(launch.minutes) * (1.0 - launch.t / max(launch.duration, 0.1))))
+        leisure_skip(left, if launch.outward: "Out to the {CRAFT_NAMES[int(pc.kind)]} in the harbour launch" else: "Ashore in the harbour launch", 2)
+        return
+    # (its wash: spray off the bow and a stream astern, as long as it is under way)
+    pose = launches.launch_pose(launch)
+    u = launch.t / max(launch.duration, 0.1)
+    if u > 0.05 and u < 0.95 and spray_ps.items.len() < 900 and frame_number() % 2 == 0:
+        dir = vec3(f32(sin(pose.1)), 0, f32(cos(pose.1)))
+        stern = pose.0 - dir * 4.2 + vec3(0, 0.05, 0)
+        emit(spray_ps, world_point(stern), 2, 1.2, rgba(0.95, 0.97, 1, 0.8), 1.1, 0.35, 0.6, normalize(vec3(0, 1, 0) - dir * 0.6))
+        loop side in [-1.0, 1.0]:
+            bow = pose.0 + dir * 3.3 + vec3(dir.z, 0, -dir.x) * f32(side * 0.9) + vec3(0, 0.05, 0)
+            emit(spray_ps, world_point(bow), 1, 2.0, rgba(0.95, 0.97, 1, 0.85), 0.6, 0.22, 0.5, normalize(vec3(f32(side) * dir.z, 1.0, f32(-side) * dir.x)))
+    if launches.launch_done(launch): finish_launch()
+
+# the buoys about (once in a while: a harbour's are found once, then kept)
+refresh_buoys = ():
+    global buoys_near, buoys_at, offshore
+    if not pc.state.moored: offshore = none
+    if not offshore_only(pc.kind) and offshore == none:
+        buoys_near = []; buoys_at = -1
+        return
+    at = if me.mode == .aboard: pc.state.position else: me.pos
+    h = nearest_harbour(at.xz, 2500.0)
+    if h == buoys_at: return
+    buoys_at = h
+    buoys_near = if h >= 0: offshore_moorings(h, swing_radius(pc.kind)) else: []
+
+# (AEGEAN_CRAFT a big boat: it starts on its buoy off the home harbour, not at a dock)
+if offshore_only(pc.kind): settle_big_craft(me.mode == .aboard)
+refresh_buoys()
+
+# AEGEAN_CAPTURE_LAUNCH=out|ashore|cut (captures): at frame 60 the harbour launch sets out from the
+# home dock to the big aircraft on its buoy (cut: and the ride is skipped), or comes for the pilot
+# aboard; what it cost and where it ended are printed (LAUNCH lines). No effect in ordinary play.
+launch_capture = env("AEGEAN_CAPTURE_LAUNCH") ?? ""
+# (buoy: whatever the aircraft, on the home harbour's H-4 buoy: like-for-like frame timing)
+if launch_capture == "buoy":
+    ms = offshore_moorings(0, swing_radius(.hughes_h4))
+    if ms.len() > 0: moor_on_buoy(ms[0])
+launch_capture_step = ():
+    # (shot:water34|side|flight: the coordinator's model captures, a camera set off the aircraft
+    # by its size, three-quarter ahead, abeam, or riding along in flight)
+    if launch_capture.starts_with("shot:"):
+        if frame_number() == 40:
+            global judge_camera, judge_origin
+            judge_origin = pc.state.position
+            f = heading_vector(heading(pc.state)); r = heading_vector(heading(pc.state) + PI / 2)
+            size = max(aircraft_profile(pc.kind).span, aircraft_profile(pc.kind).length)
+            at = pc.state.position + vec3(0, f32(size * 0.06), 0)
+            eye = match launch_capture[5..]:
+                "side": at + r * f32(size * 1.45) + vec3(0, f32(size * 0.05), 0)
+                "flight": at + r * f32(size * 1.1) + f * f32(size * 0.55) + vec3(0, f32(size * 0.12), 0)
+                _: at + f * f32(size * 0.95) + r * f32(size * 0.75) + vec3(0, f32(size * 0.22), 0)
+            judge_camera = JudgeView(eye, at, launch_capture)
+            print("SHOT {launch_capture} eye {eye} at {at} craft {pc.state.position}")
+        if launch_capture == "shot:flight": pc.throttle = 0.75
+        return
+    # (takeoff: from frame 30, a run out to sea from 1.2 km off the home harbour at full throttle)
+    if launch_capture.starts_with("takeoff"):
+        if frame_number() == 31 and launch_capture == "takeoff-side":
+            # (a camera abeam, riding along: the spray seen from the side)
+            global judge_camera, judge_origin
+            judge_origin = pc.state.position
+            f = heading_vector(along_quay); r = vec3(-f.z, 0, f.x)
+            eye = pc.state.position + r * f32(pc.spec.span * 1.3) + f * f32(pc.spec.span * 0.35) + vec3(0, 5, 0)
+            judge_camera = JudgeView(eye, pc.state.position + vec3(0, 3, 0), "takeoff, abeam")
+        if frame_number() == 30:
+            global offshore
+            p0 = home.docks[0] + vec3(home.out.x, 0, home.out.y) * 1200.0
+            unmoor(pc.state); rope.tied = false; offshore = none
+            pc.state = water_start(pc.spec, vec3(p0.x, 0, p0.z), along_quay)
+            pc.aim_heading = along_quay; pc.placed = false; me.mode = .aboard
+        if frame_number() >= 30: pc.throttle = 1.0
+        if frame_number() % 120 == 0: print("LAUNCH takeoff t {pc.state.time:.0} speed {length(pc.state.velocity):.1} y {pc.state.position.y:.1} water {pc.state.on_water} spray {spray_ps.items.len()}")
+        return
+    # (switch:ID: at frame 60 the pause menu's change to that type, wherever one is)
+    if launch_capture.starts_with("switch:") and frame_number() == 60:
+        kind = Craft(clamp(to_int(launch_capture[7..]) ?? 0, 0, CRAFT_NAMES.len() - 1))
+        was = pc.state.position
+        change_craft(kind, default_craft_model(kind))
+        print("LAUNCH switch to {CRAFT_NAMES[int(kind)]} from {was} to {pc.state.position}, moored {pc.state.moored}, buoy {offshore != none}, mode {me.mode}, ground under {surface_height(f64(pc.state.position.x), f64(pc.state.position.z)):.1}")
+        return
+    if frame_number() == 60 and offshore != none:
+        if launch_capture == "ashore" or launch_capture == "save":
+            me.mode = .aboard
+            start_launch(false)
+        else:
+            d = offshore!.dock
+            me.mode = .walking; me.pos = vec3(d.x, f32(walk_height(towns, f64(d.x), f64(d.z))), d.z)
+            start_launch(true)
+            if launch_capture == "cut": leisure_skip(launch.minutes, "Out to the {CRAFT_NAMES[int(pc.kind)]} in the harbour launch", 2)
+        print("LAUNCH start {launch_capture} fare {launch.fare} from {launch.from} to {launch.to} seen {launch.duration:.1} s, {launch.minutes} min; purse {player_cents()}; ledger {launches.ledger_balances(living_world)}")
+    # (save: ashore by the launch, the running game captured and applied again, as a load does)
+    if launch_capture == "save" and frame_number() == 900:
+        g = capture_running_game()
+        if g is lt.SaveGame:
+            runtime = read_game_session(g)
+            pc.state.position = vec3(0, 50, 0)
+            global offshore
+            offshore = none
+            ok = runtime is GameSession and apply_saved_game(g, runtime as GameSession)
+            print("LAUNCH save round trip {ok}: mode {me.mode} moored {pc.state.moored} at {pc.state.position} buoy {offshore != none} line {rope.tied} {rope.anchor}; purse {player_cents()} ledger {launches.ledger_balances(living_world)}")
+        else: print("LAUNCH save refused: {g.message}")
+    if frame_number() > 60 and frame_number() % 30 == 0 and launch_capture != "":
+        print("LAUNCH frame {frame_number()} active {launch.active} t {launch.t:.1} mode {me.mode} pos {me.pos} skip {skip.active}")
+
 # A look at the cats and the pilot's face for captures (AEGEAN_CAT_CAPTURE=pet|feed|face): the
 # player set down by a town cat (AEGEAN_CAT_CAPTURE_INDEX: the nearest, the next...) that knows
 # them; it follows them out into the street, where it is stroked or fed over and over, the camera
@@ -4138,7 +4393,7 @@ race_offer_here = () -> int:
     if me.mode == .aboard:
         st = pc.state
         if st.crashed or st.capsized or st.beached or st.moored or not st.on_water or length(st.velocity) > 8.0: return -1
-        if mooring_spot(pc, towns) != none or find_vessel_mooring(vessels, st, pc.spec.span) != none or rescue_act != 0: return -1
+        if dock_spot() != none or buoy_spot() != none or find_vessel_mooring(vessels, st, pc.spec.span) != none or rescue_act != 0: return -1
         k = race_offer(air_events, living_world, st.position)
         return if k >= 0: k else: race_withdraw_offer(air_events, living_world, st.position)
     -1
@@ -4264,7 +4519,7 @@ open_fuel_pier = ():
     p = fuel_pier_near()
     if p == none: return
     if not pc.state.moored and not pc.spec.landplane:
-        if let d = mooring_spot(pc, towns):
+        if let d = dock_spot():
             if not dock_taken(d, others_at()):
                 moor(pc.state, vec3(d.x, f32(pc.spec.float_height), d.z), heading(pc.state))
                 pc.throttle = 0.0
@@ -4707,6 +4962,7 @@ walk_offers = () -> Offer[]:
     if not held and near_own_craft():
         offer_add(o, "aboard", "climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
         if pc.state.moored and not busy: offer_add(o, "tinker", "work on the aircraft", .g)
+    if not held and by_launch_dock(): offer_add(o, "launch-out", "take the harbour launch out to your {CRAFT_NAMES[int(pc.kind)]} ({phoenix_text(launches.LAUNCH_FARE)})")
     if not held and not near_own_craft() and near_map_find() >= 0: offer_add(o, "map-find", "pick up the {map_title(near_map_find())}")
     if not near_own_craft() and near_board() >= 0: offer_add(o, "notices", "read the notices")
     offer_add(o, "leisure", offer_words(leisure_prompt()))
@@ -4731,9 +4987,12 @@ aboard_offers = () -> Offer[]:
     st = pc.state
     if me.mode != .aboard or ui != .none or paused or show_chart or notebook.open or st.crashed or st.capsized or st.beached: return o
     if rescue_act == 1: offer_add(o, "rescue", offer_words(rescue_prompt()))
-    if st.moored and vessel_mooring.vessel < 0: offer_add(o, "ashore", "step ashore      Shift  open the throttle")
+    if st.moored and vessel_mooring.vessel < 0:
+        if offshore != none: offer_add(o, "launch-ashore", "call the harbour launch to go ashore ({phoenix_text(launches.LAUNCH_FARE)})      Shift  open the throttle")
+        else: offer_add(o, "ashore", "step ashore      Shift  open the throttle")
     if landplane_parked(): offer_add(o, "ashore", "climb down      Shift  open the throttle")
-    if not st.moored and (mooring_spot(pc, towns) != none or find_vessel_mooring(vessels, st, pc.spec.span) != none): offer_add(o, "moor", "moor here")
+    if not st.moored and buoy_spot() != none: offer_add(o, "buoy", "make fast to the buoy")
+    if not st.moored and (dock_spot() != none or find_vessel_mooring(vessels, st, pc.spec.span) != none): offer_add(o, "moor", "moor here")
     offer_add(o, "fuel", offer_words(fuel_offer_text(again = true)))
     race = race_offer_here()
     if race >= 0: offer_add(o, "race", offer_words(race_offer_text(air_events, living_world, race)))
@@ -4905,7 +5164,7 @@ update_frame = (dt: f64, saves: bool = true):
         notebook.open = true
         notebook.fresh = true
         mouse_lock(false)
-    if vpressed(.f2) and not typing and not presentation.thermal.active: me.mode = if me.mode == .free: Mode.walking else: Mode.free
+    if vpressed(.f2) and not typing and not presentation.thermal.active and not launch.active: me.mode = if me.mode == .free: Mode.walking else: Mode.free
     # (only while the card can be seen: a battle met behind a panel keeps its card for later)
     if (me.mode == .aboard or me.mode == .walking) and frame_number() % 20 == 0 and not paused and not show_chart and ui == .none:
         global battle_card, presentation
@@ -4944,7 +5203,8 @@ update_frame = (dt: f64, saves: bool = true):
     if player_combat>=0:battle.actors[player_combat].pilot.trigger=false
     match me.mode:
         .free:
-            if not title.open: free.update(dt)
+            if launch.active: launch_step(dt, typing)
+            else if not title.open: free.update(dt)
         .walking:
           if job.active: plane_job_step(dt)
           if listen_mode != "": listen_step(dt)
@@ -5054,6 +5314,7 @@ update_frame = (dt: f64, saves: bool = true):
               if act == "workshop": open_workshop()
               if act == "cat" and not cat_busy(cat_scene):
                   me.yaw = cat_begin(cat_scene, cat_here(), cat_prompt_here().starts_with("F  give"), me.pos)
+              if act == "launch-out": start_launch(true)
               if act == "aboard":
                   me.mode = .aboard
                   mouse_lock(true)
@@ -5172,6 +5433,9 @@ update_frame = (dt: f64, saves: bool = true):
             vapor(pc, vapor_trails, hour, t)
             act = if typing: "" else: offer_pressed(aboard_offers())
             if act == "rescue": do_rescue()
+            else if act == "buoy":
+                if let m = buoy_spot(): moor_on_buoy(m)
+            else if act == "launch-ashore": start_launch(false)
             else if act == "fuel": open_fuel_pier()
             else if act == "ashore" and landplane_parked():
                 step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
@@ -5182,7 +5446,7 @@ update_frame = (dt: f64, saves: bool = true):
                         moor(pc.state,vec3(point.x,f32(pc.spec.float_height),point.z),heading(pc.state))
                         pc.throttle = 0.0
                         rope.tied = true; rope.anchor = point; was_moored = true
-                else if let d0 = mooring_spot(pc, towns):
+                else if let d0 = dock_spot():
                   if dock_taken(d0, others_at()): say_toast("That dock is taken")
                   else:
                     d = d0
@@ -5207,7 +5471,9 @@ update_frame = (dt: f64, saves: bool = true):
         was_moored = false
         off = vec3(pc.state.position.x - rope.anchor.x, 0, pc.state.position.z - rope.anchor.z)
         rope.loose = rope.anchor + normalize(off + vec3(0.001, 0, 0)) * 3.0
-    if not rope.tied and pc.state.moored: tie_up()
+    if frame_number() % 30 == 7: refresh_buoys()
+    if launch_capture != "": launch_capture_step()
+    if not rope.tied and pc.state.moored and offshore == none: tie_up()
     dust_ps.update(dt)
     # debugging: F1 opens the panel; its standing switches
     if dbg.infinite_fuel:
@@ -5367,11 +5633,11 @@ update_frame = (dt: f64, saves: bool = true):
     gap = f64(pc.state.position.y) - pc.spec.float_height - water_under
     skim = if pc.state.on_water or pc.state.moored: 0.0 else: (1.0 - smoothstep(0.5, pc.spec.span * 0.6, gap)) * smoothstep(28.0, 60.0, f64(length(pc.state.velocity)) / pure_k(pc.spec))
     under = craft_offset(pc.state,vec3(-pc.state.velocity.x*0.15,f32(water_under+0.1)-pc.state.position.y,-pc.state.velocity.z*0.15))
-    wake_step(wakes[0], under, pc.state.velocity, pc.state.on_water and not pc.state.moored, 1.6, t, skim)
+    wake_step(wakes[0], under, pc.state.velocity, pc.state.on_water and not pc.state.moored, wake_width(pc.kind), t, skim)
     if skim > 0.1 and me.mode == .aboard: emit(spray_ps, under, int(1.0 + skim * 4.0), 3.0 + 6.0 * skim, rgba(0.96, 0.98, 1.0, f32(0.5 + 0.4 * skim)), 1.2, 0.5 + 0.6 * skim, 0.7, normalize(vec3(-pc.state.velocity.x, 30.0, -pc.state.velocity.z)))
     loop k in 0..all_air_traffic.len():
         tr = all_air_traffic[k]
-        wake_step(wakes[k + 1], craft_point(tr.state), tr.state.velocity, tr.state.on_water and not tr.state.moored, if tr.kind == .heron: 1.4 else: 1.6, t)
+        wake_step(wakes[k + 1], craft_point(tr.state), tr.state.velocity, tr.state.on_water and not tr.state.moored, wake_width(tr.kind), t)
     if trace and floor(t / 10.0) != floor((t - dt) / 10.0):
         print("living minute {living_world.minute}, tick {living_world.tick}")
         loop id in living_world.far.near_people:
@@ -5483,7 +5749,9 @@ airfield_wind = () -> vec3:
 
 pc_at = () -> mat4: translation(vec3(0, f32(plunge), 0)) * (if pc.state.moored: afloat_transform(craft_transform(pc),t) else: craft_transform(pc))
 
+cloud_frame_list: CloudVolume[]
 draw_world = (L: Light):
+    global cloud_cull,cloud_frame_list
     if not effect_pipelines_ready:
         # Prepare the actual transparent-pass blend/target variant once. Vulkan
         # otherwise compiles it and serializes its pipeline cache on first use.
@@ -5500,10 +5768,22 @@ draw_world = (L: Light):
                 draw_instanced(local_particle_sh,local_particle_mesh,[LocalParticle(half=0)],LocalParticleParams(clouds=cloud_veil,vp=vp))
             effect_pipelines_ready = true
         ,transparent=true)
-    draw_custom((): begin_cloud_depth())
+    # One cloud list a frame: its shadows are drawn before the ground and water.
+    # The cloud list is rebuilt every second frame on low and medium: clouds
+    # move little in a frame and the view cull keeps a margin for turning.
+    if legacy_clouds: cloud_frame_list = []
+    else if render_quality.tier == 2 or frame_number()%2 == 0 or cloud_frame_list.len() == 0:
+        cloud_cull = cloud_frame_cull(L)
+        cloud_frame_list = world_clouds(scene_camera(),WorldPoint(wind_drift(wind_now).x*0.35,0,wind_drift(wind_now).z*0.35))
+    frame_clouds = cloud_frame_list
     draw_custom(():
-        bow = transform_point(afloat_transform(craft_transform(pc),t), vec3(1.4, -1.9, -2.6))
-        draw_rope(rope, pc.state.moored, bow, L, t))
+        render_cloud_shadows(frame_clouds,L)
+        begin_cloud_depth())
+    draw_custom(():
+        bow = transform_point(afloat_transform(craft_transform(pc),t), rope_bow())
+        draw_rope(rope, pc.state.moored, bow, L, t)
+        launches.draw_launch(launch_view, launch, L, t)
+        loop m in buoys_near: launches.draw_buoy(launch_view, m.at, L, t))
     draw_custom((): zone("sky");draw_sky(L, t);zone_end())
     draw_custom((): zone("far sea");draw_far_sea(depth_tex, L, t, wind_now);zone_end())
     draw_custom(():
@@ -5639,7 +5919,7 @@ draw_world = (L: Light):
     , transparent = true)
     draw_splashes(pc,craft_models[pc.model],pc_at(),spray_ps,L,t,me.mode==.aboard)
     if not legacy_clouds:
-        draw_cloud_layer(world_clouds(scene_camera(),WorldPoint(wind_drift(wind_now).x*0.35,0,wind_drift(wind_now).z*0.35)),L)
+        draw_cloud_layer(frame_clouds,L)
     else:draw_custom((): prepare_cloud_transparency(),transparent=true)
     draw_splash_dust(spray_ps)
     if startup_aegean_nowake == none:
@@ -5856,7 +6136,10 @@ draw = ():
             else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
             else: draw_offers(aboard_offers(), 196.0)
         .descent: pass
-        .free: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
+        .free:
+            if launch.active:
+                if not skip.active: prompt_card(fonts, if launch.outward: "F  skip the ride out" else: "F  skip the ride ashore", 90.0)
+            else: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if me.mode == .aboard:
         on_ways=slip.active and active_scenario=="canal"
         aim_marks(pc,not pc.cockpit_view and not on_ways)
@@ -5933,6 +6216,9 @@ draw = ():
         if directory!="-" and n>=120 and n%2==0:save_png("{directory}/{n}.png",screenshot())
         if me.mode==.aboard:
             if let band=prop_bands.get(living_world.people[living_world.player].craft):print("PROPFRAME {n} {pc.state.throttle:.4} {prop_rotation_speed(pc.state,pc.feedback.speed):.3} {band.angle:.5}")
+    # AEGEAN_CLOUD_FRAMES=dir: every second frame from frame 60 (clips of cloud shadows)
+    if let directory=cloud_frames_dir:
+        if frame_number()>=60 and frame_number()%2==0:save_png("{directory}/{(frame_number()-60)/2:05}.png",screenshot())
     if let directory=startup_aegean_atmos_frames:
         if frame_number() in [2,360,780,1200,1800] or frame_number()%4==0 and (frame_number()<=120 or frame_number()>=720 and frame_number()<=960): save_png("{directory}/{frame_number()}.png",screenshot())
     # AEGEAN_LEISURE_FRAMES=dir: every half second of a job on the aircraft, and its legs as they go
