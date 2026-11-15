@@ -143,6 +143,25 @@ Pronunciation and delivery follow the speaker (round 4):
   few lines stays nearer the plain reading (n / (n + 1)), a genre with none keeps the station's
   hand-set style.
 
+Sentence intonation, the energy envelope and vocal effort are learned from the speaker (round 5,
+`intonation.py`):
+
+- each syllable's pitch level (re the line), its slope through the vowel and its energy (re the
+  line, after the vowel's own intrinsic loudness) are linear functions of 43 features: accent
+  (first, nuclear, before and after), place in the phrase, what ends the phrase (full stop,
+  question, exclamation, comma, ellipsis or dash, breath), resets at later phrases and sentences,
+  and genre; ridge-fitted on the takes, the weights travel in the data file (`tune_*`) and the
+  game computes the same features (`voice_syllable_features`) and joins the targets into a
+  contour (centred on the line, so register and range are calibrated separately) and an energy
+  envelope;
+- an ellipsis or a dash is now a pause in the game, and every pause knows what ended its phrase;
+- each genre's vocal effort is the speaker's own spectral change against their plain reads
+  (`tilt_<genre>`), and calibration fits brightness (the plain reading's too), the contour's size
+  per genre and a sustain floor for voiced frames by synthesis, like tempo and register;
+- on held-out lines with the speaker's own timing, the learned contour correlates 0.47 with their
+  takes (round 4's model 0.44) at 3.5 st RMS (4.3); two takes of the same line by the speaker
+  correlate 0.55 at the syllable level, so that is about the ceiling.
+
 The voice studio's "Tune" button starts a round. The recordings, voices and rounds all stay in
 scratch.
 

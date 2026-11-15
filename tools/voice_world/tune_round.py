@@ -33,6 +33,7 @@ import build_units as bu
 import pack
 import prosody_fit as pf
 import voicefile
+import intonation
 
 RAW = {'AX': ('AH', 0), 'IX': ('IH', 0), 'AXR': ('ER', 0), 'IYX': ('IY', 0)}
 STAGES = ['baseline', 'align', 'fit', 'evaluate', 'publish']
@@ -438,16 +439,37 @@ def delivery(phones, f0, start_of=lambda p: p['start'], dur_of=lambda p: p['end'
     return dict(rate=syl / max(talk, 1e-3), pause=pause, med=med, spread=2.0 * float(np.median(np.abs(s - med))), voiced=len(v) / max(1, len(seg)))
 
 
-def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, passes=2, per_genre_plain=12):
+def spectral(x, f0):
+    """Brightness (dB of 1-4 kHz over 80 Hz-1 kHz, median over voiced frames) and level
+    movement (st. dev. of voiced frames' energy, dB) of a stretch of speech."""
+    from scipy.signal import stft
+    f, t, Z = stft(x, wa.RATE, nperseg=512, noverlap=432)
+    P = np.abs(Z) ** 2
+    v = np.asarray(f0)[np.clip((t / 0.005).astype(int), 0, len(f0) - 1)] > 0
+    if v.sum() < 10:
+        return None
+    lo = P[(f > 80) & (f < 1000)][:, v].sum(0); hi = P[(f >= 1000) & (f < 4000)][:, v].sum(0)
+    e = 10 * np.log10(P[:, v].sum(0) + 1e-12)
+    return dict(bright=float(10 * np.log10(np.median(hi / np.maximum(lo, 1e-12)))), dyn=float(np.std(e)))
+
+
+def brightness_per_c1():
+    """How much one unit of c1 changes the brightness measure (dB), from the warped-cosine basis."""
+    B = wa._mcep_basis(wa.FFT // 2 + 1)
+    f = np.linspace(0, wa.RATE / 2, wa.FFT // 2 + 1)
+    return float(10 / np.log(10) * (B[(f >= 1000) & (f < 4000), 1].mean() - B[(f > 80) & (f < 1000), 1].mean()))
+
+
+def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, passes=3, per_genre_plain=12, root=None):
     """Fit the delivery by synthesis: render sample training lines, compare each genre with the
     speaker's takes, and set that genre's speed, pitch, range and pauses (and, from the plain
     reads, the register, shape gain, pitch limit, voicing threshold and reference rate) so the
     synthesis matches. Each genre's numbers are shrunk toward the plain reading by how many of its
     lines there are. Returns (fit, report)."""
     fit = dict(fit)
+    fit['shape'] = [1.0 if fit.get('tune') else 1.6, 7.0, 0.5]      # a learned contour starts at its own size
     # only genres with takes get a fitted delivery; the rest keep the station's hand-set style
     fit['styles'] = {g: list(NEUTRAL_STYLE) for g in sorted({GAME_GENRE[l['genre']] for l in lines if l['genre'] in GAME_GENRE})}
-    fit.setdefault('shape', [1.6, 7.0, 0.5])
     plain = [l for l in lines if l['genre'] not in GAME_GENRE][:per_genre_plain]
     sample = plain + [l for l in lines if l['genre'] in GAME_GENRE]
     rec = {}
@@ -457,6 +479,15 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
         if d:
             rec[l['id']] = d
     sample = [l for l in sample if l['id'] in rec]
+    # brightness and level movement of the takes (vocal effort, sustain)
+    for l in sample:
+        if root:
+            sp = spectral(ev.trim(ev.load16(os.path.join(root, takes[l['id']]['file']))), aligned[l['id']][1]['f0'])
+            if sp:
+                rec[l['id']].update(sp)
+    sens = brightness_per_c1()
+    fit['tilts'] = {g: list(v) for g, v in (fit.get('tilts') or {}).items()}
+    fit['sustain'] = 9.0
     report = []
     for it in range(passes):
         v = os.path.join(work, f'calibrate-{it}.z')
@@ -466,9 +497,13 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
         got, vfrac = {}, {}
         for l in sample:
             dry, _, ph = syn[l['id']]
-            an = wa.analyse(ev.load16(dry))
+            x = ev.load16(dry)
+            an = wa.analyse(x)
             d = delivery(ph, an['f0'], dur_of=lambda p: p['dur'])
             if d:
+                sp = spectral(x, an['f0'])
+                if sp:
+                    d.update(sp)
                 got[l['id']] = d
             vp = os.path.join(out, f"{l['id']}-voicing.txt")
             if os.path.exists(vp):
@@ -482,12 +517,25 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
             r = {k: float(np.median([rec[i][k] for i in ids])) for k in ('rate', 'med', 'spread', 'voiced')}
             y = {k: float(np.median([got[i][k] for i in ids])) for k in ('rate', 'med', 'spread', 'voiced')}
             r['pause'] = float(np.mean([rec[i]['pause'] for i in ids])); y['pause'] = float(np.mean([got[i]['pause'] for i in ids]))
+            both = [i for i in ids if 'bright' in rec[i] and 'bright' in got[i]]
+            if both:
+                for k in ('bright', 'dyn'):
+                    r[k] = float(np.median([rec[i][k] for i in both])); y[k] = float(np.median([got[i][k] for i in both]))
             step[g] = dict(n=len(ids), rec=r, syn=y)
+            # brightness: the speaker's vocal effort, through c1 (plain reading under 'plain')
+            if 'bright' in r and abs(sens) > 1e-6:
+                key = 'plain' if g == 'plain' else g
+                v = fit['tilts'].setdefault(key, [0.0] * 25)
+                w = 1.0 if g == 'plain' else len(ids) / (len(ids) + 1.0)
+                v[1] = round(float(np.clip(v[1] + w * (r['bright'] - y['bright']) / sens, -1.5, 1.5)), 4)
+            if g == 'plain' and 'dyn' in r:
+                # sustain: a voiced frame no further below the vowels than the speaker's level movement allows
+                fit['sustain'] = round(float(np.clip(fit['sustain'] - (y['dyn'] - r['dyn']) / 4.343 * 1.5, 1.5, 9.0)), 3)
             if g == 'plain':
                 fit['durations'] = dict(fit['durations'], reference_rate=round(fit['durations']['reference_rate'] * float(np.clip(r['rate'] / y['rate'], 0.7, 1.4)), 3))
                 fit['f0_st'] = dict(fit.get('f0_st', {}), median=round(fit.get('f0_st', {}).get('median', 7.0) + float(np.clip(r['med'] - y['med'], -4, 4)), 2))
                 gain, lim, thr = fit['shape']
-                gain = float(np.clip(gain * np.clip(r['spread'] / max(0.5, y['spread']), 0.6, 1.8), 0.8, 4.0))
+                gain = float(np.clip(gain * np.clip(r['spread'] / max(0.5, y['spread']), 0.6, 1.8), 0.6, 4.0))
                 lim = float(np.clip(max(lim, 0.6 * r['spread'] + 2.0), 5.0, 14.0))
                 vals = np.concatenate([vfrac[i] for i in ids if i in vfrac]) if any(i in vfrac for i in ids) else np.array([])
                 vals = vals[vals > 0.02]
@@ -505,7 +553,7 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
                 speed, pitch, rng, pz = fit['styles'][g]
                 full = [speed * r['rate'] / y['rate'], pitch + (r['med'] - y['med']),
                         rng * r['spread'] / max(0.5, y['spread']), pz * (r['pause'] + 0.05) / (y['pause'] + 0.05)]
-                w = len(ids) / (len(ids) + 1.0)
+                w = len(ids) / (len(ids) + 0.5)
                 speed, pitch, rng, pz = full[0] ** w, w * full[1], full[2] ** w, full[3] ** w
                 fit['styles'][g] = [round(float(np.clip(speed, 0.6, 1.8)), 3), round(float(np.clip(pitch, -6, 14)), 2),
                                     round(float(np.clip(rng, 0.5, 2.5)), 3), round(float(np.clip(pz, 0.3, 2.5)), 3)]
@@ -758,6 +806,14 @@ def main():
             user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids)
             adapted, phones_seen = adapt_units(narr['units'], user, M)
             lex_n, own_words, rules = speaker_lex(lex, subset)
+            # sentence intonation, the energy envelope and each genre's vocal effort, learned from the takes
+            items = [(l, al['phones'], an) for l, al, an in subset if l['id'] not in val_ids]
+            import phone_align as pa_
+            fit['tune'] = intonation.fit(items, a.repo, pa_.number_words, pack.PHONES)
+            fit['tilts'] = intonation.genre_tilts(items)
+            if fit['tune']:
+                notes = notes + [f"intonation and energy learned from {fit['tune']['syllables']} syllables of your takes"
+                                 + (f"; vocal effort of {', '.join(sorted(fit['tilts']))} from your takes of them" if fit['tilts'] else '')]
             notes = notes + [f'pronunciations: {own_words} words as you say them' + (', and for other words ' + ', '.join(f'{k} as {v}' for k, v in rules.items()) if rules else '')
                              + (', room noise taken off your takes' if ROOM is not None else '')]
             likeness = {}
@@ -765,7 +821,7 @@ def main():
                 if chosen is None:        # before any of the speaker's prosody: the prior's, at the speaker's pitch
                     chosen = ('starting prosody at your pitch', dict(prior_fit, f0_st=fit.get('f0_st', prior_fit['f0_st'])))
                 cands = [(f'yours from {n} lines', fit),
-                         (f'yours from {n} lines, intonation as before', dict(fit, superposition=chosen[1]['superposition'])),
+                         (f'yours from {n} lines, intonation as before', dict(fit, superposition=chosen[1]['superposition'], tune=chosen[1].get('tune'))),
                          (f'as before ({chosen[0]})', chosen[1])]
 
                 def vscore(label, f, n=n, adapted=adapted):
@@ -785,11 +841,12 @@ def main():
                                  + ', '.join(f'{k} {v:.0%} / {likeness.get(k, float("nan")):.2f}' for k, v in accs.items()) + ')']
             # the delivery, fitted by synthesis against the speaker's takes of each genre
             prog.set('fit', f'Calibrating the delivery of the {n}-line voice against your takes', 38 + 55 * (i + 0.2) / len(sizes))
-            fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work)
+            fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
             last = cal[-1]
             notes = notes + ['delivery fitted to your takes: ' + '; '.join(
                 f"{g} {v[0]:.2f}x tempo, {v[1]:+.1f} st, range {v[2]:.2f}, pauses {v[3]:.2f}" for g, v in sorted(fit['styles'].items()) if g in last)
-                + f"; register {100 * 2 ** (fit['f0_st']['median'] / 12):.0f} Hz, shape gain {fit['shape'][0]:.2f}, pitch limit {fit['shape'][1]:.1f} st, voicing above {fit['shape'][2]:.2f}"]
+                + f"; register {100 * 2 ** (fit['f0_st']['median'] / 12):.0f} Hz, shape gain {fit['shape'][0]:.2f}, pitch limit {fit['shape'][1]:.1f} st, voicing above {fit['shape'][2]:.2f}"
+                + f", sustain {fit['sustain']:.1f}, brightness " + ', '.join(f"{g or 'plain'} {v[1]:+.2f}" for g, v in sorted(fit['tilts'].items()))]
             calibration_log.append(dict(lines=n, styles=fit['styles'], shape=fit['shape'], passes=cal))
             blended, own = blend_units(adapted, user)
             kinds = [('adapt', adapted, f'starting voice adapted to you ({phones_seen} phones measured)'),

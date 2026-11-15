@@ -171,6 +171,10 @@ voice_tokens = (text: str) -> str[]:
         else:
             if c == c',' or c == c'.' or c == c';' or c == c':' or c == c'!' or c == c'?':
                 out.push(byte_str(c))
+            # an ellipsis or a dash (UTF-8 E2 80 A6 / 94 / 93) is a break, read as a pause
+            else if c == u8(0xE2) and i+2 < n and text[i+1] == u8(0x80) and (text[i+2] == u8(0xA6) or text[i+2] == u8(0x94) or text[i+2] == u8(0x93)):
+                out.push(";")
+                i += 2
             i += 1
     out
 
@@ -342,6 +346,7 @@ struct VoicePhone:
     word = -1
     word_start = false
     word_end = false
+    tone = 0                          # on pauses, what ends the phrase: 1 full stop, 2 question, 3 exclamation, 4 comma, 5 other break, 6 breath
 
 struct VoicePlan:
     phones: VoicePhone[]
@@ -371,11 +376,12 @@ voice_phones = (bank: VoiceBank, text: str, style: VoiceStyle) -> VoicePhone[]:
         if not voice_is_letter(c):
             if out[out.len()-1].phone == VOICE_PAU: continue
             stop = c == c'.' or c == c'!' or c == c'?'
-            out.push(VoicePhone(VOICE_PAU,0,false,phrase,if stop: 2 else: 1,(if stop: m.pause_stop else: m.pause_comma)*pause_scale))
+            tone = if c == c'.': 1 else: if c == c'?': 2 else: if c == c'!': 3 else: if c == c',': 4 else: 5
+            out.push(VoicePhone(VOICE_PAU,0,false,phrase,if stop: 2 else: 1,(if stop: m.pause_stop else: m.pause_comma)*pause_scale,tone=tone))
             phrase += 1; since_break = 0
             continue
         if since_break >= 7 and tok in VOICE_BREATH_BEFORE and out[out.len()-1].phone != VOICE_PAU:
-            out.push(VoicePhone(VOICE_PAU,0,false,phrase,3,m.pause_breath*pause_scale))
+            out.push(VoicePhone(VOICE_PAU,0,false,phrase,3,m.pause_breath*pause_scale,tone=6))
             phrase += 1; since_break = 0
         content = not (tok in VOICE_FUNCTION)
         codes = if not content and tok in VOICE_WEAK: voice_phone_codes(bank,VOICE_WEAK[tok]) else: voice_pronounce(bank,tok)
@@ -389,7 +395,7 @@ voice_phones = (bank: VoiceBank, text: str, style: VoiceStyle) -> VoicePhone[]:
             out[first].word_start = true
             out[out.len()-1].word_end = true
         word += 1; since_break += 1
-    if out[out.len()-1].phone != VOICE_PAU: out.push(VoicePhone(VOICE_PAU,0,false,phrase,2,m.pause_stop*pause_scale))
+    if out[out.len()-1].phone != VOICE_PAU: out.push(VoicePhone(VOICE_PAU,0,false,phrase,2,m.pause_stop*pause_scale,tone=1))
     voice_phone_durations(bank,out,speed)
     t = 0.0
     loop mut p in out:
@@ -583,6 +589,152 @@ voice_random = (state: mut u64) -> f64:
 # stressed content-word vowel an accent shape aligned to its onset (first accent, downstepped
 # middle ones, the nuclear accent and its fall); microprosody inside voiced obstruents and at
 # vowel onsets after obstruents. Accent timing shrinks with the tempo (square root).
+# ---------------------------------------------------------------- learned intonation and energy
+# Each syllable (vowel) of a phrase, with what tools/voice_world/intonation.py computes for it.
+struct VoiceSyllable:
+    phone = 0                         # index into plan.phones
+    k = 0                             # syllable of its phrase
+    n = 0                             # syllables in the phrase
+    tone = 1                          # what ends the phrase (VoicePhone.tone)
+    phrase_in_sentence = 0
+    sentence = 0
+    accented = false                  # primary stress of a content word
+    secondary = false
+    first = false                     # the phrase's first accent
+    nuclear = false                   # its last
+    before = false                    # before the first accent
+    after = false                     # after the last
+
+VOICE_GENRES = ["","news","war","race","advert","weather"]
+
+voice_syllables = (ps: VoicePhone[]) -> VoiceSyllable[]:
+    out: VoiceSyllable[]
+    sentence = 0; in_sentence = 0
+    i = 0
+    loop i < ps.len():
+        if ps[i].phone == VOICE_PAU:
+            i += 1
+            continue
+        a = i
+        loop i < ps.len() and ps[i].phone != VOICE_PAU: i += 1
+        tone = if i < ps.len() and ps[i].tone > 0: ps[i].tone else: 1
+        idx: int[]
+        loop k in a..i:
+            if voice_is_vowel_phone(ps[k].phone): idx.push(k)
+        acc: int[]
+        loop q in 0..idx.len():
+            if ps[idx[q]].content and ps[idx[q]].stress == 1: acc.push(q)
+        has = acc.len() > 0
+        loop q in 0..idx.len():
+            p = ps[idx[q]]
+            out.push(VoiceSyllable(phone=idx[q],k=q,n=idx.len(),tone=tone,phrase_in_sentence=in_sentence,sentence=sentence,
+                accented=p.content and p.stress == 1,secondary=p.content and p.stress == 2,
+                first=has and q == acc[0],nuclear=has and q == acc[acc.len()-1],before=has and q < acc[0],after=has and q > acc[acc.len()-1]))
+        if tone == 1 or tone == 2 or tone == 3:
+            sentence += 1; in_sentence = 0
+        else: in_sentence += 1
+    out
+
+voice_flag = (b: bool) -> f64: if b: 1.0 else: 0.0
+
+voice_syllable_features = (s: VoiceSyllable, genre: str) -> f64[]:
+    acc = voice_flag(s.accented)
+    t = (f64(s.k)+0.5)/f64(max(1,s.n))
+    last = voice_flag(s.k == s.n-1)
+    nuc = voice_flag(s.nuclear)
+    f = [1.0,acc,voice_flag(s.secondary),acc*voice_flag(s.first),acc*nuc,t,voice_flag(s.k == 0),last,voice_flag(s.k == s.n-2)]
+    loop tone in 1..7: f.push(if s.tone == tone: last else: 0.0)
+    loop tone in 1..7: f.push(if s.tone == tone: nuc else: 0.0)
+    f.push(voice_flag(s.phrase_in_sentence >= 1)); f.push(voice_flag(s.sentence >= 1))
+    loop g in VOICE_GENRES:
+        on = voice_flag(genre == g)
+        f.push(on*acc); f.push(on*t); f.push(on*last)
+    f.push(voice_flag(s.after)); f.push(voice_flag(s.before))
+    f
+
+voice_dot = (w: f64[], f: f64[]) -> f64:
+    acc = 0.0
+    loop q in 0..min(w.len(),f.len()): acc += w[q]*f[q]
+    acc
+
+# The learned contour (st re the line) at every frame: each vowel at its predicted level plus its
+# slope about its middle; between vowels a cosine join (intonation.render).
+voice_learned_contour = (bank: VoiceBank, plan: VoicePlan, style: VoiceStyle) -> f64[]:
+    m = bank.model
+    n = plan.count
+    out = fill(0.0,n)
+    sy = voice_syllables(plan.phones)
+    if sy.len() == 0: return out
+    lv: f64[]; sl: f64[]; a: f64[]; b: f64[]
+    loop s in sy:
+        f = voice_syllable_features(s,style.genre)
+        lv.push(voice_dot(m.tune_pitch,f)); sl.push(clamp(voice_dot(m.tune_slope,f),-60.0,60.0))
+        p = plan.phones[s.phone]
+        a.push(p.start); b.push(p.start+p.duration)
+    # centred on the line's median syllable: the register is calibrated on its own, and the gain
+    # and range must scale only the movement (an offset scaled with them pinned the pitch high)
+    mid_level = voice_median(lv)
+    loop mut x in lv: x -= mid_level
+    at = (i: int, t: f64) -> f64: lv[i]+sl[i]*clamp(t-0.5*(a[i]+b[i]),-0.5*(b[i]-a[i]),0.5*(b[i]-a[i]))
+    k = 0
+    loop j in 0..n:
+        t = f64(j)*VOICE_FRAME
+        loop k+1 < sy.len() and t > b[k]: k += 1
+        if (t >= a[k] and t <= b[k]) or (k == 0 and t < a[k]) or (k == sy.len()-1 and t > b[k]): out[j] = at(k,t)
+        else:
+            u = clamp((t-b[k-1])/max(0.001,a[k]-b[k-1]),0.0,1.0)
+            w = 0.5-0.5*cos(3.141592653589793*u)
+            out[j] = (1.0-w)*at(k-1,b[k-1])+w*at(k,a[k])
+    out
+
+voice_median = (xs: f64[]) -> f64:
+    if xs.len() == 0: return 0.0
+    v = xs
+    v.sort()
+    v[v.len()/2]
+
+# The learned energy envelope: each vowel's level (re the line, after its intrinsic level) moved to
+# the predicted one, the change joined linearly between vowel middles and added to every frame.
+const VOICE_ENERGY_LIMIT = 1.2       # log power, about 5 dB either way
+voice_energy = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle):
+    m = bank.model
+    if m.tune_energy.len() != VOICE_TUNE_FEATURES: return
+    sy = voice_syllables(plan.phones)
+    if sy.len() == 0: return
+    w = bank.width
+    n = plan.count
+    want: f64[]; have: f64[]; mid: f64[]
+    loop s in sy:
+        p = plan.phones[s.phone]
+        want.push(voice_dot(m.tune_energy,voice_syllable_features(s,style.genre))+(if p.phone < m.tune_intrinsic.len(): m.tune_intrinsic[p.phone] else: 0.0))
+        j0 = clamp(int(p.start/VOICE_FRAME),0,max(0,n-1)); j1 = clamp(int((p.start+p.duration)/VOICE_FRAME),j0+1,n)
+        acc = 0.0
+        loop j in j0..j1: acc += f64(plan.frames[j*w])
+        have.push(acc/f64(max(1,j1-j0)))
+        mid.push(p.start+0.5*p.duration)
+    wm = voice_median(want); hm = voice_median(have)
+    gain = [loop i in 0..sy.len(): clamp((want[i]-wm)-(have[i]-hm),-VOICE_ENERGY_LIMIT,VOICE_ENERGY_LIMIT)]
+    k = 0
+    loop j in 0..n:
+        t = f64(j)*VOICE_FRAME
+        loop k+1 < mid.len() and t > mid[k+1]: k += 1
+        g = if t <= mid[0]: gain[0] else: if k+1 >= mid.len(): gain[mid.len()-1] else: gain[k]+(gain[k+1]-gain[k])*clamp((t-mid[k])/max(0.001,mid[k+1]-mid[k]),0.0,1.0)
+        plan.frames[j*w] += f32(g)
+    # sustain: voiced frames no further than m.sustain below the line's vowel level
+    if m.sustain < 8.9:
+        floor = hm-m.sustain
+        loop j in 0..n:
+            v = f64(plan.frames[j*w+w-1])
+            if v > 0.5 and f64(plan.frames[j*w]) < floor: plan.frames[j*w] = f32(floor*v+f64(plan.frames[j*w])*(1.0-v))
+
+# The genre's vocal effort as the speaker's own spectral change, on voiced frames.
+voice_genre_tilt = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle):
+    if let v = bank.model.tilts.get(if style.genre == "": "plain" else: style.genre):
+        w = bank.width
+        loop j in 0..plan.count:
+            voiced = f64(plan.frames[j*w+w-1])
+            loop c in 1..min(v.len(),bank.m): plan.frames[j*w+c] += f32(voiced*v[c])
+
 voice_pitch = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle, seed: int):
     m = bank.model
     n = plan.count
@@ -593,8 +745,13 @@ voice_pitch = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle, seed: in
     squeeze = sqrt(clamp(style.speed,0.5,2.0))
     base = m.level_st+style.pitch
     levels = fill(base,n)
+    # a learned contour where the data has one; otherwise the superposition model below
+    learned = m.tune_pitch.len() == VOICE_TUNE_FEATURES and m.tune_slope.len() == VOICE_TUNE_FEATURES
+    if learned:
+        contour = voice_learned_contour(bank,plan,style)
+        loop j in 0..n: st[j] = base+style.range*contour[j]
     sentence_index = 0
-    i = 0
+    i = if learned: ps.len() else: 0
     loop i < ps.len():
         if ps[i].phone == VOICE_PAU:
             i += 1
@@ -666,9 +823,10 @@ voice_fitted_style = (bank: VoiceBank, style: VoiceStyle) -> VoiceStyle:
             out.speed = v[0]; out.pitch = v[1]; out.range = v[2]; out.pauses = v[3]
     out
 
-# A word starting with a stressed vowel after a word ending in a stop or affricate: a short break
-# (the stop's release, then the vowel's own onset), not a glide straight into the vowel.
-const VOICE_JUNCTURE_DROP = 1.6      # log amplitude, about 14 dB
+# A word starting with a stressed vowel after a word ending in a stop or affricate: a softer onset
+# (the stop's release, then the vowel's own start), not a glide straight into the vowel. A full
+# unvoiced break was heard as unnatural, so this stays voiced and shallow.
+const VOICE_JUNCTURE_DROP = 1.0      # log power, about 4 dB: a soft onset, still voiced
 voice_junctures = (bank: VoiceBank, plan: mut VoicePlan):
     w = bank.width
     n = plan.count
@@ -676,15 +834,16 @@ voice_junctures = (bank: VoiceBank, plan: mut VoicePlan):
     loop k in 1..ps.len():
         p = ps[k]; q = ps[k-1]
         if not (p.word_start and p.content and p.stress == 1 and voice_is_vowel_phone(p.phone) and q.phone in VOICE_STOP_AFFRICATE): continue
-        j0 = max(0,int((p.start-0.012)/VOICE_FRAME)); j1 = min(n,int((p.start+0.022)/VOICE_FRAME)+1)
+        j0 = max(0,int((p.start-0.010)/VOICE_FRAME)); j1 = min(n,int((p.start+0.015)/VOICE_FRAME)+1)
         loop j in j0..j1:
             plan.frames[j*w] -= f32(VOICE_JUNCTURE_DROP)
-            plan.frames[j*w+w-1] = f32(0)
 
 voice_plan = (bank: VoiceBank, text: str, style0: VoiceStyle = VoiceStyle(), seed: int = 0) -> VoicePlan:
     style = voice_fitted_style(bank,style0)
     plan = VoicePlan(phones=voice_phones(bank,text,style),tilt=style.tilt,breath=style.breath)
     voice_frames(bank,plan)
     voice_junctures(bank,plan)
+    voice_energy(bank,plan,style)
+    voice_genre_tilt(bank,plan,style)
     voice_pitch(bank,plan,style,seed)
     plan

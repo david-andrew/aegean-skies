@@ -279,6 +279,15 @@ def model_numbers(fit, superposition, prior=None):
     # rendering numbers and genre deliveries calibrated to a speaker (tune_round.calibrate), when present
     if fit.get('shape'):
         m['shape'] = _vector([fit], ['shape'], 3, [1.6, 7.0, 0.5])
+    tune = fit.get('tune')
+    if tune and all(len(tune.get(k) or []) == 43 for k in ('pitch', 'slope', 'energy')) and len(tune.get('intrinsic') or []) == len(PHONES):
+        for k in ('pitch', 'slope', 'energy', 'intrinsic'):
+            m['tune_' + k] = [float(x) for x in tune[k]]
+    if _num(fit.get('sustain')) is not None:
+        m['sustain'] = [float(fit['sustain'])]
+    for g, v in sorted((fit.get('tilts') or {}).items()):
+        if v and all(_num(x) is not None for x in v):
+            m['tilt_' + g] = [float(x) for x in v]
     for g, v in sorted((fit.get('styles') or {}).items()):
         if v and len(v) == 4 and all(_num(x) is not None for x in v):
             m['style_' + g] = [float(x) for x in v]

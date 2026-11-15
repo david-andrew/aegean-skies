@@ -213,5 +213,23 @@ class SpeakerLexicon(unittest.TestCase):
         self.assertEqual(lex['father'], ['F', 'AO1', 'DH', 'ER0'])  # applied to a word not said
 
 
+class Intonation2(unittest.TestCase):
+    def test_breaks_tones_and_features_match_the_game(self):
+        import intonation as it, phone_align as pa
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        fn, br = it.game_lists(repo)
+        w = it.words_and_breaks("The crew? Off… safe. And the harbor and the boats and the men and the guns", pa.number_words, fn, br)
+        self.assertEqual([x[2] for x in w[:4]], [0, 2, 5, 1])
+        self.assertIn(it.BREATH, [x[2] for x in w])                 # a long run breathes before "and"
+        self.assertEqual(w[-1][2], it.FINAL)
+        ph = [dict(p=p, stress=1 if p == 'UW' else 0, wi=i, start=0.1 * k, end=0.1 * k + 0.08)
+              for k, (i, p) in enumerate([(0, 'AH'), (1, 'UW'), (2, 'AO'), (3, 'EY')])]
+        sy = it.syllables(w, ph)
+        self.assertEqual([s['tone'] for s in sy], [2, 2, 5, 1])
+        self.assertEqual([s['sentence'] for s in sy], [0, 0, 1, 1])
+        self.assertTrue(sy[1]['nuclear'] and sy[1]['first'])
+        self.assertEqual(len(it.features(sy[0], 'war')), it.NF)
+
+
 if __name__ == '__main__':
     unittest.main()
