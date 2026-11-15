@@ -10,21 +10,46 @@ import 'living_conditions.jo' as weather
 const CLOUD_CELL = 6500.0
 const CLOUD_RANGE = 150000.0
 const CLOUD_LOCAL_RANGE = 70000.0
-const CLOUD_BANK_CELL = 26000.0
-const CLOUD_BANK_CHANCE = 0.22
-cloud_bank_x = -999999
-cloud_bank_z = -999999
-cloud_bank_cache: CloudVolume[]
 cloud_field_x = -999999
 cloud_field_z = -999999
 cloud_field_cache: CloudVolume[]
 
-# A finite multiplicative cascade, with equal-area population per size octave.
-# Centres and occupancy share coarse weather structure rather than one grid of
-# similarly sized puffs. Every octave is deterministic in world space.
+# Three size octaves of persistent world cells. A cell places a small group
+# (a clump of fair-weather cells, a cloud with satellites, a street) whose
+# members share the air mass's condensation level. Occupancy follows a coarse
+# clumping cascade and wind-aligned streets, so clouds gather in clusters and
+# rows with clear lanes between, as a cumulus field seen from above.
 cloud_scale = (level: int) -> f64: 1625.0*pow(4.0,f64(level))
 cloud_scale_range = (level: int) -> f64: if level == 0: 16000.0 else: if level == 1: CLOUD_LOCAL_RANGE else: CLOUD_RANGE
-cloud_octave = (x: int,z: int,level: int) -> CloudVolume?:
+
+# Shape codes: 0 small/flat forms, 1 heaped, 2 towers, 3 masses (5 anvil).
+cloud_shape_code = (stamp: int) -> f32:
+    kind = cloud_stamp_kind(stamp)
+    if kind == CLOUD_CONGESTUS or kind == CLOUD_TWIN: return 2.0
+    if kind == CLOUD_MASS: return 3.0
+    if kind == CLOUD_ANVIL: return 5.0
+    if stamp >= 8: 1.0 else: 0.0
+
+# Uniform scale from the form's own proportions; only the depth varies a little.
+cloud_extent = (stamp: int, half_width: f64, depth: f64 = 1.0) -> vec3:
+    a = cloud_stamp_aspect(stamp)
+    vec3(f32(half_width),f32(half_width*f64(a.y)),f32(half_width*f64(a.z)*depth))
+
+cloud_place = (r: mut Rng, x: f64, z: f64, half_width: f64, stamp: int, tone: f64, heading: f64, alt: int = -1) -> CloudVolume:
+    extent = cloud_extent(stamp,half_width,0.9+r.next_float()*0.2)
+    base = 650.0+noise(x/60000.0,z/60000.0)*300.0
+    mirror: f32 = if r.next_float() < 0.5: -1.0 else: 1.0
+    CloudVolume(vec3(f32(x),f32(base+f64(extent.y)*CLOUD_BASE),f32(z)),extent,cloud_shape_code(stamp),f32(heading),f32(tone),stamp=f32(stamp),mirror=mirror,alt=f32(alt))
+
+cloud_pick = (r: mut Rng, kind: int, group_lo: int, group_hi: int) -> int:
+    stamps = cloud_stamps_of(kind,group_lo,group_hi)
+    stamps[r.next_int(0,stamps.len())]
+
+# Small sizes are common and large ones rare (a power law within each octave).
+cloud_size = (r: mut Rng, lo: f64, hi: f64) -> f64: lo*pow(hi/lo,pow(r.next_float(),1.7))
+
+cloud_octave_group = (x: int,z: int,level: int) -> CloudVolume[]:
+    result: CloudVolume[]
     cell = cloud_scale(level)
     r = rng(701+x*73856093+z*19349663+level*83492791)
     cx = (f64(x)+0.5+(r.next_float()-0.5)*0.78)*cell
@@ -33,17 +58,67 @@ cloud_octave = (x: int,z: int,level: int) -> CloudVolume?:
     loop octave in 0..4:
         scale = 104000.0/pow(2.0,f64(octave))
         mass *= 0.55+noise(cx/scale+31.0,cz/scale-19.0)*0.9
-    if r.next_float() > min(0.65,0.30*mass): return none
-    width = cell*0.16*pow(2.7,r.next_float())
-    depth = width*(0.65+r.next_float()*0.35)
-    # The largest octave usually spreads as banks, but carries occasional deep
-    # connected towers too. No arbitrary visibility-dependent reseeding.
-    tower = level < 2 or r.next_float() < 0.24
-    height = if tower: min(6500.0,width*(0.8+r.next_float()*1.8)) else: 550.0+r.next_float()*1000.0
-    base = 650.0+noise(cx/60000.0,cz/60000.0)*300.0
-    CloudVolume(vec3(f32(cx),f32(base+height*CLOUD_BASE),f32(cz)),vec3(f32(width),f32(height),f32(depth)),f32(if tower: floor(r.next_float()*2.0) else: 2.0+floor(r.next_float()*2.0)),f32(r.next_float()*TAU),f32(r.next_float()))
+    # Streets: rows along the prevailing northerly, a few kilometres apart.
+    street = noise(cx/3400.0+7.0,cz/16000.0-3.0)
+    chance = min(0.85,(if level == 0: 0.55 else: if level == 1: 0.42 else: 0.30)*mass*(0.3+street*1.4))
+    if r.next_float() > chance: return result
+    tone = r.next_float()
+    heading = (noise(cx/40000.0,cz/40000.0)-0.5)*1.2+(r.next_float()-0.5)*0.8
+    if level == 0:
+        # A clump of one to four small fair-weather clouds.
+        n = 2+r.next_int(0,4)
+        loop k in 0..n:
+            hw = cloud_size(r,110.0,460.0)
+            px = cx+(r.next_float()-0.5)*cell*0.55; pz = cz+(r.next_float()-0.5)*cell*0.7
+            kind = if r.next_float() < 0.18: CLOUD_FRACTUS else: if r.next_float() < 0.3: CLOUD_CLUSTER else: CLOUD_HUMILIS
+            t = fract(tone+f64(k)*0.137)
+            if t > 0.55 and kind == CLOUD_HUMILIS:
+                # Some grow into small towers while the air builds them.
+                result.push(cloud_place(r,px,pz,hw*1.5,cloud_pick(r,CLOUD_CONGESTUS,4,6),t,heading,cloud_pick(r,CLOUD_HUMILIS,0,2)))
+            else:
+                result.push(cloud_place(r,px,pz,hw,cloud_pick(r,kind,0,2),t,heading+(r.next_float()-0.5)*1.5))
+    if level == 1:
+        # A main cloud with satellites. A heaped cell grows into a tower while
+        # the air builds towers (cloud_evolve), the higher its tone the sooner.
+        if tone > 0.3:
+            hw = 1100.0+r.next_float()*1200.0
+            tower = cloud_pick(r,if r.next_float() < 0.2: CLOUD_TWIN else: CLOUD_CONGESTUS,4,6)
+            heaped = cloud_pick(r,if r.next_float() < 0.3: CLOUD_CLUSTER else: CLOUD_MEDIOCRIS,2,4)
+            result.push(cloud_place(r,cx,cz,hw,tower,tone,heading,heaped))
+        else:
+            hw = cloud_size(r,500.0,1400.0)
+            result.push(cloud_place(r,cx,cz,hw,cloud_pick(r,if r.next_float() < 0.4: CLOUD_CLUSTER else: CLOUD_HUMILIS,0,2),tone,heading))
+        loop k in 0..r.next_int(0,3):
+            ang = r.next_float()*TAU; d = cell*(0.12+r.next_float()*0.15)
+            result.push(cloud_place(r,cx+cos(ang)*d,cz+sin(ang)*d,cloud_size(r,220.0,600.0),cloud_pick(r,CLOUD_HUMILIS,0,2),fract(tone*0.5+0.11*f64(k)),heading))
+    if level == 2:
+        if tone < 0.22:
+            # A large mass, or a big congestus, standing over the field.
+            hw = cloud_size(r,2600.0,4200.0)
+            stamp = if r.next_float() < 0.5: cloud_pick(r,CLOUD_MASS,6,7) else: cloud_pick(r,CLOUD_CONGESTUS,4,6)
+            if stamp < 24: hw *= 0.75
+            result.push(cloud_place(r,cx,cz,hw,stamp,tone,heading))
+        else:
+            # A street: heaped cells and clumps in a row along the heading.
+            n = 3+r.next_int(0,5)
+            along = vec2(f32(sin(heading)),f32(cos(heading)))
+            t = -f64(n)*0.5
+            loop k in 0..n:
+                hw = cloud_size(r,900.0,2600.0)
+                kind = if r.next_float() < 0.45: CLOUD_CLUSTER else: if r.next_float() < 0.5: CLOUD_MEDIOCRIS else: CLOUD_HUMILIS
+                group_lo = if kind == CLOUD_HUMILIS: 0 else: 2
+                stamp = cloud_pick(r,kind,group_lo,group_lo+2)
+                side = (r.next_float()-0.5)*hw*1.2
+                px = cx+f64(along.x)*t*2200.0+f64(along.y)*side
+                pz = cz+f64(along.y)*t*2200.0-f64(along.x)*side
+                result.push(cloud_place(r,px,pz,hw,stamp,fract(tone+f64(k)*0.071),heading+(r.next_float()-0.5)*0.6))
+                t += 0.7+r.next_float()*0.8
+    result
 
-cloud_cell = (x: int,z: int) -> CloudVolume?: cloud_octave(x,z,1)
+cloud_cell = (x: int,z: int) -> CloudVolume?:
+    group = cloud_octave_group(x,z,1)
+    if group.len() == 0: return none
+    group[0]
 cloud_level_x: int[] = [-999999,-999999,-999999]
 cloud_level_z: int[] = [-999999,-999999,-999999]
 cloud_level_cache: CloudVolume[][] = [[],[],[]]
@@ -60,16 +135,6 @@ cloud_heating = (p: vec2) -> f32:
             heat = max(heat,f32(smoothstep(0.0,120.0,new_land_base(f64(q.x),f64(q.y)).0)))
     heat
 
-cloud_bank = (x: int,z: int,drift: vec2 = vec2(0,0), heating: bool = true) -> CloudVolume?:
-    r = rng(1701+x*73856093+z*19349663)
-    if r.next_float() > CLOUD_BANK_CHANCE: return none
-    p = vec2(f32((f64(x)+0.5)*CLOUD_BANK_CELL),f32((f64(z)+0.5)*CLOUD_BANK_CELL))
-    heat = if heating: cloud_heating(p+drift) else: 0.0
-    tone = f32(r.next_float())
-    height = 700.0+tone*900.0
-    extent = vec3(f32(6500.0+r.next_float()*2200.0),height,f32(3900.0+r.next_float()*1800.0))
-    CloudVolume(vec3(p.x,950+height*CLOUD_BASE,p.y),extent,if tone < 0.45: 2.0 else: 3.0, f32(r.next_float()*TAU),tone,thermal=heat)
-
 cloud_evolve = (source: CloudVolume,air: weather.WeatherAir,seconds: f64) -> CloudVolume:
     v = source
     phase = f32(fract(seconds/(1000.0+f64(v.tone)*800.0)+f64(v.tone)))
@@ -79,16 +144,23 @@ cloud_evolve = (source: CloudVolume,air: weather.WeatherAir,seconds: f64) -> Clo
     heating = f32(smoothstep(9.0,15.0,weather_hour_now)*(1.0-smoothstep(17.0,20.0,weather_hour_now)))*v.thermal
     amount = air.cloud+heating*0.22
     v.weather.x = clamp((amount-v.tone*0.42)*4.0,0.0,1.0)*alive*(1.0-smoothstep(0.2,0.75,air.deck))
-    tall = smoothstep(0.55,0.95,v.tone)*max(air.towers,heating*0.65)
-    v.extent.xz *= 0.65+rise*0.3+spread*0.12
-    v.extent.y *= (0.15+rise*0.85)*(1.0-spread*0.62)*(0.95+tall*1.45)
-    # Strong heating grows a cauliflower mass, not a vertically stretched needle.
-    v.extent.y = min(v.extent.y,6500.0)
-    v.extent.x = max(v.extent.x,v.extent.y*0.48)
-    v.extent.z = max(v.extent.z,v.extent.y*0.38)
+    tall = max(air.towers,heating*0.45)*(0.35+0.65*smoothstep(0.3,0.9,v.tone))
+    # A cloud swells and wears away at its own proportions; nothing stretches.
+    erosion = (1.0-rise)*0.075+spread*0.10
+    if v.alt >= 0.0:
+        # A tower stands while the air builds towers; otherwise its cell holds a
+        # heaped cloud. One wears away entirely before the other grows.
+        if tall < 0.3:
+            depth = v.extent.z/max(v.extent.x*cloud_stamp_aspect(int(v.stamp)).z,1.0)
+            v.stamp = v.alt; v.shape = cloud_shape_code(int(v.alt))
+            v.extent = cloud_extent(int(v.alt),f64(v.extent.x)*0.62,f64(depth))
+            erosion += smoothstep(0.2,0.3,tall)*0.3
+        else:
+            erosion += (1.0-smoothstep(0.3,0.42,tall))*0.3
+    v.extent *= 0.72+rise*0.24+spread*0.1
     v.center.y = air.ceiling+v.extent.y*f32(CLOUD_BASE)
     v.weather.y = air.storm
-    v.growth = vec4((1.0-rise)*0.075+spread*0.10,f32(seconds*0.005)+v.tone*6.28,0.018*rise,spread*0.035)
+    v.growth = vec4(erosion,f32(seconds*0.005)+v.tone*6.28,0.018*rise,spread*0.035)
     v
 
 world_clouds = (cam: vec3, movement: WorldPoint) -> CloudVolume[]:
@@ -103,7 +175,7 @@ world_clouds = (cam: vec3, movement: WorldPoint) -> CloudVolume[]:
             radius = int(ceil(reach/cell))+1
             loop iz in z-radius..z+radius+1:
                 loop ix in x-radius..x+radius+1:
-                    if let source = cloud_octave(ix,iz,level):
+                    loop source in cloud_octave_group(ix,iz,level):
                         v = source; v.thermal = cloud_heating(v.center.xz+drift)
                         cache.push(v)
             cloud_level_cache[level] = cache
@@ -132,7 +204,9 @@ world_clouds = (cam: vec3, movement: WorldPoint) -> CloudVolume[]:
                 result.push(CloudVolume(vec3(center.x,base+250.0,center.y),vec3(radius*cell.aspect.x/0.83,500,radius*cell.aspect.y/0.64),4,weather=vec2(life,0.4),precise=point))
             if cell.kind == .storm:
                 # A dark anvil and rising column at the saved storm center.
-                result.push(CloudVolume(vec3(center.x,3000,center.y),vec3(max(4000.0,min(radius,5500.0)),4000,max(3200.0,min(radius,4500.0))),5,weather=vec2(life,1),growth=vec4(0,f32(weather_seconds*0.004)+f32(cell.id),0.025,0.035),precise=point))
+                anvil = 24+cell.id%2
+                extent = cloud_extent(anvil,f64(max(4000.0,min(radius,5500.0))))
+                result.push(CloudVolume(vec3(center.x,800.0+extent.y*f32(CLOUD_BASE),center.y),extent,5,weather=vec2(life,1),growth=vec4(0,f32(weather_seconds*0.004)+f32(cell.id),0.025,0.035),precise=point,stamp=f32(anvil)))
             if cell.kind == .squall or cell.kind == .storm:
                 result.push(CloudVolume(vec3(center.x,base*0.35,center.y),vec3(radius*cell.aspect.x/0.83,base*0.7,radius*cell.aspect.y/0.64),6,weather=vec2(life*f32(cell.severity)/1000.0,1),precise=point))
             if cell.kind == .fog:

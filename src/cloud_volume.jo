@@ -22,6 +22,9 @@ struct CloudVolume:
     growth: vec4 = vec4(0,0,0,0)    # erosion distance, rolling phase, roll, shear
     precise:WorldPoint?=none
     thermal: f32 = 0.0             # cached land heating, CPU only
+    stamp: f32 = 0.0               # which procedural form (cloud_density.jo)
+    mirror: f32 = 1.0              # +-1: the form mirrored across its width
+    alt: f32 = -1.0                # a tower's form while the air builds none, CPU only
 
 struct VolumeVertex:
     corner: vec2
@@ -34,6 +37,8 @@ struct VolumeInstance:
     weather: vec2
     growth: vec4
     air: vec3
+    slab: vec4                      # the form's atlas slices: origin, per row, count
+    voxels: vec4                    # its voxel grid x, y, channel, mirror
 
 struct VolumeParams:
     rays: mat4
@@ -65,10 +70,12 @@ struct VolumeOut:
     weather: vec2
     growth: vec4
     air: vec3
+    slab: vec4
+    voxels: vec4
 
 volume_vs = (v: VolumeVertex, inst: VolumeInstance, u: VolumeParams) -> VolumeOut:
     ndc = mix(inst.rect.xy, inst.rect.zw, v.corner)
-    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air)
+    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air,inst.slab,inst.voxels)
 
 cloud_to_local = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x + p.z * yaw.y, p.y, -p.x * yaw.y + p.z * yaw.x)
 cloud_to_world = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x - p.z * yaw.y, p.y, p.x * yaw.y + p.z * yaw.x)
@@ -135,18 +142,35 @@ volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
             # flip there split the view from inside the deck along a stepped horizon)
             normal = normalize(vec3(-broad_field.y*21.0,clamp(p.y*10.0,-1.0,1.0),-broad_field.z*21.0))
         return vec4(normal*0.5+vec3(0.5,0.5,0.5),density)
-    field = cloud_stamp_sample(atlas,p,kind)
-    vec4(field.xyz,clamp((field.w-0.5)*14.0,0.0,1.0))
+    vec4(0.5,1,0.5,0)
 
-cloud_stamp_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
-    if max(abs(p.x),max(abs(p.y),abs(p.z))) > 1.0: return vec4(0.5,1,0.5,0)
-    stamp = if kind == 5.0: 4.0 else: kind
-    q = (p * 0.5 + vec3(0.5, 0.5, 0.5)) * f32(CLOUD_VOXELS - 1)
-    z0 = floor(q.z); z1 = min(z0 + 1.0, f32(CLOUD_VOXELS - 1))
-    slice0 = stamp*f32(CLOUD_VOXELS)+z0; slice1 = stamp*f32(CLOUD_VOXELS)+z1
-    a = vec2(slice0-floor(slice0/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice0/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
-    b = vec2(slice1-floor(slice1/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice1/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
-    mix(sample(atlas, a / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), sample(atlas, b / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), q.z - z0)
+# A form's encoded distance (.5 at the surface, larger inside). Each texel
+# holds four forms, one per channel; a form's grid has its box's aspect.
+cloud_stamp_value = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4) -> f32:
+    if max(abs(p.x),max(abs(p.y),abs(p.z))) > 1.0: return 0.0
+    q = (vec3(p.x*voxels.w,p.y,p.z)*0.5+vec3(0.5,0.5,0.5))*(vec3(voxels.x,voxels.y,slab.w)-vec3(1,1,1))
+    z0 = floor(q.z); z1 = min(z0+1.0,slab.w-1.0)
+    tile = vec2(voxels.x+2.0,voxels.y+2.0)
+    a = slab.xy+vec2(z0-floor(z0/slab.z)*slab.z,floor(z0/slab.z))*tile+q.xy+vec2(1.5,1.5)
+    b = slab.xy+vec2(z1-floor(z1/slab.z)*slab.z,floor(z1/slab.z))*tile+q.xy+vec2(1.5,1.5)
+    size = vec2(f32(CLOUD_ATLAS_W),f32(CLOUD_ATLAS_H))
+    texel = mix(sample(atlas,a/size),sample(atlas,b/size),q.z-z0)
+    if voxels.z < 0.5: return texel.x
+    if voxels.z < 1.5: return texel.y
+    if voxels.z < 2.5: return texel.z
+    texel.w
+
+# The outward gradient of the form's distance in local box coordinates, from
+# four tetrahedral taps `reach` voxels apart. A wide reach gives the lobes'
+# broad shoulders rather than every crevice (painted light, not pockmarks).
+# Divide by the extent for a world normal.
+cloud_stamp_gradient = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4, reach: f32 = 2.6) -> vec3:
+    h = vec3(reach/(voxels.x-1.0),reach/(voxels.y-1.0),reach/(slab.w-1.0))
+    a = cloud_stamp_value(atlas,p+vec3(h.x,-h.y,-h.z),slab,voxels)
+    b = cloud_stamp_value(atlas,p+vec3(-h.x,-h.y,h.z),slab,voxels)
+    c = cloud_stamp_value(atlas,p+vec3(-h.x,h.y,-h.z),slab,voxels)
+    d = cloud_stamp_value(atlas,p+vec3(h.x,h.y,h.z),slab,voxels)
+    -vec3(a-b-c+d,-a-b+c+d,-a+b-c+d)/h
 
 cloud_growth_padding = (growth: vec4) -> vec3: vec3(abs(growth.z)+abs(growth.w),0,abs(growth.z))
 
@@ -160,8 +184,8 @@ cloud_growing_point = (p: vec3, growth: vec4) -> vec3:
 # Surface values are deliberately grouped into broad painted regions, with
 # narrow transitions and gentle washes inside them. The silhouette comes from the distance field,
 # rather than an accumulation of widely spaced translucent samples.
-cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
-    normal = cloud_to_world((form.xyz*2.0-vec3(1,1,1))/i.extent,i.meta.xy)
+cloud_paint = (gradient: vec3, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
+    normal = cloud_to_world(gradient/i.extent,i.meta.xy)
     normal /= max(length(normal),0.000001)
     sun = normalize(u.sun_dir)
     facing = dot(normal,sun)
@@ -182,7 +206,7 @@ cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: Vol
     light *= 0.93+0.07*smoothstep(-0.3,0.9,facing)
     under = smoothstep(f32(-CLOUD_BASE+0.01),f32(-CLOUD_BASE+0.04),p.y)
     if u.shadows > 0.0:
-        probe = cloud_stamp_sample(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.16,i.meta.z).w
+        probe = cloud_stamp_value(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.16,i.slab,i.voxels)
         light = mix(light,shade,smoothstep(0.51,0.53,probe)*0.38)
     edge = 1.0-abs(dot(normal,ray))
     rim = smoothstep(0.80,0.96,edge)*smoothstep(0.0,0.15,facing)
@@ -254,8 +278,9 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
     if i.meta.z < 4.0 or i.meta.z == 5.0:
         # Conservative distance steps skip empty air; quantization and warped
         # ellipsoid gradients get a safety margin. Refine only the visible shell.
-        scale = min(i.extent.x,min(i.extent.y,i.extent.z))
-        ray_scale = 1.0/max(length(direction/i.extent)+leave/(f32(EARTH_RADIUS)*i.extent.y),0.000001)
+        # Distances are in units of the form's half width (uniform scale).
+        scale = i.extent.x
+        ray_scale = scale/(1.0+leave/f32(EARTH_RADIUS))
         pixel = max(fwidth(i.ndc.x),fwidth(i.ndc.y))*0.4
         t = enter
         loop k in 0..80:
@@ -263,19 +288,19 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
             world = u.cam+ray*t
             world.y += world_drop(ray.xz*t)
             p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
-            form = cloud_stamp_sample(u.atlas,p,i.meta.z)
-            d = (0.5-form.w)*0.5+i.growth.x
-            epsilon = max(0.005,t*pixel/scale*0.55)
+            d = (0.5-cloud_stamp_value(u.atlas,p,i.slab,i.voxels))/f32(CLOUD_ENCODE)+i.growth.x
+            epsilon = max(0.004,t*pixel/scale*0.55)
             if d < epsilon:
                 path = max(leave-t,0.0)
+                gradient = cloud_stamp_gradient(u.atlas,p,i.slab,i.voxels)
                 if t < 0.01 and d < 0.0:
                     # Looking outward near an exit thins continuously; inward rays
                     # see the dense interior rather than a turning sheet.
-                    normal = normalize(cloud_to_world((form.xyz*2.0-vec3(1,1,1))/i.extent,i.meta.xy))
+                    normal = normalize(cloud_to_world(gradient/i.extent,i.meta.xy))
                     outward = dot(normal,ray)
                     if outward > 0.05: path = min(path,-d*scale/outward)
                 opacity = i.weather.x*(1.0-exp(-path*0.018))
-                color = cloud_paint(form,p,world,ray,i,u)
+                color = cloud_paint(gradient,p,world,ray,i,u)
                 inside = smoothstep(0.0,0.035,-d)*step(t,0.01)
                 mist = mix(u.paint_shade,u.shade*0.7,i.weather.y)*mix(1.0,0.48,i.weather.y)
                 mist += vec3(0.7,0.78,1.0)*u.lightning*i.weather.y
@@ -510,7 +535,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         if v.shape == 5.0 and area > 0.03: weather_coverage = max(weather_coverage,0.31)
         composite_low = min(composite_low,rect.xy); composite_high = max(composite_high,rect.zw)
         air = sky_air_color(normalize(render_world(v.center,cam)-cam).y,cam.y,L.sun_dir.y,L.sky_top,L.sky_horizon,L.haze)
-        instances.push(VolumeInstance(rect, world_local(cloud_point(v),chart), v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air))
+        instances.push(VolumeInstance(rect, world_local(cloud_point(v),chart), v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air,cloud_stamp_slab(int(v.stamp)),cloud_stamp_voxels(int(v.stamp),v.mirror)))
     volume_visible = instances.len()
     set_instances(volume_instances, instances)
     rays = render_rays(vp)
