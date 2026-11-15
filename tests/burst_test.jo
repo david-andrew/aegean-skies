@@ -1,0 +1,109 @@
+use '../src/combat.jo'
+use '../src/flight.jo'
+use '../src/planes.jo'
+use '../src/tweaks.jo'
+
+# How many bursts bring an aircraft down. A shooter flies behind (or across) a target holding
+# its course, fires 1.5 s bursts with a second between them, aimed on the target (plus an aim
+# error, metres, wandering), with the period's twin guns. Both are flown straight by the test.
+struct BurstResult:
+    bursts = 0
+    hits = 0
+    down = false
+    how = ""
+
+burst_lab = (range: f64, crossing: f64, error: f64, human: bool, seed: int, kind: Craft = .gull, most: int = 12, shooter_human: bool = false) -> BurstResult:
+    k = craft_spec(kind,[])
+    speed = k.cruise_speed*0.9
+    heading = 0.0
+    target_dir = heading_vector(heading)
+    tstate = CraftState(position=vec3(0,800,0),orientation=quat_euler(0,-heading,0),velocity=target_dir*f32(speed),fuel=k.fuel_capacity,throttle=0.8)
+    # (the shooter: behind, or off to the side by the crossing angle, closing to the range)
+    away = quat_rotate(quat_euler(0,crossing,0),-target_dir)
+    sstate = CraftState(position=tstate.position+away*f32(range),orientation=quat_euler(0,-heading,0),velocity=target_dir*f32(speed),fuel=k.fuel_capacity,throttle=0.8)
+    shooter = Combatant(1,1,1,craft_spec(kind,[]),sstate,external=true,human=shooter_human)
+    target = Combatant(2,2,2,k,tstate,external=true,human=human)
+    b = start_engagement(1,seed,vec3(0,800,0),[shooter,target])
+    b.bullet_scale = 5
+    b.actors[0].gun.locked = false
+    result = BurstResult()
+    tick = 0
+    loop result.bursts < most:
+        firing = tick%150 < 90
+        if tick%150 == 0: result.bursts += 1
+        loop i in 0..2:
+            a = b.actors[i]
+            a.previous = a.state.position; a.previous_point = craft_point(a.state)
+            a.state.position += a.state.velocity*f32(COMBAT_DT); a.state.precise_ready = false
+            a.external = true
+            b.actors[i] = a
+        s = b.actors[0]; t = b.actors[1]
+        # (the shooter keeps its place relative to the target and holds its nose on the lead)
+        s.state.position = t.state.position+away*f32(range); s.state.velocity = t.state.velocity
+        wander = vec3(f32(sin(f64(tick)*0.037+f64(seed))*error),f32(cos(f64(tick)*0.029+f64(seed)*1.3)*error),0)
+        aim = intercept(t.state.position+wander-s.state.position,t.state.velocity-s.state.velocity,420.0*b.bullet_scale)
+        s.state.orientation = quat_facing(normalize(aim))
+        s.pilot.trigger = firing
+        b.actors[0] = s
+        step_battle(b,FlightEnv(ground=(x:f64,z:f64)->f64:0.0),vec3(0,800,0))
+        loop e in b.events:
+            if e.kind == .hit and e.craft == 2: result.hits += 1
+        t = b.actors[1]
+        if t.status != .flying or t.bailed:
+            result.down = true
+            result.how = if t.pilot_hit: "pilot" else: if t.state.engine_damage > 0.95: "engine" else: if t.fire > 0: "fire" else: if not t.state.damage.parts[int(PartId.tail)].attached: "tail" else: "wing"
+            break
+        tick += 1
+    result
+
+report = (label: str, rs: BurstResult[]) -> f64:
+    downs = 0; total = 0; hits = 0; first = 0
+    hows: str[]
+    loop r in rs:
+        hits += r.hits
+        if r.down:
+            downs += 1; total += r.bursts; hows.push(r.how)
+            if r.bursts == 1: first += 1
+    mean = f64(total)/max(1.0,f64(downs))
+    print("DAMAGE {label}: down {downs}/{rs.len()}, mean bursts {mean:.2}, one-burst kills {first}, hits per fight {f64(hits)/f64(rs.len()):.1}, how {hows}")
+    mean
+
+test "a few good bursts bring an aircraft down; the player takes more":
+    good: BurstResult[]
+    loop seed in 0..12: good.push(burst_lab(220.0,0.0,1.5,false,seed))
+    m = report("NPC, astern 220 m, aim 1.5 m",good)
+    assert(m >= 1.8 and m <= 4.2,"bursts to a kill {m:.2}")
+    ones = 0
+    loop r in good: if r.down and r.bursts == 1: ones += 1
+    assert(ones <= 3,"too many one-burst kills: {ones}")
+    loop r in good: assert(r.down,"every target falls within a dozen good bursts")
+    deflect: BurstResult[]
+    loop seed in 0..12: deflect.push(burst_lab(250.0,0.5,3.0,false,seed))
+    _ = report("NPC, 30 degrees off 250 m, aim 3 m",deflect)
+    beam: BurstResult[]
+    loop seed in 0..12: beam.push(burst_lab(200.0,1.5,2.0,false,seed))
+    _ = report("NPC, from the beam 200 m, aim 2 m",beam)
+    glancing: BurstResult[]
+    loop seed in 0..12: glancing.push(burst_lab(420.0,0.0,9.0,false,seed,most=4))
+    _ = report("NPC, astern 420 m, aim 9 m (glancing), 4 bursts",glancing)
+    player: BurstResult[]
+    loop seed in 0..12: player.push(burst_lab(220.0,0.0,1.5,true,seed))
+    p = report("player, astern 220 m, aim 1.5 m",player)
+    assert(p >= m*1.4 and p <= m*2.3,"the player takes {p/m:.2} times the punishment")
+
+test "the player's generous hits and aim assist land more of a burst":
+    t = Tweaks(); t.generous_hits = false; t.aim_assist = false; set_tweaks(t)
+    cases = [(220.0,0.0,3.0,"astern 220 m, aim 3 m"),(300.0,0.5,5.0,"30 degrees off 300 m, aim 5 m"),(250.0,1.5,4.0,"beam 250 m, aim 4 m")]
+    plain = 0.0; generous = 0.0; assisted = 0.0
+    loop c in cases:
+        loop mode in 0..3:
+            t = Tweaks(); t.generous_hits = mode >= 1; t.aim_assist = mode == 2; set_tweaks(t)
+            rs: BurstResult[]
+            loop seed in 0..8: rs.push(burst_lab(c.0,c.1,c.2,false,seed,shooter_human=true))
+            m = report("player shooting, {c.3}, {["plain","generous","generous + assist"][mode]}",rs)
+            if mode == 0: plain += m
+            if mode == 1: generous += m
+            if mode == 2: assisted += m
+    set_tweaks(Tweaks())
+    assert(generous < plain,"generous hits take fewer bursts ({generous:.1} against {plain:.1})")
+    assert(assisted <= generous,"the aim assist takes no more bursts ({assisted:.1} against {generous:.1})")
