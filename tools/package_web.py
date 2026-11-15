@@ -13,7 +13,8 @@ import re
 
 def package(html: Path) -> Path:
     source = html.read_text()
-    pattern = re.compile(r'^const SLOPPY_WASM = "([A-Za-z0-9+/=]+)";\n', re.MULTILINE)
+    # (`const` up to Sloppy 0.34.0, `var` from 0.34.1)
+    pattern = re.compile(r'^(?:const|var) SLOPPY_WASM = "([A-Za-z0-9+/=]+)";\n', re.MULTILINE)
     matches = list(pattern.finditer(source))
     if len(matches) != 1 or source.count('</body>') != 1:
         raise ValueError('Expected one Sloppy Wasm payload and one HTML body')
