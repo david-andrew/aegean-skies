@@ -735,7 +735,7 @@ On the rivers branch until it lands.
   but frames crosses the glass. `tests/cockpit_cabins_test.jo` casts rays from each cabin's eye:
   every direction must meet a face turned toward it or leave through a pane.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
-  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='60 55 cockpit'`.
+  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 165 cockpit'` (the speed is in world units at the 3.3 speed scale: give each type about its cruise × 3.3, or it spawns stalled).
 
 ### Cockpit lamp and luminous dials
 
