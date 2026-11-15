@@ -1,0 +1,149 @@
+# Offline listening for the canal's ground fire: no window, mixer or playback. Usage:
+#   sloppy --release tools/groundfire_audio.jo OUTPUT_DIR
+# Writes groundfire-samples.wav (each sound alone: rifle near and far, machine-gun bursts near and
+# far, bullet snaps, spouts walking up the water) and groundfire-canal-run.wav: the canal takeoff's
+# real battle from the slipway hand-over through the run and climb-out, every ground shot, close
+# pass, water strike and hit on the aircraft mixed by the game's own cue rules, as the pilot hears
+# them (engine and wind left out, so the guns can be judged).
+use '../src/world.jo'
+use '../src/world_point.jo'
+use '../src/world_towns.jo'
+use '../src/settlements.jo'
+use '../src/geography.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/combat.jo'
+use '../src/combat_sound.jo'
+use '../src/canal_geometry.jo'
+use '../src/scenarios.jo'
+use '../src/slipway.jo'
+use '../src/pilot.jo'
+import '../src/living_types.jo' as data
+
+assert(args().len()==2,"give an existing output directory")
+dir=args()[1]
+
+struct Mix:
+    left: f64[]
+    right: f64[]
+
+new_mix = (seconds: f64) -> Mix:
+    n=int(seconds*f64(MIX_RATE))
+    Mix(fill(0.0,n),fill(0.0,n))
+
+# As the game's mixer: the far side's channel is turned down by the pan, the near one left alone.
+put = (m: mut Mix, s: Sound, at: f64, level: f64, pan: f64 = 0.0, pitch: f64 = 1.0):
+    if level <= 0.0: return
+    frames = s.samples.len()/2
+    start = int(at*f64(MIX_RATE))
+    l = level*(if pan > 0: 1.0-pan else: 1.0); r = level*(if pan < 0: 1.0+pan else: 1.0)
+    count = int(f64(frames)/pitch)
+    loop i in 0..count:
+        j = start+i
+        if j < 0: continue
+        if j >= m.left.len(): break
+        x = f64(i)*pitch; k = int(x); f = x-f64(k)
+        if k+1 >= frames: break
+        m.left[j] += (f64(s.samples[k*2])*(1.0-f)+f64(s.samples[k*2+2])*f)*l
+        m.right[j] += (f64(s.samples[k*2+1])*(1.0-f)+f64(s.samples[k*2+3])*f)*r
+
+save = (m: Mix, path: str):
+    out = fill(f32(0),m.left.len()*2)
+    # (the game's soft limit above 0.75)
+    soft = (x: f64) -> f32:
+        a = abs(x)
+        y = if a <= 0.75: a else: 0.75+0.25*tanh((a-0.75)/0.25)
+        f32(if x < 0: -y else: y)
+    loop i in 0..m.left.len(): out[i*2] = soft(m.left[i]); out[i*2+1] = soft(m.right[i])
+    assert(save_wav(path,Sound(out)))
+    print("wrote {path} ({f64(m.left.len())/f64(MIX_RATE):.1} s)")
+
+audio = CombatAudio(guns=[loop i in 0..3*GUN_VARIANTS:gun_report(i/GUN_VARIANTS,i%GUN_VARIANTS)],hit=combat_wave(3),thump=combat_wave(7),whizz=near_miss_report(),splash=water_report())
+prepare_ground_audio(audio)
+r = rng(1935)
+
+# ---- the samples, each alone ----
+m = new_mix(18.0)
+at = 0.3
+loop d in [60.0,140.0]:
+    c = ground_shot_cue(false,d,0); put(m,audio.ground.reports[c.sound],at+c.delay,c.level/max(0.001,__reach_gain(d,GROUND_REACH))*0.6); at += 1.6
+loop d in [350.0,600.0]:
+    c = ground_shot_cue(false,d,1); put(m,audio.ground.reports[c.sound],at,c.level/max(0.001,__reach_gain(d,GROUND_REACH))*0.6); at += 1.8
+loop d in [120.0,500.0]:
+    loop k in 0..11:
+        c = ground_shot_cue(true,d,k); put(m,audio.ground.reports[c.sound],at+f64(k)/9.0,c.level/max(0.001,__reach_gain(d,GROUND_REACH))*0.6,0.0,0.96+0.08*r.next_float())
+    at += 2.8
+loop k in 0..6:
+    put(m,audio.ground.snaps[k%audio.ground.snaps.len()],at,0.55,if k%2==0: 0.5 else: -0.5,0.94+0.12*r.next_float()); at += 0.45
+at += 0.6
+loop k in 0..9:
+    d = 120.0-f64(k)*13.0
+    put(m,audio.ground.spouts[k%audio.ground.spouts.len()],at,spout_level(d),0.0,0.9+0.22*r.next_float()); at += 0.11
+save(m,dir+"/groundfire-samples.wav")
+
+# ---- the canal run ----
+assert(load_land(embed('../assets/terrain.bin')))
+assert(load_geography(embed('../assets/world.bin')))
+geography_enabled=true
+towns=[loop st in SETTLEMENTS:build_town(st)]
+init_world_towns(towns)
+set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+s=build_scenario("canal",towns,build_craft_models())!
+f=s.flyer;b=s.battle
+me=combat_index(b,s.world.people[s.world.player].craft)
+l=start_slip_launch(f)
+plan=canal_run_plan()
+from_tick=600;to_tick=60*44
+run=new_mix(f64(to_tick-from_tick)/60.0+1.5)
+heard: int[]
+shots=0;snaps=0;spouts=0;hits=0;cool=0.0
+loop tick in 0..to_tick:
+    clock=f64(tick)/60.0
+    previous=f.state.position
+    if l.active:_=step_slip_launch(l,f,1.0/60.0,clock)
+    else:
+        e=flight_env(f.state.time,f.state.position)
+        step(f.spec,f.state,canal_run_controls(f,plan,e),e,1.0/60.0)
+    b.actors[me].previous=previous;b.actors[me].previous_point=world_point(previous);b.actors[me].state=f.state
+    step_battle(b,flight_env(clock,f.state.position),f.state.position)
+    f.state=b.actors[me].state
+    if tick<from_tick:continue
+    now=f64(tick-from_tick)/60.0
+    ear=f.state.position
+    ahead=if length(f.state.velocity)>1: normalize(f.state.velocity) else: quat_rotate(f.state.orientation,vec3(0,0,-1))
+    right=normalize(cross(ahead,vec3(0,1,0))+vec3(0.0001,0,0))
+    panned=(p: vec3) -> f64:
+        d=p-ear
+        if length(d)<0.001: 0.0 else: f64(dot(normalize(d),right))*0.8
+    count=0
+    loop ev in b.events:
+        if ev.kind==.hit and ev.craft==b.actors[me].craft:
+            put(run,audio.hit,now,0.45);put(run,audio.thump,now,0.65);hits+=1;continue
+        distance=f64(length(ev.position-ear))
+        if count>=8 or distance>2500:continue
+        if ev.kind==.shot and ev.craft<0:
+            c=ground_shot_cue(ev.strength>=1.0,distance,r.next_int(0,GROUND_VARIANTS))
+            put(run,audio.ground.reports[c.sound],now+c.delay,c.level,panned(ev.position),0.96+0.08*r.next_float())
+            shots+=1;count+=1
+        else if ev.kind==.shot:
+            put(run,audio.guns[clamp(int(ev.strength),0,2)*GUN_VARIANTS+r.next_int(0,GUN_VARIANTS)],now,0.28*__reach_gain(distance,180.0),panned(ev.position));count+=1
+        else if ev.kind==.splash and ev.strength<0.8 and distance<SPOUT_REACH:
+            put(run,audio.ground.spouts[r.next_int(0,audio.ground.spouts.len())],now,spout_level(distance),panned(ev.position),0.9+0.22*r.next_float())
+            spouts+=1;count+=1
+    # (close passes, as combat_near_passes finds them: once per round, spaced 90 ms)
+    cool=max(0.0,cool-1.0/60.0)
+    loop sw in b.sweeps:
+        if sw.owner==b.actors[me].craft or heard.contains(sw.serial):continue
+        d=sw.end-sw.start
+        u=clamp(f64(dot(ear-sw.start,d))/max(f64(dot(d,d)),0.00001),0.0,1.0)
+        passed=sw.start+d*f32(u)
+        if length(passed-ear)>12:continue
+        heard.push(sw.serial)
+        if heard.len()>128:heard.remove_at(0)
+        if cool<=0:
+            if sw.owner<0:put(run,audio.ground.snaps[r.next_int(0,audio.ground.snaps.len())],now,0.55,panned(passed),0.94+0.12*r.next_float());snaps+=1
+            else:put(run,audio.whizz,now,0.5,0.0,0.9+0.2*r.next_float())
+            cool=0.09
+save(run,dir+"/groundfire-canal-run.wav")
+print("canal run: {shots} ground shots heard, {snaps} snaps, {spouts} spouts, {hits} hits on the aircraft")
