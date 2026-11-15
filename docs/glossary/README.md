@@ -1291,26 +1291,55 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Dock fishing
 
-- **Aliases:** fishing from the dock, the catch, the bucket.
-- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and strike
-  while it is under. Bites come livelier at dawn and dusk. A fish landed is **in the pilot's hand**,
-  at its kind's size and colours, flapping hard at first and then in fits; he walks with it. Holding
-  a fish he can't cast: it goes into his **bucket** (a zinc bucket bought for a few coins at a
-  chandler's or the town's market; it stands beside him on the dock while he fishes and holds six)
-  or back into the sea (X, an arc and a small splash); B puts it in the bucket. No card offers what wants the hand he holds it in (fishing again, a cat, hauling the line, the waters, work on the aircraft). He carries the bucket, fish and all, by its
-  handle (no running with fish in it; a crate wants both hands, so the bucket goes down first, to be
-  picked up again). The catch is **not in the living world's stock** while held: it enters it only
-  at the town's market (its daily-life market venue), sold there through the ledger (production
-  into his pocket at the market, `record_creation` and `cargo_mint`, then `trade`), or at the Hotel
-  Ancora, where the kitchen grills a plate of it (production, then consumption, both recorded, and
-  the cook's charge to the house). Saves keep the fish in the hand and the bucket's contents.
-- **Code:** `src/fishing.jo` (`Angling`, `FishHold`: `fish_take`, `fish_into_bucket`,
-  `fish_throw_back`, `fish_sell`, `fish_grill`, `fish_buy_bucket`); `src/fish_view.jo` (the fish,
-  the bucket, the held pose via `figure_hand` in `src/folk.jo`); `fishing_frame`, `fish_offers` and
-  `draw_catch_scene` in `aegean.jo`; `tests/fishing_test.jo`.
-- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite|fish-dock|fish-hold|fish-walk|fish-market`
-  (`AEGEAN_FISH_KIND` the kind held, `AEGEAN_FISH_AGE` seconds since it was landed,
-  `AEGEAN_FISH_VIEW` the camera's turn from behind, `AEGEAN_FISH_DIST` its distance).
+- **Aliases:** fishing from the dock, the catch, the bucket, the fish stall, the locker.
+- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and
+  strike while it is under. Bites come livelier at dawn and dusk.
+  - **The catch in hand:** a fish landed is in the pilot's hand, at its kind's size and colours,
+    flapping hard at first and then in fits. He walks with it.
+  - **No casting while holding one:** the fish goes into a bucket within reach (B) or back into
+    the sea (X, an arc and a small splash). No card offers what wants the hand he holds it in
+    (fishing again, a cat, hauling the line, the waters, work on the aircraft).
+  - **Buckets are objects in the world:** each belongs to someone and is always somewhere: in the
+    player's locker, at its owner's (by a fisherman's boat, a chandler's or office counter), set
+    down on a dock, or carried. Nothing appears in the hand; B picks a bucket up where it is and
+    puts it down where he stands, and a bucket left on a dock stays there and is saved.
+  - **Where buckets come from:**
+    - his own is in his locker at the home port;
+    - he can borrow one: ask a fisherman, the harbour office or the chandler; friendlier people
+      lend more readily, and they remember whether it came back, and how late;
+    - he can buy one at a chandler's or store, where it is put on the counter for him.
+  - **Returning:** a borrowed bucket goes back to its owner, handed over in talk or set at their
+    boat or counter.
+  - **Carrying:** a bucket of fish is carried by its handle: no running with fish in it. A crate
+    wants both hands, so the bucket goes down first.
+  - **The stock:** the catch is not in the living world's stock while held. It enters it only at
+    the town's fish stall, sold there through the ledger (production into his pocket at the
+    market, `record_creation` and `cargo_mint`, then `trade`), or at the Hotel Ancora, where the
+    kitchen grills a plate of it (production, then consumption, both recorded, and the cook's
+    charge to the house). The fish sold from a borrowed bucket are his own.
+  - **The stall:** each harbour town but the smugglers' cove has a fish stall on open quay ground
+    (or its square), found from the town's fixed geometry, clear of buildings, props, paths and
+    moorings. Its trestle and poles are solid to walk round. The world audit fails one in a
+    building or out of reach.
+  - **Saves** keep the fish in the hand and every bucket: where it is, whose, its fish, and the
+    loans remembered.
+- **Code:**
+  - `src/fishing.jo`: `Angling`, `FishHold`, `Bucket`, `BucketLoan`; `fish_take`,
+    `fish_into_bucket`, `fish_pick_up`, `fish_put_down`, `fish_ask_bucket`,
+    `fish_return_bucket`, `fish_sell`, `fish_grill`, `fish_buy_bucket`.
+  - `src/fish_buckets.jo`: where the world's buckets are kept.
+  - `src/fish_stall.jo`: the stall's and the locker's spots, and their solids.
+  - `src/fish_view.jo`: the fish, the bucket, the stall, the locker, and the held pose via
+    `figure_hand` in `src/folk.jo`.
+  - `fishing_frame`, `fish_offers` and `draw_catch_scene` in `aegean.jo`.
+  - Tests: `tests/fishing_test.jo`; the stall and locker checks in `tests/world_audit_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite|fish-dock|fish-hold|fish-walk|fish-market|fish-throw|fish-locker|fish-stow|fish-borrow|fish-borrowed`.
+  - `AEGEAN_FISH_KIND`: the kind held.
+  - `AEGEAN_FISH_AGE`: seconds since it was landed.
+  - `AEGEAN_FISH_VIEW`, `AEGEAN_FISH_DIST`, `AEGEAN_FISH_PITCH`: the camera's turn from behind, its
+    distance and its pitch.
+  - `AEGEAN_FISH_BACK`: the step back from the locker.
+  - `AEGEAN_FISH_WARM`: the lender's regard.
 
 ### Time skip
 
