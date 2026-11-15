@@ -13,8 +13,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-COLORS = {"0": "#eb6834", "1": "#2a78d6"}       # the liked model, v2
-NAMES = {"0": "liked model", "1": "flight model v2"}
+COLORS = {"0": "#eb6834", "1": "#2a78d6", "2": "#1baf7a", "3": "#6250d6"}   # liked, v2, Sky Barons, v2 SB-like
+NAMES = {"0": "liked model", "1": "flight model v2", "2": "Sky Barons", "3": "v2 Sky Barons-like"}
 CRAFTS = "Gull Heron Corsair Falco Tern Petrel Osprey Swift Pelican Kite Ibis Kestrel Minnow Albatross Cormorant Kingfisher".split()
 INK = "#3a3a38"
 MUTED = "#8a8980"
@@ -61,7 +61,7 @@ def style(ax, xlabel, ylabel):
 def plot(case, kind, models, out):
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.4))
     fig.suptitle(f"{kind}: {CASES.get(case, case)}", color=INK, x=0.01, ha="left", fontsize=13)
-    for model in ("0", "1"):
+    for model in ("0", "1", "2", "3"):
         rows = models.get(model)
         if not rows:
             continue

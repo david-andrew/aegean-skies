@@ -1,0 +1,421 @@
+use 'canal_geometry.jo'
+# Ambient townsfolk: unnamed people in a big town's square, along its waterfront and its main
+# streets, so a capital doesn't stand empty. They are pure presentation: no simulation, no
+# identities, no economy, nothing saved; the named residents (src/townsfolk.jo) stay as they are.
+# Each one is laid out once per town from the town's own square plan, quays and streets, and
+# its place each frame comes from the clock alone: a stroller's from its loop and the time, the
+# rest stand or sit where they were put. They are drawn as whole baked figures (a few outfits in
+# a few poses), one instanced draw per outfit and pose, with the town shader. How many show
+# follows the hour (empty at night, a crowd for the evening walk) and the quality tier.
+use 'look.jo'
+use 'objects.jo'
+use 'settlements.jo'
+use 'settlement_ports.jo'
+use 'town_sites.jo'
+use 'town_mesh.jo'
+use 'world_towns.jo'
+use 'walk_shapes.jo'
+use 'render_space.jo'
+use 'quality.jo'
+
+const AMBIENT_OUTFITS = 6
+const AMBIENT_POSES = 5             # standing, step left, step right, seated, talking
+const AMBIENT_REACH = 150.0         # drawn within this of the camera
+const AMBIENT_TOWN_REACH = 450.0    # a town is peopled while the camera is this near its square
+const AMBIENT_MIN_SIZE = 150        # ports and capitals
+const AMBIENT_STEP_BUDGET = 0.0015  # seconds of layout a frame while a town comes near
+
+enum AmbientKind: sit, stroll, pair, vendor
+
+struct AmbientFigure:
+    kind: AmbientKind
+    outfit: int
+    at: vec3                        # where it stands or sits (strollers: unused)
+    yaw: f64
+    path = -1                       # strollers: which loop
+    start = 0.0                     # strollers: where along it at time 0, in metres
+    speed = 1.2
+    rank = 0.0                      # 0..1: the lowest show first as the crowd thins
+    talk = 0.0                      # pairs: when this one gestures
+
+struct AmbientPath:
+    pts: vec3[]                     # ground points about a metre apart
+    length = 0.0
+    ring = false                    # a closed loop (else walked there and back)
+
+struct AmbientRoute:
+    pts: vec2[]
+    ring = false
+    deck = -1000.0                  # a quay's deck height (else the ground's)
+
+struct AmbientTown:
+    settlement = -1
+    capital = false
+    figures: AmbientFigure[]
+    paths: AmbientPath[]
+    stalls: vec4[]                  # x, y, z, yaw
+    # (laid out a little at a time as the town comes near, under a time budget a frame, so no
+    # frame pays for it all: ambient_layout_step)
+    routes: AmbientRoute[]          # loops still to be laid
+    pair_spots: vec4[]              # candidate pair centres (x, z, angle) still to be tried
+    pairs_left = 0
+    vendor_spots: vec4[]            # candidate stalls (x, z, facing) still to be set up
+    out: vec2
+    tangent: vec2
+    building: AmbientPath
+    build_k = -1                    # the next point of `building` to check (-1: none under way)
+    build_clear = true
+    done = false
+    seed = 0
+
+ambient_meshes: Mesh[]
+ambient_stall_mesh: Mesh
+ambient_ready = false
+ambient_town = AmbientTown()
+ambient_drawn = 0                   # (how many were drawn last frame, for captures and budgets)
+
+_amb_hash = (a: int, b: int) -> f64:
+    h = u64(a) * u64(0x9E3779B97F4A7C15) + u64(b + 7) * u64(0xBF58476D1CE4E5B9)
+    h = (h xor (h >> 31)) * u64(0x94D049BB133111EB)
+    f64(int((h xor (h >> 29)) & u64(0xFFFFFF))) / 16777216.0
+
+# ---------------- the figures ----------------
+
+AMBIENT_SKIN = [rgb(0.93, 0.76, 0.62), rgb(0.8, 0.6, 0.45), rgb(0.66, 0.47, 0.34)]
+
+# outfit: (top, bottom, hat (alpha 0: none), skirt)
+_amb_outfit = (k: int) -> (vec4, vec4, vec4, bool):
+    match k:
+        0: (rgb(0.9, 0.88, 0.8), rgb(0.32, 0.3, 0.3), rgb(0.88, 0.82, 0.6), false)      # white shirt, boater
+        1: (rgb(0.3, 0.36, 0.52), rgb(0.3, 0.36, 0.52), rgba(0, 0, 0, 0), false)         # blue work clothes
+        2: (rgb(0.78, 0.45, 0.4), rgb(0.78, 0.45, 0.4), rgba(0, 0, 0, 0), true)          # rose dress
+        3: (rgb(0.14, 0.14, 0.16), rgb(0.14, 0.14, 0.16), rgb(0.12, 0.12, 0.14), true)   # black, headscarf
+        4: (rgb(0.55, 0.47, 0.36), rgb(0.42, 0.36, 0.3), rgb(0.35, 0.3, 0.26), false)    # brown suit, fedora
+        _: (rgb(0.62, 0.74, 0.86), rgb(0.62, 0.74, 0.86), rgb(0.95, 0.94, 0.9), true)    # pale blue dress, hat
+
+# one figure, facing -z, its feet at y 0, about 1.75 m tall
+_amb_figure = (outfit: int, pose: int) -> Vertex3D[]:
+    vs: Vertex3D[]
+    o = _amb_outfit(outfit)
+    top = o.0; bottom = o.1; hat = o.2; skirt = o.3
+    skin = AMBIENT_SKIN[outfit % AMBIENT_SKIN.len()]
+    seated = pose == 3
+    lift = if seated: -0.42 else: 0.0                   # (seated: the hips at chair height)
+    hip = 0.92 + lift
+    # legs, from the hips
+    loop side in [-1.0, 1.0]:
+        swing = if pose == 1: side * 0.38 else: if pose == 2: -side * 0.38 else: 0.0
+        if seated:
+            add_box(vs, vec3(f32(side * 0.11), f32(hip), -0.2), vec3(0.15, 0.15, 0.44), bottom)
+            add_box(vs, vec3(f32(side * 0.11), f32(hip * 0.5), -0.4), vec3(0.13, f32(hip), 0.13), bottom)
+        else if not skirt or pose == 1 or pose == 2:
+            add_box(vs, vec3(0, -0.45, 0), vec3(0.14, 0.9, 0.15), if skirt: skin else: bottom, translation(vec3(f32(side * 0.11), f32(hip), 0)) * rotation_x(swing))
+        else:
+            add_box(vs, vec3(f32(side * 0.1), 0.2, 0), vec3(0.12, 0.4, 0.13), skin)
+    if skirt:
+        add_box(vs, vec3(0, f32(hip - 0.22), f32(if seated: -0.12 else: 0.0)), vec3(0.42, f32(if seated: 0.2 else: 0.55), f32(if seated: 0.5 else: 0.32)), bottom)
+    # the body and head
+    add_box(vs, vec3(0, f32(hip + 0.3), 0), vec3(0.42, 0.62, 0.24), top)
+    add_box(vs, vec3(0, f32(hip + 0.64), 0), vec3(0.11, 0.1, 0.1), skin)
+    add_box(vs, vec3(0, f32(hip + 0.8), -0.01), vec3(0.2, 0.24, 0.22), skin)
+    add_box(vs, vec3(0, f32(hip + 0.9), 0.02), vec3(0.21, 0.07, 0.2), rgb(0.2, 0.14, 0.1))
+    if hat.w > 0.0:
+        if outfit == 3: add_box(vs, vec3(0, f32(hip + 0.83), 0.02), vec3(0.24, 0.28, 0.24), hat)
+        else:
+            add_box(vs, vec3(0, f32(hip + 0.94), 0.0), vec3(0.34, 0.025, 0.34), hat)
+            add_box(vs, vec3(0, f32(hip + 0.99), 0.0), vec3(0.21, 0.1, 0.21), hat)
+    # arms, from the shoulders
+    loop side in [-1.0, 1.0]:
+        swing = if pose == 1: -side * 0.3 else: if pose == 2: side * 0.3 else: 0.0
+        raise = if pose == 4 and side > 0.0: -1.25 else: if seated: -0.5 else: swing
+        add_box(vs, vec3(0, -0.3, 0), vec3(0.11, 0.6, 0.12), top, translation(vec3(f32(side * 0.27), f32(hip + 0.58), 0)) * rotation_x(raise) * rotation_z(side * 0.06))
+    vs
+
+# a market stall: a trestle table under a striped awning, facing -z
+_amb_stall = () -> Vertex3D[]:
+    vs: Vertex3D[]
+    wood = rgb(0.45, 0.32, 0.2)
+    add_box(vs, vec3(0, 0.82, 0), vec3(2.0, 0.08, 0.9), wood)
+    loop x in [-0.9, 0.9]:
+        loop z in [-0.4, 0.4]: add_box(vs, vec3(f32(x), 0.4, f32(z)), vec3(0.07, 0.8, 0.07), wood)
+        add_box(vs, vec3(f32(x), 1.15, 0.42), vec3(0.06, 2.3, 0.06), wood)
+    loop k in 0..6:
+        add_box(vs, vec3(f32(-1.0 + 0.2 + f64(k) * 0.33), 2.28, 0.1), vec3(0.34, 0.05, 1.1), if k % 2 == 0: rgb(0.88, 0.85, 0.76) else: rgb(0.72, 0.3, 0.24), rotation_x(-0.18))
+    # (fruit and baskets on the table)
+    loop k in 0..5: add_box(vs, vec3(f32(-0.75 + f64(k) * 0.37), 0.93, f32(-0.1 + f64(k % 2) * 0.2)), vec3(0.28, 0.14, 0.24), [rgb(0.85, 0.55, 0.15), rgb(0.55, 0.65, 0.2), rgb(0.7, 0.2, 0.18), rgb(0.6, 0.45, 0.25), rgb(0.85, 0.75, 0.3)][k])
+    vs
+
+ambient_prepare = ():
+    global ambient_meshes, ambient_stall_mesh, ambient_ready
+    if ambient_ready: return
+    ambient_meshes = [loop k in 0..AMBIENT_OUTFITS * AMBIENT_POSES: town_mesh(_amb_figure(k / AMBIENT_POSES, k % AMBIENT_POSES))]
+    ambient_stall_mesh = town_mesh(_amb_stall())
+    ambient_ready = true
+
+# ---------------- laying a town out ----------------
+
+_amb_path = (pts: vec2[], ring: bool, deck: f64 = -1000.0) -> AmbientPath:
+    p = AmbientPath(ring = ring)
+    n = if ring: pts.len() else: pts.len() - 1
+    loop k in 0..n:
+        a = pts[k]; b = pts[(k + 1) % pts.len()]
+        steps = max(1, int(f64(length(b - a))))
+        loop s in 0..steps:
+            q = a + (b - a) * f32(f64(s) / f64(steps))
+            p.pts.push(vec3(q.x, f32(if deck > -999.0: deck else: place_ground(q)), q.y))
+    if not ring: p.pts.push(vec3(pts[pts.len() - 1].x, f32(if deck > -999.0: deck else: place_ground(pts[pts.len() - 1])), pts[pts.len() - 1].y))
+    loop k in 0..p.pts.len() - (if ring: 0 else: 1): p.length += f64(length((p.pts[(k + 1) % p.pts.len()] - p.pts[k]).xz))
+    p
+
+# where a stroller is along its loop at a distance: the point and the way it faces
+ambient_along = (p: AmbientPath, d: f64) -> (vec3, f64):
+    if p.pts.len() < 2 or p.length < 1.0: return (p.pts[0], 0.0)
+    span = if p.ring: p.length else: p.length * 2.0
+    x = d - floor(d / span) * span
+    back = not p.ring and x > p.length
+    if back: x = span - x
+    seg = p.length / f64(p.pts.len() - (if p.ring: 0 else: 1))
+    i = clamp(int(x / seg), 0, p.pts.len() - (if p.ring: 1 else: 2))
+    a = p.pts[i]; b = p.pts[(i + 1) % p.pts.len()]
+    f = clamp(x / seg - f64(i), 0.0, 1.0)
+    dir = if back: a - b else: b - a
+    (a + (b - a) * f32(f), atan2(f64(dir.x), f64(dir.z)))
+
+# (open ground: no house, wall or stall of the town's own here; the crowd's own solids aside)
+walk_cell_exclude = (p: vec2, height: f64) -> vec2:
+    result = p
+    loop site in walk_cell(p).sites: result = walk_site_exclude(site, result, height)
+    result
+# (the collision cell under `at` is built already, or one may be built now: the crowd builds at
+# most one every half second, each a millisecond or two, so no frame pays for several)
+_amb_last_build = -1000
+_amb_pace = true
+ambient_cell_ready = (at: vec2) -> bool:
+    global _amb_last_build
+    if not _amb_pace: return true
+    if walk_cells_registry == world_settlements.len() and "{int(floor(f64(at.x) / 32.0))}:{int(floor(f64(at.y) / 32.0))}" in walk_cells: return true
+    if frame_number() - _amb_last_build < 30: return false
+    _amb_last_build = frame_number()
+    true
+
+ambient_open = (at: vec2, h: f64) -> bool:
+    length(walk_cell_exclude(at, h + 0.5) - at) < 0.05
+
+_amb_add = (town: mut AmbientTown, seed: int, kind: AmbientKind, at: vec2, yaw: f64):
+    if kind != .sit and not ambient_open(at, place_ground(at)): return      # (a seat is on its bench)
+    if canal_on_ways(at): return                                            # (the slipway stays clear)
+    n = town.figures.len() + 1
+    o = int(_amb_hash(seed, n * 3) * f64(AMBIENT_OUTFITS)) % AMBIENT_OUTFITS
+    town.figures.push(AmbientFigure(kind, o, place_point(at), yaw, rank = _amb_hash(seed, n * 5 + 1), talk = _amb_hash(seed, n * 7 + 2) * 9.0))
+
+ambient_layout = (index: int) -> AmbientTown:
+    s = world_settlements[index]
+    town = AmbientTown(settlement = index, capital = s.kind == .capital)
+    seed = s.seed
+    tangent = vec2(-s.out.y, s.out.x)
+    yaw0 = atan2(f64(s.out.x), f64(s.out.y))
+    plan = place_square(s)
+    hw = plan.half_width; hd = plan.depth * 0.5
+    square = (x: f64, y: f64) -> vec2: place_to_world(s, vec2(f32(x), f32(y)))
+    # seats: the square's benches and café chairs
+    loop prop in plan.props:
+        root = TownSite(place_point(place_to_world(s, prop.local)), yaw0 + prop.yaw, 1, 1, 1, 0)
+        if prop.kind == 3:
+            loop x in [-0.6, 0.6]: _amb_add(town, seed, .sit, site_point(root, x * prop.scale, 0.05), root.yaw)
+        if prop.kind == 0:
+            loop tx in [-2.0, 2.0]:
+                loop z in [-1.25, 1.25]:
+                    seat = site_point(root, tx * prop.scale, z * prop.scale)
+                    table = site_point(root, tx * prop.scale, 0)
+                    _amb_add(town, seed, .sit, seat, atan2(f64(table.x - seat.x), f64(table.y - seat.y)))
+    # (clear of the square's props: fountains, trees, benches)
+    clear = (q: vec2, r: f64) -> bool:
+        loop prop in plan.props:
+            if f64(length(q - place_to_world(s, prop.local))) < r + 2.6 * prop.scale: return false
+        true
+    town.seed = seed; town.out = s.out; town.tangent = tangent
+    # pairs talking, here and there on the square (tried later, one a step)
+    town.pairs_left = if town.capital: 6 else: 3
+    loop tries in 1..61:
+        c = square((_amb_hash(seed, 100 + tries) * 2.0 - 1.0) * (hw - 2.0), (_amb_hash(seed, 200 + tries) * 2.0 - 1.0) * (hd - 2.0))
+        if clear(c, 1.2): town.pair_spots.push(vec4(c.x, c.y, f32(_amb_hash(seed, 300 + tries) * TAU), 0))
+    # a vendor or two, at stalls along the square's inland edge, facing across it
+    loop k in 0..(if town.capital: 2 else: 1):
+        stall = square((if k == 0: -0.35 else: 0.35) * hw, hd - 1.4)
+        if clear(stall, 1.5): town.vendor_spots.push(vec4(stall.x, stall.y, f32(yaw0), 0))
+    # strollers: round the square, along the waterfront, up and down the main streets
+    town.routes.push(AmbientRoute([square(-hw + 1.5, -hd + 1.5), square(hw - 1.5, -hd + 1.5), square(hw - 1.5, hd - 1.5), square(-hw + 1.5, hd - 1.5)], true))
+    # (the waterfront's quays, from the harbour already built for drawing: building it here would
+    # cost a frame several milliseconds)
+    quays = 0
+    port_quays: PortQuay[]
+    loop p in port_cache:
+        if p.id == s.id: port_quays = p.quays
+    loop q in port_quays:
+        if q.mole or f64(length((q.b - q.a).xz)) < 25.0 or quays >= 2: continue
+        quays += 1
+        side = vec2(-(q.b - q.a).z, (q.b - q.a).x) / f32(max(f64(length((q.b - q.a).xz)), 0.001))
+        loop lane in [-1.0, 1.0]:
+            off = side * f32(lane * min(q.width * 0.25, 2.0))
+            town.routes.push(AmbientRoute([q.a.xz + off, q.b.xz + off], false, f64(max(q.a.y, q.b.y))))
+    # (the town plan's own main streets: from the square up to the old town, and the four
+    # streets out of the old town's centre, as far as a stroll goes)
+    up = place_to_world(s, s.old) - square(0, 2)
+    town.routes.push(AmbientRoute([square(0, 2), square(0, 2) + up * f32(min(1.0, 120.0 / max(f64(length(up)), 1.0)))], false))
+    centre = atan2(-f64(s.old.y) / 0.82, -f64(s.old.x))
+    loop spoke in 0..(if town.capital: 4 else: 2):
+        a = centre + f64(spoke) * TAU / 4.0
+        town.routes.push(AmbientRoute([loop k in 1..8: place_to_world(s, place_ring(s, f64(k) * 15.0, a))], false))
+    town
+
+# A little more of the layout, until `budget` seconds have gone this frame: a pair tried, a stall
+# set up, a loop started, a point of a loop checked against the buildings (the first look at a
+# piece of town can build its collision cell: the costliest single step, about a millisecond).
+# Refused spots and loops that run through a building are dropped; once all is laid, those who
+# stand or sit become solid to walk into.
+ambient_layout_step = (town: mut AmbientTown, budget: f64, pace: bool = true):
+    global _amb_pace
+    _amb_pace = pace
+    start = time()
+    loop not town.done and time() - start < budget:
+        if town.pairs_left > 0 and town.pair_spots.len() > 0:
+            spot = town.pair_spots[0]
+            c = spot.xy; a = f64(spot.z)
+            off = vec2(f32(sin(a) * 0.55), f32(cos(a) * 0.55))
+            if not ambient_cell_ready(c + off) or not ambient_cell_ready(c - off): break
+            town.pair_spots = town.pair_spots[1..town.pair_spots.len()]
+            if ambient_open(c + off, place_ground(c + off)) and ambient_open(c - off, place_ground(c - off)):
+                _amb_add(town, town.seed, .pair, c + off, atan2(f64(-off.x), f64(-off.y)))
+                _amb_add(town, town.seed, .pair, c - off, atan2(f64(off.x), f64(off.y)))
+                town.pairs_left -= 1
+            continue
+        if town.vendor_spots.len() > 0:
+            spot = town.vendor_spots[0]
+            stall = spot.xy; facing = f64(spot.z)
+            if not ambient_cell_ready(stall): break
+            town.vendor_spots = town.vendor_spots[1..town.vendor_spots.len()]
+            if ambient_open(stall, place_ground(stall)):
+                town.stalls.push(vec4(stall.x, f32(place_ground(stall)), stall.y, f32(facing)))
+                _amb_add(town, town.seed, .vendor, stall - town.out * 1.0, facing + PI)
+                # (and someone at the stall)
+                _amb_add(town, town.seed, .pair, stall + town.out * 0.9 + town.tangent * 0.4, facing)
+            continue
+        if town.build_k < 0:
+            if town.routes.len() == 0:
+                # (those who stand or sit are solid to walk into; strollers step round in their heads)
+                solids: TownSite[]
+                loop f in town.figures:
+                    if f.kind != .stroll: solids.push(TownSite(f.at, f.yaw, 0.4, 0.4, 1.7, 0))
+                loop st in town.stalls: solids.push(TownSite(st.xyz, f64(st.w), 2.1, 1.0, 1.0, 0))
+                walk_publish("ambient-crowd", solids)
+                town.done = true
+                continue
+            r = town.routes[0]
+            town.routes = town.routes[1..town.routes.len()]
+            town.building = _amb_path(r.pts, r.ring, r.deck)
+            town.build_k = 0
+            town.build_clear = town.building.pts.len() >= 2 and town.building.length > 10.0
+            continue
+        if town.build_clear and town.build_k < town.building.pts.len():
+            q = town.building.pts[town.build_k]
+            if not ambient_cell_ready(q.xz): break
+            if not ambient_open(q.xz, f64(q.y)): town.build_clear = false
+            town.build_k += 2
+            continue
+        # (a loop checked: if it's clear, its strollers set going)
+        if town.build_clear:
+            index = town.paths.len()
+            path = town.building
+            town.paths.push(path)
+            count = if index == 0: (if town.capital: 8 else: 4) else: max(1, int(path.length / (if town.capital: 9.0 else: 16.0)))
+            loop j in 0..min(count, 10):
+                n = town.figures.len() + 1
+                town.figures.push(AmbientFigure(.stroll, int(_amb_hash(town.seed, n * 3) * f64(AMBIENT_OUTFITS)) % AMBIENT_OUTFITS, vec3(0, 0, 0), 0.0, path = index, start = _amb_hash(town.seed, n * 11) * path.length * 2.0, speed = 0.9 + _amb_hash(town.seed, n * 13) * 0.6, rank = _amb_hash(town.seed, n * 5 + 1)))
+        town.build_k = -1
+
+# ---------------- each frame ----------------
+
+# how full the streets are at an hour (0 .. 1): empty at night, busy in the morning, quieter in
+# the afternoon heat, fullest for the evening walk
+ambient_density = (hour: f64) -> f64:
+    h = hour - floor(hour / 24.0) * 24.0
+    if h < 6.0: return 0.04
+    if h < 8.5: return mix(0.04, 0.65, (h - 6.0) / 2.5)
+    if h < 13.0: return 0.7
+    if h < 16.0: return 0.45
+    if h < 17.5: return mix(0.45, 1.0, (h - 16.0) / 1.5)
+    if h < 21.5: return 1.0
+    if h < 23.5: return mix(1.0, 0.1, (h - 21.5) / 2.0)
+    0.06
+
+ambient_tier_share = () -> f64: match render_quality.tier:
+    0: 0.35
+    1: 0.6
+    _: 1.0
+
+# the big town near the camera, laid out once as it comes near; none when nowhere near one
+ambient_update_ms = 0.0             # (what the last update cost, for budgets)
+ambient_update = (cam: vec3):
+    global ambient_update_ms
+    started = time()
+    _ambient_update(cam)
+    ambient_update_ms = (time() - started) * 1000.0
+
+_ambient_update = (cam: vec3):
+    global ambient_town
+    best = -1; bd = AMBIENT_TOWN_REACH
+    if cam.y > 250.0: return       # (from the air: keep what's laid, lay out nothing new)
+    loop k in 0..world_settlements.len():
+        s = world_settlements[k]
+        if s.legacy >= 0 or s.size < AMBIENT_MIN_SIZE: continue
+        d = f64(length(s.center.xz - cam.xz))
+        if d < bd:
+            bd = d; best = k
+    if best < 0:
+        if ambient_town.settlement >= 0:
+            walk_publish("ambient-crowd", [])
+            ambient_town = AmbientTown()
+        return
+    if ambient_town.settlement != best:
+        ambient_town = ambient_layout(best)
+        return
+    ambient_layout_step(ambient_town, AMBIENT_STEP_BUDGET)
+
+ambient_draw = (cam: vec3, L: Light, t: f64, hour: f64):
+    global ambient_drawn
+    ambient_drawn = 0
+    if ambient_town.settlement < 0 or cam.y > 160.0: return
+    ambient_prepare()
+    share = ambient_density(hour) * ambient_tier_share()
+    market = hour >= 7.0 and hour < 20.0
+    origin = render_origin(cam)
+    lists: Instance3D[][] = [loop k in 0..AMBIENT_OUTFITS * AMBIENT_POSES: []]
+    stalls: Instance3D[]
+    local = (p: vec3) -> vec3: vec3(f32(f64(p.x) - f64(origin.x)), p.y, f32(f64(p.z) - f64(origin.z)))
+    if market:
+        loop st in ambient_town.stalls:
+            if f64(length(st.xz - cam.xz)) < AMBIENT_REACH: stalls.push(Instance3D(translation(local(st.xyz)) * rotation_y(f64(st.w) + PI), vec4(1, 1, 1, 1)))
+    loop f in ambient_town.figures:
+        if f.kind == .vendor:
+            if not market: continue
+        else if f.rank > share: continue
+        at = f.at; yaw = f.yaw; pose = 0
+        if f.kind == .stroll:
+            path = ambient_town.paths[f.path]
+            d = f.start + t * f.speed
+            p = ambient_along(path, d)
+            at = p.0; yaw = p.1
+            step = int(floor(d / 0.45)) % 4
+            pose = if step == 0: 1 else: if step == 2: 2 else: 0
+        else if f.kind == .sit: pose = 3
+        else if f.kind == .pair or f.kind == .vendor:
+            pose = if (t + f.talk) % 9.0 < 2.2: 4 else: 0
+        if f64(length(at.xz - cam.xz)) > AMBIENT_REACH: continue
+        lists[f.outfit * AMBIENT_POSES + pose].push(Instance3D(translation(local(at)) * rotation_y(yaw + PI), vec4(1, 1, 1, 1)))
+        ambient_drawn += 1
+    p = obj_params(L, t)
+    p.view_proj = render_view_proj(origin)
+    tp = TownParams(p, vec3(0, 0, 0))
+    loop k in 0..lists.len():
+        if lists[k].len() > 0: draw_instanced(world_town_inst_sh, ambient_meshes[k], lists[k], tp)
+    if stalls.len() > 0: draw_instanced(world_town_inst_sh, ambient_stall_mesh, stalls, tp)

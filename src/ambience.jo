@@ -43,16 +43,82 @@ struct Ambience:
     active = false
     playback = false
     duck = 1.0                      # live music close by hushes the background (the cafe's own murmur excepted)
+    # (for play the instruments are made after the first frame, a few milliseconds a frame:
+    # which kinds are made, the take being made and how far it has got)
+    ready: bool[]
+    next_take = 0
+    next_kind = AMBIENCE_KINDS      # (a place in AMBIENCE_BUILD_ORDER)
+    making = 0                      # 0 its sound, 1 its finish, 2 its half-rate copy, 3 its muffled copy, 4 the next begun
+    whole: Sound = Sound()
+    build: AmbienceBuild = AmbienceBuild()
+    copy: CopyBuild = CopyBuild()
 
 build_ambience = (render_only: bool = false) -> Ambience:
     a = Ambience(active=render_only or env("SLOPPY_NO_AUDIO") == none,playback=not render_only and env("SLOPPY_NO_AUDIO") == none)
     if not a.active: return a
+    if a.playback:
+        # (heard in play: nothing here delays the first frame; ambience_build_step makes them)
+        ambience_build_later(a)
+        return a
     loop k in 0..AMBIENCE_KINDS:
         a.first.push(a.sounds.len())
         loop take in 0..ambience_variants(AmbienceKind(k)):
             s = make_ambience(AmbienceKind(k),take+1)
             a.sounds.push(ambience_decimate(s,ambience_rate_step(AmbienceKind(k)))); a.soft.push(ambience_soften_bank(s))
+    a.ready = fill(true,AMBIENCE_KINDS); a.next_kind = AMBIENCE_KINDS
     a
+
+ambience_build_later = (a: mut Ambience):
+    a.first = []; total = 0
+    loop k in 0..AMBIENCE_KINDS:
+        a.first.push(total); total += ambience_variants(AmbienceKind(k))
+    a.sounds = fill(Sound(),total); a.soft = fill(Sound(),total)
+    a.ready = fill(false,AMBIENCE_KINDS)
+    a.next_kind = 0; a.next_take = 0; a.making = 0
+    a.build = ambience_build_begin(AMBIENCE_BUILD_ORDER[0],1)
+
+# Makes the instruments still to be made, for about `budget_ms` this frame: the same sounds
+# build_ambience would have made at once (they draw on no shared random numbers). Each take is
+# made in slices (a crowd bed piece by piece), then finished, then its half-rate copy and its
+# muffled copy are made in slices too: no piece of it takes long.
+const AMBIENCE_BUILD_SLICE = 1024
+# (what is heard soonest is made first: a fresh game starts on a quay by the sea)
+AMBIENCE_BUILD_ORDER = [AmbienceKind.beach,.murmur,.wave,.rope,.rigging,.gull,.hammer,.bell,.greet,.laugh,.call,.ask,.answer,.cafe,.ship_engine,.luff,.dog,.cliff,.surge,.trees,.grass,.cicada,.songbird,.spring,.goat,.donkey,.cricket,.owl,.whistle,.rain_sea,.rain_roof,.thunder]
+const AMBIENCE_COPY_SLICE = 8192
+ambience_build_step = (a: mut Ambience,budget_ms: f64):
+    began = time()
+    # (at least one piece a frame, however small the budget)
+    loop a.next_kind < AMBIENCE_KINDS:
+        ambience_build_piece(a)
+        if (time()-began)*1000.0 >= budget_ms: return
+
+# One piece of the making: a slice of a take's sound, its finish, or a slice of one of its copies.
+ambience_build_piece = (a: mut Ambience):
+    if a.next_kind >= AMBIENCE_KINDS: return
+    kind = AMBIENCE_BUILD_ORDER[a.next_kind]
+    at = a.first[int(kind)]+a.next_take
+    if a.making == 0:
+        if ambience_build_run(a.build,AMBIENCE_BUILD_SLICE): a.making = 1
+    else if a.making == 1:
+        a.whole = ambience_build_finish(a.build); a.build = AmbienceBuild()
+        step = ambience_rate_step(kind)
+        if step <= 1: a.sounds[at] = a.whole; a.making = 3; a.copy = ambience_soften_begin(a.whole)
+        else: a.making = 2; a.copy = ambience_copy_begin(a.whole,step,f64(MIX_RATE)/f64(step)*0.42,f64(MIX_RATE)/f64(step)*0.42)
+    else if a.making == 2:
+        if ambience_copy_run(a.copy,AMBIENCE_COPY_SLICE):
+            a.sounds[at] = Sound(a.copy.out); a.making = 3; a.copy = ambience_soften_begin(a.whole)
+    else if a.making == 3:
+        if ambience_copy_run(a.copy,AMBIENCE_COPY_SLICE):
+            a.soft[at] = Sound(a.copy.out); a.copy = CopyBuild(); a.whole = Sound()
+            a.next_take += 1
+            if a.next_take >= ambience_variants(kind):
+                a.ready[int(kind)] = true; a.next_kind += 1; a.next_take = 0
+            a.making = 4
+    else:
+        # (the next take begun, a piece of its own)
+        a.build = ambience_build_begin(kind,a.next_take+1); a.making = 0
+
+ambience_ready = (a: Ambience,kind: AmbienceKind) -> bool: int(kind) < a.ready.len() and a.ready[int(kind)]
 
 # the playback pitch of a take: the bank's rate made up (the muffled copies at a quarter)
 ambience_step = (a: Ambience,kind: AmbienceKind,muffled: bool) -> f64:
@@ -209,7 +275,7 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         exists = false
         loop v in a.loops:
             if v.source.key == s.key and v.source.kind == s.kind: exists = true
-        if exists or a.loops.len() >= AMBIENCE_LOOPS: continue
+        if exists or a.loops.len() >= AMBIENCE_LOOPS or not ambience_ready(a,s.kind): continue
         direct = play_at(a.sounds[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,false),looping=true)
         soft = play_at(a.soft[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,true),looping=true)
         a.loops.push(AmbienceVoice(s,direct,soft))
@@ -230,7 +296,7 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
     loop e in a.pending:
         if not a.enabled[ambience_category(e.source.kind)]: continue
         if e.due > now: waiting.push(e); continue
-        if now-e.due > 0.3 or a.hits.len() >= AMBIENCE_HITS: continue
+        if now-e.due > 0.3 or a.hits.len() >= AMBIENCE_HITS or not ambience_ready(a,e.source.kind): continue
         s = e.source
         if ambience_score(s,listener) <= 0.00005: continue
         muffled = s.soft > 0.45

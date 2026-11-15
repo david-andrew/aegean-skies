@@ -54,26 +54,73 @@ cat's friendship and a seen battle card restored).
 ## The title screen
 
 The game starts on a title screen (`src/title_screen.jo`, wired in `aegean.jo` beside the
-game-slot block). The world is built once, before the first frame, exactly as before; the title
-stands over that live scene (the home harbour from over the water, lit at `TITLE_HOUR`, the camera
-drifting slowly) while the world waits behind it: no simulation, autosave or sound runs until play
-begins. Its rows are the pause menu's (`game_rows` over the same cached headers) and it uses the
-same requests:
+game-slot block) over the **title reel** (`src/title_shots.jo`): the live world, seen through a
+free camera the reel flies, in unordered shots of 18-28 seconds with a short dip to dusk between
+them, each with its own hour and fair weather (never rain):
+
+- **Low pass:** low over open water at the top speed (about 450 km/h), the speed flecks streaming
+  past as in flight, banking gently (never past 7 degrees); flying free, chasing a Gull ahead,
+  overtaken by one, or a **race**: two Falcos in two liveries, flown by the game's own flight
+  model (`step` with their real spec), come from behind and overtake close in lanes to the right
+  (the NPC controller `air_waypoint_controls` holding lane, height and a jockeying pace), bank hard
+  round an air-race pylon (the meets' banded pylon) as the shared steering law (`steer`) turns them,
+  and are lined up on the next leg, shrinking ahead as the camera flies straight on past the pylon.
+  The race is flown once when its shot is cut, at a fixed 1/60 s step, and kept: repeatable. The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
+  large and sparse on the screen), the Gull 4-5 m below it. The sea, rivers and lakes are given the
+  reel camera's true velocity (`view_velocity`), so the flecks streak and keep their strength as
+  at that speed in flight. The Gull is the player's own aircraft, drawn where the reel puts it for
+  that frame only.
+- **High at sunset:** 2.7-3.4 km up, above the clouds, drifting towards the sun as it goes down.
+- **A town and its waterfront:** a low oblique run along the harbour front from just offshore
+  (boats, the quay and the seaplanes in frame, the town rising behind); a higher, slow arc at
+  golden hour, the roofs a texture; or in Neravessa along its canals. Porto Vecchio, Kalyrassa and
+  Neravessa; never a camera looking straight down into the streets.
+
+Behind the title the world runs as in play (traffic, vessels, people, weather), with the game's
+own keys muted, nothing autosaved and no slot touched; the world's own sounds are silent. Its rows
+are the pause menu's (`game_rows` over the same cached headers) and it uses the same requests:
 
 - **Continue** loads the newest usable slot (`SaveSummary.saved_at`, the unix time of the save,
   added for this; an older header without it falls back to its world time). It is the default:
   Enter, or a tap, starts it with no second question. A successful load begins play.
-- **New game** plays the world as the startup built it. The autosave takes the first empty slot as
-  before; when all three hold games it asks first: choose a slot to save over (that slot becomes
-  the autosave's), or start without saving (autosave stays off, as the policy above says).
+- **New game** puts back the world as the startup built it: a copy taken when the title opened
+  (Sloppy's values: the running world never touches it), installed through the scenario path
+  (`load_scenario("start", state)`), keeping the notebook already loaded; about 10 ms. The autosave
+  takes the first empty slot as before; when all three hold games it asks first: choose a slot to
+  save over (that slot becomes the autosave's), or start without saving (autosave stays off, as the
+  policy above says).
 - **Saved games** lists the slots to load (at once: nothing is unsaved yet) or delete (asks).
 - **Situations**, quieter, are the scenario picker's set pieces (the start one is New game).
 - With nothing saved there is only New game (and the quiet Situations). Until the slots have been
   read the screen says "Reading saved games..."; a load says "Loading slot N...".
 
-In a browser the world is built in one long step the page cannot draw during, so the page itself
-(`src/web_compat.js`) shows a quiet "Loading the islands" card in the title's dusk colour, its
-line moved by the compositor, until the game has drawn its first frame.
+**Sound.** The Adagietto plays as if from a cockpit radio: through the receiver chain with station
+levelling (the pause menu's music player, `MusicAudition`); it leads. Under it on a low pass only a
+very faint bed of engine and rushing air, about 20 dB down, faded in and out with the shot; a
+race's engines (the engine hearing's own, with Doppler, at an `EngineSource.gain` of 0.04) are
+barely there. In a browser
+the music begins at the first click, tap or key (browsers allow sound only then); nothing on the
+screen says so. When play begins the music fades away over three seconds.
+
+**Loading.** Before the title there are no words: a small two-bladed propeller turns slowly in the
+middle of the dusk, a faint ring round it filling as the preparation goes. In a browser it is the
+page's own card (`src/web_compat.js`, inline SVG turned by the compositor), so it turns while the
+module loads and the world is built, steps the page cannot draw during; natively the game draws
+the same (`src/title_screen.jo draw_loading_propeller`). Before the title's first frame the game
+finishes the islands' places a few a frame and populates the far economy in one step (about 4 s on
+the desktop): the same work play does a few seconds in, in a stall, so the reel and its music
+never stall for it and a new game starts populated.
+
+**Capture switches.** `AEGEAN_TITLE_SHOT=low|low-free|low-chase|low-pass|high|city|city-<Town>`
+(with `:run` or `:arc`) repeats a kind; `AEGEAN_TITLE_SEED=n` fixes the order; `AEGEAN_TITLE_FRAMES=dir`
+saves every 10th frame (`AEGEAN_TITLE_FRAME_STEP=n`: every nth). `AEGEAN_FRAME_STATS=1` prints the
+frame statistics every 120 frames, in the title and in play alike, for timing runs.
+`AEGEAN_TITLE_BARE=1` draws the reel without the menu; `low-free@14` flies a low pass at that
+height; `low-race` the race.
+
+**Guard.** `python3 tests/title_reel_detail_test.py` (needs a GPU; too slow for the software
+renderer) renders the reel's low pass and real flight at 125 m/s at fixed frames and requires the
+reel's fine water detail to reach 0.7 of flight's (measured 0.79; a parked sea, 0.2).
 
 Test and capture runs start straight in the game: a program that imports `aegean.jo` (its
 `PROGRAM_NAME` is not "Aegean Skies"), a run with `SLOPPY_FRAMES` or `SLOPPY_SCREENSHOT`, and a run

@@ -53,10 +53,10 @@ function audit(source, raw = false) {
 function shaders(file) {
   let data=fs.readFileSync(file);
   if (path.extname(file)==='.html') {
-    const html=data.toString(), embedded=html.match(/const SLOPPY_WASM = "([^"]+)"/);
+    const html=data.toString(), embedded=html.match(/(?:const|var) SLOPPY_WASM = "([^"]+)"/) || html.match(/id="sloppy-wasm">([A-Za-z0-9+\/=]+)</);
     if(embedded) data=Buffer.from(embedded[1],'base64');
     else {
-      const name=html.match(/fetch\("(aegean\.[a-f0-9]+\.wasm)"\)/)?.[1];
+      const name=html.match(/fetch\("(aegean\.[a-f0-9]+\.wasm)"\)/)?.[1] || html.match(/id="sloppy-wasm" data-src="(aegean\.[a-f0-9]+\.wasm)"/)?.[1];
       if(!name) throw Error('No packaged or embedded Wasm module');
       data=fs.readFileSync(path.join(path.dirname(file),name));
     }

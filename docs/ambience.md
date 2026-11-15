@@ -35,6 +35,16 @@ short textures (cicadas, rain) stay level; crickets and a ship's engine beat by 
 `tests/ambience.jo` checks all of this. The bank keeps most instruments at half the rate and the
 muffled copies at a quarter (`ambience_rate_step`, `AMBIENCE_SOFT_STEP`), about 35 MB in all.
 
+In play the bank is made after the first frame, a few milliseconds a frame
+(`ambience_build_step`, 3 ms): each take a slice at a time (a crowd bed piece by piece: its
+syllables, each talker's mix, the far layers, each reverb comb; a single event by its syllables,
+knocks, drops or runs of samples), then its finish, its half-rate copy and its muffled copy in
+slices too, the next take begun in a piece of its own. What a fresh game hears first is made
+first (`AMBIENCE_BUILD_ORDER`: the shore, the quay's crowd, waves, creaks, gulls). Every slice
+makes the very samples made at once (`tests/ambience.jo`). On the laptop (redfox, 15 November
+2026) the whole bank is 4.1 s of work over about 1,240 frames; the longest piece is 3.3 ms (a
+crowd syllable), the longest frame 6 ms. `tools/ambience_slices.jo` times every piece.
+
 There is no animal simulation, air-temperature field or seasonal climate in main. Habitat and
 fixed-summer solar time are explicit proxies for animal presence and daytime heat. Civil dates
 below do not silently change that climate. Crowd murmurs are intentionally indistinct synthesis;
