@@ -58,6 +58,24 @@ Battle. Their sounds (`GroundSounds`, built by `prepare_ground_audio` only when 
 ground guns) are reports with the canal's flutter echo, heard to 1.6 km and late by distance/343 s,
 a supersonic snap for their close passes, and spout splashes for every gun's water strikes.
 
+**Dogfighting** (`_dogfight` in `src/combat.jo`) follows Sky Barons' fighter (`sim.jo`
+`bot_fighter`, Aces' `bot_pad`): targets chosen by distance weighted to the nose (now also one on
+this aircraft's tail, then one on a friend's), lead pursuit misjudged by skill, breaking off up
+and away when too close, a spread approach, throttling back close behind. What its physics gave
+its pilots for free is flown explicitly: lag pursuit against a hard-turning target, a defensive
+break into an attacker (scissors when it overshoots) and then turning on it, head-on passes held by
+nerve and broken right (or up for the bold), extending to break a stalemate or a chase that does
+not close and coming back, unloading by hand for speed, zooming on an energy advantage and never
+hanging on the propeller after a zooming target, and wingmen (`CombatPilot.wing`) covering their
+leader. `aggression` and `caution` join `skill` and `nerve`; the mistakes are deliberate: late
+reactions, wrong-way breaks, fixing on a shot with an enemy behind, overshoots. Pulls ease toward
+the stall; pull-outs are flown by hand (upright first, straight through near vertical) from five
+seconds of sink above the water, with the terrain sampled along the path. `Battle.ceiling` is a
+soft top (the strait's cloud base). `Battle.tactics` counts each behaviour.
+`tools/dogfight_lab.jo` runs N strait battles headless (`DOGFIGHT_N`, `DOGFIGHT_SECONDS`,
+`DOGFIGHT_MODEL=default|skybarons|v2|sb`, `DOGFIGHT_TRACE="actor from every"`,
+`DOGFIGHT_DOWNS=1`) and writes a report.
+
 The **lead marker** (`src/lead_marker.jo`) is HUD only: Sky Barons' `lead_from` against the
 selected hostile or the nearest in a 25° cone within 1 km, at the Battle's muzzle speed, drawn at
 the 450 m convergence so it lines up with the gunsight.

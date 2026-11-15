@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
+- **Combat:** [Lead marker](#lead-marker) · [Dogfight brain](#dogfight-brain) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1617,6 +1617,18 @@ No image: the tiers differ in budgets more than in any single view.
   each spout a short spit and plunk. `src/combat_sound.jo` `ground_report`, `bullet_snap`,
   `spout_report`, `ground_shot_cue`; offline listening: `sloppy --release tools/groundfire_audio.jo DIR`.
 
+### Dogfight brain
+
+- **Aliases:** the AI pilots, the enemy pilots' tactics.
+- **Definition:** how combat pilots fight: Sky Barons' fighter (lead pursuit, target choice, break
+  off when too close) with lag pursuit, defensive breaks and scissors, head-on passes, extending
+  and coming back, unloading, zooming and wingmen's cover made explicit, shaped by skill,
+  aggression, caution and nerve, with deliberate mistakes.
+- **Code:** `src/combat.jo` `_dogfight`, `combat_controls`; personalities in `src/scenarios.jo`
+  `STRAIT_PILOTS`; tests `tests/dogfight_test.jo`; harness `tools/dogfight_lab.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
+  (the brain flies the player's aircraft; frames for a clip).
+
 ### Water strikes
 
 - **Aliases:** bullet spouts, strikes on the water.
@@ -1673,6 +1685,8 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
+| `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
+| `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
