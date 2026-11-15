@@ -1496,6 +1496,12 @@ No image: the tiers differ in budgets more than in any single view.
   `play_street`); the stand's places in `src/bar_scene.jo` (`band_spots`, `draw_band`); the street
   musicians in `src/townsfolk.jo` (`draw_folk`); `tests/musicians_test.jo`; every player side by
   side in `tools/musician_view.jo`.
+- **Rules:** every number of the set and its players' motions are made when the game starts
+  (about 16 ms on the desktop, the violin's bow plan most of it), so a number starting costs
+  nothing; a piece forced for a capture is made when it starts. The piano's keys (white, the
+  black in their groups) are drawn within 25 m of the stand. The violin is drawn 1.4 times a
+  real one's size, as the figures' heads are large; the players' arm bones are a little longer
+  than the walking figures' so the hands reach (`tests/musicians_test.jo` checks the violinist's).
 - **Capture:** `AEGEAN_BAND='piece lineup [from]'` (a catalogue piece in a line-up, 0 the pianist
   alone ... 6 violin and guitar, from that second, at any hour; not heard) with
   `AEGEAN_LEISURE=band` and `AEGEAN_HOUR`.
