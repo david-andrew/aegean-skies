@@ -404,6 +404,96 @@
   sloppy.env.aegean_slots_copy=(index,p,n)=>copy(Number(index)===4?enc.encode(error):buffers[Number(index)]||new Uint8Array(),p,n);
   sloppy.env.aegean_slots_release=()=>{buffers=[];};
 })(typeof globalThis!=="undefined"?globalThis:this);
+// The loading propeller (docs/glossary: Loading propeller). An engine running up, holding at full,
+// easing back to the edge of the disc, and down to idle again, every eight seconds, drawn in the
+// in-game propeller's own regimes (src/prop_disc.jo): solid blades turning, a pale disc coming in
+// over them, then the pencil arcs in bands that precess by prop_band_speed: slowly at full power,
+// fast near the hand-over from the blades. The same timetable, shapes and arcs as the game's own
+// loader (src/title_screen.jo draw_loading_propeller): 160 stops a cycle, linear between them.
+// In the page each layer is its own composited element animated only by CSS transform and opacity
+// keyframes, so it keeps turning while the main thread is blocked (the module compiling, the world
+// being built).
+(function (root) {
+  const CYCLE = 8.0, STOPS = 160, R = 34.0, HUB = 4.5;
+  // (rpm in the game's shaft rad/s, at these times, eased between)
+  const RUN = [[0, 8], [0.8, 8], [2.6, 78], [4.2, 78], [5.6, 46], [6.6, 46], [8, 8]];
+  const BLADES_BELOW = 40, DISC_FROM = 16, DISC_FULL = 50, STREAK_FROM = 26, STREAK_FULL = 64, TOP = 78, HOLD = 2.0;
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const rpmAt = (t) => {
+    for (let i = 1; i < RUN.length; i++) if (t <= RUN[i][0]) {
+      const [t0, r0] = RUN[i - 1], [t1, r1] = RUN[i];
+      return r0 + (r1 - r0) * smooth(t0, t1, t);
+    }
+    return RUN[RUN.length - 1][1];
+  };
+  // (src/prop_disc.jo prop_band_speed, line for line)
+  const bandSpeed = (rpm) => {
+    if (rpm <= BLADES_BELOW) return rpm;
+    const x = Math.min(1, Math.max(0, (TOP - rpm) / (TOP - BLADES_BELOW)));
+    const k = 0.7, TAU = Math.PI * 2;
+    const u = 0.03 + (2.0 + Math.acos(-k) / TAU - 0.03) * x;
+    const th = u * TAU;
+    let shape = Math.atan2(k * Math.sin(th), 1 + k * Math.cos(th)) / Math.asin(k);
+    let e = Math.min(1, Math.max(0, x / 0.2)); e = e * e * (3 - 2 * e);
+    const g = 1 + HOLD * e;
+    shape = Math.tanh(g * shape) / Math.tanh(g);
+    let r = Math.min(1, Math.max(0, x / 0.35)); r = r * r * (3 - 2 * r);
+    return (5 + (BLADES_BELOW - 5) * r) * shape;
+  };
+  // The timetable: for each stop, the blades' and the bands' angles (degrees, clockwise; each
+  // cycle closing on itself, a two-bladed prop being the same every half turn) and the layers'
+  // opacities.
+  const table = () => {
+    const out = [], n = 2400, dt = CYCLE / n;
+    let blade = 0, band = 0;
+    const raw = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i * dt, rpm = rpmAt(t);
+      raw.push([blade, band, rpm]);
+      blade += rpm * dt; band += bandSpeed(rpm) * dt;
+    }
+    const close = (total) => { const half = Math.PI; return Math.round(total / half) * half - total; };
+    const fixBlade = close(raw[n][0]), fixBand = close(raw[n][1]);
+    for (let s = 0; s <= STOPS; s++) {
+      const i = Math.round(s * n / STOPS), [b0, d0, rpm] = raw[i], f = i / n;
+      out.push({
+        blade: (b0 + fixBlade * f) * 180 / Math.PI,
+        band: (d0 + fixBand * f) * 180 / Math.PI,
+        blades: 1 - smooth(BLADES_BELOW - 4, BLADES_BELOW + 4, rpm),
+        disc: smooth(DISC_FROM, DISC_FULL, rpm),
+        arcs: smooth(STREAK_FROM, STREAK_FULL, rpm),
+        rpm
+      });
+    }
+    return out;
+  };
+  // (src/prop_disc.jo _disc_hash)
+  const hash = (x) => { const v = Math.sin(x * 12.9898) * 43758.547; return v - Math.floor(v); };
+  // One drawing's pencil arcs, as the game draws them: per blade a band of short arcs about the
+  // hub, each of random length and offset, a few left out. [radius, from, to] in radians clockwise
+  // from straight up.
+  const arcs = (variant) => {
+    const list = [], dr = 3.0, r0 = HUB + 2.5;
+    for (let k = 0; k < 2; k++) {
+      const s = variant * 17.3 + 7.13 * k, axis = k * Math.PI;
+      for (let j = 0; r0 + (j + 1) * dr < R; j++) {
+        const hs = s + j * 1.37;
+        if (hash(hs + 3.3) <= 0.12) continue;
+        const rr = r0 + (j + 0.5) * dr + 0.3 * dr * (hash(hs) - 0.5);
+        const w = (0.12 + 0.10 * rr / R) * R;
+        const centre = (hash(hs + 1.1) - 0.5) * w * 0.9;
+        const reach = w * (0.25 + 0.9 * hash(hs + 2.2));
+        list.push([rr, axis + (centre - reach) / rr, axis + (centre + reach) / rr]);
+      }
+    }
+    return list;
+  };
+  // (the disc's rim highlight: two bright arcs, opposite, turning with the bands)
+  const RIM = [0, Math.PI].map((k) => [k + Math.PI / 4 - 0.6, k + Math.PI / 4 + 0.6]);
+  root.AegeanLoadingProp = { table, arcs, rpmAt, bandSpeed, hash, CYCLE, STOPS, R, HUB, RIM };
+  if (typeof module !== "undefined") module.exports.AegeanLoadingProp = root.AegeanLoadingProp;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+
 // The title screen (src/title_screen.jo, aegean.jo title_wanted). A page whose URL stages a
 // capture (any AEGEAN_ option but quality, touch and title) starts straight in the game, as the
 // native runs with those environment variables do. While the module loads and the world is built
@@ -429,20 +519,45 @@
   };
   const wanted = title !== undefined ? title !== "0" : !staged;
   if (!wanted || typeof document === "undefined" || document.title !== "Aegean Skies" || !document.body) return;
-  // A small two-bladed propeller turning slowly, centred on the dusk, no words; a faint ring
-  // round it fills as the game reports its preparation. All drawn here, no image file.
+  // The loading propeller (above), small and centred on the dusk, no words; a faint ring round it
+  // fills as the game reports its preparation. Every layer its own element, so the compositor
+  // turns and fades it alone. All drawn here, no image file.
+  const P = root.AegeanLoadingProp, rows = P.table();
+  const pct = (s) => (100 * s / P.STOPS).toFixed(3) + "%";
+  const frames = (name, f) => "@keyframes " + name + "{" + rows.map((r, s) => pct(s) + "{" + f(r) + "}").join("") + "}";
+  const blade = "M0,-3 C5,-6 7,-22 2,-33 C1,-35 -1,-35 -2,-33 C-7,-22 -5,-6 0,-3 Z";
+  const at = (r, a) => (r * Math.sin(a)).toFixed(2) + "," + (-r * Math.cos(a)).toFixed(2);
+  const arcPaths = (v) => P.arcs(v).map(([r, a0, a1]) => '<path d="M' + at(r, a0) + 'A' + r.toFixed(2) + ',' + r.toFixed(2) + ' 0 0 1 ' + at(r, a1) + '"/>').join("");
+  const layer = (cls, inner) => '<div class="' + cls + '"><svg viewBox="-44 -44 88 88">' + inner + '</svg></div>';
   card = document.createElement("div");
   card.id = "aegean-loading";
   card.setAttribute("role", "progressbar");
   card.setAttribute("aria-label", "Loading");
-  const blade = "M0,-3 C5,-6 7,-22 2,-33 C1,-35 -1,-35 -2,-33 C-7,-22 -5,-6 0,-3 Z";
+  const ease = " " + P.CYCLE + "s linear infinite";
   card.innerHTML = '<style>#aegean-loading{position:fixed;inset:0;z-index:5;background:#131a26;display:flex;align-items:center;' +
-    'justify-content:center}#aegean-loading svg{width:88px;height:88px;overflow:visible}#aegean-loading .prop{transform-origin:0 0;' +
-    'animation:aegean-turn 2.6s linear infinite;will-change:transform}#aegean-loading .fill{transition:stroke-dashoffset .3s linear}' +
-    '@keyframes aegean-turn{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>' +
+    'justify-content:center}#aegean-loading .stage{position:relative;width:88px;height:88px}' +
+    '#aegean-loading .stage>div,#aegean-loading .stage>svg,#aegean-loading .band>div{position:absolute;inset:0;width:88px;height:88px;will-change:transform,opacity}' +
+    '#aegean-loading svg{width:88px;height:88px;overflow:visible;display:block}#aegean-loading .fill{transition:stroke-dashoffset .3s linear}' +
+    '#aegean-loading .blades{animation:aegean-blade-turn' + ease + ',aegean-blade-show' + ease + '}' +
+    '#aegean-loading .disc{animation:aegean-disc' + ease + '}' +
+    '#aegean-loading .rim{animation:aegean-rim' + ease + '}' +
+    '#aegean-loading .band{animation:aegean-band-turn' + ease + '}' +
+    '#aegean-loading .v{animation:aegean-flip .25s step-end infinite}' +
+    '#aegean-loading .v1{animation-delay:-.1667s}#aegean-loading .v2{animation-delay:-.0833s}' +
+    '@keyframes aegean-flip{0%{opacity:1}33.333%{opacity:0}100%{opacity:0}}' +
+    frames("aegean-blade-turn", r => "transform:rotate(" + r.blade.toFixed(2) + "deg)") +
+    frames("aegean-blade-show", r => "opacity:" + r.blades.toFixed(3)) +
+    frames("aegean-disc", r => "opacity:" + r.disc.toFixed(3)) +
+    frames("aegean-band-turn", r => "transform:rotate(" + r.band.toFixed(2) + "deg);opacity:" + r.arcs.toFixed(3)) +
+    frames("aegean-rim", r => "transform:rotate(" + r.band.toFixed(2) + "deg);opacity:" + r.disc.toFixed(3)) +
+    '</style><div class="stage">' +
     '<svg viewBox="-44 -44 88 88"><circle r="40" fill="none" stroke="rgba(217,212,196,.10)" stroke-width="1.5"/>' +
     '<circle class="fill" r="40" fill="none" stroke="rgba(199,158,82,.55)" stroke-width="1.5" stroke-dasharray="251.3" ' +
-    'stroke-dashoffset="251.3" transform="rotate(-90)"/><g class="prop" fill="#c79e52" opacity=".85">' +
-    '<path d="' + blade + '"/><path d="' + blade + '" transform="rotate(180)"/><circle r="4.5" fill="#8a6a35"/></g></svg>';
+    'stroke-dashoffset="251.3" transform="rotate(-90)"/></svg>' +
+    layer("disc", '<circle r="' + P.R + '" fill="rgba(217,212,196,.16)"/><circle r="' + (P.R - 0.8) + '" fill="none" stroke="rgba(217,212,196,.32)" stroke-width="1.1"/>') +
+    layer("rim", '<g fill="none" stroke="rgba(250,244,228,.9)" stroke-width="1.8" stroke-linecap="round">' + P.RIM.map(([a0, a1]) => '<path d="M' + at(P.R - 0.8, a0) + 'A' + (P.R - 0.8) + ',' + (P.R - 0.8) + ' 0 0 1 ' + at(P.R - 0.8, a1) + '"/>').join("") + '</g>') +
+    '<div class="band">' + [0, 1, 2].map(v => layer("v v" + v, '<g fill="none" stroke="rgba(240,232,210,.92)" stroke-width="1.4" stroke-linecap="round">' + arcPaths(v) + '</g>')).join("") + '</div>' +
+    layer("blades", '<g fill="#c79e52" opacity=".85"><path d="' + blade + '"/><path d="' + blade + '" transform="rotate(180)"/></g>') +
+    '<svg viewBox="-44 -44 88 88"><circle r="' + P.HUB + '" fill="#8a6a35"/></svg></div>';
   document.body.appendChild(card);
 })(typeof globalThis !== "undefined" ? globalThis : this);
