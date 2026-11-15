@@ -331,6 +331,18 @@ def fit_superposition(data):
     err = np.concatenate([ys[i] - Xs[i] @ w for i in te])
     flat = np.concatenate([ys[i] for i in te])
     cs = [np.corrcoef(Xs[i] @ w, ys[i])[0, 1] for i in te if np.std(Xs[i] @ w) > 1e-6]
+    # The fit is on mean-removed contours, so the shapes carry an arbitrary constant; the
+    # synthesizer adds them, uncentred, to the phrase level. Take out the median level the shapes
+    # add to a phrase (stop and other phrases apart; the arc's hats sum to one, so a constant on
+    # the arc shifts the whole phrase), so a phrase's median pitch is the fitted level, as the
+    # level model assumes. Without this a speaker's fit came out 3 st high.
+    offset = {}
+    for stop in (True, False):
+        o = [float(np.median(design(d)[clean(d['s'])] @ w)) for d in data if (d['punct'] == 'stop') == stop and clean(d['s']).sum() >= 10]
+        offset['stop' if stop else 'other'] = float(np.median(o)) if o else 0.0
+    w = w.copy()
+    w[:ARC_POINTS] -= offset['stop']
+    w[ARC_POINTS:2 * ARC_POINTS] -= offset['other']
     k = 0
     out = {}
     for name, n in [('arc_stop', ARC_POINTS), ('arc_other', ARC_POINTS)] + [(f'accent_{t}', len(LAGS)) for t in ACC_TYPES] + [('micro', len(MICRO))]:
@@ -342,6 +354,7 @@ def fit_superposition(data):
         levels.setdefault(min(d.get('index', 0), 2), []).append(float(np.median(d['s'])))
     med = float(np.median(np.concatenate([d['s'] for d in data])))
     return dict(weights=out, lags=[round(float(l), 2) for l in LAGS], micro_names=MICRO,
+                level_offset_removed_st={k: round(v, 2) for k, v in offset.items()},
                 level_by_index={str(k): round(float(np.median(v)) - med, 2) for k, v in sorted(levels.items())},
                 level_spread=round(float(np.percentile([np.median(d['s']) for d in data], 75) - np.percentile([np.median(d['s']) for d in data], 25)), 2),
                 heldout_rmse_st=round(float(np.sqrt(np.mean(err ** 2))), 3),

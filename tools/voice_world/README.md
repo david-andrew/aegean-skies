@@ -104,7 +104,22 @@ prosody), a blend (the speaker's own units where there are at least two tokens, 
 units elsewhere), and the speaker's units only. Each is scored on the held-out lines as they stand
 at the time of the run (with the starting voice and earlier rounds' voices scored again on the same
 lines), including word accuracy, and the round is published with a learning curve per kind. A failed run says at which stage and why, and `--round rN` retries it,
-reusing every finished scoring. The voice studio's "Tune" button starts it. The
+reusing every finished scoring.
+
+More of the speaker's data must never make the voice worse, so the fitter:
+
+- fits prosody (durations, pitch, intonation, pauses) to the plain reads only: the game adds
+  each genre's delivery itself, and fitting the performed reads would count it twice;
+- moves each prosody number from the prior toward the speaker's by how much data it rests on
+  (n / (n + k)) rather than switching over at a threshold;
+- removes the level its fitted intonation shapes would add (they are fitted to mean-removed
+  contours, but the synthesizer adds them to the phrase level as they are; a speaker's fit came
+  out 3 semitones high);
+- guards the prosody: about ten training lines are kept out of the prosody fit, and at each pool
+  size the new prosody, the new prosody with the previous intonation, and the previous choice
+  are scored on them by word accuracy. The one with the most of the speaker's data within two
+  points of the best is kept, so validation accuracy can fall by at most two points as data
+  grows. The round's note says which was kept and why. The voice studio's "Tune" button starts it. The
 recordings, voices and rounds all stay in scratch.
 
 ## Checks

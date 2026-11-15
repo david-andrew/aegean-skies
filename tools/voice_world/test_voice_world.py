@@ -155,5 +155,39 @@ class ModelGaps(unittest.TestCase):
         self.assertTrue(all(np.isfinite(x) for x in v['model']['level']))
 
 
+class Intonation(unittest.TestCase):
+    def test_fitted_shapes_add_no_level(self):
+        """Contours that rise well above the phrase level at every accent: the fitted shapes must
+        not carry that rise into the level (the synthesizer adds them uncentred)."""
+        import prosody_fit as pf
+        rng = np.random.default_rng(4)
+        data = []
+        for i in range(60):
+            dur = rng.uniform(0.7, 1.1)
+            t = np.arange(0, dur, 0.005)
+            acc = [(a, a + 0.12) for a in np.sort(rng.uniform(0.05, dur - 0.3, rng.integers(1, 3)))]
+            s = 12.0 + 0.01 * rng.standard_normal(len(t))
+            for a, b in acc:
+                s += 5.0 / (1 + np.exp(-(t - a - 0.05) / 0.03))             # a rise held after the accent
+            data.append(dict(t=t, s=s, acc=acc, dur=dur, punct='stop' if i % 2 else 'comma', test=i % 5 == 4, rows=[], index=i % 3))
+        sp = pf.fit_superposition(data)
+        w = np.concatenate([sp['weights'][k] for k in ['arc_stop', 'arc_other', 'accent_first', 'accent_middle', 'accent_nuclear', 'micro']])
+        added = [float(np.median(pf.design(d) @ w)) for d in data]
+        self.assertLess(abs(np.median(added)), 0.3)
+        self.assertGreater(max(sp['level_offset_removed_st'].values()), 0.5)    # there was a level to remove
+
+
+class ProsodyGuard(unittest.TestCase):
+    def test_more_data_wins_only_within_the_tolerance(self):
+        import tune_round as tr
+        acc = {'new': 0.80, 'mix': 0.85, 'before': 0.86}
+        pick = lambda: tr.guard_prosody([(k, k) for k in ['new', 'mix', 'before']], lambda label, fit: acc[label])[0]
+        self.assertEqual(pick(), 'mix')                 # 1 point below the best: more data wins
+        acc['mix'] = 0.83
+        self.assertEqual(pick(), 'before')              # 3 points below: keep what was there
+        acc['new'] = 0.86
+        self.assertEqual(pick(), 'new')
+
+
 if __name__ == '__main__':
     unittest.main()

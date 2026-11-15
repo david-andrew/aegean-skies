@@ -141,9 +141,28 @@ def corpus_files(subset, aligned, work):
     return [os.path.join(work, f) for f in ('phones.json', 'words.json', 'corpus.npz', 'speakers.json')]
 
 
-def fit_user(subset, work, prior_fit):
-    """The user's diphone units and prosody from the subset; thin parts of the prosody fall back
-    to the prior. Returns (units, fit, notes)."""
+PLAIN = ('neutral', 'contrast', 'news')     # reads without a performed delivery
+SHRINK = dict(duration=8, phrases=60, pauses=10, fricatives=10)
+
+
+def toward(prior, user, w):
+    """prior + w (user - prior), elementwise on numbers and lists."""
+    if isinstance(prior, (list, tuple)):
+        return [toward(a, b, w) for a, b in zip(prior, user)]
+    return round(float(prior + w * (user - prior)), 4)
+
+
+def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=()):
+    """The user's diphone units and prosody from the subset. Returns (units, fit, notes).
+
+    More data must never make the voice worse, so the prosody:
+    - comes from the plain reads only (PLAIN): the game adds each genre's delivery on top, and
+      fitting the performed reads (war, race, ident...) would count that delivery twice;
+    - moves from the prior toward the user's value gradually, by how much data each number rests
+      on (weight n / (n + k), SHRINK), instead of switching over at a threshold.
+    Units and the raised-voice spectrum (effort) use every take: they describe the voice itself.
+    Lines in `exclude` (the validation lines) never shape the prosody.
+    """
     os.makedirs(work, exist_ok=True)
     phones_json, words_json, npz, speakers = corpus_files(subset, None, work)
     notes = []
@@ -158,65 +177,89 @@ def fit_user(subset, work, prior_fit):
         mean, n = bu.average([f for f, m in fm])
         units[k] = dict(frames=mean, count=n, left=float(np.median([m['left'] for f, m in fm])),
                         right=float(np.median([m['right'] for f, m in fm])))
-    # every phone must be able to start and end a phrase: borrow the nearest pause unit if missing
-    phrases = pf.load(phones_json, words_json, npz, speakers)
+    every = [p for p in pf.load(phones_json, words_json, npz, speakers) if subset[p['seg']][0]['id'] not in exclude]
+    plain = [p for p in every if subset[p['seg']][0]['genre'] in PLAIN] if plain_only else every
     fit = dict(prior_fit)
-    if phrases:
-        d = pf.fit_durations(phrases, pack.PHONES)
+    wt = (lambda n, k: n / (n + k)) if shrink else (lambda n, k: 1.0)
+    if plain_only:
+        notes.append(f'prosody from your {len({p["seg"] for p in plain})} plain reads (the game adds each genre\'s delivery itself)')
+    if plain:
+        d = pf.fit_durations(plain, pack.PHONES)
         counts = {}
-        for p in phones:
-            if p['p'] != '[SIL]':
-                lab = bu.unit_label(p['p'], p['stress'])
-                counts[lab] = counts.get(lab, 0) + 1
+        for phr in plain:
+            for p in phr['phones']:
+                if p['p'] != '[SIL]':
+                    lab = bu.unit_label(p['p'], p['stress'])
+                    counts[lab] = counts.get(lab, 0) + 1
         prior_ms = prior_fit['durations']['intercept_ms']
         ok = lambda v: isinstance(v, (int, float)) and np.isfinite(v) and v > 0
         d['intercept_ms'] = {l: v for l, v in d['intercept_ms'].items() if ok(v)}
         shared = [l for l in d['intercept_ms'] if counts.get(l, 0) >= 5 and ok(prior_ms.get(l))]
         ratio = float(np.exp(np.median([np.log(d['intercept_ms'][l] / prior_ms[l]) for l in shared]))) if shared else 1.0
         dur = dict(prior_fit['durations'])
-        dur['intercept_ms'] = {l: (d['intercept_ms'][l] if counts.get(l, 0) >= 5 and l in d['intercept_ms'] else round(v * ratio, 1))
-                               for l, v in prior_ms.items()}
-        own = sum(1 for l in dur['intercept_ms'] if counts.get(l, 0) >= 5)
-        notes.append(f'durations: {own} phones from your takes, the rest the prior scaled by {ratio:.2f}')
-        if len(phrases) >= 150:
+        ims = {}
+        for l, v in prior_ms.items():
+            c = counts.get(l, 0)
+            if l in d['intercept_ms'] and c >= 2 and (shrink or c >= 5):
+                w = wt(c, SHRINK['duration'])
+                ims[l] = round(float(np.exp(np.log(v * ratio) + w * (np.log(d['intercept_ms'][l]) - np.log(v * ratio)))), 1)
+            else:
+                ims[l] = round(v * ratio, 1)
+        dur['intercept_ms'] = ims
+        own = sum(1 for l in ims if counts.get(l, 0) >= 2)
+        notes.append(f'durations: {own} phones from your takes' + (' (weighted by count)' if shrink else '') + f', the rest the prior scaled by {ratio:.2f}')
+        if len(plain) >= 150:
             dur['factors'] = d['factors']; dur['elasticity'] = d['elasticity']; dur['reference_rate'] = d['reference_rate']
             notes.append('duration factors and tempo elasticities from your takes')
         else:
             dur['reference_rate'] = round(prior_fit['durations']['reference_rate'] / ratio, 3)
             notes.append('duration factors and tempo elasticities from the prior (fewer than 150 phrases)')
         fit['durations'] = dur
-        data = pf.prepare_f0(phrases)
+        data = pf.prepare_f0(plain)
         allf = np.concatenate([x['s'] for x in data]) if data else np.array([])
         if len(allf) > 200:
             fit['f0_st'] = dict(median=round(float(np.median(allf)), 2), p5=round(float(np.percentile(allf, 5)), 2), p95=round(float(np.percentile(allf, 95)), 2))
             notes.append(f"pitch level from your takes ({100 * 2 ** (fit['f0_st']['median'] / 12):.0f} Hz median)")
-        if len(data) >= 60:
+        psp = prior_fit['superposition']
+        if len(data) >= (20 if shrink else 60):
             sp = pf.fit_superposition(data)
-            # a phrase-position class with no examples keeps the prior's level
-            lv = dict(prior_fit['superposition'].get('level_by_index', {}))
-            lv.update(sp.get('level_by_index', {}))
+            w = wt(len(data), SHRINK['phrases'])
+            sp['weights'] = {k: toward(psp['weights'][k], v, w) if k in psp['weights'] else v for k, v in sp['weights'].items()}
+            lv = dict(psp.get('level_by_index', {}))      # a position class with no examples keeps the prior's level
+            lv.update({k: toward(lv[k], v, w) if k in lv else v for k, v in sp.get('level_by_index', {}).items()})
             sp['level_by_index'] = lv
+            sp['level_spread'] = toward(psp['level_spread'], sp['level_spread'], w)
             fit['superposition'] = sp
-            notes.append('intonation shapes fitted to your takes')
+            notes.append(f'intonation shapes {round(100 * w)}% yours ({len(data)} phrases)')
         else:
-            sp = dict(prior_fit['superposition'])
+            sp = dict(psp)
             if len(data) >= 5:
                 lv = [float(np.median(x['s'])) for x in data]
-                sp['level_spread'] = round(float(np.percentile(lv, 75) - np.percentile(lv, 25)), 2)
+                sp['level_spread'] = toward(psp['level_spread'], float(np.percentile(lv, 75) - np.percentile(lv, 25)), wt(len(data), SHRINK['phrases']))
             fit['superposition'] = sp
-            notes.append('intonation shapes from the prior (fewer than 60 phrases)')
+            notes.append(f'intonation shapes from the prior (fewer than {20 if shrink else 60} phrases)')
+        fr = pf.fricatives(plain)
+        fit['fricatives'] = {k: dict(v) for k, v in prior_fit['fricatives'].items()}
+        for k, v in fr.items():
+            if k in fit['fricatives'] and shrink:
+                fit['fricatives'][k]['p90_ms'] = toward(fit['fricatives'][k]['p90_ms'], v['p90_ms'], wt(v['n'], SHRINK['fricatives']))
+            elif v['n'] >= 5:
+                fit['fricatives'][k] = v
+        pz = pf.pauses(plain)
+        fit['pauses'] = {}
+        for k, v in prior_fit['pauses'].items():
+            if k in pz and shrink and pz[k]['n'] >= 1:
+                fit['pauses'][k] = dict(v, median_ms=toward(v['median_ms'], pz[k]['median_ms'], wt(pz[k]['n'], SHRINK['pauses'])))
+            else:
+                fit['pauses'][k] = pz[k] if k in pz and pz[k]['n'] >= 5 else v
+    if every:
         try:
-            e = pf.effort(phrases)
+            e = pf.effort(every)
             if e['frames'] >= 300:
                 fit['effort'] = e
                 notes.append('raised-voice spectrum direction from your takes')
         except Exception:
             pass
-        fr = pf.fricatives(phrases)
-        fit['fricatives'] = {k: v for k, v in prior_fit['fricatives'].items()}
-        fit['fricatives'].update({k: v for k, v in fr.items() if v['n'] >= 5})
-        pz = pf.pauses(phrases)
-        fit['pauses'] = {k: (pz[k] if k in pz and pz[k]['n'] >= 5 else v) for k, v in prior_fit['pauses'].items()}
     return units, fit, notes
 
 
@@ -277,6 +320,30 @@ def blend_units(adapted, user, min_count=2):
     return out, own
 
 
+GUARD_TOLERANCE = 0.02     # word accuracy a choice with more of the speaker's data may give up
+
+
+def validation_lines(pool, k_min=6, k_max=10, share=0.12):
+    """A fixed draw of training lines that never shape the prosody: the prosody guard scores
+    candidate prosodies on them."""
+    ids = sorted(l['id'] for l in pool)
+    k = min(k_max, max(k_min, round(share * len(ids))))
+    pick = set(random.Random(20261115).sample(ids, min(k, len(ids))))
+    return [l for l in pool if l['id'] in pick]
+
+
+def guard_prosody(candidates, score):
+    """candidates: [(label, fit)] with the most of the speaker's data first. Each is scored
+    (word accuracy on the validation lines); the first within GUARD_TOLERANCE of the best wins, so
+    adding data can cost at most the tolerance on the validation lines, and the speaker's own
+    prosody comes in as soon as it costs no intelligibility."""
+    scored = [(label, fit, score(label, fit)) for label, fit in candidates]
+    best = max(a for _, _, a in scored)
+    for label, fit, acc in scored:
+        if acc >= best - GUARD_TOLERANCE:
+            return label, fit, {l: round(a, 3) for l, _, a in scored}
+
+
 def pack_voice(units, fit, lex, out, prior=None):
     pack.pack(units, lex, out, pack.model_numbers(fit, fit['superposition'], prior))
 
@@ -294,10 +361,24 @@ def evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr
                 return d['entries']
         except (OSError, ValueError):
             pass
+    # the same voice on the same takes, scored by an earlier round (its files stay where they are)
+    shared = os.path.join(root, 'tune', 'scores', hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:20] + '.json')
+    if not full and os.path.exists(shared):
+        try:
+            entries = json.load(open(shared))['entries']
+            if all(os.path.exists(os.path.join(root, e['synth'])) for e in entries):
+                evaluate_voice.reused += 1
+                return entries
+        except (OSError, ValueError, KeyError):
+            pass
     entries = _evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr)
     tmp = done + '.tmp'
     json.dump(dict(key=key, entries=entries), open(tmp, 'w'))
     os.replace(tmp, done)
+    if rel_base:
+        os.makedirs(os.path.dirname(shared), exist_ok=True)
+        json.dump(dict(key=key, entries=entries), open(shared + '.tmp', 'w'))
+        os.replace(shared + '.tmp', shared)
     return entries
 
 
@@ -466,13 +547,40 @@ def main():
             if n not in sizes:
                 sizes.append(n)
         full_entries, notes_full = {}, []
+        # the prosody guard: candidate prosodies scored on validation lines from the pool
+        val = validation_lines(pool) if asr is not None else []
+        val_ids = {l['id'] for l in val}
+        chosen = None                     # the prosody chosen at the previous size
+        guard_log = []
         for i, n in enumerate(sizes):
             subset = [(l, aligned[l['id']][0], aligned[l['id']][1]) for l in order[:n]]
             full = n == len(order)
             share = '' if full else f' ({round(100 * n / len(order))}%)'
             prog.set('fit', f'Fitting voices to {n} lines{share}', 38 + 55 * i / len(sizes))
-            user, fit, notes = fit_user(subset, os.path.join(root, 'tune', 'work', f'{rnd_id}-{n}'), prior_fit)
+            work = os.path.join(root, 'tune', 'work', f'{rnd_id}-{n}')
+            user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids)
             adapted, phones_seen = adapt_units(narr['units'], user, M)
+            if val:
+                if chosen is None:        # before any of the speaker's prosody: the prior's, at the speaker's pitch
+                    chosen = ('starting prosody at your pitch', dict(prior_fit, f0_st=fit.get('f0_st', prior_fit['f0_st'])))
+                cands = [(f'yours from {n} lines', fit),
+                         (f'yours from {n} lines, intonation as before', dict(fit, superposition=chosen[1]['superposition'])),
+                         (f'as before ({chosen[0]})', chosen[1])]
+
+                def vscore(label, f, n=n, adapted=adapted):
+                    slug = re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-')[:60]
+                    v = os.path.join(work, f'guard-{slug}.z')
+                    pack_voice(adapted, f, lex, v, prior_fit)
+                    prog.set('fit', f'Checking prosody "{label}" on {len(val)} validation lines', 38 + 55 * i / len(sizes))
+                    ents = evaluate_voice(a.repo, val, takes, v, os.path.join(work, 'guard-' + slug), root, '', False, asr)
+                    return float(np.mean([e['metrics']['word_acc'] for e in ents]))
+                label, fit, accs = guard_prosody(cands, vscore)
+                if label.startswith('as before'):
+                    label = chosen[0]
+                chosen = (label, fit)
+                guard_log.append(dict(lines=n, chosen=label, validation_word_acc=accs))
+                notes = notes + [f'prosody kept: {label} (word accuracy on {len(val)} validation lines: '
+                                 + ', '.join(f'{k} {v:.0%}' for k, v in accs.items()) + ')']
             blended, own = blend_units(adapted, user)
             kinds = [('adapt', adapted, f'starting voice adapted to you ({phones_seen} phones measured)'),
                      ('blend', blended, f'your units where you have them ({own}), adapted elsewhere'),
@@ -484,6 +592,7 @@ def main():
                 prog.set('evaluate', f'Scoring "{kind}" from {n} lines on {len(heldout)} held-out lines', 40 + 55 * (i + (j + 1) / 3) / len(sizes))
                 ents = evaluate_voice(a.repo, heldout, takes, voice, os.path.join(base_dir, f'{kind}-n{n}'), root, f'compare/{rnd_id}/{kind}-n{n}', full, asr)
                 curve.append(dict(lines=n, kind=kind, label=f'{kind}, {n} lines{share}', about=about, summary=summary(ents),
+                                  prosody=chosen[0] if val else 'yours',
                                   voice=os.path.relpath(voice, root), listen={e['line']: e['synth'] for e in ents if e['line'] in listen}))
                 if full:
                     full_entries[kind] = ents
@@ -518,7 +627,7 @@ def main():
         publish(root, dict(id=rnd_id, label=f'Round {rnd_id[1:]}: {len(order)} of your lines, best: {best}', note=note, date=date,
                            heldout=len(heldout), heldout_lines=held_ids, recordings_word_acc=rec_acc, lines=len(order),
                            kind=best, summary=summary(entries), entries=entries, curve=curve, voice=main_voice,
-                           aligner='phone' if aligner else 'dtw'))
+                           aligner='phone' if aligner else 'dtw', guard=guard_log, validation_lines=sorted(val_ids)))
         prog.finish('done', f'Round {rnd_id[1:]} is ready on the Compare tab'
                     + (f' ({evaluate_voice.reused} scorings reused from the earlier attempt)' if evaluate_voice.reused else ''))
     except Exception as e:
