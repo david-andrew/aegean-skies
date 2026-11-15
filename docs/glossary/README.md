@@ -28,6 +28,7 @@ on that unmerged branch so far.
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
+- **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1606,7 +1607,16 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/combat.jo` `step_ground_fire`, `ground_sight`; `src/canal_ground_fire.jo`
   (the canal takeoff's posts); `src/ground_fire_view.jo` (figures, sandbags, guns).
 - **Rules:** they belong to the scenario, never to the living world's population; they hold fire
-  until the slipway hand-over. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run.
+  until the slipway hand-over. A machine-gun nest swings only 110° either side of the way it faces
+  (its sandbag ring's open back stays behind the gunner). Rooftop posts stand on flat-roofed houses
+  only (their parapet slab), the iron bridge's gun at the head of its approach stair, clear of the
+  truss. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run; `tests/ground_fire_test.jo`
+  the arc, waking, silencing and the sounds.
+- **Sound:** a rifle's crack or a machine gun's duller report, dulled further with distance and
+  heard late by the sound's travel, then the canal's **flutter echo** (slaps off either wall in
+  turn, each duller) and a short tail; a ground round passing close makes a sharp supersonic snap;
+  each spout a short spit and plunk. `src/combat_sound.jo` `ground_report`, `bullet_snap`,
+  `spout_report`, `ground_shot_cue`; offline listening: `sloppy --release tools/groundfire_audio.jo DIR`.
 
 ### Water strikes
 
@@ -1643,6 +1653,23 @@ No image: the tiers differ in budgets more than in any single view.
   `slip_point` (the ramp); `src/canal_render.jo` (ways, sleepers, winch).
 
 ---
+## Input
+
+### Panels own the wheel
+
+- **Aliases:** the wheel leak, the menu zooming the camera.
+- **Definition:** while any menu, panel or overlay is open, the mouse wheel is the panel's (one
+  that scrolls, scrolls) and never brings a camera nearer or farther: every `Ui` state
+  (conversations, the board, handling, trade, contracts, the map counter, fuel, the leisure panels
+  with their table bar, menu, rooms, tavli, paper and fishing, the workshop), the
+  pause menu, the notebook, the chart and its maps, time passing, and sitting at a table or at the
+  bar. A new panel is covered by being a `Ui` state.
+- **Code:** `src/ui_state.jo` (`Ui`, `Overlays`, `overlays_open`, `wheel_kept`); `menus_open()` in
+  `aegean.jo`, applied after every camera step that can read the wheel: the walking follow camera
+  (the library's zoom and the game's own), the aboard orbit camera (`fly`), the parachute camera.
+- **Tests:** `tests/camera_wheel_test.jo` (every state against the rule); `tools/wheel_probe.jo`
+  turns the real wheel (`SLOPPY_INPUT` `n:wheel=1`) in the running game with each state open in
+  turn, and once with nothing open to see it zoom (the command is at the top of the file).
 
 ## Capture switches
 
@@ -1665,6 +1692,8 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
+| `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
+| `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
