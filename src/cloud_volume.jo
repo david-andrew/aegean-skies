@@ -164,7 +164,7 @@ cloud_stamp_value = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4) -> f32:
 # four tetrahedral taps `reach` voxels apart. A wide reach gives the lobes'
 # broad shoulders rather than every crevice (painted light, not pockmarks).
 # Divide by the extent for a world normal.
-cloud_stamp_gradient = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4, reach: f32 = 2.6) -> vec3:
+cloud_stamp_gradient = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4, reach: f32 = 3.4) -> vec3:
     h = vec3(reach/(voxels.x-1.0),reach/(voxels.y-1.0),reach/(slab.w-1.0))
     a = cloud_stamp_value(atlas,p+vec3(h.x,-h.y,-h.z),slab,voxels)
     b = cloud_stamp_value(atlas,p+vec3(-h.x,-h.y,h.z),slab,voxels)
@@ -181,11 +181,56 @@ cloud_growing_point = (p: vec3, growth: vec4) -> vec3:
     q.z += cos(p.y*4.0-growth.y+p.x*3.0)*growth.z
     q
 
+# Fine relief for clouds seen close: two octaves of value noise in the cloud's
+# own metres (it drifts and turns with the cloud), faded out before a
+# low-resolution pixel could resolve it, and kept off the flat base.
+cloud_vnoise3 = (q: vec3) -> f32:
+    k = floor(q.y); f = q.y-k; f = f*f*(3.0-2.0*f)
+    mix(vnoise(q.xz+vec2(k*17.31,k*31.73)),vnoise(q.xz+vec2((k+1.0)*17.31,(k+1.0)*31.73)),f)
+
+# Signed metres added to the distance (positive erodes, negative bulges).
+# Billowed noise: rounded bulges with creases between them, as cauliflower.
+cloud_relief = (m: vec3, fade: vec2, seed: f32) -> f32:
+    r: f32 = 0.0
+    if fade.x > 0.0: r -= (abs(cloud_vnoise3(m/95.0+vec3(seed,seed*0.7,seed*1.3))*2.0-1.0)-0.35)*26.0*fade.x
+    if fade.y > 0.0: r -= (abs(cloud_vnoise3(m/38.0+vec3(seed*1.7,seed,seed*0.4))*2.0-1.0)-0.35)*7.0*fade.y
+    r
+
+# Relief fades in by metres per low-resolution pixel; none on the base.
+cloud_relief_fade = (mpp: f32) -> vec2: vec2(1.0-smoothstep(10.0,30.0,mpp),1.0-smoothstep(4.0,12.0,mpp))
+cloud_relief_keep = (p: vec3) -> f32: smoothstep(f32(-CLOUD_BASE),f32(-CLOUD_BASE)+0.08,p.y)
+
+# The visible surface at a point of the body: colour and opacity.
+cloud_body_hit = (p: vec3, world: vec3, ray: vec3, t: f32, d: f32, leave: f32, fade: vec2, seed: f32, i: VolumeOut, u: VolumeParams) -> vec4:
+    scale = i.extent.x
+    path = max(leave-t,0.0)
+    local = normalize(cloud_stamp_gradient(u.atlas,p,i.slab,i.voxels)/i.extent)
+    if fade.x+fade.y > 0.0:
+        m = p*i.extent; h: f32 = 6.0
+        keep = cloud_relief_keep(p)
+        r0 = cloud_relief(m,fade,seed)
+        g = vec3(cloud_relief(m+vec3(h,0,0),fade,seed)-r0,cloud_relief(m+vec3(0,h,0),fade,seed)-r0,cloud_relief(m+vec3(0,0,h),fade,seed)-r0)/h
+        # The relief breaks the silhouette; the light keeps its broad painted
+        # masses (full relief shading reads as crumpled paper).
+        local = normalize(local+g*(keep*0.3))
+    if t < 0.01 and d < 0.0:
+        # Looking outward near an exit thins continuously; inward rays
+        # see the dense interior rather than a turning sheet.
+        outward = dot(normalize(cloud_to_world(local,i.meta.xy)),ray)
+        if outward > 0.05: path = min(path,-d*scale/outward)
+    opacity = i.weather.x*(1.0-exp(-path*0.018))
+    color = cloud_paint(local,p,world,ray,i,u)
+    inside = smoothstep(0.0,0.035,-d)*step(t,0.01)
+    mist = mix(u.paint_shade,u.shade*0.7,i.weather.y)*mix(1.0,0.48,i.weather.y)
+    mist += vec3(0.7,0.78,1.0)*u.lightning*i.weather.y
+    color = mix(color,mist*(0.94+0.08*vnoise(p.xz*32.0+vec2(p.y*17.0,i.growth.y))),inside)
+    vec4(color*opacity,opacity)
+
 # Surface values are deliberately grouped into broad painted regions, with
 # narrow transitions and gentle washes inside them. The silhouette comes from the distance field,
 # rather than an accumulation of widely spaced translucent samples.
-cloud_paint = (gradient: vec3, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
-    normal = cloud_to_world(gradient/i.extent,i.meta.xy)
+cloud_paint = (local_normal: vec3, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
+    normal = cloud_to_world(local_normal,i.meta.xy)
     normal /= max(length(normal),0.000001)
     sun = normalize(u.sun_dir)
     facing = dot(normal,sun)
@@ -194,7 +239,7 @@ cloud_paint = (gradient: vec3, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u:
     # Otherwise every shoulder becomes an identical isolated dark crescent.
     mass_normal = p*vec3(0.8,0.55,0.8)+vec3(0,0.18,0)
     mass_normal = cloud_to_world(mass_normal/max(length(mass_normal),0.000001),i.meta.xy)
-    value = mix(facing,dot(mass_normal,sun),0.3)+wash*0.08
+    value = mix(facing,dot(mass_normal,sun),0.5)+wash*0.08
     shade = mix(u.shade*0.9,u.paint_shade,smoothstep(-0.12,0.15,sun.y))
     shade = mix(shade,vec3(0.08,0.23,0.37)*u.sun,i.weather.y*0.8)
     white = u.sun*u.paint_light
@@ -206,13 +251,17 @@ cloud_paint = (gradient: vec3, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u:
     light *= 0.93+0.07*smoothstep(-0.3,0.9,facing)
     under = smoothstep(f32(-CLOUD_BASE+0.01),f32(-CLOUD_BASE+0.04),p.y)
     if u.shadows > 0.0:
-        probe = cloud_stamp_value(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.16,i.slab,i.voxels)
-        light = mix(light,shade,smoothstep(0.51,0.53,probe)*0.38)
+        # Broad self-shadow from the next mass sunward, not every crevice.
+        probe = cloud_stamp_value(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.26,i.slab,i.voxels)
+        # (never on faces turned to the sun: there it reads as a crater)
+        light = mix(light,shade,smoothstep(0.52,0.6,probe)*0.2*(1.0-smoothstep(0.0,0.4,facing)))
     edge = 1.0-abs(dot(normal,ray))
     rim = smoothstep(0.80,0.96,edge)*smoothstep(0.0,0.15,facing)
     light = mix(light,white*1.04,rim*0.45)
     # The shared condensation floor reads as one cool plane.
-    light = mix(shade*0.94,light,under)
+    # (a little darker than the shaded sides: seen from below, a near cloud's
+    # base separates it from the farther clouds it overlaps)
+    light = mix(shade*0.86,light,under)
     # Fine pigment, independent of lobe lighting; no broad mottled gradients.
     pigment = vnoise(p.xy*47.0+vec2(p.z*23.0,0))-0.5
     tooth = hash21(floor(p.xy*1400.0)+floor(p.z*1400.0)*vec2(17,31))-0.5
@@ -282,32 +331,32 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         scale = i.extent.x
         ray_scale = scale/(1.0+leave/f32(EARTH_RADIUS))
         pixel = max(fwidth(i.ndc.x),fwidth(i.ndc.y))*0.4
+        seed = i.meta.w*61.0
+        fade_far = 1.0-smoothstep(125000.0,150000.0,distance)
         t = enter
-        loop k in 0..80:
+        # The ray's closest pass outside the surface, in units of the hit
+        # tolerance: a near miss is partly covered, so a low-resolution
+        # silhouette is antialiased rather than stepped when enlarged.
+        near_r: f32 = 1000.0; near_t: f32 = 0.0
+        loop k in 0..96:
             if t >= leave: break
             world = u.cam+ray*t
             world.y += world_drop(ray.xz*t)
             p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
             d = (0.5-cloud_stamp_value(u.atlas,p,i.slab,i.voxels))/f32(CLOUD_ENCODE)+i.growth.x
             epsilon = max(0.004,t*pixel/scale*0.55)
+            fade = cloud_relief_fade(t*pixel*1.5)
+            relief = d*scale < 60.0 and fade.x > 0.0
+            if relief: d += cloud_relief(p*i.extent,fade,seed)*cloud_relief_keep(p)/scale
             if d < epsilon:
-                path = max(leave-t,0.0)
-                gradient = cloud_stamp_gradient(u.atlas,p,i.slab,i.voxels)
-                if t < 0.01 and d < 0.0:
-                    # Looking outward near an exit thins continuously; inward rays
-                    # see the dense interior rather than a turning sheet.
-                    normal = normalize(cloud_to_world(gradient/i.extent,i.meta.xy))
-                    outward = dot(normal,ray)
-                    if outward > 0.05: path = min(path,-d*scale/outward)
-                opacity = i.weather.x*(1.0-exp(-path*0.018))
-                color = cloud_paint(gradient,p,world,ray,i,u)
-                inside = smoothstep(0.0,0.035,-d)*step(t,0.01)
-                mist = mix(u.paint_shade,u.shade*0.7,i.weather.y)*mix(1.0,0.48,i.weather.y)
-                mist += vec3(0.7,0.78,1.0)*u.lightning*i.weather.y
-                color = mix(color,mist*(0.94+0.08*vnoise(p.xz*32.0+vec2(p.y*17.0,i.growth.y))),inside)
-                fade = 1.0-smoothstep(125000.0,150000.0,distance)
-                return vec4(color*opacity,opacity)*fade
-            t += max((d-0.001)*ray_scale*0.72,epsilon*ray_scale*0.5)
+                return cloud_body_hit(p,world,ray,t,d,leave,if relief: fade else: vec2(0,0),seed,i,u)*fade_far
+            if d/epsilon < near_r: near_r = d/epsilon; near_t = t
+            t += max((d-0.001)*ray_scale*(if relief: 0.45 else: 0.72),epsilon*ray_scale*0.5)
+        if near_r < 3.0:
+            world = u.cam+ray*near_t
+            world.y += world_drop(ray.xz*near_t)
+            p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
+            return cloud_body_hit(p,world,ray,near_t,0.0,leave,vec2(0,0),seed,i,u)*(fade_far*(1.0-smoothstep(1.0,3.0,near_r)))
         return vec4(0,0,0,0)
     dt = (leave - enter) / steps
     # Midpoints are stable in world/view space. No frame-random dither/history.
