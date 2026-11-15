@@ -2358,12 +2358,14 @@ No image: the tiers differ in budgets more than in any single view.
 ### Lead marker
 
 - **Aliases:** the lead ring, lead marks, the deflection marker, "where to aim".
-- **Definition:** a small ring in the hostile colour on every hostile within 700 m on screen,
-  where the rounds and that hostile would meet: Sky Barons' lead ring, drawn as it draws it
-  (6 px radius, 2 px line, 0.9 alpha). It follows `lead_from`: time of flight refined twice, the
+- **Definition:** a small ring on every hostile within 700 m on screen, where the rounds and that
+  hostile would meet: Sky Barons' lead ring, drawn as it draws it with its markers plain (6 px
+  radius, 2 px line, its quiet warm white at 0.75 alpha). It follows `lead_from`: time of flight refined twice, the
   rounds keeping the aircraft's own velocity, drop added back as aim above.
 - **Code:** `src/lead_marker.jo` `gun_lead`, `lead_marks`, `draw_lead_marks`.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 900 2400 30"`.
+
+![Lead rings in the strait melee, small and quiet where each hostile and the rounds would meet; the larger ring with a dot is the gunsight](img/lead-marker.png)
 
 ### Player toughness, generous hits, aim assist
 
