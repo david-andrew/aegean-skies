@@ -109,7 +109,8 @@ marches distance steps in metres, refined only near the surface.
 - **Brushwork.** Brush strokes in the cloud's own metres curl round each lobe
   along the terminator (`cloud_strokes`): they break every band edge into
   dry-brush cuts and pool pigment along the strokes. Beyond the close relief,
-  scalloped brush dabs break the silhouette (`cloud_brush`). Both stay a few
+  scalloped brush dabs break the silhouette (`cloud_brush`; not on the low tier,
+  where its noise at every march step near a surface cost redfox about 0.3 ms). Both stay a few
   pixels across at any distance, stepping through blended octaves in metres so
   nothing swims, and never reach more than a tenth of a cloud's size. A storm's
   cloud adds broad strokes at its own scale and layers its bands darker toward
