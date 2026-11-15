@@ -13,6 +13,7 @@ use 'render_space.jo'
 use 'quality.jo'
 use 'cloud_depth.jo'
 use 'cloud_shadow_map.jo'
+use 'cloud_field.jo'
 use 'weather_scene.jo'
 use 'look.jo'
 
@@ -72,9 +73,25 @@ cloud_shadow_enabled = env("AEGEAN_CLOUD_SHADOWS") != "0"
 cloud_frames_dir = env("AEGEAN_CLOUD_FRAMES")
 cloud_shadow_count = 0
 
+# The frame's cloud relevance: in view, or shadowing the map drawn this frame.
+cloud_frame_cull = (L: Light) -> CloudCull:
+    forward = normalize(render_rays(scene_view_proj())[2].xyz)
+    c = CloudCull(active=true,forward=forward)
+    s = normalize(L.sun_dir)
+    if __soft or not __post_active or not cloud_shadow_enabled or smoothstep(0.06,0.25,f64(s.y)) <= 0.0: return c
+    eye = world_point(scene_camera())
+    ahead = if length(forward.xz) > 0.001: normalize(forward.xz) else: vec2(0,0)
+    c.k = cloud_shadow_k(L.sun_dir)
+    c.shadow = cloud_shadow_center(eye.x,eye.z,ahead,render_quality.tier)
+    c.half = f32(cloud_shadow_half_for(render_quality.tier))
+    c
+
 render_cloud_shadows = (clouds: CloudVolume[], L: Light):
     global cloud_shadow_x,cloud_shadow_z,cloud_shadow_half,cloud_shadow_strength,cloud_shadow_target,cloud_shadow_base
     global cloud_shadow_sh,cloud_shadow_quad,cloud_shadow_instances,cloud_shadow_ready,cloud_shadow_count
+    # On low the map is redrawn every second frame; between, the last map and its
+    # placement stand (clouds and sun move little in a frame).
+    if render_quality.tier == 0 and frame_number()%2 == 1 and cloud_shadow_strength > 0.0 and cloud_shadow_target.texture.width == cloud_shadow_res_for(0): return
     cloud_shadow_strength = 0.0
     if __soft or not __post_active or not cloud_shadow_enabled: return
     s = normalize(L.sun_dir)
@@ -88,8 +105,8 @@ render_cloud_shadows = (clouds: CloudVolume[], L: Light):
         cloud_shadow_ready = true
     zone("cloud shadows")
     # About 35 m texels: crisp enough for a small cumulus's shadow outline.
-    res = if render_quality.tier == 0: 768 else: if render_quality.tier == 1: 1024 else: 1536
-    cloud_shadow_half = if render_quality.tier == 0: 14000.0 else: if render_quality.tier == 1: 18000.0 else: 24000.0
+    res = cloud_shadow_res_for(render_quality.tier)
+    cloud_shadow_half = cloud_shadow_half_for(render_quality.tier)
     if cloud_shadow_target.texture.width != res:
         if cloud_shadow_target.fbo != 0: free_render_target(cloud_shadow_target)
         tex = texture(image(res,res),true)
@@ -102,16 +119,18 @@ render_cloud_shadows = (clouds: CloudVolume[], L: Light):
     eye = world_point(cam)
     forward = render_rays(scene_view_proj())[2].xyz
     ahead = if length(forward.xz) > 0.001: normalize(forward.xz) else: vec2(0,0)
-    texel = cloud_shadow_half*2.0/f64(res)
-    # Biased ahead of the view, snapped to whole texels so edges never crawl.
-    cloud_shadow_x = floor((eye.x+f64(ahead.x)*cloud_shadow_half*0.4)/texel)*texel
-    cloud_shadow_z = floor((eye.z+f64(ahead.y)*cloud_shadow_half*0.4)/texel)*texel
+    center = cloud_shadow_center(eye.x,eye.z,ahead,render_quality.tier)
+    cloud_shadow_x = f64(center.x); cloud_shadow_z = f64(center.y)
     rows: ShadowInstance[]
     loop v in clouds:
         if v.shape >= 4.0 and v.shape != 5.0: continue
         if v.weather.x < 0.01: continue
         point = cloud_point(v)
         c = vec3(f32(point.x-cloud_shadow_x),v.center.y,f32(point.z-cloud_shadow_z))
+        # (cheap rejection before the eight projected corners)
+        reach = length(v.extent)*1.2*(1.0+length(k))
+        mc = c.xz-k*c.y
+        if max(abs(mc.x),abs(mc.y)) > f32(cloud_shadow_half)+reach: continue
         yaw = vec2(cos(v.heading),sin(v.heading))
         lo = vec2(1e9,1e9); hi = vec2(-1e9,-1e9)
         loop corner in 0..8:
