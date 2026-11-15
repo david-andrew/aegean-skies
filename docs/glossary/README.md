@@ -605,7 +605,8 @@ On the rivers branch until it lands.
 
 - **Aliases:** the P.7's take-off, foil-borne, on the foils, the clutch, the water screw.
 - **Definition:** the Piaggio P.7 (1929) has no floats. Its sealed hull floats low with the wings
-  just clear of the water and the air propeller feathered and still, its lower blade in the sea.
+  just clear of the water and the air propeller feathered, declutched and windmilling slowly, its
+  lower blade in the sea.
   Two hydrofoils on struts just ahead of the wing and a third under the tail lift it; a small
   water screw under the tail, driven by the same engine, pushes it. The run goes in four phases:
   1. **Hull-borne:** the screw pushes the hull through the water (it needs nearly full throttle
@@ -616,19 +617,32 @@ On the rivers branch until it lands.
      settles at a ride height by herself; the tail foil sits higher than the forward pair, so the
      ride is a little nose-up. Fast, a foil's lift per square metre tops out (cavitation), which
      keeps her from being pinned to the water.
-  3. **The clutch:** once the hull has been clear 0.4 s, the air propeller is out of the water,
-     the speed is 14 m/s and the throttle open, the clutch goes over by itself (or when
-     `Controls.clutch` asks): the screw is let go first, then the air propeller is clutched in and
+  3. **The clutch:** once the hull has been clear 0.4 s, the air propeller is out of the water
+     and the throttle open, the clutch goes over by itself at 14 m/s, or as soon as her speed on
+     the foils has stopped rising for a second (in a sea, or short of power, she settles below
+     14 m/s) (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then the air propeller is clutched in and
      comes off its feather over about 1.4 s. In that gap nothing much pushes and she slows.
   4. **Into the air:** the air propeller pulls her along on the foils; as the wing takes her
      weight the foils rise to the surface and break out, and she flies. Holding the stick back on
      the foils gets her off at about 40 m/s; hands off it takes until about 60 m/s.
-  It is meant to be challenging but achievable. It fails when: the throttle is under about 85%
-  (she never gets over the hump on the screw); the nose is pushed down on the foils (the
+  It is meant to be challenging but achievable. It fails when: the engine is short of power
+  (under 70%, from wear: the screw barely gets her onto her foils and the drive plate says
+  "engine too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
   propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
   in the water (it beats the sea, gives no thrust and hurts the engine); or the swell is big
   (wind over about 8 m/s: the wing tips catch the waves and tear). Closing the throttle at under
   5 m/s on the water puts the clutch back to the screw for another try.
+  **The air propeller as seen:** declutched, the engine drags it round through its feathered
+  blades: it whirls with the throttle (12 rad/s idling, 33 flat out, about 315 rpm:
+  `windmill_speed`), as fast as solid blades still read, while its disc and arcs are held back
+  (`foil_disc_speed`, `prop_disc_speed`), so its solid blades show whirling while a blade can touch
+  the sea; where a blade cuts the water it flicks a small throw of spray at each strike
+  (`_blade_cuts` in `src/pilot.jo`, the same particles and colour as the bow spray). A blade windmilling through the sea drags a little and does no harm; driven by the
+  engine, it wrecks it. Once clutched in, out of the sea, its turn rises from the windmill's to the
+  engine's as it comes off its feather (`foil_prop_speed`), through the usual blades-to-disc
+  handover. The brass drive plate lights SCREW, FOILS or AIR PROP, and shows "propeller in the
+  sea" whenever a blade is in the water, and "engine too worn to lift her: have it serviced" on
+  the water when the engine is short of power.
 - **Code:** `src/hydrofoil.jo` (the foils' lift and drag, `foil_force`; the screw,
   `screw_thrust`; the clutch, `clutch_step`; the P.7's foils and screw, `P7_FOILS`, `P7_SCREW`),
   `src/hydrofoil_solver.jo` `hydrofoil_contacts` (called from the water model in `src/flight.jo`
@@ -2587,6 +2601,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
 | `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
+| `AEGEAN_CAPTURE_TAKEOFF=1\|worn` | the player's aircraft, serviced (or `worn`: as the save has it), at rest on the water off the home harbour, and the production take-off autopilot flying it off and up, the stick held back on a hydrofoil racer's foils (with `AEGEAN_CRAFT`, `AEGEAN_CAPTURE_ORBIT`, `AEGEAN_FRAMES`; see [Hydrofoil take-off](#hydrofoil-take-off)) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
