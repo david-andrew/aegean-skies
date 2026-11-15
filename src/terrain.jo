@@ -17,6 +17,7 @@ use 'coast_mesh.jo'
 use 'coast_atlas.jo'
 use 'quality.jo'
 use 'road_material.jo'
+use 'canopy.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -49,6 +50,8 @@ struct GroundParams:
     working_map:Texture=Texture()
     lake_map:Texture=Texture()
     lake_area:vec4=vec4(0,0,0,0)
+    canopy: Texture = Texture()     # the crown mass sheet (src/canopy.jo)
+    grove: vec4 = vec4(0,0,0,0)     # canopy_paint's grove: density seed, exact crowns, mesh reach, kept share
 
 struct GroundOut:
     pos: vec4
@@ -62,6 +65,7 @@ struct GroundOut:
     # terrain vertices; the river mask is far coarser than the vertex spacing.
     river: vec2 = vec2(0,0)
     working:vec4=vec4(0,0,0,0)
+    grove: f32 = 0.0                # the groves' density field here (grove_density)
 
 # A map a draw leaves unread (no river or lake in its area: river_area/lake_area are zero) still
 # needs a texture bound in WebGL, or the browser warns on every draw ("no texture bound to the
@@ -99,7 +103,7 @@ coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
     local = vec3(inst.origin.x+p.x*14.0,y,inst.origin.y+p.y*14.0)
     world = local+u.origin
     bent = render_warped(local,u.cam,u.warp_a,u.warp_b)
-    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1)),0,s.normal,ground_riparian(u,world.xz,y))
+    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1)),0,s.normal,ground_riparian(u,world.xz,y),grove=grove_density(world.xz,u.grove.x))
 
 # The analytic detail gradient avoids derivative extensions and extra fragment
 # work on WebGL2. It converges to the same continuous field as the fine mesh.
@@ -138,7 +142,7 @@ ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> Ground
     world = local + u.origin
     camera_local = u.cam
     bent = render_warped(local, camera_local, u.warp_a, u.warp_b)
-    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1)))
+    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1)),grove=grove_density(world.xz,u.grove.x))
 
 # Band-limit the original limestone pattern to the pixel footprint. Retain
 # resolved strata nearby; distant slopes use each pattern's mean, not aliasing.
@@ -208,6 +212,10 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     veg: f32 = 0.0
     dry: f32 = 0.0
     crease: f32 = 0.0
+    canopy_bend = vec2(0,0)
+    canopy_lit: f32 = 0.0
+    canopy_offset: f32 = 0.0
+    canopy_shadow: f32 = 0.0
     # Underwater the wet sand/rock branch replaces every land contribution.
     if y >= (if coastal: 0.25 else: 0.6):
         canopy = sample(u.pigment,world.xz/320.0)
@@ -251,6 +259,11 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         veg = (1.0-exposure)*smoothstep(0.6,1.5,y)
         if large_terrain: veg *= i.tint.w    # high land reuses bare limestone
         c = mix(stone, green, veg)
+        # The far canopy: crowns painted over wooded ground (src/canopy.jo), the groves' own
+        # trees among them; its crowns light by their own rounded normals below.
+        paint = canopy_paint(c,n,world.xz,y,footprint,i.grove,woody,veg*(1.0-i.orchard*0.7),wash,length(i.world-u.cam),normalize(u.sun_dir),u.canopy,u.grove)
+        c = paint.color
+        canopy_bend = paint.bend; canopy_lit = paint.crown; canopy_offset = paint.offset; canopy_shadow = paint.shadow
         # Parcels vary over hundreds of metres: vertex interpolation is sufficient
         # here. Broad rock/cover transitions above remain per fragment.
         orchard = i.orchard
@@ -317,9 +330,10 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         garden=mix(vec3(0.43,0.32,0.20),vec3(0.32,0.40,0.20),row)
         crop=(grain*i.working.x+vines*i.working.y+olive*i.working.z+garden*i.working.w)/max(cultivated,0.001)
         c=mix(c,crop,clamp(cultivated,0.0,1.0)*0.86)
+        canopy_lit*=1.0-clamp(cultivated,0.0,1.0);canopy_shadow*=1.0-clamp(cultivated,0.0,1.0)
     if large_terrain and y>0.5:
         road=road_coverage(u.roads,u.road_rect,i.world.xz,footprint)
-        c=mix(c,vec3(0.82,0.75,0.58),road);veg*=1.0-road
+        c=mix(c,vec3(0.82,0.75,0.58),road);veg*=1.0-road;canopy_lit*=1.0-road;canopy_shadow*=1.0-road
     riparian:f32=0.0
     if large_terrain and i.river.x>0.0:
         riparian=i.river.x
@@ -335,7 +349,7 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
             bank_wet=1.0-smoothstep(-3.0,2.0,-distance)
             pebble=mix(vec3(0.55,0.52,0.42),vec3(0.38,0.40,0.32),bank_wet*0.55)
             pebble=mix(pebble,vec3(0.61,0.59,0.51),bank.z*0.3)
-            c=mix(c,pebble,strip);veg*=1.0-strip
+            c=mix(c,pebble,strip);veg*=1.0-strip;canopy_lit*=1.0-strip;canopy_shadow*=1.0-strip
             # Reed beds in the shallows and on the wet margin, in patches.
             reed=(1.0-smoothstep(5.0,13.0,abs(distance-3.0)))*smoothstep(0.64,0.78,bank.y)
             c=mix(c,mix(vec3(0.37,0.42,0.20),vec3(0.46,0.47,0.26),bank.z),reed*0.85)
@@ -346,16 +360,14 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     light_normal = if coastal: normalize(i.relief_normal) else: n
     ndl = dot(render_normal(light_normal, i.world, u.cam), normalize(u.sun_dir))
     lit = paint_ramp(ndl,max(light_width,if coastal: 0.08 else: 0.015))
-    # Dappled rounded tree/maquis masses continue beyond individual grove meshes.
-    # The shared procedural tile varies crown radius/spacing, fading before aliasing.
-    if veg*woody > 0.02:
-        cap = canopy
-        visible = 1.0-smoothstep(3.0,12.0,footprint)
-        lobe = paint_ramp(dot(cap.xyz*2.0-vec3(1,1,1),normalize(u.sun_dir)),max(0.04,footprint/144.0))
-        # Separate cool rounded undersides from warm crown tops. Broad value
-        # masses carry the foliage at aerial scale, without extra tree geometry.
-        crown = mix(vec3(0.66,0.79,0.83),vec3(1.12,1.10,0.92),lobe)
-        c *= mix(vec3(1,1,1),crown+(cap.w-0.5)*0.16,veg*woody*visible)
+    # The canopy's crowns: each lit by its own rounded normal on the slope, through a wrapped
+    # painted ramp (the terminator shifted a little crown to crown, as a brush would place it).
+    if canopy_lit > 0.0:
+        crown_normal = normalize(vec3(light_normal.x+canopy_bend.x*0.9,light_normal.y,light_normal.z+canopy_bend.y*0.9))
+        cdl = dot(render_normal(crown_normal,i.world,u.cam),normalize(u.sun_dir))
+        crown_lit = paint_ramp((cdl+0.28)/1.28+canopy_offset,max(light_width,0.05))
+        lit = mix(lit,crown_lit,canopy_lit)
+    lit *= 1.0-canopy_shadow*(1.0-canopy_lit*0.3)
     shade = mix(u.shade,vec3(dot(u.shade,vec3(0.22,0.62,0.16))),(1.0-veg)*0.28)
     light = mix(shade*vec3(0.94,1.08,1.1)+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
     col = c * light
@@ -437,6 +449,9 @@ draw_ground = (L: Light, t: f64):
         params = GroundParams(relative_vp, render_eye(origin), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t),
             meadow_wind(wind_now, origin), wind_now.drift, origin, tile.heights, tile.materials, scene_flow, vec4(scene_warp_a.x - origin.x, scene_warp_a.y - origin.z, scene_warp_a.z, scene_warp_a.w), scene_warp_b)
         params.pigment = paint_surface()
+        params.canopy = canopy_sheet()
+        # (the islands' groves have their own placement: their painted crowns stand among them)
+        params.grove = vec4(tile.grove_seed,1,0,1)
         params.coast_pattern = coast_pattern_texture
         params.river_map = unread_map(); params.lake_map = unread_map()
         terrain_prepare += time() - prepare_start
