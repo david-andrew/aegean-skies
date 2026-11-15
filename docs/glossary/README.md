@@ -24,7 +24,7 @@ on that unmerged branch so far.
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
-- **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
+- **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
@@ -1281,6 +1281,27 @@ On the rivers branch until it lands.
   audit re-checks every mooring found with independent rings ("offshore mooring fouled" is severe)
   and warns where a harbour has none. `tools/mooring_survey.jo` reports all 318 sea harbours.
 - **Capture:** `AEGEAN_CRAFT=<the H-4> AEGEAN_ABOARD=1` (the H-4 starts on its buoy off Porto Vecchio).
+
+### Drawn vessel pose
+
+- **Aliases:** boat interpolation, vessel smoothing, jerky boats (the bug it fixed).
+- **Definition:** where a vessel is drawn this frame, apart from where the simulation holds it.
+  The fleet steps hulls at a fixed 1/30 s, and external hulls (fishing workboats, far-sea coasters)
+  are placed from the living world, the workboats once a world minute (two seconds of play) and
+  everything waiting while a world minute runs. Drawn at those poses, boats moved on every other
+  frame and jumped 15 m every two seconds, like a lagging network game. A stepped hull is drawn
+  between the start and end of its current step at the fleet clock's fraction of a step; an
+  external hull is carried on at its velocity and eased (0.25 s) toward the world's last pose
+  carried on by that velocity since it arrived, and put there at once on a jump over 25 m. The
+  wave bob, pitch and roll are sampled at render time at the drawn position, so the sway is
+  continuous too.
+- **Code:** `src/vessel_motion.jo` (`vessel_render_ships`, `vessel_stepped_pose`), called in
+  `prepare_vessel_view` (`src/vessel_view.jo`); `Vessel.previous` set in `vessel_tick`; the
+  navigation lights read the drawn ships (`vessel_view.drawn`).
+- **Rules:** only drawing reads drawn poses: saved state, collisions, targets and moorings keep the
+  simulated ones. `tests/vessel_motion_test.jo`: at a steady 60 fps no frame's drawn step is more
+  than 1.5 times a neighbour's, for stepped and external hulls, and a long frame moves a hull by its
+  time, not a jump.
 
 ### Harbour launch
 
