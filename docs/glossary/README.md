@@ -641,13 +641,13 @@ On the rivers branch until it lands.
 ### Chaotic stalls
 
 - **Aliases:** the stall trial.
-- **Definition:** the Tweaks option for a more physical stall, with left and right wing separation,
-  stall breaks and spins (the user's aim includes a hammerhead with prop-wash rudder authority).
-  With it off, the liked arcade flight model is unchanged.
-- **Code:** `chaotic_stalls` in `src/tweaks.jo`; `wing_separation` and `_stall_rotation` in
-  `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
-- **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
-  spans. Landings must forgive firm touchdowns.
+- **Definition:** retired 2026-11-15 (the user judged it not worth keeping): a Tweaks option for a
+  more physical stall, with left and right wing separation, stall breaks and spins. The option,
+  its checkbox, its `AEGEAN_TWEAKS=stalls` hook, its flight and autopilot code, and its tools and
+  tests are gone; the game flies the liked arcade stall as it always did with the option off.
+  Flight model v2 keeps a soft stall of its own.
+- **Code:** none left. `wing_separation`, `buffet` and `stall_blend` in `CraftState` are written
+  only by flight model v2 (`src/flight_v2.jo`, `src/flight_sb.jo`) and read by the flight feedback.
 
 ### Flight model v2
 
@@ -783,8 +783,7 @@ On the rivers branch until it lands.
   - The capital club's pilot cohort (`AIR_CLUB_PILOTS`, five) and an aerodrome's air arm (two)
     are reserved together.
   - On the way home a clubmate yields the approach only to another coming home, and one already
-    down or on final keeps its landing. Under the chaotic-stalls trial the autopilot's arrival at
-    1.4 times the stall can stall a racer's sharp wing (default tweaks are fine).
+    down or on final keeps its landing.
 - **Capture:** `AEGEAN_CAPTURE_RACE=schneider` with `AEGEAN_CRAFT` a Schneider racer (the S.6B is
   21): the long course off the home harbour, the player at the third gate's approach 41 s into the
   race, five rivals flown by the flight model; `schneider-finish` the results card;
