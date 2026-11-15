@@ -39,59 +39,90 @@ const SHEET_PX = 384
 const CHART_LIST_W = 250.0
 const SHEET_DETAIL = 30000.0        # sheets narrower than this get their own finer painting
 
-build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n: int = CHART_PX) -> Texture:
-    rows = parallel_map([0..n), (j: int) -> f64[]:
-        z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
-        row: f64[]
-        loop i in 0..n:
-            x = cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5
-            # Whole-world pixels span ~780 m; don't calculate metre-scale erosion.
-            row.push(if extent > CHART_EXTENT and (abs(x) >= LEGACY_RESERVE or abs(z) >= LEGACY_RESERVE): new_land_base(x,z).0 else: height(x,z))
-        row
-    )
-    # (inland lakes, from the lake source: painted as still water with their own inked shore)
-    lakes = parallel_map([0..n), (j: int) -> bool[]:
-        z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
-        [loop i in 0..n: lake_at(cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5,z).wet]
-    )
-    img = image(n, n)
+# The chart's paper is made a row at a time, in three passes: each row's heights, each row's lakes,
+# then each row painted (it reads the rows either side). build_chart_texture makes it at once;
+# ChartTextureBuild makes the same pixels a few rows a frame (chart_texture_step).
+_chart_height_row = (extent: f64, depth: f64, cx: f64, cz: f64, n: int, j: int) -> f64[]:
+    z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
+    row: f64[]
+    loop i in 0..n:
+        x = cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5
+        # Whole-world pixels span ~780 m; don't calculate metre-scale erosion.
+        row.push(if extent > CHART_EXTENT and (abs(x) >= LEGACY_RESERVE or abs(z) >= LEGACY_RESERVE): new_land_base(x,z).0 else: height(x,z))
+    row
+
+# (inland lakes, from the lake source: painted as still water with their own inked shore)
+_chart_lake_row = (extent: f64, depth: f64, cx: f64, cz: f64, n: int, j: int) -> bool[]:
+    z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
+    [loop i in 0..n: lake_at(cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5,z).wet]
+
+_chart_paint_row = (img: mut Image, rows: f64[][], lakes: bool[][], n: int, j: int):
     paper = vec3(0.93, 0.88, 0.76)
-    loop j in 0..n:
-        loop i in 0..n:
-            h = rows[j][i]
-            hx = rows[j][min(i + 1, n - 1)] - rows[j][max(i - 1, 0)]
-            hz = rows[min(j + 1, n - 1)][i] - rows[max(j - 1, 0)][i]
-            grain = f32(noise(f64(i) * 0.9, f64(j) * 0.9) * 0.06 + noise(f64(i) * 0.08, f64(j) * 0.08) * 0.08)
-            c = paper
-            lake = lakes[j][i]
-            if lake:
-                # (a lake: one pale wash, a shade deeper than the shallows)
-                c = mix(mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), 0.3), paper, 0.25)
-            else if h <= 0.0:
-                # watercolor sea: paler near the coast, bands of depth
-                d = clamp(-h / 60.0, 0.0, 1.0)
-                band = f32(floor(d * 4.0) / 4.0)
-                c = mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), band)
-                c = mix(c, paper, 0.25)
-            else:
-                # land: ochre low ground, green above, shaded from the north-west
-                g = f32(clamp(h / 220.0, 0.0, 1.0))
-                c = mix(vec3(0.86, 0.76, 0.55), vec3(0.55, 0.62, 0.4), g)
-                shade = f32(clamp((hx + hz) * 0.02, -0.25, 0.25))
-                c = c * (1.0 - shade)
-                # contour lines every 50 m
-                if floor(h / 50.0) != floor((h + abs(hx) * 0.5 + abs(hz) * 0.5) / 50.0): c = c * 0.82
-            # the coastline in ink
-            hn = [rows[j][min(i + 1, n - 1)], rows[min(j + 1, n - 1)][i], rows[j][max(i - 1, 0)], rows[max(j - 1, 0)][i]]
-            coast = false
-            loop q in hn:
-                if (q > 0.0) != (h > 0.0): coast = true
-            if not lake and h > 0.0:
-                if lakes[j][min(i + 1, n - 1)] or lakes[min(j + 1, n - 1)][i] or lakes[j][max(i - 1, 0)] or lakes[max(j - 1, 0)][i]: coast = true
-            if coast: c = vec3(0.25, 0.2, 0.16)
-            c = c * (1.0 - grain)
-            img.set(i, j, vec4(c.x, c.y, c.z, 1))
+    loop i in 0..n:
+        h = rows[j][i]
+        hx = rows[j][min(i + 1, n - 1)] - rows[j][max(i - 1, 0)]
+        hz = rows[min(j + 1, n - 1)][i] - rows[max(j - 1, 0)][i]
+        grain = f32(noise(f64(i) * 0.9, f64(j) * 0.9) * 0.06 + noise(f64(i) * 0.08, f64(j) * 0.08) * 0.08)
+        c = paper
+        lake = lakes[j][i]
+        if lake:
+            # (a lake: one pale wash, a shade deeper than the shallows)
+            c = mix(mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), 0.3), paper, 0.25)
+        else if h <= 0.0:
+            # watercolor sea: paler near the coast, bands of depth
+            d = clamp(-h / 60.0, 0.0, 1.0)
+            band = f32(floor(d * 4.0) / 4.0)
+            c = mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), band)
+            c = mix(c, paper, 0.25)
+        else:
+            # land: ochre low ground, green above, shaded from the north-west
+            g = f32(clamp(h / 220.0, 0.0, 1.0))
+            c = mix(vec3(0.86, 0.76, 0.55), vec3(0.55, 0.62, 0.4), g)
+            shade = f32(clamp((hx + hz) * 0.02, -0.25, 0.25))
+            c = c * (1.0 - shade)
+            # contour lines every 50 m
+            if floor(h / 50.0) != floor((h + abs(hx) * 0.5 + abs(hz) * 0.5) / 50.0): c = c * 0.82
+        # the coastline in ink
+        hn = [rows[j][min(i + 1, n - 1)], rows[min(j + 1, n - 1)][i], rows[j][max(i - 1, 0)], rows[max(j - 1, 0)][i]]
+        coast = false
+        loop q in hn:
+            if (q > 0.0) != (h > 0.0): coast = true
+        if not lake and h > 0.0:
+            if lakes[j][min(i + 1, n - 1)] or lakes[min(j + 1, n - 1)][i] or lakes[j][max(i - 1, 0)] or lakes[max(j - 1, 0)][i]: coast = true
+        if coast: c = vec3(0.25, 0.2, 0.16)
+        c = c * (1.0 - grain)
+        img.set(i, j, vec4(c.x, c.y, c.z, 1))
+
+build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n: int = CHART_PX) -> Texture:
+    rows = parallel_map([0..n), (j: int) -> f64[]: _chart_height_row(extent, depth, cx, cz, n, j))
+    lakes = parallel_map([0..n), (j: int) -> bool[]: _chart_lake_row(extent, depth, cx, cz, n, j))
+    img = image(n, n)
+    loop j in 0..n: _chart_paint_row(img, rows, lakes, n, j)
     texture(img, true)
+
+struct ChartTextureBuild:
+    extent: f64
+    depth: f64
+    n: int = CHART_PX
+    stage: int = 0                  # 0 heights, 1 lakes, 2 painting, 3 done
+    j: int = 0
+    rows: f64[][] = []
+    lakes: bool[][] = []
+    img: Image = image(1, 1)
+
+# rows of the build until `budget` seconds have gone; true once every pixel is painted
+chart_texture_step = (b: mut ChartTextureBuild, budget: f64) -> bool:
+    began = time()
+    loop b.stage < 3:
+        if b.stage == 0: b.rows.push(_chart_height_row(b.extent, b.depth, 0.0, 0.0, b.n, b.j))
+        else if b.stage == 1: b.lakes.push(_chart_lake_row(b.extent, b.depth, 0.0, 0.0, b.n, b.j))
+        else:
+            if b.j == 0: b.img = image(b.n, b.n)
+            _chart_paint_row(b.img, b.rows, b.lakes, b.n, b.j)
+        b.j += 1
+        if b.j >= b.n: b.stage += 1; b.j = 0
+        if time() - began >= budget: break
+    b.stage >= 3
 
 chart_local = false
 chart_extent = () -> f64: if geography_enabled and not chart_local: WORLD_WIDTH else: CHART_EXTENT
@@ -100,6 +131,23 @@ chart_depth = () -> f64: if geography_enabled and not chart_local: WORLD_DEPTH e
 build_chart = () -> Chart:
     local = build_chart_texture(CHART_EXTENT,CHART_EXTENT)
     Chart(local,if geography_enabled: build_chart_texture(WORLD_WIDTH,WORLD_DEPTH) else: local)
+
+# The whole chart (its local sheet, then the world's) a few rows a frame: chart_step makes rows
+# until `budget` seconds have gone and gives the chart once both are done (the same pixels as
+# build_chart); with a budget of 1e9 it finishes at once
+struct ChartBuild:
+    local: ChartTextureBuild = ChartTextureBuild(CHART_EXTENT, CHART_EXTENT)
+    world: ChartTextureBuild = ChartTextureBuild(WORLD_WIDTH, WORLD_DEPTH)
+    local_tex: Texture = Texture()
+
+chart_step = (b: mut ChartBuild, budget: f64) -> Chart?:
+    began = time()
+    if b.local_tex.id == 0:
+        if not chart_texture_step(b.local, budget): return none
+        b.local_tex = texture(b.local.img, true)
+    if not geography_enabled: return Chart(b.local_tex, b.local_tex)
+    if not chart_texture_step(b.world, max(0.0, budget - (time() - began))): return none
+    Chart(b.local_tex, texture(b.world.img, true))
 
 # the ground the chart spans: its middle and its width and depth, in metres
 struct ChartView:
