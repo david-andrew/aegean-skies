@@ -13,7 +13,7 @@ use 'render_space.jo'
 use 'objects.jo'
 use 'folk.jo'
 use 'music_synth.jo'
-use 'live_notes_shim.jo'
+use 'live_notes.jo'
 use 'street_phrase.jo'
 
 # ---------------- the instruments ----------------
@@ -31,9 +31,12 @@ struct InstrumentKit:
     bass: Mesh                      # the double bass, on the floor at 0, face +z
     mouth: Mesh                     # (a unit box)
     stool: Mesh                     # (for a seated player, its seat 0.52 m up)
+    keys: Mesh                      # a piano's 88 keys: front edge at 0 (the player at +x), the low
+                                    # end toward +z, tops at 0 and up
 
+const KEYBOARD_WIDTH = 1.22          # (88 keys, metres)
 const BOW_FROG = 0.1                # (the stretch of the bow that is used, from the frog)
-const BOW_TIP = 0.52
+const BOW_TIP = 0.48
 
 make_instrument_kit = () -> InstrumentKit:
     wood = rgb(0.55, 0.27, 0.1)
@@ -138,7 +141,21 @@ make_instrument_kit = () -> InstrumentKit:
             add_box(vs, vec3(f32(cos(a) * 0.12), 0.23, f32(sin(a) * 0.12)), vec3(0.035, 0.46, 0.035), rgb(0.25, 0.15, 0.09))
         vs
     ())
-    InstrumentKit(violin, bow, guitar, mandolin, bouzouki, box_right, box_left, bellows, clarinet, bass, mouth, stool)
+    keys = custom_mesh((): 
+        vs: Vertex3D[]
+        w = KEYBOARD_WIDTH / 52.0
+        white = 0
+        loop n in 21..109:
+            pc = n % 12
+            if pc == 1 or pc == 3 or pc == 6 or pc == 8 or pc == 10:
+                # (a black key, raised, short, on the line between the white keys either side)
+                add_box(vs, vec3(-0.085, 0.012, f32(KEYBOARD_WIDTH * 0.5 - f64(white) * w)), vec3(0.09, 0.014, f32(w * 0.55)), rgb(0.06, 0.05, 0.05))
+            else:
+                add_box(vs, vec3(-0.065, 0.004, f32(KEYBOARD_WIDTH * 0.5 - (f64(white) + 0.5) * w)), vec3(0.13, 0.012, f32(w * 0.9)), rgb(0.96, 0.94, 0.88))
+                white += 1
+        vs
+    ())
+    InstrumentKit(violin, bow, guitar, mandolin, bouzouki, box_right, box_left, bellows, clarinet, bass, mouth, stool, keys)
 
 # ---------------- the figure, posed ----------------
 
@@ -505,14 +522,29 @@ struct Performance:
     motions: PlayerMotion[]
     seconds = 0.0
     playing = false
+    kept: str[]                     # (motions made before, kept by key: a number played again,
+    kept_parts: int[][]             # or made ahead with perform_warm, costs nothing)
+    kept_motions: PlayerMotion[][]
 
 perform_prepare = (p: mut Performance, feed: LiveNoteFeed, key: str):
     if key == p.key: return
+    loop k in 0..p.kept.len():
+        if p.kept[k] == key:
+            p.parts = p.kept_parts[k]; p.motions = p.kept_motions[k]; p.key = key
+            return
     p.parts = []; p.motions = []
     loop n in feed.notes:
         if not (n.part in p.parts): p.parts.push(n.part)
     loop part in p.parts: p.motions.push(player_motion(part, part_notes(feed.notes, part)))
     p.key = key
+    if p.kept.len() >= 16:
+        p.kept.remove_at(0); p.kept_parts.remove_at(0); p.kept_motions.remove_at(0)
+    p.kept.push(key); p.kept_parts.push(p.parts); p.kept_motions.push(p.motions)
+
+# Make (and keep) the motions for a feed ahead of time: the bow's plan is a few milliseconds a part.
+perform_warm = (p: mut Performance, feed: LiveNoteFeed, key: str):
+    perform_prepare(p, feed, key)
+    p.key = ""
 
 perform_motion = (p: Performance, instrument: int) -> PlayerMotion:
     loop k in 0..p.parts.len():
@@ -564,39 +596,56 @@ struct Player:
 
 # The violin's frame in the hips frame: under the chin on the left shoulder, pointing forward
 # and left, its top tilted toward the bow.
+const VIOLIN_SCALE = 1.4            # (the mesh is a real violin's size: the figures' heads are
+                                    # large, so it is drawn larger to read beside them)
+
 violin_frame = (r: Rig) -> mat4:
     trunk = rig_trunk(r)
     a = normalize(transform_dir(trunk, vec3(-0.62, -0.08, -0.78)))
     up = transform_dir(trunk, vec3(0.35, 1, 0.1))
-    chin = transform_point(trunk, vec3(-0.13, 1.47, -0.12))
-    neck_frame(chin, a, cross(a, up)) * scaling(1.2)
+    # (the end of the violin on the collarbone, under the chin)
+    chin = transform_point(trunk, vec3(-0.11, 1.5, -0.1))
+    neck_frame(chin, a, cross(a, up)) * scaling(VIOLIN_SCALE)
 
-play_violin = (p: Player, m: PlayerMotion, ms: f64, kit: InstrumentKit, L: Light, t: f64):
+# The violinist's pose for a note's pitch, the place on the bow at the string and how far it is
+# lifted: the violin's frame and the bow's frog and the way it lies (all in the hips frame).
+struct ViolinPose:
+    r: Rig
+    vf: mat4
+    frog: vec3
+    across: vec3
+
+violin_pose = (pitch: f64, s: f64, lift: f64, lean: f64, sway: f64) -> ViolinPose:
     r = Rig()
-    k = group_at(m.groups, ms)
-    pitch = if k >= 0: m.groups[k].mean else: 69.0
-    r.lean = 0.04; r.tilt = 0.03 + 0.02 * sin(t * 0.6 + p.seed)
+    r.lean = 0.04 + lean; r.tilt = 0.03 + sway
     r.head_tilt = 0.32; r.head_nod = 0.12
-    # (the body leans a little into each stroke's start)
-    if k >= 0: r.lean += 0.03 * m.groups[k].level * pluck_curve((ms - m.groups[k].start) * 0.3)
     vf = violin_frame(r)
     # the left hand on the neck: further up toward the body for the higher notes
-    along = 0.46 - 0.09 * clamp((pitch - 69.0) / 18.0, 0.0, 1.0)
-    r.left = transform_point(vf, vec3(f32(along), -0.045, 0))
+    along = 0.41 - 0.08 * clamp((pitch - 69.0) / 18.0, 0.0, 1.0)
+    r.left = transform_point(vf, vec3(f32(along), -0.035, 0))
     r.left_pole = vec3(0.1, -1, 0.2)
     # the bow across the strings by the bridge, tipped for the string the note is on
-    s, lift = bow_at(m.strokes, ms)
     string = clamp((pitch - 55.0) / 7.0, 0.0, 3.0)
-    contact = transform_point(vf, vec3(0.2, f32(0.05 + lift), 0))
-    across = normalize(transform_dir(vf, vec3(0, f32(0.32 - 0.2 * string), 1)))
+    contact = transform_point(vf, vec3(0.19, f32(0.04 + lift / VIOLIN_SCALE), 0))
+    across = normalize(transform_dir(vf, vec3(0, f32(0.2 - 0.14 * string), 1)))
     # (the bow lies across, frog toward the player's right)
     if f64(across.x) < 0.0: across = -across
-    r.right = contact + across * f32(s) + transform_dir(vf, vec3(0, 0.03, 0))
+    frog = contact + across * f32(s)
+    r.right = frog + normalize(transform_dir(vf, vec3(0, 1, 0))) * 0.03
     r.right_pole = vec3(0.6, -1, 0.3)
-    hips = draw_rig(p.fig, p.at, r, kit, L, t, p.offset)
-    draw(obj_sh, kit.violin, obj_local_params(L, t, hips * vf))
-    top = transform_dir(vf, vec3(0, 1, 0))
-    draw(obj_sh, kit.bow, obj_local_params(L, t, hips * neck_frame(contact + across * f32(s), across, cross(across, top))))
+    ViolinPose(r, vf, frog, across)
+
+play_violin = (p: Player, m: PlayerMotion, ms: f64, kit: InstrumentKit, L: Light, t: f64):
+    k = group_at(m.groups, ms)
+    pitch = if k >= 0: m.groups[k].mean else: 69.0
+    # (the body leans a little into each stroke's start)
+    lean = if k >= 0: 0.03 * m.groups[k].level * pluck_curve((ms - m.groups[k].start) * 0.3) else: 0.0
+    s, lift = bow_at(m.strokes, ms)
+    v = violin_pose(pitch, s, lift, lean, 0.02 * sin(t * 0.6 + p.seed))
+    hips = draw_rig(p.fig, p.at, v.r, kit, L, t, p.offset)
+    draw(obj_sh, kit.violin, obj_local_params(L, t, hips * v.vf))
+    top = normalize(transform_dir(v.vf, vec3(0, 1, 0)))
+    draw(obj_sh, kit.bow, obj_local_params(L, t, hips * neck_frame(v.frog, v.across, cross(v.across, top))))
 
 # Seated at a keyboard: `keys` is where the middle of the keys is, from the figure's feet (world
 # metres: across, up, ahead), `width` the keyboard's.

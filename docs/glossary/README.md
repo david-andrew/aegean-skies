@@ -1463,8 +1463,8 @@ No image: the tiers differ in budgets more than in any single view.
   it is silent. It gives the notes that started since the last step; a seek or a skip re-syncs it
   without a burst of old ones. The live source has no travel delay, so neither has this.
 - **Code:** the shared feed `src/live_notes.jo` (`LiveNote`, `LiveNoteFeed`, `live_notes_load`,
-  `live_notes_step`, `live_notes_heard_frame`, `live_notes_clock_frame`; on this branch its
-  stand-in `src/live_notes_shim.jo`); the band's in `src/bar_band.jo` (`BandFeed`,
+  `live_notes_step`, `live_notes_heard_frame`, `live_notes_clock_frame`; `feed.notes` sorted by
+  start; velocity against the piece's loudest note, as the scores' gains run past 1); the band's in `src/bar_band.jo` (`BandFeed`,
   `bar_note_feed`, `bar_note_events`); the street phrase in `src/street_phrase.jo`; the players'
   places in `src/bar_scene.jo` (`band_spots`); `band_notes` in `aegean.jo`.
 - **Rules:** one feed interface for every consumer, so what is seen and what is heard can't drift
