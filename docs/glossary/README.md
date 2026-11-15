@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1101,7 +1101,13 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Code:** `src/tavli.jo` (rules, `tavli_choose`, `tavli_settle`, `tavli_partners`),
   `src/tavli_view.jo` (the drawn board, dice physics, input); `tavli_frame` in `aegean.jo`;
   `tests/tavli_test.jo`; `tools/tavli_board.jo` stages a position.
-- **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid`.
+- **Plakoto:** the second game, chosen with the stake: a single checker on a point is pinned, not
+  hit, and freed when the pinner leaves; pinning the other's last checker at home (the "mother")
+  wins double. The opponent sits across the table in the scene, framed in a window the board's
+  panel leaves open (`camera_into_window`), with gestures from the game (`src/tavli_view.jo`); the
+  dice's rattle and clacks and the checkers' clicks are made in code (`src/tavli_sound.jo`).
+- **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid|tavli-plakoto`
+  (`AEGEAN_TAVLI_GESTURE` for a gesture).
 
 ### Band request
 
@@ -1142,6 +1148,92 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Code:** `music_set_piano` (`src/music_synth.jo`), set by `bar_music_load` (`src/bar_band.jo`)
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
+
+### Table service
+
+- **Aliases:** the waiter, the tray, drinking at one's own pace, holding a drink.
+- **Definition:** what is ordered is paid at once and brought: the hotel's waiter from the end of
+  the bar on a tray (three things a trip), the barkeep along the counter to one standing at the
+  bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
+  the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
+  finished. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
+  the elbow, the forearm turned in), the level going down only while it is there; a plate stays
+  on the table and the fork goes to the mouth with a bite. Let go: the glass is held at the chest.
+  Another item, or Escape, puts it down. Glasses and plates are drawn in two parts, the vessel
+  and what is in it, which goes down (a glass's level, a plate's food all round); the hotel's
+  china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was.
+- **Code:** `src/table_service.jo` (`Waiter`, `waiter_step`, `Taking`, `take_step`, `take_label`);
+  `Served.amount`, `held`, `empty_for` and `LeisureState.coming` in `src/leisure.jo`;
+  `build_serve_parts`, `draw_serving` in `src/bar_scene.jo`; `service_step`, `draw_service`,
+  `draw_table_things`, `pilot_arm_pose` in `aegean.jo`; the bent arm (`Figure.upper`, `fore`,
+  `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
+  `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
+  waiter brings it again after a load).
+- **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties`.
+
+### Bill of fare
+
+- **Aliases:** the menu card, the chalk board, the secret line.
+- **Definition:** what a house offers at a glance: the Hotel Ancora's printed card (double rule,
+  dotted leaders) and the coffee house's chalk board, a handful of things by section with their
+  prices, ordered by 1 to 9 or a click. The faint line at the foot ("Other wines and spirits on
+  request"; "and whatever else the house has"), or 0, opens the house's whole book: the deep
+  drinks list, searchable, unchanged. The line stays faint but is a finger's height on a phone.
+- **Code:** `BILL_HOTEL`, `BILL_COFFEE`, `leisure_bill` in `src/leisure.jo`; `bill_of_fare` in
+  `src/leisure_view.jo`; leisure stage 13 and `leisure_open_book` in `aegean.jo`.
+- **Capture:** `AEGEAN_LEISURE=bill|bill-coffee`; the book: `menu|search`.
+
+### The barber
+
+- **Definition:** Stavros's chair on the waterfront at the Hotel Ancora's corner, facing a gilt
+  mirror on the hotel wall: a shave and a trim, or a new mustache (clean-shaven, handlebar,
+  walrus, chevron) seen in the glass as one chooses, paid by one transfer to the house while time
+  passes and he talks in the dialogue's way. The style is saved with the game.
+- **Code:** `src/barber.jo`; `GameSession.mustache`, `set_pilot_mustache` in `aegean.jo`;
+  `tests/barber_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=barber|barber-walrus|barber-clean`.
+
+### Swimming
+
+- **Definition:** in from a beach or off the end of a dock (a dive): wading while one can stand,
+  then the crawl along the surface, riding the swell from the unified water query; quays and pier
+  stone are walls; out where the ground rises, or climbing onto a dock from deep water. Spray in
+  the approved splash look. At night the moon's glitter lies on the sea (silver and faint, only
+  once the sun is well down; the speed flecks untouched). Saving mid-swim keeps the pilot where he
+  went in.
+- **Code:** `src/swimming.jo`; the moon in `src/sea.jo`; `tests/swimming_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=swim-dock|swim-beach|swim-wade|swim-night`.
+
+### Stargazing
+
+- **Definition:** lying back at night on a hilltop or the end of the hotel's pier, the view drifting
+  slowly round the sky. The brighter stars stand at their places on the game's own celestial
+  sphere (its pole 20 degrees up toward the north, the summer sun at 6h on the equator, as
+  `src/celestial.jo` turns the sun and moon), and the names of stars, constellations, the
+  planets and the moon show faintly, in transliterated period Greek and in English, as one looks
+  at them. T lets an hour pass. The pilot's scarf is not drawn while he lies back (tied at a
+  standing neck, it hung over the view).
+- **Code:** `src/stargazing.jo` (`SKY_NAMES`, `sky_star`, `Gaze`, `name_alpha`); `gaze_*` and
+  `draw_gaze_sky` in `aegean.jo`; `tests/stargazing_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=stars|stars-hill` (`AEGEAN_GAZE_TURN` turns the view).
+
+### Rising notes
+
+- **Aliases:** the floating notes, musical notes over the band.
+- **Definition:** small notes float up from whoever plays music in the world (not the radio), bob
+  and fade, so music heard from afar can be found by looking round. Each is a real note: its
+  onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
+  closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
+  which show only when the tune has been quiet a while; no burst after a seek or a new number.
+  Higher notes rise from a little higher; louder ones are larger; a short note is an eighth with
+  its flag, a longer one a quarter. Ink by day, warm cream after dark; fainter with distance
+  about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
+  table or the bar), where the band is in view. Options: "Musical notes rising from music played
+  nearby" (on by default).
+- **Code:** `src/note_cue.jo` (`NoteCue`, `note_cue_pick`, `note_cue_rise`, `draw_note_cue`);
+  `music_cues_step`, `draw_music_cues` in `aegean.jo`; each part's player from `band_spots`;
+  `tests/note_cue_test.jo`; `tools/note_cue_bench.jo` counts its work per frame.
+- **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
 
 ### Time skip
 
