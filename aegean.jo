@@ -11,6 +11,8 @@ use 'src/thermal_sites.jo'
 use 'src/inland_scenery.jo'
 use 'src/canal_geometry.jo'
 use 'src/thermal_render.jo'
+use 'src/airfields.jo'
+use 'src/airfield_render.jo'
 use 'src/access_bridge_render.jo'
 use 'src/working_land_render.jo'
 import 'src/living_thermal.jo' as thermal_life
@@ -312,7 +314,15 @@ start_record = living_world.people[living_world.player].craft
 living_world.aircraft[start_record].kind = lt.Airframe(int(start_kind))
 living_world.aircraft[start_record].model_index = start_model
 living_world.aircraft[start_record].livery_index = DEFAULT_LIVERIES[int(start_kind)]
-pc = make_flyer(start_kind, start_model, craft_models[start_model].contacts, home.docks[0], along_quay)
+# A landplane put down on an airfield stand (the airfield nearest `near`): on the grass, at rest,
+# its nose toward the strip. (airfields.jo; a landplane never starts on the water)
+landplane_at_airfield = (kind: Craft, model: int, near: vec3, where: str = "stand") -> Flyer:
+    f = AIRFIELDS[max(0, nearest_airfield(near.xz))]
+    spec = craft_spec(kind, craft_models[model].contacts)
+    at = if where == "runway": airfield_point(f, -f.half_length + 40.0, 0.0) else: (if where == "fuel": airfield_fuel_stand(f) else: airfield_stand(f, 0))
+    st = ground_start(spec, at, if where == "runway": f.heading else: airfield_stand_heading(f))
+    Flyer(kind, model, spec, st, cam_pos = st.position, aim_heading = heading(st))
+pc = if aircraft_profile(start_kind).landplane: landplane_at_airfield(start_kind, start_model, home.docks[0]) else: make_flyer(start_kind, start_model, craft_models[start_model].contacts, home.docks[0], along_quay)
 pc.spec.player = true
 moored: Moored[]
 traffic = make_living_traffic(living_world, craft_models)
@@ -2606,6 +2616,21 @@ if let v = env("AEGEAN_WIND"):
     w = split(v, " ")
     wind_now.speed = to_float(w[0]) ?? 6.0
 
+# AEGEAN_AIRFIELD=stand|fuel|runway: aboard at the nearest airfield, on its apron stand, at its
+# fuel point, or at the strip's southern threshold heading down it (a landplane on its wheels; captures and checks)
+if let v = env("AEGEAN_AIRFIELD"):
+    was = pc
+    pc = landplane_at_airfield(pc.kind, pc.model, pc.state.position, v)
+    pc.spec = was.spec; pc.state.fuel = was.state.fuel
+    me.mode = .aboard
+
+# AEGEAN_SWITCH=id: after the start, change to that aircraft as the pause menu's Aircraft page does
+# (checks and captures of the switch: a landplane goes to an airfield, a boat to clear water)
+if let v = env("AEGEAN_SWITCH"):
+    k = Craft(clamp(to_int(v) ?? 0, 0, CRAFT_NAMES.len() - 1))
+    change_craft(k, default_craft_model(k))
+    me.mode = .aboard
+
 # Reproducible river fixture; ordinary flight controls and the owned player craft.
 if env("AEGEAN_RIVER") != none or env("AEGEAN_CANAL")!=none:
     a=RIVER_NODES[85];b=RIVER_NODES[86]
@@ -2695,6 +2720,9 @@ update_walkers = (dt: f64):
 # by one's own aircraft, at rest on the water or moored
 # the wind as a velocity (for cloth)
 wind_now_vec = () -> vec3: vec3(wind_now.dir.x, 0, wind_now.dir.y) * f32(wind_now.speed)
+
+# A landplane standing still on its wheels, throttle closed: one may climb down (and back up).
+landplane_parked = () -> bool: pc.spec.landplane and pc.state.on_ground and not pc.state.crashed and pc.throttle < 0.05 and length(pc.state.velocity) < 0.3
 
 near_own_craft = () -> bool:
     d = f64(length(vec2(pc.state.position.x - me.pos.x, pc.state.position.z - me.pos.z)))
@@ -2908,7 +2936,15 @@ change_craft = (kind: Craft, model: int):
         return
     old = pc.state
     nf = make_flyer(kind, model, craft_models[model].contacts, old.position - vec3(0, f32(pc.spec.float_height), 0), heading(old))
-    if not old.moored:
+    # (not in the air: a landplane goes to the nearest airfield's stand, never onto the water;
+    # a seaplane switched in on land goes to the home harbour's free dock)
+    grounded = old.moored or old.on_water or old.on_ground or old.beached or old.crashed
+    moved = false
+    if aircraft_profile(kind).landplane and grounded:
+        nf = landplane_at_airfield(kind, model, old.position); moved = true
+    else if pc.spec.landplane and grounded:
+        nf = make_flyer(kind, model, craft_models[model].contacts, free_dock(home, others_at(), home.docks[0]) ?? home.docks[0], along_quay); moved = true
+    if not old.moored and not moved:
         unmoor(nf.state)
         nf.state.position = old.position
         nf.state.velocity = old.velocity
@@ -2920,7 +2956,7 @@ change_craft = (kind: Craft, model: int):
     nf.cam_pos = pc.cam_pos; nf.look = pc.look; nf.look_v = pc.look_v; nf.cam_up = pc.cam_up; nf.roll = pc.roll
     nf.path = pc.path; nf.cam_e = pc.cam_e; nf.cam_ev = pc.cam_ev; nf.cam_lh = pc.cam_lh; nf.fov = pc.fov
     nf.prev_vel = pc.prev_vel; nf.acc_lp = pc.acc_lp; nf.prev_dir = pc.prev_dir
-    nf.placed = pc.placed
+    nf.placed = pc.placed and not moved
     nf.spec.player = true
     nf.spec.fuel_capacity = f64(a.tank_ml)/1000.0
     nf.spec.fuel_burn = f64(a.burn_ml_sec)/1000.0
@@ -4454,6 +4490,14 @@ fuel_pier_near = () -> refuel.FuelPier?:
     global fuel_pier_seen, fuel_pier_frame
     st = pc.state
     if me.mode != .aboard or st.crashed or st.capsized or st.beached or vessel_mooring.vessel >= 0: return none
+    # (a landplane takes on fuel at an airfield's fuel point, from the stores of the town it serves)
+    if pc.spec.landplane:
+        if not st.on_ground or length(vec3(st.velocity.x, 0, st.velocity.z)) > 2.0: return none
+        k = nearest_airfield(st.position.xz, 3000.0)
+        if k < 0: return none
+        f = AIRFIELDS[k]; stand = airfield_fuel_stand(f)
+        if length((st.position - stand).xz) > 18.0 or not (f.place in living_world.far.districts): return none
+        return refuel.FuelPier(core = living_world.far.districts[f.place].core, district = f.place, dock = stand, name = f.name)
     if not st.moored and (not st.on_water or length(vec3(st.velocity.x, 0, st.velocity.z)) > 2.0): return none
     if frame_number() - fuel_pier_frame >= 10 or frame_number() < fuel_pier_frame:
         fuel_pier_seen = refuel.fuel_pier_at(living_world, st.position)
@@ -4474,7 +4518,7 @@ open_fuel_pier = ():
     global ui, fuel_offered_at, fuel_panel_pier, fuel_notice
     p = fuel_pier_near()
     if p == none: return
-    if not pc.state.moored:
+    if not pc.state.moored and not pc.spec.landplane:
         if let d = dock_spot():
             if not dock_taken(d, others_at()):
                 moor(pc.state, vec3(d.x, f32(pc.spec.float_height), d.z), heading(pc.state))
@@ -4946,6 +4990,7 @@ aboard_offers = () -> Offer[]:
     if st.moored and vessel_mooring.vessel < 0:
         if offshore != none: offer_add(o, "launch-ashore", "call the harbour launch to go ashore ({phoenix_text(launches.LAUNCH_FARE)})      Shift  open the throttle")
         else: offer_add(o, "ashore", "step ashore      Shift  open the throttle")
+    if landplane_parked(): offer_add(o, "ashore", "climb down      Shift  open the throttle")
     if not st.moored and buoy_spot() != none: offer_add(o, "buoy", "make fast to the buoy")
     if not st.moored and (dock_spot() != none or find_vessel_mooring(vessels, st, pc.spec.span) != none): offer_add(o, "moor", "moor here")
     offer_add(o, "fuel", offer_words(fuel_offer_text(again = true)))
@@ -5392,6 +5437,8 @@ update_frame = (dt: f64, saves: bool = true):
                 if let m = buoy_spot(): moor_on_buoy(m)
             else if act == "launch-ashore": start_launch(false)
             else if act == "fuel": open_fuel_pier()
+            else if act == "ashore" and landplane_parked():
+                step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
             else if act == "ashore" or act == "moor":
                 if let ship_mooring = find_vessel_mooring(vessels,pc.state,pc.spec.span):
                     vessel_mooring = ship_mooring
@@ -5413,7 +5460,9 @@ update_frame = (dt: f64, saves: bool = true):
             if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached):
                 # towed home to a free dock and patched up (the bill comes later)
                 dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
-                pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
+                # (a landplane is towed to its airfield, not to a dock)
+                pc = if pc.spec.landplane: landplane_at_airfield(pc.kind, pc.model, pc.state.position) else: make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
+                pc.spec.player = true
                 ci=combat_index(battle,living_world.people[living_world.player].craft)
                 if ci>=0:battle.actors[ci]=Combatant(battle.actors[ci].craft,living_world.player,0,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=pc.model)
                 pc.placed = false
@@ -5691,6 +5740,13 @@ const TITLE_RACER_KEY = -1001   # (the racers' own keys for their propellers and
 # behind the title, the aircraft when aboard, still on foot)
 view_velocity = () -> vec3: if title.open: title_now.velocity else: if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0)
 
+# The air at the airfield nearest the camera, for its windsocks (the flight model's own wind).
+airfield_wind = () -> vec3:
+    k = nearest_airfield(scene_camera().xz)
+    if k < 0: return vec3(0, 0, 0)
+    pos = vec3(AIRFIELDS[k].center.x, 150, AIRFIELDS[k].center.y)
+    if weather_active: weather_flight_wind(pos) else: vec3(wind_now.dir.x, 0, wind_now.dir.y) * f32(wind_now.speed * 0.7)
+
 pc_at = () -> mat4: translation(vec3(0, f32(plunge), 0)) * (if pc.state.moored: afloat_transform(craft_transform(pc),t) else: craft_transform(pc))
 
 cloud_frame_list: CloudVolume[]
@@ -5738,6 +5794,7 @@ draw_world = (L: Light):
         draw_canal(L,t)
         draw_slip_cradle(L,t)
         zone("thermal");draw_thermal(L,t);zone_end()
+        zone("airfields");draw_airfields(L,t,airfield_wind());zone_end()
         zone("access bridges");draw_access_bridges(L,t);zone_end()
         zone("working land");draw_working_land(tree_meshes,L,t);zone_end()
         zone("ground");draw_ground(L, t);zone_end()
