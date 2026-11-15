@@ -109,6 +109,10 @@ struct Flyer:
     feedback: FlightFeedback = FlightFeedback()
     instruments: FlightInstruments = FlightInstruments()
     cam_vel: vec3 = vec3(0, 0, 0)   # the camera's own motion (it rides a spring behind the aircraft)
+    # (the frame last drawn from, whichever camera drew it: the mouse and drag move the aim in it)
+    screen_view: vec3 = vec3(0, 0, -1)
+    screen_up: vec3 = vec3(0, 1, 0)
+    screen_ready = false
 
 make_flyer = (kind: Craft, model: int, contacts: vec3[], dock: vec3, heading: f64) -> Flyer:
     spec = craft_spec(kind, contacts)
@@ -134,6 +138,47 @@ _attitude = (st: CraftState) -> (f64, f64, f64):
 aim_dir = (f: Flyer) -> vec3:
     cp = cos(f.aim_climb)
     vec3(f32(sin(f.aim_heading) * cp), f32(sin(f.aim_climb)), f32(-cos(f.aim_heading) * cp))
+
+# The mouse or a drag moves the aim ring the way it moved on the screen, whichever way the view
+# faces or rolls (a target view looking aft, a camera carried over the top of a loop). The aim is
+# pushed along the drawn frame's right and up, so a ring behind the eye moves the same way too.
+# `turn` is in radians (x right, y down); climb stays inside low..high without going over a pole.
+screen_aim = (f: mut Flyer, turn: vec2, low: f64 = -1.55, high: f64 = 1.55):
+    a = aim_dir(f)
+    view = if f.screen_ready: normalize(f.screen_view) else: a
+    up = if f.screen_ready: f.screen_up else: vec3(0, 1, 0)
+    right = cross(view, up)
+    if length(right) < 0.001: right = cross(view, if abs(view.y) < 0.9: vec3(0, 1, 0) else: vec3(0, 0, 1))
+    right = normalize(right)
+    up = normalize(cross(right, view))
+    # (a step along the great circle toward that screen direction's vanishing point: straight
+    # along the screen wherever the ring is drawn, at an even angular rate, never past it)
+    push = right * f32(turn.x) - up * f32(turn.y)
+    amount = f64(length(push))
+    if amount < 1e-9: return
+    goal = push / f32(amount)
+    across = goal - a * dot(a, goal)
+    if length(across) < 0.000001: return
+    across = normalize(across)
+    angle = min(amount, acos(clamp(f64(dot(a, goal)), -1.0, 1.0)))
+    moved = normalize(a * f32(cos(angle)) + across * f32(sin(angle)))
+    flat = vec2(moved.x, moved.z)
+    old = vec2(f32(sin(f.aim_heading)), f32(-cos(f.aim_heading)))
+    climb = asin(clamp(f64(moved.y), -1.0, 1.0))
+    # (over the top or under the bottom: hold the heading, stop at the limit)
+    if length(flat) > 0.02 and dot(flat, old) > 0.0: f.aim_heading = atan2(f64(flat.x), -f64(flat.y))
+    else: climb = if moved.y > 0: high else: low
+    f.aim_climb = clamp(climb, low, high)
+
+# The drawn camera's axes, from the view matrix in use (cockpit or any other camera).
+remember_screen_axes = (f: mut Flyer):
+    v = __view
+    right = vec3(v[0].x, v[1].x, v[2].x)
+    up = vec3(v[0].y, v[1].y, v[2].y)
+    if length(right) < 0.5 or length(up) < 0.5: return
+    f.screen_view = normalize(cross(up, right))
+    f.screen_up = normalize(up)
+    f.screen_ready = true
 
 # Pure mapping also used by tests and future lever UI. No reverse engine thrust.
 lever_controls = (lever: f64, gear: bool = false) -> Controls:
@@ -210,8 +255,7 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
             f.aim_heading = hd
             f.aim_climb = clamp(pitch, -0.2, 0.3)
             f.mouse_mode = true
-        f.aim_heading += f64(md.x) * 0.0025
-        f.aim_climb = clamp(f.aim_climb - f64(md.y) * 0.0025, -0.4, 0.6)
+        screen_aim(f, md * 0.0025, -0.4, 0.6)
         c.yaw = clamp(angle_delta(f.aim_heading, hd) * 2.5 + ky + kr, -1.0, 1.0)
         c.pitch = clamp((f.aim_climb - pitch) * 3.0 + kp, -1.0, 1.0)
         c.water_brake = up(.space)
@@ -240,8 +284,7 @@ key_controls = (f: mut Flyer, dt: f64) -> Controls:
             f.aim_heading = hd
             f.aim_climb = pitch
         f.mouse_mode = true
-        f.aim_heading += f64(md.x) * 0.0025
-        f.aim_climb = clamp(f.aim_climb - f64(md.y) * 0.0025, -1.55, 1.55)
+        screen_aim(f, md * 0.0025)
     else if keys and (vpressed(.w) or vpressed(.s) or vpressed(.a) or vpressed(.d) or vpressed(.q) or vpressed(.e) or vpressed(.up) or vpressed(.down) or vpressed(.left) or vpressed(.right)):
         f.mouse_mode = false
     if f.mouse_mode:
@@ -505,6 +548,34 @@ transport_camera_up=(up:vec3,old:vec3,view:vec3)->vec3:
     if length(result)<0.0001:result=cross(view,if abs(view.x)<0.8:vec3(1,0,0) else:vec3(0,0,1))
     normalize(result)
 
+# Target view rights itself: its carried up rolls back toward the horizon at a bounded rate,
+# never in a snap, and holds where the horizon is undefined (looking nearly straight up or
+# down). Without this, carrying the frame round a loop of bearings (a target passing overhead)
+# left the picture upside down for good.
+camera_horizon_up=(up:vec3,view:vec3,dt:f64)->vec3:
+    level=vec3(0,1,0)-view*view.y
+    n=f64(length(level))
+    if n<0.05 or dt<=0:return up
+    level=level/f32(n)
+    angle=atan2(f64(dot(cross(up,level),view)),f64(dot(up,level)))
+    turn=clamp(angle*(1.0-exp(-2.5*dt)),-1.5*dt,1.5*dt)*smoothstep(0.08,0.35,n)
+    result=quat_rotate(quat_axis_angle(view,turn),up)
+    normalize(result-view*dot(result,view))
+
+# Gimbal-safe up for the drawn frame: carried from the frame last drawn, then turned onto the
+# wanted up wherever that is defined. Near the vertical, where a look-at's up hint degenerates
+# and would flip the picture, the carried frame holds instead.
+steady_camera_up=(f:Flyer,view:vec3,hint:vec3)->vec3:
+    want=hint-view*dot(hint,view)
+    n=f64(length(want))
+    carried=if f.screen_ready:transport_camera_up(f.screen_up,normalize(f.screen_view),view) else:transport_camera_up(vec3(0,1,0),view,view)
+    if n<0.0001:return carried
+    want=want/f32(n)
+    k=smoothstep(0.1,0.35,n)
+    if k>=1.0:return want
+    angle=atan2(f64(dot(cross(carried,want),view)),f64(dot(carried,want)))
+    normalize(quat_rotate(quat_axis_angle(view,angle*k),carried))
+
 target_chase_camera=(f:mut Flyer,tracking:vec3,weight:f64,dt:f64=1.0/60.0)->ChaseCamera:
     eye=if f.cam_ready:f.cam_point else:world_point(f.cam_pos)
     w=clamp(weight,0.0,1.0)
@@ -516,7 +587,7 @@ target_chase_camera=(f:mut Flyer,tracking:vec3,weight:f64,dt:f64=1.0/60.0)->Chas
     view=blend_bearing(normal,tracking,w)
     if not f.target_frame.ready:f.target_frame=TargetChaseFrame(true,normal,normal_up)
     view=blend_bearing(f.target_frame.view,view,1.0-exp(-10.0*max(0.0,dt)))
-    up=transport_camera_up(f.target_frame.up,f.target_frame.view,view)
+    up=camera_horizon_up(transport_camera_up(f.target_frame.up,f.target_frame.view,view),view,dt)
     # Smoothly recover the normal chase roll when leaving target view.
     home=transport_camera_up(normal_up,normal,view)
     roll=atan2(f64(dot(cross(home,up),view)),f64(dot(home,up)))
@@ -562,10 +633,17 @@ clear_chase_camera=(f:mut Flyer,frame:ChaseCamera,dt:f64,towns:Town[]=[])->Chase
     view=normalize(world_delta(focus,eye))
     ChaseCamera(eye,view,transport_camera_up(frame.up,frame.view,view))
 
-place_chase_camera = (f: mut Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64 = 0.0, towns:Town[]=[]):
+# The chase or target frame to draw from; remembers its axes for the mouse.
+chase_frame = (f: mut Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64 = 0.0, towns:Town[]=[]) -> ChaseCamera:
     if not f.placed:chase(f,1.0/60.0)
     dt=if f.target_camera_time<0:1.0/60.0 else:clamp(t-f.target_camera_time,0.0,0.1)
     frame=clear_chase_camera(f,target_chase_camera(f,tracking,weight,dt),dt,towns);f.target_camera_time=t
+    frame.up=steady_camera_up(f,frame.view,frame.up)
+    f.screen_view=frame.view;f.screen_up=frame.up;f.screen_ready=true
+    frame
+
+place_chase_camera = (f: mut Flyer, t: f64, tracking:vec3 = vec3(0,0,-1), weight:f64 = 0.0, towns:Town[]=[]):
+    frame=chase_frame(f,t,tracking,weight,towns)
     view=frame.view;camera_up=frame.up;eye=frame.eye
     # the view hums only once it is really fast (the airframe itself shakes sooner), and shakes in a
     # buffet or a crash
