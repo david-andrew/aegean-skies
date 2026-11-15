@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
+- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1540,6 +1540,15 @@ No image: the tiers differ in budgets more than in any single view.
   (the canal takeoff's posts); `src/ground_fire_view.jo` (figures, sandbags, guns).
 - **Rules:** they belong to the scenario, never to the living world's population; they hold fire
   until the slipway hand-over. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run.
+
+### Water strikes
+
+- **Aliases:** bullet spouts, strikes on the water.
+- **Definition:** where a round (any gun's, aircraft or ground) hits the water: a thin spout a
+  metre or two tall that falls back within half a second, so a burst's strikes walk along the water
+  in a line. Only a wreck going in raises the big lingering mist column.
+- **Code:** `src/combat_view.jo` `combat_effect_events` (`.splash`); `src/combat.jo`
+  `step_combat_rounds` raises the event for every owner, ground guns included.
 
 ### Screen aim
 
