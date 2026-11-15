@@ -74,11 +74,31 @@ seconds of sink above the water, with the terrain sampled along the path. `Battl
 soft top (the strait's cloud base). `Battle.tactics` counts each behaviour.
 `tools/dogfight_lab.jo` runs N strait battles headless (`DOGFIGHT_N`, `DOGFIGHT_SECONDS`,
 `DOGFIGHT_MODEL=default|skybarons|v2|sb`, `DOGFIGHT_TRACE="actor from every"`,
-`DOGFIGHT_DOWNS=1`) and writes a report.
+`DOGFIGHT_DOWNS=1`) and writes a report: time to first kill and kills per minute, the player
+seat's shots, hits and kills, how often NPCs are close to their target and lined up, and every
+round followed to its target (hit rate by range and crossing angle, misses by nearest pass).
 
-The **lead marker** (`src/lead_marker.jo`) is HUD only: Sky Barons' `lead_from` against the
-selected hostile or the nearest in a 25° cone within 1 km, at the Battle's muzzle speed, drawn at
-the 450 m convergence so it lines up with the gunsight.
+**Gunnery** (`_gun_aim`): the lead (`intercept`), misjudged by skill; the nose put where the aim
+is going, leading its swing by 0.12–0.24 s (a proportional steering law alone trails a turning
+target by a few degrees and misses by 5–20 m); fired within the pilot's reach and cone. A pilot
+on a gun run far from the player (LOD 1–2, whose full brain runs every 15 or 30 ticks) re-aims
+every six ticks between thoughts (`_retrack`: stick and trigger only, no actor scans).
+
+The **lead marks** (`src/lead_marker.jo`) are HUD only and drawn as Sky Barons draws its lead
+ring: a small ring (6 px radius, 2 px line) in the hostile colour where the rounds and the target
+would meet (`lead_from`, at the Battle's muzzle speed), on every hostile within 700 m whose own
+place is on screen.
+
+**Damage tuning.** Two to four solid bursts from twin guns at fighting range bring an aircraft
+down; glancing hits do partial damage, and one-burst kills come only from a lucky hit to the
+engine or the pilot. Each round's damage is `BULLET_DAMAGE` divided by the part's toughness
+(`PART_TOUGHNESS`); a tail shot away, a struck pilot (an NPC's: `PILOT_CHANCE` of a round through
+the cockpit) or a burnt-out engine takes the aircraft down. The player's own aircraft divides
+combat damage by Tweaks' **Player toughness** (2.0: about 1.8 times the bursts). The player's
+rounds hit within **Player hit margin** (0.7 m) of each part (Tweaks' **Generous hits**, on), and
+Tweaks' **Aim assist** (off) bends the player's rounds after the muzzle toward the enemy most
+plainly in their path (within 3° and 700 m, at most 4°/s, for 0.6 s); it never touches the
+controls or the aircraft. `tests/burst_test.jo` measures bursts to a kill for each.
 
 Guns use real forward muzzle/convergence vectors, inherited aircraft velocity, gravity and
 seeded scatter. Moving aircraft are hit in local part ellipsoids, with nearest-hit ordering and
