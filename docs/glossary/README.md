@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -777,7 +777,11 @@ On the rivers branch until it lands.
     speed; 1.4 stands for the ground effect of a low wing near the water.
   - **Water thrust** (`water_thrust`, default 1): the pull at a standstill over the force model's,
     full by 1.2 times the stall. A fixed-pitch propeller made for 650 km/h is stalled at low
-    speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s).
+    speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s). Above 1
+    it is a **static pull** factor: a big, slow-turning propeller pulls far harder at a standstill
+    than the force model's thrust (derived from the drag at the top speed) allows a slow, heavy
+    biplane; the Fairey IIIF's 1.3 brings its run to about 31 s as the player (the Velos needs
+    none: 23 s, beside the Short 184's 25; the Gull's is 18).
   - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
 
 
@@ -838,6 +842,32 @@ On the rivers branch until it lands.
   21): the long course off the home harbour, the player at the third gate's approach 41 s into the
   race, five rivals flown by the flight model; `schneider-finish` the results card;
   `schneider-empty` the same flight with no race (frame-time comparisons).
+
+### Velos and Fairey IIIF
+
+- **Aliases:** the Greek naval types; the Blackburn T.3 Velos (Craft `blackburn_velos`), the
+  Fairey IIIF (`fairey_iiif`).
+- **Definition:** two aircraft of the Greek naval air service, on twin floats. The **Velos** (1925)
+  is the Blackburn Dart's two-seat torpedo and training biplane built for the Greek navy (four
+  from Brough, twelve licence-built at Palaion Faliro, the first aircraft built in Greece): two-bay
+  wings, a Napier Lion behind a nose radiator under a navy-blue cowl, the observer raised behind
+  with a Lewis gun, a torpedo between the floats; 172 km/h. The **Fairey IIIF** (1931 in Greek
+  service) is the naval-cooperation biplane the Greek navy flew on floats from Phaleron Bay until
+  1941: a metal fuselage round a Lion XIA in a pointed cowl, a belly radiator, the tall Fairey
+  rudder, pilot, observer and gunner; 209 km/h.
+- **Code:** `src/greek_planes.jo` (models; `greek_roundel`), built with the racer kit
+  (`src/racer_planes.jo` `rk_*`); profiles in `src/aircraft_catalog.jo` (with `real_top_kmh`);
+  `tests/aircraft_greek2_test.jo`; listed beside greek-1's types in [Greek service](#greek-service).
+- **Rules:** their default is the Greek Naval Air Service livery (marking 3: the Greek insignia
+  from `src/markings.jo` on the upper wings by `kit_wing_mark`, under the lower wings and on the
+  fuselage sides by `greek_side_mark`, blue-white-blue vertical stripes on the rudder by `kit_rudder`),
+  its dope a cool silver so it still reads silver in warm light. Its family is "greek": the
+  [Paint page](#paint-page) offers them the Greek-service liveries and the civil ones, and the Greek
+  and British insignia and rudders (`TYPE_NATIONS`). Their game speeds follow
+  the fleet's rule from `real_top_kmh` as the other Greek-service types' do (68 and 76 m/s); the
+  IIIF has a static pull of 1.3 (see Schneider racers, water thrust). Both are in the picker's
+  Greek service group, and their struts are tagged for streamers (the racer kit's `rk_strut` and
+  `rk_blade`).
 
 ---
 
