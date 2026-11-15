@@ -60,9 +60,20 @@ funny or useful (time passes, people are met, the plane is looked after).
 8. **Fishing from a dock**: cast, wait, and strike. The catch enters the world's stock as
    production, to be sold to the fish market or grilled at the hotel.
 
+## Built (fishing, round two)
+
+9. **The catch is physical**: the fish is in the pilot's hand, at its size and colours, flapping
+   at first; he carries it as he walks. Holding one he can't cast: into the bucket, or back into
+   the sea with a splash. The bucket is bought at a chandler's or the town's market, stands beside
+   him on the dock while he fishes, holds six, and is carried, fish and all, by its handle.
+10. **Sold at the real market**: no selling from the dock. He walks to the town's market and sells
+   there through the ledger, or takes the catch to the Hotel Ancora's kitchen to have it grilled.
+   Held and bucketed fish are outside the world's stock until sold or eaten, so conservation holds;
+   saves keep them.
+
 ## Built (round seven)
 
-9. **Table service and one's own pace.** What is ordered is brought, not conjured: the hotel's
+11. **Table service and one's own pace.** What is ordered is brought, not conjured: the hotel's
    waiter carries it on a tray from the end of the bar (three things at a time), the barkeep along
    the counter to one standing at the bar, the coffee house's boy from the door. He sets each
    thing down on a free spot and comes back for the empties after they have stood a while. Each
@@ -70,23 +81,23 @@ funny or useful (time passes, people are met, the plane is looked after).
    lifts the glass to his lips, bending his elbow, and the level goes down; with a plate, the
    fork goes from plate to mouth with a bite on it. Let go and he holds the glass at his chest;
    another item, or Escape, puts it down. Paid once, when ordered.
-10. **A bill of fare** per house: the hotel's printed card and the coffee house's chalk board,
+12. **A bill of fare** per house: the hotel's printed card and the coffee house's chalk board,
    each with a handful of dishes and drinks and their prices. The faint line at the foot ("Other
    wines and spirits on request", or "and whatever else the house has") opens the house's whole
    book, the deep drinks list as it was.
-11. **Tavli, polished.** The opponent sits across the coffee house table, seen through a window
+13. **Tavli, polished.** The opponent sits across the coffee house table, seen through a window
    the board leaves open, with gestures (a shrug, a checker slapped down, a laugh); dice and
    checker sounds made in code; Plakoto as a second game, chosen with the stake.
-12. **The barber** at the Hotel Ancora's corner of the waterfront: a shave and a trim, or a new
+14. **The barber** at the Hotel Ancora's corner of the waterfront: a shave and a trim, or a new
    shape for the mustache (clean-shaven, handlebar, walrus, chevron) seen in the mirror as one
    chooses; one payment to the house; Stavros talks while he works. The style is saved.
-13. **Swimming** from a beach or the end of a dock: wade in, swim the crawl once it is deep, ride
+15. **Swimming** from a beach or the end of a dock: wade in, swim the crawl once it is deep, ride
    the swell, dive off a dock, climb out onto one; the moon's glitter on the water at night.
-14. **Stargazing** at night on a hilltop or the end of the hotel's pier: lie back and the view
+16. **Stargazing** at night on a hilltop or the end of the hotel's pier: lie back and the view
    drifts round the sky; the brighter stars at their places on the game's celestial sphere, and
    the names of stars, constellations, the planets and the moon in transliterated period Greek and
    in English, shown faintly as one looks at them. An hour can pass under the stars.
-15. **Notes rising from music in the world** (not the radio): small notes float up from whoever
+17. **Notes rising from music in the world** (not the radio): small notes float up from whoever
    is playing, so the music can be found by looking round. See "Rising notes" in the glossary.
 
 ## Controls
@@ -108,9 +119,14 @@ funny or useful (time passes, people are met, the plane is looked after).
   back, and Escape asks before giving up. By finger: tap, tap.
 - The paper: wheel, arrow and page keys, a finger's drag, or the up and down buttons; Escape
   puts it down.
-- At the hotel in the evening: "Ask for a song", and "Have your catch grilled" when one has fish.
+- At the hotel in the evening: "Ask for a song". With fish: "Have your catch grilled" seated, or
+  the card at the bar or the terrace table ("have the kitchen grill your catch").
 - Fishing: **F** at the water's edge on a dock in a harbour town. F, Space or the first button
-  casts and strikes; "Sell the catch" sells to the fish market; Escape stops.
+  casts and strikes. With a fish in the hand: **B** (or the button) puts it in the bucket, **X** throws
+  it back; Escape stops (he walks off holding it, and picks up the bucket).
+- On foot with a catch: at the town's market, F sells it all; X at the water's edge throws the held
+  fish back; B puts it in the carried bucket. Holding a fish he can't start fishing, stroke a cat, haul in the line, take the waters or work on the aircraft; carrying a bucket of fish, he can't haul, bathe or work on the aircraft either. At a chandler's or the market without a bucket: buy
+  one. Near one's bucket set down: pick it up.
 - The barber: **F** at his chair on the waterfront by the hotel's corner.
 - Swimming: **G** at the water's edge of a beach or the end of a dock; walk to swim (Shift: a
   strong stroke); out where the ground rises, or **F** to climb onto a dock.

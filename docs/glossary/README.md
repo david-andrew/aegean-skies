@@ -1299,13 +1299,26 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Dock fishing
 
+- **Aliases:** fishing from the dock, the catch, the bucket.
 - **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and strike
-  while it is under. Bites come livelier at dawn and dusk. The catch goes into the angler's pocket
-  at the fish market as production (`record_creation` and `cargo_mint`, exactly like a fisher's),
-  to be sold there or grilled by the hotel's kitchen (consumed and recorded so).
-- **Code:** `src/fishing.jo`; `fishing_frame` and `draw_fishing` in `aegean.jo`;
-  `tests/fishing_test.jo`.
-- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite`.
+  while it is under. Bites come livelier at dawn and dusk. A fish landed is **in the pilot's hand**,
+  at its kind's size and colours, flapping hard at first and then in fits; he walks with it. Holding
+  a fish he can't cast: it goes into his **bucket** (a zinc bucket bought for a few coins at a
+  chandler's or the town's market; it stands beside him on the dock while he fishes and holds six)
+  or back into the sea (X, an arc and a small splash); B puts it in the bucket. No card offers what wants the hand he holds it in (fishing again, a cat, hauling the line, the waters, work on the aircraft). He carries the bucket, fish and all, by its
+  handle (no running with fish in it; a crate wants both hands, so the bucket goes down first, to be
+  picked up again). The catch is **not in the living world's stock** while held: it enters it only
+  at the town's market (its daily-life market venue), sold there through the ledger (production
+  into his pocket at the market, `record_creation` and `cargo_mint`, then `trade`), or at the Hotel
+  Ancora, where the kitchen grills a plate of it (production, then consumption, both recorded, and
+  the cook's charge to the house). Saves keep the fish in the hand and the bucket's contents.
+- **Code:** `src/fishing.jo` (`Angling`, `FishHold`: `fish_take`, `fish_into_bucket`,
+  `fish_throw_back`, `fish_sell`, `fish_grill`, `fish_buy_bucket`); `src/fish_view.jo` (the fish,
+  the bucket, the held pose via `figure_hand` in `src/folk.jo`); `fishing_frame`, `fish_offers` and
+  `draw_catch_scene` in `aegean.jo`; `tests/fishing_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite|fish-dock|fish-hold|fish-walk|fish-market`
+  (`AEGEAN_FISH_KIND` the kind held, `AEGEAN_FISH_AGE` seconds since it was landed,
+  `AEGEAN_FISH_VIEW` the camera's turn from behind, `AEGEAN_FISH_DIST` its distance).
 
 ### Venue piano
 
