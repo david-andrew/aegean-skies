@@ -60,6 +60,17 @@ funny or useful (time passes, people are met, the plane is looked after).
 8. **Fishing from a dock**: cast, wait, and strike. The catch enters the world's stock as
    production, to be sold to the fish market or grilled at the hotel.
 
+## Built (fishing, round two)
+
+9. **The catch is physical**: the fish is in the pilot's hand, at its size and colours, flapping
+   at first; he carries it as he walks. Holding one he can't cast: into the bucket, or back into
+   the sea with a splash. The bucket is bought at a chandler's or the town's market, stands beside
+   him on the dock while he fishes, holds six, and is carried, fish and all, by its handle.
+10. **Sold at the real market**: no selling from the dock. He walks to the town's market and sells
+   there through the ledger, or takes the catch to the Hotel Ancora's kitchen to have it grilled.
+   Held and bucketed fish are outside the world's stock until sold or eaten, so conservation holds;
+   saves keep them.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
@@ -75,9 +86,14 @@ funny or useful (time passes, people are met, the plane is looked after).
   back, and Escape asks before giving up. By finger: tap, tap.
 - The paper: wheel, arrow and page keys, a finger's drag, or the up and down buttons; Escape
   puts it down.
-- At the hotel in the evening: "Ask for a song", and "Have your catch grilled" when one has fish.
+- At the hotel in the evening: "Ask for a song". With fish: "Have your catch grilled" seated, or
+  the card at the bar or the terrace table ("have the kitchen grill your catch").
 - Fishing: **F** at the water's edge on a dock in a harbour town. F, Space or the first button
-  casts and strikes; "Sell the catch" sells to the fish market; Escape stops.
+  casts and strikes. With a fish in the hand: **B** (or the button) puts it in the bucket, **X** throws
+  it back; Escape stops (he walks off holding it, and picks up the bucket).
+- On foot with a catch: at the town's market, F sells it all; X at the water's edge throws the held
+  fish back; B puts it in the carried bucket. Holding a fish he can't start fishing, stroke a cat, haul in the line, take the waters or work on the aircraft; carrying a bucket of fish, he can't haul, bathe or work on the aircraft either. At a chandler's or the market without a bucket: buy
+  one. Near one's bucket set down: pick it up.
 
 ## Later (worth adding)
 
