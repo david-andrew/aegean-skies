@@ -272,8 +272,46 @@ grass_needs_refresh=(f:GrassField,center:vec3,eye:vec3)->bool:
     # actor stands still. Grow it before the visible disk reaches its edge.
     f.resident_radius<render_quality.grass_radius+16.0 and f64(length(eye.xz-f.center.xz))+f64(grass_draw_radius())+3.0>f.resident_radius
 
-build_grass = (towns: Town[], center: vec3) -> GrassField:
+# A cell's cover is fixed by the world: the terrain, the settlements made so far and the
+# roads laid so far. Keep it per metre cell, so a field moved 12 m on computes only the
+# strip it gained rather than every cell again.
+const GRASS_COVER_EDGE = 256
+struct GrassCoverCell:
+    x: int
+    z: int
+    revision = -1
+    cover: f64
+    made = false                     # (the blade record below is kept once the ground's material is there)
+    cell: GrassCell = GrassCell(mat4(),vec4(0,0,0,0),vec4(0,0,0,0))
+grass_cover_cells: GrassCoverCell[]
+grass_cover_revision = () -> int: (geography_revision*65537+world_settlements.len())*65537+settlement_road_revision
+grass_cover_slot = (x: f64, z: f64) -> int:
+    global grass_cover_cells
+    if x!=floor(x) or z!=floor(z): return -1
+    if grass_cover_cells.len()==0: grass_cover_cells=[loop i in 0..GRASS_COVER_EDGE*GRASS_COVER_EDGE: GrassCoverCell()]
+    (int(x) & (GRASS_COVER_EDGE-1))+(int(z) & (GRASS_COVER_EDGE-1))*GRASS_COVER_EDGE
+grass_cover_at = (towns: Town[], x: f64, z: f64) -> f64:
+    global grass_cover_cells
+    slot=grass_cover_slot(x,z)
+    if slot<0: return grass_cover(towns,x,z)
+    ix=int(x);iz=int(z);revision=grass_cover_revision()
+    old=grass_cover_cells[slot]
+    if old.x==ix and old.z==iz and old.revision==revision: return old.cover
+    cover=grass_cover(towns,x,z)
+    grass_cover_cells[slot]=GrassCoverCell(ix,iz,revision,cover)
+    cover
+
+# A field is made a slice at a time (the field drawn till now stays until the new one is whole).
+struct GrassBuild:
+    active = false
+    center: vec3 = vec3(0,0,0)
+    lanes: TownLane[]
+    radius: f64 = 0.0
+    n: int = 0
+    cell: int = 0
     list: GrassCell[]
+
+grass_build_start = (towns: Town[], center: vec3) -> GrassBuild:
     lanes=grass_road_lanes(center.xz,render_quality.grass_radius+18.0)
     loop tw in towns:
         if length(tw.center.xz-center.xz)>500.0:continue
@@ -286,32 +324,47 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
                 prev=tw.houses[k-1].xz+tw.out*8.0
                 if length(prev-front)<25.0:lanes.push(TownLane(prev,front,2.0))
     radius = grass_resident_radius(center,scene_camera())
-    n = int(radius * 2.0 / GRASS_STEP)
+    GrassBuild(true,center,lanes,radius,int(radius * 2.0 / GRASS_STEP))
+
+# Cells until `until` (a time()); true once every cell is done.
+grass_build_step = (towns: Town[], b: mut GrassBuild, until: f64) -> bool:
+    global grass_cover_cells
+    center=b.center; n=b.n
     cx = floor(f64(center.x) / GRASS_STEP) * GRASS_STEP
     cz = floor(f64(center.z) / GRASS_STEP) * GRASS_STEP
-    loop j in 0..n:
-        loop i in 0..n:
-            gx = cx + (f64(i) - f64(n) * 0.5) * GRASS_STEP
-            gz = cz + (f64(j) - f64(n) * 0.5) * GRASS_STEP
-            x = gx
-            z = gz
-            d = sqrt((x - f64(center.x)) ^ 2.0 + (z - f64(center.z)) ^ 2.0)
-            if d > radius: continue
-            if not grass_lane_clear(vec2(f32(x),f32(z)),lanes):continue
-            k = grass_cover(towns, x, z)
-            if k < 0.001: continue
-            cell=if grass_cached_land(x,z):grass_terrain(x,z) else:GrassTerrain(ground=surface_height(x,z),dx=surface_height(x+0.5,z)-surface_height(x-0.5,z),dz=surface_height(x,z+0.5)-surface_height(x,z-0.5))
-            h=cell.ground;hx=cell.dx;hz=cell.dz
-            m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
-            m[1]=vec4(0,f32(k),0,0)
-            m[0]=vec4(1,f32(hx),0,0);m[2]=vec4(0,f32(hz),1,0)
-            material=grass_ground_material(x,z,f32(h))
-            if material.tint.w<0.0:continue
-            normal=normalize(material.normal)
-            orchard=orchard_cover(vec2(f32(x),f32(z)),f32(h),length(normal.xz)/max(normal.y,0.1))
-            list.push(GrassCell(m,material.tint,vec4(normal,orchard)))
+    loop b.cell < n*n:
+        if b.cell%16 == 0 and time() > until: return false
+        i = b.cell%n; j = b.cell/n
+        b.cell += 1
+        gx = cx + (f64(i) - f64(n) * 0.5) * GRASS_STEP
+        gz = cz + (f64(j) - f64(n) * 0.5) * GRASS_STEP
+        x = gx
+        z = gz
+        d = sqrt((x - f64(center.x)) ^ 2.0 + (z - f64(center.z)) ^ 2.0)
+        if d > b.radius: continue
+        if not grass_lane_clear(vec2(f32(x),f32(z)),b.lanes):continue
+        k = grass_cover_at(towns, x, z)
+        if k < 0.001: continue
+        slot = grass_cover_slot(x,z)
+        if slot >= 0 and grass_cover_cells[slot].made:
+            b.list.push(grass_cover_cells[slot].cell)
+            continue
+        cell=if grass_cached_land(x,z):grass_terrain(x,z) else:GrassTerrain(ground=surface_height(x,z),dx=surface_height(x+0.5,z)-surface_height(x-0.5,z),dz=surface_height(x,z+0.5)-surface_height(x,z-0.5))
+        h=cell.ground;hx=cell.dx;hz=cell.dz
+        m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
+        m[1]=vec4(0,f32(k),0,0)
+        m[0]=vec4(1,f32(hx),0,0);m[2]=vec4(0,f32(hz),1,0)
+        material=grass_ground_material(x,z,f32(h))
+        if material.tint.w<0.0:continue
+        normal=normalize(material.normal)
+        orchard=orchard_cover(vec2(f32(x),f32(z)),f32(h),length(normal.xz)/max(normal.y,0.1))
+        made=GrassCell(m,material.tint,vec4(normal,orchard))
+        b.list.push(made)
+        if slot >= 0: grass_cover_cells[slot].made=true; grass_cover_cells[slot].cell=made
+    true
 
-
+grass_build_finish = (b: GrassBuild) -> GrassField:
+    center=b.center; list=b.list
     # Stable 8 m batches retain all blades but avoid vertex work outside the view.
     list.sort(grass_tile_key)
     chunks: GrassChunk[]
@@ -323,7 +376,12 @@ build_grass = (towns: Town[], center: vec3) -> GrassField:
             at=list[finish].model[3].xyz;lo=min(lo,at);hi=max(hi,at);finish+=1
         chunks.push(GrassChunk((lo+hi)*0.5,length(hi-lo)*0.5+3.0,start,finish-start))
         start=finish
-    GrassField(center, instance_buffer(list), list.len(), true,chunks,list,grass_road_stamp(center.xz),radius,grass_ground_material(f64(center.x),f64(center.z),center.y).tint.w>=0.0)
+    GrassField(center, instance_buffer(list), list.len(), true,chunks,list,grass_road_stamp(center.xz),b.radius,grass_ground_material(f64(center.x),f64(center.z),center.y).tint.w>=0.0)
+
+build_grass = (towns: Town[], center: vec3) -> GrassField:
+    b = grass_build_start(towns,center)
+    _ = grass_build_step(towns,b,1e30)
+    grass_build_finish(b)
 
 grass_actor = vec3(0,0,0)
 grass_contact_radius: f32 = 1.2
