@@ -50,6 +50,9 @@ on that unmerged branch so far.
   speed is completely gone". Every water surface you can take off from (rivers, canals, lakes)
   must use the same flecks at the same scale and density. Check a low fast pass over open water
   (`AEGEAN_FLYING='60 150'`) before and after any change to water, depth, quality tiers or sky.
+  Whatever moves the eye must pass its velocity to the sea (`view_velocity`): a moving camera over
+  a sea told it is still shows soft, faint marks (the title reel once did;
+  `tests/title_reel_detail_test.py` now guards it).
 - **Capture:** `AEGEAN_FLYING='8 190'` or `AEGEAN_FLYING='60 150'`; `tools/precision_view.jo`
   with `PRECISION_MARKS=1` isolates the fleck painter.
 
@@ -1072,19 +1075,42 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ### Title screen
 
-- **Definition:** what the game starts on: the name alone over a live golden-hour view of the home
-  harbour, then Continue (the newest save), New game, Saved games and, quieter, Situations. No
-  tagline or subtitle, ever. The **loading card** is the web page's own "Loading the islands"
-  card shown while the world is built, before the first frame.
-- **Code:** `src/title_screen.jo` (`title_screen`, `title_camera`, `title_latest`); `aegean.jo`
-  (`title_wanted`, `title_update`, `draw_title_screen`); `src/web_compat.js` (the loading card).
-- **Rules:** the world loads once; the title only waits in front of it. Continue never asks;
-  New game asks only before it would save over a slot. Test and capture runs skip it
+- **Definition:** what the game starts on: the name alone, then Continue (the newest save), New
+  game, Saved games and, quieter, Situations, over the **title reel**. No tagline or subtitle,
+  ever. The **loading propeller** shows before it, with no words: a small two-bladed propeller
+  turning slowly on the dusk, a faint ring round it filling as the islands and towns are prepared
+  (the web page's own card while the module loads; natively the game draws the same).
+- **Code:** `src/title_screen.jo` (`title_screen`, `title_latest`, `_soft_shade`); `aegean.jo`
+  (`title_wanted`, `title_prepare`, `title_update`, `draw_title_screen`); `src/web_compat.js`
+  (the loading card and its progress); `draw_loading_propeller`.
+- **Rules:** the world loads once; the title only stands in front of it. Continue never asks;
+  New game asks only before it would save over a slot. A soft radial shade behind the buttons and
+  a fainter one behind the name, no visible edge. Test and capture runs skip it
   ([Game saves](../game-saves.md#the-title-screen)).
-- **Capture:** `AEGEAN_TITLE=1 SLOPPY_FRAMES=150` (with `SLOPPY_SAVE_DIR` holding saves for the
+- **Capture:** `AEGEAN_TITLE=1 SLOPPY_FRAMES=600` (with `SLOPPY_SAVE_DIR` holding saves for the
   Continue state; `SLOPPY_WINDOW=390x844 SLOPPY_TOUCH=1` for a phone).
 
 ![The title screen](img/title-screen.png)
+
+### Title reel
+
+- **Aliases:** the backdrop, the title's shots.
+- **Definition:** the live world behind the title in unordered shots of 18-28 s with a dip to dusk
+  between them: a **low pass** over open water at the top speed (free, chasing a Gull, overtaken by
+  one, or a **race**: two Falcos, flown by the real flight model, overtake, bank hard round an
+  air-race pylon and pull away); **high at sunset** above the clouds; a **town and its waterfront** (a low
+  run along the harbour front from just offshore, a slow golden-hour arc, or along Neravessa's
+  canals). Each shot sets its own hour and fair weather. The Adagietto plays as from a cockpit
+  radio and leads; aircraft sounds are a faint bed about 20 dB under it.
+- **Code:** `src/title_shots.jo` (`title_next_shot`, `title_view`); `aegean.jo` (`title_cut`,
+  `title_sound`, the free camera it flies).
+- **Rules:** never rain; never the same kind twice running; banks of 7 degrees at most; a town shot
+  never looks straight down into the streets; the low pass's water reads as flight's at that speed
+  (the sea gets the reel camera's velocity; the eye at the chase camera's height, 13-16 m;
+  `tests/title_reel_detail_test.py`). The world behind it is never saved: a new game puts
+  back the startup's world. It costs no more than ordinary play at each quality tier.
+- **Capture:** `AEGEAN_TITLE=1 AEGEAN_TITLE_SHOT=low-pass|high|city-Kalyrassa:arc|...`,
+  `AEGEAN_TITLE_SEED`, `AEGEAN_TITLE_FRAMES=dir`; `tests/title_shots_test.jo` checks the rules.
 
 ### Voices
 

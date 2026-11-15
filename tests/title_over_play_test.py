@@ -41,10 +41,12 @@ def main():
         opened, names, over = run(folder, 160, 150, AEGEAN_TITLE='0')
         assert not opened and names == 0 and over == 0, (opened, names, over)
         print('skipped title: no name over play')
-        opened, names, over = run(folder, 120, 100, AEGEAN_TITLE='1')
+        # (the title shows once the world is prepared, a few seconds of frames in: see
+        # docs/game-saves.md, Loading)
+        opened, names, over = run(folder, 420, 400, AEGEAN_TITLE='1')
         assert opened and names > 0, (opened, names)
         print(f'title screen: the name drawn ({names} times)')
-        opened, names, over = run(folder, 300, 290, AEGEAN_TITLE='1', SLOPPY_INPUT='60:enter+ 62:enter- 90:enter+ 92:enter-')
+        opened, names, over = run(folder, 540, 520, AEGEAN_TITLE='1', SLOPPY_INPUT='400:enter+ 402:enter- 430:enter+ 432:enter-')
         assert not opened and names > 0 and over == 0, (opened, names, over)
         print(f'play begun from the title: the name drawn {names} times before, none after')
 
