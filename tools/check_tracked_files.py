@@ -4,7 +4,8 @@
 Modes (stdlib only, run from anywhere inside the repository):
   check_tracked_files.py                 every tracked file in the working tree's index
   check_tracked_files.py --staged        the files staged for the next commit (pre-commit hook)
-  check_tracked_files.py --range A..B    every file added or changed by the commits in A..B,
+  check_tracked_files.py --range A..B    (any `git log` revision words, e.g. "SHA --not --remotes")
+                                         every file added or changed by the commits in A..B,
                                          even if a later commit deleted it (pre-push hook, CI)
   check_tracked_files.py --all-history REV   the same for every commit reachable from REV
 
@@ -19,6 +20,7 @@ What it refuses (see docs/CI.md):
 """
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 
@@ -138,7 +140,7 @@ def parse_raw(raw):
 
 
 def entries_range(rng):
-    raw = git("log", "--raw", "--no-abbrev", "--no-renames", "--diff-filter=AMC", "-z", "--format=", rng)
+    raw = git("log", "--raw", "--no-abbrev", "--no-renames", "--diff-filter=AMC", "-z", "--format=", *shlex.split(rng))
     return parse_raw(raw)
 
 
@@ -151,7 +153,7 @@ def added_lines(rng, staged):
     if staged:
         text = git("diff", "--cached", "--no-renames", "-U0", "--no-color", text=True)
     else:
-        text = git("log", "-p", "--no-renames", "-U0", "--no-color", "--format=", rng, text=True)
+        text = git("log", "-p", "--no-renames", "-U0", "--no-color", "--format=", *shlex.split(rng), text=True)
     path = None
     for line in text.splitlines():
         if line.startswith("+++ b/"):
