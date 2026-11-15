@@ -89,11 +89,10 @@ const probe = `(() => {
   const raf = window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = (cb) => raf((t) => { if (P.frames.length < 200000) P.frames.push(t); mark('first_frame'); cb(t); });
   const proto = WebGL2RenderingContext.prototype, link = proto.linkProgram, loc = proto.getUniformLocation;
-  P.uniforms = {asked: 0, missing: [], buffers: {}};
+  P.uniforms = {asked: 0, missing: []};
   proto.getUniformLocation = function (p, name) {
     const l = loc.call(this, p, name);
     P.uniforms.asked++;
-    if (/aegean_gb|\.[tn]_$/.test(name)) P.uniforms.buffers[name] = !!l;
     if (!l && P.uniforms.missing.length < 400) P.uniforms.missing.push(name);
     return l;
   };
@@ -157,7 +156,6 @@ if (shown) {
 }
 const extra = JSON.parse(await evaluate('JSON.stringify({fails: window.__phone.fails, errors: window.__phone.errors, uniforms: window.__phone.uniforms, log: (document.getElementById("log")||{}).textContent || ""})') || '{}');
 result.uniform_lookups = extra.uniforms && {asked: extra.uniforms.asked, missing: extra.uniforms.missing};
-result.buffer_uniforms = extra.uniforms && extra.uniforms.buffers;
 result.shader_failures = extra.fails;
 result.errors = extra.errors;
 result.page_log = (extra.log || '').slice(-4000);
