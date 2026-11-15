@@ -27,13 +27,29 @@ WEIGHTS = ROOT / "tools" / "ci_test_weights.json"
 # files run with --release (their loops are too slow in a debug build; the same ones pages.yml
 # runs with --release)
 RELEASE = {"tests/sky_test.jo", "tests/nature_test.jo"}
+# never run in CI: they need a real GPU (the depth prepass differs under software rendering: the
+# test passes on the desktop, and gives 0 hidden-bed pixels under SLOPPY_SOFTWARE=1)
+GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)"}
+# run only when CI_SLOW=1 (workflow_dispatch with slow: true): the whole game, software-rendered
+SLOW = {
+    "tests/title_reel_detail_test.py": "slow under software rendering (about 16 min)",
+    "tests/title_over_play_test.py": "slow under software rendering (over 25 min)",
+}
 TIMEOUT = int(os.environ.get("CI_TEST_TIMEOUT", "1500"))
+
+
+def skipped():
+    out = dict(GPU_ONLY)
+    if os.environ.get("CI_SLOW") != "1":
+        out.update(SLOW)
+    return out
 
 
 def items():
     found = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "tests").glob("*.jo"))
     found += sorted(str(p.relative_to(ROOT)) for p in (ROOT / "tests").glob("*_test.py"))
-    return found
+    skip = skipped()
+    return [i for i in found if i not in skip]
 
 
 def deal(all_items, n):
@@ -100,6 +116,8 @@ def main():
     slow = sorted(results, key=lambda r: -r["seconds"])[:5]
     lines.append("Slowest: " + ", ".join("%s %.0f s" % (Path(r["item"]).name, r["seconds"]) for r in slow))
     lines.append("")
+    if a.shard == 0:
+        lines += ["Not run in CI: " + "; ".join("%s (%s)" % (k, v) for k, v in sorted(skipped().items())), ""]
     for r in failed:
         tail = "\n".join(r["output"].strip().splitlines()[-80:])
         lines += ["<details open><summary><b>%s</b> (exit %d)</summary>" % (r["item"], r["code"]), "", "```", tail, "```", "</details>", ""]
