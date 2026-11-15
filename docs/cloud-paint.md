@@ -73,7 +73,7 @@ an air mass sits on its condensation level (`air.ceiling`).
 Each frame needs only some clouds: those that can be in view (a cone around
 the camera's forward, conservative for the cloud's size and the curved horizon)
 or that can shadow the shadow map (`cloud_needed`). Only these are evolved. On
-low and medium the list is rebuilt every second frame. Clouds less than about
+low and medium the list is rebuilt every third frame. Clouds less than about
 two pixels wide fade out (`smoothstep(0.0025, 0.005)` on half-width over
 distance). The small octave reaches 13 km.
 
@@ -128,7 +128,7 @@ sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 
 The shadows are applied in screen space (`apply_cloud_shadows`), after the
 opaque scene and the water and before the clouds: a tint factor computed at a
-quarter (low) or half resolution (the shadows are soft, and its two dependent
+quarter (low), a third (medium) or half (high) resolution (the shadows are soft, and its two dependent
 fetches a pixel cost 0.87 ms at full resolution on redfox), then multiplied
 into the scene at full resolution. Each pixel's world position comes
 from the scene depth (on water that writes none, from the curved sea), so the shadow
