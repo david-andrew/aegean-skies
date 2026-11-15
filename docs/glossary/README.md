@@ -28,6 +28,7 @@ on that unmerged branch so far.
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
+- **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -1652,6 +1653,23 @@ No image: the tiers differ in budgets more than in any single view.
   `slip_point` (the ramp); `src/canal_render.jo` (ways, sleepers, winch).
 
 ---
+## Input
+
+### Panels own the wheel
+
+- **Aliases:** the wheel leak, the menu zooming the camera.
+- **Definition:** while any menu, panel or overlay is open, the mouse wheel is the panel's (one
+  that scrolls, scrolls) and never brings a camera nearer or farther: every `Ui` state
+  (conversations, the board, handling, trade, contracts, the map counter, fuel, the leisure panels
+  with their table bar, menu, rooms, tavli, paper and fishing, the workshop), the
+  pause menu, the notebook, the chart and its maps, time passing, and sitting at a table or at the
+  bar. A new panel is covered by being a `Ui` state.
+- **Code:** `src/ui_state.jo` (`Ui`, `Overlays`, `overlays_open`, `wheel_kept`); `menus_open()` in
+  `aegean.jo`, applied after every camera step that can read the wheel: the walking follow camera
+  (the library's zoom and the game's own), the aboard orbit camera (`fly`), the parachute camera.
+- **Tests:** `tests/camera_wheel_test.jo` (every state against the rule); `tools/wheel_probe.jo`
+  turns the real wheel (`SLOPPY_INPUT` `n:wheel=1`) in the running game with each state open in
+  turn, and once with nothing open to see it zoom (the command is at the top of the file).
 
 ## Capture switches
 
