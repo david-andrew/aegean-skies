@@ -60,10 +60,12 @@ them, each with its own hour and fair weather (never rain):
 
 - **Low pass:** low over open water at the top speed (about 450 km/h), the speed flecks streaming
   past as in flight, banking gently (never past 7 degrees); flying free, chasing a Gull ahead,
-  overtaken by one, or a **race**: two Falcos in two liveries come from behind, overtake close,
-  jockeying, open up, bank hard round an air-race pylon (the meets' banded pylon) and peel off,
-  shrinking ahead as the camera flies straight on, close past the pylon; their engines are heard
-  passing with Doppler (the engine hearing's own, at a `gain` under the music). The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
+  overtaken by one, or a **race**: two Falcos in two liveries, flown by the game's own flight
+  model (`step` with their real spec), come from behind and overtake close in lanes to the right
+  (the NPC controller `air_waypoint_controls` holding lane, height and a jockeying pace), bank hard
+  round an air-race pylon (the meets' banded pylon) as the shared steering law (`steer`) turns them,
+  and are lined up on the next leg, shrinking ahead as the camera flies straight on past the pylon.
+  The race is flown once when its shot is cut, at a fixed 1/60 s step, and kept: repeatable. The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
   large and sparse on the screen), the Gull 4-5 m below it. The sea, rivers and lakes are given the
   reel camera's true velocity (`view_velocity`), so the flecks streak and keep their strength as
   at that speed in flight. The Gull is the player's own aircraft, drawn where the reel puts it for
@@ -93,8 +95,10 @@ are the pause menu's (`game_rows` over the same cached headers) and it uses the 
   read the screen says "Reading saved games..."; a load says "Loading slot N...".
 
 **Sound.** The Adagietto plays as if from a cockpit radio: through the receiver chain with station
-levelling (the pause menu's music player, `MusicAudition`), and under it on a low pass the engine
-and the rushing air, faded in and out with the shot, a few decibels below the music. In a browser
+levelling (the pause menu's music player, `MusicAudition`); it leads. Under it on a low pass only a
+very faint bed of engine and rushing air, about 20 dB down, faded in and out with the shot; a
+race's engines (the engine hearing's own, with Doppler, at an `EngineSource.gain` of 0.04) are
+barely there. In a browser
 the music begins at the first click, tap or key (browsers allow sound only then); nothing on the
 screen says so. When play begins the music fades away over three seconds.
 
