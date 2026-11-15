@@ -1,0 +1,178 @@
+# The Schneider racers (src/racer_planes.jo): each builds, rests on the water at its float height,
+# takes off by the production autopilot, climbs, turns, flies straight and level, lands, and runs
+# the same twice; on both flight models. The S.6B's long run and the torque swing are pinned.
+import '../src/planes.jo' as planes
+import '../src/flight.jo' as fl
+import '../src/flight_v2.jo' as v2
+import '../src/tweaks.jo' as tw
+import '../src/living_types.jo' as living
+
+_racers = [planes.Craft.macchi_m33, planes.Craft.curtiss_r3c2, planes.Craft.supermarine_s6b, planes.Craft.sea_lion_ii]
+
+_finite = (s: fl.CraftState):
+    assert(abs(f64(s.position.x)) < 1e7 and abs(f64(s.position.y)) < 1e7 and abs(f64(s.position.z)) < 1e7)
+    assert(abs(f64(length(s.orientation)) - 1.0) < 0.0001)
+
+_spec = (kind: planes.Craft, player: bool) -> fl.CraftSpec:
+    fl.set_speed_scale(if player: 3.3 else: 1.0)
+    m = planes.build_craft(kind, planes.LIVERIES[planes.DEFAULT_LIVERIES[int(kind)]])
+    k = fl.craft_spec(kind, m.contacts)
+    k.player = player
+    k
+
+test "racers build with their parts, contacts, props and identities":
+    loop kind in _racers:
+        id = int(kind); p = planes.aircraft_profile(kind)
+        m = planes.build_craft(kind, planes.LIVERIES[planes.DEFAULT_LIVERIES[id]])
+        k = fl.craft_spec(kind, m.contacts)
+        a = living.AIRFRAMES[id]
+        assert(str(kind) == str(living.Airframe(id)) and planes.DEFAULT_LIVERIES[id] == living.AIRFRAME_LIVERIES[id])
+        assert(a.cruise_mps > 0 and a.price_cents > 0 and a.cargo_grams > 0 and a.seats == 0 and a.tank_ml / a.burn_ml_sec > 700)
+        assert(m.parts.len() == 7 and m.contacts.len() >= 6 and m.shade.len() % 2 == 0 and m.prop_hubs.len() == 1)
+        assert(m.cockpits.len() == 1 and m.prop_radius == p.prop_radius)
+        mass = 0.0; points = 0; vertices = 0
+        loop part in m.parts:
+            mass += part.spec.mass_share; points += part.spec.contacts.len(); vertices += part.mesh.count
+            assert(part.mesh.count > 0 and part.spec.strength > 0)
+        assert(abs(mass - 1) < 0.00001 and points == m.contacts.len() and vertices == m.body.count)
+        loop c in m.contacts: assert(c in k.parts[planes.contact_part(kind, c)].contacts)
+        # (the prop disc clears the hull or floats: no contact point inside its swept circle)
+        hub = m.prop_hubs[0]
+        loop c in m.contacts: assert(length(vec2(c.x - hub.x, c.y - hub.y)) > m.prop_radius + 0.1 or abs(f64(c.z - hub.z)) > 0.3)
+        assert(k.wing_contacts.len() == p.decks * 2)
+        print("{planes.CRAFT_NAMES[id]}: {m.body.count / 3} triangles, {m.contacts.len()} contacts, {k.mass:.0} kg, float height {k.float_height:.2}")
+
+_exercise = (kind: planes.Craft, player: bool):
+    k = _spec(kind, player)
+    e = fl.FlightEnv()
+    # Calm-water settling: buoyancy and contact torque alone.
+    s = fl.water_start(k, vec3(0, 0, 0))
+    loop i in 0..600: fl.step(k, s, fl.Controls(), e, 1.0 / 30.0)
+    print("{kind} player={player} rest y={s.position.y:.3} expected={k.float_height:.3} speed={length(s.velocity):.3}")
+    assert(abs(f64(s.position.y) - k.float_height) < 0.12 and length(s.velocity) < 0.1 and not s.crashed)
+    # The production takeoff controller: no teleport or airborne reset before takeoff.
+    s = fl.water_start(k, vec3(0, 0, 0))
+    took_off = false; plan = fl.FlightPlan()
+    loop i in 0..60 * 120:
+        fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+        if not s.on_water and s.position.y > k.float_height + 5:
+            took_off = true; break
+    print("{kind} player={player} takeoff t={s.time:.2} distance={length(s.position.xz):.1} y={s.position.y:.1} damage={s.hull_damage:.4}")
+    assert(took_off and not s.crashed and s.hull_damage < 0.01 and length(s.position.xz) < (if player: 9000 else: 2500))
+    before = s.position.y
+    loop i in 0..60 * 45:
+        fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+        if s.position.y > before + 60: break
+    _finite(s)
+    assert(s.position.y > before + 15 and not s.crashed)
+    # A known level entry separates roll/yaw authority from takeoff trim.
+    s = fl.CraftState(position = vec3(0, 500, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, throttle = 0.75)
+    loop i in 0..120: fl.step(k, s, fl.Controls(throttle = 0.75, roll = 0.12, yaw = 0.2), e, 1.0 / 60.0)
+    print("{kind} player={player} turn heading={fl.heading(s):.3} y={s.position.y:.1}")
+    assert(fl.heading(s) > 0.05 and fl.heading(s) < 1.4 and s.position.y > 450 and not s.crashed)
+    # The pure speed scale also scales the landing entry; water forces see the true speed.
+    s = fl.CraftState(position = vec3(0, k.float_height + 3, 0), velocity = vec3(0, -0.6, -k.stall_speed * 1.15 * fl.pure_k(k)),
+        orientation = quat_euler(-0.02, 0, 0), fuel = k.fuel_capacity)
+    touched = false; rebound = 0.0
+    loop i in 0..60 * 150:
+        fl.step(k, s, fl.Controls(assist = 0, water_brake = 0.4), e, 1.0 / 60.0)
+        if s.on_water: touched = true
+        if touched: rebound = max(rebound, f64(s.velocity.y))
+    print("{kind} player={player} landing y={s.position.y:.3} speed={length(s.velocity):.3} rebound={rebound:.2} damage={s.hull_damage:.4}")
+    _finite(s)
+    assert(touched and not s.crashed and s.hull_damage < 0.05 and rebound < 2)
+    assert(abs(f64(s.position.y) - k.float_height) < 0.15 and length(s.velocity) < 0.2)
+    fl.set_speed_scale(1.0)
+
+test "macchi m33 NPC and player: settle, takeoff, climb, turn, landing":
+    _exercise(.macchi_m33, false); _exercise(.macchi_m33, true)
+
+test "curtiss r3c2 NPC and player: settle, takeoff, climb, turn, landing":
+    _exercise(.curtiss_r3c2, false); _exercise(.curtiss_r3c2, true)
+
+test "supermarine s6b NPC and player: settle, takeoff, climb, turn, landing":
+    _exercise(.supermarine_s6b, false); _exercise(.supermarine_s6b, true)
+
+test "sea lion ii NPC and player: settle, takeoff, climb, turn, landing":
+    _exercise(.sea_lion_ii, false); _exercise(.sea_lion_ii, true)
+
+# Straight and level, hands off, at cruise throttle: neither climbs nor falls away, nor turns, on
+# the liked model and on v2. Returns the speed held.
+_level = (kind: planes.Craft, model: int) -> f64:
+    t = tw.tweaks; t.flight_model = model; tw.set_tweaks(t)
+    k = _spec(kind, true)
+    e = fl.FlightEnv()
+    s = fl.CraftState(position = vec3(0, 600, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, throttle = 0.8)
+    loop i in 0..60 * 20: fl.step(k, s, fl.Controls(throttle = 0.8), e, 1.0 / 60.0)
+    _finite(s)
+    speed = f64(length(s.velocity))
+    print("{kind} model={model} level 20 s: y={s.position.y:.1} heading={fl.heading(s):.3} speed={speed:.1} (cruise {k.cruise_speed:.1}, top {k.max_speed:.1})")
+    assert(not s.crashed and s.position.y > 450 and s.position.y < 900 and abs(fl.heading(s)) < 0.15)
+    assert(speed > k.stall_speed * 1.5 * fl.pure_k(k) and speed < k.max_speed * 1.1)
+    t.flight_model = 0; tw.set_tweaks(t)
+    fl.set_speed_scale(1.0)
+    speed / 3.3
+
+test "racers fly straight and level on both flight models; the S.6B is the fastest":
+    speeds: f64[]
+    loop kind in _racers:
+        a = _level(kind, 0); _level(kind, 1)
+        speeds.push(a)
+    # (true speeds, m/s: the S.6B well ahead, then the R3C-2, the M.33, the Sea Lion II)
+    assert(speeds[2] > speeds[1] * 1.3 and speeds[1] > speeds[0] and speeds[0] > speeds[3])
+
+_top = (kind: planes.Craft) -> f64:
+    k = _spec(kind, true)
+    e = fl.FlightEnv()
+    s = fl.CraftState(position = vec3(0, 400, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, throttle = 1)
+    loop i in 0..60 * 60: fl.step(k, s, fl.Controls(throttle = 1), e, 1.0 / 60.0)
+    fl.set_speed_scale(1.0)
+    f64(length(s.velocity)) / 3.3
+
+test "full-throttle level speeds come to the historical top speeds":
+    loop kind in _racers:
+        v = _top(kind); p = planes.aircraft_profile(kind)
+        print("{kind}: top {v * 3.6:.0} km/h true (historical {p.top * 3.6:.0})")
+        assert(abs(v - p.top) < p.top * 0.08)
+
+# Take-off runs at full throttle with the stick held level and the rudder holding the heading:
+# the time and the distance to leave the water, and the most the heading wandered.
+_run = (kind: planes.Craft, swing: bool) -> vec3:
+    t = tw.tweaks; t.torque_swing = swing; tw.set_tweaks(t)
+    k = _spec(kind, true)
+    e = fl.FlightEnv()
+    s = fl.water_start(k, vec3(0, 0, 0))
+    wander = 0.0
+    loop i in 0..60 * 120:
+        h = fl.heading(s)
+        wander = max(wander, abs(h))
+        c = fl.Controls(throttle = 1, yaw = clamp(-h * 4.0, -1.0, 1.0), pitch = if s.airspeed > k.stall_speed * 3.3: 0.25 else: 0.0)
+        fl.step(k, s, c, e, 1.0 / 60.0)
+        if not s.on_water and s.position.y > k.float_height + 3: break
+    _finite(s)
+    assert(not s.crashed and s.hull_damage < 0.02)
+    t.torque_swing = true; tw.set_tweaks(t)
+    fl.set_speed_scale(1.0)
+    vec3(f32(s.time), f32(length(s.position.xz)), f32(wander))
+
+test "the S.6B's take-off run is the longest; the torque swing needs rudder but is held":
+    runs = [loop kind in _racers: _run(kind, true)]
+    loop i in 0..4: print("{_racers[i]} run {runs[i].x:.1} s, {runs[i].y:.0} m drawn, heading wander {runs[i].z:.3} rad")
+    assert(runs[2].x > runs[0].x and runs[2].x > runs[1].x and runs[2].x > runs[3].x)
+    assert(runs[2].x < 60.0)
+    loop r in runs: assert(r.z < 0.35)
+    # (without the rudder, the S.6B swings to port: its heading goes negative)
+    k = _spec(.supermarine_s6b, true)
+    e = fl.FlightEnv()
+    s = fl.water_start(k, vec3(0, 0, 0))
+    loop i in 0..60 * 4: fl.step(k, s, fl.Controls(throttle = 1), e, 1.0 / 60.0)
+    print("S.6B hands off, 4 s: heading {fl.heading(s):.3}")
+    assert(fl.heading(s) < -0.1 and not s.crashed)
+    calm = _run(.supermarine_s6b, false)
+    assert(calm.z < 0.02)
+    fl.set_speed_scale(1.0)
+
+test "racers are deterministic":
+    loop kind in _racers:
+        a = _run(kind, true); b = _run(kind, true)
+        assert(a == b)
