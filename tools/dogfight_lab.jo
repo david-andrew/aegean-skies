@@ -1,0 +1,135 @@
+# Automated dogfights over the strait: no window, no sound. Usage:
+#   sloppy --release tools/dogfight_lab.jo OUTPUT_DIR
+# DOGFIGHT_N battles (default 6) of DOGFIGHT_SECONDS (default 240) each, under DOGFIGHT_MODEL
+# (default | skybarons | v2 | sb). Each battle is the strait scenario's own 8-a-side fight, its
+# start varied by seed; the player's seat is flown by a plain lead-pursuit pilot (no tactics) on
+# the player's guns. Reports engagement time, shots and hits by side, downs, how often each
+# behaviour is chosen, and stuck or broken states: a pilot engaged without firing for 90 s
+# (circling forever), stalled, flying into the sea undamaged, or very low. Writes dogfights.md.
+use '../src/world.jo'
+use '../src/world_point.jo'
+use '../src/world_towns.jo'
+use '../src/settlements.jo'
+use '../src/geography.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/flight_ground.jo'
+use '../src/tweaks.jo'
+use '../src/combat.jo'
+use '../src/scenarios.jo'
+use '../src/pilot.jo'
+import '../src/living_types.jo' as data
+
+assert(args().len()==2,"give an existing output directory")
+dir=args()[1]
+battles=to_int(env("DOGFIGHT_N") ?? "6") ?? 6
+seconds=to_float(env("DOGFIGHT_SECONDS") ?? "240") ?? 240.0
+model=env("DOGFIGHT_MODEL") ?? "default"
+t=Tweaks()
+if model=="skybarons": t.skybarons_response=true
+if model=="v2": t.flight_model=1; t.fdm2_npcs=true
+if model=="sb": t.flight_model=2
+set_tweaks(t)
+
+MODE_NAMES=["pursuit","scissors","breakaway","regroup","evade","strafe","withdrawing","down","lag","break_turn","head_on","extend","unload","zoom","cover","approach"]
+
+assert(load_land(embed('../assets/terrain.bin')))
+assert(load_geography(embed('../assets/world.bin')))
+geography_enabled=true
+towns=[loop st in SETTLEMENTS:build_town(st)]
+init_world_towns(towns)
+set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+models=build_craft_models()
+base=build_scenario("strait",towns,models)!
+
+report:str[]
+report.push("# Dogfights over the strait ({model} flight model, {battles} battles of {seconds:.0} s)\n")
+report.push("| battle | first shot s | end s | finished | Kalyra shots/hits | Orenthia shots/hits | down K/O | stand-in hit/down | stuck | stalls | into sea | lowest m |")
+report.push("|---|---|---|---|---|---|---|---|---|---|---|---|")
+entries=fill(0,MODE_NAMES.len());occupancy=fill(0,MODE_NAMES.len());stalled_in=fill(0,MODE_NAMES.len())
+ratio_sum=0.0;ratio_n=0
+totals=fill(0,8)
+loop n in 0..battles:
+    b=base.battle
+    b.seed=1934+n*7919
+    stand=-1
+    loop i in 0..b.actors.len():
+        a=b.actors[i]
+        # (a varied start: each a little off its slot and heading)
+        nudge=vec3(f32(combat_noise(b.seed,a.craft,0,0)*60.0),f32(combat_noise(b.seed,a.craft,0,1)*25.0),f32(combat_noise(b.seed,a.craft,0,2)*60.0))
+        turn=quat_euler(0,combat_noise(b.seed,a.craft,0,3)*0.12,0)
+        a.state.position+=nudge;a.state.orientation=normalize(quat_mul(turn,a.state.orientation));a.state.velocity=quat_rotate(turn,a.state.velocity)
+        a.state.precise_ready=false
+        a.previous=a.state.position;a.previous_point=world_point(a.state.position)
+        if a.human:
+            # (the player's seat: a plain pursuit pilot on the player's guns)
+            a.external=false;a.gun.locked=false
+            a.pilot=CombatPilot(skill=0.7,simple=true,formation=true,leader=a.pilot.leader,formation_heading=a.pilot.formation_heading,formation_speed=a.pilot.formation_speed,formation_offset=a.pilot.formation_offset)
+            stand=i
+        b.actors[i]=a
+    b.tactics=fill(0,MODE_NAMES.len())
+    shots=fill(0,3);hits=fill(0,3);downs=fill(0,3)
+    first=-1;ended=-1;intosea=0;stuck=0;stalls=0;lowest=1e9;lowest_mode=CombatMode.regroup
+    idle=fill(0,b.actors.len());slow=fill(0,b.actors.len());fired=fill(0,b.actors.len())
+    loop tick in 0..int(seconds*60.0):
+        observer=b.actors[stand].state.position
+        step_battle(b,flight_env(f64(tick)/60.0,observer),observer)
+        loop ev in b.events:
+            k=combat_index(b,ev.craft)
+            if k<0:continue
+            side=b.actors[k].side
+            if ev.kind==.shot:
+                shots[side]+=1
+                if first<0:first=tick
+            if ev.kind==.hit:hits[side]+=1
+            if ev.kind==.downed:
+                downs[side]+=1
+                d=b.actors[k]
+                if d.state.crashed and d.state.hull_damage<0.25 and d.fire==0 and d.last_attacker<0:intosea+=1
+        if b.finished and ended<0:ended=tick
+        if let who=env("DOGFIGHT_TRACE"):
+            i=to_int(who) ?? 0
+            if tick%60==0 and i<b.actors.len():
+                a=b.actors[i];tg=a.pilot.target
+                st=a.spec.stall_speed*pure_k(a.spec)
+                fwd=quat_rotate(a.state.orientation,vec3(0,0,-1));up=quat_rotate(a.state.orientation,vec3(0,1,0))
+                info=if tg>=0 and tg<b.actors.len(): "tgt {tg} d {length(b.actors[tg].state.position-a.state.position):.0} ang {acos(clamp(f64(dot(fwd,normalize(b.actors[tg].state.position-a.state.position))),-1.0,1.0)):.2} clos {dot(a.state.velocity-b.actors[tg].state.velocity,normalize(b.actors[tg].state.position-a.state.position)):.0}" else: "no target"
+                print("TRACE t {tick/60} {a.pilot.mode} v/st {f64(length(a.state.velocity))/st:.2} alt {a.state.position.y:.0} climb {asin(clamp(f64(fwd.y),-1.0,1.0)):.2} up.y {up.y:.2} pitch {a.pilot.controls.pitch:.2} roll {a.pilot.controls.roll:.2} thr {a.state.throttle:.2} aoa {a.state.aoa:.2} stalled {a.state.stalled} shots {a.gun.shots} {info}")
+        if tick%30==0:
+            loop i in 0..b.actors.len():
+                a=b.actors[i]
+                if a.status!=.flying or not a.present:idle[i]=0;slow[i]=0;continue
+                g=max(0.0,flight_surface_height(f64(a.state.position.x),f64(a.state.position.z)))
+                if f64(a.state.position.y)-g<lowest:lowest=f64(a.state.position.y)-g;lowest_mode=a.pilot.mode
+                if i!=stand:occupancy[int(a.pilot.mode)]+=1
+                # (engaged and turning with a target, yet not a shot fired in 90 s: circling forever)
+                engaged=a.pilot.mode==.pursuit or a.pilot.mode==.lag or a.pilot.mode==.cover
+                if a.gun.shots!=fired[i] or not engaged:fired[i]=a.gun.shots;idle[i]=0
+                else:idle[i]+=30
+                if idle[i]==90*60:
+                    stuck+=1
+                    tg=a.pilot.target
+                    gap=if tg>=0 and tg<b.actors.len(): f64(length(b.actors[tg].state.position-a.state.position)) else: -1.0
+                    print("STUCK battle {n} actor {i} side {a.side} {a.pilot.mode} t {tick/60} target {tg} d {gap:.0} skill {a.pilot.skill:.2} agg {a.pilot.aggression:.2} caution {a.pilot.caution:.2} role {a.pilot.role}")
+                if f64(length(a.state.velocity))<a.spec.stall_speed*pure_k(a.spec)*1.1:slow[i]+=30 else:slow[i]=0
+                if slow[i]==5*60:stalls+=1;stalled_in[int(a.pilot.mode)]+=1
+                ratio_sum+=f64(length(a.state.velocity))/(a.spec.stall_speed*pure_k(a.spec));ratio_n+=1
+    loop m in 0..MODE_NAMES.len():entries[m]+=b.tactics[m]
+    s=b.actors[stand]
+    sh="{s.state.hull_damage:.2}/{if s.status==.flying: "flying" else: "down"}"
+    totals[0]+=shots[1];totals[1]+=hits[1];totals[2]+=shots[2];totals[3]+=hits[2];totals[4]+=downs[1];totals[5]+=downs[2];totals[6]+=stuck;totals[7]+=intosea
+    line="| {n} | {f64(first)/60.0:.0} | {f64(if ended<0: int(seconds*60.0) else: ended)/60.0:.0} | {ended>=0} | {shots[1]}/{hits[1]} | {shots[2]}/{hits[2]} | {downs[1]}/{downs[2]} | {sh} | {stuck} | {stalls} | {intosea} | {lowest:.0} ({lowest_mode}) |"
+    report.push(line);print(line)
+report.push("\nTotals: Kalyra {totals[0]} shots {totals[1]} hits ({100.0*f64(totals[1])/max(1.0,f64(totals[0])):.1}%), Orenthia {totals[2]} shots {totals[3]} hits ({100.0*f64(totals[3])/max(1.0,f64(totals[2])):.1}%); downed Kalyra {totals[4]}, Orenthia {totals[5]}; stuck {totals[6]}, into the sea undamaged {totals[7]}.\n")
+report.push("Mean speed {ratio_sum/max(1.0,f64(ratio_n)):.2} x stall speed.\n")
+report.push("| behaviour | times chosen | share of flying time | stalls begun in it |")
+report.push("|---|---|---|---|")
+all=0
+loop o in occupancy:all+=o
+loop m in 0..MODE_NAMES.len():
+    if entries[m]==0 and occupancy[m]==0:continue
+    report.push("| {MODE_NAMES[m]} | {entries[m]} | {100.0*f64(occupancy[m])/max(1.0,f64(all)):.1}% | {stalled_in[m]} |")
+text=join(report,"\n")+"\n"
+print(text)
+assert(write_file(dir+"/dogfights-{model}.md",text))
