@@ -417,6 +417,8 @@
   const CYCLE = 8.0, STOPS = 160, R = 34.0, HUB = 4.5;
   // (rpm in the game's shaft rad/s, at these times, eased between)
   const RUN = [[0, 8], [0.8, 8], [2.6, 78], [4.2, 78], [5.6, 46], [6.6, 46], [8, 8]];
+  // (the rim highlight's own turn: a steady fraction of the shaft's, a sheen sliding round the rim)
+  const RIM_RATE = 0.06;
   const BLADES_BELOW = 40, DISC_FROM = 16, DISC_FULL = 50, STREAK_FROM = 26, STREAK_FULL = 64, TOP = 78, HOLD = 2.0;
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const rpmAt = (t) => {
@@ -445,20 +447,21 @@
   // opacities.
   const table = () => {
     const out = [], n = 2400, dt = CYCLE / n;
-    let blade = 0, band = 0;
+    let blade = 0, band = 0, rim = 0;
     const raw = [];
     for (let i = 0; i <= n; i++) {
       const t = i * dt, rpm = rpmAt(t);
-      raw.push([blade, band, rpm]);
-      blade += rpm * dt; band += bandSpeed(rpm) * dt;
+      raw.push([blade, band, rpm, rim]);
+      blade += rpm * dt; band += bandSpeed(rpm) * dt; rim += RIM_RATE * rpm * dt;
     }
     const close = (total) => { const half = Math.PI; return Math.round(total / half) * half - total; };
-    const fixBlade = close(raw[n][0]), fixBand = close(raw[n][1]);
+    const fixBlade = close(raw[n][0]), fixBand = close(raw[n][1]), fixRim = close(raw[n][3]);
     for (let s = 0; s <= STOPS; s++) {
-      const i = Math.round(s * n / STOPS), [b0, d0, rpm] = raw[i], f = i / n;
+      const i = Math.round(s * n / STOPS), [b0, d0, rpm, r0] = raw[i], f = i / n;
       out.push({
         blade: (b0 + fixBlade * f) * 180 / Math.PI,
         band: (d0 + fixBand * f) * 180 / Math.PI,
+        rim: (r0 + fixRim * f) * 180 / Math.PI,
         blades: 1 - smooth(BLADES_BELOW - 4, BLADES_BELOW + 4, rpm),
         disc: smooth(DISC_FROM, DISC_FULL, rpm),
         arcs: smooth(STREAK_FROM, STREAK_FULL, rpm),
@@ -488,7 +491,7 @@
     }
     return list;
   };
-  // (the disc's rim highlight: two bright arcs, opposite, turning with the bands)
+  // (the disc's rim highlight: two bright arcs, opposite, turning at their own rate, RIM_RATE)
   const RIM = [0, Math.PI].map((k) => [k + Math.PI / 4 - 0.6, k + Math.PI / 4 + 0.6]);
   root.AegeanLoadingProp = { table, arcs, rpmAt, bandSpeed, hash, CYCLE, STOPS, R, HUB, RIM };
   if (typeof module !== "undefined") module.exports.AegeanLoadingProp = root.AegeanLoadingProp;
@@ -549,7 +552,7 @@
     frames("aegean-blade-show", r => "opacity:" + r.blades.toFixed(3)) +
     frames("aegean-disc", r => "opacity:" + r.disc.toFixed(3)) +
     frames("aegean-band-turn", r => "transform:rotate(" + r.band.toFixed(2) + "deg);opacity:" + r.arcs.toFixed(3)) +
-    frames("aegean-rim", r => "transform:rotate(" + r.band.toFixed(2) + "deg);opacity:" + r.disc.toFixed(3)) +
+    frames("aegean-rim", r => "transform:rotate(" + r.rim.toFixed(2) + "deg);opacity:" + r.disc.toFixed(3)) +
     '</style><div class="stage">' +
     '<svg viewBox="-44 -44 88 88"><circle r="40" fill="none" stroke="rgba(217,212,196,.10)" stroke-width="1.5"/>' +
     '<circle class="fill" r="40" fill="none" stroke="rgba(199,158,82,.55)" stroke-width="1.5" stroke-dasharray="251.3" ' +
