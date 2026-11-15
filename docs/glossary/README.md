@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -430,6 +430,70 @@ On the rivers branch until it lands.
   work in `docs/FEEL.md`.
 
 ![A Gull planing on a landing run](img/planing.png)
+
+### Hydrofoil take-off
+
+- **Aliases:** the P.7's take-off, foil-borne, on the foils, the clutch, the water screw.
+- **Definition:** the Piaggio P.7 (1929) has no floats. Its sealed hull floats low with the wings
+  just clear of the water and the air propeller feathered and still, its lower blade in the sea.
+  Two hydrofoils on struts just ahead of the wing and a third under the tail lift it; a small
+  water screw under the tail, driven by the same engine, pushes it. The run goes in four phases:
+  1. **Hull-borne:** the screw pushes the hull through the water (it needs nearly full throttle
+     to get over the hump). The foils' lift grows with the square of the speed and the hull rises,
+     its wetted drag falling as it does.
+  2. **Foil-borne:** at about 12 m/s (true) the hull is clear and she rides on the foils alone. A
+     foil loses its lift as it nears the surface and all of it once it breaks through, so she
+     settles at a ride height by herself; the tail foil sits higher than the forward pair, so the
+     ride is a little nose-up. Fast, a foil's lift per square metre tops out (cavitation), which
+     keeps her from being pinned to the water.
+  3. **The clutch:** once the hull has been clear 0.4 s, the air propeller is out of the water,
+     the speed is 14 m/s and the throttle open, the clutch goes over by itself (or when
+     `Controls.clutch` asks): the screw is let go first, then the air propeller is clutched in and
+     comes off its feather over about 1.4 s. In that gap nothing much pushes and she slows.
+  4. **Into the air:** the air propeller pulls her along on the foils; as the wing takes her
+     weight the foils rise to the surface and break out, and she flies. Holding the stick back on
+     the foils gets her off at about 40 m/s; hands off it takes until about 60 m/s.
+  It is meant to be challenging but achievable. It fails when: the throttle is under about 85%
+  (she never gets over the hump on the screw); the nose is pushed down on the foils (the
+  propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
+  in the water (it beats the sea, gives no thrust and hurts the engine); or the swell is big
+  (wind over about 8 m/s: the wing tips catch the waves and tear). Closing the throttle at under
+  5 m/s on the water puts the clutch back to the screw for another try.
+- **Code:** `src/hydrofoil.jo` (the foils' lift and drag, `foil_force`; the screw,
+  `screw_thrust`; the clutch, `clutch_step`; the P.7's foils and screw, `P7_FOILS`, `P7_SCREW`),
+  `src/hydrofoil_solver.jo` `hydrofoil_contacts` (called from the water model in `src/flight.jo`
+  `_substep`) and `hydrofoil_air` (the clutch kept going in the air, all three flight models);
+  `CraftState.foil` holds the clutch and the telemetry (`foilborne`, `lift`, `screw`,
+  `prop_wet`). The model is `_p7` in `src/italian_racers.jo`.
+- **Rules:** the foils are not float contacts: they never set the waterline or the static
+  buoyancy, and only the hull's contacts decide "hull clear". The P.7's hull is not a planing
+  hull (`hull_planing` 0.15). The UI still needs a clutch key and an indicator (see the racers'
+  report).
+- **Test:** `tests/italian_racers_test.jo` "the P.7 takes off from her hull to her foils and into
+  the air".
+
+### Contra-rotating and push-pull props
+
+- **Definition:** two propellers on one axis turning opposite ways. The Macchi M.C.72 has a
+  **coaxial contra-rotating** pair at the nose (the Fiat AS.6 drives each from one of its halves);
+  the Savoia-Marchetti S.65 has a **push-pull tandem**, a tractor at the nose and a pusher behind
+  the cockpit. Each hub carries a spin (+1 the original way, -1 the other); a -1 hub carries the
+  mirror-handed blades (`CraftModel.prop_alt`), and its prop disc's bands turn the other way too.
+  Their torque reactions cancel, so neither swings on its run (see [Prop torque](#prop-torque)).
+- **Code:** `CraftModel.prop_spins`, `prop_alt`, `prop_spin`, `prop_frame`, `prop_mesh` in
+  `src/planes.jo`; the hubs in `italian_racer_hubs` (`src/italian_racers.jo`); the discs in
+  `queue_prop_discs` (`src/prop_disc.jo`).
+
+### Prop torque
+
+- **Aliases:** torque swing, torque reaction.
+- **Definition:** a Tweaks trial (off by default): the propeller's reaction rolls the aircraft the
+  other way, about a fifth of the static thrust at the blade tip, with the throttle: on the take-off
+  run one float digs in, and in the air (flight model v2) the wings want to roll. A contra-rotating
+  pair or a push-pull tandem has none (`CraftSpec.torque_share` 0).
+- **Code:** `prop_torque` in `src/flight.jo`; `tweaks.prop_torque` in `src/tweaks.jo`.
+- **Test:** `tests/italian_racers_test.jo` "contra-rotating and push-pull pairs have no net torque
+  swing".
 
 ### Speed scale
 
