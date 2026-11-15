@@ -126,8 +126,11 @@ sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 - **Edges.** The penumbra widens with the slab's height above the ground.
 - **Combining.** Overlapping clouds combine as coverage: `a + b(1 - a)`.
 
-The shadows are applied in one screen-space pass (`apply_cloud_shadows`), after the
-opaque scene and the water and before the clouds. Each pixel's world position comes
+The shadows are applied in screen space (`apply_cloud_shadows`), after the
+opaque scene and the water and before the clouds: a tint factor computed at a
+quarter (low) or half resolution (the shadows are soft, and its two dependent
+fetches a pixel cost 0.87 ms at full resolution on redfox), then multiplied
+into the scene at full resolution. Each pixel's world position comes
 from the scene depth (on water that writes none, from the curved sea), so the shadow
 falls offset by the sun's angle and lands at the right place on hills and roofs. The
 map darkens it by a cool tint: navy over deep water, deeper teal over the shallows,

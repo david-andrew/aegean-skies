@@ -223,32 +223,63 @@ cloud_shadow_apply_fs = (i: ShadowApplyOut, u: ShadowApplyParams) -> vec4:
     sea = sea_intersection(ray,u.cam.y)
     if sea > 0.0 and sea <= t+1.0:
         t = sea; water = 1.0
-    if t > 900000000.0: discard()
+    if t > 900000000.0: return vec4(1,1,1,1)
     p = u.cam+ray*t
     p.y += world_drop(ray.xz*t)
     shadow = cloud_shadow_at(u.map,u.area,u.slope,p)
-    if shadow < 0.002: discard()
     vec4(mix(vec3(1,1,1),mix(CLOUD_SHADOW_LAND,CLOUD_SHADOW_WATER,water),shadow),1)
 
+# Full resolution: multiply the scene by the reduced-resolution factor. The
+# shadows are soft (35-73 m texels), so a bilinear factor is enough.
+struct ShadowBlendParams:
+    factor: Texture
+
+cloud_shadow_blend_vs = (v: ShadowApplyVertex, u: ShadowBlendParams) -> ShadowApplyOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    ShadowApplyOut(vec4(ndc,0,1),ndc)
+
+cloud_shadow_blend_fs = (i: ShadowApplyOut, u: ShadowBlendParams) -> vec4:
+    f = sample(u.factor,i.ndc*0.5+vec2(0.5,0.5))
+    if min(f.x,min(f.y,f.z)) > 0.998: discard()
+    vec4(f.xyz,1)
+
 cloud_shadow_apply_sh = Shader()
+cloud_shadow_blend_sh = Shader()
 cloud_shadow_apply_quad = Mesh()
+cloud_shadow_factor = RenderTarget()
 
 apply_cloud_shadows = ():
-    global cloud_shadow_apply_sh,cloud_shadow_apply_quad
+    global cloud_shadow_apply_sh,cloud_shadow_apply_quad,cloud_shadow_blend_sh,cloud_shadow_factor
     if cloud_shadow_strength <= 0.0 or not __post_active or cloud_scene_depth.id == 0: return
     if cloud_shadow_apply_sh.prog == 0:
         cloud_shadow_apply_sh = make_shader(shader(cloud_shadow_apply_vs,cloud_shadow_apply_fs))
+        cloud_shadow_blend_sh = make_shader(shader(cloud_shadow_blend_vs,cloud_shadow_blend_fs))
         cloud_shadow_apply_quad = mesh([ShadowApplyVertex(vec2(0,0)),ShadowApplyVertex(vec2(1,0)),ShadowApplyVertex(vec2(0,1)),ShadowApplyVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
     zone("cloud shadows apply")
     chart = render_origin(scene_camera())
     vp = render_view_proj(chart)
     rays = render_rays(vp)
+    # The factor at a quarter (low) or half resolution: two dependent fetches a
+    # pixel are latency-bound on Intel GPUs, 0.87 ms at full resolution.
+    divisor = if render_quality.tier == 0: 4 else: 2
+    w = max(1,cloud_scene_depth.width/divisor); h = max(1,cloud_scene_depth.height/divisor)
+    if cloud_shadow_factor.texture.width != w or cloud_shadow_factor.texture.height != h:
+        if cloud_shadow_factor.fbo != 0: free_render_target(cloud_shadow_factor)
+        tex = texture(image(w,h),true)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        cloud_shadow_factor = RenderTarget(tex,fbo,0)
     # The scene depth is sampled read-only: swap its attachment out meanwhile.
     detach_cloud_depth()
-    glViewport(0,0,i32(cloud_scene_depth.width),i32(cloud_scene_depth.height))
-    glDisable(GL_CULL_FACE)
-    glEnable(GL_BLEND); glBlendFunc(GL_DST_COLOR,GL_ZERO)
+    glDisable(GL_CULL_FACE); glDisable(GL_BLEND)
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(cloud_shadow_factor.fbo))
+    glViewport(0,0,i32(w),i32(h))
     draw(cloud_shadow_apply_sh,cloud_shadow_apply_quad,ShadowApplyParams(cloud_shadow_map(),cloud_scene_depth,rays,render_eye(chart),normalize(rays[2].xyz),world_depth_params(),cloud_shadow_area(chart),cloud_shadow_slope()))
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(cloud_scene_fbo))
+    glViewport(0,0,i32(cloud_scene_depth.width),i32(cloud_scene_depth.height))
+    glEnable(GL_BLEND); glBlendFunc(GL_DST_COLOR,GL_ZERO)
+    draw(cloud_shadow_blend_sh,cloud_shadow_apply_quad,ShadowBlendParams(cloud_shadow_factor.texture))
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
     restore_cloud_depth()
     zone_end()
