@@ -48,7 +48,10 @@ const phoneState = () => {
   }
   const caps = {};
   for (const m of thermal.matchAll(/CoolingDevice\{mValue=(\d+), mType=\d+, mName=(thermal-(?:cpufreq|devfreq)-\d+)\}/g)) caps[m[2]] = Number(m[1]);
-  return {battery_c: Number(bat.match(/temperature: (\d+)/)?.[1]) / 10, level: Number(bat.match(/level: (\d+)/)?.[1]),
+  // (Battery Saver: LG then holds the panel at 30 Hz and limits the CPU; the panel's rate now)
+  const saver = adb('shell', 'settings', 'get', 'global', 'low_power') === '1';
+  const hz = Number(adb('shell', 'dumpsys', 'SurfaceFlinger').match(/refresh-rate\s*:\s*([\d.]+)/)?.[1]);
+  return {battery_saver: saver, refresh_hz: hz, battery_c: Number(bat.match(/temperature: (\d+)/)?.[1]) / 10, level: Number(bat.match(/level: (\d+)/)?.[1]),
     cpu_c: cpu, gpu_c: gpu, sensors: other, thermal_status: Number(thermal.match(/Thermal Status: (\d+)/)?.[1] ?? -1), caps};
 };
 
@@ -137,7 +140,8 @@ await send('Log.enable');
 await send('Page.enable');
 await send('Page.addScriptToEvaluateOnNewDocument', {source: probe});
 await send('Page.navigate', {url});
-console.log(`phone_run: ${url} (${browser}), battery ${before.battery_c} C, thermal ${before.thermal_status}`);
+console.log(`phone_run: ${url} (${browser}), battery ${before.battery_c} C, thermal ${before.thermal_status}, display ${before.refresh_hz} Hz`);
+if (before.battery_saver) console.log('phone_run: WARNING Battery Saver is on (30 Hz panel, CPU limited): `adb shell cmd power set-mode 0` turns it off');
 
 // wait for the title (the card gone) or an error, at most 5 minutes
 let stages = {};
