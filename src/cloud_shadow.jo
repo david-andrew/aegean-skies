@@ -16,6 +16,7 @@ use 'cloud_shadow_map.jo'
 use 'cloud_field.jo'
 use 'weather_scene.jo'
 use 'look.jo'
+use 'depth_space.jo'
 
 struct ShadowVertex:
     corner: vec2
@@ -180,4 +181,74 @@ render_cloud_shadows = (clouds: CloudVolume[], L: Light):
     cloud_shadow_strength = strength
     cloud_shadow_sun_k = k
     cloud_shadow_base = if weather_active: weather_here.ceiling else: 950.0
+    zone_end()
+
+# ---------------- applying the shadows: one screen-space pass ----------------
+# After the opaque scene and the water, before the clouds: each pixel's world
+# position comes from the scene depth (on water without depth, the curved sea)
+# and the map darkens it by a cool shadow tint. The ground, water, town and
+# object shaders stay untouched: on Intel GPUs any addition to them cost their
+# SIMD16 compile. Water keeps its hue (navy over deep water, deeper teal over
+# the shallows) and its small marks keep their contrast, being multiplied.
+struct ShadowApplyVertex:
+    corner: vec2
+
+struct ShadowApplyParams:
+    map: Texture
+    depth: Texture
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    depth_ab: vec2
+    area: vec4
+    slope: vec4
+
+struct ShadowApplyOut:
+    pos: vec4
+    ndc: vec2
+
+const CLOUD_SHADOW_LAND = vec3(0.52,0.58,0.70)
+const CLOUD_SHADOW_WATER = vec3(0.56,0.64,0.70)
+
+cloud_shadow_apply_vs = (v: ShadowApplyVertex, u: ShadowApplyParams) -> ShadowApplyOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    ShadowApplyOut(vec4(ndc,0,1),ndc)
+
+cloud_shadow_apply_fs = (i: ShadowApplyOut, u: ShadowApplyParams) -> vec4:
+    ray = normalize((u.rays*vec4(i.ndc,1,0)).xyz)
+    t: f32 = 1000000000.0
+    raw = sample(u.depth,i.ndc*0.5+vec2(0.5,0.5)).x
+    if world_has_depth(raw,u.depth_ab): t = world_depth_decode(raw,u.depth_ab)/max(dot(ray,u.forward),0.0001)
+    water: f32 = 0.0
+    sea = sea_intersection(ray,u.cam.y)
+    if sea > 0.0 and sea <= t+1.0:
+        t = sea; water = 1.0
+    if t > 900000000.0: discard()
+    p = u.cam+ray*t
+    p.y += world_drop(ray.xz*t)
+    shadow = cloud_shadow_at(u.map,u.area,u.slope,p)
+    if shadow < 0.002: discard()
+    vec4(mix(vec3(1,1,1),mix(CLOUD_SHADOW_LAND,CLOUD_SHADOW_WATER,water),shadow),1)
+
+cloud_shadow_apply_sh = Shader()
+cloud_shadow_apply_quad = Mesh()
+
+apply_cloud_shadows = ():
+    global cloud_shadow_apply_sh,cloud_shadow_apply_quad
+    if cloud_shadow_strength <= 0.0 or not __post_active or cloud_scene_depth.id == 0: return
+    if cloud_shadow_apply_sh.prog == 0:
+        cloud_shadow_apply_sh = make_shader(shader(cloud_shadow_apply_vs,cloud_shadow_apply_fs))
+        cloud_shadow_apply_quad = mesh([ShadowApplyVertex(vec2(0,0)),ShadowApplyVertex(vec2(1,0)),ShadowApplyVertex(vec2(0,1)),ShadowApplyVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+    zone("cloud shadows apply")
+    chart = render_origin(scene_camera())
+    vp = render_view_proj(chart)
+    rays = render_rays(vp)
+    # The scene depth is sampled read-only: swap its attachment out meanwhile.
+    detach_cloud_depth()
+    glViewport(0,0,i32(cloud_scene_depth.width),i32(cloud_scene_depth.height))
+    glDisable(GL_CULL_FACE)
+    glEnable(GL_BLEND); glBlendFunc(GL_DST_COLOR,GL_ZERO)
+    draw(cloud_shadow_apply_sh,cloud_shadow_apply_quad,ShadowApplyParams(cloud_shadow_map(),cloud_scene_depth,rays,render_eye(chart),normalize(rays[2].xyz),world_depth_params(),cloud_shadow_area(chart),cloud_shadow_slope()))
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+    restore_cloud_depth()
     zone_end()
