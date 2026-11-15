@@ -52,8 +52,11 @@ negative owner IDs, never people). `step_ground_fire` runs after the aircraft gu
 target from flying hostiles in reach with clear sight (terrain samples plus `FlightEnv.solid` in
 short pieces), combat's `intercept` lead with drop, skill wander, a limited swing rate, a reaction
 time, stateless scatter. Their rounds, shot and hit events are ordinary; rounds from other sides
-hit a post's small ellipsoid and silence it when its health runs out. Deterministic and
-text-serialized with the Battle.
+hit a post's small ellipsoid and silence it when its health runs out. A post swings only within
+`arc` of its `facing` (machine-gun nests 1.9 rad). Deterministic and text-serialized with the
+Battle. Their sounds (`GroundSounds`, built by `prepare_ground_audio` only when a scenario has
+ground guns) are reports with the canal's flutter echo, heard to 1.6 km and late by distance/343 s,
+a supersonic snap for their close passes, and spout splashes for every gun's water strikes.
 
 The **lead marker** (`src/lead_marker.jo`) is HUD only: Sky Barons' `lead_from` against the
 selected hostile or the nearest in a 25° cone within 1 km, at the Battle's muzzle speed, drawn at
