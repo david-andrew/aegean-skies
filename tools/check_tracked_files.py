@@ -16,7 +16,7 @@ What it refuses (see docs/CI.md):
   - soundfonts and reference names (FluidR3, .sf2, .sf3);
   - binaries over 5 MB that are not one of the known baked assets in KNOWN_LARGE below;
   - (range and staged modes) added lines that copy from the scratch and reference areas, such as
-    a path under ~/dev/tmp/aegean-skies/refs or a recordings folder.
+    a path into the scratch tree's refs, voice or recordings folders.
 """
 import argparse
 import re
@@ -71,7 +71,7 @@ COPY_FROM = re.compile(
     r"(refs?|voice|voices|recordings?|stills|fluidr3)\b",
     re.I,
 )
-COPY_FROM_OK_SUFFIXES = (".md",)  # documentation may name the areas; code and data may not
+COPY_FROM_OK_SUFFIXES = (".md", "tools/check_tracked_files.py")  # docs and this guard may name the areas
 
 
 def git(*args, check=True, text=False):
