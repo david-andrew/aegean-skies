@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [Wing-strut streamers](#wing-strut-streamers)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -699,6 +699,27 @@ On the rivers branch until it lands.
     speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s).
   - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
 
+
+### Wing-strut streamers
+
+- **Aliases:** streamers, the ribbons on the struts.
+- **Definition:** a red-and-cream ribbon each side of the player's aircraft, streaming back in
+  the wind of flight (the same cloth as the [Pilot's scarf](#pilots-scarf)). Each is tied
+  halfway along that type's outermost strut that is clear of the water and no higher than its top
+  wing: an interplane strut on a biplane, a wing strut, a float strut on a twin-float
+  monoplane, or a tip-float strut on a boat. Of a fore-and-aft pair it takes the rear one. Found
+  from the type's own struts, so every type, and any added later, has them on its own structure.
+  The Supermarine S.6B and Macchi M.C.72 (cantilever wings) carry them on their float struts; the
+  Piaggio P.7, whose only struts are its hydrofoil legs under the water, has none.
+- **Code:** `src/craft_struts.jo` (`tag_strut`, `craft_struts`, `streamer_ties`); the strut helpers
+  in `src/planes.jo`, `src/racer_planes.jo`, `src/aircraft_boats.jo`, `src/italian_racers.jo`
+  tag their boxes; `src/planes.jo craft_tie_streamers` fills `CraftModel.struts` and
+  `CraftModel.streamers`; `src/fabric.jo cloths_for`; `tests/streamer_test.jo`.
+- **Rules:** a new aircraft's struts must be laid with a strut helper (`_strut`, `kit_strut`,
+  `_bstrut`, the racers' `_strut`/`_blade`, `_st`), or call `tag_strut` on the box just pushed;
+  the test fails for a type with no strut to tie to unless it's listed as having none.
+- **Capture:** `HANGAR_STREAMERS=1 HANGAR_YAW=2.3 HANGAR_KINDS="0,1,3,5,12,16,17,20,21,25,26,32"
+  sloppy tools/hangar.jo` (a contact sheet).
 
 ### Race classes
 
