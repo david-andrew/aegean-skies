@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -568,6 +568,37 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_FLYING='1250 60'` (HUD) and `AEGEAN_FLYING='1250 60 cockpit'`.
 
 ![The altimeter at 1,250 m on the HUD and on the Gull's panel](img/altimeter.png)
+
+### Schneider racers
+
+- **Aliases:** the racers, the historical racers; the Macchi M.33, Curtiss R3C-2, Supermarine
+  S.6B and Sea Lion II (Craft `macchi_m33`, `curtiss_r3c2`, `supermarine_s6b`, `sea_lion_ii`).
+- **Definition:** four real racing seaplanes of the Schneider Trophy years (1922–1931), each built
+  to its own layout: the M.33's shoulder wing and engine nacelle on N-struts above the hull, the
+  R3C-2's tiny biplane wings with brass surface radiators, the S.6B's low wing with radiators over
+  the wings and float tops, the Sea Lion II's biplane boat with its pusher between the wings. Their
+  `top` is the real top speed in true m/s (the S.6B's 655 km/h record; 600 m/s drawn at the 3.3
+  scale), so they compare with one another as they did; the original fictional types sit faster
+  than real 1920s aircraft of their roles.
+- **Code:** models in `src/racer_planes.jo` (dispatched from `src/planes.jo`); profiles at the end
+  of `AIRCRAFT` in `src/aircraft_catalog.jo`; `tests/aircraft_racers_test.jo`;
+  `tools/racer_view.jo` (model check), `tools/racer_runs.jo` (every type's take-off run).
+- **Rules:**
+  - **Torque swing** (Tweaks: "Racers' propeller torque", on by default, the player's aircraft
+    only): `swing` in the profile, rad/s² of roll at full throttle. On the run the port float is
+    pressed in and the nose swings to port until the hull planes (rudder holds it); just off the
+    water a roll to port that fades out by 2.4 times the stall speed (the wings were rigged for
+    it at speed). Both flight models. These four take no [Prop torque](#prop-torque) (the
+    generic trial) on top: `torque_share` is 0 for any type with a `swing`.
+  - **Ground lift** (`ground_lift`, default 1): the wing's lift on and just off the water over the
+    free air's. The water model lets a hull or float pitch to about 0.1 rad before its tail digs
+    in at speed, so a wing as heavily loaded as the S.6B's (204 kg/m²) could not unstick at a sane
+    speed; 1.4 stands for the ground effect of a low wing near the water.
+  - **Water thrust** (`water_thrust`, default 1): the pull at a standstill over the force model's,
+    full by 1.2 times the stall. A fixed-pitch propeller made for 650 km/h is stalled at low
+    speed: the S.6B's 0.35 gives it the longest take-off run of the racers (about 45 s).
+  - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
+
 
 ---
 
@@ -2041,6 +2072,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
+| `AEGEAN_CRAFT_VIEW='yaw pitch distance'` | the free camera on the player's aircraft from that side (radians round from its nose and up, metres): moored with `AEGEAN_CRAFT`, or a few frames into `AEGEAN_FLYING` |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
 | `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
