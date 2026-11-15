@@ -513,6 +513,22 @@ On the rivers branch until it lands.
 - **Code:** `src/flight.jo` (the gear loop and the wet check in `_substep`; the belly volumes in
   `craft_spec`).
 
+### Greek service
+
+- **Definition:** aircraft flown in and around Greece: the Sopwith Greek Seaplane (1914, a
+  two-seat four-bay pusher on two long floats with a tail float, six built for the Hellenic Naval
+  Air Service), the Sopwith Bat Boat Type 2 (1914, a pusher flying boat with a sewn-plywood
+  "Consuta" hull, its tail on open booms; one went to Greece), here an **amphibian** whose wheels
+  fold up beside the hull (as the 1913 Type 1A's did; X, as on the Albatross), the Short Type 184
+  (1915, the three-bay torpedo seaplane flown from Ben-my-Chree and Mudros in the Aegean, with its
+  torpedo between the floats and air bags under its wing tips) and the KEA Chelidon (1927, the
+  Phaleron factory's own two-seat trainer, a landplane that flies from the aerodrome). Greek
+  naval liveries: the blue and white roundel, blue rudders with a white band. Their own group in
+  the aircraft picker.
+- **Code:** `src/aircraft_greek.jo` (models, wheels, contacts), profiles in
+  `src/aircraft_catalog.jo`, the picker group in `src/aircraft_picker.jo`;
+  `tests/aircraft_greek_test.jo`.
+
 ### Early aircraft
 
 - **Definition:** the oldest types in the game, 1912–1926: the Donnet-Lévêque Type A pioneer boat,
