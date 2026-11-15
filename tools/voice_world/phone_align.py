@@ -159,6 +159,14 @@ def number_words(n):
     return number_words(n // 1000) + ['thousand'] + (number_words(n % 1000) if n % 1000 else [])
 
 
+def add_s(stem):
+    """The -s ending: a vowel and Z after a sibilant, S after a voiceless stop or fricative, else Z."""
+    last = re.sub(r'\d', '', stem[-1])
+    if last in ('S', 'Z', 'SH', 'ZH', 'CH', 'JH'):
+        return stem + ['IH0', 'Z']
+    return stem + (['S'] if last in ('P', 'T', 'K', 'F', 'TH') else ['Z'])
+
+
 class Pronouncer:
     def __init__(self, extra=None):
         import cmudict
@@ -176,8 +184,11 @@ class Pronouncer:
             return self.manual[w]
         if w in self.d:
             return self.d[w][0]
-        if w.endswith("'s") and w[:-2] in self.d:
-            return self.d[w[:-2]][0] + ['Z']
+        # plural and possessive endings on a known stem, as the game does (voice_text.jo voice_pronounce)
+        for suf, longer in (("'s", 2), ('s', 3), ('es', 4)):
+            stem = w[:-len(suf)]
+            if w.endswith(suf) and len(w) > longer and (stem in self.manual or stem in self.d):
+                return add_s(self.manual[stem] if stem in self.manual else self.d[stem][0])
         return self.lts.pronounce(w)
 
     def line(self, text):

@@ -7,9 +7,9 @@ button, or by hand):
 1. Pool: every accepted take of a training line; the held-out lines with accepted takes are only
    ever scored, never fitted.
 2. Baseline: if no round exists yet, round r0 scores the prior (narrator) voice on the held-out set.
-3. Alignment: each new take is aligned to a synthesis of its line (evaluate.py's DTW aligner,
-   which carries the synthesis's phone boundaries onto the recording) and analysed WORLD-style.
-   Both are cached per take, so a re-tune only aligns what is new.
+3. Alignment: each new take is labelled phone by phone (phone_align.py; --dtw for the old
+   alignment to a synthesis) and analysed WORLD-style. Both are cached per take, so a re-tune only
+   aligns what is new.
 4. Nested random subsets of the pool (a fixed shuffle, so 25% is inside 50% inside 100%): for each,
    fit diphone units, durations and intonation to the user's takes and pack a voice file. Where
    the subset is still too small for a part of the model, that part falls back to the prior's
@@ -17,10 +17,12 @@ button, or by hand):
 5. Each voice synthesizes the held-out lines and is scored; the full pool's voice provides the
    Compare entries (recording, synthesis, radio), the smaller ones a learning curve and a couple
    of listenable lines.
-Progress goes to VOICE_USER_DIR/tune/progress.json. Everything stays in VOICE_USER_DIR; nothing
+Progress goes to VOICE_USER_DIR/tune/progress.json; a failure records the stage and the reason.
+`--round rN` retries a failed round: every scoring of the same voice file on the same held-out
+takes is reused (compare/rN/*/entries.json), so it carries on where it stopped. Everything stays in VOICE_USER_DIR; nothing
 derived from the recordings enters the repository.
 """
-import argparse, json, math, os, random, re, subprocess, sys, time
+import argparse, hashlib, json, math, os, random, re, shutil, subprocess, sys, time
 import numpy as np
 import soundfile as sf
 
@@ -34,6 +36,8 @@ import voicefile
 
 RAW = {'AX': ('AH', 0), 'IX': ('IH', 0), 'AXR': ('ER', 0), 'IYX': ('IY', 0)}
 STAGES = ['baseline', 'align', 'fit', 'evaluate', 'publish']
+STAGE_NAMES = dict(baseline='scoring the starting voice', align='aligning your takes', fit='fitting the voices',
+                   evaluate='scoring the voices', publish='publishing the round')
 
 
 class Progress:
@@ -50,9 +54,27 @@ class Progress:
         os.replace(tmp, self.path)
         print(step, flush=True)
 
-    def finish(self, state, message):
-        self.state.update(state=state, step=message, finished=time.strftime('%Y-%m-%dT%H:%M:%S'), percent=100 if state == 'done' else self.state['percent'])
+    def finish(self, state, message, **extra):
+        self.state.update(state=state, step=message, finished=time.strftime('%Y-%m-%dT%H:%M:%S'), percent=100 if state == 'done' else self.state['percent'],
+                          **extra)
         self.set(self.state['stage'], message, self.state['percent'])
+
+
+def file_hash(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''):
+            h.update(b)
+    return h.hexdigest()[:16]
+
+
+def reason_of(e):
+    """A one-line reason a person can read (a bare KeyError prints only the key)."""
+    if isinstance(e, KeyError):
+        return f'a value the model needs was missing ({e.args[0]!r})'
+    if isinstance(e, RuntimeError):
+        return str(e)
+    return f'{type(e).__name__}: {e}'
 
 
 def words_of(text):
@@ -260,6 +282,29 @@ def pack_voice(units, fit, lex, out, prior=None):
 
 
 def evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr=None):
+    """Scores a voice on the held-out lines; a finished scoring of the same voice file on the same
+    held-out takes is reused, so a retried round only scores what it had not finished."""
+    key = dict(voice=file_hash(data), lines=[f"{l['id']}-{takes[l['id']]['n']}" for l in heldout], full=bool(full), asr=asr is not None)
+    done = os.path.join(outdir, 'entries.json')
+    if os.path.exists(done):
+        try:
+            d = json.load(open(done))
+            if d.get('key') == key:
+                evaluate_voice.reused += 1
+                return d['entries']
+        except (OSError, ValueError):
+            pass
+    entries = _evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr)
+    tmp = done + '.tmp'
+    json.dump(dict(key=key, entries=entries), open(tmp, 'w'))
+    os.replace(tmp, done)
+    return entries
+
+
+evaluate_voice.reused = 0
+
+
+def _evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr=None):
     syn = ev.synthesize(repo, heldout, os.path.join(outdir, 'synth'), data=data, radio=full)
     entries = []
     for l in heldout:
@@ -329,6 +374,8 @@ def main():
     nums = [int(r['id'][1:]) for r in idx['rounds'] if re.match(r'^r\d+$', r['id'])]
     rnd_id = a.round or f'r{max([0] + nums) + 1}'
     prog = Progress(root, rnd_id)
+    if a.round and os.path.isdir(os.path.join(root, 'compare', rnd_id)):
+        prog.set('baseline', f'Resuming round {rnd_id[1:]}: finished alignments and scorings are reused', 0)
     try:
         script = json.load(open(os.path.join(root, 'script.json')))
         manifest = json.load(open(os.path.join(root, 'manifest.json')))
@@ -361,8 +408,18 @@ def main():
         rec_acc = None
         if asr is not None:
             prog.set('baseline', f'Checking your {len(heldout)} held-out recordings with the recognizer', 2)
-            accs = [asr.accuracy(ev.trim(ev.load16(os.path.join(root, takes[l['id']]['file']))), l['text'])[0] for l in heldout]
-            rec_acc = round(float(np.mean(accs)), 3)
+            ra_path = os.path.join(root, 'tune', 'recordings-word-acc.json')
+            ra = {}
+            try:
+                ra = json.load(open(ra_path))
+            except (OSError, ValueError):
+                pass
+            for l in heldout:
+                k = f"{l['id']}-{takes[l['id']]['n']}"
+                if k not in ra:
+                    ra[k] = asr.accuracy(ev.trim(ev.load16(os.path.join(root, takes[l['id']]['file']))), l['text'])[0]
+            json.dump(ra, open(ra_path + '.tmp', 'w')); os.replace(ra_path + '.tmp', ra_path)
+            rec_acc = round(float(np.mean([ra[f"{l['id']}-{takes[l['id']]['n']}"] for l in heldout])), 3)
         # 1. the starting voice, scored on today's held-out set
         prog.set('baseline', f'Scoring the starting voice on {len(heldout)} held-out lines', 4)
         start = evaluate_voice(a.repo, heldout, takes, a.prior_data, os.path.join(base_dir, 'start'), root, f'compare/{rnd_id}/start', False, asr)
@@ -448,15 +505,32 @@ def main():
                    + '; '.join(f'{k} {v:.0%}' for k, v in acc.items() if v is not None) + '. ' if asr else '')
                 + 'Prosody: ' + '; '.join(notes_full) + '.')
         prog.set('publish', 'Publishing the round', 98)
+        # leftovers of an earlier failed attempt at this round (other pool sizes) go
+        keep_dirs = {'start'} | {f"earlier-{c['label'].split()[0]}" for c in curve if c['kind'] == 'earlier'} \
+            | {f"{c['kind']}-n{c['lines']}" for c in curve if c['kind'] not in ('start', 'earlier')}
+        for d in os.listdir(base_dir):
+            if d not in keep_dirs and os.path.isdir(os.path.join(base_dir, d)):
+                shutil.rmtree(os.path.join(base_dir, d), ignore_errors=True)
+        keep_voices = {os.path.basename(c['voice']) for c in curve if c.get('voice')}
+        for f in os.listdir(os.path.join(root, 'voices')):
+            if f.startswith(rnd_id + '-') and f not in keep_voices:
+                os.remove(os.path.join(root, 'voices', f))
         publish(root, dict(id=rnd_id, label=f'Round {rnd_id[1:]}: {len(order)} of your lines, best: {best}', note=note, date=date,
                            heldout=len(heldout), heldout_lines=held_ids, recordings_word_acc=rec_acc, lines=len(order),
                            kind=best, summary=summary(entries), entries=entries, curve=curve, voice=main_voice,
                            aligner='phone' if aligner else 'dtw'))
-        prog.finish('done', f'Round {rnd_id[1:]} is ready on the Compare tab')
+        prog.finish('done', f'Round {rnd_id[1:]} is ready on the Compare tab'
+                    + (f' ({evaluate_voice.reused} scorings reused from the earlier attempt)' if evaluate_voice.reused else ''))
     except Exception as e:
         import traceback
         traceback.print_exc()
-        prog.finish('failed', f'Tuning stopped: {e}')
+        stage = prog.state.get('stage') or 'baseline'
+        where = STAGE_NAMES.get(stage, stage)
+        m = re.match(r'(Fitting voices to|Scoring "\w+" from) (\d+) lines', prog.state.get('step', ''))
+        if m:
+            where += f' ({m.group(2)} lines)'
+        reason = reason_of(e)
+        prog.finish('failed', f'Tuning failed at {where}: {reason}', failed_stage=where, reason=reason, resumable=True)
         sys.exit(1)
 
 

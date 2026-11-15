@@ -93,7 +93,9 @@ pronunciation with accent variants (neighbouring vowels, reductions, common cons
 optional drops), so a phone is labelled as spoken. It replaced the earlier DTW-to-synthesis
 alignment, which cut units in the wrong places across large rate and pitch differences.
 `voicefile.py` reads a packed voice back. `evaluate.py` can score word accuracy with a local
-speech recognizer (faster-whisper; scratch only).
+speech recognizer (faster-whisper; scratch only). Its
+pronunciations follow the game's: weak forms, the name list, CMUdict, plural and possessive endings
+on a known stem (-'s, -s, -es, as `voice_text.jo` does), then the letter-to-sound rules.
 
 `tune_round.py` runs one tuning round on whatever the speaker has recorded. It caches the
 alignment and analysis of each take and, for nested random subsets of the pool, builds three
@@ -101,7 +103,8 @@ voices: the prior voice adapted toward the speaker (per-phone spectral offsets, 
 prosody), a blend (the speaker's own units where there are at least two tokens, adapted prior
 units elsewhere), and the speaker's units only. Each is scored on the held-out lines as they stand
 at the time of the run (with the starting voice and earlier rounds' voices scored again on the same
-lines), including word accuracy, and the round is published with a learning curve per kind. The voice studio's "Tune" button starts it. The
+lines), including word accuracy, and the round is published with a learning curve per kind. A failed run says at which stage and why, and `--round rN` retries it,
+reusing every finished scoring. The voice studio's "Tune" button starts it. The
 recordings, voices and rounds all stay in scratch.
 
 ## Checks
