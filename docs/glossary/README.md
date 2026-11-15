@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel)
@@ -1503,15 +1503,38 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Crowd bed
 
-- **Aliases:** the harbour murmur, the café murmur.
-- **Definition:** the looped sound of a distant crowd under the harbour and café ambience: ten or
-  twelve synthesized talkers, each a buzzing voice through two moving vowel formants, speaking
-  syllables of uneven length with uneven pauses, smeared by a few soft reflections; the café's
-  adds glasses and cups touched at uneven times. Its loudness follows the people actually nearby.
-- **Code:** `src/ambience_synth.jo` (`ambience_crowd`).
-- **Rules:** at least 4.5 s long, no loudness rhythm shorter than its loop and no held pure pitch
-  (`tests/ambience.jo`). The first version, four gated pure hums in a 2.4 s loop, was heard as a
-  little repeating tune (A F# A A F#) on the quay.
+- **Aliases:** the harbour murmur, the cafe murmur.
+- **Definition:** the looped sound of a crowd under the harbour and cafe ambience: three talkers
+  near and five across the square speaking invented syllables (consonants and vowels, never
+  words) in phrases whose pitch falls, conversations swelling and fading, the many beyond as a
+  breathing noise, low air under it, people walking past, a short outdoor reverb; stereo, the
+  ears partly alike. The cafe's has one more talker near, a smaller room and glasses and cups.
+  Its parameters are fitted to CC0 and public-domain recordings of real squares, promenades, a
+  wharf and cafes (`docs/crowd-reference.md`); nothing recorded ships.
+- **Code:** `src/ambience_crowd.jo` (`CrowdFit`, `crowd_bed`); `tools/crowdlab.jo`.
+- **Rules:** a 7 s loop with no loudness rhythm shorter than it and no held pure pitch; louder
+  single voices are events from real people, never baked into the loop (`tests/ambience.jo`).
+  The first version, four gated pure hums in a 2.4 s loop, was heard as a little repeating tune
+  (A F# A A F#) on the quay.
+
+### Uneven events
+
+- **Definition:** single ambient sounds (hammering, creaks, halyard slaps, waves, animals, birds,
+  single voices) played at uneven moments: time is cut into cells of the event's mean period and
+  each cell holds one event at its own hashed moment, so gaps run from almost nothing to nearly
+  twice the period. Each event plays one of a few takes, its pitch spread a little.
+- **Code:** `src/ambience.jo` (`ambience_due`, `ambience_hash`, `ambience_take`);
+  `src/ambience_scene.jo` (`ambience_event`).
+- **Rules:** never a fixed period (hull hammering was once a blow every 4.7 s to the frame).
+
+### Single voices
+
+- **Definition:** now and then a greeting, a laugh, a call or a short exchange (a question and its
+  companion's answer) from a real person near the listener; vowel-only synthesis, never words.
+- **Code:** `src/ambience_scene.jo` (`ambience_voices`), `src/ambience_synth.jo`
+  (`ambience_voice_take`, `ambience_utter`).
+- **Rules:** from awake people out and about within 40 m (calls 90 m); even ids men's voices, odd
+  women's, as the figures are dressed; rarer at night. Not the radio announcer.
 
 ### Note events
 
