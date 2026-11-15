@@ -143,7 +143,7 @@ Pronunciation and delivery follow the speaker (round 4):
   few lines stays nearer the plain reading (n / (n + 1)), a genre with none keeps the station's
   hand-set style.
 
-Sentence intonation, the energy envelope and vocal effort are learned from the speaker (round 5,
+Sentence intonation and vocal effort are learned from the speaker (round 5,
 `intonation.py`):
 
 - each syllable's pitch level (re the line), its slope through the vowel and its energy (re the
@@ -158,6 +158,9 @@ Sentence intonation, the energy envelope and vocal effort are learned from the s
 - each genre's vocal effort is the speaker's own spectral change against their plain reads
   (`tilt_<genre>`), and calibration fits brightness (the plain reading's too), the contour's size
   per genre and a sustain floor for voiced frames by synthesis, like tempo and register;
+- the learned energy envelope is off (`ENERGY_ENVELOPE` in `tune_round.py`): rendered, it made
+  the syllable energies less like the speaker's (0.69 against 0.72 without it), so the units'
+  own energy pattern stays;
 - on held-out lines with the speaker's own timing, the learned contour correlates 0.47 with their
   takes (round 4's model 0.44) at 3.5 st RMS (4.3); two takes of the same line by the speaker
   correlate 0.55 at the syllable level, so that is about the ceiling.

@@ -280,9 +280,10 @@ def model_numbers(fit, superposition, prior=None):
     if fit.get('shape'):
         m['shape'] = _vector([fit], ['shape'], 3, [1.6, 7.0, 0.5])
     tune = fit.get('tune')
-    if tune and all(len(tune.get(k) or []) == 43 for k in ('pitch', 'slope', 'energy')) and len(tune.get('intrinsic') or []) == len(PHONES):
-        for k in ('pitch', 'slope', 'energy', 'intrinsic'):
-            m['tune_' + k] = [float(x) for x in tune[k]]
+    if tune and all(len(tune.get(k) or []) == 43 for k in ('pitch', 'slope')):
+        m['tune_pitch'], m['tune_slope'] = [float(x) for x in tune['pitch']], [float(x) for x in tune['slope']]
+        if len(tune.get('energy') or []) == 43 and len(tune.get('intrinsic') or []) == len(PHONES):
+            m['tune_energy'], m['tune_intrinsic'] = [float(x) for x in tune['energy']], [float(x) for x in tune['intrinsic']]
     if _num(fit.get('sustain')) is not None:
         m['sustain'] = [float(fit['sustain'])]
     for g, v in sorted((fit.get('tilts') or {}).items()):

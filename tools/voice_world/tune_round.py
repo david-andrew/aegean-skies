@@ -414,6 +414,9 @@ def speaker_lex(base, subset):
 
 
 # ------------------------------------------------------------------ calibration by synthesis
+# The learned energy envelope made the synthesis's syllable energies less like the speaker's
+# (round 5: 0.69 against 0.72 without it, on the held-out lines), so voices do not carry it.
+ENERGY_ENVELOPE = False
 GAME_GENRE = {'war': 'war', 'news': 'news', 'ident': 'news', 'race': 'race', 'advert': 'advert', 'weather': 'weather'}
 NEUTRAL_STYLE = [1.0, 0.0, 1.0, 1.0]          # speed, pitch (st), range, pause scale: the plain reading
 
@@ -810,9 +813,11 @@ def main():
             items = [(l, al['phones'], an) for l, al, an in subset if l['id'] not in val_ids]
             import phone_align as pa_
             fit['tune'] = intonation.fit(items, a.repo, pa_.number_words, pack.PHONES)
+            if fit['tune'] and not ENERGY_ENVELOPE:
+                fit['tune'] = dict(fit['tune'], energy=None, intrinsic=None)
             fit['tilts'] = intonation.genre_tilts(items)
             if fit['tune']:
-                notes = notes + [f"intonation and energy learned from {fit['tune']['syllables']} syllables of your takes"
+                notes = notes + [f"intonation learned from {fit['tune']['syllables']} syllables of your takes"
                                  + (f"; vocal effort of {', '.join(sorted(fit['tilts']))} from your takes of them" if fit['tilts'] else '')]
             notes = notes + [f'pronunciations: {own_words} words as you say them' + (', and for other words ' + ', '.join(f'{k} as {v}' for k, v in rules.items()) if rules else '')
                              + (', room noise taken off your takes' if ROOM is not None else '')]
