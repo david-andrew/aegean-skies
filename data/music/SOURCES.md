@@ -68,9 +68,13 @@ a small subset of metadata retained. This is not an endorsement by any source au
 * Per-note start/end gain follows velocity and CC7/11. Controller curves within a note
   are approximated by a straight ramp, not reproduced exactly.
 
+* The radio's Gymnopédie No. 1 (`gymnopedie-orchestra`) is the same Mutopia source, scored by
+  `tools/music_pack.py` in the manner of Debussy's orchestration (1897, public domain): the tune on
+  the oboe and then, from bar 22, the flute; the second-beat chords on the harp with muted strings
+  holding them; the bass notes on the harp and the low strings. Only the instrumentation follows
+  Debussy; no notes are taken from his score.
 * The Hotel Ancora's evening set (not on the radio) is arranged for its small band:
-  Gymnopédie No. 1 puts the right hand's top voice (the tune, from bar 5) on the violin and leaves
-  the chords and bass on the piano; Ave Maria keeps the source violin and piano (the bar's singer
+  Gymnopédie No. 1 is Satie's piano texture, the pianist alone; Ave Maria keeps the source violin and piano (the bar's singer
   takes the violin's line, which then plays at half level); Clair de lune is the source piano
   alone, its rubato, dynamics, pedal and voicing from an annotated performance
   (`clair-de-lune-performance.json`, written by `tools/clair_performance.py`; see
@@ -90,3 +94,12 @@ pitch sequences. Its decisions are recorded in `performance.json`; see
 `docs/music-performance.md`. `instruments.json` contains scalar parameters for the game's
 procedural oscillators and envelopes, packed by `tools/music_timbres.py`. It contains no
 PCM, recorded sample loops, waveform phases or measured impulse responses.
+Its 17th family, the 1920s upright piano (`MUSIC_UPRIGHT`, a honky-tonk), was fitted the same
+way as the others (per-partial amplitudes, measured over the unison's beat, and two decay rates at
+three velocities and seven pitches; inharmonicity, attack, release; loudness kept across the
+keyboard), plus a body response fitted from a reference phrase and the unison's spacing (two equal
+strings 5 cents apart, `UPRIGHT_DETUNE_CENTS` in src/music_synth.jo), to FluidR3 GM's Honky-tonk
+Piano (bank 0, program 3; the same soundfont file, SHA-256 74594e8f...a1bc1cb0, as the measurements
+above; copyright Frank Wen, permissive licence). Its notes and phrases were rendered through
+FluidSynth offline in scratch for measurement only; no soundfont data or rendered audio is in this
+repository, only the fitted numbers.

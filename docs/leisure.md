@@ -46,6 +46,20 @@ funny or useful (time passes, people are met, the plane is looked after).
    root), with a pose that fits; time passes; a small real effect only on light engine/hull wear
    (heavier damage stays the workshop's job). See "Plane work" in the glossary.
 
+## Built (round six)
+
+5. **Tavli** at the coffee house (Portes): played against a townsperson who plays with a
+   personality, for stakes both can stand, through the ledger. Those near the table come first,
+   then the town's regulars at leisure. The board is drawn in code: a walnut case with a Greek-key
+   inlay, bone and ebony checkers, and dice thrown with a little physics. Each opponent remembers
+   the games, which warms their regard a little and gives them a word for the next meeting.
+6. **A song from the band**: pick a number from the evening set and tip a phoenix; it is played
+   next, and the set carries on after it.
+7. **Today's paper** at the coffee house: the Porto Vecchio Courier, made from what the town has
+   heard (see "The paper" in the glossary).
+8. **Fishing from a dock**: cast, wait, and strike. The catch enters the world's stock as
+   production, to be sold to the fish market or grilled at the hotel.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
@@ -55,19 +69,28 @@ funny or useful (time passes, people are met, the plane is looked after).
   whoever is at the next table, get up (Escape). The menu: section chips, type to search, up/down
   (wheel, arrow keys, page buttons), order.
 - A grateful family's member, at home: "Could I rest at yours a while?" in the conversation.
+- At the coffee house: "Play tavli" and "Buy the paper" (then "Read the paper") on the bar.
+- Tavli: click a checker, then where it goes (or drag it; a single place to go moves at once).
+  Arrows and Enter choose by keyboard. Space throws and finishes the turn, Backspace takes it
+  back, and Escape asks before giving up. By finger: tap, tap.
+- The paper: wheel, arrow and page keys, a finger's drag, or the up and down buttons; Escape
+  puts it down.
+- At the hotel in the evening: "Ask for a song", and "Have your catch grilled" when one has fish.
+- Fishing: **F** at the water's edge on a dock in a harbour town. F, Space or the first button
+  casts and strikes; "Sell the catch" sells to the fish market; Escape stops.
 
 ## Later (worth adding)
 
 - Take the waters at hot springs; sea bathing from the beach; a siesta in the shade.
-- Fishing from the quay or a hired boat (fish go into the living world's stock).
-- Cards, backgammon (tavli) and dominoes with townsfolk at the coffee house, small stakes.
+- Fishing from a hired boat (fishing from a dock is built).
+- Cards and dominoes with townsfolk at the coffee house, small stakes (tavli is built).
 - The barber and a shave; tailor for a new flying jacket; laundry.
 - A feast day dance in the square; a church service; the cinema in a capital (silent films).
 - Picnic flights to beaches; sightseeing passengers; a photographer on the quay.
 - Gardening a hotel garden; feeding the town cats (exists) and adopting one.
-- Reading the newspapers (the world's news) at the coffee house; writing letters home.
+- Writing letters home (the newspaper is built).
 - Teaching a youngster to fly; a flying club evening; model aircraft with the children.
-- Music: request a song from the band; learn the bouzouki; sing along (the crowd's call).
+- Music: learn the bouzouki; sing along (the crowd's call). (Requests are built.)
 - Cooking a meal for a family you stay with; bringing wine as a guest.
 - Stargazing from a hilltop (celestial.jo already has the sky); a lighthouse visit.
 - Night swimming; walking the hill paths; visiting monasteries.

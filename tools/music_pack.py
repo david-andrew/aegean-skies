@@ -27,7 +27,23 @@ PIECES = [
  ('clair-de-lune', 'Clair de lune', 'Claude Debussy', 'Hotel Ancora'),
  ('adelita', 'Adelita', 'Francisco Tarrega', 'Hotel Ancora'),
  ('berceuse', 'Berceuse (Dolly)', 'Gabriel Faure', 'Hotel Ancora'),
+ # The radio's Gymnopedie: the same score as the bar's, in the manner of Debussy's orchestration
+ # (1897): harp and low strings under it, the tune on the oboe and then the flute, muted strings.
+ ('gymnopedie-orchestra', 'Gymnopedie No. 1 (orchestrated)', 'Erik Satie; orch. after Claude Debussy', 'Voice of Kalyra'),
 ]
+
+# An arrangement's own high shelf (dB per instrument number above hz): the orchestral
+# Gymnopedie's strings play muted (con sordino), darker and veiled.
+ARRANGED_SHELF = {'gymnopedie-orchestra': dict(hz=1500.0, db={'0': -7.0})}
+
+# Pieces played on the 1920s hotel upright (the synth's MUSIC_UPRIGHT model) rather than the
+# concert grand: the bar pianist's numbers, and the radio's period piano. Clair de lune keeps the
+# grand its performance was approved on.
+UPRIGHT = {'gymnopedie', 'ave-maria', 'magnetic', 'el-choclo', 'bethena'}
+
+# Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
+SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
+source_of = lambda name: SOURCE.get(name, name)
 
 # The automatic balance (tools/music_balance.py writes it): per piece, a gain per instrument (dB)
 # so the melody sits a few loudness units over the accompaniment, and a high shelf where a part is
@@ -56,6 +72,7 @@ MOOD = {
  'ikariotikos': ('dance-like', "a Greek island dance: quick, even and circling"),
  'bethena': ('dance-like', "Joplin's concert waltz: lilting, the waltz pulse kept under the sentiment"),
  'gymnopedie': ('mournful', "marked 'Lent et douloureux': slow and sorrowful over a rocking accompaniment"),
+ 'gymnopedie-orchestra': ('mournful', "the same lament, its tune passed from oboe to flute over harp and muted strings"),
  'ave-maria': ('tender', "a devotional song over Bach's prelude: sustained, warm, unhurried"),
  'clair-de-lune': ('dreamy', "moonlight: floating, pedalled, flowing in its middle section"),
  'adelita': ('tender', "a small sentimental mazurka for guitar, wistful rather than danced"),
@@ -65,7 +82,8 @@ MOOD = {
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
 # the rest keep their current reading until their mood's result is shown to be better.
 APPLY_MOOD = {
- 'gymnopedie': dict(seed=3, phrase_bars=4),
+ 'gymnopedie': dict(seed=3, phrase_bars=4, base=0.87),
+ 'gymnopedie-orchestra': dict(seed=3, phrase_bars=4, base=0.87),
 }
 
 # Pieces with an annotated performance (time map, levels; for the piano, dynamics, pedal and
@@ -146,7 +164,69 @@ def opening():
  targets=json.loads((ROOT/'data/music/opening-performance.json').read_text())
  return [[n['start'],n['duration'],n['pitch'],15,n['effort'][0],n['effort'][2],0,n['effort'][1],.40] for n in targets]
 
+def gentle_touch(notes, means, spread=.35):
+ # A gentler hand on the piano: every key pressed softly. Each voice (the tune, the right hand's
+ # chords, the bass, the left hand's chords) is set to its own soft mean velocity, keeping only a
+ # third of the phrasing around it, so the tune leads by a little and the bass and the second-beat
+ # chords carry more of the sound. (Soft notes are darker in the piano's own model as well.)
+ top={}
+ for n in notes:
+  if n[6]==1:k=round(n[0],2);top[k]=max(top.get(k,0),n[2])
+ def role(n):
+  if n[6]==1:return 'tune' if n[2]>=67 and n[2]==top[round(n[0],2)] else 'chords'
+  return 'bass' if n[2]<48 else 'left'
+ groups={}
+ for n in notes:groups.setdefault(role(n),[]).append(n[4])
+ centre={r:sum(v)/len(v) for r,v in groups.items()}
+ out=[]
+ for n in notes:
+  r=role(n);m=means[r]/127
+  g0=max(.2,m+(n[4]-centre[r])*spread);g1=max(.2,m+(n[5]-centre[r])*spread)
+  out.append(list(n[:4])+[g0,g1]+list(n[6:]))
+ return out
+
+# The Gymnopedie's touch: soft mean velocities per voice (the tune just above the rest).
+GENTLE = {'gymnopedie': dict(tune=58, chords=50, bass=57, left=52)}
+
+def gymnopedie_orchestra(notes):
+ # The tune: the top of the right hand where it moves on its own (not the second-beat chords),
+ # held notes the MIDI re-strikes joined into one; on the oboe until the new phrase at bar 22
+ # (beat 63), then the flute. The second-beat chords: harp, with muted strings holding them; the
+ # bass notes: harp and the low strings (cellos and basses, soft). Levels set so the tune sits
+ # about 3 LU over the rest (measured with tools/music_balance.py's partial loudness: the balancer
+ # itself takes one melody instrument, and here the tune passes between two).
+ tune=[];chords=[];bass=[]
+ by={}
+ for n in notes:by.setdefault((n[6],round(n[0],3)),[]).append(n)
+ sounding=-1.0
+ for (track,start),group in sorted(by.items(),key=lambda kv:(kv[0][1],kv[0][0])):
+  if track!=1:
+   for n in group:(bass if n[2]<48 else chords).append(n)
+   continue
+  group=sorted(group,key=lambda n:n[2]);top=group[-1]
+  second=round(start)%3==1
+  chord_like=second and all(abs(n[1]-group[0][1])<1e-6 for n in group) and len(group)>=3
+  if start<sounding-1e-6 or chord_like or (len(group)>1 and top[1]==group[0][1] and second):
+   chords+=group;continue
+  tune.append(top);chords+=group[:-1];sounding=start+top[1]
+ joined=[]
+ for n in sorted(tune):
+  if joined and joined[-1][2]==n[2] and abs(joined[-1][0]+joined[-1][1]-n[0])<1e-6 and n[0]<62:
+   joined[-1]=[joined[-1][0],joined[-1][1]+n[1]]+list(joined[-1][2:]);continue
+  joined.append(list(n))
+ out=[]
+ for start,dur,pitch,ins,g0,g1,track in joined:
+  out.append([start,dur,pitch,OBOE if start<62.5 else FLUTE,g0*.85,g1*.85,1])
+ for start,dur,pitch,ins,g0,g1,track in chords:
+  out.append([start,dur,pitch,HARP,g0*.67,g1*.67,2])
+  out.append([start,dur+.25,pitch,STRINGS,g0*.58,g1*.58,3])
+ for start,dur,pitch,ins,g0,g1,track in bass:
+  out.append([start,dur,pitch,HARP,g0*.85,g1*.85,2])
+  out.append([start,dur,pitch,BASS,g0*.61,g1*.61,4])
+ return sorted(out)
+
 def arrange(name,notes):
+ if name=='gymnopedie-orchestra':return gymnopedie_orchestra(notes)
  out=[]
  top={}
  for start,dur,pitch,ins,g0,g1,track in notes:
@@ -158,9 +238,9 @@ def arrange(name,notes):
    # Keep every original piano pitch; light banjo doubles the off-beat middle register.
    if track==2 and 48<=pitch<67:out.append([start,dur,pitch,BANJO,g0*.36,g1*.36,track])
   elif name=='el-choclo': ins=ACCORDION if track==0 else PIANO if pitch>=48 else BASS
-  elif name=='gymnopedie' and track==1:
-   # The right hand's top voice is the tune: the violin sings it; the chords stay on the piano.
-   ins=STRINGS if pitch>=67 and pitch==top.get((track,round(start,3)),-1) else PIANO
+  elif name=='gymnopedie':
+   # Satie's own texture: the piano alone.
+   ins=PIANO
   elif name=='adelita':
    # Two guitars: the tune on a mandolin-like plucked voice, the accompaniment on a guitar.
    ins=BOUZOUKI if track==1 else HARP
@@ -202,15 +282,16 @@ def pack(notes, mix_levels=False, sections=None):
 def main():
  meta=[]; performances={}
  for name,title,composer,station in PIECES:
-  notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{name}.mid')
+  notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{source_of(name)}.mid')
   if name=='mahler-opening':
    performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
   else:
-   clock=score_clock(ROOT/'data/music/source'/f'{name}.mid',name)
+   clock=score_clock(ROOT/'data/music/source'/f'{source_of(name)}.mid',name)
    notes,performance=interpret(arrange(name,notes),name,clock)
    if name in APPLY_MOOD:
     mood=MOOD[name][0];touch=MOODS[mood][1]
     notes=mood_touch(notes,clock,touch)
+    if name in GENTLE:notes=gentle_touch(notes,GENTLE[name])
     time_map,curves=timing_map(notes,clock,mood_timing(mood,**APPLY_MOOD[name]))
     notes=warp(notes,time_map)
     performance.update(mood=mood,expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
@@ -233,11 +314,16 @@ def main():
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
  (ROOT/'data/music/performance.json').write_text(json.dumps(performances,indent=2)+'\n')
  (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
- lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '    shelf_hz = 0.0                  # the automatic balance\'s high shelf (tools/music_balance.py)', '    shelf_db: f64[] = []            # (dB per instrument above shelf_hz)', '', 'MUSIC_PIECES: MusicPiece[] = [']
+ lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '    shelf_hz = 0.0                  # the automatic balance\'s high shelf (tools/music_balance.py)', '    shelf_db: f64[] = []            # (dB per instrument above shelf_hz)', '    piano = 0                       # the piano it is played on: 0 the concert grand, 1 the 1920s upright', '', 'MUSIC_PIECES: MusicPiece[] = [']
  for r in meta:
   shelf=BALANCE.get(r['id'],{}).get('shelf')
+  if r['id'] in ARRANGED_SHELF:
+   own=ARRANGED_SHELF[r['id']];merged=dict(own['db'])
+   for k,v in (shelf or {}).get('db',{}).items():merged[k]=min(v,merged.get(k,0.0))
+   shelf=dict(hz=own['hz'],db=merged)
   extra=f",{float(shelf['hz'])},["+','.join(f"{float(shelf['db'].get(str(k),0.0))}" for k in range(16))+"]" if shelf else ''
-  lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}{extra}),")
+  piano=', piano = 1' if r['id'] in UPRIGHT else ''
+  lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}{extra}{piano}),")
  lines+= [']','','music_bytes = (piece: int) -> u8[]:', '    match piece:']
  for i,r in enumerate(meta):lines.append(f'        {i}: embed(\'../data/music/{r["id"]}.z\')')
  lines+= ['        else: []','']

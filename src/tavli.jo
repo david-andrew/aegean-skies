@@ -1,0 +1,524 @@
+# Tavli at the coffee house: Portes (the Greek game that is backgammon without the doubling cube),
+# played against a townsperson for small stakes. The rules, the townsperson's play (a heuristic
+# with a personality: some play fast and loose, some carefully) and the reckoning at the end: the
+# stake moves by one `transfer` between the two purses (kind `gambling`), so the world's money
+# holds. Pure: no drawing here (src/tavli_view.jo draws the board and the dice).
+#
+# The board from the player's side: index 0..23 is point 1..24. The player (side 0, the light
+# checkers) moves from 24 down to 1 and bears off below point 1; the townsperson (side 1, the dark
+# ones) moves the other way and bears off past point 24. Counts are signed: + light, - dark.
+
+use 'phoenix.jo'
+use 'living_types.jo'
+use 'living_seed.jo'
+use 'living_money.jo'
+
+const TAVLI_OFF = 24                # a move's `to` when it bears a checker off
+const TAVLI_BAR = -1                # a move's `from` when it enters from the bar
+
+struct TavliBoard:
+    pts: int[]                      # 24 points, signed counts (+ light, - dark)
+    bar: int[]                      # checkers on the bar, per side
+    off: int[]                      # borne off, per side
+
+struct TavliMove:
+    from: int                       # point index, or TAVLI_BAR
+    to: int                         # point index, or TAVLI_OFF
+    die: int
+    hit = false
+
+tavli_start_board = () -> TavliBoard:
+    b = TavliBoard(fill(0, 24), [0, 0], [0, 0])
+    b.pts[23] = 2; b.pts[12] = 5; b.pts[7] = 3; b.pts[5] = 5
+    b.pts[0] = -2; b.pts[11] = -5; b.pts[16] = -3; b.pts[18] = -5
+    b
+
+# how many of a side's checkers stand on a point
+tavli_own = (b: TavliBoard, side: int, i: int) -> int: if side == 0: max(0, b.pts[i]) else: max(0, -b.pts[i])
+tavli_theirs = (b: TavliBoard, side: int, i: int) -> int: tavli_own(b, 1 - side, i)
+
+# pips still to travel, per side
+tavli_pips = (b: TavliBoard, side: int) -> int:
+    n = b.bar[side] * 25
+    loop i in 0..24:
+        c = tavli_own(b, side, i)
+        if c > 0: n += c * (if side == 0: i + 1 else: 24 - i)
+    n
+
+# how far a checker on point i is from home's end (1..24): the distance it still has to go
+_dist = (side: int, i: int) -> int: if side == 0: i + 1 else: 24 - i
+
+_all_home = (b: TavliBoard, side: int) -> bool:
+    if b.bar[side] > 0: return false
+    loop i in 0..24:
+        if tavli_own(b, side, i) > 0 and _dist(side, i) > 6: return false
+    true
+
+# the point a checker reaches from `from` with die d (TAVLI_OFF past the end), or -2 if it can't go
+_target = (b: TavliBoard, side: int, from: int, d: int) -> int:
+    if from == TAVLI_BAR:
+        to = if side == 0: 24 - d else: d - 1
+        if tavli_theirs(b, side, to) >= 2: return -2
+        return to
+    dist = _dist(side, from)
+    if dist - d > 0:
+        to = if side == 0: from - d else: from + d
+        if tavli_theirs(b, side, to) >= 2: return -2
+        return to
+    # bearing off: all home; exact, or a higher die from the farthest checker
+    if not _all_home(b, side): return -2
+    if dist == d: return TAVLI_OFF
+    loop i in 0..24:
+        if tavli_own(b, side, i) > 0 and _dist(side, i) > dist: return -2
+    TAVLI_OFF
+
+tavli_apply = (b: TavliBoard, side: int, m: TavliMove) -> TavliBoard:
+    n = TavliBoard(b.pts, b.bar, b.off)
+    sign = if side == 0: 1 else: -1
+    if m.from == TAVLI_BAR: n.bar[side] -= 1
+    else: n.pts[m.from] -= sign
+    if m.to == TAVLI_OFF: n.off[side] += 1
+    else:
+        if tavli_theirs(n, side, m.to) == 1:
+            n.pts[m.to] = 0; n.bar[1 - side] += 1
+        n.pts[m.to] += sign
+    n
+
+# every single move a side can make with one die
+tavli_single_moves = (b: TavliBoard, side: int, d: int) -> TavliMove[]:
+    out: TavliMove[]
+    if b.bar[side] > 0:
+        to = _target(b, side, TAVLI_BAR, d)
+        if to >= 0: out.push(TavliMove(TAVLI_BAR, to, d, tavli_theirs(b, side, to) == 1))
+        return out
+    loop i in 0..24:
+        if tavli_own(b, side, i) == 0: continue
+        to = _target(b, side, i, d)
+        if to == -2: continue
+        out.push(TavliMove(i, to, d, to != TAVLI_OFF and tavli_theirs(b, side, to) == 1))
+    out
+
+tavli_key = (b: TavliBoard) -> str: "{b.pts}|{b.bar}|{b.off}"
+
+_without = (dice: int[], k: int) -> int[]: [loop j in 0..dice.len(): if j != k: dice[j]]
+
+# The most dice that can still be played from here (stops looking once all of them can).
+tavli_max_usable = (b: TavliBoard, side: int, dice: int[]) -> int:
+    if dice.len() == 0: return 0
+    best = 0
+    tried: {int: bool}
+    loop k in 0..dice.len():
+        if dice[k] in tried: continue
+        tried[dice[k]] = true
+        loop m in tavli_single_moves(b, side, dice[k]):
+            u = 1 + tavli_max_usable(tavli_apply(b, side, m), side, _without(dice, k))
+            if u > best: best = u
+            if best == dice.len(): return best
+    best
+
+# The dice of a roll (four of a double).
+tavli_roll_dice = (a: int, b: int) -> int[]: if a == b: [a, a, a, a] else: [a, b]
+
+# The moves the player may make next, having `dice` left of a turn that must use `need` of them
+# (the rules: as many dice as can be played; with only one of two, the larger if it can be).
+tavli_legal_next = (b: TavliBoard, side: int, dice: int[], need: int, larger_only: int = 0) -> TavliMove[]:
+    out: TavliMove[]
+    if need <= 0: return out
+    tried: {int: bool}
+    loop k in 0..dice.len():
+        if dice[k] in tried: continue
+        tried[dice[k]] = true
+        if larger_only > 0 and dice[k] != larger_only: continue
+        loop m in tavli_single_moves(b, side, dice[k]):
+            if 1 + tavli_max_usable(tavli_apply(b, side, m), side, _without(dice, k)) == need: out.push(m)
+    out
+
+# What a whole turn must do: how many dice, and whether only the larger die may be used.
+struct TavliDuty:
+    need = 0
+    larger_only = 0
+
+tavli_duty = (b: TavliBoard, side: int, dice: int[]) -> TavliDuty:
+    need = tavli_max_usable(b, side, dice)
+    larger = 0
+    if need == 1 and dice.len() == 2 and dice[0] != dice[1]:
+        hi = max(dice[0], dice[1])
+        if tavli_single_moves(b, side, hi).len() > 0: larger = hi
+    TavliDuty(need, larger)
+
+struct TavliPlay:
+    moves: TavliMove[]
+    board: TavliBoard
+
+# Every distinct way to play a whole roll (distinct by where the checkers end up).
+tavli_plays = (b: TavliBoard, side: int, dice: int[]) -> TavliPlay[]:
+    duty = tavli_duty(b, side, dice)
+    out: TavliPlay[]
+    seen: {str: bool}
+    if duty.need == 0:
+        out.push(TavliPlay([], b))
+        return out
+    _plays_from(b, side, dice, duty.need, duty.larger_only, [], out, seen)
+    out
+
+_plays_from = (b: TavliBoard, side: int, dice: int[], need: int, larger: int, done: TavliMove[], out: mut TavliPlay[], seen: mut {str: bool}):
+    if need == 0:
+        key = tavli_key(b)
+        if not (key in seen):
+            seen[key] = true
+            out.push(TavliPlay(done, b))
+        return
+    loop m in tavli_legal_next(b, side, dice, need, larger):
+        k = 0
+        loop j in 0..dice.len():
+            if dice[j] == m.die: k = j; break
+        _plays_from(tavli_apply(b, side, m), side, _without(dice, k), need - 1, 0, done + [m], out, seen)
+
+# ---------------- the end of a game ----------------
+
+tavli_winner = (b: TavliBoard) -> int:
+    if b.off[0] == 15: return 0
+    if b.off[1] == 15: return 1
+    -1
+
+# 1 for a plain win, 2 when the loser bore nothing off (a gammon: in Portes it counts double)
+tavli_points = (b: TavliBoard) -> int:
+    w = tavli_winner(b)
+    if w < 0: 0 else: if b.off[1 - w] == 0: 2 else: 1
+
+# ---------------- the townsperson's play ----------------
+
+# How a person plays: care (0 fast and loose .. 1 careful), boldness (hits and leaves blots), and
+# how long they take over a move.
+struct TavliStyle:
+    care = 0.5
+    boldness = 0.5
+    pace = 1.0                      # seconds per checker moved
+    words = 0                       # which voice their remarks come in (0 dry, 1 cheerful, 2 grumbling)
+
+tavli_style = (w: World, person: int) -> TavliStyle:
+    if person < 0 or person >= w.people.len(): return TavliStyle()
+    p = w.people[person]
+    r = f64(draw1000000(w.seed, 91, person, 0)) / 1000000.0
+    care = clamp(0.25 + f64(1000 - p.traits.boldness) / 1600.0 + f64(min(p.age, 75) - 20) / 140.0 + (r - 0.5) * 0.4, 0.05, 1.0)
+    bold = clamp(f64(p.traits.boldness) / 1000.0 + (r - 0.5) * 0.3, 0.05, 0.95)
+    pace = 0.35 + care * 1.25
+    words = if p.traits.sociability > 620: 1 else: if p.traits.sociability < 380: 2 else: 0
+    TavliStyle(care, bold, pace, words)
+
+tavli_style_words = (s: TavliStyle) -> str:
+    if s.care < 0.4: "plays fast and loose"
+    else if s.care > 0.75: "plays slowly and carefully"
+    else if s.boldness > 0.6: "plays boldly"
+    else: "plays a steady game"
+
+# how many of the 36 rolls let the other side hit a checker `dist` points away
+_shot_rolls = (dist: int) -> int:
+    if dist <= 0 or dist > 24: return 0
+    n = 0
+    loop a in 1..7:
+        loop c in 1..7:
+            if a == dist or c == dist or a + c == dist or (a == c and (a * 3 == dist or a * 4 == dist)): n += 1
+    n
+
+# How good a position looks to `side`: positive is good. Careful players count the shots at their
+# blots; loose ones hardly look.
+tavli_value = (b: TavliBoard, side: int, s: TavliStyle) -> f64:
+    me = side; them = 1 - side
+    v = f64(tavli_pips(b, them) - tavli_pips(b, me)) * 1.0
+    v += f64(b.off[me] - b.off[them]) * 3.0
+    v += f64(b.bar[them]) * (6.0 + s.boldness * 6.0) - f64(b.bar[me]) * 10.0
+    # contact: is anyone still in the way?
+    my_back = 0; their_back = 0
+    loop i in 0..24:
+        if tavli_own(b, me, i) > 0: my_back = max(my_back, _dist(me, i))
+        if tavli_own(b, them, i) > 0: their_back = max(their_back, _dist(them, i))
+    if b.bar[me] > 0: my_back = 25
+    if b.bar[them] > 0: their_back = 25
+    contact = my_back + their_back > 25
+    if not contact: return v * 1.5 + f64(b.off[me]) * 2.0
+    # made points, a home board, a prime, and blots
+    run = 0
+    loop i in 0..24:
+        own = tavli_own(b, me, i)
+        d = _dist(me, i)
+        if own >= 2:
+            v += 2.0 + (if d <= 6: 2.5 else: if d <= 9: 1.0 else: 0.0)
+            run += 1
+            if run >= 3: v += f64(run) * 1.2
+            if own > 3: v -= f64(own - 3) * 0.6       # (stacked up, wasted)
+        else:
+            run = 0
+        if own == 1:
+            # where the shooters are: their checkers behind this blot (by their direction)
+            risk = 0
+            loop j in 0..24:
+                if tavli_own(b, them, j) == 0: continue
+                # (the dark move up the points, the light down: a checker behind the blot can hit it)
+                gap = if them == 1: i - j else: j - i
+                if gap > 0: risk = max(risk, _shot_rolls(gap))
+            if b.bar[them] > 0: risk = max(risk, _shot_rolls(d))
+            lost = f64(25 - d)
+            careful = 0.25 + s.care * 0.75
+            v -= f64(risk) / 36.0 * lost * careful * (1.15 - s.boldness * 0.5)
+    # an anchor in their home board keeps a way back
+    loop i in 0..24:
+        if tavli_own(b, me, i) >= 2 and _dist(them, i) <= 6: v += 1.5
+    v
+
+# The townsperson chooses a play: the careful take the best; the loose pick among the good ones,
+# and sometimes simply the first that comes to hand.
+tavli_choose = (b: TavliBoard, side: int, dice: int[], s: TavliStyle, seed: u64) -> TavliPlay:
+    plays = tavli_plays(b, side, dice)
+    if plays.len() <= 1: return plays[0]
+    scored = [loop k in 0..plays.len(): (k, tavli_value(plays[k].board, side, s))]
+    scored.sort((p: (int, f64)) -> f64: -p.1)
+    r = f64(mix64(seed) % u64(1000000)) / 1000000.0
+    if s.care >= 0.85: return plays[scored[0].0]
+    # (the looser the player, the wider the choice and the more it is luck)
+    width = max(1, int((1.0 - s.care) * 4.0 + 0.5))
+    width = min(width, scored.len())
+    if r < (1.0 - s.care) * 0.18: return plays[scored[min(scored.len() - 1, width)].0]
+    spread = scored[0].1 - scored[width - 1].1
+    if spread > 6.0 * s.care + 1.5: return plays[scored[0].0]
+    plays[scored[int(r * f64(width)) % width].0]
+
+# ---------------- a game ----------------
+
+enum TavliPhase: opening, roll, move, done
+
+struct TavliGame:
+    board: TavliBoard = tavli_start_board()
+    phase: TavliPhase = .opening
+    turn = 0                        # whose turn: 0 the player, 1 the townsperson
+    roll: int[] = [0, 0]            # the dice thrown this turn
+    dice: int[]                     # the dice still to play
+    duty: TavliDuty = TavliDuty()
+    done: TavliMove[]               # moved so far this turn (to take back)
+    turn_board: TavliBoard = tavli_start_board()
+    opening: int[] = [0, 0]         # the one die each throws to see who starts
+    rng: u64 = u64(1)
+    throws = 0
+    opponent = -1
+    stake = 0                       # cents a point
+    style: TavliStyle = TavliStyle()
+    winner = -1
+    points = 0
+    hits: int[] = [0, 0]            # (checkers each side has hit: for the remarks)
+
+tavli_new = (w: World, opponent: int, stake: int, game_number: int) -> TavliGame:
+    g = TavliGame(opponent = opponent, stake = stake)
+    g.rng = mix64(w.seed xor u64(opponent * 7919 + game_number * 104729 + w.minute))
+    g.style = tavli_style(w, opponent)
+    g.turn_board = g.board
+    g
+
+tavli_die = (g: mut TavliGame) -> int:
+    g.rng = mix64(g.rng + u64(0x9e3779b97f4a7c15))
+    g.throws += 1
+    int(g.rng % u64(6)) + 1
+
+# Each throws one die; the higher starts and plays the two numbers (thrown again on a tie).
+tavli_opening = (g: mut TavliGame):
+    a = tavli_die(g); c = tavli_die(g)
+    loop a == c:
+        a = tavli_die(g); c = tavli_die(g)
+    g.opening = [a, c]
+    g.turn = if g.opening[0] > g.opening[1]: 0 else: 1
+    _begin_turn(g, g.opening[0], g.opening[1])
+
+_begin_turn = (g: mut TavliGame, a: int, c: int):
+    g.roll = [a, c]
+    g.dice = tavli_roll_dice(a, c)
+    g.duty = tavli_duty(g.board, g.turn, g.dice)
+    g.done = []
+    g.turn_board = g.board
+    g.phase = .move
+
+# The one whose turn it is throws.
+tavli_throw = (g: mut TavliGame):
+    if g.phase != .roll: return
+    a = tavli_die(g); c = tavli_die(g)
+    _begin_turn(g, a, c)
+
+# The moves the player may make now.
+tavli_options = (g: TavliGame) -> TavliMove[]:
+    if g.phase != .move: return []
+    tavli_legal_next(g.board, g.turn, g.dice, g.duty.need - g.done.len(), if g.done.len() == 0: g.duty.larger_only else: 0)
+
+tavli_turn_complete = (g: TavliGame) -> bool: g.phase == .move and g.done.len() >= g.duty.need
+
+# Make one move of the turn (if it is allowed).
+tavli_move = (g: mut TavliGame, m: TavliMove) -> bool:
+    ok = false
+    loop o in tavli_options(g):
+        if o.from == m.from and o.to == m.to and o.die == m.die: ok = true
+    if not ok: return false
+    if m.hit: g.hits[g.turn] += 1
+    g.board = tavli_apply(g.board, g.turn, m)
+    g.done.push(m)
+    k = 0
+    loop j in 0..g.dice.len():
+        if g.dice[j] == m.die: k = j; break
+    g.dice = _without(g.dice, k)
+    if tavli_winner(g.board) >= 0:
+        g.winner = tavli_winner(g.board); g.points = tavli_points(g.board); g.phase = .done
+    true
+
+# Take back the turn's moves (before it is passed).
+tavli_undo = (g: mut TavliGame):
+    if g.phase != .move or g.done.len() == 0: return
+    first_hits = 0
+    loop m in g.done:
+        if m.hit: first_hits += 1
+    g.hits[g.turn] -= first_hits
+    g.board = g.turn_board
+    g.dice = tavli_roll_dice(g.roll[0], g.roll[1])
+    g.done = []
+
+# The turn passes to the other side.
+tavli_pass = (g: mut TavliGame):
+    if g.phase != .move or not tavli_turn_complete(g): return
+    g.turn = 1 - g.turn
+    g.phase = .roll
+
+# The townsperson's whole turn, once the dice are down: the moves, in order.
+tavli_their_play = (g: TavliGame) -> TavliMove[]:
+    tavli_choose(g.board, g.turn, tavli_roll_dice(g.roll[0], g.roll[1]), g.style, g.rng xor u64(g.throws * 31)).moves
+
+# Giving up: the other side wins a single game.
+tavli_resign = (g: mut TavliGame, side: int):
+    if g.phase == .done: return
+    g.winner = 1 - side; g.points = 1; g.phase = .done
+
+# ---------------- stakes and memory ----------------
+
+# The most a townsperson will play for, a point (they keep enough back for a gammon).
+tavli_their_limit = (w: World, person: int) -> int:
+    if person < 0 or person >= w.people.len(): return 0
+    a = w.people[person].account
+    if not account_valid(w, a): return 0
+    w.accounts[a].cents / 2
+
+TAVLI_STAKES: int[] = [0, 20, 50, 100, 200]
+
+tavli_stake_words = (cents: int) -> str: if cents <= 0: "for nothing but the game" else: "for {phoenix_text(cents)} a point"
+
+struct TavliRecord:
+    person: int
+    wins = 0                        # the player's wins against them
+    losses = 0
+    last_minute = -1
+    last_result = 0                 # 1 the player won the last game, -1 lost
+    balance = 0                     # cents the player is up (+) or down (-) against them
+
+struct TavliSettle:
+    ok: bool
+    message: str
+    cents = 0                       # what moved (+ to the player)
+
+# The reckoning: the loser pays the winner stake x points, one transfer; then they remember it.
+tavli_settle = (w: mut World, g: TavliGame, records: mut TavliRecord[]) -> TavliSettle:
+    if g.phase != .done or g.winner < 0: return TavliSettle(false, "The game isn't over.")
+    them = g.opponent
+    if them < 0 or them >= w.people.len(): return TavliSettle(false, "Nobody to settle with.")
+    amount = g.stake * g.points
+    pa = w.people[w.player].account
+    ta = w.people[them].account
+    moved = 0
+    if amount > 0 and account_valid(w, pa) and account_valid(w, ta):
+        from = if g.winner == 0: ta else: pa
+        to = if g.winner == 0: pa else: ta
+        pay = min(amount, w.accounts[from].cents)
+        if pay > 0 and transfer(w, from, to, pay, .gambling): moved = if g.winner == 0: pay else: -pay
+    # standing: a game in company warms them a little; a win pleases them more than a loss stings
+    seed_relationship(w, them, w.player)
+    rid = w.relationship_index[RelationshipKey(them, w.player)]
+    warm = if g.winner == 1: 6 else: if g.points == 2: 1 else: 3
+    w.relationships[rid].affinity = clamp(w.relationships[rid].affinity + warm, -1000, 1000)
+    w.relationships[rid].last_contact_minute = w.minute
+    k = -1
+    loop i in 0..records.len():
+        if records[i].person == them: k = i
+    if k < 0:
+        records.push(TavliRecord(them))
+        k = records.len() - 1
+    if g.winner == 0: records[k].wins += 1 else: records[k].losses += 1
+    records[k].last_minute = w.minute
+    records[k].last_result = if g.winner == 0: 1 else: -1
+    records[k].balance += moved
+    name = split(w.people[them].name, " ")[0]
+    gammon = if g.points == 2: " A gammon: it counts double." else: ""
+    message = if g.winner == 0:
+        if moved > 0: "You win, and {name} pays {phoenix_text(moved)}.{gammon}" else: "You win.{gammon}"
+    else:
+        if moved < 0: "{name} wins; you pay {phoenix_text(-moved)}.{gammon}" else: "{name} wins.{gammon}"
+    TavliSettle(true, message, moved)
+
+tavli_record = (records: TavliRecord[], person: int) -> TavliRecord?:
+    loop r in records:
+        if r.person == person: return r
+    none
+
+# A word about past games, when one meets them again ("" if there is nothing to say).
+tavli_remark = (w: World, records: TavliRecord[], person: int) -> str:
+    if let r = tavli_record(records, person):
+        days = (w.minute - r.last_minute) / 1440
+        if r.last_minute < 0 or days > 30: return ""
+        n = r.wins + r.losses
+        k = (person + r.wins * 3 + r.losses * 5) % 3
+        if r.wins >= r.losses + 3: return ["You again? You've had my coffee money three times over.", "I've been practising. Come to the kafeneio and we'll see.", "They say you play tavli like you fly: too lucky to be decent."][k]
+        if r.losses >= r.wins + 3: return ["Back for another lesson at the board?", "The board misses you. My purse does too.", "Sit down any time. I'll go easy on you. I won't."][k]
+        if r.last_result == 1: return ["You owe me a game. That last one was the dice, not you.", "That last game of tavli: I'm still thinking about the double fives.", "A rematch, when you've a minute. I've a score to settle."][k]
+        if r.last_result == -1 and n > 0: return ["A good game, the other day. Another, when you're passing?", "You nearly had me at the board. Nearly.", "If you want your money back, you know where I sit."][k]
+    ""
+
+# The townsperson's remarks across the board, by their voice and what just happened.
+tavli_says = (s: TavliStyle, what: str, n: int) -> str:
+    lines = match what:
+        "hit": if s.words == 1: ["Off you go! Round again.", "Sorry, sorry. Not sorry.", "Ha! To the bar with that one."] else: if s.words == 2: ["You left it there. What did you expect?", "That's yours on the bar.", "Mm. There."] else: ["To the bar.", "That one's mine.", "Hit."]
+        "hit_me": if s.words == 1: ["Ouch! Well played.", "You've a sharp eye.", "There goes my running man."] else: if s.words == 2: ["Of course. Of course you roll that.", "Hm. Lucky.", "The dice like you today."] else: ["Well hit.", "Hm.", "So be it."]
+        "double": if s.words == 1: ["Doubles! The saints are with me.", "Look at that!", "Doubles, and I'll take them."] else: if s.words == 2: ["About time.", "Doubles. Don't look at me like that.", "Even a blind man rolls doubles."] else: ["Doubles.", "That helps.", "Good."]
+        "your_double": if s.words == 1: ["Doubles for you. Enjoy them.", "Lucky hands!", "Who taught you to throw like that?"] else: if s.words == 2: ["Doubles again. Show me those dice.", "Naturally.", "Hmph."] else: ["Doubles.", "Nice throw.", "Hm."]
+        "stuck": ["Nothing. I can't move.", "Blocked. Your turn.", "Not a thing to play."]
+        "win": if s.words == 1: ["A good game! Another coffee?", "There. Thank you for the game.", "Again? I'm in the mood."] else: if s.words == 2: ["That's the game.", "Pay up, pilot.", "As I said it would go."] else: ["Mine, I think.", "That's the game.", "Thank you."]
+        "lose": if s.words == 1: ["Well played! Truly.", "You've done this before.", "Bah! Well done."] else: if s.words == 2: ["The dice, not you.", "Take it, then.", "Next time."] else: ["Well played.", "Yours.", "A fair game."]
+        "start": if s.words == 1: ["Sit, sit! Light or dark? You're light.", "A game! Good. Throw.", "The board's been waiting."] else: if s.words == 2: ["Sit if you're sitting.", "You're the light. Throw.", "Let's see you, then."] else: ["Portes, then. Throw for the start.", "Light is yours. Throw.", "Throw for the start."]
+        else: [""]
+    lines[n % lines.len()]
+
+# ---------------- who will play ----------------
+
+# Townsfolk at the coffee house who would sit down to a game: whoever is near the table first
+# (`near`: person ids in the order of how close they are), then others of the town who are in it
+# and not working at something that can't wait. At most three; never the player, a patrol pilot or
+# a pirate, nor anyone on the road.
+tavli_partners = (w: World, place: int, near: int[]) -> int[]:
+    out: int[]
+    ok = (id: int) -> bool:
+        if id < 0 or id >= w.people.len() or id == w.player: return false
+        p = w.people[id]
+        if p.place != place or p.trip >= 0 or p.carriage >= 0: return false
+        if p.occupation == .player or p.occupation == .patrol or p.occupation == .pirate: return false
+        if p.age < 16: return false
+        account_valid(w, p.account)
+    loop id in near:
+        if out.len() >= 3: break
+        if ok(id) and not (id in out): out.push(id)
+    # (the regulars: the town's own, picked afresh each day)
+    day = day_index(w.minute)
+    regulars: int[]
+    loop p in w.people:
+        if p.home == place and ok(p.id) and not (p.id in out): regulars.push(p.id)
+    # (those at leisure first; someone at work or keeping a house only if nobody else is about)
+    regulars.sort((id: int) -> int: draw1000000(w.seed, 92, id, day) + (if w.people[id].state == .working or w.people[id].occupation == .hotelier or w.people[id].occupation == .innkeeper: 2000000 else: 0))
+    loop id in regulars:
+        if out.len() >= 3: break
+        out.push(id)
+    out
+
+# The stakes both can stand: the player keeps enough for a gammon, so do they.
+tavli_stakes = (w: World, person: int) -> int[]:
+    mine = if account_valid(w, w.people[w.player].account): w.accounts[w.people[w.player].account].cents / 2 else: 0
+    theirs = tavli_their_limit(w, person)
+    [loop s in TAVLI_STAKES: if s <= mine and s <= theirs: s]

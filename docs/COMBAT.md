@@ -47,6 +47,18 @@ step_battle(b, environment, physical_observer)
 - The caller owns lifecycle: retain disabled aircraft through the wreck/descent, consume outcomes,
   then retire an engagement or build the next one. Do not append indefinitely to an old Battle.
 
+`Battle.ground` holds a scenario's fixed ground guns (`GroundGun`: rifle or machine gun, stable
+negative owner IDs, never people). `step_ground_fire` runs after the aircraft guns each tick: a
+target from flying hostiles in reach with clear sight (terrain samples plus `FlightEnv.solid` in
+short pieces), combat's `intercept` lead with drop, skill wander, a limited swing rate, a reaction
+time, stateless scatter. Their rounds, shot and hit events are ordinary; rounds from other sides
+hit a post's small ellipsoid and silence it when its health runs out. Deterministic and
+text-serialized with the Battle.
+
+The **lead marker** (`src/lead_marker.jo`) is HUD only: Sky Barons' `lead_from` against the
+selected hostile or the nearest in a 25° cone within 1 km, at the Battle's muzzle speed, drawn at
+the 450 m convergence so it lines up with the gunsight.
+
 Guns use real forward muzzle/convergence vectors, inherited aircraft velocity, gravity and
 seeded scatter. Moving aircraft are hit in local part ellipsoids, with nearest-hit ordering and
 stable ID tie breaks. Terrain/sea is sampled nine times along each bullet step; this is a bounded
@@ -245,7 +257,9 @@ capped at 6/10/16 on low/medium/high; further aircraft use instanced silhouettes
 ribbons are compacted, not retained until the hard cap.
 
 **Tab** cycles targets and **C** toggles target-follow camera; right mouse keeps free look.
-Mouse/drag flight steering stays independent of the viewed target. Touch **Look** cycles on
+Mouse/drag flight steering stays independent of the viewed target, but moves the aim ring along
+the drawn camera's own right and up (`screen_aim`), so the ring follows the hand in any view. The
+target view's up rolls back to the horizon at a bounded rate (`camera_horizon_up`). Touch **Look** cycles on
 release after a tap, or toggles follow after a .45-second hold. Combat candidates include all
 hostiles without a cap, sorted by immediate threat then distance, followed by nearby friends.
 Outside combat, at most six relevant aircraft, job destinations/ships and nearby landmarks
