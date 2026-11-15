@@ -284,6 +284,8 @@ voice_spell = (bank: VoiceBank, word: str) -> int[]:
     loop mut p in out:
         if voice_is_vowel_phone(p):
             if k == target: p = p | 64
+            # an unstressed full vowel (AA AE EH AO UH) reduces to schwa, as an English reader says it
+            else if p == 1 or p == 2 or p == 7 or p == 4 or p == 14: p = 3
             k += 1
     out
 
@@ -343,6 +345,7 @@ struct VoiceStyle:
     breath = 1.0                      # scale on aperiodicity (raised voice is less breathy)
     pauses = 1.0                      # pause scale
     colour = 0.75                     # period studio, carbon microphone and transmitter (radio_studio.jo)
+    genre = ""                        # war, news, race, advert, weather: a fitted delivery in the data replaces speed, pitch, range and pauses
     record = 0.25                     # transcription-disc wear in the receiver chain
 
 struct VoicePhone:
@@ -370,6 +373,7 @@ struct VoicePlan:
 VOICE_VOICELESS = [17,20,22,24,29,31,32,33,34]          # CH F HH K P S SH T TH
 VOICE_VOICED_OBSTRUENT = [16,18,19,21,23,35,38,39]      # B D DH G JH V Z ZH
 VOICE_FRICATIVE = [19,20,22,31,32,34,35,38,39]          # DH F HH S SH TH V Z ZH
+VOICE_STOP_AFFRICATE = [16,17,18,21,23,24,29,33]        # B CH D G JH K P T
 
 voice_phones = (bank: VoiceBank, text: str, style: VoiceStyle) -> VoicePhone[]:
     m = bank.model
@@ -526,7 +530,6 @@ struct VoiceSpan:
 # held silence. Stretching the pause half across the whole pause drew out the frication of a
 # final /s/ or /z/ (the held-'s' fault).
 const VOICE_PAUSE_EDGE = 0.045
-const VOICE_SHAPE_GAIN = 1.6
 
 voice_frames = (bank: VoiceBank, plan: mut VoicePlan):
     spans: VoiceSpan[]
@@ -651,8 +654,8 @@ voice_pitch = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle, seed: in
             jo = min(j1,j0+int(0.04/squeeze/VOICE_FRAME)+1)
             loop j in j0..jo: st[j] += shift
     # Restore the variance a mean model loses (the fitted shapes alone vary much less than real
-    # phrases; part of that is measurement noise): widen them by VOICE_SHAPE_GAIN around each level.
-    loop j in 0..n: st[j] = levels[j]+VOICE_SHAPE_GAIN*(st[j]-levels[j])
+    # phrases; part of that is measurement noise): widen them by the model's shape gain around each level.
+    loop j in 0..n: st[j] = levels[j]+m.shape_gain*(st[j]-levels[j])
     # A little slow wander, then 25 ms smoothing.
     walk = 0.0; slow = 0.0
     loop j in 0..n:
@@ -664,15 +667,41 @@ voice_pitch = (bank: VoiceBank, plan: mut VoicePlan, style: VoiceStyle, seed: in
     loop j in 0..n:
         acc = 0.0
         loop k in -2..3: acc += st[clamp(j+k,0,n-1)]
-        # soft limit at +-7 st around the register
-        s = base+7.0*tanh((acc/5.0-base)/7.0)
-        if plan.frames[j*w+w-1] > 0.5:
+        # soft limit around the register
+        lim = max(1.0,m.pitch_limit)
+        s = base+lim*tanh((acc/5.0-base)/lim)
+        if plan.frames[j*w+w-1] > m.voicing:
             plan.f0[j] = f32(100.0*pow(2.0,s/12.0))
             # the narrator's spectrum brightens with his pitch: follow it, plus the style's effort
             plan.effort[j] = f32(style.effort+0.8*(s-base))
 
-voice_plan = (bank: VoiceBank, text: str, style: VoiceStyle = VoiceStyle(), seed: int = 0) -> VoicePlan:
+# The genre's delivery fitted to the speaker, where the data file has one.
+voice_fitted_style = (bank: VoiceBank, style: VoiceStyle) -> VoiceStyle:
+    out = style
+    if style.genre != "":
+        if let v = bank.model.styles.get(style.genre):
+            out.speed = v[0]; out.pitch = v[1]; out.range = v[2]; out.pauses = v[3]
+    out
+
+# A word starting with a stressed vowel after a word ending in a stop or affricate: a short break
+# (the stop's release, then the vowel's own onset), not a glide straight into the vowel.
+const VOICE_JUNCTURE_DROP = 1.6      # log amplitude, about 14 dB
+voice_junctures = (bank: VoiceBank, plan: mut VoicePlan):
+    w = bank.width
+    n = plan.count
+    ps = plan.phones
+    loop k in 1..ps.len():
+        p = ps[k]; q = ps[k-1]
+        if not (p.word_start and p.content and p.stress == 1 and voice_is_vowel_phone(p.phone) and q.phone in VOICE_STOP_AFFRICATE): continue
+        j0 = max(0,int((p.start-0.012)/VOICE_FRAME)); j1 = min(n,int((p.start+0.022)/VOICE_FRAME)+1)
+        loop j in j0..j1:
+            plan.frames[j*w] -= f32(VOICE_JUNCTURE_DROP)
+            plan.frames[j*w+w-1] = f32(0)
+
+voice_plan = (bank: VoiceBank, text: str, style0: VoiceStyle = VoiceStyle(), seed: int = 0) -> VoicePlan:
+    style = voice_fitted_style(bank,style0)
     plan = VoicePlan(phones=voice_phones(bank,text,style),tilt=style.tilt,breath=style.breath)
     voice_frames(bank,plan)
+    voice_junctures(bank,plan)
     voice_pitch(bank,plan,style,seed)
     plan

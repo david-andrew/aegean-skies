@@ -34,7 +34,7 @@ MANUAL = {
     'orenthian': 'AO0 R EH1 N TH IY0 AH0 N', 'orenthians': 'AO0 R EH1 N TH IY0 AH0 N Z',
     'orenthessa': 'AO2 R EH0 N TH EH1 S AH0', 'kalamos': 'K AA1 L AH0 M OW2 S', 'mikra': 'M IY1 K R AH0',
     'agios': 'AA1 Y IY0 OW2 S', 'nikolaos': 'N IY2 K OW0 L AA1 OW0 S', 'selene': 'S EH0 L IY1 N IY0',
-    'kryfo': 'K R IY1 F OW0', 'vecchio': 'V EH1 K IY0 OW0', 'porto': 'P AO1 R T OW0',
+    'kryfo': 'K R IY1 F OW0', 'wind': 'W IH1 N D', 'winds': 'W IH1 N D Z', 'vecchio': 'V EH1 K IY0 OW0', 'porto': 'P AO1 R T OW0',
     'seaplane': 'S IY1 P L EY2 N', 'seaplanes': 'S IY1 P L EY2 N Z', 'floatplane': 'F L OW1 T P L EY2 N',
     'aeroplane': 'EH1 R AH0 P L EY2 N', 'triplane': 'T R AY1 P L EY2 N', 'metres': 'M IY1 T ER0 Z',
     'metre': 'M IY1 T ER0', 'kilometres': 'K IH0 L AA1 M AH0 T ER0 Z', 'harbour': 'HH AA1 R B ER0',
@@ -221,6 +221,12 @@ def model_numbers(fit, superposition, prior=None):
     m['level'] = [_pick(fits, ['f0_st', 'median'], 7.0), _pick(sps, ['level_spread'], 1.5)] + levels
     m['effort'] = _vector(fits, ['effort', 'vector'], len((fit.get('effort') or prior.get('effort') or {}).get('vector') or []) or 25, [0.0] * 25)
     m['pauses'] = [_pick(fits, ['pauses', k, 'median_ms'], d) / 1000 for k, d in (('comma', 150.0), ('stop', 450.0), ('none', 150.0))]
+    # rendering numbers and genre deliveries calibrated to a speaker (tune_round.calibrate), when present
+    if fit.get('shape'):
+        m['shape'] = _vector([fit], ['shape'], 3, [1.6, 7.0, 0.5])
+    for g, v in sorted((fit.get('styles') or {}).items()):
+        if v and len(v) == 4 and all(_num(x) is not None for x in v):
+            m['style_' + g] = [float(x) for x in v]
     return m
 
 

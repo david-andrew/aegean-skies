@@ -183,10 +183,30 @@ class ProsodyGuard(unittest.TestCase):
         acc = {'new': 0.80, 'mix': 0.85, 'before': 0.86}
         pick = lambda: tr.guard_prosody([(k, k) for k in ['new', 'mix', 'before']], lambda label, fit: acc[label])[0]
         self.assertEqual(pick(), 'mix')                 # 1 point below the best: more data wins
-        acc['mix'] = 0.83
-        self.assertEqual(pick(), 'before')              # 3 points below: keep what was there
+        acc['mix'] = 0.80
+        self.assertEqual(pick(), 'before')              # 6 points below: keep what was there
         acc['new'] = 0.86
         self.assertEqual(pick(), 'new')
+
+
+class SpeakerLexicon(unittest.TestCase):
+    def test_most_frequent_realisation_and_systematic_substitutions(self):
+        import tune_round as tr
+        def take(words):
+            ph = []
+            for wi, (w, prons) in enumerate(words):
+                for p in prons.split():
+                    base, st = (p[:-1], int(p[-1])) if p[-1].isdigit() else (p, 0)
+                    ph.append(dict(p=base, stress=st, wi=wi, word=w, confidence=0.9))
+            return (dict(id='x'), dict(phones=ph), None)
+        sub = [take([('chalk', 'CH AO1 K'), ('on', 'AO1 N')]), take([('chalk', 'CH AO1 K')]), take([('chalk', 'CH AA1 K')])]
+        sub += [take([('on', 'AO1 N')]) for _ in range(14)]
+        own, seen = tr.speaker_lexicon(sub)
+        self.assertEqual(own['chalk'], ['CH', 'AO1', 'K'])
+        base = {'chalk': ['CH', 'AA1', 'K'], 'on': ['AA1', 'N'], 'father': ['F', 'AA1', 'DH', 'ER0']}
+        lex, n, rules = tr.speaker_lex(base, sub)
+        self.assertEqual(rules, {'AA1': 'AO1'})                  # 15 of 18 AA1 tokens said as AO1
+        self.assertEqual(lex['father'], ['F', 'AO1', 'DH', 'ER0'])  # applied to a word not said
 
 
 if __name__ == '__main__':

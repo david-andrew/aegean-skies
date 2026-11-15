@@ -55,35 +55,72 @@ class Aligner:
             out = self.model(self.torch.from_numpy(x.astype(np.float32))[None]).logits.log_softmax(-1)[0].numpy()
         return out
 
-    def align(self, x16, words):
-        """words: [(word, [ARPAbet with stress digits or reduced labels])]. Returns phone dicts."""
-        lp = self.logp(x16)
-        T = len(lp)
-        sil = self.vocab['[SIL]']
-        states = [dict(p='pau', dict_p='pau', choices=['[SIL]'], stress=0, wi=-1, skip=False)]
-        for wi, (w, pron) in enumerate(words):
-            for k, ph in enumerate(pron):
-                base, stress = REDUCED.get(ph, (re.sub(r'\d', '', ph), int(ph[-1]) if ph[-1].isdigit() else 0))
-                if base not in self.vocab:
-                    continue
-                alts = (VOWEL_VARIANTS.get(base, []) if base in VOWELS else CONS_VARIANTS.get(base, []))
-                final = k == len(pron) - 1
-                skip = base in DROPPABLE and (base != 'T' and base != 'D' or (final and k > 0 and re.sub(r'\d', '', pron[k - 1]) not in VOWELS))
-                states.append(dict(p=base, dict_p=base, choices=[base] + [a for a in alts if a in self.vocab], stress=stress, wi=wi, word=w,
-                                   skip=skip, reduced=ph in REDUCED or (base in VOWELS and stress == 0)))
-            states.append(dict(p='pau', dict_p='pau', choices=['[SIL]'], stress=0, wi=-1, skip=True))
-        states[-1]['skip'] = False
-        n = len(states)
-        if n > T:
-            raise ValueError('take shorter than its phone sequence')
-        # emission per state: dictionary phone, or the best variant minus a penalty
-        E = np.empty((T, n))
+    def _word_states(self, wi, w, pron):
+        out = []
+        for k, ph in enumerate(pron):
+            base, stress = REDUCED.get(ph, (re.sub(r'\d', '', ph), int(ph[-1]) if ph[-1].isdigit() else 0))
+            if base not in self.vocab:
+                continue
+            alts = (VOWEL_VARIANTS.get(base, []) if base in VOWELS else CONS_VARIANTS.get(base, []))
+            final = k == len(pron) - 1
+            skip = base in DROPPABLE and (base != 'T' and base != 'D' or (final and k > 0 and re.sub(r'\d', '', pron[k - 1]) not in VOWELS))
+            out.append(dict(p=base, dict_p=base, choices=[base] + [a for a in alts if a in self.vocab], stress=stress, wi=wi, word=w,
+                            skip=skip, reduced=ph in REDUCED or (base in VOWELS and stress == 0)))
+        return out
+
+    def _emissions(self, lp, states):
+        E = np.empty((len(lp), len(states)))
         for j, s in enumerate(states):
             ids = [self.vocab[c] for c in s['choices']]
             e = lp[:, ids[0]]
             if len(ids) > 1:
                 e = np.maximum(e, lp[:, ids[1:]].max(1) - PENALTY)
             E[:, j] = e
+        return E
+
+    def align_choosing(self, x16, words):
+        """words: [(word, [pronunciation, alternative, ...])]. Each word's alternatives (the
+        dictionary's other pronunciations, e.g. "gentlemen" with and without its T) are scored on
+        the frames the first pass gave that word; the best one is aligned in a second pass.
+        Returns (phones, the pronunciation chosen for each word)."""
+        lp = self.logp(x16)
+        first = self.align(x16, [(w, alts[0]) for w, alts in words], lp=lp)
+        chosen = []
+        for wi, (w, alts) in enumerate(words):
+            ps = [p for p in first if p['wi'] == wi]
+            if len(alts) < 2 or not ps:
+                chosen.append(alts[0]); continue
+            a = int(round((ps[0]['start'] - 0.0075) / 0.01)); b = int(round((ps[-1]['end'] - 0.0075) / 0.01))
+            seg = lp[max(0, a):min(len(lp), b)]
+            best, best_score = alts[0], -np.inf
+            for pron in alts:
+                st = self._word_states(wi, w, pron)
+                if not st or len(st) > len(seg):
+                    continue
+                E = self._emissions(seg, st)
+                cost = np.array([DROP_PENALTY if s['skip'] else np.inf for s in st])
+                path = viterbi(E, cost)
+                score = float(E[np.arange(len(seg)), path].sum()) - sum(DROP_PENALTY for j, s in enumerate(st) if j not in set(path.tolist()))
+                if score > best_score + 1e-6:
+                    best, best_score = pron, score
+            chosen.append(best)
+        return self.align(x16, list(zip([w for w, _ in words], chosen)), lp=lp), chosen
+
+    def align(self, x16, words, lp=None):
+        """words: [(word, [ARPAbet with stress digits or reduced labels])]. Returns phone dicts."""
+        lp = self.logp(x16) if lp is None else lp
+        T = len(lp)
+        sil = self.vocab['[SIL]']
+        states = [dict(p='pau', dict_p='pau', choices=['[SIL]'], stress=0, wi=-1, skip=False)]
+        for wi, (w, pron) in enumerate(words):
+            states += self._word_states(wi, w, pron)
+            states.append(dict(p='pau', dict_p='pau', choices=['[SIL]'], stress=0, wi=-1, skip=True))
+        states[-1]['skip'] = False
+        n = len(states)
+        if n > T:
+            raise ValueError('take shorter than its phone sequence')
+        # emission per state: dictionary phone, or the best variant minus a penalty
+        E = self._emissions(lp, states)
         cost = np.array([(0.0 if s['p'] == 'pau' else DROP_PENALTY) if s['skip'] else np.inf for s in states])
         path = viterbi(E, cost)
         out = []
@@ -190,6 +227,18 @@ class Pronouncer:
             if w.endswith(suf) and len(w) > longer and (stem in self.manual or stem in self.d):
                 return add_s(self.manual[stem] if stem in self.manual else self.d[stem][0])
         return self.lts.pronounce(w)
+
+    def alternatives(self, w):
+        """The word's pronunciation first, then the dictionary's other ones."""
+        out = [self.word(w)]
+        if w not in WEAK and w not in self.manual and w in self.d:
+            for p in self.d[w][1:]:
+                if p not in out:
+                    out.append(p)
+        return out
+
+    def line_alternatives(self, text):
+        return [(w, self.alternatives(w)) for w, _ in self.line(text)]
 
     def line(self, text):
         out = []

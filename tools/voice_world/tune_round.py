@@ -92,7 +92,7 @@ def align_take(root, repo, line, take, syn_entry, cache, aligner=None, pron=None
         return json.load(open(jpath)), np.load(npath)
     rec = ev.trim(ev.load16(os.path.join(root, take['file'])))
     if aligner is not None:
-        rec_phones = aligner.align(rec, pron.line(line['text']))
+        rec_phones, _ = aligner.align_choosing(rec, pron.line_alternatives(line['text']))
         metrics = {}
     else:
         dry, _, ph = syn_entry
@@ -106,13 +106,37 @@ def align_take(root, repo, line, take, syn_entry, cache, aligner=None, pron=None
     return json.load(open(jpath)), np.load(npath)
 
 
+# ------------------------------------------------------------------ room noise
+ROOM = None           # power envelope of the speaker's room tone (set by main), subtracted from every frame
+
+
+def room_noise(root):
+    """Median power envelope of the room-tone take (Mic & room tone tab), or None."""
+    try:
+        e = json.load(open(os.path.join(root, 'manifest.json')))['setup']['roomtone']
+        an = wa.analyse(ev.load16(os.path.join(root, e['file'])))
+        return np.median(an['env'], 0)
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def denoise(mcep, room, over=1.5, floor=0.03):
+    """Spectral subtraction of the room's noise from each frame's envelope: a stop's closure
+    in a home recording is room noise, not silence, and without this it entered the units (and
+    the adapted voice's per-phone offsets) about 20 dB too loud, heard as a scratch at stops."""
+    if room is None:
+        return mcep
+    p = np.exp(wa.mcep_to_log_power(mcep))
+    return wa.envelope_to_mcep(np.maximum(p - over * room, floor * p))
+
+
 def corpus_files(subset, aligned, work):
     """Write the analysis/phones/words/speakers files build_units and prosody_fit read."""
     f0, mc, ap, si, ss, pw = [], [], [], [], [], []
     phones, words, speakers = [], [], []
     for k, (line, al, an) in enumerate(subset):
         n = len(an['f0'])
-        f0.append(an['f0']); mc.append(an['mcep']); ap.append(an['ap'])
+        f0.append(an['f0']); mc.append(denoise(an['mcep'], ROOM)); ap.append(an['ap'])
         si.append(np.full(n, k)); ss.append(np.zeros(n)); pw.append(np.zeros(n))
         toks = words_of(line['text'])
         words.append(dict(text=line['text'], words=[dict(word=' ' + t) for t in toks]))
@@ -142,7 +166,7 @@ def corpus_files(subset, aligned, work):
 
 
 PLAIN = ('neutral', 'contrast', 'news')     # reads without a performed delivery
-SHRINK = dict(duration=8, phrases=60, pauses=10, fricatives=10)
+SHRINK = dict(duration=8, phrases=30, pauses=10, fricatives=10)
 
 
 def toward(prior, user, w):
@@ -277,6 +301,9 @@ def centre_means(units, M):
     return {p: acc[p] / cnt[p] for p in acc}, cnt
 
 
+CONS_LEVEL_SLACK = 0.35     # log amplitude, about 3 dB
+
+
 def adapt_units(narr, user, M, shrink=5.0):
     """The narrator's units moved toward the user's voice: per phone, the difference between the
     user's and the narrator's mean spectral envelope near the phone's centre (shrunk toward zero
@@ -293,6 +320,11 @@ def adapt_units(narr, user, M, shrink=5.0):
     vowels = [p for p in off if p in ev.VOWELS]
     cons = [p for p in off if p not in ev.VOWELS]
     vmean = np.mean([off[p] for p in vowels], 0) if vowels else np.zeros(M)
+    # a consonant's level offset stays near the vowels' (the voice's overall level difference):
+    # its own centre is mostly closure or frication, whose level says little about the voice
+    for p in cons:
+        off[p] = off[p].copy()
+        off[p][0] = float(np.clip(off[p][0], vmean[0] - CONS_LEVEL_SLACK, vmean[0] + CONS_LEVEL_SLACK))
     cmean = np.mean([off[p] for p in cons], 0) if cons else np.zeros(M)
     for p in nm:
         if p not in off:
@@ -320,7 +352,168 @@ def blend_units(adapted, user, min_count=2):
     return out, own
 
 
-GUARD_TOLERANCE = 0.02     # word accuracy a choice with more of the speaker's data may give up
+VOWEL_LABELS = {'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'EH', 'ER', 'EY', 'IH', 'IY', 'OW', 'OY', 'UH', 'UW'}
+
+
+def speaker_lexicon(subset, min_conf=0.35):
+    """How the speaker says each word: the most frequent realisation in their aligned takes
+    (phone by phone as the aligner labelled it, reductions and dropped phones included). Words
+    the aligner was unsure of keep the dictionary's."""
+    seen = {}
+    for line, al, an in subset:
+        cur = {}
+        for p in al['phones']:
+            if p['p'] != 'pau' and p.get('wi', -1) >= 0:
+                cur.setdefault((p['wi'], p['word']), []).append(p)
+        for (wi, w), ps in cur.items():
+            if not w or np.mean([p['confidence'] for p in ps]) < min_conf:
+                continue
+            seen.setdefault(w, []).append(tuple(p['p'] + (str(p['stress']) if p['p'] in VOWEL_LABELS else '') for p in ps))
+    out = {}
+    for w, reals in seen.items():
+        counts = {}
+        for r in reals:
+            counts[r] = counts.get(r, 0) + 1
+        out[w] = list(max(counts, key=lambda r: (counts[r], -reals.index(r))))
+    return out, seen
+
+
+def substitutions(seen, lex, min_n=15, share=0.5):
+    """The speaker's systematic substitutions: a dictionary phone (with its stress) they say as
+    another phone in at least `share` of `min_n` or more tokens. Reductions of unstressed AH, IH,
+    ER and IY are left out: the game makes those itself."""
+    tally = {}
+    for w, reals in seen.items():
+        d = lex.get(w)
+        if not d:
+            continue
+        for r in reals:
+            if len(r) != len(d):
+                continue
+            for a, b in zip(d, r):
+                tally.setdefault(a, {}).setdefault(b, 0)
+                tally[a][b] += 1
+    rules = {}
+    for a, c in tally.items():
+        n = sum(c.values())
+        b, k = max(c.items(), key=lambda x: x[1])
+        if n >= min_n and b != a and k / n >= share and not (a[:-1] in ('AH', 'IH', 'ER', 'IY') and a.endswith('0')):
+            rules[a] = b
+    return rules
+
+
+def speaker_lex(base, subset):
+    """The dictionary with the speaker's own pronunciations first and their substitutions applied
+    to words they have not said. Returns (lexicon, words from the takes, rules)."""
+    own, seen = speaker_lexicon(subset)
+    rules = substitutions(seen, base)
+    lex = {w: [rules.get(p, p) for p in pr] for w, pr in base.items()}
+    lex.update(own)
+    return lex, len(own), rules
+
+
+# ------------------------------------------------------------------ calibration by synthesis
+GAME_GENRE = {'war': 'war', 'news': 'news', 'ident': 'news', 'race': 'race', 'advert': 'advert', 'weather': 'weather'}
+NEUTRAL_STYLE = [1.0, 0.0, 1.0, 1.0]          # speed, pitch (st), range, pause scale: the plain reading
+
+
+def delivery(phones, f0, start_of=lambda p: p['start'], dur_of=lambda p: p['end'] - p['start']):
+    """Articulation rate (syllables per second of speech), internal pause time, pitch median and
+    within-line spread (st), voiced fraction of the speech span, from phones and a 5 ms F0 track."""
+    sp = [p for p in phones if p['p'] != 'pau']
+    if len(sp) < 3:
+        return None
+    t0, t1 = start_of(sp[0]), start_of(sp[-1]) + dur_of(sp[-1])
+    talk = sum(dur_of(p) for p in sp)
+    syl = sum(1 for p in sp if re.sub(r'\d', '', p['p']) in ev.VOWELS)
+    pause = sum(dur_of(p) for p in phones if p['p'] == 'pau' and start_of(p) > t0 and start_of(p) < t1)
+    j0, j1 = int(t0 / 0.005), min(len(f0), int(t1 / 0.005) + 1)
+    seg = np.asarray(f0[j0:j1])
+    v = seg[seg > 0]
+    if len(v) < 20:
+        return None
+    s = 12 * np.log2(v / 100.0)
+    med = float(np.median(s))
+    # spread: twice the median absolute deviation (robust to creak and octave slips in a track)
+    return dict(rate=syl / max(talk, 1e-3), pause=pause, med=med, spread=2.0 * float(np.median(np.abs(s - med))), voiced=len(v) / max(1, len(seg)))
+
+
+def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, passes=2, per_genre_plain=12):
+    """Fit the delivery by synthesis: render sample training lines, compare each genre with the
+    speaker's takes, and set that genre's speed, pitch, range and pauses (and, from the plain
+    reads, the register, shape gain, pitch limit, voicing threshold and reference rate) so the
+    synthesis matches. Each genre's numbers are shrunk toward the plain reading by how many of its
+    lines there are. Returns (fit, report)."""
+    fit = dict(fit)
+    # only genres with takes get a fitted delivery; the rest keep the station's hand-set style
+    fit['styles'] = {g: list(NEUTRAL_STYLE) for g in sorted({GAME_GENRE[l['genre']] for l in lines if l['genre'] in GAME_GENRE})}
+    fit.setdefault('shape', [1.6, 7.0, 0.5])
+    plain = [l for l in lines if l['genre'] not in GAME_GENRE][:per_genre_plain]
+    sample = plain + [l for l in lines if l['genre'] in GAME_GENRE]
+    rec = {}
+    for l in sample:
+        al, an = aligned[l['id']]
+        d = delivery(al['phones'], an['f0'])
+        if d:
+            rec[l['id']] = d
+    sample = [l for l in sample if l['id'] in rec]
+    report = []
+    for it in range(passes):
+        v = os.path.join(work, f'calibrate-{it}.z')
+        pack_voice(units, fit, lex, v, prior_fit)
+        out = os.path.join(work, f'calibrate-{it}')
+        syn = ev.synthesize(repo, sample, out, data=v, radio=False)
+        got, vfrac = {}, {}
+        for l in sample:
+            dry, _, ph = syn[l['id']]
+            an = wa.analyse(ev.load16(dry))
+            d = delivery(ph, an['f0'], dur_of=lambda p: p['dur'])
+            if d:
+                got[l['id']] = d
+            vp = os.path.join(out, f"{l['id']}-voicing.txt")
+            if os.path.exists(vp):
+                vfrac[l['id']] = np.loadtxt(vp, ndmin=1)
+        groups = {}
+        for l in sample:
+            if l['id'] in got:
+                groups.setdefault(GAME_GENRE.get(l['genre'], 'plain'), []).append(l['id'])
+        step = {}
+        for g, ids in groups.items():
+            r = {k: float(np.median([rec[i][k] for i in ids])) for k in ('rate', 'med', 'spread', 'voiced')}
+            y = {k: float(np.median([got[i][k] for i in ids])) for k in ('rate', 'med', 'spread', 'voiced')}
+            r['pause'] = float(np.mean([rec[i]['pause'] for i in ids])); y['pause'] = float(np.mean([got[i]['pause'] for i in ids]))
+            step[g] = dict(n=len(ids), rec=r, syn=y)
+            if g == 'plain':
+                fit['durations'] = dict(fit['durations'], reference_rate=round(fit['durations']['reference_rate'] * float(np.clip(r['rate'] / y['rate'], 0.7, 1.4)), 3))
+                fit['f0_st'] = dict(fit.get('f0_st', {}), median=round(fit.get('f0_st', {}).get('median', 7.0) + float(np.clip(r['med'] - y['med'], -4, 4)), 2))
+                gain, lim, thr = fit['shape']
+                gain = float(np.clip(gain * np.clip(r['spread'] / max(0.5, y['spread']), 0.6, 1.8), 0.8, 4.0))
+                lim = float(np.clip(max(lim, 0.6 * r['spread'] + 2.0), 5.0, 14.0))
+                vals = np.concatenate([vfrac[i] for i in ids if i in vfrac]) if any(i in vfrac for i in ids) else np.array([])
+                vals = vals[vals > 0.02]
+                if len(vals) > 100:
+                    now = float(np.mean(vals > thr))
+                    target = float(np.clip(now + (r['voiced'] - y['voiced']), 0.3, 0.97))
+                    thr = float(np.clip(np.quantile(vals, 1 - target), 0.2, 0.6))
+                fit['shape'] = [round(gain, 3), round(lim, 2), round(thr, 3)]
+                # pauses inside a line (comma, breath and between sentences) scale to the speaker's
+                pz = float(np.clip((r['pause'] + 0.05) / (y['pause'] + 0.05), 0.3, 2.0))
+                fit['pauses'] = {k: dict(v, median_ms=round(v['median_ms'] * pz, 1)) for k, v in fit['pauses'].items()}
+            else:
+                # the style that would match this pass (the current one times the ratios), then
+                # pulled toward the plain reading by how few lines the genre has; stable across passes
+                speed, pitch, rng, pz = fit['styles'][g]
+                full = [speed * r['rate'] / y['rate'], pitch + (r['med'] - y['med']),
+                        rng * r['spread'] / max(0.5, y['spread']), pz * (r['pause'] + 0.05) / (y['pause'] + 0.05)]
+                w = len(ids) / (len(ids) + 1.0)
+                speed, pitch, rng, pz = full[0] ** w, w * full[1], full[2] ** w, full[3] ** w
+                fit['styles'][g] = [round(float(np.clip(speed, 0.6, 1.8)), 3), round(float(np.clip(pitch, -6, 14)), 2),
+                                    round(float(np.clip(rng, 0.5, 2.5)), 3), round(float(np.clip(pz, 0.3, 2.5)), 3)]
+        report.append(step)
+    return fit, report
+
+
+GUARD_FLOOR = 0.05     # word accuracy a choice with more of the speaker's data may give up; within it the user's ear decides     # word accuracy a choice with more of the speaker's data may give up
 
 
 def validation_lines(pool, k_min=6, k_max=10, share=0.12):
@@ -332,15 +525,15 @@ def validation_lines(pool, k_min=6, k_max=10, share=0.12):
     return [l for l in pool if l['id'] in pick]
 
 
-def guard_prosody(candidates, score):
+def guard_prosody(candidates, score, floor=GUARD_FLOOR):
     """candidates: [(label, fit)] with the most of the speaker's data first. Each is scored
-    (word accuracy on the validation lines); the first within GUARD_TOLERANCE of the best wins, so
-    adding data can cost at most the tolerance on the validation lines, and the speaker's own
-    prosody comes in as soon as it costs no intelligibility."""
+    (word accuracy on the validation lines); the first within `floor` of the best wins. The
+    speaker's own prosody is kept unless it costs intelligibility beyond the floor: how close it
+    sounds to them is theirs to judge, and the round's note reports what it cost."""
     scored = [(label, fit, score(label, fit)) for label, fit in candidates]
     best = max(a for _, _, a in scored)
     for label, fit, acc in scored:
-        if acc >= best - GUARD_TOLERANCE:
+        if acc >= best - floor:
             return label, fit, {l: round(a, 3) for l, _, a in scored}
 
 
@@ -428,6 +621,7 @@ def publish(root, rnd):
 
 
 def main():
+    global ROOM
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', required=True)
     ap.add_argument('--repo', required=True)
@@ -518,7 +712,7 @@ def main():
             import phone_align as pa
             aligner = pa.Aligner(a.aligner, a.aligner_vocab)
             pron = pa.Pronouncer()
-            cache = os.path.join(root, 'tune', 'cache-phone')
+            cache = os.path.join(root, 'tune', 'cache-phone2')     # 2: the dictionary's alternative pronunciations
         os.makedirs(cache, exist_ok=True)
         key = lambda l: f"{l['id']}-{takes[l['id']]['n']:02d}"
         todo = [l for l in pool if not os.path.exists(os.path.join(cache, key(l) + '.json'))]
@@ -539,7 +733,10 @@ def main():
         prior_fit = json.load(open(a.prior_fit))
         narr = voicefile.read(a.prior_data)
         M = narr['M']
-        lex, _ = pack.lexicon(a.repo)
+        # the dictionary for every word of the script (the game's own text has its own), then the
+        # speaker's pronunciations per subset; the room's noise comes off every analysed frame
+        lex, _ = pack.lexicon(a.repo, extra_text=' '.join(l['text'] for l in script['lines']))
+        ROOM = room_noise(root)
         listen = held_ids[:a.listen]
         sizes = []
         for fr in fractions:
@@ -551,7 +748,7 @@ def main():
         val = validation_lines(pool) if asr is not None else []
         val_ids = {l['id'] for l in val}
         chosen = None                     # the prosody chosen at the previous size
-        guard_log = []
+        guard_log, calibration_log = [], []
         for i, n in enumerate(sizes):
             subset = [(l, aligned[l['id']][0], aligned[l['id']][1]) for l in order[:n]]
             full = n == len(order)
@@ -560,6 +757,10 @@ def main():
             work = os.path.join(root, 'tune', 'work', f'{rnd_id}-{n}')
             user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids)
             adapted, phones_seen = adapt_units(narr['units'], user, M)
+            lex_n, own_words, rules = speaker_lex(lex, subset)
+            notes = notes + [f'pronunciations: {own_words} words as you say them' + (', and for other words ' + ', '.join(f'{k} as {v}' for k, v in rules.items()) if rules else '')
+                             + (', room noise taken off your takes' if ROOM is not None else '')]
+            likeness = {}
             if val:
                 if chosen is None:        # before any of the speaker's prosody: the prior's, at the speaker's pitch
                     chosen = ('starting prosody at your pitch', dict(prior_fit, f0_st=fit.get('f0_st', prior_fit['f0_st'])))
@@ -570,17 +771,26 @@ def main():
                 def vscore(label, f, n=n, adapted=adapted):
                     slug = re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-')[:60]
                     v = os.path.join(work, f'guard-{slug}.z')
-                    pack_voice(adapted, f, lex, v, prior_fit)
+                    pack_voice(adapted, f, lex_n, v, prior_fit)
                     prog.set('fit', f'Checking prosody "{label}" on {len(val)} validation lines', 38 + 55 * i / len(sizes))
                     ents = evaluate_voice(a.repo, val, takes, v, os.path.join(work, 'guard-' + slug), root, '', False, asr)
+                    likeness[label] = round(float(np.nanmean([e['metrics'].get('f0_corr', np.nan) for e in ents])), 3)
                     return float(np.mean([e['metrics']['word_acc'] for e in ents]))
                 label, fit, accs = guard_prosody(cands, vscore)
                 if label.startswith('as before'):
                     label = chosen[0]
                 chosen = (label, fit)
-                guard_log.append(dict(lines=n, chosen=label, validation_word_acc=accs))
-                notes = notes + [f'prosody kept: {label} (word accuracy on {len(val)} validation lines: '
-                                 + ', '.join(f'{k} {v:.0%}' for k, v in accs.items()) + ')']
+                guard_log.append(dict(lines=n, chosen=label, validation_word_acc=accs, validation_pitch_corr=likeness))
+                notes = notes + [f'prosody kept: {label} (on {len(val)} validation lines, word accuracy / pitch match with your takes: '
+                                 + ', '.join(f'{k} {v:.0%} / {likeness.get(k, float("nan")):.2f}' for k, v in accs.items()) + ')']
+            # the delivery, fitted by synthesis against the speaker's takes of each genre
+            prog.set('fit', f'Calibrating the delivery of the {n}-line voice against your takes', 38 + 55 * (i + 0.2) / len(sizes))
+            fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work)
+            last = cal[-1]
+            notes = notes + ['delivery fitted to your takes: ' + '; '.join(
+                f"{g} {v[0]:.2f}x tempo, {v[1]:+.1f} st, range {v[2]:.2f}, pauses {v[3]:.2f}" for g, v in sorted(fit['styles'].items()) if g in last)
+                + f"; register {100 * 2 ** (fit['f0_st']['median'] / 12):.0f} Hz, shape gain {fit['shape'][0]:.2f}, pitch limit {fit['shape'][1]:.1f} st, voicing above {fit['shape'][2]:.2f}"]
+            calibration_log.append(dict(lines=n, styles=fit['styles'], shape=fit['shape'], passes=cal))
             blended, own = blend_units(adapted, user)
             kinds = [('adapt', adapted, f'starting voice adapted to you ({phones_seen} phones measured)'),
                      ('blend', blended, f'your units where you have them ({own}), adapted elsewhere'),
@@ -588,7 +798,7 @@ def main():
             for j, (kind, units, about) in enumerate(kinds):
                 voice = os.path.join(root, 'voices', f'{rnd_id}-{kind}-{n}.z')
                 os.makedirs(os.path.dirname(voice), exist_ok=True)
-                pack_voice(units, fit, lex, voice, prior_fit)
+                pack_voice(units, fit, lex_n, voice, prior_fit)
                 prog.set('evaluate', f'Scoring "{kind}" from {n} lines on {len(heldout)} held-out lines', 40 + 55 * (i + (j + 1) / 3) / len(sizes))
                 ents = evaluate_voice(a.repo, heldout, takes, voice, os.path.join(base_dir, f'{kind}-n{n}'), root, f'compare/{rnd_id}/{kind}-n{n}', full, asr)
                 curve.append(dict(lines=n, kind=kind, label=f'{kind}, {n} lines{share}', about=about, summary=summary(ents),
@@ -627,7 +837,7 @@ def main():
         publish(root, dict(id=rnd_id, label=f'Round {rnd_id[1:]}: {len(order)} of your lines, best: {best}', note=note, date=date,
                            heldout=len(heldout), heldout_lines=held_ids, recordings_word_acc=rec_acc, lines=len(order),
                            kind=best, summary=summary(entries), entries=entries, curve=curve, voice=main_voice,
-                           aligner='phone' if aligner else 'dtw', guard=guard_log, validation_lines=sorted(val_ids)))
+                           aligner='phone' if aligner else 'dtw', guard=guard_log, calibration=calibration_log, validation_lines=sorted(val_ids)))
         prog.finish('done', f'Round {rnd_id[1:]} is ready on the Compare tab'
                     + (f' ({evaluate_voice.reused} scorings reused from the earlier attempt)' if evaluate_voice.reused else ''))
     except Exception as e:

@@ -37,7 +37,7 @@ rule('C', ('', 'CH', '', 'CH'), ('', 'CK', '', 'K'), ('', 'CC', '+', 'K S'), (''
 rule('D', ('', 'DD', '', 'D'), ('', 'DG', '+', 'JH'), ('#:', 'DED', ' ', 'D IH D'), ('', 'D', '', 'D'))
 rule('E',
      (' ', 'E', ' ', 'IY'), ('#:', 'E', ' ', ''), (' :', 'E', ' ', 'IY'), ('', 'EAU', '', 'OW'),
-     ('', 'EA', 'R', 'IY'), ('', 'EA', '', 'IY'), ('', 'EE', '', 'IY'), ('', 'EI', '', 'EY'),
+     ('', 'EA', 'SUR', 'EH'), ('', 'EA', 'THER', 'EH'), ('', 'EA', 'LTH', 'EH'), ('', 'EA', 'R', 'IY'), ('', 'EA', '', 'IY'), ('', 'EE', '', 'IY'), ('', 'EI', '', 'EY'),
      ('', 'EY', ' ', 'IY'), ('', 'EY', '', 'EY'), ('', 'EU', '', 'Y UW'), ('', 'EW', '', 'Y UW'),
      ('', 'ER', '#', 'EH R'), ('', 'ER', '', 'ER'), ('#:', 'ES', ' ', 'IH Z'), ('#:', 'ED', ' ', 'D'),
      ('', 'E', '^E ', 'IY'), ('', 'E', '', 'EH'))
@@ -47,28 +47,29 @@ rule('G', ('', 'GG', '', 'G'), ('', 'GH', ' ', ''), ('', 'GH', '', 'G'), ('', 'G
 rule('H', (' ', 'HOUR', '', 'AW ER'), ('', 'H', '#', 'HH'), ('', 'H', '', ''))
 rule('I',
      ('', 'IGH', '', 'AY'), ('', 'IE', ' ', 'IY'), ('', 'IER', '', 'IY ER'), ('', 'IE', '', 'IY'),
-     ('', 'IR', '#', 'AY R'), ('', 'IR', '', 'ER'), ('', 'ION', '', 'Y AH N'),
+     ('', 'IRR', '', 'IH R'), ('', 'IR', '#', 'AY R'), ('', 'IR', '', 'ER'), ('', 'ION', '', 'Y AH N'),
      ('', 'I', '^E ', 'AY'), ('', 'I', '^%', 'AY'), (' ', 'I', ' ', 'AY'), ('', 'I', ' ', 'IY'),
      ('', 'I', '#', 'IY'), ('', 'I', '', 'IH'))
 rule('J', ('', 'J', '', 'JH'))
 rule('K', (' ', 'KN', '', 'N'), ('', 'KK', '', 'K'), ('', 'K', '', 'K'))
 rule('L', ('', 'LL', '', 'L'), ('', 'L', '', 'L'))
 rule('M', ('', 'MM', '', 'M'), ('', 'M', '', 'M'))
-rule('N', ('', 'NG', '+', 'N JH'), ('', 'NG', '', 'NG'), ('', 'NK', '', 'NG K'), ('', 'NN', '', 'N'), ('', 'N', '', 'N'))
+rule('N', ('I', 'NGER', ' ', 'NG ER'), ('I', 'NGER', 'S ', 'NG ER'), ('O', 'NGER', '', 'NG G ER'), ('U', 'NGER', '', 'NG G ER'),
+     ('', 'NG', '+', 'N JH'), ('', 'NG', '', 'NG'), ('', 'NK', '', 'NG K'), ('', 'NN', '', 'N'), ('', 'N', '', 'N'))
 rule('O',
      (' ', 'O', ' ', 'OW'), ('', 'OO', 'R', 'AO'), ('', 'OO', 'K', 'UH'), ('', 'OO', '', 'UW'),
      ('', 'OA', '', 'OW'), ('', 'OI', '', 'OY'), ('', 'OY', '', 'OY'), ('', 'OU', 'GHT', 'AO'),
-     ('', 'OU', '', 'AW'), ('', 'OW', ' ', 'OW'), ('', 'OW', '', 'AW'), ('', 'OR', '', 'AO R'),
+     ('', 'OU', '', 'AW'), ('', 'OW', ' ', 'OW'), ('', 'OW', '', 'AW'), ('#:', 'OR', ' ', 'ER'), ('#:', 'OR', 'S ', 'ER'), ('', 'OR', '', 'AO R'),
      ('', 'O', '^E ', 'OW'), ('', 'O', '^%', 'OW'), ('', 'O', ' ', 'OW'), ('', 'O', '#', 'OW'),
      ('', 'O', '', 'AA'))
 rule('P', ('', 'PH', '', 'F'), ('', 'PP', '', 'P'), ('', 'P', '', 'P'))
 rule('Q', ('', 'QU', '', 'K W'), ('', 'Q', '', 'K'))
 rule('R', ('', 'RR', '', 'R'), ('', 'RH', '', 'R'), ('', 'R', '', 'R'))
 rule('S',
-     ('', 'SCH', '', 'S K'), ('', 'SH', '', 'SH'), ('', 'SS', '', 'S'), ('', 'SION', '', 'ZH AH N'),
+     ('', 'SCH', '', 'S K'), ('', 'SH', '', 'SH'), ('', 'SS', '', 'S'), ('', 'SION', '', 'ZH AH N'), ('#', 'SURE', '', 'ZH ER'),
      ('#', 'S', '#', 'Z'), ('.', 'S', ' ', 'Z'), ('#', 'S', ' ', 'Z'), ('', 'S', '', 'S'))
 rule('T',
-     ('', 'TCH', '', 'CH'), ('', 'TH', '', 'TH'), ('', 'TION', '', 'SH AH N'), ('', 'TT', '', 'T'),
+     ('', 'TCH', '', 'CH'), ('#', 'TH', 'ER', 'DH'), ('', 'TH', '', 'TH'), ('', 'TION', '', 'SH AH N'), ('', 'TT', '', 'T'),
      ('', 'T', '', 'T'))
 rule('U',
      ('', 'UR', '#', 'Y UH R'), ('', 'UR', '', 'ER'), ('', 'U', '^E ', 'UW'), ('', 'U', '^%', 'UW'),
@@ -206,6 +207,11 @@ def stress_syllable(word):
     return n - 3
 
 
+# Unstressed full vowels from the rules reduce to schwa, as an English reader would say them
+# ("compass", "balcony"); long vowels and diphthongs keep their quality. The game does the same.
+REDUCE = {'AE', 'AA', 'EH', 'AO', 'UH'}
+
+
 def pronounce(word):
     phones = letters_to_phones(word)
     target = stress_syllable(word)
@@ -213,7 +219,7 @@ def pronounce(word):
     k = 0
     for p in phones:
         if p in VOW:
-            out.append(p + ('1' if k == target else '0'))
+            out.append(p + '1' if k == target else ('AH' if p in REDUCE else p) + '0')
             k += 1
         else:
             out.append(p)
