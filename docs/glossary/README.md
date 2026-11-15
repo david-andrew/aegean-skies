@@ -724,12 +724,19 @@ On the rivers branch until it lands.
   - NPC racing pace: the club class 140 m/s drawn as before; the Schneider class 80% of each
     type's top speed up to 160 m/s times the course scale (480 m/s on the long course).
   - A Schneider race is held only where the club fields a Schneider racer; the club class always.
+  - The race card names the class while racing; the results card lists the field (place, pilot,
+    aircraft, time or lap); the gate's label sits above or below its bracket, off the player's
+    aircraft. The chase camera's fall-back at speed is held at 1.9 times its rest distance for a
+    Schneider racer (3.4 for the rest), so the racer reads at 600 m/s.
+  - The capital club's pilot cohort (`AIR_CLUB_PILOTS`, five) and an aerodrome's air arm (two)
+    are reserved together.
   - On the way home a clubmate yields the approach only to another coming home, and one already
     down or on final keeps its landing. Under the chaotic-stalls trial the autopilot's arrival at
     1.4 times the stall can stall a racer's sharp wing (default tweaks are fine).
 - **Capture:** `AEGEAN_CAPTURE_RACE=schneider` with `AEGEAN_CRAFT` a Schneider racer (the S.6B is
-  21): the long course off the home harbour, the player at the third gate's approach, three rivals
-  flown by the flight model.
+  21): the long course off the home harbour, the player at the third gate's approach 41 s into the
+  race, five rivals flown by the flight model; `schneider-finish` the results card;
+  `schneider-empty` the same flight with no race (frame-time comparisons).
 
 ---
 
