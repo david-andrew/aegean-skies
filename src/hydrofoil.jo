@@ -25,6 +25,8 @@ const SCREW_STATIC = 8200.0         # the water screw's thrust standing, full th
 const SCREW_PITCH_SPEED = 36.0      # the speed at which its blades no longer bite (m/s)
 const FOIL_ENGAGE_SPEED = 14.0      # the clutch goes over once foil-borne at this speed (m/s)
 const FOIL_CLEAR_TIME = 0.4         # how long the hull must have been clear first (s)
+const FOIL_SETTLE_TIME = 1.0        # or once her speed on the foils has stopped rising this long (s)
+const FOIL_SETTLE_GAIN = 0.1        # (what counts as still rising, m/s)
 const CLUTCH_TIME = 0.5             # the clutch's own travel (s)
 const UNFEATHER_TIME = 1.4          # the air propeller off its feather and up to speed (s)
 
@@ -53,8 +55,10 @@ struct FoilDrive:
     prop_wet = false                # (telemetry) the air propeller's lowest blade in the sea
     lift = 0.0                      # (telemetry) the foils' lift, a fraction of her weight
     screw = 0.0                     # (telemetry) the screw's thrust, N
-    windmill = 5.0                  # the declutched air propeller's slow turn, rad/s (drawn; below the
-                                    # prop disc's speeds, so its solid blades show while it can touch the sea)
+    best_speed = 0.0                # (the fastest she has gone on the foils, this time up)
+    settled = 0.0                   # (how long her speed on the foils has not risen)
+    windmill = 12.0                 # the declutched air propeller's turn, rad/s (drawn: its solid blades
+                                    # whirl, never the disc, while it can touch the sea)
 
 water_drive = () -> FoilDrive: FoilDrive(clutch = 0.0, engaged = false, air = 0.0)
 
@@ -83,14 +87,25 @@ screw_thrust = (throttle: f64, speed: f64, depth: f64, drive: f64) -> f64:
     SCREW_STATIC * throttle * drive * max(0.0, 1.0 - max(speed, 0.0) / SCREW_PITCH_SPEED) * f64(smoothstep(0.0, 0.2, depth))
 
 # The clutch: over to the air propeller in the air, when asked (manual), or by itself once the hull
-# has been clear FOIL_CLEAR_TIME, the air propeller is clear of the water, the speed is
-# FOIL_ENGAGE_SPEED and the throttle open; back to the screw only at rest-ish on the water with the
-# throttle closed (to try again).
+# has been clear FOIL_CLEAR_TIME, the air propeller is clear of the water and the throttle open,
+# and either the speed is FOIL_ENGAGE_SPEED or her speed on the foils has stopped rising for
+# FOIL_SETTLE_TIME (in a sea, or short of power, she can settle below it); back to the screw only
+# at rest-ish on the water with the throttle closed (to try again).
 clutch_step = (d: mut FoilDrive, dt: f64, airborne: bool, hull_clear: bool, prop_clear: bool, speed: f64, throttle: f64, manual: bool):
     d.clear_time = if hull_clear: d.clear_time + dt else: 0.0
-    d.windmill = windmill_speed(speed)
+    # (the turn follows the throttle, eased, so it never jumps)
+    d.windmill = move_toward(d.windmill, windmill_speed(throttle), dt * 15.0)
     d.foilborne = hull_clear and not airborne
-    if airborne or manual or (d.clear_time >= FOIL_CLEAR_TIME and prop_clear and speed >= FOIL_ENGAGE_SPEED and throttle >= 0.5):
+    # (on the foils, the screw has done what it can once her speed stops rising: in a sea she can
+    # settle short of FOIL_ENGAGE_SPEED, and the clutch goes over then)
+    if d.foilborne:
+        if speed > d.best_speed + FOIL_SETTLE_GAIN:
+            d.best_speed = speed; d.settled = 0.0
+        else: d.settled += dt
+    else:
+        d.best_speed = 0.0; d.settled = 0.0
+    ready = d.clear_time >= FOIL_CLEAR_TIME and prop_clear and throttle >= 0.5 and (speed >= FOIL_ENGAGE_SPEED or d.settled >= FOIL_SETTLE_TIME)
+    if airborne or manual or ready:
         d.engaged = true
     else if not airborne and throttle < 0.1 and speed < 5.0:
         d.engaged = false
@@ -100,14 +115,28 @@ clutch_step = (d: mut FoilDrive, dt: f64, airborne: bool, hull_clear: bool, prop
     if d.clutch >= 1.0: d.air = move_toward(d.air, 1.0, dt / UNFEATHER_TIME)
     else: d.air = move_toward(d.air, 0.0, dt / 0.3)
 
+# The least engine power (0.3 + 0.7 x the engine's health, flight.jo) she can be got onto her foils
+# and away with in practice: below it the screw takes half a minute and more to lift her and, flown
+# well, the run is over three kilometres; in any sea she never gets off. Her drive plate says so.
+const FOIL_MIN_POWER = 0.7
+foil_power_short = (engine_health: f64) -> bool: 0.3 + 0.7 * clamp(engine_health, 0.0, 1.0) < FOIL_MIN_POWER
+
 # The water screw's share of the engine (the clutch's travel takes it out).
 screw_drive = (d: FoilDrive) -> f64: 1.0 - d.clutch
 
-# The declutched air propeller's turn (rad/s): a slow idle turn, a little faster as the air and the
-# sea go by, never as fast as the prop disc's first speeds (prop_disc.jo PROP_DISC_FROM, 16).
-WINDMILL_IDLE = 5.0
-WINDMILL_MAX = 13.0
-windmill_speed = (speed: f64) -> f64: clamp(WINDMILL_IDLE + 0.4 * max(speed, 0.0), WINDMILL_IDLE, WINDMILL_MAX)
+# The declutched air propeller's turn (rad/s), as drawn: dragged round by the engine through its
+# feathered blades, faster with the throttle (about 115 rpm idling, 315 rpm flat out): clearly
+# whirling solid blades, just under the speeds where the blades fade (prop_disc.jo
+# PROP_BLADES_BELOW, 40). Its disc is held back until the clutch (flight_feedback.jo prop_disc_speed).
+WINDMILL_IDLE = 12.0
+WINDMILL_MAX = 33.0
+windmill_speed = (throttle: f64) -> f64: WINDMILL_IDLE + (WINDMILL_MAX - WINDMILL_IDLE) * clamp(throttle, 0.0, 1.0)
+
+# The speed the declutched propeller's disc is drawn for: under the disc's first speeds
+# (PROP_DISC_FROM, 16), so only its solid blades show; as it comes off its feather (air 0 to 1)
+# rising to the turn itself, so the disc and its arcs fade in through the usual handover.
+FOIL_DISC_HOLD = 15.0
+foil_disc_speed = (d: FoilDrive, turn: f64) -> f64: turn * d.air + min(turn, FOIL_DISC_HOLD) * (1.0 - d.air)
 
 # The air propeller's drawn turn (rad/s) for the engine's own (8 + 70 x throttle): the windmill's
 # while it is declutched, handing over to the engine's as it comes off its feather (air 0 to 1).
