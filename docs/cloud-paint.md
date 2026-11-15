@@ -102,9 +102,20 @@ marches distance steps in metres, refined only near the surface.
 - **Antialiased edges.** A ray that misses is still partly covered if it passed
   within three hit tolerances of the surface. Upsampled from the third-resolution
   target, the silhouette is soft rather than stepped.
-- **Painted light.** A terminator ramp on a mix of the local and the mass
-  normal. A broad sunward self-shadow, never on sun-facing faces, where it
+- **Painted light.** Flat bands on a mix of the local and the mass normal:
+  shade, cream, and full white on the lumps turned most to the sun, with narrow
+  transitions. A broad sunward self-shadow, never on sun-facing faces, where it
   reads as a crater. A rim light, and a darker flat base.
+- **Brushwork.** Brush strokes in the cloud's own metres curl round each lobe
+  along the terminator (`cloud_strokes`): they break every band edge into
+  dry-brush cuts and pool pigment along the strokes. Beyond the close relief,
+  scalloped brush dabs break the silhouette (`cloud_brush`). Both stay a few
+  pixels across at any distance, stepping through blended octaves in metres so
+  nothing swims, and never reach more than a tenth of a cloud's size. A storm's
+  cloud adds broad strokes at its own scale and layers its bands darker toward
+  the base and brighter toward the top; it skips the self-shadow probe, whose
+  cut drew round holes at that size. The strokes live in the shader, not the
+  atlas: every RGBA8 texel already holds four forms.
 
 The third-resolution colour target, depth reconstruction, edge repair, decks,
 rain and fog are as before. The visibility veil for blended effects
@@ -112,7 +123,8 @@ rain and fog are as before. The visibility veil for blended effects
 
 ## Shadows (`src/cloud_shadow.jo`, `src/cloud_shadow_map.jo`)
 
-Each frame the clouds near the camera are drawn into a coverage map in
+The map is redrawn only every few frames (below), so "each frame" means each
+redraw: the clouds near the camera are drawn into a coverage map in
 sun-projected coordinates: a point P maps to `P.xz - k*P.y`, with `k =
 sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 
@@ -124,7 +136,12 @@ sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
   no edge test. Flat forms take three slab taps instead of four.
 - **Drawing it.** One instanced quad per cloud covers its projected box. Four
   footprint taps (one per height slab) project the cloud along the sun.
-- **Edges.** The penumbra widens with the slab's height above the ground.
+- **Edges.** The map holds two channels: the outline's coverage as a smooth
+  ramp about a texel each side (x), and the shadow's strength (y, the cloud's
+  opacity and the edge fade). The full-resolution multiply cuts the ramp sharp
+  (`cloud_shadow_edge`): a quick transition with a hint of softness, never
+  narrower than the ramp's change across a pixel, which would stair-step. The
+  reduced-resolution tint and ramp are smooth, so they enlarge cleanly.
 - **Combining.** Overlapping clouds combine as coverage: `a + b(1 - a)`.
 
 The shadows are applied in screen space (`apply_cloud_shadows`), after the
@@ -159,6 +176,37 @@ so between redraws only the clouds' own centimetres of drift wait; no stepping
 shows and no second map is blended.
 
 All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs`).
+
+## Storms (`src/lightning.jo`, `src/storm_render.jo`, `src/weather_scene.jo`)
+
+- **Lightning.** One deterministic schedule per saved storm (`lightning_slot_strike`):
+  time is cut into 5.5 s slots, four in five hold a strike, 45% of them cloud to
+  ground. A strike has three or four return strokes over 0.55 s. Its channel
+  (`lightning_bolt`) is a jagged walk with forked branches: from 400 m inside the
+  cloud to the sea, or crawling just under the base. The bolts are camera-facing
+  ribbons at least about two and a half pixels across, with a bloom, dimmed but
+  never hidden by cloud and rain. The same strike lights its cloud from inside
+  (`cloud_flash`, falling off over about 3 km), flashes the sky near it, and is
+  heard after its distance at 343 m/s (`ambience_thunder`).
+- **Rain shafts** (weather kind 8): a few dark columns and curtains under the
+  storm's core, clear air between, the lower rain carried downwind (the layer's
+  box turns with the storm's wind), streaked, and ragged scud hanging under the
+  base. The march holds to their cylinder, eight samples. The squall's veil is
+  thinner under a storm.
+- **Rain inside and under a storm.** A second, denser set of streaks; streaks
+  follow the airflow and lengthen with speed. Beads on the windscreen in the
+  cockpit. Near a storm's core the view closes in, darker and greyer.
+- **Inside a cloud.** The mist carries darker and lighter masses at a few tens of
+  metres, sampled along the view in world metres, so they rush past with speed and
+  turbulence. `CLOUD_INSIDE_SIZE`, `_CONTRAST` and `_BRIGHTNESS` tune it;
+  `AEGEAN_CLOUD_INSIDE="size contrast brightness"` overrides them without a rebuild.
+- **Turbulence** (`weather_turbulence`): the bodies of the clouds near the camera
+  (`cloud_weather_bodies`) make the air rough inside them, 0.12 in fair cumulus up
+  to 1 in a thunderstorm, plus the gust front under a storm. It reaches the flight
+  model twice: eddies and drafts in the wind (`weather_turbulent_gust`), and roll,
+  pitch and yaw kicks, each the change of a bounded displacement
+  (`_turbulence_kick`), so the aircraft is knocked about its path and comes back.
+  `tests/storm_test.jo` holds it flyable hands off.
 
 ## Developer controls
 
