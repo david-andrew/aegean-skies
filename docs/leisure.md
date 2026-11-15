@@ -100,6 +100,21 @@ funny or useful (time passes, people are met, the plane is looked after).
 17. **Notes rising from music in the world** (not the radio): small notes float up from whoever
    is playing, so the music can be found by looking round. See "Rising notes" in the glossary.
 
+## Built (fishing, round three)
+
+18. **Fish stalls in the open**:
+    - each harbour town's stall stands on open quay ground (or its square), found from the town's
+      fixed geometry and checked by the world audit;
+    - its trestle and poles are solid to walk round;
+    - the smugglers' cove has none.
+19. **Buckets that come from somewhere**: every bucket is an object in the world with an owner
+    and a place.
+    - his own waits in his locker on the home quay;
+    - fishermen, the harbour office and the chandler lend theirs (by their boat or counter), by
+      standing, and remember it coming back;
+    - a chandler's sells new ones, put on the counter;
+    - a bucket set down stays there, and saves keep every bucket where it is.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
@@ -124,9 +139,12 @@ funny or useful (time passes, people are met, the plane is looked after).
 - Fishing: **F** at the water's edge on a dock in a harbour town. F, Space or the first button
   casts and strikes. With a fish in the hand: **B** (or the button) puts it in the bucket, **X** throws
   it back; Escape stops (he walks off holding it, and picks up the bucket).
-- On foot with a catch: at the town's market, F sells it all; X at the water's edge throws the held
-  fish back; B puts it in the carried bucket. Holding a fish he can't start fishing, stroke a cat, haul in the line, take the waters or work on the aircraft; carrying a bucket of fish, he can't haul, bathe or work on the aircraft either. At a chandler's or the market without a bucket: buy
-  one. Near one's bucket set down: pick it up.
+- On foot with a catch: at the town's fish stall, F sells it all; X at the water's edge throws the
+  held fish back; B puts it in a bucket within reach.
+- Buckets, on B: take yours from the locker, or put it back; pick up a bucket within reach (your
+  own, or one lent you); put one back at its owner's boat or counter; put the bucket down where
+  you stand. In talk: "Could I borrow a bucket?" and "I've brought your bucket back." At a
+  chandler's: buy one (it's put on the counter). Holding a fish he can't start fishing, stroke a cat, haul in the line, take the waters or work on the aircraft; carrying a bucket of fish, he can't haul, bathe or work on the aircraft either.
 - The barber: **F** at his chair on the waterfront by the hotel's corner.
 - Swimming: **G** at the water's edge of a beach or the end of a dock; walk to swim (Shift: a
   strong stroke); out where the ground rises, or **F** to climb onto a dock.
