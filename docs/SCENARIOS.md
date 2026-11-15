@@ -2,6 +2,11 @@
 
 Pause (P/F1), select **Scenarios**, then **Battle over the strait**. The button replaces the current situation and resumes immediately. P opens the ordinary pause menu again; all normal flight, weapons, bailout, weather and debug controls remain available. No restart, mission mode, victory screen or automatic return timer is involved. This does not overwrite a living-world save. Scenario notebook edits use a separate save key.
 
+Each side's pilots have a skill, aggression and caution by formation slot (`STRAIT_PILOTS` in
+`src/scenarios.jo`), and pairs fly on each other's wing: Orenthia brings a reckless ace at the
+point and a cautious pair behind him. The fight is kept under the overcast's base
+(`Battle.ceiling` 600 m).
+
 The first situation starts at 09:30 on day zero. Kalyra's blue-and-white Gull flight meets Orenthia's navy-and-gold flight (both carry their national roundels) over the eastern channel. Eight aircraft per side approach from roughly six kilometres apart. The player starts at the back of a loose V, with cruise power already set. The saved weather combines an overcast deck and a mild rain cell: about 650 m cloud base, above a 440–500 m approach. The cloud layer remains the normal three-dimensional weather and can be flown through.
 
 ## Ownership and loading
