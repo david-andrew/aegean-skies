@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
@@ -202,7 +202,7 @@ blue discs that stay in every frame are **speed flecks**.
   scaled up by its weight. They thin as it planes and stop in the air.
 - **Code:** `src/pilot.jo` `_bow_sheets`; the curtains' scale is `boat_spray_scale` in
   `src/aircraft_boats.jo`, applied in `src/splash.jo` `splash_instances`.
-- **Capture:** `AEGEAN_CRAFT=18 AEGEAN_CAPTURE_LAUNCH=takeoff-side` (a camera abeam on a takeoff run).
+- **Capture:** `AEGEAN_CRAFT=<the Do X> AEGEAN_CAPTURE_LAUNCH=takeoff-side` (a camera abeam on a takeoff run).
 
 ### Splash streaks
 
@@ -961,14 +961,17 @@ On the rivers branch until it lands.
   aircraft can sweep as it swings round its buoy), no shoal within 15 m of it, clear of every quay,
   mole, dock, the seaplane buoy, the harbour's boats and the ships' anchorage, out of the
   seaplanes' approach lanes, with a straight run for the [harbour launch](#harbour-launch) from a
-  dock, and as sheltered as the coast allows. The aircraft lies nose to the buoy, facing the
-  harbour.
+  dock, and as sheltered as the coast allows. The aircraft is made fast facing the harbour, then
+  **swings to the wind**: nose to the buoy and into the wind, turning faster the stronger the wind
+  and slower the bigger the aircraft, damped so it settles (a Do X comes round 90 degrees in about
+  20 s in 8 m/s); in a calm it lies as it is.
 - **Code:** `src/offshore_moorings.jo` (`offshore_moorings`, `verify_mooring`,
-  `clear_water_near`); in play, `moor_on_buoy` / `settle_big_craft` in `aegean.jo`.
+  `clear_water_near`, `buoy_swing`, `moored_centre`); in play, `moor_on_buoy` / `settle_big_craft` /
+  `swing_on_buoy` in `aegean.jo`.
 - **Rules:** deterministic (terrain and port data only, cached per harbour and radius). The world
   audit re-checks every mooring found with independent rings ("offshore mooring fouled" is severe)
   and warns where a harbour has none. `tools/mooring_survey.jo` reports all 318 sea harbours.
-- **Capture:** `AEGEAN_CRAFT=19 AEGEAN_ABOARD=1` (the H-4 starts on its buoy off Porto Vecchio).
+- **Capture:** `AEGEAN_CRAFT=<the H-4> AEGEAN_ABOARD=1` (the H-4 starts on its buoy off Porto Vecchio).
 
 ### Harbour launch
 
@@ -976,14 +979,30 @@ On the rivers branch until it lands.
 - **Definition:** the small motor boat (the canal launch's model) that takes the pilot between a
   dock and their aircraft on an [offshore mooring](#offshore-mooring): offered at the dock ("take
   the harbour launch out to your Do X") and aboard ("call the harbour launch to go ashore"). The
-  ride is seen, the camera behind the launch, or cut short with F (a [time skip](#time-skip)). A
+  ride is seen, the camera behind the launch and the pilot seated on a thwart on its foredeck, or
+  cut short with F (a [time skip](#time-skip)). A
   fare of ¤1.50 a trip goes to the harbour's market through the ledger; with an empty purse the
   boatman lets it go.
 - **Code:** `src/harbour_launch.jo` (`launch_ride`, `launch_pose`, `pay_launch`, `draw_launch`,
   `draw_buoy`); `start_launch` / `launch_step` / `finish_launch` in `aegean.jo`.
 - **Rules:** no saving during a ride; a saved game restores the aircraft on its buoy (found again
   from the line's anchor).
-- **Capture:** `AEGEAN_CRAFT=18 AEGEAN_CAPTURE_LAUNCH=out|ashore|cut|save|switch:ID`.
+- **Capture:** `AEGEAN_CRAFT=<a big boat> AEGEAN_CAPTURE_LAUNCH=out|ashore|cut|save|switch:ID`.
+
+### Fuel lighter
+
+- **Aliases:** the lighter, the lighterman.
+- **Definition:** a small tank boat (the [harbour launch](#harbour-launch)'s hull with a riveted
+  fuel tank, a hand pump and a hose reel) that brings fuel out to an aircraft on an
+  [offshore mooring](#offshore-mooring). Aboard on the buoy with room in the tank: "call the fuel
+  lighter out (88 λ a litre, ¤2 to come out)". The call-out goes to the harbour through the ledger
+  (refused with an empty purse); the lighter comes alongside and the fuel panel ("Fuel lighter")
+  sells the harbour pier's own fuel at its price and dues, from its market's stock, as at the pier.
+  It goes home when the panel closes, or turns back if the aircraft casts off.
+- **Code:** `src/harbour_launch.jo` (`pay_harbour`, `LIGHTER_FEE`, `draw_lighter`); `lighter_offer`,
+  `call_lighter`, `lighter_step` in `aegean.jo`; the sale is `src/living_refuel.jo` `buy_tank_fuel`.
+- **Capture:** `AEGEAN_CRAFT=<a big boat> AEGEAN_ABOARD=1 AEGEAN_CAPTURE_LAUNCH=lighter` (also
+  `swing`: the wind held abeam, seen from above).
 
 ### Legacy towns
 
@@ -1172,7 +1191,7 @@ On the rivers branch until it lands.
   hours, strolling round the square, along the waterfront and up the main streets. Pure
   presentation: no simulation, identity, money or saving; named residents ([Townsfolk](#townsfolk))
   are unchanged. Fullest in the morning and for the evening walk, thin in the afternoon heat,
-  next to nobody at night; low and medium quality show about 35% and 60% of the high tier.
+  next to nobody at night; low and medium quality show about 35% and 50% of the high tier.
 - **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
   `ambient_draw`, `ambient_density`); called from `aegean.jo update_frame` and `draw_world`.
 - **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
@@ -2123,6 +2142,25 @@ No image: the tiers differ in budgets more than in any single view.
   windsocks), `src/airfield_audit.jo` (audit checks), `tools/airfield_survey.jo` (site search).
 - **Rules:** a field is axis-aligned and on the 14 m lattice; trees are cleared from the whole
   field, tall grass from the turf; no road or house may cross the field (the audit checks).
+- **In the living world:** a save made on the field is named after it and filed under its town;
+  the autosave counts it a safe place (parked on the wheels, or on foot there); the paper maps that
+  print airfields (the military sheets, the pilots' mooring sheet) list it, and the chart draws it
+  (a strip, a ring, its name) where the sheet prints it, survey error and all
+  (`publish_airfield_features` in `src/map_scene.jo`, `chart_fields` in `aegean.jo`). Stands 0 and
+  1 are the [air arm](#air-arm)'s, stand 2 the visitors' (the player's landplane).
+
+### Air arm
+
+- **Definition:** a country's fighters at an aerodrome: two C.R.20s bought once by the town the
+  field serves (its household purse, two pilots reserved over the civil cohort, no harbour berth:
+  their stands), each flying once a day by the flight model's controls alone: the first the
+  morning circuits at 09:30 (two laps of a racetrack round the field), the second a display over
+  the town at 16:00 (a figure eight). A sortie taxis out, lines up and runs, climbs away, flies its
+  mission, joins a long final, flares, rolls out on the brakes and taxis back to its stand. Fuel
+  comes from the town's market at the stand; bad weather, a hurt engine or a wreck keeps it down.
+- **Code:** `src/air_arm.jo` (`arm_tick`, `prepare_air_arm`, `update_air_arm`), `ArmPilot` in
+  `src/air_race.jo` (saved with the air events), the stand registration and fuel in
+  `src/living_far_aircraft.jo`; `tests/air_arm_test.jo`.
 
 ![Kalyrassa aerodrome from the air](img/airfield.png)
 
@@ -2255,6 +2293,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 |---|---|
 | `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
+| `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |

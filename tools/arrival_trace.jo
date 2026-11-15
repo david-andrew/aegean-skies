@@ -1,0 +1,153 @@
+# Arriving in a town, frame by frame. The pilot waits ARRIVAL_WARMUP wall seconds far from the
+# town (cold streaming and shaders settle there), then comes in by ARRIVAL_MODE:
+#   walk      on foot from well outside the town (its radius + 700 m, inland or along the
+#             shore), standing there through the warm-up, to the square at ARRIVAL_WALK_SPEED
+#             (8 m/s, about twice a run, by default: a harder test than a real arrival)
+#   land      in the air 4 km out to sea at 300 m, gliding down to the main dock at 60 m/s,
+#             set on the water there, then stepping ashore and walking 40 m in
+#   teleport  set down on the square at once (a worst case, not a way players arrive)
+# and stays ARRIVAL_STAY seconds. Every measured frame's interval, update and draw are logged
+# (ARRIVAL_FRAME), and each frame over ARRIVAL_SLOW_MS with the zone times of that frame alone
+# (ARRIVAL_SLOW). Timings on redfox under bench.lock; on the desktop only for attribution.
+build:
+    js = "../src/web_compat.js"
+import '../aegean.jo' as game
+use '../src/settlements.jo'
+use '../src/world.jo'
+use '../src/objects.jo'
+use '../src/world_point.jo'
+use '../src/world_terrain.jo'
+use '../src/world_towns.jo'
+record_stats()
+arr_update:(f64)->void=game.update
+arr_draw:()->void=game.draw
+town_name=env("ARRIVAL_TOWN")??"Kalyrassa"
+mode=env("ARRIVAL_MODE")??"walk"
+warmup=to_float(env("ARRIVAL_WARMUP")??"20")??20.0
+stay=to_float(env("ARRIVAL_STAY")??"20")??20.0
+slow_ms=to_float(env("ARRIVAL_SLOW_MS")??"50")??50.0
+walk_speed=to_float(env("ARRIVAL_WALK_SPEED")??"8")??8.0
+walk_from=vec2(0,0)
+frame=0
+phase=0                 # 0 starting, 1 warming up far away, 2 coming in, 3 staying, 4 done
+phase_start=0.0
+center=vec3(0,0,0);out=vec2(1,0);dock=vec3(0,0,0);ashore=vec2(0,0)
+start_at=vec3(0,0,0)
+previous=0.0;update_ms=0.0;draw_ms=0.0
+rows:vec4[]
+measure_start=0.0
+arrived_at=-1.0
+stats=""
+pending=""              # a slow frame's line, finished a frame later with its own zone times
+far_pos=vec3(0,0,0)
+
+s_radius=(name:str)->f64:
+    loop s in world_settlements:
+        if s.name==name:return s.radius
+    0.0
+ground=(p:vec2)->f64: walk_height(game.towns,f64(p.x),f64(p.y))
+put_on_foot=(p:vec2):
+    # (as stepping ashore does: the follow camera starts again behind the walker)
+    if game.me.mode!=.walking:game.follow.placed=false
+    game.me.mode=.walking
+    game.me.pos=vec3(p.x,f32(ground(p)),p.y)
+    game.walker_point=world_point(game.me.pos);game.walker_published=game.me.pos
+put_in_air=(p:vec3,toward:vec3,speed:f64):
+    d=normalize(vec3(toward.x-p.x,0,toward.z-p.z))
+    h=atan2(f64(d.x),f64(-d.z))
+    game.me.mode=.aboard
+    game.pc.state.position=p
+    game.pc.state.velocity=d*f32(speed)
+    game.pc.state.orientation=quat_euler(0,-h,0)
+    game.pc.state.angular_velocity=vec3(0,0,0)
+    game.pc.state.on_water=false;game.pc.state.crashed=false;game.pc.state.moored=false
+    game.pc.throttle=0.7
+
+update=(dt:f64):
+    global frame,phase,phase_start,center,out,dock,ashore,start_at,previous,update_ms,rows,measure_start,arrived_at,far_pos,walk_from,pending
+    now=time()
+    # (frame_stats_line lags a frame: the line taken after the next frame's draw is this one's)
+    if pending!="":print("{pending} {stats}");pending=""
+    if previous>0 and phase>=2 and phase<4:
+        rows.push(vec4(f32(now-measure_start),f32((now-previous)*1000.0),f32(update_ms),f32(draw_ms)))
+        if (now-previous)*1000.0>slow_ms:pending="ARRIVAL_SLOW t={now-measure_start:.3} ms={(now-previous)*1000.0:.2} update={update_ms:.2} draw={draw_ms:.2} tiles={world_generated} slots={world_town_slots.len()} job={world_town_job.stage} close={close_job.k}/{close_job.sites.len()}"
+    frame+=1
+    if phase==0 and frame==60:
+        finish_settlement_registry()
+        found=false
+        loop s in world_settlements:
+            if s.name!=town_name:continue
+            center=s.center;out=s.out;found=true
+            dock=if s.harbor.len()>0:s.harbor[0].at else:if s.legacy>=0:game.towns[s.legacy].docks[0] else:s.center+vec3(out.x,0,out.y)*40.0
+            ashore=if s.harbor.len()>0:s.harbor[0].quay_a else:center.xz
+            break
+        assert(found,"Unknown ARRIVAL_TOWN")
+        # (far away to warm up: 6 km out to sea, in the air)
+        far_pos=center+vec3(out.x,0,out.y)*6000.0+vec3(0,300,0)
+        if mode=="walk":
+            # (dry ground well outside the town: inland first, else along the shore)
+            reach=f32(s_radius(town_name)+700.0)
+            tangent=vec2(-out.y,out.x)
+            found_start=false
+            loop dir in [-out,tangent,-tangent,normalize(tangent-out),normalize(-tangent-out)]:
+                p=center.xz+dir*reach
+                if ground(p)>1.0:walk_from=p;found_start=true;break
+            assert(found_start,"No dry start for the walk")
+            put_on_foot(walk_from)
+        else:put_in_air(far_pos,center,0.0)
+        phase=1;phase_start=now
+        print("ARRIVAL_WARMUP town={town_name} mode={mode} center={center} dock={dock}")
+    if phase==1:
+        if mode=="walk":put_on_foot(walk_from)
+        else:game.pc.state.position=far_pos;game.pc.state.velocity=vec3(0,0,0)
+        if now-phase_start>=warmup:
+            phase=2;phase_start=now;measure_start=now
+            if mode=="teleport":put_on_foot(center.xz);arrived_at=0.0
+            if mode=="land":put_in_air(center+vec3(out.x,0,out.y)*4000.0+vec3(0,300,0),dock,60.0)
+            print("ARRIVAL_START unix={unix_time():.3}")
+    if phase==2:
+        s=now-phase_start
+        if mode=="walk":
+            span=f64(length(center.xz-walk_from))
+            f=min(1.0,s*walk_speed/span)
+            p=walk_from+(center.xz-walk_from)*f32(f)
+            game.me.pos=vec3(p.x,f32(ground(p)),p.y);game.walker_point=world_point(game.me.pos);game.walker_published=game.me.pos
+            heading=normalize(center.xz-walk_from)
+            game.me.yaw=atan2(f64(heading.x),f64(heading.y))+PI;game.me.stride=1.0;game.me.phase+=dt*8.0
+            if f>=1.0 and arrived_at<0:arrived_at=s
+        if mode=="land":
+            glide=4000.0/60.0
+            if s<glide:
+                f=s/glide
+                from=center+vec3(out.x,0,out.y)*4000.0
+                p=from+(dock-from)*f32(f)
+                p.y=f32(300.0*(1.0-f)*(1.0-f)+3.0)
+                put_in_air(p,dock,60.0)
+            else if s<glide+3.0:
+                game.debug_place(f64(dock.x),f64(dock.z),0.0)
+            else if s<glide+3.0+40.0/1.7:
+                q=ashore-out*f32((s-glide-3.0)*1.7)
+                if game.me.mode!=.walking:put_on_foot(q)
+                game.me.pos=vec3(q.x,f32(ground(q)),q.y);game.walker_point=world_point(game.me.pos);game.walker_published=game.me.pos
+                if arrived_at<0:arrived_at=s
+            else:phase=3;phase_start=now
+        if (mode=="walk" or mode=="teleport") and arrived_at>=0:phase=3;phase_start=now
+    if phase==3 and now-phase_start>=stay:
+        worst=0.0;over=0;worst_t=0.0
+        loop r in rows:
+            if f64(r.y)>worst:worst=f64(r.y);worst_t=f64(r.x)
+            if r.y>50:over+=1
+        loop i in 0..rows.len():
+            r=rows[i];print("ARRIVAL_FRAME,{i},{r.x:.4},{r.y:.3},{r.z:.3},{r.w:.3}")
+        print("ARRIVAL_END town={town_name} mode={mode} frames={rows.len()} arrived_at={arrived_at:.2} worst_ms={worst:.2} worst_at={worst_t:.2} over50={over}")
+        phase=4
+        quit();return
+    elapsed=if previous>0:now-previous else:dt
+    previous=time()
+    # (the real interval, as a player's game would step: a slow frame moves the world on further)
+    arr_update(elapsed)
+    update_ms=(time()-previous)*1000.0
+draw=():
+    global draw_ms,stats
+    started=time();arr_draw();draw_ms=(time()-started)*1000.0
+    stats=frame_stats_line()
