@@ -60,6 +60,9 @@ use 'src/touch.jo'
 use 'src/targets.jo'
 use 'src/target_scene.jo'
 use 'src/target_view.jo'
+use 'src/lead_marker.jo'
+use 'src/slipway.jo'
+use 'src/ground_fire_view.jo'
 use 'src/options.jo'
 use 'src/chart.jo'
 use 'src/planes.jo'
@@ -108,6 +111,7 @@ use 'src/trails.jo'
 use 'src/damage.jo'
 use 'src/prop_disc.jo'
 use 'src/townsfolk.jo'
+use 'src/ambient_crowd.jo'
 use 'src/cat_bonds.jo'
 use 'src/cats.jo'
 use 'src/speech.jo'
@@ -222,6 +226,8 @@ if legacy_clouds:
     puffs = instance_buffer(build_puffs(7,render_quality.cloud_fields))
 towns = [loop st in SETTLEMENTS: build_town(st)]
 init_world_towns(towns)
+# (the unnamed crowd's figures, made once now rather than as the first big town comes near)
+if geography_enabled: ambient_prepare()
 living_validation.set_living_strict(false)
 living_world = living.build_world(u64(0), harbors_from_towns(towns))
 traffic_scene = living_scene.SceneAdapter()
@@ -1344,6 +1350,7 @@ tuft = build_tuft()
 capture_audio = startup_aegean_audio_capture != none and env("SLOPPY_SCREENSHOT") != none
 audio_enabled = startup_sloppy_no_audio == none or capture_audio
 captured_audio: f32[]
+audio_capture_frames = int(f64(to_int(env("AEGEAN_AUDIO_SECONDS") ?? "") ?? 30) * 60.0)   # (frames of the mix the capture keeps)
 audio = if audio_enabled: start_audio(false) else: Audio()
 life_sound = life_audio.build_life_audio()
 world_ambience = AmbienceScene(sound=build_ambience(render_only=capture_audio))
@@ -1737,7 +1744,7 @@ if startup_sloppy_no_audio == none: music_audition_prepare(dbg.music)
 # (the chaotic stalls and spins remain an opt-in trial.)
 set_tweaks(dbg.tweaks)
 dbg.opts = options
-# AEGEAN_TWEAKS="pure,curve,grip,airframe,cloth,trim,orbit,fdm2,fdm2npcs" switches trials on from the start
+# AEGEAN_TWEAKS="pure,curve,grip,airframe,cloth,trim,orbit,fdm2,fdm2npcs,fdmsb" switches trials on from the start
 if let tw = env("AEGEAN_TWEAKS"):
     loop name in split(tw, ","):
         match name:
@@ -1752,6 +1759,7 @@ if let tw = env("AEGEAN_TWEAKS"):
             "orbit": dbg.tweaks.orbit_camera = true
             "fdm2": dbg.tweaks.flight_model = 1
             "fdm2npcs": dbg.tweaks.fdm2_npcs = true
+            "fdmsb": dbg.tweaks.flight_model = 2
             _: pass
     set_tweaks(dbg.tweaks)
 # AEGEAN_FDM2="lift=1.35,slow=1.3,..." (the Flight v2 page's copied line) sets flight model v2's numbers
@@ -1763,6 +1771,7 @@ last_shots = 0
 # brings it back up; drawn, not simulated)
 plunge = 0.0
 plunge_v = 0.0
+slap_t = -1.0                       # (the last weak float slap that threw spray)
 MUZZLES: vec3[] = [vec3(-2.7, 1.7, -1.3), vec3(2.7, 1.7, -1.3)]
 
 # a new aircraft of another kind for the player, where the old one is (moored where it was moored)
@@ -1899,6 +1908,7 @@ debug_place = (x: f64, z: f64, alt: f64):
 # Apply one complete replacement only after its builder succeeded. GPU assets/options survive;
 # no old world identity, physics history, sound scheduler, UI reference or camera spring does.
 active_scenario = ""
+slip = SlipLaunch()                 # the canal takeoff's opening down the workshop's slipway
 scenario_templates: {str: ScenarioState}
 # (`given`: put that state in place instead of building one: the title's new game, the startup's
 # own world kept aside while the title ran; its notebook stays the one already loaded)
@@ -1910,7 +1920,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
-    global leisure,leisure_spent,leisure_had,skip
+    global leisure,leisure_spent,leisure_had,skip,slip,slip_cradle_z,combat_audio
     load_started=time()
     fresh=key=="start"
     if fresh:
@@ -1949,6 +1959,9 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     broadcast.radio_place_transmitters(cockpit_radio,height)
     radio_bulletin=broadcast.RadioBulletinCache();radio_card_until=-1
     living_world=next.world;pc=next.flyer;battle=next.battle
+    if battle.ground.len()>0 and combat_audio.guns.len()>0:prepare_ground_audio(combat_audio)
+    if next.slipway:slip=start_slip_launch(pc)
+    else:slip=SlipLaunch();slip_cradle_z=SLIP_START
     traffic_scene=living_scene.SceneAdapter()
     traffic=make_living_traffic(living_world,craft_models)
     bind_living_player(pc,living_world,traffic_scene)
@@ -2793,6 +2806,7 @@ if let attitude=env("AEGEAN_CAPTURE_ATTITUDE"):
     pc.state.orientation=quat_euler(pitch,-along_quay,0)
     pc.state.velocity=quat_rotate(pc.state.orientation,vec3(0,0,-f32(length(pc.state.velocity))))
 
+if let scenario=env("AEGEAN_SCENARIO"):assert(load_scenario(scenario),"Unknown scenario")
 # The same close orbit used in play, without browser pointer-lock permission in captures.
 if let orbit=env("AEGEAN_CAPTURE_ORBIT"):
     words=split(orbit," ");assert(words.len()==3,"orbit capture: distance yaw pitch")
@@ -2801,9 +2815,39 @@ if let orbit=env("AEGEAN_CAPTURE_ORBIT"):
     pc.orbit_yaw=to_float(words[1]) ?? 0.0
     pc.orbit_pitch=clamp(to_float(words[2]) ?? 0.32,-0.05,1.35)
 
-if let scenario=env("AEGEAN_SCENARIO"):assert(load_scenario(scenario),"Unknown scenario")
+# AEGEAN_CAPTURE_DOGFIGHT="ahead across up" (after a battle scenario loads): the nearest hostile put
+# that many metres ahead, to the side and above, crossing from left to right at cruise, for
+# captures of the lead marker in a real fight. Captures only.
+if let fight=env("AEGEAN_CAPTURE_DOGFIGHT"):
+    words=split(fight," ");assert(words.len()==3,"dogfight capture: ahead across up")
+    mine=combat_index(battle,living_world.people[living_world.player].craft)
+    if mine>=0:
+        nose=quat_rotate(pc.state.orientation,vec3(0,0,-1));side=quat_rotate(pc.state.orientation,vec3(1,0,0))
+        best=-1
+        loop i in 0..battle.actors.len():
+            if battle.actors[i].side!=battle.actors[mine].side and best<0:best=i
+        if best>=0:
+            a=battle.actors[best]
+            a.state.position=pc.state.position+nose*f32(to_float(words[0]) ?? 300.0)+side*f32(to_float(words[1]) ?? -80.0)+vec3(0,f32(to_float(words[2]) ?? 15.0),0)
+            h=heading(pc.state)+PI*0.5
+            a.state.orientation=quat_euler(0,-h,0);a.state.velocity=heading_vector(h)*f32(length(pc.state.velocity))
+            a.previous=a.state.position;a.previous_point=craft_point(a.state);a.previous_rotation=a.state.orientation
+            a.pilot.formation=false;a.pilot.target=mine
+            battle.actors[best]=a
+
+# AEGEAN_CAPTURE_CANAL_RUN=1: after the slipway hand-over, the canal scenario's tests' steering
+# flies the run; AEGEAN_CAPTURE_POST=k watches it from behind ground post k. Captures only.
+capture_canal_run=env("AEGEAN_CAPTURE_CANAL_RUN")!=none
+capture_canal_plan=canal_run_plan()
+capture_post=to_int(env("AEGEAN_CAPTURE_POST") ?? "-1") ?? -1
+capture_post_look=env("AEGEAN_CAPTURE_POST_LOOK")!=none
+
+# AEGEAN_NO_GROUND_FIRE=1: the canal's posts removed, for an A/B of their cost in one binary.
+if env("AEGEAN_NO_GROUND_FIRE")!=none:battle.ground=[]
+
 if startup_aegean_capture_panel=="scenarios":dbg.page=6;set_paused(true)
 if startup_aegean_capture_panel=="flight":dbg.page=8;set_paused(true)
+if startup_aegean_capture_panel=="flight-levers":dbg.page=8;dbg.fdm2_tab=1;set_paused(true)
 # AEGEAN_CAPTURE_PANEL=game|game-confirm opens the pause menu's Game page (with a load waiting for
 # its yes on slot 2); =saved shows the autosave's card at the captured frame (SLOPPY_FRAMES)
 # (paused a second in, once the camera has settled on the quay)
@@ -2894,10 +2938,8 @@ stage_capture_race = (stage: str):
 race_offer_here = () -> int:
     if paused or show_chart or ui != .none or notebook.open: return -1
     if me.mode == .walking:
-        if holding_cargo() >= 0 or near_job_cargo() >= 0 or near_own_craft() or near_board() >= 0 or nearest_folk(folks, me.pos, 3.5) >= 0 or map_shop_here() != "": return -1
-        if pc.state.moored:
-            if let a = mooring_anchor():
-                if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: return -1
+        # (beside other things to do, it is offered with them: walk_offers)
+        if holding_cargo() >= 0: return -1
         k = race_offer(air_events, living_world, me.pos)
         return if k >= 0: k else: race_withdraw_offer(air_events, living_world, me.pos)
     if me.mode == .aboard:
@@ -3007,9 +3049,10 @@ fuel_pier_near = () -> refuel.FuelPier?:
     fuel_pier_seen
 
 # the fuel card's words, or "" when there is none to show
-fuel_offer_text = () -> str:
+fuel_offer_text = (again: bool = false) -> str:
     if paused or show_chart or ui != .none or notebook.open or rescue_act == 1: return ""
-    if length((pc.state.position - fuel_offered_at).xz) < 30.0: return ""
+    # (again: offered beside stepping ashore, even after the panel was opened here once)
+    if not again and length((pc.state.position - fuel_offered_at).xz) < 30.0: return ""
     c = living_world.people[living_world.player].craft
     if c < 0 or lt.AIRFRAMES[int(living_world.aircraft[c].kind)].tank_ml - living_world.aircraft[c].fuel_ml < 1000: return ""
     if let p = fuel_pier_near(): return "F  take on fuel, {fuel_litre_price(refuel.fuel_price(living_world, p))} a litre"
@@ -3044,6 +3087,15 @@ fuel_stop_step = ():
 fuel_reading = () -> f64: if refueling(): refuel_gauge(refuel_from, refuel_to, t - refuel_start, refuel_len) else: pc.state.fuel
 
 # a sale at the open panel's pier: 0 fills up, 1 adds 10 litres, 2 adds 20
+# the most fuel the purse pays for here, in whole litres (dues included), or 0
+fuel_affordable_ml = (p: refuel.FuelPier) -> int:
+    w = living_world
+    lo = 0; hi = 400
+    loop hi - lo > 1:
+        mid = (lo + hi) / 2
+        if refuel.fuel_quote(w, p, w.player, mid * 1000).ml > 0: lo = mid else: hi = mid
+    lo * 1000
+
 fuel_take = (choice: int):
     global fuel_notice, refuel_from, refuel_to, refuel_start, refuel_len
     w = living_world; who = w.player; c = w.people[who].craft
@@ -3051,7 +3103,7 @@ fuel_take = (choice: int):
     p = fuel_panel_pier
     cap = lt.AIRFRAMES[int(w.aircraft[c].kind)].tank_ml
     before = f64(w.aircraft[c].fuel_ml) / 1000.0
-    got = refuel.buy_tank_fuel(living_world, p, who, [cap, 10000, 20000][choice], choice == 0)
+    got = refuel.buy_tank_fuel(living_world, p, who, [cap, 10000, 20000, fuel_affordable_ml(p)][choice], choice == 0)
     if got.ml > 0:
         pc.state.fuel = f64(living_world.aircraft[c].fuel_ml) / 1000.0
         refuel_from = before; refuel_to = pc.state.fuel; refuel_start = t; refuel_len = refuel_seconds(f64(got.ml) / 1000.0)
@@ -3073,6 +3125,12 @@ fuel_panel = ():
     q10 = refuel.fuel_quote(w, p, who, 10000)
     q20 = refuel.fuel_quote(w, p, who, 20000)
     options = [FuelOption("Fill up", fill.ml, fill.cents, fill.reason), FuelOption("Add 10 litres", q10.ml, q10.cents, q10.reason), FuelOption("Add 20 litres", q20.ml, q20.cents, q20.reason)]
+    # (a purse short of a full tank: as much as it pays for)
+    if fill.ml == 0 and fill.cash < fill.cents:
+        most = fuel_affordable_ml(p)
+        if most > 0:
+            q = refuel.fuel_quote(w, p, who, most)
+            options.push(FuelOption("Fill what {phoenix_text(fill.cash)} buys", q.ml, q.cents, q.reason))
     res = fuel_counter(fonts, p.name, refuel.fuel_price(w, p), fuel_reading(), f64(cap) / 1000.0, fill.stock_ml, player_cents(), options, refueling(), fuel_notice, dues = p.core >= 0 and p.core != 5)
     if res.choice >= 0: fuel_take(res.choice)
     if res.refused >= 0: fuel_notice = options[res.refused].reason
@@ -3146,7 +3204,7 @@ stage_capture_workshop = (stage: str):
             if living_world.far.people[p].role == .artisan: found = true
         if not found: _ = settlement_residents.promote_far_person(living_world, CANAL_CITY_ID, .artisan)
         loop p in living_world.far.districts[CANAL_CITY_ID].named:
-            if living_world.far.people[p].role == .artisan: living_world.people[p].pose.pos = canal_workshop
+            if living_world.far.people[p].role == .artisan: living_world.people[p].pose.pos = canal_yard
     if n == 2: print("WORKSHOP ready at frame {capture_workshop_from}; refusal='{desk_refusal(living_world, living_world.player)}' craft={c} state={living_world.aircraft[c].state} engine={living_world.aircraft[c].engine}")
     if n == 4 and stage != "prompt": open_workshop()
     if n == 6 and (stage == "underway" or stage == "confirm" or stage == "interrupted" or stage == "done"):
@@ -3246,10 +3304,7 @@ cat_here = () -> int: if me.mode == .walking and holding_cargo() < 0 and not cat
 
 cat_prompt_here = () -> str:
     if paused or show_chart or ui != .none or notebook.open or me.mode != .walking: return ""
-    if holding_cargo() >= 0 or near_job_cargo() >= 0 or rescue_act == 2 or near_own_craft() or near_map_find() >= 0 or near_board() >= 0 or nearest_folk(folks, me.pos, 3.5) >= 0 or map_shop_here() != "" or race_offer_here() >= 0: return ""
-    if pc.state.moored:
-        if let a = mooring_anchor():
-            if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: return ""
+    if holding_cargo() >= 0: return ""
     k = cat_here()
     if k < 0: return ""
     cat_prompt(cat_scene, k, presentation.cat_bonds, living_world.minute, cat_food())
@@ -3383,6 +3438,110 @@ world_input_this_frame = () -> bool:
     false
 
 # A frame's update, then (after everything that frame did) a slice of any save in progress.
+# ---------------- what can be done here, and with which key ----------------
+# Every action open to the pilot at once is offered, each on a card of its own, stacked: the
+# first that wants F has it, one more that wants F takes R; T talks and G works on the aircraft
+# as ever. The cards and the keys come from the same list, so what a card says is what its key
+# (or, on a touch screen, a finger on the card) does.
+
+struct Offer:
+    key: Key
+    words: str                      # "climb aboard your Gull" (the card puts the key before it)
+    act: str
+    hold = false                    # (held down, not pressed: "hold F  haul in the line")
+
+offer_key_name = (k: Key) -> str:
+    match k:
+        .f: "F"
+        .r: "R"
+        .g: "G"
+        .t: "T"
+        _: "?"
+
+offer_card = (o: Offer) -> str: (if o.hold: "hold " else: "") + "{offer_key_name(o.key)}  {o.words}"
+
+# (a prompt's own words, without the key the old single card put before them)
+offer_words = (s: str) -> str:
+    t = s
+    loop prefix in ["hold F  ", "F  "]:
+        if t.starts_with(prefix): t = t[prefix.len()..t.len()]
+    t
+
+offer_add = (o: mut Offer[], act: str, words: str, key: Key = .f, hold: bool = false):
+    if words == "": return
+    has_f = false
+    has_r = false
+    has_own = false
+    loop e in o:
+        if e.key == .f: has_f = true
+        if e.key == .r: has_r = true
+        if e.key == key: has_own = true
+    k = key
+    if k == .f and has_f: k = .r
+    if (k == .r and has_r) or (k != .r and k != .f and has_own): return
+    o.push(Offer(k, words, act, hold))
+
+# on foot (the baths, once in them, keep their own keys: F an hour, T till evening, R leave)
+walk_offers = () -> Offer[]:
+    o: Offer[]
+    if me.mode != .walking or ui != .none or skip.active or presentation.thermal.active or paused or show_chart or notebook.open: return o
+    held = holding_cargo() >= 0
+    if not held and near_thermal().0 >= 0:
+        nearby = near_thermal(); reserved = presentation.thermal.paid_place == THERMAL_SITES[nearby.0].place and presentation.thermal.paid_until > living_world.minute
+        offer_add(o, "thermal", if not nearby.1: "take the waters" else: if reserved: "return to your room until morning" else: "stay at the inn until morning — {phoenix_text(thermal_life.THERMAL_INN_CENTS)}")
+    if held:
+        point = portage.cargo_loading_spot(living_world,living_world.people[living_world.player].craft)
+        offer_add(o, "cargo", if point != none and length(me.pos-point!) < 4: "put the crate into the hold" else: "put down or hand over the crate")
+    else if near_job_cargo() >= 0: offer_add(o, "cargo", "pick up {cargo_view.cargo_label(living_world,living_world.cargo[near_job_cargo()])}")
+    if rescue_act == 2: offer_add(o, "rescue", offer_words(rescue_prompt()))
+    if not held and near_own_craft():
+        offer_add(o, "aboard", "climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
+        if pc.state.moored: offer_add(o, "tinker", "work on the aircraft", .g)
+    if not held and not near_own_craft() and near_map_find() >= 0: offer_add(o, "map-find", "pick up the {map_title(near_map_find())}")
+    if not near_own_craft() and near_board() >= 0: offer_add(o, "notices", "read the notices")
+    offer_add(o, "leisure", offer_words(leisure_prompt()))
+    k = nearest_folk(folks, me.pos, 3.5)
+    if k >= 0: offer_add(o, "talk", "talk to {living_world.people[folks[k].person].name}", .t)
+    if map_shop_here() != "": offer_add(o, "map-shop", offer_words(map_shop_prompt(map_shop_here())))
+    offer_add(o, "workshop", offer_words(workshop_prompt()))
+    race = race_offer_here()
+    if race >= 0: offer_add(o, "race", offer_words(race_offer_text(air_events, living_world, race)))
+    offer_add(o, "cat", offer_words(cat_prompt_here()))
+    if not held and not near_own_craft() and pc.state.moored:
+        if let a = mooring_anchor():
+            if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: offer_add(o, "haul", "haul in the line", hold = true)
+    o
+
+# aboard, on the water (a wreck has only R, to be towed home: its own card)
+aboard_offers = () -> Offer[]:
+    o: Offer[]
+    st = pc.state
+    if me.mode != .aboard or ui != .none or paused or show_chart or notebook.open or st.crashed or st.capsized or st.beached: return o
+    if rescue_act == 1: offer_add(o, "rescue", offer_words(rescue_prompt()))
+    if st.moored and vessel_mooring.vessel < 0: offer_add(o, "ashore", "step ashore      Shift  open the throttle")
+    if not st.moored and (mooring_spot(pc, towns) != none or find_vessel_mooring(vessels, st, pc.spec.span) != none): offer_add(o, "moor", "moor here")
+    offer_add(o, "fuel", offer_words(fuel_offer_text(again = true)))
+    race = race_offer_here()
+    if race >= 0: offer_add(o, "race", offer_words(race_offer_text(air_events, living_world, race)))
+    o
+
+offers_now = () -> Offer[]: if me.mode == .aboard: aboard_offers() else: walk_offers()
+
+# the offer whose key went down this frame ("" for none)
+offer_pressed = (o: Offer[]) -> str:
+    loop e in o:
+        if not e.hold and vpressed(e.key): return e.act
+    ""
+# (a held one, hauling in the line, while its key is down)
+offer_held = (o: Offer[], act: str) -> bool:
+    loop e in o:
+        if e.act == act and e.hold and vdown(e.key): return true
+    false
+
+# the cards, stacked up from where the single card stood (the first nearest the bottom)
+draw_offers = (o: Offer[], bottom: f64):
+    loop k in 0..o.len(): prompt_card(fonts, offer_card(o[k]), bottom + 52.0 * f64(k))
+
 # AEGEAN_FRAME_STATS=1: the frame statistics every 120 frames (FRAME_STATS lines), the same for
 # the title and for play, for timing runs on redfox
 frame_stats_on = env("AEGEAN_FRAME_STATS") != none
@@ -3551,7 +3710,7 @@ update_frame = (dt: f64, saves: bool = true):
     update_rescue()
     if me.mode == .aboard and frame_number() % 30 == 15 and not paused and not show_chart and ui == .none: meet_fuel_step()
     race_k = race_offer_here()
-    if race_k >= 0 and vpressed(.f) and not typing:
+    if race_k >= 0 and offer_pressed(offers_now()) == "race" and not typing:
         if player_air_entry(air_events.meets[race_k], living_world.player) != none:
             back = air_withdraw_refund(air_events.meets[race_k], player_air_entry(air_events.meets[race_k], living_world.player)!, living_world.tick)
             out = withdraw_player_air_meet(air_events, living_world, air_events.meets[race_k].id)
@@ -3615,15 +3774,13 @@ update_frame = (dt: f64, saves: bool = true):
               if not world_held():
                   portage.cargo_person_pose(living_world,living_world.player,me.pos)
                   living_world.people[living_world.player].pose.rot = lt.facing(vec3(f32(sin(me.yaw)),0,f32(cos(me.yaw))))
-              if vdown(.f) and holding_cargo() < 0 and not near_own_craft() and pc.state.moored:
-                  if let a = mooring_anchor():
-                      if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: haul_in(dt)
-              # talk to whoever is near; read the board
-              cargo_used = vpressed(.f) and cargo_interact()
-              if vpressed(.f) and not cargo_used and rescue_act == 2:
-                  cargo_used = true
-                  do_rescue()
-              if vpressed(.t) or pad_talk:
+              # what can be done here: one action per key press (walk_offers)
+              offers = walk_offers()
+              act = if typing: "" else: offer_pressed(offers)
+              if offer_held(offers, "haul"): haul_in(dt)
+              if act == "cargo": _ = cargo_interact()
+              if act == "rescue": do_rescue()
+              if act == "talk" or pad_talk:
                   pad_talk = false
                   k = nearest_folk(folks, me.pos, 3.5)
                   if k >= 0:
@@ -3639,33 +3796,25 @@ update_frame = (dt: f64, saves: bool = true):
                               ui_line = "Is that {job_cargo(id)} from {living_world.people[j.poster].name}?"
                       ui_news = 0
                       mouse_lock(false)
-              if vpressed(.f) and not cargo_used and holding_cargo() < 0 and not near_own_craft() and near_map_find() >= 0:
-                  cargo_used = true
+              if act == "map-find":
                   found = living.find_map(living_world,near_map_find(),living_world.player)
                   if not found.ok: say_toast(found.message)
-              if vpressed(.f) and not cargo_used and not near_own_craft() and near_board() >= 0:
+              if act == "notices":
                   ui = .board
                   ui_place = near_board()
                   mouse_lock(false)
-              if vpressed(.f) and not cargo_used and ui == .none and leisure_prompt() != "":
-                  cargo_used = true
-                  leisure_act()
-              if vpressed(.g) and ui == .none and holding_cargo() < 0 and near_own_craft() and pc.state.moored:
+              if act == "leisure": leisure_act()
+              if act == "tinker":
                   global leisure_ui, leisure_line
                   ui = .leisure
                   leisure_ui = 3
                   leisure_line = ""
                   mouse_lock(false)
-              if vpressed(.f) and not cargo_used and map_shop_here() != "":
-                  cargo_used = true
-                  open_map_counter(map_shop_here())
-              if vpressed(.f) and not cargo_used and near_map_find() < 0 and near_board() < 0 and leisure_prompt() == "" and workshop_prompt() != "":
-                  cargo_used = true
-                  open_workshop()
-              if vpressed(.f) and not cargo_used and not cat_busy(cat_scene) and cat_prompt_here() != "":
-                  cargo_used = true
+              if act == "map-shop": open_map_counter(map_shop_here())
+              if act == "workshop": open_workshop()
+              if act == "cat" and not cat_busy(cat_scene):
                   me.yaw = cat_begin(cat_scene, cat_here(), cat_prompt_here().starts_with("F  give"), me.pos)
-              if vpressed(.f) and not cargo_used and holding_cargo() < 0 and near_own_craft():
+              if act == "aboard":
                   me.mode = .aboard
                   mouse_lock(true)
                   pc.placed = false
@@ -3704,7 +3853,17 @@ update_frame = (dt: f64, saves: bool = true):
                 pc.throttle=1.0-clamp((f64(frame_number())-prop_sweep_from)/(prop_sweep_secs*60.0),0.0,1.0)
                 # a sound engine, so the sweep starts from true full power
                 pc.state.damage.parts[int(PartId.engine)].health=1.0;pc.state.engine_damage=0.0
-            if me.mode==.aboard:fly(pc, dt, t)
+            if me.mode==.aboard:
+                if slip.active and active_scenario=="canal":
+                    global slip
+                    _=step_slip_launch(slip,pc,dt,t)
+                    if slip.splash:slip_splash(pc,spray_ps)
+                else if capture_canal_run and active_scenario=="canal":
+                    # (capture runs only: the tests' canal steering instead of the keys)
+                    e=flight_env(t,pc.state.position)
+                    step(pc.spec,pc.state,canal_run_controls(pc,capture_canal_plan,e),e,dt)
+                    pc.prop_angle+=dt*prop_rotation_speed(pc.state,pc.feedback.speed);pc.sea_t=t;feel(pc,dt,e.wind)
+                else:fly(pc, dt, t)
             if not dbg.no_damage: collide_vessels(vessels,pc.spec,pc.state,previous_vessel_contact,living_world.people[living_world.player].craft)
             set_drag_scale(1.0)
             # into the water hard (falling fast): a column of spray thrown up all round, and the
@@ -3737,21 +3896,29 @@ update_frame = (dt: f64, saves: bool = true):
             chase(pc, dt)
             spray(pc, craft_models, spray_ps, dt)
             # what the aircraft hit: a splash, a crunch, parts tearing away; seen, heard and felt
+            global slap_t
             loop ev in pc.state.damage.events:
                 hard = clamp(log(1.0 + ev.strength / 2000.0) / 6.0, 0.0, 1.0)
                 if hard < 0.05: continue
                 crunch = ev.kind != .splash
+                # (a float running fast slaps the water many times a second, each barely over the
+                # threshold; as impacts their bursts lingered and strung out behind into long
+                # white bands. Weak slaps throw spray a few times a second, short-lived; real
+                # impacts are unchanged)
+                weak = not crunch and hard < 0.1
+                if weak and t - slap_t >= 0.0 and t - slap_t < 0.3: continue
+                if weak: slap_t = t
                 n = int(6.0 + 60.0 * hard)
-                emit(spray_ps, ev.position, n, 4.0 + 14.0 * hard, rgba(0.96, 0.98, 1.0, 0.9), 1.4, 0.6 + 0.8 * hard, 0.9, normalize(ev.normal + vec3(0, 1, 0)))
+                emit(spray_ps, ev.position, n, 4.0 + 14.0 * hard, rgba(0.96, 0.98, 1.0, 0.9), if weak: min(1.4, 12.0 / max(f64(length(pc.state.velocity)), 1.0)) else: 1.4, 0.6 + 0.8 * hard, 0.9, normalize(ev.normal + vec3(0, 1, 0)))
                 if crunch: emit(spray_ps, ev.position, n / 2, 6.0 + 10.0 * hard, rgba(0.42, 0.3, 0.2, 1), 1.8, 0.25, PI, vec3(0, 1, 0))
                 impact_sound(audio, ev.position, crunch, hard)
                 # (the camera feels it: a jolt in its spring)
                 pc.cam_ev += normalize(ev.impulse + vec3(0, 0.001, 0)) * f32(-3.0 * hard)
             vapor(pc, vapor_trails, hour, t)
-            if vpressed(.f) and ui != .none: pass
-            else if vpressed(.f) and rescue_act == 1: do_rescue()
-            else if vpressed(.f) and not typing and fuel_offer_text() != "": open_fuel_pier()
-            else if vpressed(.f):
+            act = if typing: "" else: offer_pressed(aboard_offers())
+            if act == "rescue": do_rescue()
+            else if act == "fuel": open_fuel_pier()
+            else if act == "ashore" or act == "moor":
                 if let ship_mooring = find_vessel_mooring(vessels,pc.state,pc.spec.span):
                     vessel_mooring = ship_mooring
                     if let point = vessel_mooring_point(vessels,vessel_mooring,pc.spec.span):
@@ -3792,6 +3959,7 @@ update_frame = (dt: f64, saves: bool = true):
             if pc.state.damage.parts[k].attached: pc.state.damage.parts[k].health = 1.0
     wind_now.speed = max(0.0, wind_now.speed + wind_bias)
     update_walkers(dt)
+    if geography_enabled and (frame_number() % 20 == 0 or (ambient_town.settlement >= 0 and not ambient_town.done)): ambient_update(if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
     # the errands one carries: told, and written in the log, when they are done or missed
     loop id, was in my_jobs:
         if not (id in living_world.jobs): continue
@@ -3853,7 +4021,7 @@ update_frame = (dt: f64, saves: bool = true):
             listener_index=combat_index(battle,living_world.people[living_world.player].craft)
             listener=if listener_index>=0:battle.actors[listener_index].state.position else:pc.state.position
             combat_near_passes(combat_visual,battle,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1,listener)
-            if combat_audio.guns.len()>0:combat_audio_passes(combat_audio,combat_visual.whizzes)
+            if combat_audio.guns.len()>0:combat_audio_passes(combat_audio,combat_visual.whizzes);combat_audio_snaps(combat_audio,combat_visual.snaps)
             if combat_audio.guns.len()>0:combat_audio_events(combat_audio,events,listener,if me.mode==.aboard:living_world.people[living_world.player].craft else:-1)
         ,(craft: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState:
             result = state
@@ -4075,6 +4243,7 @@ draw_world = (L: Light):
         draw_river_banks(L,t)
         zone("lake banks");draw_lake_banks(L,t);zone_end()
         draw_canal(L,t)
+        draw_slip_cradle(L,t)
         zone("thermal");draw_thermal(L,t);zone_end()
         zone("access bridges");draw_access_bridges(L,t);zone_end()
         zone("working land");draw_working_land(tree_meshes,L,t);zone_end()
@@ -4085,6 +4254,10 @@ draw_world = (L: Light):
         zone("towns")
         draw_world_towns(towns, L, t)
         draw_towns(towns, L, t)
+        if geography_enabled:
+            zone("ambient crowd")
+            ambient_draw(scene_camera(), L, t, hour)
+            zone_end()
         draw_hotel(hotel, leisure_light(L, hotel), t)
         draw_coffee_house(coffee, leisure_light(L, hotel, coffee.seat), t)
         if me.mode==.walking: trace_walk_precision(walker_point,follow,follow_frame,towns)
@@ -4130,6 +4303,7 @@ draw_world = (L: Light):
         ci=combat_index(battle,living_world.people[living_world.player].craft)
         left=ci>=0 and battle.actors[ci].bailed
         draw_combat_aircraft(combat_visual,battle,craft_models,L,t,if left:-1 else:living_world.people[living_world.player].craft)
+        draw_ground_fire(battle,L,t)
         pm = craft_models[pc.model]
         at = pc_at()
         if not left:
@@ -4248,8 +4422,18 @@ draw = ():
             render_camera(free.pos, forward(free), 62.0, 1.0, world_far(f64(free.pos.y)))
             ear_forward = forward(free)
         .aboard:
-            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil,view_target.bearing,view_target.weight,pc_at())
+            if pc.cockpit_view:place_cockpit_camera(craft_models[pc.model],pc.state,pc.look_yaw,pc.look_pitch,t,pc.jolt,bullet_scale,combat_visual.recoil,view_target.bearing,view_target.weight,pc_at());remember_screen_axes(pc)
             else:place_chase_camera(pc,t,view_target.bearing,view_target.weight,towns)
+            if capture_post>=0 and capture_post<battle.ground.len():
+                g=battle.ground[capture_post];toward=normalize(pc.state.position-g.position)
+                back=normalize(vec3(toward.x,0,toward.z)+vec3(0.0001,0,0))
+                eye=g.position-back*4.5+vec3(0,1.8,0)+normalize(cross(back,vec3(0,1,0)))*3.0
+                look=pc.state.position-eye
+                if capture_post_look:
+                    # (beside the post, looking at the man himself)
+                    eye=g.position+normalize(cross(back,vec3(0,1,0)))*4.0-back*1.5+vec3(0,0.3,0)
+                    look=g.position-vec3(0,0.5,0)-eye
+                precise_camera(world_point(eye),look,55.0,0.3,world_far(f64(eye.y)))
             ear_forward = if pc.cockpit_view: quat_rotate(pc.state.orientation, vec3(0, 0, -1)) else: pc.look
         .descent:place_descent_camera(descent_camera,world_far(f64(me.pos.y)))
         _:
@@ -4332,13 +4516,16 @@ draw = ():
     # (play begun from the title: the scene comes up out of the dusk it left)
     if t-title_left_at<0.7: rect(0,0,f64(screen_width()),f64(screen_height()),rgba(0.075,0.1,0.15,f32(1.0-smoothstep(0.0,0.7,t-title_left_at))))
     set_font(fonts.ui)
-    text("{int(hour):02}:{int((hour - floor(hour)) * 60.0):02}", vec2(f32(screen_width() - 80), 18), 22, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
+    clock_size = readable(22.0)
+    clock_words = "{int(hour):02}:{int((hour - floor(hour)) * 60.0):02}"
+    text(clock_words, vec2(f32(f64(screen_width()) - 24.0 - text_width(clock_words, clock_size)), 18), clock_size, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
     set_font()
     # money
     set_font(fonts.ui)
     # (the purse: the phoenix in gold over its flame, the figure in cream, flush under the clock)
     purse = phoenix_text(player_cents())
-    ptext(purse, vec2(f32(f64(screen_width()) - 24.0 - ptext_width(purse, 20)), 46), 20, rgba(1, 0.95, 0.8, 0.85), shadow = rgba(0, 0, 0, 0.4), sign = PHOENIX_GOLD, fire = PHOENIX_FLAME)
+    purse_size = readable(20.0)
+    ptext(purse, vec2(f32(f64(screen_width()) - 24.0 - ptext_width(purse, purse_size)), f32(24.0 + clock_size)), purse_size, rgba(1, 0.95, 0.8, 0.85), shadow = rgba(0, 0, 0, 0.4), sign = PHOENIX_GOLD, fire = PHOENIX_FLAME)
     set_font()
     # the people about: names over those near, a line from whoever is nearest (not through the
     # pause menu, the chart or the notebook)
@@ -4369,41 +4556,21 @@ draw = ():
                     prompt_card(fonts,"F  spend an hour in the water",190)
                     prompt_card(fonts,if lt.local_minute(living_world.minute)<1080:"T  stay until evening" else:"T  stay until morning",140)
                 prompt_card(fonts,if presentation.thermal.sleeping:"R  leave the inn" else:"R  leave the waters",90)
-            else if near_thermal().0>=0 and holding_cargo()<0:
-                nearby=near_thermal();reserved=presentation.thermal.paid_place==THERMAL_SITES[nearby.0].place and presentation.thermal.paid_until>living_world.minute
-                prompt_card(fonts,if not nearby.1:"F  take the waters" else:if reserved:"F  return to your room until morning" else:"F  stay at the inn until morning — {phoenix_text(thermal_life.THERMAL_INN_CENTS)}")
-            else if holding_cargo() >= 0:
-                point = portage.cargo_loading_spot(living_world,living_world.people[living_world.player].craft)
-                prompt_card(fonts,if point != none and length(me.pos-point!) < 4: "F  put the crate into the hold" else: "F  put down or hand over the crate")
-            else if near_job_cargo() >= 0: prompt_card(fonts,"F  pick up {cargo_view.cargo_label(living_world,living_world.cargo[near_job_cargo()])}")
-            else if rescue_act == 2: prompt_card(fonts, rescue_prompt())
-            else if near_own_craft():
-                prompt_card(fonts, "F  climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
-                if pc.state.moored: prompt_card(fonts, "G  work on the aircraft", 146.0)
-            else if near_map_find() >= 0: prompt_card(fonts, "F  pick up the {map_title(near_map_find())}")
-            else if near_board() >= 0: prompt_card(fonts, "F  read the notices")
-            else if leisure_prompt() != "": prompt_card(fonts, leisure_prompt())
-            else if nearest_folk(folks, me.pos, 3.5) >= 0: prompt_card(fonts, "T  talk to {living_world.people[folks[nearest_folk(folks, me.pos, 3.5)].person].name}")
-            else if map_shop_here() != "": prompt_card(fonts, map_shop_prompt(map_shop_here()))
-            else if workshop_prompt() != "": prompt_card(fonts, workshop_prompt())
-            else if race_offer_here() >= 0: prompt_card(fonts, race_offer_text(air_events, living_world, race_offer_here()))
-            else if cat_prompt_here() != "": prompt_card(fonts, cat_prompt_here())
-            else if pc.state.moored:
-                if let a = mooring_anchor():
-                    if f64(length(vec2(a.x - me.pos.x, a.z - me.pos.z))) < 5.0: prompt_card(fonts, "hold F  haul in the line")
+            else: draw_offers(walk_offers(), 90.0)
         .aboard:
             if pc.state.crashed or pc.state.capsized: prompt_card(fonts, "Wrecked.  R  to be towed home", 180.0)
             else if pc.state.beached: prompt_card(fonts, "Run aground.  R  to be towed home", 180.0)
             else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
-            else if fuel_offer_text() != "": prompt_card(fonts, fuel_offer_text(), 180.0)
-            else if pc.state.moored: prompt_card(fonts, "F  step ashore      Shift  open the throttle", 180.0)
-            else if rescue_act == 1: prompt_card(fonts, rescue_prompt(), 180.0)
-            else if mooring_spot(pc, towns) != none: prompt_card(fonts, "F  moor here", 180.0)
-            else if race_offer_here() >= 0: prompt_card(fonts, race_offer_text(air_events, living_world, race_offer_here()), 180.0)
+            else: draw_offers(aboard_offers(), 196.0)
         .descent: pass
         .free: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if me.mode == .aboard:
-        aim_marks(pc,not pc.cockpit_view)
+        on_ways=slip.active and active_scenario=="canal"
+        aim_marks(pc,not pc.cockpit_view and not on_ways)
+        if not pc.state.on_water and not pc.state.moored and not show_chart and not on_ways:
+            picked=if view_target.selected>=0 and view_target.items[view_target.selected].kind==0:view_target.items[view_target.selected].id else:-1
+            nose=quat_rotate(pc.state.orientation,vec3(0,0,-1))
+            if let mark=lead_mark(battle,living_world.people[living_world.player].craft,picked,pc.state.position,pc.state.velocity,nose):draw_lead_mark(mark,pc.state.position+nose*f32(LEAD_CONVERGE))
         if pc.cockpit_view:
             if let radio_hit=cockpit_radio_rect(craft_models[pc.model],pc_at(),craft_point(pc.state)):tap_card(radio_hit,.f9)
         st = pc.state
@@ -4422,7 +4589,7 @@ draw = ():
     if (me.mode == .aboard or me.mode == .walking) and not paused and not show_chart and ui == .none: draw_battle_card(fonts, battle_card, t)
     if me.mode==.aboard and not paused and not show_chart and ui==.none and not notebook.open:draw_view_target(view_target,fonts)
     if vdown(.h) and not leisure_typing(): controls_card(fonts, me.mode == .aboard)
-    else if t-max(title_left_at,0.0) > (if title_left_at<0: 7.5 else: 1.5) and t-max(title_left_at,0.0) < 22.0 and not judge_ready and active_scenario=="" and not leisure_typing(): keys_hint(fonts)
+    else if t-max(title_left_at,0.0) > (if title_left_at<0: 7.5 else: 1.5) and t-max(title_left_at,0.0) < 22.0 and not judge_ready and active_scenario=="" and me.mode != .free and not leisure_typing(): keys_hint(fonts)
     draw_ui()
     notebook_panel(fonts, notebook, clock_text(living_world, living_world.minute))
     if skip.active: time_card(fonts, skip.doing, "{lt.local_minute(living_world.minute) / 60:02}:{lt.local_minute(living_world.minute) % 60:02}", skip.fade)
@@ -4493,13 +4660,13 @@ draw = ():
         if words.len()>1 and "{frame_number()}" in words[1..words.len()]:
             save_png("{words[0]}/{frame_number()}.png",screenshot())
             near_folk = len([loop f in folks: if f.shown and length(f.pos - me.pos) < 40.0: 1])
-            print("SHOT {frame_number()} mode {me.mode} pos {me.pos.x:.1} {me.pos.y:.2} {me.pos.z:.1} yaw {me.yaw:.2} ui {ui} paused {paused} minute {living_world.minute} cash {player_cents()} folk40 {near_folk}/{folks.len()}")
+            print("SHOT {frame_number()} mode {me.mode} pos {me.pos.x:.1} {me.pos.y:.2} {me.pos.z:.1} yaw {me.yaw:.2} ui {ui} paused {paused} minute {living_world.minute} cash {player_cents()} folk40 {near_folk}/{folks.len()} crowd {ambient_drawn}")
 
-# (AEGEAN_AUDIO_CAPTURE: the first 30 seconds of the mix, to a file)
+# (AEGEAN_AUDIO_CAPTURE: the first audio_capture_frames of the mix, to a file)
 capture_audio_frame = ():
     global captured_audio
-    if frame_number()<=1800: captured_audio.extend(__mix_buf)
-    if frame_number()==1800:
+    if frame_number()<=audio_capture_frames: captured_audio.extend(__mix_buf)
+    if frame_number()==audio_capture_frames:
         if let path=startup_aegean_audio_capture: assert(save_wav(path,Sound(captured_audio)))
 
 # the panels open over the scene: a conversation, a board, a ledger
@@ -4672,10 +4839,12 @@ draw_ui = ():
                 loop g in 0..w.goods.len(): used += w.aircraft[c].cargo.qty[g] / 1000
             res = ledger(fonts, w.people[folks[ui_folk].person].name, SETTLEMENTS[ui_place].name, rows, player_cents(), used, 8)
             if res.row >= 0:
-                ok = if res.dir > 0: living.buy(living_world, ui_place, goods[res.row], 1000, living_world.player) else: living.sell(living_world, ui_place, goods[res.row], 1000, living_world.player)
+                before = player_cents()
+                ok = if res.dir > 0: living.buy(living_world, ui_place, goods[res.row], 1000 * res.qty, living_world.player) else: living.sell(living_world, ui_place, goods[res.row], 1000 * res.qty, living_world.player)
+                loads = if res.qty == 1: "a load" else: "{res.qty} loads"
                 if not ok: say_toast("No: not enough money or stock. Bring your goods ashore to sell them.")
-                else if res.dir > 0: say_toast("Bought a load of {rows[res.row].name}, {phoenix_text(rows[res.row].buy)}. It waits at the warehouse: carry it aboard with F.")
-                else: say_toast("Sold a load of {rows[res.row].name}, {phoenix_text(rows[res.row].sell)}.")
+                else if res.dir > 0: say_toast("Bought {loads} of {rows[res.row].name}, {phoenix_text(before - player_cents())}. {if res.qty == 1: "It waits" else: "They wait"} at the warehouse: carry {if res.qty == 1: "it" else: "them"} aboard with F.")
+                else: say_toast("Sold {loads} of {rows[res.row].name}, {phoenix_text(player_cents() - before)}.")
             if res.closed: ui = .none
         .maps:
             near = [loop s in living.map_sellers(living_world, living_world.player): if s.id == ui_shop: s]

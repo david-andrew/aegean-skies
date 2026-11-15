@@ -18,15 +18,16 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud bank and tower](#cloud-bank-and-tower) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Workshop repair desk](#workshop-repair-desk)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
+- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -467,6 +468,17 @@ On the rivers branch until it lands.
   path is held. The default stays the liked model until the user prefers v2.
 - **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
 
+### Sky Barons port
+
+- **Aliases:** flight model 2, the Sky Barons model, fdmsb.
+- **Definition:** Sky Barons' own `fly_air` (examples/skybarons/sim.jo) flying this game's aircraft,
+  for reference beside the liked model and [flight model v2](#flight-model-v2): the nose turned at
+  fixed rates, the path following it, speed from thrust, drag on speed squared and gravity along the
+  path. Worked in true units with the catalog's figures and drawn at the [speed scale](#speed-scale).
+  The water, land and contacts stay on the liked solver; the player's aircraft only.
+- **Code:** `src/flight_sb.jo` `fly_air_sb`; chosen on the pause menu's Flight v2 page (or
+  `AEGEAN_TWEAKS=fdmsb`); `tests/flight_sb_test.jo`; a column of `tools/fdm_compare.jo`.
+
 ### Departure resistance
 
 - **Aliases:** the AoA limit, the assist's stall margin.
@@ -860,6 +872,50 @@ On the rivers branch until it lands.
 - **Capture:** `tools/folkview.jo`; `tools/faceview.jo` (`FACEVIEW=pilot|follow|folk|cats`).
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
+
+### Ambient crowd
+
+- **Aliases:** unnamed townsfolk, the crowd, passers-by.
+- **Definition:** unnamed people in a big town (ports and capitals): sitting at the square's
+  benches and café tables, talking in pairs, a vendor or two at striped market stalls in market
+  hours, strolling round the square, along the waterfront and up the main streets. Pure
+  presentation: no simulation, identity, money or saving; named residents ([Townsfolk](#townsfolk))
+  are unchanged. Fullest in the morning and for the evening walk, thin in the afternoon heat,
+  next to nobody at night; low and medium quality show about 35% and 60% of the high tier.
+- **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
+  `ambient_draw`, `ambient_density`); called from `aegean.jo update_frame` and `draw_world`.
+- **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
+  and pose through the town shader, within 150 m; laid out once per town as it comes within
+  450 m, a loop a frame (no arrival hitch); spots and loops that touch a building are refused;
+  those who stand or sit are walking solids, strollers are not.
+- **Capture:** `AEGEAN_AT='-117963.77 -84900.62 0' AEGEAN_HOUR=17 AEGEAN_CAPTURE_LIFE=1`
+  (Kalyrassa's square); `SHOT` lines report `crowd N`, the number drawn.
+
+### Action cards
+
+- **Aliases:** offers, prompts, what can be done here.
+- **Definition:** every action open to the pilot at once gets a card of its own, stacked above
+  the first: the first that wants F has it, one more that wants F takes R (stepping ashore on F,
+  fuel on R at a fuel pier); T talks and G works on the aircraft. Cards and keys come from one
+  list, so one press does one thing; on a touch screen the card is the button.
+- **Code:** `aegean.jo walk_offers`, `aboard_offers`, `offer_add`, `offer_pressed`, `draw_offers`.
+
+### Readable type
+
+- **Aliases:** minimum type size, readable().
+- **Definition:** no text is set smaller than 12.5 points on the screen (a page's CSS pixels):
+  on a phone on its side (about 0.54 points per 2D unit) speech bubbles, name tags, prompt
+  cards, the clock and purse, conversations, the ledger, the notice board and the fuel pier grow
+  until it reads; on a desktop window nothing changes. A bubble with no room above a head goes
+  beside it, never over the face.
+- **Code:** `src/hud.jo ui_points`, `readable`, `readable_k`, `READABLE_POINTS`.
+
+### Wading
+
+- **Definition:** a walker steps through water up to 0.85 m deep (a strip of shallows at a
+  beach or a dock's side), not into the sea. The world audit still checks every place is
+  reachable without wading at all.
+- **Code:** `src/objects.jo WALK_WADE_DEPTH`, `walk_step_precise`.
 
 ### Camera wall check
 
@@ -1410,6 +1466,18 @@ No image: the tiers differ in budgets more than in any single view.
   `src/ambience_scene.jo`; `docs/ambience.md`.
 - **Rules:** sounds are synthesized, never recorded; ambient murmurs are never dialogue.
 
+### Crowd bed
+
+- **Aliases:** the harbour murmur, the café murmur.
+- **Definition:** the looped sound of a distant crowd under the harbour and café ambience: ten or
+  twelve synthesized talkers, each a buzzing voice through two moving vowel formants, speaking
+  syllables of uneven length with uneven pauses, smeared by a few soft reflections; the café's
+  adds glasses and cups touched at uneven times. Its loudness follows the people actually nearby.
+- **Code:** `src/ambience_synth.jo` (`ambience_crowd`).
+- **Rules:** at least 4.5 s long, no loudness rhythm shorter than its loop and no held pure pitch
+  (`tests/ambience.jo`). The first version, four gated pure hums in a 2.4 s loop, was heard as a
+  little repeating tune (A F# A A F#) on the quay.
+
 ---
 
 ## Process
@@ -1538,6 +1606,79 @@ No image: the tiers differ in budgets more than in any single view.
 
 ---
 
+## Combat
+
+### Lead marker
+
+- **Aliases:** the lead ring, the deflection marker, "where to aim".
+- **Definition:** a small hostile-coloured ring with a dark rim and a centre dot showing where to put
+  the gunsight so the rounds meet a moving hostile. It follows Sky Barons' `lead_from`: time of
+  flight refined twice, the rounds keeping the aircraft's own velocity, drop added back as aim
+  above. It is drawn at the guns' 450 m convergence, so it lines up with the gunsight ring in any
+  view, with a faint tie back to the target. It fills when the gunsight sits on it.
+- **Code:** `src/lead_marker.jo` `gun_lead`, `lead_mark` (selected hostile, else the nearest in a
+  25° cone, within 1 km), `draw_lead_mark`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT="420 -160 20"`.
+
+### Ground fire
+
+- **Aliases:** ground posts, riflemen and machine-gun posts, the gunners on the roofs.
+- **Definition:** scenario-owned fixed guns (`GroundGun` in a Battle) with stable negative owner IDs.
+  Riflemen take aimed single shots; machine guns fire bursts behind sandbags. They lead with the
+  round's time of flight and drop, wander by skill, swing at a limited rate (a close crossing
+  outruns them and the fire falls in behind), and wait a reaction time after first sighting. Their
+  rounds are ordinary combat rounds: the same hits, damage, tracers, muzzle flashes, whizzes and
+  splashes. Posts can be shot and fall silent.
+- **Code:** `src/combat.jo` `step_ground_fire`, `ground_sight`; `src/canal_ground_fire.jo`
+  (the canal takeoff's posts); `src/ground_fire_view.jo` (figures, sandbags, guns).
+- **Rules:** they belong to the scenario, never to the living world's population; they hold fire
+  until the slipway hand-over. A machine-gun nest swings only 110° either side of the way it faces
+  (its sandbag ring's open back stays behind the gunner). Rooftop posts stand on flat-roofed houses
+  only (their parapet slab), the iron bridge's gun at the head of its approach stair, clear of the
+  truss. `tests/canal_scenario_test.jo` bounds their hits on a takeoff run; `tests/ground_fire_test.jo`
+  the arc, waking, silencing and the sounds.
+- **Sound:** a rifle's crack or a machine gun's duller report, dulled further with distance and
+  heard late by the sound's travel, then the canal's **flutter echo** (slaps off either wall in
+  turn, each duller) and a short tail; a ground round passing close makes a sharp supersonic snap;
+  each spout a short spit and plunk. `src/combat_sound.jo` `ground_report`, `bullet_snap`,
+  `spout_report`, `ground_shot_cue`; offline listening: `sloppy --release tools/groundfire_audio.jo DIR`.
+
+### Water strikes
+
+- **Aliases:** bullet spouts, strikes on the water.
+- **Definition:** where a round (any gun's, aircraft or ground) hits the water: a thin spout a
+  metre or two tall that falls back within half a second, so a burst's strikes walk along the water
+  in a line. Only a wreck going in raises the big lingering mist column.
+- **Code:** `src/combat_view.jo` `combat_effect_events` (`.splash`); `src/combat.jo`
+  `step_combat_rounds` raises the event for every owner, ground guns included.
+
+### Screen aim
+
+- **Definition:** mouse and drag moves push the flight aim ring along the drawn camera's right
+  and up (chase, target or cockpit view, any roll), so the ring always moves the way the hand
+  did on the screen.
+- **Code:** `src/pilot.jo` `screen_aim`, `remember_screen_axes`.
+
+### Target view righting
+
+- **Definition:** the target-follow camera's up rolls back toward the horizon at a bounded rate
+  (never a snap; held when looking near the vertical), and every chase frame's up is carried
+  from the frame last drawn, so a look-at never flips. Before this, a target passing overhead
+  could leave the picture upside down for good.
+- **Code:** `src/pilot.jo` `camera_horizon_up`, `steady_camera_up`, `chase_frame`;
+  `tests/camera_mouse_test.jo`.
+
+### Slipway launch
+
+- **Definition:** the canal takeoff's opening: the aircraft on a timber cradle on the greased ways
+  inside Neravessa's workshop, engine running; the chocks come away, it slides down into the canal,
+  floats off the cradle with the ordinary splash bodies, and the yard swings it to the canal's
+  heading before handing over. The cradle stays at the foot of the ways.
+- **Code:** `src/slipway.jo` `step_slip_launch`, `draw_slip_cradle`; `src/canal_geometry.jo`
+  `slip_point` (the ramp); `src/canal_render.jo` (ways, sleepers, winch).
+
+---
+
 ## Capture switches
 
 The game and its tools take environment switches for repeatable headless captures. Run them with
@@ -1556,6 +1697,11 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |
 | `AEGEAN_CAPTURE_PANEL=notebook|options|scenarios|speech|game|game-confirm|saved` | open a panel (`game`: the pause menu's Game page; `saved`: the autosave's card) |
 | `AEGEAN_TALK=1` | talk to the nearest person |
+| `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
+| `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
+| `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
+| `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
+| `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |

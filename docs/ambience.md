@@ -17,8 +17,8 @@ A clock rewind, load jump or large listener teleport also discards queued ambien
 | Source | Authority and conditions |
 |---|---|
 | Hour bells / service peals | Registry church/hill-church landmarks and original towns' visible chapel anchors. Nearest audible church strikes 1–12 on the hour; at 09:00 on Sundays/feasts a short three-pitch service peal replaces the hour count. No startup backlog. |
-| Harbour voices / ropes / rigging | Awake, non-travelling, non-carried people physically near the quay. Loudness saturates at six bodies. Wind drives ropes and rigging. Hull hammering also requires an arrived, working mechanic nearby. |
-| Cafe voices / clinks | Actual cafe landmarks/core life venues, nearby awake bodies, 17:00–23:00. No settlement population multiplier. |
+| Harbour voices / ropes / rigging | Awake, non-travelling, non-carried people physically near the quay; the voices are the crowd bed (`ambience_crowd`: uneven synthesized talkers in a 5 s loop, no beat, no held pitch). Loudness saturates at six bodies. Wind drives ropes and rigging. Hull hammering also requires an arrived, working mechanic nearby. |
+| Cafe voices / clinks | Actual cafe landmarks/core life venues, nearby awake bodies, 17:00–23:00. The crowd bed with glasses and cups at uneven times. No settlement population multiplier. |
 | Musicians | Existing arrived performers and notes; square performances get four quiet early reflections baked into the note. Occlusion softens the note and its reflections. |
 | Beaches / cliffs | A nearby zero crossing of the canonical height field, classified by the same slope criterion as the terrain beach material. Wind increases wash/boom; sources stay at the coast. |
 | Wind / insects / owl | Actual resident tree-stand bounds, plane-tree landmarks, olive ecology and the shared `grass_cover` query. Summer afternoon sun/low rain favours cicadas; dry, calm nights favour crickets and occasional owls. |
@@ -83,6 +83,16 @@ env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1 \
 Create the sample directory first. The lab writes individual instruments, contextual quay/night/
 storm mixes, dry/reflected musician phrases, a softened quay and idle-engine comparisons. The
 storm fixture has a flash at t=1 and a source 1,029 m away; thunder begins at t=4.
+To hear the game's own mix at a start, a screenshot run writes it offline to a WAV file
+(`AEGEAN_AUDIO_SECONDS`, default 30, sets its length; a fresh save directory gives the normal
+new-game start on the Porto Vecchio jetty):
+
+```sh
+env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1 SLOPPY_SAVE_DIR=<empty dir> \
+  AEGEAN_AUDIO_CAPTURE=<out.wav> AEGEAN_AUDIO_SECONDS=40 SLOPPY_SCREENSHOT=<out.png> \
+  SLOPPY_FRAMES=2405 sloppy --release aegean.jo
+```
+
 `tools/ambience_cost.jo` is a silent adapter workload through a generated capital. Only enable
 `AMBIENCE_TIMING=1` on the quiet laptop under the shared benchmark lock; use instruction counts
 on the desktop. See `~/dev/tmp/aegean-skies/sound/report.md` for measured checks and limitations.
