@@ -12,7 +12,7 @@ const COMBAT_MAX_CRAFT = 128
 const COMBAT_MAX_ROUNDS = 2048
 
 enum CombatRole: fighter, wingman, strike, escort, flee
-enum CombatMode: pursuit, scissors, breakaway, regroup, evade, strafe, withdrawing, down
+enum CombatMode: pursuit, scissors, breakaway, regroup, evade, strafe, withdrawing, down, lag, break_turn, head_on, extend, unload, zoom, cover, approach
 enum CombatStatus: flying, disabled, escaped, wreck
 
 enum CombatEventKind: shot, hit, ignition, separated, downed, bailed, landed, fled, splash, boat_disabled
@@ -109,6 +109,20 @@ struct CombatPilot:
     controls: Controls = Controls()
     trigger = false
     formation = false              # optional approach; contact permanently releases the slot
+    # A personality, with skill and nerve: aggression presses attacks, holds head-on passes, fires
+    # from further and skips lag pursuit (and so overshoots); caution watches its tail and breaks
+    # sooner, extends to reset a fight it is not winning, and keeps with its pair.
+    aggression = 0.5
+    caution = 0.5
+    simple = false                 # a plain lead-pursuit pilot (the dogfight harness's player seat)
+    wing = -1                      # a wingman's pair leader (aircraft ID); else its formation leader
+    commit = 0                     # the tick the current manoeuvre is held until
+    turn = 1.0                     # which way it breaks or extends (+1 right)
+    away: vec3 = vec3(0,0,-1)      # an extension's heading
+    threat = -1                    # local index of the enemy on its tail, once noticed
+    noticed = -1                   # the tick that threat was first seen
+    stalemate = 0                  # ticks of a turning fight with no angle gained
+    best_angle = 3.2               # the smallest angle off the nose to the target lately
     formation_heading = 0.0
     formation_speed = 0.0
     formation_offset: vec3
@@ -225,6 +239,8 @@ struct Battle:
     brain_steps = 0
     physics_steps = 0
     finished = false
+    tactics: int[]                 # how often each CombatMode was entered (by its index)
+    ceiling = 1e9                  # a soft top for the fight (a cloud deck's base): climbs ease under it
 
 # One fixed tick of visual latency removes held/advanced-frame alternation. Human/external
 # owners retain their own pose. This copy never feeds back into simulation or collision sweeps.
@@ -343,14 +359,179 @@ _choose_target = (b: Battle, a: Combatant) -> int:
         distance = f64(length(delta))
         cost = distance*(2.0-f64(dot(f,delta/f32(max(distance,0.01)))))
         if j == a.pilot.target: cost *= 0.7
+        # (one on this aircraft's tail first, then one on a friend's)
+        if e.pilot.target >= 0 and e.pilot.target < b.actors.len() and b.actors[e.pilot.target].side == a.side:
+            cost *= if e.pilot.target == combat_index(b,a.craft): 0.6 else: 0.85
         if a.pilot.role == .escort:
             loop boat in b.boats:
                 if boat.side == a.side and length(e.state.position-boat.position) < 1500: cost *= 0.45
         if cost < score or (cost == score and (best < 0 or e.craft < b.actors[best].craft)): best = j; score = cost
     best
 
+# The dogfight, after Sky Barons' fighter (sim.jo bot_fighter, Aces' bot_pad): target choice by
+# distance weighted to the nose, lead pursuit misjudged by skill, breaking off when too close and
+# closing, a spread approach, throttling back close behind. What its physics gave its pilots for
+# free is made explicit for this flight model: lag pursuit against a hard-turning target (no
+# overshoot), a defensive break into an attacker and scissors when it overshoots, head-on passes
+# held by nerve, extending to break a stalemate or after a pass and coming back, unloading to get
+# speed back, zooming on an energy advantage, and wingmen covering their leader. Skill and the
+# personality (aggression, caution) shape every choice; the mistakes are deliberate: a late
+# reaction, a break the wrong way, fixation on a shot with an enemy behind, an overshoot, the aim
+# misjudged. Returns the way to fly and the throttle; sets the mode and the trigger.
+_dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f64, elapsed: int, was: CombatMode) -> (vec3,f64):
+    a = b.actors[index]; s = a.state; k = a.spec
+    pos = s.position; fwd = quat_rotate(s.orientation,vec3(0,0,-1)); right = quat_rotate(s.orientation,vec3(1,0,0))
+    speed = f64(length(s.velocity)); stall = k.stall_speed*pure_k(k)
+    alt = f64(pos.y)-ground
+    flat = (v: vec3) -> vec3:
+        f = vec3(v.x,0,v.z)
+        if length(f) < 0.01: vec3(fwd.x+0.0001,0,fwd.z) else: normalize(f)
+    noise = (salt: int, axis: int) -> f64: combat_noise(b.seed,a.craft,salt,axis)
+    # (an enemy within 800 m with its nose on this aircraft; noticed only after a reaction time)
+    threat = -1; nearest = 450.0+300.0*p.caution
+    if not p.simple:
+        loop j in 0..b.actors.len():
+            o = b.actors[j]
+            if j == index or not o.present or o.status != .flying or o.bailed or o.side == a.side: continue
+            if a.engagement >= 0 and o.engagement != a.engagement: continue
+            d = pos-o.state.position; dist = f64(length(d))
+            if dist >= nearest or dist < 1.0: continue
+            if f64(dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),d/f32(dist))) > 0.985-p.caution*0.05: threat = j; nearest = dist
+    if threat != p.threat: p.threat = threat; p.noticed = b.tick
+    reaction = int((0.3+(1.0-p.skill)*1.1-p.caution*0.25)*60.0)
+    alarmed = threat >= 0 and b.tick-p.noticed >= reaction
+    # (a wingman turns on whoever is on its leader's tail)
+    leader = if p.role == .wingman: combat_index(b,if p.wing >= 0: p.wing else: p.leader) else: -1
+    covering = false
+    if not alarmed and leader >= 0 and leader != index and b.actors[leader].status == .flying and b.actors[leader].present:
+        l = b.actors[leader].state
+        loop j in 0..b.actors.len():
+            o = b.actors[j]
+            if o.side == a.side or o.status != .flying or not o.present or o.bailed: continue
+            d = l.position-o.state.position; dist = f64(length(d))
+            if dist < 700.0 and dist > 1.0 and f64(dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),d/f32(dist))) > 0.9:
+                p.target = j; covering = true; break
+    t = p.target
+    has = t >= 0 and t < b.actors.len() and b.actors[t].status == .flying and b.actors[t].present
+    # Held manoeuvres run their course; a fresh threat can still interrupt an extension.
+    p.mode = was
+    held = b.tick < p.commit and (was == .break_turn or was == .scissors or was == .extend or was == .unload)
+    if held and was == .extend and alarmed: held = false
+    if not held and b.tick >= p.commit and was == .break_turn and p.caution > 0.55 and threat >= 0:
+        # (a cautious pilot, the attacker still about after its break: away, to come back later)
+        p.mode = .extend; p.away = flat(s.velocity); p.commit = b.tick+int((4.0+p.caution*5.0)*60.0); held = true
+    # (a break or a scissors pulls only as hard as the speed allows: slow, it eases off)
+    ease = f32(smoothstep(stall*1.25,stall*1.8,speed))
+    if held:
+        if p.mode == .break_turn: return (right*f32(p.turn*1.6)*ease+fwd*(1.3-ease)+vec3(0,0.12,0),1.0)
+        if p.mode == .scissors: return (right*f32(p.turn*1.4)*ease+fwd*(1.2-ease)+vec3(0,0.25,0),if speed > stall*1.6: 0.35 else: 1.0)
+        if p.mode == .unload: return (flat(fwd)+vec3(0,-0.45,0),1.0)
+        return (p.away+vec3(0,if alt > 450: -0.06 else: 0.05,0),1.0)
+    if alarmed:
+        o = b.actors[threat]
+        # (fixed on its own shot: an aggressive, less skilled pilot may not let go of it)
+        good = has and dot(fwd,normalize(b.actors[t].state.position-pos+vec3(0.0001,0,0))) > 0.96 and length(b.actors[t].state.position-pos) < 600
+        # (on a good shot, the bold press it unless the attacker is very close; and an aggressive,
+        # less skilled pilot may fix on it whatever comes)
+        pressing = good and nearest > 250.0 and p.caution < 0.6
+        fixed = pressing or (good and noise(p.noticed,7)*0.5+0.5 < p.aggression*(1.0-p.skill)*1.4)
+        if not fixed and not p.simple:
+            side = if dot(o.state.position-pos,right) >= 0: 1.0 else: -1.0
+            # (the wrong way, now and then, for the less skilled)
+            if noise(p.noticed,8)*0.5+0.5 < (1.0-p.skill)*0.3: side = -side
+            p.turn = side
+            closing = f64(dot(o.state.velocity-s.velocity,normalize(pos-o.state.position)))
+            if nearest < 220.0 and closing > 10.0 and p.skill+p.aggression > 0.9:
+                p.mode = .scissors; p.commit = b.tick+int(1.1*60.0)
+                return (right*f32(side*1.4)*ease+fwd*(1.2-ease)+vec3(0,0.25,0),if speed > stall*1.6: 0.35 else: 1.0)
+            p.mode = .break_turn; p.commit = b.tick+int((1.1+p.caution*1.2)*60.0)
+            # (and after it, turn on the attacker)
+            if p.caution < 0.7: p.target = threat; p.target_tick = b.tick
+            return (right*f32(side*1.6)*ease+fwd*(1.3-ease)+vec3(0,0.12,0),1.0)
+    # (slow and with height to spare: unload, nose down, wings level, for speed)
+    if not p.simple and speed < stall*1.35 and alt > 350.0:
+        p.mode = .unload; p.commit = b.tick+int(2.5*60.0)
+        return (flat(fwd)+vec3(0,-0.45,0),1.0)
+    if not has: return (vec3(0,0,0),1.0)
+    o = b.actors[t]
+    delta = o.state.position-pos; dist = max(f64(length(delta)),0.01); los = delta/f32(dist)
+    angle = acos(clamp(f64(dot(fwd,los)),-1.0,1.0))
+    nose_on_me = f64(dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),-los))
+    closure = f64(dot(s.velocity-o.state.velocity,los))
+    aim = intercept(delta,o.state.velocity-s.velocity,420.0*b.bullet_scale)
+    err = (1.0-p.skill)*min(dist*0.035,25.0)
+    wobble = vec3(sin(f64(b.tick)*0.021+f64(a.craft))*err,cos(f64(b.tick)*0.017+f64(a.craft))*err,0)
+    reach = 420.0+380.0*p.aggression+150.0*p.skill
+    cone = 0.9995-(1.0-p.skill)*0.002-p.aggression*0.0008
+    fire = (at: vec3) -> bool: dist < reach and f64(dot(fwd,normalize(at))) > cone
+    if p.simple:
+        p.mode = .pursuit
+        if dist < 65 and closure > 0: p.mode = .breakaway; return (-los+vec3(0,0.8,0),1.0)
+        p.trigger = fire(aim)
+        return (aim+wobble,if dist < 180 and closure > 8 and speed > stall*1.6: 0.4 else: 1.0)
+    # Head-on: hold it by nerve, fire if it lines up, break right (as both sides were taught) or,
+    # for a bold one, up; the cautious go away after it, the aggressive straight back round.
+    if angle < 0.5 and nose_on_me > 0.8 and closure > 50.0 and dist < 1800.0:
+        if dist < 140.0+(1.0-p.aggression)*380.0+p.caution*120.0:
+            p.turn = 1.0; p.mode = .break_turn; p.commit = b.tick+int(1.3*60.0)
+            if p.aggression > 0.75: return (fwd+vec3(0,1.2,0),1.0)
+            return (right*1.6+fwd*0.3-vec3(0,0.1,0),1.0)
+        p.mode = .head_on; p.trigger = fire(aim)
+        return (aim+wobble,1.0)
+    # Too close and closing: break off up and away (Sky Barons'); the fight goes on after.
+    if dist < 65 and closure > 0:
+        p.mode = .breakaway
+        return (-los+vec3(0,0.8,0),1.0)
+    # Gone past behind: come straight back round, or (slow, or cautious) extend first.
+    if angle > 1.75 and nose_on_me < 0.9:
+        if speed < stall*1.6 or (p.caution > 0.65 and dist < 600.0):
+            p.mode = .extend; p.away = flat(s.velocity); p.commit = b.tick+int((3.5+p.caution*5.0)*60.0)
+            return (p.away,1.0)
+        p.mode = if covering: .cover else: .pursuit
+        return (delta+vec3(0,f32(clamp(f64(-delta.y)*0.1,-40.0,60.0)),0),1.0)
+    # Far: closing in a spread, each its own place (Sky Barons'), with height: the skilled and the
+    # cautious look for an advantage; fast and below it, zoom up at it.
+    if dist > 1500.0:
+        across = normalize(vec3(-delta.z,0,delta.x)+vec3(0.0001,0,0))
+        spread = f32((f64(a.craft%5)-2.0)*90.0*min((dist-1500.0)/800.0,1.0))
+        over = f32(clamp(f64(o.state.position.y-pos.y)+80.0*p.skill+60.0*p.caution,-250.0,300.0))
+        p.mode = if over > 150 and speed > stall*2.2: .zoom else: (if covering: .cover else: .approach)
+        return (delta+across*spread+vec3(0,over,0),1.0)
+    # A stalemate (a turning fight with no angle gained) is broken by extending and coming back.
+    # (and a stern chase that does not close: let it go, for whoever is nearer)
+    # (progress is a firing position, or a better angle than any yet; a nose swept past a target
+    # out of range is not)
+    chasing = dist > reach and closure < 3.0
+    if (dist < reach and angle < 0.3) or angle < p.best_angle-0.08: p.best_angle = angle; p.stalemate = 0
+    else: p.stalemate += elapsed
+    if p.stalemate > int((26.0-p.caution*12.0)*60.0) and dist > 150.0:
+        p.stalemate = 0; p.best_angle = 3.2
+        if chasing or dist > reach:
+            p.target_tick = b.tick-1000; p.mode = .approach
+            return (delta,1.0)
+        p.mode = .extend; p.away = flat(s.velocity); p.commit = b.tick+int((5.0+p.caution*6.0)*60.0)
+        return (p.away,1.0)
+    # Overshoot coming: lag pursuit, aiming behind it and easing off, until the angle is right.
+    turning = f64(length(o.state.angular_velocity)) > 0.35
+    if closure > 25.0+(1.0-p.aggression)*20.0 and dist < 350.0 and (angle > 0.25 or turning) and p.aggression < 0.8:
+        p.mode = .lag
+        behind = delta-o.state.velocity*0.45
+        p.trigger = angle < 0.1 and fire(aim)
+        return (behind,if speed > stall*1.6: 0.55 else: 1.0)
+    p.mode = if covering: .cover else: .pursuit
+    # (no hanging on the propeller after a zooming target: climbing steeply and slowing, level off
+    # and let it come back down; the less skilled hold on longer)
+    if f64(fwd.y) > 0.6 and speed < stall*(1.35+0.6*p.skill):
+        p.trigger = fire(aim)
+        return (flat(delta)+vec3(0,-0.1,0),1.0)
+    p.trigger = fire(aim)
+    throttle = if dist < 180 and closure > 8 and p.aggression < 0.85 and speed > stall*1.6: 0.4 else: 1.0
+    (aim+wobble,throttle)
+
 combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     a = b.actors[index]; p = a.pilot; s = a.state; k = a.spec
+    elapsed = if p.brain_tick < 0: 6 else: b.tick-p.brain_tick
+    was = p.mode
     p.brain_tick = b.tick; p.trigger = false
     if p.target < 0 or p.target >= b.actors.len() or b.actors[p.target].status != .flying or not b.actors[p.target].present or b.actors[p.target].side==a.side or (a.engagement>=0 and b.actors[p.target].engagement!=a.engagement) or b.tick-p.target_tick>=60:
         p.target = _choose_target(b,a)
@@ -359,7 +540,15 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     speed = f64(length(s.velocity))
     ground = max(0.0,e.ground(f64(pos.x),f64(pos.z)))
     ahead = pos+s.velocity*3.0
-    low = pos.y < ground+90 or ahead.y < max(0.0,e.ground(f64(ahead.x),f64(ahead.z)))+70
+    look = pos+s.velocity*4.5
+    # (the faster it sinks, the higher it starts pulling out: a softer flight model pulls out wider)
+    sink = max(0.0,-f64(s.velocity.y))
+    low = f64(pos.y) < ground+110.0+sink*5.0 or ahead.y < max(0.0,e.ground(f64(ahead.x),f64(ahead.z)))+80 or look.y < max(0.0,e.ground(f64(look.x),f64(look.z)))+40
+    # (and the hills: the path sampled further out, for an island's slope rising ahead)
+    loop later in [1.5,3.0,4.5,6.0]:
+        if low: break
+        q = pos+s.velocity*f32(later)
+        low = f64(q.y) < max(0.0,e.ground(f64(q.x),f64(q.z)))+(if later < 3: 120.0 else: 80.0)
     hurt = s.hull_damage > 0.22+0.25*p.nerve or part_health(s.damage,.tail)<0.3 or min(part_health(s.damage,.left_wing),part_health(s.damage,.right_wing))<0.35 or s.engine_damage > 0.65 or a.fire > 0.35 or a.gun.ammo == 0 or s.fuel < k.fuel_capacity*0.04
     fleeing = p.role == .flee or hurt or p.mode == .withdrawing
     if p.formation:
@@ -387,29 +576,16 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         away = pos-a.rally; away.y = 0
         if length(away) < 1: away = fwd
         want = normalize(away)*1200.0+vec3(0,clamp(ground+250-f64(pos.y),-120.0,250.0),0)
-    else if p.target >= 0:
-        target = b.actors[p.target]
-        delta = target.state.position-pos; dist = f64(length(delta))
-        aim = intercept(delta,target.state.velocity-s.velocity,420.0*b.bullet_scale)
-        err = (1.0-p.skill)*min(dist*0.035,25.0)
-        want = aim+vec3(sin(f64(b.tick)*0.021+f64(a.craft))*err,cos(f64(b.tick)*0.017+f64(a.craft))*err,0)
-        p.mode = .pursuit
-        behind = dot(fwd,normalize(delta+vec3(0.0001,0,0))) < -0.25
-        threatened = behind and dist < 500 and dot(quat_rotate(target.state.orientation,vec3(0,0,-1)),normalize(-delta)) > 0.75
-        if threatened:
-            p.mode = .scissors
-            turn = if (b.tick/150+a.craft)%2 == 0: -1.0 else: 1.0
-            side = quat_rotate(s.orientation,vec3(turn,0,0))
-            want = fwd+side*1.4+vec3(0,0.35,0)
-        else if dist < 65 and dot(s.velocity-target.state.velocity,delta) > 0:
-            p.mode = .breakaway; want = normalize(-delta)+vec3(0,0.8,0)
-        else:
-            p.trigger = dist < 850.0*b.bullet_scale and dot(fwd,normalize(aim)) > 0.9995-(1.0-p.skill)*0.002
-    if not fleeing and p.role==.wingman and (p.target<0 or length(b.actors[p.target].state.position-pos)>900):
-        leader = combat_index(b,p.leader)
+    throttle = 1.0
+    if not fleeing and p.role != .strike:
+        fight,power = _dogfight(b,index,e,p,ground,elapsed,was)
+        if length(fight) > 0.001: want = fight; throttle = power
+    if not fleeing and p.role==.wingman and p.mode!=.cover and p.mode!=.break_turn and p.mode!=.scissors and (p.target<0 or length(b.actors[p.target].state.position-pos)>900):
+        leader = combat_index(b,if p.wing >= 0: p.wing else: p.leader)
         if leader >= 0 and b.actors[leader].present and b.actors[leader].status == .flying:
             l = b.actors[leader].state
             want = l.position+quat_rotate(l.orientation,vec3(if a.craft%2==0: -65 else: 65,25,100))-pos
+            p.mode = .regroup; p.trigger = false
     # Strike pilots prefer boats while escorts engage their attackers.
     if not fleeing and p.role == .strike:
         best = -1; dist = 1e20
@@ -426,7 +602,18 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
             if dist < 240 or (dist < 550 and dot(fwd,delta) < 0): p.mode = .breakaway; want = fwd+vec3(0,0.8,0)
             p.trigger = p.mode == .strafe and dist < 1100 and dot(fwd,normalize(aim)) > 0.997
     if low and not (p.mode == .strafe and pos.y > ground+75):
-        want = vec3(fwd.x,0.9,fwd.z); p.trigger = false; p.mode = .evade
+        want = vec3(fwd.x,0.9,fwd.z); p.trigger = false; p.mode = .evade; throttle = 1.0
+    else if p.mode != .strafe:
+        # (under a cloud deck: no climbing into it, and back down out of it)
+        if f64(pos.y) > b.ceiling-150.0 and b.ceiling > ground+450.0:
+            w = normalize(want+vec3(0.0001,0,0))
+            over = clamp((f64(pos.y)-(b.ceiling-150.0))/250.0,0.0,1.0)
+            # (a gentle way down, never a dive: at most a third of the way)
+            want = vec3(w.x,f32(max(-0.33,min(f64(w.y),0.35*(1.0-over))-0.35*clamp((f64(pos.y)-b.ceiling)/200.0,0.0,1.0))),w.z)
+        # (near the sea, no steeper dive than leaves room to pull out)
+        w = normalize(want+vec3(0.0001,0,0)); room = f64(pos.y)-ground
+        deepest = -clamp((room-200.0)/1400.0,0.0,0.9)
+        if f64(w.y) < deepest: want = vec3(w.x,f32(deepest),w.z)
     # Local separation sampled only on brain ticks; no all-pairs scan per physics substep.
     avoid = vec3(0,0,0)
     loop other in b.actors:
@@ -440,13 +627,33 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         if length(miss) < reach: avoid += normalize(miss+vec3(0,if a.craft>other.craft: 2 else: -2,0))*0.7
     if length(want) < 0.001: want = fwd
     p.controls = steer(k,s,normalize(want)+avoid)
-    p.controls.throttle = 1.0
-    p.controls.pitch *= 0.65+0.35*p.skill
-    if speed < k.stall_speed*pure_k(k)*1.25: p.controls.pitch = min(p.controls.pitch,0.15)
-    if p.mode == .pursuit and p.target >= 0:
-        other = b.actors[p.target].state
-        if length(other.position-pos) < 180 and speed > length(other.velocity)+8:
-            p.controls.throttle = 0.4; p.controls.airbrake = 0.5
+    p.controls.throttle = throttle
+    if throttle < 0.5: p.controls.airbrake = 0.5
+    if p.mode != .evade: p.controls.pitch *= 0.65+0.35*p.skill
+    # (slow: the pull eases off as the speed falls toward the stall, rather than at a cliff)
+    st = k.stall_speed*pure_k(k)
+    p.controls.pitch = min(p.controls.pitch,0.15+0.85*smoothstep(st*1.1,st*1.45,speed))
+    if p.mode == .evade:
+        # (a pull-out is flown by hand too: roll toward upright, and pull hard once the wings are
+        # up; from a steep bank the steering law spends too long rolling)
+        r = quat_rotate(s.orientation,vec3(1,0,0)); u = quat_rotate(s.orientation,vec3(0,1,0))
+        # (nearly vertical: pull straight through, the roll no matter; otherwise upside down or
+        # on a wing: roll upright first, with no pull, which would only steepen the dive; then pull)
+        vertical = f64(fwd.y) < -0.85
+        p.controls.roll = if vertical: 0.0 else: (if u.y < 0.3: (if r.y >= 0: 1.0 else: -1.0) else: clamp(f64(r.y)*3.0,-1.0,1.0))
+        p.controls.pitch = if vertical: 1.0 else: if u.y > 0.45: 1.0 else: if u.y > 0.15: 0.3 else: 0.0
+        p.controls.pitch = min(p.controls.pitch,0.25+0.75*smoothstep(st*1.05,st*1.3,speed))
+        p.controls.yaw = 0.0; p.controls.throttle = 1.0; p.controls.airbrake = 0.0
+    if p.mode == .unload:
+        # (an unload is flown by hand: wings rolled level, the nose pushed a little below the
+        # horizon, full power; the steering law would roll over and pull for a point below, the
+        # last thing a slow aircraft wants)
+        r = quat_rotate(s.orientation,vec3(1,0,0)); u = quat_rotate(s.orientation,vec3(0,1,0))
+        climb = asin(clamp(f64(fwd.y),-1.0,1.0))
+        # (rolling toward the side whose wing is up raises the lift vector: upright either way)
+        p.controls.roll = if u.y < 0: (if r.y >= 0: 1.0 else: -1.0) else: clamp(f64(r.y)*3.0,-1.0,1.0)
+        p.controls.pitch = if u.y < 0.2: 0.0 else: clamp((-0.3-climb)*2.5,-1.0,0.2)
+        p.controls.yaw = 0.0
     p
 
 bail_combatant = (b: mut Battle, i: int) -> bool:
@@ -732,7 +939,11 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
         period = if a.lod==2: 30 else: if a.lod==1: 15 else: 6
         b.actors[i]=a
         if not a.external and a.status == .flying and (a.pilot.brain_tick<0 or (b.tick+a.craft)%period==0):
+            was=a.pilot.mode
             a.pilot=combat_controls(b,i,e); b.brain_steps+=1
+            if a.pilot.mode!=was:
+                if b.tactics.len()<17:b.tactics=fill(0,17)
+                b.tactics[int(a.pilot.mode)]+=1
         if a.status == .disabled or a.bailed:
             a.pilot.controls=Controls(throttle=0,assist=0,roll=0.15)
             a.pilot.trigger=false

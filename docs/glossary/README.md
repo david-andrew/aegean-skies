@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch)
+- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -1445,26 +1445,55 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Dock fishing
 
-- **Aliases:** fishing from the dock, the catch, the bucket.
-- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and strike
-  while it is under. Bites come livelier at dawn and dusk. A fish landed is **in the pilot's hand**,
-  at its kind's size and colours, flapping hard at first and then in fits; he walks with it. Holding
-  a fish he can't cast: it goes into his **bucket** (a zinc bucket bought for a few coins at a
-  chandler's or the town's market; it stands beside him on the dock while he fishes and holds six)
-  or back into the sea (X, an arc and a small splash); B puts it in the bucket. No card offers what wants the hand he holds it in (fishing again, a cat, hauling the line, the waters, work on the aircraft). He carries the bucket, fish and all, by its
-  handle (no running with fish in it; a crate wants both hands, so the bucket goes down first, to be
-  picked up again). The catch is **not in the living world's stock** while held: it enters it only
-  at the town's market (its daily-life market venue), sold there through the ledger (production
-  into his pocket at the market, `record_creation` and `cargo_mint`, then `trade`), or at the Hotel
-  Ancora, where the kitchen grills a plate of it (production, then consumption, both recorded, and
-  the cook's charge to the house). Saves keep the fish in the hand and the bucket's contents.
-- **Code:** `src/fishing.jo` (`Angling`, `FishHold`: `fish_take`, `fish_into_bucket`,
-  `fish_throw_back`, `fish_sell`, `fish_grill`, `fish_buy_bucket`); `src/fish_view.jo` (the fish,
-  the bucket, the held pose via `figure_hand` in `src/folk.jo`); `fishing_frame`, `fish_offers` and
-  `draw_catch_scene` in `aegean.jo`; `tests/fishing_test.jo`.
-- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite|fish-dock|fish-hold|fish-walk|fish-market`
-  (`AEGEAN_FISH_KIND` the kind held, `AEGEAN_FISH_AGE` seconds since it was landed,
-  `AEGEAN_FISH_VIEW` the camera's turn from behind, `AEGEAN_FISH_DIST` its distance).
+- **Aliases:** fishing from the dock, the catch, the bucket, the fish stall, the locker.
+- **Definition:** fishing from a dock or quay in a harbour town: cast, wait for the float, and
+  strike while it is under. Bites come livelier at dawn and dusk.
+  - **The catch in hand:** a fish landed is in the pilot's hand, at its kind's size and colours,
+    flapping hard at first and then in fits. He walks with it.
+  - **No casting while holding one:** the fish goes into a bucket within reach (B) or back into
+    the sea (X, an arc and a small splash). No card offers what wants the hand he holds it in
+    (fishing again, a cat, hauling the line, the waters, work on the aircraft).
+  - **Buckets are objects in the world:** each belongs to someone and is always somewhere: in the
+    player's locker, at its owner's (by a fisherman's boat, a chandler's or office counter), set
+    down on a dock, or carried. Nothing appears in the hand; B picks a bucket up where it is and
+    puts it down where he stands, and a bucket left on a dock stays there and is saved.
+  - **Where buckets come from:**
+    - his own is in his locker at the home port;
+    - he can borrow one: ask a fisherman, the harbour office or the chandler; friendlier people
+      lend more readily, and they remember whether it came back, and how late;
+    - he can buy one at a chandler's or store, where it is put on the counter for him.
+  - **Returning:** a borrowed bucket goes back to its owner, handed over in talk or set at their
+    boat or counter.
+  - **Carrying:** a bucket of fish is carried by its handle: no running with fish in it. A crate
+    wants both hands, so the bucket goes down first.
+  - **The stock:** the catch is not in the living world's stock while held. It enters it only at
+    the town's fish stall, sold there through the ledger (production into his pocket at the
+    market, `record_creation` and `cargo_mint`, then `trade`), or at the Hotel Ancora, where the
+    kitchen grills a plate of it (production, then consumption, both recorded, and the cook's
+    charge to the house). The fish sold from a borrowed bucket are his own.
+  - **The stall:** each harbour town but the smugglers' cove has a fish stall on open quay ground
+    (or its square), found from the town's fixed geometry, clear of buildings, props, paths and
+    moorings. Its trestle and poles are solid to walk round. The world audit fails one in a
+    building or out of reach.
+  - **Saves** keep the fish in the hand and every bucket: where it is, whose, its fish, and the
+    loans remembered.
+- **Code:**
+  - `src/fishing.jo`: `Angling`, `FishHold`, `Bucket`, `BucketLoan`; `fish_take`,
+    `fish_into_bucket`, `fish_pick_up`, `fish_put_down`, `fish_ask_bucket`,
+    `fish_return_bucket`, `fish_sell`, `fish_grill`, `fish_buy_bucket`.
+  - `src/fish_buckets.jo`: where the world's buckets are kept.
+  - `src/fish_stall.jo`: the stall's and the locker's spots, and their solids.
+  - `src/fish_view.jo`: the fish, the bucket, the stall, the locker, and the held pose via
+    `figure_hand` in `src/folk.jo`.
+  - `fishing_frame`, `fish_offers` and `draw_catch_scene` in `aegean.jo`.
+  - Tests: `tests/fishing_test.jo`; the stall and locker checks in `tests/world_audit_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=fishing|fishing-bite|fish-dock|fish-hold|fish-walk|fish-market|fish-throw|fish-locker|fish-stow|fish-borrow|fish-borrowed`.
+  - `AEGEAN_FISH_KIND`: the kind held.
+  - `AEGEAN_FISH_AGE`: seconds since it was landed.
+  - `AEGEAN_FISH_VIEW`, `AEGEAN_FISH_DIST`, `AEGEAN_FISH_PITCH`: the camera's turn from behind, its
+    distance and its pitch.
+  - `AEGEAN_FISH_BACK`: the step back from the locker.
+  - `AEGEAN_FISH_WARM`: the lender's regard.
 
 ### Venue piano
 
@@ -2010,6 +2039,18 @@ No image: the tiers differ in budgets more than in any single view.
   each spout a short spit and plunk. `src/combat_sound.jo` `ground_report`, `bullet_snap`,
   `spout_report`, `ground_shot_cue`; offline listening: `sloppy --release tools/groundfire_audio.jo DIR`.
 
+### Dogfight brain
+
+- **Aliases:** the AI pilots, the enemy pilots' tactics.
+- **Definition:** how combat pilots fight: Sky Barons' fighter (lead pursuit, target choice, break
+  off when too close) with lag pursuit, defensive breaks and scissors, head-on passes, extending
+  and coming back, unloading, zooming and wingmen's cover made explicit, shaped by skill,
+  aggression, caution and nerve, with deliberate mistakes.
+- **Code:** `src/combat.jo` `_dogfight`, `combat_controls`; personalities in `src/scenarios.jo`
+  `STRAIT_PILOTS`; tests `tests/dogfight_test.jo`; harness `tools/dogfight_lab.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
+  (the brain flies the player's aircraft; frames for a clip).
+
 ### Water strikes
 
 - **Aliases:** bullet spouts, strikes on the water.
@@ -2083,6 +2124,8 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
+| `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
+| `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
