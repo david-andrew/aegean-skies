@@ -635,6 +635,8 @@ On the rivers branch until it lands.
 - **Code:** `set_speed_scale` in `src/flight.jo`; the `pure_scale` flag in `src/tweaks.jo`;
   `pure_k` converts back to true speed.
 - **Rules:** a plain scalar, not a curve; the approved version is tagged `liked-speed-3.3x`.
+  The "true speed on a curve", quick-grip, true-speed airframe and true-speed cloth trials (no
+  checkbox, only `AEGEAN_TWEAKS=curve|grip|airframe|cloth`) were retired 2026-11-15: nothing used them.
   Distance-dependent speed tricks (near boost, detail flow, whole-sea flow, axial stretch;
   `AEGEAN_SPEED_MODE`, `AEGEAN_NEAR_BOOST`) were rejected on 2026-11-10 and must not be revived.
 
