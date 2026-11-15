@@ -70,6 +70,13 @@ Sizes follow a power law within each octave. A placed cloud picks one of the
 seeds of its kind, a heading, and a mirror (half are mirrored). Every cloud of
 an air mass sits on its condensation level (`air.ceiling`).
 
+Each frame needs only some clouds: those that can be in view (a cone around
+the camera's forward, conservative for the cloud's size and the curved horizon)
+or that can shadow the shadow map (`cloud_needed`). Only these are evolved. On
+low and medium the list is rebuilt every second frame. Clouds less than about
+two pixels wide fade out (`smoothstep(0.0025, 0.005)` on half-width over
+distance). The small octave reaches 13 km.
+
 Life: a cloud swells (0.72 to 1.06 of its size) and wears away (erosion of its
 distance) at its own proportions.
 
@@ -109,17 +116,22 @@ Each frame the clouds near the camera are drawn into a coverage map in
 sun-projected coordinates: a point P maps to `P.xz - k*P.y`, with `k =
 sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
 
-- **Map size by tier:** 768 px over 28 km on low, 1024 over 36 km on medium,
-  1536 over 48 km on high (about 35 m texels). It is centred ahead of the view
-  and snapped to texels.
+- **Map size by tier:** 384 px over 28 km on low (73 m texels, redrawn every
+  second frame), 1024 over 36 km on medium, 1536 over 48 km on high (about
+  35 m texels). It is centred ahead of the view and snapped to texels.
+- **Fill.** The map fades to nothing over its outer eighth, so receivers need
+  no edge test. Flat forms take three slab taps instead of four.
 - **Drawing it.** One instanced quad per cloud covers its projected box. Four
   footprint taps (one per height slab) project the cloud along the sun.
 - **Edges.** The penumbra widens with the slab's height above the ground.
 - **Combining.** Overlapping clouds combine as coverage: `a + b(1 - a)`.
 
-Receivers sample it at their own projected point (`cloud_shadow_at`), so
-shadows fall offset by the sun's angle and land at the right place on hills and
-roofs. The receivers are:
+Receivers sample it at their own projected point, so shadows fall offset by the
+sun's angle and land at the right place on hills and roofs. Terrain, grass, sea,
+rivers and lakes compute the map coordinate per vertex (`cloud_shadow_uv`).
+Being linear in position, it is exact at every pixel, which pays one fetch
+(`cloud_shadow_fetch`). Painted objects sample per pixel (`cloud_shadow_at`).
+The receivers are:
 
 - **ground and grass** (`ground_surface`): the shadow removes 85% of the direct
   sun, leaving the cool fill and some of the ground's colour. On the seabed it
@@ -144,6 +156,8 @@ WebGL2's guaranteed limits (`tools/check_web_shaders.cjs`).
 These are not game UI.
 
 - `AEGEAN_CLOUD_SHADOWS=0` turns shadows off.
+- `AEGEAN_CLOUD_SHADOW_SKIP=ground,grass,obj,sea` leaves those receivers
+  unshaded, for cost measurements.
 - `AEGEAN_CLOUD_TIMELAPSE=k` runs the clouds' drift and lives k times faster.
 - `AEGEAN_CLOUD_FRAMES=dir` saves every second frame from frame 60. With `ffmpeg
   -framerate 30 -i dir/%05d.png -crf 18` it makes clips of moving shadows.
