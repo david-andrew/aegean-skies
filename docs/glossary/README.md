@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
+- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -2278,15 +2278,25 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Lead marker
 
-- **Aliases:** the lead ring, the deflection marker, "where to aim".
-- **Definition:** a small hostile-coloured ring with a dark rim and a centre dot showing where to put
-  the gunsight so the rounds meet a moving hostile. It follows Sky Barons' `lead_from`: time of
-  flight refined twice, the rounds keeping the aircraft's own velocity, drop added back as aim
-  above. It is drawn at the guns' 450 m convergence, so it lines up with the gunsight ring in any
-  view, with a faint tie back to the target. It fills when the gunsight sits on it.
-- **Code:** `src/lead_marker.jo` `gun_lead`, `lead_mark` (selected hostile, else the nearest in a
-  25° cone, within 1 km), `draw_lead_mark`.
-- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT="420 -160 20"`.
+- **Aliases:** the lead ring, lead marks, the deflection marker, "where to aim".
+- **Definition:** a small ring in the hostile colour on every hostile within 700 m on screen,
+  where the rounds and that hostile would meet: Sky Barons' lead ring, drawn as it draws it
+  (6 px radius, 2 px line, 0.9 alpha). It follows `lead_from`: time of flight refined twice, the
+  rounds keeping the aircraft's own velocity, drop added back as aim above.
+- **Code:** `src/lead_marker.jo` `gun_lead`, `lead_marks`, `draw_lead_marks`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 900 2400 30"`.
+
+### Player toughness, generous hits, aim assist
+
+- **Aliases:** the player's armour, hit margin, bullet magnetism.
+- **Definition:** three Tweaks under Combat. **Player toughness** (2.0) divides combat damage to
+  the player's own aircraft. **Generous hits** (on) lets the player's rounds hit within **Player
+  hit margin** (0.7 m) of each part an aircraft is hit as. **Aim assist** (off) bends the
+  player's rounds, after they leave the guns, a little toward the enemy most plainly in their
+  path (within 3° and 700 m, at most 4°/s, for their first 0.6 s); it never moves the controls or
+  the aircraft.
+- **Code:** `src/tweaks.jo`; `src/combat.jo` `bullet_damage`, `Round.wide`, `Round.assist`,
+  `_assist_target`; tests `tests/burst_test.jo`.
 
 ### Ground fire
 
