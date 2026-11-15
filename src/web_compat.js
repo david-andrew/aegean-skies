@@ -488,7 +488,9 @@
     }
     return list;
   };
-  root.AegeanLoadingProp = { table, arcs, rpmAt, bandSpeed, hash, CYCLE, STOPS, R, HUB };
+  // (the disc's rim highlight: two bright arcs, opposite, turning with the bands)
+  const RIM = [0, Math.PI].map((k) => [k + Math.PI / 4 - 0.6, k + Math.PI / 4 + 0.6]);
+  root.AegeanLoadingProp = { table, arcs, rpmAt, bandSpeed, hash, CYCLE, STOPS, R, HUB, RIM };
   if (typeof module !== "undefined") module.exports.AegeanLoadingProp = root.AegeanLoadingProp;
 })(typeof globalThis !== "undefined" ? globalThis : this);
 
@@ -538,6 +540,7 @@
     '#aegean-loading svg{width:88px;height:88px;overflow:visible;display:block}#aegean-loading .fill{transition:stroke-dashoffset .3s linear}' +
     '#aegean-loading .blades{animation:aegean-blade-turn' + ease + ',aegean-blade-show' + ease + '}' +
     '#aegean-loading .disc{animation:aegean-disc' + ease + '}' +
+    '#aegean-loading .rim{animation:aegean-rim' + ease + '}' +
     '#aegean-loading .band{animation:aegean-band-turn' + ease + '}' +
     '#aegean-loading .v{animation:aegean-flip .25s step-end infinite}' +
     '#aegean-loading .v1{animation-delay:-.1667s}#aegean-loading .v2{animation-delay:-.0833s}' +
@@ -546,11 +549,13 @@
     frames("aegean-blade-show", r => "opacity:" + r.blades.toFixed(3)) +
     frames("aegean-disc", r => "opacity:" + r.disc.toFixed(3)) +
     frames("aegean-band-turn", r => "transform:rotate(" + r.band.toFixed(2) + "deg);opacity:" + r.arcs.toFixed(3)) +
+    frames("aegean-rim", r => "transform:rotate(" + r.band.toFixed(2) + "deg);opacity:" + r.disc.toFixed(3)) +
     '</style><div class="stage">' +
     '<svg viewBox="-44 -44 88 88"><circle r="40" fill="none" stroke="rgba(217,212,196,.10)" stroke-width="1.5"/>' +
     '<circle class="fill" r="40" fill="none" stroke="rgba(199,158,82,.55)" stroke-width="1.5" stroke-dasharray="251.3" ' +
     'stroke-dashoffset="251.3" transform="rotate(-90)"/></svg>' +
     layer("disc", '<circle r="' + P.R + '" fill="rgba(217,212,196,.16)"/><circle r="' + (P.R - 0.8) + '" fill="none" stroke="rgba(217,212,196,.32)" stroke-width="1.1"/>') +
+    layer("rim", '<g fill="none" stroke="rgba(250,244,228,.9)" stroke-width="1.8" stroke-linecap="round">' + P.RIM.map(([a0, a1]) => '<path d="M' + at(P.R - 0.8, a0) + 'A' + (P.R - 0.8) + ',' + (P.R - 0.8) + ' 0 0 1 ' + at(P.R - 0.8, a1) + '"/>').join("") + '</g>') +
     '<div class="band">' + [0, 1, 2].map(v => layer("v v" + v, '<g fill="none" stroke="rgba(240,232,210,.92)" stroke-width="1.4" stroke-linecap="round">' + arcPaths(v) + '</g>')).join("") + '</div>' +
     layer("blades", '<g fill="#c79e52" opacity=".85"><path d="' + blade + '"/><path d="' + blade + '" transform="rotate(180)"/></g>') +
     '<svg viewBox="-44 -44 88 88"><circle r="' + P.HUB + '" fill="#8a6a35"/></svg></div>';
