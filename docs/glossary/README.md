@@ -28,7 +28,7 @@ on that unmerged branch so far.
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
-- **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus)
+- **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
 - **Reference:** [Capture switches](#capture-switches)
 
 ---
@@ -2634,22 +2634,44 @@ No image: the tiers differ in budgets more than in any single view.
   standard pad or a flight stick) and `SLOPPY_INPUT`'s pad items (`40:rt=1 930:lstick=0x0.8`) drive
   a standard pad in the running game. An older options file loads with the default controls.
 - **Tests:** `tests/gamepad_test.jo` (shaping, contexts, menus, a flight stick, binding by moving,
-  saving, and a take-off, a turn and a landing flown on a synthetic gamepad through
-  `key_controls`). Captures: `AEGEAN_CAPTURE_PANEL=controls`, `AEGEAN_CAPTURE_TAKEOFF=pad`.
+  saving, offers and hints, and a take-off, a turn and a landing flown on a synthetic gamepad
+  through `key_controls`). Captures: `AEGEAN_CAPTURE_PANEL=controls`, `AEGEAN_CAPTURE_TAKEOFF=pad`.
+  In a browser: `WEBPAD_GPU=1 node tools/web_gamepad.mjs <chrome-headless-shell> <page.html> <outdir>`
+  fakes a standard-mapping pad (`navigator.getGamepads`), works the pause menu to the Controls
+  page and flies a take-off, steering by the trace lines (SwiftShader without `WEBPAD_GPU` is too
+  slow to fly).
 
 ![The Controls page, the d-pad's ring on the inverted-Y box](img/controls-page.png)
 
 ### Pad focus
 
 - **Aliases:** the menu ring, menu nav.
-- **Definition:** the white ring a controller moves through menus drawn with Sloppy's `hud_` boxes
-  (the pause menu, the title's panels): the d-pad or left stick moves it to the nearest box that
-  way, A presses (ticks) it, left and right step a slider, LB and RB turn the pause menu's pages, B
-  closes the pause menu. It shows once a controller is touched and goes when the mouse or a key is
-  used. A scrolling page scrolls to keep it in view.
-- **Code:** `src/menu_nav.jo` (`nav_button`, `nav_checkbox`, `nav_slider`, `nav_step`); the title's
-  own list takes the d-pad through `mkey` (`src/touch.jo`). A stand-in until Sloppy's `hud_` boxes
-  take keys and a gamepad themselves (asked of the Sloppy thread, 2026-11-15).
+- **Definition:** the white ring a controller moves through menus and panels: the pause menu, the
+  title's panels, the Paint page, and the panels that draw their own buttons (the leisure menus,
+  tavli, the paper, the fuel and map counters, the workshop desk). The d-pad or left stick moves it
+  to the nearest box that way, A presses (ticks) it, left and right step a slider, LB and RB turn
+  the pause menu's pages (the ring starts on the page's tab), B goes back (closes the pause menu, a
+  panel). It shows once a controller is touched and goes when the mouse or a key is used. A
+  scrolling page scrolls to keep it in view. Lists worked by keys (talking, trading, the tavli
+  board, the paper) take the d-pad as the arrows, A as Enter, B as Escape, X and Y as trade's B and S.
+- **Code:** `src/menu_nav.jo` (`nav_button`, `nav_checkbox`, `nav_slider`, `nav_hit` for a panel's
+  own boxes, `nav_step`); `mkey` and `mrepeat` in `src/touch.jo` for keys. A stand-in for Sloppy's
+  `hud_nav` (in Sloppy after v0.36.2): when the project moves to a release with it, the hud_ wrappers
+  give way to `hud_nav(true)`.
+- **Tests:** `tests/gamepad_test.jo`; in a browser, `tools/web_gamepad.mjs` (below).
+
+### Pad hints
+
+- **Aliases:** button prompts.
+- **Definition:** once a controller is the last thing used (until a key or the mouse is), every
+  hint names its buttons instead of keys: the prompt cards ("A  step ashore      RT  open the
+  throttle"), the H card (its bindings, aboard or on foot, made from the profile in use), the
+  corner hint, and the pause menu's title ("Start to carry on"). On foot A, X and Y choose the
+  first, second and third thing on offer whatever its key (aboard, A the first); with nothing on
+  offer they press F, R and T. A key with no button where the player is stays a key.
+- **Code:** `src/controller.jo` (`pad_hints`, `pad_words`, `key_button_name`, `offer_button_name`,
+  `pad_card_lines`, `controller_offers`); `offer_card_at` and `offer_pressed` in `aegean.jo`;
+  `prompt_card`, `controls_card` and `keys_hint` in `src/hud.jo`.
 
 ## Capture switches
 
@@ -2665,6 +2687,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=plane` | the pause menu open on its Plane page (fuel, damage, mending, the scales) |
 | `AEGEAN_CAPTURE_PANEL=paint` | the pause menu open on its Paint page |
 | `AEGEAN_CAPTURE_PANEL=controls` | the pause menu open on its Controls page (gamepads and flight sticks) |
+| (the pause-menu panels) | `aircraft`, `plane`, `paint`, `scenarios`, `flight`, `flight-levers`, `tweaks`, `controls` pause at frame 60, once the camera is placed: paused from the first frame the world was drawn from an eye never put anywhere (terrain floating over the sea). Script `SLOPPY_INPUT` presses after frame 60 |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
