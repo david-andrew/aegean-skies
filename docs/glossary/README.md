@@ -2199,6 +2199,9 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/air_arm.jo` (`arm_tick`, `prepare_air_arm`, `update_air_arm`), `ArmPilot` in
   `src/air_race.jo` (saved with the air events), the stand registration and fuel in
   `src/living_far_aircraft.jo`; `tests/air_arm_test.jo`.
+- **Rules:** at a save boundary the air arm's records are the world's again, their exact flight
+  state beside each record (`release_air_owners`, as for the clubs); after a load a pilot
+  mid-sortie takes the scene back (`restore_air_owners`); `tests/air_arm_save_test.jo`.
 
 ![Kalyrassa aerodrome from the air](img/airfield.png)
 
