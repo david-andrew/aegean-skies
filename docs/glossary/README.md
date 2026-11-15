@@ -755,9 +755,9 @@ On the rivers branch until it lands.
 - **Definition:** the dark, soft-edged patches the clouds cast on land, sea, rivers, lakes and
   towns, offset from each cloud by the sun's angle and moving with clouds and sun; deep water
   goes navy, clear shallows a deeper teal, land keeps some colour.
-- **Code:** the map in `src/cloud_shadow.jo` (sun-projected coverage from each form's footprint
-  slabs), the sample `cloud_shadow_at` in `src/cloud_shadow_map.jo`; `AEGEAN_CLOUD_SHADOWS=0`
-  turns them off.
+- **Code:** `src/cloud_shadow.jo`: the map (sun-projected coverage from each form's footprint
+  slabs) and `apply_cloud_shadows`, a screen-space pass over the scene depth; the sea's glints
+  per vertex in `src/sea.jo`. `AEGEAN_CLOUD_SHADOWS=0` turns them off.
 
 ![Towers and their shadows from 3000 m](img/cloud-shadows.png)
 
