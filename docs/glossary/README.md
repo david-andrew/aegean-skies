@@ -1191,7 +1191,7 @@ On the rivers branch until it lands.
   hours, strolling round the square, along the waterfront and up the main streets. Pure
   presentation: no simulation, identity, money or saving; named residents ([Townsfolk](#townsfolk))
   are unchanged. Fullest in the morning and for the evening walk, thin in the afternoon heat,
-  next to nobody at night; low and medium quality show about 35% and 60% of the high tier.
+  next to nobody at night; low and medium quality show about 35% and 50% of the high tier.
 - **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
   `ambient_draw`, `ambient_density`); called from `aegean.jo update_frame` and `draw_world`.
 - **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
