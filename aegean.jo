@@ -106,6 +106,7 @@ use 'src/tweaks.jo'
 use 'src/title_screen.jo'
 use 'src/loading_prop.jo'
 use 'src/title_shots.jo'
+use 'src/title_battle.jo'
 use 'src/celestial.jo'
 import 'src/living_guard.jo' as living_validation
 import 'src/living_world.jo' as living
@@ -3595,14 +3596,37 @@ title_frame_step = max(1, to_int(env("AEGEAN_TITLE_FRAME_STEP") ?? "10") ?? 10)
 title_bare = env("AEGEAN_TITLE_BARE") != none   # (captures: the reel without the menu over it)
 title_shot = TitleShot()
 title_coming: TitleShot? = none
+title_flying = TitleFlying()            # (the next shot's aircraft, flown a slice a frame)
+title_battling = TitleBattling()        # (or its battle)
+title_shots_heard = 0                   # (the merge's gunfire heard so far)
+title_warming = false                   # (its terrain and town asked for ahead)
+title_waited = 0.0                      # (how long the shot was held on for the next to be ready)
+title_dark = 0.0                        # (how long the new shot has stayed dark, its view not yet settled)
+title_dt = 1.0 / 60.0                   # (the shot clock's step: smoothed, so the camera never jerks with an uneven frame)
+const TITLE_PICK_AT = 2.0               # (seconds into a shot when the next is chosen and its preparing begins)
+const TITLE_WARM_AHEAD = 12.0           # (seconds before the cut its terrain and towns are warmed)
+const TITLE_WAIT_MOST = 5.0             # (the longest a shot is held on, waiting)
+const TITLE_DARK_MOST = 2.5             # (the longest a new shot stays dark, waiting for its view; the first, longer: nothing was warmed for it)
+const TITLE_FIRST_DARK_MOST = 8.0
+title_shown = 0                         # (shots begun)
 title_shot_age = 0.0
 title_now = TitleView(eye = vec3(0, 0, 0), dir = vec3(0, 0, -1), up = vec3(0, 1, 0), velocity = vec3(0, 0, 0), pace_at = vec3(0, 0, 0), pace_turn = vec4(0, 0, 0, 1))
 title_world_open = false
 title_start: ScenarioState? = none
-title_music = MusicAudition(piece = 0, through_radio = true, station_levelling = true, volume = 0.6)
+# (1.2 s of the music queued ahead, refilled three blocks a frame: a long frame at a cut, or a
+# heavy one in a shot, never runs it dry)
+title_music = MusicAudition(piece = 0, through_radio = true, station_levelling = true, volume = 0.6, lead = 1.2, blocks = 3)
 title_music_fade = 1.0          # (after play begins the music fades away)
 title_sound_on = false          # (in a page: from the first click, tap or key)
 title_kept: CraftState? = none  # (the player's aircraft, while a paced one is drawn in its place)
+# AEGEAN_TITLE_TIMING=1: each frame longer than 30 ms behind the title, and the worst frame within a
+# second of each cut (TITLE_FRAME, TITLE_CUT_WORST lines), with where the time went
+title_timing = env("AEGEAN_TITLE_TIMING") != none
+title_frame_at = -1.0
+title_parts: {str: f64} = {}
+title_cut_worst = 0.0
+title_cuts = 0
+title_part = (name: str, began: f64): if title_timing: title_parts[name] = (title_parts.get(name) ?? 0.0) + (time() - began) * 1000.0
 
 # the big towns a city shot flies over
 title_sites = () -> TitleSite[]:
@@ -3621,22 +3645,98 @@ title_sites = () -> TitleSite[]:
 title_ground = (x: f64, z: f64) -> f64: f64(surface_height(x, z))
 
 title_pick = (previous: TitleShotKind?) -> TitleShot:
-    loop attempt in 0..6:
-        shot = title_next_shot(title_rng, previous, home.center, title_sites(), title_ground, (h: f64) -> vec3: sky_sun(h), title_force)
-        if shot.kind != .low or shot.pace != 2: return shot
-        # (a race is flown now, by the flight model; and again elsewhere if a racer would cross land)
-        title_fly_race(shot, craft_spec(.falco, craft_models[3].contacts))
-        wet = true
-        loop track in shot.race:
-            loop k in 0..track.at.len():
-                if k % 30 == 0 and title_ground(f64(track.at[k].x), f64(track.at[k].z)) > -3.0: wet = false
-        if wet: return shot
-    title_next_shot(title_rng, previous, home.center, title_sites(), title_ground, (h: f64) -> vec3: sky_sun(h), "high")
+    title_next_shot(title_rng, previous, home.center, title_sites(), title_ground, (h: f64) -> vec3: sky_sun(h), title_force, strait_origin(0))
+
+# the aircraft a shot's flights use
+title_flight_spec = (shot: TitleShot) -> CraftSpec: if shot.kind == .high: craft_spec(.gull, craft_models[SUNSET_MODEL].contacts) else: craft_spec(.falco, craft_models[3].contacts)
+
+# A shot's aircraft (or its battle) flown on until `until` (time()); true once all flown.
+title_fly_some = (shot: mut TitleShot, until: f64) -> bool:
+    global title_flying, title_battling
+    if shot.kind == .high and shot.pace == 4: return title_battle_step(shot, title_battling, craft_models, title_ground, until)
+    title_flight_step(shot, title_flying, title_flight_spec(shot), until)
+title_fly_begin = ():
+    global title_flying, title_battling
+    title_flying = TitleFlying(); title_battling = TitleBattling()
+title_flown = () -> bool: title_flying.done or title_battling.done
+
+# The next shot made ready a little a frame through the current one: its aircraft flown (a few
+# milliseconds a frame), then, for the last seconds, its terrain and town warmed where its camera
+# will be. A race that would cross land is chosen again. True once it is all ready.
+title_prepare_next = () -> bool:
+    global title_coming, title_flying, title_warming, world_grove_next_anchor, world_grove_next_reach
+    if title_coming == none:
+        if title_shot_age < TITLE_PICK_AT: return false
+        title_coming = title_pick(title_shot.kind); title_fly_begin()
+    next = title_coming!
+    if not title_flown():
+        began = time()
+        _ = title_fly_some(next, began + 0.004)
+        title_coming = next
+        title_part("flight", began)
+        if not title_flown(): return false
+        if not title_wet(next):
+            title_coming = none
+            return false
+    if title_shot_age < title_shot.length - TITLE_WARM_AHEAD: return false
+    if not title_warming:
+        title_warming = true
+        a = title_view(next, 0.0, title_ground)
+        b = title_view(next, next.length * 0.5, title_ground)
+        world_warm([WorldWarmView(a.eye, a.eye + a.dir * 100.0), WorldWarmView(b.eye, b.eye + b.dir * 100.0)])
+        world_towns_expect(title_path_points(next) + title_path_points(title_shot))
+        world_grove_next_anchor = title_grove_anchor(next); world_grove_next_reach = title_grove_reach(next)
+    world_warm_settled() and world_towns_settled() and world_groves_settled()
+
+# its aircraft keep over the sea (a race or a lone flight that would cross land is chosen again)
+title_wet = (shot: TitleShot) -> bool:
+    if shot.kind != .low: return true
+    loop track in shot.race:
+        loop k in 0..track.at.len():
+            if k % 30 == 0 and title_ground(f64(track.at[k].x), f64(track.at[k].z)) > -3.0: return false
+    true
+
+# the middle of a shot's path, and how far from it its groves reach: the usual reach round the
+# camera wherever it is along the path (no further than 1100 m, the slots' bound)
+title_grove_anchor = (shot: TitleShot) -> vec3: title_view(shot, shot.length * 0.5, title_ground).eye
+title_grove_reach = (shot: TitleShot) -> f64:
+    a = title_view(shot, 0.0, title_ground).eye; b = title_view(shot, shot.length, title_ground).eye; m = title_grove_anchor(shot)
+    min(1100.0, render_quality.grove_distance + f64(max(length(a.xz - m.xz), length(b.xz - m.xz))))
+
+# where a shot's camera passes, every 100 m or so, on the ground
+title_path_points = (shot: TitleShot) -> vec2[]:
+    n = max(2, int(shot.speed * shot.length / 100.0))
+    [loop k in 0..n + 1: title_view(shot, shot.length * f64(k) / f64(n), title_ground).eye.xz]
+
+# (timing: the frame that just ended, and the worst near each cut)
+title_frame_log = ():
+    global title_frame_at, title_parts, title_cut_worst, title_cuts
+    now = time()
+    if title_frame_at >= 0.0:
+        ms = (now - title_frame_at) * 1000.0
+        near = title_shot_age < 1.0 or title_shot_age > title_shot.length - 1.0
+        if near: title_cut_worst = max(title_cut_worst, ms)
+        if ms > 30.0:
+            parts = [loop k, v in title_parts: "{k} {v:.1}"].join(", ")
+            print("TITLE_FRAME {ms:.1} ms at {title_shot.kind} {title_shot_age:.2} s ({parts})")
+        if title_shot_age > 1.0 and title_shot_age < 1.5 and title_cut_worst > 0.0:
+            print("TITLE_CUT_WORST cut {title_cuts} into {title_shot.kind} {title_shot.site}: {title_cut_worst:.1} ms")
+            title_cut_worst = 0.0
+            title_cuts += 1
+    title_frame_at = now
+    title_parts = {}
 
 # a shot begins: its weather (fair, never rain), where it is
 title_cut = (shot: TitleShot):
-    global title_shot, title_shot_age, title_coming
-    title_shot = shot; title_shot_age = 0.0; title_coming = none
+    global title_shot, title_shot_age, title_coming, title_warming, title_waited, title_dark, title_shown, world_grove_anchor, world_grove_reach, world_grove_next_anchor, world_grove_capped
+    title_shot = shot; title_shot_age = 0.0; title_coming = none; title_warming = false; title_waited = 0.0; title_dark = 0.0; title_shown += 1
+    world_warm_clear()
+    world_towns_expect(title_path_points(shot))
+    # (the shot's groves reached from its middle: their edge stays still while the camera moves)
+    world_grove_anchor = title_grove_anchor(shot); world_grove_reach = title_grove_reach(shot)
+    world_grove_next_anchor = none
+    if title_frames != none and world_grove_capped: print("TITLE warning: a shot's groves were capped at {WORLD_GROVE_SHOT_MOST} tiles, the farthest left out")
+    world_grove_capped = false
     view = title_view(shot, 0.0, title_ground)
     weather_choose(living_world, shot.weather, view.eye)
     print("TITLE shot {shot.kind} {shot.site} at {view.eye.x:.0} {view.eye.y:.0} {view.eye.z:.0} hour {shot.hour:.2} weather {WEATHER_LABELS[shot.weather]} pace {shot.pace} for {shot.length:.1} s")
@@ -3655,8 +3755,16 @@ title_open_world = ():
     print("TITLE world prepared in {(time() - began) * 1000.0:.0} ms (far economy populated: {living_world.far.populated})")
     title_start = ScenarioState(world = living_world, flyer = pc, battle = battle, mode = .walking, position = me.pos, yaw = me.yaw, hour = hour,
         camera_yaw = follow.yaw, camera_pitch = follow.pitch, vessels = vessels)
+    # (the rivers' and the canal city's scenery, made once here rather than at a cut in the reel)
+    prepare_inland_scenery(canal_origin)
     me.mode = .free
-    title_cut(title_pick(none))
+    first = title_pick(none)
+    loop attempt in 0..6:
+        title_fly_begin()
+        _ = title_fly_some(first, 1e30)
+        if title_wet(first): break
+        first = title_pick(none)
+    title_cut(first)
     free = fly_camera(title_view(title_shot, 0.0, title_ground).eye, 0.0, 0.0)
 
 # how dark the dip between shots is now (0 none .. 1 dusk)
@@ -3699,7 +3807,8 @@ draw_title_prep = ():
 
 # the world runs behind the title; the reel flies the camera; the saved games are read
 title_update = (dt: f64):
-    global title_shot_age, title_coming, title_now, keys_muted, title_sound_on
+    global title_shot_age, title_coming, title_now, keys_muted, title_sound_on, title_dt, title_dark, title_waited, title_flying
+    if title_timing and title_prep >= 2: title_frame_log()
     if title_prep < 2:
         title_prepare()
         return
@@ -3709,17 +3818,37 @@ title_update = (dt: f64):
         title_begin()
         return
     if not game_save_status().busy: title.loading = -1
-    title_shot_age += dt
-    if title_coming == none and title_shot_age > title_shot.length - TITLE_DIP - 0.2: title_coming = title_pick(title_shot.kind)
+    # (the shot's own clock: the frame's time smoothed, a long frame never jumping the camera)
+    title_dt = title_dt + (clamp(dt, 0.0, 0.05) - title_dt) * 0.15
+    # (a new shot stays dark at its start until its view is drawn whole)
+    if title_shot_age < 0.05 and title_dark < (if title_shown <= 1: TITLE_FIRST_DARK_MOST else: TITLE_DARK_MOST) and not (world_view_settled() and world_towns_settled()): title_dark += dt
+    else:
+        if title_timing and title_shot_age == 0.0 and title_dark > 0.0: print("TITLE dark {title_dark:.2} s: land missing {world_view_missing}, districts pending {world_town_pending}, job {world_town_job.active}, groves {world_grove_visible} of {world_groves.len()} slots, {world_grove_count} trees")
+        title_shot_age += title_dt
+    began = time()
+    ready = title_prepare_next()
+    title_part("prepare", began)
+    # (the shot held on, a little at most, until the next is ready to be seen)
+    if not ready and title_shot_age > title_shot.length - TITLE_DIP - 0.05 and title_waited < TITLE_WAIT_MOST:
+        title_shot.length += title_dt; title_waited += title_dt
+    began = time()
     if title_shot_age >= title_shot.length:
-        if let next = title_coming: title_cut(next)
+        if title_waited > 0.0 or title_dark > 0.0: print("TITLE waited {title_waited:.2} s for the next shot (dark {title_dark:.2} s before this one)")
+        # (should the wait run out first, what is left is made ready now)
+        if title_coming == none: title_coming = title_pick(title_shot.kind); title_fly_begin()
+        next = title_coming!
+        if not title_flown(): _ = title_fly_some(next, 1e30)
+        title_cut(next)
+    title_part("cut", began)
     title_now = title_view(title_shot, title_shot_age, title_ground)
     # (while the screen is dark the world already looks where the next shot begins)
     free.pos = title_now.eye
     if let next = title_coming:
         if title_shot_age > title_shot.length - TITLE_DIP * 0.5: free.pos = title_view(next, 0.0, title_ground).eye
     keys_muted = true
+    began = time()
     update_frame(dt, false)
+    title_part("update", began)
     keys_muted = false
     when TARGET == "wasm":
         if not title_sound_on and (mouse_pressed(.left) or touches().len() > 0 or key_pressed(.enter) or key_pressed(.space) or key_pressed(.up) or key_pressed(.down)): title_sound_on = true
@@ -3732,7 +3861,8 @@ title_update = (dt: f64):
 title_sound = (dt: f64):
     global title_music
     if not audio_enabled: return
-    if title.open and title_sound_on and not title_music.playing and title_music.position <= 0.0:
+    # (not before the first shot shows: the long frames of its first moments come first)
+    if title.open and title_sound_on and title_shot_age > 0.2 and not title_music.playing and title_music.position <= 0.0:
         title_music.playing = true
         print("TITLE music begins at frame {frame_number()}")
     title_music.volume = 0.6 * title_music_fade
@@ -3752,14 +3882,28 @@ title_sound = (dt: f64):
     if title_sound_on:
         loop i in 0..title_now.racers.len():
             racer = title_now.racers[i]
-            racers.push(EngineSource(TITLE_RACER_KEY - i, racer.at, racer.velocity, 1.0, true, engine_tone(.falco, TITLE_RACER_KEY - i),
-                f64(length(racer.velocity)) / speed_scale, voice = aircraft_profile(.falco).voice, gain = 0.04))
+            # (a race's two Falcos barely there; the sunset's Gull fainter; the strait's sixteen fainter still)
+            kind = Craft(racer.kind)
+            racers.push(EngineSource(TITLE_RACER_KEY - i, racer.at, racer.velocity, 1.0, true, engine_tone(kind, TITLE_RACER_KEY - i),
+                f64(length(racer.velocity)) / speed_scale, voice = aircraft_profile(kind).voice, gain = if title_shot.pace == 4: 0.01 else: if title_shot.kind == .high: 0.02 else: 0.04))
     hear_engines(hearing, racers, title_now.eye, title_now.velocity, t)
+    # (the merge's guns, very faint: far under the music, a dozen dB under the battle's own)
+    global title_shots_heard
+    if title_shot_age < 0.01: title_shots_heard = 0
+    if title_sound_on and combat_audio.guns.len() > 0:
+        heard = 0
+        loop title_shots_heard < title_shot.shots.len() and f64(title_shot.shots[title_shots_heard].w) <= title_shot_age:
+            o = title_shot.shots[title_shots_heard]
+            if heard < 4 and length(o.xyz - title_now.eye) < 2500.0:
+                play_at(combat_audio.guns[random_int(0, GUN_VARIANTS)], o.xyz, 0.02, 180.0); heard += 1
+            title_shots_heard += 1
 
 # play begins (a new game where the startup left it, a loaded one, or a situation)
 title_begin = ():
-    global title_left_at,game_ui_note,title_start,title_kept
+    global title_left_at,game_ui_note,title_start,title_kept,world_grove_anchor,world_grove_next_anchor
     title.open = false
+    # (the reel's preparing let go: play's own view decides what is made)
+    world_warm_clear(); world_towns_expect([]); world_grove_anchor = none; world_grove_next_anchor = none
     title_start = none
     title_kept = none
     title.loading = -1
@@ -6184,6 +6328,22 @@ draw_title_race = (L: Light, t: f64):
         at[3] = vec4(0, 0, 0, 1)
         draw(obj_sh, m.body, obj_params(L, t, at, anchor = anchor))
         if not queue_prop_discs(m, at, anchor, t * 78.0 + f64(k), 78.0, L, t, TITLE_RACER_KEY - k): draw_craft_props(m, L, t, at, t * 78.0 + f64(k), anchor)
+    # (the merge's tracers, drawn as the battle draws its own)
+    if title_now.rounds.len() > 0:
+        g = Guns()
+        loop o in title_now.rounds: g.bullets.push(Bullet(o.at, o.velocity, o.age, true))
+        draw_tracers(g, title_shot.round_scale)
+    # (and the guns' flashes, on the aircraft as it flies, as the battle draws them)
+    if title_shot.shots.len() > 0:
+        muzzle = WorldParticles()
+        loop n in 0..title_shot.shots.len():
+            o = title_shot.shots[n]
+            ago = title_shot_age - f64(o.w)
+            if ago < 0.0 or ago > 0.065 or title_shot.shot_by[n] >= title_now.racers.len(): continue
+            at = title_now.racers[title_shot.shot_by[n]].at + title_shot.shot_off[n]
+            distance = f64(length(at - scene_camera()))
+            if distance < 11000.0: muzzle.items.push(WorldParticle(at, vec3(0, 0, 0), 1, 1, f32(max(0.6, min(9.0, distance * 0.002))), rgba(1, 0.8, 0.3, 1), precise = world_point(at), published = at, ready = true))
+        if muzzle.items.len() > 0: draw_curved_particles(muzzle, true)
 const TITLE_RACER_KEY = -1001   # (the racers' own keys for their propellers and engines, never a craft's)
 
 # how fast the eye moves: the water's flecks streak and strengthen with it (the reel's camera
