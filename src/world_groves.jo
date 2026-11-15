@@ -60,51 +60,151 @@ world_grove_lists = (x: int,z: int) -> Instance3D[][]:
                     lists[kind].push(Instance3D(m2,vec4(shade,shade,shade,1)))
     nature_grove(lists)
 
+# A tile's grove made (or remade, its roads or places changed) in a slot: the least recently used
+# beyond WORLD_GROVE_SLOTS, never one used this frame. -1 when every slot is in use.
+const WORLD_GROVE_SLOTS = 96
+# (an anchored set, the title shot's or the coming one's, keeps to this many, nearest its middle
+# first: the two together always fit, so warming never waits on a slot)
+const WORLD_GROVE_SHOT_MOST = 48
+_world_grove_fill = (node: WorldTile) -> int:
+    global world_groves
+    ox,oz = world_tile_origin(node.x,node.z,0)
+    found = -1
+    loop k in 0..world_groves.len():
+        if world_groves[k].key == node.key: found = k; break
+    if found >= 0: pass
+    else if world_groves.len() < WORLD_GROVE_SLOTS:
+        empty: Instance3D[]
+        world_groves.push(WorldGrove(grove=Grove(vec2(0,0),160.0,[loop k in 0..PLANT_KINDS: instance_buffer(empty)])))
+        found = world_groves.len()-1
+    else:
+        oldest = world_frame
+        loop k in 0..world_groves.len():
+            if world_groves[k].used < oldest: oldest = world_groves[k].used; found = k
+        if found < 0: return -1
+    lists = thin_grove(world_grove_lists(node.x,node.z))
+    solids: TownSite[]
+    loop kind in 0..min(2,lists.len()):
+        loop tree in lists[kind]:
+            at=tree.model[3].xyz;scale=f64(length(tree.model[0].xyz))
+            solids.push(TownSite(at,0,0.6*scale,0.6*scale,5*scale,0))
+    walk_publish("worldgrove:{found}",solids)
+    g = world_groves[found]
+    loop k in 0..PLANT_KINDS: set_instances(g.grove.kinds[k],quality_trees(lists[k]))
+    g.key = node.key; g.roads = _world_grove_roads(ox,oz); g.places = _world_grove_places(ox,oz); g.grove.center = vec2(f32(ox+112.0),f32(oz+112.0))
+    world_groves[found] = g
+    found
+
+_world_grove_roads = (ox: f64,oz: f64) -> int: settlement_road_bins.get(road_bin(vec2(f32(ox+112.0),f32(oz+112.0))),[]).len()
+_world_grove_places = (ox: f64,oz: f64) -> int: settlement_bins.get(geography_bin(ox+112.0,oz+112.0),[]).len()
+_world_grove_slot = (node: WorldTile) -> int:
+    ox,oz = world_tile_origin(node.x,node.z,0)
+    loop k in 0..world_groves.len():
+        if world_groves[k].key == node.key:
+            if world_groves[k].roads != _world_grove_roads(ox,oz) or world_groves[k].places != _world_grove_places(ox,oz): return -1
+            return k
+    -1
+
+# A fixed point the groves are reached from, instead of the moving camera (the title's shots: its
+# middle, so the groves' edge stays still in the world while the camera moves), and how far; and
+# the same for the coming view, while it is warmed.
+world_grove_anchor: vec3? = none
+world_grove_reach = 0.0
+world_grove_next_anchor: vec3? = none
+world_grove_next_reach = 0.0
+_world_grove_near = (at: vec2, eye: vec3, anchor: vec3?, reach: f64) -> bool:
+    if let a = anchor: return length(a.xz-at) <= f32(reach)
+    length(eye.xz-at) <= f32(render_quality.grove_distance)
+
+# The near tiles whose groves a selected tile shows: itself, at the finest level and settled; with
+# an anchor, also the finest tiles under a coarser one within the reach (their trees stand on the
+# true ground, where the coarser mesh is within a metre or two: far off, unseen), so trees don't
+# arrive mid-shot as the terrain's finest level reaches them.
+world_grove_visible = 0
+_world_grove_tiles = (node: WorldTile,eye: vec3,anchor: vec3?,reach: f64) -> WorldTile[]:
+    if node.high < 4.0 or node.low >= 2200.0: return []
+    if node.level == 0:
+        ox,oz = world_tile_origin(node.x,node.z,0)
+        if anchor == none and node.lod != 0.0: return []
+        return if _world_grove_near(vec2(f32(ox+112.0),f32(oz+112.0)),eye,anchor,reach): [node] else: []
+    if anchor == none or node.level > 3: return []
+    tiles: WorldTile[]
+    n = 1 << node.level
+    loop dz in 0..n:
+        loop dx in 0..n:
+            x = node.x*n+dx; z = node.z*n+dz
+            ox,oz = world_tile_origin(x,z,0)
+            if _world_grove_near(vec2(f32(ox+112.0),f32(oz+112.0)),eye,anchor,reach): tiles.push(WorldTile(key=world_tile_key(x,z,0),x=x,z=z,level=0,low=node.low,high=node.high))
+    tiles
+
+# an anchored set of tiles, nearest the anchor first, to WORLD_GROVE_SHOT_MOST
+world_grove_capped = false
+_world_grove_cap = (tiles: WorldTile[],anchor: vec3?) -> WorldTile[]:
+    global world_grove_capped
+    if let a = anchor:
+        if tiles.len() <= WORLD_GROVE_SHOT_MOST: return tiles
+        world_grove_capped = true
+        kept = tiles
+        kept.sort((w: WorldTile) -> f32:
+            ox,oz = world_tile_origin(w.x,w.z,0)
+            length(a.xz-vec2(f32(ox+112.0),f32(oz+112.0))))
+        return kept[0..WORLD_GROVE_SHOT_MOST]
+    tiles
+
+# The groves of the tiles warmed for a coming view (world_warm), made ahead in the frames' one
+# grove each, kept from the slots' reuse while asked for; how many are still to be made.
+world_grove_warm_missing = 0
+world_grove_warm_frame = -1
+world_groves_warm = ():
+    global world_groves,world_grove_generated,world_grove_warm_missing,world_grove_warm_frame
+    world_grove_warm_missing = 0; world_grove_warm_frame = world_frame
+    wanted: WorldTile[]
+    keys: {int: bool} = {}
+    loop n in 0..world_warm_selected.len():
+        if world_warm_selected[n] >= world_tiles.len(): continue
+        eye = world_warm_eyes[n]
+        if f64(eye.y) > 2100.0: continue
+        if abs(eye.x) < LEGACY_RESERVE-1000.0 and abs(eye.z) < LEGACY_RESERVE-1000.0: continue
+        loop tile in _world_grove_tiles(world_tiles[world_warm_selected[n]],eye,world_grove_next_anchor,world_grove_next_reach):
+            if not (tile.key in keys): keys[tile.key] = true; wanted.push(tile)
+    loop tile in _world_grove_cap(wanted,world_grove_next_anchor):
+        found = _world_grove_slot(tile)
+        if found < 0:
+            world_grove_warm_missing += 1
+            if world_grove_generated >= 1: continue
+            found = _world_grove_fill(tile)
+            if found < 0: continue
+            world_grove_generated += 1; world_grove_warm_missing -= 1
+        g = world_groves[found]; g.used = world_frame; world_groves[found] = g
+# the coming view's groves all made (as of this frame or the last)
+world_groves_settled = () -> bool: world_warm_views.len() == 0 or (world_grove_warm_frame >= world_frame-1 and world_grove_warm_missing == 0)
+
 draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
-    global world_groves,world_grove_count,world_grove_generated
+    global world_groves,world_grove_count,world_grove_generated,world_grove_visible
     world_grove_count = 0; world_grove_generated = 0
     if not geography_enabled: return
     cam = scene_camera()
-    if (abs(cam.x) < LEGACY_RESERVE-1000.0 and abs(cam.z) < LEGACY_RESERVE-1000.0) or cam.y > 2100.0: return
+    if (abs(cam.x) < LEGACY_RESERVE-1000.0 and abs(cam.z) < LEGACY_RESERVE-1000.0) or cam.y > 2100.0:
+        if world_warm_views.len() > 0: world_groves_warm()
+        return
     zone("world groves")
     visible: Grove[]
+    wanted: WorldTile[]
     loop tile_slot in world_selected:
-        node = world_tiles[tile_slot]
-        if node.level != 0 or node.lod != 0.0 or node.high < 4.0 or node.low >= 2200.0: continue
-        ox,oz = world_tile_origin(node.x,node.z,0)
-        if length(cam.xz-vec2(f32(ox+112.0),f32(oz+112.0))) > f32(render_quality.grove_distance): continue
         # Published domains already pass the terrain frustum test.
-        found = -1
-        loop k in 0..world_groves.len():
-            if world_groves[k].key == node.key: found = k; break
-        road_count = settlement_road_bins.get(road_bin(vec2(f32(ox+112.0),f32(oz+112.0))),[]).len()
-        place_count = settlement_bins.get(geography_bin(ox+112.0,oz+112.0),[]).len()
-        if found < 0 or world_groves[found].roads != road_count or world_groves[found].places != place_count:
+        loop tile in _world_grove_tiles(world_tiles[tile_slot],cam,world_grove_anchor,world_grove_reach): wanted.push(tile)
+    loop tile in _world_grove_cap(wanted,world_grove_anchor):
+        found = _world_grove_slot(tile)
+        if found < 0:
             if world_grove_generated >= 1: continue
-            if found >= 0: pass
-            else if world_groves.len() < 64:
-                empty: Instance3D[]
-                world_groves.push(WorldGrove(grove=Grove(vec2(0,0),160.0,[loop k in 0..PLANT_KINDS: instance_buffer(empty)])))
-                found = world_groves.len()-1
-            else:
-                oldest = world_frame
-                loop k in 0..world_groves.len():
-                    if world_groves[k].used < oldest: oldest = world_groves[k].used; found = k
-                if found < 0: continue
-            lists = thin_grove(world_grove_lists(node.x,node.z))
-            solids: TownSite[]
-            loop kind in 0..min(2,lists.len()):
-                loop tree in lists[kind]:
-                    at=tree.model[3].xyz;scale=f64(length(tree.model[0].xyz))
-                    solids.push(TownSite(at,0,0.6*scale,0.6*scale,5*scale,0))
-            walk_publish("worldgrove:{found}",solids)
-            g = world_groves[found]
-            loop k in 0..PLANT_KINDS: set_instances(g.grove.kinds[k],quality_trees(lists[k]))
-            g.key = node.key; g.roads = road_count; g.places = place_count; g.grove.center = vec2(f32(ox+112.0),f32(oz+112.0))
-            world_groves[found] = g
+            found = _world_grove_fill(tile)
+            if found < 0: continue
             world_grove_generated += 1
         g = world_groves[found]; g.used = world_frame; world_groves[found] = g
         loop kind in g.grove.kinds: world_grove_count += kind.count
         visible.push(g.grove)
+    world_grove_visible = visible.len()
+    # (then the coming view's, with what is left of the frame's one)
+    if world_warm_views.len() > 0: world_groves_warm()
     draw_groves(meshes,visible,L,t)
     zone_end()
