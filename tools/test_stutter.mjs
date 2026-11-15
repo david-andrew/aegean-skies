@@ -5,9 +5,10 @@
 import {spawn} from 'node:child_process';
 import {readFileSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
+import {openPage} from './web_page.mjs';
 const [chrome,page,out,town='Olythoria',mode='stay']=process.argv.slice(2);
 if(!chrome||!page||!out)throw new Error('Expected CHROMIUM PAGE.html OUTPUT [TOWN] [fly|stay]');
-readFileSync(page);const profile=mkdtempSync(join(out,'profile-'));let browser,ws;
+readFileSync(page);const served=await openPage(page);const profile=mkdtempSync(join(out,'profile-'));let browser,ws;
 const logs=[],errors=[];let stderr='',id=0;const pending=new Map();let complete;
 const done=new Promise(r=>complete=r);let ready;
 const listening=new Promise(r=>ready=r);
@@ -31,7 +32,7 @@ try{
  if(process.env.STUTTER_AGL)q.set('STUTTER_AGL',process.env.STUTTER_AGL);
  if(process.env.STUTTER_AUTOSAVE_AT)q.set('STUTTER_AUTOSAVE_AT',process.env.STUTTER_AUTOSAVE_AT);
  if(process.env.STUTTER_GPU_SECONDS)q.set('STUTTER_GPU_SECONDS',process.env.STUTTER_GPU_SECONDS);
- await send('Page.navigate',{url:'file://'+resolve(page)+'?'+q});
+ await send('Page.navigate',{url:served.url+'?'+q});
  const result=await done;
  if(process.env.STUTTER_PROFILE==='1')writeFileSync(join(out,'cpu.json'),JSON.stringify(await send('Profiler.stop')));
  const probe=(await send('Runtime.evaluate',{expression:'({...stutterProbe,resolution:globalThis.AegeanWeb?.resolution,quality:globalThis.AegeanWeb?.quality})',returnByValue:true})).result.value;
@@ -40,4 +41,4 @@ try{
  console.log(JSON.stringify({result,errors,frames:probe.frames.length,warp:probe.warp,finish:probe.finish,linked:probe.links.filter(Boolean).length,programs:probe.links.length}));
  const over=Number(result.end?.match(/over50=(\d+)/)?.[1]??-1);
  if(result.timeout||errors.length||probe.links.some(x=>!x)||over!==0)process.exitCode=1;
-}finally{clearTimeout(timeout);ws?.close();const exited=new Promise(r=>browser.once('exit',r));if(browser.exitCode===null){browser.kill();const guard=setTimeout(()=>browser.kill('SIGKILL'),5000);await exited;clearTimeout(guard)}rmSync(profile,{recursive:true,force:true})}
+}finally{clearTimeout(timeout);ws?.close();await served.close();const exited=new Promise(r=>browser.once('exit',r));if(browser.exitCode===null){browser.kill();const guard=setTimeout(()=>browser.kill('SIGKILL'),5000);await exited;clearTimeout(guard)}rmSync(profile,{recursive:true,force:true})}

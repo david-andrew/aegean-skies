@@ -7,11 +7,13 @@
 import {spawn, execFileSync} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve, join} from 'node:path';
+import {openPage} from './web_page.mjs';
 import assert from 'node:assert/strict';
 
 const [chrome, pageArg, outArg] = process.argv.slice(2);
 assert(chrome && pageArg && outArg, 'chromium, built page and scratch output directory required');
 const page=resolve(pageArg), out=resolve(outArg);
+const served=await openPage(page);
 readFileSync(page); mkdirSync(out,{recursive:true});
 const profile=mkdtempSync(join(out,'chromium-'));
 const gpu=process.env.WEB_NEAR_GPU==='native'
@@ -70,7 +72,7 @@ try {
     if(process.env.WEB_NEAR_LINEAR)query.set('AEGEAN_LINEAR_DEPTH','1');
     if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
     errors.length=0;loaded=false;
-    await send('Page.navigate',{url:'file://'+page+'?'+query});
+    await send('Page.navigate',{url:served.url+'?'+query});
     await until(()=>loaded);
     await until(async()=>{
       const r=await send('Runtime.evaluate',{returnByValue:true,expression:'globalThis.quayFrames||0'});
@@ -143,6 +145,7 @@ print(json.dumps({name:sum(ImageStat.Stat(ImageChops.difference(a.crop(box),b.cr
   writeFileSync(join(out,'stability.json'),JSON.stringify(stability,null,2)+'\n');
   console.log('PASS: close-camera coverage and split/full WebGL depth comparisons');
 } finally {
+  await served.close();
   ws?.close();
   const exited=new Promise(r=>browser.once('exit',r));
   if(browser.exitCode===null){browser.kill();const guard=setTimeout(()=>browser.kill('SIGKILL'),5000);await exited;clearTimeout(guard);}
