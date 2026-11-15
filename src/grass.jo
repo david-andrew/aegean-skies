@@ -153,16 +153,19 @@ grass_visible_blades=0
 # The far tuft: fewer, wider blades of the same height, for cells beyond GRASS_FAR_START.
 grass_far_blade_count=()->int:
     blades=grass_blade_count()
-    if blades==24:12 else:if blades==72:36 else:if blades==1024:506 else:max(6,blades/2)
+    far=if blades==24:12 else:if blades==72:36 else:if blades==1024:506 else:max(6,blades/2)
+    max(4,int(f64(far)*(to_float(env("AEGEAN_GRASS_FAR") ?? "") ?? 1.0)))
 
 # The base radius of the drawn region (8/11/12 m by tier, the old disc's). The egg reaches 2.5 times as far
 # ahead, `grass_side_scale` times to each side and `grass_back_scale` behind.
 grass_draw_radius=()->f32:
     f32(clamp(to_float(env("AEGEAN_GRASS_RADIUS") ?? "") ?? (if render_quality.tier==0:8.0 else:if render_quality.tier==1:11.0 else:12.0),4.0,36.0))
-const GRASS_AHEAD_SCALE=2.5
+grass_ahead_scale=()->f32:f32(clamp(to_float(env("AEGEAN_GRASS_AHEAD") ?? "") ?? 2.5,1.0,6.0))
+# AEGEAN_GRASS_HIDE=1 draws no grass; AEGEAN_GRASS_FAR=x scales the far tuft's blade count (cost experiments)
+grass_hidden=env("AEGEAN_GRASS_HIDE")!=none
 const GRASS_SIDE_SCALE=1.2
 const GRASS_BACK_SCALE=0.55
-grass_forward_reach=()->f32:grass_draw_radius()*GRASS_AHEAD_SCALE
+grass_forward_reach=()->f32:grass_draw_radius()*grass_ahead_scale()
 
 # The egg for a camera looking along `look` (3D unit vector). Looking steeply down (from the air, or at the
 # feet) there is no "ahead": the egg relaxes toward a disc a little wider than the base radius.
@@ -175,7 +178,7 @@ grass_view_shape=(look:vec3)->vec4:
     vec4(aim.x,aim.y,mix(disc,radius*GRASS_SIDE_SCALE,level),mix(disc,radius*GRASS_BACK_SCALE,level))
 grass_reach_for=(look:vec3)->f32:
     radius=grass_draw_radius()
-    mix(radius*1.1,radius*GRASS_AHEAD_SCALE,smoothstep(0.25,0.75,length(look.xz)))
+    mix(radius*1.1,radius*grass_ahead_scale(),smoothstep(0.25,0.75,length(look.xz)))
 
 # Rows and columns of a blade grid for n blades: the factor pair nearest a square.
 grass_columns=(n:int)->int:
@@ -441,7 +444,7 @@ grass_airflow = vec3(0,-1,0)
 draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     global grass_visible_blades
     grass_visible_blades=0
-    if not f.built or f.count == 0: return
+    if not f.built or f.count == 0 or grass_hidden: return
     # A stale field after departure must not spend vertex work behind the aircraft.
     camera=scene_camera()
     if length(camera.xz-f.center.xz)>f32(render_quality.grass_radius*2.0+16.0) or camera.y-f.center.y>80.0:return
@@ -466,32 +469,49 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     slope=1.0/min(gp.grass_view.z,gp.grass_view.w)
     # Reject coarse tiles first, then upload only visible one-metre cells.
     # Keep their order front-to-back in a single instanced draw.
-    visible_cells:GrassCell[]
-    far_cells:GrassCell[]
+    # Cells go into sixteen bins by distance along the egg, so the draw runs front to back (early depth
+    # rejection) without sorting every cell every frame.
+    empty:GrassCell[]
+    near_bins:GrassCell[][]=[loop i in 0..16:empty]
+    far_bins:GrassCell[][]=[loop i in 0..16:empty]
+    near_count=0
+    far_count=0
+    # a cell's blades reach at most this far (its roots, tips, lean and the tilt of the ground) from its root
+    cell_reach=horizontal*1.42+3.0
     loop chunk in f.chunks:
-        center=render_world(chunk.center-gp.origin,gp.cam)
+        center=chunk.center-gp.origin
         if grass_shape(center.xz-gp.cam.xz,gp.grass_view,reach)-chunk.radius*slope>1.1:continue
         visible=true
+        inside=true
         loop plane in planes:
-            if dot(plane.xyz,center)+plane.w < -chunk.radius:visible=false
+            side=dot(plane.xyz,center)+plane.w
+            if side < -chunk.radius:visible=false
+            if side < chunk.radius+cell_reach:inside=false
         if not visible:continue
         loop k in chunk.first..chunk.first+chunk.count:
             cell=f.cells[k]
-            at=render_world(cell.model[3].xyz-gp.origin,gp.cam)
+            at=cell.model[3].xyz-gp.origin
             # The blade roots occupy a square of half-width 0.5 m. Thinning
             # depends on root distance, not the displaced tip's position.
             shape=grass_shape(at.xz-gp.cam.xz,gp.grass_view,reach)
             if shape-0.71*slope>1.1:continue
-            extent=vec3(horizontal,1.35*(abs(cell.model[0].y)+abs(cell.model[2].y))+1.35,horizontal)
-            keep=true
-            loop plane in planes:
-                if dot(plane.xyz,at)+plane.w < -dot(abs(plane.xyz),extent):keep=false
-            if keep:
-                if shape-0.71*slope>=GRASS_FAR_START:far_cells.push(cell)
-                else:visible_cells.push(cell)
-    visible_cells.sort((cell:GrassCell)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
-    far_cells.sort((cell:GrassCell)->f32:dot(cell.model[3].xyz-camera,cell.model[3].xyz-camera))
-    grass_visible_blades=visible_cells.len()*grass_blade_count()+far_cells.len()*grass_far_blade_count()
+            if not inside:
+                extent=vec3(horizontal,1.35*(abs(cell.model[0].y)+abs(cell.model[2].y))+1.35,horizontal)
+                keep=true
+                loop plane in planes:
+                    if dot(plane.xyz,at)+plane.w < -dot(abs(plane.xyz),extent):keep=false
+                if not keep:continue
+            bin=clamp(int(shape*15.0),0,15)
+            if shape-0.71*slope>=GRASS_FAR_START:
+                far_bins[bin].push(cell);far_count+=1
+            else:
+                near_bins[bin].push(cell);near_count+=1
+    visible_cells:GrassCell[]
+    far_cells:GrassCell[]
+    loop bin in 0..16:
+        visible_cells.extend(near_bins[bin])
+        far_cells.extend(far_bins[bin])
+    grass_visible_blades=near_count*grass_blade_count()+far_count*grass_far_blade_count()
     global grass_visible_buf,grass_far_buf
     if visible_cells.len()>0:
         set_instances(grass_visible_buf,visible_cells)
