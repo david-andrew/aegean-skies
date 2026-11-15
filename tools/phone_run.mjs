@@ -30,21 +30,36 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const adb = (...a) => execFileSync('adb', a, {encoding: 'utf8'}).trim();
 const devport = 9222 + ['chrome', 'beta', 'chromium'].indexOf(browser);
 
-// the phone's state (battery temperature in 0.1 C, thermal status 0 none .. 6 shutdown)
+// the phone's state: battery temperature (C), the hottest CPU and GPU sensors and the skin/board
+// ones (C, from /sys/class/thermal), the thermal status (0 none .. 6 shutdown) and the cooling
+// devices' throttling steps (thermal-cpufreq-N: CPU cluster caps, thermal-devfreq-0: the GPU's)
 const phoneState = () => {
   const bat = adb('shell', 'dumpsys', 'battery');
   const thermal = adb('shell', 'dumpsys', 'thermalservice');
-  const temps = {};
-  const cur = thermal.split('Current temperatures from HAL:')[1] || '';
-  for (const m of cur.split('Current cooling devices')[0].matchAll(/mValue=([\d.]+), mType=(\d+), mName=([\w-]+)/g)) temps[m[3]] = Number(m[1]);
-  return {battery_c: Number(bat.match(/temperature: (\d+)/)?.[1]) / 10, level: Number(bat.match(/level: (\d+)/)?.[1]),
-    thermal_status: Number(thermal.match(/Thermal Status: (\d+)/)?.[1] ?? -1), temps};
+  const zones = adb('shell', 'for z in /sys/class/thermal/thermal_zone*; do echo "$(cat $z/type) $(cat $z/temp)"; done 2>/dev/null');
+  let cpu = -1e9, gpu = -1e9;
+  const other = {};
+  for (const line of zones.split('\n')) {
+    const [name, v] = line.trim().split(/\s+/); const c = Number(v) / 1000;
+    if (!name || !isFinite(c) || c < -40 || c > 150) continue;
+    if (/^cpu-/.test(name)) cpu = Math.max(cpu, c);
+    else if (/^gpuss/.test(name)) gpu = Math.max(gpu, c);
+    else if (/skin|xo-therm|quiet|pa-therm/.test(name)) other[name] = c;
+  }
+  const caps = {};
+  for (const m of thermal.matchAll(/CoolingDevice\{mValue=(\d+), mType=\d+, mName=(thermal-(?:cpufreq|devfreq)-\d+)\}/g)) caps[m[2]] = Number(m[1]);
+  // (Battery Saver: LG then holds the panel at 30 Hz and limits the CPU; the panel's rate now)
+  const saver = adb('shell', 'settings', 'get', 'global', 'low_power') === '1';
+  const hz = Number(adb('shell', 'dumpsys', 'SurfaceFlinger').match(/refresh-rate\s*:\s*([\d.]+)/)?.[1]);
+  return {battery_saver: saver, refresh_hz: hz, battery_c: Number(bat.match(/temperature: (\d+)/)?.[1]) / 10, level: Number(bat.match(/level: (\d+)/)?.[1]),
+    cpu_c: cpu, gpu_c: gpu, sensors: other, thermal_status: Number(thermal.match(/Thermal Status: (\d+)/)?.[1] ?? -1), caps};
 };
 
 // keep the phone's screen on and Chrome in front, then reach its DevTools
 adb('shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--set', '0');   // (the phone stays silent)
 adb('shell', 'svc', 'power', 'stayon', 'usb');
 adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP');
+adb('shell', 'wm', 'dismiss-keyguard');
 adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'about:blank', '-p', packages[browser]);
 adb('forward', `tcp:${devport}`, `localabstract:${sockets[browser]}`);
 await sleep(1500);
@@ -125,7 +140,8 @@ await send('Log.enable');
 await send('Page.enable');
 await send('Page.addScriptToEvaluateOnNewDocument', {source: probe});
 await send('Page.navigate', {url});
-console.log(`phone_run: ${url} (${browser}), battery ${before.battery_c} C, thermal ${before.thermal_status}`);
+console.log(`phone_run: ${url} (${browser}), battery ${before.battery_c} C, thermal ${before.thermal_status}, display ${before.refresh_hz} Hz`);
+if (before.battery_saver) console.log('phone_run: WARNING Battery Saver is on (30 Hz panel, CPU limited): `adb shell cmd power set-mode 0` turns it off');
 
 // wait for the title (the card gone) or an error, at most 5 minutes
 let stages = {};
