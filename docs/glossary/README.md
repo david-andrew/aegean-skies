@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
+- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -186,7 +186,14 @@ blue discs that stay in every frame are **speed flecks**.
   stay white, overhanging undersides and a thin rim where each lobe turns from the eye take the
   shadow tone (in bright sun the middle tone saturates to white, so curtains skip it). All motion
   is continuous in time, never per-frame noise. Billows and crest drops use the small shared mesh
-  (40x24); sheet lobes and other bodies the 64x40 mesh.
+  (40x24); sheet lobes and other bodies the 64x40 mesh. Spray only at the water: skimming
+  counts within 6 m of the sea whatever the span, and a sheet is never drawn between an aircraft
+  and the sea. The [big boats](#big-boats) throw theirs from **spray stations** (`_boat_targets`):
+  each hull, sponson and float's contacts, each wet or dry with hysteresis (wet on touching the
+  water, dry only well clear of it), the curtain's root sliding along the hull (eased, at most
+  12 m/s) to the aftmost wet station instead of jumping between contacts; the fans start at the
+  hull's chines; skimming low, the sheet is on the sea under the part
+  (`tests/boat_spray_test.jo`).
 - **Capture:** `tools/splash_frames.jo` with `POLISH_CASE=planing` (a held planing run),
   `POLISH_ORBIT="azimuth elevation distance [aim-x aim-z]"`, `POLISH_NOCRAFT=1` to hide the
   aircraft, `POLISH_SEQUENCE=<dir>` for 30 fps strips.
@@ -332,6 +339,43 @@ On the rivers branch until it lands.
 
 ## Aircraft
 
+### Paint page
+
+- **Aliases:** repainting, the paint shop (later), liveries, colour schemes.
+- **Definition:** the pause menu's Paint tab (beside Aircraft and Plane): the player's aircraft
+  repainted. A livery valid for the type (its own first, its period paints, the civil ones and its
+  family's), its four colours (main, trim, wings, stripe) from period dopes, lacquers and trims or
+  any colour by hue, saturation and brightness, national insignia, operator bars, rudder stripes
+  and a tail number where the type wears them, and Reset to default. It applies at once (a model
+  of the player's own, built from the paint: other aircraft of the type keep theirs) and is saved
+  with the game. The Flying now card's Paint button opens it.
+- **Rules:** colours and drawn marks only, no textures. The session's `Paint` is the one save
+  field (the aircraft's record mirrors its livery); a game saved before it loads as built, or in
+  the period paint its record wore. A later paint shop prices `paint_changes` and draws the same
+  page; the model needs no change.
+- **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`,
+  `paint_support`, `paint_changes`), `src/aircraft_paint_view.jo` (`paint_page`); `set_player_paint`,
+  `paint_step`, `player_model` in `aegean.jo`; `tests/aircraft_paint_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_PANEL=paint`; `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1
+  number=K-AB3 body=0.2,0.3,0.6'` or a paint's name (`AEGEAN_PAINT='Greek Naval Air Service'`);
+  `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
+
+### Markings
+
+- **Definition:** what is painted on an aircraft besides its colours, all drawn by the kit
+  (`src/planes.jo`): national **insignia** on the upper wings (none; the game's two countries,
+  Kalyra and Orenthia; Italian, British, Greek, American (a star on a disc) and German (a straight
+  cross) for those nations' types), **operator bars** (the civil marking; inboard of an insignia
+  when both), **rudder stripes** (`kit_rudder`) and a **tail number** in block capitals on the
+  fin ahead of the rudder. What a type can wear is found by building it with and without each
+  mark; the first four types and the big boats wear wing marks only when repainted with them, so
+  as built every aircraft looks as it did.
+- **Extending:** append to `INSIGNIA` or `RUDDERS` (a `nation` limits them to that nation's
+  types), add a type to `TYPE_NATIONS`, a livery to `LIVERY_FAMILIES` or `TYPE_LIVERIES`
+  (`src/markings.jo`); indices are saved: append, never reorder.
+- **Code:** `src/markings.jo`; `livery_insignia`, `livery_bars`, `_wing_mark`, `_rudder`,
+  `_tail_number` in `src/planes.jo`; `_boat_marks` in `src/aircraft_boats.jo`.
+
 ### Prop disc
 
 - **Aliases:** the propeller disc, "spinning propellers as a film animator paints them".
@@ -457,6 +501,21 @@ On the rivers branch until it lands.
   How the pair's propellers turn and cancel their torque: [Contra-rotating and push-pull
   props](#contra-rotating-and-push-pull-props) (the big boats set `push_pull`).
 
+### One speed rule
+
+- **Aliases:** the speed rule; the historical speed rule.
+- **Definition:** a Tweaks trial (off by default: "One speed rule for historical aircraft") that
+  places every historical type by one curve from its real top speed: design top, true m/s = 80 ×
+  (real km/h ÷ 250)^0.76, the single curve closest to the three fleets' own scalings. Each type's
+  cruise moves with its top, its stall stays as designed, drag is set so thrust over drag makes the
+  new top, thrust is kept. The game's own sixteen designs are not changed. Switching it remakes every
+  aircraft's spec at once.
+- **Code:** `real_top_kmh`, `speed_rule`, `AIRCRAFT_RULED` in `src/aircraft_catalog.jo`;
+  `aircraft_profile` in `src/planes.jo`; `tests/speed_rule_test.jo`; `tools/speed_rule_table.jo`
+  (the table); `AEGEAN_TWEAKS=speedrule`, or `AEGEAN_SPEED_RULE=1` (also for running any test with it).
+- **Rules:** every historical profile must carry `real_top_kmh` (a test checks every type after the
+  sixteen). The living world's trip times (`AIRFRAMES` cruise) are not changed by it.
+
 ### Big boats
 
 - **Aliases:** the big flying boats; offshore-only aircraft (those over 30 m span).
@@ -465,6 +524,10 @@ On the rivers branch until it lands.
   thick aerofoil wings, round nacelles) rather than the catalogue's boxes. The three over 30 m span
   (Do X, Sarafand, H-4) are **offshore-only**: they never use a dock, only an
   [offshore mooring](#offshore-mooring).
+- **Paints:** a type's period paints (`boat_paints`) are presets among the liveries on the
+  [Paint page](#paint-page); the S.55 wears Silver Dope or the **Greek Naval Air Service**
+  (aluminium dope, a dark hull bottom, light-blue and white roundels, blue-white-blue rudders).
+  Paints are named, not numbered (`livery_named`).
 - **Code:** `src/aircraft_boats.jo` (`build_big_boat`, `big_boat`, `offshore_only`,
   `swing_radius`, `boat_parts`); profiles in `src/aircraft_catalog.jo` (`draft`, `engines`,
   `discs`); `tools/boats_view.jo` (four views of one model); tests in
@@ -497,6 +560,22 @@ On the rivers branch until it lands.
   need, so it settles low and does not float.
 - **Code:** `src/flight.jo` (the gear loop and the wet check in `_substep`; the belly volumes in
   `craft_spec`).
+
+### Greek service
+
+- **Definition:** aircraft flown in and around Greece: the Sopwith Greek Seaplane (1914, a
+  two-seat four-bay pusher on two long floats with a tail float, six built for the Hellenic Naval
+  Air Service), the Sopwith Bat Boat Type 2 (1914, a pusher flying boat with a sewn-plywood
+  "Consuta" hull, its tail on open booms; one went to Greece), here an **amphibian** whose wheels
+  fold up beside the hull (as the 1913 Type 1A's did; X, as on the Albatross), the Short Type 184
+  (1915, the three-bay torpedo seaplane flown from Ben-my-Chree and Mudros in the Aegean, with its
+  torpedo between the floats and air bags under its wing tips) and the KEA Chelidon (1927, the
+  Phaleron factory's own two-seat trainer, a landplane that flies from the aerodrome). Greek
+  naval liveries: the blue and white roundel, blue rudders with a white band. Their own group in
+  the aircraft picker.
+- **Code:** `src/aircraft_greek.jo` (models, wheels, contacts), profiles in
+  `src/aircraft_catalog.jo`, the picker group in `src/aircraft_picker.jo`;
+  `tests/aircraft_greek_test.jo`.
 
 ### Early aircraft
 
@@ -614,19 +693,21 @@ On the rivers branch until it lands.
 - **Code:** `set_speed_scale` in `src/flight.jo`; the `pure_scale` flag in `src/tweaks.jo`;
   `pure_k` converts back to true speed.
 - **Rules:** a plain scalar, not a curve; the approved version is tagged `liked-speed-3.3x`.
+  The "true speed on a curve", quick-grip, true-speed airframe and true-speed cloth trials (no
+  checkbox, only `AEGEAN_TWEAKS=curve|grip|airframe|cloth`) were retired 2026-11-15: nothing used them.
   Distance-dependent speed tricks (near boost, detail flow, whole-sea flow, axial stretch;
   `AEGEAN_SPEED_MODE`, `AEGEAN_NEAR_BOOST`) were rejected on 2026-11-10 and must not be revived.
 
 ### Chaotic stalls
 
 - **Aliases:** the stall trial.
-- **Definition:** the Tweaks option for a more physical stall, with left and right wing separation,
-  stall breaks and spins (the user's aim includes a hammerhead with prop-wash rudder authority).
-  With it off, the liked arcade flight model is unchanged.
-- **Code:** `chaotic_stalls` in `src/tweaks.jo`; `wing_separation` and `_stall_rotation` in
-  `src/flight.jo`; `tools/stalllab.jo`, `tools/stallframes.jo`.
-- **Rules:** near the water the old model is used up to 1 span of clearance and blended in by 3
-  spans. Landings must forgive firm touchdowns.
+- **Definition:** retired 2026-11-15 (the user judged it not worth keeping): a Tweaks option for a
+  more physical stall, with left and right wing separation, stall breaks and spins. The option,
+  its checkbox, its `AEGEAN_TWEAKS=stalls` hook, its flight and autopilot code, and its tools and
+  tests are gone; the game flies the liked arcade stall as it always did with the option off.
+  Flight model v2 keeps a soft stall of its own.
+- **Code:** none left. `wing_separation`, `buffet` and `stall_blend` in `CraftState` are written
+  only by flight model v2 (`src/flight_v2.jo`, `src/flight_sb.jo`) and read by the flight feedback.
 
 ### Flight model v2
 
@@ -710,6 +791,27 @@ On the rivers branch until it lands.
   - Their `AIRFRAMES` rows exist for the player's records; no seeded fleet flies them yet.
 
 
+### Wing-strut streamers
+
+- **Aliases:** streamers, the ribbons on the struts.
+- **Definition:** a red-and-cream ribbon each side of the player's aircraft, streaming back in
+  the wind of flight (the same cloth as the [Pilot's scarf](#pilots-scarf)). Each is tied
+  halfway along that type's outermost strut that is clear of the water and no higher than its top
+  wing: an interplane strut on a biplane, a wing strut, a float strut on a twin-float
+  monoplane, or a tip-float strut on a boat. Of a fore-and-aft pair it takes the rear one. Found
+  from the type's own struts, so every type, and any added later, has them on its own structure.
+  The Supermarine S.6B and Macchi M.C.72 (cantilever wings) carry them on their float struts; the
+  Piaggio P.7, whose only struts are its hydrofoil legs under the water, has none.
+- **Code:** `src/craft_struts.jo` (`tag_strut`, `craft_struts`, `streamer_ties`); the strut helpers
+  in `src/planes.jo`, `src/racer_planes.jo`, `src/aircraft_boats.jo`, `src/italian_racers.jo`
+  tag their boxes; `src/planes.jo craft_tie_streamers` fills `CraftModel.struts` and
+  `CraftModel.streamers`; `src/fabric.jo cloths_for`; `tests/streamer_test.jo`.
+- **Rules:** a new aircraft's struts must be laid with a strut helper (`_strut`, `kit_strut`,
+  `_bstrut`, the racers' `_strut`/`_blade`, `_st`), or call `tag_strut` on the box just pushed;
+  the test fails for a type with no strut to tie to unless it's listed as having none.
+- **Capture:** `HANGAR_STREAMERS=1 HANGAR_YAW=2.3 HANGAR_KINDS="0,1,3,5,12,16,17,20,21,25,26,32"
+  sloppy tools/hangar.jo` (a contact sheet).
+
 ### Race classes
 
 - **Aliases:** the club class, the Schneider class, the open class; club racers, the long course.
@@ -741,8 +843,7 @@ On the rivers branch until it lands.
   - The capital club's pilot cohort (`AIR_CLUB_PILOTS`, five) and an aerodrome's air arm (two)
     are reserved together.
   - On the way home a clubmate yields the approach only to another coming home, and one already
-    down or on final keeps its landing. Under the chaotic-stalls trial the autopilot's arrival at
-    1.4 times the stall can stall a racer's sharp wing (default tweaks are fine).
+    down or on final keeps its landing.
 - **Capture:** `AEGEAN_CAPTURE_RACE=schneider` with `AEGEAN_CRAFT` a Schneider racer (the S.6B is
   21): the long course off the home harbour, the player at the third gate's approach 41 s into the
   race, five rivals flown by the flight model; `schneider-finish` the results card;
@@ -2236,15 +2337,25 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Lead marker
 
-- **Aliases:** the lead ring, the deflection marker, "where to aim".
-- **Definition:** a small hostile-coloured ring with a dark rim and a centre dot showing where to put
-  the gunsight so the rounds meet a moving hostile. It follows Sky Barons' `lead_from`: time of
-  flight refined twice, the rounds keeping the aircraft's own velocity, drop added back as aim
-  above. It is drawn at the guns' 450 m convergence, so it lines up with the gunsight ring in any
-  view, with a faint tie back to the target. It fills when the gunsight sits on it.
-- **Code:** `src/lead_marker.jo` `gun_lead`, `lead_mark` (selected hostile, else the nearest in a
-  25° cone, within 1 km), `draw_lead_mark`.
-- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT="420 -160 20"`.
+- **Aliases:** the lead ring, lead marks, the deflection marker, "where to aim".
+- **Definition:** a small ring in the hostile colour on every hostile within 700 m on screen,
+  where the rounds and that hostile would meet: Sky Barons' lead ring, drawn as it draws it
+  (6 px radius, 2 px line, 0.9 alpha). It follows `lead_from`: time of flight refined twice, the
+  rounds keeping the aircraft's own velocity, drop added back as aim above.
+- **Code:** `src/lead_marker.jo` `gun_lead`, `lead_marks`, `draw_lead_marks`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 900 2400 30"`.
+
+### Player toughness, generous hits, aim assist
+
+- **Aliases:** the player's armour, hit margin, bullet magnetism.
+- **Definition:** three Tweaks under Combat. **Player toughness** (2.0) divides combat damage to
+  the player's own aircraft. **Generous hits** (on) lets the player's rounds hit within **Player
+  hit margin** (0.7 m) of each part an aircraft is hit as. **Aim assist** (off) bends the
+  player's rounds, after they leave the guns, a little toward the enemy most plainly in their
+  path (within 3° and 700 m, at most 4°/s, for their first 0.6 s); it never moves the controls or
+  the aircraft.
+- **Code:** `src/tweaks.jo`; `src/combat.jo` `bullet_damage`, `Round.wide`, `Round.assist`,
+  `_assist_target`; tests `tests/burst_test.jo`.
 
 ### Ground fire
 
@@ -2275,8 +2386,9 @@ No image: the tiers differ in budgets more than in any single view.
 - **Definition:** how combat pilots fight: Sky Barons' fighter (lead pursuit, target choice, break
   off when too close) with lag pursuit, defensive breaks and scissors, head-on passes, extending
   and coming back, unloading, zooming and wingmen's cover made explicit, shaped by skill,
-  aggression, caution and nerve, with deliberate mistakes.
-- **Code:** `src/combat.jo` `_dogfight`, `combat_controls`; personalities in `src/scenarios.jo`
+  aggression, caution and nerve, with deliberate mistakes. Gunners lead a turning target's swing
+  and keep aiming between thoughts when far from the player.
+- **Code:** `src/combat.jo` `_dogfight`, `_gun_aim`, `_retrack`, `combat_controls`; personalities in `src/scenarios.jo`
   `STRAIT_PILOTS`; tests `tests/dogfight_test.jo`; harness `tools/dogfight_lab.jo`.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
   (the brain flies the player's aircraft; frames for a clip).
@@ -2344,7 +2456,9 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 |---|---|
 | `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
-| `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page |
+| `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page (the picker) |
+| `AEGEAN_CAPTURE_PANEL=plane` | the pause menu open on its Plane page (fuel, damage, mending, the scales) |
+| `AEGEAN_CAPTURE_PANEL=paint` | the pause menu open on its Paint page |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
