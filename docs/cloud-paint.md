@@ -191,7 +191,7 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
 - **Rain shafts** (weather kind 8): a few dark columns and curtains under the
   storm's core, clear air between, the lower rain carried downwind (the layer's
   box turns with the storm's wind), streaked, and ragged scud hanging under the
-  base. The march holds to their cylinder, eight samples. The squall's veil is
+  base. The march holds to their cylinder, six samples. The squall's veil is
   thinner under a storm.
 - **Rain inside and under a storm.** A second, denser set of streaks; streaks
   follow the airflow and lengthen with speed. Beads on the windscreen in the
