@@ -212,6 +212,8 @@ struct Round:
     tracer = true
     point:WorldPoint?=none
     serial = -1                    # stable shot identity for one-shot presentation feedback
+    wide = 0.0                     # metres round each part this round still hits (the player's, generous)
+    assist = -1                    # the aircraft (ID) this round curves toward (the player's, aim assist)
 
 struct RoundSweep:
     owner: int
@@ -306,11 +308,12 @@ segment_ellipsoid = (a: vec3, z: vec3, center: vec3, half: vec3) -> f64:
     if t >= 0 and t <= 1: t else: 2
 
 # Part-sized solids rather than a single giant sphere around the wing tips.
-hit_aircraft = (a: Combatant, from: vec3, to: vec3) -> (f64,PartId):
+hit_aircraft = (a: Combatant, from: vec3, to: vec3, more: f64 = 0.0) -> (f64,PartId):
     inv = quat_inverse(a.state.orientation)
     p0 = quat_rotate(inv,from-a.previous); p1 = quat_rotate(inv,to-a.state.position)
     p = aircraft_profile(a.spec.kind)
     best = 2.0; part = PartId.body
+    grow = vec3(f32(more),f32(more),f32(more))
     loop i in 0..7:
         if not a.state.damage.parts[i].attached: continue
         center = a.spec.parts[i].attachment
@@ -326,14 +329,14 @@ hit_aircraft = (a: Combatant, from: vec3, to: vec3) -> (f64,PartId):
                 at=center+vec3(0,-f64(level)*(if p.decks==3:1.25 else:1.9),0)
                 size=half
                 if level>0:size.x*=f32(p.lower_span)
-                t=segment_ellipsoid(p0,p1,at,size)
+                t=segment_ellipsoid(p0,p1,at,size+grow)
                 if t<best:best=t;part=PartId(i)
         else if i==1 and p.engine_x>0:
             loop side in [-1.0,1.0]:
-                t=segment_ellipsoid(p0,p1,center+vec3(side*p.engine_x,0,0),vec3(0.65,0.65,0.8))
+                t=segment_ellipsoid(p0,p1,center+vec3(side*p.engine_x,0,0),vec3(0.65,0.65,0.8)+grow)
                 if t<best:best=t;part=.engine
         else:
-            t = segment_ellipsoid(p0,p1,center,half)
+            t = segment_ellipsoid(p0,p1,center,half+grow)
             if t < best: best = t; part = PartId(i)
     (best,part)
 
@@ -728,6 +731,32 @@ apply_bullet_hit = (b: mut Battle, i: int, part: PartId, point: vec3, direction:
     b.actors[i] = a
     _event(b,.hit,a,point,attacker,part,amount,direction)
 
+# Aim assist (the player's, on Tweaks): the enemy a round leaving the muzzle is most plainly
+# fired at, within ASSIST_CONE of where it would meet the round and ASSIST_REACH: none otherwise.
+const ASSIST_CONE = 0.9986          # cos 3 degrees
+const ASSIST_REACH = 700.0
+const ASSIST_TURN = 0.21            # radians a second the round's path may bend (12 degrees)
+const ASSIST_TIME = 0.6             # seconds after the muzzle it may bend
+
+_assist_meet = (from: vec3, speed: f64, o: Combatant) -> vec3:
+    rel = o.state.position-from
+    t = f64(length(rel))/max(speed,1.0)
+    loop _ in 0..2: t = f64(length(rel+o.state.velocity*f32(t)))/max(speed,1.0)
+    rel+o.state.velocity*f32(t)+vec3(0,f32(4.905*t*t),0)
+
+_assist_target = (b: Battle, i: int, at: vec3, velocity: vec3) -> int:
+    side = b.actors[i].side; way = normalize(velocity); speed = f64(length(velocity))
+    best = -1; nearest = ASSIST_CONE
+    loop j in 0..b.actors.len():
+        o = b.actors[j]
+        if j == i or o.side == side or not o.present or o.status != .flying or o.bailed: continue
+        meet = _assist_meet(at,speed,o)
+        d = f64(length(meet))
+        if d > ASSIST_REACH or d < 5.0: continue
+        on = f64(dot(way,meet/f32(d)))
+        if on > nearest: nearest = on; best = o.craft
+    best
+
 _fire_round = (b: mut Battle, i: int):
     a = b.actors[i]
     configure_player_gun(a,a.gun.choice,a.gun.endless)
@@ -745,9 +774,14 @@ _fire_round = (b: mut Battle, i: int):
         point=craft_offset(a.state,quat_rotate(a.state.orientation,local))
         at=world_vec(point)
         jitter = vec3(combat_noise(b.seed,a.craft,a.gun.shots,0),combat_noise(b.seed,a.craft,a.gun.shots,1),0)*f32(gun.spread)
-        # Convergence is physical: no target seeking or bending after the round is fired.
+        # Convergence is physical: no target seeking or bending after the round is fired (except
+        # the player's rounds under the aim assist Tweak).
         dir = quat_rotate(a.state.orientation,normalize(vec3(0,0,-450)-local+jitter*450.0))
-        b.rounds.push(Round(at,a.state.velocity+dir*f32(420.0*b.bullet_scale),a.craft,a.side,gun.damage,tracer=rapid or a.gun.shots%3==0,serial=b.next_serial,point=point))
+        round = Round(at,a.state.velocity+dir*f32(420.0*b.bullet_scale),a.craft,a.side,gun.damage,tracer=rapid or a.gun.shots%3==0,serial=b.next_serial,point=point)
+        if a.human:
+            if tweaks.generous_hits: round.wide = max(0.0,tweaks.hit_margin)
+            if tweaks.aim_assist: round.assist = _assist_target(b,i,at,round.velocity)
+        b.rounds.push(round)
         a.gun.shots += 1
         if not endless:a.gun.ammo -= 1
         a.gun.heat += 0.035
@@ -871,6 +905,17 @@ step_combat_rounds = (b: mut Battle, e: FlightEnv, broad_phase:bool = true):
     loop n < b.rounds.len():
         r = b.rounds[n]; r.age += COMBAT_DT
         r.velocity.y -= f32(9.81*COMBAT_DT)
+        # (aim assist: bent a little toward the enemy it was fired at, in its first moments only)
+        if r.assist >= 0 and r.age < ASSIST_TIME:
+            k = combat_index(b,r.assist)
+            if k >= 0 and b.actors[k].status == .flying:
+                speed = f64(length(r.velocity))
+                want = normalize(_assist_meet(r.position,speed,b.actors[k]))
+                way = normalize(r.velocity)
+                gap = acos(clamp(f64(dot(way,want)),-1.0,1.0))
+                if gap > 1e-5 and gap < 0.1:
+                    turn = min(1.0,ASSIST_TURN*COMBAT_DT/gap)
+                    r.velocity = normalize(lerp(way,want,f32(turn)))*f32(speed)
         next_point=world_offset(r.point ?? world_point(r.position),r.velocity*f32(COMBAT_DT))
         end=world_vec(next_point)
         best = 2.0; victim = -1; boat_id = -1; part = PartId.body
@@ -892,10 +937,10 @@ step_combat_rounds = (b: mut Battle, e: FlightEnv, broad_phase:bool = true):
             a = b.actors[i]
             b.pair_tests += 1
             mid = (r.position+end)*0.5-a.state.position
-            radius = a.spec.span+f64(length(end-r.position))*0.5+f64(length(a.state.position-a.previous))
+            radius = a.spec.span+r.wide+f64(length(end-r.position))*0.5+f64(length(a.state.position-a.previous))
             if dot(mid,mid) > radius*radius: continue
             b.narrow_tests += 1
-            at,id = hit_aircraft(a,r.position,end)
+            at,id = hit_aircraft(a,r.position,end,r.wide)
             if at < best or (at == best and victim >= 0 and a.craft < b.actors[victim].craft): best=at; victim=i; part=id
         loop j in 0..b.boats.len():
             boat = b.boats[j]
