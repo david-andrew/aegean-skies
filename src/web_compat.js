@@ -81,6 +81,29 @@
     if (/\bu\b/.test(result)) throw Error("Unsupported whole uniform struct use");
     return result;
   }
+  // Sloppy 0.36 reads a GPU buffer in GLSL through `struct S_GB { isampler2D t_; int n_; }`: a
+  // uniform struct holding a sampler, passed by value to the generated `gbr_*` readers. The Adreno
+  // 650 driver behind Chrome 114 (LG V60, Android 13) then fails to compile some of those shaders,
+  // depending only on identifier names after ANGLE hashes them ("no matching overloaded function
+  // found" for an ordinary call elsewhere in the shader): about 1 name in 20 on the flight effects
+  // shader, which kept the game on its loading card. With the sampler and the length as plain
+  // uniforms, no name failed (120 tried). Declare each buffer as two uniforms and pass both to the
+  // readers; location lookups of `X.t_` / `X.n_` are translated below. Shaders that use S_GB in any
+  // other way are left as they were. Remove once Sloppy no longer puts samplers in structs.
+  function flattenGpuBuffers(source) {
+    if (!/\bstruct S_GB\s*\{/.test(source)) return source;
+    const names = [...source.matchAll(/^uniform S_GB (\w+);$/gm)].map(m => m[1]);
+    let s = source.replace(/struct S_GB\s*\{[^}]*\};\n?/, "");
+    s = s.replace(/^uniform S_GB (\w+);$/gm, (_, x) => `uniform highp isampler2D aegean_gbt_${x};\nuniform int aegean_gbn_${x};`);
+    s = s.replace(/\b(gbr_\w+)\(S_GB b, int i\)/g, "$1(highp isampler2D b_t, int b_n, int i)");
+    s = s.replace(/\bb\.t_\b/g, "b_t").replace(/\bb\.n_\b/g, "b_n");
+    for (const x of names) {
+      s = s.replace(new RegExp("\\b(gbr_\\w+)\\(" + x + ",", "g"), `$1(aegean_gbt_${x}, aegean_gbn_${x},`);
+      s = s.replace(new RegExp("\\b" + x + "\\.t_\\b", "g"), "aegean_gbt_" + x).replace(new RegExp("\\b" + x + "\\.n_\\b", "g"), "aegean_gbn_" + x);
+    }
+    return /\bS_GB\b/.test(s) || names.some(x => new RegExp("\\b" + x + "\\b").test(s)) ? source : s;
+  }
+  const gpuBufferUniform = name => name.replace(/^(\w+)\.([tn])_$/, "aegean_gb$2_$1");
   function chooseTier(device) {
     if (["low", "medium", "high"].includes(device.override)) return ["low", "medium", "high"].indexOf(device.override);
     if (device.mobile || device.textureLimit <= 4096 || device.fragmentLimit <= 224) return 0;
@@ -155,7 +178,7 @@
     proto.getItem = function(key) { const value = get.call(this, key); return bodyKey(key) ? livingStoreDecode(value) : value; };
     Object.defineProperty(proto, "__aegeanWideLivingStore", {value:true});
   }
-  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
+  root.AegeanWeb = { specializeUniforms, flattenGpuBuffers, gpuBufferUniform, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
   if (typeof module !== "undefined") module.exports = root.AegeanWeb;
   if (typeof Storage !== "undefined") installLivingStorage(Storage.prototype);
   if (typeof WebGL2RenderingContext === "undefined") return;
@@ -297,10 +320,11 @@
   const proto = WebGL2RenderingContext.prototype;
   const shaderSource = proto.shaderSource, linkProgram = proto.linkProgram, uniformLocation = proto.getUniformLocation;
   proto.shaderSource = function (shader, source) {
-    return shaderSource.call(this, shader, specializeUniforms(source));
+    return shaderSource.call(this, shader, flattenGpuBuffers(specializeUniforms(source)));
   };
   proto.getUniformLocation = function (program, name) {
-    return uniformLocation.call(this, program, name.replace(/^u\./, "aegean_u_"));
+    const plain = name.replace(/^u\./, "aegean_u_"), flat = gpuBufferUniform(plain);
+    return (flat !== plain && uniformLocation.call(this, program, flat)) || uniformLocation.call(this, program, plain);
   };
   proto.linkProgram = function (program) {
     linkProgram.call(this, program);
