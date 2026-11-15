@@ -16,6 +16,7 @@ use 'look.jo'
 use 'plants.jo'
 use 'world_terrain.jo'
 use 'world_source.jo'
+use 'canopy.jo'
 
 struct WorldGrove:
     key: int = -1
@@ -28,35 +29,41 @@ world_groves: WorldGrove[]
 world_grove_count = 0
 world_grove_generated = 0
 
-world_grove_lists = (x: int,z: int) -> Instance3D[][]:
+# The trees of one tile from the shared cell query (src/canopy.jo): the shader finds the same
+# crowns again for the far canopy, so each tree stands on its painted crown. share: the cells
+# kept as meshes (grove_keep under it; 1 all of them, as the canopy and the tests see them).
+world_grove_lists = (x: int,z: int,share: f32 = 1.0) -> Instance3D[][]:
     ox,oz = world_tile_origin(x,z,0)
     lists: Instance3D[][] = [[],[],[]]
     # Global ecology cells belong to exactly one tile, including negative space.
-    loop j in int(floor(oz/26.0))..int(ceil((oz+224.0)/26.0)):
-        loop i in int(floor(ox/26.0))..int(ceil((ox+224.0)/26.0)):
-            r = rng((i*73856093 xor j*19349663 xor GEOGRAPHY_SEED) & 0x7FFFFFFF)
-            wx = (f64(i)+r.next_float())*26.0
-            wz = (f64(j)+r.next_float())*26.0
+    loop j in int(floor(oz/GROVE_CELL))..int(ceil((oz+224.0)/GROVE_CELL)):
+        loop i in int(floor(ox/GROVE_CELL))..int(ceil((ox+224.0)/GROVE_CELL)):
+            cell = vec2(f32(i),f32(j))
+            lay = grove_layout(cell)
+            wx = (f64(i)+f64(lay.x))*GROVE_CELL
+            wz = (f64(j)+f64(lay.y))*GROVE_CELL
             if wx < ox or wx >= ox+224.0 or wz < oz or wz >= oz+224.0: continue
+            if grove_keep(cell) >= share: continue
             if thermal_paved(vec2(f32(wx),f32(wz))) or working_paved(vec2(f32(wx),f32(wz))) or airfield_clear(vec2(f32(wx),f32(wz))) or settlement_urban(vec2(f32(wx),f32(wz))) or settlement_on_road(vec2(f32(wx),f32(wz))): continue
             h = world_source_surface(wx,wz)
             if h < 4.0 or h >= 2200.0 or water_at(wx,wz).wet: continue
             sl = world_source_slope(wx,wz)
             if sl > 0.7: continue
-            dens = fbm(wx*0.006+3.3*3.0,wz*0.006,3)
-            # Existing bare/bush behavior above the original islands' elevation
-            # range: no new alpine tree species or palette.
-            if r.next_float() < smoothstep(1500.0,2200.0,h): continue
-            kind = grove_kind(sl,dens,1e9,r,false)
+            dens = fbm(wx*0.006+f64(GROVE_SEED),wz*0.006,3)
+            chance = grove_chances(cell)
+            # (above the original islands' elevation range thinning out: no alpine species)
+            kind = grove_kind_at(chance,f32(dens),f32(sl),f32(h))
             if kind < 0: continue
-            scale = geo_random(r,0.75,1.3); shade = f32(geo_random(r,0.85,1.12))
-            m = translation(vec3(f32(wx),f32(h),f32(wz)))*rotation_y(geo_random(r,0.0,TAU))*scaling(scale)
-            lists[kind].push(Instance3D(m,vec4(shade,shade*f32(geo_random(r,0.95,1.05)),shade,1)))
-            if kind == int(Tree.pine) and r.next_float() < 0.6:
-                nx = wx+geo_random(r,-9.0,9.0); nz = wz+geo_random(r,-9.0,9.0)
+            scale = 0.75+0.55*f64(lay.z); shade = 0.85+0.27*chance.w
+            m = translation(vec3(f32(wx),f32(h),f32(wz)))*rotation_y(f64(lay.w)*TAU)*scaling(scale)
+            lists[kind].push(Instance3D(m,vec4(shade,shade*(0.95+0.1*lay.w),shade,1)))
+            if kind == int(Tree.pine):
+                sib = grove_sibling(cell)
+                if sib.x >= 0.6: continue
+                nx = wx+(f64(sib.y)*2.0-1.0)*GROVE_SIBLING_REACH; nz = wz+(f64(sib.z)*2.0-1.0)*GROVE_SIBLING_REACH
                 nh = world_source_surface(nx,nz)
                 if nh > 4.0 and not water_at(nx,nz).wet and not thermal_paved(vec2(f32(nx),f32(nz))) and not airfield_clear(vec2(f32(nx),f32(nz))) and not working_paved(vec2(f32(nx),f32(nz))) and not settlement_on_road(vec2(f32(nx),f32(nz))):
-                    m2 = translation(vec3(f32(nx),f32(nh),f32(nz)))*rotation_y(geo_random(r,0.0,TAU))*scaling(geo_random(r,0.7,1.15))
+                    m2 = translation(vec3(f32(nx),f32(nh),f32(nz)))*rotation_y(f64(sib.y+lay.w)*TAU)*scaling(0.7+0.45*f64(sib.w))
                     lists[kind].push(Instance3D(m2,vec4(shade,shade,shade,1)))
     nature_grove(lists)
 
@@ -82,7 +89,8 @@ _world_grove_fill = (node: WorldTile) -> int:
         loop k in 0..world_groves.len():
             if world_groves[k].used < oldest: oldest = world_groves[k].used; found = k
         if found < 0: return -1
-    lists = thin_grove(world_grove_lists(node.x,node.z))
+    # (the tier's thinning by cell, so the far canopy knows which crowns have meshes)
+    lists = world_grove_lists(node.x,node.z,grove_kept_share())
     solids: TownSite[]
     loop kind in 0..min(2,lists.len()):
         loop tree in lists[kind]:
@@ -90,7 +98,7 @@ _world_grove_fill = (node: WorldTile) -> int:
             solids.push(TownSite(at,0,0.6*scale,0.6*scale,5*scale,0))
     walk_publish("worldgrove:{found}",solids)
     g = world_groves[found]
-    loop k in 0..PLANT_KINDS: set_instances(g.grove.kinds[k],quality_trees(lists[k]))
+    loop k in 0..PLANT_KINDS: set_instances(g.grove.kinds[k],lists[k])
     g.key = node.key; g.roads = _world_grove_roads(ox,oz); g.places = _world_grove_places(ox,oz); g.grove.center = vec2(f32(ox+112.0),f32(oz+112.0))
     world_groves[found] = g
     found
