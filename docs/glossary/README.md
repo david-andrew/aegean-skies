@@ -19,7 +19,7 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
@@ -1120,7 +1120,9 @@ On the rivers branch until it lands.
 - **Definition:** the dark patches with defined edges that the clouds cast on land, sea,
   rivers, lakes and towns, offset from each cloud by the sun's angle and moving with clouds
   and sun; deep water goes navy, clear shallows a deeper teal, land keeps some colour. The
-  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`).
+  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`). Seen from height they
+  grow lighter and softer, and small clouds' shadows fade, as in the film; near the ground
+  they keep their edge.
 - **Code:** `src/cloud_shadow.jo`: the map (sun-projected coverage from each form's footprint
   slabs) and `apply_cloud_shadows`, a screen-space pass over the scene depth; the sea's glints
   per vertex in `src/sea.jo`. `AEGEAN_CLOUD_SHADOWS=0` turns them off.
@@ -1157,6 +1159,39 @@ On the rivers branch until it lands.
 
 ![A storm's anvil about 11 km off](img/anvil.png)
 
+### Storm system
+
+- **Aliases:** thunderstorm, storm cell (in the weather simulation).
+- **Definition:** a thunderstorm about 26 km across, minutes to fly through: a dark deck from a
+  ragged 1150 m base to above the highest an aircraft can climb, a tiered **shelf cloud** along
+  its leading (downwind) edge, four embedded cells at their stages (towers, a mature anvil, a
+  dissipating mass) under one painted **anvil canopy** near 9-10 km, rain shafts under the
+  cells, and a slate rain veil from its base to the sea that reads from 10-40 km. Painted in
+  the film's storm palette: near-black slate belly and deck, cream-grey lit tops. The air is
+  rough throughout its deck and violent in the cells. Born about 30 km out, it
+  crosses the home waters at 120 m a minute, closing the routes under it for about three and a
+  half hours: one waits it out, goes round, or pushes through.
+- **Code:** `storm_cells` (the shared layout) in `src/lightning.jo`; `storm_system_clouds` in
+  `src/cloud_field.jo`; weather kinds 9 (shelf), 10 (storm deck) and 11 (canopy) in
+  `src/cloud_volume.jo`; the schedule in `src/living_weather.jo`.
+- **Capture:** `AEGEAN_WEATHER=storm AEGEAN_WEATHER_CENTER='x z'` (with `AEGEAN_FLYING` the storm
+  centres on the aircraft).
+
+### Storm sighting
+
+- **Definition:** a thunderstorm in sight of a place (up to about 60 km beyond its edge), told
+  as an observation, never a forecast: islanders name where it stands, how far, and whether it
+  comes on or moves off; the radio's harbour weather report names it too.
+- **Code:** `storm_sighting` in `src/living_conditions.jo`; `context_weather` in
+  `src/living_talk_context.jo`; `radio_weather_content` in `src/radio_content.jo`.
+
+### Storm sound
+
+- **Definition:** a storm heard from the aircraft: rain drumming on fabric and wood, wind gusting
+  with the rough air, and thunder from each strike the bolts show, a crack and a roll near, a
+  darker roll far, arriving after its distance at the speed of sound. All synthesized.
+- **Code:** `src/storm_sound.jo`. On the ground the ambience's own thunder plays instead.
+
 ### Lightning
 
 - **Aliases:** strikes, bolts.
@@ -1172,9 +1207,10 @@ On the rivers branch until it lands.
 
 ### Rain shafts
 
-- **Definition:** the few dark columns and curtains of rain hanging from a storm's base to the
-  sea under its core, clear air between them, the lower rain carried downwind, with ragged scud
-  under the base. A squall's lighter **rain curtains** hang under its deck.
+- **Definition:** the dark columns and curtains of rain hanging from a storm system's base
+  (1150 m) to the sea under each of its cells, clear air between them, the lower rain carried
+  downwind, with ragged scud under the base. Hazed far less than the air around them, so from 30
+  to 40 km they are the grey streaks that say "storm". A squall's lighter **rain curtains** hang under its deck.
 - **Code:** weather kind 8 in `volume_sample`, `src/cloud_volume.jo`.
 
 ### Storm turbulence
@@ -1183,7 +1219,9 @@ On the rivers branch until it lands.
 - **Definition:** the air inside a cloud's body is rough, mildly in fair cumulus and violently
   in a thunderstorm, and gusty under a storm. It acts through the flight model: eddies and
   drafts in the wind it meets (vertical jolts and airspeed swings), and roll, pitch and yaw
-  kicks with a fast shudder that knock the aircraft about its path and let it come back.
+  kicks with a fast shudder that knock the aircraft about its path and let it come back,
+  and a slow wander of roll and pitch: left alone in a storm it drifts into a bank and a
+  descent over tens of seconds; held, it gets through.
 - **Code:** `weather_turbulence`, `weather_turbulent_gust` in `src/weather_scene.jo`;
   `_turbulence_kick` in `src/flight.jo`; `tests/storm_test.jo`.
 
@@ -1235,7 +1273,10 @@ On the rivers branch until it lands.
 ### Moon
 
 - **Definition:** a sphere lit by the actual sun direction, never a painted phase mask. On
-  `t3/splash-2` its disc is the same apparent size as the sun's.
+  `t3/splash-2` its disc is the same apparent size as the sun's. By day it is seen through the
+  sky in front of it: its lit side a pale, faintly blue wash low in contrast against the blue,
+  its dark side only sky; through dusk it becomes the night Moon.
+- **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count).
 - **Code:** `src/celestial.jo sky_moon`, `moon_illumination`; the disc in `src/sky.jo`.
 
 ### Planet lights

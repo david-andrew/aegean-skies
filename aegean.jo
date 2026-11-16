@@ -59,6 +59,7 @@ use 'src/cloud_shadow.jo'
 use 'src/weather_scene.jo'
 use 'src/rain.jo'
 use 'src/storm_render.jo'
+use 'src/storm_sound.jo'
 use 'src/sky.jo'
 use 'src/objects.jo'
 use 'src/touch.jo'
@@ -3500,6 +3501,12 @@ audio_built = not audio_deferred
 audio_job = AudioBuild(environment = false)
 audio_job_step = 0               # (0 the sounds' pieces, 1 the far engines' hearing, 2 the guns')
 audio = if audio_enabled and not audio_deferred: start_audio(false) else: Audio()
+# AEGEAN_SKY_DAYS=d fixes the sky's day count (the Moon's age) for captures.
+sky_days_override: f64? = to_float(env("AEGEAN_SKY_DAYS") ?? "")
+# (a thunderstorm's rain, gusts and thunder: made with the other sounds, behind the title when
+# those are deferred: step_audio_build)
+storm_audio = StormSound()
+if audio_enabled and not audio_deferred: storm_sound_start(storm_audio)
 life_sound = life_audio.build_life_audio()
 world_ambience = AmbienceScene(sound=build_ambience(render_only=capture_audio))
 if capture_audio: world_ambience.sound.playback=true
@@ -3638,7 +3645,7 @@ if let sm = env("AEGEAN_SPEED_MODE"): set_speed_mode(to_int(sm) ?? 1)
 # AEGEAN_FLYING="altitude [speed] [cockpit]" starts in the air off the home harbor, heading out to
 # sea: altitude in metres, speed the TRUE airspeed in m/s (the speedometer's; drawn at the speed
 # scale, 3.3 times faster), by default a safe 1.3 times the aircraft's stall; "cockpit": in the
-# cockpit view
+# cockpit view. The aircraft starts serviced (AEGEAN_WEAR=1 keeps a new game's wear)
 flying_drawn_speed = (spec: CraftSpec, given: f64?) -> f64:
     (given ?? spec.stall_speed * 1.3) * max(spec.handling_scale, 1.0)
 if let v = env("AEGEAN_FLYING"):
@@ -3680,6 +3687,10 @@ if let v = env("AEGEAN_FLYING"):
     # (a weather fixture centres on the aircraft it starts in)
     if let name = env("AEGEAN_WEATHER"):
         if env("AEGEAN_WEATHER_CENTER") == none: weather_fixture(living_world,name,pc.state.position)
+    # (the speed is through the air: the wind where it starts is added, so a storm's wind from
+    # behind doesn't start it below its stall)
+    weather_scene_step(living_world,pc.state.position,hour,0.0)
+    pc.state.velocity += weather_at_point(pc.state.position).wind
 if let v = env("AEGEAN_WIND"):
     w = split(v, " ")
     wind_now.speed = to_float(w[0]) ?? 6.0
@@ -3724,6 +3735,7 @@ craft_shadow_old=env("AEGEAN_OLD_SHADOWS")!=none
 capture_takeoff_pad=env("AEGEAN_CAPTURE_TAKEOFF")=="pad"
 capture_takeoff=env("AEGEAN_CAPTURE_TAKEOFF")!=none and not capture_takeoff_pad
 capture_takeoff_worn=env("AEGEAN_CAPTURE_TAKEOFF")=="worn"
+flying_serviced=env("AEGEAN_FLYING")!=none and env("AEGEAN_WEAR")==none
 capture_takeoff_plan=FlightPlan()
 # AEGEAN_CAPTURE_TAXI=s (with AEGEAN_CAPTURE_TAKEOFF=1): taxi out at the autopilot's taxiing pace
 # for s seconds first, then the take-off run (a clip of dolphins racing a taxiing aircraft)
@@ -5108,7 +5120,7 @@ title_open_world = ():
 vessels_prewarmed = false        # (the ships' view made while the title is dusk: vessel_view_prewarm)
 # the next piece of the sounds made behind the title (all = true: every piece left, at once)
 step_audio_build = (all: bool):
-    global audio, hearing, combat_audio, audio_built, audio_job_step, audio_job
+    global audio, hearing, combat_audio, audio_built, audio_job_step, audio_job, storm_audio
     loop not audio_built:
         if audio_job_step == 0:
             if audio_build_step(audio_job):
@@ -5116,7 +5128,7 @@ step_audio_build = (all: bool):
         else if audio_job_step == 1:
             hearing = make_hearing(); audio_job_step = 2
         else:
-            combat_audio = start_combat_audio(); audio_built = true
+            combat_audio = start_combat_audio(); storm_sound_start(storm_audio); audio_built = true
             print("TITLE sounds made behind the title")
         if not all: break
 
@@ -7492,6 +7504,20 @@ update_frame = (dt: f64, saves: bool = true):
                 pc.throttle=1.0-clamp((f64(frame_number())-prop_sweep_from)/(prop_sweep_secs*60.0),0.0,1.0)
                 # a sound engine, so the sweep starts from true full power
                 pc.state.damage.parts[int(PartId.engine)].health=1.0;pc.state.engine_damage=0.0
+            # (AEGEAN_FLYING starts from a serviced aircraft: a new game's Gull is worn by design,
+            # hull 650 and engine 550, and a staged flight would start it near its stall and short
+            # of power; done in the first five seconds, while the new game binds it;
+            # AEGEAN_WEAR=1 keeps the wear)
+            if flying_serviced and me.mode==.aboard:
+                global flying_serviced
+                rec=living_world.people[living_world.player].craft
+                if rec>=0 and (living_world.aircraft[rec].engine<1000 or living_world.aircraft[rec].hull<1000):
+                    living_world.aircraft[rec].engine=1000;living_world.aircraft[rec].hull=1000
+                    pc.state.damage=DamageState();pc.state.hull_damage=0.0;pc.state.engine_damage=0.0
+                    # (the combat actor's parts are copied back onto the aircraft every frame)
+                    fc=combat_index(battle,rec)
+                    if fc>=0:battle.actors[fc].state.damage=pc.state.damage;battle.actors[fc].state.hull_damage=0.0;battle.actors[fc].state.engine_damage=0.0
+                flying_serviced=frame_number()<300
             if me.mode==.aboard:
                 if slip.active and active_scenario=="canal":
                     global slip
@@ -7903,6 +7929,9 @@ update_frame = (dt: f64, saves: bool = true):
     shore = abs(f64(surface_height(f64(where.x), f64(where.z)))) * 8.0 + (if flying: f64(where.y) * 2.0 else: 0.0)
     # (the sounds go by the speed as designed: true speed / the speed scale)
     update_audio(audio, dt, flying and not pc.state.moored, pc.state.throttle, if flying: pc.feedback.speed else: 0.0, shore, not flying, where, pc.kind, if flying: pc.feedback else: FlightFeedback())
+    # (a storm heard from the aircraft: rain on it, gusting wind, thunder after the strikes)
+    raining = if weather_active and f64(where.y) < f64(weather_here.ceiling+weather_here.storm*5200.0): f64(weather_here.rain) else: 0.0
+    storm_sound_step(storm_audio, flying and not pc.state.moored, pc.cockpit_view, raining, if flying: f64(weather_turbulence(pc.state.position)) else: 0.0, f64(length(pc.state.velocity)), where, weather_seconds)
     # (behind the title the world is heard only through the title's own sound)
     if not title.open:
         world_ambience.sound.enabled = dbg.snd_world
@@ -8293,7 +8322,7 @@ draw = ():
     # after the frame)
     world_hour=hour
     if title.open: hour=title_now.hour
-    L = weather_light(light_at(hour,f64(living_world.minute)/1440.0),if title.open: title_now.eye else: if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
+    L = weather_light(light_at(hour,sky_days_override ?? f64(living_world.minute)/1440.0),if title.open: title_now.eye else: if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
     if startup_aegean_clear_air != none: L.fog_density = 0.0
     clear(BLACK)
     sun(L.sun_dir, L.sun, 0.0)
