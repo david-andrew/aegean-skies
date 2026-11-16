@@ -1220,8 +1220,9 @@ On the rivers branch until it lands.
   in a thunderstorm, and gusty under a storm. It acts through the flight model: eddies and
   drafts in the wind it meets (vertical jolts and airspeed swings), and roll, pitch and yaw
   kicks with a fast shudder that knock the aircraft about its path and let it come back,
-  and a slow wander of roll and pitch: left alone in a storm it drifts into a bank and a
-  descent over tens of seconds; held, it gets through.
+  and the storm's push, scaled to each type: left alone it is banked and off its heading
+  within seconds, and with the mouse steering it holds level but is turned off its course
+  (the aim turns with it), so a storm is flown by the instruments, correcting.
 - **Code:** `weather_turbulence`, `weather_turbulent_gust` in `src/weather_scene.jo`;
   `_turbulence_kick` in `src/flight.jo`; `tests/storm_test.jo`.
 

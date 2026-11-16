@@ -247,12 +247,17 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   model twice: eddies and drafts in the wind (`weather_turbulent_gust`), and roll,
   pitch and yaw kicks, each the change of a bounded displacement
   (`_turbulence_kick`), so the aircraft is knocked about its path and comes back;
-  and a slow roll and pitch that wander over tens of seconds, so left alone in a
-  storm it drifts into a bank and a descent while a pilot holding it gets through.
-  `tests/storm_test.jo` flies every aircraft through the game's own storm air
-  (the cell, the deck and the cloud bodies, through `flight_env`, on the player's
-  speed scale): hands off it is in trouble no sooner than 8 s and within a minute
-  at the median; a correcting pilot gets through.
+  and the storm's push (`_storm_push`): irregular roll, yaw and pitch, each part a
+  share of the type's own control rates and part common, so a fast, stiff racer and a
+  heavy boat are thrown about too. Under a storm the gust front and downbursts make the
+  air rough 0.7 wherever its rain falls. The push on the heading and climb turns the
+  mouse's aim with the nose (`gust_turn`, `aim_gust`): the mouse's steering holds the
+  aircraft steady but not on course, so one flies a storm by the compass and the
+  attitude indicator, bringing the aim back. `tests/storm_test.jo` flies the game's own
+  storm air (the cell, the deck and the cloud bodies, through `flight_env`, on the
+  player's speed scale) with every type: hands off on the keys it is banked and off its
+  heading within 20 s and in trouble no sooner than 7 s; hands off with the mouse it is
+  turned off its course and carried up or down; a correcting pilot gets each through.
 
 ## Developer controls
 
