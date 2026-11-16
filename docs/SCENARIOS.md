@@ -23,7 +23,7 @@ quay, where its pilot stands afterwards. The radio's words show over each Morse 
 **Pilots in the water.** A pilot shot down low over the sea with the engine gone and the aircraft
 still answering ditches rather than jumps (`_can_ditch`, `_ditch_controls`), and climbs out beside
 the floating aircraft; others come down under the canopy. Either way they wait in the water in a
-yellow life vest, a green marker dye spreading round them, waving at aircraft that come near
+life vest of the period (kapok in buff canvas pockets), waving at aircraft that come near
 (`src/survivor_view.jo`), for a day. The living world's rescue takes it from there: land, taxi
 alongside, F to take them aboard, moor at a harbour, F to set them ashore. A foe set ashore in the
 player's own country's harbour can be handed to the guard (F) or let go (R). A few words are said

@@ -3231,9 +3231,9 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Pilots in the water
 
-- **Aliases:** survivors, ditching, the dye marker, rescue at sea, prisoners.
+- **Aliases:** survivors, ditching, rescue at sea, prisoners.
 - **Definition:** a pilot down in the sea, after a parachute or a ditching, waits in a life vest
-  with a green dye patch, waving at aircraft near. The player can land, taxi alongside, take them
+  (kapok in buff canvas, as vests were before the bright yellow of the 1940s), waving at aircraft near. The player can land, taxi alongside, take them
   aboard and set them ashore at a harbour: a friend thanked, a foe held as a prisoner or let go.
 - **Code:** `src/combat.jo` `_can_ditch`, `_ditch_controls`, `_ditched_out`;
   `src/survivor_view.jo`; `src/rescue_exchange.jo`; the living world's `board_survivors`,
