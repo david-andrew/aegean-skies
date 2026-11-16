@@ -13,6 +13,8 @@ What it refuses (see docs/CI.md):
   - paths in the scratch and reference areas (refs/, scratch/, tmp/, voice and recording folders);
   - audio recordings (.wav .mp3 .flac .ogg .m4a ...) and video (.mp4 .webm .mov ...), also when
     renamed: file contents are recognised by their header;
+    (except the edited ambience beds named exactly in ALLOWED_AUDIO, the user's approved
+    exception: docs/CREDITS.md);
   - soundfonts and reference names (FluidR3, .sf2, .sf3);
   - binaries over 5 MB that are not one of the known baked assets in KNOWN_LARGE below;
   - (range and staged modes) added lines that copy from the scratch and reference areas, such as
@@ -33,6 +35,16 @@ KNOWN_LARGE = {
     "assets/terrain_lod.bin": 16 * 1024 * 1024,    # baked render tiles, checked in
     "assets/living-routes.bin": 16 * 1024 * 1024,  # baked by tools/bake_living_routes.jo
     "assets/lake-basins.bin": 16 * 1024 * 1024,    # baked by tools/bake_lake_basins.py
+}
+
+# The only audio allowed in the repository, by exact path, each with its largest size: the recorded
+# ambience beds (src/ambience_beds.jo), edited and looped from free-to-use recordings with the
+# user's approval (2026-11-16; sources in docs/CREDITS.md). Never the raw recordings.
+ALLOWED_AUDIO = {
+    "assets/ambience/harbour.ogg": 320 * 1024,
+    "assets/ambience/village.ogg": 320 * 1024,
+    "assets/ambience/bar.ogg": 320 * 1024,
+    "assets/ambience/river.ogg": 320 * 1024,
 }
 
 AUDIO_VIDEO_EXT = {
@@ -173,18 +185,24 @@ def check(entries, lines):
             reasons.append("is under a scratch/reference/voice/recording folder")
         if BANNED_NAME.search(path) and ext not in {".jo", ".py", ".md", ".mjs", ".cjs", ".js", ".json", ".txt"}:
             reasons.append("is named like a recording")
-        if ext in AUDIO_VIDEO_EXT:
+        allowed = ALLOWED_AUDIO.get(path)
+        if ext in AUDIO_VIDEO_EXT and allowed is None:
             reasons.append("is an audio or video file (%s)" % ext)
         if ext in SOUNDFONT_EXT or SOUNDFONT_NAME.search(path.rsplit("/", 1)[-1]):
             reasons.append("is a soundfont or carries a reference name (FluidR3, .sf2)")
         size, body = info.get(oid, (0, b""))
         head = body[:64]
+        if allowed is not None:
+            if not head.startswith(b"OggS"):
+                reasons.append("is on the audio allowlist but is not an Ogg file")
+            elif size > allowed:
+                reasons.append("is %d KB, over the %d KB allowed for this ambience bed" % (size // 1024, allowed // 1024))
         for magic, off, what in MAGICS:
             if head[off : off + len(magic)] == magic:
                 if magic == b"RIFF" and head[8:12] not in RIFF_BAD:
                     continue
                 if ext in AUDIO_VIDEO_EXT or ext in SOUNDFONT_EXT:
-                    continue  # already reported by name
+                    continue  # already reported by name (or allowed by it)
                 reasons.append("has the header of %s, whatever its name" % what)
                 break
         is_binary = b"\0" in body[:8192]

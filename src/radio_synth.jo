@@ -2,12 +2,15 @@
 use 'music_synth.jo'
 use 'radio_chain.jo'
 use 'radio_station.jo'
+use 'voice_text.jo'
+use 'voice_synth.jo'
+use 'radio_studio.jo'
 # One mono 16 kHz stream, bounded blocks. No game/global RNG is touched.
 const RADIO_RATE = 16000
 const RADIO_TABLE = 1024
 const RADIO_BLOCK = 800             # <= 50 ms per render call
 
-enum RadioStyle: foxtrot, tango, waltz, bouzouki, march, choir, morse, classical
+enum RadioStyle: foxtrot, tango, waltz, bouzouki, march, choir, morse, classical, speech
 
 struct RadioFilter:
     b0 = 0.0
@@ -53,6 +56,17 @@ struct RadioSynth:
     station: StationLevel = StationLevel()
     record_mix = 0.0
     night = 0.0
+    # The announcer (src/voice_text.jo, src/voice_synth.jo). A bulletin repeats on the world
+    # clock with the given period, as the Morse loop did; silence fills the rest of a period.
+    voice_bank: VoiceBank
+    voice_tried = false              # loading was attempted (the data file may be absent)
+    voice: VoiceSynth
+    speech_text: str = ""
+    speech_origin = 0                # sample where the current period began
+    speech_period = 160000           # samples
+    speech_seed = 0
+    studio: Studio
+    speech_colour = 0.0
 
 # The receiver only needs a sine for its Morse tone, fading and tuning whistle.
 make_radio_synth = () -> RadioSynth:
@@ -61,7 +75,22 @@ make_radio_synth = () -> RadioSynth:
 # Prepare bounded storage and hot paths during world loading, before first play.
 # Discard the tiny procedural warmup; subsequent programme selection resets all audible
 # state. This opens no stream/device and retains no reference or pre-rendered programme.
+# Load the announcer once; without its data file (AEGEAN_VOICE_DATA) speech stays off.
+radio_voice_prepare = (s: mut RadioSynth):
+    if s.voice_tried: return
+    s.voice_tried = true
+    s.voice_bank = voice_load()
+    if not s.voice_bank.ready: return
+    s.voice = make_voice_synth(s.voice_bank)
+    # Warm the text stage and the vocoder during loading (first-run costs in the browser), then
+    # discard: the first real bulletin starts from a clean state.
+    warm = voice_plan(s.voice_bank,"Here is the news at 09:30.",VoiceStyle(),0)
+    voice_start(s.voice,warm,0,0)
+    _ = voice_render(s.voice,800)
+    voice_start(s.voice,VoicePlan(),0,0)
+
 radio_synth_prepare = (s: mut RadioSynth):
+    radio_voice_prepare(s)
     if s.music_ready: return
     s.music = make_music_synth(); s.music_ready = true
     s.music.events = [MusicEvent(0,1600,60,0,0.6,0.6),MusicEvent(0,1600,60,6,0.6,0.6)]
@@ -95,7 +124,50 @@ radio_music_program = (s: mut RadioSynth, piece: int, seconds: f64):
     s.record_mix = if piece == 12: 0.35 else: record_levels[clamp(piece,0,record_levels.len()-1)]
     music_seek(s.music,seconds%(f64(s.music.frames)/f64(MUSIC_RATE)))
 
-radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds: f64, morse: bool[] = []):
+# A spoken bulletin: plan the words once, then find where in its period the world clock is.
+radio_speech_program = (s: mut RadioSynth, text: str, voice: VoiceStyle, span: f64, seconds: f64):
+    radio_voice_prepare(s)
+    if not s.voice_bank.ready:
+        # No announcer data: a silent programme (radio_play chooses Morse instead).
+        s.speech_period = max(VOICE_HOP,int(max(1.0,span)*f64(RADIO_RATE)))
+        s.speech_origin = s.cursor
+        voice_start(s.voice,VoicePlan(),0,0)
+        return
+    plan = voice_plan(s.voice_bank,text,voice,s.seed)
+    s.studio = make_studio()
+    s.speech_colour = clamp(voice.colour,0.0,1.0)
+    s.record_mix = clamp(voice.record,0.0,1.0)
+    period = ceil((plan.seconds+1.5)/max(1.0,span))*max(1.0,span)
+    s.speech_period = max(VOICE_HOP,int(period*f64(RADIO_RATE)))
+    s.speech_origin = int((floor((seconds+1140.0)/period)*period-1140.0)*f64(RADIO_RATE))
+    s.speech_text = text
+    s.speech_seed = s.seed
+    voice_start(s.voice,plan,max(0,s.cursor-s.speech_origin),s.seed)
+
+# The next count samples of the bulletin loop (dry voice, before the station and the receiver).
+# Gaps carry a -140 dB dither: exact zeros let the receiver's filters decay into subnormal
+# floats, which cost several times a normal sample on x86 and in wasm.
+radio_speech_block = (s: mut RadioSynth, count: int) -> f64[]:
+    out = fill(0.0,max(0,count))
+    loop k in 0..out.len(): out[k] = (radio_noise(s))*1e-7
+    i = 0
+    total = s.voice.plan.count*VOICE_HOP
+    loop i < out.len():
+        position = s.cursor+i-s.speech_origin
+        if position >= s.speech_period:
+            s.speech_origin += s.speech_period
+            continue
+        if position < 0 or position >= total:
+            i += if position < 0: min(out.len()-i,-position) else: min(out.len()-i,s.speech_period-position)
+            continue
+        if s.voice.cursor != position: voice_start(s.voice,s.voice.plan,position,s.speech_seed)
+        n = min(out.len()-i,total-position)
+        chunk = voice_render(s.voice,n)
+        loop k in 0..n: out[i+k] += chunk[k]
+        i += n
+    out
+
+radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds: f64, morse: bool[] = [], text: str = "", voice: VoiceStyle = VoiceStyle(), span: f64 = 10.0):
     s.style = style; s.seed = max(0,seed)
     s.cursor = max(0,int(seconds*f64(RADIO_RATE)))
     s.morse = morse
@@ -106,7 +178,8 @@ radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds:
     s.station = StationLevel()
     s.chain.strength = clamp(s.strength,0.0,1.0)
     s.record_mix = 0
-    if style != .morse: radio_music_program(s,radio_piece(style,seed),seconds)
+    if style == .speech: radio_speech_program(s,text,voice,span,seconds)
+    else if style != .morse: radio_music_program(s,radio_piece(style,seed),seconds)
 
 radio_noise = (s: mut RadioSynth) -> f64:
     s.rng = (s.rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
@@ -124,7 +197,10 @@ radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f6
     if out.len() == 0: return out
     target = clamp(strength,0.0,1.0)
     programme: f64[]
-    if s.style != .morse:
+    if s.style == .speech:
+        programme = radio_speech_block(s,out.len())
+        if not dry: studio_block(s.studio,programme,s.speech_colour)
+    else if s.style != .morse:
         if not s.music_ready: radio_music_program(s,radio_piece(s.style,s.seed),f64(s.cursor)/f64(RADIO_RATE))
         if s.music.cursor >= s.music.frames: music_seek(s.music,0)
         first = min(out.len(),s.music.frames-s.music.cursor)
