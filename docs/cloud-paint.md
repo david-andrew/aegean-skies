@@ -225,7 +225,10 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   ribbons at least about two and a half pixels across, with a bloom, dimmed but
   never hidden by cloud and rain. The same strike lights its cloud from inside
   (`cloud_flash`, falling off over about 3 km), flashes the sky near it, and is
-  heard after its distance at 343 m/s (`ambience_thunder`).
+  heard after its distance: on the ground at 343 m/s (`ambience_thunder`); from the
+  aircraft (`src/storm_sound.jo`) at that speed times the speed scale, so a strike 10 km
+  off is heard some 9 s after its flash, out to 25 km, its roll made loud enough to stand
+  8 dB or so over the cockpit's engine, wind and rain.
 - **Rain shafts** (weather kind 8): a few dark columns and curtains under the
   storm's core, clear air between, the lower rain carried downwind (the layer's
   box turns with the storm's wind), streaked, and ragged scud hanging under the
