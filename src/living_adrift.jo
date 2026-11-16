@@ -1,0 +1,204 @@
+# A working boat in trouble at sea. Now and then a fishing boat that has gone out further for the
+# fish loses its engine, its mast, or its way in the murk, and lies adrift on the sea lane out of
+# its harbour, drifting slowly along it (the lanes are water all the way: never on a rock). Its
+# trip is held, so it is overdue, and the harbour's worry follows (the missing-boat story, the
+# lead "Kostas's boat's overdue."). It is really there: drawn where it lies, found by looking, with
+# no marker. Then:
+#   the pilot lands alongside and takes the crew aboard, and sets them ashore at a harbour;
+#   the pilot gets a line across to another boat out fishing near, which tows it home;
+#   the pilot tells the harbour where it is, and the harbour sends its launch;
+#   or, left alone, the lost find their way home in some hours, and the others are brought in by
+#   a passing boat late the next day.
+# The family's relief and the harbour's thanks go into the pilot's name (src/reputation.jo).
+use 'living_types.jo'
+use 'adrift_types.jo'
+use 'living_events.jo'
+use 'living_travel.jo'
+use 'living_geometry.jo'
+use 'living_conditions.jo'
+
+const ADRIFT_TAG = 7401
+const ADRIFT_CHANCE = 25000         # in a million, a fishing trip's chance of trouble (fair weather)
+const ADRIFT_STORM = 60             # (and a million-th more for each unit of the weather's severity)
+const ADRIFT_DRIFT_MM = 6000        # mm a minute it drifts along the lane (about 360 m an hour)
+const ADRIFT_LOST_HOME = 420        # minutes before the lost find their own way home
+const ADRIFT_PASSING = 1260         # minutes before a passing boat brings the others in
+const LAUNCH_MPS = 6                # the harbour launch's way (m/s)
+const TOW_MPS = 3                   # a caique towing another (m/s)
+
+adrift_index = (w: World, trip: int) -> int:
+    loop i in 0..w.adrift.len():
+        if w.adrift[i].trip == trip: return i
+    -1
+
+adrift_of = (w: World, person: int) -> int:
+    loop i in 0..w.adrift.len():
+        if w.adrift[i].person == person and w.adrift[i].state != .home: return i
+    -1
+
+# Whether the boat's trip is held out at sea (advance_workboats leaves it be).
+adrift_holds = (w: World, trip: int) -> bool:
+    i = adrift_index(w,trip)
+    i >= 0 and w.adrift[i].state != .home
+
+# A point `mm` along a route (mm), and the route's length.
+_along = (route: vec3[], mm: int) -> vec3:
+    left = f64(mm)/1000.0
+    loop k in 0..route.len()-1:
+        seg = f64(length(route[k+1]-route[k]))
+        if left <= seg: return route[k]+(route[k+1]-route[k])*f32(left/max(seg,0.001))
+        left -= seg
+    route[route.len()-1]
+
+_length_mm = (route: vec3[]) -> int:
+    total = 0.0
+    loop k in 0..route.len()-1: total += f64(length(route[k+1]-route[k]))
+    int(total*1000.0)
+
+# Where it lies now: drifted on along its lane from where it came to grief (never past the middle).
+adrift_pos = (w: World, a: AdriftBoat) -> vec3:
+    if not (a.route in w.sea_routes): return a.at
+    route = w.sea_routes[a.route]
+    drifted = if a.state == .adrift: (w.minute-a.since)*ADRIFT_DRIFT_MM else: 0
+    _along(route,min(a.start_mm+drifted,_length_mm(route)/2))
+
+# The sea lane out of `home` it was fishing along: the one to the nearest other harbour, turn about.
+_lane_from = (w: World, home: int, pick: int) -> int:
+    keys: int[]
+    loop other in 0..w.places.len():
+        if other == home: continue
+        key = route_address(w,home,other)
+        if key in w.sea_routes: keys.push(key)
+    if keys.len() == 0: return -1
+    keys.sort()
+    keys[pick%keys.len()]
+
+# Trouble for a fishing trip (the tests and captures may choose it): its boat adrift on a lane out
+# of its harbour, two to four kilometres out. Returns its index in World.adrift, or -1.
+adrift_begin = (w: mut World, trip: int, cause: AdriftCause) -> int:
+    if not (trip in w.trips) or adrift_index(w,trip) >= 0: return -1
+    t = w.trips[trip]
+    if t.mode != .boat or t.reason.purpose != .fishing: return -1
+    home = t.origin
+    lane = _lane_from(w,home,draw1000000(w.seed,ADRIFT_TAG+1,trip,0))
+    if lane < 0: return -1
+    route = w.sea_routes[lane]
+    full = _length_mm(route)
+    start = min(full*2/5,1800000+draw1000000(w.seed,ADRIFT_TAG+2,trip,0)%2200000)
+    a = AdriftBoat(trip=trip,person=t.actor,home=home,cause=cause,route=lane,start_mm=start,since=w.minute)
+    a.at = adrift_pos(w,a)
+    w.adrift.push(a)
+    w.people[t.actor].pose.pos = a.at
+    len(w.adrift)-1
+
+# The town a boat is off: the nearest harbour.
+adrift_near = (w: World, a: AdriftBoat) -> int:
+    best = a.home; near = 1e18
+    loop p in 0..w.harbors.len():
+        d = f64(length(w.harbors[p].center-a.at))
+        if d < near: near = d; best = p
+    best
+
+# Brought in: the trip ends at `place` (its harbour, or wherever the pilot set them ashore), the
+# family's worry is over.
+_bring_in = (w: mut World, i: int, place: int, rescuer: int):
+    a = w.adrift[i]
+    w.adrift[i].state = .home; w.adrift[i].rescuer = rescuer
+    trip = a.trip
+    if trip in w.trips and w.trips[trip].state != .arrived and w.trips[trip].state != .failed:
+        w.trips[trip].destination = place
+        if not commit_arrival(w,trip,place,-1,0):
+            # (a shut harbour: ashore all the same, and the boat on its mooring)
+            w.trips[trip].state = .arrived; w.trips[trip].terminal_minute = w.minute
+            p = a.person
+            w.people[p].place = place; w.people[p].trip = -1; w.people[p].state = .idle
+            w.people[p].pose.pos = w.harbors[place].center+vec3(0,1.2,0)
+            if not (p in w.places[place].residents): w.places[place].residents.push(p)
+    w.people[a.person].return_passage_needed = place != w.people[a.person].home
+    # (the skipper remembers who found them: src/living_news.jo remember)
+    if a.pilot_helped:
+        reason = Reason(purpose=.rescue,actor=w.player,beneficiary=a.person,counterparty=a.person,origin=place,destination=place)
+        _ = emit_event(w,.rescue,place,w.player,a.person,reason)
+    ids = w.stories.keys(); ids.sort()
+    loop id in ids:
+        s = w.stories[id]
+        if s.kind == .missing_boat and not s.resolved and s.actors.len() > 0 and s.actors[0] == a.person:
+            w.stories[id].stage = 2; w.stories[id].resolved = true
+            w.stories[id].outcome = if rescuer == w.player: "The pilot found the boat and brought them home." else: "The boat is in again."
+
+# The pilot takes the crew aboard, alongside (true if they came).
+adrift_take_aboard = (w: mut World, i: int) -> bool:
+    if i < 0 or i >= w.adrift.len() or w.adrift[i].state != .adrift: return false
+    w.adrift[i].state = .aboard; w.adrift[i].found = true; w.adrift[i].rescuer = w.player; w.adrift[i].pilot_helped = true
+    true
+
+# Set ashore by the pilot at `place`: they're home (or near it), and the harbour fetches the boat.
+adrift_set_ashore = (w: mut World, i: int, place: int) -> bool:
+    if i < 0 or i >= w.adrift.len() or w.adrift[i].state != .aboard or place < 0 or place >= w.places.len(): return false
+    a = w.adrift[i]
+    _bring_in(w,i,place,w.player)
+    true
+
+# Another boat out fishing within `reach` metres that could take a line (its skipper), or -1.
+adrift_tow_boat = (w: World, i: int, reach: f64) -> int:
+    a = w.adrift[i]
+    best = -1; near = reach
+    loop id in w.active_trips:
+        t = w.trips[id]
+        if t.mode != .boat or t.reason.purpose != .fishing or t.state == .arrived or t.actor == a.person or adrift_holds(w,id): continue
+        d = f64(length(w.people[t.actor].pose.pos-a.at))
+        if d < near: near = d; best = t.actor
+    best
+
+# The line got across: the other boat tows it home (minutes, as they'll take).
+adrift_tow = (w: mut World, i: int, helper: int) -> int:
+    if i < 0 or i >= w.adrift.len() or (w.adrift[i].state != .adrift) or helper < 0: return -1
+    a = w.adrift[i]
+    d = f64(length(w.harbors[a.home].center-a.at))
+    minutes = max(10,int(d/f64(TOW_MPS)/60.0))
+    w.adrift[i].state = .towed; w.adrift[i].found = true; w.adrift[i].helper = helper; w.adrift[i].pilot_helped = true
+    w.adrift[i].help_minute = w.minute; w.adrift[i].home_minute = w.minute+minutes
+    minutes
+
+# The pilot tells the harbour where it lies: its launch goes out (minutes until it's in again).
+adrift_report = (w: mut World, i: int) -> int:
+    if i < 0 or i >= w.adrift.len() or w.adrift[i].state != .adrift or not w.adrift[i].found: return -1
+    a = w.adrift[i]
+    d = f64(length(w.harbors[a.home].center-a.at))
+    minutes = 15+2*int(d/f64(LAUNCH_MPS)/60.0)
+    w.adrift[i].state = .reported; w.adrift[i].pilot_helped = true
+    w.adrift[i].help_minute = w.minute; w.adrift[i].home_minute = w.minute+minutes
+    minutes
+
+# The pilot has come upon it (seen it close, from the air or the water).
+adrift_found = (w: mut World, i: int):
+    if i >= 0 and i < w.adrift.len(): w.adrift[i].found = true
+
+# Trouble on fishing trips; boats drifting; help arriving; the lost finding their way; a passing
+# boat bringing in what nobody has.
+adrift_minute = (w: mut World):
+    loop id in w.active_trips:
+        t = w.trips[id]
+        if t.mode != .boat or t.reason.purpose != .fishing or t.state == .arrived or t.state == .failed: continue
+        if t.segment != 1 or t.segment_elapsed_ticks > TICKS_PER_MINUTE or adrift_index(w,id) >= 0: continue
+        if w.people[t.actor].move_owner == .scene: continue
+        severity = weather_severity(w,w.people[t.actor].pose.pos)
+        if draw1000000(w.seed,ADRIFT_TAG,id,0) >= ADRIFT_CHANCE+severity*ADRIFT_STORM: continue
+        roll = draw1000000(w.seed,ADRIFT_TAG+3,id,0)%3
+        cause = if roll == 0: AdriftCause.engine else: if roll == 1: AdriftCause.mast else: AdriftCause.lost
+        _ = adrift_begin(w,id,cause)
+    loop i in 0..w.adrift.len():
+        a = w.adrift[i]
+        if a.state == .home: continue
+        if a.state == .adrift:
+            w.adrift[i].at = adrift_pos(w,a)
+            if not (a.trip in w.trips) or w.trips[a.trip].state == .arrived:
+                w.adrift[i].state = .home; continue
+            w.people[a.person].pose.pos = w.adrift[i].at
+            gone = w.minute-a.since
+            if (a.cause == .lost and gone >= ADRIFT_LOST_HOME) or gone >= ADRIFT_PASSING: _bring_in(w,i,a.home,-1)
+        else if (a.state == .towed or a.state == .reported) and w.minute >= a.home_minute:
+            _bring_in(w,i,a.home,if a.state == .towed: a.helper else: -1)
+    # (a month's past troubles are let go)
+    if local_minute(w.minute) == 0:
+        w.adrift = [loop a in w.adrift: if a.state != .home or w.minute-a.since < 30*1440: a]
