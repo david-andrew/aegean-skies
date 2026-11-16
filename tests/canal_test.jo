@@ -5,24 +5,59 @@ use '../src/flight.jo'
 use '../src/flight_ground.jo'
 use '../src/planes.jo'
 use '../src/geography.jo'
+use '../src/pilot.jo'
+use '../src/slipway.jo'
+use '../src/world_point.jo'
+use '../src/chase_collision.jo'
+import '../src/living_types.jo' as data
 
 test "canal bridge openings and swept decks share solid geometry":
     assert(load_geography(embed('../assets/world.bin')))
     geography_enabled=true
     init_canal_geometry()
-    loop j in 0..3:
-        i=CANAL_BEGIN+[15,38,56][j]
+    loop bridge in CANAL_BRIDGES:
+        i=CANAL_BEGIN+bridge.local
         a=RIVER_NODES[i];b=RIVER_NODES[i+1]
         along=normalize(vec3(b.x-a.x,0,b.y-a.y))
         at=vec3(a.x,a.z+2,a.y)
-        assert(canal_sweep(at-along*10,at+along*10).w==0)
-        deck=if j==0:13.0 else:if j==1:13.0 else:4.0
-        at.y=a.z+f32(deck+0.5)
-        assert(canal_sweep(at-along*10,at+along*10).w>0)
-        at.y=a.z+f32(deck-1.0)
+        assert(canal_sweep(at-along*10,at+along*10).w==0,"bridge {bridge.local} blocks the water")
+        # (its deck, a little off the centre line, is solid to a sweep along the canal)
+        at.y=a.z+f32(canal_bridge_top(bridge,0.0,f64(a.w))-0.3)
+        assert(canal_sweep(at-along*10,at+along*10).w>0,"bridge {bridge.local} has no deck")
+        at.y=a.z+f32(canal_bridge_under(bridge,0.0,f64(a.w))-1.0)
         assert(canal_sweep(at,at+vec3(0,4,0)).y<0)
         # A walker below cannot snap onto an overhead deck.
         assert(canal_floor(f64(a.x),f64(a.y),f64(a.z)+2.8)<f64(a.z)+3.0)
+
+test "a planing Gull held near the centre line passes under every crossing":
+    assert(load_geography(embed('../assets/world.bin')))
+    geography_enabled=true;init_canal_geometry()
+    # (floats on the water: the top wing's tip ~3.9 m over it, its half span 5.5 m)
+    loop bridge in CANAL_BRIDGES:
+        i=CANAL_BEGIN+bridge.local
+        a=RIVER_NODES[i];b=RIVER_NODES[i+1]
+        along=normalize(vec3(b.x-a.x,0,b.y-a.y));side=vec3(-along.z,0,along.x)
+        loop lateral in [-8.0,-4.0,0.0,4.0,8.0]:
+            loop tip in [-5.5,0.0,5.5]:
+                at=vec3(a.x,a.z+3.9,a.y)+side*f32(lateral+tip)
+                assert(canal_sweep(at-along*12,at+along*12).w==0,"bridge {bridge.local} strikes a wing at {lateral+tip} m")
+                if bridge.kind==CANAL_STONE:
+                    # (a metre spare over the wing everywhere within 8 m of the centre)
+                    assert(canal_bridge_under(bridge,lateral+tip,f64(a.w))>4.9,"bridge {bridge.local}: {canal_bridge_under(bridge,lateral+tip,f64(a.w))} at {lateral+tip}")
+
+test "the canal's walls stand to the street over the water":
+    assert(load_geography(embed('../assets/world.bin')))
+    geography_enabled=true;init_canal_geometry()
+    loop local in [10,25,40,45,60]:
+        i=CANAL_BEGIN+local
+        a=RIVER_NODES[i];b=RIVER_NODES[i+1];m=(a+b)*0.5
+        d=normalize(b.xy-a.xy);side=vec2(-d.y,d.x)
+        loop sign in [-1.0,1.0]:
+            front=canal_frontage(local,sign)
+            if front==3:continue
+            q=m.xy+side*f32(sign*(f64(m.w)+1.0))
+            top=canal_floor(f64(q.x),f64(q.y),f64(m.z)+20.0,true)
+            assert(abs(top-(f64(m.z)+canal_street(front)))<0.05,"node {local} side {sign}: wall top {top-f64(m.z)}")
 
 test "bridge strike is resolved even while clear of the river":
     assert(load_geography(embed('../assets/world.bin')))
@@ -40,21 +75,37 @@ test "bridge strike is resolved even while clear of the river":
 test "a gull can accelerate along the canal and clear the bridges":
     assert(load_geography(embed('../assets/world.bin')))
     geography_enabled=true;init_canal_geometry()
-    model=build_craft(Craft.gull,LIVERIES[0]);k=craft_spec(Craft.gull,model.contacts)
-    a=RIVER_NODES[CANAL_BEGIN+22];b=RIVER_NODES[CANAL_BEGIN+23]
-    hd=atan2(f64(b.x-a.x),-f64(b.y-a.y))
-    e=FlightEnv(ground=flight_surface_height,solid=canal_sweep,has_swell=true,swell_ceiling=f64(a.z)+0.1,current_at=river_current,
-        swell=(x:f64,z:f64)->vec3:
-            r=river_at(x,z)
-            vec3(if r.wet:f32(r.level) else:0,r.slope.x,r.slope.y))
-    s=water_start(k,vec3(a.x,a.z,a.y),hd)
-    plan=FlightPlan(takeoff_heading=hd,target=vec3(b.x,a.z+100,b.y),altitude=f64(a.z)+100)
-    loop i in 0..1200:
-        r=river_at(f64(s.position.x),f64(s.position.z))
-        target=RIVER_NODES[min(CANAL_FINISH,canal_station(s.position)+3)]
-        if s.on_water or s.position.y<f32(r.level)+40.0:
-            plan.takeoff_heading=atan2(f64(target.x-s.position.x),-f64(target.y-s.position.z))
-            forward=normalize(vec3(target.x-s.position.x,0,target.y-s.position.z))
-            plan.target=s.position+forward*5000.0
-        step(k,s,autopilot(k,s,plan,e),e,1.0/60.0)
-    assert(not s.on_water and s.position.y>a.z+40 and s.hull_damage==0,"pos={s.position} damage={s.hull_damage} wet={s.on_water}")
+    # (at the game's flight scales, from the slipway's hand-over, steered as the canal scenario's
+    # run is: it planes the cut under every bridge and lifts off on the wide reach past them)
+    set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+    model=build_craft(Craft.gull,LIVERIES[0])
+    f=make_flyer(.gull,0,model.contacts,canal_launch,canal_heading)
+    f.state.moored=false
+    plan=canal_run_plan()
+    loop i in 0..3000:
+        e=flight_env(f.state.time,f.state.position)
+        step(f.spec,f.state,canal_run_controls(f,plan,e),e,1.0/60.0)
+    set_speed_scale(1.0);data.scale_airframes(1.0)
+    s=f.state
+    assert(not s.on_water and s.position.y>canal_launch.y+40 and s.hull_damage==0,"pos={s.position} damage={s.hull_damage} wet={s.on_water}")
+
+test "after a crash into the canal's wall the chase camera is put back out of the stone":
+    assert(load_geography(embed('../assets/world.bin')))
+    geography_enabled=true;init_canal_geometry()
+    model=build_craft(Craft.gull,LIVERIES[0])
+    a=RIVER_NODES[CANAL_BEGIN+40];b=RIVER_NODES[CANAL_BEGIN+41]
+    d=normalize(b.xy-a.xy);side=vec2(-d.y,d.x)
+    # (the wreck lodged in the left wall, the camera frozen where it was, inside the stone too)
+    wall=a.xy+side*f32(f64(a.w)+0.9)
+    f=make_flyer(.gull,0,model.contacts,vec3(wall.x,a.z+3.0,wall.y),atan2(f64(d.x),-f64(d.y)))
+    f.state.moored=false
+    chase(f,1.0/60.0)
+    f.state.crashed=true
+    inside=a.xy+side*f32(f64(a.w)+1.0)-d*6.0
+    f.cam_point=world_point(vec3(inside.x,a.z+2.5,inside.y));f.cam_pos=world_vec(f.cam_point);f.cam_ready=true
+    loop k in 0..30:
+        chase(f,1.0/60.0)
+        frame=clear_chase_camera(f,target_chase_camera(f,vec3(0,0,-1),0),1.0/60.0)
+        eye=world_vec(frame.eye)
+        assert(f64(length(camera_push_out(eye,0.5)-eye))<0.001,"camera inside a solid at {eye}")
+        assert(is_finite(frame.view.x) and f64(length(frame.view))>0.9)

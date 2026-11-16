@@ -4,7 +4,7 @@
 // (init_<file> > the function it called: where the start goes).
 //
 // usage: node tools/phone_profile.mjs <page.html> [--query "AEGEAN_TITLE=1"] [--until first_frame|card_gone|<seconds>]
-//          [--module local-copy.html (a URL page: its module, for the names)] [--top 40] [--under <function>] [--cold] [--out profile.json]
+//          [--module local-copy.html (a URL page: its module, for the names)] [--top 40] [--under <function>] [--runs] [--cold] [--out profile.json]
 //        node tools/phone_profile.mjs <page.html> --analyze profile.json   (again, from a saved profile)
 // Hold the phone lock: flock -w 1200 ~/dev/tmp/phone.lock node tools/phone_profile.mjs ...
 // (sampling every 1 ms costs some speed: the stages come out a little slower than tools/phone_run.mjs's)
@@ -15,6 +15,7 @@ import {openPage, pageModule} from './web_page.mjs';
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; };
 const page = args[0];
+const flag2 = (name) => args.includes('--' + name);
 const until = opt('until', 'first_frame'), top = Number(opt('top', 40));
 const adb = (...a) => execFileSync('adb', a, {encoding: 'utf8'}).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -160,4 +161,20 @@ if (under) for (let k = 0; k < profile.samples.length; k++) {
 const show = (m, n) => [...m].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${v.toFixed(0).padStart(7)} ms  ${(100 * v / total).toFixed(1).padStart(5)}%  ${k}`).join('\n');
 console.log(`phone_profile: ${url}\nstages ${JSON.stringify(stages)}\nsampled ${total.toFixed(0)} ms\n\n== self time by function\n${show(self, top)}\n\n== under the top level (init_* > the function it called)\n${show(byChild, top)}`);
 if (under) console.log(`\n== under ${under}\n${show(byUnder, top)}`);
+// (--runs: each function's longest unbroken stretch on the stack, ms, and when it began: a frame's
+// hitch shows as one function's long run)
+if (flag2('runs')) {
+  const cur = new Map(), best = new Map();
+  let at = 0;
+  for (let k = 0; k < profile.samples.length; k++) {
+    const ms = (dt[k] || 0) / 1000; at += ms;
+    const on = new Set();
+    for (let id = profile.samples[k]; id !== undefined; id = parent.get(id)) on.add(names.get(id));
+    for (const [nm, run] of cur) if (!on.has(nm)) { const b = best.get(nm); if (!b || run.ms > b.ms) best.set(nm, run); cur.delete(nm); }
+    for (const nm of on) { const r = cur.get(nm) || {ms: 0, from: at - ms}; r.ms += ms; cur.set(nm, r); }
+  }
+  for (const [nm, run] of cur) { const b = best.get(nm); if (!b || run.ms > b.ms) best.set(nm, run); }
+  const rows = [...best].filter(([nm]) => !/^\(|^init_|wasm-to-js|^__wasm|^onAnim|^frame$|^run$|\[js\]$/.test(nm)).sort((a, b) => b[1].ms - a[1].ms).slice(0, top);
+  console.log('\n== longest unbroken runs\n' + rows.map(([nm, r]) => `${r.ms.toFixed(0).padStart(7)} ms  at ${(r.from / 1000).toFixed(1).padStart(6)} s  ${nm}`).join('\n'));
+}
 process.exit(0);

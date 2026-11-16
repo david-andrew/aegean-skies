@@ -91,11 +91,6 @@ cloud, scaled up from 0.4 while the heaped form wears away inside it.
 skeleton of holes. Below the band only the heaped form shows, above it only
 the tower.
 
-Stratus slivers (weather kind 13): in fair and towers weather, thin, flat, faintly lit
-bands just above the cumulus bases, long along the wind, crossing in front of and
-below the towers. A single layer per air mass; none within 10-30 km of a storm, where
-they read as searchlights.
-
 ## Drawing (`src/cloud_volume.jo`)
 
 Each instance is a screen-space quad over its projected support box. The ray
@@ -126,7 +121,11 @@ marches distance steps in metres, refined only near the surface.
   nothing swims, and never reach more than a tenth of a cloud's size. A storm's
   cloud adds broad strokes at its own scale and layers its bands darker toward
   the base and brighter toward the top; it skips the self-shadow probe, whose
-  cut drew round holes at that size. The strokes live in the shader, not the
+  cut drew round holes at that size. A storm's cells and canopy also skip the close relief and the
+  brush dabs and step longer to a coarser tolerance: at kilometres across that detail
+  showed nothing and cost redfox medium about 2 ms near a storm (the shelf keeps both
+  for its ragged lit lip). The strokes and dabs are keyed to the low-resolution pixel
+  they land in, never finer, so they don't flicker pixel by pixel on shaded sides. The strokes live in the shader, not the
   atlas: every RGBA8 texel already holds four forms.
 
 The third-resolution colour target, depth reconstruction, edge repair, decks,

@@ -1,0 +1,252 @@
+# Aircraft shadows as the film draws them: a flat, crisp, dark shape of the aircraft's own
+# silhouette (wings, floats, struts) on the sea, the land, the grass and the docks, fading and
+# softening with height and gone a few hundred metres up (glossary: Aircraft shadow).
+#
+# Two steps a frame, both inside the cloud pass's target switches (no extra render pass):
+# 1. The mask (craft_shadow_mask_pass): each nearby aircraft's own mesh, flattened along the
+#    sunlight onto sea level, into a small top-down texture centred under the player's shadow
+#    (16 cm texels; 31 on the low tier). A texel holds: covered, how dark, the caster's lowest
+#    point (no aircraft shadows itself) and how soft.
+# 2. The shadow (craft_shadow_multiply): one full-resolution pass over the mask's rectangle on
+#    screen. Each pixel's world point comes from the scene depth (the swell as drawn, the terrain,
+#    a quay, a boat), is carried along the sunlight to the mask, and the scene there is multiplied
+#    by a cool shadow tint: the surface keeps its hue, navy on the sea, deep green on the grass.
+# Without post-processing (software rendering) the old shadows stand: rectangles on the sea
+# (sea.jo add_sea_shadow), the flattened mesh on land (curved_world.jo draw_curved_shadow).
+use 'render_space.jo'
+use 'depth_space.jo'
+use 'cloud_depth.jo'
+use 'quality.jo'
+use 'planes.jo'
+
+# The mask's half size (m) and resolution by tier.
+CRAFT_SHADOW_HALF = 40.0
+craft_shadow_res_for = (tier: int) -> int: if tier == 0: 256 else: 512
+# The height (m above what is under it) by which a shadow has faded out, and the sun's softening:
+# a penumbra about a hundredth of the height (the sun's disc), at most this (m).
+CRAFT_SHADOW_GONE = 320.0
+CRAFT_SHADOW_SOFT_MAX = 2.5
+# The casters' lowest points are kept in 64 m above the lowest of them, a quarter-metre steps.
+CRAFT_SHADOW_RANGE = 64.0
+
+struct CraftShadowCaster:
+    model: mat4                     # mesh to render space (the frame's render origin)
+    mesh: Mesh
+    strength: f32                   # 0..1: how dark
+    bottom: f32                     # its lowest point's height (render space y)
+    soft: f32                       # penumbra (m)
+
+# How dark and how soft a shadow is for the caster's height above what is under it (m) and the
+# sun's height (sin of its elevation).
+craft_shadow_strength = (height: f64, sun_y: f64) -> f64:
+    (1.0 - smoothstep(30.0, CRAFT_SHADOW_GONE, height)) * smoothstep(0.08, 0.2, sun_y)
+craft_shadow_soft = (height: f64) -> f64: clamp(max(height, 0.0) * 0.012, 0.0, CRAFT_SHADOW_SOFT_MAX)
+
+craft_shadow_casters: CraftShadowCaster[] = []
+craft_shadow_origin = vec3(0, 0, 0)
+craft_shadow_center = vec2(0, 0)           # the mask's centre (render space x, z, at sea level)
+craft_shadow_k = vec2(0, 0)                # the sunlight's slope: x, z travelled per metre down
+craft_shadow_base = 0.0                    # the lowest caster's bottom, less a margin
+craft_shadow_ready = false
+
+# Whether this frame can draw the new shadows (post-processing and the scene depth present).
+craft_shadow_available = () -> bool: __post_active and not __soft
+
+# Start the frame's casters, with the mask centred under the point `focus` (world) along the sun.
+craft_shadow_begin = (focus: vec3, sun: vec3):
+    global craft_shadow_casters,craft_shadow_origin,craft_shadow_center,craft_shadow_k
+    craft_shadow_casters = []
+    craft_shadow_origin = render_origin(scene_camera())
+    s = normalize(sun)
+    craft_shadow_k = if s.y > 0.05: vec2(s.x / s.y, s.z / s.y) else: vec2(0, 0)
+    f = focus - craft_shadow_origin
+    c = f.xz - craft_shadow_k * f.y
+    # (snapped to whole texels, so the silhouette's edges never crawl as it slides)
+    texel = f32(CRAFT_SHADOW_HALF * 2.0 / f64(craft_shadow_res_for(render_quality.tier)))
+    craft_shadow_center = vec2(floor(c.x / texel) * texel, floor(c.y / texel) * texel)
+
+# Whether a caster at `pos` (world) of this reach (m, its half span) falls inside the mask.
+craft_shadow_covers = (pos: vec3, reach: f64) -> bool:
+    f = pos - craft_shadow_origin
+    m = f.xz - craft_shadow_k * f.y - craft_shadow_center
+    f64(max(abs(m.x), abs(m.y))) + reach < CRAFT_SHADOW_HALF
+
+# One aircraft: its mesh placed by `model` (world), how high it is above what lies under it, and
+# its lowest point's height (world y).
+craft_shadow_add = (model: mat4, mesh: Mesh, height: f64, bottom: f64, sun_y: f64):
+    global craft_shadow_casters
+    a = craft_shadow_strength(height, sun_y)
+    if a < 0.01: return
+    craft_shadow_casters.push(CraftShadowCaster(render_model(model, craft_shadow_origin), mesh, f32(a), f32(bottom - f64(craft_shadow_origin.y)), f32(craft_shadow_soft(height))))
+
+# A model's reach (m: how far its shadow can spread from its centre) and its lowest point below its
+# origin (m, negative), from its flat shadow parts and its float or hull contacts.
+craft_shadow_reach = (m: CraftModel) -> f64:
+    r = 4.0
+    loop j in 0..m.shade.len() / 2:
+        c = m.shade[j * 2]; h = m.shade[j * 2 + 1]
+        r = max(r, f64(max(abs(c.x) + h.x, abs(c.z) + h.z)))
+    r
+craft_shadow_lowest = (m: CraftModel) -> f64:
+    lo = 0.0
+    loop p in m.contacts: lo = min(lo, f64(p.y))
+    lo
+
+# ---------------- 1. the mask ----------------
+struct CraftMaskParams:
+    model: mat4
+    k: vec2
+    center: vec2
+    half: f32
+    code: vec4                      # written as it is: covered, strength, bottom code, soft code
+
+struct CraftMaskOut:
+    pos: vec4
+    code: vec4
+
+craft_mask_vs = (v: Vertex3D, u: CraftMaskParams) -> CraftMaskOut:
+    w = (u.model * vec4(v.pos, 1)).xyz
+    m = w.xz - u.k * w.y - u.center
+    CraftMaskOut(vec4(m / u.half, 0, 1), u.code)
+
+craft_mask_fs = (i: CraftMaskOut, u: CraftMaskParams) -> vec4: i.code
+
+craft_mask_sh = Shader()
+craft_shadow_target = RenderTarget()
+
+# (the aircraft shadow's two shaders, made at the start with the rest: linked before play, not
+# in the first frame an aircraft casts one)
+init_craft_shadow = ():
+    global craft_mask_sh,craft_shadow_sh
+    if craft_mask_sh.prog == 0: craft_mask_sh = make_shader(shader(craft_mask_vs,craft_mask_fs))
+    if craft_shadow_sh.prog == 0: craft_shadow_sh = make_shader(shader(craft_shadow_vs,craft_shadow_fs))
+
+craft_shadow_mask_pass = ():
+    global craft_mask_sh,craft_shadow_target,craft_shadow_ready,craft_shadow_base,craft_shadow_casters
+    craft_shadow_ready = false
+    if craft_shadow_casters.len() == 0 or not craft_shadow_available(): return
+    zone("craft shadow mask")
+    if craft_mask_sh.prog == 0: craft_mask_sh = make_shader(shader(craft_mask_vs,craft_mask_fs))
+    res = craft_shadow_res_for(render_quality.tier)
+    if craft_shadow_target.texture.width != res:
+        if craft_shadow_target.fbo != 0: free_render_target(craft_shadow_target)
+        tex = texture(image(res,res),true)
+        set_mipmaps(tex,false)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        craft_shadow_target = RenderTarget(tex,fbo,0)
+    base: f32 = 1e9
+    loop c in craft_shadow_casters: base = min(base, c.bottom)
+    craft_shadow_base = f64(base) - 2.0
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(craft_shadow_target.fbo))
+    glViewport(0,0,i32(res),i32(res))
+    glDisable(GL_DEPTH_TEST); glDepthMask(0); glDisable(GL_CULL_FACE); glDisable(GL_BLEND)
+    glClearColor(0,0,0,0); glClear(GL_COLOR_BUFFER_BIT)
+    # (no blending: an aircraft's overlapping wing, float and fuselage write the same texel the
+    # same, never darker; the strongest, the lowest, is drawn last)
+    craft_shadow_casters.sort((c: CraftShadowCaster) -> f32: c.strength)
+    loop c in craft_shadow_casters:
+        code = vec4(1, c.strength, clamp(f32((f64(c.bottom) - craft_shadow_base) / CRAFT_SHADOW_RANGE), 0.0, 1.0), clamp(c.soft / f32(CRAFT_SHADOW_SOFT_MAX), 0.0, 1.0))
+        draw(craft_mask_sh,c.mesh,CraftMaskParams(c.model,craft_shadow_k,craft_shadow_center,f32(CRAFT_SHADOW_HALF),code))
+    craft_shadow_ready = true
+    zone_end()
+
+# ---------------- 2. the shadow ----------------
+struct CraftShadowVertex:
+    corner: vec2
+
+struct CraftShadowParams:
+    mask: Texture
+    depth: Texture
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    depth_ab: vec2
+    k: vec2
+    center: vec2
+    half: f32
+    texel: f32
+    base: f32
+    rect: vec4                      # the screen rectangle drawn (ndc: lo x, lo y, hi x, hi y)
+
+struct CraftShadowOut:
+    pos: vec4
+    ndc: vec2
+
+# The shadow's tint, multiplied in: cool, so a navy sea goes deeper navy and grass deep green.
+const CRAFT_SHADOW_TINT = vec3(0.38,0.43,0.52)
+
+craft_shadow_vs = (v: CraftShadowVertex, u: CraftShadowParams) -> CraftShadowOut:
+    ndc = mix(u.rect.xy, u.rect.zw, v.corner)
+    CraftShadowOut(vec4(ndc,0,1),ndc)
+
+craft_shadow_fs = (i: CraftShadowOut, u: CraftShadowParams) -> vec4:
+    raw = sample(u.depth,i.ndc*0.5+vec2(0.5,0.5)).x
+    ray = normalize((u.rays*vec4(i.ndc,1,0)).xyz)
+    t: f32 = 1000000000.0
+    if world_has_depth(raw,u.depth_ab): t = world_depth_decode(raw,u.depth_ab)/max(dot(ray,u.forward),0.0001)
+    # (water the depth does not hold: the sea's own surface)
+    sea = sea_intersection(ray,u.cam.y)
+    if sea > 0.0 and sea < t-3.0: t = sea
+    if t > 20000.0: discard()
+    p = u.cam+ray*t
+    p.y += world_drop(ray.xz*t)
+    m = p.xz-u.k*p.y-u.center
+    uv = m/(u.half*2.0)+vec2(0.5,0.5)
+    if uv.x < 0.0 or uv.y < 0.0 or uv.x > 1.0 or uv.y > 1.0: discard()
+    s = sample(u.mask,uv)
+    if s.x < 0.004: discard()
+    strength = s.y/s.x
+    # (only what lies below the aircraft takes its shadow: never the aircraft itself)
+    bottom = u.base+s.z/s.x*64.0
+    if p.y > bottom-0.25: discard()
+    cover = s.x
+    soft = s.w/s.x*2.5
+    if soft > u.texel:
+        # (a few metres up and more, the sun's penumbra: four more looks around)
+        d = soft/(u.half*2.0)
+        cover = (cover+sample(u.mask,uv+vec2(d,0)).x+sample(u.mask,uv-vec2(d,0)).x+sample(u.mask,uv+vec2(0,d)).x+sample(u.mask,uv-vec2(0,d)).x)/5.0
+        dark = smoothstep(0.0,1.0,cover)*strength
+        return vec4(mix(vec3(1,1,1),CRAFT_SHADOW_TINT,dark),1)
+    # (low down: cut crisp, a pixel of antialiasing)
+    edge = clamp((cover-0.5)/max(fwidth(cover),0.0001)+0.5,0.0,1.0)
+    vec4(mix(vec3(1,1,1),CRAFT_SHADOW_TINT,edge*strength),1)
+
+craft_shadow_sh = Shader()
+craft_shadow_quad = Mesh()
+
+# In the cloud pass's depth-detached window: multiply the shadows into the scene.
+craft_shadow_multiply = (chart: vec3, vp: mat4):
+    global craft_shadow_sh,craft_shadow_quad
+    if not craft_shadow_ready or cloud_scene_depth.id == 0: return
+    zone("craft shadows")
+    if craft_shadow_sh.prog == 0: craft_shadow_sh = make_shader(shader(craft_shadow_vs,craft_shadow_fs))
+    if craft_shadow_quad.count == 0 and craft_shadow_quad.index_count == 0:
+        craft_shadow_quad = mesh([CraftShadowVertex(vec2(0,0)),CraftShadowVertex(vec2(1,0)),CraftShadowVertex(vec2(0,1)),CraftShadowVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+    # (the mask's square, at sea level and up to the casters, on screen: only those pixels drawn)
+    offset = craft_shadow_origin-chart
+    center = craft_shadow_center+offset.xz
+    half = f32(CRAFT_SHADOW_HALF)
+    lo = vec2(1,1); hi = vec2(-1,-1); behind = false
+    loop corner in 0..8:
+        x = center.x+(if corner & 1 == 0: -half else: half)
+        z = center.y+(if corner & 2 == 0: -half else: half)
+        y: f32 = if corner & 4 == 0: -2.0 else: f32(craft_shadow_base)+40.0
+        w = vec3(x,0,z)+vec3(craft_shadow_k.x*y,y,craft_shadow_k.y*y)
+        clip = vp*vec4(w,1)
+        if clip.w <= 0.05: behind = true
+        else:
+            n = clip.xy/clip.w
+            lo = min(lo,n); hi = max(hi,n)
+    rect = if behind: vec4(-1,-1,1,1) else: vec4(max(lo.x,-1.0),max(lo.y,-1.0),min(hi.x,1.0),min(hi.y,1.0))
+    if rect.x >= rect.z or rect.y >= rect.w:
+        zone_end()
+        return
+    glEnable(GL_BLEND); glBlendFunc(GL_DST_COLOR,GL_ZERO)
+    rays = render_rays(vp)
+    draw(craft_shadow_sh,craft_shadow_quad,CraftShadowParams(craft_shadow_target.texture,cloud_scene_depth,rays,render_eye(chart),normalize(rays[2].xyz),world_depth_params(),
+        craft_shadow_k,center,half,f32(CRAFT_SHADOW_HALF*2.0/f64(craft_shadow_res_for(render_quality.tier))),f32(craft_shadow_base)-offset.y,rect))
+    # (the cloud composite that follows blends premultiplied)
+    glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_ALPHA)
+    zone_end()

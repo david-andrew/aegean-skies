@@ -6,6 +6,7 @@ use 'depth_space.jo'
 use 'cloud_density.jo'
 use 'sky_air.jo'
 use 'cloud_depth.jo'
+use 'craft_shadow.jo'
 use 'look.jo'
 use 'paint.jo'
 use 'render_space.jo'
@@ -119,14 +120,6 @@ cloud_layer_noise = (p: vec2) -> vec3:
 
 volume_sample = (atlas: Texture, p: vec3, kind: f32, ext: vec3) -> vec4:
     if max(abs(p.x), max(abs(p.y), abs(p.z))) > 1.0: return vec4(0.5, 1, 0.5, 0)
-    if kind == 13.0:
-        # Stratus slivers: long thin streaks along the wind, a few hundred metres
-        # wide, scattered in broad patches; a flat thin body (a 60 km layer).
-        m = p.xz*60000.0
-        streak = vnoise(vec2(m.x/9000.0,m.y/650.0))*0.75+vnoise(vec2(m.x/2600.0,m.y/300.0))*0.25
-        patch = smoothstep(0.45,0.7,vnoise(m/23000.0+vec2(5.3,1.7)))
-        body = smoothstep(-0.7,-0.2,p.y)*(1.0-smoothstep(0.2,0.7,p.y))
-        return vec4(0.5,1,0.5,body*patch*smoothstep(0.6,0.72,streak)*0.9)
     if kind == 8.0:
         # A thunderstorm's rain shafts: a few dark columns and curtains hanging
         # from the anvil's base to the sea under its core, clear air between
@@ -410,7 +403,7 @@ cloud_paint = (local_normal: vec3, p: vec3, world: vec3, ray: vec3, mpp: f32, i:
         # A storm's cloud at its own scale: broad brush strokes a fiftieth of
         # its width layer the bands, darker and heavier toward the base and
         # brighter toward the top, as the towers' are at theirs.
-        big = cloud_strokes(p*i.extent,normalize(local_normal),cloud_to_local(sun,i.meta.xy),i.extent.x*0.02)
+        big = cloud_strokes(p*i.extent,normalize(local_normal),cloud_to_local(sun,i.meta.xy),max(i.extent.x*0.02,mpp))
         value += (big*0.35+(p.y*0.45+0.05)*0.4)*storm
     shade = mix(u.shade*0.9,u.paint_shade,smoothstep(-0.12,0.15,sun.y))
     # (a storm in the film's palette: near-black slate shade, its lit tops a cream-grey)
@@ -541,6 +534,7 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         pixel = max(fwidth(i.ndc.x),fwidth(i.ndc.y))*0.4
         seed = i.meta.w*61.0
         fade_far = 1.0-smoothstep(125000.0,150000.0,distance)
+        stormy = i.weather.y > 0.5 and i.meta.z != 9.0
         t = enter
         # The ray's closest pass outside the surface, in units of the hit
         # tolerance: a near miss is partly covered, so a low-resolution
@@ -554,25 +548,32 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
             # (a broken overcast's rolls thin out 12-18 km away: the bright band of sky
             # under its far edge at the horizon)
             d = if i.meta.z == 9.0: storm_shelf_distance(p*i.extent,i.extent)/scale else: if i.meta.z == 11.0: storm_canopy_distance(p*i.extent,i.extent)/scale else: if i.meta.z == 12.0: (broken_rolls_distance(p*i.extent+vec3(0,i.extent.y*0.5,0))+smoothstep(12000.0,18000.0,t)*3000.0+(1.0-smoothstep(11000.0,14000.0,length((world-u.cam).xz)))*3000.0)/scale else: (0.5-cloud_stamp_value(u.atlas,p,i.slab,i.voxels))/f32(CLOUD_ENCODE)+i.growth.x
-            epsilon = max(if i.meta.z == 12.0: 15.0/scale else: 0.004,t*pixel/scale*0.55)
-            mpp = t*pixel*1.5
+            epsilon = max(if i.meta.z == 12.0: 15.0/scale else: 0.004,t*pixel/scale*(if stormy: 0.9 else: 0.55))
+            # (metres a low-resolution pixel spans: the strokes, dabs and relief keyed to it stay
+            # three pixels and more across; finer, they flickered pixel by pixel on shaded sides)
+            mpp = t*pixel*2.5
             fade = cloud_relief_fade(mpp)
-            relief = d*scale < 60.0 and fade.x > 0.0
+            # (a storm's cells and canopy, kilometres across, take no close relief or brush dabs: tens of
+            # metres of detail mean nothing at their size, their own broad strokes carry them,
+            # and in the march at every step near their surface it cost redfox medium about
+            # 5 ms with one in view; the shelf keeps both, its ragged lit lip; the cells and
+            # canopy also step longer, to a coarser tolerance)
+            relief = d*scale < 60.0 and fade.x > 0.0 and not stormy
             if relief: d += cloud_relief(p*i.extent,fade,seed)*cloud_relief_keep(p)/scale
             # (beyond the close relief, the painted brush dabs carry the edge)
             # (only within the dabs' reach, never more than a tenth of the cloud)
-            brush = u.paint.x > 0.0 and fade.x < 1.0 and d*scale < min(95.0*pow(2.0,ceil(cloud_brush_octave(mpp)))*0.7,0.12*scale)
+            brush = u.paint.x > 0.0 and fade.x < 1.0 and not stormy and d*scale < min(95.0*pow(2.0,ceil(cloud_brush_octave(mpp)))*0.7,0.12*scale)
             # (never more than a tenth of the cloud: a far, small cloud keeps its shape)
             if brush: d += clamp(cloud_brush(p*i.extent,mpp,seed),-0.1*scale,0.1*scale)*(1.0-fade.x)*cloud_relief_keep(p)/scale
             if d < epsilon:
                 return cloud_body_hit(p,world,ray,t,d,leave,if relief: fade else: vec2(0,0),seed,mpp,i,u)*fade_far
             if d/epsilon < near_r: near_r = d/epsilon; near_t = t
-            t += max((d-0.001)*ray_scale*(if relief: 0.45 else: if brush: 0.62 else: 0.72),epsilon*ray_scale*0.5)
+            t += max((d-0.001)*ray_scale*(if relief: 0.45 else: if brush: 0.62 else: if stormy: 0.85 else: 0.72),epsilon*ray_scale*0.5)
         if near_r < 3.0:
             world = u.cam+ray*near_t
             world.y += world_drop(ray.xz*near_t)
             p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
-            return cloud_body_hit(p,world,ray,near_t,0.0,leave,vec2(0,0),seed,near_t*pixel*1.5,i,u)*(fade_far*(1.0-smoothstep(1.0,3.0,near_r)))
+            return cloud_body_hit(p,world,ray,near_t,0.0,leave,vec2(0,0),seed,near_t*pixel*2.5,i,u)*(fade_far*(1.0-smoothstep(1.0,3.0,near_r)))
         return vec4(0,0,0,0)
     dt = (leave - enter) / steps
     # Midpoints are stable in world/view space. No frame-random dither/history.
@@ -610,8 +611,6 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
             if i.meta.z == 4.0: light *= 0.72+0.28*vnoise(p.xz*93.0)
             if i.meta.z == 6.0: light = if i.weather.y > 1.5: vec3(0.44,0.47,0.52)*clamp(dot(u.sun,vec3(0.2126,0.7152,0.0722))*1.2,0.25,1.0) else: mix(u.shade,u.haze,0.35)*0.85
             # (a storm's deck in the painted storm palette: cool blue-greys, darker below)
-            # (slivers: pale and faintly lit, between the cream and the cool shade)
-            if i.meta.z == 13.0: light = mix(u.paint_shade*0.95,u.sun*u.paint_light,0.55)
             # (the storm's deck: near-black slate at its base to a slate grey on top)
             if i.meta.z == 10.0: light = mix(vec3(0.10,0.11,0.14),vec3(0.38,0.40,0.45),smoothstep(-0.2,0.8,dot(normal,sun))*(0.15+0.85*under*under))*clamp(dot(u.sun,vec3(0.2126,0.7152,0.0722))*1.2,0.25,1.0)
             # (rain curtains: a mid slate grey, lighter than the base above them and darker
@@ -690,6 +689,9 @@ volume_composite_vs = (v: VolumeVertex, u: VolumeCompositeParams) -> VolumeCompo
 
 volume_view_depth = (d: f32, ab: vec2) -> f32: world_depth_decode(d,ab)
 
+# A premultiplied cloud sample's tone for finding its edges: brightness and cover together.
+volume_tone = (c: vec4) -> f32: c.x * 0.3 + c.y * 0.5 + c.z * 0.2 + c.w * 0.5
+
 volume_nearest_resolves = (center: f32, nearest: f32) -> bool:
     abs(nearest-center) <= max(8.0,center*0.025)*7.0
 
@@ -710,16 +712,61 @@ volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
     pixel = i.uv * u.size - vec2(0.5, 0.5)
     base = floor(pixel); f = fract(pixel)
     color = vec4(0, 0, 0, 0); weight: f32 = 0.0
+    blend = vec4(0, 0, 0, 0); blend_weight: f32 = 0.0
+    low: f32 = 1000.0; high: f32 = -1000.0
     loop k in 0..4:
         corner = vec2(f32(k % 2), f32(k / 2))
         uv = (base + corner + vec2(0.5, 0.5)) / u.size
         depth = volume_view_depth(sample(u.depth, uv).x, u.depth_ab)
         delta = abs(depth - center) / max(8.0, center * 0.025)
+        bilinear = (if k % 2 == 0: 1.0 - f.x else: f.x) * (if k / 2 == 0: 1.0 - f.y else: f.y)
         # Reject cloud/sky samples across an opaque silhouette. An unresolved
         # isolated pixel is resolved by the full-resolution edge pass.
-        w = (if k % 2 == 0: 1.0 - f.x else: f.x) * (if k / 2 == 0: 1.0 - f.y else: f.y) / (1.0 + delta * delta * delta * delta)
-        color += sample(u.color, uv) * w; weight += w
-    result = if weight < 0.0001: vec4(0, 0, 0, 0) else: color / weight
+        w = bilinear / (1.0 + delta * delta * delta * delta)
+        tap = sample(u.color, uv)
+        color += tap * w; weight += w
+        # The sea or land behind a cloud, seen at a grazing angle (under a deck, the side of a
+        # storm, looking down from height), changes depth steeply from one reduced-resolution row
+        # to the next though it is one smooth surface: weighed against the centre's own depth its
+        # taps look like a silhouette and the blend collapses to the nearest texel, the cloud in
+        # hard three- and four-pixel blocks. Far off, taps within a fifth of the centre's depth are
+        # that same surface (anything opaque against it, an aircraft or a headland, is far nearer):
+        # blend them. (Which pixels are resolved here, or re-marched at full resolution by the
+        # edge pass, is still decided by the strict weights above.)
+        if center > 1500.0: delta = min(delta, abs(depth - center) / (center * 0.2))
+        wb = bilinear / (1.0 + delta * delta * delta * delta)
+        blend += tap * wb; blend_weight += wb
+        lum = volume_tone(tap)
+        low = min(low, lum); high = max(high, lum)
+    result = if weight < 0.0001: vec4(0, 0, 0, 0) else: blend / blend_weight
+    # A hard edge in the reduced target (a deck's flat base seen edge-on, a cell's or the anvil's
+    # rim against the sky, a painted band), magnified 3-4x by the bilinear taps, steps along its
+    # length in texel-sized teeth. Where the taps straddle a strong edge, average further samples
+    # along it (each only if it lies on this pixel's surface, never across an opaque silhouette),
+    # so it runs smooth along its length and stays as sharp across it. Every gate is a smooth
+    # function of bilinear samples (no texel-wide strips), and the edge's direction comes from
+    # taps a texel either side, which average away a speckled texture (never smeared to streaks).
+    if weight >= 0.0001 and high - low > 0.08:
+        texel = vec2(1.0, 1.0) / u.size
+        east = volume_tone(sample(u.color, i.uv + vec2(texel.x, 0))); west = volume_tone(sample(u.color, i.uv - vec2(texel.x, 0)))
+        north = volume_tone(sample(u.color, i.uv + vec2(0, texel.y))); south = volume_tone(sample(u.color, i.uv - vec2(0, texel.y)))
+        gx = east - west; gy = north - south
+        g = length(vec2(gx, gy))
+        # (across a straight edge the four taps average to the middle; in a speckle they do not)
+        bend = abs((east + west + north + south) * 0.25 - volume_tone(result))
+        coherent = smoothstep(0.12, 0.2, g) * (1.0 - smoothstep(0.2, 0.45, bend / max(g, 0.0001)))
+        if coherent > 0.0:
+            along = vec2(-gy, gx) / max(g, 0.0001) * texel
+            # (out to four texels either way: a shallow edge's teeth come every few texels)
+            run = result * 0.3; total: f32 = 0.3
+            loop k in 0..4:
+                reach = (if k / 2 == 0: 1.5 else: 3.5) * (if k % 2 == 0: 1.0 else: -1.0)
+                q = i.uv + along * reach
+                z = volume_view_depth(sample(u.depth, q).x, u.depth_ab)
+                if abs(z - center) <= (if center > 1500.0: center * 0.2 else: max(8.0, center * 0.025)):
+                    wk: f32 = if k / 2 == 0: 0.2 else: 0.15
+                    run += sample(u.color, q) * wk; total += wk
+            result = mix(result, run / total, coherent)
     if u.shaft_gain > 0.0:
         # Screen-space crepuscular rays. Both land and the integrated cloud
         # transmittance occlude them. Bounded taps; no temporal trails/history.
@@ -897,6 +944,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         c = world_local(cloud_point(v),chart)
         cloud_shadow_deck = vec4(c.x,c.z,v.center.y-v.extent.y*0.5+200.0,v.weather.x*0.85)
         cloud_shadow_deck_frame = vec4(cos(v.heading),sin(v.heading),cloud_shadow_sun_k.x,cloud_shadow_sun_k.y)
+    craft_shadow_mask_pass()
     cloud_shadow_factor_pass(chart,vp)
     glBindFramebuffer(GL_FRAMEBUFFER, u32(volume_color.fbo))
     glViewport(0, 0, i32(w), i32(h))
@@ -912,6 +960,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     # attachment out temporarily. Color and the actual scene depth are preserved.
     detach_cloud_depth()
     glViewport(0, 0, i32(cloud_scene_depth.width), i32(cloud_scene_depth.height))
+    craft_shadow_multiply(chart,vp)
     cloud_shadow_multiply()
     # With no shafts, clear pixels outside every projected cloud cannot
     # contribute. Include two low-resolution texels for reconstruction taps.

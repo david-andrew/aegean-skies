@@ -83,9 +83,15 @@ mutates simulation state.
 
 State slogans are explicitly editorial opinion, with no claim that a war has begun or a battle
 was won. Existing public event paths can carry future war reports; add accurate event-specific
-headlines in `radio_public_news` when new event kinds land. Do not infer national victories from
+headlines in `radio_headline` when new event kinds land. Do not infer national victories from
 an arbitrary raid. Weather is a current harbor observation, not invented forecasting. Shipping
 notices read actual closure orders; old news of a closure does not masquerade as current status.
+
+Copy reads as a period announcer would say it, on air and in the transcript: the time of an
+event in clock words with its part of the day ("From the harbour office: at a quarter to one this
+afternoon, ..."; "yesterday evening", "last night"), wind as a Beaufort force ("Wind west, force
+four"; "Wind calm"), lists with "and", and no game-minute counts, digits or raw units
+(`tests/radio.jo` checks it).
 
 ## Audio, cost and validation
 

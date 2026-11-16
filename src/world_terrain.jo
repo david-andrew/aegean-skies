@@ -50,6 +50,7 @@ struct WorldTile:
     cpu_heights: f32[] = []
     cpu_materials: u8[] = []
     inland_water: bool = false
+    canal_city: bool = false       # over Neravessa's canal cut (world_tile_canal)
 
 struct WorldInstance:
     origin: vec2
@@ -72,6 +73,14 @@ world_generate_budget = WORLD_GENERATE_LIMIT
 # time to keep, lift it and so make tiles as fast as the old four-a-frame limit allows)
 world_generate_seconds = 0.005
 world_generate_until = 0.0
+# (checks: a fixed count of tiles a frame in place of the time slice, three while the arrival's
+# larger slice would apply, so a check tests the order and the arrival's share, not how fast the
+# machine is; 0 in the game, which keeps its time slice)
+world_generate_tiles = 0
+world_generate_made = 0           # (tiles made this frame outside the contact burst)
+_world_slice_spent = () -> bool:
+    if world_generate_tiles > 0: return world_generate_made >= world_generate_tiles * (if world_arriving_bare: 3 else: 1)
+    time() > world_generate_until
 # While most land in view has nothing that can be drawn (just after a jump, a load or the
 # title's city shot), tiles get a larger slice of the frame: a few slower frames rather than
 # seconds of sea where the coast should be. (Only most: a coastal tile or two hidden after
@@ -192,7 +201,9 @@ world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
     world_upload_tile(world_heights,job.h,slot)
     world_upload_tile(world_materials,job.m,slot)
     world_upload_tile(world_working,job.working,slot)
-    WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
+    tile=WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
+    tile.canal_city=world_tile_canal(job.x,job.z,job.level)
+    tile
 
 world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
     job = world_tile_job_start(x,z,level)
@@ -250,7 +261,7 @@ world_view_missing = 0
 world_view_settled = () -> bool: world_view_missing == 0
 
 world_request_tile = (x: int,z: int,level: int) -> int:
-    global world_tiles,world_cache,world_generated,world_uploaded,world_tile_job,world_next_level
+    global world_tiles,world_cache,world_generated,world_uploaded,world_tile_job,world_next_level,world_generate_made
     key = world_tile_key(x,z,level)
     if key in world_cache:
         slot = world_cache[key]
@@ -266,7 +277,7 @@ world_request_tile = (x: int,z: int,level: int) -> int:
             world_want(key,x,z,level)
             if world_tile_job.key >= 0 and world_tile_job.asked >= world_frame-1: return -1
             if world_next_level >= 0 and level < world_next_level: return -1
-            if time() > world_generate_until: return -1
+            if _world_slice_spent(): return -1
             world_tile_job = world_tile_job_start(x,z,level)
         world_tile_job.asked = world_frame
         if not world_tile_job_rows(world_tile_job,world_generate_until): return -1
@@ -283,6 +294,7 @@ world_request_tile = (x: int,z: int,level: int) -> int:
         world_tiles[slot] = world_tile_job_finish(world_tile_job,slot)
         world_tile_job = WorldTileJob()
         world_next_level = -1
+        world_generate_made += 1
     else: world_tiles[slot] = world_make_tile(x,z,level,slot)
     world_cache[key] = slot
     if world_warming: world_warm_missing -= 1 else: world_view_missing -= 1
@@ -300,12 +312,20 @@ world_tile_inland = (tx:int,tz:int,level:int) -> bool:
     r=water_at(x+size*0.5,z+size*0.5)
     r.found and r.distance<size*0.71+r.width*3.0
 
+# The canal city's cut (36 m of water between street-high walls) is narrower than a coarse tile's
+# cells: there the terrain keeps its finest cells further out, so the cut stays open from the air.
+world_tile_canal = (tx:int,tz:int,level:int) -> bool:
+    x,z=world_tile_origin(tx,tz,level);size=world_tile_size(level)
+    if x>f64(RIVER_BOUNDS.z) or x+size<f64(RIVER_BOUNDS.x) or z>f64(RIVER_BOUNDS.w) or z+size<f64(RIVER_BOUNDS.y):return false
+    r=water_at(x+size*0.5,z+size*0.5)
+    r.found and r.segment>=CANAL_BEGIN and r.distance<size*0.71+r.width*3.0
+
 world_tile_detail = (node: WorldTile) -> f64:
     # Water coverage belongs to the immutable tile, not the moving camera.
     # Ocean coasts get one extra level; river and lake tiles half a level,
     # which keeps the carved banks and their groves (2x and 1.5x look alike).
     # Canonical contact tiles and sub-cell bank refinement remain unchanged.
-    render_quality.terrain_detail*(if node.low < 0.0 and node.high > 0.0:2.0 else:if node.inland_water:1.5 else:1.0)
+    render_quality.terrain_detail*(if node.canal_city:3.0 else:if node.low < 0.0 and node.high > 0.0:2.0 else:if node.inland_water:1.5 else:1.0)
 
 # A cold arrival can leave a country-sized ancestor selected while its
 # children stream. Its multi-kilometre triangles connect opposite shores
@@ -642,6 +662,9 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     world_generate_budget = if contact_burst: world_contact_budget(cam) else: WORLD_GENERATE_LIMIT
     world_frame += 1; world_clock = t; world_generated = 0; world_uploaded = 0
     world_generate_until = time()+(if world_generate_seconds >= 1.0: world_generate_seconds else: if world_arriving_bare: max(WORLD_ARRIVAL_SECONDS,build_slice(world_generate_seconds)) else: build_slice(world_generate_seconds))
+    global world_generate_made
+    world_generate_made = 0
+    if world_generate_tiles > 0: world_generate_until = 1e30
     global world_next_level,world_want_key,world_want_level,world_want_cam,world_want_warm,world_view_missing
     world_next_level = if world_arriving or world_want_warm: world_want_level else: -1
     world_want_key = -1; world_want_level = -1; world_want_cam = cam; world_want_warm = false; world_view_missing = 0
@@ -736,7 +759,10 @@ draw_world_terrain = (L: Light,t: f64):
     params.pigment = paint_surface()
     params.canopy = canopy_sheet()
     params.grove = grove_new_world()
+    params.canopy_light = canopy_light(L.sun_dir)
+    params.land_light = land_light(L.sun_dir)
     params.grass_gust = meadow_gust(origin)
+    params.grass_blobs = meadow_blob_rows(origin)
     params.working_map=world_working
     params.river_map=river_material_texture()
     params.river_area=vec4(RIVER_BOUNDS.xy,RIVER_BOUNDS.zw-RIVER_BOUNDS.xy)
