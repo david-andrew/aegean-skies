@@ -7,14 +7,14 @@
 // thermal status. The server and the port mappings end with the tool.
 //
 // usage: node tools/phone_run.mjs <page.html | URL> [--secs 60] [--warm 20] [--query "AEGEAN_X=1&..."]
-//          [--out result.json] [--browser chrome|beta|chromium] [--keep]
+//          [--out result.json] [--browser chrome|beta|chromium] [--keep] [--inject script.js]
 //   a URL (the Pages site) is opened as it is; a page file is served (index.html + index.wasm)
 //   --warm: seconds after the loading card goes before the measured window of --secs starts
 //   --keep: leave the tab open on the game afterwards (default: navigate it to about:blank)
 // Hold the phone lock around it: flock -w 900 ~/dev/tmp/phone.lock node tools/phone_run.mjs ...
 // One device is expected (adb devices); ADB_SERIAL / ANDROID_SERIAL pick another.
 import {execFileSync} from 'node:child_process';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync, readFileSync} from 'node:fs';
 import {openPage} from './web_page.mjs';
 
 const args = process.argv.slice(2);
@@ -139,6 +139,8 @@ await send('Runtime.enable');
 await send('Log.enable');
 await send('Page.enable');
 await send('Page.addScriptToEvaluateOnNewDocument', {source: probe});
+// (--inject f.js: a script of one's own run before the page's, for experiments)
+if (opt('inject', null)) await send('Page.addScriptToEvaluateOnNewDocument', {source: readFileSync(opt('inject'), 'utf8')});
 await send('Page.navigate', {url});
 console.log(`phone_run: ${url} (${browser}), battery ${before.battery_c} C, thermal ${before.thermal_status}, display ${before.refresh_hz} Hz`);
 if (before.battery_saver) console.log('phone_run: WARNING Battery Saver is on (30 Hz panel, CPU limited): `adb shell cmd power set-mode 0` turns it off');
