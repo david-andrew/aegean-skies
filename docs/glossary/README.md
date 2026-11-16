@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -2028,11 +2028,38 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Code:** `src/bar_scene.jo` (`hotel_site`, `build_hotel`, `draw_band`, `draw_served`);
   the venue rule in `src/living_life_seed.jo` (`choose_life_venue`, `life_aviator`) and
   `src/living_life.jo`; seating in `src/townsfolk.jo`.
-- **Rules:** the walkable deck is published as quays; the building stands over water, so it
-  cannot be walked into. The terrace venue key ends with `TERRACE_VENUE_SUFFIX`.
+- **Rules:** the walkable deck is published as quays; the building's walls are published solids,
+  so it is not walked into: its [bar room](#bar-room) is gone into at a door. The terrace venue key ends with `TERRACE_VENUE_SUFFIX`.
 - **Capture:** `AEGEAN_LEISURE=exterior|harbour|terrace|sit`.
 
 ![The Hotel Ancora from the water](img/hotel-ancora.png)
+
+### Bar room
+
+- **Definition:** the Hotel Ancora's ground floor, an indoor evening room: a stone arch across it,
+  the band's stand in a curtained corner with the piano, a long dark counter against a back bar of
+  bottles with a mirror and a clock, tables under hanging lamps, palms in pots, and walls crowded
+  with pictures, pinned papers, a propeller and a shelf of cups. Lit by lamps only: warm pools
+  under the shades, deep brown beyond (by day in the rain, the sea windows' grey light too).
+- **When:** the bar is inside from 18:00 through the night; everything (tables, waiter, band) is
+  inside while it rains. The hotel's places (`HotelSpots`) shift into the room, so the seated
+  view, company, the waiter and the band follow without their own code knowing. The switch
+  happens out of sight: not while the pilot sits at the hotel, else with the camera 70 m away, or
+  on going in by a door (the terrace door by the bar's end, the side door off the east walk).
+- **The world:** keeps the terrace's places (the band's numbers, the patrons' seats), so saves and
+  replays don't change; whoever it has at the terrace's tables, bar or stand is drawn, found and
+  talked to at the same place in the room (`room_place_folk`); those crossing the terrace aren't
+  drawn. In rough weather the band still plays, and at Porto Vecchio of an evening the keeper and
+  the pilots go to the hotel rather than shelter.
+- **Light:** baked into the vertices (`bake_bar_room`): shaded hanging lamps throw their light
+  down, wall lamps all round, a soft shoulder on the brightest; drawn in a flat light so the bake
+  shows, with the lamps glowing. People inside are drawn in `room_figure_light`. Built the first
+  time the camera is inside; drawn only then (rain is not drawn inside).
+- **Code:** `src/bar_room.jo`; `HotelSpots`, `hotel_as_built`, `room_camera_inside` in
+  `src/bar_scene.jo`; the floor for seats in `src/walk_shapes.jo` (`walk_publish_floors`).
+- **Capture:** `AEGEAN_LEISURE=sit|seat-bar|band` at an evening hour (`AEGEAN_CAPTURE_MINUTES`),
+  with `AEGEAN_WEATHER=rain` for everything inside; `AEGEAN_ROOM=0|1|2` forces the room's state.
+- **Tests:** `tests/bar_room_test.jo`; the storm evening in `tests/band_life_test.jo`.
 
 ### Lantern light
 
