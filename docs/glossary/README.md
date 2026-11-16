@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -2895,23 +2895,34 @@ No image: the tiers differ in budgets more than in any single view.
   cafés, music, shore, nature, animals, ships and weather.
 - **Code:** `src/ambience.jo` (scheduler and mixer), `src/ambience_synth.jo` (instruments),
   `src/ambience_scene.jo`; `docs/ambience.md`.
-- **Rules:** sounds are synthesized, never recorded; ambient murmurs are never dialogue.
+- **Rules:** sounds are synthesized, except the recorded crowd and river beds (`docs/CREDITS.md`); ambient murmurs are never dialogue.
 
 ### Crowd bed
 
-- **Aliases:** the harbour murmur, the cafe murmur.
-- **Definition:** the looped sound of a crowd under the harbour and cafe ambience: three talkers
-  near and five across the square speaking invented syllables (consonants and vowels, never
-  words) in phrases whose pitch falls, conversations swelling and fading, the many beyond as a
-  breathing noise, low air under it, people walking past, a short outdoor reverb; stereo, the
-  ears partly alike. The cafe's has one more talker near, a smaller room and glasses and cups.
-  Its parameters are fitted to CC0 and public-domain recordings of real squares, promenades, a
-  wharf and cafes (`docs/crowd-reference.md`); nothing recorded ships.
-- **Code:** `src/ambience_crowd.jo` (`CrowdFit`, `crowd_bed`); `tools/crowdlab.jo`.
-- **Rules:** a 7 s loop with no loudness rhythm shorter than it and no held pure pitch; louder
-  single voices are events from real people, never baked into the loop (`tests/ambience.jo`).
-  The first version, four gated pure hums in a 2.4 s loop, was heard as a little repeating tune
-  (A F# A A F#) on the quay.
+- **Aliases:** the harbour murmur, the cafe murmur, the village chatter; recorded beds.
+- **Definition:** the looped sound of people talking under the harbour, square and cafe ambience:
+  recordings edited into seamless 30 s loops, streamed as they play. The harbour bed (a busy quay,
+  square or market), the village bed (a few people; an open terrace) and the bar bed (a cafe or bar
+  room), with the river bed beside them. Sources and licences: `docs/CREDITS.md`.
+- **Code:** `src/ambience_beds.jo`, `assets/ambience/`; `src/ambience_scene.jo` (`ambience_talk`:
+  the village bed for one to three people, crossfading into the harbour bed between four and fourteen).
+- **Rules:** only the edited beds named in `tools/check_tracked_files.py` `ALLOWED_AUDIO` may be
+  committed, never a raw recording. Louder single voices are events from real people, never baked
+  in. Two synthesized crowds came first: four gated pure hums, heard as a little tune on the quay,
+  then layered formant talkers, heard as "awful" beside these recordings and retired.
+
+### River sound
+
+- **Definition:** flowing water heard from the nearest bank of a river (a canal at a third of
+  the level, louder for a wider river, to about 160 m), from the recorded river bed.
+- **Code:** `src/ambience_scene.jo` (`ambience_river`), `src/ambience_beds.jo`.
+
+### Birdsong
+
+- **Definition:** single phrases of birds in the trees and fields about the listener by day (not
+  in rain or strong wind): four synthesized birds (a trill, a warble, chips, a whistled phrase),
+  notes of 10-60 ms at 3-8 kHz sweeping fast, each tree its own singer at uneven moments.
+- **Code:** `src/ambience_synth.jo` (`ambience_bird_note`), `src/ambience_scene.jo`.
 
 ### Uneven events
 
