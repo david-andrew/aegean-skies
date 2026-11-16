@@ -1262,8 +1262,10 @@ On the rivers branch until it lands.
   high tier the sea reflects the band.
 - **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
   (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`);
-  `sky_afterglow` in `src/sky_air.jo`. The sky and the sea draw with glow variants of their
-  shaders (`sky_glow_sh`, `sea_glow_sh`) only while it glows, so the day's shaders are unchanged.
+  `sky_afterglow` in `src/sky_air.jo`. On the medium and high tiers the sky draws with a glow
+  variant (`sky_glow_sh`, the glow worked out on a screen grid) while it glows, and on the high tier
+  the sea too (`sea_glow_sh`); the day's shaders are unchanged. The low tier keeps the plain sky and
+  warms its horizon and haze instead (`SKY_GLOW_LOW`): a softer band all round, at no cost.
 - **Capture:** `AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into the glow);
   `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
 
