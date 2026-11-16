@@ -4199,9 +4199,105 @@ rope: Rope
 was_moored = false
 talk_at_start = env("AEGEAN_TALK") != none
 radio_card_until = -1.0             # (while the radio's card shows, after tuning)
+radio_volume_card_until = -1.0      # (and while it shows the volume, after the knob turns)
+radio_hit_rect: Rect? = none        # (where the radio was drawn last frame, in the cockpit)
+
+# The radio's volume knob, turned by a drag on the radio (the mouse, free of the view, or a finger:
+# up is louder), the wheel over it, [ and ], or the gamepad's Radio button held with the look
+# stick. While it turns, the level is the knob's own; the options keep it when it stops.
+struct RadioKnob:
+    level = -1.0                    # (-1: not being turned; the options' level is the one)
+    turning = 0                     # 0 still, 1 the mouse, 2 a finger, 3 the gamepad
+    from = vec2(0, 0)
+    start = 0.5
+    moved = false
+    idle = 0.0                      # (seconds since a key or the wheel last turned it)
+radio_knob = RadioKnob()
+
+# F9, the Radio button or a tap on the radio: on to the next station, and off after the last
+radio_next_station = ():
+    if cockpit_radio.muted:
+        radio.radio_mute(cockpit_radio, false)
+        radio.radio_seek(cockpit_radio, 1, living_world.minute)
+    else:
+        was = cockpit_radio.khz
+        radio.radio_seek(cockpit_radio, 1, living_world.minute)
+        if cockpit_radio.khz <= was: radio.radio_mute(cockpit_radio, true)
+
+# the knob's level now: its own while it turns, else the one kept with the options
+radio_knob_level = () -> f64: if radio_knob.level >= 0.0: radio_knob.level else: dbg.opts.radio_volume
+
+# the knob turned to v (0..1): the card says so; the options keep it once it stops
+radio_knob_set = (v: f64, now: f64):
+    global radio_knob, radio_volume_card_until, radio_card_until
+    radio_knob.level = clamp(v, 0.0, 1.0)
+    radio_volume_card_until = now + 2.0
+    radio_card_until = now + 2.0
+
+# The knob, once a frame aboard (keys free): a drag that hardly moves is a tap (the next station).
+radio_knob_step = (dt: f64, now: f64):
+    global radio_knob, radio_card_until
+    r = radio_hit_rect
+    # (a drag the whole height of the radio, twice, turns it from off to the top)
+    span = if r is Rect: max(r.h * 2.0, 80.0) else: 160.0
+    if radio_knob.turning == 0:
+        if r is Rect and not pad.on and not is_mouse_locked() and mouse_pressed(.left) and contains(r, mouse_pos()):
+            radio_knob = RadioKnob(level = radio_knob_level(), turning = 1, from = mouse_pos(), start = radio_knob_level())
+        else if let f = pad_finger_on(.f8):
+            radio_knob = RadioKnob(level = radio_knob_level(), turning = 2, from = f, start = radio_knob_level())
+        else if ctl_pressed(.f7):
+            radio_knob = RadioKnob(level = radio_knob_level(), turning = 3, start = radio_knob_level())
+    at: vec2? = none
+    held = false
+    if radio_knob.turning == 1:
+        held = mouse_down(.left)
+        at = mouse_pos()
+    else if radio_knob.turning == 2:
+        at = pad_finger_on(.f8)
+        held = at != none
+    else if radio_knob.turning == 3:
+        held = ctl_down(.f7)
+        look = ctl.radio_look
+        if abs(f64(look.y)) > 0.15:
+            radio_knob_set(radio_knob_level() - f64(look.y) * dt * 0.5, now)
+            radio_knob.moved = true
+        across = if look.x > 0.5: 1 else: if look.x < -0.5: -1 else: 0
+        if across != 0:
+            if radio.radio_hold_tune(cockpit_radio, across, dt) and cockpit_radio.muted: radio.radio_mute(cockpit_radio, false)
+            radio_knob.moved = true
+            radio_card_until = now + 2.5
+    if radio_knob.turning == 1 or radio_knob.turning == 2:
+        if let p = at:
+            rise = f64(radio_knob.from.y - p.y)
+            if abs(rise) > 6.0 or radio_knob.moved:
+                if not radio_knob.moved: radio_knob.from = p          # (the drag starts where it was taken up)
+                radio_knob.moved = true
+                radio_knob_set(radio_knob.start + f64(radio_knob.from.y - p.y) / span, now)
+    if radio_knob.turning != 0 and not held:
+        if not radio_knob.moved:
+            radio_next_station()
+            radio_card_until = now + 2.5
+        radio_knob.turning = 0
+        radio_knob.idle = 0.0
+    # the wheel over the radio, and [ ]
+    step = 0.0
+    if r is Rect and not is_mouse_locked() and contains(r, mouse_pos()): step += clamp(mouse_wheel(), -3.0, 3.0) * 0.05
+    if key_repeat(.rbracket): step += 0.05
+    if key_repeat(.lbracket): step -= 0.05
+    if step != 0.0:
+        radio_knob_set(radio_knob_level() + step, now)
+        radio_knob.idle = 0.0
+    # (kept once it has stopped a moment: not a save a frame while it turns)
+    if radio_knob.turning == 0 and radio_knob.level >= 0.0:
+        radio_knob.idle += dt
+        if radio_knob.idle > 0.4:
+            global dbg
+            dbg.opts.radio_volume = radio_knob.level
+            radio_knob.level = -1.0
 
 # what the radio is on, for its card: the station near the dial, or the band between them
 radio_label = () -> str:
+    if t < radio_volume_card_until: return radio.radio_volume_label(radio_knob_level())
     if cockpit_radio.muted: return "Radio off"
     loop st in cockpit_radio.stations:
         if abs(st.khz - cockpit_radio.khz) < 8.0: return "{st.name}   {int(cockpit_radio.khz)} kc"
@@ -4384,6 +4480,8 @@ dbg = Debug()
 if startup_sloppy_no_audio == none: music_audition_prepare(dbg.music)
 set_tweaks(dbg.tweaks)
 dbg.opts = options
+# AEGEAN_RADIO_VOLUME=0..1: the radio's volume knob set there (captures; kept with the options)
+if let v = env("AEGEAN_RADIO_VOLUME"): dbg.opts.radio_volume = clamp(to_float(v) ?? dbg.opts.radio_volume, 0.0, 1.0)
 # AEGEAN_LOOK="yaw pitch [cockpit]": captures of the mouse look (the Options page's "Mouse steers the
 # aircraft" turned off, kept in the run's save folder as options are): the view turned that far
 # (radians), in the cockpit if asked; outside, the orbit about the aircraft turned that far from behind
@@ -7402,19 +7500,16 @@ update_frame = (dt: f64, saves: bool = true):
             radio.radio_mute(cockpit_radio,not cockpit_radio.muted)
             tuned = true
         if vpressed(.f9):
-            if cockpit_radio.muted:
-                radio.radio_mute(cockpit_radio, false)
-                radio.radio_seek(cockpit_radio, 1, living_world.minute)
-            else:
-                was = cockpit_radio.khz
-                radio.radio_seek(cockpit_radio, 1, living_world.minute)
-                if cockpit_radio.khz <= was: radio.radio_mute(cockpit_radio, true)
+            radio_next_station()
             tuned = true
         if tuned:
             global radio_card_until
             radio_card_until = t + 2.5
+        radio_knob_step(dt, t)
     else:
         _ = radio.radio_hold_tune(cockpit_radio,0,0)
+        global radio_knob
+        radio_knob.turning = 0
     # (the dial stays where it was left, from one game to the next: kept once the tuning stops)
     if abs(cockpit_radio.khz - radio_saved_khz) > 0.5 and not vdown(.comma) and not vdown(.period):
         global radio_saved_khz
@@ -7427,7 +7522,7 @@ update_frame = (dt: f64, saves: bool = true):
     if vdown(.n2) and hour_keys: hour = (hour + dt * 2.0) % 24.0
     if vpressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
-    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked():
+    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1:
         mouse_lock(true)
         global click_took_mouse
         click_took_mouse = true             # (that click only takes the mouse: it doesn't fire)
@@ -8106,6 +8201,7 @@ update_frame = (dt: f64, saves: bool = true):
         bar_music_update(bar_music, bar_band_position(living_world.band, living_world.tick), heard, audio_enabled)
         band_step(dt)
         if listen_mode != "" and frame_number() % 60 == 0: print("LISTEN frame {frame_number()} distance {heard.distance:.1f} pan {heard.pan:+.2f} front {heard.front:+.2f} occlusion {heard.occlusion:.2f} zone {heard.zone} duck {world_ambience.sound.duck:.2f} voice {bar_music.voice} playing {bar_band_position(living_world.band, living_world.tick).playing}")
+        cockpit_radio.volume = radio_knob_level()
         radio.radio_play(cockpit_radio,f64(living_world.tick)/60.0,me.mode == .aboard,
             not pc.state.moored,pc.state.throttle,audio_enabled)
         # the other aircraft's engines, heard from where their sound left them, Doppler and all
@@ -8371,7 +8467,7 @@ draw_world = (L: Light):
                 side = if job.legs[job.leg].target.x < 0: -1.0 else: 1.0
                 draw(obj_sh, cowling_panel, obj_params(L, t, at * translation(l.engine + vec3(f32(side * l.engine_radius), f32(l.engine_radius * 0.55), 0)) * rotation_z(side * 2.0)))
             if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t,me.mode==.aboard and pc.cockpit_view)
-            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_disc_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft)
+            if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_disc_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft,radio_knob_level())
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true,offset=world_residual(craft_point(pc.state)))
         draw_ride_seated(pm, at, L)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
@@ -8668,13 +8764,17 @@ draw = ():
             else: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if active_scenario=="strait" and (me.mode == .aboard or me.mode == .walking): draw_homeward(homeward,fonts,t)
     draw_welcome()
+    global radio_hit_rect
+    radio_hit_rect = none
     if me.mode == .aboard:
         on_ways=slip.active and active_scenario=="canal"
         aim_marks(pc,not pc.cockpit_view and not on_ways)
         if not pc.state.on_water and not pc.state.moored and not show_chart and not on_ways:
             draw_lead_marks(lead_marks(battle,living_world.people[living_world.player].craft,pc.state.position,pc.state.velocity))
         if pc.cockpit_view:
-            if let radio_hit=cockpit_radio_rect(craft_models[pc.model],pc_at(),craft_point(pc.state)):tap_card(radio_hit,.f9)
+            radio_hit_rect = cockpit_radio_rect(craft_models[pc.model],pc_at(),craft_point(pc.state))
+            # (a finger on the radio: a tap steps the stations, a drag turns the volume)
+            if let radio_hit=radio_hit_rect:tap_card(radio_hit,.f8)
         st = pc.state
         # (the speedometer reads the true speed)
         if show_chart: pass

@@ -5,12 +5,21 @@ The receiver starts muted. While aboard, with no panel or text field taking inpu
 * `/` toggles mute.
 * `,` and `.` tune down/up by 5 kHz.
 * Shift with either tuning key seeks the previous/next station currently on air, wrapping the dial.
+* F9 (the touch screen's Radio button, a tap or click on the radio in the cockpit) steps to the
+  next station on the air, and off after the last.
+* **Volume**: the knob in the dial's lower left corner. Drag up or down on the radio (the mouse,
+  once it is free of the view, or a finger), turn the wheel over it, or press `[` and `]`. A
+  gamepad or flight stick has a Radio button to bind on the Controls page (unbound at first:
+  every button is taken aboard): a tap steps the stations, and while it is held the look stick
+  turns the volume (up and down) and tunes (across). The same level is Options → Sound → Radio
+  volume, kept with the options. Half way is the level the radio always had; the knob spans
+  20 dB either side of it in even steps of loudness (`radio_volume_gain`), and 0 is silent. At
+  the top, at cruise, the announcer is about 5 dB under the engine rather than 25; moored, the
+  receiver reaches full scale first.
 
-This change implements audio and data APIs. The physical cockpit dial, touch controls, station
-label and optional bulletin transcript are intentionally left for the coordinator's UI work.
-Bulletins are **read aloud by a synthesized announcer** (see "The announcer" below); the maritime
-shipping notices stay in Morse. The full English copy remains available to the UI. Choir is
-wordless.
+A card names the station, or the volume, for a moment after each change. Bulletins are **read
+aloud by a synthesized announcer** (see "The announcer" below); the maritime shipping notices
+stay in Morse. The full English copy remains available to the UI. Choir is wordless.
 
 ## Stations and programme clock
 
@@ -139,11 +148,40 @@ a neural model:
 
 A bulletin repeats on the world clock: its period is the programme span (10 s, or 30 s for
 maritime) rounded up to fit the words plus a pause, so tuning in mid-bulletin joins it where it is.
-The voice data file (333 KB: spectra, lexicon, rules and the fitted prosody model) is **not in
-the repository** until a final voice is chosen: the game reads it from the path in
-`AEGEAN_VOICE_DATA`, during world loading with the music (about 43 ms native, 78 ms in Chromium on
-redfox). Without it, speech is off and spoken programmes stay in Morse; `src/voice_model.jo` holds
-only neutral placeholder numbers. How it is made: `tools/voice_world/README.md`.
+The voice data file (340 KB: spectra, lexicon, rules and the fitted prosody model) is **not in
+the repository**: the approved voice is fitted to a reference narrator, and nothing derived from
+that recording goes into git until its rights are settled. The game reads it from the path in
+`AEGEAN_VOICE_DATA`, during world loading with the music. Without it, speech is off and spoken
+programmes stay in Morse; `src/voice_model.jo` holds only neutral placeholder numbers. How it is
+made: `tools/voice_world/README.md`. Its cost, measured on redfox with the approved voice
+(`tools/voice_budget.jo` with the file embedded): loading takes 45 ms native and 80 ms in
+Chromium, once; a bulletin's first programme 2–2.4 ms native (20 ms for the first in Chromium,
+3–4 ms after), and rendering 1.1 ms native, 1.35 ms in Chromium per 50 ms block. Embedded in a
+web build it would add 454 KB to the page (343 KB gzipped: the file is compressed already).
+
+## Backlog: finding the stations (a design note, not built)
+
+From the user, on hearing the first voice: the dial is easy to sweep today, and every station is
+there from the first flight. Later, the stations could be **found**:
+
+* **Early on, the pilot knows few stations or none.** The receiver still picks up whatever is in
+  range, but a sweep across the band is a search, not a list: a station found by ear is one the
+  pilot can come back to.
+* **Asking around.** People mention stations: a mechanic who leaves the dance band on in the
+  workshop, a fisherman who swears by the maritime forecast, a bar where the Night Gull plays
+  after dark, a newspaper's listings. Hearing of one gives its name and roughly where it sits on
+  the dial ("the Blue Lantern, up past eleven hundred"), not an exact frequency.
+* **Marks on the dial's card.** Once found, the pilot pencils the station on the panel: a small
+  hand-written mark and abbreviation on a card above or below the radio's display, at the
+  station's place on the scale. The marks build up through a career, in the pilot's hand (or set
+  down by the pilot on their own the first time a station is heard clearly). A station heard of
+  but not yet found might get a faint question mark at its rough place.
+* **Tuning with the marks.** Shift-seek (and the Radio button) would step between marked stations
+  rather than every station on the air; free tuning stays for searching.
+* **What it touches:** a found-stations set in the saved game; mentions in talk, the
+  newspaper and the bar (`living_*`, `radio_content.jo` for listings); the card drawn in
+  `cockpit.jo` beside the dial (procedural strokes, no font images); `radio_seek` restricted to
+  marked stations. Nothing here changes reception or the programme clock.
 
 ## Audio, cost and validation
 

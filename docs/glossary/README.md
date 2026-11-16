@@ -3445,6 +3445,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day (also overrides a scenario's own start hour, for captures) |
 | `AEGEAN_RADIO=kc` | the cockpit radio on and tuned to that frequency from the start (620 Archipelago Radio, 1100 Blue Lantern, 1260 the Maritime Service reach the home harbour by day; 780 Voice of Kalyra and 940 Orenthia National do not; heard aboard, with `AEGEAN_AUDIO_CAPTURE` for its sound) |
+| `AEGEAN_RADIO_VOLUME=0..1` | the radio's volume knob set there from the start (0.5 the usual level, 1 the top, 20 dB louder; kept with the options; captures) |
 | `AEGEAN_CAPTURE_MINUTES=m` | advance the living world m minutes before the start (the radio's programme clock follows it: news at each half hour) |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
