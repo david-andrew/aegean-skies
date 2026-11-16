@@ -3,7 +3,7 @@ use 'world_point.jo'
 # rescue, spawning of inhabitants, device reads or random() calls occur here.
 use 'flight.jo'
 use 'tweaks.jo'
-from 'air_pilot.jo' import air_waypoint_controls
+from 'air_pilot.jo' import air_waypoint_controls, air_runway, AirRunway
 use 'damage.jo'
 use 'bailout.jo'
 from 'planes.jo' import Craft, aircraft_profile, PartId
@@ -13,7 +13,7 @@ const COMBAT_MAX_CRAFT = 128
 const COMBAT_MAX_ROUNDS = 2048
 
 enum CombatRole: fighter, wingman, strike, escort, flee
-enum CombatMode: pursuit, scissors, breakaway, regroup, evade, strafe, withdrawing, down, lag, break_turn, head_on, extend, unload, zoom, cover, approach
+enum CombatMode: pursuit, scissors, breakaway, regroup, evade, strafe, withdrawing, down, lag, break_turn, head_on, extend, unload, zoom, cover, approach, homeward, ditching
 enum CombatStatus: flying, disabled, escaped, wreck
 
 enum CombatEventKind: shot, hit, ignition, separated, downed, bailed, landed, fled, splash, boat_disabled
@@ -126,12 +126,19 @@ struct CombatPilot:
     best_angle = 3.2               # the smallest angle off the nose to the target lately
     breaking = 0                   # ticks spent breaking from an attacker without respite
     close = false                  # in a gun fight (a target near): thinks every few ticks, however far
+    scripted = false               # flown by its caller (a test's stand-in player): no brain of its own
     aim_dir: vec3                  # the gun aim's direction at the last look, and when, and at whom
     aim_tick = -1
     aim_of = -1
     formation_heading = 0.0
     formation_speed = 0.0
     formation_offset: vec3
+    # Going home (src/combat.jo _homeward): the turn to land in, the flight plan once it is its
+    # turn, when the leader began its descent, and done (moored at the base).
+    home_turn = -1
+    plan: FlightPlan = FlightPlan()
+    descend_tick = -1
+    home_done = false
 
 struct HitMark:
     local: vec3
@@ -168,6 +175,7 @@ struct Combatant:
     marks: HitMark[]
     prop = 0.0
     lod = 0
+    ditched = false                # put down on the water rather than bailed out of; the pilot is out
 
 struct CombatBoat:
     id: int
@@ -250,6 +258,30 @@ struct Battle:
     finished = false
     tactics: int[]                 # how often each CombatMode was entered (by its index)
     ceiling = 1e9                  # a soft top for the fight (a cloud deck's base): climbs ease under it
+    homes: BattleHome[]            # each side's base harbour, where it goes home to (none: away)
+    home_since: int[] = [-1,-1,-1] # the tick each side (by index) turned for home
+    strength: int[] = [0,0,0]      # how many each side began with
+
+# A side's base: where its aircraft touch down (on `heading`), the first mooring and the step
+# between moorings along the quay, and the height they come home at.
+struct BattleHome:
+    side: int
+    touchdown: vec3
+    heading: f64
+    dock: vec3
+    step: vec3
+    altitude = 320.0
+    place = -1                      # the world's place ID (for the deeds and the dock)
+    centre: vec3 = vec3(0,0,0)      # the harbour's waterfront and its way out to sea (for the runway)
+    out: vec3 = vec3(0,0,1)
+
+# Where to land at home in this wind: the traffic's own choice of water (air_runway), clear of the
+# shore ahead; else the base's own touchdown.
+home_runway = (h: BattleHome, e: FlightEnv) -> (vec3,f64):
+    # (the run out after a landing at the combat's pure-scale speeds is long: clear water for it)
+    rw = air_runway(h.centre,h.out,e.wind,e.ground,h.altitude,rollout=1900.0)
+    if rw.valid: return (rw.touchdown,rw.heading)
+    (h.touchdown,h.heading)
 
 # One fixed tick of visual latency removes held/advanced-frame alternation. Human/external
 # owners retain their own pose. This copy never feeds back into simulation or collision sweeps.
@@ -365,6 +397,8 @@ _choose_target = (b: Battle, a: Combatant) -> int:
         if not e.present:continue
         if e.side == a.side or e.status != .flying or e.bailed: continue
         if a.engagement>=0 and e.engagement!=a.engagement: continue
+        # (one gone home is let go)
+        if e.pilot.mode == .homeward and not e.human: continue
         delta = e.state.position-a.state.position
         distance = f64(length(delta))
         cost = distance*(2.0-f64(dot(f,delta/f32(max(distance,0.01)))))
@@ -591,6 +625,7 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     elapsed = if p.brain_tick < 0: 6 else: b.tick-p.brain_tick
     was = p.mode
     p.brain_tick = b.tick; p.trigger = false; p.close = false
+    if p.mode == .homeward: return _homeward(b,index,e,p)
     if p.target < 0 or p.target >= b.actors.len() or b.actors[p.target].status != .flying or not b.actors[p.target].present or b.actors[p.target].side==a.side or (a.engagement>=0 and b.actors[p.target].engagement!=a.engagement) or b.tick-p.target_tick>=60:
         p.target = _choose_target(b,a)
         p.target_tick=b.tick
@@ -714,6 +749,162 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         p.controls.pitch = if u.y < 0.2: 0.0 else: clamp((-0.3-climb)*2.5,-1.0,0.2)
         p.controls.yaw = 0.0
     p
+
+# ---------------- going home ----------------
+const LAND_GAP = 25*60              # ticks between aircraft landing in turn at a base
+
+_has_home = (b: Battle, side: int) -> bool:
+    loop h in b.homes:
+        if h.side == side: return true
+    false
+
+_home_of = (b: Battle, side: int) -> BattleHome:
+    loop h in b.homes:
+        if h.side == side: return h
+    BattleHome(side,vec3(0,0,0),0.0,vec3(0,0,0),vec3(0,0,0))
+
+# The side's homeward leader: the first in the landing order still flying (-1: none).
+home_leader = (b: Battle, side: int) -> int:
+    best = -1
+    loop i in 0..b.actors.len():
+        a = b.actors[i]
+        if a.side != side or a.status != .flying or a.pilot.mode != .homeward or a.human: continue
+        if best < 0 or a.pilot.home_turn < b.actors[best].pilot.home_turn: best = i
+    best
+
+# Where a homeward aircraft's place in the formation is: its own slot from the outward flight,
+# kept relative to the leader's.
+home_slot = (b: Battle, lead: int, offset: vec3) -> vec3:
+    l = b.actors[lead]
+    h = heading(l.state)
+    l.state.position+quat_rotate(quat_euler(0,-h,0),offset-l.pilot.formation_offset)
+
+# A side turns for home when it is beaten (half its aircraft lost and outnumbered three to two by
+# those still fighting) or has won (no enemy left fighting): every one of its pilots still flying
+# goes home, the leader first, the rest in their slots. Only battles that know their bases.
+_turn_for_home = (b: mut Battle):
+    if b.homes.len() == 0: return
+    if b.strength[0]+b.strength[1]+b.strength[2] == 0:
+        loop a in b.actors:
+            if a.side >= 0 and a.side < 3: b.strength[a.side] += 1
+    loop side in 0..3:
+        if b.home_since[side] >= 0 or b.strength[side] == 0 or not _has_home(b,side): continue
+        fighting = 0; other = 0
+        loop a in b.actors:
+            if a.status != .flying or not a.present or a.pilot.mode == .homeward or a.pilot.mode == .withdrawing: continue
+            if a.side == side: fighting += 1 else: other += 1
+        lost = b.strength[side]-fighting
+        beaten = fighting > 0 and lost*2 >= b.strength[side] and fighting*3 <= other*2
+        won = fighting > 0 and other == 0 and b.tick > 600
+        if not beaten and not won: continue
+        b.home_since[side] = b.tick
+        order = 0
+        loop i in 0..b.actors.len():
+            a = b.actors[i]
+            if a.side != side or a.status != .flying or a.external or a.pilot.scripted or not a.present: continue
+            a.pilot.mode = .homeward; a.pilot.home_turn = order; order += 1
+            a.pilot.trigger = false; a.pilot.target = -1; a.pilot.formation = false
+            a.pilot.plan = FlightPlan(); a.pilot.descend_tick = -1; a.pilot.home_done = false
+            b.actors[i] = a
+
+# Home: the leader flies its own approach (the autopilot: cruise, descent, landing, taxi to the
+# first mooring); the others keep their slots on it until it starts down, then circle the bay,
+# stacked, and land in turn, LAND_GAP apart, each taxiing to its own mooring along the quay.
+_homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatPilot:
+    a = b.actors[index]; s = a.state; k = a.spec
+    p.mode = .homeward; p.trigger = false
+    if p.home_done:
+        p.controls = Controls(throttle = 0.0, water_brake = 1.0, anchor = true)
+        return p
+    if not _has_home(b,a.side):
+        away = s.position-b.center; away.y = 0
+        if length(away) < 1: away = quat_rotate(s.orientation,vec3(0,0,-1))
+        p.controls = air_waypoint_controls(k,s,e,s.position+normalize(away)*2000.0,350.0,k.cruise_speed*0.9)
+        return p
+    h = _home_of(b,a.side)
+    lead = home_leader(b,a.side)
+    rank = 0
+    loop o in b.actors:
+        if o.side == a.side and o.status == .flying and o.pilot.mode == .homeward and not o.human and o.pilot.home_turn < p.home_turn: rank += 1
+    descending = if lead >= 0 and lead != index: b.actors[lead].pilot.descend_tick else: p.descend_tick
+    mine = lead == index or (descending >= 0 and b.tick >= descending+rank*LAND_GAP)
+    if mine:
+        if not p.plan.initialized:
+            touchdown,landing = home_runway(h,e)
+            p.plan = FlightPlan(target = touchdown, taxi_target = h.dock+h.step*f32(p.home_turn), altitude = h.altitude, landing_heading = landing, phase = .cruise, speed = if lead == index: k.cruise_speed*0.82 else: 0.0)
+        c = autopilot(k,s,p.plan,e)
+        if (p.plan.phase == .descend or p.plan.phase == .land) and p.descend_tick < 0: p.descend_tick = b.tick
+        if p.plan.phase == .failed:
+            # (waved off for good: round again from the start of the approach)
+            p.plan.phase = .cruise; p.plan.go_arounds = 0
+        if p.plan.phase == .done: p.home_done = true
+        p.controls = c
+        return p
+    if descending < 0 and lead >= 0:
+        # (in its slot on the leader)
+        l = b.actors[lead].state
+        slot = home_slot(b,lead,p.formation_offset)
+        direction = heading_vector(heading(l))
+        lv = f64(length(l.velocity))
+        pace = clamp(lv+f64(dot(slot-s.position,direction))*0.12,lv*0.75,lv*1.25)
+        p.controls = air_waypoint_controls(k,s,e,slot+direction*1000.0,f64(slot.y),pace)
+        return p
+    # (its turn not yet come: round the bay on the approach side, stacked by turn)
+    touchdown,landing = home_runway(h,e)
+    centre = touchdown-heading_vector(landing)*1600.0
+    out = s.position-centre; out.y = 0
+    if length(out) < 1: out = vec3(1,0,0)
+    around = f64(atan2(f64(out.z),f64(out.x)))+0.45
+    aim = centre+vec3(f32(cos(around)*900.0),0,f32(sin(around)*900.0))
+    p.controls = air_waypoint_controls(k,s,e,aim,h.altitude+40.0*f64(rank),k.cruise_speed*0.75)
+    p
+
+# ---------------- ditching ----------------
+# Can it be put down on the water: the engine gone but wings and tail still there and answering,
+# no fire, the pilot sound, over the sea ahead, and low (higher, the parachute).
+_can_ditch = (a: Combatant, e: FlightEnv) -> bool:
+    s = a.state
+    if s.crashed or a.fire > 0 or a.pilot_hit or s.on_water: return false
+    loop part in [2,3,6]:
+        if not s.damage.parts[part].attached: return false
+    if f64(length(s.velocity)) < a.spec.stall_speed*pure_k(a.spec)*0.85: return false
+    above = f64(s.position.y)-max(0.0,e.ground(f64(s.position.x),f64(s.position.z)))
+    if above > 260.0: return false
+    loop t in [0.0,4.0,8.0,12.0]:
+        q = s.position+s.velocity*f32(t)
+        if e.ground(f64(q.x),f64(q.z)) > -1.0: return false
+    true
+
+# A glide to the water, wings level, at a little over the stall, the flare in the last metres.
+_ditch_controls = (a: Combatant, e: FlightEnv) -> Controls:
+    s = a.state; k = a.spec
+    if s.on_water: return Controls(throttle = 0.0, water_brake = 1.0)
+    fwd = quat_rotate(s.orientation,vec3(0,0,-1))
+    flat = vec3(fwd.x,0,fwd.z)
+    if length(flat) < 0.1: flat = vec3(s.velocity.x,0,s.velocity.z)
+    flat = normalize(flat+vec3(0.0001,0,0))
+    st = k.stall_speed*pure_k(k); speed = max(f64(length(s.velocity)),1.0)
+    hgt = f64(s.position.y)-k.float_height-max(0.0,e.ground(f64(s.position.x),f64(s.position.z)))
+    slope = if speed < st*1.3: -0.16 else: if speed > st*1.6: -0.05 else: -0.09
+    if hgt < 25.0: slope = -clamp(hgt*0.3,0.6,4.5)/speed
+    c = steer(k,s,normalize(flat+vec3(0,f32(slope),0)))
+    c.throttle = 0.0; c.roll = clamp(c.roll,-0.6,0.6); c.assist = 0.0
+    c
+
+# The pilot out of a ditched aircraft into the water beside it: in the water, a survivor.
+_ditched_out = (b: mut Battle, i: int):
+    a = b.actors[i]; p = aircraft_profile(a.spec.kind)
+    side = quat_rotate(a.state.orientation,vec3(1,0,0)); side.y = 0
+    at = a.state.position+normalize(side+vec3(0.0001,0,0))*f32(p.span*0.5+1.5)
+    at.y = -0.5
+    d = leave_aircraft(a.person,a.craft,world_point(at),a.state.orientation,vec3(0,0,0),vec3(0,0,0))
+    d.position = at; d.point = world_point(at); d.published = at; d.velocity = vec3(0,0,0); d.phase = .swimming; d.wet = 0.0
+    b.descents.push(d)
+    a.bailed = true; a.ditched = true; a.external = false; a.status = .wreck; a.gun.locked = true; a.pilot.trigger = false
+    b.actors[i] = a
+    _event(b,.landed,a,at,a.last_attacker,outcome=true)
+    last = b.outcomes.len()-1
+    b.outcomes[last].injury = 0.1; b.outcomes[last].at_sea = true
 
 bail_combatant = (b: mut Battle, i: int) -> bool:
     if i < 0 or i >= b.actors.len() or b.actors[i].bailed or b.actors[i].state.moored: return false
@@ -1058,18 +1249,23 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
         distance = length(a.state.position-observer)
         a.lod = if distance > 2800: 2 else: if distance > 1200: 1 else: 0
         period = if a.lod==2: 30 else: if a.lod==1: 15 else: 6
+        # (coming in to land at home the autopilot flies the flare and the taxi: every tick, however
+        # far, or a held stick porpoises it into the water)
+        if a.pilot.mode==.homeward and not a.pilot.home_done and (a.pilot.plan.phase==.descend or a.pilot.plan.phase==.land or a.pilot.plan.phase==.taxi): period = 1
         b.actors[i]=a
-        if not a.external and a.status == .flying and (a.pilot.brain_tick<0 or (b.tick+a.craft)%period==0):
+        if not a.external and not a.pilot.scripted and a.status == .flying and (a.pilot.brain_tick<0 or (b.tick+a.craft)%period==0):
             was=a.pilot.mode
             a.pilot=combat_controls(b,i,e); b.brain_steps+=1
             if a.pilot.mode!=was:
-                if b.tactics.len()<17:b.tactics=fill(0,17)
+                if b.tactics.len()<20:b.tactics=fill(0,20)
                 b.tactics[int(a.pilot.mode)]+=1
         # (far from the player, a pilot on a gun run still aims every few ticks: held for half a
         # second, its stick and trigger would spray past a target it should be tracking)
-        else if not a.external and a.status == .flying and a.lod > 0 and a.pilot.close and (b.tick+a.craft)%6==0:
+        else if not a.external and not a.pilot.scripted and a.status == .flying and a.lod > 0 and a.pilot.close and (b.tick+a.craft)%6==0:
             a.pilot=_retrack(b,i)
-        if a.status == .disabled or a.bailed:
+        if a.pilot.mode == .ditching and not a.bailed:
+            a.pilot.controls=_ditch_controls(a,e); a.pilot.trigger=false
+        else if a.status == .disabled or a.bailed:
             a.pilot.controls=Controls(throttle=0,assist=0,roll=0.15)
             a.pilot.trigger=false
         if not a.external:
@@ -1101,10 +1297,17 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
         if a.status==.wreck: a.wreck_age+=COMBAT_DT
         if not a.last_wet and a.state.on_water and a.status != .flying: _event(b,.splash,a,a.state.position,strength=1.0)
         a.last_wet=a.state.on_water
-        if a.pilot.mode==.withdrawing and length(a.state.position-a.rally)>b.retreat_radius and a.status==.flying:
+        if (a.pilot.mode==.withdrawing or (a.pilot.mode==.homeward and not _has_home(b,a.side))) and length(a.state.position-a.rally)>b.retreat_radius and a.status==.flying:
             a.status=.escaped; a.external=true; _event(b,.fled,a,a.state.position,a.last_attacker,outcome=true)
+        # (low over the sea with the engine gone and the aircraft still answering: put it down on
+        # the water rather than jump; a fire or a wing gone, and there is height, jump after all)
+        if hopeless and not a.external and not a.bailed and a.pilot.mode != .ditching and _can_ditch(a,e): a.pilot.mode = .ditching
+        if a.pilot.mode == .ditching and not a.bailed:
+            above = f64(a.state.position.y)-max(0.0,e.ground(f64(a.state.position.x),f64(a.state.position.z)))
+            if (a.fire > 0 or not a.state.damage.parts[2].attached or not a.state.damage.parts[3].attached) and above > 70.0: a.pilot.mode = .down
         b.actors[i]=a
-        if hopeless and not a.external and not a.bailed: bail_combatant(b,i)
+        if a.pilot.mode == .ditching and not a.bailed and a.state.on_water and f64(length(a.state.velocity)) < 3.0: _ditched_out(b,i)
+        else if hopeless and not a.external and not a.bailed and a.pilot.mode != .ditching: bail_combatant(b,i)
     # Rotate launch order when the hard round budget is full, so the first faction in the
     # array cannot monopolize it. Each gun still advances exactly once per fixed tick.
     loop offset in 0..b.actors.len():_fire_round(b,(b.tick+offset)%b.actors.len())
@@ -1121,9 +1324,11 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
                 _event(b,.landed,b.actors[a],d.position,b.actors[a].last_attacker,outcome=true)
                 last=b.outcomes.len()-1
                 b.outcomes[last].injury=d.injury; b.outcomes[last].at_sea=d.phase==.swimming
+    if b.tick%30 == 0: _turn_for_home(b)
     side=-1; contested=false
     loop a in b.actors:
-        if a.status != .flying: continue
+        # (one gone home, or withdrawing hurt, no longer contests the fight)
+        if a.status != .flying or a.pilot.mode == .homeward or a.pilot.mode == .withdrawing: continue
         if side<0: side=a.side
         else if side!=a.side: contested=true
     loop boat in b.boats:
