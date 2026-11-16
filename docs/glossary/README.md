@@ -1545,6 +1545,9 @@ On the rivers branch until it lands.
 - **Rules:** a harbour whose quay cannot reach its houses over ground no steeper than 45° gets one.
   One direction only (no switchbacks): flights stacked over one another in plan cannot share
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
+  Its parapet holds: a step off the treads onto ground more than 0.6 m below them is refused
+  (`stair_parapet_blocks`, also on the island landings' stairs); its foot and top stay open. On a
+  stair the pilot walks at 3.4 m/s (`on_any_stair`).
 - **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
   cliff stair).
 
@@ -1906,6 +1909,30 @@ you watch (`docs/SIM_SPEC.md`, `src/living_*.jo`).
   destroys or renames anyone.
 - **Code:** `src/living_far_people.jo:78 promote_far_person`, `far_people_minute`,
   `far_resident_views`; `FarPerson` in `src/living_far_types.jo`.
+
+### Dock handover
+
+- **Aliases:** the receiver on the dock, hand over the cargo, meeting the aircraft.
+- **Definition:** a flying job's receiver meets the pilot's aircraft on the dock. Once the cargo is
+  aboard, they go down to wait where it comes ashore, whether their home is on the quay or up the
+  hill. They wait until it is due, or for as long as the aircraft is bound there or moored there.
+  They wave as it comes in and ask after it ("Is that the medicine from Eleni?"). When the pilot
+  steps ashore beside them, the card offers **Hand over the medicine**. They thank the pilot and
+  take it from the aircraft, and once it is in their hands the job is delivered and paid through
+  the ledger. Then they walk home with it.
+- **Rules:** the pilot's own cargo comes ashore only at the handover (`cargo_plan_carriage`
+  leaves it aboard until `choose_collection` names who carries it). The waiting is the living
+  world's own day (`cargo_awaited`, `cargo_meeting_spot`), so the scene and the far world agree;
+  one waiting walks the world's way where the scene's paths can't find one. Picking the crate up
+  oneself is offered only when nobody waits for it. A new pilot's first job has at least twelve
+  hours to its due time.
+- **Code:** `src/living_portage.jo` (`cargo_awaited`, `cargo_meeting_spot`,
+  `cargo_awaited_words`); `src/living_life.jo` (the waiting day); `src/life_scene.jo`;
+  `handover_here`, `handover_act`, `handover_frame` in `aegean.jo`; `Folk.waving`. Tests
+  `tests/first_delivery_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_DELIVERY=2 AEGEAN_DELIVERY_MOORED=1` (the medicine for Agios
+  Nikolaos taken, loaded, the aircraft tied up there an hour on); `AEGEAN_DELIVERY_TRACE=1` logs
+  the job.
 
 ### Notices
 
