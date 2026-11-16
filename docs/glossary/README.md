@@ -1894,7 +1894,15 @@ On the rivers branch until it lands.
   taper up the hill, the front row two to four storeys, the rows behind lower; a garden with a fig,
   an olive or a cypress between houses now and then; every nine to twelve houses a landmark of
   another form (a bell tower with a lead dome or a hipped cap, a domed church, a tower house, a
-  stand of cypresses), the chapel among them.
+  stand of cypresses), the chapel among them. The houses weathered as the film paints them
+  (`house_wall_weather`): a darker plinth where the damp rises, shade under the eaves, stone
+  quoins at the corners in long and short courses, grey stains running down from the eaves, a
+  patch or two where the plaster has come away and the coursed stone shows at a ragged edge;
+  above the street the windows' shutters stand open either side of a dark recess (`SHUTTERS`:
+  greens, a grey-blue, a brown), a stone sill under each window; the roofs in courses of barrel
+  tiles (`roof_tiles`). Walls carry their own layout (tag 186: across the face, height up it,
+  `add_house_walls`) and roofs theirs (tag 185, `roof_uv`), so nothing swims; the stains and
+  patches use a value noise that repeats every 64 m (`wall_noise`), steady as the origin moves.
 - **Code:** `src/objects.jo` (`WALLS`, `ROOFS`, `SLATE`, `LEAD`, `roof_shade`, `roof_lit_first`,
   `add_gable`, `add_hip`, `add_dome`, `add_cypress`, `add_garden_tree`, `house_roof_kind`,
   `build_town`'s tiers with their own random stream so the harbour's boats stay where they were);
@@ -1916,7 +1924,10 @@ On the rivers branch until it lands.
   hotel's waiter in a white jacket and long apron, the barkeep in a waistcoat, the errand boy in a
   cap. The band's players change into evening clothes (a frock with a low waist, a dark suit) out
   of sight before their evening. Mostly pale and neutral, a clear colour about one in five; hats on
-  most men and half the women.
+  most men and half the women. Women's and girls' long hair shows (`add_long_hair`): fuller over
+  the ears, and a bun high on the back, a low knot at the nape, a plait down the back or worn down
+  to the shoulders (the old mostly up; under a headscarf or a cloche down or in a knot); a girl's
+  two plaits with ribbons.
 - **Code:** `src/wardrobe.jo` (`outfit_for`, `evening_outfit`, `waiter_outfit`, `barkeep_outfit`,
   `errand_boy_outfit`, `walker_outfit`); `src/folk.jo` (`Outfit`, `Garb`, `build_outfit_figure`,
   `dress_outfit` for the old dress kinds); `person_figure` and `Folk.day`/`Folk.evening` in
@@ -2233,11 +2244,15 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   bottles with a mirror and a clock, tables under hanging lamps, palms in pots, and walls crowded
   with pictures, pinned papers, a propeller and a shelf of cups. Lit by lamps only: warm pools
   under the shades, deep brown beyond (by day in the rain, the sea windows' grey light too).
-- **When:** the bar is inside from 18:00 through the night; everything (tables, waiter, band) is
-  inside while it rains. The hotel's places (`HotelSpots`) shift into the room, so the seated
-  view, company, the waiter and the band follow without their own code knowing. The switch
-  happens out of sight: not while the pilot sits at the hotel, else with the camera 70 m away, or
-  on going in by a door (the terrace door by the bar's end, the side door off the east walk).
+- **When:** only while it rains: everything (tables, waiter, band) is inside; on any other
+  evening the terrace (its sky and the sea). The hotel's places (`HotelSpots`) shift into the
+  room, so the seated view, company, the waiter and the band follow without their own code
+  knowing. The switch happens out of sight: not while the pilot sits at the hotel, else with the
+  camera 70 m away.
+- **Walked into:** the ground floor's walls have two open doorways (from the terrace by the bar's
+  end, and off the east walk), leaves folded back, reveals through the wall, stone sills; the room
+  is drawn whenever one is within 70 m, its floor published for walking, its furniture solid. One
+  walks in and out: no button, no cut. Capture: `AEGEAN_LEISURE=walk-in|walk-in-side`.
 - **The world:** keeps the terrace's places (the band's numbers, the patrons' seats), so saves and
   replays don't change; whoever it has at the terrace's tables, bar or stand is drawn, found and
   talked to at the same place in the room (`room_place_folk`); those crossing the terrace aren't
@@ -2246,7 +2261,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Light:** baked into the vertices (`bake_bar_room`): shaded hanging lamps throw their light
   down, wall lamps all round, a soft shoulder on the brightest; drawn in a flat light so the bake
   shows, with the lamps glowing. People inside are drawn in `room_figure_light`. Built the first
-  time the camera is inside; drawn only then (rain is not drawn inside).
+  time one comes near (rain is not drawn with the camera inside).
 - **Code:** `src/bar_room.jo`; `HotelSpots`, `hotel_as_built`, `room_camera_inside` in
   `src/bar_scene.jo`; the floor for seats in `src/walk_shapes.jo` (`walk_publish_floors`).
 - **Capture:** `AEGEAN_LEISURE=sit|seat-bar|band` at an evening hour (`AEGEAN_CAPTURE_MINUTES`),
@@ -2665,31 +2680,35 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Rising notes
 
 - **Aliases:** the floating notes, musical notes over the band.
-- **Definition:** small notes float up from whoever plays music in the world (not the radio), bob
-  and fade, so music heard from afar can be found by looking round. Each is a real note: its
-  onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
-  closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
-  which show only when the tune has been quiet a while; no burst after a seek or a new number.
-  Higher notes rise from a little higher; louder ones are larger. Each shows its written value
-  (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
-  a flag, a sixteenth with two, a dot after the head for a dotted one. Notes played together
-  rise as one chord (`note_chord`): those of the same part started within 35 ms (struck, rolled
-  or strummed), as far as one hand reaches (no gap over an octave: a left-hand chord stays apart
-  from the tune above it), up to five heads up the stave on one stem, a second's upper head on
-  the stem's other side; the chord's longest note sets its value. An accompanying chord may show
-  after 0.7 s of quiet in the tune (a single accompanying note after 1.1 s). Ink by day, warm cream after dark; fainter with distance
-  about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
-  table or the bar), where the band is in view. Options: "Musical notes rising from music played
-  nearby" (on by default).
+- **Definition:** every note of every part played in the world (not the radio), none skipped,
+  floats off from its player as written, like a line of music carried on the air. Each part has its
+  staff in a lane above the player (treble, bass, or a grand staff for a piano's two hands, its
+  five or ten lines faint in the air); a note's head sits on its line or space by its pitch, with
+  ledger lines and a sharp for a black key, and shows its written value (see
+  [Note value](#note-value)); notes played together are one chord (`note_chord`: the same part's
+  notes started within 35 ms, struck, rolled or strummed, as far as one hand reaches), heads
+  stacked on one stem, the longest setting the value. Each rises in an arc and drifts off across
+  the view, tilted into the depth with the wind (`note_cue_steer`), at a speed set by the piece so
+  the quickest tenth of its notes stand 0.26 m apart: the newest by the player, the older further
+  along, so a phrase reads left to right as it floats away and new notes never land on old ones;
+  placed by its onset, not the frame it was seen in. In the bar room the staves are smaller and
+  come down together under the ceiling. Ink by day, warm cream after dark; fainter with distance
+  about as the music is (gone at 140 m) and through walls; far off, heads and stems only. Shown
+  at the hotel's tables too. Options: "Musical notes rising from music played nearby" (on by
+  default).
 - **Sources:** the Hotel Ancora's band (its feed `band_notes`, as `band_step` keeps it with what is
-  heard; each note from its part's player, `band_spots`) and the nearest street musician, the one
+  heard; each part from its player, `band_spots`) and the nearest street musician, the one
   `src/life_audio.jo` plays (their phrase, `street_events`, loaded as a feed about now; heard to
-  70 m, so the fade runs over half the band's distance). A cue keeps its place in a feed by frame,
-  so a whole piece and a sliding window read alike, and it never steps the shared feed itself.
-- **Code:** `src/note_cue.jo` (`NoteCue`, `note_cue_pick`, `note_cue_rise`, `draw_note_cue`);
-  `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
-  `tools/note_cue_bench.jo` counts its work per frame.
-- **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
+  70 m). A cue keeps its place in a feed by frame (`note_cue_take`), so a whole piece and a sliding
+  window read alike, and it never steps the shared feed itself.
+- **Cost:** the busiest number (Ave Maria: violin, singer and the piano's running arpeggio, about
+  45 notes in the air) draws in 0.17 ms a frame on the desktop (`tools/note_draw_bench.jo`); each
+  staff's lines are a dozen-point polyline, each note's parts reckoned when it rises.
+- **Code:** `src/note_cue.jo` (`NoteCue`, `NoteStaff`, `note_cue_prepare`, `note_cue_take`,
+  `note_cue_rise`, `draw_note_cue`); `music_cues_step`, `draw_music_cues` in `aegean.jo`;
+  `tests/note_cue_test.jo`; `tools/note_cue_bench.jo`, `tools/note_draw_bench.jo`.
+- **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND='8 4 40'` (Ave Maria) or in the evening
+  (`AEGEAN_CAPTURE_MINUTES=690`).
 
 ### Note value
 
