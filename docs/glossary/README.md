@@ -3289,7 +3289,7 @@ No image: the tiers differ in budgets more than in any single view.
 - **Aliases:** the player's armour, hit margin, bullet magnetism.
 - **Definition:** three Tweaks under Combat. **Player toughness** (2.0) divides combat damage to
   the player's own aircraft. **Generous hits** (on) lets the player's rounds hit within **Player
-  hit margin** (0.7 m) of each part an aircraft is hit as. **Aim assist** (off) bends the
+  hit margin** (2 m) of each part an aircraft is hit as. **Aim assist** (on) bends the
   player's rounds, after they leave the guns, a little toward the enemy most plainly in their
   path (within 3° and 700 m, at most 4°/s, for their first 0.6 s); it never moves the controls or
   the aircraft.
