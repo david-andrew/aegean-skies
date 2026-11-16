@@ -2705,21 +2705,24 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Aliases:** the menu ring, menu nav, hud_nav.
 - **Definition:** the ring the keys and a controller move through menus and panels, Sloppy's own
-  `hud_nav` (Sloppy 0.37.0): the pause menu (each page keeps its own focus), the title's panels
-  (the title's main list has its own focus, by up and down), the Paint and Controls pages, and the
-  panels that draw their own buttons (the leisure menus, the paper, the notebook, the fuel and map
-  counters, the workshop desk), whose buttons each get an invisible `hud_button` (`pad_hit`) so
-  hud_nav can reach them. The d-pad or left stick moves it to the nearest box that way, A (Enter)
-  chooses, left and right step a slider, LB and RB turn the pause menu's pages, B goes back (closes
-  the pause menu, a panel). Moving the mouse hides it. It is off while the Controls page waits for a
-  control to be moved. Tavli keeps its own keys (the d-pad and A over the board, X throws and
-  finishes, Y takes back); talking and trading take the d-pad as their arrows, A as Enter, X and Y
-  as trade's B and S.
+  `hud_nav` (Sloppy 0.37.2): the pause menu (each page keeps its own focus; a page turned by the
+  bumpers starts on its content, one chosen by its tab on that tab: `hud_nav_focus`), the title's
+  panels (the title's main list has its own focus, by up and down), the Paint and Controls pages,
+  and the panels that draw their own buttons (the leisure menus, the paper, the notebook, the fuel
+  and map counters, the workshop desk), each button a `hud_nav_box` (`pad_hit`: the panel's own
+  click on the press still counts, so a held press still holds). The d-pad or left stick moves it
+  to the nearest box that way, A (Enter) chooses, left and right step a slider, LB and RB turn the
+  pause menu's pages, B goes back (closes the pause menu, a panel). A flight stick (any device that
+  is not a standard gamepad) works it too: its look binding (the hat) and its trigger or Interact
+  button are given to hud_nav (`hud_nav_input`), its Camera view button goes back. Moving the mouse
+  hides it. It is off while the Controls page waits for a control to be moved. Tavli keeps its own
+  keys (the d-pad and A over the board, X throws and finishes, Y takes back); talking and trading
+  take the d-pad as their arrows, A as Enter, X and Y as trade's B and S.
 - **Code:** `hud_nav(...)` calls in `src/debugmenu.jo` `debug_panel`, `src/title_screen.jo` and
   `aegean.jo` `draw` (the panels); `pad_hit` in `src/touch.jo`; `mkey` and `mrepeat` there for
   the keys a panel reads itself.
 - **Tests:** `tests/gamepad_play_test.py` (the title, the pause menu to the Controls page, by a
-  scripted pad); in a browser, `tools/web_gamepad.mjs`.
+  scripted pad and by a scripted flight stick); in a browser, `tools/web_gamepad.mjs`.
 
 ### Pad hints
 

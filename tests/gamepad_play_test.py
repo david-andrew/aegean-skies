@@ -58,16 +58,35 @@ def main():
         assert at(s, 350)["tpage"] == "0", at(s, 350)
         print("title: d-pad to Situations, A opened it, B came back")
 
-        # the pause menu: Start; RB eight pages along to Controls; the d-pad five boxes down to
-        # Invert Y (Game, Paint, Tweaks, Scenarios, the Gamepad tab, Invert Y); A ticks it; B carries on
+        # the pause menu: Start; RB eight pages along to Controls (its focus on the page: the Gamepad
+        # tab); the d-pad down to Invert Y; A ticks it; B carries on
         parts = [press(70, "start")] + [press(90 + 8 * k, "rb") for k in range(8)]
-        parts += [press(170 + 10 * k, "down") for k in range(5)] + [press(225, "a"), press(245, "b")]
+        parts += [press(190, "down"), press(225, "a"), press(245, "b")]
         s = run(work, "pause", 270, " ".join(parts))
         assert at(s, 80)["paused"] == "true", at(s, 80)
         assert at(s, 160)["page"] == "11", at(s, 160)
         assert at(s, 220)["invert"] == "false" and at(s, 240)["invert"] == "true", (at(s, 220), at(s, 240))
         assert at(s, 260)["paused"] == "false", at(s, 260)
         print("pause: Start, RB to Controls, d-pad and A ticked Invert Y, B carried on")
+
+        # a flight stick in the menus (its hat given to hud_nav: raw axes 4 and 5; its trigger,
+        # raw button 0, chooses; raw button 2 goes back; raw button 7 pauses)
+        name = "1:pad_name=T.16000M 1:pad_axis4=0 1:pad_axis5=0"
+        hat = lambda f, axis, v: f"{f}:pad_axis{axis}={v} {f + 3}:pad_axis{axis}=0"
+        btn = lambda f, i: f"{f}:pad_button{i}+ {f + 3}:pad_button{i}-"
+        script = " ".join([name, hat(200, 5, 1), btn(230, 0), hat(280, 5, 1), btn(320, 2)])
+        s = run(work, "title-stick", 360, script, AEGEAN_TITLE="1")
+        assert at(s, 220)["tfocus"] == "1" and at(s, 260)["tpage"] == "2" and at(s, 350)["tpage"] == "0", (at(s, 220), at(s, 260), at(s, 350))
+        print("title by stick: hat to Situations, trigger opened it, back came back")
+        # (the pause menu: right twice and down twice from the Game tab is Controls; down three to
+        # Invert Y (Flight v2, the Flight stick tab, Invert Y), the trigger ticks it, back carries on)
+        parts = [name, btn(70, 7), hat(90, 4, 1), hat(100, 4, 1), hat(110, 5, 1), hat(120, 5, 1), btn(135, 0)]
+        parts += [hat(160, 5, 1), hat(170, 5, 1), hat(180, 5, 1), btn(200, 0), btn(230, 2)]
+        s = run(work, "pause-stick", 260, " ".join(parts))
+        assert at(s, 80)["paused"] == "true" and at(s, 150)["page"] == "11", (at(s, 80), at(s, 150))
+        assert at(s, 190)["sinvert"] == "false" and at(s, 220)["sinvert"] == "true", (at(s, 190), at(s, 220))
+        assert at(s, 250)["paused"] == "false", at(s, 250)
+        print("pause by stick: its pause button, the hat to Controls and Invert Y, the trigger ticked it, back carried on")
 
         # a flight stick: named, its own axes (the lever 3, full forward; the stick's pitch 1, back)
         script = "1:pad_name=T.16000M 1:pad_axis3=1 40:pad_axis3=-1 930:pad_axis1=0.8 1010:pad_axis1=0.35 1090:pad_axis1=0.12"

@@ -92,9 +92,8 @@ try {
   for (let k = 0; k < 8; k++) await press(5);
   await sleep(800);
   await shot("2-controls.png");
-  // (a page's focus starts on its first box, the Game tab: down past Paint, Tweaks and Scenarios,
-  // the Gamepad tab, to Invert Y)
-  for (let k = 0; k < 5; k++) await press(13);
+  // (a page turned by the bumpers starts its focus on the page: the Gamepad tab; down to Invert Y)
+  await press(13);
   await press(0);
   await sleep(800);
   await shot("3-invert.png");
