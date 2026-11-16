@@ -1,0 +1,166 @@
+# After the strait: the way home as the player meets it. The radio (a line of words over each
+# short Morse cue: who said it and what), the place left for the player in the formation home
+# (a faint ring, nothing more), whether the player flew in it, the landings in turn at the base,
+# the pilots standing on the quay by their moored aircraft afterwards, and the deeds of flying
+# home in formation or leaving the fight (src/deeds.jo). Reads the Battle; never steers anyone.
+use 'combat.jo'
+use 'battle_radio.jo'
+use 'lead_marker.jo'
+use 'hud.jo'
+use 'folk.jo'
+use 'look.jo'
+use 'deeds.jo'
+use 'rescue_exchange.jo'
+import 'living_types.jo' as data
+
+const RADIO_LINE_SECONDS = 4.8
+const SLOT_NEAR = 70.0              # metres from the slot that count as flying in it
+const JOINED_SECONDS = 40.0         # flown in the slot this long: flying home with them
+
+struct RadioLine:
+    who: str
+    words: str
+
+struct HomewardView:
+    said: str[]
+    queue: RadioLine[]
+    showing: RadioLine = RadioLine("","")
+    until = -1.0
+    bank: Sound[]
+    voice = -1
+    volume = 0.18
+    formed = 0.0                    # seconds flown in the slot
+    joined = false
+    went_own_way = false
+    recorded = false
+    left_recorded = false
+    landed: int[]                   # crafts whose landing has been called
+    slot: vec3 = vec3(0,0,0)
+    slot_shown = false
+    figures: {int: Figure}
+
+_said = (v: HomewardView, key: str) -> bool: key in v.said
+
+_say = (v: mut HomewardView, key: str, who: str, words: str):
+    if key in v.said: return
+    v.said.push(key)
+    v.queue.push(RadioLine(who,words))
+
+_call = (w: data.World, side: int, n: int) -> str:
+    name = if side >= 0 and side < w.countries.len(): w.countries[side].name else: "Flight"
+    "{name} {n}"
+
+_base_name = (w: data.World, b: Battle, side: int) -> str:
+    loop h in b.homes:
+        if h.side == side and h.place in w.place_contexts: return w.place_contexts[h.place].name
+    "home"
+
+_base = (b: Battle, side: int) -> BattleHome?:
+    loop h in b.homes:
+        if h.side == side: return h
+    none
+
+# One step of the way home: who says what, the player's slot, and the deeds. `me` is the
+# player's index in the Battle; `on_water` and `at` the player's own aircraft.
+update_homeward = (v: mut HomewardView, b: Battle, w: mut data.World, me: int, at: vec3, on_water: bool, now: f64, dt: f64, audio: bool):
+    if me < 0 or me >= b.actors.len() or b.homes.len() == 0: return
+    side = b.actors[me].side
+    other = if side == 1: 2 else: 1
+    # (a name to call the player by on the radio; none for the default "The Pilot")
+    name = w.people[w.player].name
+    called = if name.starts_with("The ") or name == "": "" else: ", {name}"
+    who = if called == "": "Our friend" else: name
+    lead = home_leader(b,side)
+    base = _base_name(w,b,side)
+    # (the fight going on, the player gone far off from it: leaving the fight)
+    if not b.finished and b.home_since[side] < 0 and not v.left_recorded and b.tick > 60*20 and f64(length(vec3(at.x-b.center.x,0,at.z-b.center.z))) > 7000.0:
+        v.left_recorded = true
+        deed_record(.left_the_fight,w.player,other,deed_place_off(w,at),_witnesses(b,side,at),w.minute,at)
+    if b.home_since[other] >= 0 and b.home_since[side] < 0: _say(v,"running",_call(w,side,3),"They're breaking off! Running for {_base_name(w,b,other)}.")
+    if b.home_since[side] >= 0:
+        # (beaten: the enemy still fighting when this side turned for home)
+        beaten = false
+        loop o in b.actors:
+            if o.side == other and o.status == .flying and o.present and o.pilot.mode != .homeward and o.pilot.mode != .withdrawing: beaten = true
+        if beaten: _say(v,"home",_call(w,side,1),"Break off, break off! Form on me and stay low. Home to {base}.")
+        else: _say(v,"home",_call(w,side,1),"That's the fight. All aircraft, form on me. We're going home to {base}.")
+        if lead >= 0 and b.actors[lead].pilot.descend_tick < 0:
+            v.slot = home_slot(b,lead,b.actors[me].pilot.formation_offset); v.slot_shown = not on_water
+            if f64(length(at-v.slot)) < SLOT_NEAR and not on_water: v.formed += dt
+            if v.formed > 6.0: _say(v,"welcome",_call(w,side,1),"Good to have you on my wing{called}. Hold that slot.")
+            if v.formed > JOINED_SECONDS: v.joined = true
+            if not v.joined and b.tick-b.home_since[side] > 60*60 and f64(length(at-b.actors[lead].state.position)) > 4000.0:
+                v.went_own_way = true
+                _say(v,"bye",_call(w,side,1),"{who}'s going their own way. Safe home.")
+        else: v.slot_shown = false
+        if let h = _base(b,side):
+            if lead >= 0 and f64(length(vec3(b.actors[lead].state.position.x-h.touchdown.x,0,b.actors[lead].state.position.z-h.touchdown.z))) < 11000.0:
+                _say(v,"base",_call(w,side,2),"{base} in sight.")
+                _say(v,"turns",_call(w,side,1),"Landing in turn. I'll go first; follow me down in order.")
+            # (each one down and tied up says so; the last of them asks the player in)
+            waiting = 0
+            loop a in b.actors:
+                if a.side != side or a.human or a.status != .flying: continue
+                if a.pilot.home_done and not (a.craft in v.landed):
+                    v.landed.push(a.craft)
+                    _say(v,"down{a.craft}",_call(w,side,a.pilot.home_turn+1),if a.pilot.home_turn == 0: "Down. Tied up at the dock." else: "Down and tied up.")
+                if not a.pilot.home_done: waiting += 1
+            if waiting == 0 and v.landed.len() > 0 and not on_water: _say(v,"your turn",_call(w,side,1),"Your turn{called}. There's room at the end of the pier.")
+            # (down at the base after flying home with them)
+            if v.joined and not v.recorded and on_water and f64(length(vec3(at.x-h.dock.x,0,at.z-h.dock.z))) < 2500.0:
+                v.recorded = true
+                deed_record(.flew_home_in_formation,w.player,side,h.place,_witnesses(b,side,at),w.minute,at)
+                _say(v,"welcome home",_call(w,side,1),"Welcome home{called}.")
+    # (the radio: one line at a time, each over its Morse cue)
+    if now >= v.until and v.queue.len() > 0:
+        v.showing = v.queue[0]; v.queue.remove_at(0)
+        v.until = now+RADIO_LINE_SECONDS
+        if audio:
+            if v.bank.len() == 0: v.bank = [battle_radio_wave("K",1941),battle_radio_wave("R",1942),battle_radio_wave("VV",1943)]
+            if v.voice >= 0: stop(v.voice)
+            v.voice = play(v.bank[v.said.len()%v.bank.len()],v.volume,pan=-0.12)
+
+# The pilots of the side near `at` (who saw it).
+_witnesses = (b: Battle, side: int, at: vec3) -> int[]:
+    out: int[]
+    loop a in b.actors:
+        if a.side == side and not a.human and a.person >= 0 and a.status == .flying and f64(length(a.state.position-at)) < 6000.0: out.push(a.person)
+    out
+
+hush_homeward = (v: mut HomewardView):
+    if v.voice >= 0: stop(v.voice); v.voice = -1
+
+# The radio line, low on the screen, and the faint ring where the player's place is.
+draw_homeward = (v: HomewardView, fonts: Fonts, now: f64):
+    sw = f64(screen_width()); sh = f64(screen_height())
+    if v.slot_shown:
+        if let p = hud_point(v.slot):
+            ring(p,11,1.6,rgba(0.95,0.92,0.78,0.55))
+            circle(p,1.6,rgba(0.95,0.92,0.78,0.55))
+    if now < v.until and v.showing.words != "":
+        alpha = f32(clamp(v.until-now,0.0,0.6)/0.6)
+        line = "{v.showing.who}:  {v.showing.words}"
+        set_font(fonts.ui)
+        tw = min(text_width(line,20),sw-60.0)
+        y = sh*0.80
+        rect_rounded((sw-tw)*0.5-18.0,y-20.0,tw+36.0,40.0,8,rgba(0.06,0.08,0.10,0.55*alpha))
+        text_centered(fit_text(line,sw-70.0,20),vec2(f32(sw*0.5),f32(y)),20,rgba(1,0.97,0.9,alpha))
+        set_font()
+
+# The pilots on the quay by their moored aircraft: each a few steps ashore from it, looking out
+# at the water, now and then turning to the one beside.
+draw_homeward_pilots = (v: mut HomewardView, b: Battle, side: int, ground: (f64,f64)->f64, L: Light, t: f64):
+    loop a in b.actors:
+        if a.side != side or a.human or not a.pilot.home_done or a.status != .flying: continue
+        if f64(length(a.state.position-scene_camera())) > 1500.0: continue
+        h = _base(b,side) ?? BattleHome(side,vec3(0,0,0),0.0,vec3(0,0,0),vec3(0,0,0))
+        inland = -normalize(vec3(h.out.x,0,h.out.z)+vec3(0.0001,0,0))
+        stand = vec3(0,0,0); found = false
+        loop k in 0..12:
+            p = a.state.position+inland*f32(5.0+f64(k)*2.0)
+            g = ground(f64(p.x),f64(p.z))
+            if g > 0.4: stand = p+inland*1.5; stand.y = f32(ground(f64(stand.x),f64(stand.z))); found = true; break
+        if not found: continue
+        if not (a.craft in v.figures): v.figures[a.craft] = build_figure(.pilot,a.craft*31+7)
+        yaw = atan2(-f64(inland.x),-f64(inland.z))+sin(t*0.3+f64(a.craft))*0.5
+        draw_figure(v.figures[a.craft],stand,yaw,0.0,0.0,L,t,wave=if sin(t*0.5+f64(a.craft)*1.7) > 0.93: 0.6 else: 0.0)
