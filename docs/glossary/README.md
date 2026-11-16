@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -49,11 +49,11 @@ on that unmerged branch so far.
   painted-look pass replaced them with larger, sparser brush marks, the user said "your sense of
   speed is completely gone". Every water surface you can take off from (rivers, canals, lakes)
   must use the same flecks at the same scale and density. Check a low fast pass over open water
-  (`AEGEAN_FLYING='60 150'`) before and after any change to water, depth, quality tiers or sky.
+  (`AEGEAN_FLYING='60 45.5'`) before and after any change to water, depth, quality tiers or sky.
   Whatever moves the eye must pass its velocity to the sea (`view_velocity`): a moving camera over
   a sea told it is still shows soft, faint marks (the title reel once did;
   `tests/title_reel_detail_test.py` now guards it).
-- **Capture:** `AEGEAN_FLYING='8 190'` or `AEGEAN_FLYING='60 150'`; `tools/precision_view.jo`
+- **Capture:** `AEGEAN_FLYING='8 57.6'` or `AEGEAN_FLYING='60 45.5'`; `tools/precision_view.jo`
   with `PRECISION_MARKS=1` isolates the fleck painter.
 
 ![Speed flecks streaming past below a Gull at 8 m](img/speed-flecks.png)
@@ -407,7 +407,7 @@ On the rivers branch until it lands.
 - **Rules:** off by day (`nav_light_level` 0 above sun height 0.12), full by sun height -0.10.
   Aircraft lamps sit on the outermost wing contact (biplanes: the wider wing) and are off when
   moored or wrecked. Vessels' bow is +z, so port (red) is +x for them and -x for aircraft.
-- **Capture:** `AEGEAN_FLYING="200 190" AEGEAN_HOUR=22`; distance: add
+- **Capture:** `AEGEAN_FLYING="200 57.6" AEGEAN_HOUR=22`; distance: add
   `AEGEAN_VIEW="2433 210 -3365 0.5711 -0.01 22" SLOPPY_INPUT="2:f2+ 3:f2-"`.
 
 ### Prop arcs
@@ -700,7 +700,7 @@ On the rivers branch until it lands.
 - **Aliases:** drawn speed versus true speed, pure scale, `liked-speed-3.3x`.
 - **Definition:** the world is flown at 3.3 times the aircraft's true speed. Drawn (visual)
   speed is true speed times the scale. The capture switch `AEGEAN_FLYING='alt speed'` takes the
-  drawn speed.
+  true speed (m/s, the speedometer's) and draws it at the scale; left out, 1.3 times the stall.
 - **Code:** `set_speed_scale` in `src/flight.jo`; the `pure_scale` flag in `src/tweaks.jo`;
   `pure_k` converts back to true speed.
 - **Rules:** a plain scalar, not a curve; the approved version is tagged `liked-speed-3.3x`.
@@ -793,7 +793,7 @@ On the rivers branch until it lands.
   but frames crosses the glass. `tests/cockpit_cabins_test.jo` casts rays from each cabin's eye:
   every direction must meet a face turned toward it or leave through a pane.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
-  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 165 cockpit'` (the speed is in world units at the 3.3 speed scale: give each type about its cruise × 3.3, or it spawns stalled).
+  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 50 cockpit'` (the speed is the true airspeed; left out, a safe 1.3 times the type's stall).
 
 ### Cockpit lamp and luminous dials
 
@@ -1592,6 +1592,10 @@ On the rivers branch until it lands.
   beach or a dock's side), not into the sea. The world audit still checks every place is
   reachable without wading at all.
 - **Code:** `src/objects.jo WALK_WADE_DEPTH`, `walk_step_precise`.
+- **Rules:** the limit is under the still water (a lake or river's level, else the sea's mean), never
+  the swell's. Anyone standing deeper than it (out of a swim, put down by a load) may still walk
+  toward ground rising that way (3-9 m ahead against 3-9 m behind), so no one is ever left with
+  nowhere to step; going deeper from there is refused.
 
 ### Camera wall check
 
@@ -1870,10 +1874,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
   distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
   the violin plays softer. Each evening starts one number further on, so every piece comes round.
-- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_set_position`, `singer_line`, `singer_render`,
-  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`draw_band`); clips with
+  The players are townspeople, and a number begins only when they are in their places (see
+  [The band's people](#the-bands-people)).
+- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_band_position`, `singer_line`, `singer_render`,
+  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`band_spots`); clips with
   `tools/bar_music_clip.jo`; note sources and permissions in `data/music/SOURCES.md`.
-- **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
+- **Rules:** kept by the living world (its minutes), so it is where it should be after resting.
 
 ### Live source
 
@@ -1932,14 +1938,55 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid|tavli-plakoto`
   (`AEGEAN_TAVLI_GESTURE` for a gesture).
 
+### The band's people
+
+- **Aliases:** the musicians, the players walking on and off, the band as people.
+- **Definition:** the Hotel Ancora's players are Porto Vecchio people with the rest of their day:
+  Leila Demir (the telegraphist) sings, Yannis Markou (the clerk) plays the piano, Petros Laskaris
+  (a fisher) the guitar and the bass, Marta Bellini (a merchant) the violin, the mandolin and the
+  reeds. From 17:30 they make their way to the terrace and sit at the band's table by the stand.
+  When a number wants them they walk to the stand's step, step up, walk to their place, pick up the
+  instrument and settle; the number begins only when all its players have; the music is followed
+  as before. Between numbers those in the next stay put; those not in it put the instrument down
+  where it lives at the back of the stand (or close the piano), walk back to the step and down, and
+  sit again. After the last number of the evening (the one playing at 23:30 is finished) they all
+  do, and go home. One who can't come (at work, laid up, away, the weather) means their numbers are
+  passed over. Nobody appears or vanishes in view: off the stand they are the town's walkers.
+- **Code:** the people and where each is wanted in `src/band_roster.jo` (`BAND_ROSTER`,
+  `band_wanted`, `band_step_point`, `band_on_stage`); the programme in `src/band_life.jo`
+  (`band_minute`, each world minute after the daily life; `band_publish`); its state saved in the
+  world (`World.band`, `BandState`, `BandNumber` in `src/life_types.jo`); the intents in
+  `src/living_life.jo` (`life_daily_goal`, the band's table and steps in `set_life_destination`;
+  meetings leave a player at the stand alone, `src/living_social.jo`); the stand drawn in
+  `src/band_stage.jo` (`band_numbers`, `draw_band_people`); `tests/band_life_test.jo`.
+- **Rules:** the programme is the world's, so it runs the same near or far, and after a rest. A
+  number's start waits a minute for its players' climb and settling (`BAND_CLIMB`, `BAND_SETTLE`);
+  putting away and stepping down take `BAND_PACK`. The world keeps a player's place at the step while
+  they are on the stand; the town doesn't draw them there. Company at the table doesn't take a
+  player while the band wants them; one already sitting with the pilot when called excuses
+  themselves and goes to the stand (`company_called_away`, `src/company.jo`).
+- **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND_CAM` and `AEGEAN_CAPTURE_MINUTES`;
+  `AEGEAN_BAND_LOG=1` prints the band's state twice a second.
+
 ### Band request
 
 - **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
-  to the house). It is played as soon as the number playing (and the pause after it) is over, or it
-  opens the evening. The set then carries on where it was. Only one request may wait at a time.
-- **Code:** `BandRequest` (`src/band_request.jo`), `bar_set_position(tick, requests)` and
-  `bar_request_start` in `src/bar_band.jo`; `leisure_request` in `src/leisure.jo`.
-- **Capture:** `AEGEAN_LEISURE=request|requested`.
+  to the house), at any hour the hotel is open. It is played as soon as the number playing (and the
+  pause after it) is over and its players are in their places; the set then carries on where it
+  was. Only one request may wait at a time. A player who isn't here (and won't be coming of
+  themselves: it isn't the evening) can be sent for: the house's boy goes, for a small tip (another
+  transfer to the house), and they come walking in from wherever they are a while later. Not in
+  the night, not one away or laid up, and not one busy with work.
+  The panel says where each missing player is and offers three buttons: send the boy (the tip on
+  it), ask for another number, never mind; the boy is seen running out of the bar's door, across
+  the terrace and down the side walk toward the town.
+- **Code:** `band_ask`, `band_missing`, `band_fetch`, `band_fetch_refusal` in `src/band_life.jo`;
+  `leisure_request`, `leisure_fetch` (`FETCH_TIP`) in `src/leisure.jo`; `fetch_panel` in
+  `src/leisure_view.jo`; the panel's step (`band_fetch_for`, `band_whereabouts`) and the boy
+  (`draw_boy_errand`, `BOY_ROUTE`) in `aegean.jo`; `BandRequest` (`src/band_request.jo`) is the
+  notebook's.
+- **Capture:** `AEGEAN_LEISURE=fetch|fetch-sent` (with `AEGEAN_CAPTURE_MINUTES` for the
+  afternoon).
 
 ### The paper
 
@@ -2014,11 +2061,29 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### Company
+
+- **Aliases:** someone joining the pilot, company at the table, a neighbour at the bar.
+- **Definition:** now and then (one sitting in about seven at a table, a little more at the bar)
+  someone from the town comes over while the pilot sits: one of the townsfolk about, a pilot more
+  likely at the hotel, and someone the pilot has talked with more likely than a stranger. At a
+  table they stop beside it and ask ("May I join you?": Please, sit down / I'd rather sit alone);
+  turned away, they go and nobody else comes that sitting. At the bar they simply take the next
+  stool, and about half of them talk. Sitting, they pass an ordinary remark every half minute or
+  so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
+  them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
+- **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
+  `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
+  asking) in `aegean.jo`; `tests/company_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=company-ask|company-sit|company-bar`; `AEGEAN_COMPANY=<seconds>`
+  makes someone come that soon after sitting, from a few steps away; `AEGEAN_SEAT_FRAMES=<dir>`
+  writes the seated clip's frames.
+
 ### Table service
 
 - **Aliases:** the waiter, the tray, drinking at one's own pace, holding a drink.
 - **Definition:** what is ordered is paid at once and brought: the hotel's waiter from the end of
-  the bar on a tray (three things a trip), the barkeep along the counter to one standing at the
+  the bar on a tray (three things a trip), the barkeep across the counter to one on a stool at the
   bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
   the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
   finished. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
@@ -2026,7 +2091,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   on the table and the fork goes to the mouth with a bite. Let go: the glass is held at the chest.
   Another item, or Escape, puts it down. Glasses and plates are drawn in two parts, the vessel
   and what is in it, which goes down (a glass's level, a plate's food all round); the hotel's
-  china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was.
+  china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was. Each
+  thing's button on the table's bar is a bar too, filled as far as there is still of it.
+- **Seated view:** at a table or on a bar stool (`hotel.stools`, the figure raised `STOOL_LIFT`),
+  the camera turns about the pilot as the taxiing orbit does: a drag of either mouse button begun
+  off the table's bar, the right stick, a finger; the wheel or a pinch for nearer and farther
+  (1.4 to 7 m), the follow camera keeping it out of the walls (`seat_orbit_step`).
 - **Code:** `src/table_service.jo` (`Waiter`, `waiter_step`, `Taking`, `take_step`, `take_label`);
   `Served.amount`, `held`, `empty_for` and `LeisureState.coming` in `src/leisure.jo`;
   `build_serve_parts`, `draw_serving` in `src/bar_scene.jo`; `service_step`, `draw_service`,
@@ -2066,7 +2136,14 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the approved splash look. At night the moon's glitter lies on the sea (silver and faint, only
   once the sun is well down; the speed flecks untouched). Saving mid-swim keeps the pilot where he
   went in.
-- **Code:** `src/swimming.jo`; the moon in `src/sea.jo`; `tests/swimming_test.jo`.
+- **Rules:** swimming, wading and coming out go by the depth under the still water (`still` in
+  `swim_step`), with a band of 15 cm either side of the swimming depth so a passing wave never
+  flips one into the other, and the swell only lifts the swimmer (never below the ground). In a
+  rough sea the troughs once ended a swim on sand two metres under still water, where walking
+  refused every step; `tests/swim_ashore_test.jo` swims ashore in a 14 m/s wind at several beaches
+  and wave phases and walks up the beach and back.
+- **Code:** `src/swimming.jo`; the moon in `src/sea.jo`; `tests/swimming_test.jo`,
+  `tests/swim_ashore_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=swim-dock|swim-beach|swim-wade|swim-night`.
 
 ### Stargazing
@@ -2090,8 +2167,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
   closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
   which show only when the tune has been quiet a while; no burst after a seek or a new number.
-  Higher notes rise from a little higher; louder ones are larger; a short note is an eighth with
-  its flag, a longer one a quarter. Ink by day, warm cream after dark; fainter with distance
+  Higher notes rise from a little higher; louder ones are larger. Each shows its written value
+  (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
+  a flag, a sixteenth with two, a dot after the head for a dotted one. Ink by day, warm cream after dark; fainter with distance
   about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
   table or the bar), where the band is in view. Options: "Musical notes rising from music played
   nearby" (on by default).
@@ -2104,6 +2182,23 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
   `tools/note_cue_bench.jo` counts its work per frame.
 - **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
+
+### Note value
+
+- **Aliases:** a note's written length, whole/half/quarter/eighth/sixteenth.
+- **Definition:** a played note's written value from how long it lasts against the score's
+  quarter note: its MIDI ticks over the ticks a quarter (PPQ), or its seconds against the tempo
+  (microseconds a quarter). Snapped to the nearest value by ratio (in log-time), the dotted values
+  (one and a half of the plain) among them; longer than a whole is a whole, shorter than a
+  sixteenth a sixteenth. The quarter's seconds per piece, as played, come from the source MIDI's
+  tempo map stretched by how much longer the performance is than the score (`MUSIC_TEMPO`); a
+  street musician's beat is an eighth, each note lasting to the next one played.
+- **Code:** `src/note_value.jo` (`NoteValue`, `note_value_of`, `note_value_ticks`,
+  `note_value_tempo`, `note_value_seconds`, `music_quarter_at`); `src/music_tempo.jo`, generated
+  by `tools/music_tempo.py` (no dependencies; run it after a score or `performance.json` changes);
+  `STREET_QUARTER` in `src/street_phrase.jo`; `tests/note_value_test.jo`.
+- **Rules:** the performance's rubato and legato move a note's length a little; a ratio within
+  about a fifth of a value still reads as that value.
 
 ### Time skip
 
@@ -2656,8 +2751,9 @@ No image: the tiers differ in budgets more than in any single view.
   that scrolls, scrolls) and never brings a camera nearer or farther: every `Ui` state
   (conversations, the board, handling, trade, contracts, the map counter, fuel, the leisure panels
   with their table bar, bill of fare, book, tavli, paper, barber and fishing, the workshop), the
-  pause menu, the notebook, the chart and its maps, time passing, and sitting at a table or at the
-  bar. A new panel is covered by being a `Ui` state.
+  pause menu, the notebook, the chart and its maps, time passing, and a menu opened over a table
+  or the bar. A new panel is covered by being a `Ui` state. The one exception: sitting with only
+  the table's own bar along the bottom (`seat_view`), the wheel is the seated view's, which zooms.
 - **Code:** `src/ui_state.jo` (`Ui`, `Overlays`, `overlays_open`, `wheel_kept`); `menus_open()` in
   `aegean.jo`, applied after every camera step that can read the wheel: the walking follow camera
   (the library's zoom and the game's own), the aboard orbit camera (`fly`), the parachute camera.
@@ -2677,7 +2773,7 @@ No image: the tiers differ in budgets more than in any single view.
   bail out or open the parachute, D-pad up the gun safety, A interact, Start pause, Back the
   chart); the **flight stick** profile reads a device's own numbered axes and buttons (stick X and
   Y, the throttle lever taking the throttle when it moves, the twist or pedals as rudder, the hat
-  looking). A device counts as a flight stick by its name (or as the Controls page says). Each axis
+  looking). A device counts as a flight stick when the platform says it is not a standard gamepad (`gamepad_standard`; the Controls page's Advanced row can say otherwise). Each axis
   has a binding (set by choosing it and moving the control), an inversion, a dead zone and a
   sensitivity; each profile has a response curve. Bindings name their device, so a stick, a
   throttle and pedals plugged in together each give their part. The controller's buttons press the
@@ -2688,9 +2784,11 @@ No image: the tiers differ in budgets more than in any single view.
   menu's Controls page); `src/pilot.jo` `key_controls` (the analog axes and the right-stick look);
   `src/options.jo` (`Options.controls`).
 - **Rules:** no hardware is needed to test it: `controller_inject` puts in a synthetic device (a
-  standard pad or a flight stick) and `SLOPPY_INPUT`'s pad items (`40:rt=1 930:lstick=0x0.8`) drive
-  a standard pad in the running game. An older options file loads with the default controls.
-- **Tests:** `tests/gamepad_test.jo` (shaping, contexts, menus, a flight stick, binding by moving,
+  standard pad or a flight stick) for unit tests, and in the running game `SLOPPY_INPUT`'s pad items
+  drive a standard pad (`40:rt=1 930:lstick=0x0.8`) or a flight stick's own controls
+  (`1:pad_name=T.16000M 40:pad_axis3=-1 930:pad_axis1=0.8`; Sloppy 0.37.0). An older options file loads with the default controls.
+- **Tests:** `tests/gamepad_play_test.py` (the game by a scripted pad and flight stick:
+  `tools/gamepad_probe.jo`); `tests/gamepad_test.jo` (shaping, contexts, menus, a flight stick, binding by moving,
   saving, offers and hints, and a take-off, a turn and a landing flown on a synthetic gamepad
   through `key_controls`). Captures: `AEGEAN_CAPTURE_PANEL=controls`, `AEGEAN_CAPTURE_TAKEOFF=pad`.
   In a browser: `WEBPAD_GPU=1 node tools/web_gamepad.mjs <chrome-headless-shell> <page.html> <outdir>`
@@ -2702,20 +2800,26 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Pad focus
 
-- **Aliases:** the menu ring, menu nav.
-- **Definition:** the white ring a controller moves through menus and panels: the pause menu, the
-  title's panels, the Paint page, and the panels that draw their own buttons (the leisure menus,
-  tavli, the paper, the fuel and map counters, the workshop desk). The d-pad or left stick moves it
-  to the nearest box that way, A presses (ticks) it, left and right step a slider, LB and RB turn
-  the pause menu's pages (the ring starts on the page's tab), B goes back (closes the pause menu, a
-  panel). It shows once a controller is touched and goes when the mouse or a key is used. A
-  scrolling page scrolls to keep it in view. Lists worked by keys (talking, trading, the tavli
-  board, the paper) take the d-pad as the arrows, A as Enter, B as Escape, X and Y as trade's B and S.
-- **Code:** `src/menu_nav.jo` (`nav_button`, `nav_checkbox`, `nav_slider`, `nav_hit` for a panel's
-  own boxes, `nav_step`); `mkey` and `mrepeat` in `src/touch.jo` for keys. A stand-in for Sloppy's
-  `hud_nav` (in Sloppy after v0.36.2): when the project moves to a release with it, the hud_ wrappers
-  give way to `hud_nav(true)`.
-- **Tests:** `tests/gamepad_test.jo`; in a browser, `tools/web_gamepad.mjs` (below).
+- **Aliases:** the menu ring, menu nav, hud_nav.
+- **Definition:** the ring the keys and a controller move through menus and panels, Sloppy's own
+  `hud_nav` (Sloppy 0.37.2): the pause menu (each page keeps its own focus; a page turned by the
+  bumpers starts on its content, one chosen by its tab on that tab: `hud_nav_focus`), the title's
+  panels (the title's main list has its own focus, by up and down), the Paint and Controls pages,
+  and the panels that draw their own buttons (the leisure menus, the paper, the notebook, the fuel
+  and map counters, the workshop desk), each button a `hud_nav_box` (`pad_hit`: the panel's own
+  click on the press still counts, so a held press still holds). The d-pad or left stick moves it
+  to the nearest box that way, A (Enter) chooses, left and right step a slider, LB and RB turn the
+  pause menu's pages, B goes back (closes the pause menu, a panel). A flight stick (any device that
+  is not a standard gamepad) works it too: its look binding (the hat) and its trigger or Interact
+  button are given to hud_nav (`hud_nav_input`), its Camera view button goes back. Moving the mouse
+  hides it. It is off while the Controls page waits for a control to be moved. Tavli keeps its own
+  keys (the d-pad and A over the board, X throws and finishes, Y takes back); talking and trading
+  take the d-pad as their arrows, A as Enter, X and Y as trade's B and S.
+- **Code:** `hud_nav(...)` calls in `src/debugmenu.jo` `debug_panel`, `src/title_screen.jo` and
+  `aegean.jo` `draw` (the panels); `pad_hit` in `src/touch.jo`; `mkey` and `mrepeat` there for
+  the keys a panel reads itself.
+- **Tests:** `tests/gamepad_play_test.py` (the title, the pause menu to the Controls page, by a
+  scripted pad and by a scripted flight stick); in a browser, `tools/web_gamepad.mjs`.
 
 ### Pad hints
 
@@ -2738,7 +2842,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 
 | Switch | What it does |
 |---|---|
-| `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
+| `AEGEAN_FLYING='alt [speed] [cockpit]'` | start in the air off the home harbour: altitude m, true airspeed m/s (the speedometer's; drawn 3.3 times faster), by default 1.3 times the aircraft's stall; `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
 | `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page (the picker) |
 | `AEGEAN_CAPTURE_PANEL=plane` | the pause menu open on its Plane page (fuel, damage, mending, the scales) |
@@ -2767,6 +2871,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|bar|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk|listen-run` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_BAND_LOG=1` | print the hotel band's state (number, start, who is called, up, packing) twice a second |
 | `AEGEAN_BAND='piece lineup [from]'` | the hotel's band plays that catalogue piece in that line-up from that second, whatever the hour (not heard; see [Musicians at play](#musicians-at-play)) |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
