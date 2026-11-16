@@ -1,0 +1,345 @@
+# Dolphins: small pods of short-beaked common dolphins offshore, the Aegean's commonest. A pod roams
+# deep water off the harbours, its members surfacing now and then to breathe in a low roll; when a
+# fishing caique comes by underway they ride its bow wave for a while, and a seaplane taxiing out
+# (not yet flying, not too fast) they race alongside, porpoising in leaps, until it pulls away or
+# lifts off and they peel off to the side. Each dolphin swims itself: thrust toward where it wants to
+# be, a turn rate and a top speed, buoyancy to its depth, and above the water nothing but gravity, so
+# its arcs come out of its speed (no keyframed paths). A splash and a spray of drops at each surfacing
+# and re-entry, a faint blow as it breathes.
+# Cosmetic like the rest of the wildlife (src/wildlife.jo): nothing saved, nothing in the living
+# world; where pods live is hashed from the world's harbours. Drawn by src/dolphin_view.jo; their
+# marks and calls go through the wildlife's (its rings, its ambience events).
+
+use 'wildlife.jo'
+use 'geography.jo'
+use 'settlements.jo'
+use 'objects.jo'
+use 'vessel_types.jo'
+
+const POD_SCAN = 3600.0             # pod sites are looked for within this of the camera
+const POD_LIVE = 1500.0             # and a pod is kept swimming within this
+const POD_DEEP = 7.0                # metres of water a pod keeps under it
+const DOLPHIN_TOP = 11.0            # m/s: as fast as one swims, racing
+const DOLPHIN_CRUISE = 2.2
+const DOLPHIN_DEPTH = 1.3           # its depth swimming along between breaths
+const DOLPHIN_SPRAY = 160           # drops in the air at most
+const RACE_SPEED = 12.5             # an aircraft on the water faster than this has left them
+
+enum PodMode: roam, bow, race, peel
+
+struct PodSite:
+    key: int
+    at: vec2
+    out: vec2
+
+struct Dolphin:
+    pos: vec3                       # y: height over still water (under it negative)
+    vel = vec3(0, 0, 0)
+    slot = vec2(0, 0)               # its place in the pod (across, along)
+    breath = 0.0                    # to its next surfacing
+    surfacing = false
+    airborne = false
+    beat = 0.0                      # the flukes' beat (radians)
+    seed = 0.0
+    size = 1.0
+    calf = false
+
+struct Pod:
+    site: PodSite
+    dolphins: Dolphin[]
+    centre: vec2
+    heading = 0.0
+    wander = 0.0
+    mode: PodMode = .roam
+    timer = 0.0
+    target = -1                     # the vessel id it rides with (bow), or -1
+    lead = vec3(0, 0, 0)            # what it races or rides with: where it is
+    lead_vel = vec3(0, 0, 0)        # and its velocity
+    away = vec2(1, 0)               # the way it peels off
+    cooldown = 0.0                  # before it will join anything again
+    met = 0                         # (how many it has joined: varies the chances)
+
+struct Spray:
+    pos: vec3
+    vel: vec3
+    born: f64
+    size: f64
+
+struct Dolphins:
+    sites: PodSite[]
+    scanned = vec2(1.0e9, 1.0e9)
+    pods: Pod[]
+    spray: Spray[]
+    time = 0.0
+    extra: PodSite[] = []           # placed outright (captures: AEGEAN_WILD_POD)
+
+# ---------------- where they live ----------------
+
+# Deep water off a harbour: out along its way to sea and to one side, where the bottom is well
+# down, hashed from the place's own key.
+pod_site_at = (key: int, centre: vec2, out: vec2, env: WildEnv) -> PodSite?:
+    if wild_unit(key, 1) > 0.75: return none
+    o = if length(out) > 0.001: normalize(out) else: vec2(1, 0)
+    side = vec2(-o.y, o.x)
+    loop k in 0..6:
+        along = 700.0 + wild_unit(key, 2 + k) * 1100.0
+        across = (wild_unit(key, 10 + k) - 0.5) * 1400.0
+        p = centre + o * f32(along) + side * f32(across)
+        if env.ground(f64(p.x), f64(p.y)) < -POD_DEEP * 2.0 and not _pod_inland(env, p): return PodSite(key, p, o)
+    none
+
+_pod_inland = (env: WildEnv, p: vec2) -> bool:
+    w = env.water(f64(p.x), f64(p.y))
+    w > 0.5 or w < -1.0e8
+
+# The sites near `at`: one hashed per harbour (the islands' towns and the world's harbours).
+pod_scan = (d: mut Dolphins, towns: Town[], at: vec3, env: WildEnv):
+    d.scanned = at.xz
+    d.sites = []
+    seen: {int: bool} = {}
+    reach = POD_SCAN + 2000.0
+    loop k in 0..towns.len():
+        tw = towns[k]
+        if f64(length(tw.center.xz - at.xz)) > reach: continue
+        key = 7000000 + k * 4
+        seen[key] = true
+        if let s = pod_site_at(key, tw.center.xz, tw.out, env): d.sites.push(s)
+    if world_settlements.len() > 0:
+        loop dz in -1..2:
+            loop dx in -1..2:
+                bin = geography_bin(f64(at.x) + f64(dx) * 16000.0, f64(at.z) + f64(dz) * 16000.0)
+                loop index in settlement_bins.get(bin, []):
+                    s = world_settlements[index]
+                    if s.harbor.len() == 0 or s.legacy >= 0: continue
+                    key = 7100000 + s.id * 4
+                    if key in seen or f64(length(s.center.xz - at.xz)) > reach: continue
+                    seen[key] = true
+                    if let site = pod_site_at(key, s.harbor[0].at.xz, s.out, env): d.sites.push(site)
+    loop s in d.extra: d.sites.push(s)
+
+# ---------------- a pod ----------------
+
+# (a pod is out on a given day or not, and how many are in it, from its key and the day)
+pod_present = (key: int, day: int) -> bool: wild_unit(key, 100 + day) < 0.65
+pod_count = (key: int, day: int) -> int: 3 + wild_hash(key, 200 + day) % 6
+
+make_pod = (site: PodSite, env: WildEnv) -> Pod:
+    p = Pod(site = site, centre = site.at)
+    p.heading = wild_unit(site.key, 20) * TAU
+    n = pod_count(site.key, env.day)
+    loop b in 0..n:
+        u = wild_unit(site.key, 300 + b); v = wild_unit(site.key, 400 + b)
+        calf = b == n - 1 and n >= 5 and wild_unit(site.key, 21) < 0.5
+        slot = vec2(f32((u - 0.5) * 9.0), f32((v - 0.5) * 10.0))
+        if calf: slot = p.dolphins[0].slot + vec2(1.4, -0.6)
+        at = site.at + _pod_rot(slot, p.heading)
+        dol = Dolphin(pos = vec3(at.x, f32(-DOLPHIN_DEPTH), at.y), slot = slot, seed = u, calf = calf)
+        dol.size = if calf: 0.6 else: 0.92 + v * 0.16
+        dol.breath = 1.0 + u * 12.0
+        p.dolphins.push(dol)
+    p
+
+_pod_dir = (yaw: f64) -> vec2: vec2(f32(sin(yaw)), f32(cos(yaw)))
+_pod_rot = (v: vec2, yaw: f64) -> vec2:
+    f = _pod_dir(yaw); r = vec2(f.y, -f.x)
+    r * v.x + f * v.y
+_pod_yaw = (d: vec2) -> f64: atan2(f64(d.x), f64(d.y))
+
+# Something to join: a seaplane taxiing or on the first of its run (on the water, between walking
+# pace and RACE_SPEED), or a fishing caique underway. 1 race, 2 bow, 0 nothing.
+pod_interest = (p: Pod, threats: WildThreat[], boats: Vessel[]) -> (int, vec3, vec3, int):
+    if p.cooldown > 0.0: return (0, vec3(0, 0, 0), vec3(0, 0, 0), -1)
+    loop th in threats:
+        if not th.aircraft or f64(th.pos.y) > 6.0: continue
+        sp = f64(length(th.vel.xz))
+        if sp < 2.0 or sp > RACE_SPEED - 1.5: continue
+        if f64(length(th.pos.xz - p.centre)) < 260.0: return (1, th.pos, th.vel, -1)
+    loop b in boats:
+        if not ((b.kind == .sail_caique or b.kind == .motor_caique or b.kind == .trehantiri) and b.status == .underway and b.speed > 1.0): continue
+        if f64(length(b.position.xz - p.centre)) < 380.0: return (2, b.position, b.velocity, b.id)
+    (0, vec3(0, 0, 0), vec3(0, 0, 0), -1)
+
+_spray = (d: mut Dolphins, at: vec3, vel: vec3, n: int, now: f64, seed: int, size: f64):
+    loop k in 0..n:
+        if d.spray.len() >= DOLPHIN_SPRAY: return
+        a = wild_unit(seed, k * 3) * TAU
+        r = 0.6 + wild_unit(seed, k * 3 + 1) * 1.6
+        up = 1.6 + wild_unit(seed, k * 3 + 2) * 2.6
+        v = vec3(f32(cos(a) * r), f32(up), f32(sin(a) * r)) + vel * 0.25
+        d.spray.push(Spray(at + vec3(0, 0.05, 0), v, now, size * (0.6 + wild_unit(seed, k * 3 + 7) * 0.8)))
+
+# The pod's mind: roaming its water, or with something, or leaving it.
+_pod_think = (p: mut Pod, threats: WildThreat[], boats: Vessel[], env: WildEnv, dt: f64, now: f64, calls: mut WildCall[]):
+    p.cooldown = max(0.0, p.cooldown - dt)
+    p.timer -= dt
+    # keep up with what it is with
+    if p.mode == .race or p.mode == .bow:
+        found = false
+        if p.mode == .race:
+            loop th in threats:
+                if th.aircraft and f64(length(th.pos.xz - p.lead.xz)) < 40.0 + f64(length(th.vel)) * dt * 2.0:
+                    p.lead = th.pos; p.lead_vel = th.vel; found = true
+            # (it has lifted off, or pulled away: they let it go)
+            if found and (f64(p.lead.y) > 6.0 or f64(length(p.lead_vel.xz)) > RACE_SPEED): found = false
+        else:
+            loop b in boats:
+                if b.id == p.target and b.status == .underway: p.lead = b.position; p.lead_vel = b.velocity; found = true
+        if not found or p.timer <= 0.0:
+            p.mode = .peel; p.timer = 14.0
+            f = if length(p.lead_vel.xz) > 0.5: normalize(p.lead_vel.xz) else: _pod_dir(p.heading)
+            side = if wild_unit(p.site.key, p.met) < 0.5: 1.0 else: -1.0
+            p.away = normalize(f * 0.4 + vec2(-f.y, f.x) * f32(side))
+            p.heading = _pod_yaw(p.away)
+            p.cooldown = 70.0
+            return
+    if p.mode == .peel:
+        p.heading = _pod_yaw(p.away)
+        if p.timer <= 0.0: p.mode = .roam; p.wander = 0.0
+        return
+    if p.mode == .roam:
+        what, at, vel, id = pod_interest(p, threats, boats)
+        # (not every time: the same pod and meeting, the same choice)
+        if what > 0 and wild_unit(p.site.key + id * 7, p.met) < 0.8:
+            p.met += 1
+            p.mode = if what == 1: PodMode.race else: PodMode.bow
+            p.lead = at; p.lead_vel = vel; p.target = id
+            p.timer = if what == 1: 35.0 + wild_unit(p.site.key, p.met + 50) * 25.0 else: 50.0 + wild_unit(p.site.key, p.met + 60) * 70.0
+            return
+        p.wander -= dt
+        if p.wander <= 0.0:
+            p.wander = 25.0 + wild_unit(p.site.key, int(now)) * 35.0
+            home = p.site.at - p.centre
+            p.heading = if f64(length(home)) > 500.0: _pod_yaw(home) else: p.heading + (wild_unit(p.site.key, int(now) + 1) - 0.5) * 1.8
+        # (keep to deep water: turn from shoaling ground ahead)
+        ahead = p.centre + _pod_dir(p.heading) * 60.0
+        if env.ground(f64(ahead.x), f64(ahead.y)) > -POD_DEEP: p.heading += dt * 0.8
+
+# Where one dolphin wants to be and how fast it wants to get there.
+_dolphin_want = (p: Pod, dol: Dolphin, k: int) -> (vec2, vec2):
+    if p.mode == .race or p.mode == .bow:
+        f = if length(p.lead_vel.xz) > 0.3: normalize(p.lead_vel.xz) else: _pod_dir(p.heading)
+        r = vec2(f.y, -f.x)
+        side = if k % 2 == 0: 1.0 else: -1.0
+        rank = f64(k / 2)
+        # racing: abreast of the floats and a little ahead; riding a bow: in the pressure wave just
+        # ahead of the stem, either side
+        spot = if p.mode == .race: p.lead.xz + r * f32(side * (5.0 + rank * 2.4 + dol.seed * 1.5)) + f * f32(2.0 + rank * -1.6 + dol.seed * 3.0) else: p.lead.xz + f * f32(7.5 + rank * -1.5 + dol.seed) + r * f32(side * (1.2 + rank * 1.0))
+        return (spot, p.lead_vel.xz)
+    v = _pod_dir(p.heading) * f32(if p.mode == .peel: 5.0 else: DOLPHIN_CRUISE)
+    (p.centre + _pod_rot(dol.slot, p.heading), v)
+
+# One dolphin swims a step: steering and thrust under the water, buoyancy to its depth and up to
+# breathe, gravity only once it is clear of the water.
+_dolphin_step = (dol: mut Dolphin, p: Pod, k: int, d: mut Dolphins, env: WildEnv, dt: f64, now: f64, marks: mut WildMark[], calls: mut WildCall[]):
+    spot, flow = _dolphin_want(p, dol, k)
+    fast = p.mode == .race or p.mode == .bow or p.mode == .peel
+    if dol.airborne:
+        dol.vel.y -= f32(GRAVITY_W * dt)
+        dol.pos += dol.vel * f32(dt)
+        if dol.pos.y < 0.0 and dol.vel.y < 0.0:
+            dol.airborne = false
+            sp = f64(length(dol.vel))
+            wild_mark(marks, vec3(dol.pos.x, 0, dol.pos.z), _pod_yaw(dol.vel.xz), now, 0.5 * dol.size, 0)
+            _spray(d, vec3(dol.pos.x, 0, dol.pos.z), dol.vel, 6 + int(sp), now, wild_hash(p.site.key * 31 + k, int(now * 10.0)), 0.07 * dol.size)
+            if sp > 4.0: wild_call(calls, .plash, vec3(dol.pos.x, 0.2, dol.pos.z), 0.06, p.site.key * 64 + k)
+            dol.vel.y *= 0.4
+        return
+    # under the water: steer for its spot, matching what it swims with
+    to = spot - dol.pos.xz
+    want = flow + to * f32(if fast: 0.8 else: 0.25)
+    top = (if fast: DOLPHIN_TOP else: 4.0) * (if dol.calf: 0.9 else: 1.0)
+    if f64(length(want)) > top: want = normalize(want) * f32(top)
+    hv = dol.vel.xz
+    dv = want - hv
+    acc = if fast: 5.0 else: 1.5
+    if f64(length(dv)) > acc * dt: dv = normalize(dv) * f32(acc * dt)
+    hv = hv + dv
+    # (it turns as a swimmer does: not on the spot)
+    sp = f64(length(hv))
+    # vertical: buoyancy toward its depth, or up through the surface to breathe
+    dol.breath -= dt
+    if dol.breath <= 0.0 and not dol.surfacing:
+        dol.surfacing = true
+    target_y = if dol.surfacing: 0.6 else: -DOLPHIN_DEPTH * (if fast: 0.6 else: 1.0)
+    # (fast, it comes up steeply enough to leave the water: porpoising)
+    climb = if dol.surfacing and sp > 4.5: 2.2 + sp * 0.22 else: 0.0
+    vy = f64(dol.vel.y)
+    vy += ((target_y - f64(dol.pos.y)) * 3.0 - vy * 2.2 + climb * 2.5) * dt
+    dol.vel = vec3(hv.x, f32(vy), hv.y)
+    was = dol.pos.y
+    dol.pos += dol.vel * f32(dt)
+    dol.beat += dt * (2.0 + sp * 0.9)
+    if dol.pos.y > 0.0 and was <= 0.0:
+        # it breaks the surface: a puff of breath, spray off its back
+        wild_call(calls, .blow, vec3(dol.pos.x, 0.4, dol.pos.z), if fast: 0.05 else: 0.07, p.site.key * 64 + k)
+        _spray(d, vec3(dol.pos.x, 0, dol.pos.z), dol.vel, 3 + int(sp * 0.8), now, wild_hash(p.site.key * 17 + k, int(now * 10.0)), 0.05 * dol.size)
+        wild_mark(marks, vec3(dol.pos.x, 0, dol.pos.z), _pod_yaw(hv), now, 0.4 * dol.size, 0)
+        if dol.vel.y > 1.6: dol.airborne = true
+    # (once through the surface it heads down again: a roll, back and fin out, or a leap)
+    if dol.surfacing and (dol.airborne or dol.pos.y > 0.02):
+        dol.surfacing = false
+        dol.breath = if fast: 0.8 + wild_unit(p.site.key * 13 + k, int(now * 3.0)) * 1.6 else: 5.0 + wild_unit(p.site.key * 13 + k, int(now)) * 14.0
+    # (a wake from one riding near the surface fast)
+    if fast and dol.pos.y > -0.5 and sp > 5.0 and wild_unit(k, int(now * 4.0)) < 0.3:
+        wild_mark(marks, vec3(dol.pos.x, 0, dol.pos.z), _pod_yaw(hv), now, sp * 0.06, 1)
+
+pod_step = (p: mut Pod, d: mut Dolphins, threats: WildThreat[], boats: Vessel[], env: WildEnv, dt: f64, now: f64, marks: mut WildMark[], calls: mut WildCall[]):
+    _pod_think(p, threats, boats, env, dt, now, calls)
+    if p.mode == .roam or p.mode == .peel:
+        speed = if p.mode == .peel: 5.0 else: DOLPHIN_CRUISE
+        p.centre = p.centre + _pod_dir(p.heading) * f32(speed * dt)
+    else:
+        c = vec2(0, 0)
+        loop dol in p.dolphins: c += dol.pos.xz
+        p.centre = c / f32(max(1, p.dolphins.len()))
+    if p.mode == .peel:
+        c = vec2(0, 0)
+        loop dol in p.dolphins: c += dol.pos.xz
+        mid = c / f32(max(1, p.dolphins.len()))
+        # (the pod's centre leads them off: kept a little ahead of where they are)
+        p.centre = mid + _pod_dir(p.heading) * 8.0
+    loop k in 0..p.dolphins.len():
+        dol = p.dolphins[k]
+        _dolphin_step(dol, p, k, d, env, dt, now, marks, calls)
+        p.dolphins[k] = dol
+
+dolphins_step = (d: mut Dolphins, wl: mut Wildlife, towns: Town[], cam: vec3, threats: WildThreat[], boats: Vessel[], env: WildEnv, dt: f64):
+    d.time += dt
+    now = d.time
+    # (the drops fly and fall back)
+    if d.spray.len() > 0:
+        keep: Spray[]
+        loop s in d.spray:
+            n = s
+            n.vel.y -= f32(GRAVITY_W * dt)
+            n.pos += n.vel * f32(dt)
+            if n.pos.y > -0.05 and now - n.born < 2.5: keep.push(n)
+        d.spray = keep
+    above = f64(cam.y) - max(env.ground(f64(cam.x), f64(cam.z)), 0.0)
+    if above > WILD_HIGH:
+        d.pods = []
+        return
+    if f64(length(cam.xz - d.scanned)) > WILD_RESCAN: pod_scan(d, towns, cam, env)
+    live: Pod[]
+    loop p in d.pods:
+        if f64(length(p.centre - cam.xz)) < POD_LIVE + 300.0: live.push(p)
+    d.pods = live
+    loop s in d.sites:
+        if f64(length(s.at - cam.xz)) > POD_LIVE: continue
+        if not (s.key >= 7900000 or pod_present(s.key, env.day)): continue
+        alive = false
+        loop p in d.pods:
+            if p.site.key == s.key: alive = true
+        if not alive: d.pods.push(make_pod(s, env))
+    loop k in 0..d.pods.len():
+        p = d.pods[k]
+        pod_step(p, d, threats, boats, env, dt, now, wl.marks, wl.calls)
+        d.pods[k] = p
+
+# A pod placed outright (captures: AEGEAN_WILD_POD), there every day.
+pod_at = (x: f64, z: f64, out: vec2) -> PodSite: PodSite(7900000 + int(abs(x) * 0.1) % 99999, vec2(f32(x), f32(z)), out)
+
+dolphin_count = (d: Dolphins) -> int:
+    n = 0
+    loop p in d.pods: n += p.dolphins.len()
+    n
