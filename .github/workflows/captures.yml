@@ -1,0 +1,165 @@
+# Batches of headless, software-rendered screenshot captures of the game, run on demand from
+# tools/ci_capture.py (workflow_dispatch only: never on push). One job builds the game, the shards
+# run the captures in parallel, and the PNGs, their logs and optional MP4s go up as the artifact
+# captures-<name>-<run id>. Only captures of the game itself are uploaded. See docs/CI.md.
+name: Captures
+run-name: Captures ${{ inputs.name || github.ref_name }}
+on:
+  workflow_dispatch:
+    inputs:
+      specs:
+        description: 'JSON list of captures: [{"name": "harbour", "env": {"AEGEAN_...": "..."}, "frames": 300, "size": "1280x720"}]'
+        required: true
+        type: string
+      name:
+        description: 'Label for the artifact (letters, digits, dot, underscore, dash)'
+        required: false
+        default: batch
+        type: string
+      ref:
+        description: 'Branch or commit to build (empty: the ref this workflow was dispatched on)'
+        required: false
+        default: ''
+        type: string
+      shards:
+        description: Parallel jobs (the specs are dealt across them by frames x pixels)
+        required: false
+        default: '4'
+        type: string
+permissions:
+  contents: read
+env:
+  # keep in sync with SLOPPY_VERSION in .github/workflows/tests.yml and pages.yml
+  SLOPPY_VERSION: v0.37.5
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      programs: ${{ steps.plan.outputs.programs }}
+      label: ${{ steps.plan.outputs.label }}
+    steps:
+      # the tools come from the ref the workflow was dispatched on, the game from `ref`
+      - uses: actions/checkout@v4
+        with:
+          path: .ci
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          path: game
+      # nothing that must stay out of git may be tracked or committed on the ref
+      - name: Guard (no scratch, recordings, soundfonts or big binaries)
+        working-directory: game
+        run: |
+          python3 ../.ci/tools/check_tracked_files.py
+          git fetch --no-tags origin main
+          python3 ../.ci/tools/check_tracked_files.py --range origin/main..HEAD
+      - name: Plan
+        id: plan
+        env:
+          SPECS: ${{ inputs.specs }}
+          LABEL: ${{ inputs.name }}
+          SHARDS: ${{ inputs.shards || '4' }}
+        run: |
+          printf '%s' "$SPECS" > specs.json
+          python3 .ci/tools/ci_capture_job.py plan --specs specs.json --shards "$SHARDS"
+          label=$(printf '%s' "$LABEL" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-48)
+          echo "label=${label:-batch}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: specs
+          path: specs.json
+          retention-days: 1
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Install Sloppy
+        run: |
+          curl -fsSL https://sloppy-lang.org/install | bash -s "$SLOPPY_VERSION"
+          echo "$HOME/.sloppy/bin" >> "$GITHUB_PATH"
+      - name: Bake the land, clouds and registries
+        run: sloppy --release tools/bake.jo
+      - name: Build the programs once
+        env:
+          PROGRAMS: ${{ needs.plan.outputs.programs }}
+        run: |
+          mkdir -p build
+          for p in $PROGRAMS; do
+            time sloppy build --release "$p" -o "build/$(basename "$p" .jo)"
+          done
+          ls -la build
+      # the binaries, and the baked files the game may read from assets/ at run time
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: |
+            build/
+            assets/
+          retention-days: 1
+  capture:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          path: game
+      - uses: actions/checkout@v4
+        with:
+          path: .ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: game
+      - uses: actions/download-artifact@v4
+        with:
+          name: specs
+          path: .
+      - name: Tools
+        run: |
+          chmod +x game/build/* || true
+          # the video step, and the PNG headers' library
+          command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+      - name: Capture (shard ${{ matrix.shard }})
+        working-directory: game
+        env:
+          SHARDS: ${{ inputs.shards || '4' }}
+        run: python3 ../.ci/tools/ci_capture_job.py run --specs ../specs.json --shard ${{ matrix.shard }} --shards "$SHARDS" --out ../captures
+      # even when a capture failed: the logs are the evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shard-${{ matrix.shard }}
+          path: captures/
+          if-no-files-found: ignore
+          retention-days: 1
+  collect:
+    needs: [plan, capture]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: captures
+          merge-multiple: true
+      - name: Index
+        run: python3 tools/ci_capture_job.py index --out captures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: captures-${{ needs.plan.outputs.label }}-${{ github.run_id }}
+          path: captures/
+          retention-days: 7

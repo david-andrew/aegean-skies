@@ -74,7 +74,8 @@ seconds of sink above the water, with the terrain sampled along the path. `Battl
 soft top (the strait's cloud base). `Battle.tactics` counts each behaviour.
 `tools/dogfight_lab.jo` runs N strait battles headless (`DOGFIGHT_N`, `DOGFIGHT_SECONDS`,
 `DOGFIGHT_MODEL=default|skybarons|v2|sb`, `DOGFIGHT_TRACE="actor from every"`,
-`DOGFIGHT_DOWNS=1`) and writes a report: time to first kill and kills per minute, the player
+`DOGFIGHT_DOWNS=1`, `DOGFIGHT_AIM=1` for the aim assist on, `DOGFIGHT_PLAIN_HITS=1` for generous hits
+off) and writes a report: time to first kill and kills per minute, the player
 seat's shots, hits and kills, how often NPCs are close to their target and lined up, and every
 round followed to its target (hit rate by range and crossing angle, misses by nearest pass).
 

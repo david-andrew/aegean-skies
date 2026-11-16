@@ -254,7 +254,8 @@ _club_moorings = (s: WorldSettlement, docks: mut vec3[], quays: mut vec3[]):
             near=h.quay_a+along*f32(u)+tangent*f32(side*(h.width*0.5-0.8))
             quays.push(vec3(near.x,f32(h.deck),near.y))
 
-configure_far_harbors = (w: mut World) -> bool:
+# (the far harbours published, without the opening voyages: configure_far_harbors and FarOpeningJob)
+_publish_far_harbors = (w: mut World) -> bool:
     if not settlement_registry_ready: return false
     harbors: FarHarbor[]
     loop s in world_settlements:
@@ -273,6 +274,99 @@ configure_far_harbors = (w: mut World) -> bool:
         if s.kind==.capital: _club_moorings(s,docks,quays)
         heading=if s.remote_harbor:normalize(s.harbor[0].quay_b-s.harbor[0].quay_a) else:s.out
         harbors.push(FarHarbor(s.id,vec3(heading.x,0,heading.y),docks,quays,s.harbor[0].buoy))
-    ready=publish_far_harbors(w,harbors)
+    publish_far_harbors(w,harbors)
+
+configure_far_harbors = (w: mut World) -> bool:
+    ready=_publish_far_harbors(w)
     if ready: initialize_opening_trade(w)
     ready
+
+# The far economy's opening for a world not yet given one (configure_far_economy, then
+# configure_far_harbors, as configure_life_scene makes them), a few milliseconds a step: the start
+# makes it behind the title on the world kept aside for a new game, which nothing else changes
+# meanwhile. The same world as made at once (tools/far_opening_digest.jo, FAR_DIGEST_SLICED=1).
+struct FarOpeningJob:
+    stage: int = 0                  # 0 the catalogue, 1 the districts and letters, 2 the harbours, 3 the voyages, 4 done
+    populate: FarPopulateJob = FarPopulateJob(0,[],[])
+    trade: OpeningTradeJob = OpeningTradeJob()
+    links: FarLink[] = []
+    layout: u64 = u64(0)
+    previous: World? = none
+    epoch: int = 0
+
+far_opening_step = (w: mut World, j: mut FarOpeningJob, budget: f64, light_only: bool = false) -> bool:
+    global _far_active_layout_key,_far_canonical_links
+    began = time()
+    loop j.stage < 4:
+        if light_only and _far_opening_heavy(j): break
+        left = max(0.0, budget - (time() - began))
+        if j.stage == 0:
+            # (a world given its economy already, or one that cannot have it yet: as before, at once)
+            if w.far.populated or _far_catalog_rejected or not geography_enabled or not settlement_registry_ready or w.place_contexts.len()!=world_settlements.len():
+                _ = configure_far_economy(w)
+                if w.far.populated and w.far.harbors.len()==0: _ = configure_far_harbors(w)
+                j.stage = 4; break
+            loaded=far_route_catalog()
+            if loaded==none: j.stage = 4; break
+            decoded=loaded!
+            j.layout=hash((decoded.places,decoded.geography,decoded.terrain,decoded.access_key,hash(decoded.links)))
+            j.links = decoded.links
+            j.populate = FarPopulateJob(decoded.version,decoded.seeds,decoded.links)
+            j.previous = w; j.epoch = living_fault_epoch()
+            j.stage = 1
+        else if j.stage == 1:
+            if not far_populate_step(w,j.populate,left): break
+            if not j.populate.result or living_fault_epoch()!=j.epoch:
+                if not j.populate.result and not w.far.populated:
+                    living_fault("far.populate",guard_context(w)+" registry={j.populate.version} places={j.populate.seeds.len()} links={j.populate.links.len()}")
+                if let old = j.previous: w = old
+                j.previous = none; j.stage = 4; break
+            j.previous = none
+            w.far.access_layout_key=j.layout
+            loop lake in SETTLEMENT_LAKES:w.far.relocated_centers[lake.id]=world_settlements[settlement_by_id[lake.id]].center
+            _far_active_layout_key=j.layout;_far_canonical_links=j.links
+            publish_access_roads(j.links)
+            j.stage = 2
+        else if j.stage == 2:
+            if w.far.populated and w.far.harbors.len()==0 and _publish_far_harbors(w): j.stage = 3
+            else: j.stage = 4
+        else:
+            if opening_trade_step(w,j.trade,left): j.stage = 4
+            else: break
+        if time() - began >= budget: break
+    j.stage >= 4
+
+# (the start's one: its own world and job, begun behind the title, stepped a slice a frame, taken
+# when done)
+far_opening_kept: World = World()
+far_opening_kept_job: FarOpeningJob? = none
+far_opening_begin = (w: World):
+    global far_opening_kept, far_opening_kept_job
+    far_opening_kept = w; far_opening_kept_job = FarOpeningJob()
+far_opening_pending = () -> bool: far_opening_kept_job != none
+# (whether the job's next step is one of its long ones, each a single step of a quarter second or
+# so on a phone: the catalogue, the opening fields, the harbours, the voyages' start; the start
+# takes those only while the title dips to dusk)
+_far_opening_heavy = (j: FarOpeningJob) -> bool:
+    if j.stage == 0 or j.stage == 2: return true
+    if j.stage == 1: return j.populate.stage == 0 or j.populate.stage == 3
+    if j.stage == 3: return j.trade.stage == 0
+    false
+# (true once its world is ready to take)
+far_opening_advance = (budget: f64, light_only: bool = false) -> bool:
+    global far_opening_kept_job
+    if let job = far_opening_kept_job:
+        j = job
+        far_opening_kept_job = none
+        if far_opening_step(far_opening_kept, j, budget, light_only): return true
+        far_opening_kept_job = j
+        return false
+    false
+far_opening_take = () -> World:
+    global far_opening_kept, far_opening_kept_job
+    w = far_opening_kept
+    far_opening_kept = World(); far_opening_kept_job = none
+    w
+far_opening_drop = ():
+    global far_opening_kept, far_opening_kept_job
+    far_opening_kept = World(); far_opening_kept_job = none
