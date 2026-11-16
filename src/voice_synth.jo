@@ -1,0 +1,248 @@
+# The announcer's vocoder: WORLD's source/filter model in time-domain form, streamed in bounded
+# blocks. A fractionally placed impulse train (amplitude sqrt(T0), the power of unit noise) and
+# white noise are mixed per band by the measured aperiodicity, then shaped by an all-pole lattice
+# filter fitted, frame by frame, to the measured mel-cepstral envelope. Reflection coefficients
+# are interpolated every millisecond (always stable). Reference model: tools/voice_world/vocoder.py.
+use 'voice_text.jo'
+
+const VOICE_LPC = 24
+const VOICE_GRID = 128
+const VOICE_SUB = 16
+const VOICE_TAPS = 8
+const VOICE_PHASES = 32
+const VOICE_RING = 32
+const VOICE_DELAY = 4
+const VOICE_CROSSINGS = 4
+
+struct VoiceLowpass:
+    b0 = 0.0
+    b1 = 0.0
+    b2 = 0.0
+    a1 = 0.0
+    a2 = 0.0
+
+struct VoiceSynth:
+    ready = false
+    plan: VoicePlan
+    width = 0
+    m = 0
+    bands = 0
+    cursor = 0
+    level = 0.045                    # output scale: bulletin peaks near -3 dBFS, vowels near -22 dBFS
+    postfilter = 0.25                # mel-cepstral emphasis above c1, set against averaging blur
+    breath = 1.0                     # scale on the calibrated aperiodicity below
+    # Per-band scale on the stored aperiodicity, set so that re-analysing the synthetic voice
+    # gives the narrator's own band aperiodicity (the analysis over-reads noise in moving speech,
+    # and a round trip would compound it into hoarseness).
+    breath_band: f64[] = [0.2,0.25,0.6,0.5,1.0]
+    jitter = 0.006                   # relative period perturbation per glottal cycle
+    shimmer = 0.08                   # relative amplitude perturbation per glottal cycle
+    cycle = 1.0                      # this cycle's period factor
+    basis: f64[]                     # GRID x m warped cosines
+    cosk: f64[]                      # (LPC+1) x GRID
+    kernel: f64[]                    # PHASES x TAPS windowed sinc
+    lowpass: VoiceLowpass[]
+    k0: f64[]                        # reflection coefficients of frame f0_frame
+    k1: f64[]                        # and of the next frame
+    g0 = 0.0
+    g1 = 0.0
+    frame0 = -10
+    lattice: f64[]
+    ring: f64[]
+    lp_state: f64[]                  # 2 sources x crossings x 4 (x1 x2 y1 y2)
+    phase = 0.0
+    rng: u64 = 77
+    k: f64[]
+    g = 0.0
+    mix_p: f64[]                     # per band, set every SUB samples
+    mix_n: f64[]
+    pitch = 0.0
+    voiced = false
+    power = 0.0
+    scratch_p: f64[]
+    scratch_r: f64[]
+    effort_curve: f64[]              # log-power change per unit of effort on the grid
+    tilt_curve: f64[]                # log-power change per dB/octave of tilt above 500 Hz
+
+voice_lowpass = (hz: f64) -> VoiceLowpass:
+    w = TAU*hz/f64(VOICE_RATE); c = cos(w); a = sin(w)/(2.0*0.70710678); d = 1.0+a
+    b = (1.0-c)/(2.0*d)
+    VoiceLowpass(b,2.0*b,b,-2.0*c/d,(1.0-a)/d)
+
+make_voice_synth = (bank: VoiceBank) -> VoiceSynth:
+    s = VoiceSynth(ready=true,width=bank.width,m=bank.m,bands=bank.bands)
+    # a voice fitted to a speaker carries its own output gain, so its peaks meet the studio's
+    # carbon microphone where that was voiced (about -5 dBFS), not over it
+    s.level *= clamp(bank.model.output_gain,0.1,4.0)
+    s.basis = fill(0.0,VOICE_GRID*bank.m)
+    loop j in 0..VOICE_GRID:
+        om = (f64(j)+0.5)*PI/f64(VOICE_GRID)
+        warped = om+2.0*atan(bank.alpha*sin(om)/(1.0-bank.alpha*cos(om)))
+        loop c in 0..bank.m: s.basis[j*bank.m+c] = cos(f64(c)*warped)
+    s.cosk = fill(0.0,(VOICE_LPC+1)*VOICE_GRID)
+    loop k in 0..VOICE_LPC+1:
+        loop j in 0..VOICE_GRID:
+            s.cosk[k*VOICE_GRID+j] = cos(f64(k)*(f64(j)+0.5)*PI/f64(VOICE_GRID))/f64(VOICE_GRID)
+    s.kernel = fill(0.0,VOICE_PHASES*VOICE_TAPS)
+    loop ph in 0..VOICE_PHASES:
+        fr = f64(ph)/f64(VOICE_PHASES)
+        loop t in 0..VOICE_TAPS:
+            x = f64(t-VOICE_TAPS/2+1)-fr
+            sinc = if abs(x) < 1e-9: 1.0 else: sin(PI*x)/(PI*x)
+            s.kernel[ph*VOICE_TAPS+t] = sinc*(0.5+0.5*cos(PI*x/(f64(VOICE_TAPS)/2.0+1.0)))
+    # Telescoping crossovers at the analysis band edges (600, 1200, 2200, 4000 Hz).
+    s.lowpass = [voice_lowpass(600),voice_lowpass(1200),voice_lowpass(2200),voice_lowpass(4000)]
+    s.k0 = fill(0.0,VOICE_LPC); s.k1 = fill(0.0,VOICE_LPC); s.k = fill(0.0,VOICE_LPC)
+    s.lattice = fill(0.0,VOICE_LPC+1)
+    s.ring = fill(0.0,VOICE_RING)
+    s.lp_state = fill(0.0,2*VOICE_CROSSINGS*4)
+    s.mix_p = fill(0.0,bank.bands); s.mix_n = fill(0.0,bank.bands)
+    s.scratch_p = fill(0.0,VOICE_GRID); s.scratch_r = fill(0.0,VOICE_LPC+1)
+    s.effort_curve = fill(0.0,VOICE_GRID); s.tilt_curve = fill(0.0,VOICE_GRID)
+    effort = bank.model.effort
+    loop g in 0..VOICE_GRID:
+        if effort.len() == bank.m:
+            loop c in 0..bank.m: s.effort_curve[g] += s.basis[g*bank.m+c]*effort[c]
+        hz = (f64(g)+0.5)/f64(VOICE_GRID)*f64(VOICE_RATE)*0.5
+        s.tilt_curve[g] = 0.2302585093*log2(max(hz,500.0)/500.0)
+    s
+
+# Frame j's envelope -> reflection coefficients and gain: mel-cepstrum -> log power on a
+# linear grid -> autocorrelation -> Levinson. About 7 k multiply-adds, once per 5 ms.
+voice_frame_filter = (s: mut VoiceSynth, j: int, slot: int) -> f64:
+    plan_frames = s.plan.frames
+    o = clamp(j,0,max(0,s.plan.count-1))*s.width
+    m = s.m
+    jj = clamp(j,0,max(0,s.plan.count-1))
+    effort = if jj < s.plan.effort.len(): f64(s.plan.effort[jj]) else: 0.0
+    loop g in 0..VOICE_GRID:
+        acc = 0.0
+        base = g*m
+        loop c in 0..m:
+            coefficient = f64(plan_frames[o+c])*(if c >= 2: 1.0+s.postfilter else: 1.0)
+            acc += s.basis[base+c]*coefficient
+        acc += effort*s.effort_curve[g]+s.plan.tilt*s.tilt_curve[g]
+        s.scratch_p[g] = exp(clamp(acc,-60.0,60.0))
+    loop q in 0..VOICE_LPC+1:
+        acc = 0.0
+        base = q*VOICE_GRID
+        loop g in 0..VOICE_GRID: acc += s.cosk[base+g]*s.scratch_p[g]
+        s.scratch_r[q] = acc
+    # Levinson-Durbin with a guard on |k|.
+    a = fill(0.0,VOICE_LPC+1)
+    previous = fill(0.0,VOICE_LPC+1)
+    a[0] = 1.0
+    e = s.scratch_r[0]*(1.0+1e-9)+1e-30
+    loop i in 1..VOICE_LPC+1:
+        acc = s.scratch_r[i]
+        loop q in 1..i: acc += a[q]*s.scratch_r[i-q]
+        ki = clamp(-acc/e,-0.9995,0.9995)
+        loop q in 0..i: previous[q] = a[q]
+        loop q in 1..i: a[q] = previous[q]+ki*previous[i-q]
+        a[i] = ki
+        if slot == 0: s.k0[i-1] = ki else: s.k1[i-1] = ki
+        e *= 1.0-ki*ki
+    sqrt(max(e,0.0))
+
+voice_start = (s: mut VoiceSynth, plan: VoicePlan, sample: int = 0, seed: int = 0):
+    s.plan = plan
+    s.cursor = max(0,sample)
+    s.frame0 = -10
+    loop mut v in s.lattice: v = 0.0
+    loop mut v in s.ring: v = 0.0
+    loop mut v in s.lp_state: v = 0.0
+    s.phase = 0.0
+    s.cycle = 1.0
+    s.rng = u64(77+max(0,seed)*104729)
+
+voice_done = (s: VoiceSynth) -> bool: s.cursor >= s.plan.count*VOICE_HOP
+
+voice_uniform = (s: mut VoiceSynth) -> f64:
+    s.rng = (s.rng*u64(6364136223846793005)+u64(1442695040888963407))
+    f64((s.rng >> 11) & u64(0xfffffffffffff))/4503599627370496.0
+
+voice_noise = (s: mut VoiceSynth) -> f64:
+    total = 0.0
+    loop i in 0..3:
+        s.rng = (s.rng*u64(6364136223846793005)+u64(1442695040888963407))
+        total += f64((s.rng >> 11) & u64(0xfffffffffffff))/4503599627370496.0
+    (total-1.5)*2.0
+
+# Per-block controls: interpolated filter, pitch, voicing and band mixing gains.
+voice_controls = (s: mut VoiceSynth):
+    # Controls belong to the 1 ms block, not to where a render call began: identical output
+    # however the stream is cut into calls.
+    u = (f64(s.cursor-s.cursor%VOICE_SUB)+f64(VOICE_SUB)*0.5)/f64(VOICE_HOP)
+    j = int(u)
+    fr = u-f64(j)
+    if j != s.frame0:
+        if j == s.frame0+1:
+            loop q in 0..VOICE_LPC: s.k0[q] = s.k1[q]
+            s.g0 = s.g1
+        else:
+            s.g0 = voice_frame_filter(s,j,0)
+        s.g1 = voice_frame_filter(s,j+1,1)
+        s.frame0 = j
+    loop q in 0..VOICE_LPC: s.k[q] = s.k0[q]*(1.0-fr)+s.k1[q]*fr
+    s.g = s.g0*(1.0-fr)+s.g1*fr
+    n = s.plan.count
+    ja = clamp(j,0,n-1); jb = clamp(j+1,0,n-1)
+    fa = f64(s.plan.f0[ja]); fb = f64(s.plan.f0[jb])
+    s.voiced = (if fr < 0.5: fa else: fb) > 0
+    s.pitch = if fa > 0 and fb > 0: fa*(1.0-fr)+fb*fr else: max(fa,fb)
+    oa = ja*s.width+s.m; ob = jb*s.width+s.m
+    loop b in 0..s.bands:
+        ap = clamp((f64(s.plan.frames[oa+b])*(1.0-fr)+f64(s.plan.frames[ob+b])*fr)*s.breath*s.plan.breath*s.breath_band[b],0.001,1.0)
+        s.mix_p[b] = if s.voiced: sqrt(1.0-ap) else: 0.0
+        s.mix_n[b] = if s.voiced: sqrt(ap) else: 1.0
+
+voice_lp = (s: mut VoiceSynth, slot: int, x: f64) -> f64:
+    f = s.lowpass[slot%VOICE_CROSSINGS]
+    o = slot*4
+    y = f.b0*x+f.b1*s.lp_state[o]+f.b2*s.lp_state[o+1]-f.a1*s.lp_state[o+2]-f.a2*s.lp_state[o+3]
+    s.lp_state[o+1] = s.lp_state[o]; s.lp_state[o] = x
+    s.lp_state[o+3] = s.lp_state[o+2]; s.lp_state[o+2] = y
+    y
+
+# Render up to count samples (silence after the plan ends). Bounded work per sample.
+voice_render = (s: mut VoiceSynth, count: int) -> f64[]:
+    out = fill(0.0,max(0,count))
+    end = s.plan.count*VOICE_HOP
+    loop i in 0..out.len():
+        if s.cursor >= end: break
+        if s.cursor%VOICE_SUB == 0 or s.frame0 == -10: voice_controls(s)
+        if s.voiced and s.pitch > 0:
+            step = s.pitch/f64(VOICE_RATE)/s.cycle
+            s.phase += step
+            if s.phase >= 1.0:
+                s.phase -= 1.0
+                # The pulse fell phase/step samples ago; place it VOICE_DELAY samples ahead.
+                at = f64(VOICE_DELAY)-s.phase/step
+                whole = int(floor(at))
+                ph = clamp(int((at-f64(whole))*f64(VOICE_PHASES)),0,VOICE_PHASES-1)
+                amp = sqrt(f64(VOICE_RATE)/s.pitch)*(1.0+s.shimmer*(voice_uniform(s)-0.5))
+                s.cycle = 1.0+s.jitter*(voice_uniform(s)-0.5)
+                loop t in 0..VOICE_TAPS:
+                    offset = whole+t-VOICE_TAPS/2+1
+                    if offset >= 0: s.ring[(s.cursor+offset)%VOICE_RING] += amp*s.kernel[ph*VOICE_TAPS+t]
+        else:
+            s.phase = 0.0
+        slot = s.cursor%VOICE_RING
+        pulse = s.ring[slot]; s.ring[slot] = 0.0
+        noise = voice_noise(s)
+        excitation = 0.0
+        below_p = 0.0; below_n = 0.0
+        loop b in 0..s.bands:
+            lp_p = if b < VOICE_CROSSINGS: voice_lp(s,b,pulse) else: pulse
+            lp_n = if b < VOICE_CROSSINGS: voice_lp(s,VOICE_CROSSINGS+b,noise) else: noise
+            excitation += s.mix_p[b]*(lp_p-below_p)+s.mix_n[b]*(lp_n-below_n)
+            below_p = lp_p; below_n = lp_n
+        f = excitation*s.g
+        loop q in 0..VOICE_LPC:
+            i2 = VOICE_LPC-1-q
+            f -= s.k[i2]*s.lattice[i2]
+            s.lattice[i2+1] = s.lattice[i2]+s.k[i2]*f
+        s.lattice[0] = f
+        out[i] = f*s.level
+        s.cursor += 1
+    out

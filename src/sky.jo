@@ -5,11 +5,11 @@ use 'sky_air.jo'
 # stars at night.
 
 use 'look.jo'
+use 'quality.jo'
 use 'celestial.jo'
 use 'paint.jo'
 use 'render_space.jo'
 use 'weather_scene.jo'
-use 'tweaks.jo'
 
 struct SkyVertex:
     pos: vec2
@@ -36,7 +36,7 @@ struct SkyOut:
 
 sky_vs = (v: SkyVertex, u: SkyParams) -> SkyOut: SkyOut(vec4(v.pos, 0.9999, 1), v.pos)
 
-sky_color = (dir: vec3, u: SkyParams, trial: bool = false) -> vec3:
+sky_color = (dir: vec3, u: SkyParams, glow: bool = false, glow_at: vec4 = vec4(0,0,0,0)) -> vec3:
     h = max(u.altitude, 0.0)
     dip = sqrt(h * (2.0 * f32(EARTH_RADIUS) + h)) / (f32(EARTH_RADIUS) + h)
     y = dir.y + dip
@@ -51,10 +51,8 @@ sky_color = (dir: vec3, u: SkyParams, trial: bool = false) -> vec3:
     low_sun = (1.0 - smoothstep(0.05, 0.5, l.y)) * daylight
     warm = vec3(1.0, 0.51, 0.24)
     c = mix(c, u.top, low_sun * (1.0 - pow(sd, 3.0)) * band * 0.3)
-    # (the afterglow trial: beneath the sun's own glow and disc, which still set over it)
-    if trial and u.afterglow.w > 0.0:
-        g = sky_afterglow(dir,u.altitude,l,u.afterglow)
-        c = mix(c,g.rgb,g.a)
+    # (twilight's glow: beneath the sun's own glow and disc, which still set over it)
+    if glow: c = mix(c,glow_at.rgb,glow_at.a)
     c += u.sun * (pow(sd, 6.0) * 0.14 + pow(sd, 40.0) * 0.22) * daylight
     c += warm * (pow(sd, 18.0) * low_sun * exp(-abs(y) * 5.0) * 0.2)
     c += u.sun * smoothstep(SKY_DISC_OUTER, SKY_DISC_INNER, sd) * 4.0 * daylight
@@ -88,6 +86,13 @@ sky_color = (dir: vec3, u: SkyParams, trial: bool = false) -> vec3:
     # Moon disk: illuminate the near hemisphere with the same solar direction
     # used by terrain and clouds. Crescent orientation follows the Sun in 3D.
     moon = normalize(u.moon_dir)
+    # (at night the Moon glows: a soft halo in the air about it, broader and fainter outward,
+    # as bright as it is full)
+    if u.night > 0.0 and y > -0.01 and moon.y > -0.02:
+        ang = acos(clamp(dot(dir,moon),-1.0,1.0))
+        full = clamp((1.0-dot(normalize(u.sun_dir),moon))*0.5,0.0,1.0)
+        halo = exp(-ang*ang/(0.11*0.11))*0.10+exp(-ang*ang/(0.035*0.035))*0.16
+        c += vec3(0.72,0.78,0.9)*halo*full*u.night*smoothstep(-0.02,0.06,moon.y)
     if dot(dir,moon)>SKY_DISC_OUTER and y > -0.01:
         right = normalize(cross(if abs(moon.y)>0.98:vec3(0,0,1) else:vec3(0,1,0), moon))
         up = cross(moon, right)
@@ -106,7 +111,7 @@ sky_color = (dir: vec3, u: SkyParams, trial: bool = false) -> vec3:
         # sky in front fades and the Moon takes its full night brightness.
         pale = mix(vec3(0.84, 0.88, 0.93), c, 0.3)
         day_moon = mix(c, pale, lit * maria * 0.6 * mix(0.5, 1.0, smoothstep(0.0, 0.25, y)))
-        night_moon = c * (1.0 - u.night * 0.85) + lunar
+        night_moon = c * (1.0 - u.night * 0.85) + lunar * 1.35
         c = mix(c, mix(day_moon, night_moon, u.night), disk * smoothstep(-0.01, 0.03, y))
     q = dir.xz/max(dir.y,0.025)*3.0+vec2(u.time*0.0007,0)
     feather_filter = 1.0-smoothstep(0.2,0.6,length(vec2(fwidth(q.x),fwidth(q.y))))
@@ -121,27 +126,56 @@ sky_fs = (i: SkyOut, u: SkyParams) -> vec4:
     dir = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
     c = sky_color(dir,u)
     vec4(c*paint_paper(i.pos.xy),1)
-# (the afterglow trial's variant, tweaks.dusk_afterglow: made the first time it glows)
-sky_trial_fs = (i: SkyOut, u: SkyParams) -> vec4:
+# Twilight's variant, made the first time the sky glows (the day's sky compiles without it). The
+# glow is a smooth gradient, so it is worked out at the corners of a grid over the screen and
+# blended across it; the pixels only mix it in.
+struct SkyGlowOut:
+    pos: vec4
+    ndc: vec2
+    glow: vec4
+sky_glow_vs = (v: SkyVertex, u: SkyParams) -> SkyGlowOut:
+    dir = normalize((u.rays * vec4(v.pos, 1, 0)).xyz)
+    h = max(u.altitude, 0.0)
+    dip = sqrt(h * (2.0 * f32(EARTH_RADIUS) + h)) / (f32(EARTH_RADIUS) + h)
+    SkyGlowOut(vec4(v.pos, 0.9999, 1), v.pos, sky_afterglow(dir, dir.y + dip, u.afterglow))
+sky_glow_fs = (i: SkyGlowOut, u: SkyParams) -> vec4:
     dir = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
-    c = sky_color(dir,u,true)
+    c = sky_color(dir,u,glow=true,glow_at=i.glow)
     vec4(c*paint_paper(i.pos.xy),1)
+const SKY_GLOW_LOW = vec3(0.86, 0.56, 0.34)   # the low tier's warm horizon at twilight
+const SKY_GLOW_COLUMNS = 48
+const SKY_GLOW_ROWS = 40
+build_sky_glow_grid = () -> Mesh:
+    vs: SkyVertex[]
+    idx: u32[]
+    loop j in 0..SKY_GLOW_ROWS+1:
+        loop i in 0..SKY_GLOW_COLUMNS+1:
+            vs.push(SkyVertex(vec2(f32(i) / f32(SKY_GLOW_COLUMNS) * 2.0 - 1.0, f32(j) / f32(SKY_GLOW_ROWS) * 2.0 - 1.0)))
+    loop j in 0..SKY_GLOW_ROWS:
+        loop i in 0..SKY_GLOW_COLUMNS:
+            a = u32(j * (SKY_GLOW_COLUMNS + 1) + i)
+            b = a + 1
+            c = a + u32(SKY_GLOW_COLUMNS + 1)
+            d = c + 1
+            idx.extend([a, b, c, b, d, c])
+    mesh(vs, idx)
 
 sky_sh: Shader
-sky_trial_sh: Shader
-sky_trial_ready = false
+sky_glow_sh: Shader                 # (made at the start, not linked: queued as dusk nears, look.jo twilight_glow_soon)
+sky_glow_grid: Mesh
 sky_tri: Mesh
 
 draw_sky = (L: Light, t: f64):
-    night = if tweaks.dusk_afterglow: f64(L.afterglow.z) else: clamp(0.05 - f64(L.sun_dir.y), 0.0, 0.3) / 0.3
+    night = f64(L.stars)
     # (the sky writes no depth: it is behind everything, however far)
     glDepthMask(0)
-    glowing = L.afterglow.w > 0.0
-    if glowing and not sky_trial_ready:
-        global sky_trial_sh, sky_trial_ready
-        sky_trial_sh = make_background_shader(shader(sky_vs, sky_trial_fs))
-        sky_trial_ready = true
-    draw(if glowing: sky_trial_sh else: sky_sh, sky_tri, SkyParams(render_rays(scene_view_proj()), L.sky_top, L.sky_horizon, L.haze, L.sea_deep, L.sun_dir, L.sun, f32(night), f32(t), scene_camera().y, L.moon_dir,if weather_active: weather_here.cirrus else: 0.0,L.planets,L.afterglow))
+    # (the low and medium tiers keep the plain sky: the glow's warmth goes into the horizon's colour instead,
+    # all round rather than on the sun's side; the glow variant costs Intel GPUs half a millisecond)
+    glowing = L.afterglow.x > 0.0 and render_quality.tier > 1
+    low_glow = if L.afterglow.x > 0.0 and not glowing: L.afterglow.x else: 0.0
+    horizon = mix(L.sky_horizon, SKY_GLOW_LOW, low_glow * 0.75)
+    sky_haze = mix(L.haze, SKY_GLOW_LOW * 0.92, low_glow * 0.8)
+    draw(if glowing: sky_glow_sh else: sky_sh, if glowing: sky_glow_grid else: sky_tri, SkyParams(render_rays(scene_view_proj()), L.sky_top, horizon, sky_haze, L.sea_deep, L.sun_dir, L.sun, f32(night), f32(t), scene_camera().y, L.moon_dir,if weather_active: weather_here.cirrus else: 0.0,L.planets,L.afterglow))
     glDepthMask(1)
 
 # (the GPU programs: made once the window is open)
@@ -149,3 +183,6 @@ init_sky = ():
     global sky_sh, sky_tri
     sky_sh = make_background_shader(shader(sky_vs, sky_fs))
     sky_tri = mesh([SkyVertex(vec2(-1, -1)), SkyVertex(vec2(3, -1)), SkyVertex(vec2(-1, 3))])
+    global sky_glow_sh, sky_glow_grid
+    sky_glow_sh = make_background_shader(shader(sky_glow_vs, sky_glow_fs), false)
+    sky_glow_grid = build_sky_glow_grid()

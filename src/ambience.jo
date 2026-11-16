@@ -1,5 +1,6 @@
 # Bounded, read-only world sound scheduler/mixer. Cosmetic state is never saved in World.
 use 'ambience_synth.jo'
+use 'ambience_beds.jo'
 use 'calendar.jo'
 import 'living_types.jo' as life
 import 'living_conditions.jo' as conditions
@@ -53,10 +54,13 @@ struct Ambience:
     whole: Sound = Sound()
     build: AmbienceBuild = AmbienceBuild()
     copy: CopyBuild = CopyBuild()
+    beds: Music[]                   # the recorded beds (ambience_beds.jo), streamed
+    bed_ok: bool[]
 
 build_ambience = (render_only: bool = false) -> Ambience:
     a = Ambience(active=render_only or env("SLOPPY_NO_AUDIO") == none,playback=not render_only and env("SLOPPY_NO_AUDIO") == none)
     if not a.active: return a
+    ambience_open_beds(a)           # (cheap: nothing is decoded until a bed plays)
     if a.playback:
         # (heard in play: nothing here delays the first frame; ambience_build_step makes them)
         ambience_build_later(a)
@@ -84,7 +88,7 @@ ambience_build_later = (a: mut Ambience):
 # muffled copy are made in slices too: no piece of it takes long.
 const AMBIENCE_BUILD_SLICE = 1024
 # (what is heard soonest is made first: a fresh game starts on a quay by the sea)
-AMBIENCE_BUILD_ORDER = [AmbienceKind.beach,.murmur,.wave,.rope,.rigging,.gull,.hammer,.bell,.greet,.laugh,.call,.ask,.answer,.cafe,.ship_engine,.luff,.dog,.cliff,.surge,.trees,.grass,.cicada,.songbird,.spring,.goat,.donkey,.cricket,.owl,.whistle,.rain_sea,.rain_roof,.thunder,.goose,.bleat,.quack,.coot,.blow,.plash]
+AMBIENCE_BUILD_ORDER = [AmbienceKind.beach,.murmur,.chatter,.river,.wave,.rope,.rigging,.gull,.hammer,.bell,.greet,.laugh,.call,.ask,.answer,.cafe,.ship_engine,.luff,.dog,.cliff,.surge,.trees,.grass,.cicada,.songbird,.spring,.goat,.donkey,.cricket,.owl,.whistle,.rain_sea,.rain_roof,.thunder,.goose,.bleat,.quack,.coot,.blow,.plash]
 const AMBIENCE_COPY_SLICE = 8192
 ambience_build_step = (a: mut Ambience,budget_ms: f64):
     began = time()
@@ -97,6 +101,11 @@ ambience_build_step = (a: mut Ambience,budget_ms: f64):
 ambience_build_piece = (a: mut Ambience):
     if a.next_kind >= AMBIENCE_KINDS: return
     kind = AMBIENCE_BUILD_ORDER[a.next_kind]
+    if ambience_bed(kind):
+        # (a recorded bed: nothing to make)
+        a.ready[int(kind)] = true; a.next_kind += 1; a.next_take = 0; a.making = 0
+        if a.next_kind < AMBIENCE_KINDS: a.build = ambience_build_begin(AMBIENCE_BUILD_ORDER[a.next_kind],1)
+        return
     at = a.first[int(kind)]+a.next_take
     if a.making == 0:
         if ambience_build_run(a.build,AMBIENCE_BUILD_SLICE): a.making = 1
@@ -120,6 +129,17 @@ ambience_build_piece = (a: mut Ambience):
         a.build = ambience_build_begin(kind,a.next_take+1); a.making = 0
 
 ambience_ready = (a: Ambience,kind: AmbienceKind) -> bool: int(kind) < a.ready.len() and a.ready[int(kind)]
+
+# The recorded beds opened to stream (nothing decoded yet).
+ambience_open_beds = (a: mut Ambience):
+    a.beds = []; a.bed_ok = []
+    loop file in ambience_bed_files():
+        m = load_music(file)
+        if m is Music: a.beds.push(m); a.bed_ok.push(true)
+        else: a.beds.push(Music(file = [],channels = 0)); a.bed_ok.push(false)
+ambience_has_bed = (a: Ambience,kind: AmbienceKind) -> bool:
+    k = ambience_bed_index(kind)
+    k >= 0 and k < a.bed_ok.len() and a.bed_ok[k]
 
 # the playback pitch of a take: the bank's rate made up (the muffled copies at a quarter). A copy
 # kept at half the mixer's rate holds half the samples for the same seconds, so the mixer steps
@@ -273,7 +293,15 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         exists = false
         loop v in a.loops:
             if v.source.key == s.key and v.source.kind == s.kind: exists = true
-        if exists or a.loops.len() >= AMBIENCE_LOOPS or not ambience_ready(a,s.kind): continue
+        if exists or a.loops.len() >= AMBIENCE_LOOPS: continue
+        if ambience_bed(s.kind):
+            if not ambience_has_bed(a,s.kind): continue
+            # (each place's from its own moment in the recording, so two sites never talk in step)
+            voice = play_music(a.beds[ambience_bed_index(s.kind)],0.0,delay = -ambience_hash(s.key,0,13)*25.0)
+            move_sound(voice,s.pos,0.0,s.reach)
+            a.loops.push(AmbienceVoice(s,voice,-1))
+            continue
+        if not ambience_ready(a,s.kind): continue
         direct = play_at(a.sounds[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,false),looping=true)
         soft = play_at(a.soft[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,true),looping=true)
         a.loops.push(AmbienceVoice(s,direct,soft))
@@ -282,6 +310,10 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
     scale = min(1.0,loop_budget/max(total,0.0001))
     loop v in a.loops:
         gain = v.level*scale*(1.0-0.72*v.source.soft)*(if v.source.kind == .cafe: 1.0 else: a.duck)
+        if v.muffled < 0:
+            # (a recorded bed: behind walls or a hill, quieter rather than muffled)
+            move_sound(v.direct,v.source.pos,gain*(1.0-0.6*v.source.soft),v.source.reach)
+            continue
         move_sound(v.direct,v.source.pos,gain*(1.0-v.source.soft),v.source.reach)
         move_sound(v.muffled,v.source.pos,gain*v.source.soft,v.source.reach)
         set_pitch(v.direct,v.source.pitch*ambience_step(a,v.source.kind,false)); set_pitch(v.muffled,v.source.pitch*ambience_step(a,v.source.kind,true))

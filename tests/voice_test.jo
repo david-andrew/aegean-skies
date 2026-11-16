@@ -1,0 +1,216 @@
+use '../src/voice_model.jo'
+use '../src/voice_text.jo'
+use '../src/voice_synth.jo'
+use '../src/radio_synth.jo'
+use '../src/radio.jo'
+use '../src/radio_studio.jo'
+
+# The announcer's data file lives outside the repository (AEGEAN_VOICE_DATA). Without it these
+# tests only check that speech stays off; with it they check the voice itself.
+bank = voice_load()
+have = bank.ready
+
+test "announcer tables load and cover the phone set":
+    if have:
+        assert(bank.ready and bank.phones.len() == VOICE_PHONE_COUNT and bank.phones[0] == "pau")
+        assert(bank.units.len() > 500 and bank.words.len() > 2000 and bank.rules.len() > 50)
+        assert(bank.frames.len() == bank.units.len()*2*bank.half*bank.width)
+        # every phone can start and end a phrase
+        np = bank.phones.len()
+        loop p in 1..np:
+            f, _, _ = voice_half(bank,VOICE_PAU,p,1)
+            g, _, _ = voice_half(bank,p,VOICE_PAU,0)
+            assert(f >= 0 and g >= 0)
+        loop v in bank.frames: assert(not is_nan(f64(v)) and abs(f64(v)) < 100.0)
+
+test "numbers, clock times and punctuation become words":
+    if have:
+        assert(voice_tokens("At 09:05, 7.5 metres; -3 degrees.") == ["at","nine","oh","five",",","seven","point","five","metres",";","minus","three","degrees","."])
+        assert(voice_tokens("12:00 1941") == ["twelve","o'clock","one","thousand","nine","hundred","and","forty","one"])
+        assert(voice_number(115) == "one hundred and fifteen")
+        long = "word "*1000
+        assert(voice_tokens(long).len() == VOICE_MAX_WORDS)
+
+test "pronunciation: dictionary, plural and possessive stems, then rules":
+    if have:
+        harbor = bank.words["harbor"]
+        assert(voice_pronounce(bank,"harbors") == harbor+[38])
+        assert(voice_pronounce(bank,"harbor's") == harbor+[38])
+        # -es on a known stem ending in a sibilant takes a vowel and Z
+        if let church = bank.words.get("church"): assert(voice_pronounce(bank,"churches") == church+[10,38])
+        # an invented name falls back to the letter rules, with one primary stress
+        name = voice_pronounce(bank,"thalvery")
+        stressed = 0
+        loop p in name:
+            if p >> 6 == 1: stressed += 1
+        assert(name.len() >= 6 and stressed == 1)
+        # names read Greek-style, stress on the penultimate vowel, no reduction: "melav" is ME-lahv
+        assert(voice_spell(bank,"melav") == [26,7|64,25,1,35])
+
+test "a plan has positive durations, finite frames and voiced pitch in the narrator's range":
+    if have:
+        plan = voice_plan(bank,"Good evening. Here is the weather for the islands.",VoiceStyle(),3)
+        assert(plan.count > 400 and plan.count < 1000)
+        loop p in plan.phones: assert(p.duration > 0)
+        voiced = 0
+        loop f in plan.f0:
+            if f > 0:
+                voiced += 1
+                assert(f > 100 and f < 400)
+        assert(voiced > plan.count/3)
+        again = voice_plan(bank,"Good evening. Here is the weather for the islands.",VoiceStyle(),3)
+        assert(again.frames == plan.frames and again.f0 == plan.f0)
+
+test "the vocoder is bounded, deterministic and independent of how the stream is cut":
+    if have:
+        plan = voice_plan(bank,"Ships should keep the marked channels clear.",VoiceStyle(),1)
+        a = make_voice_synth(bank); b = make_voice_synth(bank)
+        voice_start(a,plan,0,1); voice_start(b,plan,0,1)
+        whole: f64[]
+        cut: f64[]
+        loop not voice_done(a): whole += voice_render(a,800)
+        loop not voice_done(b):
+            cut += voice_render(b,317)
+            cut += voice_render(b,483)
+        n = plan.count*VOICE_HOP
+        assert(whole.len() >= n and cut.len() >= n)
+        loop i in 0..n: assert(whole[i] == cut[i])
+        loop i in n..whole.len(): assert(whole[i] == 0.0)
+        energy = 0.0
+        loop v in whole:
+            assert(not is_nan(v) and abs(v) < 4.0)
+            energy += v*v
+        assert(energy/f64(whole.len()) > 0.0005)
+
+test "a spoken bulletin repeats on the world clock through the receiver":
+    if have:
+        s = make_radio_synth()
+        radio_synth_program(s,.speech,3,100.0,[],"Weather at Kalamos: fair conditions.",VoiceStyle(),10.0)
+        assert(s.speech_period >= 10*RADIO_RATE and s.speech_period%(10*RADIO_RATE) == 0)
+        energy = 0.0
+        loop k in 0..40:
+            x = radio_render(s,800,1.0,0.0)
+            assert(x.len() == 800)
+            loop v in x:
+                assert(abs(v) <= 0.95)
+                energy += f64(v)*f64(v)
+        assert(energy > 0.5)
+        # the same moment rendered from a fresh programme matches a continuous one
+        a = make_radio_synth(); b = make_radio_synth()
+        radio_synth_program(a,.speech,3,50.0,[],"Weather at Kalamos: fair conditions.",VoiceStyle(),10.0)
+        radio_synth_program(b,.speech,3,50.0,[],"Weather at Kalamos: fair conditions.",VoiceStyle(),10.0)
+        loop k in 0..10:
+            whole = radio_render(a,800,0.5,2)
+            left = radio_render(b,317,0.5,2); right = radio_render(b,483,0.5,2)
+            assert(whole == left+right)
+
+test "which programmes are read aloud":
+    assert(radio_spoken(0,.news) and radio_spoken(4,.weather) and radio_spoken(5,.quiz))
+    assert(not radio_spoken(4,.shipping) and not radio_spoken(1,.music) and not radio_spoken(2,.off_air))
+
+test "without the data file the bank is empty and a spoken programme is silent, not a crash":
+    if not have:
+        assert(not bank.ready and bank.units.len() == 0)
+        s = make_radio_synth()
+        radio_synth_program(s,.speech,3,10.0,[],"Weather at Kalamos.",VoiceStyle(),10.0)
+        x = radio_render(s,800,1.0,0.0,true)
+        loop v in x: assert(abs(f64(v)) < 0.001)
+
+test "the period studio is bounded, deterministic, and transparent at amount zero":
+    a = make_studio(); b = make_studio()
+    x = [loop i in 0..4000: 0.3*sin(TAU*220.0*f64(i)/16000.0)*(if (i/800)%2 == 0: 1.0 else: 0.2)]
+    ya = x; yb = x
+    studio_block(a,ya,1.0); studio_block(b,yb,1.0)
+    assert(ya == yb)
+    loop v in ya: assert(not is_nan(v) and abs(v) < 1.0)
+    clean = x
+    c = make_studio()
+    studio_block(c,clean,0.0)
+    assert(clean == x)
+
+test "a stressed vowel after a stop starts softly; a fitted genre delivery replaces the hand-set one":
+    if have:
+        plan = voice_plan(bank,"The singer washed a box of chalk early this morning.",VoiceStyle(),2)
+        w = bank.width
+        k = 0
+        loop i in 0..plan.phones.len():
+            if plan.phones[i].word_start and bank.phones[plan.phones[i].phone] == "ER" and i > 0 and bank.phones[plan.phones[i-1].phone] == "K": k = i
+        assert(k > 0)
+        j = int(plan.phones[k].start/VOICE_FRAME)
+        # a soft onset: still voiced, about 4 dB down (the juncture drop), not a gap
+        assert(plan.frames[j*w+w-1] > f32(0.3))
+        assert(plan.frames[j*w] < plan.frames[(j+8)*w]-f32(0.3))
+        m = bank.model
+        voice_model_set(m,"style_weather",[0.9,1.5,1.3,1.2])
+        voice_model_set(m,"shape",[1.2,9.0,0.4])
+        assert(m.pitch_limit == 9.0 and m.voicing == 0.4)
+        b2 = bank
+        b2.model = m
+        s = voice_fitted_style(b2,VoiceStyle(speed=1.25,pitch=-1.0,genre="weather",colour=0.6))
+        voice_model_set(m,"energy_effect",[1.5,0.1,0.05,0.4])
+        voice_model_set(m,"energy_ref_weather",[3.5])
+        b2.model = m
+        loud = voice_fitted_style(b2,VoiceStyle(genre="weather",energy=5))
+        if VOICE_ENERGY_PARKED:
+            # high energy parked: a fitted voice reads every station at the speaker's plain delivery
+            assert(s.speed == 1.0 and s.pitch == 0.0 and s.range == 1.0 and s.colour == 0.6 and s.genre == "")
+            assert(loud.speed == 1.0 and loud.pitch == 0.0 and loud.energy == 0)
+        else:
+            assert(s.speed == 0.9 and s.pitch == 1.5 and s.range == 1.3 and s.pauses == 1.2)
+            assert(voice_fitted_style(b2,VoiceStyle(speed=1.4,genre="race")).speed == 1.4)
+            # a line's own energy moves the genre's delivery by the measured steps
+            assert(abs(loud.pitch-(1.5+1.5*1.5)) < 1e-9 and loud.range > 1.3 and loud.speed > 0.9 and abs(loud.tilt-0.6) < 1e-9)
+            assert(voice_fitted_style(b2,VoiceStyle(genre="weather")).pitch == 1.5)
+        # a speaker's voice carries its own output gain
+        voice_model_set(m,"output_gain",[0.5])
+        b2.model = m
+        assert(abs(make_voice_synth(b2).level-0.5*make_voice_synth(bank).level) < 1e-12)
+        # an item's energy reaches the voice
+        assert(radio_item_style(1,RadioProgramme.news,RadioContent(energy=5)).energy == 5)
+        # above the usual energy, falls shrink (the register is held up)
+        m.tune_pitch = fill(0.0,VOICE_TUNE_FEATURES); m.tune_pitch[7] = -6.0          # last syllables 6 st down
+        m.tune_slope = fill(0.0,VOICE_TUNE_FEATURES)
+        voice_model_set(m,"energy_effect",[0.0,0.0,0.0,0.0,-0.5])
+        voice_model_set(m,"energy_ref_war",[3.0])
+        voice_model_set(m,"style_war",[1.0,0.0,1.0,1.0])
+        b2.model = m
+        low = voice_learned_contour(b2,voice_plan(b2,"The harbor is closed.",VoiceStyle(genre="war",energy=3),1),VoiceStyle(genre="war",energy=3))
+        high = voice_learned_contour(b2,voice_plan(b2,"The harbor is closed.",VoiceStyle(genre="war",energy=5),1),VoiceStyle(genre="war",energy=5))
+        lo_min = 0.0; hi_min = 0.0
+        loop v in low: lo_min = min(lo_min,v)
+        loop v in high: hi_min = min(hi_min,v)
+        assert(lo_min < -3.0 and hi_min > lo_min*0.5)
+
+test "an ellipsis or a dash is a pause, each pause knows its phrase's ending, and a learned contour, energy and effort apply":
+    toks = voice_tokens("Kalyrassa… three squadrons — up? Yes!")
+    assert(toks == ["kalyrassa",";","three","squadrons",";","up","?","yes","!"])
+    if have:
+        b2 = bank
+        ps = voice_phones(b2,"The crew? Off… safe.",VoiceStyle())
+        tones: int[]
+        loop p in ps:
+            if p.phone == VOICE_PAU and p.tone > 0: tones.push(p.tone)
+        assert(tones == [2,5,1])
+        sy = voice_syllables(ps)
+        assert(sy.len() >= 4 and sy[0].tone == 2 and sy[sy.len()-1].tone == 1 and sy[sy.len()-1].sentence == 1)
+        assert(voice_syllable_features(sy[0],"war").len() == VOICE_TUNE_FEATURES)
+        plain = voice_plan(b2,"The crew is safe.",VoiceStyle(),1)
+        m = b2.model
+        m.tune_pitch = fill(0.0,VOICE_TUNE_FEATURES); m.tune_pitch[1] = 4.0      # accents 4 st up
+        m.tune_slope = fill(0.0,VOICE_TUNE_FEATURES)
+        m.tune_energy = fill(0.0,VOICE_TUNE_FEATURES); m.tune_energy[7] = -5.0   # last syllables quieter (clamped)
+        m.tune_intrinsic = fill(0.0,VOICE_PHONE_COUNT)
+        m.tilts["war"] = fill(0.0,b2.m); m.tilts["war"][1] = 0.5
+        b2.model = m
+        learned = voice_plan(b2,"The crew is safe.",VoiceStyle(),1)
+        diff = 0.0
+        loop j in 0..min(plain.count,learned.count): diff = max(diff,abs(f64(learned.f0[j]-plain.f0[j])))
+        assert(diff > 1.0)
+        change = 0.0
+        loop j in 0..min(plain.count,learned.count): change = max(change,abs(f64(learned.frames[j*b2.width]-plain.frames[j*b2.width])))
+        assert(change > 0.1 and change <= VOICE_ENERGY_LIMIT+0.01)
+        war = voice_plan(b2,"The crew is safe.",VoiceStyle(genre="war"),1)
+        k = 0
+        loop j in 0..war.count:
+            if war.frames[j*b2.width+b2.width-1] > f32(0.9): k = j
+        assert(war.frames[k*b2.width+1] > learned.frames[k*b2.width+1]+f32(0.3))

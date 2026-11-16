@@ -136,6 +136,8 @@ struct CombatPilot:
     # Going home (src/combat.jo _homeward): the turn to land in, the flight plan once it is its
     # turn, when the leader began its descent, and done (moored at the base).
     home_turn = -1
+    rallied = false                # come in to the rally point after the fight
+    climber = false                # a pilot who uses height: over the cloud deck before closing, down from above
     plan: FlightPlan = FlightPlan()
     descend_tick = -1
     home_done = false
@@ -257,10 +259,27 @@ struct Battle:
     physics_steps = 0
     finished = false
     tactics: int[]                 # how often each CombatMode was entered (by its index)
-    ceiling = 1e9                  # a soft top for the fight (a cloud deck's base): climbs ease under it
+    ceiling = 1e9                  # a soft top for the fight (under the thrust's fade): climbs ease under it
+    deck_base = 1e9                # a cloud deck's base and top over the fight: passed through, never
+    deck_top = 1e9                 # flown in (nobody can see in it), and enemies in it unseen
     homes: BattleHome[]            # each side's base harbour, where it goes home to (none: away)
     home_since: int[] = [-1,-1,-1] # the tick each side (by index) turned for home
+    rally: vec3[] = [vec3(0,0,0),vec3(0,0,0),vec3(0,0,0)]   # where each side regroups after the fight
+    formed: int[] = [-1,-1,-1]     # the tick each side, regrouped, formed up for home (-1: not yet)
+    orders: FlightOrder[] = [FlightOrder(),FlightOrder(),FlightOrder()]   # each side's last word on the radio
     strength: int[] = [0,0,0]      # how many each side began with
+    apart_since: int[] = [-1,-1,-1] # the tick each side lost touch with the enemy (-1: in touch)
+
+# A word on the radio to one's own flight (the player's R/T): form on me, circle here and wait,
+# attack my target, break off and go home, lead me home. Held until another; an attack until its
+# target is down. A pilot with an enemy on its tail and close looks after itself first.
+enum OrderKind: none, form_on_me, circle, attack, go_home, lead_home
+struct FlightOrder:
+    kind: OrderKind = .none
+    tick = -1
+    by = -1                        # who gave it (aircraft ID)
+    at: vec3 = vec3(0,0,0)         # where (circle here)
+    target = -1                    # the aircraft to attack (ID)
 
 # A side's base: where its aircraft touch down (on `heading`), the first mooring and the step
 # between moorings along the quay, and the height they come home at.
@@ -389,6 +408,9 @@ intercept = (relative: vec3, velocity: vec3, speed: f64) -> vec3:
     t = clamp(t,0.0,3.0)
     relative+velocity*f32(t)+vec3(0,4.905*t*t,0)
 
+# Inside a cloud deck over the fight (where nobody sees anything).
+in_deck = (b: Battle, p: vec3) -> bool: b.deck_base < 1e8 and f64(p.y) > b.deck_base and f64(p.y) < b.deck_top
+
 _choose_target = (b: Battle, a: Combatant) -> int:
     best = -1; score = 1e20
     f = quat_rotate(a.state.orientation,vec3(0,0,-1))
@@ -399,6 +421,8 @@ _choose_target = (b: Battle, a: Combatant) -> int:
         if a.engagement>=0 and e.engagement!=a.engagement: continue
         # (one gone home is let go)
         if e.pilot.mode == .homeward and not e.human: continue
+        # (one in the cloud is not seen, unless it is very near)
+        if in_deck(b,e.state.position) and f64(length(e.state.position-a.state.position)) > 400.0: continue
         delta = e.state.position-a.state.position
         distance = f64(length(delta))
         cost = distance*(2.0-f64(dot(f,delta/f32(max(distance,0.01)))))
@@ -452,6 +476,8 @@ _retrack = (b: Battle, index: int) -> CombatPilot:
     a = b.actors[index]; p = a.pilot; s = a.state; k = a.spec
     t = p.target
     if not p.close or t < 0 or t >= b.actors.len() or b.actors[t].status != .flying or not (p.mode == .pursuit or p.mode == .head_on): return p
+    # (in the cloud the gun run is off: the brain is taking it out of the deck)
+    if in_deck(b,s.position): return p
     g = _gun_aim(b,a,p,t)
     fwd = quat_rotate(s.orientation,vec3(0,0,-1))
     dist = f64(length(b.actors[t].state.position-s.position))
@@ -536,6 +562,14 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
             if nearest < 220.0 and closing > 10.0 and p.skill+p.aggression > 0.9:
                 p.mode = .scissors; p.commit = b.tick+int(1.1*60.0)
                 return (right*f32(side*1.4)*ease+fwd*(1.2-ease)+vec3(0,0.25,0),if speed > stall*1.6: 0.35 else: 1.0)
+            # (a cautious pilot near the cloud uses it: up or down into the deck and on through it,
+            # out of the attacker's sight)
+            if p.caution > 0.55 and b.deck_base < 1e8 and alt > 150.0:
+                gap_up = b.deck_base-f64(pos.y); gap_down = f64(pos.y)-b.deck_top
+                into = if gap_up > 0.0 and gap_up < 260.0: 1.0 else: if gap_down > 0.0 and gap_down < 260.0: -1.0 else: 0.0
+                if into != 0.0:
+                    p.mode = .extend; p.away = normalize(flat(s.velocity)+vec3(0,f32(into*0.55),0)); p.commit = b.tick+int(9.0*60.0)
+                    return (p.away,1.0)
             p.mode = .break_turn; p.commit = b.tick+int((1.1+p.caution*1.2)*60.0)
             # (and after it, turn on the attacker)
             if p.caution < 0.7: p.target = threat; p.target_tick = b.tick
@@ -587,6 +621,11 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
         across = normalize(vec3(-delta.z,0,delta.x)+vec3(0.0001,0,0))
         spread = f32((f64(a.craft%5)-2.0)*90.0*min((dist-1500.0)/800.0,1.0))
         over = f32(clamp(f64(o.state.position.y-pos.y)+80.0*p.skill+60.0*p.caution,-250.0,300.0))
+        # (a climber goes up through the deck first, to come down on them from above)
+        if p.climber and b.deck_top < 1e8 and f64(pos.y) < b.deck_top+60.0 and f64(o.state.position.y) < b.deck_top:
+            over = f32(clamp(b.deck_top+120.0-f64(pos.y),0.0,600.0))
+            p.mode = .zoom
+            return (delta*0.25+across*spread+vec3(0,over,0),1.0)
         p.mode = if over > 150 and speed > stall*2.2: .zoom else: (if covering: .cover else: .approach)
         return (delta+across*spread+vec3(0,over,0),1.0)
     # A stalemate (a turning fight with no angle gained) is broken by extending and coming back.
@@ -626,7 +665,30 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     was = p.mode
     p.brain_tick = b.tick; p.trigger = false; p.close = false
     if p.mode == .homeward: return _homeward(b,index,e,p)
-    if p.target < 0 or p.target >= b.actors.len() or b.actors[p.target].status != .flying or not b.actors[p.target].present or b.actors[p.target].side==a.side or (a.engagement>=0 and b.actors[p.target].engagement!=a.engagement) or b.tick-p.target_tick>=60:
+    order = _order_for(b,index)
+    if order.kind == .form_on_me or order.kind == .circle:
+        by = combat_index(b,order.by)
+        if order.kind == .form_on_me and by >= 0 and b.actors[by].status == .flying:
+            # (in its own slot on the player, as on the way out)
+            l = b.actors[by].state
+            slot = l.position+quat_rotate(quat_euler(0,-heading(l),0),p.formation_offset-b.actors[by].pilot.formation_offset)
+            direction = heading_vector(heading(l)); lv = max(f64(length(l.velocity)),k.stall_speed*pure_k(k)*1.4)
+            pace = clamp(lv+f64(dot(slot-s.position,direction))*0.12,lv*0.75,lv*1.25)
+            p.controls = air_waypoint_controls(k,s,e,slot+direction*1000.0,f64(slot.y),pace)
+            p.mode = .regroup; p.target = -1
+            return p
+        if order.kind == .circle:
+            out = s.position-order.at; out.y = 0
+            if length(out) < 1: out = vec3(1,0,0)
+            around = f64(atan2(f64(out.z),f64(out.x)))+0.4
+            aim = order.at+vec3(f32(cos(around)*1000.0),0,f32(sin(around)*1000.0))
+            p.controls = air_waypoint_controls(k,s,e,aim,max(f64(order.at.y),250.0),k.cruise_speed*0.65)
+            p.mode = .regroup; p.target = -1
+            return p
+    if order.kind == .attack:
+        t = combat_index(b,order.target)
+        if t >= 0 and b.actors[t].status == .flying and b.actors[t].side != a.side: p.target = t; p.target_tick = b.tick
+    if p.target < 0 or p.target >= b.actors.len() or b.actors[p.target].status != .flying or (in_deck(b,b.actors[p.target].state.position) and f64(length(b.actors[p.target].state.position-s.position)) > 400.0) or not b.actors[p.target].present or b.actors[p.target].side==a.side or (a.engagement>=0 and b.actors[p.target].engagement!=a.engagement) or b.tick-p.target_tick>=60:
         p.target = _choose_target(b,a)
         p.target_tick=b.tick
     pos = s.position; fwd = quat_rotate(s.orientation,vec3(0,0,-1))
@@ -748,6 +810,18 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         p.controls.roll = if u.y < 0: (if r.y >= 0: 1.0 else: -1.0) else: clamp(f64(r.y)*3.0,-1.0,1.0)
         p.controls.pitch = if u.y < 0.2: 0.0 else: clamp((-0.3-climb)*2.5,-1.0,0.2)
         p.controls.yaw = 0.0
+    # (in the cloud nobody sees anything: never level in it, but on through it, up if fast and
+    # nearer the top, else down)
+    if in_deck(b,pos) and p.mode != .evade:
+        middle = (b.deck_base+b.deck_top)*0.5
+        # (crossing it already, fast and the right way, it is left to go on; else out by the nearer
+        # side it can reach: the top if fast and above the middle, else the base)
+        crossing = f64(s.velocity.y) > 20.0 or f64(s.velocity.y) < -20.0
+        up = if crossing: f64(s.velocity.y) > 0.0 else: f64(pos.y) > middle and speed > k.stall_speed*pure_k(k)*1.7
+        level = vec3(fwd.x,0,fwd.z)
+        if length(level) < 0.1: level = vec3(s.velocity.x,0,s.velocity.z)
+        c = steer(k,s,normalize(normalize(level+vec3(0.0001,0,0))+vec3(0,if up: 0.6 else: -0.8,0)))
+        p.controls.pitch = c.pitch; p.controls.roll = c.roll; p.controls.yaw = c.yaw
     # (whatever was flown, the cloud base kept above: climbing so as to be over the soft ceiling within
     # a few seconds, a zoom or a hand-flown pull-up is eased over; only high ground beneath gives way)
     if b.ceiling < 1e8 and p.mode != .evade and f64(pos.y)+max(0.0,f64(s.velocity.y))*2.5 > b.ceiling and s.velocity.y > 0 and b.ceiling > ground+150.0:
@@ -759,6 +833,10 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
 
 # ---------------- going home ----------------
 const LAND_GAP = 25*60              # ticks between aircraft landing in turn at a base
+const RALLY_HEIGHT = 450.0          # where a side regroups after a fight (under the soft ceiling)
+const RALLY_NEAR = 1300.0           # in at the rally point
+const REGROUP_MOST = 150*60         # stragglers waited for this long at most
+const REGROUP_LEAST = 60*60         # and at least a turn round the rally point, all of them in
 
 _has_home = (b: Battle, side: int) -> bool:
     loop h in b.homes:
@@ -789,8 +867,27 @@ home_slot = (b: Battle, lead: int, offset: vec3) -> vec3:
 # A side turns for home when it is beaten (half its aircraft lost and outnumbered two to one by
 # those still fighting, or after five minutes no longer the stronger) or has won (no enemy left fighting): every one of its pilots still flying
 # goes home, the leader first, the rest in their slots. Only battles that know their bases.
+const CONTACT_RANGE = 6000.0
+const CONTACT_LOST = 40*60
+
+# Whether any of a side still fighting is within CONTACT_RANGE of an enemy still fighting.
+_in_contact = (b: Battle, side: int) -> bool:
+    loop a in b.actors:
+        if a.side != side or a.status != .flying or not a.present or a.pilot.mode == .homeward or a.pilot.mode == .withdrawing: continue
+        loop o in b.actors:
+            if o.side == side or o.side < 0 or o.side > 2 or o.status != .flying or not o.present or o.pilot.mode == .homeward or o.pilot.mode == .withdrawing: continue
+            if f64(length(o.state.position-a.state.position)) < CONTACT_RANGE: return true
+    false
+
 _turn_for_home = (b: mut Battle):
     if b.homes.len() == 0: return
+    # (regrouped: every one of the side in at the rally point, or the stragglers given up on)
+    loop side in 0..3:
+        if b.home_since[side] < 0 or b.formed[side] >= 0: continue
+        all_in = true
+        loop a in b.actors:
+            if a.side == side and a.status == .flying and a.present and not a.human and a.pilot.mode == .homeward and not a.pilot.rallied: all_in = false
+        if (all_in and b.tick-b.home_since[side] >= REGROUP_LEAST) or b.tick-b.home_since[side] > REGROUP_MOST: b.formed[side] = b.tick
     if b.strength[0]+b.strength[1]+b.strength[2] == 0:
         loop a in b.actors:
             if a.side >= 0 and a.side < 3: b.strength[a.side] += 1
@@ -810,8 +907,31 @@ _turn_for_home = (b: mut Battle):
         # (and a long fight breaks up: after five minutes, half lost and not the stronger, home too)
         beaten = fighting > 0 and lost*2 >= b.strength[side] and (fighting*2 <= other or (b.tick > 60*300 and fighting <= other))
         won = fighting > 0 and other == 0 and b.tick > 600
-        if not beaten and not won: continue
+        # (and a fight come apart, none of the side within CONTACT_RANGE of an enemy for CONTACT_LOST:
+        # contact lost (up through the cloud, scattered), home, neither side beaten)
+        apart = fighting > 0 and other > 0 and not _in_contact(b,side)
+        if not apart: b.apart_since[side] = -1
+        else: if b.apart_since[side] < 0: b.apart_since[side] = b.tick
+        lost_touch = apart and b.tick-b.apart_since[side] >= CONTACT_LOST
+        if not beaten and not won and not lost_touch: continue
+        send_home(b,side,beaten,false)
+
+# A side sent home (beaten, won, or told to on the radio): every one of its pilots still flying
+# turns for home, regrouping first unless `at_once` (led straight home: "lead me home").
+send_home = (b: mut Battle, side: int, beaten: bool, at_once: bool):
+        if side < 0 or side > 2 or b.home_since[side] >= 0 or not _has_home(b,side): return
         b.home_since[side] = b.tick
+        if at_once: b.formed[side] = b.tick
+        # (scattered by the fight, they regroup first: over the fight for the winners, a few
+        # kilometres toward home for the beaten, under the cloud)
+        centre = vec3(0,0,0); n = 0
+        loop a in b.actors:
+            if a.side == side and a.status == .flying and a.present and not a.human: centre += a.state.position; n += 1
+        centre = if n > 0: centre/f32(n) else: b.center
+        if beaten:
+            toward = _home_of(b,side).touchdown-centre; toward.y = 0
+            if length(toward) > 1: centre += normalize(toward)*5000.0
+        b.rally[side] = vec3(centre.x,f32(min(RALLY_HEIGHT,b.ceiling-80.0)),centre.z)
         order = 0
         loop i in 0..b.actors.len():
             a = b.actors[i]
@@ -820,6 +940,33 @@ _turn_for_home = (b: mut Battle):
             a.pilot.trigger = false; a.pilot.target = -1; a.pilot.formation = false
             a.pilot.plan = FlightPlan(); a.pilot.descend_tick = -1; a.pilot.home_done = false
             b.actors[i] = a
+
+# The player's word on the radio to their flight: returns how many are there to hear it (their
+# side's pilots still flying in this battle). Going home starts at once.
+give_order = (b: mut Battle, by: int, kind: OrderKind, target: int = -1) -> int:
+    me = combat_index(b,by)
+    if me < 0 or b.actors[me].side < 0 or b.actors[me].side > 2: return 0
+    side = b.actors[me].side
+    hear = 0
+    loop a in b.actors:
+        if a.side == side and a.craft != by and a.status == .flying and a.present and not a.human: hear += 1
+    if hear == 0: return 0
+    b.orders[side] = FlightOrder(kind,b.tick,by,b.actors[me].state.position,target)
+    if kind == .go_home: send_home(b,side,true,false)
+    if kind == .lead_home:
+        if b.home_since[side] < 0: send_home(b,side,false,true)
+        else: b.formed[side] = min(if b.formed[side] < 0: b.tick else: b.formed[side],b.tick)
+    hear
+
+# A pilot's order this moment, if it has one to follow (none with an enemy close on its tail).
+_order_for = (b: Battle, index: int) -> FlightOrder:
+    a = b.actors[index]
+    if a.side < 0 or a.side > 2 or a.human: return FlightOrder()
+    o = b.orders[a.side]
+    if o.kind == .none or o.kind == .go_home or o.kind == .lead_home: return FlightOrder()
+    loop e in b.actors:
+        if e.side != a.side and e.status == .flying and e.present and e.pilot.target == index and f64(length(e.state.position-a.state.position)) < 700.0: return FlightOrder()
+    o
 
 # Home: the leader flies its own approach (the autopilot: cruise, descent, landing, taxi to the
 # first mooring); the others keep their slots on it until it starts down, then circle the bay,
@@ -837,6 +984,20 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
         return p
     h = _home_of(b,a.side)
     lead = home_leader(b,a.side)
+    if b.formed[a.side] < 0:
+        # (regrouping: to the rally point, then round it, each a little apart, the leader too)
+        r = b.rally[a.side]
+        d = f64(length(vec3(s.position.x-r.x,0,s.position.z-r.z)))
+        if d < RALLY_NEAR: p.rallied = true
+        if d > RALLY_NEAR*1.2:
+            p.controls = air_waypoint_controls(k,s,e,r,f64(r.y),k.cruise_speed*0.8)
+            return p
+        out = s.position-r; out.y = 0
+        if length(out) < 1: out = vec3(1,0,0)
+        around = f64(atan2(f64(out.z),f64(out.x)))+0.4
+        aim = r+vec3(f32(cos(around)*1100.0),0,f32(sin(around)*1100.0))
+        p.controls = air_waypoint_controls(k,s,e,aim,f64(r.y)+20.0*f64(p.home_turn%3),k.cruise_speed*0.65)
+        return p
     rank = 0
     loop o in b.actors:
         if o.side == a.side and o.status == .flying and o.pilot.mode == .homeward and not o.human and o.pilot.home_turn < p.home_turn: rank += 1
@@ -845,7 +1006,9 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
     if mine:
         if not p.plan.initialized:
             touchdown,landing = home_runway(h,e)
-            p.plan = FlightPlan(target = touchdown, taxi_target = h.dock+h.step*f32(p.home_turn), altitude = h.altitude, landing_heading = landing, phase = .cruise, speed = if lead == index: k.cruise_speed*0.82 else: 0.0)
+            # (leading the player home: a pace they can follow)
+            leading = b.orders[a.side].kind == .lead_home
+            p.plan = FlightPlan(target = touchdown, taxi_target = h.dock+h.step*f32(p.home_turn), altitude = h.altitude, landing_heading = landing, phase = .cruise, speed = if lead == index: k.cruise_speed*(if leading: 0.7 else: 0.82) else: 0.0)
         c = autopilot(k,s,p.plan,e)
         if (p.plan.phase == .descend or p.plan.phase == .land) and p.descend_tick < 0: p.descend_tick = b.tick
         if p.plan.phase == .failed:
