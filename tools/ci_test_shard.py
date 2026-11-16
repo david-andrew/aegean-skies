@@ -33,7 +33,6 @@ GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rend
 # run only when CI_SLOW=1 (workflow_dispatch with slow: true): the whole game, software-rendered
 SLOW = {
     "tests/title_reel_detail_test.py": "slow under software rendering (about 16 min)",
-    "tests/title_over_play_test.py": "slow under software rendering (over 25 min)",
 }
 TIMEOUT = int(os.environ.get("CI_TEST_TIMEOUT", "1500"))
 
