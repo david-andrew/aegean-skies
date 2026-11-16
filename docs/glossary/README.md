@@ -311,7 +311,9 @@ On the rivers branch until it lands.
   poplars, cast-iron lamps (lit after dark), benches and a few people before the front row of
   houses, or warehouses and works standing straight on the wall. Stairs down to the water sit in the
   wall's thickness with a landing at the foot. The workshop's yard and slipway keep a low quay 2 m
-  over the water, with stairs up to the street at either end. Contact (walls, parapets, streets,
+  over the water, with stairs up to the street at either end. The street behind an arm's wall runs
+  20 m back (the carve's bank falls below the sea's level within that, and the sea's surface would
+  show in the trench), clipped where it would meet the through-channel. Contact (walls, parapets, streets,
   stairs) and the drawing come from the same layout (`canal_banks`, `canal_solids`).
 - **Code:** `src/canal_geometry.jo` (`init_canal_geometry`, `canal_frontage`, `CANAL_WATER_STAIRS`);
   drawn by `src/canal_city.jo` (`canal_bank_mesh`, `canal_promenade`) through `src/canal_render.jo`.
@@ -347,12 +349,16 @@ On the rivers branch until it lands.
 - **Definition:** the city's blocks, 4-6 storeys on the water: muted cream, grey and stone stucco
   with one in six or seven an ochre, pink or rust accent; a darker rusticated base, string course,
   frieze and cornice; framed recessed windows with shutters (some closed), sills, balconies and
-  awnings; slate mansards, hipped tile roofs or flat roofs with a parapet; the roof pitches facing
-  north are painted darker. One in seven windows is lit after dark. Front rows are fully detailed,
+  awnings; roofs in the towns' palette: weathered terracotta in six tones with a lit pitch (facing
+  the midday sun) and a shaded, redder one, slate mansards, lead, and flat roofs with a tarred deck
+  inside a parapet. The arms are lined too: a row of plainer blocks on the wall's street and one
+  behind (kind 16). One in seven windows is lit after dark. Front rows are fully detailed,
   the next two rows have openings and trim, deeper rows are plain blocks on paved plinths. The
   skyline's set pieces (`CANAL_SKYLINE`: domed churches, bell towers, works chimneys) end the
-  canal's vistas at its bends.
-- **Code:** `src/canal_city.jo` (`canal_block`, `canal_church`, `canal_tower`, `canal_chimney`).
+  canal's vistas at its bends. The cells draw nearest first; the low tier keeps full detail within
+  300 m (750 m otherwise) and the promenade trees in their simpler build.
+- **Code:** `src/canal_city.jo` (`canal_block`, `canal_pitch`, `canal_church`, `canal_tower`,
+  `canal_chimney`); `src/canal_render.jo` (`init_canal`, `draw_canal`).
 
 ### Confluence
 
