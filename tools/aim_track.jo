@@ -1,17 +1,35 @@
 # Mouse-aim tracking: the player's steering (flight.jo `steer`, as src/pilot.jo's mouse mode calls it,
 # with its 30/s easing of the stick) flown at a target direction that steps, drifts or turns. The aim
 # is put on the target exactly (a perfect hand on the mouse), so what is left is the steering's own.
-#   sloppy --release tools/aim_track.jo        (AIM_MODELS="1" v2, "0" the liked; AIM_TRACE=1 series)
+#   sloppy --release tools/aim_track.jo        (AIM_MODELS="1" v2, "0" the liked; AIM_TRACE=1 series;
+#   AIM_FPS=30 at a phone's frame rate)
 # Lines "A,..." are the metrics: RMS error and the peak sweep of the gun line (degrees), the largest
 # bank (degrees), settle time and overshoot for the steps. Headless and deterministic.
 import '../src/flight.jo' as fl
 import '../src/tweaks.jo' as tw
 import '../src/planes.jo' as planes
+import '../src/controller.jo' as ctlr
 
-const HZ = 60.0
+# (the frame rate the controls are worked out at, the physics stepped by it: AIM_FPS, 60 by default;
+# a phone runs 30 to 45)
+HZ = to_float(env("AIM_FPS") ?? "60") ?? 60.0
 const K = 3.3
 const D = 57.2958
 trace = env("AIM_TRACE") == "1"
+# (the hand: AIM_INPUT=mouse, the aim put on the target exactly; touch, a finger's drag moving the aim
+# in the phone's device-pixel steps with a little tremor; pad, a gamepad's left stick steering the
+# aim at a rate through the pad's dead zone and curve, a thumb with some tremor; direct, the
+# gamepad's sticks flying her directly, a modelled pilot rolling and pulling toward the target)
+input = env("AIM_INPUT") ?? "mouse"
+const PAD_RATE = 1.4               # (src/pilot.jo PAD_AIM_RATE)
+const DRAG_RAD = 0.006             # (a screen unit of drag: 2.4 x 0.0025 rad)
+const DEVICE_PX = 2.625            # (the LG V60's device pixels to a screen unit)
+# (the direct pilot's gains: bank wanted per radian off to the side, roll stick per radian of bank
+# short, pull per radian above; the steadiest found for the 3-degree step, AIM_DIRECT="b,r,p")
+dgain = split(env("AIM_DIRECT") ?? "2.0,0.8,1.5", ",")
+DIRECT_BANK = to_float(dgain[0]) ?? 2.0
+DIRECT_ROLL = to_float(dgain[1]) ?? 0.8
+DIRECT_PULL = to_float(dgain[2]) ?? 1.5
 
 spec_for = (kind: planes.Craft, model: int) -> fl.CraftSpec:
     fl.set_speed_scale(K); fl.set_lift_scale(K)
@@ -57,6 +75,21 @@ target = (case: str, t: f64) -> vec3:
         "turn": return dir_of(6.0 / D * t, 2.0 / D * sin(t * 0.8))
         _: return dir_of(0.0, 0.0)
 
+# (a little deterministic noise, -1..1)
+_noise = (i: int, salt: f64) -> f64: 2.0 * (fract(sin(f64(i) * 12.9898 + salt * 78.233) * 43758.5453)) - 1.0
+
+# (the pad's stick: the deflection that gives a wanted output through its dead zone and curve, the
+# thumb's tremor added, and what then comes out)
+_pad_axis = (want: f64, i: int, salt: f64) -> f64:
+    p = ctlr.pad_defaults()
+    dz = p.axes[0].deadzone; curve = p.curve
+    m = min(abs(want), 1.0)
+    d = if m <= 0.0: 0.0 else: dz + (1.0 - dz) * pow(m, 1.0 / curve)
+    d = clamp(sign(want) * d + _noise(i, salt) * 0.03, -1.0, 1.0)
+    ctlr.shape(d, dz, curve, 1.0)
+
+_angles = (v: vec3) -> vec2: vec2(f32(atan2(f64(v.x), -f64(v.z))), f32(asin(clamp(f64(v.y), -1.0, 1.0))))
+
 fly_case = (kind: planes.Craft, model: int, v_true: f64, case: str) -> Run:
     k = spec_for(kind, model)
     s = fl.CraftState(position = vec3(0, 900, 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
@@ -70,20 +103,58 @@ fly_case = (kind: planes.Craft, model: int, v_true: f64, case: str) -> Run:
     crossed = false
     within_since = -1.0
     seen = vec3(0, 0, 0); rate = vec3(0, 0, 0)
+    held = vec2(0, 0)                          # (the hand's aim: heading and climb)
+    queue: fl.Controls[]                       # (the direct pilot's reaction time)
     loop i in 0..int(HZ * 12.0):
         t = f64(i) / HZ
-        aim = target(case, t)
-        # (the aim's motion, measured and smoothed as src/pilot.jo does)
-        if length(seen) > 0.5: rate += ((aim - seen) * f32(HZ) - rate) * f32(1.0 - exp(-10.0 / HZ))
-        seen = aim
-        c = fl.steer(k, s, aim, rate)
+        tgt = target(case, t)
+        aim = tgt
+        if input == "touch" or input == "pad":
+            ta = _angles(tgt)
+            err2 = vec2(f32(atan2(sin(f64(ta.x - held.x)), cos(f64(ta.x - held.x)))), ta.y - held.y)
+            if input == "touch":
+                # (the finger moves the aim onto the target, in device-pixel steps, with a tremor of
+                # about a third of a screen unit)
+                step_px = DRAG_RAD / DEVICE_PX
+                mv = err2 + vec2(f32(_noise(i, 1.0) * DRAG_RAD * 0.35), f32(_noise(i, 2.0) * DRAG_RAD * 0.35))
+                held += vec2(f32(round(f64(mv.x) / step_px) * step_px), f32(round(f64(mv.y) / step_px) * step_px))
+            else:
+                # (the thumb asks for the aim to close on the target in about a sixth of a second)
+                want = err2 * f32(6.0 / PAD_RATE)
+                held += vec2(f32(_pad_axis(f64(want.x), i, 3.0)), f32(_pad_axis(f64(want.y), i, 4.0))) * f32(PAD_RATE / HZ)
+            aim = dir_of(f64(held.x), f64(held.y))
+        c = fl.Controls()
+        if input == "direct":
+            # (a pilot on the gamepad's stick: banks toward the target, pulls into it and onto it,
+            # with a fifth of a second to react; the stick through the pad's dead zone and curve)
+            fw = fl.forward(s); rg = quat_rotate(s.orientation, vec3(1, 0, 0)); up = quat_rotate(s.orientation, vec3(0, 1, 0))
+            e_r = atan2(f64(dot(tgt, rg)), f64(dot(tgt, fw))); e_u = atan2(f64(dot(tgt, up)), f64(dot(tgt, fw)))
+            b = bank_of(s)
+            bank_want = clamp(e_r * DIRECT_BANK, -0.8, 0.8)
+            roll = clamp((bank_want - b) * DIRECT_ROLL - f64(s.angular_velocity.z) * -0.0, -1.0, 1.0)
+            pull = clamp(e_u * DIRECT_PULL + (1.0 / max(cos(b), 0.3) - 1.0) * 0.5, -1.0, 1.0)
+            want = fl.Controls(throttle = thr, pitch = _pad_axis(pull, i, 5.0), roll = _pad_axis(roll, i, 6.0))
+            queue.push(want)
+            c = if queue.len() > int(HZ * 0.2): queue.remove_at(0) else: fl.Controls(throttle = thr)
+            # (a stick eases toward what it asks a little faster than the keys: src/pilot.jo)
+            ka = 1.0 - exp(-18.0 / HZ)
+            c.pitch = last.pitch + (c.pitch - last.pitch) * ka
+            c.roll = last.roll + (c.roll - last.roll) * ka
+            c.yaw = last.yaw + (c.yaw - last.yaw) * ka
+        else:
+            # (the aim's motion, measured and smoothed as src/pilot.jo does)
+            if length(seen) > 0.5: rate += ((aim - seen) * f32(HZ) - rate) * f32(1.0 - exp(-10.0 / HZ))
+            seen = aim
+            c = fl.steer(k, s, aim, rate)
+            c.pitch = last.pitch + (c.pitch - last.pitch) * ease
+            c.roll = last.roll + (c.roll - last.roll) * ease
+            c.yaw = last.yaw + (c.yaw - last.yaw) * ease
         c.throttle = thr
-        c.pitch = last.pitch + (c.pitch - last.pitch) * ease
-        c.roll = last.roll + (c.roll - last.roll) * ease
-        c.yaw = last.yaw + (c.yaw - last.yaw) * ease
         last = c
         fl.step(k, s, c, fl.FlightEnv(), 1.0 / HZ)
         gun = fl.forward(s)
+        # (measured against the target itself: the hand's lag is part of it)
+        aim = tgt
         err = acos(clamp(f64(dot(gun, aim)), -1.0, 1.0)) * D
         run.bank = max(run.bank, abs(bank_of(s)) * D)
         if trace and i % 6 == 0:
