@@ -1291,15 +1291,18 @@ On the rivers branch until it lands.
 - **Definition:** the day's light keyed by the sun's height: after sunset the sky keeps a bright
   amber band low on the sun's side (orange at the horizon, peach-gold above, a faint rose round
   the rest) for over an hour, while land, sea and cloud bellies go dark beneath it as silhouettes;
-  then a teal blue hour (about 19:45) and night with stars by about 20:30. Dawn mirrors it. On the
-  high tier the sea reflects the band.
+  then a teal blue hour (about 19:45) and night with stars by about 20:30. Dawn mirrors it. The
+  sea lays a glitter path toward the band, and the moon's glitter takes over as the glow fades.
+  The same on every quality tier.
 - **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
-  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`);
-  `sky_afterglow` in `src/sky_air.jo`. On the high tier the sky and the sea draw with glow variants
-  (`sky_glow_sh`, the glow worked out on a screen grid; `sea_glow_sh`) while it glows; the day's
-  shaders are unchanged. The low and medium tiers keep the plain sky and warm its horizon and haze
-  instead (`SKY_GLOW_LOW`): a softer band all round, at no cost (the variant costs Intel UHD 620
-  about 0.5 ms).
+  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`). The band is
+  its own strip of the sky dome round the horizon (`draw_glow_band` in `src/sky.jo`: 72 bearings
+  by 10 heights, colour and cover worked out per vertex, the pixels only passing them on), drawn
+  over the plain sky; the sea's glitter path toward it comes from the sea's own sheen and glints
+  about a sun a little above the horizon on the real sun's bearing, once the real sun is down
+  (`glow_sea_sun`, `glow_sea_share` in `src/look.jo`), its water's colour held at its dusk value.
+  The same on every quality tier: any addition to the sky's or the sea's own shaders cost Intel
+  UHD 620 about half a millisecond, even a single blend.
 - **Capture:** `AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into the glow);
   `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
 
