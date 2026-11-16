@@ -159,6 +159,19 @@ funny or useful (time passes, people are met, the plane is looked after).
    rooms are: the lamp's warm pool of an evening with dark corners beyond it, the window's cool
    light by day, moonlight while one sleeps.
 
+## Built (round eleven)
+
+24. **A passenger waits.** Stepping ashore with someone in the second seat asks: "Back in a few
+   minutes" and they wait in the seat, up to an hour, with a word if it runs long; "Sorry, another
+   day" and they go home politely. Back aboard, the flight goes on. If they give up waiting they
+   say so the next time they pass, and the pilot's name takes a mild mark.
+25. **Left at the table.** Getting up leaves the plates and glasses where they were. Sitting down
+   again finds them; otherwise a waiter comes for them a while later and carries them off. While
+   seated, only empties are cleared unasked; something untouched a good while brings "Finished
+   with this?". The buttons keep the plain names, and the drain bar shows what is left.
+26. **The seated view keeps its turn.** Each drag, by finger, mouse or stick, goes on from where
+   the last one left it, at a table, on a stool, at supper and at the hotel room's window.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar

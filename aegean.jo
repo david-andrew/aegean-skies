@@ -523,10 +523,20 @@ ride = Joyride()                 # (a pleasure flight with someone from the town
 ride_fig: Figure? = none
 ride_rolled = false              # (whether anyone asks: rolled once each time the pilot comes to the aircraft)
 ride_asker = -1                  # (the folk asking, while they ask)
+ride_asking_wait = false         # (the pilot stepped ashore with them seated: the choice is up)
+ride_declined: {int: int} = {}   # (who was put off, or gave up waiting: the world minute; not asked again that day)
+ride_owed: {int: bool} = {}      # (who gave up waiting and has yet to say so)
 stay = Stay()                    # (a night under a roof: the hotel's room, or a family's: src/stay.jo)
 stay_rooms = build_stay_rooms()
 stay_host_fig: Figure? = none
 stay_figs: Figure[] = []         # (the household at the table)
+table_script = ""                # (captures: the table's script of getting up and sitting again)
+left_table: Served[] = []        # (what the pilot left on the table on getting up: there until cleared)
+left_key = ""                    # (where: "hotel", "bar", "coffee")
+left_spots = ServiceSpots(vec3(0, 0, 0), vec3(0, 0, 0), vec3(0, 0, 0), vec3(1, 0, 0), vec3(0, 0, 1))
+left_at = -1.0                   # (when, on the game's clock)
+clear_waiter = Waiter()          # (whoever comes for it, some while after)
+left_wait = to_float(env("AEGEAN_LEFT_WAIT") ?? "40") ?? 40.0   # seconds after the pilot gets up before they come to clear
 company = Company()              # (someone come to sit with the pilot, now and then: src/company.jo)
 company_line = ""                # (what they said last, and until when it shows)
 company_line_until = -1.0
@@ -623,7 +633,7 @@ struct TimeSkip:
 skip = TimeSkip()
 
 # (the menu's search line has the keyboard: letters don't also work the game's keys)
-leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 0 or leisure_ui == 15 or leisure_ui == 16 or leisure_ui == 13 or leisure_ui == 14 or leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10 or leisure_ui == 12)
+leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 0 or leisure_ui == 15 or leisure_ui == 16 or leisure_ui == 18 or leisure_ui == 19 or leisure_ui == 13 or leisure_ui == 14 or leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10 or leisure_ui == 12)
 
 leisure_place = (key: str) -> LeisurePlace: if key == "coffee": coffee_place else: hotel_place
 leisure_items = (key: str) -> MenuItem[]: if key == "coffee": coffee_menu else: hotel_menu
@@ -652,6 +662,11 @@ leisure_sit = (key: str):
     if let at = env("AEGEAN_COMPANY"): company.due = t + (to_float(at) ?? 2.0)
     leisure.sitting = key; leisure.served = []; leisure.coming = []
     waiter = Waiter(); taking = Taking()
+    # (back at the table before it was cleared: everything as it was left)
+    global left_table, left_key, clear_waiter
+    if left_key == key and left_table.len() > 0:
+        leisure.served = left_table
+        left_table = []; left_key = ""; clear_waiter = Waiter()
     global invite_refused
     invite_refused = []
     leisure_at = key; leisure_spent = 0; leisure_had = []
@@ -669,6 +684,13 @@ leisure_stand = ():
         me.pos = out.0; me.yaw = out.1; follow.yaw = me.yaw + PI
     # (off the stool, onto the deck)
     if leisure.sitting == "bar": me.pos = vec3(me.pos.x, f32(walk_height(towns, f64(me.pos.x), f64(me.pos.z))), me.pos.z)
+    # (what is on the table stays there, as it is, until someone comes to clear it; what was in
+    # hand goes back down first)
+    global left_table, left_key, left_spots, left_at, clear_waiter
+    if leisure.served.len() > 0:
+        left_table = [loop s in leisure.served: Served(s.item, s.minute, s.seat, amount = s.amount, empty_for = s.empty_for, still = s.still)]
+        left_key = leisure.sitting; left_spots = service_spots(leisure.sitting); left_at = t
+        clear_waiter = Waiter()
     leisure.sitting = ""; leisure.served = []; leisure.coming = []
     waiter = Waiter(); taking = Taking()
     follow.distance = 5.5; follow.height = 1.6
@@ -1257,6 +1279,7 @@ ride_candidate = (reach: f64) -> int:
         if not f.shown or f.performing or f.cycling or f.carrying: continue
         p = living_world.people[f.person]
         if p.age < 12 or f.person == living_world.player: continue
+        if f.person in ride_declined and living_world.minute - ride_declined[f.person] < 1440: continue
         d = f64(length(f.pos - me.pos))
         if d < bd: best = k; bd = d
     best
@@ -1311,9 +1334,30 @@ ride_tick = (dt: f64):
     if ride.stage == .thanked:
         if t > ride.line_until: ride_finish()
         return
-    # (the pilot back ashore without having flown: another time)
-    if me.mode == .walking and (ride.stage == .seated or ride.stage == .landed):
-        ride.flew = ride.flew or ride.stage == .landed
+    # (the pilot steps ashore before they have flown: back in a few minutes, or another day)
+    if me.mode == .walking and ride.stage == .seated:
+        if not ride_asking_wait and ui == .none:
+            global ride_asking_wait
+            ride_asking_wait = true; ui = .leisure; leisure_ui = 18
+            _ = mouse_lock(false)
+        return
+    # (waiting in the seat: back aboard, the flight goes on; an hour, or the pilot gone from the
+    # island, and they give up; in earshot now and then, a word)
+    if ride.stage == .waiting:
+        if me.mode == .aboard:
+            _ = ride_resume(ride, living_world.minute)
+            ride.line_until = t + 5.0; ride.next_line = t + 4.0
+            return
+        if ride_wait_over(ride, living_world.minute, living_world.people[living_world.player].place == ride.origin):
+            ride_give_up()
+            return
+        if f64(length(me.pos - pc.state.position)) < 30.0:
+            said = ride_wait_remark(ride, living_world.minute)
+            if said != "": ride.line = said; ride.line_until = t + 5.0
+        return
+    # (back ashore after the flight: their thanks)
+    if me.mode == .walking and ride.stage == .landed:
+        ride.flew = true
         _ = ride_thank(ride, t)
         return
     st = pc.state
@@ -1332,6 +1376,17 @@ ride_tick = (dt: f64):
         if f64(length(vec2(living_world.harbors[p].center.x - st.position.x, living_world.harbors[p].center.z - st.position.z))) < 2500.0: v.place_seen = living.place_name(living_world, p)
     _ = ride_step(ride, v, t)
     if ride.stage == .landed and st.moored: _ = ride_thank(ride, t)
+
+# they gave up waiting: out of the seat and home; they'll say so when next they meet the pilot,
+# and it tells a little against him (a promise not kept, mildly)
+ride_give_up = ():
+    global ride, ride_declined, ride_owed
+    if ride.person >= 0:
+        ride_declined[ride.person] = living_world.minute
+        ride_owed[ride.person] = true
+        rep_act(living_world, .cut_short, ride.person)
+        log_note(notebook, "{split(living_world.people[ride.person].name, " ")[0]} waited at the {CRAFT_NAMES[int(pc.kind)]} a good while, and went home.", clock_text(living_world, living_world.minute))
+    ride = Joyride()
 
 # the ride over: they climb out and are back in the town's routine; the world remembers it
 ride_finish = ():
@@ -1388,14 +1443,20 @@ stay_yaw = (local: f64) -> f64:
     atan2(f64(fz.x), f64(fz.z)) + local
 
 stay_begin_hotel = ():
-    global stay, ui, leisure_ui
+    global stay, ui, leisure_ui, stay_look_turn
+    stay_look_turn = ViewTurn()
+    global table_bar_area
+    table_bar_area = Rect(0, 0, 0, 0)
     stay = Stay(active = true, kind = .hotel, host = hotel_place.keeper, place = hotel_place.place, frame = stay_hotel_frame(), started = living_world.minute)
     ui = .leisure; leisure_ui = 15
     _ = mouse_lock(false)
 
 # The family's own house (their home in the living world): false when it isn't in the scene.
 stay_begin_family = (host: int) -> bool:
-    global stay, ui, leisure_ui, stay_host_fig, stay_figs
+    global stay, ui, leisure_ui, stay_host_fig, stay_figs, stay_look_turn
+    stay_look_turn = ViewTurn()
+    global table_bar_area
+    table_bar_area = Rect(0, 0, 0, 0)
     w = living_world
     p = w.people[host]
     home = choose_life_venue(w, p.home, .home, host)
@@ -1466,7 +1527,7 @@ stay_end = ():
 
 # the bar along the bottom: what one can do in the room now
 stay_frame = ():
-    global stay
+    global stay, stay_look_turn
     if not stay.active or skip.active: return
     w = living_world
     hotel_stay = stay.kind == .hotel
@@ -1488,8 +1549,10 @@ stay_frame = ():
     if pick == "Sleep until morning" or pick == "Go to bed": stay_sleep(rest_minutes(w, 420), "Asleep")
     else if pick == "Rest until evening": stay_sleep(rest_minutes(w, 1110), "Resting")
     else if pick == "An hour's nap" or pick == "A little longer": stay_sleep(60, "Dozing")
-    else if pick == "Look out of the window": stay.stage = .window
-    else if pick == "Back inside": stay.stage = .awake
+    else if pick == "Look out of the window":
+        stay.stage = .window; stay_look_turn = ViewTurn()
+    else if pick == "Back inside":
+        stay.stage = .awake; stay_look_turn = ViewTurn()
     else if pick == "Leave the room" or pick == "Thank them and go": stay_end()
 
 # what is said at the table, now and then
@@ -1520,7 +1583,14 @@ stay_look = () -> vec3:
 
 stay_camera = ():
     eye = stay_eye()
-    render_camera(eye, stay_look() - eye, 62.0, 0.05, world_far(f64(eye.y)))
+    # (the look turned about the eye by the player's drags: yaw about the up axis, then pitch)
+    look = normalize(stay_look() - eye)
+    yaw = stay_look_turn.yaw; pitch = stay_look_turn.pitch
+    flat = vec3(f32(f64(look.x) * cos(yaw) + f64(look.z) * sin(yaw)), look.y, f32(f64(look.z) * cos(yaw) - f64(look.x) * sin(yaw)))
+    lift = clamp(asin(clamp(f64(flat.y), -1.0, 1.0)) + pitch, -1.2, 1.2)
+    h = normalize(vec3(flat.x, 0, flat.z) + vec3(0.0001, 0, 0))
+    dir = h * f32(cos(lift)) + vec3(0, f32(sin(lift)), 0)
+    render_camera(eye, dir, 62.0, 0.05, world_far(f64(eye.y)))
 
 # the room's light: the day through the window, a lamp's warmth after dark (out while asleep)
 stay_light = (L: Light) -> Light:
@@ -1746,21 +1816,42 @@ draw_company_talk = ():
 seat_drag = false                # (the left button's drag began on the scene, not on the bar)
 table_bar_area = Rect(0, 0, 0, 0)
 
-seat_orbit_step = (dt: f64):
-    global follow, seat_drag
+# what turns the view this frame, seated or in a room: a drag begun off the table's bar (one
+# finger, or two together on a touch screen; either mouse button with a mouse), and whether a press
+# began this frame (its jump is no drag)
+seat_drag_input = () -> (vec2, bool):
+    global seat_drag
+    if pad.on:
+        # (a touch screen: the fingers only; its mouse follows the first finger and would count twice)
+        off_bar = not contains(table_bar_area, pad.drag_at)
+        d = if pad.two: pad.orbit else: if off_bar: pad.aim else: vec2(0, 0)
+        return (d, false)
+    pressed = mouse_pressed(.left) or mouse_pressed(.right)
     if mouse_pressed(.left): seat_drag = not contains(table_bar_area, mouse_pos())
     if not mouse_down(.left): seat_drag = false
-    turn = vec2(0, 0)
-    if mouse_down(.right) or seat_drag: turn = mouse_delta()
-    if pad.on and not contains(table_bar_area, pad.drag_at): turn = turn + pad.aim
+    d = if mouse_down(.right) or seat_drag: mouse_delta() else: vec2(0, 0)
+    (d, pressed)
+
+seat_orbit_step = (dt: f64):
+    global follow
+    inp = seat_drag_input()
     up = if options.invert_y: -1.0 else: 1.0
-    s = right_stick()
-    follow.yaw -= f64(turn.x) * 0.005 + f64(s.x) * 2.2 * dt
-    follow.pitch = clamp(follow.pitch + (f64(turn.y) * 0.004 + f64(s.y) * 1.6 * dt) * up, -0.1, 1.2)
+    v = view_turn(ViewTurn(follow.yaw, follow.pitch), inp.0, inp.1, ctl.look, dt, up, -0.1, 1.2)
+    follow.yaw = v.yaw; follow.pitch = v.pitch
     zoom = pow(0.88, clamp(mouse_wheel(), -3.0, 3.0))
     if pad.on and pad.zoom > 0.0 and abs(pad.zoom - 1.0) > 0.001: zoom = zoom / pad.zoom
     follow.distance = clamp(follow.distance * zoom, 1.4, 7.0)
     follow.height = approach(follow.height, 1.25, 4.0, dt)
+
+# In a room (a stay), the view looks about from where it is: a turn of the head, kept within the room.
+stay_look_turn = ViewTurn()
+stay_look_step = (dt: f64):
+    global stay_look_turn
+    inp = seat_drag_input()
+    up = if options.invert_y: -1.0 else: 1.0
+    v = view_turn(stay_look_turn, inp.0, inp.1, ctl.look, dt, up, -0.45, 0.45)
+    v.yaw = clamp(v.yaw, -1.1, 1.1)
+    stay_look_turn = v
 
 _ahead = () -> vec3: vec3(f32(sin(me.yaw)), 0, f32(cos(me.yaw)))
 _right = () -> vec3: vec3(f32(-cos(me.yaw)), 0, f32(sin(me.yaw)))
@@ -2367,7 +2458,14 @@ pilot_posture = () -> int: if leisure.sitting != "": 1 else: 0
 # One frame of service and of taking one's time: the waiter's round, and what the keys and the
 # buttons asked for at the table.
 service_step = (dt: f64):
-    global waiter, taking, served_look_until, table_put, table_input
+    global waiter, taking, served_look_until, table_put, table_input, left_table, left_key, clear_waiter, ui, leisure_ui
+    # (a table the pilot left: some while after, whoever serves there comes and clears it all,
+    # carrying it back on the tray; then it's done)
+    if left_key != "" and left_key != leisure.sitting and not service_frozen:
+        clear_waiter.clear_all = t - left_at >= left_wait
+        waiter_step(clear_waiter, left_spots, left_table, dt, (x: f64, z: f64) -> f64: walk_height(towns, x, z))
+        if left_table.len() == 0 and clear_waiter.stage == 0:
+            left_key = ""; clear_waiter = Waiter()
     if leisure.sitting == "" or service_frozen: return
     loop s in leisure.coming: waiter_order(waiter, s)
     leisure.coming = []
@@ -2383,37 +2481,54 @@ service_step = (dt: f64):
     down = (at_table and table_input.down) or held_capture
     take_step(taking, leisure.served, dt, pressed, down, table_put)
     table_input = TableBarResult(); table_put = false
+    # ("Finished with this?": asked at the table, answered on the panel)
+    if waiter.stage == 7 and ui == .leisure and leisure_ui == 0: leisure_ui = 19
 
 draw_service = (L: Light):
     if not hotel.ok: return
     key = leisure.sitting
+    clearing = left_key != "" and left_key != key and clear_waiter.ready
     near_hotel = f64(length(scene_camera() - hotel.counter)) < 80.0
     if near_hotel and leisure_open(living_world, hotel_place):
-        # (the hotel's people at their places when they are not the ones serving)
-        if key != "bar": draw_figure(barkeep_fig, hotel.bar_rest, hotel.bar_yaw + PI, 0.0, 0.0, L, t)
-        if key != "hotel":
+        # (the hotel's people at their places when they are not the ones serving, or clearing)
+        if key != "bar" and not (clearing and left_key == "bar"): draw_figure(barkeep_fig, hotel.bar_rest, hotel.bar_yaw + PI, 0.0, 0.0, L, t)
+        if key != "hotel" and not (clearing and left_key == "hotel"):
             d = hotel.waiter_serve - hotel.waiter_pass
             draw_figure(waiter_fig, hotel.waiter_pass, atan2(f64(d.x), f64(d.z)), 0.0, 0.0, L, t)
-    if key == "" or not waiter.ready: return
+    if clearing: _draw_server(clear_waiter, left_key, L)
+    if key != "" and waiter.ready: _draw_server(waiter, key, L)
+
+# whoever serves at a place, walking, setting down or carrying away, with the tray and what is on it
+_draw_server = (wt: Waiter, key: str, L: Light):
     fig = service_fig(key)
-    walking = waiter.stage == 1 or waiter.stage == 3 or waiter.stage == 4
-    busy = waiter.tray.len() > 0 or waiter.stage == 2 or waiter.stage == 5
-    draw_figure(fig, waiter.pos, waiter.yaw, waiter.phase, if walking: 1.0 else: 0.0, L, t, carrying = busy)
+    walking = wt.stage == 1 or wt.stage == 3 or wt.stage == 4 or wt.stage == 6
+    busy = wt.tray.len() > 0 or wt.stage == 2 or wt.stage == 5
+    draw_figure(fig, wt.pos, wt.yaw, wt.phase, if walking: 1.0 else: 0.0, L, t, carrying = busy)
     if not busy: return
     # (the tray, between his hands, and what is on it)
-    at = translation(waiter.pos) * rotation_y(waiter.yaw + PI) * scaling(f64(fig.height))
+    at = translation(wt.pos) * rotation_y(wt.yaw + PI) * scaling(f64(fig.height))
     a = transform_point(at, figure_hand_local(fig, 0, 1.15, -1.0, -0.1))
     b = transform_point(at, figure_hand_local(fig, 0, 1.15, 1.0, -0.1))
-    fwd = vec3(f32(sin(waiter.yaw)), 0, f32(cos(waiter.yaw)))
+    fwd = vec3(f32(sin(wt.yaw)), 0, f32(cos(wt.yaw)))
     top = (a + b) * 0.5 + fwd * 0.1
-    draw(obj_sh, tray_mesh, obj_params(L, t, translation(top) * rotation_y(waiter.yaw)))
-    right = vec3(f32(cos(waiter.yaw)), 0, f32(-sin(waiter.yaw)))
-    loop k in 0..waiter.tray.len():
+    draw(obj_sh, tray_mesh, obj_params(L, t, translation(top) * rotation_y(wt.yaw)))
+    right = vec3(f32(cos(wt.yaw)), 0, f32(-sin(wt.yaw)))
+    loop k in 0..wt.tray.len():
         o = [vec2(-0.08, -0.06), vec2(0.09, -0.03), vec2(0.0, 0.1)][k % 3]
         p = top + vec3(0, 0.024, 0) + right * o.x + fwd * o.y
-        draw_serving(serve_parts, waiter.tray[k], translation(p) * rotation_y(waiter.yaw + f64(k)) * scaling(1.2), L, t)
+        draw_serving(serve_parts, wt.tray[k], translation(p) * rotation_y(wt.yaw + f64(k)) * scaling(1.2), L, t)
+
+# "Finished with this?", over whoever is asking
+draw_waiter_ask = ():
+    if leisure.sitting == "" or waiter.stage != 7: return
+    head = waiter.pos + vec3(0, 1.75, 0)
+    speech_bubble(fonts, head, if leisure.sitting == "coffee": "The boy" else: if leisure.sitting == "bar": "The barkeep" else: "The waiter", "Finished with this?", f64(length(head - scene_camera())))
 
 draw_table_things = (L: Light):
+    # (what was left on a table the pilot got up from, as it was left)
+    if left_key != "" and left_key != leisure.sitting:
+        loop s in left_table:
+            draw_serving(serve_parts, s, translation(table_spot(left_spots, s.seat)) * rotation_y(f64(s.seat) * 1.3) * scaling(1.2), L, t)
     if leisure.served.len() == 0 or leisure.sitting == "": return
     sp = service_spots(leisure.sitting)
     loop s in leisure.served:
@@ -2609,6 +2724,33 @@ leisure_panel = ():
             else if r.choice == 1 or r.closed:
                 ui = .none; leisure_ui = 0
             if r.choice >= 0 or r.closed: ride_asker = -1
+        19:
+            # (the waiter, asking whether the pilot has finished with something that has some left)
+            about = waiter_asking_about(waiter, leisure.served)
+            if about == none or leisure.sitting == "":
+                leisure_ui = 0
+                return
+            who = if leisure.sitting == "coffee": "The boy" else: if leisure.sitting == "bar": "The barkeep" else: "The waiter"
+            r = choice_panel(fonts, who, "the {about!.item.name.lower()}", "", ["Yes, thank you", "Not yet"])
+            if r.choice == 0: waiter_answer(waiter, leisure.served, true)
+            else if r.choice == 1 or r.closed: waiter_answer(waiter, leisure.served, false)
+            if r.choice >= 0 or r.closed: leisure_ui = 0
+        18:
+            # (stepping ashore with someone in the second seat, before they have flown)
+            global ride_asking_wait
+            if ride.stage != .seated or ride.person < 0:
+                ui = .none; leisure_ui = 0; ride_asking_wait = false
+                return
+            pp = w.people[ride.person]
+            r = choice_panel(fonts, pp.name, "in the second seat", "", ["Back in a few minutes", "Sorry, another day"])
+            if r.choice == 1:
+                _ = ride_put_off(ride, t)
+                ride_declined[ride.person] = w.minute
+            else if r.choice == 0 or r.closed:
+                ride_wait_begin(ride, w.minute)
+                ride.line_until = t + 5.0
+            if r.choice >= 0 or r.closed:
+                ui = .none; leisure_ui = 0; ride_asking_wait = false
         6: tavli_choice_frame()
         7: tavli_frame()
         8: band_request_frame()
@@ -2788,6 +2930,17 @@ leisure_capture_step = ():
             stay_sleep(rest_minutes(living_world, 420), "Asleep")
         global stay
         stay.next_line = t + 0.5
+    if stage.starts_with("table-"):
+        # (the table's things: left on getting up (table-leave, table-back: and come back to),
+        # cleared after (table-clear), an empty taken while seated (table-empty), the waiter asking
+        # about one with some left (table-ask))
+        leisure_sit("hotel")
+        loop name in ["Meze plate", "Ouzo, the house's", "House white"]:
+            d = pick(name)
+            leisure.served.push(Served(d, living_world.minute, leisure.served.len() * 2, amount = if name == "Ouzo, the house's" and stage == "table-empty": 0.0 else: if d.food: 0.45 else: 0.6, empty_for = 60.0, still = if stage == "table-ask" and name == "House white": 200.0 else: 0.0))
+        global table_script
+        table_script = if stage == "table-leave" or stage == "table-clear": "stand:60" else: if stage == "table-back": "stand:60 sit:200" else: "trace:0"
+        follow.yaw = me.yaw + PI + 1.4; follow.distance = 4.5; follow.pitch = 0.45
     if stage.starts_with("seat") or stage.starts_with("company"):
         # (seated, the view about the seat; things on the table half gone, a glass at the lips;
         # company: someone come over, asking (at a table), sitting with the pilot, or on the next stool)
@@ -7117,14 +7270,21 @@ update_frame = (dt: f64, saves: bool = true):
             ui_folk = k0
             ui_turn = living.talk(living_world, folks[k0].person, .greeting, living_world.player)
             ui_line = with_meet_remark(folks[k0].person, ui_turn)
-    pad_mode = if title.open or paused or ui != .none or notebook.open or show_chart: 3 else if me.mode == .aboard: (if pc.state.on_water or pc.state.moored: 1 else: 0) else: 2
+    # (4: seated at a table or the bar with only its own bar along the bottom, or in a room's view:
+    # as a panel, but a finger on the scene turns the view)
+    looking = (seat_view() or (stay.active and ui == .leisure and leisure_ui == 15 and not skip.active)) and not paused and not notebook.open and not show_chart and not title.open
+    pad_mode = if looking: 4 else if title.open or paused or ui != .none or notebook.open or show_chart: 3 else if me.mode == .aboard: (if pc.state.on_water or pc.state.moored: 1 else: 0) else: 2
     lay_out_screen()                # (upright or on its side, a phone gets its own units)
     # (the touch screen's X: the P.7's hand clutch while it is still on the screw, the Albatross's gear)
     pad_lever = if pc.kind==.piaggio_p7 and not pc.state.foil.engaged: "Clutch" else: if pc.kind==.albatross: "Gear" else: ""
     update_pad(pad_mode, not pc.slow, pc.throttle, dt, pad_lever)
+    # (a touch screen never keeps the pointer locked: its first finger is also the mouse, and a
+    # locked mouse turns the view by that finger's jump from where the last touch lifted to where
+    # the next lands; the touch pad turns it instead)
+    if pad.on and is_mouse_locked(): mouse_lock(false)
     # (a gamepad or a flight stick: its axes and its buttons as the game's keys, src/controller.jo)
     # (coming down under a parachute is the air's: its button opens the canopy)
-    update_controller(if me.mode == .descent and pad_mode != 3: 0 else: pad_mode, dt, dbg.opts.controls)
+    update_controller(if pad_mode == 4: 3 else if me.mode == .descent and pad_mode != 3: 0 else: pad_mode, dt, dbg.opts.controls)
     # P (or F1) stops the world and its sounds, and opens the pause menu (the debugging panel)
     if frame_number()==capture_pause_frame: set_paused(true)
     if frame_number()==game_capture_frame:
@@ -7172,6 +7332,7 @@ update_frame = (dt: f64, saves: bool = true):
     if frame_number() % 60 == 0: leisure_clear_table(living_world, leisure)
     let dt = frame_dt(if stress_frame_dt>0:stress_frame_dt else:dt)
     t += dt
+    if stay.active and ui == .leisure and leisure_ui == 15 and not skip.active: stay_look_step(dt)
     stay_tick()
     ride_tick(dt)
     service_step(dt)
@@ -7778,8 +7939,9 @@ update_frame = (dt: f64, saves: bool = true):
     if me.mode == .walking and ui == .none and not world_held():
         k = nearest_folk(folks,me.pos,7.0)
         if k >= 0 and t-folks[k].line_t > 20.0 and not (welcome_active(living_world) and folks[k].person == living_world.welcome.greeter):
-            folks[k].line = passing_line(living_world,folks[k].person)
+            folks[k].line = if folks[k].person in ride_owed: ride_gave_up_line(living_world.people[folks[k].person].traits.boldness < 450) else: passing_line(living_world,folks[k].person)
             folks[k].line_t = t
+            if folks[k].person in ride_owed: ride_owed.remove(folks[k].person)
     if not world_held(): update_air_events(air_events,living_world,craft_models,pc.state.position,me.mode==.aboard,other_air=[loop tr in traffic:if tr.visible:AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored)])
     if let stage = capture_race: stage_capture_race(stage, dt)
     if let stage = war_stage_pending:
@@ -8381,6 +8543,7 @@ draw = ():
     set_font()
     draw_music_cues()
     draw_company_talk()
+    draw_waiter_ask()
     draw_ride_talk()
     # money
     set_font(fonts.ui)
@@ -8525,6 +8688,26 @@ draw = ():
         if frame_number()>=60 and frame_number()%2==0:save_png("{directory}/{(frame_number()-60)/2:05}.png",screenshot())
     if let directory=startup_aegean_atmos_frames:
         if frame_number() in [2,360,780,1200,1800] or frame_number()%4==0 and (frame_number()<=120 or frame_number()>=720 and frame_number()<=960): save_png("{directory}/{frame_number()}.png",screenshot())
+    # AEGEAN_RIDE_WAIT_SKIP=<frame>: at that frame the world's clock moves on 25 minutes (the
+    # waiting clip: long enough for a word from the one in the seat)
+    if let f = env("AEGEAN_RIDE_WAIT_SKIP"):
+        if frame_number() == (to_int(f) ?? -1):
+            living.advance_minutes(living_world, 25)
+            print("RIDE wait skip: {ride.stage} waited from {ride.wait_from} now {living_world.minute}")
+    # (the table capture's script: get up, sit again, at those frames; a trace of what is where)
+    loop step in split(table_script, " "):
+        kv = split(step, ":")
+        if kv.len() == 2 and frame_number() == (to_int(kv[1]) ?? -1):
+            if kv[0] == "stand" and leisure.sitting != "":
+                leisure_stand()
+                # (a step back from the table, looking at it)
+                me.pos = me.pos + vec3(f32(-sin(me.yaw)), 0, f32(-cos(me.yaw))) * 2.0
+                follow.yaw = me.yaw + PI + 1.4; follow.distance = 5.0; follow.pitch = 0.45
+            if kv[0] == "sit": leisure_sit("hotel")
+    if table_script != "" and frame_number() % 20 == 0: print("TABLE f{frame_number()} sitting {leisure.sitting} served {[loop s in leisure.served: s.amount]} left {left_key} {[loop s in left_table: s.amount]} clearer {clear_waiter.stage} tray {clear_waiter.tray.len()} waiter {waiter.stage} ui {leisure_ui}")
+    if env("AEGEAN_SEAT_TRACE") != none and frame_number() % 5 == 0: print("SEAT f{frame_number()} yaw {follow.yaw:.3} pitch {follow.pitch:.3} look {stay_look_turn.yaw:.3} {stay_look_turn.pitch:.3}")
+    if let f = env("AEGEAN_RIDE_TRACE"):
+        if frame_number() % 30 == 0: print("RIDE f{frame_number()} stage {ride.stage} mode {me.mode} ui {ui}/{leisure_ui} line {ride.line} d {length(me.pos - pc.state.position):.1}")
     # AEGEAN_RIDE_FRAMES=dir: a pleasure flight's clip, every other frame from 60 to 900
     if let directory = env("AEGEAN_RIDE_FRAMES"):
         if frame_number() >= 60 and frame_number() <= 900 and frame_number() % 2 == 0: save_png("{directory}/{(frame_number() - 60) / 2:04}.png", screenshot())
