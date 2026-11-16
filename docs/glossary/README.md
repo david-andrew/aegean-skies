@@ -2641,7 +2641,7 @@ No image: the tiers differ in budgets more than in any single view.
   bail out or open the parachute, D-pad up the gun safety, A interact, Start pause, Back the
   chart); the **flight stick** profile reads a device's own numbered axes and buttons (stick X and
   Y, the throttle lever taking the throttle when it moves, the twist or pedals as rudder, the hat
-  looking). A device counts as a flight stick by its name (or as the Controls page says). Each axis
+  looking). A device counts as a flight stick when the platform says it is not a standard gamepad (`gamepad_standard`; the Controls page's Advanced row can say otherwise). Each axis
   has a binding (set by choosing it and moving the control), an inversion, a dead zone and a
   sensitivity; each profile has a response curve. Bindings name their device, so a stick, a
   throttle and pedals plugged in together each give their part. The controller's buttons press the
@@ -2652,9 +2652,11 @@ No image: the tiers differ in budgets more than in any single view.
   menu's Controls page); `src/pilot.jo` `key_controls` (the analog axes and the right-stick look);
   `src/options.jo` (`Options.controls`).
 - **Rules:** no hardware is needed to test it: `controller_inject` puts in a synthetic device (a
-  standard pad or a flight stick) and `SLOPPY_INPUT`'s pad items (`40:rt=1 930:lstick=0x0.8`) drive
-  a standard pad in the running game. An older options file loads with the default controls.
-- **Tests:** `tests/gamepad_test.jo` (shaping, contexts, menus, a flight stick, binding by moving,
+  standard pad or a flight stick) for unit tests, and in the running game `SLOPPY_INPUT`'s pad items
+  drive a standard pad (`40:rt=1 930:lstick=0x0.8`) or a flight stick's own controls
+  (`1:pad_name=T.16000M 40:pad_axis3=-1 930:pad_axis1=0.8`; Sloppy 0.37.0). An older options file loads with the default controls.
+- **Tests:** `tests/gamepad_play_test.py` (the game by a scripted pad and flight stick:
+  `tools/gamepad_probe.jo`); `tests/gamepad_test.jo` (shaping, contexts, menus, a flight stick, binding by moving,
   saving, offers and hints, and a take-off, a turn and a landing flown on a synthetic gamepad
   through `key_controls`). Captures: `AEGEAN_CAPTURE_PANEL=controls`, `AEGEAN_CAPTURE_TAKEOFF=pad`.
   In a browser: `WEBPAD_GPU=1 node tools/web_gamepad.mjs <chrome-headless-shell> <page.html> <outdir>`
@@ -2666,20 +2668,23 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Pad focus
 
-- **Aliases:** the menu ring, menu nav.
-- **Definition:** the white ring a controller moves through menus and panels: the pause menu, the
-  title's panels, the Paint page, and the panels that draw their own buttons (the leisure menus,
-  tavli, the paper, the fuel and map counters, the workshop desk). The d-pad or left stick moves it
-  to the nearest box that way, A presses (ticks) it, left and right step a slider, LB and RB turn
-  the pause menu's pages (the ring starts on the page's tab), B goes back (closes the pause menu, a
-  panel). It shows once a controller is touched and goes when the mouse or a key is used. A
-  scrolling page scrolls to keep it in view. Lists worked by keys (talking, trading, the tavli
-  board, the paper) take the d-pad as the arrows, A as Enter, B as Escape, X and Y as trade's B and S.
-- **Code:** `src/menu_nav.jo` (`nav_button`, `nav_checkbox`, `nav_slider`, `nav_hit` for a panel's
-  own boxes, `nav_step`); `mkey` and `mrepeat` in `src/touch.jo` for keys. A stand-in for Sloppy's
-  `hud_nav` (in Sloppy after v0.36.2): when the project moves to a release with it, the hud_ wrappers
-  give way to `hud_nav(true)`.
-- **Tests:** `tests/gamepad_test.jo`; in a browser, `tools/web_gamepad.mjs` (below).
+- **Aliases:** the menu ring, menu nav, hud_nav.
+- **Definition:** the ring the keys and a controller move through menus and panels, Sloppy's own
+  `hud_nav` (Sloppy 0.37.0): the pause menu (each page keeps its own focus), the title's panels
+  (the title's main list has its own focus, by up and down), the Paint and Controls pages, and the
+  panels that draw their own buttons (the leisure menus, the paper, the notebook, the fuel and map
+  counters, the workshop desk), whose buttons each get an invisible `hud_button` (`pad_hit`) so
+  hud_nav can reach them. The d-pad or left stick moves it to the nearest box that way, A (Enter)
+  chooses, left and right step a slider, LB and RB turn the pause menu's pages, B goes back (closes
+  the pause menu, a panel). Moving the mouse hides it. It is off while the Controls page waits for a
+  control to be moved. Tavli keeps its own keys (the d-pad and A over the board, X throws and
+  finishes, Y takes back); talking and trading take the d-pad as their arrows, A as Enter, X and Y
+  as trade's B and S.
+- **Code:** `hud_nav(...)` calls in `src/debugmenu.jo` `debug_panel`, `src/title_screen.jo` and
+  `aegean.jo` `draw` (the panels); `pad_hit` in `src/touch.jo`; `mkey` and `mrepeat` there for
+  the keys a panel reads itself.
+- **Tests:** `tests/gamepad_play_test.py` (the title, the pause menu to the Controls page, by a
+  scripted pad); in a browser, `tools/web_gamepad.mjs`.
 
 ### Pad hints
 
