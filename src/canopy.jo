@@ -65,6 +65,48 @@ grove_uniform = (reach: f64,share: f32) -> vec4: vec4(f32(reach),share,if render
 grove_new_world = () -> vec4: grove_uniform(render_quality.grove_distance-112.0,grove_kept_share())
 grove_islands = () -> vec4: grove_uniform(render_quality.tree_distance,0.0)
 
+# The canopy's modelling light: the sun's bearing, held low over the crowns at every hour, so the
+# lumps keep a lit side and a shaded side even at noon (a high sun alone models nothing: the
+# canopy read flat from afar); w fades it out as the sun goes down. A world direction, never the
+# camera's, so nothing swims as the view turns.
+canopy_light = (sun: vec3) -> vec4:
+    s = normalize(sun)
+    h = vec2(s.x,s.z)
+    dir = if length(h) > 0.05: normalize(h) else: vec2(-0.6,0.8)
+    vec4(normalize(vec3(dir.x*0.85,max(s.y,0.0)*0.5+0.22,dir.y*0.85)),clamp(s.y*5.0,0.0,1.0))
+
+# The land's modelling light (ground_surface): the sun's bearing held a little lower than a
+# high sun, weighted into the land's own light, so slopes turned from the sun read shaded and
+# ridges lit even at noon: the bands the far land is built from. w: its weight.
+land_light = (sun: vec3) -> vec4:
+    s = normalize(sun)
+    h = vec2(s.x,s.z)
+    dir = if length(h) > 0.05: normalize(h) else: vec2(-0.6,0.8)
+    vec4(normalize(vec3(dir.x*0.62,0.8,dir.y*0.62)),0.55*clamp(s.y*5.0,0.0,1.0))
+
+# The land's own aerial perspective: the same air as look.jo aerial (its optical depth, thinner
+# up high), but the land fades into it faster and the air seen against land is a deeper blue
+# than the horizon haze, turning to the haze only toward the horizon. Dark woods and shaded
+# slopes go blue, lit straw goes pale, and the far ridges read as blue silhouettes a few values
+# under the sky, never a grey wash.
+land_aerial = (c: vec3,world: vec3,cam: vec3,haze: vec3,density: f32) -> vec3:
+    dist = length(world-cam)
+    low = max(min(world.y,cam.y),0.0)
+    dh = abs(max(world.y,0.0)-max(cam.y,0.0))*0.0012
+    mean = exp(-low*0.0012)*(if dh < 0.01: 1.0-dh*0.5 else: (1.0-exp(-dh))/dh)
+    optical = max(dist-60.0,0.0)*density*(0.12+0.88*mean)
+    # (quadratic at first: nearby paint keeps its colour, the change gathers with distance)
+    # (by the distance through air as dense as the ground's, thinner up high, on a scale that
+    # grows with the eye's height, so from a height the middle distance stays green; the
+    # weather's own haze on top)
+    x = max(dist-60.0,0.0)*(0.35+0.65*mean)/(2600.0+max(cam.y,0.0)*2.2)
+    seen = exp(-x*x*sqrt(x)-optical*0.6)
+    # (the air seen against land: a deep teal-blue, land in shadow rather than a pale haze, its
+    # red pulled down; it nears the haze only toward the horizon, so each far ridge holds a value
+    # step under the sky)
+    air = mix(haze*vec3(0.54,0.84,0.98),haze,1.0-exp(-optical*0.9))
+    c*seen+air*(1.0-seen)
+
 # The expected share of the ground under pine crowns: the far canopy's mean when crowns are too
 # small to draw (a pine crown about 80 m^2, 1.6 trees a cell where it holds a pine).
 # (linear ramps throughout the shader paths: on the laptop's GPU each smoothstep was a cost)
@@ -218,7 +260,28 @@ struct CanopyPaint:
 # farther off, so a stand's margin stays as soft there as near.
 canopy_mean = (base: vec3,maquis: f32) -> vec3:
     closed = clamp((maquis-0.6)*2.5,0.0,1.0)
-    mix(base*(1.0-closed*0.16),mix(vec3(0.34,0.40,0.26),vec3(0.17,0.28,0.16),closed*0.35),maquis*0.8)
+    mix(mix(base,vec3(0.07,0.20,0.15),closed*0.55),mix(vec3(0.24,0.37,0.21),vec3(0.11,0.27,0.17),closed*0.4),maquis*0.8)
+
+# One octave of lumps (clumps of crowns, or the masses they make up): a value offset, the lumps
+# lighter than their gaps and modelled by the canopy light. Two octaves of the sheet carry it:
+# clumps (54 m cells) through the middle distance, masses (180 m cells) on the far hills, where
+# single crowns and clumps are long below a pixel and the canopy would read flat.
+_canopy_lumps = (k: vec4,cover: f32,light: vec4) -> f32:
+    lump = clamp((cover*1.1-k.w)*4.0+0.5,0.0,1.0)*clamp(k.z*1.6,0.0,1.0)
+    lump*0.42-0.34+dot(k.xy*2.0-vec2(1,1),light.xz)*light.w*lump*0.3
+const CANOPY_CLUMPS = 6.0
+const CANOPY_MASSES = 20.0
+# The far value of a stand: clumps, then masses; each octave read only where it shows (low: a
+# narrow hand-over, so most pixels read one).
+canopy_far_value = (sheet: Texture,p: vec2,footprint: f32,cover: f32,light: vec4,wide: bool) -> f32:
+    span = f32(CANOPY_CELLS)*CANOPY_CELL
+    clumps = clamp((80.0-footprint)/40.0,0.0,1.0)
+    # (low: no masses octave, its sheet read was low's largest cost on the far land)
+    masses = if wide: clamp((footprint-12.0)/18.0,0.0,1.0)*clamp((900.0-footprint)/500.0,0.0,1.0) else: 0.0
+    v: f32 = 0.0
+    if clumps > 0.0: v += _canopy_lumps(sample(sheet,p/(span*CANOPY_CLUMPS)+vec2(0.37,0.61)),cover,light)*clumps
+    if masses > 0.0: v += _canopy_lumps(sample(sheet,p/(span*CANOPY_MASSES)+vec2(0.71,0.13)),cover,light)*masses*0.9
+    1.0+v*clamp((cover-0.1)*2.5,0.0,1.0)
 
 # A sheet sample's crown: present where its own random number is under the cover, inside its rim.
 _canopy_mass = (s: vec4,cover: f32,soft: f32,edge: f32) -> f32:
@@ -227,7 +290,7 @@ _canopy_mass = (s: vec4,cover: f32,soft: f32,edge: f32) -> f32:
 # base: the ground's colour (also the gaps between crowns: in a stand's thin margin it is the
 # dry grass around, so the margin has no outline); maquis: the stand cover (0 to 1); dens: the
 # grove field (the materials' tint.x).
-canopy_paint = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maquis: f32,distance: f32,sun: vec3,sheet: Texture,grove: vec4) -> CanopyPaint:
+canopy_paint = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maquis: f32,distance: f32,sun: vec3,light: vec4,sheet: Texture,grove: vec4) -> CanopyPaint:
     slope = length(n.xz)/max(n.y,0.1)
     pines = grove_pine_cover(dens,slope,y)
     if maquis < 0.01 and pines <= 0.0: return CanopyPaint(base)
@@ -248,9 +311,9 @@ canopy_paint = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maqui
         mass = _canopy_mass(s,maquis,0.06,0.3)
         tone = fract(s.w*7.13)
         closed = clamp((maquis-0.6)*2.5,0.0,1.0)
-        shrub = mix(vec3(0.30,0.37,0.24),vec3(0.38,0.43,0.28),tone)*(0.9+0.14*s.z)
-        shrub = mix(shrub,vec3(0.17,0.28,0.16),closed*0.35)
-        ground = base*(1.0-closed*0.16)
+        shrub = mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),tone)*(0.76+0.3*s.z)
+        shrub = mix(shrub,vec3(0.11,0.27,0.17),closed*0.4)
+        ground = mix(base,vec3(0.07,0.20,0.15),closed*0.55)
         color = mix(ground,shrub,mass)
         bend = (s.xy*2.0-vec2(1,1))*mass*0.5
         lit = mass
@@ -261,10 +324,10 @@ canopy_paint = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maqui
     if far > 0.0:
         # Farther off, the clumps: the ground's own colour, lighter on the clumps' tops and
         # darker in the gaps between them, so the mean (and the patch edges) stay the ground's.
-        k = sample(sheet,p/(span*6.0)+vec2(0.37,0.61))
+        k = sample(sheet,p/(span*CANOPY_CLUMPS)+vec2(0.37,0.61))
         hold = clamp((80.0-footprint)/40.0,0.0,1.0)
         clump = _canopy_mass(k,maquis*1.1,0.12,0.25)*clamp(k.z*1.6,0.0,1.0)
-        value = 1.0+(clump*0.3-0.2)*clamp((maquis-0.1)*2.5,0.0,1.0)*hold
+        value = canopy_far_value(sheet,p,footprint,maquis,light,true)
         color = mix(color,canopy_mean(base,maquis)*value,far)
         bend = mix(bend,(k.xy*2.0-vec2(1,1))*clump*0.6*hold,far)
         lit = mix(lit,clump*hold,far)
@@ -301,17 +364,18 @@ canopy_paint = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maqui
 # maquis' crowns and clumps with their light painted into their colour (lighter tops), linear
 # ramps, no second light ramp or shadow probe; the trees are the meshes only, and past their
 # reach their mean. (Measured on redfox: each smoothstep here was a visible cost.)
-canopy_paint_low = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maquis: f32,distance: f32,sun: vec3,sheet: Texture,grove: vec4) -> vec3:
+canopy_paint_low = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maquis: f32,distance: f32,light: vec4,sheet: Texture,grove: vec4) -> vec3:
     pines = clamp((dens-0.5)*1.5,0.0,0.19)*clamp((0.48-length(n.xz)/max(n.y,0.1))*16.0,0.0,1.0)*clamp((distance-grove.x)/400.0,0.0,1.0)
     if maquis < 0.01 and pines <= 0.0: return base
     span = f32(CANOPY_CELLS)*CANOPY_CELL
     if footprint < 4.5:
         s = sample(sheet,p/span)
         mass = clamp((maquis-s.w)*8.0+0.5,0.0,1.0)*clamp(s.z*3.3,0.0,1.0)
-        shrub = mix(vec3(0.30,0.37,0.24),vec3(0.38,0.43,0.28),fract(s.w*7.13))*(0.9+0.14*s.z)
+        # (each crown modelled by the canopy light: its sunward side lit, the far side and its foot dark)
+        model = dot(s.xy*2.0-vec2(1,1),light.xz)*light.w
+        shrub = mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13))*(0.72+0.34*s.z+model*0.3)
         floor_mix = clamp((maquis-0.6)*2.5,0.0,1.0)
-        shrub = mix(shrub,vec3(0.17,0.28,0.16),floor_mix*0.35)
-        return mix(mix(base*(1.0-floor_mix*0.16),shrub,mass),vec3(0.13,0.23,0.13),pines)
-    k = sample(sheet,p/(span*6.0)+vec2(0.37,0.61))
-    clump = clamp((maquis*1.1-k.w)*4.0+0.5,0.0,1.0)*clamp(k.z*1.6,0.0,1.0)*clamp((80.0-footprint)/40.0,0.0,1.0)
-    mix(canopy_mean(base,maquis)*(1.0+(clump*0.3-0.2)*clamp((maquis-0.1)*2.5,0.0,1.0)),vec3(0.13,0.23,0.13),pines)
+        shrub = mix(shrub,vec3(0.11,0.27,0.17),floor_mix*0.4)
+        return mix(mix(mix(base,vec3(0.07,0.20,0.15),floor_mix*0.55),shrub,mass),vec3(0.09,0.22,0.13),pines)
+    # (the clumps and masses as lumps: lit and shaded sides by the canopy light, dark gaps)
+    mix(canopy_mean(base,maquis)*canopy_far_value(sheet,p,footprint,maquis,light,false),vec3(0.13,0.23,0.13),pines)
