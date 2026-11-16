@@ -17,13 +17,13 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -279,12 +279,65 @@ On the rivers branch until it lands.
   twelve quads across the channel between stations, in batches of four stations grouped by
   sixteen (one material anchor). It uses the sea's
   material with its inland options: the same [speed flecks](#speed-flecks) and
-  [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water. A
+  [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water (teal
+  to slate on Neravessa's canal: [canal mirror](#canal-mirror)). A
   group or batch wholly beyond 450 m (where flecks and ripples have faded out) uses the cheaper far
   material in one draw, which is exact there.
 - **Code:** `src/river_render.jo` (`init_rivers`, `draw_rivers`, `draw_inland_water`);
   the material is `src/sea.jo sea_material` with `inland=true`.
 - **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
+
+### Canal cut
+
+- **Aliases:** Neravessa's walls, the canal side, the deep cut.
+- **Definition:** Neravessa's canal and its arms run between dark slate stone walls standing 5 m over
+  the water (`CANAL_STREET`), with a wet band at the waterline, coursed joints, iron mooring plates,
+  and a stone parapet on top. Behind the wall the street is paved: an 8 m promenade with plane trees,
+  poplars, cast-iron lamps (lit after dark), benches and a few people before the front row of
+  houses, or warehouses and works standing straight on the wall. Stairs down to the water sit in the
+  wall's thickness with a landing at the foot. The workshop's yard and slipway keep a low quay 2 m
+  over the water, with stairs up to the street at either end. Contact (walls, parapets, streets,
+  stairs) and the drawing come from the same layout (`canal_banks`, `canal_solids`).
+- **Code:** `src/canal_geometry.jo` (`init_canal_geometry`, `canal_frontage`, `CANAL_WATER_STAIRS`);
+  drawn by `src/canal_city.jo` (`canal_bank_mesh`, `canal_promenade`) through `src/canal_render.jo`.
+  Over the cut the terrain keeps finer cells further out (`world_tile_canal` in
+  `src/world_terrain.jo`) so the cut stays open from the air.
+- **Rules:** player-facing text says canal side, dock or waterfront, never "quay".
+
+### Canal crossings
+
+- **Aliases:** the canal bridges.
+- **Definition:** a crossing every 100-300 m of the canal run (`CANAL_BRIDGES`): single-span stone
+  arches (a flat ellipse from wall to wall, springing ~3.6-4 m and crowned ~8-9 m over the water,
+  with a humped road, balustrades, lamps and someone leaning on the parapet), a high steel truss,
+  a low iron footbridge (5 m clear) and a pipe bridge. A planing Gull's top wing is ~3.9 m over the
+  water: held within ~8 m of the centre line it passes under every crossing with a metre or more
+  to spare; a pilot who lifts off early must stay under the arches or hop the decks.
+- **Code:** `src/canal_geometry.jo` (`CANAL_BRIDGES`, `canal_bridge_under`, `canal_bridge_top`);
+  `src/canal_city.jo` `canal_bridge_mesh`; `tests/canal_test.jo`.
+
+### Canal mirror
+
+- **Aliases:** the canal's reflections.
+- **Definition:** on Neravessa's canal the water is teal to slate, darker than its walls, and its
+  Fresnel reflection mirrors the cut instead of only the sky: the reflected ray is tested against
+  the two walls (vertical planes at the canal's half width), giving the dark stone up to the
+  parapet, then the promenade's trees and the facades, then the sky. Flecks and glints are unchanged.
+- **Code:** `src/sea.jo` `canal_mirror` (with `SeaParams.inland_walls`); set per batch in
+  `src/river_render.jo` (`RiverBatch.walls`, `CANAL_WATER_DEEP`, `CANAL_WATER_SHALLOW`).
+
+### Canal blocks
+
+- **Aliases:** Neravessa's houses, the canal facades.
+- **Definition:** the city's blocks, 4-6 storeys on the water: muted cream, grey and stone stucco
+  with one in six or seven an ochre, pink or rust accent; a darker rusticated base, string course,
+  frieze and cornice; framed recessed windows with shutters (some closed), sills, balconies and
+  awnings; slate mansards, hipped tile roofs or flat roofs with a parapet; the roof pitches facing
+  north are painted darker. One in seven windows is lit after dark. Front rows are fully detailed,
+  the next two rows have openings and trim, deeper rows are plain blocks on paved plinths. The
+  skyline's set pieces (`CANAL_SKYLINE`: domed churches, bell towers, works chimneys) end the
+  canal's vistas at its bends.
+- **Code:** `src/canal_city.jo` (`canal_block`, `canal_church`, `canal_tower`, `canal_chimney`).
 
 ### Confluence
 
@@ -639,12 +692,24 @@ On the rivers branch until it lands.
      settles at a ride height by herself; the tail foil sits higher than the forward pair, so the
      ride is a little nose-up. Fast, a foil's lift per square metre tops out (cavitation), which
      keeps her from being pinned to the water.
-  3. **The clutch:** as soon as the foils have held the hull and the air propeller clear of the
-     water for half a second (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can
-     carry her (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by
-     itself (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then
-     the air propeller is clutched in and comes off its feather over about 1.4 s. In that gap
-     nothing much pushes and she slows.
+  3. **The clutch:** as soon as the foils have held the hull clear and the air propeller with
+     0.2 m of air under its lowest blade (`PROP_CLEAR_MARGIN`) for three quarters of a second
+     (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can carry her
+     (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by itself
+     (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then the air
+     propeller is clutched in and comes off its feather over about 1.4 s. In that gap nothing
+     much pushes and she slows. If she drops off her foils with the driven propeller in the sea
+     for `FALLEN_TIME` (0.75 s), the screw is clutched back in by itself, at any throttle, so she
+     climbs up and tries again: she is never stopped dead.
+  **At sea:** her foils hang on struts long enough that, riding them, the hull and the air
+  propeller clear a moderate swell; their lift tops out at the cavitation limit through a soft
+  knee (tanh), so it still answers the flow's angle and damps her heave over the waves; a blade
+  tip skimming a crest costs thrust in proportion to how far it is in (`air_drive`,
+  `CraftState.foil.prop_dip`), and only a propeller well into the sea, driven, takes real blows.
+  In the game's own swell (src/sea.jo, rising with the wind) she takes off hands off or with the
+  stick back from calm to wind 6 (swell to about 1.4 m) in 25-41 s at the player's speed scale;
+  `tests/italian_racers_test.jo` "the P.7 takes off from the open sea in calm and in a moderate
+  swell".
   On her foils she drags far less than a float plane on its step: the foils' lift is square to
   the flow over them, and at 14-25 m/s their drag with the struts' is 12-17% of her weight,
   against a float plane's 19-40%. The hard part is the hump, on the water screw (8.2 kN,
@@ -658,8 +723,8 @@ On the rivers branch until it lands.
   (under 70%, from wear: the screw barely gets her onto her foils and the drive plate says
   "engine too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
   propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
-  in the water (it beats the sea, gives no thrust and hurts the engine); or the swell is big
-  (wind over about 8 m/s: the wing tips catch the waves and tear). Closing the throttle at under
+  in the water (it beats the sea, gives no thrust and hurts the engine); or the sea is rough
+  (wind about 8 m/s and over: the wing tips catch the waves and tear). Closing the throttle at under
   5 m/s on the water puts the clutch back to the screw for another try.
   **The air propeller as seen:** declutched, the engine drags it round through its feathered
   blades: it whirls with the throttle (12 rad/s idling, 33 flat out, about 315 rpm:
@@ -1563,6 +1628,11 @@ On the rivers branch until it lands.
   **Herds** of goats or sheep graze the slopes above villages; a low aircraft scatters them a little.
   Every bird is cut at its **waterline** (`wild_fs`) and rides the sea's swell, so what is under
   the water is not drawn through the transparent sea.
+  A bird's **neck** is two segments and a head (`fowl_neck`, `fowl_neck_frames`): an S with the
+  head level swimming, upright alert, stretched out ahead in flight, straight on down feeding,
+  folded back with the head on the back asleep, turned down over the shoulder preening. Goats
+  are lean and deep-chested with swept-back horns, hanging ears, a beard and a cocked tail; sheep a
+  round, low, lumpy fleece over dark legs with a pale face.
 - **Code:** `src/wildlife.jo` (`wild_scan`, `wild_harbour_raft`, `wild_hill_herd`,
   `wild_raft_kinds`, `wild_threat_level`, `raft_step`, `colony_step`, `herd_step`, `wildlife_step`),
   `src/wildlife_view.jo` (`_fowl_meshes`, `_pose_fowl`, `wild_fs`, `draw_wildlife`,
@@ -1576,8 +1646,10 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_WILD_LOOK="raft|upend|duck|gulls|herd distance height bearing"` with
   `AEGEAN_VIEW`; `AEGEAN_WILD_RAFT="ahead 170 14"` with `AEGEAN_CAPTURE_TAKEOFF=1` (and
   `AEGEAN_LAKE=0` for a lake's run) and `AEGEAN_WILD_WATCH="22 1.4 0.5"` for a raft put up by a
-  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air; `AEGEAN_WILD_TRACE=1`.
-  On `t3/wildlife`.
+  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air;
+  `AEGEAN_WILD_PORTRAIT="greylag|drake|duck|coot|gosling|gull|goat|sheep distance height bearing"`
+  (turnarounds, the bearing from the animal's own heading), `AEGEAN_WILD_POSE=swim|upend|preen|rest|alert`,
+  `AEGEAN_WILD_SHEEP=1|0`; `AEGEAN_WILD_TRACE=1`.
 
 ![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
 
@@ -1749,6 +1821,33 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Not to be confused with:** race standings (`air_standings` in `src/air_race.jo`).
 
 ![Standing in the notebook](img/standing.png)
+
+### The pilot's name
+
+- **Aliases:** reputation, what people have heard of him, his name preceding him.
+- **Definition:** what the living world's people know of the pilot and think of him, carried in
+  how they behave and talk, never shown as a number. Four leanings (warmth, honour, daring,
+  reliability) and, from the deeds a listener knows, what he did to and for their own country's
+  people. **Deeds** worth telling (a rescue, a victory, a job, a debt) spread as news: the
+  witnesses and the town at once, through the town over two or three days of talk, about a town
+  a day along the roads and sea lanes while `weight × 0.7^hops` stays above 150, and to every
+  town on the wireless when big. Small acts (a chat, a table shared or refused, a tip) stay with
+  the people there and their town. It all fades with time. Known as keeping to himself, fewer
+  people come over; asked over, they say no, and why. Never a punishment.
+- **Code:** `src/reputation.jo` (`rep_record`, `rep_act`, `rep_view`, `reputation_minute`),
+  `src/reputation_talk.jo` (greetings, company, prices, the wireless, the notebook's words),
+  `src/reputation_types.jo` (`World.rep`); combat deeds come through `src/deeds.jo`
+  (`deed_record`). Design: `docs/reputation.md`. Tests: `tests/reputation_test.jo`.
+- **Rules:** a person knows of him if they dealt with him or saw a deed, or by the town's word: a
+  fixed draw from the seed and their id under the share of the town that has heard. Whoever has
+  heard a deed and hasn't met him mentions it once. Company at the hotel and the coffee house,
+  the "Ask … to join you" action, a keeper's bill (up to 6% down, 5% up) and a family's spare room
+  follow it.
+- **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
+  a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
+  he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
+  `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip (`AEGEAN_SEAT_FRAMES_STEP`
+  frames apart, the view turning `AEGEAN_SEAT_FRAMES_TURN` radians a frame, 0 to hold it).
 
 ### Contracts
 
@@ -2114,6 +2213,32 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### A night under a roof
+
+- **Aliases:** the hotel room, staying the night, the family's spare room, supper with the family.
+- **Definition:** a stay is somewhere one is, not a dark card:
+  - **The hotel's room** is upstairs behind the French window at x = 4 on the sea side. It has an
+    iron bed, a washstand, a chair by the window and a lamp, with the harbour beyond its own
+    balcony; the hotel's mesh is not drawn while one is inside.
+  - **A family's stay** is in the host's own house (their home venue in the living world). At
+    supper (18:00 to 21:30) the host and the household residents they look after sit at the
+    table. The host's lines are their own passing talk from the dialogue (their day, the
+    weather), between the ordinary words of a meal at home; a child asks a question now and then.
+    There is coffee in the morning (05:30 to 11:30).
+  - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
+    window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
+  needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
+  The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
+  show through them; a game saved during a stay loads with the pilot outside, where he went in.
+- **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
+  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`); `stay_begin_hotel`,
+  `stay_begin_family`, `stay_sleep`, `stay_woke`, `stay_end`, `stay_frame`, `draw_stay` and
+  leisure stage 15 in `aegean.jo`; the time skip's `visible` mode; `tests/stay_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
+  stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
+  `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
+
 ### Company
 
 - **Aliases:** someone joining the pilot, company at the table, a neighbour at the bar.
@@ -2125,6 +2250,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   stool, and about half of them talk. Sitting, they pass an ordinary remark every half minute or
   so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
   them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
+  Fewer come to one known for turning people away, more to good company, and one who has heard of
+  something he did says so first ([The pilot's name](#the-pilots-name)); seated, "Ask … to join
+  you" asks whoever is near, who comes or says why not.
 - **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
   `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
   asking) in `aegean.jo`; `tests/company_test.jo`.
@@ -2903,10 +3031,11 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=controls` | the pause menu open on its Controls page (gamepads and flight sticks) |
 | (the pause-menu panels) | `aircraft`, `plane`, `paint`, `scenarios`, `flight`, `flight-levers`, `tweaks`, `controls` pause at frame 60, once the camera is placed: paused from the first frame the world was drawn from an eye never put anywhere (terrain floating over the sea). Script `SLOPPY_INPUT` presses after frame 60 |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
-| `AEGEAN_HOUR=h` | time of day |
+| `AEGEAN_HOUR=h` | time of day (also overrides a scenario's own start hour, for captures) |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
+| `AEGEAN_SETTLE=1` | terrain generation without its per-frame budget, so slow headless captures show settled ground |
 | `AEGEAN_AT='x z yaw'` | on foot at a spot |
 | `AEGEAN_SHOTS='dir 120 600'` | save those frames of a scripted (`SLOPPY_INPUT`) session as `dir/<frame>.png`, each with a `SHOT` line: mode, position, open panel, minute, purse, people within 40 m |
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |

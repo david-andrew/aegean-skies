@@ -129,6 +129,20 @@ funny or useful (time passes, people are met, the plane is looked after).
    pass an ordinary remark now and then, and Talk to them opens the whole conversation. See
    "Company" in the glossary.
 
+## Built (round nine)
+
+21. **A night under a roof**: a room at the hotel, or a grateful family's spare room, is now a
+   place one is in. You pay at the desk as before, then go up to the hotel's room: an iron bed, a
+   washstand, a chair by the French window, and the harbour beyond its balcony. You can sleep
+   until morning, rest until evening, take an hour's nap, or look out of the window. The time
+   passes in the room, seen: the light at the window turns through the night, with a small clock
+   instead of a dark card. A family that offers its room takes you home to their own house in the
+   town. In the evening there is supper with the household they look after, real people of the
+   living world. The host talks of their day and the weather, the children ask their questions,
+   and there is a bowl each, bread and a bottle of their own. The bed is in the room at the back
+   under the low beam, and there is coffee in the morning before you go. They take nothing for it.
+   The notebook remembers the night. See "A night under a roof" in the glossary.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
