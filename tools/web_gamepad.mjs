@@ -92,8 +92,9 @@ try {
   for (let k = 0; k < 8; k++) await press(5);
   await sleep(800);
   await shot("2-controls.png");
-  // (from the Controls tab: Flight v2, the Flight stick tab, Invert Y)
-  await press(13); await press(13); await press(13);
+  // (a page's focus starts on its first box, the Game tab: down past Paint, Tweaks and Scenarios,
+  // the Gamepad tab, to Invert Y)
+  for (let k = 0; k < 5; k++) await press(13);
   await press(0);
   await sleep(800);
   await shot("3-invert.png");
