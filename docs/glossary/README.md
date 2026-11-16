@@ -1449,13 +1449,13 @@ On the rivers branch until it lands.
 - **Definition:** a Tweaks trial (off by default, "Wind study grass"; `AEGEAN_TWEAKS=windstudy`) that
   replaces the wind sheen's wave trains from 5 m/s up (below 2.5 m/s the trains are untouched). Built
   from a study of videos of wind over grass: **gust patches** (100-250 m, about a third of the field or
-  less, drifting downwind and changing shape as they go, gustier and calmer zones over a kilometre) and
+  less, drifting downwind and changing shape as they go) and
   **dabs** (3-8 m spots of laid-over grass that form, run and fade within a second or two, at about half
   strength between gusts, full strength inside them). Blades lean further and flutter more in a gust and
   read the field a moment late by clump (0.1-0.5 s), so they lay over and stand again unevenly. The
   ground's sheen uses the same field: dabs out to 150-600 m, the gust patches over far fields to
   1.4-2.6 km (the trains stop at 260 m).
-- **Code:** `src/look.jo` (`meadow_noise_texture`, `build_meadow_noise`, the `sa`/`sb`/`sz`/`r1`/`r2`
+- **Code:** `src/look.jo` (`meadow_noise_texture`, `build_meadow_noise`, the `sa`/`sb`/`r1`/`r2`
   offsets in `meadow_step`), `src/terrain.jo` (`meadow_study`, `meadow_study_share`, `meadow_fill`,
   the sheen in `ground_surface`), `src/grass.jo grass_vs`.
 - **Rules:** the noise tile is procedural (a 128-square tileable fBm made by the game when the trial is
