@@ -57,6 +57,13 @@ step_minute = (w: mut World):
 # whose guarded checkpoint then restores the World as before (recovery mode) or panics (strict).
 # (districts, vehicles or journeys of the far check in one unit of a spread minute)
 const FAR_CHECK_PIECES = 128
+# Release play (recovery mode) checks the far registry as a rolling pass: about this many
+# minutes for every record once, a share each minute, and the totals over all of them once at
+# the pass's end; each minute also checks the records it changed (the districts its economy
+# worked, the journeys it began). Strict runs (the tests) check everything every minute.
+const FAR_ROLLING_MINUTES = 60
+_far_rolling = FarCheck(route_points=false,rolling=true)
+_far_rolling_share = 0
 struct MinuteRun:
     active = false
     unit = 0
@@ -82,6 +89,27 @@ minute_run_step = (w: mut World, run: mut MinuteRun, budget_ms: f64) -> bool:
             return true
         if (time()-started)*1000>=budget_ms: return false
 
+# (this minute's share of the rolling far check: false when it found a fault, which the
+# minute's checkpoint then undoes, the economy skipped as when the per-minute check refused)
+_far_rolling_minute = (w: World, run: mut MinuteRun) -> bool:
+    global _far_rolling, _far_rolling_share
+    if _far_rolling.stage>=5 or _far_rolling_share<=0:
+        _far_rolling = FarCheck(route_points=false,rolling=true)
+        records = w.far.place_ids.len()+w.far.vehicles.len()+w.far.journeys.len()+24
+        _far_rolling_share = max(16,(records+FAR_ROLLING_MINUTES-1)/FAR_ROLLING_MINUTES)
+    error = far_reference_error(w)
+    if error!="":
+        living_fault("far.economy_state",guard_context(w)+" "+error)
+        return false
+    if far_check_step(w,_far_rolling,_far_rolling_share) and _far_rolling.error=="":
+        _far_rolling.error = far_conservation_error(w)
+        _far_rolling_share = 0
+    if _far_rolling.error!="":
+        living_fault("far.economy_state",guard_context(w)+" "+_far_rolling.error)
+        _far_rolling_share = 0
+        return false
+    true
+
 _guarded_minute_rules = (w: mut World):
     run=MinuteRun(active=true)
     loop _minute_unit(w,run) and not guard_blocked(): pass
@@ -104,9 +132,13 @@ _minute_unit = (w: mut World, run: mut MinuteRun) -> bool:
         # itself run a few districts, vehicles or journeys at a time: the same checks in the
         # same order on a World nothing writes meanwhile, so the same verdict.
         if not w.far.populated or w.far.last_minute>=w.minute: run.unit=3; return true
+        if not living_strict():
+            if not _far_rolling_minute(w,run): run.unit=3
+            else: run.index=w.minute%60
+            return true
         if not run.checking:
             run.checking=true
-            run.far_check=if living_strict(): FarCheck() else: FarCheck(route_points=false,slice=w.minute%FAR_CHECK_SLICES,slices=FAR_CHECK_SLICES)
+            run.far_check=FarCheck()
         if not far_check_step(w,run.far_check,FAR_CHECK_PIECES): run.unit=1; return true
         run.checking=false
         if run.far_check.error!="":
@@ -116,7 +148,11 @@ _minute_unit = (w: mut World, run: mut MinuteRun) -> bool:
         return true
     if k==2:
         if run.index<w.far.place_ids.len():
-            far_economy_place(w,run.index); run.index+=60; run.unit=2
+            far_economy_place(w,run.index)
+            if not living_strict() and run.index<w.far.place_ids.len():
+                error=far_record_error(w,district=w.far.place_ids[run.index])
+                if error!="": living_fault("far.economy_place",guard_context(w)+" "+error)
+            run.index+=60; run.unit=2
         else: w.far.last_minute=w.minute
         return true
     if k==3:
@@ -138,7 +174,11 @@ _minute_unit = (w: mut World, run: mut MinuteRun) -> bool:
         return true
     if k==6:
         if run.index<run.ids.len():
-            far_depart(w,run.ids[run.index]); run.index+=1; run.unit=6
+            vehicle=run.ids[run.index]
+            far_depart(w,vehicle); run.index+=1; run.unit=6
+            if not living_strict() and vehicle<w.far.vehicles.len() and w.far.vehicles[vehicle].journey>=0:
+                error=far_record_error(w,vehicle=vehicle,journey=w.far.vehicles[vehicle].journey)
+                if error!="": living_fault("far.departure",guard_context(w)+" "+error)
         return true
     if k==7: sea_rescue_minute(w); return true
     if k==8: far_commissions_minute(w); return true

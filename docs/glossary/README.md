@@ -19,11 +19,11 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1120,7 +1120,9 @@ On the rivers branch until it lands.
 - **Definition:** the dark patches with defined edges that the clouds cast on land, sea,
   rivers, lakes and towns, offset from each cloud by the sun's angle and moving with clouds
   and sun; deep water goes navy, clear shallows a deeper teal, land keeps some colour. The
-  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`).
+  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`). Seen from height they
+  grow lighter and softer, and small clouds' shadows fade, as in the film; near the ground
+  they keep their edge.
 - **Code:** `src/cloud_shadow.jo`: the map (sun-projected coverage from each form's footprint
   slabs) and `apply_cloud_shadows`, a screen-space pass over the scene depth; the sea's glints
   per vertex in `src/sea.jo`. `AEGEAN_CLOUD_SHADOWS=0` turns them off.
@@ -1157,6 +1159,39 @@ On the rivers branch until it lands.
 
 ![A storm's anvil about 11 km off](img/anvil.png)
 
+### Storm system
+
+- **Aliases:** thunderstorm, storm cell (in the weather simulation).
+- **Definition:** a thunderstorm about 26 km across, minutes to fly through: a dark deck from a
+  ragged 1150 m base to above the highest an aircraft can climb, a tiered **shelf cloud** along
+  its leading (downwind) edge, four embedded cells at their stages (towers, a mature anvil, a
+  dissipating mass) under one painted **anvil canopy** near 9-10 km, rain shafts under the
+  cells, and a slate rain veil from its base to the sea that reads from 10-40 km. Painted in
+  the film's storm palette: near-black slate belly and deck, cream-grey lit tops. The air is
+  rough throughout its deck and violent in the cells. Born about 30 km out, it
+  crosses the home waters at 120 m a minute, closing the routes under it for about three and a
+  half hours: one waits it out, goes round, or pushes through.
+- **Code:** `storm_cells` (the shared layout) in `src/lightning.jo`; `storm_system_clouds` in
+  `src/cloud_field.jo`; weather kinds 9 (shelf), 10 (storm deck) and 11 (canopy) in
+  `src/cloud_volume.jo`; the schedule in `src/living_weather.jo`.
+- **Capture:** `AEGEAN_WEATHER=storm AEGEAN_WEATHER_CENTER='x z'` (with `AEGEAN_FLYING` the storm
+  centres on the aircraft).
+
+### Storm sighting
+
+- **Definition:** a thunderstorm in sight of a place (up to about 60 km beyond its edge), told
+  as an observation, never a forecast: islanders name where it stands, how far, and whether it
+  comes on or moves off; the radio's harbour weather report names it too.
+- **Code:** `storm_sighting` in `src/living_conditions.jo`; `context_weather` in
+  `src/living_talk_context.jo`; `radio_weather_content` in `src/radio_content.jo`.
+
+### Storm sound
+
+- **Definition:** a storm heard from the aircraft: rain drumming on fabric and wood, wind gusting
+  with the rough air, and thunder from each strike the bolts show, a crack and a roll near, a
+  darker roll far, arriving after its distance at the speed of sound. All synthesized.
+- **Code:** `src/storm_sound.jo`. On the ground the ambience's own thunder plays instead.
+
 ### Lightning
 
 - **Aliases:** strikes, bolts.
@@ -1172,9 +1207,10 @@ On the rivers branch until it lands.
 
 ### Rain shafts
 
-- **Definition:** the few dark columns and curtains of rain hanging from a storm's base to the
-  sea under its core, clear air between them, the lower rain carried downwind, with ragged scud
-  under the base. A squall's lighter **rain curtains** hang under its deck.
+- **Definition:** the dark columns and curtains of rain hanging from a storm system's base
+  (1150 m) to the sea under each of its cells, clear air between them, the lower rain carried
+  downwind, with ragged scud under the base. Hazed far less than the air around them, so from 30
+  to 40 km they are the grey streaks that say "storm". A squall's lighter **rain curtains** hang under its deck.
 - **Code:** weather kind 8 in `volume_sample`, `src/cloud_volume.jo`.
 
 ### Storm turbulence
@@ -1183,7 +1219,9 @@ On the rivers branch until it lands.
 - **Definition:** the air inside a cloud's body is rough, mildly in fair cumulus and violently
   in a thunderstorm, and gusty under a storm. It acts through the flight model: eddies and
   drafts in the wind it meets (vertical jolts and airspeed swings), and roll, pitch and yaw
-  kicks with a fast shudder that knock the aircraft about its path and let it come back.
+  kicks with a fast shudder that knock the aircraft about its path and let it come back,
+  and a slow wander of roll and pitch: left alone in a storm it drifts into a bank and a
+  descent over tens of seconds; held, it gets through.
 - **Code:** `weather_turbulence`, `weather_turbulent_gust` in `src/weather_scene.jo`;
   `_turbulence_kick` in `src/flight.jo`; `tests/storm_test.jo`.
 
@@ -1235,7 +1273,10 @@ On the rivers branch until it lands.
 ### Moon
 
 - **Definition:** a sphere lit by the actual sun direction, never a painted phase mask. On
-  `t3/splash-2` its disc is the same apparent size as the sun's.
+  `t3/splash-2` its disc is the same apparent size as the sun's. By day it is seen through the
+  sky in front of it: its lit side a pale, faintly blue wash low in contrast against the blue,
+  its dark side only sky; through dusk it becomes the night Moon.
+- **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count).
 - **Code:** `src/celestial.jo sky_moon`, `moon_illumination`; the disc in `src/sky.jo`.
 
 ### Planet lights
@@ -1545,6 +1586,9 @@ On the rivers branch until it lands.
 - **Rules:** a harbour whose quay cannot reach its houses over ground no steeper than 45° gets one.
   One direction only (no switchbacks): flights stacked over one another in plan cannot share
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
+  Its parapet holds: a step off the treads onto ground more than 0.6 m below them is refused
+  (`stair_parapet_blocks`, also on the island landings' stairs); its foot and top stay open. On a
+  stair the pilot walks at 3.4 m/s (`on_any_stair`).
 - **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
   cliff stair).
 
@@ -1906,6 +1950,30 @@ you watch (`docs/SIM_SPEC.md`, `src/living_*.jo`).
   destroys or renames anyone.
 - **Code:** `src/living_far_people.jo:78 promote_far_person`, `far_people_minute`,
   `far_resident_views`; `FarPerson` in `src/living_far_types.jo`.
+
+### Dock handover
+
+- **Aliases:** the receiver on the dock, hand over the cargo, meeting the aircraft.
+- **Definition:** a flying job's receiver meets the pilot's aircraft on the dock. Once the cargo is
+  aboard, they go down to wait where it comes ashore, whether their home is on the quay or up the
+  hill. They wait until it is due, or for as long as the aircraft is bound there or moored there.
+  They wave as it comes in and ask after it ("Is that the medicine from Eleni?"). When the pilot
+  steps ashore beside them, the card offers **Hand over the medicine**. They thank the pilot and
+  take it from the aircraft, and once it is in their hands the job is delivered and paid through
+  the ledger. Then they walk home with it.
+- **Rules:** the pilot's own cargo comes ashore only at the handover (`cargo_plan_carriage`
+  leaves it aboard until `choose_collection` names who carries it). The waiting is the living
+  world's own day (`cargo_awaited`, `cargo_meeting_spot`), so the scene and the far world agree;
+  one waiting walks the world's way where the scene's paths can't find one. Picking the crate up
+  oneself is offered only when nobody waits for it. A new pilot's first job has at least twelve
+  hours to its due time.
+- **Code:** `src/living_portage.jo` (`cargo_awaited`, `cargo_meeting_spot`,
+  `cargo_awaited_words`); `src/living_life.jo` (the waiting day); `src/life_scene.jo`;
+  `handover_here`, `handover_act`, `handover_frame` in `aegean.jo`; `Folk.waving`. Tests
+  `tests/first_delivery_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_DELIVERY=2 AEGEAN_DELIVERY_MOORED=1` (the medicine for Agios
+  Nikolaos taken, loaded, the aircraft tied up there an hour on); `AEGEAN_DELIVERY_TRACE=1` logs
+  the job.
 
 ### Notices
 
@@ -2294,6 +2362,24 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND_CAM` and `AEGEAN_CAPTURE_MINUTES`;
   `AEGEAN_BAND_LOG=1` prints the band's state twice a second.
 
+### Tip jar
+
+- **Definition:** a glass jar on the band's stand (on the piano when the band plays in the
+  [bar room](#bar-room)), filling over the evening. On foot by it, or seated at the hotel (a
+  table or the bar), while the band's evening is on: "Tip the band", a small coin (20 λ) or a note
+  (¤5). The tables drop coins in too, now and then after each number. Between numbers the player
+  at the front of the stand thanks the pilot; for a note, "This one's for the pilot."
+- **The world:** each tip is a ledger transfer to the house (the hotel's keeper), which keeps the
+  jar for the band (`BandState.jar`, `jar_pieces`); at closing the house pays it out in equal
+  shares to those who played that evening (`played_by`), as wages. A tip is a warm act toward the
+  front player (`.tipped`; a note, `.gift`).
+- **Code:** `band_tip`, `band_share_jar`, `band_jar_house` in `src/band_life.jo`; `leisure_tip`,
+  `band_front` in `src/leisure.jo`; `band_jar_at`, `build_tip_jar`, `draw_tip_jar`,
+  `band_thanks_from` in `src/band_stage.jo`; `tip_frame`, `tip_thanks_step` in `aegean.jo`.
+- **Capture:** `AEGEAN_LEISURE=tip|tip-panel|tip-jar|tip-thanks` (`AEGEAN_TIPS=n` drops n
+  coins and a note in first).
+- **Tests:** the tip jar in `tests/band_life_test.jo`.
+
 ### Band request
 
 - **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
@@ -2618,7 +2704,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   which show only when the tune has been quiet a while; no burst after a seek or a new number.
   Higher notes rise from a little higher; louder ones are larger. Each shows its written value
   (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
-  a flag, a sixteenth with two, a dot after the head for a dotted one. Ink by day, warm cream after dark; fainter with distance
+  a flag, a sixteenth with two, a dot after the head for a dotted one. Notes played together
+  rise as one chord (`note_chord`): those of the same part started within 35 ms (struck, rolled
+  or strummed), as far as one hand reaches (no gap over an octave: a left-hand chord stays apart
+  from the tune above it), up to five heads up the stave on one stem, a second's upper head on
+  the stem's other side; the chord's longest note sets its value. An accompanying chord may show
+  after 0.7 s of quiet in the tune (a single accompanying note after 1.1 s). Ink by day, warm cream after dark; fainter with distance
   about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
   table or the bar), where the band is in view. Options: "Musical notes rising from music played
   nearby" (on by default).
