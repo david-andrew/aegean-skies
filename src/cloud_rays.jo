@@ -1,0 +1,167 @@
+use 'cloud_shadow_map.jo'
+use 'render_space.jo'
+use 'depth_space.jo'
+use 'cloud_depth.jo'
+use 'quality.jo'
+use 'tweaks.jo'
+use 'look.jo'
+# ---------------- sunlight breaking through cloud: the rays (a trial) ----------------
+# Under broken cloud the air in a cloud's shadow is darker than the sunlit air beside it, and the
+# sunlit columns between the shadows read as rays falling from the gaps, slanting with the sun:
+# brightest looking toward it, crisp at their sides, fading downward (the painted rays of the
+# films under a storm bank or a scattered sky). Each pixel's view ray is marched below the
+# cloud base through the cloud shadow map (cloud_shadow_map.jo: the sun-projected coverage, so
+# a sample falls in the shadow of whatever cloud is above it toward the sun). The shadowed air
+# along the path darkens the pixel a little (under scattered cloud: darker shafts in the bright
+# air); where the path is mostly in shadow and lit through gaps (under a deck or a bank), the lit
+# air glows warm: bright beams through the gaps. Open sky never turns into a uniform haze. One reduced-resolution pass
+# (quarter, third or half resolution by tier, the shadow factor's), then a premultiplied
+# composite at full resolution: scene * (1 - dark) + glow.
+# Tweaks "Sunlight through cloud" (tweaks.sun_rays, AEGEAN_SUN_RAYS=1).
+
+struct RaysVertex:
+    corner: vec2
+
+struct RaysParams:
+    map: Texture
+    depth: Texture
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    depth_ab: vec2
+    area: vec4
+    slope: vec4
+    sun: vec3                       # toward the sun
+    glow: vec3                      # the rays' colour (the sun's, warmed)
+    shape: vec4                     # x the cloud base (m), y the march's reach (m), z its steps, w strength
+    noise: vec2                     # the jitter's frame offset
+
+struct RaysOut:
+    pos: vec4
+    ndc: vec2
+
+cloud_rays_vs = (v: RaysVertex, u: RaysParams) -> RaysOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    RaysOut(vec4(ndc,0,1),ndc)
+
+const RAYS_MAX_STEPS = 24
+
+cloud_rays_fs = (i: RaysOut, u: RaysParams) -> vec4:
+    ray = normalize((u.rays*vec4(i.ndc,1,0)).xyz)
+    t: f32 = 1000000000.0
+    raw = sample(u.depth,i.ndc*0.5+vec2(0.5,0.5)).x
+    if world_has_depth(raw,u.depth_ab): t = world_depth_decode(raw,u.depth_ab)/max(dot(ray,u.forward),0.0001)
+    sea = sea_intersection(ray,u.cam.y)
+    if sea > 0.0 and sea < t: t = sea
+    base = u.shape.x
+    # (the part of the view ray below the cloud base: from the eye if it is under the base, or from
+    # where the ray comes down through it)
+    t0: f32 = 0.0
+    if u.cam.y > base:
+        if ray.y >= -0.0001: return vec4(0,0,0,0)
+        t0 = (u.cam.y-base)/(-ray.y)
+    t1 = min(t,u.shape.y)
+    if ray.y > 0.0001: t1 = min(t1,(base-u.cam.y)/ray.y)
+    if t1 <= t0: return vec4(0,0,0,0)
+    steps = u.shape.z
+    dt = (t1-t0)/steps
+    # (interleaved gradient noise: each pixel starts at its own fraction of a step, so the few
+    # steps smooth into an even gradient once the reduced target is enlarged)
+    q = i.pos.xy+u.noise
+    jitter = fract(52.9829189*fract(dot(q,vec2(0.06711056,0.00583715))))
+    shade_len: f32 = 0.0
+    lit_len: f32 = 0.0
+    loop k in 0..RAYS_MAX_STEPS:
+        if f32(k) >= steps: break
+        p = u.cam+ray*(t0+(f32(k)+jitter)*dt)
+        s = cloud_shadow_at(u.map,u.area,u.slope,p)
+        shadowed = smoothstep(0.42,0.58,s.x)*s.y
+        # (the air thins toward the cloud base; the rays fade up into the clouds' undersides)
+        air = clamp((base-p.y)/150.0,0.0,1.0)
+        far = 1.0-smoothstep(u.shape.y*0.6,u.shape.y,t0+(f32(k)+jitter)*dt)
+        shade_len += shadowed*air*far*dt
+        lit_len += (1.0-shadowed)*air*far*dt
+    total = shade_len+lit_len
+    if total <= 1.0: return vec4(0,0,0,0)
+    # (bright beams only where the path is mostly in shadow, lit through gaps: under a deck or a
+    # bank, as the films paint them; under scattered cloud the air is mostly lit, and the shafts
+    # are the clouds' darker shadows in it)
+    mixed = smoothstep(0.35,0.75,shade_len/total)*clamp(lit_len/total*4.0,0.0,1.0)
+    toward = max(dot(ray,u.sun),0.0)
+    phase = 0.25+0.75*toward*toward*toward
+    dark = (1.0-exp(-shade_len/4000.0))*0.36*u.shape.w
+    glow = (1.0-exp(-lit_len/2000.0))*mixed*phase*1.4*u.shape.w
+    vec4(u.glow*glow,dark)
+
+# Full resolution: the reduced target's premultiplied glow and darkening, bilinearly enlarged.
+struct RaysBlendParams:
+    rays: Texture
+    texel: vec2                     # one texel of the reduced target, in uv
+
+cloud_rays_blend_vs = (v: RaysVertex, u: RaysBlendParams) -> RaysOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    RaysOut(vec4(ndc,0,1),ndc)
+
+cloud_rays_blend_fs = (i: RaysOut, u: RaysBlendParams) -> vec4:
+    # (four bilinear taps a texel apart: the few march steps' grain smoothed away)
+    uv = i.ndc*0.5+vec2(0.5,0.5)
+    f = (sample(u.rays,uv+u.texel*vec2(-0.75,-0.25))+sample(u.rays,uv+u.texel*vec2(0.75,0.25))+sample(u.rays,uv+u.texel*vec2(0.25,-0.75))+sample(u.rays,uv+u.texel*vec2(-0.25,0.75)))*0.25
+    if f.w < 0.002 and max(f.x,max(f.y,f.z)) < 0.002: discard()
+    f
+
+cloud_rays_sh = Shader()
+cloud_rays_blend_sh = Shader()
+cloud_rays_quad = Mesh()
+cloud_rays_target = RenderTarget()
+cloud_rays_ready = false
+cloud_rays_frame: f32 = 0.0
+
+# Steps along each ray by tier: few on low (at a quarter of the resolution as well).
+cloud_rays_steps = (tier: int) -> f32: if tier == 0: 8.0 else: if tier == 1: 12.0 else: 18.0
+
+# 1. The rays into their own small target (called beside the shadow factor, while the scene's
+# depth is sampled from another target).
+cloud_rays_pass = (chart: vec3, vp: mat4, L: Light):
+    global cloud_rays_sh,cloud_rays_blend_sh,cloud_rays_quad,cloud_rays_target,cloud_rays_ready,cloud_rays_frame
+    cloud_rays_ready = false
+    if not tweaks.sun_rays or cloud_shadow_rays <= 0.0 or not __post_active or cloud_scene_depth.id == 0: return
+    if cloud_rays_sh.prog == 0:
+        cloud_rays_sh = make_shader(shader(cloud_rays_vs,cloud_rays_fs),false)
+        cloud_rays_blend_sh = make_shader(shader(cloud_rays_blend_vs,cloud_rays_blend_fs),false)
+        cloud_rays_quad = mesh([RaysVertex(vec2(0,0)),RaysVertex(vec2(1,0)),RaysVertex(vec2(0,1)),RaysVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+    zone("cloud rays")
+    divisor = if render_quality.tier == 0: 4 else: if render_quality.tier == 1: 3 else: 2
+    w = max(1,cloud_scene_depth.width/divisor); h = max(1,cloud_scene_depth.height/divisor)
+    if cloud_rays_target.texture.width != w or cloud_rays_target.texture.height != h:
+        if cloud_rays_target.fbo != 0: free_render_target(cloud_rays_target)
+        tex = texture(image(w,h),true)
+        set_mipmaps(tex,false)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        cloud_rays_target = RenderTarget(tex,fbo,0)
+    glDisable(GL_CULL_FACE); glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST); glDepthMask(0)
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(cloud_rays_target.fbo))
+    glViewport(0,0,i32(w),i32(h))
+    rays = render_rays(vp)
+    sun = normalize(L.sun_dir)
+    # (the rays' colour: the sun's own, a little warmer; strength with the shadows' own)
+    glow = L.sun*vec3(1.0,0.93,0.78)
+    cloud_rays_frame = (cloud_rays_frame+1.0) % 64.0
+    reach = if render_quality.tier == 0: 9000.0 else: 12000.0
+    draw(cloud_rays_sh,cloud_rays_quad,RaysParams(cloud_shadow_map(),cloud_scene_depth,rays,render_eye(chart),normalize(rays[2].xyz),world_depth_params(),cloud_shadow_area_rays(chart),cloud_shadow_slope(),sun,glow,vec4(cloud_shadow_base,f32(reach),cloud_rays_steps(render_quality.tier),cloud_shadow_rays),vec2(cloud_rays_frame*5.588238,cloud_rays_frame*3.1)))
+    cloud_rays_ready = true
+    zone_end()
+
+# 2. Composited at full resolution after the clouds (in the cloud pass's depth-detached window):
+# the rays are the air between the eye and the cloud bank, crossing in front of it, as the films
+# paint them.
+cloud_rays_composite = ():
+    if not cloud_rays_ready: return
+    depth_on = __vg_depth
+    glDisable(GL_DEPTH_TEST)
+    glEnable(GL_BLEND); glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_ALPHA)
+    t = cloud_rays_target.texture
+    draw(cloud_rays_blend_sh,cloud_rays_quad,RaysBlendParams(t,vec2(1.0/f32(max(t.width,1)),1.0/f32(max(t.height,1)))))
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+    if depth_on: glEnable(GL_DEPTH_TEST)
