@@ -217,6 +217,71 @@ air_display_task = (pilot: AirClubPilot, center: vec3, out: vec3, tick: int, spe
     at = center + side * f32(sin(a) * radius) + out * f32(sin(a * 2.0) * radius * 0.42)
     AirTask(pilot.craft, at, 260 + f64(pilot.craft % 2) * 80.0, 0.95)
 
+# One club pilot's tick of flight (what update_air_events runs for each tick since the last; a
+# held tick, while a world minute is in progress, runs it too): the World only read.
+_club_tick = (events: mut AirEvents, p: mut AirClubPilot, w: data.World, spec: CraftSpec, out: vec3, contacts: AirContact[], e: FlightEnv, tick: int):
+    mi = air_meet_index(events, p.meet)
+    returning = if p.meet >= 0: mi < 0 or events.meets[mi].phase == .finished or events.meets[mi].phase == .cancelled else: tick >= p.practice_until
+    returning = returning or p.state.fuel < 22.0
+    approach_busy = false
+    # (one already down, taxiing, or on its final approach keeps it)
+    if returning and not p.state.on_water and p.plan.phase != .land and p.plan.phase != .taxi and p.plan.phase != .done:
+        loop other in events.pilots:
+            if other.craft < p.craft and other.capital == p.capital and other.active and not other.state.on_water:
+                # (only a clubmate coming home too has the approach; one going out to its
+                # own class's race does not hold this one up)
+                mo = air_meet_index(events, other.meet)
+                other_home = if other.meet >= 0: mo < 0 or events.meets[mo].phase == .finished or events.meets[mo].phase == .cancelled else: tick >= other.practice_until
+                if other_home or other.state.fuel < 22.0: approach_busy = true
+    if tick >= p.next_think:
+        p.next_think = tick + 6
+        air_think(p.air, AirProfile(temperament = .racer, altitude = 260, pace = min(1.0, 140.0 / spec.cruise_speed)), p.craft, p.capital, p.state, spec, p.plan.target, contacts, [], -1, tick, e)
+        if p.departing:
+            taxi = FlightPlan(phase = .taxi, initialized = true, taxi_target = if p.air.avoiding: p.air.aim else: p.departure)
+            p.controls = air_autopilot(spec, p.state, taxi, e); p.controls.anchor = false
+            if length((p.state.position - p.departure).xz) < 8 and length(p.state.velocity) < 1:
+                p.departing = false; p.plan.phase = .takeoff
+        else if p.plan.phase == .takeoff or p.plan.phase == .climb or (returning and not approach_busy):
+            p.controls = air_autopilot(spec, p.state, p.plan, e)
+        else:
+            task = air_display_task(p, w.place_contexts[p.capital].center + out * 2200.0, out, tick, spec.cruise_speed)
+            pace = min(spec.cruise_speed, 140.0)
+            if mi >= 0:
+                loop entry in events.meets[mi].entries:
+                    if entry.craft == p.craft:
+                        if let race = air_race_task(events.meets[mi], entry, p.state.position):
+                            task = race
+                            # (staggered heights; the fast class lower, well under its ceiling)
+                            task.altitude = if events.meets[mi].race_class == .schneider: 140.0 + f64(p.craft % 2) * 70.0 else: 130 + f64(p.craft % 2) * 140.0
+                            pace = air_class_pace(events.meets[mi].race_class, spec.cruise_speed, spec.max_speed, events.meets[mi].scale)
+            if approach_busy: task.altitude = 400; task.aim += out * 1500.0; task.pace = 0.60
+            p.controls = air_waypoint_controls(spec, p.state, e, task.aim, task.altitude, pace * task.pace)
+            if mi >= 0 and events.meets[mi].phase == .display: p.controls.roll += sin(f64(tick) / 60.0 * 2.0) * 0.18
+        if p.air.avoiding:
+            if p.state.on_water:
+                if p.air.yield_water: p.controls.throttle = 0; p.controls.water_brake = 1.0
+            else: p.controls = air_waypoint_controls(spec, p.state, e, p.air.aim, p.air.altitude, p.air.speed)
+    if p.plan.phase == .failed and p.state.on_water and not p.state.crashed and not p.state.beached and p.state.fuel > 0: p.plan.phase = .taxi
+    step(spec, p.state, p.controls, e, 1.0 / 60.0)
+    p.prop += (8 + 70 * p.state.throttle) / 60.0
+    if mi >= 0: sample_air_entry(events.meets[mi], p.craft, p.state.position, tick, not p.state.crashed)
+
+# A held frame's flight for the club pilots and the air arm (a world minute in progress): each
+# pilot in the air flies the scene's ticks up to `tick`, ahead of the World's, the World only
+# read; update_air_events commits where they are once the World has caught up. `other_air`
+# carries the player and the scene's traffic where they are now (the World's poses wait).
+step_air_events_held = (events: mut AirEvents, w: data.World, models: CraftModel[], tick: int, other_air: AirContact[] = [], ground: (f64, f64) -> f64 = flight_surface_height):
+    contacts = other_air + [loop p in events.pilots: AirContact(p.craft, p.state.position, p.state.velocity, p.capital, p.state.on_water, p.state.moored)]
+    loop k in 0..events.pilots.len():
+        p = events.pilots[k]
+        if not p.active or p.last_tick >= tick or w.aircraft[p.craft].owner != p.person: continue
+        spec = club_spec(p, w, models)
+        e = FlightEnv(ground = ground, wind = conditions.wind_at(w, p.state.position))
+        loop t in max(p.last_tick + 1, tick - 14)..tick + 1: _club_tick(events, p, w, spec, w.far.harbors[p.capital].out, contacts, e, t)
+        p.last_tick = tick
+        events.pilots[k] = p
+    step_air_arm_held(events, w, models, tick, (x: f64, z: f64) -> f64: ground(x, z) + airfield_turf(x, z))
+
 # Commit one pose per world tick, after integrating any batched render-frame interval. These
 # sparse flights have no core Trip: the capital/meeting lives in AirEvents, not a core index.
 # Club aircraft run on the same main thread as traffic. Share its exact bounded
@@ -245,7 +310,8 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
                     if entry.craft == p.craft and entry.finished_tick < 0: entry.disqualified = true
             continue
         spec = club_spec(p, w, models)
-        if p.last_tick == w.tick: continue
+        # (a pilot that flew held ticks ahead of the World waits for it)
+        if p.last_tick >= w.tick: continue
         meeting = -1; racing_class = club_class(w, p.craft)
         loop i in 0..events.meets.len():
             m = events.meets[i]
@@ -286,53 +352,7 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
         elapsed = clamp(w.tick - p.last_tick, 0, 15); p.last_tick = w.tick
         if not p.active: events.pilots[k] = p; continue
         e = FlightEnv(ground = ground, wind = conditions.wind_at(w, p.state.position))
-        loop n in 0..elapsed:
-            tick = w.tick - elapsed + n + 1
-            mi = air_meet_index(events, p.meet)
-            returning = if p.meet >= 0: mi < 0 or events.meets[mi].phase == .finished or events.meets[mi].phase == .cancelled else: tick >= p.practice_until
-            returning = returning or p.state.fuel < 22.0
-            approach_busy = false
-            # (one already down, taxiing, or on its final approach keeps it)
-            if returning and not p.state.on_water and p.plan.phase != .land and p.plan.phase != .taxi and p.plan.phase != .done:
-                loop other in events.pilots:
-                    if other.craft < p.craft and other.capital == p.capital and other.active and not other.state.on_water:
-                        # (only a clubmate coming home too has the approach; one going out to its
-                        # own class's race does not hold this one up)
-                        mo = air_meet_index(events, other.meet)
-                        other_home = if other.meet >= 0: mo < 0 or events.meets[mo].phase == .finished or events.meets[mo].phase == .cancelled else: tick >= other.practice_until
-                        if other_home or other.state.fuel < 22.0: approach_busy = true
-            if tick >= p.next_think:
-                p.next_think = tick + 6
-                air_think(p.air, AirProfile(temperament = .racer, altitude = 260, pace = min(1.0, 140.0 / spec.cruise_speed)), p.craft, p.capital, p.state, spec, p.plan.target, contacts, [], -1, tick, e)
-                if p.departing:
-                    taxi = FlightPlan(phase = .taxi, initialized = true, taxi_target = if p.air.avoiding: p.air.aim else: p.departure)
-                    p.controls = air_autopilot(spec, p.state, taxi, e); p.controls.anchor = false
-                    if length((p.state.position - p.departure).xz) < 8 and length(p.state.velocity) < 1:
-                        p.departing = false; p.plan.phase = .takeoff
-                else if p.plan.phase == .takeoff or p.plan.phase == .climb or (returning and not approach_busy):
-                    p.controls = air_autopilot(spec, p.state, p.plan, e)
-                else:
-                    task = air_display_task(p, w.place_contexts[p.capital].center + h.out * 2200.0, h.out, tick, spec.cruise_speed)
-                    pace = min(spec.cruise_speed, 140.0)
-                    if mi >= 0:
-                        loop entry in events.meets[mi].entries:
-                            if entry.craft == p.craft:
-                                if let race = air_race_task(events.meets[mi], entry, p.state.position):
-                                    task = race
-                                    # (staggered heights; the fast class lower, well under its ceiling)
-                                    task.altitude = if events.meets[mi].race_class == .schneider: 140.0 + f64(p.craft % 2) * 70.0 else: 130 + f64(p.craft % 2) * 140.0
-                                    pace = air_class_pace(events.meets[mi].race_class, spec.cruise_speed, spec.max_speed, events.meets[mi].scale)
-                    if approach_busy: task.altitude = 400; task.aim += h.out * 1500.0; task.pace = 0.60
-                    p.controls = air_waypoint_controls(spec, p.state, e, task.aim, task.altitude, pace * task.pace)
-                    if mi >= 0 and events.meets[mi].phase == .display: p.controls.roll += sin(f64(tick) / 60.0 * 2.0) * 0.18
-                if p.air.avoiding:
-                    if p.state.on_water:
-                        if p.air.yield_water: p.controls.throttle = 0; p.controls.water_brake = 1.0
-                    else: p.controls = air_waypoint_controls(spec, p.state, e, p.air.aim, p.air.altitude, p.air.speed)
-            if p.plan.phase == .failed and p.state.on_water and not p.state.crashed and not p.state.beached and p.state.fuel > 0: p.plan.phase = .taxi
-            step(spec, p.state, p.controls, e, 1.0 / 60.0)
-            p.prop += (8 + 70 * p.state.throttle) / 60.0
-            if mi >= 0: sample_air_entry(events.meets[mi], p.craft, p.state.position, tick, not p.state.crashed)
+        loop n in 0..elapsed: _club_tick(events, p, w, spec, h.out, contacts, e, w.tick - elapsed + n + 1)
         phase = if p.state.crashed: data.CraftState.wrecked else: if p.state.moored: data.CraftState.moored else: if p.state.on_water: data.CraftState.taxi else: data.CraftState.airborne
         revision = scene.scene_motion(w, p.craft, w.aircraft[p.craft].revision, data.Pose(pos = p.state.position, vel = p.state.velocity, rot = p.state.orientation, throttle = int(p.state.throttle * 1000)),
             max(0, int(round(p.state.fuel * 1000))), max(0, int((1.0 - p.state.hull_damage) * 1000)), max(0, int((1.0 - p.state.engine_damage) * 1000)), phase, false, false)

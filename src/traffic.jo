@@ -394,6 +394,19 @@ _step_traffic = (tr: mut Traffic, w: mut living.World, e: FlightEnv, commit: boo
     tr.prop_angle += (8.0 + 70.0 * tr.state.throttle) / 60.0
     if commit:commit_traffic_motion(tr,w)
 
+# _step_traffic's flight for a held tick: the World only read, the berth as last claimed.
+_step_traffic_held = (tr: mut Traffic, w: living.World, e: FlightEnv, contacts:AirContact[] = [], ships:AirShip[] = [], player:int = -1):
+    c = w.aircraft[tr.craft]
+    if c.trip < 0: return
+    if c.fuel_ml + 1 < int(round(tr.state.fuel * 1000.0)): tr.state.fuel = f64(c.fuel_ml) / 1000.0
+    if not tr.combat_damage or tr.state.moored:
+        _impose_condition(tr.state, tr.spec, c.hull, c.engine)
+        tr.state.hull_damage = max(tr.state.hull_damage, 1.0 - f64(c.hull) / 1000.0)
+        tr.state.engine_damage = max(tr.state.engine_damage, 1.0 - f64(c.engine) / 1000.0)
+    controls = traffic_controls(tr, w, e,contacts,ships,player)
+    step(tr.spec, tr.state, controls, e, 1.0 / 60.0)
+    tr.prop_angle += (8.0 + 70.0 * tr.state.throttle) / 60.0
+
 commit_traffic_motion = (tr: mut Traffic,w: mut living.World,arrival: bool = true):
     c=w.aircraft[tr.craft]
     phase: data.CraftState = if tr.state.on_water: (if tr.plan.phase == .takeoff: data.CraftState.taxi else: data.CraftState.approach) else: data.CraftState.airborne
@@ -425,15 +438,44 @@ _fold_after_tick = (traffic: mut Traffic[], w: mut living.World, adapter: mut sc
                 scene.release_scene(w, adapter, tr.craft, if terminal: [] else: _physical_remainder(tr, w))
                 tr.materialized = false
 
+# The World's side of the held ticks, once their minute is over: its clock through each, and at
+# the last one what a tick commits (the scene's motion, the player's, engagements and
+# encounters) from where the bodies now are. A minute that begins on the way holds the rest.
+_catch_up_ticks = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, player: CraftState?, battle: mut Battle, effects: (CombatEvent[]) -> void):
+    player_craft = w.people[w.player].craft
+    loop adapter.held_ticks > 0 and not adapter.holding:
+        adapter.held_ticks -= 1
+        scene.scene_clock_begin(w)
+        physical: int[]
+        if adapter.held_ticks == 0:
+            if let body = player:
+                pi = combat_index(battle,player_craft)
+                if battle.enabled and pi >= 0: commit_player_motion(w,battle.actors[pi].state,w.aircraft[player_craft].pose,w.aircraft[player_craft].fuel_ml,1.0,battle.actors[pi].status==.flying,false)
+                else: commit_player_motion(w,body,w.aircraft[player_craft].pose,w.aircraft[player_craft].fuel_ml,1.0)
+            if battle.enabled: physical = bind_scene_engagements(battle,w)
+            loop i in 0..traffic.len():
+                tr = traffic[i]
+                if scene.scene_bound(adapter,tr.craft):
+                    # (as a tick commits: in a battle every scene body, else those on a trip)
+                    if battle.enabled: commit_traffic_motion(tr,w,not combat_owns(battle,tr.craft))
+                    else if w.aircraft[tr.craft].trip >= 0 and not combat_owns(battle,tr.craft): commit_traffic_motion(tr,w)
+                traffic[i] = tr
+            if battle.enabled: resolve_scene_engagements(battle,w,physical)
+        scene.scene_encounters(w,physical)
+        if not scene.scene_clock_end_spread(w,adapter): return
+        _fold_after_tick(traffic,w,adapter,battle)
+
 # A frame that must not wait (input, a menu, a save or load): finish the minute in progress now.
 finish_held_minute = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, battle: Battle):
     if adapter.holding and scene.scene_clock_resume(w,adapter,true): _fold_after_tick(traffic,w,adapter,battle)
 
 update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scene.SceneAdapter, observer: vec3, t: f64, dt: f64, player: CraftState? = none, towns: Town[] = [], battle: mut Battle = Battle(), effects: (CombatEvent[]) -> void = (events: CombatEvent[]): pass, contact: (int,CraftSpec,CraftState,vec3) -> CraftState = (id: int,spec: CraftSpec,state: CraftState,previous: vec3) -> CraftState: state,ships:AirShip[] = [],other_air:AirContact[] = []):
     accepted = frame_dt(dt)
-    # A world minute still in progress: continue it; no new tick until it and its tick end.
+    # A world minute still in progress: continue it. Meanwhile the scene's bodies fly on (held
+    # ticks, below); once it is over the World takes the ticks it missed.
     if adapter.holding:
         if scene.scene_clock_resume(w,adapter): _fold_after_tick(traffic,w,adapter,battle)
+    if not adapter.holding and adapter.held_ticks > 0: _catch_up_ticks(traffic,w,adapter,player,battle,effects)
     velocity = (observer - adapter.observer) / f32(max(accepted, 1.0 / 60.0))
     if length(velocity) > 200: velocity = normalize(velocity) * 200.0
     adapter.observer = observer; adapter.observer_velocity = velocity
@@ -441,32 +483,43 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
     adapter.frame_ticks = 0
     player_craft = w.people[w.player].craft
     # Saving folds all owners. The same human body claims its lease before the next step.
-    if player != none and not adapter.holding and not scene.scene_bound(adapter, player_craft):
+    if player != none and not adapter.holding and adapter.held_ticks == 0 and not scene.scene_bound(adapter, player_craft):
         w.aircraft[player_craft].move_owner = .scene; w.aircraft[player_craft].revision += 1
         adapter.handles[player_craft] = adapter.bodies.add(scene.SceneLease(player_craft))
     player_before = w.aircraft[player_craft].pose
     player_fuel = w.aircraft[player_craft].fuel_ml
+    # (a frame begun in a held minute: the World's pose of the player is from before it, so the
+    # player's combat body goes on from where it last was)
+    held_from = data.pose_point(player_before)
+    if adapter.holding or adapter.held_ticks > 0:
+        hpi = combat_index(battle,player_craft)
+        if hpi >= 0: held_from = battle.actors[hpi].state.precise
     steps = max(1, int(floor((adapter.accumulator + 1e-9) * 60.0)))
     stepped = 0
     life_nav_budget = 1
-    loop not adapter.holding and adapter.accumulator + 1e-9 >= 1.0 / 60.0:
+    loop adapter.accumulator + 1e-9 >= 1.0 / 60.0:
         adapter.accumulator = max(0.0, adapter.accumulator - 1.0 / 60.0)
-        # Ownership is fixed before this whole step. New trips become eligible next step.
-        loop i in 0..traffic.len():
-            tr = traffic[i]
-            if not scene.scene_bound(adapter, tr.craft) and scene.scene_candidate(w, tr.craft, observer, velocity): _acquire_traffic(tr, w, adapter)
-            traffic[i] = tr
-        if let body = player:
-            if not body.moored and w.aircraft[player_craft].trip < 0: scene.scene_player_departure(w)
-        scene.scene_clock_begin(w)
-        cargo_scene.step_cargo_scene(w,towns,observer,1.0/60.0)
-        life_nav_budget -= daily_scene.step_life_scene(w,towns,observer,1.0/60.0,life_nav_budget)
+        # (a held tick, while a world minute is spread over frames: the bodies already in the scene
+        # fly, fight and touch on, and nothing writes the World; the World takes these ticks
+        # once the minute is over, _catch_up_ticks)
+        held = adapter.holding or adapter.held_ticks > 0
+        if not held:
+            # Ownership is fixed before this whole step. New trips become eligible next step.
+            loop i in 0..traffic.len():
+                tr = traffic[i]
+                if not scene.scene_bound(adapter, tr.craft) and scene.scene_candidate(w, tr.craft, observer, velocity): _acquire_traffic(tr, w, adapter)
+                traffic[i] = tr
+            if let body = player:
+                if not body.moored and w.aircraft[player_craft].trip < 0: scene.scene_player_departure(w)
+            scene.scene_clock_begin(w)
+            cargo_scene.step_cargo_scene(w,towns,observer,1.0/60.0)
+            life_nav_budget -= daily_scene.step_life_scene(w,towns,observer,1.0/60.0,life_nav_budget)
         stepped += 1
         adapter.frame_ticks += 1
         alpha=f64(stepped)/f64(steps)
-        if not battle.enabled:
+        if not battle.enabled and not held:
             if let body=player:commit_player_motion(w,body,player_before,player_fuel,alpha)
-        e = flight_env(f64(w.tick) / 60.0)
+        e = flight_env(f64(w.tick + adapter.held_ticks + (if held: 1 else: 0)) / 60.0)
         physical:int[]
         if battle.enabled:
             # Registration does not create a second person, lease or body. Passive traffic
@@ -480,7 +533,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                     battle.actors[pi].previous=old.position
                     battle.actors[pi].previous_point=craft_point(old)
                     battle.actors[pi].state=body
-                    battle.actors[pi].state.precise=world_lerp(data.pose_point(player_before),craft_point(body),alpha)
+                    battle.actors[pi].state.precise=world_lerp(held_from,craft_point(body),alpha)
                     battle.actors[pi].state.position=world_vec(battle.actors[pi].state.precise)
                     battle.actors[pi].state.published=battle.actors[pi].state.position; battle.actors[pi].state.precise_ready=true
                     loop part in 0..7:
@@ -492,7 +545,7 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                                 loop piece in old.damage.debris:
                                     if int(piece.part)==part:battle.actors[pi].state.damage.debris.push(piece)
                     refresh_damage(battle.actors[pi].spec,battle.actors[pi].state)
-            physical=bind_scene_engagements(battle,w)
+            if not held: physical=bind_scene_engagements(battle,w)
         contacts:AirContact[]=other_air
         loop tr in traffic:
             if not tr.visible or length(tr.state.position-observer)>8000:continue
@@ -504,8 +557,11 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                 if weather_active: e.wind = conditions.wind_at(w,tr.state.position)
                 previous = tr.state.position
                 active = w.aircraft[tr.craft].trip >= 0
-                _step_traffic(tr, w, e,false,contacts,ships,player_craft)
-                if not battle.enabled and active:
+                if held:
+                    _step_traffic_held(tr, w, e, contacts, ships, player_craft)
+                    if not battle.enabled and active: tr.state = contact(tr.craft,tr.spec,tr.state,previous)
+                else: _step_traffic(tr, w, e,false,contacts,ships,player_craft)
+                if not battle.enabled and active and not held:
                     before = tr.state.hull_damage
                     tr.state = contact(tr.craft,tr.spec,tr.state,previous)
                     if tr.state.hull_damage > before: tr.combat_damage = true
@@ -535,8 +591,11 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
                         if actor.last_attacker>=0:tr.combat_damage=true
                     # One revisioned motion commit, after this tick's rounds and fire. A
                     # passive pilot hit in this tick must not also take the route's ditch path.
-                    commit_traffic_motion(tr,w,not combat_owns(battle,tr.craft))
+                    if not held: commit_traffic_motion(tr,w,not combat_owns(battle,tr.craft))
                 traffic[i]=tr
+        if held:
+            adapter.held_ticks += 1
+            continue
         if battle.enabled:
             if let body=player:
                 pi=combat_index(battle,player_craft)
@@ -545,7 +604,8 @@ update_traffic = (traffic: mut Traffic[], w: mut living.World, adapter: mut scen
         if battle.enabled:resolve_scene_engagements(battle,w,physical)
         scene.scene_encounters(w,physical)
         # A world minute may continue over the next frames; this tick's end waits for it.
-        if not scene.scene_clock_end_spread(w,adapter): break
+        # (a minute begun here goes on over the next frames; this frame's further ticks are held)
+        if not scene.scene_clock_end_spread(w,adapter): continue
         _fold_after_tick(traffic,w,adapter,battle)
         # Abstract poses already interpolate at fixed ticks, rather than jumping by minutes.
     loop mut tr in traffic:
