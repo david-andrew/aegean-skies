@@ -89,7 +89,6 @@ struct SeaParams:
     cloud_shadow: Texture = Texture()  # cloud_shadow_map.jo: the sun's glints and sheen go in cloud shadow
     cloud_area: vec4 = vec4(0,0,0,0)
     cloud_slope: vec4 = vec4(0,0,0,0)
-    afterglow: vec4 = vec4(0,0,0,0)  # twilight's glow (look.jo Light.afterglow), reflected
 
 struct SeaOut:
     pos: vec4
@@ -387,7 +386,7 @@ _crest_strokes = (p: vec2, s: vec3, t: f32, wd: vec2, ws: f32, amp: f32, dist: f
 # reflected-light dot is <= (1+v.l)*(nf.h)^2-v.l. Reject only when even that
 # bound cannot reach the glint's first smoothstep edge; no facets are thinned.
 sea_glint_possible = (n: vec3,v: vec3,l: vec3,h: vec3,rough: f32) -> bool:
-    r=(0.22+0.45*rough)*0.707107
+    r=(0.22+0.45*rough)*0.5
     if r>=0.999:return true
     cosine=abs(dot(n,h))
     limit=sqrt(max(1.0-r*r,0.0))
@@ -419,9 +418,12 @@ _glints = (p: vec2, n: vec3, v: vec3, l: vec3, dist: f32, t: f32, rough: f32, u:
     r2 = hash21(cell+vec2(13.0,lev*17.0))
     ph = t*(1.5+3.0*r1)+r2*10.0
     tick = floor(ph)
-    d3 = hash21(cell+vec2(5.0,3.0+tick))-0.5
-    d4 = hash21(cell+vec2(9.0+tick,11.0))-0.5
-    tilt = vec2(d3*abs(d3),d4*abs(d4))*(2.0*(0.22+0.45*rough))
+    # (the facet's tilt: any way round, its size gathering toward level, never past half the
+    # roughness's reach: a round spread, so the glitter's outline is the light's own ellipse and
+    # the gusts' roughness ragged at its edge, never a box along the world's axes)
+    spin = hash21(cell+vec2(5.0,3.0+tick))*TAU
+    lean = hash21(cell+vec2(9.0+tick,11.0))
+    tilt = vec2(cos(spin),sin(spin))*(lean*lean*0.5*(0.22+0.45*rough))
     nf = normalize(n+vec3(tilt.x,0,tilt.y))
     hit = smoothstep(GLINT_ACCEPT,0.999,dot(reflect(-v,nf),l))
     if hit <= 0.0: return 0.0
@@ -462,12 +464,6 @@ sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
 coast_sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
-sea_glow_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
-    if sea_depth_hidden(i.clip,u):discard()
-    sea_material(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u,false,glow=true)
-coast_sea_glow_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
-    if sea_depth_hidden(i.clip,u):discard()
-    sea_material(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u,true,glow=true)
 
 # What a walled canal's water mirrors along rd: the dark stone wall, the trees and facades behind
 # the parapet, or the sky over them (each wall a vertical plane at the canal's half width).
@@ -491,9 +487,7 @@ canal_mirror = (i: SeaOut, u: SeaParams, rd: vec3, skyc: vec3) -> vec3:
     over = mix(over,tree,(smoothstep(1.0,2.0,at_tree)-smoothstep(7.0,9.0,at_tree))*0.75)
     mix(stone,over,smoothstep(u.inland_walls.y-soft,u.inland_walls.y+soft,at_wall))
 
-# (glow: twilight's variant, a separate shader made when the sky first glows, on the high tier;
-# the day's sea compiles without it)
-sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_detail:bool=true,glow:bool=false) -> vec4:
+sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_detail:bool=true) -> vec4:
     local = i.world.xz
     p = local+u.origin.xz
     dist = length(i.world - u.cam)
@@ -693,33 +687,16 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         a = mix(a,clear_alpha,clear_bay)
     if inland:
         a=clamp(smoothstep(0.0,u.inland_opacity_depth,depth)+fres*0.4+foam+gl,0.0,1.0)
-    # Twilight's glow reflected by the flat sea, at the end where little else is live (Intel GPUs
-    # run the sea at half width once it holds too many values).
-    if glow and not inland and u.afterglow.x > 0.0:
-        tv = normalize(u.cam - i.world)
-        ag = sky_afterglow(vec3(-tv.x,tv.y,-tv.z),tv.y,u.afterglow)
-        c = mix(c,ag.rgb,ag.a*(0.02+0.98*pow(1.0-max(tv.y,0.0),5.0))*0.9)
     c = aerial(c, i.world, u.cam, u.haze, u.fog)
     vec4(c, a)
 
 sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false)
 coast_sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true)
-sea_glow_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false,glow=true)
-coast_sea_glow_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true,glow=true)
 
 sea_near_mesh: Mesh
 coast_sea_sh: Shader
 sea_sh: Shader
 far_sea_sh: Shader
-# (twilight's variants, for the high tier; low and medium keep the plain sea. Made at the start but
-# not linked (warm = false): queue_sea_glow queues them as dusk nears, and they link one a frame)
-sea_glow_sh: Shader
-coast_sea_glow_sh: Shader
-far_sea_glow_sh: Shader
-sea_glow_on = (L: Light) -> bool: L.afterglow.x > 0.0 and render_quality.tier > 1
-queue_sea_glow = ():
-    warm_up_later(sea_glow_sh); warm_up_later(coast_sea_glow_sh); warm_up_later(far_sea_glow_sh)
-
 # the open sea from height (see DEEP_SEA_*): its deep colour and haze for the eye's height
 sea_from_height = (p: mut SeaParams, L: Light):
     if tweaks.brighter_ocean: return
@@ -742,12 +719,6 @@ far_sea_fs = (i: FarSeaOut, u: SeaParams) -> vec4:
     world = vec3(u.cam.x + dir.x * dist, 0, u.cam.z + dir.z * dist)
     # The identical sea material at its actual surface point, not a sky tint.
     sea_fs(SeaOut(i.pos, world), u)
-far_sea_glow_fs = (i: FarSeaOut, u: SeaParams) -> vec4:
-    dir = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
-    dist = sea_intersection(dir, u.cam.y)
-    if dist < 14000.0: discard()
-    world = vec3(u.cam.x + dir.x * dist, 0, u.cam.z + dir.z * dist)
-    sea_glow_fs(SeaOut(i.pos, world), u)
 
 
 # rings around the camera: fine near it, coarse far out
@@ -978,7 +949,15 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     # (the moon's glitter: its phase lit by the sun, and only once it is up)
     lit = moon_illumination(normalize(L.sun_dir), normalize(L.moon_dir))
     p.moon = vec4(L.moon_dir, f32(0.35 * lit * smoothstep(0.02, 0.2, f64(normalize(L.moon_dir).y))))
-    p.afterglow = L.afterglow
+    # (twilight's glow on the water: the sun's own sheen and glints about a sun just above the
+    # horizon on its bearing, coloured by the glow (look.jo glow_sea_sun): a glitter path toward
+    # the glow, no shader of its own. The water's own colour keeps its dusk value, and the moon's
+    # glitter comes in as the glow goes)
+    if L.afterglow.x > 0.0:
+        g = glow_sea_sun(L)
+        keep = (mix(L.sun,vec3(1,1,1),0.45)*0.7)/(mix(g.1,vec3(1,1,1),0.45)*0.76)
+        p.sun_dir = g.0; p.sun = g.1
+        p.deep = p.deep*keep; p.shallow = p.shallow*keep
     p
 
 sea_phases = (p: mut SeaParams,t: f64):
@@ -1022,10 +1001,8 @@ draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = 
         p.opaque_depth=snapshot_opaque_depth();p.reject_depth=1
     glDepthMask(1)
     glEnable(GL_CULL_FACE)
-    glow = sea_glow_on(L)
-    plain = if glow: sea_glow_sh else: sea_sh
-    draw(plain, m, p)
-    draw(if coast_height_valid: (if glow: coast_sea_glow_sh else: coast_sea_sh) else: plain,sea_near_mesh,p)
+    draw(sea_sh, m, p)
+    draw(if coast_height_valid: coast_sea_sh else: sea_sh,sea_near_mesh,p)
     glDisable(GL_CULL_FACE)
     glDepthMask(0)
     zone_end()
@@ -1035,8 +1012,7 @@ draw_far_sea = (depth: Texture, L: Light, t: f64, w: Wind):
     sea_from_height(p, L)
     zone("sea horizon")
     glDepthMask(0)
-    glow = sea_glow_on(L)
-    draw(if glow: far_sea_glow_sh else: far_sea_sh, far_sea_tri, p)
+    draw(far_sea_sh, far_sea_tri, p)
     glDepthMask(1)
     zone_end()
 
@@ -1056,10 +1032,6 @@ init_sea = ():
     # WebGL's full-depth variants share the immutable opaque-depth rejection.
     sea_sh = make_world_shader(if world_log_depth_active():shader(sea_depth_vs,sea_depth_fs) else:shader(sea_vs,sea_fs))
     coast_sea_sh = make_world_shader(if world_log_depth_active():shader(sea_depth_vs,coast_sea_depth_fs) else:shader(sea_vs,coast_sea_fs))
-    global sea_glow_sh, coast_sea_glow_sh, far_sea_glow_sh
-    far_sea_glow_sh = make_background_shader(shader(far_sea_vs, far_sea_glow_fs), false)
-    sea_glow_sh = make_world_shader(if world_log_depth_active():shader(sea_depth_vs,sea_glow_depth_fs) else:shader(sea_vs,sea_glow_fs), false)
-    coast_sea_glow_sh = make_world_shader(if world_log_depth_active():shader(sea_depth_vs,coast_sea_glow_depth_fs) else:shader(sea_vs,coast_sea_glow_fs), false)
 
 # the sea's surface where the eye sees it (the same swells the sea is drawn with): height and slope
 swell_at = (x: f64, z: f64, t: f64) -> vec3:
