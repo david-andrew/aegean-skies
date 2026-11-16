@@ -170,7 +170,16 @@ speaker's takes of the genres that vary in it, `tune_round.energy_effect` fits o
 (pitch, log range, log tempo, brightness as tilt) shared by the genres, each genre keeping its own
 usual energy (`energy_effect`, `energy_ref_<genre>` in the data file); `VoiceStyle.energy` applies
 it in the game, and voicelab and the evaluation pass each line's energy (`name|text|energy`). The
-game's own bulletins do not set an energy yet, so in the game a genre reads at its usual one.
+game sets each radio item's energy where the content is made (`RadioContent.energy`,
+`radio_news_energy`: raids and ditchings 4, rescues, patrols, searches and celebrations 3, routine
+harbor news 2, unconfirmed one lower, weather 1-2, the advert 3; alarms 5, war bulletins and
+victory calls 4-5, race finishes 5 and mid-race calls 3-4 when such programmes exist).
+
+Round 7 calibrates the energy steps by synthesis too: each pass renders every genre line at its
+own energy and corrects the per-step pitch, range, tempo and fall depth by the slope of what is
+left against the line's distance from its genre's usual energy. Above the usual energy the falls
+of the learned contour shrink by that fall factor per step, so short falling phrases no longer
+drag a loud line's register down.
 
 The voice studio's "Tune" button starts a round. The recordings, voices and rounds all stay in
 scratch.

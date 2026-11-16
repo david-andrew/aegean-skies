@@ -438,8 +438,10 @@ def delivery(phones, f0, start_of=lambda p: p['start'], dur_of=lambda p: p['end'
         return None
     s = 12 * np.log2(v / 100.0)
     med = float(np.median(s))
-    # spread: twice the median absolute deviation (robust to creak and octave slips in a track)
-    return dict(rate=syl / max(talk, 1e-3), pause=pause, med=med, spread=2.0 * float(np.median(np.abs(s - med))), voiced=len(v) / max(1, len(seg)))
+    # spread: twice the median absolute deviation (robust to creak and octave slips in a track);
+    # tail: how far the low end falls below the median (the depth of the falls)
+    return dict(rate=syl / max(talk, 1e-3), pause=pause, med=med, spread=2.0 * float(np.median(np.abs(s - med))), voiced=len(v) / max(1, len(seg)),
+                tail=max(0.3, med - float(np.percentile(s, 10))))
 
 
 def spectral(x, f0):
@@ -463,7 +465,7 @@ def brightness_per_c1():
     return float(10 / np.log(10) * (B[(f >= 1000) & (f < 4000), 1].mean() - B[(f > 80) & (f < 1000), 1].mean()))
 
 
-def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, passes=3, per_genre_plain=12, root=None):
+def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, passes=4, per_genre_plain=12, root=None):
     """Fit the delivery by synthesis: render sample training lines, compare each genre with the
     speaker's takes, and set that genre's speed, pitch, range and pauses (and, from the plain
     reads, the register, shape gain, pitch limit, voicing threshold and reference rate) so the
@@ -560,6 +562,29 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
                 speed, pitch, rng, pz = full[0] ** w, w * full[1], full[2] ** w, full[3] ** w
                 fit['styles'][g] = [round(float(np.clip(speed, 0.6, 1.8)), 3), round(float(np.clip(pitch, -6, 14)), 2),
                                     round(float(np.clip(rng, 0.5, 2.5)), 3), round(float(np.clip(pz, 0.3, 2.5)), 3)]
+        # each line's own energy, by synthesis: the slope of what is left (after each genre's median)
+        # against the line's distance from its genre's usual energy corrects the per-step pitch,
+        # range, tempo and fall depth, so the output lands on the takes at every energy
+        en = fit.get('energy')
+        if en and len(en.get('effect') or []) == 5:
+            rows = []
+            for l in sample:
+                g = GAME_GENRE.get(l['genre']); e = l.get('energy') or 0
+                if not g or e <= 0 or l['id'] not in got or g not in en['refs']:
+                    continue
+                r, y = rec[l['id']], got[l['id']]
+                rows.append((g, e - en['refs'][g], r['med'] - y['med'], np.log(r['spread'] / max(0.3, y['spread'])),
+                             np.log(r['rate'] / y['rate']), np.log(r['tail'] / max(0.3, y['tail']))))
+            if len(rows) >= 6 and len({round(x[1]) for x in rows}) >= 2:
+                adj = []
+                for k in (2, 3, 4, 5):
+                    med_g = {g: float(np.median([x[k] for x in rows if x[0] == g])) for g in {x[0] for x in rows}}
+                    d = np.array([x[1] for x in rows]); res = np.array([x[k] - med_g[x[0]] for x in rows])
+                    adj.append(float(np.sum(d * res) / (np.sum(d * d) + 2.0)))
+                ef = en['effect']
+                en['effect'] = [round(float(np.clip(ef[0] + adj[0], -3, 5)), 3), round(float(np.clip(ef[1] + adj[1], -0.5, 0.4)), 4),
+                                round(float(np.clip(ef[2] + adj[2], -0.3, 0.3)), 4), ef[3], round(float(np.clip(ef[4] + adj[3], -0.8, 0.3)), 4)]
+                step['energy'] = dict(n=len(rows), adjust=[round(a, 3) for a in adj], effect=en['effect'])
         report.append(step)
     return fit, report
 
@@ -594,7 +619,7 @@ def energy_effect(lines, takes, aligned, root, lam=4.0):
     pitch, spread, rate, bright = slope(2), slope(3), slope(4), slope(5)
     refs = {g: round(float(np.mean([r[1] for r in rows if r[0] == g])), 3) for g in genres}
     return dict(effect=[round(float(np.clip(pitch, -3, 4)), 3), round(float(np.clip(spread, -0.4, 0.4)), 4),
-                        round(float(np.clip(rate, -0.3, 0.3)), 4), round(float(np.clip(bright / 2, -1.5, 1.5)), 3)],
+                        round(float(np.clip(rate, -0.3, 0.3)), 4), round(float(np.clip(bright / 2, -1.5, 1.5)), 3), 0.0],
                 refs=refs, n=len(rows), levels=levels)
 
 
@@ -880,13 +905,13 @@ def main():
                                  + ', '.join(f'{k} {v:.0%} / {likeness.get(k, float("nan")):.2f}' for k, v in accs.items()) + ')']
             # the delivery, fitted by synthesis against the speaker's takes of each genre
             prog.set('fit', f'Calibrating the delivery of the {n}-line voice against your takes', 38 + 55 * (i + 0.2) / len(sizes))
-            fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
-            # a line's own energy within its genre, from the speaker's takes at each energy
+            # a line's own energy within its genre: measured from the takes, then corrected by synthesis
             fit['energy'] = energy_effect([l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, root)
-            if fit['energy']:
+            fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
+            if fit.get('energy'):
                 ee = fit['energy']['effect']
                 notes = notes + [f"per energy step (from {fit['energy']['n']} takes): pitch {ee[0]:+.1f} st, range x{np.exp(ee[1]):.2f}, "
-                                 f"tempo x{np.exp(ee[2]):.2f}, tilt {ee[3]:+.2f} dB/octave, about each genre's usual energy "
+                                 f"tempo x{np.exp(ee[2]):.2f}, tilt {ee[3]:+.2f} dB/octave" + (f", falls x{np.exp(ee[4]):.2f}" if len(ee) > 4 else '') + ", calibrated by synthesis, about each genre's usual energy "
                                  + ', '.join(f'{g} {r:.1f}' for g, r in fit['energy']['refs'].items())]
             last = cal[-1]
             notes = notes + ['delivery fitted to your takes: ' + '; '.join(
