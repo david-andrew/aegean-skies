@@ -17,7 +17,7 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
@@ -320,6 +320,20 @@ On the rivers branch until it lands.
   Over the cut the terrain keeps finer cells further out (`world_tile_canal` in
   `src/world_terrain.jo`) so the cut stays open from the air.
 - **Rules:** player-facing text says canal side, dock or waterfront, never "quay".
+
+### Canal basin
+
+- **Aliases:** the basin, the lagoon, where the arm joins.
+- **Definition:** partway along the escape (stations 44-53), where the mill-water arm joins it, the
+  canal opens into a basin some 120 m across and 200 m long: room to turn, evade and line up on the
+  water between the narrow cuts. Its walls flare out along the wall line (the solids follow it too),
+  with promenades, trees and lamps all round, a stone arch at its entry (44) and exit (53), barges
+  and a launch moored 5 m off its walls and one barge at a buoy out on its water, and riflemen and a
+  machine gun on its far quays and the exit bridge's head.
+- **Code:** `tools/bake_river.py` (`canal_width`, baked into `src/river_data.jo`; `world.bin` and
+  `assets/living-routes.bin` follow it); `src/river_field.jo` (the carve's reach capped at 140 m past
+  a wide basin's wall); `src/canal_geometry.jo` (`canal_line_slab`); `src/canal_traffic.jo`;
+  `src/canal_ground_fire.jo`.
 
 ### Canal crossings
 
