@@ -20,9 +20,9 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -1521,6 +1521,27 @@ On the rivers branch until it lands.
   redfox). The old islands' groves keep their own placement; nothing is painted under their
   meshes.
 
+
+### Farmland
+
+- **Aliases:** the fields, the patchwork, hedgerows, tree lines, lanes.
+- **Definition:** the gentle lowland drawn as a patchwork of straight-edged fields (about 30 to
+  110 m), each one flat crop colour (greens, straw, tilled brown, striped vines and olive rows),
+  in districts of about 500 m whose direction varies, as the film's farmland is. Hedgerows and
+  tree lines run along a share of the field edges, scalloped, lit on their sun side, casting a
+  shadow onto the field away from the canopy light (held low, so they read at noon). Lanes run
+  between districts, a hedgerow along about half. A settlement's working land and the olive
+  country are drawn as the same patchwork, taking their own crops. Woods keep the pine stands;
+  the lowland's maquis gives way to the fields. Far off, the fields turn to their mean. On low,
+  the fields' colour is baked into the terrain tiles on the CPU (soft edges, no hedgerows; the
+  fields' mean on coarse tiles).
+- **Code:** `src/fields.jo` (`field_at`, `field_crop`, `field_hedges`, `field_share`,
+  `field_bake`, `field_crop_low`, `field_palette`); used by `ground_surface` in
+  `src/terrain.jo`; baked for low in `world_tile_job_rows` (`src/world_terrain.jo`).
+- **Rules:** the palette is a switch until the look is decided: `AEGEAN_FIELD_PALETTE=dry` gives
+  the dry straw summer (docs/ART.md); green valleys by default. Low's terrain shader is at a
+  register-pressure cliff on redfox: measure any addition to its low path there, alone and
+  together.
 ---
 
 ## Towns and people
@@ -1612,6 +1633,45 @@ On the rivers branch until it lands.
   `call_lighter`, `lighter_step` in `aegean.jo`; the sale is `src/living_refuel.jo` `buy_tank_fuel`.
 - **Capture:** `AEGEAN_CRAFT=<a big boat> AEGEAN_ABOARD=1 AEGEAN_CAPTURE_LAUNCH=lighter` (also
   `swing`: the wind held abeam, seen from above).
+
+### Call for help
+
+- **Aliases:** help on the R/T, a tow, the flare.
+- **Definition:** down on the sea and unable to go on (the tank dry, the engine or hull too far
+  gone, wrecked or aground), the [R/T](#rt) pad offers "Call for help" first (R does too on a
+  wreck). Whoever is really near answers. One of the player's flight (in a fight, for fuel only)
+  lands into the wind off to one side, taxis to lie alongside and hands over two two-gallon cans
+  out of its own tank, then takes off again. Failing that, the nearest passing ship of the living
+  world turns aside (a hull stands in for it, the ship itself held on its route and not drawn
+  meanwhile) and tows the aircraft into the nearest town harbour. Failing that, that harbour's
+  launch comes out and tows it in. The radio answers with a rough time ("about twenty minutes");
+  the boat sails the fleet's own sea lanes, round the land, and is seen coming; "Wait for them"
+  skips the wait ([time skip](#time-skip)) to the last 60 m, or a tow to the harbour. The tow
+  draws up alongside, takes the line and hauls the aircraft round onto it; in at the harbour the
+  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). The
+  cans are paid for at the nearest pier's price to the wingman, the tow by distance to the
+  skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
+  the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
+  reads "Fire a flare": a red star goes up and the nearest ship or harbour within 8 km comes.
+  When the flight turns for home its leader says where ("then back to Ardevanti").
+- **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
+  `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /
+  `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
+  `aegean.jo`.
+- **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
+  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
+
+### R/T
+
+- **Aliases:** the radio-telephone, the pad, orders to the flight.
+- **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
+  plate; a controller's D-pad left). Down on the sea in trouble its first line is the
+  [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
+  the flight leader's words follow: form on me, circle here and wait, attack my target, break off
+  and go home, lead me home. A number, a click or tap sends one, or C steps and F sends; Escape or
+  a few idle seconds close it. The nearest of the flight answers in a few plain words.
+- **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
+  in `aegean.jo`.
 
 ### Legacy towns
 
@@ -2143,10 +2203,51 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   the notebook logs them, and the bubble in `draw_company_talk` (`aegean.jo`); `passing_topic` in
   `src/speech.jo`; `tests/pilot_talk_test.jo`.
 - **Rules:** on by default; Options, Character: "Your pilot makes small talk". The day's doings
-  are kept for the session (the world's deeds, which it also reads, are saved).
+  are kept in the World (`World.pilot_day`, `src/pilot_day_types.jo`), saved with the game; an
+  older save loads with an empty day.
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=0.5 AEGEAN_SMALL_TALK=always
   AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` (he answers every remark; a bumpy flight over from
   Kalamos and a load brought in are on his day).
+
+### Leads
+
+- **Aliases:** what's going on, things to look into, something he could go and do.
+- **Definition:** now and then people mention something real the pilot could go and do: someone
+  after a lift (an open passenger job), a load left on a dock a while (an open cargo job), a race
+  at a capital on a named day (a club meeting taking entries), a boat overdue (a missing-boat
+  story), music at the Ancora tonight (the band's evening). Said plainly, once by each person a
+  day (kept in the World, so not again after a load: `World.rep.told_leads`), one kind a day each;
+  nearest home first. No quest log and no marker: the player remembers
+  it, or writes it in the notebook. Mostly when asked what they've heard (half the time) and at
+  the table (a third of the remarks), now and then in passing (one remark in seven).
+- **Code:** `src/leads.jo` (`leads_for`, `lead_real`, `lead_line`, `lead_to_tell`); `tell_lead`,
+  `_lead_meets` and the three places it is said in `aegean.jo`; `tests/leads_test.jo` (every lead
+  real, over days of the world; gone once taken, closed or over).
+- **Capture:** `AEGEAN_LEISURE=lead-bar AEGEAN_COMPANY=0.5 AEGEAN_COMPANY_GAP=10 AEGEAN_LEADS=always
+  AEGEAN_CAPTURE_MINUTES=450 AEGEAN_HOUR=17` (someone at the bar tells of a lift wanted, the band,
+  a load); `AEGEAN_LEISURE=lead-ride` (he has walked up to the one who wants the lift).
+
+### A boat adrift
+
+- **Aliases:** an overdue boat, a boat in trouble, Petros's boat.
+- **Definition:** now and then (about one fishing trip in forty, more in bad weather) a fishing
+  boat that has gone further out loses its engine or its mast, or loses its way, and lies adrift
+  on the sea lane out of its harbour, two to four kilometres out, drifting slowly along it. Its
+  trip is held there, so it is overdue: the town worries (the missing-boat story) and people say
+  so (a [lead](#leads)). It is really there, drawn where it lies; found by flying over and
+  looking, with no marker. Landed alongside, the pilot takes the skipper aboard (he climbs into
+  the second seat, as a rescued pilot does) and sets him ashore at a harbour; or gets a line
+  across to another boat out fishing near, which tows it home; or, having seen it, tells someone
+  of its harbour where it lies, and the launch goes out. Left alone, the lost find their way home
+  in some hours, and the others are brought in by a passing boat late the next day. The skipper
+  remembers who came for him; the worried and the harbour tell of it ("Heard you found Petros.");
+  the pilot's day has it ("Found Petros off Porto Vecchio.").
+- **Code:** `src/living_adrift.jo` (`adrift_minute`, `adrift_begin`, `adrift_take_aboard`,
+  `adrift_set_ashore`, `adrift_tow`, `adrift_report`), `src/adrift_types.jo` (`World.adrift`, saved);
+  the hold in `advance_workboats`; the deed `found_boat` in `src/reputation.jo`; `update_adrift`,
+  the offers and the talk card's "… boat is lying off …" in `aegean.jo`; `tests/adrift_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home` (heard: with
+  `AEGEAN_LEADS=always`; search: with `AEGEAN_FLYING=110`).
 ### Contracts
 
 - **Aliases:** missions, commissions, military contracts.
