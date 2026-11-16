@@ -18,7 +18,6 @@ A clock rewind, load jump or large listener teleport also discards queued ambien
 |---|---|
 | Hour bells / service peals | Registry church/hill-church landmarks and original towns' visible chapel anchors. Nearest audible church strikes 1–12 on the hour; at 09:00 on Sundays/feasts a short three-pitch service peal replaces the hour count. No startup backlog. |
 | Harbour voices / ropes / rigging | Awake, non-travelling, non-carried people physically near the quay. The voices are a recorded bed (`src/ambience_beds.jo`; `docs/CREDITS.md`), streamed: a few people's talk (village bed) for one to three nearby, crossfading into a busy quay's (harbour bed) between four and fourteen; squares and markets the same in the day and evening. Wind drives single rope/fender creaks and halyard slaps at uneven moments, more often in a stronger wind. Hull hammering (a few blows at a time, then a pause) also requires an arrived, working mechanic nearby. |
-| Single voices | Awake people out and about within 40 m of the listener (calls from up to 90 m): now and then a greeting, a laugh, a call, or a question their companion answers, from where each stands. Vowel-only synthesis, no words; even ids are men's voices, odd women's (as `src/life_view.jo` dresses them); pitch follows age. About one a person every 75 s, rarer at night and at a distance. |
 | Cafe voices / clinks | Actual cafe landmarks/core life venues, nearby awake bodies, 17:00–23:00: a room's recorded talk and glasses (bar bed) indoors, the village bed on an open terrace. No settlement population multiplier. |
 | Rivers | The nearest bank of a river (a canal at a third of the level), louder for a wider river, heard to some 160 m: a recorded river bed. |
 | Birdsong | Trees and fields about the listener by day, not in rain or strong wind: one phrase at a time from each tree's own singer at uneven moments, four synthesized birds (a trill, a warble, chips, a whistled phrase). |
@@ -29,8 +28,8 @@ A clock rewind, load jump or large listener teleport also discards queued ambien
 | Ships | Actual vessel pose, kind, status and speed. Powered ships thump underway; sailboats luff according to apparent wind/head-to-wind. Steam whistles follow observed departures/arrivals, never first discovery. Sunk/stopped craft have no propulsion sound. |
 | Rain / thunder | Saved spatial weather. Roof rain uses actual nearby houses/parcels; sea rain uses an open-water surface tile. Rain is silent above cloud base. Thunder follows the existing storm-ID/23-second lightning phase, once per double flash, delayed by source distance / 343 m/s. |
 
-No ambience repeats on a beat. Single events (hammering, creaks, slaps, waves, animals, birds,
-voices) come at uneven moments from `ambience_due`: time is cut into cells of the event's mean
+No ambience repeats on a beat. Single events (hammering, creaks, slaps, waves, animals, birds)
+come at uneven moments from `ambience_due`: time is cut into cells of the event's mean
 period and each cell holds one event at its own hashed moment. Each event plays one of a few
 takes with a little pitch spread. Beds that loop run 3.3-7 s with random, not periodic, swells;
 short textures (cicadas, rain) stay level; crickets and a ship's engine beat by nature.
