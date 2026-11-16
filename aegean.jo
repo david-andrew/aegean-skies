@@ -103,6 +103,7 @@ use 'src/canal_geometry.jo'
 import 'src/living_refuel.jo' as refuel
 use 'src/rescue_view.jo'
 use 'src/shore.jo'
+use 'src/side_colours.jo'
 use 'src/rescue_exchange.jo'
 use 'src/air_pilot.jo'
 use 'src/distant.jo'
@@ -158,6 +159,7 @@ use 'src/combat_trails.jo'
 use 'src/combat_sound.jo'
 use 'src/battle_radio.jo'
 use 'src/homeward_view.jo'
+use 'src/rt_pad.jo'
 use 'src/cockpit.jo'
 use 'src/bailout.jo'
 use 'src/descent_view.jo'
@@ -186,6 +188,7 @@ use 'src/reputation.jo'
 use 'src/reputation_talk.jo'
 use 'src/stay.jo'
 use 'src/joyride.jo'
+use 'src/rescued_rider.jo'
 from 'src/living_events.jo' import emit_event
 from 'src/living_news.jo' import remember
 from 'src/living_life_seed.jo' import choose_life_venue
@@ -253,7 +256,7 @@ init_shadow()
 init_trails()
 init_flight_effects();init_splashes();init_storm_render();init_craft_shadow()
 init_birds()
-init_curved_world()
+init_curved_world(legacy_clouds)
 # These effects first appear when a nearby aircraft starts, potentially long
 # after a walking scene has settled. Load their programs before the game loop.
 init_prop_discs()
@@ -476,7 +479,7 @@ if let v = env("AEGEAN_UI"):
 
 hotel = build_hotel(hotel_site(towns[0], (x: f64, z: f64) -> f64: surface_height(x, z)))
 towns[0].quays = towns[0].quays + hotel.quays
-walk_publish("hotel-ancora", hotel_solids(hotel))
+walk_publish("hotel-ancora", hotel_solids(hotel) + room_solids(hotel))
 walk_publish_floors(room_floor_sites(hotel))
 publish_leisure_venue(living_world, hotel.venue)
 band = make_band()
@@ -522,6 +525,8 @@ served_look_until = -1.0        # (a look at the table while what was ordered ar
 served_pending = false
 ride = Joyride()                 # (a pleasure flight with someone from the town: src/joyride.jo)
 ride_fig: Figure? = none
+rider = RescuedRider()              # (a pilot taken out of the water, seen aboard and walking off: src/rescued_rider.jo)
+rider_fig: Figure? = none
 ride_rolled = false              # (whether anyone asks: rolled once each time the pilot comes to the aircraft)
 ride_asker = -1                  # (the folk asking, while they ask)
 ride_asking_wait = false         # (the pilot stepped ashore with them seated: the choice is up)
@@ -682,10 +687,6 @@ leisure_stand = ():
     if leisure_spent > 0:
         log_note(notebook, "At {leisure_place(leisure.sitting).name}: {join(leisure_had, ", ")}. {phoenix_text(leisure_spent)}.", clock_text(living_world, living_world.minute))
     global waiter, taking
-    # (out of the bar room by its door)
-    if room_point_inside(hotel, me.pos):
-        out = room_way_out(hotel, leisure.sitting == "bar")
-        me.pos = out.0; me.yaw = out.1; follow.yaw = me.yaw + PI
     # (off the stool, onto the deck)
     if leisure.sitting == "bar": me.pos = vec3(me.pos.x, f32(walk_height(towns, f64(me.pos.x), f64(me.pos.z))), me.pos.z)
     # (what is on the table stays there, as it is, until someone comes to clear it; what was in
@@ -721,11 +722,9 @@ leisure_skip = (minutes: int, doing: str, after: int = 0):
 # what one can do here, on foot (the card says it; F does it)
 leisure_prompt = () -> str:
     if me.mode != .walking or holding_cargo() >= 0 or not hotel.ok: return ""
-    if f64(length(me.pos - hotel.seat)) < 2.4: return "F  sit at a table on the terrace"
+    if f64(length(me.pos - hotel.seat)) < 2.4: return if room_point_inside(hotel, hotel.seat): "F  sit at a table" else: "F  sit at a table on the terrace"
     if f64(length(me.pos - hotel.counter)) < 2.4: return "F  order at the bar"
     if f64(length(me.pos - hotel.desk)) < 2.8: return "F  ask at the desk for a room"
-    door = room_door_prompt(hotel, me.pos)
-    if door != "": return door
     if tip_jar_here(): return "F  tip the band"
     if coffee.ok and f64(length(me.pos - coffee.seat)) < 2.4: return "F  sit at the coffee house"
     if f64(length(me.pos - hotel.barber_seat)) < 1.6: return "F  a shave at the barber's"
@@ -738,22 +737,15 @@ leisure_act = ():
     if said.contains("tip the band"):
         ui = .leisure; leisure_ui = 20; leisure_line = ""
         mouse_lock(false)
-    else if said.contains("go in"):
-        # (into the bar room, by a door: a cut, the places as they should be now)
-        room_go_in(hotel, room_hour(), weather_here.rain, weather_here.storm)
-        if said.contains("bar"):
-            leisure_sit("bar")
-            leisure_open_menu("bar")
-        else: leisure_sit("hotel")
-    else if said.contains("terrace"): leisure_sit("hotel")
-    else if said.contains("bar"):
+    else if said.contains("sit at a table"): leisure_sit("hotel")
+    else if said.contains("barber"): barber_begin()
+    else if said.contains("order at the bar"):
         leisure_sit("bar")
         leisure_open_menu("bar")
     else if said.contains("desk"):
         ui = .leisure; leisure_ui = 2; leisure_at = "hotel"; leisure_line = ""
         mouse_lock(false)
     else if said.contains("coffee"): leisure_sit("coffee")
-    else if said.contains("barber"): barber_begin()
     else if said.contains("fish"): fishing_begin()
 
 # time passing: the screen darkens, the scene's people and craft are folded back into the world,
@@ -1201,12 +1193,18 @@ music_cues_step = ():
     note_cue_age(band_cue, t)
     note_cue_age(street_cue, t)
     if hotel.ok and band_notes.frame >= 0 and f64(length(scene_camera() - hotel.stage)) < NOTE_HEARD + 20.0:
-        if let n = note_cue_pick(band_cue, band_notes.feed.notes, band_notes.frame, t):
-            bp = bar_band_position(living_world.band, living_world.tick)
+        # (in the bar room they keep under its ceiling, and no wind carries them)
+        inside = room_point_inside(hotel, hotel.stage)
+        band_cue.ceiling = if inside: f64(transform_point(hotel.frame, vec3(0, f32(DECK + 3.6), 12)).y) else: 1e9
+        air = if inside: 0.0 else: wind_now.speed
+        bp = bar_band_position(living_world.band, living_world.tick)
+        spots = band_spots(hotel, BAR_SET[bp.index].lineup, bar_singing(bp))
+        loop chord in note_cue_take(band_cue, band_notes.feed.notes, band_notes.frame):
+            n = chord[0]
             at = hotel.stage + vec3(0, 1.9, 0)
-            loop s in band_spots(hotel, BAR_SET[bp.index].lineup, bar_singing(bp)):
-                if s.instrument == n.part: at = s.pos + vec3(0, f32(if s.seated: 1.45 else: 1.9), 0)
-            note_cue_rise(band_cue, n, at, t, music_quarter_of(band_notes.piece, n), note_chord(band_notes.feed.notes, n))
+            loop s in spots:
+                if s.instrument == n.part: at = s.pos + vec3(0, f32(if s.seated: 1.5 else: 1.95), 0)
+            note_cue_rise(band_cue, chord, at, t, music_quarter_of(band_notes.piece, n), note_ago(band_notes.frame, n), wind_now.dir, air)
     else: band_cue.frame = -1
     # (the street: only the nearest musician is heard, within STREET_HEARD)
     ear = scene_camera()
@@ -1217,22 +1215,22 @@ music_cues_step = ():
         d = f64(length(f.pos - ear))
         if d < bd: best = k; bd = d
     if best != street_player:
-        street_player = best; street_cue.frame = -1
+        street_player = best; street_cue = NoteCue()
     if best < 0: return
     f = folks[best]
     live_notes_load(street_feed, street_events(f.person, t), STREET_PART)
-    if let n = note_cue_pick(street_cue, street_feed.notes, live_notes_clock_frame(t), t):
-        note_cue_rise(street_cue, n, f.pos + vec3(0, f32(f.fixture_height + (if f.posture == 1: 1.4 else: 1.85)), 0), t, STREET_QUARTER, note_chord(street_feed.notes, n))
+    head = f.pos + vec3(0, f32(f.fixture_height + (if f.posture == 1: 1.5 else: 1.95)), 0)
+    frame = live_notes_clock_frame(t)
+    loop chord in note_cue_take(street_cue, street_feed.notes, frame):
+        note_cue_rise(street_cue, chord, head, t, STREET_QUARTER, note_ago(frame, chord[0]), wind_now.dir, wind_now.speed)
 
 const STREET_HEARD = 70.0           # (metres: as far as src/life_audio.jo plays a street musician)
 
-# Drawn over the scene, under the cards: none when the option is off; the band's none while one
-# sits at the hotel (at a table or the bar), where the band is plain to see.
+# Drawn over the scene, under the cards: none when the option is off.
 draw_music_cues = ():
     if not options.music_notes or stay.active: return
     night = 1.0 - smoothstep(-0.06, 0.1, f64(sky_sun(hour).y))
-    if leisure.sitting != "hotel" and leisure.sitting != "bar" and leisure.sitting != "guest":
-        draw_note_cue(band_cue, t, note_heard_alpha(band_heard.distance, band_heard.occlusion), night)
+    draw_note_cue(band_cue, t, note_heard_alpha(band_heard.distance, band_heard.occlusion), night)
     if street_player >= 0 and street_player < folks.len():
         d = f64(length(folks[street_player].pos - scene_camera()))
         # (the street is heard to 70 m, the band to 140: the same fade over half the distance)
@@ -1427,6 +1425,44 @@ draw_ride_seated = (m: CraftModel, at: mat4, L: Light):
         # (an arm out at their house; both hands on the cockpit's edge on the take-off run)
         arms = if t < ride.pointing_until: vec2(-9, 2.6) else: if ride.stage == .seated and pc.throttle > 0.3: vec2(1.0, 1.0) else: vec2(-9, -9)
         draw_figure_at(f, at * translation(seat - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true, offset = world_residual(craft_point(pc.state)), arms = arms)
+
+# The rescued pilot (src/rescued_rider.jo): their figure in flying kit, made once per person.
+rider_takes = (person: int, in_water: vec3):
+    global rider, rider_fig
+    rider = rider_board(person, in_water, t, ride.stage != .none)
+    p = living_world.people[person]
+    rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+
+rider_tick = (dt: f64):
+    global rider, rider_fig
+    # (after a load, whoever the world has aboard is back in the seat)
+    if rider.stage == .none:
+        aboard = rescue_aboard(living_world)
+        if aboard.len() > 0 and living_world.war.survivors[aboard[0]].person >= 0:
+            person = living_world.war.survivors[aboard[0]].person
+            rider = rider_seated(person, t, ride.stage != .none)
+            p = living_world.people[person]
+            rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+    rider_step(rider, t, dt, (x: f64, z: f64) -> f64?: (if walk_height(towns, x, z) > (if geography_enabled: water_at(x, z).level else: 0.0) + 0.3: walk_height(towns, x, z) else: none))
+    if rider.stage == .none: rider_fig = none
+
+draw_rider_seated = (m: CraftModel, at: mat4, L: Light):
+    if rider.stage != .aboard: return
+    if let f = rider_fig:
+        seat = rider_seat(ride_seat(m), rider.on_wing, pc.spec.span)
+        draw_figure_at(f, at * translation(seat - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true, offset = world_residual(craft_point(pc.state)))
+
+draw_rider_out = (L: Light):
+    if let f = rider_fig:
+        if rider.stage == .boarding:
+            seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span) - vec3(0, 1.55, 0))
+            p = rider_climb_point(rider.from, seat, (t - rider.since) / RIDER_CLIMB)
+            draw_figure(f, p, heading(pc.state), t * 3.0, 0.3, L, t, arms = vec2(2.6, 2.6))
+        else if rider.stage == .alighting:
+            p = rider_climb_point(rider.from - vec3(0, 1.55, 0), rider.pos, (t - rider.since) / RIDER_ALIGHT)
+            draw_figure(f, p, rider.yaw, 0.0, 0.0, L, t)
+        else if rider.stage == .walking:
+            draw_figure(f, rider.pos, rider.yaw, rider.phase, 0.8, L, t)
 
 draw_ride_talk = ():
     if ride.stage == .none or ride.person < 0 or ride.line == "" or t > ride.line_until: return
@@ -1863,7 +1899,9 @@ tip_jar_here = () -> bool:
     if not hotel.ok or me.mode != .walking or leisure.sitting != "": return false
     if not (band_evening(living_world) or living_world.band.index >= 0): return false
     j = band_jar_at(hotel)
-    f64(length(vec2(j.x - me.pos.x, j.z - me.pos.z))) < 2.2 and abs(f64(j.y - me.pos.y)) < 1.5
+    # (on the piano in the bar room, it is reached across the stand from its front)
+    inside = room_point_inside(hotel, j)
+    f64(length(vec2(j.x - me.pos.x, j.z - me.pos.z))) < (if inside: 4.6 else: 2.2) and abs(f64(j.y - me.pos.y)) < 2.0
 
 # A coin or a note in the jar (src/leisure.jo leisure_tip): the ledger, the reputation; thanks
 # come from the stand between numbers.
@@ -1938,7 +1976,7 @@ seat_orbit_step = (dt: f64):
     up = if options.invert_y: -1.0 else: 1.0
     v = view_turn(ViewTurn(follow.yaw, follow.pitch), inp.0, inp.1, ctl.look, dt, up, -0.1, 1.2)
     follow.yaw = v.yaw; follow.pitch = v.pitch
-    zoom = pow(0.88, clamp(mouse_wheel(), -3.0, 3.0))
+    zoom = wheel_zoom()
     if pad.on and pad.zoom > 0.0 and abs(pad.zoom - 1.0) > 0.001: zoom = zoom / pad.zoom
     follow.distance = clamp(follow.distance * zoom, 1.4, 7.0)
     follow.height = approach(follow.height, 1.25, 4.0, dt)
@@ -1960,6 +1998,8 @@ _right = () -> vec3: vec3(f32(-cos(me.yaw)), 0, f32(sin(me.yaw)))
 fish_water_ahead = () -> bool:
     if me.mode != .walking or f64(me.pos.y) > 4.0 or f64(me.pos.y) < 0.3: return false
     out = me.pos + _ahead() * 3.0
+    # (a floor over the water is no water: the bar room's)
+    if walk_floor_height(out.xz, -1e9) > -1e8: return false
     surface_height(f64(out.x), f64(out.z)) <= -0.6
 
 # On a dock or quay in a harbour town, facing deep enough water, away from one's own mooring and
@@ -3386,6 +3426,27 @@ leisure_capture_step = ():
         me.pos = vec3(p.x, f32(walk_height(towns, f64(p.x), f64(p.z))), p.z)
         me.yaw = atan2(f64(-hotel.table_z.x), f64(-hotel.table_z.z))
         follow.yaw = me.yaw + PI - 0.25; follow.distance = 2.6; follow.pitch = 0.32
+    if stage.starts_with("doorway"):
+        # (the bar room's doorways close to, from outside and inside: doorway, doorway-in,
+        # doorway-side, doorway-side-in)
+        global judge_camera
+        at = (x: f64, y: f64, z: f64) -> vec3: transform_point(hotel.frame, vec3(f32(x), f32(DECK + y), f32(z)))
+        judge_camera = match stage:
+            "doorway": JudgeView(at(1.6, 1.6, 20.2), at(0.0, 1.5, 17.8), "the bar room's doorway, from the terrace")
+            "doorway-in": JudgeView(at(-1.4, 1.6, 15.6), at(0.0, 1.4, 18.0), "the bar room's doorway, from inside")
+            "doorway-side": JudgeView(at(12.8, 1.6, 13.6), at(11.0, 1.5, 15.0), "the side doorway, from the walk")
+            _: JudgeView(at(8.6, 1.6, 13.4), at(11.0, 1.4, 15.0), "the side doorway, from inside")
+    if stage == "walk-in" or stage == "walk-in-side":
+        # (from the terrace round the bar's end and in at its doorway, or along the east walk and in
+        # at the side door, on foot: the bar room is there, through the door)
+        global listen_mode, listen_path
+        at = (x: f64, z: f64) -> vec3: transform_point(hotel.frame, vec3(f32(x), 1.2, f32(z)))
+        route = if stage == "walk-in": [at(5.6, 23.5), at(5.4, 19.1), at(0.0, 18.9), at(0.0, 16.6), at(-1.0, 13.4), at(-1.6, 12.6)] else: [at(13.0, 24.0), at(13.0, 15.0), at(10.0, 15.0), at(6.0, 13.0)]
+        me.pos = vec3(route[0].x, f32(walk_height(towns, f64(route[0].x), f64(route[0].z))), route[0].z)
+        d = route[1] - route[0]
+        me.yaw = atan2(f64(d.x), f64(d.z))
+        follow.yaw = me.yaw + PI; follow.distance = 3.6; follow.pitch = 0.18
+        listen_mode = "listen-walk"; listen_path = route[1..route.len()]
     if stage == "listen-run": listen_run = true
     if stage == "listen-turn" or stage == "listen-walk" or stage == "listen-run":
         # (for recording how the band is heard: by it, turning on the spot; or walking away)
@@ -3819,6 +3880,7 @@ combat_visual = make_combat_view()
 combat_audio = if audio_enabled and not audio_deferred: start_combat_audio() else: CombatAudio()
 battle_radio = BattleRadio()
 homeward = HomewardView()           # after the strait: the way home (src/homeward_view.jo)
+rt = RtPad()                        # the R/T to one's own flight (src/rt_pad.jo)
 cockpit_model = build_cockpit()
 
 grass = GrassField(me.pos, instance_buffer([GrassCell(mat4(), vec4(1, 1, 1, 1),vec4(0,1,0,0))]), 0)
@@ -3829,6 +3891,8 @@ const GRASS_ARRIVAL_SECONDS = 0.012
 const GRASS_BUILD_SECONDS = 0.003
 
 follow = follow_camera(distance = 5.5, pitch = 0.25, height = 1.6)
+const WALK_NEAREST = 2.5            # (how near and far the wheel takes the camera on foot)
+const WALK_FARTHEST = 14.0
 follow_frame = FollowFrame()
 walker_point = world_point(me.pos)
 walker_published = me.pos
@@ -3854,7 +3918,8 @@ update_player_follow = (dt: f64,input: bool = true):
     target = if follow_steady == vec3(0, 0, 0): walker_point else: world_point(world_vec(walker_point) - follow_steady)
     before = follow.distance
     update_local_follow(follow,follow_frame,target,dt,input=input)
-    follow.distance = wheel_kept(follow.distance, before, menus_open())
+    # (the library's camera zooms by the wheel itself; the game's own zoom, smoothed, instead)
+    follow.distance = if menus_open(): before else if input: clamp(before * wheel_zoom(), WALK_NEAREST, WALK_FARTHEST) else: follow.distance
     follow_clear_of_walls()
     actor_render_offsets[living_world.player]=world_residual(walker_point)
 
@@ -4710,7 +4775,7 @@ if let v = env("AEGEAN_LOOK"):
         pc.orbit_dist = 22.0
         pc.look_yaw = 0.0; pc.look_pitch = 0.0
 
-# AEGEAN_TWEAKS="pure,trim,energy,orbit,fdm2,fdm2npcs,fdmsb,speedrule,aim,plainhits" switches trials on
+# AEGEAN_TWEAKS="pure,trim,energy,orbit,fdm2,fdm2npcs,fdmsb,aim,plainhits" switches trials on
 # from the start (aim: the aim assist on; plainhits: generous hits off)
 if let tw = env("AEGEAN_TWEAKS"):
     loop name in split(tw, ","):
@@ -4722,7 +4787,6 @@ if let tw = env("AEGEAN_TWEAKS"):
             "fdm2": dbg.tweaks.flight_model = 1
             "fdm2npcs": dbg.tweaks.fdm2_npcs = true
             "fdmsb": dbg.tweaks.flight_model = 2
-            "speedrule": dbg.tweaks.speed_rule = true
             "aim": dbg.tweaks.aim_assist = true
             "plainhits": dbg.tweaks.generous_hits = false
             _: pass
@@ -4914,7 +4978,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
         music_audition_stop(dbg.music)
         dbg=Debug(opts=dbg.opts)
         if startup_sloppy_no_audio == none: music_audition_prepare(dbg.music)
-        apply_speed_scale(BASE_SPEED_SCALE);set_lift_scale(3.3);set_bullet_scale(5.0)
+        apply_speed_scale(BASE_SPEED_SCALE);set_lift_scale(3.3);set_bullet_scale(7.0)
         set_sea_rough(1.0);set_drag_scale(1.0);set_tweaks(dbg.tweaks)
         set_near_boost(3.0);set_speed_mode(0);set_camera_rises(false)
     # A situation chooses the world and aircraft, never the user's flight calibration.
@@ -4957,7 +5021,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     me=Player(mode=if next.mode==.aboard:Mode.aboard else:if next.mode==.free:Mode.free else:Mode.walking,pos=next.position,yaw=next.yaw)
     folks=[];sync_folk(folks,living_world,towns);folk_sync_t=0
     air_events=AirEvents();all_air_traffic=traffic;view_target=TargetView();target_scan=0
-    vessels=next.vessels;vessel_bindings=VesselBindings();vessel_view=VesselView();vessel_mooring=VesselMooring()
+    vessels=next.vessels;vessel_bindings=VesselBindings();vessel_view=vessel_view_fresh(vessel_view);vessel_mooring=VesselMooring()
     cv=combat_visual
     combat_visual=CombatView(low=cv.low,low_parts=cv.low_parts,chute=cv.chute,hole=cv.hole,oil=cv.oil,pilot=cv.pilot,distant_pilot=cv.distant_pilot,
         trails=BattleTrails(mesh=cv.trails.mesh,shader=cv.trails.shader))
@@ -5282,6 +5346,21 @@ when TARGET == "wasm":
 title_wanted = () -> bool: title_will_open()
 title = TitleScreen(open = title_wanted())
 title_left_at = -100.0          # (when play began from the title: the scene comes up out of the dusk)
+title_handover_frame = -1       # (the frame play began from the title)
+# A choice made on the title (New, Continue, a slot, a Situation) waits, the screen in the title's
+# dusk with the loading propeller turning and the menu gone, until what play needs that the title
+# has been preparing a dusk frame at a time is ready (its shaders, its sounds and, for a new game,
+# the far economy), and only then is made:
+# play then comes up out of the dusk with nothing left to stall its first frames (a long first
+# frame of play showed the dusk it fades out of as a dark box over the game, in a browser).
+title_leaving: TitleChoice? = none
+title_leaving_since = 0.0
+const TITLE_LEAVING_MOST = 10.0       # (seconds, at the most: then it is made all the same)
+# (tests: AEGEAN_TITLE_PICK=new, continue, slot1, slot2... or a Situation's key, chosen as a click
+# would once the title is ready; each frame's title layers reported for some seconds of play after)
+title_pick_env = env("AEGEAN_TITLE_PICK")
+title_pick_asked = title_pick_env != none
+title_pick_new = (title_pick_env ?? "") == "new"
 names_at_play = 0               # (the game's name drawn so far when play began: no more after that)
 title_check = to_int(env("AEGEAN_TITLE_CHECK") ?? "") ?? -1   # (a frame to report on the name over play)
 page_shown = false              # (web: the page's loading card is taken away once the game has drawn)
@@ -5309,6 +5388,7 @@ title_flying = TitleFlying()            # (the next shot's aircraft, flown a sli
 title_battling = TitleBattling()        # (or its battle)
 title_shots_heard = 0                   # (the merge's gunfire heard so far)
 title_vapour: Trail[] = [Trail(), Trail(), Trail(), Trail()]   # (a race: the vapour off each racer's two wingtips in the pull)
+title_wakes: WakeTrail[] = [WakeTrail(), WakeTrail()]          # (and the water their downwash and prop wash work, skimming the sea)
 title_warming = false                   # (its terrain and town asked for ahead)
 title_waited = 0.0                      # (how long the shot was held on for the next to be ready)
 title_dark = 0.0                        # (how long the new shot has stayed dark, its view not yet settled)
@@ -5318,6 +5398,13 @@ const TITLE_WARM_AHEAD = 12.0           # (seconds before the cut its terrain an
 const TITLE_WAIT_MOST = 5.0             # (the longest a shot is held on, waiting)
 const TITLE_DARK_MOST = 2.5             # (the longest a new shot stays dark, waiting for its view; the first, longer: nothing was warmed for it)
 const TITLE_FIRST_DARK_MOST = 8.0
+# (the first shot also waits behind the loading card while the title's own frames stall: its shaders
+# linked at their first draw, seconds each on a phone's fresh visit; shown once this many frames in
+# a row are quick, or after TITLE_FIRST_STALL_MOST seconds of stalling)
+const TITLE_CALM_FRAMES = 4
+const TITLE_FIRST_STALL_MOST = 30.0
+title_calm = 0
+title_stalled = 0.0
 title_shown = 0                         # (shots begun)
 title_shot_age = 0.0
 title_now = TitleView(eye = vec3(0, 0, 0), dir = vec3(0, 0, -1), up = vec3(0, 1, 0), velocity = vec3(0, 0, 0), pace_at = vec3(0, 0, 0), pace_turn = vec4(0, 0, 0, 1))
@@ -5357,8 +5444,8 @@ title_ground = (x: f64, z: f64) -> f64: f64(surface_height(x, z))
 title_pick = (previous: TitleShotKind?) -> TitleShot:
     # (the reel opens on the vista: the Aegean at a glance, sea, islands, a great cloud and a small seaplane)
     if title_force == "high-vista" or (title_force == "" and title_shown == 0 and previous == none):
-        if let v = title_vista(title_rng, home.center, title_ground): return v
-    title_next_shot(title_rng, previous, home.center, title_sites(), title_ground, (h: f64) -> vec3: sky_sun(h), title_force, strait_origin(0))
+        if let v = title_vista(title_rng, home.center, title_ground, title_aspect()): return v
+    title_next_shot(title_rng, previous, home.center, title_sites(), title_ground, (h: f64) -> vec3: sky_sun(h), title_force, strait_origin(0), title_aspect())
 
 # The vista's tower: one towering cumulus made for the shot from the field's own tower forms
 # (src/cloud_field.jo), where the shot puts it (title_vista_tower), grown full and standing solid
@@ -5377,6 +5464,11 @@ title_make_tower = (shot: TitleShot) -> CloudVolume:
     v.growth = vec4(0.05, f32(shot.phase), 0.018, 0.0)
     v.precise = world_point(v.center)
     v
+
+# the screen's shape, and the vertical field the shot is composed with on 16:9 (title_fov widens it
+# for narrower screens)
+title_aspect = () -> f64: f64(max(screen_width(), 1)) / f64(max(screen_height(), 1))
+title_base_fov = () -> f64: if title_shot.pace == 4: 62.0 else: if title_shot.kind == .low: 68.0 else: 55.0
 
 # the aircraft a shot's flights use
 title_flight_spec = (shot: TitleShot) -> CraftSpec: if shot.kind == .high: craft_spec(.gull, craft_models[SUNSET_MODEL].contacts) else: craft_spec(.falco, craft_models[3].contacts)
@@ -5459,7 +5551,7 @@ title_frame_log = ():
 
 # a shot begins: its weather (fair, never rain), where it is
 title_cut = (shot: TitleShot):
-    global title_shot, title_shot_age, title_coming, title_warming, title_waited, title_dark, title_shown, world_grove_anchor, world_grove_reach, world_grove_next_anchor, world_grove_capped, title_vapour, title_tower
+    global title_shot, title_shot_age, title_coming, title_warming, title_waited, title_dark, title_shown, world_grove_anchor, world_grove_reach, world_grove_next_anchor, world_grove_capped, title_vapour, title_tower, title_wakes
     title_shot = shot; title_shot_age = 0.0; title_coming = none; title_warming = false; title_waited = 0.0; title_dark = 0.0; title_shown += 1
     world_warm_clear()
     world_towns_expect(title_path_points(shot))
@@ -5475,6 +5567,7 @@ title_cut = (shot: TitleShot):
         strait_weather(living_world, living_world.minute)
     else: weather_choose(living_world, shot.weather, view.eye)
     title_vapour = [Trail(), Trail(), Trail(), Trail()]
+    title_wakes = [WakeTrail(), WakeTrail()]
     title_tower = if shot.pace == 5: title_make_tower(shot) else: none
     print("TITLE shot {shot.kind} {shot.site} at {view.eye.x:.0} {view.eye.y:.0} {view.eye.z:.0} hour {shot.hour:.2} weather {WEATHER_LABELS[shot.weather]} pace {shot.pace} for {shot.length:.1} s")
 
@@ -5538,7 +5631,12 @@ step_audio_build = (all: bool):
             print("TITLE sounds made behind the title")
         if not all: break
 
+# the first shot still held dark for its view to be drawn whole: the loading card stays up (the
+# propeller on the dusk, no menu), the menu coming up with the shot, never over an empty dusk
+title_first_waiting = () -> bool: title_shown <= 1 and title_shot_age == 0.0 and not world_hidden
+
 title_dip = () -> f64:
+    if title_leaving != none: return 1.0
     into = 1.0 - smoothstep(0.0, TITLE_DIP, title_shot_age)
     out = smoothstep(title_shot.length - TITLE_DIP, title_shot.length, title_shot_age)
     max(into, out)
@@ -5584,11 +5682,14 @@ title_update = (dt: f64):
         title_prepare()
         return
     lay_out_screen()
-    title.age += dt
+    # (the menu's own fade in begins with the first shot, not under the loading card)
+    if not title_first_waiting(): title.age += dt
     # (the far economy's long single steps and the sounds' pieces only while the screen is dusk:
     # a quarter second on a phone would be seen over the shot)
     dusk = title_dip() > 0.92
-    step_far_opening(if dusk: 0.06 else: build_slice(0.008), not dusk)
+    # (a choice waiting on it, the hold's dusk: a bigger slice, the propeller turning slower but the
+    # hold over sooner)
+    step_far_opening(if title_leaving != none: 0.15 else: if dusk: 0.06 else: build_slice(0.008), not dusk)
     if dusk: step_audio_build(false)
     if dusk and not vessels_prewarmed: vessels_prewarmed = vessel_view_prewarm(vessel_view, vessels)
     # (the shaders play needs but the title has not drawn, linked one a dusk frame: about 60 ms
@@ -5597,12 +5698,19 @@ title_update = (dt: f64):
     if process_game_saves():
         title_begin()
         return
+    title_leave_step()
     if not game_save_status().busy: title.loading = -1
     # (the shot's own clock: the frame's time smoothed, a long frame never jumping the camera)
     title_dt = title_dt + (clamp(dt, 0.0, 0.05) - title_dt) * 0.15
-    # (a new shot stays dark at its start until its view is drawn whole)
-    if title_shot_age < 0.05 and title_dark < (if title_shown <= 1: TITLE_FIRST_DARK_MOST else: TITLE_DARK_MOST) and not (world_view_settled() and world_towns_settled()): title_dark += dt
+    # (a new shot stays dark at its start until its view is drawn whole; the first, behind the
+    # loading card, until the title's frames run smoothly too)
+    global title_calm, title_stalled
+    title_calm = if frame_time() < 0.1: title_calm + 1 else: 0
+    stalling = title_shown <= 1 and title_shot_age == 0.0 and title_calm < TITLE_CALM_FRAMES and title_stalled < TITLE_FIRST_STALL_MOST
+    if stalling: title_stalled += frame_time()
+    if stalling or (title_shot_age < 0.05 and title_dark < (if title_shown <= 1: TITLE_FIRST_DARK_MOST else: TITLE_DARK_MOST) and not (world_view_settled() and world_towns_settled())): title_dark += dt
     else:
+        if title_shown <= 1 and title_shot_age == 0.0: print("TITLE first shot shown at {elapsed():.2} s: held {title_dark:.2} s behind the loading card, {title_stalled:.2} s of it in stalled frames")
         if title_timing and title_shot_age == 0.0 and title_dark > 0.0: print("TITLE dark {title_dark:.2} s: land missing {world_view_missing}, districts pending {world_town_pending}, job {world_town_job.active}, groves {world_grove_visible} of {world_groves.len()} slots, {world_grove_count} trees")
         title_shot_age += title_dt
     began = time()
@@ -5621,6 +5729,11 @@ title_update = (dt: f64):
         title_cut(next)
     title_part("cut", began)
     title_now = title_view(title_shot, title_shot_age, title_ground)
+    # (on a narrow screen, a phone upright, the camera turns gently toward the shot's aircraft)
+    turn = title_subject_turn(title_shot, title_shot_age, title_ground, title_base_fov(), title_aspect())
+    if abs(turn) > 1e-5:
+        q = quat_axis_angle(vec3(0, 1, 0), -turn)
+        title_now.dir = quat_rotate(q, title_now.dir); title_now.up = quat_rotate(q, title_now.up)
     # (a race: vapour off the racers' wingtips as they pull, as the player's aircraft makes it: the
     # load on its wings, its true speed and the damp of the air)
     if title_shot.kind == .low and title_shot.pace == 2:
@@ -5639,6 +5752,15 @@ title_update = (dt: f64):
             strength = vapour_strength(f64(length(racer.velocity)) / speed_scale, racer.load, damp)
             trail_step(title_vapour[2 * i], craft_offset(body, quat_rotate(racer.turn, left)), strength, t)
             trail_step(title_vapour[2 * i + 1], craft_offset(body, quat_rotate(racer.turn, right)), strength, t)
+            # (low and fast, their downwash and prop wash streak the sea under them, as any aircraft's do)
+            k = title_airframe_spec(racer.kind)
+            water = f64(swell_at(f64(racer.at.x), f64(racer.at.z), t).x)
+            skim = skim_amount(k, f64(racer.at.y) - k.float_height - water, racer.velocity)
+            under = craft_offset(body, vec3(-racer.velocity.x * 0.15, f32(water + 0.1) - racer.at.y, -racer.velocity.z * 0.15))
+            trail = title_wakes[i]
+            wake_step(trail, under, racer.velocity, false, wake_width(Craft(racer.kind)), t, skim)
+            title_wakes[i] = trail
+            if skim > 0.15: emit(spray_ps, under, int(1.0 + skim * 3.0), 3.0 + 5.0 * skim, rgba(0.96, 0.98, 1.0, f32(0.4 + 0.4 * skim)), 1.0, 0.4 + 0.5 * skim, 0.7, normalize(vec3(-racer.velocity.x, 30.0, -racer.velocity.z)))
     # (while the screen is dark the world already looks where the next shot begins)
     free.pos = title_now.eye
     if let next = title_coming:
@@ -5698,8 +5820,11 @@ title_sound = (dt: f64):
 
 # play begins (a new game where the startup left it, a loaded one, or a situation)
 title_begin = ():
-    global title_left_at,game_ui_note,title_start,title_kept,world_grove_anchor,world_grove_next_anchor
+    global title_left_at,game_ui_note,title_start,title_kept,world_grove_anchor,world_grove_next_anchor,title_leaving
     title.open = false
+    # (no page of the title's left open for when it next opens; no choice left waiting)
+    title.page = 0; title.pick = -1
+    title_leaving = none
     set_far_opening_deferred(false)
     far_opening_drop()
     step_audio_build(true)
@@ -5718,7 +5843,9 @@ title_begin = ():
     global names_at_play
     names_at_play = title_name_draws
     game_ui_note = ""
-    print("TITLE play: scenario '{active_scenario}', autosave slot {game_active_slot}")
+    print("TITLE play: scenario '{active_scenario}', autosave slot {game_active_slot}, shaders pending {shaders_pending()}")
+    global title_handover_frame
+    title_handover_frame = frame_number()
 
 # the slot Continue loads: the newest one that can be loaded
 title_continue_slot = (rows: GameRow[]) -> int:
@@ -5726,14 +5853,55 @@ title_continue_slot = (rows: GameRow[]) -> int:
 
 # the title's buttons, and what they ask of the game
 draw_title_screen = ():
+    global loading_t0
     # (the dip to dusk between shots, under the menu)
     v = visible_rect()
     if title_dip() > 0.002: rect(v, rgba(0.075, 0.1, 0.15, f32(title_dip())))
+    if title_leaving != none:
+        # (a choice made: the propeller turns on the dusk while play is made ready)
+        if loading_t0 < 0.0: loading_t0 = elapsed()
+        draw_loading_propeller(vec2(f32(f64(v.x) + f64(v.w) * 0.5), f32(f64(v.y) + f64(v.h) * 0.5)), elapsed() - loading_t0, 0.0)
+        return
     if title_bare: return
+    if title_first_waiting():
+        # (the loading card's propeller turning on, its ring full, until the first shot is there;
+        # in a page the page's own card is still up over it)
+        if loading_t0 < 0.0: loading_t0 = elapsed()
+        draw_loading_propeller(vec2(f32(f64(v.x) + f64(v.w) * 0.5), f32(f64(v.y) + f64(v.h) * 0.5)), elapsed() - loading_t0, 1.0)
+        return
     rows = game_rows(game_slot_views, -1)
     status = game_save_status()
     ready = status.ready and game_slots_known
     pick = title_screen(title, fonts, rows, title_continue_slot(rows), ready, status.busy, game_ui_note, status.error != "" and game_ui_note == status.error)
+    # (a choice to start play waits for play to be ready: title_leave_step makes it)
+    if pick.act == "load" or pick.act == "new" or pick.act == "situation":
+        global title_leaving, title_leaving_since
+        title_leaving = pick; title_leaving_since = elapsed()
+        return
+    title_choose(pick)
+
+# A choice waiting to start play: made once nothing play needs is left to prepare (or after
+# TITLE_LEAVING_MOST); the tests' AEGEAN_TITLE_PICK made the same way once the title is ready.
+title_leave_step = ():
+    global title_leaving, title_pick_env, title_leaving_since
+    if let want = title_pick_env:
+        status = game_save_status()
+        if status.ready and game_slots_known and not status.busy and title.age > 1.0:
+            rows = game_rows(game_slot_views, -1)
+            title_leaving = if want == "new": TitleChoice(act = "new") else: if want == "continue": TitleChoice(act = "load", slot = title_continue_slot(rows)) else: if want.starts_with("slot"): TitleChoice(act = "load", slot = (to_int(want[4..want.len()]) ?? 1) - 1) else: TitleChoice(act = "situation", key = want)
+            title_pick_env = none
+            title_leaving_since = elapsed()
+            print("TITLE pick {want} at frame {frame_number()}, shaders pending {shaders_pending()}")
+    if let pick = title_leaving:
+        # (the shaders, the sounds and, for a new game, the far economy: each a slice a dusk frame)
+        ready = shaders_pending() == 0 and audio_built and (pick.act != "new" or not far_opening_pending())
+        if not ready and elapsed() - title_leaving_since < TITLE_LEAVING_MOST: return
+        title_leaving = none
+        print("TITLE leaving after {(elapsed() - title_leaving_since) * 1000.0:.0} ms, shaders pending {shaders_pending()}, sounds made {audio_built}, far economy pending {far_opening_pending()}")
+        title_choose(pick)
+
+# what a choice on the title does
+title_choose = (pick: TitleChoice):
     match pick.act:
         "load": _ = request_game_load(pick.slot)
         "delete": _ = request_game_delete(pick.slot)
@@ -6649,6 +6817,13 @@ capture_after_controls = (e: FlightEnv) -> Controls:
     if mine<0: return Controls()
     side=battle.actors[mine].side
     lead=home_leader(battle,side)
+    if battle.home_since[side]>=0 and battle.formed[side]<0:
+        # (regrouping: to the rally point and round it with the rest)
+        r=battle.rally[side];out=pc.state.position-r;out.y=0
+        if length(out)<1:out=vec3(1,0,0)
+        if f64(length(out))>2200.0:return air_waypoint_controls(pc.spec,pc.state,e,r,f64(r.y),pc.spec.cruise_speed*0.8)
+        around=f64(atan2(f64(out.z),f64(out.x)))+0.4
+        return air_waypoint_controls(pc.spec,pc.state,e,r+vec3(f32(cos(around)*1300.0),0,f32(sin(around)*1300.0)),f64(r.y)-30.0,pc.spec.cruise_speed*0.65)
     if lead>=0 and battle.actors[lead].pilot.descend_tick<0 and not capture_after_plan.initialized:
         slot=home_slot(battle,lead,battle.actors[mine].pilot.formation_offset)
         l=battle.actors[lead].state;direction=heading_vector(heading(l));lv=f64(length(l.velocity))
@@ -7311,6 +7486,61 @@ update_rescue = ():
                 rescue_name = rescue_aboard_name(living_world, aboard[0])
                 rescue_hold = living_world.war.survivors[aboard[0]].person >= 0 and rescue_can_hold(living_world, living_world.war.survivors[aboard[0]].country, place)
 
+# The R/T (src/rt_pad.jo): how many of the player's flight would hear it; opened by C (the R/T
+# plate's tap, the controller's R/T button), then a number, C again to step, F to send.
+rt_flight = () -> int:
+    me_i = combat_index(battle, living_world.people[living_world.player].craft)
+    if me_i < 0 or not battle.enabled: return 0
+    n = 0
+    loop a in battle.actors:
+        if a.side == battle.actors[me_i].side and not a.human and a.status == .flying and a.present: n += 1
+    n
+
+rt_tick = ():
+    global rt
+    if not rt.open:
+        if vpressed(.c):
+            if rt_flight() == 0: say_toast("No one on the R/T.")
+            else:
+                rt_open(rt, t)
+                rt.took_mouse = is_mouse_locked()
+                if rt.took_mouse: mouse_lock(false)
+        return
+    number = if vpressed(.n1): 1 else: if vpressed(.n2): 2 else: if vpressed(.n3): 3 else: if vpressed(.n4): 4 else: if vpressed(.n5): 5 else: 0
+    esc = vpressed(.escape)
+    if esc: take_escape()
+    chosen = rt_keys(rt, vpressed(.c), vpressed(.f) or vpressed(.enter), number, esc, t)
+    if chosen >= 0: rt_send(chosen)
+    if not rt.open and rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
+
+# Sends the chosen word: the battle's order, a wingman's answer on the radio.
+rt_send = (k: int):
+    me_craft = living_world.people[living_world.player].craft
+    me_i = combat_index(battle, me_craft)
+    kind = RT_KINDS[k]
+    target = -1
+    if kind == .attack and view_target.selected >= 0 and view_target.items[view_target.selected].kind == 0:
+        c = combat_index(battle, view_target.items[view_target.selected].id)
+        # (one gone into the cloud deck is out of the flight's sight)
+        if c >= 0 and me_i >= 0 and battle.actors[c].side != battle.actors[me_i].side and not in_deck(battle, battle.actors[c].state.position): target = battle.actors[c].craft
+    heard = if kind == .attack and target < 0: rt_flight() else: give_order(battle, me_craft, kind, target)
+    if heard == 0:
+        say_toast("No answer on the R/T.")
+        return
+    # (the nearest of the flight answers, by their number in it)
+    side = battle.actors[me_i].side
+    best = -1; near = 1e18; number = 0; count = 0
+    loop a in battle.actors:
+        if a.side != side: continue
+        count += 1
+        if a.human or a.status != .flying or not a.present: continue
+        d = f64(length(a.state.position - pc.state.position))
+        if d < near: near = d; best = a.craft; number = count
+    words = rt_answer(kind, target >= 0)
+    if rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
+    if active_scenario == "strait": radio_say(homeward, "rt{battle.tick}", call_sign(living_world, side, max(1, number)), words)
+    else: say_toast(words)
+
 do_rescue = (free: bool = false):
     now = clock_text(living_world, living_world.minute)
     if rescue_act == 1:
@@ -7321,6 +7551,8 @@ do_rescue = (free: bool = false):
             return
         rescue_card(rescue, if n == 1: "{name} is aboard" else: "{n} survivors aboard", ["Moor at a harbour to set them ashore."], t)
         log_note(notebook, "Took {name} aboard from the water.", now)
+        sv = living_world.war.survivors[rescue_id]
+        if sv.person >= 0: rider_takes(sv.person, sv.at + vec3(0, -1.2, 0))
     else if rescue_act == 2:
         s = living_world.war.survivors[rescue_id]
         name = rescue_name
@@ -7334,6 +7566,12 @@ do_rescue = (free: bool = false):
         place = harbour_name(living_world, rescue_place)
         held = rescue_hold and not free
         if s.person >= 0:
+            # (they climb out onto the quay beside the pilot and walk off into the town)
+            if rider.person == s.person and (rider.stage == .aboard or rider.stage == .boarding):
+                seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span))
+                inland = me.pos - pc.state.position
+                side = normalize(vec3(-inland.z, 0, inland.x) + vec3(0.0001, 0, 0))
+                rider_alight(rider, seat, me.pos + side * 1.2, inland, t)
             words = rescue_words(living_world, name, s.country, rescue_place, place, held, s.person)
             rescue_card(rescue, words.title, words.lines + ["Standing with {country}: {before} to {after}"], t)
             rescue.card_until = t + 11.0
@@ -7402,6 +7640,40 @@ stage_capture_rescue = (stage: str):
 # touches the World between its pieces, so it is the same minute as all at once.
 MINUTE_FRAME_MS = 4.0
 WORLD_ACTION_KEYS: Key[] = [.f,.t,.r,.m,.g,.x,.b,.v,.p,.j,.c,.e,.h,.q,.enter,.escape,.tab,.comma,.period,.slash,.page_up,.page_down,.up,.down,.space,.f1,.f2,.f9,.n1,.n2]
+# The rain's, the windscreen rain's and the lightning's shaders, left out of the warm-ups (most
+# flights see no weather), queued once a look a second finds rain or a storm within 12 km: they
+# link one a frame in play (update), well before the first drop or strike is drawn.
+weather_shaders_queued = false
+weather_shaders_look = 0.0
+weather_shaders_near = (p: vec3):
+    global weather_shaders_queued, weather_shaders_look
+    if weather_shaders_queued or not weather_active or t < weather_shaders_look: return
+    weather_shaders_look = t + 1.0
+    near = false
+    loop d in [vec3(0,0,0),vec3(12000,0,0),vec3(-12000,0,0),vec3(0,0,12000),vec3(0,0,-12000)]:
+        a = weather_at_point(p + d)
+        if a.rain > 0.0 or a.storm > 0.0: near = true
+    if not near: return
+    weather_shaders_queued = true
+    warm_up_later(rain_sh); warm_up_later(bolt_sh); warm_up_later(screen_rain_sh)
+
+# The afterglow's sky and sea variants (the high tier's) are made at the start but not linked
+# (warm = false); half an hour of game time before the sky begins to glow they are queued, and
+# link one a frame (update) before the first glowing frame instead of at it.
+# (AEGEAN_GLOW_LOG=1: the queueing and the first glowing frame logged, for tools/test_web_afterglow.mjs)
+afterglow_shaders_queued = false
+afterglow_log = env("AEGEAN_GLOW_LOG") != none
+afterglow_logged_on = false
+afterglow_shaders_near = ():
+    global afterglow_shaders_queued, afterglow_logged_on
+    if afterglow_log and not afterglow_logged_on and light_at(hour).afterglow.x > 0.0:
+        afterglow_logged_on = true
+        print("AFTERGLOW_ON hour {hour:.3} frame {frame_number()}")
+    if afterglow_shaders_queued or render_quality.tier < 2 or not twilight_glow_soon(hour, 0.5): return
+    afterglow_shaders_queued = true
+    warm_up_later(sky_glow_sh); queue_sea_glow()
+    if afterglow_log: print("AFTERGLOW_QUEUED hour {hour:.3} frame {frame_number()} pending {shaders_pending()}")
+
 world_held = () -> bool: traffic_scene.holding or traffic_scene.held_ticks > 0
 world_input_this_frame = () -> bool:
     if pad.pressed.len()>0 or mouse_pressed(.left) or mouse_pressed(.right) or text_input()!="": return true
@@ -7568,12 +7840,13 @@ update = (dt: f64):
         pc.state = kept
         title_kept = none
     build_slice_tick()
+    afterglow_shaders_near()
     if title.open:
         title_update(dt)
         return
-    # (a start with no title, or a shader made during play and not yet drawn: linked here, not in
-    # the middle of a frame's drawing)
-    if shaders_pending() > 0: _ = warm_up_shaders()
+    # (a start with no title, a shader queued in play (the weather's, as it nears) or one made
+    # during play and not yet drawn: linked here, one a frame, not in the middle of a frame's drawing)
+    if shaders_pending() > 0: _ = warm_up_shaders(max_count = 1)
     # (walking-path searches for the scenes' people share a few milliseconds each frame)
     cargo_scene.walk_paths_frame(2.0)
     calm=ui==.none and not paused and active_scenario=="" and not world_input_this_frame()
@@ -7611,6 +7884,7 @@ update_frame = (dt: f64, saves: bool = true):
     looking = (seat_view() or (stay.active and ui == .leisure and leisure_ui == 15 and not skip.active)) and not paused and not notebook.open and not show_chart and not title.open
     pad_mode = if looking: 4 else if title.open or paused or ui != .none or notebook.open or show_chart: 3 else if me.mode == .aboard: (if pc.state.on_water or pc.state.moored: 1 else: 0) else: 2
     lay_out_screen()                # (upright or on its side, a phone gets its own units)
+    wheel_zoom_step(dt, menus_open() or title.open)     # (the wheel's zoom, read once a frame)
     # (the touch screen's X: the P.7's hand clutch while it is still on the screw, the Albatross's gear)
     pad_lever = if pc.kind==.piaggio_p7 and not pc.state.foil.engaged: "Clutch" else: if pc.kind==.albatross: "Gear" else: ""
     update_pad(pad_mode, not pc.slow, pc.throttle, dt, pad_lever)
@@ -7705,11 +7979,13 @@ update_frame = (dt: f64, saves: bool = true):
     if stay.active and ui == .leisure and leisure_ui == 15 and not skip.active: stay_look_step(dt)
     stay_tick()
     ride_tick(dt)
+    rider_tick(dt)
     service_step(dt)
     company_tick(dt)
     tip_thanks_step()
     music_cues_step()
     weather_scene_step(living_world,if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos,hour,dt)
+    weather_shaders_near(if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
     hour = (hour + dt * hour_rate + 24.0) % 24.0      # an hour of the day: two minutes
     typing = ui_typing() or debug_typing() or leisure_typing()
     # The radio: , and . tune it (Shift: to the next station on the air), / switches it on and off,
@@ -7735,6 +8011,7 @@ update_frame = (dt: f64, saves: bool = true):
             global radio_card_until
             radio_card_until = t + 2.5
         radio_knob_step(dt, t)
+        rt_tick()
     else:
         _ = radio.radio_hold_tune(cockpit_radio,0,0)
         global radio_knob
@@ -7746,12 +8023,12 @@ update_frame = (dt: f64, saves: bool = true):
         _ = save_value("radio-khz", radio_saved_khz)
     # (1 and 2 wind the hour only with no panel open: in a conversation, a board or the workshop
     # they choose what to say or do)
-    hour_keys = not typing and ui == .none and not notebook.open and not show_chart
+    hour_keys = not typing and ui == .none and not notebook.open and not show_chart and not rt.open
     if vdown(.n1) and hour_keys: hour = (hour - dt * 2.0 + 24.0) % 24.0
     if vdown(.n2) and hour_keys: hour = (hour + dt * 2.0) % 24.0
     if vpressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
-    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1:
+    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1 and not rt.open:
         mouse_lock(true)
         global click_took_mouse
         click_took_mouse = true             # (that click only takes the mouse: it doesn't fire)
@@ -7816,7 +8093,6 @@ update_frame = (dt: f64, saves: bool = true):
           else if ui != .none: update_player_follow(dt, input = false)
           thermal_handled=ui==.none and not notebook.open and not show_chart and thermal_walk(dt)
           if ui == .none and not notebook.open and not show_chart and not thermal_handled:
-              if not menus_open(): follow.distance = clamp(follow.distance * pow(0.93, clamp(mouse_wheel(), -3.0, 3.0)), 2.5, 14.0)
               if vdown(.q): follow.yaw += dt * 2.0
               if vdown(.e): follow.yaw -= dt * 2.0
               a = walk_axis()
@@ -8379,7 +8655,7 @@ update_frame = (dt: f64, saves: bool = true):
     # skimming: fast within about a span of the water, the downwash churns it and throws spray
     water_under=f64(swell_at(craft_point(pc.state).x,craft_point(pc.state).z,t).x)
     gap = f64(pc.state.position.y) - pc.spec.float_height - water_under
-    skim = if pc.state.on_water or pc.state.moored: 0.0 else: (1.0 - smoothstep(0.5, min(pc.spec.span * 0.6, 6.0), gap)) * smoothstep(28.0, 60.0, f64(length(pc.state.velocity)) / pure_k(pc.spec))
+    skim = if pc.state.on_water or pc.state.moored: 0.0 else: skim_amount(pc.spec, gap, pc.state.velocity)
     under = craft_offset(pc.state,vec3(-pc.state.velocity.x*0.15,f32(water_under+0.1)-pc.state.position.y,-pc.state.velocity.z*0.15))
     wake_step(wakes[0], under, pc.state.velocity, pc.state.on_water and not pc.state.moored, wake_width(pc.kind), t, skim)
     if skim > 0.1 and me.mode == .aboard: emit(spray_ps, under, int(1.0 + skim * 4.0), 3.0 + 6.0 * skim, rgba(0.96, 0.98, 1.0, f32(0.5 + 0.4 * skim)), 1.2, 0.5 + 0.6 * skim, 0.7, normalize(vec3(-pc.state.velocity.x, 30.0, -pc.state.velocity.z)))
@@ -8452,10 +8728,7 @@ update_frame = (dt: f64, saves: bool = true):
             not tr.state.moored and (tr.flying or tr.state.throttle > 0.02 or f64(length(tr.state.velocity)) > 0.5),
             engine_tone(tr.kind, tr.craft), true_speed(tr.spec, f64(length(tr.state.velocity))), voice = aircraft_profile(tr.kind).voice,point=craft_point(tr.state))], scene_camera(), if me.mode == .aboard: pc.state.velocity else: vec3(0, 0, 0), t,world_offset(world_point(scene_camera()),render_eye_low))
     queue_autosave(dt)
-    # (the one speed rule for historical aircraft, switched: every aircraft's spec made again at once)
-    rule_switched = dbg.tweaks.speed_rule != tweaks.speed_rule
     set_tweaks(dbg.tweaks)
-    if rule_switched: apply_speed_scale(speed_scale)
     set_fdm2_tuning(dbg.fdm2)
     set_options(dbg.opts)
     set_walk_left(dbg.opts.walk_left)
@@ -8516,7 +8789,9 @@ draw_title_race = (L: Light, t: f64):
         at = translation(racer.at) * quat_to_mat4(racer.turn)
         anchor = world_point(racer.at)
         at[3] = vec4(0, 0, 0, 1)
-        draw(obj_sh, m.body, obj_params(L, t, at, anchor = anchor))
+        # (their airframes working as any aircraft's do: bowing in the pull, buffeting, fluttering at speed)
+        flex = airframe_cues(title_airframe_spec(racer.kind), racer.velocity, racer.load, false, racer.throttle)
+        draw(obj_sh, m.body, obj_params(L, t, at, flex = flex, anchor = anchor))
         if not queue_prop_discs(m, at, anchor, t * 78.0 + f64(k), 78.0, L, t, TITLE_RACER_KEY - k): draw_craft_props(m, L, t, at, t * 78.0 + f64(k), anchor)
     # (the racers' vapour)
     if title_shot.pace == 2 and title_shot.kind == .low: draw_custom((): draw_trails(title_vapour, L, t), transparent = true)
@@ -8537,6 +8812,14 @@ draw_title_race = (L: Light, t: f64):
             if distance < 11000.0: muzzle.items.push(WorldParticle(at, vec3(0, 0, 0), 1, 1, f32(max(0.6, min(9.0, distance * 0.002))), rgba(1, 0.8, 0.3, 1), precise = world_point(at), published = at, ready = true))
         if muzzle.items.len() > 0: draw_curved_particles(muzzle, true)
 const TITLE_RACER_KEY = -1001   # (the racers' own keys for their propellers and engines, never a craft's)
+# a title aircraft's spec by its kind, made once (for its airframe's working as it is drawn)
+title_airframe_specs: {int: CraftSpec} = {}
+title_airframe_spec = (kind: int) -> CraftSpec:
+    global title_airframe_specs
+    if let s = title_airframe_specs.get(kind): return s
+    s = craft_spec(Craft(kind), craft_models[default_craft_model(Craft(kind))].contacts)
+    title_airframe_specs[kind] = s
+    s
 
 # how fast the eye moves: the water's flecks streak and strengthen with it (the reel's camera
 # behind the title, the aircraft when aboard, still on foot)
@@ -8660,6 +8943,7 @@ draw_world = (L: Light):
         draw_folk(folks, Lw, t, band.kit)
         draw_company(Lw)
         draw_ride_walking(Lw)
+        draw_rider_out(Lw)
         draw_leisure(Lw)
         draw_cats(cat_scene, L, t)
         zone("life");life_view.draw_life(living_world,life_meshes,L,t);zone_end()
@@ -8712,6 +8996,7 @@ draw_world = (L: Light):
             if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_disc_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft,radio_knob_level())
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true,offset=world_residual(craft_point(pc.state)))
         draw_ride_seated(pm, at, L)
+        draw_rider_seated(pm, at, L)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
     if legacy_clouds: draw_custom((): draw_clouds(puff_mesh,puffs,L,WorldPoint(wind_drift(wind_now).x*0.35,0,wind_drift(wind_now).z*0.35),t))
@@ -8761,6 +9046,7 @@ draw_world = (L: Light):
     draw_splash_dust(spray_ps)
     if startup_aegean_nowake == none:
         draw_custom((): draw_wakes(wakes, L, t), transparent = true)
+        if title.open and title_shot.kind == .low and title_shot.pace == 2: draw_custom((): draw_wakes(title_wakes, L, t), transparent = true)
         draw_custom((): draw_vessel_wakes(vessel_view,L,t), transparent = true)
         draw_custom((): draw_wildlife_marks(wildlife, L, t), transparent = true)
     draw_custom((): draw_vessel_smoke(vessel_view,L,t), transparent = true)
@@ -8914,10 +9200,7 @@ draw = ():
         ear_forward = view.target - view.eye
     if title.open:
         # (the merge at the chase camera's own field of view, where its fixed rig starts)
-        fov=if title_shot.pace == 4: 62.0 else: match title_shot.kind:
-            .low: 68.0
-            _: 55.0
-        render_camera(title_now.eye,title_now.dir,fov,if title_shot.kind==.low: 0.3 else: 1.0,world_far(f64(title_now.eye.y)),title_now.up)
+        render_camera(title_now.eye,title_now.dir,title_fov(title_base_fov(),title_aspect()),if title_shot.kind==.low: 0.3 else: 1.0,world_far(f64(title_now.eye.y)),title_now.up)
         ear_forward=title_now.dir
     if me.mode == .aboard:
         pp = pc.state.position
@@ -8949,7 +9232,7 @@ draw = ():
     # Upscale the finished scene; overlays retain their existing logical coordinates.
     full_resolution()
     when TARGET == "wasm":
-        if not page_shown:
+        if not page_shown and not (title.open and title_first_waiting()):
             global page_shown
             page_shown=true
             __aegean_shown()
@@ -8963,11 +9246,20 @@ draw = ():
         quality_next_frame()
         return
     # (play begun from the title: the scene comes up out of the dusk it left)
-    if t-title_left_at<0.7: rect(0,0,f64(screen_width()),f64(screen_height()),rgba(0.075,0.1,0.15,f32(1.0-smoothstep(0.0,0.7,t-title_left_at))))
+    # (over the whole window, letterbox and all, as the title's dusk was)
+    if t-title_left_at<0.7: rect(visible_rect(),rgba(0.075,0.1,0.15,f32(1.0-smoothstep(0.0,0.7,t-title_left_at))))
+    # (tests: the title's layers in the first seconds of play, AEGEAN_TITLE_PICK)
+    if title_handover_frame >= 0 and frame_number() > title_handover_frame and frame_number() <= title_handover_frame + 120 and frame_number() % 10 == 0:
+        print("TITLE_LAYERS play frame {frame_number() - title_handover_frame}: open {title.open} leaving {title_leaving != none} dusk {1.0 - smoothstep(0.0, 0.7, t - title_left_at):.2} panel {title.page}")
+    # (a test's choice made: done once its two seconds of play are read, software rendering being
+    # slow; a new game once its first autosave is made too, for Continue to load next)
+    if title_pick_asked and title_handover_frame >= 0 and frame_number() >= title_handover_frame + 120:
+        if not title_pick_new or saved_toast_at > title_left_at or frame_number() >= title_handover_frame + 900: quit()
+    # (the clock and the purse in the top right corner: not while the pause menu covers it)
     set_font(fonts.ui)
     clock_size = readable(22.0)
     clock_words = "{int(hour):02}:{int((hour - floor(hour)) * 60.0):02}"
-    text(clock_words, vec2(f32(f64(screen_width()) - 24.0 - text_width(clock_words, clock_size)), 18), clock_size, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
+    if not dbg.open: text(clock_words, vec2(f32(f64(screen_width()) - 24.0 - text_width(clock_words, clock_size)), 18), clock_size, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
     set_font()
     draw_music_cues()
     draw_tip_thanks()
@@ -8979,7 +9271,7 @@ draw = ():
     # (the purse: the phoenix in gold over its flame, the figure in cream, flush under the clock)
     purse = phoenix_text(player_cents())
     purse_size = readable(20.0)
-    ptext(purse, vec2(f32(f64(screen_width()) - 24.0 - ptext_width(purse, purse_size)), f32(24.0 + clock_size)), purse_size, rgba(1, 0.95, 0.8, 0.85), shadow = rgba(0, 0, 0, 0.4), sign = PHOENIX_GOLD, fire = PHOENIX_FLAME)
+    if not dbg.open: ptext(purse, vec2(f32(f64(screen_width()) - 24.0 - ptext_width(purse, purse_size)), f32(24.0 + clock_size)), purse_size, rgba(1, 0.95, 0.8, 0.85), shadow = rgba(0, 0, 0, 0.4), sign = PHOENIX_GOLD, fire = PHOENIX_FLAME)
     set_font()
     # the people about: names over those near, a line from whoever is nearest (not through the
     # pause menu, the chart or the notebook)
@@ -9025,6 +9317,15 @@ draw = ():
                 if not skip.active: prompt_card(fonts, if launch.outward: "F  skip the ride out" else: "F  skip the ride ashore", 90.0)
             else: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if active_scenario=="strait" and (me.mode == .aboard or me.mode == .walking): draw_homeward(homeward,fonts,t)
+    if me.mode == .aboard and rt.open:
+        chosen = draw_rt_pad(rt, fonts, t, pad.on)
+        if chosen >= 0: rt_send(chosen)
+    # (the R/T plate: by the radio in the cockpit, at the left otherwise, while there is a flight to hear)
+    if me.mode == .aboard and not rt.open and pad.on and rt_flight() > 0:
+        plate = if let r = radio_hit_rect: Rect(r.x, r.y - 34, 64, 28) else: Rect(16, f32(f64(screen_height()) * 0.30), 64, 28)
+        rect_rounded(f64(plate.x), f64(plate.y), f64(plate.w), f64(plate.h), 5, rgba(0.05, 0.07, 0.10, 0.7))
+        text_centered("R/T", vec2(plate.x + plate.w * 0.5, plate.y + plate.h * 0.5), 15, rgba(1, 0.97, 0.9, 0.9))
+        tap_card(plate, .c)
     draw_welcome()
     global radio_hit_rect
     radio_hit_rect = none
@@ -9051,7 +9352,7 @@ draw = ():
         if race_k >= 0: draw_race_hud(fonts, air_events, living_world, race_k, if me.mode == .aboard: pc.state.position else: me.pos, me.mode == .aboard, pc.spec.span)
         if me.mode == .aboard:
             marks = rescue_marks(rescue, pc.state.position)
-            loop k in 0..min(marks.len(), 3): draw_rescue_mark(fonts, marks[k].pos, pc.state.position, survivor_name(living_world, marks[k]))
+            loop k in 0..min(marks.len(), 3): draw_rescue_mark(fonts, marks[k].pos, pc.state.position, survivor_name(living_world, marks[k]), side_colour(survivor_standing(living_world, marks[k].country), 0.95))
             # (a claimed contract's packet or survivor: where to collect it, then where it is to go)
             if packets_now.len() > 0: draw_rescue_mark(fonts, packets_now[0].pos, pc.state.position, packets_now[0].label, rgba(0.78, 0.86, 1.0, 0.95))
     if (me.mode == .aboard or me.mode == .walking) and not paused and not show_chart and ui == .none: draw_battle_card(fonts, battle_card, t)
