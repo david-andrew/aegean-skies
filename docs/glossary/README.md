@@ -236,14 +236,18 @@ blue discs that stay in every frame are **speed flecks**.
   round the float, bigger the harder it comes down; rough water throws more and taller; a flying
   boat's wingtip float digging in throws hard; a propeller low over rough water whips up mist.
   The spray curtains are the sheet at the float; the bank is what they leave behind.
+  The bank is one continuous wall: each float side's lobes are chained in the order they are
+  thrown, and neighbours are joined by low **bridging lobes** seated on the water, sized from both
+  ends, so there are no gaps while every lobe grows and shrinks on its own. Lobes vary in
+  proportions and turn a little off the run; crowns bulge out of the bigger ones.
 - **Code:** `src/spray_bank.jo` (`step_spray_bank`, `spray_run_puff`, `spray_burst`,
-  `spray_prop_mist`, `spray_bank_instances`); stepped and drawn in `src/splash.jo`
-  `draw_splashes`, on their own mesh (14x22 on the low tier, 20x32 otherwise).
+  `spray_prop_mist`, `spray_lobe`, `spray_bank_instances`); stepped and drawn in `src/splash.jo`
+  `draw_splashes`, on their own mesh (10x16 on the low tier, 20x32 otherwise).
 - **Rules:** presentation only (no forces, no shared particles, no draws on the game's random
   numbers); every puff seated on the water, never hanging in the air; bodies shrink, never fade;
   painted as the film's spray, a cream lit side and a flat aqua-grey shade about 20 L* below it;
-  lower within the chase camera's few spans so the aircraft stays in view. Cap: 120 puffs on the
-  low tier, 170 medium, 220 high.
+  lower within the chase camera's few spans so the aircraft stays in view. Cap: 80 puffs on the
+  low tier (no stacked lobes there, one bridge per gap), 170 medium, 220 high.
 - **Capture:** `AEGEAN_CAPTURE_TAKEOFF=1` (take-off), `=land` (a landing with a bounce),
   `AEGEAN_WATCH="ahead side up [look]"` (a fixed camera to watch a bank hang),
   `AEGEAN_WEATHER=meltemi` (rough water), `AEGEAN_CRAFT=5` (a flying boat).
