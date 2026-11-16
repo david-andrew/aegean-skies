@@ -21,9 +21,9 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Company](#company)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1492,6 +1492,42 @@ On the rivers branch until it lands.
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
 
+### Wildlife
+
+- **Aliases:** the geese, the ducks, a raft, the harbour gulls, the goats.
+- **Definition:** animals about the camera, cosmetic like the cats. **Rafts** of waterfowl as the
+  1920s Aegean had them: greylag geese (more and larger rafts in winter; in summer some with
+  goslings), and on the lakes and wider river reaches mallards in pairs and coots among them.
+  Harbour corners hold greylags, now and then with a pair of mallards. A raft paddles in loose
+  lines with small wakes, drifts on the wind and roosts at night. Greylags and mallards **upend** to
+  feed: tipped forward, front half and head under, the rear third and tail up at about 55 degrees,
+  feet paddling and splashing at the surface. Coots **dive** instead. A raft that an aircraft taxis
+  or lands close to, or that someone walks up to, first **moves off**, then is **put up**: each bird
+  runs pattering over the water until its wings carry it (lift as the square of its speed; mallards
+  spring off soonest), and flies off low behind a leader of its own kind. **Gulls** fly themselves
+  too (banking into turns, gliding, flapping when slow or climbing), wheel over the harbours, perch
+  on the bollards at the water's edge and on ridges, squabble, and follow fishing caiques.
+  **Herds** of goats or sheep graze the slopes above villages; a low aircraft scatters them a little.
+  Every bird is cut at its **waterline** (`wild_fs`) and rides the sea's swell, so what is under
+  the water is not drawn through the transparent sea.
+- **Code:** `src/wildlife.jo` (`wild_scan`, `wild_harbour_raft`, `wild_hill_herd`,
+  `wild_raft_kinds`, `wild_threat_level`, `raft_step`, `colony_step`, `herd_step`, `wildlife_step`),
+  `src/wildlife_view.jo` (`_fowl_meshes`, `_pose_fowl`, `wild_fs`, `draw_wildlife`,
+  `draw_wildlife_marks`), `src/wildlife_sound.jo` (`wildlife_voices`: honks, quacks, coot calls,
+  gull cries, goat bells and bleats as ambience events; the instruments in `src/ambience_synth.jo`).
+- **Rules:** where they live comes from the world's places by hash (`wild_hash` of a settlement's
+  id, a lake's id, a river node), never from the camera, and is the same from anywhere; the islands'
+  town harbours keep a raft all year, others are seasonal. Nothing is saved and nothing touches the
+  living world. Zero cost with none in range; nothing simulated above 1,500 m. Tests:
+  `tests/wildlife_test.jo` (placement determinism, the take-off trigger, the species and the dive).
+- **Capture:** `AEGEAN_WILD_LOOK="raft|upend|duck|gulls|herd distance height bearing"` with
+  `AEGEAN_VIEW`; `AEGEAN_WILD_RAFT="ahead 170 14"` with `AEGEAN_CAPTURE_TAKEOFF=1` (and
+  `AEGEAN_LAKE=0` for a lake's run) and `AEGEAN_WILD_WATCH="22 1.4 0.5"` for a raft put up by a
+  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air; `AEGEAN_WILD_TRACE=1`.
+  On `t3/wildlife`.
+
+![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
+
 ### Pilot's scarf
 
 - **Aliases:** the scarf, its tails or ends, worn cloth.
@@ -1838,10 +1874,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
   distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
   the violin plays softer. Each evening starts one number further on, so every piece comes round.
-- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_set_position`, `singer_line`, `singer_render`,
-  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`draw_band`); clips with
+  The players are townspeople, and a number begins only when they are in their places (see
+  [The band's people](#the-bands-people)).
+- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_band_position`, `singer_line`, `singer_render`,
+  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`band_spots`); clips with
   `tools/bar_music_clip.jo`; note sources and permissions in `data/music/SOURCES.md`.
-- **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
+- **Rules:** kept by the living world (its minutes), so it is where it should be after resting.
 
 ### Live source
 
@@ -1900,14 +1938,55 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid|tavli-plakoto`
   (`AEGEAN_TAVLI_GESTURE` for a gesture).
 
+### The band's people
+
+- **Aliases:** the musicians, the players walking on and off, the band as people.
+- **Definition:** the Hotel Ancora's players are Porto Vecchio people with the rest of their day:
+  Leila Demir (the telegraphist) sings, Yannis Markou (the clerk) plays the piano, Petros Laskaris
+  (a fisher) the guitar and the bass, Marta Bellini (a merchant) the violin, the mandolin and the
+  reeds. From 17:30 they make their way to the terrace and sit at the band's table by the stand.
+  When a number wants them they walk to the stand's step, step up, walk to their place, pick up the
+  instrument and settle; the number begins only when all its players have; the music is followed
+  as before. Between numbers those in the next stay put; those not in it put the instrument down
+  where it lives at the back of the stand (or close the piano), walk back to the step and down, and
+  sit again. After the last number of the evening (the one playing at 23:30 is finished) they all
+  do, and go home. One who can't come (at work, laid up, away, the weather) means their numbers are
+  passed over. Nobody appears or vanishes in view: off the stand they are the town's walkers.
+- **Code:** the people and where each is wanted in `src/band_roster.jo` (`BAND_ROSTER`,
+  `band_wanted`, `band_step_point`, `band_on_stage`); the programme in `src/band_life.jo`
+  (`band_minute`, each world minute after the daily life; `band_publish`); its state saved in the
+  world (`World.band`, `BandState`, `BandNumber` in `src/life_types.jo`); the intents in
+  `src/living_life.jo` (`life_daily_goal`, the band's table and steps in `set_life_destination`;
+  meetings leave a player at the stand alone, `src/living_social.jo`); the stand drawn in
+  `src/band_stage.jo` (`band_numbers`, `draw_band_people`); `tests/band_life_test.jo`.
+- **Rules:** the programme is the world's, so it runs the same near or far, and after a rest. A
+  number's start waits a minute for its players' climb and settling (`BAND_CLIMB`, `BAND_SETTLE`);
+  putting away and stepping down take `BAND_PACK`. The world keeps a player's place at the step while
+  they are on the stand; the town doesn't draw them there. Company at the table doesn't take a
+  player while the band wants them; one already sitting with the pilot when called excuses
+  themselves and goes to the stand (`company_called_away`, `src/company.jo`).
+- **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND_CAM` and `AEGEAN_CAPTURE_MINUTES`;
+  `AEGEAN_BAND_LOG=1` prints the band's state twice a second.
+
 ### Band request
 
 - **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
-  to the house). It is played as soon as the number playing (and the pause after it) is over, or it
-  opens the evening. The set then carries on where it was. Only one request may wait at a time.
-- **Code:** `BandRequest` (`src/band_request.jo`), `bar_set_position(tick, requests)` and
-  `bar_request_start` in `src/bar_band.jo`; `leisure_request` in `src/leisure.jo`.
-- **Capture:** `AEGEAN_LEISURE=request|requested`.
+  to the house), at any hour the hotel is open. It is played as soon as the number playing (and the
+  pause after it) is over and its players are in their places; the set then carries on where it
+  was. Only one request may wait at a time. A player who isn't here (and won't be coming of
+  themselves: it isn't the evening) can be sent for: the house's boy goes, for a small tip (another
+  transfer to the house), and they come walking in from wherever they are a while later. Not in
+  the night, not one away or laid up, and not one busy with work.
+  The panel says where each missing player is and offers three buttons: send the boy (the tip on
+  it), ask for another number, never mind; the boy is seen running out of the bar's door, across
+  the terrace and down the side walk toward the town.
+- **Code:** `band_ask`, `band_missing`, `band_fetch`, `band_fetch_refusal` in `src/band_life.jo`;
+  `leisure_request`, `leisure_fetch` (`FETCH_TIP`) in `src/leisure.jo`; `fetch_panel` in
+  `src/leisure_view.jo`; the panel's step (`band_fetch_for`, `band_whereabouts`) and the boy
+  (`draw_boy_errand`, `BOY_ROUTE`) in `aegean.jo`; `BandRequest` (`src/band_request.jo`) is the
+  notebook's.
+- **Capture:** `AEGEAN_LEISURE=fetch|fetch-sent` (with `AEGEAN_CAPTURE_MINUTES` for the
+  afternoon).
 
 ### The paper
 
@@ -2088,8 +2167,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
   closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
   which show only when the tune has been quiet a while; no burst after a seek or a new number.
-  Higher notes rise from a little higher; louder ones are larger; a short note is an eighth with
-  its flag, a longer one a quarter. Ink by day, warm cream after dark; fainter with distance
+  Higher notes rise from a little higher; louder ones are larger. Each shows its written value
+  (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
+  a flag, a sixteenth with two, a dot after the head for a dotted one. Ink by day, warm cream after dark; fainter with distance
   about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
   table or the bar), where the band is in view. Options: "Musical notes rising from music played
   nearby" (on by default).
@@ -2102,6 +2182,23 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
   `tools/note_cue_bench.jo` counts its work per frame.
 - **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
+
+### Note value
+
+- **Aliases:** a note's written length, whole/half/quarter/eighth/sixteenth.
+- **Definition:** a played note's written value from how long it lasts against the score's
+  quarter note: its MIDI ticks over the ticks a quarter (PPQ), or its seconds against the tempo
+  (microseconds a quarter). Snapped to the nearest value by ratio (in log-time), the dotted values
+  (one and a half of the plain) among them; longer than a whole is a whole, shorter than a
+  sixteenth a sixteenth. The quarter's seconds per piece, as played, come from the source MIDI's
+  tempo map stretched by how much longer the performance is than the score (`MUSIC_TEMPO`); a
+  street musician's beat is an eighth, each note lasting to the next one played.
+- **Code:** `src/note_value.jo` (`NoteValue`, `note_value_of`, `note_value_ticks`,
+  `note_value_tempo`, `note_value_seconds`, `music_quarter_at`); `src/music_tempo.jo`, generated
+  by `tools/music_tempo.py` (no dependencies; run it after a score or `performance.json` changes);
+  `STREET_QUARTER` in `src/street_phrase.jo`; `tests/note_value_test.jo`.
+- **Rules:** the performance's rubato and legato move a note's length a little; a ratio within
+  about a fifth of a value still reads as that value.
 
 ### Time skip
 
@@ -2774,6 +2871,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|bar|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk|listen-run` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_BAND_LOG=1` | print the hotel band's state (number, start, who is called, up, packing) twice a second |
 | `AEGEAN_BAND='piece lineup [from]'` | the hotel's band plays that catalogue piece in that line-up from that second, whatever the hour (not heard; see [Musicians at play](#musicians-at-play)) |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |
