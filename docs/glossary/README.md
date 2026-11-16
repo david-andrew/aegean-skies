@@ -759,8 +759,8 @@ On the rivers branch until it lands.
      weight the foils rise to the surface and break out, and she flies. Holding the stick back on
      the foils gets her off at about 40 m/s; hands off it takes until about 60 m/s.
   It is meant to be challenging but achievable. It fails when: the engine is short of power
-  (under 70%, from wear: the screw barely gets her onto her foils and the drive plate says
-  "engine too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
+  (under 70%, from wear: the screw barely gets her onto her foils, and a notice says "Her engine
+  is too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
   propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
   in the water (it beats the sea, gives no thrust and hurts the engine); or the sea is rough
   (wind about 8 m/s and over: the wing tips catch the waves and tear). Closing the throttle at under
@@ -771,11 +771,14 @@ On the rivers branch until it lands.
   (`foil_disc_speed`, `prop_disc_speed`), so its solid blades show whirling while a blade can touch
   the sea; where a blade cuts the water it flicks a small throw of spray at each strike
   (`_blade_cuts` in `src/pilot.jo`, the same particles and colour as the bow spray). A blade windmilling through the sea drags a little and does no harm; driven by the
-  engine, it wrecks it. Once clutched in, out of the sea, its turn rises from the windmill's to the
-  engine's as it comes off its feather (`foil_prop_speed`), through the usual blades-to-disc
-  handover. The brass drive plate lights SCREW, FOILS or AIR PROP, and shows "propeller in the
-  sea" whenever a blade is in the water, and "engine too worn to lift her: have it serviced" on
-  the water when the engine is short of power.
+  engine, it wrecks it. From the moment the clutch goes over, out of the sea, it is drawn at the
+  engine's full turn, the stylised disc and arcs at once (`foil_prop_speed`, `foil_disc_speed`);
+  the unfeathering's slower build of thrust stays in the physics, unshown.
+  **No display of the stages:** the foils lift her as before, but there is no plate or warning for
+  the screw, the foils or the clutch; the player reads the run from how she rides the water and
+  from her propeller (whirling blades on the screw, the spinning disc once the air propeller is
+  in). Her one-time hint: "full throttle; once her propeller is spinning, ease the stick back,
+  never push".
 - **Code:** `src/hydrofoil.jo` (the foils' lift and drag, `foil_force`; the screw,
   `screw_thrust`; the clutch, `clutch_step`; the P.7's foils and screw, `P7_FOILS`, `P7_SCREW`),
   `src/hydrofoil_solver.jo` `hydrofoil_contacts` (called from the water model in `src/flight.jo`
