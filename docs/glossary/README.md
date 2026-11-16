@@ -2235,10 +2235,15 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   on the sea lane out of its harbour, two to four kilometres out, drifting slowly along it. Its
   trip is held there, so it is overdue: the town worries (the missing-boat story) and people say
   so (a [lead](#leads)). It is really there, drawn where it lies; found by flying over and
-  looking, with no marker. Landed alongside, the pilot takes the skipper aboard (he climbs into
-  the second seat, as a rescued pilot does) and sets him ashore at a harbour; or gets a line
-  across to another boat out fishing near, which tows it home; or, having seen it, tells someone
-  of its harbour where it lies, and the launch goes out. Left alone, the lost find their way home
+  looking, with no marker; a boat that lost its mast is drawn with it snapped off and the sail
+  over the side. Landed alongside, the pilot takes the skipper aboard (he climbs into the second
+  seat, as a rescued pilot does, and is back in it after a load) and sets him ashore at a harbour;
+  or signals a passing caique on its way, which turns aside and tows it in; or gets a line across
+  to another boat out fishing near; or, having seen it, tells someone of its harbour where it lies,
+  and the launch puts out from its berth. The launch and the caique are seen: they come out on the
+  fleet's sea lanes, draw up alongside, make fast, and tow the boat in astern on a line to the
+  harbour (`src/adrift_help.jo`, with the radio help's pieces); the world waits for them while they
+  are in sight and finishes by its own clock once the pilot is far off. Left alone, the lost find their way home
   in some hours, and the others are brought in by a passing boat late the next day. The skipper
   remembers who came for him; the worried and the harbour tell of it ("Heard you found Petros.");
   the pilot's day has it ("Found Petros off Porto Vecchio.").
@@ -2246,7 +2251,8 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   `adrift_set_ashore`, `adrift_tow`, `adrift_report`), `src/adrift_types.jo` (`World.adrift`, saved);
   the hold in `advance_workboats`; the deed `found_boat` in `src/reputation.jo`; `update_adrift`,
   the offers and the talk card's "… boat is lying off …" in `aegean.jo`; `tests/adrift_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home` (heard: with
+- **Capture:** `AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home|launch` (launch: the launch
+  putting out, the long ways out and in skipped to their last stretch; heard: with
   `AEGEAN_LEADS=always`; search: with `AEGEAN_FLYING=110`).
 ### Contracts
 

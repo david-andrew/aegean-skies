@@ -1,0 +1,192 @@
+# Help for a boat adrift, seen (src/living_adrift.jo): the harbour's launch putting out from its
+# berth when the pilot tells the harbour where the boat lies, or a passing caique turning aside when
+# the pilot gets a line across to it. The boat comes out round the land on the fleet's own sea
+# lanes, draws up alongside, takes the line, and tows the boat in to the harbour, the boat following
+# astern on the line (radio_help.jo's pieces: the choosing, the rough times, where to come
+# alongside, the tow's geometry). The world keeps the authority: it is told the time the help will
+# take (help_minutes, the same the radio gives), waits for the scene while the scene is towing,
+# and has the boat in when the launch berths. Out of the pilot's reach the scene lets go and the
+# world's own timing finishes the job.
+use 'world_point.jo'
+use 'vessel_types.jo'
+use 'vessels.jo'
+use 'sea_routes.jo'
+use 'radio_help.jo'
+import 'living_types.jo' as lt
+import 'living_adrift.jo' as adrift
+import 'adrift_types.jo' as adrift_data
+
+const ADRIFT_HELP_VESSEL = 691000000
+const ADRIFT_HELP_REACH = 20000.0       # beyond this from the pilot, the scene lets the world finish it
+const ADRIFT_TOW_LINE = 22.0            # metres of line astern of the helping boat
+
+enum AdriftHelpBy: none, launch, ship
+enum AdriftHelpStage: none, routing, coming, alongside, towing
+
+struct AdriftHelp:
+    trip = -1                       # the adrift boat's trip (World.adrift's key)
+    by: AdriftHelpBy = .none
+    stage: AdriftHelpStage = .none
+    kind: VesselKind = .canal_launch
+    vessel = -1                     # the helping boat in the scene's fleet
+    lane = -1
+    harbour = -1                    # where it tows to (settlement id)
+    hidden = -1                     # the far ship stood in for (not drawn meanwhile)
+    since = 0.0                     # seconds in this stage
+    still = 0.0                     # (seconds slow and near, coming)
+    name = ""                       # who comes, as said ("the launch from Porto Vecchio")
+    serial = 0
+    tow_at: vec3 = vec3(0,0,0)      # the towed boat, following the line
+    tow_yaw = 0.0
+
+_index = (w: lt.World, trip: int) -> int: adrift.adrift_index(w,trip)
+
+# The harbour the boat belongs to, as a settlement id, and its name.
+adrift_help_home = (w: lt.World, i: int) -> int:
+    home = w.adrift[i].home
+    if home >= 0 and home < w.places.len(): w.places[home].id else: -1
+
+_speed = (f: VesselFleet, id: int, wind: vec2) -> f64:
+    k = vessel_index(f,id)
+    if k < 0: return 2.0
+    max(0.6,vessel_target_speed(f.ships[k],wind))
+
+# Sets a boat out to the adrift boat `i`: the harbour's launch (`ship` -1) or that passing far ship.
+# Returns the minutes it will take all told (out, and in again with the boat in tow), or -1 when no
+# boat can come (the world's own timing then serves).
+adrift_help_start = (h: mut AdriftHelp, f: mut VesselFleet, w: mut lt.World, i: int, ship: int, wind: vec2) -> int:
+    if h.stage != .none or i < 0 or i >= w.adrift.len(): return -1
+    a = w.adrift[i]
+    home = adrift_help_home(w,i)
+    if home < 0: return -1
+    kind = if ship >= 0: VesselKind.trehantiri else: VesselKind.canal_launch
+    spec = vessel_spec(kind)
+    start = vec2(0,0); yaw = 0.0; owner = 0; side = 0; name = ""
+    if ship >= 0:
+        v = w.far.vehicles[ship]
+        start = v.pos.xz; owner = max(0,v.account); side = 200+v.citizen
+        if f64(length(v.velocity)) > 0.01: yaw = atan2(f64(v.velocity.x),f64(v.velocity.z))
+        skipper = if v.captain >= 0 and v.captain < w.people.len(): w.people[v.captain].name else: ""
+        name = if skipper != "": "{split(skipper," ")[0]}'s caique" else: "a passing caique"
+        if v.journey >= 0 and v.journey in w.far.journeys: w.far.journeys[v.journey].hold_until_tick = w.tick+120*60*24
+    else:
+        berth = vessel_berth(home,.canal_launch)
+        if berth == none: return -1
+        start = berth!.0
+        name = "the launch from {help_harbour_name(home)}"
+        d0 = a.at.xz-start
+        if length(d0) > 0.1: yaw = atan2(f64(d0.x),f64(d0.y))
+    along = help_alongside(a.at,vec3(start.x,0,start.y),8.0,spec.length)
+    h.serial += 1
+    id = ADRIFT_HELP_VESSEL+h.serial
+    lane = request_sea_lane(f,-1,-1,start,along.xz,spec.draft,spec.beam*0.5+2.0)
+    if lane < 0 or not spawn_vessel(f,Vessel(id=id,kind=kind,owner=owner,side=side,lane=lane,position=vec3(start.x,0,start.y),yaw=yaw,status=.waiting_route)):
+        if lane >= 0: retire_sea_lane(f,lane)
+        if ship >= 0: adrift_help_release(w,ship)
+        return -1
+    speed = _speed(f,id,wind)
+    out = f64(length(along.xz-start))
+    back = f64(length(a.at.xz-w.harbors[a.home].center.xz))
+    minutes = help_minutes(out*1.25,speed)+help_minutes(back*1.25,speed*0.7)
+    h.by = if ship >= 0: AdriftHelpBy.ship else: AdriftHelpBy.launch
+    h.trip = a.trip; h.stage = .routing; h.kind = kind
+    h.vessel = id; h.lane = lane; h.harbour = home; h.hidden = ship; h.since = 0.0; h.still = 0.0; h.name = name
+    minutes
+
+# (a far ship borrowed for a tow goes back to its own journey)
+adrift_help_release = (w: mut lt.World, ship: int):
+    if ship < 0 or ship >= w.far.vehicles.len(): return
+    j = w.far.vehicles[ship].journey
+    if j >= 0 and j in w.far.journeys: w.far.journeys[j].hold_until_tick = w.tick
+
+# Lets go: the boat retired, the lane let go, the far ship back on its way; the world finishes the
+# job by its own clock from what is left (`minutes`, -1: as it already has it).
+adrift_help_drop = (h: mut AdriftHelp, f: mut VesselFleet, w: mut lt.World, minutes: int = -1):
+    if h.vessel >= 0: _ = retire_vessel(f,h.vessel)
+    if h.lane >= 0: _ = retire_sea_lane(f,h.lane)
+    if h.hidden >= 0: adrift_help_release(w,h.hidden)
+    i = _index(w,h.trip)
+    if i >= 0 and minutes >= 0 and w.adrift[i].state != .home: w.adrift[i].home_minute = w.minute+minutes
+    serial = h.serial
+    h = AdriftHelp(serial=serial)
+
+# Words for the card or the log while it goes on ("" when nothing is under way).
+adrift_help_words = (h: AdriftHelp) -> str:
+    match h.stage:
+        .routing: "{_cap(h.name)} is putting out."
+        .coming: "{_cap(h.name)} is on its way out."
+        .alongside: "{_cap(h.name)} is alongside the boat."
+        .towing: "{_cap(h.name)} has the boat in tow."
+        _: ""
+
+_cap = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper()+s[1..]
+
+# A frame: routed, coming, alongside, the line made fast, the tow, in at the harbour. `observer`
+# the pilot (out of reach: the scene lets go). Returns true the frame the boat is brought in.
+adrift_help_step = (h: mut AdriftHelp, f: mut VesselFleet, w: mut lt.World, observer: vec3, wind: vec2, dt: f64) -> bool:
+    if h.stage == .none: return false
+    i = _index(w,h.trip)
+    if i < 0 or w.adrift[i].state == .home:
+        adrift_help_drop(h,f,w)
+        return false
+    h.since += dt
+    k = vessel_index(f,h.vessel)
+    if k < 0:
+        adrift_help_drop(h,f,w,30)
+        return false
+    v = f.ships[k]
+    a = w.adrift[i]
+    if f64(length(observer.xz-v.position.xz)) > ADRIFT_HELP_REACH and f64(length(observer.xz-a.at.xz)) > ADRIFT_HELP_REACH:
+        left = help_minutes(lane_left(f,v)+f64(length(a.at.xz-w.harbors[a.home].center.xz)),_speed(f,h.vessel,wind))
+        adrift_help_drop(h,f,w,left)
+        return false
+    # (the world waits for the scene while it has the boat in hand)
+    w.adrift[i].home_minute = max(w.adrift[i].home_minute,w.minute+2)
+    li = sea_lane_index(f,h.lane)
+    if h.stage == .routing:
+        if li >= 0 and f.lanes[li].status == .ready: h.stage = .coming; h.since = 0.0
+        else if li < 0 or f.lanes[li].status == .blocked or v.status == .stopped: adrift_help_drop(h,f,w,60)
+        return false
+    if h.stage == .coming:
+        near = f64(length(v.position.xz-a.at.xz)) < vessel_spec(v.kind).length*0.5+40.0
+        h.still = if v.speed < 0.2 and near: h.still+dt else: 0.0
+        if v.status == .stopped and not near: adrift_help_drop(h,f,w,60)
+        else if v.status == .docked or v.status == .anchored or h.still > 6.0: h.stage = .alongside; h.since = 0.0
+        return false
+    if h.stage == .alongside:
+        if h.since < 5.0: return false
+        to = vessel_berth(h.harbour,h.kind)
+        if to == none:
+            adrift_help_drop(h,f,w,60)
+            return false
+        spec = vessel_spec(h.kind)
+        old = h.lane
+        lane = request_sea_lane(f,-1,h.harbour,v.position.xz,to!.0,spec.draft,spec.beam*0.5+2.0,to!.1)
+        if lane < 0 or not set_vessel_route(f,h.vessel,lane):
+            adrift_help_drop(h,f,w,60)
+            return false
+        _ = retire_sea_lane(f,old)
+        h.lane = lane; h.stage = .towing; h.since = 0.0
+        h.tow_at = a.at; h.tow_yaw = 0.0
+        return false
+    # .towing: the boat follows the line, never faster than the helper makes way and a little over,
+    # nosing round after it; the world is told where it is
+    place = tow_place(v,ADRIFT_TOW_LINE)
+    gap = vec3(place.0.x-h.tow_at.x,0,place.0.z-h.tow_at.z)
+    move = min(f64(length(gap)),(v.speed+1.2)*dt)
+    if length(gap) > 0.01: h.tow_at += normalize(gap)*f32(move)
+    p = w.adrift[i].person
+    w.adrift[i].at = h.tow_at
+    ahead = tow_stern(v)-h.tow_at
+    if f64(length(ahead.xz)) > 0.5: w.adrift[i].yaw = atan2(f64(ahead.x),f64(ahead.z))
+    w.people[p].pose.pos = h.tow_at
+    if (v.status == .docked or v.status == .anchored) and h.since > 3.0:
+        adrift.adrift_in(w,i)
+        adrift_help_drop(h,f,w)
+        return true
+    false
+
+# Where the helping boat is (for a camera), or none.
+adrift_help_at = (h: AdriftHelp, f: VesselFleet) -> vec3?:
+    k = vessel_index(f,h.vessel)
+    if k < 0: none else: f.ships[k].position
