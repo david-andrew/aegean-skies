@@ -23,9 +23,12 @@ const FOIL_STRUT = 0.0022           # the struts' drag area per metre immersed (
 const FOIL_CAVITATION = 65000.0     # the most lift a square metre of foil gives before it cavitates (Pa)
 const SCREW_STATIC = 8200.0         # the water screw's thrust standing, full throttle (N)
 const SCREW_PITCH_SPEED = 36.0      # the speed at which its blades no longer bite (m/s)
-const PROP_CLEAR_TIME = 0.5         # the clutch goes over once the foils have held the hull and the air
+const PROP_CLEAR_TIME = 0.75        # the clutch goes over once the foils have held the hull and the air
                                     # propeller clear of the water this long (s; hysteresis against a
                                     # passing crest lifting her for a moment)
+const PROP_CLEAR_MARGIN = 0.2       # with this much air under its lowest blade (m)
+const FALLEN_TIME = 0.75            # off her foils with the driven propeller in the sea this long (s):
+                                    # the screw is clutched back in, so she can climb up and try again
 const FOIL_CARRY_SPEED = 11.5       # and only fast enough for the foils to carry her (m/s): slower, a
                                     # swell can lift her clear for a moment, but she drops back
 const CLUTCH_TIME = 0.5             # the clutch's own travel (s)
@@ -41,9 +44,10 @@ struct FoilSpec:
 # The P.7's: two forward foils just ahead of the wing, high incidence, and a small one under the
 # tail, big enough to hold her nose down against the screw's low thrust line; together they carry
 # her weight at about 14 m/s fully immersed and level.
-P7_FOILS = [FoilSpec(vec3(-0.82, -1.55, -1.75), 0.17, 0.85, 0.2, 0.08), FoilSpec(vec3(0.82, -1.55, -1.75), 0.17, 0.85, 0.2, 0.08),
-    FoilSpec(vec3(0, -0.8, 3.85), 0.13, 0.76, 0.17, 0.08)]
-P7_SCREW = vec3(0, -1.0, 4.15)
+# (on struts long enough that, riding her foils, the hull and the air propeller clear a moderate swell)
+P7_FOILS = [FoilSpec(vec3(-0.82, -2.0, -1.75), 0.17, 0.85, 0.2, 0.08), FoilSpec(vec3(0.82, -2.0, -1.75), 0.17, 0.85, 0.2, 0.08),
+    FoilSpec(vec3(0, -1.25, 3.85), 0.13, 0.76, 0.17, 0.08)]
+P7_SCREW = vec3(0, -1.45, 4.15)
 
 # The engine's two paths. 1.0 = the air propeller (every other aircraft, and the P.7 in the air);
 # a P.7 set on the water starts with the clutch over to the screw (water_start).
@@ -57,6 +61,9 @@ struct FoilDrive:
     lift = 0.0                      # (telemetry) the foils' lift, a fraction of her weight
     screw = 0.0                     # (telemetry) the screw's thrust, N
     prop_clear_time = 0.0           # (how long the air propeller has been clear of the water)
+    clearance = 0.0                 # (telemetry) the air propeller's lowest blade above the sea, m
+    prop_dip = 0.0                  # (telemetry) how far it is in the sea, a fraction of its radius
+    down_time = 0.0                 # (how long she has been off her foils, clutched in, the propeller wet)
     windmill = 12.0                 # the declutched air propeller's turn, rad/s (drawn: its solid blades
                                     # whirl, never the disc, while it can touch the sea)
 
@@ -74,7 +81,9 @@ foil_force = (f: FoilSpec, depth: f64, forward: f64, upward: f64) -> vec2:
     q = 0.5 * WATER_DENSITY * forward * forward
     # (fast, the low pressure over the foil boils the water: its lift per area tops out, however
     # fast it goes; the reason a foil fast enough rides near the surface and lets the nose rotate)
-    load = sign(cl) * min(q * abs(cl), FOIL_CAVITATION)
+    # (a soft knee rather than a hard cap: near it the lift still answers the flow's angle a little,
+    # which is what damps her heave over a swell)
+    load = FOIL_CAVITATION * tanh(q * cl / FOIL_CAVITATION)
     lift = load * f.area * immersed
     ce = load / max(q, 1.0)
     drag = q * (f.area * (FOIL_CD0 + FOIL_INDUCED * ce * ce) * immersed + FOIL_STRUT * min(depth + 0.25, 1.4))
@@ -90,7 +99,8 @@ screw_thrust = (throttle: f64, speed: f64, depth: f64, drive: f64) -> f64:
 # have lifted the hull and the air propeller clear of the water for PROP_CLEAR_TIME with the
 # throttle open; back
 # to the screw only at rest-ish on the water with the throttle closed (to try again).
-clutch_step = (d: mut FoilDrive, dt: f64, airborne: bool, hull_clear: bool, prop_clear: bool, speed: f64, throttle: f64, manual: bool):
+clutch_step = (d: mut FoilDrive, dt: f64, airborne: bool, hull_clear: bool, clearance: f64, speed: f64, throttle: f64, manual: bool):
+    prop_clear = clearance >= PROP_CLEAR_MARGIN
     d.clear_time = if hull_clear: d.clear_time + dt else: 0.0
     # (the turn follows the throttle, eased, so it never jumps)
     d.windmill = move_toward(d.windmill, windmill_speed(throttle), dt * 15.0)
@@ -99,10 +109,14 @@ clutch_step = (d: mut FoilDrive, dt: f64, airborne: bool, hull_clear: bool, prop
     # moment, the clutch goes over: the screw has done its work)
     d.prop_clear_time = if prop_clear and hull_clear: d.prop_clear_time + dt else: 0.0
     ready = d.prop_clear_time >= PROP_CLEAR_TIME and speed >= FOIL_CARRY_SPEED and throttle >= 0.5
+    # (fallen off her foils into the sea, the driven propeller in the water: the screw takes her again)
+    d.down_time = if d.engaged and not airborne and not hull_clear and clearance < 0.0: d.down_time + dt else: 0.0
     if airborne or manual or ready:
         d.engaged = true
     else if not airborne and throttle < 0.1 and speed < 5.0:
         d.engaged = false
+    if d.down_time >= FALLEN_TIME and not manual:
+        d.engaged = false; d.down_time = 0.0; d.prop_clear_time = 0.0
     d.clutch = move_toward(d.clutch, if d.engaged: 1.0 else: 0.0, dt / CLUTCH_TIME)
     # (the screw's clutch is let go first; only once it is out does the air propeller's go in and
     # the blades come off their feather, which takes a while. Let go, it stops quickly)
@@ -137,4 +151,4 @@ foil_disc_speed = (d: FoilDrive, turn: f64) -> f64: turn * d.air + min(turn, FOI
 foil_prop_speed = (d: FoilDrive, engine: f64) -> f64: engine * d.air + d.windmill * (1.0 - d.air)
 
 # The air propeller's share of the engine's thrust (none while its blade is in the sea).
-air_drive = (d: FoilDrive) -> f64: if d.prop_wet: 0.0 else: d.air
+air_drive = (d: FoilDrive) -> f64: d.air * (1.0 - min(1.0, d.prop_dip / 0.35))
