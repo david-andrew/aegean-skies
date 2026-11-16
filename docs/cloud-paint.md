@@ -180,6 +180,23 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
 
 ## Storms (`src/lightning.jo`, `src/storm_render.jo`, `src/weather_scene.jo`)
 
+- **A system, drawn as few large pieces** (`storm_system_clouds`): a saved storm is about 26 km
+  across. Its layout (`storm_cells`) places four cells at fixed places in its frame turned
+  downwind; the cells, the rain shafts and where lightning strikes all share it.
+  - The deck (weather kind 10): a dark layer from a ragged 1150 m base, lumps of it hanging
+    lower, to 3.4-3.9 km, above the flight ceiling, without gaps. Its wall is sharp at its rim;
+    its samples are spaced as squares from where the ray enters it, so its colour comes from
+    just inside the wall rather than kilometres in (evenly spaced samples drew the wall as tiles).
+  - The shelf cloud (kind 9): an analytic distance of three tiered, tapered, waved rolls along
+    the leading edge, marched and painted as a body; lighter on its lit upper edges, dark beneath.
+  - The cells: anvil, tower and mass forms at their stages, 3.5-7 km half-widths.
+  - The anvil canopy (kind 11): an analytic plate, thick over the middle and thinning to a ragged
+    rim, painted as a body.
+  - The rain shafts (kind 8) under the cells, hazed less than the air so they show from 40 km.
+  - Distance LOD comes from the march's own step budget; the far view is cheap.
+- **Sound** (`src/storm_sound.jo`): rain on the airframe, gusting wind with the roughness, and
+  thunder from the same strikes as the bolts, after their distance.
+
 - **Lightning.** One deterministic schedule per saved storm (`lightning_slot_strike`):
   time is cut into 5.5 s slots, four in five hold a strike, 45% of them cloud to
   ground. A strike has three or four return strokes over 0.55 s. Its channel
