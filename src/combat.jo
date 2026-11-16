@@ -137,6 +137,7 @@ struct CombatPilot:
     # turn, when the leader began its descent, and done (moored at the base).
     home_turn = -1
     rallied = false                # come in to the rally point after the fight
+    climber = false                # a pilot who uses height: over the cloud deck before closing, down from above
     plan: FlightPlan = FlightPlan()
     descend_tick = -1
     home_done = false
@@ -258,7 +259,9 @@ struct Battle:
     physics_steps = 0
     finished = false
     tactics: int[]                 # how often each CombatMode was entered (by its index)
-    ceiling = 1e9                  # a soft top for the fight (a cloud deck's base): climbs ease under it
+    ceiling = 1e9                  # a soft top for the fight (under the thrust's fade): climbs ease under it
+    deck_base = 1e9                # a cloud deck's base and top over the fight: passed through, never
+    deck_top = 1e9                 # flown in (nobody can see in it), and enemies in it unseen
     homes: BattleHome[]            # each side's base harbour, where it goes home to (none: away)
     home_since: int[] = [-1,-1,-1] # the tick each side (by index) turned for home
     rally: vec3[] = [vec3(0,0,0),vec3(0,0,0),vec3(0,0,0)]   # where each side regroups after the fight
@@ -392,6 +395,9 @@ intercept = (relative: vec3, velocity: vec3, speed: f64) -> vec3:
     t = clamp(t,0.0,3.0)
     relative+velocity*f32(t)+vec3(0,4.905*t*t,0)
 
+# Inside a cloud deck over the fight (where nobody sees anything).
+in_deck = (b: Battle, p: vec3) -> bool: b.deck_base < 1e8 and f64(p.y) > b.deck_base and f64(p.y) < b.deck_top
+
 _choose_target = (b: Battle, a: Combatant) -> int:
     best = -1; score = 1e20
     f = quat_rotate(a.state.orientation,vec3(0,0,-1))
@@ -402,6 +408,8 @@ _choose_target = (b: Battle, a: Combatant) -> int:
         if a.engagement>=0 and e.engagement!=a.engagement: continue
         # (one gone home is let go)
         if e.pilot.mode == .homeward and not e.human: continue
+        # (one in the cloud is not seen, unless it is very near)
+        if in_deck(b,e.state.position) and f64(length(e.state.position-a.state.position)) > 400.0: continue
         delta = e.state.position-a.state.position
         distance = f64(length(delta))
         cost = distance*(2.0-f64(dot(f,delta/f32(max(distance,0.01)))))
@@ -539,6 +547,14 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
             if nearest < 220.0 and closing > 10.0 and p.skill+p.aggression > 0.9:
                 p.mode = .scissors; p.commit = b.tick+int(1.1*60.0)
                 return (right*f32(side*1.4)*ease+fwd*(1.2-ease)+vec3(0,0.25,0),if speed > stall*1.6: 0.35 else: 1.0)
+            # (a cautious pilot near the cloud uses it: up or down into the deck and on through it,
+            # out of the attacker's sight)
+            if p.caution > 0.55 and b.deck_base < 1e8 and alt > 150.0:
+                gap_up = b.deck_base-f64(pos.y); gap_down = f64(pos.y)-b.deck_top
+                into = if gap_up > 0.0 and gap_up < 260.0: 1.0 else: if gap_down > 0.0 and gap_down < 260.0: -1.0 else: 0.0
+                if into != 0.0:
+                    p.mode = .extend; p.away = normalize(flat(s.velocity)+vec3(0,f32(into*0.55),0)); p.commit = b.tick+int(9.0*60.0)
+                    return (p.away,1.0)
             p.mode = .break_turn; p.commit = b.tick+int((1.1+p.caution*1.2)*60.0)
             # (and after it, turn on the attacker)
             if p.caution < 0.7: p.target = threat; p.target_tick = b.tick
@@ -590,6 +606,11 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
         across = normalize(vec3(-delta.z,0,delta.x)+vec3(0.0001,0,0))
         spread = f32((f64(a.craft%5)-2.0)*90.0*min((dist-1500.0)/800.0,1.0))
         over = f32(clamp(f64(o.state.position.y-pos.y)+80.0*p.skill+60.0*p.caution,-250.0,300.0))
+        # (a climber goes up through the deck first, to come down on them from above)
+        if p.climber and b.deck_top < 1e8 and f64(pos.y) < b.deck_top+60.0 and f64(o.state.position.y) < b.deck_top:
+            over = f32(clamp(b.deck_top+120.0-f64(pos.y),0.0,600.0))
+            p.mode = .zoom
+            return (delta*0.25+across*spread+vec3(0,over,0),1.0)
         p.mode = if over > 150 and speed > stall*2.2: .zoom else: (if covering: .cover else: .approach)
         return (delta+across*spread+vec3(0,over,0),1.0)
     # A stalemate (a turning fight with no angle gained) is broken by extending and coming back.
@@ -751,6 +772,15 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         p.controls.roll = if u.y < 0: (if r.y >= 0: 1.0 else: -1.0) else: clamp(f64(r.y)*3.0,-1.0,1.0)
         p.controls.pitch = if u.y < 0.2: 0.0 else: clamp((-0.3-climb)*2.5,-1.0,0.2)
         p.controls.yaw = 0.0
+    # (in the cloud nobody sees anything: never level in it, but on through it, up if fast and
+    # nearer the top, else down)
+    if in_deck(b,pos) and p.mode != .evade and abs(f64(s.velocity.y)) < 9.0:
+        middle = (b.deck_base+b.deck_top)*0.5
+        up = f64(pos.y) > middle and speed > k.stall_speed*pure_k(k)*1.7
+        level = vec3(fwd.x,0,fwd.z)
+        if length(level) < 0.1: level = vec3(s.velocity.x,0,s.velocity.z)
+        c = steer(k,s,normalize(normalize(level+vec3(0.0001,0,0))+vec3(0,if up: 0.45 else: -0.35,0)))
+        p.controls.pitch = c.pitch; p.controls.roll = c.roll; p.controls.yaw = c.yaw
     # (whatever was flown, the cloud base kept above: climbing so as to be over the soft ceiling within
     # a few seconds, a zoom or a hand-flown pull-up is eased over; only high ground beneath gives way)
     if b.ceiling < 1e8 and p.mode != .evade and f64(pos.y)+max(0.0,f64(s.velocity.y))*2.5 > b.ceiling and s.velocity.y > 0 and b.ceiling > ground+150.0:
