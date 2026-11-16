@@ -110,7 +110,7 @@ struct Raft:
     flown = 0.0
     honk = 0.0
 
-enum GullAct: perch, fly, land
+enum GullAct: perch, fly, land, dive, sit
 
 struct Gull:
     pos: vec3
@@ -128,6 +128,7 @@ struct Gull:
     beat = 0.0
     seed = 0.0
     squabble = 0.0                  # wings up and shouting at a neighbour
+    aim = vec3(0, 0, 0)             # where it is diving to
     look = 0.0
     floor_at = vec2(1.0e9, 1.0e9)   # where the ground under it was last taken (again 8 m on)
     floor = -1.0e9
@@ -172,7 +173,7 @@ struct WildMark:
     kind: int                       # 0 a ring, 1 a wake, 2 a splash of a running foot
 
 # A call to be heard (wildlife_sound.jo).
-enum WildVoice: honk, cry, bell, bleat, quack, kowk
+enum WildVoice: honk, cry, bell, bleat, quack, kowk, blow, plash
 struct WildCall:
     voice: WildVoice
     pos: vec3
@@ -554,6 +555,10 @@ _mark = (marks: mut WildMark[], pos: vec3, yaw: f64, now: f64, size: f64, kind: 
     if marks.len() >= WILD_MARKS: return
     marks.push(WildMark(pos, yaw, now, size, kind))
 
+# (for the other animals of the sea: src/dolphins.jo)
+wild_call = (calls: mut WildCall[], voice: WildVoice, pos: vec3, loud: f64, key: int): _call(calls, voice, pos, loud, key)
+wild_mark = (marks: mut WildMark[], pos: vec3, yaw: f64, now: f64, size: f64, kind: int): _mark(marks, pos, yaw, now, size, kind)
+
 raft_flush = (r: mut Raft, from: vec3, env: WildEnv, calls: mut WildCall[]):
     if r.alarm == 2: return
     r.alarm = 2
@@ -883,13 +888,20 @@ _gull_free_perch = (c: Colony, k: int) -> int:
     # (all taken: squabble for one)
     start
 
-colony_step = (c: mut Colony, threats: WildThreat[], env: WildEnv, dt: f64, now: f64, boat: Vessel?, calls: mut WildCall[]):
+# A fishing boat stopped on its ground: hauling its nets, the gulls diving for what comes up.
+wild_hauling = (b: Vessel) -> bool: b.status == .anchored or (b.status == .underway and b.speed < 0.3)
+
+colony_step = (c: mut Colony, threats: WildThreat[], env: WildEnv, dt: f64, now: f64, boat: Vessel?, calls: mut WildCall[], marks: mut WildMark[]):
     night = wild_night(env.hour)
     centre = c.site.at
+    hauling = false
+    stern = c.site.at
     if let b = boat:
-        # (behind the boat's stern, low over its wake)
+        # (behind the boat's stern, low over its wake; hauling, close about it)
         f = vec2(f32(sin(b.yaw)), f32(cos(b.yaw)))
-        centre = b.position + vec3(-f.x * 16.0, 0, -f.y * 16.0)
+        hauling = wild_hauling(b)
+        stern = b.position + vec3(-f.x * 5.0, 0, -f.y * 5.0)
+        centre = if hauling: b.position + vec3(-f.x * 6.0, 0, -f.y * 6.0) else: b.position + vec3(-f.x * 16.0, 0, -f.y * 16.0)
     c.cry -= dt
     loop k in 0..c.gulls.len():
         g = c.gulls[k]
@@ -919,10 +931,17 @@ colony_step = (c: mut Colony, threats: WildThreat[], env: WildEnv, dt: f64, now:
             # round the circle: a tangent, drawn in or out to its radius
             tangent = _unit2(vec2(-rel.y, rel.x) * f32(g.turn), _dir(g.yaw))
             radial = _unit2(-rel, vec2(0, 0)) * f32(clamp((r - g.radius) / g.radius, -1.0, 1.5))
-            alt = if boat != none: f64(centre.y) + 5.0 + 6.0 * (0.5 + 0.5 * sin(now * 0.4 + g.seed * 20.0)) else: g.alt
+            alt = if boat != none: f64(centre.y) + (if hauling: 3.5 else: 5.0) + 6.0 * (0.5 + 0.5 * sin(now * 0.4 + g.seed * 20.0)) else: g.alt
+            if hauling: g.radius = 9.0 + g.seed * 10.0
             want_speed = if boat != none: GULL_SPEED + f64(length(boat!.velocity)) * 0.5 else: GULL_SPEED
             gull_fly(g, _unit2(tangent + radial, tangent), want_speed, alt, env, dt, c.level)
-            if g.timer <= 0.0:
+            if g.timer <= 0.0 and hauling and wild_unit(c.site.key + k, int(now * 2.0) + 9) < 0.6:
+                # down after something thrown back or slipped from the net, just astern
+                u = wild_unit(c.site.key + k, int(now * 3.0)); v = wild_unit(c.site.key + k, int(now * 3.0) + 1)
+                g.aim = stern + vec3(f32((u - 0.5) * 12.0), 0, f32((v - 0.5) * 12.0))
+                g.aim.y = f32(c.level)
+                g.act = .dive; g.timer = 8.0
+            else if g.timer <= 0.0:
                 if boat == none and (night or wild_unit(c.site.key + k, int(now * 2.0)) < 0.65) and c.site.perches.len() > 0:
                     g.act = .land; g.perch = _gull_free_perch(c, k); g.timer = 25.0
                 else:
@@ -936,6 +955,34 @@ colony_step = (c: mut Colony, threats: WildThreat[], env: WildEnv, dt: f64, now:
                         g.turn = -g.turn
             if c.cry <= 0.0 and wild_unit(c.site.key + k, int(now * 4.0)) < 0.02:
                 _call(calls, .cry, g.pos, 0.08, c.site.key * 32 + k); c.cry = 2.0
+        else if g.act == .dive:
+            # a steep glide down onto the water, wings half folded, and a splash
+            g.timer -= dt
+            to = g.aim - g.pos
+            hd = f64(length(to.xz))
+            hs = clamp(hd * 0.8, 3.0, 9.0)
+            vy = if hd < 14.0: max(-7.0, f64(to.y) * 1.6 - 1.0) else: -0.5
+            f = _unit2(to.xz, _dir(g.yaw))
+            g.vel = vec3(f.x * f32(hs), f32(vy), f.y * f32(hs))
+            g.pos += g.vel * f32(dt)
+            g.yaw = _turn(g.yaw, _yaw_of(f), dt * 4.0)
+            g.bank *= 0.9
+            g.beat = max(0.0, g.beat - dt * 3.0)
+            if f64(g.pos.y) <= c.level + 0.12 or g.timer <= 0.0:
+                g.pos.y = f32(c.level)
+                _mark(marks, g.pos, g.yaw, now, 0.35, 2)
+                _mark(marks, g.pos, g.yaw, now, 0.4, 0)
+                g.act = .sit; g.timer = 1.5 + wild_unit(c.site.key + k, int(now * 5.0)) * 4.0
+                if wild_unit(c.site.key + k, int(now * 5.0) + 2) < 0.4: _call(calls, .cry, g.pos, 0.08, c.site.key * 32 + k)
+        else if g.act == .sit:
+            # on the water a moment, swallowing; then up again with a few hard beats
+            g.timer -= dt
+            g.pos.y = f32(c.level); g.vel = vec3(0, 0, 0)
+            if g.timer <= 0.0:
+                g.act = .fly; g.timer = 4.0 + wild_unit(c.site.key + k, int(now)) * 8.0
+                f = _dir(g.yaw)
+                g.vel = vec3(f.x * 4.0, 3.0, f.y * 4.0); g.beat = 1.0; g.pos.y += 0.3
+                _mark(marks, g.pos, g.yaw, now, 0.3, 2)
         else:
             # coming in to its perch: down a glide slope from downwind, slowing, beating to stop
             p = c.site.perches[g.perch]
@@ -1137,7 +1184,7 @@ herd_step = (h: mut Herd, threats: WildThreat[], env: WildEnv, dt: f64, now: f64
 # ---------------- the whole ----------------
 
 _fishing = (v: Vessel) -> bool:
-    (v.kind == .sail_caique or v.kind == .motor_caique or v.kind == .trehantiri) and v.status == .underway
+    (v.kind == .sail_caique or v.kind == .motor_caique or v.kind == .trehantiri) and (v.status == .underway or v.status == .anchored)
 
 # A frame of the wildlife about the camera: looked for again as the camera moves, groups brought
 # to life as they come near and let go as they fall behind, each stepped.
@@ -1217,7 +1264,7 @@ wildlife_step = (wl: mut Wildlife, towns: Town[], cam: vec3, threats: WildThreat
         if c.boat >= 0:
             loop b in boats:
                 if b.id == c.boat: boat = b
-        colony_step(c, threats, env, dt, now, boat, wl.calls)
+        colony_step(c, threats, env, dt, now, boat, wl.calls, wl.marks)
         wl.colonies[k] = c
     loop k in 0..wl.herds.len():
         h = wl.herds[k]

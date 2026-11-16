@@ -21,9 +21,9 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1659,6 +1659,31 @@ On the rivers branch until it lands.
 
 ![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
 
+### Dolphins
+
+- **Aliases:** a pod, bow-riding, racing the Gull.
+- **Definition:** small pods (3–8, some with a calf) of short-beaked common dolphins (dark cape,
+  tan-yellow forward flank, grey behind, white belly) in deep water off the harbours. A roaming pod
+  swims slowly about its water, each dolphin rolling up to breathe every 5–19 s (back and fin out, a
+  blow, a little spray). A fishing caique underway draws them to **bow-ride** just ahead of its stem;
+  a seaplane taxiing or on the start of its run (on the water, 2–11 m/s) they **race** abreast of
+  its floats, porpoising in leaps; when it pulls away or lifts off they **peel off** to one side and
+  roam again. Each dolphin swims itself: thrust toward its spot with a top speed and turn, buoyancy to
+  its depth and up to breathe, gravity alone once clear of the water, so the leaps come from its speed.
+  Cut at the sea's surface like the birds. Gulls about a caique **hauling** its nets (stopped on its
+  ground) dive to the water astern, sit, and get up again.
+- **Code:** `src/dolphins.jo` (`pod_scan`, `pod_site_at`, `make_pod`, `pod_interest`, `pod_step`,
+  `dolphins_step`), `src/dolphin_view.jo` (`build_dolphin_meshes`, `draw_dolphins`), gulls in
+  `src/wildlife.jo` (`wild_hauling`, the `dive` and `sit` acts of `colony_step`); the blow and the
+  splash in `src/ambience_synth.jo`.
+- **Rules:** sites hashed from each harbour's key, a pod out on about two days in three; nothing saved.
+  Tests: `tests/dolphins_test.jo`, and the hauling test in `tests/wildlife_test.jo`.
+- **Capture:** `AEGEAN_WILD_POD="ahead d s"` (placed on the first frame from where the aircraft is),
+  `AEGEAN_CAPTURE_TAKEOFF=1 AEGEAN_CAPTURE_TAXI=<seconds>` (taxi out, then the take-off run),
+  `AEGEAN_WILD_DOLPHIN_HOLD=1` with `AEGEAN_WILD_PORTRAIT="dolphin d h bearing"` for turnarounds,
+  `AEGEAN_WILD_LOOK="pod|hauling d h b"`, `AEGEAN_WILD_RACECAM="side ahead up"` (held beside the player's
+  aircraft, looking across at the water off its floats).
+
 ### Pilot's scarf
 
 - **Aliases:** the scarf, its tails or ends, worn cloth.
@@ -2056,11 +2081,38 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Code:** `src/bar_scene.jo` (`hotel_site`, `build_hotel`, `draw_band`, `draw_served`);
   the venue rule in `src/living_life_seed.jo` (`choose_life_venue`, `life_aviator`) and
   `src/living_life.jo`; seating in `src/townsfolk.jo`.
-- **Rules:** the walkable deck is published as quays; the building stands over water, so it
-  cannot be walked into. The terrace venue key ends with `TERRACE_VENUE_SUFFIX`.
+- **Rules:** the walkable deck is published as quays; the building's walls are published solids,
+  so it is not walked into: its [bar room](#bar-room) is gone into at a door. The terrace venue key ends with `TERRACE_VENUE_SUFFIX`.
 - **Capture:** `AEGEAN_LEISURE=exterior|harbour|terrace|sit`.
 
 ![The Hotel Ancora from the water](img/hotel-ancora.png)
+
+### Bar room
+
+- **Definition:** the Hotel Ancora's ground floor, an indoor evening room: a stone arch across it,
+  the band's stand in a curtained corner with the piano, a long dark counter against a back bar of
+  bottles with a mirror and a clock, tables under hanging lamps, palms in pots, and walls crowded
+  with pictures, pinned papers, a propeller and a shelf of cups. Lit by lamps only: warm pools
+  under the shades, deep brown beyond (by day in the rain, the sea windows' grey light too).
+- **When:** the bar is inside from 18:00 through the night; everything (tables, waiter, band) is
+  inside while it rains. The hotel's places (`HotelSpots`) shift into the room, so the seated
+  view, company, the waiter and the band follow without their own code knowing. The switch
+  happens out of sight: not while the pilot sits at the hotel, else with the camera 70 m away, or
+  on going in by a door (the terrace door by the bar's end, the side door off the east walk).
+- **The world:** keeps the terrace's places (the band's numbers, the patrons' seats), so saves and
+  replays don't change; whoever it has at the terrace's tables, bar or stand is drawn, found and
+  talked to at the same place in the room (`room_place_folk`); those crossing the terrace aren't
+  drawn. In rough weather the band still plays, and at Porto Vecchio of an evening the keeper and
+  the pilots go to the hotel rather than shelter.
+- **Light:** baked into the vertices (`bake_bar_room`): shaded hanging lamps throw their light
+  down, wall lamps all round, a soft shoulder on the brightest; drawn in a flat light so the bake
+  shows, with the lamps glowing. People inside are drawn in `room_figure_light`. Built the first
+  time the camera is inside; drawn only then (rain is not drawn inside).
+- **Code:** `src/bar_room.jo`; `HotelSpots`, `hotel_as_built`, `room_camera_inside` in
+  `src/bar_scene.jo`; the floor for seats in `src/walk_shapes.jo` (`walk_publish_floors`).
+- **Capture:** `AEGEAN_LEISURE=sit|seat-bar|band` at an evening hour (`AEGEAN_CAPTURE_MINUTES`),
+  with `AEGEAN_WEATHER=rain` for everything inside; `AEGEAN_ROOM=0|1|2` forces the room's state.
+- **Tests:** `tests/bar_room_test.jo`; the storm evening in `tests/band_life_test.jo`.
 
 ### Lantern light
 
