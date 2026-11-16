@@ -1,0 +1,487 @@
+# An automated playtest of the game's loops: the whole game, driven through the functions the
+# player's inputs reach, telling at each step what is offered next. PLAYTEST_CASE picks the loop;
+# each prints PLAYTEST lines and ends with PLAYTEST PASS or a failed assertion naming the dead end.
+# Run headlessly with an isolated SLOPPY_SAVE_DIR and SLOPPY_SCREENSHOT set (see tools/playtest.sh).
+build:
+    name = "Aegean playtest probe"
+    js = "../src/web_compat.js"
+import '../aegean.jo' as game
+import '../src/living_world.jo' as life
+import '../src/living_portage.jo' as portage
+import '../src/living_claims.jo' as claims
+use '../src/controller.jo'
+use '../src/world.jo'
+use '../src/world_point.jo'
+use '../src/flight.jo'
+use '../src/combat.jo'
+use '../src/leisure.jo'
+use '../src/game_slots.jo'
+use '../src/living_types.jo'
+use '../src/settlements.jo'
+
+finish_settlement_registry()
+base_update:(f64)->void=game.update
+base_draw:()->void=game.draw
+case=env("PLAYTEST_CASE") ?? "room"
+stage=0
+frames=0
+waited=0
+limit=to_int(env("PLAYTEST_FRAMES") ?? "3000") ?? 3000
+
+note=(text:str):print("PLAYTEST {case} f={frame_number()} stage={stage}: {text}")
+offers_text=()->str:
+    out=""
+    loop o in game.offers_now():out=out+"[{game.offer_key_name(o.key)} {o.words} ({o.act})]"
+    out
+state_text=()->str:"mode={game.me.mode} ui={game.ui} leisure_ui={game.leisure_ui} stay={game.stay.active} scenario='{game.active_scenario}' moored={game.pc.state.moored} water={game.pc.state.on_water} fuel={game.pc.state.fuel:.1} crashed={game.pc.state.crashed} cents={game.player_cents()}"
+next=(n:int):
+    global stage,waited
+    stage=n;waited=0
+saved=(slot:int)->bool:game.game_save_command=="" and not game.game_saves.busy and game.game_slot_views.len()==3 and game.game_slot_views[slot].exists
+loaded=()->bool:game.game_save_command=="" and not game.game_save_status().busy
+
+pressing=false
+key_down=false
+# A key pressed for one frame, as the touch pad's buttons press them
+press_key=(k:Key):
+    global key_down
+    game.pad.pressed.push(k);key_down=true
+# The k-th thing on offer chosen, as a controller's button chooses it (for the next update only).
+press=(act:str)->bool:
+    global pressing
+    o=game.offers_now()
+    loop k in 0..o.len():
+        if o[k].act==act:
+            ctl.choice=k;pressing=true
+            return true
+    false
+has_offer=(act:str)->bool:
+    loop o in game.offers_now():
+        if o.act==act:return true
+    false
+# The walker put beside a point (as if he had walked there), on the ground.
+walk_to=(p:vec3,back:f64=2.0):
+    d=normalize(vec3(game.me.pos.x-p.x,0,game.me.pos.z-p.z)+vec3(0.001,0,0))
+    q=p+d*f32(back)
+    game.me.pos=vec3(q.x,f32(game.walk_height(game.towns,f64(q.x),f64(q.z))),q.z)
+    game.walker_point=world_point(game.me.pos)
+
+update = (dt: f64):
+    global frames,waited,pressing,key_down
+    base_update(dt)
+    if pressing:
+        ctl.choice=-1;pressing=false
+    if key_down:
+        game.pad.pressed=[];key_down=false
+    frames+=1;waited+=1
+    assert(frames<limit,"PLAYTEST {case}: stuck at stage {stage}: {state_text()} offers {offers_text()}")
+    if game.game_saves.error!="":
+        w=game.living_world;mine=w.people[w.player].craft
+        loop k in 0..w.aircraft.len():
+            if w.aircraft[k].move_owner==.scene:
+                ci=combat_index(game.battle,k)
+                o=w.aircraft[k].owner
+                inair=false
+                loop pl in game.air_events.pilots:
+                    if pl.craft==k:inair=true
+                loop pl in game.air_events.arm:
+                    if pl.craft==k:inair=true
+                print("PLAYTEST   craft {k} owner {if o>=0: w.people[o].name else: "-"} occupation {if o>=0: to_text(w.people[o].occupation) else: "-"} air_events={inair} kind {w.aircraft[k].kind} place {w.aircraft[k].place}")
+                print("PLAYTEST scene-owned craft {k} player={k==mine} combat={ci} status={if ci>=0: to_text(game.battle.actors[ci].status) else: "-"} present={if ci>=0: game.battle.actors[ci].present else: false} state={w.aircraft[k].state} trip={w.aircraft[k].trip}")
+    assert(game.game_saves.error=="","PLAYTEST {case}: save error {game.game_saves.error}")
+    if case=="room":room_case()
+    if case=="delivery":delivery_case()
+    if case=="strait-home" or case=="canal":situation_case()
+    if case=="tow":tow_case()
+    if case=="broke":broke_case()
+    if case=="fuel":fuel_case()
+    if case=="night":night_case()
+    if case=="ride":ride_case()
+    if case=="strait-lose":strait_lose_case()
+    if case=="dry":dry_case()
+    if case=="bail":bail_case()
+
+# A room for the night, saved in the room and loaded again in the same session: the pilot must be
+# back on foot by the desk with the room gone, not held in a room he can no longer leave.
+room_case=():
+    if stage==0:
+        if game.game_slot_views.len()!=3 or game.game_saves.busy or not game.living_world.far.populated or not game.stay.active:return
+        note("in the room: {state_text()}")
+        assert(game.request_game_save(1));next(1)
+    else if stage==1:
+        if not saved(1):return
+        note("saved in the room")
+        assert(game.request_game_load(1));next(2)
+    else if stage==2:
+        if not loaded():return
+        note("loaded: {state_text()} offers {offers_text()}")
+        assert(not game.stay.active,"the room outlived the load: the pilot can't leave it")
+        assert(game.me.mode==.walking and game.ui==.none)
+        d=f64(length(game.me.pos.xz-game.hotel.desk.xz))
+        assert(d<6.0,"loaded {d:.1} m from the hotel desk")
+        next(3)
+    else if stage==3 and waited>60:
+        note("walking after the load: {state_text()}")
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# The first delivery, staged moored at its destination (AEGEAN_CAPTURE_DELIVERY + _MOORED): ashore,
+# saved and loaded with the receiver waiting, then handed over and signed for, and paid.
+delivery_job=-1
+cents_before=0
+seen_waiting=false
+delivery_case=():
+    global delivery_job,cents_before,seen_waiting,waited
+    w=game.living_world
+    if stage==0:
+        if game.game_slot_views.len()!=3 or game.game_saves.busy or not w.far.populated or waited<30:return
+        delivery_job=game.capture_delivery_job
+        assert(delivery_job>=0,"no job staged")
+        note("moored at the destination: {state_text()} offers {offers_text()} job {w.jobs[delivery_job].state} loaded {w.jobs[delivery_job].loaded}")
+        assert(game.me.mode==.aboard)
+        o=game.offers_now()
+        acts=[loop e in o:e.act]
+        # (on to the dock: whichever offer takes the pilot ashore)
+        chosen=false
+        loop a in ["ashore","climb-down","step-ashore","out"]:
+            if not chosen and a in acts:chosen=press(a)
+        assert(chosen,"moored at the destination with no way ashore: {offers_text()}")
+        next(1)
+    else if stage==1:
+        if game.me.mode!=.walking:
+            assert(waited<120,"still not ashore: {state_text()}");return
+        note("ashore: {state_text()} offers {offers_text()}")
+        assert(game.request_game_save(1));next(2)
+    else if stage==2:
+        if not saved(1):return
+        assert(game.request_game_load(1));next(3)
+    else if stage==3:
+        if not loaded():return
+        note("loaded on the dock: {state_text()} job {w.jobs[delivery_job].state} {portage.cargo_status(w,delivery_job)}")
+        next(4)
+    else if stage==4:
+        # (or the receiver comes and unloads it herself, through the world's carriage: then it is
+        # signed for without a handover)
+        if w.jobs[delivery_job].state==.delivered:
+            cents_before=game.player_cents()-1
+            note("collected by the receiver without a handover")
+            next(5);return
+        rc=portage.cargo_receiver(w,delivery_job)
+        if rc>=0 and w.people[rc].carriage>=0 and w.people[rc].carrying>=0:return
+        # (the receiver waiting on the dock: the pilot walks up to them)
+        who=-1
+        loop k in 0..game.folks.len():
+            if game.folks[k].shown and portage.cargo_awaited(w,game.folks[k].person)==delivery_job:who=k
+        if who<0:
+            if waited%600==0:
+                rc=portage.cargo_receiver(w,delivery_job)
+                rp=if rc>=0:w.people[rc] else:w.people[w.player]
+                shown=false;dist=-1.0
+                loop f in game.folks:
+                    if f.person==rc:shown=f.shown;dist=f64(length(f.pos.xz-game.me.pos.xz))
+                note("waiting for the receiver {if rc>=0: rp.name else: "none"}: place {rp.place} trip {rp.trip} carrying {rp.carrying} carriage {rp.carriage} in scene {shown} {dist:.0} m away; minute {w.minute} due {w.jobs[delivery_job].due_minute}; {portage.cargo_status(w,delivery_job)}")
+            assert(waited<to_int(env("PLAYTEST_WAIT") ?? "1800") ?? 1800,"nobody comes down to wait for the cargo: {portage.cargo_status(w,delivery_job)} job {w.jobs[delivery_job].state}")
+            return
+        if not seen_waiting:
+            seen_waiting=true;waited=0
+        if waited%10==0:walk_to(game.folks[who].pos)
+        if has_offer("handover"):
+            cents_before=game.player_cents()
+            note("receiver {w.people[game.folks[who].person].name} waiting; offers {offers_text()}")
+            assert(press("handover"));next(5)
+        else:
+            cr=w.people[w.player].craft
+            assert(waited<1800,"beside the receiver, no handover offered: {offers_text()} (aircraft place {w.aircraft[cr].place} trip {w.aircraft[cr].trip} state {w.aircraft[cr].state}; destination {w.jobs[delivery_job].destination}; receiver {game.folks[who].pos} me {game.me.pos})")
+    else if stage==5:
+        if w.jobs[delivery_job].state!=.delivered:
+            assert(waited<3600,"handed over but never signed for: {portage.cargo_status(w,delivery_job)}");return
+        note("signed for after {waited} frames, paid {game.player_cents()-cents_before}: {state_text()} offers {offers_text()}")
+        assert(game.player_cents()>cents_before,"delivered without pay")
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# The player's aircraft brought in to its side's home dock, as a pilot who has flown there lands and ties up
+come_in_home=():
+    me=combat_index(game.battle,game.living_world.people[game.living_world.player].craft)
+    assert(me>=0)
+    side=game.battle.actors[me].side
+    found=false
+    loop hm in game.battle.homes:
+        if hm.side==side and not found:
+            found=true
+            h=hm.heading
+            game.pc.state=water_start(game.pc.spec,vec3(hm.dock.x,0,hm.dock.z),h)
+            moor(game.pc.state,vec3(hm.dock.x,f32(game.pc.spec.float_height),hm.dock.z),h)
+            game.pc.throttle=0.0;game.pc.state.throttle=0.0
+            game.capture_after="";game.capture_canal_run=false
+            game.tie_up()
+            note("flown in to the home dock at place {hm.place}")
+    assert(found,"no home harbour for the player's side: nowhere the situation leads")
+
+# A situation (AEGEAN_SCENARIO=strait with AEGEAN_CAPTURE_STRAIT_AFTER=home: the side's homeward
+# flight; or the canal escape with AEGEAN_CAPTURE_CANAL_RUN) played to its arrival: it must hand the
+# pilot back to the ordinary game, which can be saved, once moored in a harbour.
+situation_case=():
+    if stage==0:
+        if game.active_scenario=="" or waited<30:return
+        note("situation {game.active_scenario} under way: {state_text()}")
+        next(1)
+    else if stage==1:
+        if waited%600==0:
+            mi=combat_index(game.battle,game.living_world.people[game.living_world.player].craft)
+            sd=if mi>=0:game.battle.actors[mi].side else:1
+            foes=0;near=1e9
+            loop a in game.battle.actors:
+                if a.side!=sd and a.present and a.status==.flying:
+                    foes+=1;near=min(near,f64(length(a.state.position.xz-game.pc.state.position.xz)))
+            note("{state_text()} pos {game.pc.state.position} home_since {game.battle.home_since[sd]} formed {game.battle.formed[sd]} homes {game.battle.homes.len()} foes flying {foes} nearest {near:.0} m")
+        if waited==to_int(env("PLAYTEST_COME_IN") ?? "4000") ?? 4000 and not game.pc.state.moored:come_in_home()
+        if game.pc.state.moored or game.me.mode==.walking:
+            note("moored: {state_text()} offers {offers_text()}")
+            next(2)
+    else if stage==2:
+        if waited<180:
+            if waited%10==1:note("moored? {game.pc.state.moored} scenario '{game.active_scenario}' throttle {game.pc.throttle:.2} speed {length(game.pc.state.velocity):.2}")
+            return
+        note("after mooring: {state_text()} offers {offers_text()}")
+        assert(game.active_scenario=="","moored in harbour after the {game.active_scenario} situation, still inside it: no saving, no way on to the ordinary game")
+        assert(game.request_game_save(1));next(3)
+    else if stage==3:
+        if not saved(1):return
+        note("saved the carried-on game")
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# Wrecked in flight (AEGEAN_FLYING), the world records the damage; R tows her home: she must come
+# home whole and tied up, not wrecked again by the record's old damage.
+tow_case=():
+    w=game.living_world;c=w.people[w.player].craft
+    if stage==0:
+        if not w.far.populated or waited<60:return
+        # (PLAYTEST_TOW=shot: badly hit first, flying on while the world records it, then down)
+        if env("PLAYTEST_TOW")=="shot":
+            game.pc.state.hull_damage=0.9;game.pc.state.engine_damage=0.85
+            note("shot up: {state_text()}")
+            next(10);return
+        game.pc.state.hull_damage=0.97;game.pc.state.crashed=true;game.pc.state.throttle=0;game.pc.throttle=0
+        note("wrecked: {state_text()} record hull {w.aircraft[c].hull} engine {w.aircraft[c].engine}")
+        next(1)
+    else if stage==10:
+        if waited<180:return
+        note("flying on hit: record hull {w.aircraft[c].hull} engine {w.aircraft[c].engine}")
+        game.pc.state.crashed=true;game.pc.state.throttle=0;game.pc.throttle=0
+        next(1)
+    else if stage==1:
+        if waited<240:return
+        note("down: {state_text()} record hull {w.aircraft[c].hull} engine {w.aircraft[c].engine} fuel_ml {w.aircraft[c].fuel_ml}")
+        assert(game.pc.state.crashed,"the wreck isn't a wreck")
+        press_key(.r);next(2)
+    else if stage==2:
+        if waited<300:return
+        note("towed: {state_text()} record hull {w.aircraft[c].hull} engine {w.aircraft[c].engine} offers {offers_text()}")
+        assert(not game.pc.state.crashed,"towed home and wrecked again (the record's hull {w.aircraft[c].hull})")
+        assert(game.pc.state.moored,"towed home but not tied up")
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# Broke and dry at home (no money, an empty tank): some way to earn must stay open (a job on foot,
+# a charter that supplies its fuel), or the game ends there with no way on.
+broke_case=():
+    w=game.living_world;c=w.people[w.player].craft
+    if stage==0:
+        if not w.far.populated or waited<60:return
+        game.debug_cents(0);game.debug_fuel_ml(c,0);game.pc.state.fuel=0
+        next(1)
+    else if stage==1:
+        if waited<30:return
+        reasons:{str:int}={}
+        open=0;ok=0;foot=0;charter=0
+        loop id in w.active_jobs:
+            j=w.jobs[id]
+            if j.state!=.open or j.origin!=w.people[w.player].place:continue
+            open+=1
+            r=claims.claim_refusal(w,id,w.player)
+            key=if r=="":"claimable" else:r
+            reasons[key]=reasons.get(key,0)+1
+            if r=="":
+                ok+=1
+                if j.delivery_mode==.foot:foot+=1
+                if j.wet_charter:charter+=1
+        note("broke and dry: {state_text()} open jobs here {open}: {reasons} (claimable on foot {foot}, charters {charter}) offers {offers_text()}")
+        if ok>0:
+            print("PLAYTEST PASS {case}")
+            exit(0)
+        next(2)
+    else if stage==2:
+        # (time passes, an hour at a time, as it would sitting at the café: does anything turn up?)
+        if waited%5!=0:return
+        life.advance_minutes(w,60)
+        hours=waited/5
+        ok=0;foot=0;why:{str:int}={}
+        loop id in w.active_jobs:
+            j=w.jobs[id]
+            if j.state!=.open or j.origin!=w.people[w.player].place:continue
+            r=claims.claim_refusal(w,id,w.player)
+            why[if r=="": "claimable" else: r]=why.get(if r=="": "claimable" else: r,0)+1
+            if r=="":
+                ok+=1
+                if j.delivery_mode==.foot:foot+=1
+        if ok>0 or hours>=24:
+            note("after {hours} h: {why} (on foot {foot}) cents {game.player_cents()} fuel_ml {w.aircraft[c].fuel_ml}")
+            assert(ok>0,"broke with an empty tank at home: nothing to take for a whole day, a dead end")
+            print("PLAYTEST PASS {case}")
+            exit(0)
+
+# At home on the quay: aboard, the pier's fuel bought into a drained tank, saved and loaded with it.
+fuel_before=0.0
+fuel_cents=0
+fuel_case=():
+    global fuel_before,fuel_cents
+    w=game.living_world;c=w.people[w.player].craft
+    if stage==0:
+        if not w.far.populated or waited<60:return
+        note("on the quay: {state_text()} offers {offers_text()}")
+        assert(press("aboard"),"no way aboard from the start: {offers_text()}");next(1)
+    else if stage==1:
+        if game.me.mode!=.aboard:
+            assert(waited<120,"not aboard");return
+        game.debug_fuel_ml(c,6000);game.pc.state.fuel=6.0
+        next(2)
+    else if stage==2:
+        if waited<30:return
+        note("aboard with 6 L: offers {offers_text()}")
+        fuel_before=game.pc.state.fuel;fuel_cents=game.player_cents()
+        assert(press("fuel"),"alongside the home pier with a dry tank, no fuel offered: {offers_text()}");next(3)
+    else if stage==3:
+        if game.ui!=.fuel:
+            assert(waited<120,"the fuel panel didn't open: {state_text()}");return
+        game.fuel_take(0);next(4)
+    else if stage==4:
+        if waited<120:return
+        note("filled: {state_text()} paid {fuel_cents-game.player_cents()}")
+        assert(game.pc.state.fuel>fuel_before+10.0,"bought no fuel")
+        game.ui=.none
+        fuel_before=game.pc.state.fuel
+        assert(game.request_game_save(1));next(5)
+    else if stage==5:
+        if not saved(1):return
+        game.pc.state.fuel=0
+        assert(game.request_game_load(1));next(6)
+    else if stage==6:
+        if not loaded():return
+        note("loaded: {state_text()} offers {offers_text()}")
+        assert(abs(game.pc.state.fuel-fuel_before)<0.01,"the fuel bought didn't survive the load")
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# A night in the hotel's room (AEGEAN_LEISURE=stay-hotel): asleep till morning, then out by the desk.
+night_case=():
+    w=game.living_world
+    if stage==0:
+        if not w.far.populated or not game.stay.active or waited<30:return
+        note("in the room at {game.lt.local_minute(w.minute)/60}h: {state_text()}")
+        game.stay_sleep(rest_minutes(w,420),"Sleeping");next(1)
+    else if stage==1:
+        if game.skip.active or waited<10:return
+        note("woke at {game.lt.local_minute(w.minute)/60}h, stage {game.stay.stage}")
+        assert(game.stay.active,"woke and the room was gone")
+        game.stay_end();next(2)
+    else if stage==2:
+        if waited<60:return
+        note("out of the room: {state_text()} offers {offers_text()}")
+        assert(not game.stay.active and game.me.mode==.walking and game.ui==.none,"still held in the room")
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# A pleasure flight (AEGEAN_LEISURE=ride-air with AEGEAN_FLYING): brought in to a dock, the guest thanks
+# the pilot and goes; the game carries on with nothing held.
+ride_case=():
+    w=game.living_world
+    if stage==0:
+        if not w.far.populated or waited<60:return
+        note("flying with a guest: ride stage {game.ride.stage} {state_text()}")
+        assert(game.ride.stage==.flying,"no guest aboard")
+        tw=game.towns[0];d=tw.docks[0];o=vec3(tw.out.x,0,tw.out.y);h=atan2(-f64(o.x),f64(o.z))
+        game.pc.state=water_start(game.pc.spec,vec3(d.x,0,d.z),h)
+        moor(game.pc.state,vec3(d.x,f32(game.pc.spec.float_height),d.z),h)
+        game.pc.throttle=0.0;game.tie_up();game.capture_takeoff=false
+        next(1)
+    else if stage==1:
+        if waited%120==0:note("ride stage {game.ride.stage} {state_text()} offers {offers_text()}")
+        if game.ride.stage==.none:
+            note("the guest has gone: {state_text()} offers {offers_text()}")
+            print("PLAYTEST PASS {case}")
+            exit(0)
+        if game.me.mode==.aboard and waited==240:press("ashore")
+        assert(waited<3000,"the pleasure flight never ends: ride stage {game.ride.stage}")
+
+# Lost in the strait: wrecked on the water, R tows her home; the situation must hand back there too.
+strait_lose_case=():
+    w=game.living_world
+    if stage==0:
+        if game.active_scenario!="strait" or waited<300:return
+        game.pc.state.hull_damage=0.97;game.pc.state.crashed=true;game.pc.throttle=0;game.pc.state.throttle=0
+        note("shot down: {state_text()}");next(1)
+    else if stage==1:
+        if waited<300:return
+        note("down at sea: {state_text()} offers {offers_text()}")
+        press_key(.r);next(2)
+    else if stage==2:
+        if waited%120==0:note("{state_text()} offers {offers_text()}")
+        if game.active_scenario=="" and waited>60:
+            note("handed back: {state_text()} offers {offers_text()}")
+            assert(game.request_game_save(1));next(3)
+        else:
+            if waited==600:
+                mi=combat_index(game.battle,game.living_world.people[game.living_world.player].craft)
+                sd=if mi>=0:game.battle.actors[mi].side else:-1
+                near=1e9;who=""
+                loop a in game.battle.actors:
+                    if a.side!=sd and a.present and a.status==.flying:
+                        dd=f64(length(a.state.position.xz-game.pc.state.position.xz))
+                        if dd<near:near=dd;who="craft {a.craft} side {a.side} engagement {a.engagement} (battle {game.battle.engagement}) human {a.human} owner {game.living_world.people[a.person].name} home {game.living_world.people[a.person].home}"
+                note("debug: me_index {mi} side {sd} held {game.world_held()} skip {game.skip.active} nearest foe {near:.0} m ({who}) pos {game.pc.state.position} place {game.game_place_at(game.pc.state.position)}")
+            assert(waited<1800,"towed home after losing, still in the situation")
+    else if stage==3:
+        if not saved(1):return
+        print("PLAYTEST PASS {case}")
+        exit(0)
+
+# Out of fuel over the sea (AEGEAN_FLYING): the engine dies, she comes down on the water, intact.
+# (The call for help at sea is in hand elsewhere: this reports what is offered meanwhile.)
+dry_case=():
+    w=game.living_world;c=w.people[w.player].craft
+    if stage==0:
+        if not w.far.populated or waited<60:return
+        game.debug_fuel_ml(c,0);game.pc.state.fuel=0;game.pc.throttle=0
+        # (PLAYTEST_DRY=afloat: already down on the water, intact, out at sea)
+        if env("PLAYTEST_DRY")=="afloat":
+            at=game.pc.state.position;h=game.heading(game.pc.state)
+            game.pc.state=water_start(game.pc.spec,vec3(at.x,0,at.z),h);game.pc.state.fuel=0
+        note("tank dry at {game.pc.state.position.y:.0} m");next(1)
+    else if stage==1:
+        if game.pc.state.on_water and length(game.pc.state.velocity)<2.0 and waited>120:
+            note("afloat and powerless: {state_text()} offers [{offers_text()}] (R tow card shown only when wrecked or aground)")
+            assert(game.offers_now().len()>0 or game.pc.state.crashed or game.pc.state.beached,"afloat, intact and out of fuel at sea: nothing offered, no way on")
+            print("PLAYTEST PASS {case}")
+            exit(0)
+        if waited%600==0:note("{state_text()} y {game.pc.state.position.y:.0}")
+        assert(waited<9000,"never came down")
+
+# Bailed out over the strait: down in the sea, how does the pilot get out of it?
+bail_case=():
+    if stage==0:
+        if game.active_scenario!="strait" or waited<300:return
+        press_key(.t);next(1)
+    else if stage==1:
+        if waited%600==0:
+            me_p=game.living_world.player;txt="none"
+            loop d in game.battle.descents:
+                if d.person==me_p:txt="{d.phase} released {d.released} at {d.position} age {d.age:.0}"
+            note("{state_text()} descent {txt}")
+        if game.me.mode==.walking:
+            note("on foot again: {state_text()} offers {offers_text()}")
+            print("PLAYTEST PASS {case}")
+            exit(0)
+
+draw = (): base_draw()
