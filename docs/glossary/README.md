@@ -2536,14 +2536,16 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### A new pilot's welcome
 
 - **Aliases:** the newcomer's guidance, Paolo's welcome, the note by the compass, Hints.
-- **Definition:** how a new game shows the way, from the living world and never with arrows:
+- **Definition:** an opt-in welcome for a new pilot (Options, Accessibility: **Hints for a new
+  pilot**, off by default: the game is found by playing), from the living world and never with
+  arrows:
   - **Paolo,** the home harbour's mechanic, is on the dock at the pilot's right hand as the game
     opens. He is kept there for the first hour by his own day in the living world, so the scene and the
     far simulation agree. A couple of seconds in he says *"You'll be the new pilot. Paolo — I keep the
-    engines here running."* Talking to him adds two answers. **Where's the work?** gives the board,
-    then the soonest-due open job on foot and a flying one, read from the real board. **How does
-    she handle?** gives the throttle and the take-off in a pilot's words. Walk off without a word and
-    he calls once after about 40 s.
+    engines here running."* Walk off without a word and he calls once after about 40 s.
+  - **A mechanic's two answers,** for anyone who asks any mechanic, Hints or not: **Where's the
+    work?** gives the board, then the soonest-due open job on foot and a flying one, read from the
+    real board; **How does she handle?** gives the throttle and the take-off in a pilot's words.
   - **A note by the compass,** in his hand, shows for 8 s the first time aboard: throttle, stick and
     view.
   - **A fisherman** about says once to wait for the float, after the first strike too soon.
@@ -2551,15 +2553,16 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     buttons and axes, or a touch screen's own controls.
 - **Rules:** it begins only with **New game** from the title (never in a scenario, never in a loaded
   game: a world saved before it existed loads with it done). It ends for good with the first job
-  delivered, two minutes in the air, a job taken after asking Paolo, or **Hints** off (Options;
-  which also hides the corner's key hint). It is a few short lines, said once.
+  delivered, two minutes in the air, a job taken after asking Paolo, or the Hints turned off. It
+  is a few short lines, said once. The corner's "H  all the keys" stays for everyone, as do the
+  board's keys and the radio's work line.
 - **Code:** `src/newcomer.jo` (`welcome_finished`, `welcome_jobs`, the words, `throttle_said` and
   the rest by `Hands`); `src/living_life.jo` `welcome_begin`, `welcome_holds` (Paolo's day);
   `World.welcome` (`WelcomeState`, `src/life_types.jo`); `welcome_frame`, `draw_welcome`,
-  `welcome_spot` and the talk panel's two answers in `aegean.jo`; `Options.hints`. Tests
+  `welcome_spot` and the talk panel's two answers in `aegean.jo`; `Options.guidance`. Tests
   `tests/newcomer_test.jo`.
-- **Capture:** `AEGEAN_TITLE=1` and New game (Enter at frame 300), or `AEGEAN_WELCOME=1` for a
-  welcome without the title.
+- **Capture:** `AEGEAN_TITLE=1` and New game (Enter at frame 300) with `Options(guidance=true)` in
+  the save folder's options file, or `AEGEAN_WELCOME=1` for a welcome without the title.
 
 ### Company
 
