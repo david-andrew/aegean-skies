@@ -3389,6 +3389,21 @@ No image: the tiers differ in budgets more than in any single view.
   `home_runway`, `BattleHome`; `src/scenarios.jo` `strait_homes`; `src/homeward_view.jo`; tests
   `tests/homeward_test.jo`.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_STRAIT_AFTER=home|arrive`.
+- **The canal escape** goes home the same way: its sides' harbours nearest Neravessa (never the
+  occupied city itself), once the pursuers are beaten or lost, the courier leading in.
+
+### A situation's end
+
+- **Aliases:** the hand-back, coming in safe.
+- **Definition:** a fight's situation (the strait, the canal escape) ends where the pilot comes safe
+  into harbour: moored, or ashore in a town, with no enemy of that fight flying within 8 km; whether
+  it was won, lost and towed home, or run from. The game simply goes on from there, in the same
+  world with its war and towns, and can be saved; a note and one line say so. Saving a game with a
+  battle in it hands the battle's aircraft back to the world at the checkpoint, and the battle takes
+  those still in the fight again after a load.
+- **Code:** `aegean.jo` `situation_arrival`; `src/scenarios.jo` `battle_homes`;
+  `src/game_session.jo` `release_battle_owners`, `restore_battle_owners`; played through by
+  `tools/playtest_probe.jo` (`tests/playtest_loops_test.py`).
 
 ### Pilots in the water
 
