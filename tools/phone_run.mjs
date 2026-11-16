@@ -186,7 +186,7 @@ result.shader_failures = extra.fails;
 result.errors = extra.errors;
 result.page_log = (extra.log || '').slice(-4000);
 result.frame_stats = logs.filter((l) => /FRAME_STATS/.test(l[2])).map((l) => l[2]);
-result.console = logs.filter((l) => !/FRAME_STATS/.test(l[2])).slice(-60);
+result.console = logs.filter((l) => !/FRAME_STATS/.test(l[2])).slice(-2000);
 if (!flag('keep')) await send('Page.navigate', {url: 'about:blank'});
 ws.close();
 if (served) { try { adb('reverse', '--remove', `tcp:${new URL(served.url).port}`); } catch {} await served.close(); }
