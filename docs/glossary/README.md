@@ -1563,7 +1563,6 @@ On the rivers branch until it lands.
   `AEGEAN_WILD_PORTRAIT="greylag|drake|duck|coot|gosling|gull|goat|sheep distance height bearing"`
   (turnarounds, the bearing from the animal's own heading), `AEGEAN_WILD_POSE=swim|upend|preen|rest|alert`,
   `AEGEAN_WILD_SHEEP=1|0`; `AEGEAN_WILD_TRACE=1`.
-  On `t3/wildlife`.
 
 ![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
 
