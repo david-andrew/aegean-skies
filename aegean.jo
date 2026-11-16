@@ -3229,7 +3229,13 @@ capture_audio = startup_aegean_audio_capture != none and env("SLOPPY_SCREENSHOT"
 audio_enabled = startup_sloppy_no_audio == none or capture_audio
 captured_audio: f32[]
 audio_capture_frames = int(f64(to_int(env("AEGEAN_AUDIO_SECONDS") ?? "") ?? 30) * 60.0)   # (frames of the mix the capture keeps)
-audio = if audio_enabled: start_audio(false) else: Audio()
+# (behind the title the sounds, about 0.9 s of a phone's start, are made a piece a frame while the
+# title dips to dusk between shots, the rest at once when the title closes: step_audio_build)
+audio_deferred = audio_enabled and title_will_open()
+audio_built = not audio_deferred
+audio_job = AudioBuild(environment = false)
+audio_job_step = 0               # (0 the sounds' pieces, 1 the far engines' hearing, 2 the guns')
+audio = if audio_enabled and not audio_deferred: start_audio(false) else: Audio()
 life_sound = life_audio.build_life_audio()
 world_ambience = AmbienceScene(sound=build_ambience(render_only=capture_audio))
 if capture_audio: world_ambience.sound.playback=true
@@ -3237,12 +3243,12 @@ cockpit_radio = radio.Radio()
 if audio_enabled: radio.radio_prepare(cockpit_radio)
 radio_bulletin = broadcast.RadioBulletinCache()
 broadcast.radio_place_transmitters(cockpit_radio, height)
-hearing = if audio_enabled: make_hearing() else: Hearing()
+hearing = if audio_enabled and not audio_deferred: make_hearing() else: Hearing()
 cat_scene = build_cat_scene(audio_enabled)       # the town cats about the player (src/cats.jo)
 battle = Battle(enabled=true,seed=int(living_world.seed%100000))
 register_combat_body(battle,living_world,living_world.people[living_world.player].craft,pc.spec,pc.state,true)
 combat_visual = make_combat_view()
-combat_audio = if audio_enabled: start_combat_audio() else: CombatAudio()
+combat_audio = if audio_enabled and not audio_deferred: start_combat_audio() else: CombatAudio()
 battle_radio = BattleRadio()
 cockpit_model = build_cockpit()
 
@@ -3322,6 +3328,9 @@ if let focus = env("AEGEAN_CHART_FOCUS"):
     loop c in living.owned_maps(living_world,living_world.player):
         if c.edition == focus: chart_focus = c.id
 
+# AEGEAN_SETTLE=1: the terrain generates without its per-frame budget (slow headless captures see
+# the settled ground of real play rather than the coarse arrival tiles).
+if env("AEGEAN_SETTLE")!=none:world_generate_seconds=2.0
 if let v = env("AEGEAN_VIEW"):
     w = split(v, " ")
     if w.len() >= 6:
@@ -3573,6 +3582,68 @@ wild_chase_view = () -> (vec3, vec3)?:
 # AEGEAN_WILD_LOOK="raft|gulls|herd distance height bearing": the free camera kept on the nearest
 # raft, colony or herd from that far, that high, from that bearing (radians; captures)
 wild_look = env("AEGEAN_WILD_LOOK")
+# AEGEAN_WILD_PORTRAIT="greylag|drake|duck|coot|gosling|gull|goat|sheep distance height bearing":
+# the view held, unsmoothed, on one animal of that kind, from a bearing taken from its own heading
+# (0 in front of it, 1.57 its side, 3.14 behind; captures and turnarounds)
+wild_portrait = env("AEGEAN_WILD_PORTRAIT")
+wild_portrait_view = () -> (vec3, vec3)?:
+    if wild_portrait == none: return none
+    w = split(wild_portrait!, " ")
+    if w.len() < 4: return none
+    at = vec3(0, 0, 0); yaw = 0.0; lift = 0.25; found = false
+    kinds = ["greylag", "drake", "duck", "coot"]
+    loop r in wildlife.rafts:
+        loop g in r.geese:
+            if found: break
+            want = if w[0] == "gosling": g.young else: not g.young and g.kind < kinds.len() and kinds[g.kind] == w[0]
+            if want and g.act != .fly and g.act != .run:
+                at = g.pos; yaw = g.yaw; found = true
+                lift = 0.22 * FOWL_SIZE[g.kind]
+    if w[0] == "gull":
+        loop c in wildlife.colonies:
+            loop g in c.gulls:
+                if not found and g.act == .perch: at = g.pos; yaw = g.yaw; found = true; lift = 0.25
+    if w[0] == "goat" or w[0] == "sheep":
+        loop h in wildlife.herds:
+            if (h.site.species == 1) != (w[0] == "sheep"): continue
+            # (one of the commonest coat: a white sheep, a brown goat)
+            loop e in h.beasts:
+                if not found and e.coat == 0 and e.act != .lie: at = e.pos; yaw = e.yaw; found = true; lift = 0.6
+    if not found: return none
+    d = to_float(w[1]) ?? 3.0; hgt = to_float(w[2]) ?? 0.5; b = yaw + (to_float(w[3]) ?? 1.57)
+    target = at + vec3(0, f32(lift), 0)
+    # (from the first bearing round from b whose eye is above the ground and sees the animal
+    # past the hill between: a far view of a herd on a slope)
+    eye = target
+    loop k in 0..16:
+        bb = b + f64((k + 1) / 2) * (if k % 2 == 0: 1.0 else: -1.0) * TAU / 16.0
+        eye = target + vec3(f32(sin(bb) * d), f32(hgt), f32(cos(bb) * d))
+        ground = surface_height(f64(eye.x), f64(eye.z)) + 1.6
+        if f64(eye.y) < ground: eye.y = f32(ground)
+        clear = true
+        loop j in 1..12:
+            p = eye + (target - eye) * f32(f64(j) / 12.0)
+            if surface_height(f64(p.x), f64(p.z)) > f64(p.y) - 0.3 and j < 11: clear = false
+        if clear: break
+    (eye, target)
+# (the portrait's field of view: AEGEAN_WILD_FOV, degrees, 40 by default; narrow for far views)
+wild_portrait_fov = to_float(env("AEGEAN_WILD_FOV") ?? "40") ?? 40.0
+# AEGEAN_WILD_POSE="swim|upend|preen|rest|alert": every bird of every raft held at that (captures)
+wild_pose = env("AEGEAN_WILD_POSE") ?? ""
+wild_pose_step = ():
+    if wild_pose == "": return
+    loop k in 0..wildlife.rafts.len():
+        loop j in 0..wildlife.rafts[k].geese.len():
+            g = wildlife.rafts[k].geese[j]
+            if g.young or g.act == .fly or g.act == .run: continue
+            match wild_pose:
+                "upend": g.act = if g.kind == FOWL_COOT: GooseAct.dive else: GooseAct.upend
+                "preen": g.act = .preen
+                "rest": g.act = .rest
+                _: g.act = .swim
+            g.timer = 5.0
+            wildlife.rafts[k].geese[j] = g
+        if wild_pose == "alert": wildlife.rafts[k].alarm = 1; wildlife.rafts[k].alarm_t = 5.0; wildlife.rafts[k].away = vec2(1, 0)
 wild_look_step = ():
     if wild_look == none or me.mode != .free: return
     w = split(wild_look!, " ")
@@ -4617,6 +4688,20 @@ title_open_world = ():
     free = fly_camera(title_view(title_shot, 0.0, title_ground).eye, 0.0, 0.0)
 
 # how dark the dip between shots is now (0 none .. 1 dusk)
+# the next piece of the sounds made behind the title (all = true: every piece left, at once)
+step_audio_build = (all: bool):
+    global audio, hearing, combat_audio, audio_built, audio_job_step, audio_job
+    loop not audio_built:
+        if audio_job_step == 0:
+            if audio_build_step(audio_job):
+                audio = audio_job.a; audio_job = AudioBuild(); audio_job_step = 1
+        else if audio_job_step == 1:
+            hearing = make_hearing(); audio_job_step = 2
+        else:
+            combat_audio = start_combat_audio(); audio_built = true
+            print("TITLE sounds made behind the title")
+        if not all: break
+
 title_dip = () -> f64:
     into = 1.0 - smoothstep(0.0, TITLE_DIP, title_shot_age)
     out = smoothstep(title_shot.length - TITLE_DIP, title_shot.length, title_shot_age)
@@ -4664,6 +4749,7 @@ title_update = (dt: f64):
     lay_out_screen()
     title.age += dt
     step_far_opening(build_slice(0.008))
+    if title_dip() > 0.5: step_audio_build(false)
     if process_game_saves():
         title_begin()
         return
@@ -4754,7 +4840,7 @@ title_sound = (dt: f64):
             kind = Craft(racer.kind)
             racers.push(EngineSource(TITLE_RACER_KEY - i, racer.at, racer.velocity, 1.0, true, engine_tone(kind, TITLE_RACER_KEY - i),
                 f64(length(racer.velocity)) / speed_scale, voice = aircraft_profile(kind).voice, gain = if title_shot.pace == 4: 0.01 else: if title_shot.kind == .high: 0.02 else: 0.04))
-    hear_engines(hearing, racers, title_now.eye, title_now.velocity, t)
+    if audio_built: hear_engines(hearing, racers, title_now.eye, title_now.velocity, t)
     # (the merge's guns, very faint: far under the music, a dozen dB under the battle's own)
     global title_shots_heard
     if title_shot_age < 0.01: title_shots_heard = 0
@@ -4772,6 +4858,7 @@ title_begin = ():
     title.open = false
     set_far_opening_deferred(false)
     far_opening_drop()
+    step_audio_build(true)
     # (the reel's preparing let go: play's own view decides what is made)
     world_warm_clear(); world_towns_expect([]); world_grove_anchor = none; world_grove_next_anchor = none
     title_start = none
@@ -5545,6 +5632,8 @@ if let attitude=env("AEGEAN_CAPTURE_ATTITUDE"):
     pc.state.velocity=quat_rotate(pc.state.orientation,vec3(0,0,-f32(length(pc.state.velocity))))
 
 if let scenario=env("AEGEAN_SCENARIO"):assert(load_scenario(scenario),"Unknown scenario")
+# (AEGEAN_HOUR also overrides a scenario's own hour, for captures at another time of day)
+if env("AEGEAN_SCENARIO")!=none and env("AEGEAN_HOUR")!=none:hour=to_float(env("AEGEAN_HOUR") ?? "") ?? hour
 # The same close orbit used in play, without browser pointer-lock permission in captures.
 if let orbit=env("AEGEAN_CAPTURE_ORBIT"):
     words=split(orbit," ");assert(words.len()==3,"orbit capture: distance yaw pitch")
@@ -6780,8 +6869,8 @@ update_frame = (dt: f64, saves: bool = true):
                     me.mode=.walking;d.released=true;follow.placed=false
         .aboard:
             if vpressed(.v) and not typing:pc.cockpit_view=not pc.cockpit_view
-            # (the first time aboard a P.7: how she is flown off)
-            if pc.kind==.piaggio_p7 and not p7_hint_shown:
+            # (the first time aboard a P.7 on the water: how she is flown off; not when first met in the air)
+            if pc.kind==.piaggio_p7 and not p7_hint_shown and pc.state.on_water:
                 global p7_hint_shown
                 p7_hint_shown=true
                 _=save_value("p7-hint-shown",true)
@@ -7079,6 +7168,7 @@ update_frame = (dt: f64, saves: bool = true):
         zone("wildlife")
         wildlife_step(wildlife, towns, scene_camera(), wild_threats(), vessels.ships, wild_env(), dt)
         wild_look_step()
+        wild_pose_step()
         zone_end()
         if wild_trace and floor(t * 2.0) != floor((t - dt) * 2.0):
             up = 0; afloat = 0; feeding = 0
@@ -7618,6 +7708,8 @@ draw = ():
         )
     if let eye=wild_watch:
         render_camera(eye,wild_watch_target()-eye,50.0,0.1,world_far(f64(eye.y)))
+    if let view=wild_portrait_view():
+        render_camera(view.0,view.1-view.0,wild_portrait_fov,0.05,world_far(f64(view.0.y)))
     if let view=wild_chase_view():
         render_camera(view.0,view.1-view.0,50.0,0.1,world_far(f64(view.0.y)))
     if let view=judge_camera:
