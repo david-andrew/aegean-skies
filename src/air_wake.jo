@@ -1,0 +1,145 @@
+use 'world_point.jo'
+use 'depth_space.jo'
+use 'look.jo'
+use 'render_space.jo'
+use 'cloud_volume.jo'
+use 'cloud_transparency.jo'
+use 'flight.jo'
+use 'sea.jo'
+use 'trails.jo'
+# The air an aircraft pushes down and back, low and fast over the sea: its downwash and prop wash
+# roughen the water under it, a dark band of cat's paws (small ripples, the odd glint) spreading
+# out in a V behind it and smoothing away in a few seconds. Drawn over the sea as a strip of its
+# own (the sea itself is not touched); the further it reaches down the faster the aircraft goes.
+
+const AIR_WAKE_LIFE = 4.5           # seconds a stretch of it lasts
+const AIR_WAKE_EVERY = 0.04         # seconds between its points
+const AIR_WAKE_SPREAD = 5.5         # m/s each side of the V opens at
+
+# (0..1: how hard the air works the water `gap` metres under an aircraft of this span, at this
+# true speed (m/s): within about a span slow, twice that fast)
+air_wake_amount = (span: f64, gap: f64, speed: f64) -> f64:
+    fast = smoothstep(28.0, 50.0, speed)
+    reach = span * (0.8 + 1.2 * fast)
+    (1.0 - smoothstep(0.5, max(reach, 1.0), gap)) * fast
+
+struct AirWakePoint:
+    pos: WorldPoint                 # on the water under the aircraft
+    side: vec2                      # across its track
+    born: f64
+    strength: f32
+    width: f32                      # the band's half width as it is made (m)
+
+struct AirWake:
+    pts: AirWakePoint[]
+    last = -1.0
+    on = false
+
+# its track: the point on the water under the aircraft (`at`), its velocity, the amount
+air_wake_step = (w: mut AirWake, at: WorldPoint, velocity: vec3, span: f64, amount: f64, t: f64):
+    loop w.pts.len() > 0 and (t - w.pts[0].born > AIR_WAKE_LIFE or t < w.pts[0].born): w.pts.remove_at(0)
+    flat = vec2(velocity.x, velocity.z)
+    if amount < 0.02 or length(flat) < 1.0:
+        if w.on and w.pts.len() > 0:
+            p = w.pts[w.pts.len() - 1]; p.strength = 0.0
+            w.pts.push(p)
+        w.on = false
+        return
+    if w.on and t - w.last < AIR_WAKE_EVERY: return
+    w.last = t
+    d = normalize(flat)
+    p = AirWakePoint(pos = at, side = vec2(-d.y, d.x), born = t, strength = f32(amount), width = f32(span * 0.45))
+    if not w.on and w.pts.len() > 0:
+        gap = p; gap.strength = 0.0
+        w.pts.push(gap)
+    w.on = true
+    loop w.pts.len() >= 160: w.pts.remove_at(0)
+    w.pts.push(p)
+
+# (the band's cross-section: across, in its half widths)
+AIR_COLS: f32[7] = [-1.0, -0.66, -0.33, 0.0, 0.33, 0.66, 1.0]
+
+# The strips of `wakes`, on the swell, into `vs` (render-local about `origin`)
+air_wake_strips = (vs: mut TrailVertex[], wakes: AirWake[], t: f64, origin: vec3):
+    n = AIR_COLS.len()
+    loop w in wakes:
+        if w.pts.len() < 2: continue
+        rows: TrailVertex[]
+        loop p in w.pts:
+            age = t - p.born
+            half = f64(p.width) + age * AIR_WAKE_SPREAD
+            loop c in 0..n:
+                q = WorldPoint(p.pos.x + f64(p.side.x) * f64(AIR_COLS[c]) * half, 0.0, p.pos.z + f64(p.side.y) * f64(AIR_COLS[c]) * half)
+                q.y = f64(swell_at(q.x, q.z, t).x) + 0.06
+                rows.push(TrailVertex(world_local(q, origin), vec4(AIR_COLS[c], f32(age), p.strength, f32(half))))
+        loop k in 0..w.pts.len() - 1:
+            if w.pts[k].strength <= 0.0 and w.pts[k + 1].strength <= 0.0: continue
+            loop c in 0..n - 1:
+                a0 = rows[k * n + c]; a1 = rows[k * n + c + 1]
+                b0 = rows[(k + 1) * n + c]; b1 = rows[(k + 1) * n + c + 1]
+                vs.push(a0); vs.push(b0); vs.push(a1)
+                vs.push(a1); vs.push(b0); vs.push(b1)
+
+struct AirWakeParams:
+    view_proj: mat4
+    cam: vec3
+    sun: vec3
+    sky: vec3
+    haze: vec3
+    fog: f32
+    warp_a: vec4
+    warp_b: vec4
+    clouds: CloudVeil
+    offset: vec2                    # (the render origin, kept small: the ripples stay put on the sea)
+    time: f32
+
+air_wake_vs = (v: TrailVertex, u: AirWakeParams) -> TrailOut: TrailOut(u.view_proj * vec4(render_warped(v.pos, u.cam, u.warp_a, u.warp_b), 1), v.pos, v.data)
+
+# (dark roughened water, densest along the band's middle and soft at its edges, in patches of small
+# ripples that drift and smooth away; a glint here and there on their faces)
+air_wake_fs = (i: TrailOut, u: AirWakeParams) -> vec4:
+    ax = abs(i.data.x)
+    age = i.data.y
+    band = 1.0 - smoothstep(0.45, 1.0, ax)
+    fade = exp(-age / 1.7) * (1.0 - smoothstep(AIR_WAKE_LIFE * 0.6, AIR_WAKE_LIFE, age)) * smoothstep(0.0, 0.08, age)
+    p = i.world.xz + u.offset
+    coarse = vnoise(p * 0.55 + vec2(age * 0.4, 0.0))
+    fine = vnoise(vec2(p.x * 3.1 + p.y * 1.3, p.y * 3.4 - p.x * 1.1) + vec2(0.0, u.time * 1.7))
+    paws = smoothstep(0.3, 0.7, coarse * 0.6 + fine * 0.4)
+    k = band * fade * i.data.z
+    dark = k * (0.35 + 0.65 * paws)
+    glint = smoothstep(0.8, 0.92, fine) * paws * k
+    if dark < 0.01 and glint < 0.01: discard()
+    deep = vec3(0.02, 0.07, 0.12) * (u.sun * 0.6 + u.sky * 0.5)
+    shine = vec3(1, 1, 1) * (u.sun * 0.9 + u.sky * 0.3)
+    c = mix(deep, shine, clamp(glint * 1.5, 0.0, 1.0))
+    a = max(dark * 0.5, glint * 0.7) * cloud_transmittance(i.world, u.clouds)
+    vec4(aerial(c, i.world, u.cam, u.haze, u.fog), a)
+
+air_wake_sh: Shader
+air_wake_mesh: Mesh
+air_wake_ready = false
+air_wake_vs_list: TrailVertex[]
+
+# (made only when first drawn)
+_air_wake_init = ():
+    global air_wake_sh, air_wake_mesh, air_wake_ready
+    air_wake_sh = make_world_shader(shader(air_wake_vs, air_wake_fs), false)
+    air_wake_mesh = mesh([TrailVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), TrailVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), TrailVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0))])
+    air_wake_ready = true
+
+# Draw the bands of `wakes` (inside a transparent draw_custom); nothing while none has a stretch
+draw_air_wakes = (wakes: AirWake[], L: Light, t: f64):
+    global air_wake_vs_list
+    live = false
+    loop w in wakes:
+        if w.pts.len() >= 2: live = true
+    if not live: return
+    origin = render_origin(scene_camera())
+    clear(air_wake_vs_list)
+    air_wake_strips(air_wake_vs_list, wakes, t, origin)
+    if air_wake_vs_list.len() < 3: return
+    if not air_wake_ready: _air_wake_init()
+    update_mesh(air_wake_mesh, air_wake_vs_list)
+    off = vec2(f32(f64(origin.x) % 997.0), f32(f64(origin.z) % 997.0))
+    draw(air_wake_sh, air_wake_mesh, AirWakeParams(view_proj = render_view_proj(origin), cam = render_eye(origin), sun = L.sun, sky = L.sky_top, haze = L.haze, fog = f32(L.fog_density), warp_a = render_anchor(scene_warp_a, origin), warp_b = scene_warp_b, clouds = cloud_veil, offset = off, time = f32(t % 1000.0)))
