@@ -641,11 +641,17 @@ _turbulence_kick = (t: f64, dt: f64, freqs: f64[], amps: f64[], seed: f64) -> f6
         kick += (noise(t * freqs[k], seed + f64(k) * 7.0) - noise((t - dt) * freqs[k], seed + f64(k) * 7.0)) * amps[k] * 2.0
     kick
 
+# (for flight model v2's storm: the same push and kicks)
+storm_push = (t: f64, seed: f64) -> f64: _storm_push(t, seed)
+turbulence_kick = (t: f64, dt: f64, freqs: f64[], amps: f64[], seed: f64) -> f64: _turbulence_kick(t, dt, freqs, amps, seed)
+
 # Sky Barons' steer (sim.jo): stick and rudder that turn the aircraft toward a direction: far off,
 # rolled toward it and pulled; nearly there (or a little below), small corrections with the wings
 # level; between, some of each. Each correction closes on the aim in about a sixth of a second.
-steer = (k: CraftSpec, s: CraftState, want: vec3) -> Controls:
-    if fdm2_active(k): return steer_v2(k, s, want)
+# want_rate: how fast the aim itself is moving (d/dt of its unit direction), for flight model v2's
+# steering to lead it; the liked model's steering ignores it.
+steer = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0, 0), firm: bool = false) -> Controls:
+    if fdm2_active(k): return steer_v2(k, s, want, want_rate, firm)
     l = quat_rotate(quat_inverse(s.orientation), normalize(want))     # (-z ahead, +x right, +y up)
     ahead = f64(-l.z)
     a = max(ahead, 0.1)
@@ -712,7 +718,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
         return
     if _clear_of_water(k, s, e, max(0.6, f64(length(s.velocity)) * dt + f64(length(s.angular_velocity)) * k.span * dt)):
-        if fdm2_active(k): fly_air_v2(k, s, c, e, dt)
+        if fdm2_active(k) and not fdm2_hop(k, s, e): fly_air_v2(k, s, c, e, dt)
         else if fdmsb_active(k): fly_air_sb(k, s, c, e, dt)
         else: _fly_air(k, s, c, e, dt)
         return
@@ -881,9 +887,14 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             wet += share
     wet += hydrofoil_contacts(k, s, c, e, omega_world, force, torque, dt)
     # Wing tips and exposed engine/body/tail also resolve actual contact impulses.
+    # (a hydrofoil's sealed hull, the P.7's, floats low: her wing tips and hull sides sit at the
+    # waterline and meet the sea as hull, with her keel and tip contacts, never as panels slammed
+    # broadside; on land and quays they strike as any)
+    sealed = k.foils.len() > 0
     loop id in 0..k.parts.len():
         if not s.damage.parts[id].attached: continue
-        loop group in [k.parts[id].wing_contacts, k.parts[id].strikes]:
+        loop g in 0..2:
+            group = if g == 0: k.parts[id].wing_contacts else: k.parts[id].strikes
             loop point in group:
                 if not s.damage.parts[id].attached: break
                 arm = quat_rotate(s.orientation, point)
@@ -894,7 +905,8 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
                 if land >= sea.height - 0.05 and f64(p.y) < land:
                     _terrain_contact(k, s, e, id, arm, p, land, force, torque, dt)
                     ground_hit = true
-                if f64(p.y) < sea.height and land < sea.height - 0.05:
+                waterline = sealed and (g == 0 or (id == 0 and f64(point.y) <= 0.0))
+                if f64(p.y) < sea.height and land < sea.height - 0.05 and not waterline:
                     relative = s.velocity + cross(omega_world, arm) - e.current - e.current_at(precise_contact.x, precise_contact.z) - vec3(0, sea.vertical_speed, 0)
                     vn = f64(dot(relative, sea.normal))
                     depth = sea.height - f64(p.y)
@@ -1021,7 +1033,7 @@ _air_controls = (k: CraftSpec, s: CraftState, e: FlightEnv, direction: vec3, alt
     climb = clamp((altitude - f64(s.position.y)) * 0.005, -0.18, 0.24)
     if airspeed < k.stall_speed * 1.2 * pure_k(k): climb = min(climb, -0.02)
     want = normalize(d + vec3(0, f32(climb), 0))
-    c = steer(k, s, want)
+    c = steer(k, s, want, vec3(0, 0, 0), true)
     c.roll = clamp(c.roll, -0.8, 0.8)
     if fdm2_active(k): c.roll = fdm2_bank_limit(k, s, c.roll); c.pitch = fdm2_autopilot_pitch(k, s, c.pitch, climb)
     c.airbrake = clamp((airspeed - speed - 2.0) * 0.12, 0.0, 1.0)
@@ -1077,6 +1089,14 @@ autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, env: Flig
             c.yaw = clamp(angle_delta(plan.takeoff_heading, heading(state)) * 2.0, -1.0, 1.0)
             pitch = asin(clamp(f64(forward(state).y), -1.0, 1.0))
             c.pitch = clamp(((if speed > spec.stall_speed * 0.9 * vs: 0.16 else: 0.025) - pitch) * 3.0 / spec.pitch_rate, -0.5, 0.6)
+            # (flight model v2, off the water and over the stall: its stick asks for a turn of the
+            # path, and holding the nose alone leaves her skimming the crests; so she is pulled into a
+            # climb of about 7 degrees, the nose no higher than 11, so her heels clear what she lifts
+            # over)
+            if fdm2_active(spec) and not state.on_water and speed > spec.stall_speed * vs:
+                path = asin(clamp(f64(state.velocity.y) / max(speed, 0.1), -1.0, 1.0))
+                pull = clamp((0.12 - path) * 3.0, 0.0, 0.5) * smoothstep(spec.stall_speed * vs, spec.stall_speed * 1.2 * vs, speed)
+                c.pitch = max(c.pitch, pull * clamp((0.2 - pitch) / 0.05, 0.0, 1.0))
             return c
     if plan.phase == .climb or plan.phase == .cruise:
         if plan.phase == .climb and plan.clearance_altitude > plan.altitude + 10 and p.y < plan.clearance_altitude - 10:
@@ -1089,7 +1109,9 @@ autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, env: Flig
         alt = _terrain_altitude(state, dir, env, plan.altitude)
         if plan.phase == .climb and p.y > plan.altitude - 15: plan.phase = .cruise
         if d < max(220.0, speed * 5.0): plan.phase = .descend
-        arrival_speed = if d < 1200: spec.stall_speed * 1.4 * vs else: cruise_speed
+        # (flight model v2 turns tightest well over the stall, where it may bank steeply: it comes to
+        # the approach's fix at 1.8 x stall, not 1.4)
+        arrival_speed = if d < 1200: spec.stall_speed * (if fdm2_active(spec): 1.8 else: 1.4) * vs else: cruise_speed
         return _air_controls(spec, state, env, dir, alt, arrival_speed)
     if plan.phase == .descend or plan.phase == .land:
         delta = plan.target - p
@@ -1108,7 +1130,10 @@ autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, env: Flig
             plan.phase = if plan.go_arounds > 3: .failed else: .climb
             return _air_controls(spec, state, env, dir, max(terrain_alt, plan.altitude), cruise_speed)
         if along < 450: plan.phase = .land
-        c = _air_controls(spec, state, env, dir, terrain_alt, spec.stall_speed * 1.30 * vs)
+        # (flight model v2, still turning onto the approach: faster, where the wing banks steeper and
+        # the turn is tighter, then slowed to the approach's 1.3 x stall once lined up)
+        turning = if fdm2_active(spec) and plan.phase == .descend: smoothstep(0.3, 1.0, abs(angle_delta(atan2(f64(dir.x), -f64(dir.z)), heading(state)))) else: 0.0
+        c = _air_controls(spec, state, env, dir, terrain_alt, spec.stall_speed * (1.30 + 0.6 * turning) * vs)
         if plan.phase == .land:
             # The flare: steer for a sink rate that eases off near the water, at the slowest safe
             # speed, the throttle closed in the last few meters.
@@ -1124,9 +1149,13 @@ autopilot = (spec: CraftSpec, state: CraftState, plan: mut FlightPlan, env: Flig
             # (floating in ground effect well over the stall, as the pure scale's water lets her: the
             # air brake, till the wing lets go and she settles level onto the water)
             if hgt < 8.0 and vs > 1.0001: c.airbrake = clamp((speed - spec.stall_speed * 0.55 * vs) * 0.15, 0.0, 1.0)
+            # (flight model v2 floats too in the water's ground effect, unscaled as well: the air brake)
+            else if hgt < 12.0 and fdm2_active(spec): c.airbrake = clamp((speed - spec.stall_speed * 0.9) * 0.3, 0.0, 1.0)
             # (and the pure scale's ground effect holds the nose a little up for a light stick: floating
             # level with no sink, a firmer push, eased again as soon as she starts down)
             if vs > 1.0001 and hgt < 4.5 and f64(state.velocity.y) > -1.2: c.pitch = min(c.pitch, -0.34)
+            # (flight model v2 floats level in it too: a gentler push, eased as soon as she starts down)
+            else if fdm2_active(spec) and hgt < 4.5 and f64(state.velocity.y) > -0.8 * vs: c.pitch = min(c.pitch, -0.12)
         if state.on_water:
             plan.touchdown = state.position; plan.phase = .taxi
         return c

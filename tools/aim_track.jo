@@ -1,0 +1,128 @@
+# Mouse-aim tracking: the player's steering (flight.jo `steer`, as src/pilot.jo's mouse mode calls it,
+# with its 30/s easing of the stick) flown at a target direction that steps, drifts or turns. The aim
+# is put on the target exactly (a perfect hand on the mouse), so what is left is the steering's own.
+#   sloppy --release tools/aim_track.jo        (AIM_MODELS="1" v2, "0" the liked; AIM_TRACE=1 series)
+# Lines "A,..." are the metrics: RMS error and the peak sweep of the gun line (degrees), the largest
+# bank (degrees), settle time and overshoot for the steps. Headless and deterministic.
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+
+const HZ = 60.0
+const K = 3.3
+const D = 57.2958
+trace = env("AIM_TRACE") == "1"
+
+spec_for = (kind: planes.Craft, model: int) -> fl.CraftSpec:
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks(flight_model = model))
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = true
+    k
+
+dir_of = (heading: f64, climb: f64) -> vec3:
+    vec3(f32(sin(heading) * cos(climb)), f32(sin(climb)), f32(-cos(heading) * cos(climb)))
+
+bank_of = (s: fl.CraftState) -> f64:
+    r = quat_rotate(s.orientation, vec3(1, 0, 0)); u = quat_rotate(s.orientation, vec3(0, 1, 0))
+    atan2(-f64(r.y), f64(u.y))
+
+struct Run:
+    rms = 0.0
+    peak = 0.0
+    bank = 0.0
+    settle = -1.0
+    overshoot = 0.0
+    n = 0
+
+# the target's direction at time t, for a case; heading 0 is where she starts flying
+target = (case: str, t: f64) -> vec3:
+    match case:
+        "left1": return dir_of(-1.0 / D, 0.0)
+        "left3": return dir_of(-3.0 / D, 0.0)
+        "left10": return dir_of(-10.0 / D, 0.0)
+        "right3": return dir_of(3.0 / D, 0.0)
+        "right10": return dir_of(10.0 / D, 0.0)
+        "up3": return dir_of(0.0, 3.0 / D)
+        "up10": return dir_of(0.0, 10.0 / D)
+        "right20": return dir_of(20.0 / D, 0.0)
+        # (a quick mouse sweep: 30 degrees a second for 0.7 s to the right, then held)
+        "sweep": return dir_of(min(t, 0.7) * 30.0 / D, 0.0)
+        # (small corrections: the aim wiggled two degrees side to side, once every two seconds)
+        "wiggle": return dir_of(2.0 / D * sin(t * PI), 0.0)
+        # (a target drifting sideways across the nose at 2 degrees a second)
+        "drift": return dir_of(2.0 / D * t, 0.0)
+        # (a target in a gentle turn ahead: its bearing swinging at 6 degrees a second, and a little
+        # up and down as it banks)
+        "turn": return dir_of(6.0 / D * t, 2.0 / D * sin(t * 0.8))
+        _: return dir_of(0.0, 0.0)
+
+fly_case = (kind: planes.Craft, model: int, v_true: f64, case: str) -> Run:
+    k = spec_for(kind, model)
+    s = fl.CraftState(position = vec3(0, 900, 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
+    thr = fl.cruise_throttle(k, v_true)
+    s.throttle = thr; s.rpm = thr
+    step = case != "drift" and case != "turn" and case != "wiggle" and case != "sweep"
+    size = if step: f64(acos(clamp(f64(dot(target(case, 0.0), vec3(0, 0, -1))), -1.0, 1.0))) else: 0.0
+    run = Run()
+    last = fl.Controls(throttle = thr)
+    ease = 1.0 - exp(-30.0 / HZ)
+    crossed = false
+    within_since = -1.0
+    seen = vec3(0, 0, 0); rate = vec3(0, 0, 0)
+    loop i in 0..int(HZ * 12.0):
+        t = f64(i) / HZ
+        aim = target(case, t)
+        # (the aim's motion, measured and smoothed as src/pilot.jo does)
+        if length(seen) > 0.5: rate += ((aim - seen) * f32(HZ) - rate) * f32(1.0 - exp(-10.0 / HZ))
+        seen = aim
+        c = fl.steer(k, s, aim, rate)
+        c.throttle = thr
+        c.pitch = last.pitch + (c.pitch - last.pitch) * ease
+        c.roll = last.roll + (c.roll - last.roll) * ease
+        c.yaw = last.yaw + (c.yaw - last.yaw) * ease
+        last = c
+        fl.step(k, s, c, fl.FlightEnv(), 1.0 / HZ)
+        gun = fl.forward(s)
+        err = acos(clamp(f64(dot(gun, aim)), -1.0, 1.0)) * D
+        run.bank = max(run.bank, abs(bank_of(s)) * D)
+        if trace and i % 6 == 0:
+            print("T,{planes.CRAFT_NAMES[int(kind)]},{model},{v_true:.0},{case},{t:.2},{err:.3},{bank_of(s) * D:.2},{c.pitch:.3},{c.roll:.3},{c.yaw:.3},{fl.heading(s) * D:.2},{atan2(f64(s.velocity.x), -f64(s.velocity.z)) * D:.2}")
+        if step:
+            # (settled: within a tenth of the step, or a quarter of a degree, for a whole second)
+            band = max(size * D * 0.1, 0.25)
+            if err < band:
+                if within_since < 0.0: within_since = t
+                if run.settle < 0.0 and t - within_since >= 1.0: run.settle = within_since
+            else: within_since = -1.0
+            # (overshoot: how far past the target the gun line swings once it has got there)
+            if err < 0.3 * size * D: crossed = true
+            if crossed:
+                # (past it: the gun line on the far side of the target from where it started)
+                past = f64(dot(gun - aim, aim - vec3(0, 0, -1)))
+                if past > 0.0: run.overshoot = max(run.overshoot, err)
+            if t >= 1.0:
+                run.rms += err * err; run.n += 1
+                run.peak = max(run.peak, if crossed: err else: 0.0)
+        else:
+            if t >= 2.0:
+                run.rms += err * err; run.n += 1
+                run.peak = max(run.peak, err)
+    run.rms = sqrt(run.rms / f64(max(run.n, 1)))
+    run
+
+main = ():
+    models: int[]
+    loop part in split(env("AIM_MODELS") ?? "1", ","): models.push(to_int(part) ?? 1)
+    print("A,model,aircraft,speed,case,rms_deg,peak_sweep_deg,max_bank_deg,settle_s,overshoot_deg")
+    only = env("AIM_CASE") ?? ""
+    loop kind in [planes.Craft.gull, planes.Craft.corsair, planes.Craft.supermarine_s6b]:
+        loop model in models:
+            k = spec_for(kind, model)
+            top = k.max_speed / K
+            loop v in [k.stall_speed * 1.6, k.cruise_speed / K, top * 0.9]:
+                loop case in ["left1", "left3", "left10", "right3", "right10", "right20", "up3", "up10", "sweep", "wiggle", "drift", "turn"]:
+                    if only != "" and only != case: continue
+                    r = fly_case(kind, model, v, case)
+                    print("A,{model},{planes.CRAFT_NAMES[int(kind)]},{v:.0},{case},{r.rms:.2},{r.peak:.2},{r.bank:.1},{r.settle:.2},{r.overshoot:.2}")
+    tw.set_tweaks(tw.Tweaks())
