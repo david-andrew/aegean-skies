@@ -6,6 +6,9 @@
 # sixteenth, dotted or not) from its length against the score's quarter note (src/note_value.jo).
 # Ink by day, cream after dark; fainter with distance, about as the music is.
 #
+# Notes played together (a chord in one hand, a strum) rise together as one chord: heads stacked
+# on a shared stem, its longest note setting the written value.
+#
 # A cue reads a feed's notes and the frame being heard and keeps its own place in them by frame
 # (a whole piece, or a street player's phrase about now), so the feed's other readers (the
 # musicians' motions) are not disturbed. Pure but for the drawing.
@@ -21,6 +24,7 @@ struct RisingNote:
     size: f64                       # (from how loudly it was played)
     value: NoteValue                # (written: whole .. sixteenth, dotted or not)
     sway: f64                       # (its bob's phase)
+    pitches: int[] = []             # a chord's notes, lowest first (empty: the one note)
 
 struct NoteCue:
     frame = -1                      # (the frame last followed to)
@@ -34,6 +38,47 @@ const NOTE_GAP = 0.3                # at least this between notes shown (three a
 const NOTE_OTHER_GAP = 1.1          # a note off the tune only when the tune (and any note) has been quiet this long
 const NOTE_RISE = 0.42              # metres a second
 const NOTE_HEARD = 140.0            # (metres: beyond this they are not shown, as the music fades)
+const CHORD_WINDOW = 0.035          # seconds: notes of a part started this close are played together
+const CHORD_REACH = 12              # semitones: a wider gap between neighbours is the other hand
+const CHORD_MOST = 5                # (heads drawn on one stem at most)
+const NOTE_CHORD_GAP = 0.7          # a chord off the tune, when the tune has been quiet this long
+
+# The chord a note is part of: the notes of its part started within CHORD_WINDOW of it (a chord
+# struck together, rolled a little, or strummed), as far as one hand reaches from it (no gap of
+# more than an octave between neighbours: a left-hand chord stays apart from the tune above it),
+# lowest first, at most CHORD_MOST, the note itself always among them. A note alone is its own.
+note_chord = (notes: LiveNote[], lead: LiveNote) -> LiveNote[]:
+    w = int(CHORD_WINDOW * f64(MUSIC_RATE))
+    lo = 0; hi = notes.len()
+    loop lo < hi:
+        mid = (lo + hi) / 2
+        if notes[mid].start < lead.start - w: lo = mid + 1
+        else: hi = mid
+    together: LiveNote[]
+    k = lo
+    loop k < notes.len() and notes[k].start <= lead.start + w:
+        n = notes[k]
+        if n.part == lead.part: together.push(n)
+        k += 1
+    if together.len() <= 1: return [lead]
+    together.sort((n: LiveNote): (n.pitch, n.start))
+    at = 0
+    loop i in 0..together.len():
+        if together[i].pitch == lead.pitch and together[i].start == lead.start: at = i
+    a = at; b = at
+    loop a > 0 and together[a].pitch - together[a - 1].pitch <= CHORD_REACH: a -= 1
+    loop b < together.len() - 1 and together[b + 1].pitch - together[b].pitch <= CHORD_REACH: b += 1
+    out: LiveNote[]
+    seen: int[]
+    loop i in a..b + 1:
+        # (the same pitch twice, as a roll repeats it: one head)
+        if not (together[i].pitch in seen):
+            out.push(together[i]); seen.push(together[i].pitch)
+    # (too many: those nearest the lead in pitch)
+    loop out.len() > CHORD_MOST:
+        if abs(out[0].pitch - lead.pitch) > abs(out[out.len() - 1].pitch - lead.pitch): out.remove_at(0)
+        else: out.remove_at(out.len() - 1)
+    out
 
 # A note of the tune: the part that carries it, or the singer's line.
 note_is_tune = (n: LiveNote) -> bool: n.melody or n.part == 14
@@ -64,21 +109,27 @@ note_cue_pick = (c: mut NoteCue, notes: LiveNote[], frame: int, now: f64) -> Liv
             if tune < 0 or n.velocity > notes[tune].velocity: tune = k
         else if other < 0 or n.velocity > notes[other].velocity: other = k
         k += 1
+    # (an accompanying chord, struck or strummed, may show sooner than a single accompanying note)
+    other_gap = if other >= 0 and note_chord(notes, notes[other]).len() >= 2: NOTE_CHORD_GAP else: NOTE_OTHER_GAP
     if tune >= 0: c.last_tune = now
     if now - c.last < NOTE_GAP: return none
     # (off the tune, sparser: only when the tune has been quiet a while, and as long since any)
-    pick = if tune >= 0: tune else: if other >= 0 and now - c.last_tune >= NOTE_OTHER_GAP and now - c.last >= NOTE_OTHER_GAP: other else: -1
+    pick = if tune >= 0: tune else: if other >= 0 and now - c.last_tune >= other_gap and now - c.last >= other_gap: other else: -1
     if pick < 0: return none
     c.last = now
     notes[pick]
 
 # A note shown, rising from `at` (the player's head): higher notes a little higher. `quarter`: the
-# score's quarter note there, in seconds (none: a quarter or an eighth by its length).
-note_cue_rise = (c: mut NoteCue, n: LiveNote, at: vec3, now: f64, quarter: f64? = none):
+# score's quarter note there, in seconds (none: a quarter or an eighth by its length). `chord`: the
+# notes played with it (note_chord), shown as one chord whose longest note sets the value.
+note_cue_rise = (c: mut NoteCue, n: LiveNote, at: vec3, now: f64, quarter: f64? = none, chord: LiveNote[] = []):
     lift = clamp(f64(n.pitch - 60) / 24.0, -1.0, 1.0) * 0.35
     c.shown += 1
-    value = if let q = quarter: note_value_seconds(n.length, q) else: NoteValue(if n.length < 0.3: NOTE_EIGHTH else: NOTE_QUARTER)
-    c.rising.push(RisingNote(at + vec3(0, f32(lift), 0), now, n.pitch, 0.8 + 0.35 * clamp(n.velocity, 0.0, 1.0), value, f64(c.shown) * 2.39))
+    length = n.length; loudest = n.velocity
+    loop m in chord: length = max(length, m.length); loudest = max(loudest, m.velocity)
+    value = if let q = quarter: note_value_seconds(length, q) else: NoteValue(if length < 0.3: NOTE_EIGHTH else: NOTE_QUARTER)
+    pitches = if chord.len() >= 2: [loop m in chord: m.pitch] else: []
+    c.rising.push(RisingNote(at + vec3(0, f32(lift), 0), now, n.pitch, 0.8 + 0.35 * clamp(loudest, 0.0, 1.0), value, f64(c.shown) * 2.39, pitches))
     if c.rising.len() > 12: c.rising.remove_at(0)
 
 note_cue_age = (c: mut NoteCue, now: f64):
@@ -99,32 +150,54 @@ note_heard_alpha = (distance: f64, occlusion: f64) -> f64:
 
 # ---------------- drawing ----------------
 
+# A chord's heads as steps up the stave from its lowest (a step to each line or space, by the
+# white notes: C D E F G A B), lowest first; one note: [0].
+_white_step = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6]
+note_staff_step = (pitch: int) -> int: (pitch / 12) * 7 + _white_step[pitch % 12]
+note_steps = (pitches: int[]) -> int[]:
+    if pitches.len() < 2: return [0]
+    base = note_staff_step(pitches[0])
+    out: int[]
+    loop p in pitches:
+        s = note_staff_step(p) - base
+        # (two notes on one step, a sharp beside its natural: a step apart, as accidentals sit)
+        if out.len() > 0 and s <= out[out.len() - 1]: s = out[out.len() - 1] + 1
+        out.push(s)
+    out
+
 # One note `h` pixels tall (head to the stem's top) with its head at `c`, as written: a slanted
 # oval head (open for a whole or a half, filled for the rest; a whole a little wider, with no
 # stem), a stem up from its right side, a flag curling down from the stem's top for an eighth and
 # two for a sixteenth, and a dot after the head for a dotted value.
-draw_note_glyph = (c: vec2, h: f64, col: vec4, v: NoteValue):
+draw_note_glyph = (c: vec2, h: f64, col: vec4, v: NoteValue, steps: int[] = [0]):
     wide = if v.kind == NOTE_WHOLE: 1.25 else: 1.0
     rx = h * 0.2 * wide; ry = h * 0.14
     w = max(1.0, h * 0.075)
-    head: vec2[]
-    loop k in 0..12:
-        a = f64(k) * TAU / 12.0
-        x = cos(a) * rx; y = sin(a) * ry
-        head.push(vec2(f32(f64(c.x) + x * 0.94 + y * 0.34), f32(f64(c.y) + y * 0.94 - x * 0.34)))
-    if v.kind <= NOTE_HALF:
-        loop k in 0..12: line(head[k], head[(k + 1) % 12], w * 1.15, col)
-    else: polygon(head, col)
-    if v.dotted: circle(vec2(f32(f64(c.x) + rx * 1.65), f32(f64(c.y) - ry * 0.2)), max(1.0, h * 0.055), col, 6)
+    # (a chord's heads up the stave, a step to a line or a space; a second's upper head goes to
+    # the stem's other side, as written)
+    flipped = false
+    loop i in 0..steps.len():
+        flipped = i > 0 and steps[i] - steps[i - 1] <= 1 and not flipped
+        hc = vec2(f32(f64(c.x) + (if flipped: rx * 1.8 else: 0.0)), f32(f64(c.y) - f64(steps[i]) * ry))
+        head: vec2[]
+        loop k in 0..12:
+            a = f64(k) * TAU / 12.0
+            x = cos(a) * rx; y = sin(a) * ry
+            head.push(vec2(f32(f64(hc.x) + x * 0.94 + y * 0.34), f32(f64(hc.y) + y * 0.94 - x * 0.34)))
+        if v.kind <= NOTE_HALF:
+            loop k in 0..12: line(head[k], head[(k + 1) % 12], w * 1.15, col)
+        else: polygon(head, col)
+        if v.dotted: circle(vec2(f32(f64(c.x) + rx * (if flipped: 3.45 else: 1.65)), f32(f64(hc.y) - ry * 0.2)), max(1.0, h * 0.055), col, 6)
     if v.kind == NOTE_WHOLE: return
     sx = f64(c.x) + rx * 0.9
-    top = vec2(f32(sx), f32(f64(c.y) - h * 0.86))
+    high = f64(c.y) - f64(steps[steps.len() - 1]) * ry
+    top = vec2(f32(sx), f32(high - h * 0.86))
     line(vec2(f32(sx), f32(f64(c.y) - ry * 0.3)), top, w, col)
     loop f in 0..max(0, v.kind - NOTE_QUARTER):
         dy = f64(f) * h * 0.2
         start = vec2(top.x, f32(f64(top.y) + dy))
-        mid = vec2(f32(sx + h * 0.24), f32(f64(c.y) - h * 0.56 + dy))
-        end = vec2(f32(sx + h * 0.18), f32(f64(c.y) - h * 0.36 + dy))
+        mid = vec2(f32(sx + h * 0.24), f32(high - h * 0.56 + dy))
+        end = vec2(f32(sx + h * 0.18), f32(high - h * 0.36 + dy))
         line(start, mid, w * 1.1, col)
         line(mid, end, w, col)
 
@@ -144,4 +217,4 @@ draw_note_cue = (c: NoteCue, now: f64, heard: f64, night: f64):
             if a <= 0.01: continue
             age = now - r.born
             at = s + vec2(f32(sin(age * 2.3 + r.sway) * h * 0.35), 0)
-            draw_note_glyph(at, h, vec4(ink.x, ink.y, ink.z, f32(a)), r.value)
+            draw_note_glyph(at, h, vec4(ink.x, ink.y, ink.z, f32(a)), r.value, note_steps(r.pitches))
