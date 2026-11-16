@@ -130,18 +130,16 @@ blue discs that stay in every frame are **speed flecks**.
 
 ### Deep sea from height
 
-- **Aliases:** "Deeper sea from height" (the Tweaks checkbox), the navy sea.
-- **Definition:** a trial, off by default: the open sea's colour darkens toward navy as the eye
-  climbs (none below about 60 m, full by 700 m) and the look steepens, while the shallows band,
-  clear bays and the low-level sea keep their luminous teal. The haze over open water darkens a
-  little with it, so the sea's horizon band sits below the sky's.
-- **Code:** `tweaks.deep_sea_height`; `SeaParams.deep_dark`, set in `sea_params` and applied in
-  `sea_material` after the speed flecks and before the sun's sheen and glints.
-- **Rules:** one factor on the body and its marks together, so the speed flecks keep their density,
-  size and contrast to the body; never in water shallower than about 6 m. Whether it becomes the
-  default is the user's call (`docs/ART.md` asks for a luminous teal sea).
-- **Capture:** `AEGEAN_DEEP_SEA=1` with `AEGEAN_FLYING=600` or a free view looking down,
-  `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
+- **Aliases:** the navy sea; its opposite is "Brighter ocean" (the Tweaks checkbox).
+- **Definition:** the open sea's deep-water colour darkens toward navy as the eye climbs (none below
+  60 m, full by 700 m), and the haze over the sea darkens a little with it, so the sea's horizon
+  band sits below the sky's. The shallows band, clear bays and the low-level sea keep their
+  luminous teal; the speed flecks, glints and crest strokes are drawn over the body as before.
+- **Code:** `sea_from_height` in `src/sea.jo` (`DEEP_SEA_*`): `SeaParams.deep` and `.haze` set on the
+  CPU for the sea and the far sea only (lakes and rivers keep theirs); no shader work.
+  `tweaks.brighter_ocean` (`AEGEAN_BRIGHT_SEA=1`) skips it.
+- **Rules:** colour and gradients only: never thin, dim or restyle the sea's fine detail for it.
+- **Capture:** `AEGEAN_FLYING=600`, or a free view looking down, `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
 
 ### Shore foam
 
@@ -1248,27 +1246,28 @@ On the rivers branch until it lands.
 
 ### Afterglow
 
-- **Aliases:** "Dusk afterglow" (the Tweaks checkbox), twilight, golden hour, blue hour.
-- **Definition:** a trial, off by default: the light keyed by the sun's height, so that after
-  sunset the sky keeps a bright amber band low on the sun's side (orange at the horizon, peach-gold
-  above, a faint rose round the rest) for over an hour, while land, sea and cloud bellies go dark
-  beneath it as silhouettes; then a teal blue hour (about 19:45) and night by about 20:30. Dawn
-  mirrors it. The sea reflects the band.
-- **Code:** `tweaks.dusk_afterglow`; `twilight_light` and its `TWILIGHT_*` keyframes in
-  `src/look.jo`, `Light.afterglow`; `sky_afterglow` in `src/sky_air.jo`, used by `src/sky.jo` and
-  the sea's reflection in `src/sea.jo`.
-- **Capture:** `AEGEAN_AFTERGLOW=1 AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into
-  the glow); `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
+- **Aliases:** twilight, golden hour, blue hour.
+- **Definition:** the day's light keyed by the sun's height: after sunset the sky keeps a bright
+  amber band low on the sun's side (orange at the horizon, peach-gold above, a faint rose round
+  the rest) for over an hour, while land, sea and cloud bellies go dark beneath it as silhouettes;
+  then a teal blue hour (about 19:45) and night with stars by about 20:30. Dawn mirrors it. On the
+  medium and high tiers the sea reflects the band.
+- **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
+  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`);
+  `sky_afterglow` in `src/sky_air.jo`. The sky and the sea draw with glow variants of their
+  shaders (`sky_glow_sh`, `sea_glow_sh`) only while it glows, so the day's shaders are unchanged.
+- **Capture:** `AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into the glow);
+  `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
 
 ### Warm bounce
 
-- **Aliases:** "Warm bounce in shade" (the Tweaks checkbox), bounce light.
-- **Definition:** a trial, off by default: plaster, paving and masonry in shade are lit by the sunlit
-  ground's bounce in the sun's own colour (straw and limestone) instead of a cool grey fill: the
-  same strength at noon, warm in the evening, gone with the sun.
-- **Code:** `tweaks.warm_bounce`; `paint_plaster_bounce` in `src/paint.jo`, reckoned once a frame
-  into `ObjParams.plaster_bounce` (`src/objects.jo`, `src/cockpit.jo`).
-- **Capture:** `AEGEAN_WARM_BOUNCE=1 AEGEAN_CAPTURE=port:10001:ground AEGEAN_HOUR=17`.
+- **Aliases:** bounce light.
+- **Definition:** plaster, paving and masonry in shade are lit by the sunlit ground's bounce in the
+  sun's own colour (straw and limestone) rather than a cool grey fill: as strong as the old fill at
+  noon, warm in the evening, gone with the sun.
+- **Code:** `paint_plaster_bounce` in `src/paint.jo`, reckoned once a frame into
+  `ObjParams.plaster_bounce` (`src/objects.jo`, `src/cockpit.jo`).
+- **Capture:** `AEGEAN_CAPTURE=port:10001:ground AEGEAN_HOUR=17`.
 
 ### Moon
 

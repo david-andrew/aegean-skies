@@ -6,8 +6,11 @@ tone-mapping from the engine), so the palette below is what reaches the screen.
 
 ## The sea
 
-- Open water is a **luminous teal-blue**, not navy: deep cobalt only straight down in deep water,
-  brightening toward the horizon where it takes the sky's color.
+- Open water is a **luminous teal-blue** low over it: deep cobalt only straight down in deep water,
+  brightening toward the horizon where it takes the sky's color. Seen from height (above about
+  60 m, fully by 700 m) the deep water darkens toward **navy**, so islands, wakes and spray read
+  against it; the shallows, the fine marks, glints and crests keep their look. (The Tweaks page's
+  "Brighter ocean" keeps the teal at any height.)
 - Over sand it turns **turquoise**, glowing from within, and at the shore it is clear enough to
   see the white sand and rocks through it.
 - The surface carries **short painted dashes**: pale streaks along the swell, scattered and
@@ -21,7 +24,9 @@ tone-mapping from the engine), so the palette below is what reaches the screen.
 - **Cumulus are huge** and heaped: crisp cream-white sunlit tops, **slate blue-grey shaded
   sides** with a clear painted edge between the two, flat darker bases. Towering ones near
   islands, scattered small ones over open sea, flat stratus sheets at times.
-- Sunset: gold and amber light, clouds with dark slate undersides against a glowing sky.
+- Sunset: gold and amber light, clouds with dark slate undersides against a glowing sky. The glow
+  outlasts the sun: for over an hour after sunset an amber band stays low on the sun's side above
+  near-black land and sea (silhouettes), then a teal blue hour, then night. Dawn mirrors it.
 - Night: deep navy, stars, lamps in harbors.
 
 ## The islands
@@ -45,6 +50,7 @@ tone-mapping from the engine), so the palette below is what reaches the screen.
 ## Light
 
 - A soft two-tone (cel-like) light: lit and shaded sides with a narrow soft edge. Whitewash
-  stays **warm cream in sun and pale blue-grey in shade**, with broad neutral ambient fill.
+  stays **warm cream in sun and a pale, near-neutral grey in shade**, warmed by the bounce from the
+  sunlit ground (more so in the evening), with broad neutral ambient fill.
   Richer cool shadows belong to foliage/cloud masses, not a blue dye over every wall.
 - Distance fades to a pale blue haze, warm gold in the evening.
