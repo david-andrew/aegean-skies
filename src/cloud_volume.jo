@@ -5,6 +5,7 @@ use 'depth_space.jo'
 use 'cloud_density.jo'
 use 'sky_air.jo'
 use 'cloud_depth.jo'
+use 'craft_shadow.jo'
 use 'look.jo'
 use 'paint.jo'
 use 'render_space.jo'
@@ -664,6 +665,9 @@ volume_composite_vs = (v: VolumeVertex, u: VolumeCompositeParams) -> VolumeCompo
 
 volume_view_depth = (d: f32, ab: vec2) -> f32: world_depth_decode(d,ab)
 
+# A premultiplied cloud sample's tone for finding its edges: brightness and cover together.
+volume_tone = (c: vec4) -> f32: c.x * 0.3 + c.y * 0.5 + c.z * 0.2 + c.w * 0.5
+
 volume_nearest_resolves = (center: f32, nearest: f32) -> bool:
     abs(nearest-center) <= max(8.0,center*0.025)*7.0
 
@@ -684,16 +688,61 @@ volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
     pixel = i.uv * u.size - vec2(0.5, 0.5)
     base = floor(pixel); f = fract(pixel)
     color = vec4(0, 0, 0, 0); weight: f32 = 0.0
+    blend = vec4(0, 0, 0, 0); blend_weight: f32 = 0.0
+    low: f32 = 1000.0; high: f32 = -1000.0
     loop k in 0..4:
         corner = vec2(f32(k % 2), f32(k / 2))
         uv = (base + corner + vec2(0.5, 0.5)) / u.size
         depth = volume_view_depth(sample(u.depth, uv).x, u.depth_ab)
         delta = abs(depth - center) / max(8.0, center * 0.025)
+        bilinear = (if k % 2 == 0: 1.0 - f.x else: f.x) * (if k / 2 == 0: 1.0 - f.y else: f.y)
         # Reject cloud/sky samples across an opaque silhouette. An unresolved
         # isolated pixel is resolved by the full-resolution edge pass.
-        w = (if k % 2 == 0: 1.0 - f.x else: f.x) * (if k / 2 == 0: 1.0 - f.y else: f.y) / (1.0 + delta * delta * delta * delta)
-        color += sample(u.color, uv) * w; weight += w
-    result = if weight < 0.0001: vec4(0, 0, 0, 0) else: color / weight
+        w = bilinear / (1.0 + delta * delta * delta * delta)
+        tap = sample(u.color, uv)
+        color += tap * w; weight += w
+        # The sea or land behind a cloud, seen at a grazing angle (under a deck, the side of a
+        # storm, looking down from height), changes depth steeply from one reduced-resolution row
+        # to the next though it is one smooth surface: weighed against the centre's own depth its
+        # taps look like a silhouette and the blend collapses to the nearest texel, the cloud in
+        # hard three- and four-pixel blocks. Far off, taps within a fifth of the centre's depth are
+        # that same surface (anything opaque against it, an aircraft or a headland, is far nearer):
+        # blend them. (Which pixels are resolved here, or re-marched at full resolution by the
+        # edge pass, is still decided by the strict weights above.)
+        if center > 1500.0: delta = min(delta, abs(depth - center) / (center * 0.2))
+        wb = bilinear / (1.0 + delta * delta * delta * delta)
+        blend += tap * wb; blend_weight += wb
+        lum = volume_tone(tap)
+        low = min(low, lum); high = max(high, lum)
+    result = if weight < 0.0001: vec4(0, 0, 0, 0) else: blend / blend_weight
+    # A hard edge in the reduced target (a deck's flat base seen edge-on, a cell's or the anvil's
+    # rim against the sky, a painted band), magnified 3-4x by the bilinear taps, steps along its
+    # length in texel-sized teeth. Where the taps straddle a strong edge, average further samples
+    # along it (each only if it lies on this pixel's surface, never across an opaque silhouette),
+    # so it runs smooth along its length and stays as sharp across it. Every gate is a smooth
+    # function of bilinear samples (no texel-wide strips), and the edge's direction comes from
+    # taps a texel either side, which average away a speckled texture (never smeared to streaks).
+    if weight >= 0.0001 and high - low > 0.08:
+        texel = vec2(1.0, 1.0) / u.size
+        east = volume_tone(sample(u.color, i.uv + vec2(texel.x, 0))); west = volume_tone(sample(u.color, i.uv - vec2(texel.x, 0)))
+        north = volume_tone(sample(u.color, i.uv + vec2(0, texel.y))); south = volume_tone(sample(u.color, i.uv - vec2(0, texel.y)))
+        gx = east - west; gy = north - south
+        g = length(vec2(gx, gy))
+        # (across a straight edge the four taps average to the middle; in a speckle they do not)
+        bend = abs((east + west + north + south) * 0.25 - volume_tone(result))
+        coherent = smoothstep(0.12, 0.2, g) * (1.0 - smoothstep(0.2, 0.45, bend / max(g, 0.0001)))
+        if coherent > 0.0:
+            along = vec2(-gy, gx) / max(g, 0.0001) * texel
+            # (out to four texels either way: a shallow edge's teeth come every few texels)
+            run = result * 0.3; total: f32 = 0.3
+            loop k in 0..4:
+                reach = (if k / 2 == 0: 1.5 else: 3.5) * (if k % 2 == 0: 1.0 else: -1.0)
+                q = i.uv + along * reach
+                z = volume_view_depth(sample(u.depth, q).x, u.depth_ab)
+                if abs(z - center) <= (if center > 1500.0: center * 0.2 else: max(8.0, center * 0.025)):
+                    wk: f32 = if k / 2 == 0: 0.2 else: 0.15
+                    run += sample(u.color, q) * wk; total += wk
+            result = mix(result, run / total, coherent)
     if u.shaft_gain > 0.0:
         # Screen-space crepuscular rays. Both land and the integrated cloud
         # transmittance occlude them. Bounded taps; no temporal trails/history.
@@ -863,6 +912,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(tex.id), 0)
         volume_color = RenderTarget(tex, fbo, 0)
+    craft_shadow_mask_pass()
     cloud_shadow_factor_pass(chart,vp)
     glBindFramebuffer(GL_FRAMEBUFFER, u32(volume_color.fbo))
     glViewport(0, 0, i32(w), i32(h))
@@ -878,6 +928,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     # attachment out temporarily. Color and the actual scene depth are preserved.
     detach_cloud_depth()
     glViewport(0, 0, i32(cloud_scene_depth.width), i32(cloud_scene_depth.height))
+    craft_shadow_multiply(chart,vp)
     cloud_shadow_multiply()
     # With no shafts, clear pixels outside every projected cloud cannot
     # contribute. Include two low-resolution texels for reconstruction taps.

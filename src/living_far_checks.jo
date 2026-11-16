@@ -24,6 +24,11 @@ struct FarCheck:
     route_points = true
     slice = 0
     slices = 1
+    # (rolling: one pass spread over many minutes of a World that changes between them, as
+    # release play runs it: each record is checked as it stands when the pass reaches it, and
+    # the totals over all records, which no single moment would see, are left to
+    # far_conservation_error, run once at the pass's end)
+    rolling = false
     stage = 0                     # 0 header, 1 districts, 2 people and routes, 3 vehicles, 4 journeys, 5 done
     k = 0
     population = 0
@@ -36,6 +41,78 @@ struct FarCheck:
     journey_ids: int[]
     error = ""
 
+# The totals over every far record, at one moment: the population (residents, crews,
+# refugees aboard and rescued survivors), the crews and the wagons each still what they were
+# at the opening, and no arable parcel owned by two districts. The parts of the full check a
+# rolling pass cannot make (its records are seen at different minutes). Read-only.
+far_conservation_error = (w: World) -> str:
+    if not w.far.populated: return ""
+    population=w.far.named_core_population+w.far.people.len()+w.far.dead+w.far.evacuated
+    loop c in 0..3: population+=w.far.crew_population[c]
+    wagons=0
+    parcels: {int: bool}
+    loop _, d in w.far.districts:
+        loop c in 0..3: population+=d.workers[c]+d.dependents[c]
+        wagons+=d.spare_wagons
+        loop field in d.fields:
+            if field.land.id in parcels: return "two districts own the same arable parcel"
+            parcels[field.land.id]=true
+    crew: int[3]
+    loop v in w.far.vehicles:
+        loop c in 0..3: crew[c]+=v.crew[c]
+        loop asset in v.cart_assets: wagons+=asset.wagons
+    loop _, j in w.far.journeys:
+        loop n in j.refugees: population+=n
+    loop _, s in w.war.survivors:
+        loop n in s.passengers: population+=n
+    if population!=w.far.opening_population: return "far population conservation"
+    if crew!=w.far.crew_population: return "far crew conservation"
+    if w.far.opening_spare_wagons<0 or wagons!=w.far.opening_spare_wagons: return "wagon equipment conservation"
+    ""
+
+# Every reference the minute's far economy and transport index directly (places, routes,
+# vehicles, journeys, convoy leaders, accounts, goods): what must hold at each minute's start so
+# that no helper indexes out of range, whatever wrote the registry the minute before. The
+# rolling pass checks the rest of every record. Read-only; "" when sound.
+far_reference_error = (w: World) -> str:
+    if not w.far.populated: return ""
+    if w.far.place_ids.len()!=w.far.districts.len() or w.far.journeys.len()>w.far.vehicles.len(): return "invalid far dimensions/version"
+    links=w.far.links.len(); vehicles=w.far.vehicles.len()
+    loop id in w.far.place_ids:
+        if not (id in w.far.districts) or not (id in w.place_contexts): return "invalid far place index"
+    loop id, d in w.far.districts:
+        if d.id!=id or d.core< -1 or d.core>=w.places.len() or not account_valid(w,d.market_account) or not account_valid(w,d.household_account) or d.output<0 or d.output>=9: return "invalid far district identity/control"
+        loop link in d.links:
+            if link<0 or link>=links: return "missing far district road"
+    loop i in 0..vehicles:
+        v=w.far.vehicles[i]
+        if v.id!=i or not account_valid(w,v.account) or v.route<0 or v.route>=links: return "invalid far vehicle"
+        if v.journey>=0:
+            if not (v.journey in w.far.journeys) or w.far.journeys[v.journey].vehicle!=i or v.place>=0: return "far vehicle double location"
+        else if not (v.place in w.far.districts): return "far vehicle missing location"
+        loop person in v.passengers:
+            if person<0 or person>=w.people.len(): return "invalid named sea passenger"
+    loop id, j in w.far.journeys:
+        if id!=j.id or j.vehicle<0 or j.vehicle>=vehicles or j.link<0 or j.link>=links or j.segment<0 or j.segment>w.far.links[j.link].points.len()-1: return "invalid far journey"
+        if j.follow_vehicle< -1 or j.follow_vehicle>=vehicles or (j.follow_vehicle<0)!=(j.follow_voyage<0): return "invalid convoy leader"
+        if not (j.origin in w.far.districts) or not (j.destination in w.far.districts) or j.good< -1 or j.good>=9: return "invalid far manifest"
+        if w.far.vehicles[j.vehicle].journey!=id: return "far cargo custody mismatch"
+        if not account_valid(w,j.buyer) or not account_valid(w,j.seller): return "invalid far cargo title"
+    ""
+
+# One district's, vehicle's or journey's own record, every detail (what a minute just changed:
+# the districts its economy worked and the journeys it began). "" when sound. Read-only.
+far_record_error = (w: World, district: int = -1, vehicle: int = -1, journey: int = -1) -> str:
+    fc=FarCheck(route_points=false,rolling=true)
+    if district>=0:
+        error=_far_check_district(w,fc,district)
+        if error!="": return error
+    if vehicle>=0 and vehicle<w.far.vehicles.len():
+        error=_far_check_vehicle(w,fc,vehicle)
+        if error!="": return error
+    if journey>=0 and journey in w.far.journeys: return _far_check_journey(w,fc,journey)
+    ""
+
 validate_far = (w: World, route_points: bool = true, slice: int = 0, slices: int = 1) -> str:
     fc=FarCheck(route_points=route_points,slice=slice,slices=slices)
     loop not far_check_step(w,fc,1000000000): pass
@@ -45,6 +122,9 @@ validate_far = (w: World, route_points: bool = true, slice: int = 0, slices: int
 # check is over, its verdict in fc.error ("" when the far registry is sound).
 far_check_step = (w: World, fc: mut FarCheck, pieces: int) -> bool:
     n=0
+    # (the place list may have changed since the pass's last piece: its order check goes on
+    # from the record before this one as the list now stands)
+    if fc.rolling and fc.stage==1 and fc.k>0 and fc.k<=w.far.place_ids.len(): fc.previous=w.far.place_ids[fc.k-1]
     loop fc.stage<5 and n<pieces:
         if fc.stage==0:
             fc.error=_far_check_header(w,fc); fc.k=0; n+=8
@@ -60,7 +140,10 @@ far_check_step = (w: World, fc: mut FarCheck, pieces: int) -> bool:
             else:
                 fc.error=_far_check_fleet(w,fc); fc.stage=4; fc.k=0; fc.journey_ids=w.far.journeys.keys(); n+=1
         else:
-            if fc.k<fc.journey_ids.len(): fc.error=_far_check_journey(w,fc,fc.journey_ids[fc.k]); fc.k+=1; n+=1
+            if fc.k<fc.journey_ids.len():
+                # (a rolling pass's journey may have ended since the pass listed it)
+                if not fc.rolling or fc.journey_ids[fc.k] in w.far.journeys: fc.error=_far_check_journey(w,fc,fc.journey_ids[fc.k])
+                fc.k+=1; n+=1
             else:
                 if w.far.next_journey<=fc.max_journey: fc.error="far journey counter rewind"
                 fc.stage=5
@@ -159,8 +242,9 @@ _far_check_district = (w: World, fc: mut FarCheck, id: int) -> str:
     fc.spare_wagons+=d.spare_wagons
     if d.fields.len()>8 or d.field_workers<0 or d.field_workers>1000000 or d.field_seed_target<0 or d.field_seed_target>6000000 or d.field_reason.len()>4096 or d.field_reason_day>day_index(w.minute) or d.field_reason_minute< -1 or d.field_reason_minute>w.minute: return "unbounded household field state"
     loop field in d.fields:
-        if field.land.id in fc.field_ids: return "two districts own the same arable parcel"
-        fc.field_ids[field.land.id]=true
+        if not fc.rolling:
+            if field.land.id in fc.field_ids: return "two districts own the same arable parcel"
+            fc.field_ids[field.land.id]=true
         if deep:
             error=validate_household_field(w,id,field)
             if error!="": return error
@@ -220,7 +304,7 @@ _far_check_people = (w: World, fc: mut FarCheck) -> str:
         loop n in s.passengers:
             if n<0: return "negative rescued population"
             fc.population+=n
-    if fc.population!=w.far.opening_population: return "far population conservation"
+    if not fc.rolling and fc.population!=w.far.opening_population: return "far population conservation"
     loop i in 0..w.far.links.len():
         l = w.far.links[i]
         if l.id!=i or not (l.a in w.far.districts) or not (l.b in w.far.districts) or l.a==l.b or l.points.len()<2 or l.points.len()>4096 or l.length_mm<=0: return "invalid far service route"
@@ -261,6 +345,7 @@ _far_check_vehicle = (w: World, fc: mut FarCheck, i: int) -> str:
     ""
 
 _far_check_fleet = (w: World, fc: mut FarCheck) -> str:
+    if fc.rolling: return ""
     if fc.counted_crew!=w.far.crew_population: return "far crew conservation"
     if w.far.opening_spare_wagons<0 or fc.spare_wagons!=w.far.opening_spare_wagons: return "wagon equipment conservation"
     ""
