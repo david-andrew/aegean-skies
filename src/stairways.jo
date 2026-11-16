@@ -98,7 +98,9 @@ plan_cliff_stair=(ground:(f64,f64)->f64,start:vec3,top:f64,along:vec2,inland:vec
 
 # Steps, the masonry they stand on and a parapet along the downhill side.
 # coarse (the aerial silhouette) lays one block per few treads and no parapet.
-add_stairway_mesh=(vs:mut Vertex3D[],points:vec3[],width:f64,ground:(f64,f64)->f64,stone:vec4,origin:vec3=vec3(0,0,0),coarse:bool=false):
+# parapet_drop: a parapet only where the ground on the open side falls more than this below the
+# treads (0: always; a hillside lane's gentle stretches have none)
+add_stairway_mesh=(vs:mut Vertex3D[],points:vec3[],width:f64,ground:(f64,f64)->f64,stone:vec4,origin:vec3=vec3(0,0,0),coarse:bool=false,parapet_drop:f64=0.0):
     loop k in 1..points.len():
         a=points[k-1];b=points[k];d=b.xz-a.xz;span=f64(length(d))
         if span<0.01:continue
@@ -120,6 +122,7 @@ add_stairway_mesh=(vs:mut Vertex3D[],points:vec3[],width:f64,ground:(f64,f64)->f
         left=ground(f64(mid.x+side.x*f32(width)),f64(mid.y+side.y*f32(width)))
         right=ground(f64(mid.x-side.x*f32(width)),f64(mid.y-side.y*f32(width)))
         open=if left<right:side else: -side
+        if parapet_drop>0.0 and min(left,right)>f64(a.y+b.y)*0.5-parapet_drop:continue
         loop n in 0..steps:
             u=(f64(n)+0.5)/f64(steps);at=mix(a.xz,b.xz,f32(u))+open*f32(width*0.5-0.18)
             top=stair_tread(a,b,u)
@@ -256,3 +259,74 @@ add_cliff_stair_mesh=(vs:mut Vertex3D[],points:vec3[],width:f64,ground:(f64,f64)
                     add_stair_block(vs,m-dir*0.22,m+dir*0.22,side,-contact+0.12,-contact+0.16,y+0.75,y+1.25,y+0.75,y+1.25,rgb(0.18,0.27,0.44),0.0)
                     add_stair_block(vs,m-dir*0.62,m+dir*0.62,side,-contact-0.5,-contact+0.22,y+1.55,y+1.72,y+1.55,y+1.72,rgb(0.66,0.33,0.22),0.0)
         t+=span
+
+
+# A stepped lane over a hillside, from a stair's top to the nearest of goals (the houses' front
+# steps): a search over a 1.5 m grid that keeps to gentle ground (steeper than LANE_GRADE refused,
+# steeper than a stroll costs more), clear of the sea and of `blocked` (the houses), then pulled
+# into straight runs wherever the ground allows and resampled every 2 m on the ground. [] when no
+# way is found within reach.
+const LANE_GRADE=0.85
+const LANE_CELL=1.5
+
+_lane_ok=(ground:(f64,f64)->f64,blocked:(vec2)->bool,a:vec2,b:vec2)->bool:
+    n=max(1,int(ceil(f64(length(b-a)))));prev=ground(f64(a.x),f64(a.y))
+    loop k in 1..n+1:
+        p=mix(a,b,f32(f64(k)/f64(n)));h=ground(f64(p.x),f64(p.y))
+        if h<1.6 or blocked(p) or abs(h-prev)>LANE_GRADE*f64(length(b-a))/f64(n)+0.05:return false
+        prev=h
+    true
+
+plan_hill_lane=(ground:(f64,f64)->f64,from:vec3,goals:vec2[],blocked:(vec2)->bool,reach:f64=400.0,budget:int=120000)->vec3[]:
+    if goals.len()==0:return []
+    key=(i:int,j:int)->int:(i+4096)*8192+(j+4096)
+    at=(i:int,j:int)->vec2:from.xz+vec2(f32(f64(i)*LANE_CELL),f32(f64(j)*LANE_CELL))
+    near=(p:vec2)->f64:
+        best=1e18
+        loop g in goals:best=min(best,f64(length(g-p)))
+        best
+    cost:{int:f64}={key(0,0):0.0};back:{int:int}={key(0,0):-1}
+    queue:(f64,int,int)[]=[(near(from.xz),0,0)];done=-1
+    loop queue.len()>0 and cost.len()<budget:
+        item=queue.heap_pop();i=item.1;j=item.2;k=key(i,j);p=at(i,j)
+        if near(p)<=LANE_CELL*1.2:done=k;break
+        if f64(length(p-from.xz))>reach:continue
+        hp=ground(f64(p.x),f64(p.y))
+        if item.0-near(p)>cost[k]+1e-6:continue
+        loop dj in -1..2:
+            loop di in -1..2:
+                if di==0 and dj==0:continue
+                q=at(i+di,j+dj);hq=ground(f64(q.x),f64(q.y));run=f64(length(q-p))
+                grade=abs(hq-hp)/run
+                if hq<1.6 or grade>LANE_GRADE or blocked(q):continue
+                c=cost[k]+run*(1.0+6.0*max(0.0,grade-0.25))
+                nk=key(i+di,j+dj)
+                if nk in cost and cost[nk]<=c:continue
+                cost[nk]=c;back[nk]=k;queue.heap_push((c+near(q),i+di,j+dj))
+    if done<0:return []
+    # (the grid's cells back to the start)
+    cells:vec2[]
+    k=done
+    loop k>=0:
+        i=k/8192-4096;j=k%8192-4096
+        cells.push(at(i,j));k=back[k]
+    cells.reverse()
+    cells[0]=from.xz
+    best=goals[0]
+    loop g in goals:
+        if length(g-cells[cells.len()-1])<length(best-cells[cells.len()-1]):best=g
+    cells.push(best)
+    # (pulled straight: from each corner, on to the farthest cell the ground lets one walk to)
+    pulled:vec2[]=[cells[0]];i=0
+    loop i<cells.len()-1:
+        j=cells.len()-1
+        loop j>i+1 and not _lane_ok(ground,blocked,cells[i],cells[j]):j-=1
+        pulled.push(cells[j]);i=j
+    # (every 2 m on the ground; the first point the stair's top itself)
+    out:vec3[]=[from]
+    loop k2 in 1..pulled.len():
+        a=pulled[k2-1];b=pulled[k2];n=max(1,int(ceil(f64(length(b-a))/2.0)))
+        loop s in 1..n+1:
+            p=mix(a,b,f32(f64(s)/f64(n)))
+            out.push(vec3(p.x,f32(ground(f64(p.x),f64(p.y))),p.y))
+    out
