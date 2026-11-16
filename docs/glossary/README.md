@@ -745,7 +745,7 @@ On the rivers branch until it lands.
   tail's 1.6 m) that, riding them, the hull and the air propeller clear a moderate swell; her
   sealed hull's sides and wing tips, which sit at the waterline, meet the water as hull (buoyancy,
   planing, a keel or tip dug in across the flow catches) and never as panels slammed broadside
-  (`craft_wing_contacts`, `_catalog_parts`: a hydrofoil has no wing panels or hull-side strikes);
+  (`_substep` in `src/flight.jo`, `sealed`: on land and quays they strike as any aircraft's);
   their lift tops out at the cavitation limit through a soft
   knee (tanh), so it still answers the flow's angle and damps her heave over the waves; a blade
   tip skimming a crest costs thrust in proportion to how far it is in (`air_drive`,
