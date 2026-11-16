@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
+- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
 - **Reference:** [House style](#house-style) · [Capture switches](#capture-switches)
 
@@ -62,15 +62,23 @@ on that unmerged branch so far.
 
 - **Aliases:** the sun's glitter, sparkle, "small, hard sparkle" (`docs/ART.md`); close to the
   camera, the white ovals on the water.
-- **Definition:** **sun glints** are sparse, tiny facets, each tipped at random and re-tipped in
-  steps. Far off, each one is a pixel or two of hard white sparkle; close to the camera (beside the
-  floats on a take-off or landing run) the same glints are drawn as small, flat white ovals lying on
-  the water. Together they form the **glitter path**: the band of glints and soft sheen on the
-  water along the sun's bearing.
-- **Code:** `src/sea.jo:305 _glints`, with `sea_glint_possible` (a cheap early reject) and
-  `sea_glint_anchor`; used in `sea_material`.
-- **Rules:** the early reject must not thin the facets. The speed-fleck rule covers glints too:
-  keep their density, scale and intensity.
+- **Definition:** **sun glints** (and the moon's at night) are facets of the waves, one to a cell of
+  the water, each tipped at random and re-tipped a few times a second; the tilts gather toward
+  level, so the glitter is dense in its core and thins toward its edges, and a low light draws it
+  out into a column toward the eye. A facet that catches the light is painted as a short soft dash
+  across the view, a few pixels long whatever the distance (far off a pixel or so high, as the
+  water is foreshortened), leaning a little with the wave's slope; some are little crescents, a few
+  are larger, brighter flashes, and each fades in and out as its facet turns. The cells are about
+  three pixels high on the screen, so a glint never shrinks to one hard pixel. Close to the camera
+  (beside the floats on a take-off or landing run) they are small, flat white ovals and crescents
+  lying on the water. Together they form the **glitter path**: the band of glints and soft sheen
+  on the water along the light's bearing.
+- **Code:** `src/sea.jo _glints` (`GLINT_ACCEPT`, `SeaParams.glint_pixel`), with
+  `sea_glint_possible` (a cheap early reject) and `sea_glint_anchor`; used in `sea_material`.
+  `tools/glint_view.jo` shows the glitter for a chosen light height, eye and look.
+- **Rules:** the early reject must not thin the facets (its bound follows `GLINT_ACCEPT`). Keep the
+  glints' density and intensity as they are (the user asked for their shape in 2026-11: dashes and
+  crescents, never square pixels).
 - **Capture:** a low sun (`AEGEAN_HOUR` near 7 or 17) with the camera facing the sun;
   `tools/coast_capture.jo COAST_SITE=beach COAST_RANGE=300`; `tools/splash_frames.jo` close up.
 
@@ -130,18 +138,16 @@ blue discs that stay in every frame are **speed flecks**.
 
 ### Deep sea from height
 
-- **Aliases:** "Deeper sea from height" (the Tweaks checkbox), the navy sea.
-- **Definition:** a trial, off by default: the open sea's colour darkens toward navy as the eye
-  climbs (none below about 60 m, full by 700 m) and the look steepens, while the shallows band,
-  clear bays and the low-level sea keep their luminous teal. The haze over open water darkens a
-  little with it, so the sea's horizon band sits below the sky's.
-- **Code:** `tweaks.deep_sea_height`; `SeaParams.deep_dark`, set in `sea_params` and applied in
-  `sea_material` after the speed flecks and before the sun's sheen and glints.
-- **Rules:** one factor on the body and its marks together, so the speed flecks keep their density,
-  size and contrast to the body; never in water shallower than about 6 m. Whether it becomes the
-  default is the user's call (`docs/ART.md` asks for a luminous teal sea).
-- **Capture:** `AEGEAN_DEEP_SEA=1` with `AEGEAN_FLYING=600` or a free view looking down,
-  `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
+- **Aliases:** the navy sea; its opposite is "Brighter ocean" (the Tweaks checkbox).
+- **Definition:** the open sea's deep-water colour darkens toward navy as the eye climbs (none below
+  60 m, full by 700 m), and the haze over the sea darkens a little with it, so the sea's horizon
+  band sits below the sky's. The shallows band, clear bays and the low-level sea keep their
+  luminous teal; the speed flecks, glints and crest strokes are drawn over the body as before.
+- **Code:** `sea_from_height` in `src/sea.jo` (`DEEP_SEA_*`): `SeaParams.deep` and `.haze` set on the
+  CPU for the sea and the far sea only (lakes and rivers keep theirs); no shader work.
+  `tweaks.brighter_ocean` (`AEGEAN_BRIGHT_SEA=1`) skips it.
+- **Rules:** colour and gradients only: never thin, dim or restyle the sea's fine detail for it.
+- **Capture:** `AEGEAN_FLYING=600`, or a free view looking down, `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
 
 ### Shore foam
 
@@ -736,20 +742,25 @@ On the rivers branch until it lands.
      0.2 m of air under its lowest blade (`PROP_CLEAR_MARGIN`) for three quarters of a second
      (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can carry her
      (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by itself
-     (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then the air
+     (or when `Controls.clutch` asks: the X key, the touch screen's Clutch): the screw is let go first, then the air
      propeller is clutched in and comes off its feather over about 1.4 s. In that gap nothing
      much pushes and she slows. If she drops off her foils with the driven propeller in the sea
      for `FALLEN_TIME` (0.75 s), the screw is clutched back in by itself, at any throttle, so she
      climbs up and tries again: she is never stopped dead.
-  **At sea:** her foils hang on struts long enough that, riding them, the hull and the air
-  propeller clear a moderate swell; their lift tops out at the cavitation limit through a soft
+  **At sea:** her foils hang on struts long enough (the forward pair 2.4 m below her centre, the
+  tail's 1.6 m) that, riding them, the hull and the air propeller clear a moderate swell; her
+  sealed hull's sides and wing tips, which sit at the waterline, meet the water as hull (buoyancy,
+  planing, a keel or tip dug in across the flow catches) and never as panels slammed broadside
+  (`_substep` in `src/flight.jo`, `sealed`: on land and quays they strike as any aircraft's);
+  their lift tops out at the cavitation limit through a soft
   knee (tanh), so it still answers the flow's angle and damps her heave over the waves; a blade
   tip skimming a crest costs thrust in proportion to how far it is in (`air_drive`,
   `CraftState.foil.prop_dip`), and only a propeller well into the sea, driven, takes real blows.
   In the game's own swell (src/sea.jo, rising with the wind) she takes off hands off or with the
-  stick back from calm to wind 6 (swell to about 1.4 m) in 25-41 s at the player's speed scale;
-  `tests/italian_racers_test.jo` "the P.7 takes off from the open sea in calm and in a moderate
-  swell".
+  stick back from calm to wind 5 (swell to about 1.24 m) from every one of eight starting points
+  in the swell, in 27-46 s at the player's speed scale, with under 1% of hull damage; at wind 6
+  from most of them; `tests/italian_racers_test.jo` "the P.7 takes off from the open sea in calm
+  and in a moderate swell, wherever she starts" (seven of eight at least, each case).
   On her foils she drags far less than a float plane on its step: the foils' lift is square to
   the flow over them, and at 14-25 m/s their drag with the struts' is 12-17% of her weight,
   against a float plane's 19-40%. The hard part is the hump, on the water screw (8.2 kN,
@@ -764,7 +775,7 @@ On the rivers branch until it lands.
   is too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
   propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
   in the water (it beats the sea, gives no thrust and hurts the engine); or the sea is rough
-  (wind about 8 m/s and over: the wing tips catch the waves and tear). Closing the throttle at under
+  (wind about 8 m/s and over: the crests reach her hull on the foils and stop her). Closing the throttle at under
   5 m/s on the water puts the clutch back to the screw for another try.
   **The air propeller as seen:** declutched, the engine drags it round through its feathered
   blades: it whirls with the throttle (12 rad/s idling, 33 flat out, about 315 rpm:
@@ -1272,27 +1283,31 @@ On the rivers branch until it lands.
 
 ### Afterglow
 
-- **Aliases:** "Dusk afterglow" (the Tweaks checkbox), twilight, golden hour, blue hour.
-- **Definition:** a trial, off by default: the light keyed by the sun's height, so that after
-  sunset the sky keeps a bright amber band low on the sun's side (orange at the horizon, peach-gold
-  above, a faint rose round the rest) for over an hour, while land, sea and cloud bellies go dark
-  beneath it as silhouettes; then a teal blue hour (about 19:45) and night by about 20:30. Dawn
-  mirrors it. The sea reflects the band.
-- **Code:** `tweaks.dusk_afterglow`; `twilight_light` and its `TWILIGHT_*` keyframes in
-  `src/look.jo`, `Light.afterglow`; `sky_afterglow` in `src/sky_air.jo`, used by `src/sky.jo` and
-  the sea's reflection in `src/sea.jo`.
-- **Capture:** `AEGEAN_AFTERGLOW=1 AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into
-  the glow); `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
+- **Aliases:** twilight, golden hour, blue hour.
+- **Definition:** the day's light keyed by the sun's height: after sunset the sky keeps a bright
+  amber band low on the sun's side (orange at the horizon, peach-gold above, a faint rose round
+  the rest) for over an hour, while land, sea and cloud bellies go dark beneath it as silhouettes;
+  then a teal blue hour (about 19:45) and night with stars by about 20:30. Dawn mirrors it. On the
+  high tier the sea reflects the band.
+- **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
+  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`);
+  `sky_afterglow` in `src/sky_air.jo`. On the high tier the sky and the sea draw with glow variants
+  (`sky_glow_sh`, the glow worked out on a screen grid; `sea_glow_sh`) while it glows; the day's
+  shaders are unchanged. The low and medium tiers keep the plain sky and warm its horizon and haze
+  instead (`SKY_GLOW_LOW`): a softer band all round, at no cost (the variant costs Intel UHD 620
+  about 0.5 ms).
+- **Capture:** `AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into the glow);
+  `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
 
 ### Warm bounce
 
-- **Aliases:** "Warm bounce in shade" (the Tweaks checkbox), bounce light.
-- **Definition:** a trial, off by default: plaster, paving and masonry in shade are lit by the sunlit
-  ground's bounce in the sun's own colour (straw and limestone) instead of a cool grey fill: the
-  same strength at noon, warm in the evening, gone with the sun.
-- **Code:** `tweaks.warm_bounce`; `paint_plaster_bounce` in `src/paint.jo`, reckoned once a frame
-  into `ObjParams.plaster_bounce` (`src/objects.jo`, `src/cockpit.jo`).
-- **Capture:** `AEGEAN_WARM_BOUNCE=1 AEGEAN_CAPTURE=port:10001:ground AEGEAN_HOUR=17`.
+- **Aliases:** bounce light.
+- **Definition:** plaster, paving and masonry in shade are lit by the sunlit ground's bounce in the
+  sun's own colour (straw and limestone) rather than a cool grey fill: as strong as the old fill at
+  noon, warm in the evening, gone with the sun.
+- **Code:** `paint_plaster_bounce` in `src/paint.jo`, reckoned once a frame into
+  `ObjParams.plaster_bounce` (`src/objects.jo`, `src/cockpit.jo`).
+- **Capture:** `AEGEAN_CAPTURE=port:10001:ground AEGEAN_HOUR=17`.
 
 ### Moon
 
@@ -1922,7 +1937,15 @@ On the rivers branch until it lands.
   taper up the hill, the front row two to four storeys, the rows behind lower; a garden with a fig,
   an olive or a cypress between houses now and then; every nine to twelve houses a landmark of
   another form (a bell tower with a lead dome or a hipped cap, a domed church, a tower house, a
-  stand of cypresses), the chapel among them.
+  stand of cypresses), the chapel among them. The houses weathered as the film paints them
+  (`house_wall_weather`): a darker plinth where the damp rises, shade under the eaves, stone
+  quoins at the corners in long and short courses, grey stains running down from the eaves, a
+  patch or two where the plaster has come away and the coursed stone shows at a ragged edge;
+  above the street the windows' shutters stand open either side of a dark recess (`SHUTTERS`:
+  greens, a grey-blue, a brown), a stone sill under each window; the roofs in courses of barrel
+  tiles (`roof_tiles`). Walls carry their own layout (tag 186: across the face, height up it,
+  `add_house_walls`) and roofs theirs (tag 185, `roof_uv`), so nothing swims; the stains and
+  patches use a value noise that repeats every 64 m (`wall_noise`), steady as the origin moves.
 - **Code:** `src/objects.jo` (`WALLS`, `ROOFS`, `SLATE`, `LEAD`, `roof_shade`, `roof_lit_first`,
   `add_gable`, `add_hip`, `add_dome`, `add_cypress`, `add_garden_tree`, `house_roof_kind`,
   `build_town`'s tiers with their own random stream so the harbour's boats stay where they were);
@@ -1944,7 +1967,10 @@ On the rivers branch until it lands.
   hotel's waiter in a white jacket and long apron, the barkeep in a waistcoat, the errand boy in a
   cap. The band's players change into evening clothes (a frock with a low waist, a dark suit) out
   of sight before their evening. Mostly pale and neutral, a clear colour about one in five; hats on
-  most men and half the women.
+  most men and half the women. Women's and girls' long hair shows (`add_long_hair`): fuller over
+  the ears, and a bun high on the back, a low knot at the nape, a plait down the back or worn down
+  to the shoulders (the old mostly up; under a headscarf or a cloche down or in a knot); a girl's
+  two plaits with ribbons.
 - **Code:** `src/wardrobe.jo` (`outfit_for`, `evening_outfit`, `waiter_outfit`, `barkeep_outfit`,
   `errand_boy_outfit`, `walker_outfit`); `src/folk.jo` (`Outfit`, `Garb`, `build_outfit_figure`,
   `dress_outfit` for the old dress kinds); `person_figure` and `Folk.day`/`Folk.evening` in
@@ -2265,11 +2291,16 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   bottles with a mirror and a clock, tables under hanging lamps, palms in pots, and walls crowded
   with pictures, pinned papers, a propeller and a shelf of cups. Lit by lamps only: warm pools
   under the shades, deep brown beyond (by day in the rain, the sea windows' grey light too).
-- **When:** the bar is inside from 18:00 through the night; everything (tables, waiter, band) is
-  inside while it rains. The hotel's places (`HotelSpots`) shift into the room, so the seated
-  view, company, the waiter and the band follow without their own code knowing. The switch
-  happens out of sight: not while the pilot sits at the hotel, else with the camera 70 m away, or
-  on going in by a door (the terrace door by the bar's end, the side door off the east walk).
+- **When:** only while it rains: everything (tables, waiter, band) is inside; on any other
+  evening the terrace (its sky and the sea). The hotel's places (`HotelSpots`) shift into the
+  room, so the seated view, company, the waiter and the band follow without their own code
+  knowing. The switch happens out of sight: not while the pilot sits at the hotel, else with the
+  camera 70 m away.
+- **Walked into:** the ground floor's walls have two open doorways (from the terrace by the bar's
+  end, and off the east walk), leaves folded back, reveals through the wall, stone sills; the room
+  is drawn whenever one is within 70 m, its floor published for walking, its furniture solid. One
+  walks in and out: no button, no cut. Capture: `AEGEAN_LEISURE=walk-in|walk-in-side`, and the
+  doorways close to: `doorway|doorway-in|doorway-side|doorway-side-in`.
 - **The world:** keeps the terrace's places (the band's numbers, the patrons' seats), so saves and
   replays don't change; whoever it has at the terrace's tables, bar or stand is drawn, found and
   talked to at the same place in the room (`room_place_folk`); those crossing the terrace aren't
@@ -2278,7 +2309,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Light:** baked into the vertices (`bake_bar_room`): shaded hanging lamps throw their light
   down, wall lamps all round, a soft shoulder on the brightest; drawn in a flat light so the bake
   shows, with the lamps glowing. People inside are drawn in `room_figure_light`. Built the first
-  time the camera is inside; drawn only then (rain is not drawn inside).
+  time one comes near (rain is not drawn with the camera inside).
 - **Code:** `src/bar_room.jo`; `HotelSpots`, `hotel_as_built`, `room_camera_inside` in
   `src/bar_scene.jo`; the floor for seats in `src/walk_shapes.jo` (`walk_publish_floors`).
 - **Capture:** `AEGEAN_LEISURE=sit|seat-bar|band` at an evening hour (`AEGEAN_CAPTURE_MINUTES`),
@@ -2734,31 +2765,29 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Rising notes
 
 - **Aliases:** the floating notes, musical notes over the band.
-- **Definition:** small notes float up from whoever plays music in the world (not the radio), bob
-  and fade, so music heard from afar can be found by looking round. Each is a real note: its
-  onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
-  closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
-  which show only when the tune has been quiet a while; no burst after a seek or a new number.
-  Higher notes rise from a little higher; louder ones are larger. Each shows its written value
-  (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
-  a flag, a sixteenth with two, a dot after the head for a dotted one. Notes played together
-  rise as one chord (`note_chord`): those of the same part started within 35 ms (struck, rolled
-  or strummed), as far as one hand reaches (no gap over an octave: a left-hand chord stays apart
-  from the tune above it), up to five heads up the stave on one stem, a second's upper head on
-  the stem's other side; the chord's longest note sets its value. An accompanying chord may show
-  after 0.7 s of quiet in the tune (a single accompanying note after 1.1 s). Ink by day, warm cream after dark; fainter with distance
-  about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
-  table or the bar), where the band is in view. Options: "Musical notes rising from music played
-  nearby" (on by default).
+- **Definition:** each note played in the world (not the radio) leaves its player as it is played,
+  floats up and away, bobbing, drifting a little with the wind, and fades, so music heard from
+  afar can be found by looking round. Each is a real note from the source's note feed
+  (`src/live_notes.jo`), shown with its written value (see [Note value](#note-value)); a note's
+  height says nothing of its pitch. Notes played together (`note_chord`: the same part's notes
+  started within 35 ms, struck, rolled or strummed, as far as one hand reaches) float off as one
+  cluster, their heads spaced by their intervals as on a staff (no staff drawn), the longest
+  setting the value. Each sets off quickly, then floats, a little its own way so quick notes
+  spread; when notes come quickly the older ones still in the air fade sooner: never more than
+  four from one player at once. Under the bar room's ceiling they keep below it; no wind indoors.
+  Ink by day, warm cream after dark; fainter with distance about as the music is (gone at 140 m)
+  and through walls. Shown at the hotel's tables too. Options: "Musical notes rising from music
+  played nearby" (on by default).
 - **Sources:** the Hotel Ancora's band (its feed `band_notes`, as `band_step` keeps it with what is
-  heard; each note from its part's player, `band_spots`) and the nearest street musician, the one
+  heard; each part from its player, `band_spots`) and the nearest street musician, the one
   `src/life_audio.jo` plays (their phrase, `street_events`, loaded as a feed about now; heard to
-  70 m, so the fade runs over half the band's distance). A cue keeps its place in a feed by frame,
-  so a whole piece and a sliding window read alike, and it never steps the shared feed itself.
-- **Code:** `src/note_cue.jo` (`NoteCue`, `note_cue_pick`, `note_cue_rise`, `draw_note_cue`);
-  `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
-  `tools/note_cue_bench.jo` counts its work per frame.
-- **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
+  70 m). A cue keeps its place in a feed by frame (`note_cue_take`), so a whole piece and a sliding
+  window read alike, and it never steps the shared feed itself.
+- **Code:** `src/note_cue.jo` (`NoteCue`, `note_cue_take`, `note_cue_rise`, `note_pos`,
+  `draw_note_cue`); `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
+  `tools/note_cue_bench.jo`, `tools/note_draw_bench.jo`.
+- **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND='8 4 40'` (Ave Maria) or in the evening
+  (`AEGEAN_CAPTURE_MINUTES=690`).
 
 ### Note value
 
@@ -3289,7 +3318,7 @@ No image: the tiers differ in budgets more than in any single view.
 - **Aliases:** the player's armour, hit margin, bullet magnetism.
 - **Definition:** three Tweaks under Combat. **Player toughness** (2.0) divides combat damage to
   the player's own aircraft. **Generous hits** (on) lets the player's rounds hit within **Player
-  hit margin** (0.7 m) of each part an aircraft is hit as. **Aim assist** (off) bends the
+  hit margin** (2 m) of each part an aircraft is hit as. **Aim assist** (on) bends the
   player's rounds, after they leave the guns, a little toward the enemy most plainly in their
   path (within 3° and 700 m, at most 4°/s, for their first 0.6 s); it never moves the controls or
   the aircraft.
@@ -3334,11 +3363,22 @@ No image: the tiers differ in budgets more than in any single view.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
   (the brain flies the player's aircraft; frames for a clip).
 
+### Side colours
+
+- **Aliases:** friend and foe colours, the side palette.
+- **Definition:** one colour scheme for sides wherever the game marks them: enemies red-orange,
+  friends blue, everyone else cream. Lead rings, the target brackets and names, people in the
+  water, the formation's place and the radio's speakers all take it from one place, for a later
+  colour-blind setting (docs/DESIGN.md backlog).
+- **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `battle_standing`,
+  `country_standing`).
+
 ### Going home
 
 - **Aliases:** breaking off, the formation home, landing in turn.
 - **Definition:** after the strait, each side flies to its base harbour: beaten (half lost and
-  outnumbered two to one) or with no enemy left. Its pilots form on the leader in their own slots
+  outnumbered two to one) or with no enemy left. Scattered, they first regroup at a rally point,
+  circling and calling in for a minute or two; then its pilots form on the leader in their own slots
   (the player's left open, marked with a faint ring), and land in turn at their moorings. The
   radio says each step in words over a Morse cue.
 - **Code:** `src/combat.jo` `_turn_for_home`, `_homeward`, `home_leader`, `home_slot`,
@@ -3348,9 +3388,9 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Pilots in the water
 
-- **Aliases:** survivors, ditching, the dye marker, rescue at sea, prisoners.
+- **Aliases:** survivors, ditching, rescue at sea, prisoners.
 - **Definition:** a pilot down in the sea, after a parachute or a ditching, waits in a life vest
-  with a green dye patch, waving at aircraft near. The player can land, taxi alongside, take them
+  (kapok in buff canvas, as vests were before the bright yellow of the 1940s), waving at aircraft near. The player can land, taxi alongside, take them
   aboard and set them ashore at a harbour: a friend thanked, a foe held as a prisoner or let go.
 - **Code:** `src/combat.jo` `_can_ditch`, `_ditch_controls`, `_ditched_out`;
   `src/survivor_view.jo`; `src/rescue_exchange.jo`; the living world's `board_survivors`,

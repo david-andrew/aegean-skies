@@ -14,9 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run(folder, frames, check, **extra):
     env = {k: v for k, v in os.environ.items() if k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
+    # (no world drawn, AEGEAN_NO_WORLD, and a small window: the name's drawing is what is counted,
+    # and software rendering takes seconds a frame over the title's shots)
     env.update(SLOPPY_NO_AUDIO='1', SLOPPY_THREADS=env.get('SLOPPY_THREADS', '1'), SLOPPY_FRAMES=str(frames), SLOPPY_SCREENSHOT=str(Path(folder) / 'last.png'),
+               SLOPPY_FIXED_STEP='1', SLOPPY_WINDOW='320x180', AEGEAN_NO_WORLD='1',
                SLOPPY_SAVE_DIR=folder, AEGEAN_TITLE_CHECK=str(check), **extra)
-    out = subprocess.run(['sloppy', '--release', 'aegean.jo'], cwd=ROOT, env=env, capture_output=True, text=True, timeout=1200)
+    out = subprocess.run(['sloppy', '--release', 'aegean.jo'], cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
     m = re.search(r'TITLE_CHECK frame (\d+) open (\w+) names (\d+) over_play (\d+)', out.stdout)
     assert m, out.stdout[-2000:] + out.stderr[-2000:]
     return m.group(2) == 'true', int(m.group(3)), int(m.group(4))
