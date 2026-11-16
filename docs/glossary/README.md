@@ -1894,7 +1894,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   radio and leads; aircraft sounds are a faint bed about 20 dB under it.
 - **Code:** `src/title_shots.jo` (`title_next_shot`, `title_view`); `aegean.jo` (`title_cut`,
   `title_sound`, the free camera it flies).
-- **Rules:** never rain; never the same kind twice running; banks of 7 degrees at most; a town shot
+- **Rules:** never rain; never the same kind twice running; banks of 7 degrees at most, except the
+  race, whose camera rolls with its swing after the racers up to some 14 degrees (`RACE_PAN_ROLL`,
+  in proportion to the swing, never a step); a town shot
   never looks straight down into the streets; the low pass's water reads as flight's at that speed
   (the sea gets the reel camera's velocity; the eye at the chase camera's height, 13-16 m;
   `tests/title_reel_detail_test.py`). The world behind it is never saved: a new game puts
@@ -2829,6 +2831,8 @@ No image: the tiers differ in budgets more than in any single view.
   the aircraft.
 - **Code:** `src/tweaks.jo`; `src/combat.jo` `bullet_damage`, `Round.wide`, `Round.assist`,
   `_assist_target`; tests `tests/burst_test.jo`.
+- **Capture:** `AEGEAN_TWEAKS=aim` (the aim assist on), `AEGEAN_TWEAKS=plainhits` (generous hits
+  off); in `tools/dogfight_lab.jo`, `DOGFIGHT_AIM=1` and `DOGFIGHT_PLAIN_HITS=1`.
 
 ### Ground fire
 
