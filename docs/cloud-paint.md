@@ -124,7 +124,10 @@ marches distance steps in metres, refined only near the surface.
   cut drew round holes at that size. A storm's cells and canopy also skip the close relief and the
   brush dabs and step longer to a coarser tolerance: at kilometres across that detail
   showed nothing and cost redfox medium about 2 ms near a storm (the shelf keeps both
-  for its ragged lit lip). The strokes and dabs are keyed to the low-resolution pixel
+  for its ragged lit lip, a medium and high feature: on low it goes plain too, every
+  storm body marches coarser, and the rain veil and shafts take fewer samples, which
+  brought a near storm on redfox low from +3.9 to +2.1 ms over the old storm's). The
+  strokes and dabs are keyed to the low-resolution pixel
   they land in, never finer, so they don't flicker pixel by pixel on shaded sides. The strokes live in the shader, not the
   atlas: every RGBA8 texel already holds four forms.
 

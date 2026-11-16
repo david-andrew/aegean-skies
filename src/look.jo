@@ -172,52 +172,58 @@ advance_wind=(w:mut Wind,dt:f64):
     w.drift_point=world_advance(wind_drift(w),vec3(w.dir.x,0,w.dir.y),w.speed*dt*0.9)
     w.drift=world_vec(w.drift_point).xz;w.drift_published=w.drift
 
-# Meadow gusts. Irregular patches of bent, paler grass morph and blow downwind across the meadow: a
-# domain-warped, two-octave value noise (cells of 4.5 m and 2.25 m, the warp on 14 m) whose three layers
-# are carried downwind by separate offsets at different speeds, so the shapes change as they travel.
-# The scales are fixed; wind speed only raises how fast the layers travel, so a point is swept more often
-# in stronger wind. The offsets are plain translations accumulated in f64 on the CPU (a turning wind
-# only turns the direction they advance in): no direction-dependent phase, so no field-wide pulse.
-# The noise lattice repeats every GUST_PERIOD metres, which every offset is wrapped by.
+# Meadow waves. Three wave trains at non-harmonic scales (4.5, 7.6 and 11.3 m, crests at different angles)
+# roll downwind across the meadow. Their phases are bent by slow low-frequency warps, and a slow envelope
+# (blobs about 60 m across) raises and lowers their strength from place to place, so no two parts of the field
+# swing alike and the pattern never repeats. Each train rides its own offset, carried downwind at its own speed
+# (the envelope and warp, slowest), so the shapes keep changing as they travel. The scales are fixed; wind speed
+# only raises how fast the offsets travel. The offsets are plain translations accumulated in f64 on the CPU (a
+# turning wind only turns the direction they advance in): no direction-dependent phase, so no field-wide pulse.
+# Every wavenumber is a whole number of cycles per GUST_PERIOD, which every offset is wrapped by.
+#
+# Blades follow the field through a damped spring (about 2 Hz, damping 0.45): a train too fast for the blade is
+# attenuated, one near its natural frequency is lifted a little and lags, so after a crest passes the grass
+# springs back, overshoots slightly and settles; there is no hard stop. The spring is linear, so it acts on each
+# train as a gain and a phase lag (meadow_spring, meadow_lag), computed on the CPU.
 const GUST_PERIOD = 4032.0
+const MEADOW_K = 0.0015583          # TAU / GUST_PERIOD
+const MEADOW_SPRING_HZ = 2.0
+const MEADOW_DAMPING = 0.45
 
 struct MeadowPhase:
-    a1 = vec2(0,0)                  # offset of the 4.5 m layer (world x, z, wrapped to GUST_PERIOD)
-    a2 = vec2(0,0)                  # the 2.25 m layer (travels faster)
-    aw = vec2(0,0)                  # the warp layer (travels slower)
+    a1 = vec2(0,0)                  # offset of the 4.5 m train (world x, z, wrapped to GUST_PERIOD)
+    a2 = vec2(0,0)                  # the 7.6 m train (travels a little faster)
+    aw = vec2(0,0)                  # the 11.3 m train, the warps and the envelope (travel slower)
     axis = vec2(0.8,0.6)            # the wind's direction, eased (the lean's direction)
+    speed = 0.0                     # the wind speed last stepped
 
 meadow_state = MeadowPhase()
 
-# metres a gust layer travels per second: 1.7 m/s in a calm, 4.8 m/s at 8 m/s wind, 13 m/s at 30 m/s
+# metres a wave layer travels per second: 1.7 m/s in a calm, 4.8 m/s at 8 m/s wind, 13 m/s at 30 m/s
 meadow_travel = (speed: f64) -> f64: 5.5 * (0.3 + 0.07 * clamp(speed, 0.0, 40.0))
 
 meadow_wrap = (x: f64) -> f64: x - floor(x / f64(GUST_PERIOD)) * f64(GUST_PERIOD)
 
-# call once a frame with the wind's final speed (x, z unused: the gusts are fixed to the world, not the viewer)
+# call once a frame with the wind's final speed (x, z unused: the waves are fixed to the world, not the viewer)
 meadow_step = (w: Wind, x: f64, z: f64, dt: f64):
-    global meadow_state, meadow_blob_ready
+    global meadow_state
     if dt <= 0.0: return
     m = meadow_state
     mixed = m.axis + (w.dir - m.axis) * f32(min(1.0, dt * 1.5))
     if length(mixed) > 0.05: m.axis = normalize(mixed)
+    m.speed = w.speed
     c = meadow_travel(w.speed) * dt
     d = vec2(f64(m.axis.x), f64(m.axis.y))
     m.a1 = vec2(f32(meadow_wrap(f64(m.a1.x) + d.x * c)), f32(meadow_wrap(f64(m.a1.y) + d.y * c)))
     m.a2 = vec2(f32(meadow_wrap(f64(m.a2.x) + d.x * c * 1.15)), f32(meadow_wrap(f64(m.a2.y) + d.y * c * 1.15)))
     m.aw = vec2(f32(meadow_wrap(f64(m.aw.x) + d.x * c * 0.6)), f32(meadow_wrap(f64(m.aw.y) + d.y * c * 0.6)))
     meadow_state = m
-    if not meadow_blob_ready and w.speed >= 7.0:
-        # first strong wind: a few blobs already under way
-        meadow_blob_ready = true
-        loop k in 0..60: meadow_blob_step(m.axis, w.speed, x, z, 0.25)
-    meadow_blob_step(m.axis, w.speed, x, z, dt)
 
 # the wind vector the shaders read: (lean direction x, z, speed, 0)
 meadow_wind = (w: Wind, origin: vec3) -> vec4:
     vec4(meadow_state.axis.x, meadow_state.axis.y, f32(w.speed), 0)
 
-# layer offsets for a render origin, so a chart-local position p reads the noise at p + shift
+# layer offsets for a render origin, so a chart-local position p reads the waves at p + shift
 meadow_shift = (a: vec2, origin: vec3) -> vec2:
     vec2(f32(meadow_wrap(f64(origin.x) - f64(a.x))), f32(meadow_wrap(f64(origin.z) - f64(a.y))))
 meadow_gust = (origin: vec3) -> vec4:
@@ -225,109 +231,52 @@ meadow_gust = (origin: vec3) -> vec4:
     vec4(s1.x, s1.y, s2.x, s2.y)
 meadow_gust_w = (origin: vec3) -> vec2: meadow_shift(meadow_state.aw, origin)
 
-# Wind gusts as blobs. In strong wind the grass mostly stands, leaning steadily downwind; a good number of small,
-# soft, irregular blobs (cat's-paws) are born upwind of the viewer, run downwind, grow and fade over several
-# seconds, and press the grass down where they pass (overlaps add). Each blob's strength rises and falls
-# smoothly, so the lean never pops. Kept on the CPU in f64 world coordinates; the shaders read at most
-# MEADOW_BLOBS of them as uniform rows (two vec4 each) and evaluate them per blade. The blend into the
-# older gust field starts at 8 m/s and is complete at 16 m/s, so calm and fresh winds are untouched.
-const MEADOW_BLOBS = 10
+# the trains' wavevectors as whole cycles per GUST_PERIOD (x, z), and their layer speed factors
+const TRAIN_1 = vec2(760, 470)      # 4.5 m
+const TRAIN_2 = vec2(-310, 430)     # 7.6 m
+const TRAIN_3 = vec2(210, -290)     # 11.3 m
 
-struct MeadowBlob:
-    x: f64
-    z: f64
-    r: f64                          # radius (m) when grown
-    peak: f64                       # strength at its fullest
-    age: f64 = 0.0
-    life: f64
-    aspect: f64                     # semi-axis along its heading over the cross semi-axis
-    turn: f64                       # heading off the wind (radians)
-    seed: f64
+# the spring's gain and phase lag for one train at wind speed `speed`, from how fast a blade sees it pass
+meadow_train_response = (cycles: vec2, factor: f64, speed: f64, axis: vec2) -> vec2:
+    k = vec2(f64(cycles.x) * f64(MEADOW_K), f64(cycles.y) * f64(MEADOW_K))
+    signed = (k.x * f64(axis.x) + k.y * f64(axis.y)) * meadow_travel(speed) * factor
+    r = abs(signed) / (TAU * MEADOW_SPRING_HZ)
+    z = MEADOW_DAMPING
+    gain = 1.0 / sqrt((1.0 - r * r) * (1.0 - r * r) + 4.0 * z * z * r * r)
+    lag = atan2(2.0 * z * r, 1.0 - r * r)
+    vec2(gain, if signed >= 0.0: lag else: -lag)
 
-meadow_blobs: MeadowBlob[]
-meadow_blob_rng = 20240601          # its own counter: never the world's random numbers
-meadow_blob_next = 0.0
-meadow_blob_ready = false
+# per frame, for the shaders: gains (trains 1-3, 0) and phase offsets (trains 1-3, 0)
+meadow_spring = () -> vec4:
+    m = meadow_state
+    a = meadow_train_response(TRAIN_1, 1.0, m.speed, m.axis)
+    b = meadow_train_response(TRAIN_2, 1.15, m.speed, m.axis)
+    c = meadow_train_response(TRAIN_3, 0.6, m.speed, m.axis)
+    vec4(f32(a.x), f32(b.x), f32(c.x), 0)
+meadow_lag = () -> vec4:
+    m = meadow_state
+    a = meadow_train_response(TRAIN_1, 1.0, m.speed, m.axis)
+    b = meadow_train_response(TRAIN_2, 1.15, m.speed, m.axis)
+    c = meadow_train_response(TRAIN_3, 0.6, m.speed, m.axis)
+    vec4(f32(a.y), f32(b.y), f32(c.y), 0)
 
-meadow_blend = (speed: f32) -> f32: smoothstep(8.0, 16.0, speed)
-
-meadow_rand = () -> f64:
-    global meadow_blob_rng
-    meadow_blob_rng = (meadow_blob_rng * 1103515245 + 12345) % 2147483648
-    f64(meadow_blob_rng) / 2147483648.0
-
-# metres a blob travels per second: half the wind, between 1.5 and 12 m/s (a full-speed gale would cross a
-# gust's own width in under two seconds, which reads as flicker)
-meadow_blob_travel = (speed: f64) -> f64: clamp(0.5 * speed, 1.5, 12.0)
-
-meadow_blob_step = (axis: vec2, speed: f64, x: f64, z: f64, dt: f64):
-    global meadow_blobs, meadow_blob_next
-    c = meadow_blob_travel(speed)
-    d = vec2(f64(axis.x), f64(axis.y))
-    kept: MeadowBlob[]
-    loop b in meadow_blobs:
-        nb = b
-        nb.age += dt
-        nb.x += d.x * c * dt
-        nb.z += d.y * c * dt
-        dx = nb.x - x; dz = nb.z - z
-        if nb.age < nb.life and dx * dx + dz * dz < 320.0 * 320.0: kept.push(nb)
-    meadow_blobs = kept
-    meadow_blob_next -= dt
-    if meadow_blob_next <= 0.0 and speed >= 7.0 and meadow_blobs.len() < MEADOW_BLOBS:
-        life = 7.0 + 4.0 * meadow_rand()
-        up = c * life * 0.5 + 10.0 * meadow_rand()
-        across = (meadow_rand() - 0.5) * 70.0
-        meadow_blobs.push(MeadowBlob(x - d.x * up - d.y * across, z - d.y * up + d.x * across, 4.0 + 8.0 * meadow_rand(), 0.7 + 0.5 * meadow_rand(), 0.0, life, 0.8 + meadow_rand(), (meadow_rand() - 0.5), meadow_rand() * 6.2832))
-        meadow_blob_next = 0.95 * (0.5 + meadow_rand())
-
-# the uniform rows: per blob (x, z relative to the render origin, radius, strength now) and (heading x, z,
-# aspect, wobble phase); a strength of zero is an empty slot
-meadow_blob_rows = (origin: vec3) -> vec4[20]:
-    rows: vec4[20] = [vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0)]
-    n = min(meadow_blobs.len(), MEADOW_BLOBS)
-    loop k in 0..n:
-        b = meadow_blobs[k]
-        a = b.age / b.life
-        env = smoothstep(0.0, 0.3, a) * (1.0 - smoothstep(0.62, 1.0, a))
-        grow = 0.55 + 0.45 * smoothstep(0.0, 0.5, a)
-        cs = cos(b.turn); sn = sin(b.turn)
-        ax = f64(meadow_state.axis.x); az = f64(meadow_state.axis.y)
-        rows[k * 2] = vec4(f32(b.x - f64(origin.x)), f32(b.z - f64(origin.z)), f32(b.r * grow), f32(b.peak * env))
-        rows[k * 2 + 1] = vec4(f32(ax * cs - az * sn), f32(ax * sn + az * cs), f32(b.aspect), f32(b.seed + b.age * 0.4))
-    rows
-
-# (in shaders) smooth value noise on a lattice that repeats every 32 cells
-pnoise = (p: vec2) -> f32:
-    i = floor(p)
-    f = p - i
-    u = f * f * (vec2(3, 3) - f * 2.0)
-    i0 = i - floor(i / 32.0) * 32.0
-    i1 = i0 + vec2(1, 1)
-    i1 = i1 - floor(i1 / 32.0) * 32.0
-    a = hash21(i0)
-    b = hash21(vec2(i1.x, i0.y))
-    c = hash21(vec2(i0.x, i1.y))
-    d = hash21(i1)
-    mix(mix(a, b, u.x), mix(c, d, u.x), u.y)
-
-# (in shaders) one gust field, 0..1.2. `local` is the render position; g = meadow_gust (4.5 m and 2.25 m layer
-# offsets) and gw = meadow_gust_w (the warp layer). detail 1 (blades) warps the field and adds the fine layer;
-# 0 is a cheap sine version of the coarse layer (the ground's sheen).
-meadow_wave = (local: vec2, g: vec4, gw: vec2, speed: f32, detail: f32) -> f32:
-    if detail < 0.5:
-        # the ground's sheen: interlocking warped sines on the same advected layer, periodic in GUST_PERIOD
-        # (no hashing: this runs for every pixel that has meadow)
-        q = local + g.xy
-        m = 0.5 + 0.28 * sin(q.x * 1.396 + 1.8 * sin(q.y * 0.4488)) + 0.22 * sin(q.y * 0.698 + 1.3 * sin(q.x * 0.4488))
-        return smoothstep(0.32, 0.78, m) * (0.35 + 0.85 * smoothstep(0.0, 10.0, speed))
-    warp = vec2(0, 0)
-    if detail > 0.5:
-        angle = pnoise((local + gw) / 14.0 + vec2(3.1, 7.7)) * 6.2832
-        warp = vec2(cos(angle), sin(angle)) * 3.0
-    n = pnoise((local + g.xy + warp) / 4.5)
-    if detail > 0.5: n = n * 0.65 + pnoise((local + g.zw + warp * 0.6) / 2.25 + vec2(13, 5)) * 0.35
-    smoothstep(0.32, 0.78, n) * (0.35 + 0.85 * smoothstep(0.0, 10.0, speed))
+# (in shaders) the wave field, 0..1.2, shared by the blades' lean, the blades' colour and the ground's sheen
+# (so near and far match). `local` is the render position; g = meadow_gust (train 1 and 2 offsets), gw =
+# meadow_gust_w (train 3, warps, envelope); spring = meadow_spring gains, lag = meadow_lag phase offsets.
+meadow_wave = (local: vec2, g: vec4, gw: vec2, speed: f32, spring: vec4, lag: vec4) -> f32:
+    k = f32(MEADOW_K)
+    q1 = local + g.xy
+    q2 = local + g.zw
+    q3 = local + gw
+    # slow warps of the trains' phases, and the slow envelope of strength
+    wa = sin(q3.y * (144.0 * k) + 0.7)
+    wb = sin(q3.x * (101.0 * k) + 2.1)
+    envelope = 0.55 + 0.45 * sin(dot(q3, vec2(55.0, 41.0) * k) + 1.3 * wa)
+    s = 0.34 * spring.x * sin(dot(q1, TRAIN_1 * k) + 2.2 * wa + lag.x)
+    s += 0.26 * spring.y * sin(dot(q2, TRAIN_2 * k) + 1.6 * wb + lag.y)
+    s += 0.20 * spring.z * sin(dot(q3, TRAIN_3 * k) + 1.2 * wa + 0.9 * wb + lag.z)
+    front = smoothstep(0.25, 0.8, 0.5 + 0.9 * s * (0.5 + 0.8 * envelope))
+    front * (0.35 + 0.85 * smoothstep(0.0, 10.0, speed))
 
 # lean (metres per unit blade height factor): a steady push and the swing of the bands on top of it,
 # both growing with the wind speed
