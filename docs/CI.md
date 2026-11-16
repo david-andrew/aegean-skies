@@ -31,7 +31,8 @@ A new push to the same branch cancels the run before it.
 
 `tools/check_tracked_files.py` fails if a file in the tree, or in any commit that is about to be
 public, is under a scratch/reference/voice/recording folder; is an audio or video file (by name or
-by its header, so a renamed `.wav` is caught); is a soundfont or carries a FluidR3 name; is a binary
+by its header, so a renamed `.wav` is caught), except the four edited ambience beds named exactly in
+`ALLOWED_AUDIO` (each must be Ogg and under its size; `docs/CREDITS.md`); is a soundfont or carries a FluidR3 name; is a binary
 over 5 MB that is not a known baked asset (`KNOWN_LARGE` in the script); or (in commit ranges) adds a
 line that copies a path from the scratch and reference areas. It is the first step of `tests.yml`
 and `pages.yml`, and runs as git hooks:
