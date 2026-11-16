@@ -741,15 +741,20 @@ On the rivers branch until it lands.
      much pushes and she slows. If she drops off her foils with the driven propeller in the sea
      for `FALLEN_TIME` (0.75 s), the screw is clutched back in by itself, at any throttle, so she
      climbs up and tries again: she is never stopped dead.
-  **At sea:** her foils hang on struts long enough that, riding them, the hull and the air
-  propeller clear a moderate swell; their lift tops out at the cavitation limit through a soft
+  **At sea:** her foils hang on struts long enough (the forward pair 2.4 m below her centre, the
+  tail's 1.6 m) that, riding them, the hull and the air propeller clear a moderate swell; her
+  sealed hull's sides and wing tips, which sit at the waterline, meet the water as hull (buoyancy,
+  planing, a keel or tip dug in across the flow catches) and never as panels slammed broadside
+  (`craft_wing_contacts`, `_catalog_parts`: a hydrofoil has no wing panels or hull-side strikes);
+  their lift tops out at the cavitation limit through a soft
   knee (tanh), so it still answers the flow's angle and damps her heave over the waves; a blade
   tip skimming a crest costs thrust in proportion to how far it is in (`air_drive`,
   `CraftState.foil.prop_dip`), and only a propeller well into the sea, driven, takes real blows.
   In the game's own swell (src/sea.jo, rising with the wind) she takes off hands off or with the
-  stick back from calm to wind 6 (swell to about 1.4 m) in 25-41 s at the player's speed scale;
-  `tests/italian_racers_test.jo` "the P.7 takes off from the open sea in calm and in a moderate
-  swell".
+  stick back from calm to wind 5 (swell to about 1.24 m) from every one of eight starting points
+  in the swell, in 27-46 s at the player's speed scale, with under 1% of hull damage; at wind 6
+  from most of them; `tests/italian_racers_test.jo` "the P.7 takes off from the open sea in calm
+  and in a moderate swell, wherever she starts" (seven of eight at least, each case).
   On her foils she drags far less than a float plane on its step: the foils' lift is square to
   the flow over them, and at 14-25 m/s their drag with the struts' is 12-17% of her weight,
   against a float plane's 19-40%. The hard part is the hump, on the water screw (8.2 kN,
@@ -764,7 +769,7 @@ On the rivers branch until it lands.
   "engine too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
   propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
   in the water (it beats the sea, gives no thrust and hurts the engine); or the sea is rough
-  (wind about 8 m/s and over: the wing tips catch the waves and tear). Closing the throttle at under
+  (wind about 8 m/s and over: the crests reach her hull on the foils and stop her). Closing the throttle at under
   5 m/s on the water puts the clutch back to the screw for another try.
   **The air propeller as seen:** declutched, the engine drags it round through its feathered
   blades: it whirls with the throttle (12 rad/s idling, 33 flat out, about 315 rpm:
