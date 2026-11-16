@@ -2985,6 +2985,10 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
 | `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
+| `AEGEAN_FLYING_OVER=airfield` | with `AEGEAN_FLYING`: start over the nearest airfield's grass, along its runway, the height above the ground (see [Aircraft shadow](#aircraft-shadow)) |
+| `AEGEAN_CAPTURE_SHADOW_VIEW=1` | with `AEGEAN_FLYING`: a free camera behind and above, looking between the aircraft and its shadow |
+| `AEGEAN_CAPTURE_LOW_PASS=h` | with `AEGEAN_FLYING`: the production autopilot holds the player's aircraft at that height (a low pass for a clip) |
+| `AEGEAN_OLD_SHADOWS=1` | the aircraft's older shadows (rectangles on the sea, flattened meshes on land), for comparisons |
 | `AEGEAN_CAPTURE_TAKEOFF=1\|worn` | the player's aircraft, serviced (or `worn`: as the save has it), at rest on the water off the home harbour, and the production take-off autopilot flying it off and up, the stick held back on a hydrofoil racer's foils (with `AEGEAN_CRAFT`, `AEGEAN_CAPTURE_ORBIT`, `AEGEAN_FRAMES`; see [Hydrofoil take-off](#hydrofoil-take-off)) |
 | `AEGEAN_CAPTURE_TAKEOFF=pad` | placed as `AEGEAN_CAPTURE_TAKEOFF`, serviced, but flown by the player's controls: script a gamepad with `SLOPPY_INPUT` (`40:rt=1 150:rt=0 930:lstick=0x0.8 1010:lstick=0x0.35`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
