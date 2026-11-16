@@ -132,7 +132,7 @@ blue discs that stay in every frame are **speed flecks**.
 
 - **Aliases:** "Deeper sea from height" (the Tweaks checkbox), the navy sea.
 - **Definition:** a trial, off by default: the open sea's colour darkens toward navy as the eye
-  climbs (none below about 60 m, full by 1,000 m) and the look steepens, while the shallows band,
+  climbs (none below about 60 m, full by 700 m) and the look steepens, while the shallows band,
   clear bays and the low-level sea keep their luminous teal. The haze over open water darkens a
   little with it, so the sea's horizon band sits below the sky's.
 - **Code:** `tweaks.deep_sea_height`; `SeaParams.deep_dark`, set in `sea_params` and applied in
