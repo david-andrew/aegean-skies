@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -3046,9 +3046,10 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/ambience_beds.jo`, `assets/ambience/`; `src/ambience_scene.jo` (`ambience_talk`:
   the village bed for one to three people, crossfading into the harbour bed between four and fourteen).
 - **Rules:** only the edited beds named in `tools/check_tracked_files.py` `ALLOWED_AUDIO` may be
-  committed, never a raw recording. Louder single voices are events from real people, never baked
-  in. Two synthesized crowds came first: four gated pure hums, heard as a little tune on the quay,
-  then layered formant talkers, heard as "awful" beside these recordings and retired.
+  committed, never a raw recording. Two synthesized crowds came first: four gated pure hums, heard
+  as a little tune on the quay, then layered formant talkers, heard as "awful" beside these
+  recordings and retired; so were the single synthesized greetings, laughs and calls of passers-by
+  (a buzz through three vowel formants, the same way), 2026-11-16.
 
 ### River sound
 
@@ -3080,22 +3081,13 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Uneven events
 
-- **Definition:** single ambient sounds (hammering, creaks, halyard slaps, waves, animals, birds,
-  single voices) played at uneven moments: time is cut into cells of the event's mean period and
+- **Definition:** single ambient sounds (hammering, creaks, halyard slaps, waves, animals, birds)
+  played at uneven moments: time is cut into cells of the event's mean period and
   each cell holds one event at its own hashed moment, so gaps run from almost nothing to nearly
   twice the period. Each event plays one of a few takes, its pitch spread a little.
 - **Code:** `src/ambience.jo` (`ambience_due`, `ambience_hash`, `ambience_take`);
   `src/ambience_scene.jo` (`ambience_event`).
 - **Rules:** never a fixed period (hull hammering was once a blow every 4.7 s to the frame).
-
-### Single voices
-
-- **Definition:** now and then a greeting, a laugh, a call or a short exchange (a question and its
-  companion's answer) from a real person near the listener; vowel-only synthesis, never words.
-- **Code:** `src/ambience_scene.jo` (`ambience_voices`), `src/ambience_synth.jo`
-  (`ambience_voice_take`, `ambience_utter`).
-- **Rules:** from awake people out and about within 40 m (calls 90 m); even ids men's voices, odd
-  women's, as the figures are dressed; rarer at night. Not the radio announcer.
 
 ### Note events
 
