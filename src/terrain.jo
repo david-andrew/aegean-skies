@@ -20,6 +20,7 @@ use 'quality.jo'
 use 'road_material.jo'
 use 'canopy.jo'
 use 'fields.jo'
+use 'field_map.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -56,6 +57,8 @@ struct GroundParams:
     lake_map:Texture=Texture()
     lake_area:vec4=vec4(0,0,0,0)
     canopy: Texture = Texture()     # the crown mass sheet (src/canopy.jo)
+    field_map: Texture = Texture()  # the fields' layout round the camera (src/field_map.jo)
+    field_window: vec4 = vec4(0,0,0,1)  # its valid window: world min x, z, size; its span
     grove: vec4 = vec4(0,0,0,0)     # canopy_paint's grove (src/canopy.jo grove_uniform)
     canopy_light: vec4 = vec4(0,1,0,0)  # the canopy's modelling light (src/canopy.jo canopy_light)
     land_light: vec4 = vec4(0,1,0,0)    # the land's modelling light (src/canopy.jo land_light)
@@ -111,7 +114,8 @@ coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
     local = vec3(inst.origin.x+p.x*14.0,y,inst.origin.y+p.y*14.0)
     world = local+u.origin
     bent = render_warped(local,u.cam,u.warp_a,u.warp_b)
-    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1)),0,s.normal,ground_riparian(u,world.xz,y),land=dot(base_normal,u.land_light.xyz))
+    orchard = orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1))
+    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard,0,s.normal,ground_riparian(u,world.xz,y),land=dot(base_normal,u.land_light.xyz),working=island_fields(world,normalize(base_normal),s.tint.x,orchard,14.0*inst.region.z,u))
 
 # The analytic detail gradient avoids derivative extensions and extra fragment
 # work on WebGL2. It converges to the same continuous field as the fine mesh.
@@ -154,7 +158,8 @@ ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> Ground
     world = local + u.origin
     camera_local = u.cam
     bent = render_warped(local, camera_local, u.warp_a, u.warp_b)
-    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1)),land=dot(sample.normal,u.land_light.xyz))
+    orchard = orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1))
+    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard,land=dot(sample.normal,u.land_light.xyz),working=island_fields(world,normalize(sample.normal),sample.tint.x,orchard,14.0*inst.state.x,u))
 
 # Band-limit the original limestone pattern to the pixel footprint. Retain
 # resolved strata nearby; distant slopes use each pattern's mean, not aliasing.
@@ -276,39 +281,27 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         if large_terrain: veg *= i.tint.w    # high land reuses bare limestone
         c = mix(stone, green, veg)
         # The farmed land (src/fields.jo): straight-edged fields of flat crop colour over the gentle
-        # country, hedgerows and tree lines on a share of their edges, casting their shadows.
-        if canopy_detail > 0:
-            # (a settlement's working land is drawn as the same patchwork, its fields taking the
-            # land's own crops)
-            worked = clamp(dot(i.working,vec4(1,1,1,1)),0.0,1.0)
-            # (the gentle lowland is farmed, the maquis cleared; woods keep the grove field's
-            # pine stands)
-            stands = clamp(grove_pine_cover(i.tint.x,length(n.xz)/max(n.y,0.1),y)*7.0,0.0,1.0)
-            farm = max(field_share(slope,y,stands)*veg,worked)
-            farmed = farm
-            if farm > 0.01:
-                warp = sample(u.coast_pattern,world.xz/6000.0).xy*2.0-vec2(1,1)
-                cell = field_at(world.xz,warp)
-                # (the olive country's fields are olive groves: rows of grey-green trees)
-                if i.orchard > 0.35 and cell.crop.x < 0.7: cell.crop = vec4(0.9,cell.crop.y,1.0,cell.crop.w)
-                if worked > 0.3:
-                    w = i.working
-                    pick = if w.x >= max(w.y,max(w.z,w.w)): (if cell.crop.y < 0.5: 0.25 else: 0.1) else: if w.y >= max(w.z,w.w): 0.62 else: if w.z >= w.w: 0.9 else: (if cell.crop.y < 0.5: 0.37 else: 0.5)
-                    cell.crop = vec4(pick,cell.crop.y,if w.y >= max(w.x,w.w) or w.z >= max(w.x,max(w.y,w.w)): 1.0 else: 0.0,cell.crop.w)
-                crop = field_crop(cell,u.land_palette,footprint)
-                # (far off, the fields' mean: a patchwork below a pixel would shimmer)
-                crop = mix(crop,mix(vec3(0.62,0.55,0.34),vec3(0.38,0.48,0.25),u.land_palette),clamp((footprint-30.0)/40.0,0.0,1.0))
-                c = mix(c,crop,farm*0.92)
-                seen = clamp((8.0-footprint)/5.0,0.0,1.0)
-                # (hedges well below a pixel are their mean darkening only, below)
-                hedges = vec3(0,0,0)
-                if seen > 0.0: hedges = field_hedges(cell,u.canopy_light,footprint)
-                c = mix(c,vec3(0.74,0.67,0.50),field_lane(cell,footprint)*seen*farm)
-                hedge_col = mix(vec3(0.09,0.20,0.11),vec3(0.15,0.28,0.14),hash21(floor(world.xz/7.0)))
-                hedge_col = mix(hedge_col,vec3(0.30,0.42,0.20),hedges.z*0.8)
-                # (a tree line well below a pixel: its share of the field, darker)
-                c = mix(c,hedge_col,(hedges.x*seen+(1.0-seen)*0.08)*farm)
-                field_shadow = hedges.y*seen*farm
+        # country, the same on every tier. The terrain's working channel holds each sample's field
+        # colour and share (baked, src/world_terrain.jo; per vertex on the old islands); the field
+        # map (src/field_map.jo) holds the layout: hedgerows and tree lines on a share of the
+        # field edges, casting their shadows, lanes, and the thin edges where fields meet.
+        farmed = i.working.w*veg
+        c = mix(c,i.working.xyz,farmed)
+        if farmed > 0.01 and footprint < 6.0:
+            rel = world.xz-u.field_window.xy
+            if rel.x > 0.0 and rel.y > 0.0 and rel.x < u.field_window.z and rel.y < u.field_window.z:
+                uv = world.xz/u.field_window.w
+                m = sample(u.field_map,uv)
+                # (the hedge sunward of here, under the canopy light held low: its shadow)
+                toward = u.canopy_light.xz/max(length(u.canopy_light.xz),0.001)
+                cast = sample(u.field_map,uv+toward*(10.0/max(u.canopy_light.y,0.25)*u.canopy_light.w/u.field_window.w)).x
+                seen = clamp((6.0-footprint)*0.25,0.0,1.0)*farmed
+                c = mix(c,vec3(0.74,0.67,0.50),m.y*seen)
+                c *= 1.0-m.z*0.22*seen
+                c = mix(c,mix(vec3(0.09,0.20,0.11),vec3(0.16,0.29,0.14),hash21(floor(world.xz/7.0))),m.x*seen)
+                field_shadow = cast*(1.0-m.x)*seen
+        # (far off, the tree lines below a pixel: their share of the fields, darker)
+        c *= 1.0-0.06*farmed*clamp((footprint-3.0)*0.25,0.0,1.0)
         # The far canopy (src/canopy.jo): the maquis as scattered-to-closed crowns, the groves'
         # own pines among them; its crowns light by their own rounded normals below. A stand
         # thins out into the dry grass over some tens of metres past the summer cover's edge
@@ -375,23 +368,6 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         earth = smoothstep(0.68, 0.8, pb) * veg
         c = mix(c, c * detail, near)
         c = mix(c, vec3(0.55, 0.45, 0.32), earth * near * 0.55)
-    cultivated=dot(i.working,vec4(1,1,1,1))
-    # (low's working map holds its fields' baked colour and share: one mix, no crops to work out)
-    if canopy_detail == 0:
-        c=mix(c,i.working.xyz,i.working.w)
-        cultivated=0.0
-    if cultivated>0.01:
-        # Field colour belongs to the ground, never a coplanar decorative skin.
-        # Rows fade into their mean before they become an aerial shimmer.
-        phase=(world.x*0.8+world.z*0.6)*1.7
-        row=mix(0.5,0.5+0.5*sin(phase),1.0-smoothstep(1.0,4.0,footprint))
-        grain=mix(vec3(0.58,0.43,0.20),vec3(0.69,0.56,0.28),row)
-        vines=mix(vec3(0.40,0.35,0.22),vec3(0.27,0.35,0.18),row)
-        olive=vec3(0.47,0.44,0.29)
-        garden=mix(vec3(0.43,0.32,0.20),vec3(0.32,0.40,0.20),row)
-        crop=(grain*i.working.x+vines*i.working.y+olive*i.working.z+garden*i.working.w)/max(cultivated,0.001)
-        c=mix(c,crop,clamp(cultivated,0.0,1.0)*0.86*(1.0-farmed))
-        canopy_lit*=1.0-clamp(cultivated,0.0,1.0);canopy_shadow*=1.0-clamp(cultivated,0.0,1.0)
     if large_terrain and y>0.5:
         road=road_coverage(u.roads,u.road_rect,i.world.xz,footprint)
         c=mix(c,vec3(0.82,0.75,0.58),road);veg*=1.0-road;canopy_lit*=1.0-road;canopy_shadow*=1.0-road
@@ -437,7 +413,7 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         lit = mix(lit,crown_lit,canopy_lit)
     if canopy_detail > 0: lit *= 1.0-canopy_shadow*(1.0-canopy_lit*0.3)
     # (a hedgerow's shadow: no sun there, the sky's light only)
-    if canopy_detail > 0: lit *= 1.0-field_shadow*0.92
+    lit *= 1.0-field_shadow*0.92
     shade = mix(u.shade,vec3(dot(u.shade,vec3(0.22,0.62,0.16))),(1.0-veg)*0.28)
     light = mix(shade*vec3(0.94,1.08,1.1)+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
     col = c * light
@@ -466,6 +442,14 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         # distant tint: the root-tip response is normalized in the blade shader.
     vec4(land_aerial(col, i.world, u.cam, u.haze, u.fog), 1)
 
+# The old islands' fields, per vertex (their terrain has no baked working channel): colour and
+# share as the new world's tiles bake them. spacing: the vertices' spacing (metres).
+island_fields = (world: vec3,n: vec3,tint_x: f32,orchard: f32,spacing: f32,u: GroundParams) -> vec4:
+    slope = length(n.xz)/max(n.y,0.1)
+    stands = clamp(grove_pine_cover(tint_x,slope,world.y)*7.0,0.0,1.0)
+    warp = sample_lod(u.coast_pattern,world.xz/6000.0,0.0).xy*2.0-vec2(1,1)
+    field_colour(vec4(0,0,0,0),world.xz,world.y,1.0-n.y,stands,orchard,spacing,warp,u.land_palette)
+
 # Both terrain paths share the same coastal and vegetation material rules.
 ground_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false)
 ground_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,0)
@@ -481,6 +465,7 @@ draw_ground = (L: Light, t: f64):
     terrain_prepare = 0.0
     vp = scene_view_proj()
     cam = scene_camera()
+    update_field_map(cam)
     # Length of the vertical projection row removes camera rotation, leaving
     # cot(fov/2). Use the full viewport, including zoom/chase FOV changes.
     focal = f64(length(vec3(vp[0].y, vp[1].y, vp[2].y))) * f64(screen_height()) * 0.5
@@ -521,6 +506,7 @@ draw_ground = (L: Light, t: f64):
             meadow_wind(wind_now, origin), meadow_gust_w(origin), origin, tile.heights, tile.materials, scene_flow, vec4(scene_warp_a.x - origin.x, scene_warp_a.y - origin.z, scene_warp_a.z, scene_warp_a.w), scene_warp_b)
         params.pigment = paint_surface()
         params.canopy = canopy_sheet()
+        params.field_map = field_map_texture(); params.field_window = field_map_window
         # (the islands' groves have their own placement: their painted crowns stand among them)
         params.grove = grove_islands()
         params.canopy_light = canopy_light(L.sun_dir)
