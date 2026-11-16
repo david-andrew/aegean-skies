@@ -901,6 +901,14 @@ On the rivers branch until it lands.
 - **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
   path is held. The default stays the liked model until the user prefers v2.
 - **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+- **Every type, as a player flies it:** `tools/type_survey.jo` flies each player-selectable aircraft
+  on the mouse's aim (as `src/pilot.jo` steers) and sets out a table: the take-off in calm water and
+  in wind 3's swell from three places (landplanes on flat grass), the cruise and the top speed level,
+  a level 45 degree turn, a stall and its recovery, a landing, a taxi turn and coming to rest, and
+  the aim's step, tracking and wiggle. The player's mouse steering (`steer_v2`, not an autopilot's
+  firm one) holds the nose's attitude on the wheels, and never asks the path to turn harder than the
+  wing can at that speed, so a landplane is not sat on her tail on the grass and a flying boat just
+  off the water climbs away instead of being pulled into a stall; `tests/type_flight_test.jo`.
 
 ### Sky Barons port
 
