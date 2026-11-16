@@ -20,10 +20,10 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1242,6 +1242,37 @@ On the rivers branch until it lands.
   `src/world_groves.jo`.
 - **Rules:** don't cut tree counts to pay for paint effects.
 
+### Far canopy
+
+- **Aliases:** the canopy, the crown mass, grove crowns, painted trees, the far tree texture.
+- **Definition:** trees and maquis painted into the ground material, beyond and under the grove
+  meshes, so a wooded hillside reads as a mottled surface of crowns rather than flat green
+  patches. Two classes, both as sparse or dense as the land itself: the **trees** (the streamed
+  groves' own pines, found again in the shader from the same cell query and the same density
+  field: inside the meshes' reach a kept tree's painted crown is only its shade on the ground and
+  nothing is painted where no mesh stands; past it the painted crown is the tree, the tier's
+  thinned trees arriving cell by cell over the next 400 m), and the **maquis** (the summer
+  cover's scrub and understory: a sheet of scalloped crowns at about 9 m, scattered on dry grass
+  at its edges and closed over a shaded floor where it is dense, and farther off the **clumps**
+  they gather in, about 55 m, lightening and darkening the ground's own colour so its mean and its
+  patch edges stay put). On medium and high each crown is lit by its own rounded normal through a
+  wrapped painted ramp (its terminator shifted crown to crown), with a short sunward shadow; on
+  low its light is painted into its colour and the trees are the meshes alone, with their mean
+  past their reach.
+- **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
+  `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
+  `canopy_paint_low`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
+  in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
+  baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
+- **Rules:** one cell query and one density field for meshes and paint: change the new world's
+  placement only through them. No painted tree where no tree stands near the camera. Crowns stay
+  physically sized (they never grow in screen space); the clumps are a second physical octave.
+  Keep the Mediterranean palette (`docs/ART.md`), not the autumn colours of the reference
+  photos. Linear ramps, not `smoothstep`, in these shader paths (each one cost visible time on
+  redfox). The old islands' groves keep their own placement; nothing is painted under their
+  meshes.
+
 ---
 
 ## Towns and people
@@ -2060,6 +2091,32 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Code:** `music_set_piano` (`src/music_synth.jo`), set by `bar_music_load` (`src/bar_band.jo`)
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
+
+### A night under a roof
+
+- **Aliases:** the hotel room, staying the night, the family's spare room, supper with the family.
+- **Definition:** a stay is somewhere one is, not a dark card:
+  - **The hotel's room** is upstairs behind the French window at x = 4 on the sea side. It has an
+    iron bed, a washstand, a chair by the window and a lamp, with the harbour beyond its own
+    balcony; the hotel's mesh is not drawn while one is inside.
+  - **A family's stay** is in the host's own house (their home venue in the living world). At
+    supper (18:00 to 21:30) the host and the household residents they look after sit at the
+    table. The host's lines are their own passing talk from the dialogue (their day, the
+    weather), between the ordinary words of a meal at home; a child asks a question now and then.
+    There is coffee in the morning (05:30 to 11:30).
+  - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
+    window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
+  needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
+  The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
+  show through them; a game saved during a stay loads with the pilot outside, where he went in.
+- **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
+  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`); `stay_begin_hotel`,
+  `stay_begin_family`, `stay_sleep`, `stay_woke`, `stay_end`, `stay_frame`, `draw_stay` and
+  leisure stage 15 in `aegean.jo`; the time skip's `visible` mode; `tests/stay_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
+  stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
+  `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
 
 ### Company
 
