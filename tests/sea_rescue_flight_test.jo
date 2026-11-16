@@ -1,0 +1,121 @@
+use '../src/world.jo'
+use '../src/world_point.jo'
+use '../src/world_towns.jo'
+use '../src/settlements.jo'
+use '../src/geography.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/tweaks.jo'
+use '../src/combat.jo'
+use '../src/scenarios.jo'
+use '../src/pilot.jo'
+use '../src/flight_ground.jo'
+use '../src/war_scene.jo'
+use '../src/vessel_types.jo'
+use '../src/rescue_exchange.jo'
+use '../src/deeds.jo'
+import '../src/living_types.jo' as data
+import '../src/living_world.jo' as living
+
+strait = () -> ScenarioState:
+    global geography_enabled
+    assert(load_land(embed('../assets/terrain.bin')))
+    assert(load_geography(embed('../assets/world.bin')))
+    geography_enabled=true
+    towns=[loop st in SETTLEMENTS:build_town(st)]
+    init_world_towns(towns)
+    set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+    build_scenario("strait",towns,build_craft_models())!
+
+# The player's own aircraft flown by the autopilot along `plan` until `done` says so (or time out);
+# the battle steps alongside, as the game's fixed tick does. Returns the seconds taken.
+fly = (s: mut CraftState, k: CraftSpec, plan: mut FlightPlan, b: mut Battle, most: f64, done: (CraftState,FlightPlan)->bool) -> f64:
+    t = 0.0
+    loop t < most:
+        e = flight_env(f64(b.tick)/60.0,s.position)
+        step(k,s,autopilot(k,s,plan,e),e,1.0/60.0)
+        step_battle(b,e,s.position)
+        t += 1.0/60.0
+        if done(s,plan): return t
+    -1.0
+
+test "a foe ditches in the strait; the player lands beside them in the rough water, takes them aboard and sets them ashore":
+    sc=strait();b=sc.battle;w=sc.world
+    me=combat_index(b,w.people[w.player].craft)
+    foe=-1
+    loop i in 0..b.actors.len():
+        if b.actors[i].side==2 and foe<0:foe=i
+    loop i in 0..b.actors.len():
+        if i!=me and i!=foe:b.actors[i].present=false;b.actors[i].status=.escaped
+    b.actors[me].present=false
+    # (the foe low over the open strait, its engine shot out)
+    f=b.actors[foe]
+    h=0.4;dir=heading_vector(h)
+    f.state.position=vec3(STRAIT_CENTER.x,190,STRAIT_CENTER.z+2500);f.state.orientation=quat_euler(0,-h,0)
+    f.state.velocity=dir*f32(f.spec.cruise_speed*0.6);f.state.precise_ready=false
+    f.previous=f.state.position;f.previous_point=world_point(f.state.position)
+    f.pilot.formation=false
+    f.state.damage.parts[1].health=0.0;refresh_damage(f.spec,f.state)
+    b.actors[foe]=f
+    ditched=-1
+    loop tick in 0..60*180:
+        step_battle(b,flight_env(f64(b.tick)/60.0,b.actors[foe].state.position),b.actors[foe].state.position)
+        if b.actors[foe].ditched:ditched=tick;break
+    print("ditched at {f64(ditched)/60.0:.0} s, bailed {b.actors[foe].bailed}, descents {b.descents.len()}")
+    assert(ditched>0 and b.descents.len()==1 and b.descents[0].phase==.swimming)
+    commit_war_scene(w,VesselFleet(),b)
+    id=-1
+    loop k,v in w.war.survivors:
+        if v.person==b.actors[foe].person:id=k
+    assert(id>=0)
+    in_water=w.war.survivors[id].at
+    assert(f64(length(in_water-b.descents[0].position))<1.0)
+    # (the player, three kilometres off, comes down beside them: touching down well short, running
+    # out and taxiing the last of it up to the swimmer)
+    pk=sc.flyer.spec;ps=sc.flyer.state
+    toward=normalize(vec3(in_water.x-STRAIT_CENTER.x,0,in_water.z-STRAIT_CENTER.z-6000))
+    landing=atan2(f64(toward.x),-f64(toward.z))
+    ps.position=in_water-toward*5000.0+vec3(0,300,0);ps.orientation=quat_euler(0,-landing,0);ps.velocity=toward*f32(pk.cruise_speed*0.8);ps.precise_ready=false
+    plan=FlightPlan(target=in_water-toward*1700.0,taxi_target=in_water-toward*12.0,altitude=300.0,landing_heading=landing,phase=.cruise)
+    took=fly(ps,pk,plan,b,600.0,(s:CraftState,p:FlightPlan)->bool: p.phase==.failed or (s.on_water and f64(length(s.velocity))<3.0 and f64(length(s.position-in_water))<30.0))
+    print("alongside after {took:.0} s, {length(ps.position-in_water):.1} m off, {length(ps.velocity):.2} m/s, phase {plan.phase}, hull {ps.hull_damage:.2}")
+    assert(took>0 and not ps.crashed and not ps.capsized)
+    craft=w.people[w.player].craft
+    w.aircraft[craft].state=.taxi;w.aircraft[craft].pose.pos=ps.position;w.aircraft[craft].pose.vel=ps.velocity
+    assert(living.board_survivors(w,id,w.player)==1)
+    commit_war_scene(w,VesselFleet(),b)
+    assert(b.descents[0].released)
+    # (and to the nearest harbour: the foe's own Lyravanoria, as it happens; up, across and down)
+    home=b.homes[1]
+    touchdown,heading=home_runway(home,flight_env(0.0,home.centre))
+    plan=FlightPlan(target=touchdown,taxi_target=home.dock,altitude=280.0,landing_heading=heading,takeoff_heading=heading(ps),phase=.takeoff)
+    took=fly(ps,pk,plan,b,900.0,(s:CraftState,p:FlightPlan)->bool: p.phase==.done or p.phase==.failed)
+    print("moored after {took:.0} s at {length(vec3(ps.position.x-home.dock.x,0,ps.position.z-home.dock.z)):.1} m from the dock, phase {plan.phase}")
+    assert(took>0 and plan.phase==.done)
+    w.aircraft[craft].state=.moored;w.aircraft[craft].pose.pos=ps.position;w.aircraft[craft].pose.vel=vec3(0,0,0)
+    s=w.war.survivors[id]
+    assert(living.land_survivors(w,id,home.place,w.player)==1)
+    words=rescue_words(w,w.people[s.person].name,s.country,home.place,w.place_contexts[home.place].name,rescue_can_hold(w,s.country,home.place),s.person)
+    print("{words.title}: {words.lines}")
+    rescue_deeds(w,s.person,s.country,home.place,false,[])
+    assert(rescue_is_foe(w,s.country) and not rescue_can_hold(w,s.country,home.place))
+    assert(words.title.contains("home at"))
+    # (the world's minute takes the deeds into its log, as src/reputation.jo does)
+    _ = deeds_keep(w.deeds,deeds_take(),w.minute)
+    assert(deed_count(w.deeds,w.player,.rescued_foe)==1 and deed_count(w.deeds,w.player,.released_prisoner)==1)
+    assert([loop d in w.deeds.entries: (if d.kind==.rescued_foe: d.place else: -9)].contains(home.place))
+    assert(w.war.survivors[id].resolved)
+
+test "the words on the quay: a friend, a foe held as a prisoner, a foe let go":
+    sc=strait();w=sc.world
+    mine=w.people[w.player].citizenship
+    other=if mine==1: 2 else: 1
+    friend=rescue_words(w,"Petros",mine,-1,"Ardevanti",false,3)
+    held=rescue_words(w,"Ilias",other,-1,"Ardevanti",true,4)
+    free=rescue_words(w,"Ilias",other,-1,"Ardevanti",false,5)
+    assert(friend.title.contains("ashore") and held.title.contains("held") and free.title.contains("free"))
+    assert(not rescue_is_foe(w,mine) and rescue_is_foe(w,other))
+    loop words in [friend,held,free]:
+        assert(words.lines.len()==2)
+        loop l in words.lines: assert(not l.contains(" he ") and not l.contains(" she ") and not l.contains(" his ") and not l.contains(" her "))
