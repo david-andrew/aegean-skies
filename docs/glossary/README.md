@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -1586,6 +1586,9 @@ On the rivers branch until it lands.
 - **Rules:** a harbour whose quay cannot reach its houses over ground no steeper than 45° gets one.
   One direction only (no switchbacks): flights stacked over one another in plan cannot share
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
+  Its parapet holds: a step off the treads onto ground more than 0.6 m below them is refused
+  (`stair_parapet_blocks`, also on the island landings' stairs); its foot and top stay open. On a
+  stair the pilot walks at 3.4 m/s (`on_any_stair`).
 - **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
   cliff stair).
 
@@ -1947,6 +1950,30 @@ you watch (`docs/SIM_SPEC.md`, `src/living_*.jo`).
   destroys or renames anyone.
 - **Code:** `src/living_far_people.jo:78 promote_far_person`, `far_people_minute`,
   `far_resident_views`; `FarPerson` in `src/living_far_types.jo`.
+
+### Dock handover
+
+- **Aliases:** the receiver on the dock, hand over the cargo, meeting the aircraft.
+- **Definition:** a flying job's receiver meets the pilot's aircraft on the dock. Once the cargo is
+  aboard, they go down to wait where it comes ashore, whether their home is on the quay or up the
+  hill. They wait until it is due, or for as long as the aircraft is bound there or moored there.
+  They wave as it comes in and ask after it ("Is that the medicine from Eleni?"). When the pilot
+  steps ashore beside them, the card offers **Hand over the medicine**. They thank the pilot and
+  take it from the aircraft, and once it is in their hands the job is delivered and paid through
+  the ledger. Then they walk home with it.
+- **Rules:** the pilot's own cargo comes ashore only at the handover (`cargo_plan_carriage`
+  leaves it aboard until `choose_collection` names who carries it). The waiting is the living
+  world's own day (`cargo_awaited`, `cargo_meeting_spot`), so the scene and the far world agree;
+  one waiting walks the world's way where the scene's paths can't find one. Picking the crate up
+  oneself is offered only when nobody waits for it. A new pilot's first job has at least twelve
+  hours to its due time.
+- **Code:** `src/living_portage.jo` (`cargo_awaited`, `cargo_meeting_spot`,
+  `cargo_awaited_words`); `src/living_life.jo` (the waiting day); `src/life_scene.jo`;
+  `handover_here`, `handover_act`, `handover_frame` in `aegean.jo`; `Folk.waving`. Tests
+  `tests/first_delivery_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_DELIVERY=2 AEGEAN_DELIVERY_MOORED=1` (the medicine for Agios
+  Nikolaos taken, loaded, the aircraft tied up there an hour on); `AEGEAN_DELIVERY_TRACE=1` logs
+  the job.
 
 ### Notices
 

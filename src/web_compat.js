@@ -172,6 +172,21 @@
     return getContext.call(this, kind, options);
   };
   let sceneScale = 1;
+  // The phone's Back gesture closes the panel on top, as Escape does, instead of leaving the game:
+  // while the game has a panel open (it says so every frame) the page keeps a history entry of its
+  // own, and Back, which takes it, becomes an Escape and puts it back. With nothing open, Back
+  // leaves the page as usual.
+  let panelOpen = false, guarded = false;
+  sloppy.env.__aegean_panel_open = (on) => {
+    panelOpen = !!on;
+    if (panelOpen && !guarded) { history.pushState({aegeanPanel: true}, ""); guarded = true; }
+  };
+  window.addEventListener("popstate", () => {
+    guarded = false;
+    if (!panelOpen) return;
+    window.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", code: "Escape"}));
+    requestAnimationFrame(() => requestAnimationFrame(() => window.dispatchEvent(new KeyboardEvent("keyup", {key: "Escape", code: "Escape"}))));
+  });
   sloppy.env.__aegean_scene_scale = () => sceneScale;
   sloppy.env.__aegean_quality = () => {
     const canvas = document.querySelector("canvas"), gl = canvas.getContext("webgl2");
