@@ -736,7 +736,7 @@ On the rivers branch until it lands.
      0.2 m of air under its lowest blade (`PROP_CLEAR_MARGIN`) for three quarters of a second
      (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can carry her
      (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by itself
-     (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then the air
+     (or when `Controls.clutch` asks: the X key, the touch screen's Clutch): the screw is let go first, then the air
      propeller is clutched in and comes off its feather over about 1.4 s. In that gap nothing
      much pushes and she slows. If she drops off her foils with the driven propeller in the sea
      for `FALLEN_TIME` (0.75 s), the screw is clutched back in by itself, at any throttle, so she
