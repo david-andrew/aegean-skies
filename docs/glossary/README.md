@@ -1541,6 +1541,11 @@ On the rivers branch until it lands.
   **Herds** of goats or sheep graze the slopes above villages; a low aircraft scatters them a little.
   Every bird is cut at its **waterline** (`wild_fs`) and rides the sea's swell, so what is under
   the water is not drawn through the transparent sea.
+  A bird's **neck** is two segments and a head (`fowl_neck`, `fowl_neck_frames`): an S with the
+  head level swimming, upright alert, stretched out ahead in flight, straight on down feeding,
+  folded back with the head on the back asleep, turned down over the shoulder preening. Goats
+  are lean and deep-chested with swept-back horns, hanging ears, a beard and a cocked tail; sheep a
+  round, low, lumpy fleece over dark legs with a pale face.
 - **Code:** `src/wildlife.jo` (`wild_scan`, `wild_harbour_raft`, `wild_hill_herd`,
   `wild_raft_kinds`, `wild_threat_level`, `raft_step`, `colony_step`, `herd_step`, `wildlife_step`),
   `src/wildlife_view.jo` (`_fowl_meshes`, `_pose_fowl`, `wild_fs`, `draw_wildlife`,
@@ -1554,7 +1559,10 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_WILD_LOOK="raft|upend|duck|gulls|herd distance height bearing"` with
   `AEGEAN_VIEW`; `AEGEAN_WILD_RAFT="ahead 170 14"` with `AEGEAN_CAPTURE_TAKEOFF=1` (and
   `AEGEAN_LAKE=0` for a lake's run) and `AEGEAN_WILD_WATCH="22 1.4 0.5"` for a raft put up by a
-  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air; `AEGEAN_WILD_TRACE=1`.
+  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air;
+  `AEGEAN_WILD_PORTRAIT="greylag|drake|duck|coot|gosling|gull|goat|sheep distance height bearing"`
+  (turnarounds, the bearing from the animal's own heading), `AEGEAN_WILD_POSE=swim|upend|preen|rest|alert`,
+  `AEGEAN_WILD_SHEEP=1|0`; `AEGEAN_WILD_TRACE=1`.
   On `t3/wildlife`.
 
 ![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
