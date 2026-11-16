@@ -223,7 +223,7 @@ that much disk space. The existing legacy localStorage compact codec remains unc
   measured stay that spans a real autosave.
 - `tools/game_save_probe.jo`: actual game autosave, a real paid fuel purchase, paused manual
   save/load/delete, exact restoration, then 120 resumed frames and full conservation. `GAME_SAVE_CASE=flight`
-  with `AEGEAN_FLYING='300 150'` also checks that flight is not autosaved and manual flight works.
+  with `AEGEAN_FLYING='300 45.5'` also checks that flight is not autosaved and manual flight works.
 - `tools/run_game_save_web.mjs CHROME PAGE.html SCRATCH`: the compiled probe through the real
   Wasm/IndexedDB bridge. Web probes draw before saving and after restore, with intermediate
   renderer work reduced; this is a compatibility/functional proxy, not a phone FPS measurement.

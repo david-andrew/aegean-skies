@@ -44,7 +44,7 @@ def main():
     scratch = Path.home() / 'dev/tmp/aegean-skies/sea-detail-test'
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=scratch) as work:
-        flight = render(work, 'flight', 125, dict(AEGEAN_TITLE='0', AEGEAN_FLYING='8 125', AEGEAN_HOUR='10.69', AEGEAN_WEATHER='fair'))
+        flight = render(work, 'flight', 125, dict(AEGEAN_TITLE='0', AEGEAN_FLYING='8 37.9', AEGEAN_HOUR='10.69', AEGEAN_WEATHER='fair'))
         reel = render(work, 'reel', 400, dict(AEGEAN_TITLE='1', AEGEAN_TITLE_BARE='1', AEGEAN_TITLE_SHOT='low-free', AEGEAN_TITLE_SEED='4'))
     ratio = reel / max(flight, 1e-9)
     print(f'Title reel sea detail: reel {reel:.3f}, flight {flight:.3f}, ratio {ratio:.3f}')

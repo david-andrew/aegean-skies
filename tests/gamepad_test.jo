@@ -1,0 +1,263 @@
+# Gamepads and flight sticks without hardware: synthetic devices (src/controller.jo) fly the
+# player's aircraft through the game's own controls (src/pilot.jo key_controls), and drive menus.
+# env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 SLOPPY_SAVE_DIR=<scratch> sloppy test tests/gamepad_test.jo
+use '../src/sea.jo'
+use '../src/world_point.jo'
+use '../src/flight.jo'
+use '../src/weather_scene.jo'
+use '../src/pilot.jo'
+use '../src/options.jo'
+use '../src/controller.jo'
+use '../src/touch.jo'
+use '../src/head_look.jo'
+import '../src/planes.jo' as planes
+
+const DT = 1.0 / 60.0
+
+# a standard pad: the sticks (x right, y down), the triggers, the buttons held
+pad_state = (lx: f64, ly: f64, rx: f64 = 0.0, ry: f64 = 0.0, lt: f64 = 0.0, rt: f64 = 0.0, held: PadButton[] = []) -> SynthDevice:
+    b = fill(false, 15)
+    loop h in held: b[int(h)] = true
+    SynthDevice(name = "Test pad", standard = true, axes = [lx, ly, rx, ry, lt, rt], buttons = b)
+
+_mode = (f: Flyer) -> int: if f.state.on_water or f.state.moored: 1 else: 0
+
+# one frame of play: the pad as given, the controller read, the game's controls, the flight model
+frame = (f: mut Flyer, p: SynthDevice, e: FlightEnv):
+    _ = controller_inject(p)
+    update_controller(_mode(f), DT, ControlsConfig())
+    c = key_controls(f, DT)
+    if f.state.moored and f.throttle > 0.05: unmoor(f.state)
+    if not f.state.moored: step(f.spec, f.state, c, e, DT)
+
+test "a dead zone, a curve and a sensitivity shape an axis":
+    assert(shape(0.1, 0.12, 1.6, 1.0) == 0.0)
+    assert(shape(-0.1, 0.12, 1.6, 1.0) == 0.0)
+    assert(shape(1.0, 0.12, 1.6, 1.0) == 1.0 and shape(-1.0, 0.12, 1.6, 1.0) == -1.0)
+    # (gentler about the middle than straight, never over 1)
+    half = shape(0.56, 0.12, 1.6, 1.0)
+    assert(half > 0.0 and half < 0.5, "{half}")
+    assert(abs(shape(0.56, 0.12, 1.0, 1.0) - 0.5) < 1e-9)
+    assert(shape(0.8, 0.0, 1.0, 2.0) == 1.0)
+    assert(shape(0.25, 0.0, 1.0, 2.0) == 0.5)
+
+test "a gamepad's sticks, bumpers and triggers reach the flight axes; inverted Y climbs the other way":
+    controller_clear()
+    _ = controller_inject(pad_state(0.5, 1.0, held = [.rb]))
+    update_controller(0, DT, ControlsConfig())
+    assert(ctl.connected and not ctl.stick)
+    assert(ctl.pitch == 1.0 and ctl.roll > 0.2 and ctl.roll < 0.5 and ctl.yaw == 1.0, "{ctl.pitch} {ctl.roll} {ctl.yaw}")
+    c = ControlsConfig()
+    c.pad.axes[AX_PITCH].invert = true
+    _ = controller_inject(pad_state(0.0, 1.0, lt = 1.0))
+    update_controller(0, DT, c)
+    assert(ctl.pitch == -1.0 and ctl.throttle_rate == -1.0)
+    controller_clear()
+
+test "the buttons press the game's keys where they belong: guns aloft, run on foot, Start anywhere":
+    controller_clear()
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.x, .b, .start]))
+    update_controller(0, DT, ControlsConfig())
+    assert(vdown(.space) and vpressed(.space) and vdown(.x) and vpressed(.p) and not vdown(.shift))
+    update_controller(0, DT, ControlsConfig())
+    assert(vdown(.space) and not vpressed(.space))
+    update_controller(2, DT, ControlsConfig())
+    assert(vdown(.shift) and not vdown(.space) and not vdown(.x))
+    controller_clear()
+
+test "A, X and Y choose the things on offer on foot; with none, they press their keys":
+    controller_clear()
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.x]))
+    controller_offers(3)
+    update_controller(2, DT, ControlsConfig())
+    assert(ctl.choice == 1 and not vdown(.r), "{ctl.choice}")
+    controller_offers(3)
+    update_controller(2, DT, ControlsConfig())
+    assert(ctl.choice == -1 and ctl.choice_held == 1, "held, not pressed again")
+    # (nothing on offer: X is R, the second thing's key)
+    _ = controller_inject(pad_state(0.0, 0.0))
+    update_controller(2, DT, ControlsConfig())
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.x, .a]))
+    update_controller(2, DT, ControlsConfig())
+    assert(ctl.choice == -1 and vpressed(.r) and vpressed(.f))
+    # (aboard only A chooses; X is the guns)
+    _ = controller_inject(pad_state(0.0, 0.0))
+    update_controller(1, DT, ControlsConfig())
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.a, .x]))
+    controller_offers(2)
+    update_controller(1, DT, ControlsConfig())
+    assert(ctl.choice == 0 and vdown(.space) and not vdown(.f))
+    controller_clear()
+
+test "the hints name the controller's buttons where the player is":
+    controller_clear()
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.a]))
+    update_controller(1, DT, ControlsConfig())
+    assert(pad_hints())
+    c = ControlsConfig()
+    assert(pad_words("F  step ashore      Shift  open the throttle", c) == "A  step ashore      RT  open the throttle", pad_words("F  step ashore      Shift  open the throttle", c))
+    assert(pad_words("Wrecked.  R  to be towed home", c) == "Wrecked.  D-pad left  to be towed home")
+    update_controller(2, DT, c)
+    assert(pad_words("hold F  haul in the line", c) == "hold A  haul in the line")
+    assert(pad_words("R  leave the waters", c) == "X  leave the waters")
+    assert(offer_button_name(2, c) == "Y" and key_button_name(.p, c) == "Start")
+    assert(pad_card_lines(c, true).len() > 3 and pad_card_lines(c, false).len() > 2)
+    controller_clear()
+
+test "in a menu the d-pad is the arrows, repeating while held; A is Enter, B Escape, the bumpers a page":
+    controller_clear()
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.down]))
+    update_controller(3, DT, ControlsConfig())
+    assert(mkey(.down) and not mkey(.up))
+    presses = 1
+    loop i in 0..60:
+        update_controller(3, DT, ControlsConfig())
+        if mkey(.down): presses += 1
+    # (one at once, then after the delay about eight a second)
+    assert(presses >= 5 and presses <= 8, "{presses}")
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.a, .rb]))
+    update_controller(3, DT, ControlsConfig())
+    assert(mkey(.enter) and ctl.tab == 1 and not vdown(.f))
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.b]))
+    update_controller(3, DT, ControlsConfig())
+    assert(mkey(.escape) and not mkey(.enter))
+    controller_clear()
+
+test "a flight stick: its lever sets the throttle, its twist the rudder, its hat looks about":
+    controller_clear()
+    s = SynthDevice(name = "T.16000M", standard = false)
+    s.raw_axes[0] = 0.0; s.raw_axes[1] = 0.5; s.raw_axes[2] = -1.0; s.raw_axes[3] = 1.0; s.raw_axes[4] = 1.0
+    _ = controller_inject(s)
+    update_controller(0, DT, ControlsConfig())
+    assert(ctl.stick and ctl.pitch > 0.3 and ctl.yaw == -1.0 and ctl.look.x == 1.0, "{ctl.pitch} {ctl.yaw} {ctl.look}")
+    assert(ctl.lever == 0.0, "lever pulled back: closed, {ctl.lever}")
+    s.raw_axes[3] = -1.0
+    _ = controller_inject(s)
+    update_controller(0, DT, ControlsConfig())
+    assert(ctl.lever == 1.0 and ctl.lever_moved)
+    s.raw_buttons[0] = true
+    _ = controller_inject(s)
+    update_controller(0, DT, ControlsConfig())
+    assert(vdown(.space))
+    controller_clear()
+
+test "binding by moving the control: an axis, a pair of buttons for a rudder, a button":
+    controller_clear()
+    s = SynthDevice(name = "Pedals", standard = false)
+    _ = controller_inject(s)
+    update_controller(3, DT, ControlsConfig())
+    capture_begin(AX_RUDDER, -1, true)
+    s.raw_axes[5] = 0.9
+    _ = controller_inject(s)
+    update_controller(3, DT, ControlsConfig())
+    got = capture_take()
+    assert(got != none)
+    b = got!.0
+    assert(b.kind == 4 and b.index == 5 and b.dir == 0 and b.device == "Pedals", "{b}")
+    # (a gamepad: a bumper set for the rudder asks for the other one)
+    _ = controller_inject(pad_state(0.0, 0.0))
+    capture_begin(AX_RUDDER, -1, false)
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.lb]))
+    update_controller(3, DT, ControlsConfig())
+    assert(capture_take() == none and capture.second)
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.lb, .rb]))
+    update_controller(3, DT, ControlsConfig())
+    pair = capture_take()!
+    assert(pair.0.kind == 1 and pair.0.index == int(PadButton.lb) and pair.1.index == int(PadButton.rb))
+    # (a button; the one held as it began does not count until pressed again)
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.a]))
+    update_controller(3, DT, ControlsConfig())
+    capture_begin(-1, 0, false)
+    update_controller(3, DT, ControlsConfig())
+    assert(capture_take() == none)
+    _ = controller_inject(pad_state(0.0, 0.0, held = [.a, .y]))
+    update_controller(3, DT, ControlsConfig())
+    one = capture_take()!
+    assert(one.0.kind == 1 and one.0.index == int(PadButton.y) and bind_name(one.0) == "Y")
+    controller_clear()
+
+test "a device's name as a browser gives it, its additions taken off":
+    assert(device_label("Thrustmaster T.16000M (Vendor: 044f Product: b10a)") == "Thrustmaster T.16000M")
+    assert(device_label("Xbox 360 Controller (XInput STANDARD GAMEPAD)") == "Xbox 360 Controller")
+    assert(device_label("045e-028e-Microsoft X-Box 360 pad") == "Microsoft X-Box 360 pad")
+    assert(device_label("Saitek Pro Flight Rudder Pedals") == "Saitek Pro Flight Rudder Pedals")
+    assert(device_label("Pad (wired)") == "Pad (wired)" and device_label("") == "")
+
+struct OldOptions:
+    tilt_aim = false
+    tilt_gain = 1.0
+    mouse_steers = true
+    invert_y = false
+    tipsy_sway = true
+    walk_left = false
+    music_notes = true
+
+test "the controls are kept with the options, and an older options file still loads":
+    _ = save_value("gamepad-test-options", OldOptions(tilt_gain = 2.0, walk_left = true))
+    o = load_value("gamepad-test-options", Options())
+    assert(o.tilt_gain == 2.0 and o.walk_left and o.controls.pad.axes.len() == AXES and o.controls.stick.buttons.len() == ACTIONS)
+    o.controls.pad.axes[AX_ROLL].deadzone = 0.3
+    o.controls.stick.axes[AX_LEVER].bind = Bind(kind = 4, index = 6, device = "Throttle")
+    o.controls.kind = 2
+    _ = save_value("gamepad-test-options", o)
+    back = load_value("gamepad-test-options", Options())
+    assert(back == o)
+
+# the heading, the nose above the horizon, the bank (right wing down positive)
+att = (st: CraftState) -> (f64, f64, f64):
+    fw = quat_rotate(st.orientation, vec3(0, 0, -1))
+    r = quat_rotate(st.orientation, vec3(1, 0, 0))
+    u = quat_rotate(st.orientation, vec3(0, 1, 0))
+    (heading(st), asin(clamp(f64(fw.y), -1.0, 1.0)), atan2(-f64(r.y), f64(u.y)))
+
+# Pitch and roll toward an attitude on the left stick (y down: back climbs), as a player would.
+_hold = (f: Flyer, climb: f64, bank: f64) -> vec2:
+    hd, pitch, now_bank = att(f.state)
+    w = f.state.angular_velocity
+    lx = clamp((bank - now_bank) * 1.6 - f64(dot(w, quat_rotate(f.state.orientation, vec3(0, 0, -1)))) * 0.25, -1.0, 1.0)
+    ly = clamp((climb - pitch) * 3.0, -1.0, 1.0)
+    vec2(f32(lx), f32(ly))
+
+test "a synthetic gamepad flies a take-off, a turn and a landing":
+    controller_clear()
+    model = planes.build_craft(.gull, planes.LIVERIES[0])
+    f = make_flyer(.gull, 0, model.contacts, vec3(0, 0, 0), 0.0)
+    f.state.fuel = f.spec.fuel_capacity
+    e = FlightEnv()
+    # take-off: RT opens the throttle; the stick held level till she runs fast, then back
+    airborne = -1.0
+    loop i in 0..60 * 60:
+        st = f.state
+        fast = st.airspeed > f.spec.stall_speed * 0.95
+        s = if st.on_water: vec2(0, f32(if fast: 0.6 else: 0.0)) else: _hold(f, 0.12, 0.0)
+        frame(f, pad_state(f64(s.x), f64(s.y), rt = if f.throttle < 1.0: 1.0 else: 0.0), e)
+        if airborne < 0.0 and not f.state.on_water and f.state.position.y > f.spec.float_height + 5.0: airborne = f.state.time
+        if f.state.position.y > 120.0: break
+    print("gamepad take-off: off the water at {airborne:.1}s, 120 m at {f.state.time:.1}s, throttle {f.throttle:.2}")
+    assert(airborne > 0.0 and f.state.position.y > 120.0 and not f.state.crashed and f.state.hull_damage < 0.05)
+    assert(f.throttle == 1.0)
+    # a turn: banked right with the stick, held round to the right by 90 degrees, rolled out
+    start = heading(f.state)
+    turned = 0.0
+    loop i in 0..60 * 60:
+        turned = angle_delta(heading(f.state), start)
+        level = abs(turned) > 1.45
+        s = _hold(f, 0.03, if level: 0.0 else: 0.6)
+        frame(f, pad_state(f64(s.x), f64(s.y)), e)
+        if level and abs(att(f.state).2) < 0.08: break
+    print("gamepad turn: {turned * 57.3:.0} degrees in {f.state.time:.1}s, altitude {f.state.position.y:.0} m")
+    assert(abs(turned) > 1.45 and abs(turned) < 2.0 and f.state.position.y > 60.0 and not f.state.crashed, "{turned}")
+    # the landing: LT back to a third, a gentle descent, the flare low over the water, closed
+    loop i in 0..60 * 240:
+        st = f.state
+        h = f64(st.position.y) - f.spec.float_height
+        want = if h > 6.0: 0.35 else: 0.0
+        lt = if f.throttle > want + 0.02: 1.0 else: 0.0
+        # (the stick for a rate of descent: three metres a second, half a metre in the flare)
+        sink = if h > 5.0: -3.0 else: -0.5
+        s = if st.on_water: vec2(0, 0) else: vec2(_hold(f, 0.0, 0.0).x, f32(clamp((sink - f64(st.velocity.y)) * 0.25, -1.0, 1.0)))
+        frame(f, pad_state(f64(s.x), f64(s.y), lt = lt), e)
+        if st.on_water and st.airspeed < 3.0: break
+    print("gamepad landing: on the water at {f.state.time:.1}s, speed {f.state.airspeed:.1}, damage {f.state.hull_damage:.3}")
+    assert(f.state.on_water and not f.state.crashed and not f.state.capsized and f.state.hull_damage < 0.1)
+    controller_clear()

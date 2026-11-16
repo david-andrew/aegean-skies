@@ -59,7 +59,7 @@ try {
     {id:'pheryalara',env:{AEGEAN_AT:'14263.08 -170005.45 -1.176',SLOPPY_INPUT:'60:w+ 239:w-'}},
     {id:'cockpit',env:{AEGEAN_ABOARD:'1',SLOPPY_INPUT:'60:v+ 61:v-'}},
     {id:'orbit',env:{AEGEAN_CAPTURE_ORBIT:'9 0.8 0.35'}},
-    {id:'cloud',env:{AEGEAN_FLYING:'950 190',AEGEAN_WEATHER:'overcast',SLOPPY_INPUT:'60:v+ 61:v-'}}
+    {id:'cloud',env:{AEGEAN_FLYING:'950 57.6',AEGEAN_WEATHER:'overcast',SLOPPY_INPUT:'60:v+ 61:v-'}}
   ];
   const cases=[...['low','medium'].map(quality=>({quality,full:false,id:'quay',env:{}})),{quality:'medium',full:true,id:'quay',env:{}},
     ...extraScenes.flatMap(scene=>[false,true].map(full=>({...scene,quality:'medium',full})))];

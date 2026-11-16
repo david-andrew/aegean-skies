@@ -71,5 +71,5 @@ seabed transparency, shoreline opacity, waves, wakes and shelter data are
 unchanged. The restored pre-painted sea microdetail is preserved byte-for-byte:
 no change to mark/glint density, scale, advection, intensity or reflection.
 Only the shallow/deep body-colour interpolation weight changes. Low fast
-passes (`AEGEAN_FLYING="60 150"`) belong in every future sea visual check.
+passes (`AEGEAN_FLYING="60 45.5"`) belong in every future sea visual check.
 The shader adds no texture, sampler, varying or world record.

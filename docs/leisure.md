@@ -115,12 +115,26 @@ funny or useful (time passes, people are met, the plane is looked after).
     - a chandler's sells new ones, put on the counter;
     - a bucket set down stays there, and saves keep every bucket where it is.
 
+## Built (round eight)
+
+18. **Sitting down at the bar too**: ordering at the bar seats the pilot on a stool, and what is
+   ordered is brought there. Seated anywhere, the view turns about him (a drag with either mouse
+   button off the table's bar, the right stick, a finger) and the wheel or a pinch brings it
+   nearer or farther, kept out of the walls; Get up stands apart at the end of the bar.
+19. **Each thing's button is a bar** of how much of it is left, draining as one eats or drinks,
+   as the plate and the glass on the table do.
+20. **Company, now and then** (about one sitting in seven): someone from the town (a pilot, at
+   the hotel, or someone the pilot knows, more likely than a stranger) comes over. At a table
+   they ask first; at the bar they take the next stool, and may or may not talk. Sitting, they
+   pass an ordinary remark now and then, and Talk to them opens the whole conversation. See
+   "Company" in the glossary.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
   orders standing; **F** at the land-side door asks for a room. **F** at the coffee house's table
   sits there. Near one's moored aircraft: **G** works on it. Every prompt card is tappable.
-- Seated (or standing at the bar): the bar along the bottom. What is on the table, 1 to 6 (or
+- Seated (at a table or on a stool at the bar): the bar along the bottom. What is on the table, 1 to 6 (or
   their buttons): hold to drink or eat, let go to keep it in hand; another, or Escape, puts it
   down. Then the actions, each on a letter: M the bill of fare, W wait an hour, G have one's catch
   grilled, T tavli, P the paper, S ask for a song, R take a room, K talk to whoever is near, Escape
@@ -134,7 +148,7 @@ funny or useful (time passes, people are met, the plane is looked after).
   back, and Escape asks before giving up. By finger: tap, tap.
 - The paper: wheel, arrow and page keys, a finger's drag, or the up and down buttons; Escape
   puts it down.
-- At the hotel in the evening: "Ask for a song". With fish: "Have your catch grilled" seated, or
+- At the hotel, any hour it is open: "Ask for a song" (a player who isn't here can be sent for: the panel offers the boy, for a tip). With fish: "Have your catch grilled" seated, or
   the card at the bar or the terrace table ("have the kitchen grill your catch").
 - Fishing: **F** at the water's edge on a dock in a harbour town. F, Space or the first button
   casts and strikes. With a fish in the hand: **B** (or the button) puts it in the bucket, **X** throws
