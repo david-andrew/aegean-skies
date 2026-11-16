@@ -9,6 +9,26 @@ point and a cautious pair behind him. The fight is kept under the overcast's bas
 
 The first situation starts at 09:30 on day zero. Kalyra's blue-and-white Gull flight meets Orenthia's navy-and-gold flight (both carry their national roundels) over the eastern channel. Eight aircraft per side approach from roughly six kilometres apart. The player starts at the back of a loose V, with cruise power already set. The saved weather combines an overcast deck and a mild rain cell: about 650 m cloud base, above a 440–500 m approach. The cloud layer remains the normal three-dimensional weather and can be flown through.
 
+**How the strait ends.** A side breaks off when it has lost half its aircraft and is outnumbered
+two to one by those still fighting; a side with no enemy left fighting turns for home too. Pilots
+going home, or withdrawing hurt, no longer hold the fight open (`Battle.finished`). Each side's base
+is its country's harbour nearest the strait (`strait_homes`: Kalyra to Ardevanti, 89 km;
+Orenthia to Lyravanoria, 4 km). Its pilots form on the leader in their own slots, the player's slot
+left open and marked with a faint ring; the leader flies the autopilot's approach and the rest
+circle the bay, stacked, and land in turn 25 s apart, each taxiing to its own mooring along the
+quay, where its pilot stands afterwards. The radio's words show over each Morse cue
+(`src/homeward_view.jo`). Flying 40 s in the slot and landing at the base records
+`flew_home_in_formation`; going 7 km from the fight while it is on records `left_the_fight`.
+
+**Pilots in the water.** A pilot shot down low over the sea with the engine gone and the aircraft
+still answering ditches rather than jumps (`_can_ditch`, `_ditch_controls`), and climbs out beside
+the floating aircraft; others come down under the canopy. Either way they wait in the water in a
+yellow life vest, a green marker dye spreading round them, waving at aircraft that come near
+(`src/survivor_view.jo`), for a day. The living world's rescue takes it from there: land, taxi
+alongside, F to take them aboard, moor at a harbour, F to set them ashore. A foe set ashore in the
+player's own country's harbour can be handed to the guard (F) or let go (R). A few words are said
+on the quay (`src/rescue_exchange.jo`), and the deeds are recorded (`src/deeds.jo`).
+
 ## Ownership and loading
 
 `src/scenario_catalog.jo` supplies stable keys, names and one-line descriptions. `build_scenario(key, towns, models)` in `src/scenarios.jo` dispatches a builder and returns an optional `ScenarioState`. Unknown keys return none. Builders create a fresh seeded `World`; they do not edit the running world or read input/cosmetic randomness. The result contains the entire living world (including its clock, people, diplomacy, jobs, weather and boats), physical player aircraft, player mode/position, combat aircraft, vessels and camera settings. Terrain and meshes are existing shared resources.
