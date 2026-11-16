@@ -165,6 +165,13 @@ Sentence intonation and vocal effort are learned from the speaker (round 5,
   takes (round 4's model 0.44) at 3.5 st RMS (4.3); two takes of the same line by the speaker
   correlate 0.55 at the syllable level, so that is about the ceiling.
 
+A line's intended energy (round 6b): script lines carry an energy (1 calm .. 5 all out). From the
+speaker's takes of the genres that vary in it, `tune_round.energy_effect` fits one slope per cue
+(pitch, log range, log tempo, brightness as tilt) shared by the genres, each genre keeping its own
+usual energy (`energy_effect`, `energy_ref_<genre>` in the data file); `VoiceStyle.energy` applies
+it in the game, and voicelab and the evaluation pass each line's energy (`name|text|energy`). The
+game's own bulletins do not set an energy yet, so in the game a genre reads at its usual one.
+
 The voice studio's "Tune" button starts a round. The recordings, voices and rounds all stay in
 scratch.
 
