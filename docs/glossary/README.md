@@ -1556,6 +1556,10 @@ On the rivers branch until it lands.
   beach or a dock's side), not into the sea. The world audit still checks every place is
   reachable without wading at all.
 - **Code:** `src/objects.jo WALK_WADE_DEPTH`, `walk_step_precise`.
+- **Rules:** the limit is under the still water (a lake or river's level, else the sea's mean), never
+  the swell's. Anyone standing deeper than it (out of a swim, put down by a load) may still walk
+  toward ground rising that way (3-9 m ahead against 3-9 m behind), so no one is ever left with
+  nowhere to step; going deeper from there is refused.
 
 ### Camera wall check
 
@@ -2030,7 +2034,14 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the approved splash look. At night the moon's glitter lies on the sea (silver and faint, only
   once the sun is well down; the speed flecks untouched). Saving mid-swim keeps the pilot where he
   went in.
-- **Code:** `src/swimming.jo`; the moon in `src/sea.jo`; `tests/swimming_test.jo`.
+- **Rules:** swimming, wading and coming out go by the depth under the still water (`still` in
+  `swim_step`), with a band of 15 cm either side of the swimming depth so a passing wave never
+  flips one into the other, and the swell only lifts the swimmer (never below the ground). In a
+  rough sea the troughs once ended a swim on sand two metres under still water, where walking
+  refused every step; `tests/swim_ashore_test.jo` swims ashore in a 14 m/s wind at several beaches
+  and wave phases and walks up the beach and back.
+- **Code:** `src/swimming.jo`; the moon in `src/sea.jo`; `tests/swimming_test.jo`,
+  `tests/swim_ashore_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=swim-dock|swim-beach|swim-wade|swim-night`.
 
 ### Stargazing
