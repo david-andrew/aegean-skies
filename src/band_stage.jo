@@ -1,0 +1,144 @@
+# The Hotel Ancora's band on its stand, as the world has it (src/band_life.jo): the numbers of the
+# set published to the world (who plays each, their places on the stand and the steps up to them),
+# and the players drawn there: stepping up and walking to their place, picking up the instrument,
+# playing when the number has begun, and after their last number putting it down where it lives on
+# the stand (or closing the piano), walking back to the step and down. Off the stand they are the
+# town's (src/townsfolk.jo), walking, sitting at the band's table, going home.
+
+use 'look.jo'
+use 'render_space.jo'
+use 'objects.jo'
+use 'folk.jo'
+use 'life_types.jo'
+use 'music_data.jo'
+use 'music_synth.jo'
+use 'musician_pose.jo'
+use 'bar_scene.jo'
+use 'bar_band.jo'
+use 'band_roster.jo'
+
+# Where each role steps up, along the stand's front edge (toward the terrace's tables): metres
+# across the stand from its middle. (Apart, so those waiting there don't crowd each other.)
+STEP_ACROSS = [0.0, -1.5, 0.8, 1.6]
+
+# The set as the world knows it.
+band_numbers = (h: HotelScene) -> BandNumber[]:
+    out: BandNumber[]
+    loop k in 0..BAR_SET.len():
+        sp = BAR_SET[k]
+        n = BandNumber(int(f64(MUSIC_PIECES[sp.piece].frames) / f64(MUSIC_RATE) * 60.0), [])
+        n.spots = fill(h.stage, 4); n.steps = fill(h.stage, 4); n.yaws = fill(0.0, 4)
+        loop s in band_spots(h, sp.lineup, sp.sung.len() > 0):
+            if s.instrument < 0: continue
+            n.roles.push(s.who)
+            n.spots[s.who] = s.pos; n.yaws[s.who] = s.yaw
+            n.steps[s.who] = band_stand_world(h, STAND_HALF_OUT + 0.35, STEP_ACROSS[s.who], 0.0)
+        out.push(n)
+    out
+
+# Where instruments rest on the stand when no one holds them: a row along its back (local metres:
+# along the shore, across), and how each lies.
+_rest_at = (h: HotelScene, instrument: int) -> mat4:
+    at = (a: f64, c: f64, lift: f64) -> mat4: translation(band_stand_world(h, a, c, STAND_HEIGHT + lift))
+    yaw = atan2(f64(h.stage_out.x), f64(h.stage_out.z))
+    match instrument:
+        0: at(-1.75, 0.3, 0.03) * rotation_y(yaw) * rotation_x(0.0)
+        7: at(-1.85, 0.9, 0.48) * rotation_y(yaw + PI * 0.5) * rotation_z(1.25)
+        8: at(-1.75, 1.5, 0.05) * rotation_y(yaw) * rotation_x(-PI * 0.5)
+        9: at(-1.7, 2.1, 0.18) * rotation_y(yaw)
+        4: at(-1.75, 2.6, 0.02) * rotation_y(yaw) * rotation_z(PI * 0.5)
+        13: at(-1.95, -0.3, 0.0) * rotation_y(yaw + PI) * rotation_x(-0.12)
+        _: at(-1.75, 0.3, 0.05)
+
+_rest_mesh = (k: InstrumentKit, instrument: int) -> Mesh:
+    match instrument:
+        0: k.violin
+        7: k.guitar
+        8: k.mandolin
+        9: k.box_right
+        4: k.clarinet
+        _: k.bass
+
+# A player's state on the stand, for drawing.
+struct StagePlayer:
+    person: int
+    role: int
+    number: int                     # (whose place)
+    up = -1                         # the tick they stepped up (called)
+    down = -1                       # the tick they are down (putting away; -1: not)
+
+stage_players = (b: BandState) -> StagePlayer[]:
+    out: StagePlayer[]
+    number = if b.index >= 0: b.index else: b.last
+    loop k in 0..b.called.len():
+        if b.up[k] >= 0 and number >= 0: out.push(StagePlayer(b.called[k], b.roles[k], number, b.up[k]))
+    loop k in 0..b.packing.len():
+        out.push(StagePlayer(b.packing[k], b.packing_role[k], b.packing_number[k], -1, b.packing_until[k]))
+    out
+
+# A walk from a to b, from the deck up onto the stand (or down, `up` false), u 0..1: the place,
+# raised by the step over the first (last) quarter.
+_stage_walk = (a: vec3, b: vec3, u: f64, up: bool) -> vec3:
+    p = lerp(a, b, f32(u * u * (3.0 - 2.0 * u)))
+    lift = if up: smoothstep(0.0, 0.25, u) else: 1.0 - smoothstep(0.75, 1.0, u)
+    p + vec3(0, f32(STAND_HEIGHT * lift), 0)
+
+# The players on the stand: `figs` each role's player's own figure (`has` false where they aren't
+# in the town to draw), `tick` the world's, `ms` seconds into the number heard (perf's).
+draw_band_people = (h: HotelScene, b: Band, band: BandState, tick: int, figs: Figure[], has: bool[], perf: Performance, L: Light, t: f64):
+    if not h.ok or band.numbers.len() == 0 or length(h.stage - scene_camera()) > 160.0: return
+    near = length(h.stage - scene_camera()) < 40.0
+    held: int[]
+    piano_open = false
+    playing = band_playing(band, tick)
+    loop sp in stage_players(band):
+        if sp.role < 0 or sp.role >= figs.len() or not has[sp.role]: continue
+        number = band.numbers[sp.number]
+        step = number.steps[sp.role]; place = number.spots[sp.role]
+        fig = figs[sp.role]
+        spot: BandSpot? = none
+        loop s in band_spots(h, BAR_SET[sp.number].lineup, BAR_SET[sp.number].sung.len() > 0):
+            if s.who == sp.role and s.instrument >= 0: spot = s
+        if spot == none: continue
+        s = spot!
+        if sp.down < 0:
+            age = tick - sp.up
+            if age < BAND_CLIMB:
+                # up the step and across to the place
+                u = f64(age) / f64(BAND_CLIMB)
+                pos = _stage_walk(step, place, u, true)
+                dir = place - step
+                draw_figure(fig, pos, atan2(f64(dir.x), f64(dir.z)), f64(age) / 60.0 * 7.5, 0.7, L, t)
+                continue
+            # in place: the instrument picked up, ready, and playing once the number has begun
+            held.push(s.instrument)
+            if s.instrument == 6: piano_open = true
+            ms = if playing and sp.number == band.index: perf.seconds else: -100.0
+            draw_band_player(b, s, fig, perf, ms, L, t)
+        else:
+            left = sp.down - tick
+            if left > BAND_PACK / 2:
+                # putting it down where it lives (the piano closed): standing at the place
+                yaw = s.yaw
+                if s.instrument == 6: yaw = s.yaw + PI * 0.5
+                draw_figure(fig, place, yaw, 0.0, 0.0, L, t)
+            else:
+                # back to the step and down
+                u = 1.0 - f64(max(left, 0)) / f64(BAND_PACK / 2)
+                pos = _stage_walk(place, step, u, false)
+                dir = step - place
+                draw_figure(fig, pos, atan2(f64(dir.x), f64(dir.z)), f64(left) / 60.0 * 7.5, 0.7, L, t)
+    # the instruments no one holds, where they live on the stand; the piano's lid
+    if near:
+        loop instrument in [0, 7, 8, 9, 4, 13]:
+            if instrument in held: continue
+            at = _rest_at(h, instrument)
+            if instrument == 9:
+                # (the accordion shut: its two ends and the bellows folded between)
+                draw(obj_sh, b.kit.box_right, obj_params(L, t, at * translation(vec3(0.09, 0, 0))))
+                draw(obj_sh, b.kit.bellows, obj_params(L, t, at * scaling(vec3(0.1, 1, 1))))
+                draw(obj_sh, b.kit.box_left, obj_params(L, t, at * translation(vec3(-0.085, 0, 0))))
+            else: draw(obj_sh, _rest_mesh(b.kit, instrument), obj_params(L, t, at))
+        if length(h.stage - scene_camera()) < 25.0:
+            draw(obj_sh, b.kit.keys, obj_params(L, t, band_keys_at(h)))
+        if not piano_open: draw(obj_sh, b.kit.lid, obj_params(L, t, band_keys_at(h)))
