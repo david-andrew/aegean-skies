@@ -13,7 +13,10 @@ The first situation starts at 09:30 on day zero. Kalyra's blue-and-white Gull fl
 two to one by those still fighting; a side with no enemy left fighting turns for home too. Pilots
 going home, or withdrawing hurt, no longer hold the fight open (`Battle.finished`). Each side's base
 is its country's harbour nearest the strait (`strait_homes`: Kalyra to Ardevanti, 89 km;
-Orenthia to Lyravanoria, 4 km). Its pilots form on the leader in their own slots, the player's slot
+Orenthia to Lyravanoria, 4 km). Scattered by the fight, they first regroup at a rally point
+under the cloud (over the fight for the winners, 5 km toward home for the beaten): each flies to
+it and circles, calling in on the radio, for at least a minute and at most two and a half (a
+straggler waited for). Then its pilots form on the leader in their own slots, the player's slot
 left open and marked with a faint ring; the leader flies the autopilot's approach and the rest
 circle the bay, stacked, and land in turn 25 s apart, each taxiing to its own mooring along the
 quay, where its pilot stands afterwards. The radio's words show over each Morse cue
@@ -23,7 +26,7 @@ quay, where its pilot stands afterwards. The radio's words show over each Morse 
 **Pilots in the water.** A pilot shot down low over the sea with the engine gone and the aircraft
 still answering ditches rather than jumps (`_can_ditch`, `_ditch_controls`), and climbs out beside
 the floating aircraft; others come down under the canopy. Either way they wait in the water in a
-yellow life vest, a green marker dye spreading round them, waving at aircraft that come near
+life vest of the period (kapok in buff canvas pockets), waving at aircraft that come near
 (`src/survivor_view.jo`), for a day. The living world's rescue takes it from there: land, taxi
 alongside, F to take them aboard, moor at a harbour, F to set them ashore. A foe set ashore in the
 player's own country's harbour can be handed to the guard (F) or let go (R). A few words are said

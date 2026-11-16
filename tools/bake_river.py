@@ -92,8 +92,14 @@ for k in range(len(controls)-1):
   t=j/10
   canal.append(tuple(.5*((2*p1[d])+(-p0[d]+p2[d])*t+(2*p0[d]-5*p1[d]+4*p2[d]-p3[d])*t*t+(-p0[d]+3*p1[d]-3*p2[d]+p3[d])*t*t*t) for d in range(2)))
 canal.append((length,0))
+# Partway along, where the mill-water arm joins it, the canal opens into a basin some 120 m across
+# (stations 44-53): room to turn on the water between the narrow cuts.
+def canal_width(j):
+ base=20.0 if j<20 else 18.0
+ if 44<j<53:base+=42.0*math.sin(math.pi*(j-44)/9)**2
+ return base
 for j,(x,z) in enumerate(canal):
- u=j/(len(canal)-1);pts.append([a[0]+dx*x+sx*z,a[1]+dz*x+sz*z,a[2]*(1-u)+b[2]*u,0]);widths.append(20.0 if j<20 else 18.0)
+ u=j/(len(canal)-1);pts.append([a[0]+dx*x+sx*z,a[1]+dz*x+sz*z,a[2]*(1-u)+b[2]*u,0]);widths.append(canal_width(j))
 canal_finish=len(pts)-1
 # Two short commercial arms: a timber basin and a mill-water junction.
 for station,sign in [(32,-1),(48,1)]:
