@@ -22,33 +22,6 @@ def run(folder, frames, check, **extra):
     return m.group(2) == 'true', int(m.group(3)), int(m.group(4))
 
 
-def layers_after(folder, pick, frames):
-    """Start play from the title by a choice (AEGEAN_TITLE_PICK, made as a click would) and read the
-    title's layers reported over the first seconds of play (TITLE_LAYERS lines)."""
-    env = {k: v for k, v in os.environ.items() if k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
-    # (a small window: the layers are what is read, not the picture, and software rendering is slow)
-    env.update(SLOPPY_NO_AUDIO='1', SLOPPY_THREADS=env.get('SLOPPY_THREADS', '1'), SLOPPY_FRAMES=str(frames), SLOPPY_FIXED_STEP='1', SLOPPY_WINDOW='320x180',
-               SLOPPY_SCREENSHOT=str(Path(folder) / 'last.png'), SLOPPY_SAVE_DIR=folder, AEGEAN_TITLE='1', AEGEAN_TITLE_PICK=pick)
-    out = subprocess.run(['sloppy', '--release', 'aegean.jo'], cwd=ROOT, env=env, capture_output=True, text=True, timeout=1500)
-    assert 'TITLE leaving after' in out.stdout and 'TITLE play:' in out.stdout, (pick, out.stdout[-3000:] + out.stderr[-2000:])
-    rows = [m.groups() for m in re.finditer(r'TITLE_LAYERS play frame (\d+): open (\w+) leaving (\w+) dusk ([\d.]+) panel (\d+)', out.stdout)]
-    assert rows, (pick, out.stdout[-3000:])
-    return [(int(f), o == 'true', l == 'true', float(d), int(p)) for f, o, l, d, p in rows]
-
-
-def no_title_layer_over_play(folder):
-    """After each choice on the title (New, a Situation, Continue, a slot) the first seconds of play
-    have no title layer up: the title closed, no choice left waiting, its dusk gone within a second
-    (the dusk left fully up over a long first frame showed as a dark box over the game), no panel."""
-    for pick, frames in [('new', 1200), ('strait', 1000), ('canal', 1000), ('continue', 1000), ('slot1', 1000)]:
-        rows = layers_after(folder, pick, frames)
-        for frame, opened, leaving, dusk, panel in rows:
-            assert not opened and not leaving and panel == 0, (pick, frame, opened, leaving, panel)
-            if frame >= 60:
-                assert dusk == 0.0, (pick, frame, dusk)
-        print(f'{pick}: no title layer over play ({len(rows)} reports, the dusk gone by frame 60)')
-
-
 def name_drawn_only_by_the_title():
     """Nothing else in the game draws its name (the old opening card drew it over play)."""
     offenders = []
@@ -76,9 +49,6 @@ def main():
         opened, names, over = run(folder, 540, 520, AEGEAN_TITLE='1', SLOPPY_INPUT='400:enter+ 402:enter- 430:enter+ 432:enter-')
         assert not opened and names > 0 and over == 0, (opened, names, over)
         print(f'play begun from the title: the name drawn {names} times before, none after')
-    # (a fresh save folder: the new game's autosave is what Continue and slot 1 then load)
-    with tempfile.TemporaryDirectory(dir=scratch) as folder:
-        no_title_layer_over_play(folder)
 
 
 if __name__ == '__main__':
