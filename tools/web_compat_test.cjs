@@ -84,3 +84,15 @@ const desktop4k=resolutionPlan(2149,1209,1920,1080,2,518400,false);
 assert.deepEqual(desktop4k.display,[3840,2160]);
 assert.deepEqual(desktop4k.scene,[960,540]);
 
+
+// Samplers read at highp: GLSL ES defaults sampler2D to lowp (fp16 texture reads on phones).
+{
+  const {highpSamplers}=require('../src/web_compat.js');
+  const src='#version 300 es\nprecision highp float;\nprecision highp int;\nuniform sampler2D t;\nout vec4 o;\nvoid main(){o=texture(t,vec2(0));}\n';
+  const h=highpSamplers(src);
+  assert.match(h,/^precision highp float;\nprecision highp sampler2D;$/m);
+  assert.equal(highpSamplers(h),h);
+  const plain='#version 300 es\nprecision mediump float;\nuniform sampler2D t;\nout vec4 o;\nvoid main(){o=texture(t,vec2(0));}\n';
+  assert.equal(highpSamplers(plain),plain);
+  console.log('Highp sampler precision passed');
+}
