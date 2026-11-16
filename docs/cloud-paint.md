@@ -27,7 +27,9 @@ x half-width as 1:
 - **mass:** a large complex of cells.
 
 `cloud_heap` fills an elliptical footprint layer by layer. Its profile narrows
-with height: a low dome for humilis, a column with a rounded head for a turret.
+with height: a low dome for humilis; for a turret, lobes piled on the flat base and
+narrowing all the way to a domed head (a profile power of 1.4 to 2.2), each layer
+stepped a little aside from the last, rather than a straight-sided column.
 Exposed lobes carry the cauliflower: smaller heads, then smaller heads again,
 never below one voxel. A shared cut gives every form the same flat condensation
 base, at `p.y = -CLOUD_BASE` in the box. Fractus bases are torn rather than cut.
@@ -89,6 +91,11 @@ cloud, scaled up from 0.4 while the heaped form wears away inside it.
 skeleton of holes. Below the band only the heaped form shows, above it only
 the tower.
 
+Stratus slivers (weather kind 13): in fair and towers weather, thin, flat, faintly lit
+bands just above the cumulus bases, long along the wind, crossing in front of and
+below the towers. A single layer per air mass; none within 10-30 km of a storm, where
+they read as searchlights.
+
 ## Drawing (`src/cloud_volume.jo`)
 
 Each instance is a screen-space quad over its projected support box. The ray
@@ -104,7 +111,11 @@ marches distance steps in metres, refined only near the surface.
   target, the silhouette is soft rather than stepped.
 - **Painted light.** Flat bands on a mix of the local and the mass normal:
   shade, cream, and full white on the lumps turned most to the sun, with narrow
-  transitions. A broad sunward self-shadow, never on sun-facing faces, where it
+  transitions. Two values as the film paints them: cream lit tops (`paint_light`,
+  never mint) and a slate blue-grey shade (`paint_shade` 0.33, 0.43, 0.55) 15-25 L*
+  darker, the lower body in the shade band whatever the light. Far clouds take the
+  air's haze three quarters grey, so a front-lit far tower stays cream and slate
+  rather than cyan (a far tower at 600 m: lit L* 67, shade 51). A broad sunward self-shadow, never on sun-facing faces, where it
   reads as a crater. A rim light, and a darker flat base.
 - **Brushwork.** Brush strokes in the cloud's own metres curl round each lobe
   along the terminator (`cloud_strokes`): they break every band edge into
@@ -144,6 +155,11 @@ sun.xz/max(sun.y, 0.12)`. That is where the sunlight through P meets sea level.
   narrower than the ramp's change across a pixel, which would stair-step. The
   reduced-resolution tint and ramp are smooth, so they enlarge cleanly.
 - **Combining.** Overlapping clouds combine as coverage: `a + b(1 - a)`.
+- **From height.** As the film shows them, shadows grow lighter and softer as one
+  climbs (`cloud_shadow_apply.jo`, from 150 to 1500 m: on the sea from about 10 L*
+  darker to about 2 at 1300 m), and a small cloud's shadow fades with the viewer's
+  height (`cloud_shadow.jo`, by its size against the eye's height). Close to the
+  ground they keep their defined edge.
 
 The shadows are applied in screen space (`apply_cloud_shadows`), after the
 opaque scene and the water and before the clouds: a tint factor computed at a
@@ -193,6 +209,11 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   - The anvil canopy (kind 11): an analytic plate, thick over the middle and thinning to a ragged
     rim, painted as a body.
   - The rain shafts (kind 8) under the cells, hazed less than the air so they show from 40 km.
+  - The rain veil (kind 6, `weather.y` 2): a slate curtain filling the space under the system
+    from its base to the sea, hazed less than the air like the shafts, so from 10-40 km the
+    storm reads as reaching the water rather than a slab floating over it.
+  - The palette: near-black slate bellies and deck, a slate blue-grey shade, cream-grey lit
+    tops (`cloud_paint` by `weather.y`).
   - Distance LOD comes from the march's own step budget; the far view is cheap.
 - **Sound** (`src/storm_sound.jo`): rain on the airframe, gusting wind with the roughness, and
   thunder from the same strikes as the bolts, after their distance.
@@ -223,8 +244,13 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   to 1 in a thunderstorm, plus the gust front under a storm. It reaches the flight
   model twice: eddies and drafts in the wind (`weather_turbulent_gust`), and roll,
   pitch and yaw kicks, each the change of a bounded displacement
-  (`_turbulence_kick`), so the aircraft is knocked about its path and comes back.
-  `tests/storm_test.jo` holds it flyable hands off.
+  (`_turbulence_kick`), so the aircraft is knocked about its path and comes back;
+  and a slow roll and pitch that wander over tens of seconds, so left alone in a
+  storm it drifts into a bank and a descent while a pilot holding it gets through.
+  `tests/storm_test.jo` flies every aircraft through the game's own storm air
+  (the cell, the deck and the cloud bodies, through `flight_env`, on the player's
+  speed scale): hands off it is in trouble no sooner than 8 s and within a minute
+  at the median; a correcting pilot gets through.
 
 ## Developer controls
 

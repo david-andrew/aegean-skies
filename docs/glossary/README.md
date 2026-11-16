@@ -19,11 +19,11 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Stratus slivers](#stratus-slivers) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -940,6 +940,12 @@ On the rivers branch until it lands.
 
 ![Cloud bodies in towers weather from 300 m](img/cloud-bodies.png)
 
+### Stratus slivers
+
+- **Definition:** thin, flat, faintly lit bands just above the cumulus bases in fair and towers
+  weather, long along the wind, crossing in front of and below the towers; none near a storm.
+- **Code:** weather kind 13: the layer in `src/cloud_field.jo`, drawn in `src/cloud_volume.jo`.
+
 ### Cloud forms
 
 - **Definition:** the 28 procedural shapes a cloud body takes, built at their true proportions
@@ -990,7 +996,9 @@ On the rivers branch until it lands.
 - **Definition:** the dark patches with defined edges that the clouds cast on land, sea,
   rivers, lakes and towns, offset from each cloud by the sun's angle and moving with clouds
   and sun; deep water goes navy, clear shallows a deeper teal, land keeps some colour. The
-  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`).
+  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`). Seen from height they
+  grow lighter and softer, and small clouds' shadows fade, as in the film; near the ground
+  they keep their edge.
 - **Code:** `src/cloud_shadow.jo`: the map (sun-projected coverage from each form's footprint
   slabs) and `apply_cloud_shadows`, a screen-space pass over the scene depth; the sea's glints
   per vertex in `src/sea.jo`. `AEGEAN_CLOUD_SHADOWS=0` turns them off.
@@ -1034,7 +1042,9 @@ On the rivers branch until it lands.
   ragged 1150 m base to above the highest an aircraft can climb, a tiered **shelf cloud** along
   its leading (downwind) edge, four embedded cells at their stages (towers, a mature anvil, a
   dissipating mass) under one painted **anvil canopy** near 9-10 km, rain shafts under the
-  cells. The air is rough throughout its deck and violent in the cells. Born about 30 km out, it
+  cells, and a slate rain veil from its base to the sea that reads from 10-40 km. Painted in
+  the film's storm palette: near-black slate belly and deck, cream-grey lit tops. The air is
+  rough throughout its deck and violent in the cells. Born about 30 km out, it
   crosses the home waters at 120 m a minute, closing the routes under it for about three and a
   half hours: one waits it out, goes round, or pushes through.
 - **Code:** `storm_cells` (the shared layout) in `src/lightning.jo`; `storm_system_clouds` in
@@ -1085,7 +1095,9 @@ On the rivers branch until it lands.
 - **Definition:** the air inside a cloud's body is rough, mildly in fair cumulus and violently
   in a thunderstorm, and gusty under a storm. It acts through the flight model: eddies and
   drafts in the wind it meets (vertical jolts and airspeed swings), and roll, pitch and yaw
-  kicks with a fast shudder that knock the aircraft about its path and let it come back.
+  kicks with a fast shudder that knock the aircraft about its path and let it come back,
+  and a slow wander of roll and pitch: left alone in a storm it drifts into a bank and a
+  descent over tens of seconds; held, it gets through.
 - **Code:** `weather_turbulence`, `weather_turbulent_gust` in `src/weather_scene.jo`;
   `_turbulence_kick` in `src/flight.jo`; `tests/storm_test.jo`.
 
@@ -1763,6 +1775,33 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![Standing in the notebook](img/standing.png)
 
+### The pilot's name
+
+- **Aliases:** reputation, what people have heard of him, his name preceding him.
+- **Definition:** what the living world's people know of the pilot and think of him, carried in
+  how they behave and talk, never shown as a number. Four leanings (warmth, honour, daring,
+  reliability) and, from the deeds a listener knows, what he did to and for their own country's
+  people. **Deeds** worth telling (a rescue, a victory, a job, a debt) spread as news: the
+  witnesses and the town at once, through the town over two or three days of talk, about a town
+  a day along the roads and sea lanes while `weight × 0.7^hops` stays above 150, and to every
+  town on the wireless when big. Small acts (a chat, a table shared or refused, a tip) stay with
+  the people there and their town. It all fades with time. Known as keeping to himself, fewer
+  people come over; asked over, they say no, and why. Never a punishment.
+- **Code:** `src/reputation.jo` (`rep_record`, `rep_act`, `rep_view`, `reputation_minute`),
+  `src/reputation_talk.jo` (greetings, company, prices, the wireless, the notebook's words),
+  `src/reputation_types.jo` (`World.rep`); combat deeds come through `src/deeds.jo`
+  (`deed_record`). Design: `docs/reputation.md`. Tests: `tests/reputation_test.jo`.
+- **Rules:** a person knows of him if they dealt with him or saw a deed, or by the town's word: a
+  fixed draw from the seed and their id under the share of the town that has heard. Whoever has
+  heard a deed and hasn't met him mentions it once. Company at the hotel and the coffee house,
+  the "Ask … to join you" action, a keeper's bill (up to 6% down, 5% up) and a family's spare room
+  follow it.
+- **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
+  a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
+  he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
+  `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip (`AEGEAN_SEAT_FRAMES_STEP`
+  frames apart, the view turning `AEGEAN_SEAT_FRAMES_TURN` radians a frame, 0 to hold it).
+
 ### Contracts
 
 - **Aliases:** missions, commissions, military contracts.
@@ -2127,6 +2166,32 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### A night under a roof
+
+- **Aliases:** the hotel room, staying the night, the family's spare room, supper with the family.
+- **Definition:** a stay is somewhere one is, not a dark card:
+  - **The hotel's room** is upstairs behind the French window at x = 4 on the sea side. It has an
+    iron bed, a washstand, a chair by the window and a lamp, with the harbour beyond its own
+    balcony; the hotel's mesh is not drawn while one is inside.
+  - **A family's stay** is in the host's own house (their home venue in the living world). At
+    supper (18:00 to 21:30) the host and the household residents they look after sit at the
+    table. The host's lines are their own passing talk from the dialogue (their day, the
+    weather), between the ordinary words of a meal at home; a child asks a question now and then.
+    There is coffee in the morning (05:30 to 11:30).
+  - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
+    window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
+  needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
+  The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
+  show through them; a game saved during a stay loads with the pilot outside, where he went in.
+- **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
+  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`); `stay_begin_hotel`,
+  `stay_begin_family`, `stay_sleep`, `stay_woke`, `stay_end`, `stay_frame`, `draw_stay` and
+  leisure stage 15 in `aegean.jo`; the time skip's `visible` mode; `tests/stay_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
+  stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
+  `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
+
 ### Company
 
 - **Aliases:** someone joining the pilot, company at the table, a neighbour at the bar.
@@ -2138,6 +2203,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   stool, and about half of them talk. Sitting, they pass an ordinary remark every half minute or
   so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
   them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
+  Fewer come to one known for turning people away, more to good company, and one who has heard of
+  something he did says so first ([The pilot's name](#the-pilots-name)); seated, "Ask … to join
+  you" asks whoever is near, who comes or says why not.
 - **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
   `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
   asking) in `aegean.jo`; `tests/company_test.jo`.
