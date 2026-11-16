@@ -1588,7 +1588,11 @@ On the rivers branch until it lands.
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
   Its parapet holds: a step off the treads onto ground more than 0.6 m below them is refused
   (`stair_parapet_blocks`, also on the island landings' stairs); its foot and top stay open. On a
-  stair the pilot walks at 3.4 m/s (`on_any_stair`).
+  stair the pilot walks at 3.4 m/s (`on_any_stair`). From its top a stepped lane carries on over
+  the hillside to the nearest house's front step (`plan_hill_lane`: a 1.5 m grid search keeping to
+  grades of 0.85 and less, clear of the houses, pulled into straight runs and resampled every 2 m
+  on the ground), drawn and walked as the stair's second run, its parapet only where the ground
+  falls away. An island landing's path already begins at its settlement's square.
 - **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
   cliff stair).
 
