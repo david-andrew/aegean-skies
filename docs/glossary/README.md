@@ -1526,7 +1526,7 @@ On the rivers branch until it lands.
   taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air; `AEGEAN_WILD_TRACE=1`.
   On `t3/wildlife`.
 
-![Greylags, a pair of mallards and goslings off the home harbour, one goose upended feeding](img/wildlife.png)
+![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
 
 ### Pilot's scarf
 
