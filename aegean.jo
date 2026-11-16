@@ -160,6 +160,7 @@ use 'src/combat_sound.jo'
 use 'src/battle_radio.jo'
 use 'src/homeward_view.jo'
 use 'src/rt_pad.jo'
+use 'src/radio_help.jo'
 use 'src/cockpit.jo'
 use 'src/bailout.jo'
 use 'src/descent_view.jo'
@@ -783,6 +784,8 @@ leisure_time_step = (dt: f64):
         hour = f64(lt.local_minute(living_world.minute)) / 60.0
         if skip.left == 0:
             if skip.after == 2: finish_launch()
+            if skip.after == 5: help_after_wait()
+            if skip.after == 6: help_arrive()
             if skip.after == 3: stay_woke()
             if skip.after == 1:
                 me.pos = vec3(hotel.desk.x, f32(walk_height(towns, f64(hotel.desk.x), f64(hotel.desk.z))), hotel.desk.z)
@@ -4949,7 +4952,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     global vessels,vessel_bindings,vessel_view,vessel_mooring,combat_visual,air_visual,homeward
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,my_jobs,toast,toast_until,notebook,battle_card,war_chart,presentation,ui_mission
     global t,hour,wind_bias,wind_now,follow,descent_camera,free,show_chart,chart_local
-    global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v,launch,buoys_at,offshore,lighter,lighter_phase,swing_rate
+    global rope,was_moored,wakes,vapor_trails,guns,splashes,last_shots,plunge,plunge_v,launch,buoys_at,offshore,lighter,lighter_phase,swing_rate,sos
     global world_ambience,cockpit_radio,radio_bulletin,radio_card_until,talk_at_start,pad_talk,click_took_mouse
     global active_scenario,judge_camera,scenario_templates,walkers,judge_ready,dbg
     global leisure,leisure_spent,leisure_had,skip,slip,slip_cradle_z,combat_audio
@@ -5015,6 +5018,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     rope=Rope();was_moored=false
     launch=launches.LaunchRide();buoys_at= -1;offshore=none
     lighter=launches.LaunchRide();lighter_phase=0;swing_rate=0.0
+    sos=HelpCall()
     ui=.none;ui_folk=-1;ui_place=-1;ui_line="";ui_news=0;ui_turn=lt.ConversationTurn();ui_job=-1;my_jobs={}
     if given==none:
         notebook=if fresh:Notebook() else:Notebook(storage_key="scenario-notebook:"+key)
@@ -5139,7 +5143,7 @@ leisure_kept = () -> LeisureState:
     out
 
 apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
-    global living_world,presentation,pc,me,traffic,traffic_scene,air_events,all_air_traffic,vessels,battle,vessel_bindings,vessel_mooring
+    global living_world,presentation,pc,me,traffic,traffic_scene,air_events,all_air_traffic,vessels,battle,vessel_bindings,vessel_mooring,sos
     global walker_point,walker_published,folks,folk_sync_t,notebook,my_jobs,t,hour,wind_bias,wind_now,follow,follow_frame,free,descent_camera
     global ui,ui_folk,ui_place,ui_line,ui_news,ui_turn,ui_job,ui_mission,battle_card,war_chart,view_target,target_scan,rope,was_moored
     global wakes,vapor_trails,splashes,last_shots,plunge,plunge_v,active_scenario,judge_camera,talk_at_start,cat_scene,combat_visual,air_visual,guns
@@ -5164,6 +5168,10 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     loop ship in vessels.ships:
         id=ship.id-FAR_VESSEL_BASE
         if id>=0 and id<living_world.far.vehicles.len(): living_world.far.vehicles[id].scene_owned=true
+    # (a boat that was coming to help: the call is over with the load)
+    helpers=[loop ship in vessels.ships: if ship.id>=HELP_VESSEL and ship.id<HELP_VESSEL+10000000: ship.id]
+    loop id in helpers: retire_vessel(vessels,id)
+    sos=HelpCall()
     me=Player(mode=Mode(session.player_mode),pos=session.player_position,yaw=session.player_yaw,phase=session.player_phase)
     walker_point=session.player_point;walker_published=me.pos
     t=session.world_time;hour=session.hour;wind_bias=session.wind_bias;wind_now=session.wind
@@ -7395,13 +7403,25 @@ rt_flight = () -> int:
         if a.side == battle.actors[me_i].side and not a.human and a.status == .flying and a.present: n += 1
     n
 
+# The words on the R/T just now: down on the sea in trouble, the call for help first (a flare when
+# no one is in the R/T's reach); help coming by boat, waiting for it; then the flight's words.
+rt_lines = () -> int[]:
+    out: int[]
+    if sos.stage != .none:
+        if sos.by != .wingman and (sos.stage == .coming or sos.stage == .towing): out.push(RT_WAIT)
+    else if help_need_now() != .none: out.push(if help_in_reach(): RT_HELP else: RT_FLARE)
+    if rt_flight() > 0:
+        loop k in 0..5: out.push(k)
+    out
+
 rt_tick = ():
     global rt
     if not rt.open:
         if vpressed(.c):
-            if rt_flight() == 0: say_toast("No one on the R/T.")
+            lines = rt_lines()
+            if lines.len() == 0: say_toast("No one on the R/T.")
             else:
-                rt_open(rt, t)
+                rt_open(rt, t, lines)
                 rt.took_mouse = is_mouse_locked()
                 if rt.took_mouse: mouse_lock(false)
         return
@@ -7412,8 +7432,15 @@ rt_tick = ():
     if chosen >= 0: rt_send(chosen)
     if not rt.open and rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
 
-# Sends the chosen word: the battle's order, a wingman's answer on the radio.
+# Sends the chosen word: the battle's order, a wingman's answer on the radio; or the call for help.
 rt_send = (k: int):
+    if k == RT_HELP or k == RT_FLARE:
+        help_call(k == RT_FLARE)
+        if rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
+        return
+    if k == RT_WAIT:
+        help_wait()
+        return
     me_craft = living_world.people[living_world.player].craft
     me_i = combat_index(battle, me_craft)
     kind = RT_KINDS[k]
@@ -7439,6 +7466,372 @@ rt_send = (k: int):
     if rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
     if active_scenario == "strait": radio_say(homeward, "rt{battle.tick}", call_sign(living_world, side, max(1, number)), words)
     else: say_toast(words)
+
+# ---- the call for help (src/radio_help.jo) ----
+sos = HelpCall()
+sos_serial = 0
+sos_wreck_tilt = quat_euler(0, 0, 0)     # (a wreck towed keeps its list: its tilt off level)
+sos_tried: int[]                      # passing ships that could not get through, this call
+sos_skip = 0                          # minutes a wait skipped
+help_tow_at = vec3(0, 0, 0)           # the towed aircraft, following the line
+help_tow_h = 0.0
+
+help_need_now = () -> HelpNeed:
+    if me.mode != .aboard or pc.spec.landplane or offshore_only(pc.kind): return .none
+    help_need(pc.state, pc.spec.fuel_capacity)
+
+# One of the player's flight that could come down with cans: flying, enough in its own tank,
+# nearest within the R/T's reach (-1 none).
+help_wingman = (at: vec3) -> int:
+    me_i = combat_index(battle, living_world.people[living_world.player].craft)
+    if me_i < 0 or not battle.enabled: return -1
+    best = -1; near = RADIO_REACH
+    loop i in 0..battle.actors.len():
+        a = battle.actors[i]
+        if a.side != battle.actors[me_i].side or a.human or a.status != .flying or not a.present or a.external: continue
+        if a.craft < 0 or a.craft >= living_world.aircraft.len() or living_world.aircraft[a.craft].fuel_ml < CANS_ML + 40000: continue
+        d = f64(length(a.state.position - at))
+        if d < near: near = d; best = i
+    best
+
+help_in_reach = () -> bool:
+    at = pc.state.position
+    help_wingman(at) >= 0 or help_harbour(at, RADIO_REACH) >= 0
+
+# A line on the radio: the strait's radio box in the fight, plain words otherwise.
+help_say = (who: str, words: str):
+    if active_scenario == "strait" and battle.enabled: radio_say(homeward, "help{t}", who, words)
+    else: say_toast(if who == "": words else: "{capital(who)}: {words}")
+
+help_drop = ():
+    global sos
+    if sos.vessel >= 0:
+        retire_vessel(vessels, sos.vessel)
+        if sos.lane >= 0: retire_sea_lane(vessels, sos.lane)
+    if sos.hidden >= 0 and sos.hidden < living_world.far.vehicles.len():
+        j = living_world.far.vehicles[sos.hidden].journey
+        if j >= 0 and j in living_world.far.journeys: living_world.far.journeys[j].hold_until_tick = living_world.tick
+    if sos.by == .wingman and battle.assist.craft == sos.who: end_assist(battle)
+    if sos.stage == .towing: rope.tied = false
+    sos = HelpCall()
+
+# The call: the flight first (fuel only), then a passing ship, then a harbour's launch.
+help_call = (flare: bool):
+    global sos, sos_serial, sos_tried
+    need = help_need_now()
+    if need == .none or sos.stage != .none: return
+    at = pc.state.position
+    me_craft = living_world.people[living_world.player].craft
+    if flare: help_flare(at)
+    if not flare and need == .fuel:
+        wi = help_wingman(at)
+        if wi >= 0:
+            a = battle.actors[wi]
+            along = help_alongside(at, a.state.position, pc.spec.span)
+            send_assist(battle, a.craft, vec3(along.x, at.y, along.z), wind_now_vec())
+            eta = max(2, int(ceil(f64(length(a.state.position - at)) / max(a.spec.cruise_speed * 0.8, 20.0) / 60.0)) + 2)
+            number = 0
+            loop j in 0..wi + 1:
+                if battle.actors[j].side == a.side: number += 1
+            who = call_sign(living_world, a.side, max(1, number))
+            sos = HelpCall(stage = .coming, by = .wingman, need = need, who = a.craft, name = who, eta = eta, alongside = along)
+            help_say(who, "I see you. Coming down alongside with a couple of cans; {help_eta_words(eta)}.")
+            return
+    dest = help_harbour(at, 90000.0)
+    if dest < 0:
+        say_toast(if flare: "No one sees it." else: "Only static on the R/T.")
+        return
+    reach = if flare: FLARE_REACH else: SHIP_REACH
+    ship = help_pick_ship(living_world, at, reach)
+    if ship >= 0 and ship in sos_tried: ship = -1
+    launch_from = if flare: help_harbour(at, FLARE_REACH) else: help_harbour(at, RADIO_REACH)
+    if ship < 0 and launch_from < 0:
+        say_toast(if flare: "No one sees it." else: "Only static on the R/T.")
+        return
+    sos_serial += 1
+    id = HELP_VESSEL + sos_serial
+    kind = if ship >= 0: VesselKind.trehantiri else: VesselKind.canal_launch
+    spec = vessel_spec(kind)
+    start = vec2(0, 0); yaw = 0.0; owner = -1; side = 0; name = ""; hidden = -1
+    if ship >= 0:
+        v = living_world.far.vehicles[ship]
+        start = v.pos.xz; owner = max(0, v.account); side = 200 + v.citizen; hidden = ship
+        if f64(length(v.velocity)) > 0.01: yaw = atan2(f64(v.velocity.x), f64(v.velocity.z))
+        skipper = if v.captain >= 0 and v.captain < living_world.people.len(): living_world.people[v.captain].name else: ""
+        port = help_harbour_name(v.home)
+        if port == "the harbour": port = ""
+        name = if skipper != "": "{skipper}'s caique" else: if port != "": "a caique out of {port}" else: "a caique"
+        if v.journey >= 0 and v.journey in living_world.far.journeys: living_world.far.journeys[v.journey].hold_until_tick = living_world.tick + 120 * 60 * 24
+    else:
+        berth = vessel_berth(launch_from, .canal_launch)
+        if berth == none:
+            say_toast("Only static on the R/T.")
+            return
+        start = berth!.0
+        dest = launch_from
+        owner = max(0, launches.harbour_account(living_world, launch_from))
+        name = "the launch from {help_harbour_name(launch_from)}"
+        d0 = vec2(at.x, at.z) - start
+        if length(d0) > 0.1: yaw = atan2(f64(d0.x), f64(d0.y))
+    along = help_alongside(at, vec3(start.x, 0, start.y), pc.spec.span, spec.length)
+    lane = request_sea_lane(vessels, -1, -1, start, along.xz, spec.draft, spec.beam * 0.5 + 2.0)
+    if lane < 0 or not spawn_vessel(vessels, Vessel(id = id, kind = kind, owner = owner, side = side, lane = lane, position = vec3(start.x, 0, start.y), yaw = yaw, status = .waiting_route)):
+        if hidden >= 0: sos.hidden = hidden
+        say_toast(if flare: "No one sees it." else: "Only static on the R/T.")
+        return
+    distance = f64(length(along.xz - start))
+    eta = help_minutes(distance * 1.25, help_boat_speed(id))
+    sos = HelpCall(stage = .routing, by = if ship >= 0: HelpBy.ship else: HelpBy.launch, need = .tow, who = if ship >= 0: ship else: launch_from, name = name, kind = kind, vessel = id, lane = lane, harbour = dest, harbour_name = help_harbour_name(dest), alongside = along, flare = flare, eta = eta, hidden = hidden)
+    station = "{help_harbour_name(if launch_from >= 0: launch_from else: dest)} harbour"
+    if flare: say_toast("{capital(name)} has seen the flare and is turning toward you.")
+    else if ship >= 0: help_say(station, "{capital(name)} is nearest you; she's turning your way. {capital(help_eta_words(eta))}.")
+    else: help_say(station, "We'll send the launch out to you. {capital(help_eta_words(eta))}.")
+
+capital = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper() + s[1..]
+
+# Each frame aboard: the wingman down and alongside, the cans; the boat routed, coming, alongside,
+# the tow under way, in at the harbour.
+help_step = (dt: f64):
+    global sos, sos_wreck_tilt, sos_tried, help_tow_at, help_tow_h
+    if sos.stage == .none: return
+    sos.since += dt
+    if me.mode != .aboard:
+        help_drop()
+        return
+    if sos.by == .wingman:
+        i = combat_index(battle, sos.who)
+        if i < 0 or battle.actors[i].status != .flying or not battle.actors[i].present:
+            help_drop()
+            return
+        a = battle.actors[i]
+        if sos.stage == .coming and a.pilot.plan.phase == .done:
+            battle.assist.stage = 2; sos.stage = .alongside; sos.since = 0.0
+            help_say(sos.name, "Here. Two cans coming across.")
+        else if sos.stage == .alongside and sos.since > 6.0:
+            me_craft = living_world.people[living_world.player].craft
+            moved = help_cans(living_world, a.craft, me_craft, CANS_ML)
+            pc.state.fuel = f64(living_world.aircraft[me_craft].fuel_ml) / 1000.0
+            battle.actors[i].state.fuel = f64(living_world.aircraft[a.craft].fuel_ml) / 1000.0
+            litres = moved / 1000
+            price = 0
+            if let pier = refuel.fuel_pier_at(living_world, pc.state.position, 90000.0): price = refuel.fuel_price(living_world, pier) * moved / 10000
+            person = a.person
+            to = if person >= 0 and person < living_world.people.len(): living_world.people[person].account else: -1
+            paid = help_pay(living_world, to, price, "cans", -1)
+            help_say(sos.name, if paid or price == 0: "{litres} litres. That'll see you home." else: "{litres} litres. Settle up when you're flush.")
+            if price > 0: say_toast(if paid: "{phoenix_text(price)} to {sos.name} for the fuel." else: "{phoenix_text(price)} owed to {sos.name} for the fuel.")
+            release_assist(battle, wind_now_vec())
+            sos.stage = .done; sos.since = 0.0
+        else if sos.stage == .done and (f64(a.state.position.y) > 120.0 or sos.since > 120.0):
+            end_assist(battle)
+            sos = HelpCall()
+        return
+    k = vessel_index(vessels, sos.vessel)
+    if k < 0:
+        help_drop()
+        return
+    v = vessels.ships[k]
+    li = sea_lane_index(vessels, sos.lane)
+    if sos.stage == .routing:
+        if li >= 0 and vessels.lanes[li].status == .ready: sos.stage = .coming; sos.since = 0.0
+        else if li < 0 or vessels.lanes[li].status == .blocked or v.status == .stopped:
+            if sos.hidden >= 0: sos_tried.push(sos.hidden)
+            help_say("", "{capital(sos.name)} can't find a way through to you.")
+            help_drop()
+        return
+    if sos.stage == .coming:
+        if v.status == .stopped:
+            help_say("", "{capital(sos.name)} has had to stop short.")
+            help_drop()
+        # (in, or as near as it will come: stopped close by for a while)
+        else if v.status == .docked or v.status == .anchored or (v.speed < 0.2 and sos.since > 20.0 and f64(length(v.position.xz - pc.state.position.xz)) < vessel_spec(v.kind).length * 0.5 + pc.spec.span * 0.5 + 40.0 and help_slow(v)):
+            sos.stage = .alongside; sos.since = 0.0
+            help_say(sos.name, "Alongside. Throw us your line.")
+        return
+    if sos.stage == .alongside:
+        if sos.since < 5.0: return
+        to = vessel_berth(sos.harbour, sos.kind)
+        if to == none:
+            help_drop()
+            return
+        spec = vessel_spec(sos.kind)
+        old = sos.lane
+        lane = request_sea_lane(vessels, -1, sos.harbour, v.position.xz, to!.0, spec.draft, spec.beam * 0.5 + 2.0, to!.1)
+        if lane < 0 or not set_vessel_route(vessels, sos.vessel, lane):
+            help_drop()
+            return
+        retire_sea_lane(vessels, old)
+        sos.lane = lane
+        sos.eta = help_minutes(f64(length(to!.0 - v.position.xz)) * 1.25, help_boat_speed(sos.vessel))
+        sos.stage = .towing; sos.since = 0.0
+        # (the aircraft on the line: moored to the boat's stern, nosed after it; a wreck keeps its list)
+        place = tow_place(v, TOW_LINE)
+        level = quat_euler(0, -heading(pc.state), 0)
+        sos_wreck_tilt = if pc.state.crashed or pc.state.capsized: quat_mul(quat_inverse(level), pc.state.orientation) else: quat_euler(0, 0, 0)
+        # (hauled round onto the line from where it lies, not put there)
+        help_tow_at = pc.state.position; help_tow_h = heading(pc.state)
+        moor(pc.state, vec3(help_tow_at.x, f32(pc.spec.float_height), help_tow_at.z), help_tow_h)
+        rope.tied = true; rope.anchor = tow_stern(v); rope.loose = rope.anchor
+        help_say(sos.name, "Made fast. {capital(sos.harbour_name)}, {help_eta_words(sos.eta)}.")
+        return
+    if sos.stage == .towing:
+        if not pc.state.moored:
+            help_say(sos.name, "The line's gone. We'll leave you be.")
+            help_drop()
+            return
+        # (the aircraft follows the line: drawn after the stern, never faster than the boat makes way
+        # and a little over, nosing round to follow it)
+        place = tow_place(v, TOW_LINE)
+        gap = vec3(place.0.x - help_tow_at.x, 0, place.0.z - help_tow_at.z)
+        move = min(f64(length(gap)), (v.speed + 1.2) * dt)
+        if length(gap) > 0.01: help_tow_at += normalize(gap) * f32(move)
+        turn = angle_delta(place.1, help_tow_h)
+        help_tow_h += clamp(turn, -0.3 * dt, 0.3 * dt)
+        pc.state.mooring_point = vec3(help_tow_at.x, f32(pc.spec.float_height), help_tow_at.z)
+        pc.state.mooring_orientation = quat_mul(quat_euler(0, -help_tow_h, 0), sos_wreck_tilt)
+        rope.tied = true; rope.anchor = tow_stern(v)
+        if (v.status == .docked or v.status == .anchored) and sos.since > 3.0:
+            leisure_skip(10, "brought in to the quay", after = 6)
+            sos.stage = .done
+
+# The card while help is on its way: who, and what to do meanwhile.
+help_card = () -> str:
+    match sos.stage:
+        .routing: "{capital(sos.name)} is putting out."
+        .coming: "{capital(sos.name)} is coming.   C  R/T"
+        .alongside: "{capital(sos.name)} is alongside."
+        .towing: "Under tow to {sos.harbour_name}.   C  R/T"
+        _: ""
+
+# Stopped a while (seconds of it counted while near and slow).
+help_still = 0.0
+help_slow = (v: Vessel) -> bool:
+    global help_still
+    help_still = if v.speed < 0.2: help_still + 1.0 / 60.0 else: 0.0
+    help_still > 8.0
+
+# How fast the boat makes way just now, in this wind (m/s).
+help_boat_speed = (id: int) -> f64:
+    k = vessel_index(vessels, id)
+    if k < 0: return 2.0
+    max(0.6, vessel_target_speed(vessels.ships[k], wind_now.dir * f32(wind_now.speed)))
+
+# Waiting for the boat (the pad's "Wait for them"): the clock runs on behind the dark card; it is
+# found nearly there (coming: the last of the way seen) or in at the harbour (under tow).
+help_wait = ():
+    global sos_skip
+    if sos.by == .wingman or sos.stage == .none: return
+    k = vessel_index(vessels, sos.vessel)
+    if k < 0 or sos.stage == .routing:
+        say_toast("They're still finding the way.")
+        return
+    left = lane_left(vessels, vessels.ships[k])
+    if sos.stage == .coming and left < SEEN_COMING + 20.0:
+        say_toast("Nearly here.")
+        return
+    minutes = help_minutes(left, help_boat_speed(sos.vessel)) - 3
+    if sos.stage == .coming:
+        sos_skip = max(1, minutes)
+        leisure_skip(sos_skip, "waiting for {sos.name}", after = 5)
+    else if sos.stage == .towing:
+        sos_skip = max(1, minutes) + 10
+        sos.stage = .done
+        leisure_skip(sos_skip, "under tow to {sos.harbour_name}", after = 6)
+
+# (after a skipped wait: the boat on along its lane, the last 250 m of it left to be seen)
+help_after_wait = ():
+    lane_advance(vessels, sos.vessel, f64(sos_skip) * 60.0 * help_boat_speed(sos.vessel), SEEN_COMING)
+
+# In at the harbour: warped in to a free berth and made fast, the tow paid (or owed), the boat gone
+# about its business.
+help_arrive = ():
+    global pc, sos_tried
+    if sos.harbour < 0:
+        help_drop()
+        return
+    taken = others_at()
+    dock = help_dock(sos.harbour, taken)
+    if dock == none:
+        help_drop()
+        return
+    if pc.state.moored: unmoor(pc.state)
+    if pc.state.crashed or pc.state.capsized:
+        # (a wreck: patched up at the harbour, as the old tow home had it)
+        pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock!.0, dock!.1)
+        pc.spec.player = true
+        ci = combat_index(battle, living_world.people[living_world.player].craft)
+        if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, 0, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model)
+        pc.placed = false
+    else:
+        moor(pc.state, vec3(dock!.0.x, f32(pc.spec.float_height), dock!.0.z), dock!.1)
+    rope.tied = false
+    tie_up()
+    k = vessel_index(vessels, sos.vessel)
+    distance = if k >= 0: f64(length(vessels.ships[k].position - pc.state.position)) else: 0.0
+    fee = tow_fee(max(distance, 2000.0) + f64(sos.eta) * 60.0 * vessel_spec(sos.kind).speed * 0.5, sos.by == .launch)
+    to = if sos.by == .ship and sos.who >= 0: living_world.far.vehicles[sos.who].account else: launches.harbour_account(living_world, sos.harbour)
+    paid = help_pay(living_world, to, fee, "tow", sos.harbour)
+    say_toast(if paid: "Brought in to {sos.harbour_name}. {phoenix_text(fee)} for the tow." else: "Brought in to {sos.harbour_name}. {phoenix_text(fee)} for the tow, owed.")
+    sos_tried = []
+    help_drop()
+
+# AEGEAN_CAPTURE_HELP=tow|wreck|flare (captures and checks): at frame 30 the aircraft is put down
+# 3 km off the home harbour, its tank dry (wreck: wrecked; flare: and the R/T out of reach is not
+# staged, the flare only fired); at frame 60 help is called; each wait is skipped once the boat is
+# under way (AEGEAN_CAPTURE_HELP_SEE=1: the coming seen, not skipped). HELP lines say what happened;
+# a camera off the aircraft looks at the boat.
+help_capture = env("AEGEAN_CAPTURE_HELP") ?? ""
+help_capture_was = HelpStage.none
+help_capture_waited = HelpStage.none
+help_capture_step = ():
+    global pc, judge_camera, judge_origin, help_capture_was, help_capture_waited
+    f = frame_number()
+    if f == 30:
+        out = vec3(home.out.x, 0, home.out.y)
+        # (cans: the strait, down on the sea under the flight, where the aircraft was)
+        at = if help_capture == "cans": pc.state.position else: home.docks[0] + out * 3000.0
+        pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, vec3(at.x, 0, at.z), along_quay)
+        pc.spec.player = true
+        unmoor(pc.state); rope.tied = false
+        c = living_world.people[living_world.player].craft
+        debug_fuel_ml(c, 300); pc.state.fuel = 0.3
+        if help_capture == "wreck": pc.state.crashed = true
+        print("HELP staged at {at.x:.0},{at.z:.0}: need {help_need_now()}, in reach {help_in_reach()}, purse {player_cents()}")
+    if f == 60:
+        help_call(help_capture == "flare")
+        print("HELP called: {sos.stage} by {sos.by}, {sos.name}, told {help_eta_words(sos.eta)}, tow to {sos.harbour_name}; toast '{toast}'")
+    if sos.stage != help_capture_was:
+        print("HELP frame {f}: {help_capture_was} -> {sos.stage} ({sos.since:.1} s); aircraft at {pc.state.position.x:.0},{pc.state.position.z:.0} moored {pc.state.moored} fuel {pc.state.fuel:.1} crashed {pc.state.crashed}; purse {player_cents()}; toast '{toast}'")
+        help_capture_was = sos.stage
+    if sos.stage != help_capture_waited and not skip.active:
+        if (sos.stage == .coming and sos.since > 2.0 and env("AEGEAN_CAPTURE_HELP_SEE") == none) or (sos.stage == .towing and sos.since > 6.0):
+            help_capture_waited = sos.stage
+            help_wait()
+    k = vessel_index(vessels, sos.vessel)
+    if k >= 0:
+        boat = vessels.ships[k]
+        if f % 120 == 0: print("HELP frame {f}: boat {boat.status} at {boat.position.x:.0},{boat.position.z:.0}, {length(boat.position - pc.state.position):.0} m from the aircraft, lane {lane_left(vessels, boat):.0} m left")
+        side = normalize(vec3(boat.position.x - pc.state.position.x, 0, boat.position.z - pc.state.position.z) + vec3(0.001, 0, 0))
+        across = vec3(-side.z, 0, side.x)
+        judge_origin = pc.state.position
+        judge_camera = JudgeView(pc.state.position - side * 22.0 + across * 14.0 + vec3(0, 9, 0), mix(pc.state.position, boat.position, 0.6) + vec3(0, 2, 0), "help coming")
+    if skip.active and f % 30 == 0: print("HELP frame {f}: skipping, {skip.left} minutes left of {skip.total}")
+
+# A flare: up from the aircraft, a red star hanging and falling (drawn while it burns).
+help_flare_at = vec3(0, 0, 0)
+help_flare_t = -100.0
+help_flare = (at: vec3):
+    global help_flare_at, help_flare_t
+    help_flare_at = at; help_flare_t = t
+
+draw_help_flare = (L: Light):
+    age = t - help_flare_t
+    if age < 0.0 or age > 14.0: return
+    up = if age < 3.0: 160.0 * (1.0 - (1.0 - age / 3.0) * (1.0 - age / 3.0)) else: 160.0 - (age - 3.0) * 6.0
+    p = help_flare_at + vec3(f32((age) * 1.5), f32(up), 0)
+    lamps = WorldParticles()
+    nav_lamp(lamps, world_point(p), vec3(1.0, 0.22, 0.10) * f32(if age > 12.0: (14.0 - age) * 0.5 else: 1.0), scene_camera(), 1.0, L.fog_density)
+    draw_curved_particles(lamps, true)
 
 do_rescue = (free: bool = false):
     now = clock_text(living_world, living_world.minute)
@@ -8278,7 +8671,10 @@ update_frame = (dt: f64, saves: bool = true):
                     th = town_here(d)
                     if th >= 0: deliver_here(th)
                 else if pc.state.moored and vessel_mooring.vessel < 0 and shore_point(towns, pc.state.position) != none: step_ashore(pc.state.position)
-            if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached):
+            if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached) and not pc.spec.landplane:
+                # (a seaplane: the R/T's call for help, a boat to tow her in)
+                if sos.stage == .none: help_call(not help_in_reach())
+            else if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached):
                 # towed home to a free dock and patched up (the bill comes later)
                 dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
                 # (a landplane is towed to its airfield, not to a dock)
@@ -8294,8 +8690,10 @@ update_frame = (dt: f64, saves: bool = true):
         rope.loose = rope.anchor + normalize(off + vec3(0.001, 0, 0)) * 3.0
     if frame_number() % 30 == 7: refresh_buoys()
     if launch_capture != "": launch_capture_step()
+    if help_capture != "": help_capture_step()
     swing_on_buoy(dt)
     lighter_step(dt)
+    help_step(dt)
     if not rope.tied and pc.state.moored and offshore == none: tie_up()
     dust_ps.update(dt)
     # debugging: F1 opens the panel; its standing switches
@@ -8394,7 +8792,7 @@ update_frame = (dt: f64, saves: bool = true):
     # (while a world minute is in progress these scene-to-World syncs wait a frame or two)
     if not world_held():
         sync_workboat_vessels(vessels,vessel_bindings,living_world,dt)
-        sync_far_vessels(vessels,living_world,if me.mode==.aboard: pc.state.position else: me.pos,if render_quality.tier==0: 6 else: 16,refresh=int(t*4)!=int((t-dt)*4))
+        sync_far_vessels(vessels,living_world,if me.mode==.aboard: pc.state.position else: me.pos,if render_quality.tier==0: 6 else: 16,refresh=int(t*4)!=int((t-dt)*4),hidden=sos.hidden)
         commit_war_scene(living_world,vessels,battle)
     ci=combat_index(battle,living_world.people[living_world.player].craft)
     if ci>=0:
@@ -8923,6 +9321,7 @@ draw_world = (L: Light):
     # Navigation lights after dark on every aircraft and vessel in view.
     nav_ci=combat_index(battle,living_world.people[living_world.player].craft)
     draw_nav_lights(L,pc,not(nav_ci>=0 and battle.actors[nav_ci].bailed),all_air_traffic,battle,if vessel_view.drawn.len()==vessels.ships.len(): vessel_view.drawn else: vessels.ships)
+    draw_help_flare(L)
     # (the cloth streams out by the drawn speed, as soon as the takeoff run gets going, and its
     # flutter builds all the way to the drawn top speed in a dive, so it doesn't saturate early)
     cloth_vel = pc.state.velocity
@@ -9161,8 +9560,9 @@ draw = ():
             # (a capture's judging camera isn't the pilot's view: the pilot's cards aren't shown)
             else if judge_camera == none: draw_offers(walk_offers(), 90.0)
         .aboard:
-            if pc.state.crashed or pc.state.capsized: prompt_card(fonts, if pc.spec.landplane: "Wrecked.  R  to be towed to the aerodrome" else: "Wrecked.  R  to be towed home", 180.0)
-            else if pc.state.beached: prompt_card(fonts, "Run aground.  R  to be towed home", 180.0)
+            if sos.stage != .none and sos.stage != .done and sos.by != .wingman: prompt_card(fonts, help_card(), 180.0)
+            else if pc.state.crashed or pc.state.capsized: prompt_card(fonts, if pc.spec.landplane: "Wrecked.  R  to be towed to the aerodrome" else: "Wrecked.  R  call for help", 180.0)
+            else if pc.state.beached: prompt_card(fonts, "Run aground.  R  call for help", 180.0)
             else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
             else: draw_offers(aboard_offers(), 196.0)
         .descent: pass
@@ -9175,7 +9575,7 @@ draw = ():
         chosen = draw_rt_pad(rt, fonts, t, pad.on)
         if chosen >= 0: rt_send(chosen)
     # (the R/T plate: by the radio in the cockpit, at the left otherwise, while there is a flight to hear)
-    if me.mode == .aboard and not rt.open and pad.on and rt_flight() > 0:
+    if me.mode == .aboard and not rt.open and pad.on and (rt_flight() > 0 or help_need_now() != .none or sos.stage != .none):
         plate = if let r = radio_hit_rect: Rect(r.x, r.y - 34, 64, 28) else: Rect(16, f32(f64(screen_height()) * 0.30), 64, 28)
         rect_rounded(f64(plate.x), f64(plate.y), f64(plate.w), f64(plate.h), 5, rgba(0.05, 0.07, 0.10, 0.7))
         text_centered("R/T", vec2(plate.x + plate.w * 0.5, plate.y + plate.h * 0.5), 15, rgba(1, 0.97, 0.9, 0.9))
