@@ -1926,7 +1926,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Rules:** the programme is the world's, so it runs the same near or far, and after a rest. A
   number's start waits a minute for its players' climb and settling (`BAND_CLIMB`, `BAND_SETTLE`);
   putting away and stepping down take `BAND_PACK`. The world keeps a player's place at the step while
-  they are on the stand; the town doesn't draw them there.
+  they are on the stand; the town doesn't draw them there. Company at the table doesn't take a
+  player while the band wants them; one already sitting with the pilot when called excuses
+  themselves and goes to the stand (`company_called_away`, `src/company.jo`).
 - **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND_CAM` and `AEGEAN_CAPTURE_MINUTES`;
   `AEGEAN_BAND_LOG=1` prints the band's state twice a second.
 
@@ -1939,10 +1941,16 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   themselves: it isn't the evening) can be sent for: the house's boy goes, for a small tip (another
   transfer to the house), and they come walking in from wherever they are a while later. Not in
   the night, not one away or laid up, and not one busy with work.
+  The panel says where each missing player is and offers three buttons: send the boy (the tip on
+  it), ask for another number, never mind; the boy is seen running out of the bar's door, across
+  the terrace and down the side walk toward the town.
 - **Code:** `band_ask`, `band_missing`, `band_fetch`, `band_fetch_refusal` in `src/band_life.jo`;
-  `leisure_request`, `leisure_fetch` (`FETCH_TIP`) in `src/leisure.jo`; the panel's second step
-  (`band_fetch_for`) in `aegean.jo`; `BandRequest` (`src/band_request.jo`) is the notebook's.
-- **Capture:** `AEGEAN_LEISURE=request|requested`.
+  `leisure_request`, `leisure_fetch` (`FETCH_TIP`) in `src/leisure.jo`; `fetch_panel` in
+  `src/leisure_view.jo`; the panel's step (`band_fetch_for`, `band_whereabouts`) and the boy
+  (`draw_boy_errand`, `BOY_ROUTE`) in `aegean.jo`; `BandRequest` (`src/band_request.jo`) is the
+  notebook's.
+- **Capture:** `AEGEAN_LEISURE=fetch|fetch-sent` (with `AEGEAN_CAPTURE_MINUTES` for the
+  afternoon).
 
 ### The paper
 
