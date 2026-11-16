@@ -2500,9 +2500,23 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   act of kindness, a gift (`rep_act(.gift)`: warmth for them and a little for their town; a kind
   of its own could be added to `RepKind`); the world also remembers it as a private meeting
   (`emit_event(.met)` with `remember`). A game saved mid-flight comes back without the passenger.
-- **Code:** `src/joyride.jo` (`Joyride`, `RideView`, `ride_step`, `ride_next`, `ride_thanks`);
-  `ride_candidate`, `ride_start`, `ride_tick`, `ride_finish`, `draw_ride_seated` and leisure stage
-  16 (the asking) in `aegean.jo`; `tests/joyride_test.jo`.
+- **Waiting:** stepping ashore with them seated, before they have flown, asks once: "Back in a few
+  minutes" or "Sorry, another day".
+  - **Back in a few minutes:** they wait in the seat (`RideStage.waiting`) up to an hour of the
+    world's time (`RIDE_WAIT_MINUTES`), or until the pilot leaves the island. Within 30 m they
+    say "Still going up?" after 20 minutes and once more after 40. Back aboard, the flight goes
+    on ("There you are! I'd started to wonder.").
+  - **Sorry, another day:** they climb out with a kind word and go home, and are not asked about
+    again for a day.
+  - **Giving up:** they go home. The pilot's name takes a mild mark (`rep_act(.cut_short)`), the
+    notebook has a line, and the next time they pass the pilot they say so ("I waited by your
+    aeroplane an hour! Another day, then."), instead of asking again from scratch.
+- **Code:** `src/joyride.jo` (`Joyride`, `RideView`, `ride_step`, `ride_next`, `ride_thanks`,
+  `ride_wait_begin`, `ride_wait_over`, `ride_wait_remark`, `ride_resume`, `ride_put_off`);
+  `ride_candidate`, `ride_start`, `ride_tick`, `ride_give_up`, `ride_finish`, `draw_ride_seated`,
+  leisure stage 16 (the asking) and 18 (stepping ashore) in `aegean.jo`; `tests/joyride_test.jo`.
+  `AEGEAN_RIDE_WAIT_SKIP=<frame>` moves the world on 25 minutes at that frame, and
+  `AEGEAN_RIDE_TRACE` prints the ride's stage.
 - **Capture:** `AEGEAN_LEISURE=ride-ask|ride-seated|ride-house|ride-thanks` (ride-house with
   `AEGEAN_FLYING`); `AEGEAN_RIDE_FRAMES=<dir>` with `AEGEAN_CAPTURE_TAKEOFF=1` writes the take-off
   clip's frames.
@@ -2602,17 +2616,34 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the bar on a tray (three things a trip), the barkeep across the counter to one on a stool at the
   bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
   the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
-  finished. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
+  finished. Something with some left is never taken while the pilot sits; after it has stood
+  untouched a good while (`ASK_AFTER`, 150 s) the waiter comes and asks "Finished with this?"
+  (Yes, thank you / Not yet, leisure stage 19); "not yet" leaves it alone for longer
+  (`NOT_YET`), and a sip starts the wait again. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
   the elbow, the forearm turned in), the level going down only while it is there; a plate stays
   on the table and the fork goes to the mouth with a bite. Let go: the glass is held at the chest.
   Another item, or Escape, puts it down. Glasses and plates are drawn in two parts, the vessel
   and what is in it, which goes down (a glass's level, a plate's food all round); the hotel's
   china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was. Each
-  thing's button on the table's bar is a bar too, filled as far as there is still of it.
+  thing's button on the table's bar is a bar too, filled as far as there is still of it; its
+  label is the thing's plain name.
+- **Left on the table:** getting up leaves what was served where it stood. Sitting at the same
+  table again before it is cleared finds it there to carry on with. Some while after the pilot
+  has gone (`AEGEAN_LEFT_WAIT`, 40 s by default) a second waiter (`clear_waiter`) walks out, puts
+  the lot on his tray and carries it back.
 - **Seated view:** at a table or on a bar stool (`hotel.stools`, the figure raised `STOOL_LIFT`),
   the camera turns about the pilot as the taxiing orbit does: a drag of either mouse button begun
   off the table's bar, the right stick, a finger; the wheel or a pinch for nearer and farther
-  (1.4 to 7 m), the follow camera keeping it out of the walls (`seat_orbit_step`).
+  (1.4 to 7 m), the follow camera keeping it out of the walls (`seat_orbit_step`). Each drag goes
+  on from where the last one left the view (`ViewTurn`, `view_turn` in `src/ui_state.jo`; a
+  press's first frame is ignored, since a touch screen's pointer jumps there). On a touch screen
+  the seated view has a pad mode of its own (4): fingers on the scene turn and pinch, and only the
+  top corner's buttons show. Getting up and sitting again starts from the usual view. A touch
+  screen never keeps the pointer locked (the browser would grant it on a tap): its first finger is
+  also the mouse, and a locked mouse turned the view, on foot or in the air, by that finger's jump
+  from where one touch lifted to where the next landed. The hotel
+  room's "look out of the window" turns the same way, within a window's reach
+  (`stay_look_step`).
 - **Code:** `src/table_service.jo` (`Waiter`, `waiter_step`, `Taking`, `take_step`, `take_label`);
   `Served.amount`, `held`, `empty_for` and `LeisureState.coming` in `src/leisure.jo`;
   `build_serve_parts`, `draw_serving` in `src/bar_scene.jo`; `service_step`, `draw_service`,
@@ -2620,7 +2651,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
-- **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties`.
+- **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
+  (the last five print a `TABLE` trace).
 
 ### Bill of fare
 
