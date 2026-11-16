@@ -1245,27 +1245,33 @@ On the rivers branch until it lands.
 ### Far canopy
 
 - **Aliases:** the canopy, the crown mass, grove crowns, painted trees, the far tree texture.
-- **Definition:** trees painted into the ground material, beyond and under the grove meshes, so a
-  wooded hillside reads as one mottled surface of crowns rather than flat green patches. Three
-  parts share the ground's light: **grove crowns** (the streamed groves' own trees, found again
-  in the shader from the same cell query, so each mesh lands on its painted crown; within the
-  meshes' reach a crown with a mesh turns into that tree's shade on the ground), the **crown
-  mass** (a sheet of smaller scalloped crowns: maquis, young trees, understory), and its coarser
-  **clumps** (the same sheet at about 55 m), which carry the stand's texture on to many kilometres
-  after single crowns are below a pixel or two. Crown presence follows the groves' density field
-  and the summer cover; each crown has its own colour within the palette (grey-green maquis, dark
-  pine, a few dry ochre crowns), a wrapped painted terminator from its own rounded normal, a darker
-  cool rim, darker floor between crowns in dense stands, and shadow cast from the next crown or
-  clump sunward. Far off each layer gives way to its mean, never to flat grass.
-- **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_kind_at`,
-  `grove_crown`, `grove_density`, `canopy_sheet_pixel`, `canopy_paint`); used by
-  `ground_surface` in `src/terrain.jo` and by `world_grove_lists` in `src/world_groves.jo`. The
-  sheet is baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
-- **Rules:** one cell query for meshes and paint: change the new world's placement only through
-  it. Crowns stay physically sized (they never grow in screen space); the clumps are a second
-  physical octave, not a screen-space one. Keep the Mediterranean palette (`docs/ART.md`), not
-  the autumn colours of the reference photos. The old islands' groves keep their own placement;
-  their painted crowns stand among their meshes.
+- **Definition:** trees and maquis painted into the ground material, beyond and under the grove
+  meshes, so a wooded hillside reads as a mottled surface of crowns rather than flat green
+  patches. Two classes, both as sparse or dense as the land itself: the **trees** (the streamed
+  groves' own pines, found again in the shader from the same cell query and the same density
+  field: inside the meshes' reach a kept tree's painted crown is only its shade on the ground and
+  nothing is painted where no mesh stands; past it the painted crown is the tree, the tier's
+  thinned trees arriving cell by cell over the next 400 m), and the **maquis** (the summer
+  cover's scrub and understory: a sheet of scalloped crowns at about 9 m, scattered on dry grass
+  at its edges and closed over a shaded floor where it is dense, and farther off the **clumps**
+  they gather in, about 55 m, lightening and darkening the ground's own colour so its mean and its
+  patch edges stay put). On medium and high each crown is lit by its own rounded normal through a
+  wrapped painted ramp (its terminator shifted crown to crown), with a short sunward shadow; on
+  low its light is painted into its colour and the trees are the meshes alone, with their mean
+  past their reach.
+- **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
+  `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
+  `canopy_paint_low`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
+  in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
+  baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
+- **Rules:** one cell query and one density field for meshes and paint: change the new world's
+  placement only through them. No painted tree where no tree stands near the camera. Crowns stay
+  physically sized (they never grow in screen space); the clumps are a second physical octave.
+  Keep the Mediterranean palette (`docs/ART.md`), not the autumn colours of the reference
+  photos. Linear ramps, not `smoothstep`, in these shader paths (each one cost visible time on
+  redfox). The old islands' groves keep their own placement; nothing is painted under their
+  meshes.
 
 ---
 
