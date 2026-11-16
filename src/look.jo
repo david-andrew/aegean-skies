@@ -204,6 +204,13 @@ struct MeadowPhase:
     aw = vec2(0,0)                  # the 11.3 m train, the warps and the envelope (travel slower)
     axis = vec2(0.8,0.6)            # the wind's direction, eased (the lean's direction)
     speed = 0.0                     # the wind speed last stepped
+    # the wind study's layers (meadow_study in src/terrain.jo): the two gust layers, the gust zones, and the two
+    # ripple (dab) layers, each carried at its own speed (the second ripple layer a little off the wind's line)
+    sa = vec2(0,0)
+    sb = vec2(0,0)
+    sz = vec2(0,0)
+    r1 = vec2(0,0)
+    r2 = vec2(0,0)
 
 meadow_state = MeadowPhase()
 
@@ -225,7 +232,16 @@ meadow_step = (w: Wind, x: f64, z: f64, dt: f64):
     m.a1 = vec2(f32(meadow_wrap(f64(m.a1.x) + d.x * c)), f32(meadow_wrap(f64(m.a1.y) + d.y * c)))
     m.a2 = vec2(f32(meadow_wrap(f64(m.a2.x) + d.x * c * 1.15)), f32(meadow_wrap(f64(m.a2.y) + d.y * c * 1.15)))
     m.aw = vec2(f32(meadow_wrap(f64(m.aw.x) + d.x * c * 0.6)), f32(meadow_wrap(f64(m.aw.y) + d.y * c * 0.6)))
+    m.sa = meadow_carry(m.sa, d, c * 1.3)
+    m.sb = meadow_carry(m.sb, d, c * 1.05)
+    m.sz = meadow_carry(m.sz, d, c * 1.2)
+    m.r1 = meadow_carry(m.r1, d, c)
+    # (30 degrees off the wind's line: cos 0.866, sin 0.5)
+    m.r2 = meadow_carry(m.r2, vec2(d.x * 0.866 - d.y * 0.5, d.x * 0.5 + d.y * 0.866), c * 1.5)
     meadow_state = m
+
+meadow_carry = (a: vec2, d: vec2, metres: f64) -> vec2:
+    vec2(f32(meadow_wrap(f64(a.x) + d.x * metres)), f32(meadow_wrap(f64(a.y) + d.y * metres)))
 
 # the wind vector the shaders read: (lean direction x, z, speed, 0)
 meadow_wind = (w: Wind, origin: vec3) -> vec4:
@@ -238,6 +254,89 @@ meadow_gust = (origin: vec3) -> vec4:
     s1 = meadow_shift(meadow_state.a1, origin); s2 = meadow_shift(meadow_state.a2, origin)
     vec4(s1.x, s1.y, s2.x, s2.y)
 meadow_gust_w = (origin: vec3) -> vec2: meadow_shift(meadow_state.aw, origin)
+
+# ---- the wind study (a Tweaks trial, "Wind study grass"; src/terrain.jo meadow_study reads these) ----
+# Measured from videos of wind over grass (the study is kept outside the repository): the wind over a field
+# is intermittent. Gust patches (about 100-250 m here) cover a third of the field or less, arrive with a fairly
+# sharp edge, drift downwind and change shape as they go; between them the grass is quieter but never still.
+# Inside a gust, short-lived dabs of a few metres (cat's paws, the grass laid over) form, run downwind and fade
+# within a second or two, so no spot sees a regular rhythm. Main's three wave trains run everywhere at once with
+# an even strength, which reads as a pattern. Here the gusts are two fBm layers (a procedural 128-square noise
+# tile, meadow_noise) at 900 m and 600 m periods, turned and carried at different speeds, thresholded against a
+# slowly drifting zone layer; the dabs are two fine layers of the same tile carried at different speeds and
+# directions. Every period divides GUST_PERIOD, so the wrapped offsets stay seamless.
+meadow_noise: Texture = Texture()
+meadow_noise_ready = false
+
+# smooth value noise on a lattice of `cells` per tile that repeats across the tile's edges
+meadow_tile_noise = (x: f32, y: f32, cells: f32, seed: f32) -> f32:
+    qx = x * cells; qy = y * cells
+    ix = floor(qx); iy = floor(qy)
+    fx = qx - ix; fy = qy - iy
+    ux = fx * fx * (3.0 - 2.0 * fx); uy = fy * fy * (3.0 - 2.0 * fy)
+    x0 = ix - floor(ix / cells) * cells; y0 = iy - floor(iy / cells) * cells
+    x1 = x0 + 1.0 - floor((x0 + 1.0) / cells) * cells; y1 = y0 + 1.0 - floor((y0 + 1.0) / cells) * cells
+    a = hash21(vec2(x0 + seed, y0 + seed * 1.7)); b = hash21(vec2(x1 + seed, y0 + seed * 1.7))
+    c = hash21(vec2(x0 + seed, y1 + seed * 1.7)); d = hash21(vec2(x1 + seed, y1 + seed * 1.7))
+    (a + (b - a) * ux) * (1.0 - uy) + (c + (d - c) * ux) * uy
+
+meadow_tile_fbm = (x: f32, y: f32, base: f32, octaves: int, seed: f32) -> f32:
+    sum: f32 = 0.0; amp: f32 = 1.0; total: f32 = 0.0; cells = base
+    loop o in 0..octaves:
+        sum += amp * meadow_tile_noise(x, y, cells, seed + f32(o) * 131.0)
+        total += amp; amp *= 0.5; cells *= 2.0
+    sum / total
+
+const MEADOW_NOISE_N = 128
+
+# the tile: r, g the gust layers (4 cells, 4 octaves), b the dabs (8 cells, 3 octaves), a the second dab layer and
+# the zones (16 cells, 2 octaves); each channel spread to mean 0.5 and deviation 0.16
+build_meadow_noise = () -> Image:
+    n = MEADOW_NOISE_N
+    raw: f32[][] = [[], [], [], []]
+    bases: f32[4] = [4.0, 4.0, 8.0, 16.0]
+    octs: int[4] = [4, 4, 3, 2]
+    loop ch in 0..4:
+        loop j in 0..n:
+            loop i in 0..n:
+                raw[ch].push(meadow_tile_fbm((f32(i) + 0.5) / f32(n), (f32(j) + 0.5) / f32(n), bases[ch], octs[ch], 17.0 + f32(ch) * 389.0))
+    mean: f32[4] = [0.0, 0.0, 0.0, 0.0]
+    sd: f32[4] = [0.0, 0.0, 0.0, 0.0]
+    loop ch in 0..4:
+        m: f32 = 0.0
+        loop v in raw[ch]: m += v
+        m /= f32(n * n)
+        var: f32 = 0.0
+        loop v in raw[ch]: var += (v - m) * (v - m)
+        mean[ch] = m; sd[ch] = sqrt(var / f32(n * n))
+    img = image(n, n)
+    loop j in 0..n:
+        loop i in 0..n:
+            k = j * n + i
+            img.set(i, j, vec4(meadow_spread(raw[0][k], mean[0], sd[0]), meadow_spread(raw[1][k], mean[1], sd[1]), meadow_spread(raw[2][k], mean[2], sd[2]), meadow_spread(raw[3][k], mean[3], sd[3])))
+    img
+
+meadow_spread = (v: f32, mean: f32, sd: f32) -> f32: clamp(0.5 + 0.16 * (v - mean) / max(sd, 0.0001), 0.0, 1.0)
+
+meadow_noise_texture = () -> Texture:
+    global meadow_noise, meadow_noise_ready
+    if not meadow_noise_ready:
+        meadow_noise = texture(build_meadow_noise(), true)
+        set_repeat(meadow_noise, true)
+        set_mipmaps(meadow_noise, false)
+        meadow_noise_ready = true
+    meadow_noise
+
+# the study's uniforms for a render origin: (gust a, gust b) offsets, the zones' offset, (dab 1, dab 2) offsets,
+# and (0, the dabs' travel in m/s, 0, 1: the study is on)
+meadow_study_gust = (origin: vec3) -> vec4:
+    a = meadow_shift(meadow_state.sa, origin); b = meadow_shift(meadow_state.sb, origin)
+    vec4(a.x, a.y, b.x, b.y)
+meadow_study_zone = (origin: vec3) -> vec2: meadow_shift(meadow_state.sz, origin)
+meadow_study_dabs = (origin: vec3) -> vec4:
+    a = meadow_shift(meadow_state.r1, origin); b = meadow_shift(meadow_state.r2, origin)
+    vec4(a.x, a.y, b.x, b.y)
+meadow_study_flag = () -> vec4: vec4(0, f32(meadow_travel(meadow_state.speed)), 0, 1)
 
 # the trains' wavevectors as whole cycles per GUST_PERIOD (x, z), and their layer speed factors
 const TRAIN_1 = vec2(760, 470)      # 4.5 m
