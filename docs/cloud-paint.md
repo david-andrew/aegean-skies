@@ -124,7 +124,10 @@ marches distance steps in metres, refined only near the surface.
   cut drew round holes at that size. A storm's cells and canopy also skip the close relief and the
   brush dabs and step longer to a coarser tolerance: at kilometres across that detail
   showed nothing and cost redfox medium about 2 ms near a storm (the shelf keeps both
-  for its ragged lit lip). The strokes and dabs are keyed to the low-resolution pixel
+  for its ragged lit lip, a medium and high feature: on low it goes plain too, every
+  storm body marches coarser, and the rain veil and shafts take fewer samples, which
+  brought a near storm on redfox low from +3.9 to +2.1 ms over the old storm's). The
+  strokes and dabs are keyed to the low-resolution pixel
   they land in, never finer, so they don't flicker pixel by pixel on shaded sides. The strokes live in the shader, not the
   atlas: every RGBA8 texel already holds four forms.
 
@@ -225,7 +228,10 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   ribbons at least about two and a half pixels across, with a bloom, dimmed but
   never hidden by cloud and rain. The same strike lights its cloud from inside
   (`cloud_flash`, falling off over about 3 km), flashes the sky near it, and is
-  heard after its distance at 343 m/s (`ambience_thunder`).
+  heard after its distance: on the ground at 343 m/s (`ambience_thunder`); from the
+  aircraft (`src/storm_sound.jo`) at that speed times the speed scale, so a strike 10 km
+  off is heard some 9 s after its flash, out to 25 km, its roll made loud enough to stand
+  8 dB or so over the cockpit's engine, wind and rain.
 - **Rain shafts** (weather kind 8): a few dark columns and curtains under the
   storm's core, clear air between, the lower rain carried downwind (the layer's
   box turns with the storm's wind), streaked, and ragged scud hanging under the
@@ -244,12 +250,17 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   model twice: eddies and drafts in the wind (`weather_turbulent_gust`), and roll,
   pitch and yaw kicks, each the change of a bounded displacement
   (`_turbulence_kick`), so the aircraft is knocked about its path and comes back;
-  and a slow roll and pitch that wander over tens of seconds, so left alone in a
-  storm it drifts into a bank and a descent while a pilot holding it gets through.
-  `tests/storm_test.jo` flies every aircraft through the game's own storm air
-  (the cell, the deck and the cloud bodies, through `flight_env`, on the player's
-  speed scale): hands off it is in trouble no sooner than 8 s and within a minute
-  at the median; a correcting pilot gets through.
+  and the storm's push (`_storm_push`): irregular roll, yaw and pitch, each part a
+  share of the type's own control rates and part common, so a fast, stiff racer and a
+  heavy boat are thrown about too. Under a storm the gust front and downbursts make the
+  air rough 0.7 wherever its rain falls. The push on the heading and climb turns the
+  mouse's aim with the nose (`gust_turn`, `aim_gust`): the mouse's steering holds the
+  aircraft steady but not on course, so one flies a storm by the compass and the
+  attitude indicator, bringing the aim back. `tests/storm_test.jo` flies the game's own
+  storm air (the cell, the deck and the cloud bodies, through `flight_env`, on the
+  player's speed scale) with every type: hands off on the keys it is banked and off its
+  heading within 20 s and in trouble no sooner than 7 s; hands off with the mouse it is
+  turned off its course and carried up or down; a correcting pilot gets each through.
 
 ## Developer controls
 
