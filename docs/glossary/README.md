@@ -123,10 +123,13 @@ blue discs that stay in every frame are **speed flecks**.
 - **Definition:** the depth-driven colour ramp from cobalt in deep water, through turquoise, to
   see-through water at the shore. It reaches deep blue at 12 m on open shelves and 24 m in
   sheltered coves. The sandy seabed shows through with a faint caustic shimmer.
-- **Code:** `src/sea.jo:326 sea_shallow_mix(depth, shelter)` and the body colour in
-  `sea_material`; seabed caustics in `src/terrain.jo` (`ground_material`, "caustic shimmer").
-- **Rules:** only the colour weight may change. Add no texture, sampler, varying or world record
-  for it (`docs/painted-materials.md`).
+- **Code:** `src/sea.jo sea_shallow_mix(depth, shelter)` (the weight) and `sea_shallow_ramp` (the
+  colour) in `sea_material`; the seabed (pale sand tinted by the water above it, scattered weed
+  beds and stones, the drifting caustic network) in `src/terrain.jo ground_surface`.
+- **Rules:** the shallow/deep weight and the shallows' own depth ramp (`sea_shallow_ramp`: clear
+  aqua over the sand, turquoise, teal; no green in the water itself) may change. Add no texture,
+  sampler, varying or world record for it, and never touch the deep sea's flecks, marks or glints
+  (`docs/painted-materials.md`).
 
 ### Deep sea from height
 
