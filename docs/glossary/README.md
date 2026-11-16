@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -2886,8 +2886,45 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Definition:** each station's half-hour schedule: five minutes of news, five of editorial,
   advertisement or quiz, then music; it runs on the living world's clock. There are six stations,
-  including the Aegean Maritime Service (Morse bulletins) and The Night Gull (19:00 to 03:00).
+  including the Aegean Maritime Service (spoken weather, Morse shipping notices) and The Night Gull
+  (19:00 to 03:00). Spoken bulletins repeat on this clock.
 - **Code:** `src/radio.jo` (`radio_stations`, `radio_tune`, `radio_receive`); `docs/radio.md`.
+
+### Announcer
+
+- **Aliases:** the radio voice, the newsreader, the WORLD voice.
+- **Definition:** the synthesized voice that reads radio bulletins: a classical vocoder voice
+  (WORLD-style source/filter: pulses and noise mixed by band aperiodicity, shaped by a measured
+  spectral envelope), driven by a rule-based text stage and a prosody model measured from a
+  newsreel-style narrator. One voice; each station gives it its own pitch, tempo and diction.
+- **Code:** `src/voice_text.jo` (`voice_load`, `voice_tokens`, `voice_pronounce`, `voice_plan`),
+  `src/voice_synth.jo` (`make_voice_synth`, `voice_start`, `voice_render`), `src/voice_model.jo`
+  (generated prosody numbers); in the radio `src/radio_synth.jo radio_speech_program` and
+  `src/radio.jo radio_spoken`, `radio_voice_style`. Tools: `tools/voice_world/`, `tools/voicelab.jo`.
+- **Rules:** nothing recorded or AI-generated is shipped, only averaged spectral and prosodic
+  numbers with their provenance; reference narration stays in scratch. The stream must be
+  identical however it is cut into blocks (`tests/voice_test.jo`).
+
+### Diphone trajectory
+
+- **Aliases:** diphone unit, unit.
+- **Definition:** the announcer's measured spectral path from the middle of one phone to the middle
+  of the next (12 points of mel-cepstrum, band aperiodicity and voicing), averaged over the
+  narrator's tokens of that pair. Consecutive trajectories meet at phone centres, where the step
+  is smoothed; a missing pair borrows each half from its nearest observed neighbour.
+- **Code:** `tools/voice_world/build_units.py` (made), the announcer data file named by
+  `AEGEAN_VOICE_DATA` (outside the repository until a final voice is chosen),
+  `src/voice_text.jo voice_half`, `voice_frames` (used).
+
+### Broadcast colour
+
+- **Aliases:** studio colour, the carbon mic.
+- **Definition:** the period sound put on the announcer before the station and the receiver: a
+  small studio (reflections, tail, room tone, mains hum), a carbon microphone (resonant narrow
+  band, granule distortion, signal-dependent hiss) and transmitter compression and limiting.
+- **Code:** `src/radio_studio.jo` (`Studio`, `studio_sample`, `studio_block`); amount from
+  `VoiceStyle.colour`, applied in `src/radio_synth.jo radio_render`.
+- **Rules:** amount 0 is exactly transparent; deterministic, own noise stream (`tests/voice_test.jo`).
 
 ### Ambience
 
@@ -3407,6 +3444,8 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | (the pause-menu panels) | `aircraft`, `plane`, `paint`, `scenarios`, `flight`, `flight-levers`, `tweaks`, `controls` pause at frame 60, once the camera is placed: paused from the first frame the world was drawn from an eye never put anywhere (terrain floating over the sea). Script `SLOPPY_INPUT` presses after frame 60 |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day (also overrides a scenario's own start hour, for captures) |
+| `AEGEAN_RADIO=kc` | the cockpit radio on and tuned to that frequency from the start (620 Archipelago Radio, 1100 Blue Lantern, 1260 the Maritime Service reach the home harbour by day; 780 Voice of Kalyra and 940 Orenthia National do not; heard aboard, with `AEGEAN_AUDIO_CAPTURE` for its sound) |
+| `AEGEAN_CAPTURE_MINUTES=m` | advance the living world m minutes before the start (the radio's programme clock follows it: news at each half hour) |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |

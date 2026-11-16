@@ -1,6 +1,7 @@
 # Receiver and programme clock. This module knows neither the UI nor World: it can be tested
 # without terrain/assets. RadioContent supplies one bounded current bulletin from public facts.
 use 'radio_synth.jo'
+use 'voice_text.jo'
 
 const RADIO_MIN_KHZ = 540.0
 const RADIO_MAX_KHZ = 1600.0
@@ -86,6 +87,35 @@ struct RadioContent:
     event: int = -1
     occurred_minute: int = -1
     confidence: int = 1000
+    energy = 0                    # intended effort of the reading, 1 calm .. 5 all out (VoiceStyle.energy); 0: the station's usual
+
+# Which programmes the announcer reads aloud. The maritime service keeps its shipping notices
+# in Morse; everything else spoken is read in the station announcer's style.
+radio_spoken = (station: int, programme: RadioProgramme) -> bool:
+    if programme == .music or programme == .off_air: return false
+    not (station == 4 and programme == .shipping)
+
+# One announcer voice (the measured narrator), given each station its own delivery: tempo (the
+# newsreel default 1.35x the narrator, the war news 1.45x), pitch register and range, vocal effort
+# (the narrator's own raised-voice spectrum) and tilt. Set by listening notes, not measured.
+# The station's delivery for one item, at the item's own energy.
+radio_item_style = (station: int, programme: RadioProgramme, content: RadioContent) -> VoiceStyle:
+    v = radio_voice_style(station,programme)
+    v.energy = content.energy
+    v
+
+radio_voice_style = (station: int, programme: RadioProgramme) -> VoiceStyle:
+    match station:
+        # The national stations read their news (the war) fast, high and urgent.
+        0, 1, 2:
+            if programme == .news: VoiceStyle(speed=1.45,pitch=3.0,range=1.35,effort=3.5,tilt=1.5,breath=0.75,genre="war")
+            else: VoiceStyle(speed=1.35,pitch=1.0,range=1.15,effort=1.5,tilt=0.5,genre="news")
+        3:
+            if programme == .news: VoiceStyle(speed=1.4,pitch=1.5,range=1.25,effort=2.0,tilt=1.0,genre="race")
+            else: VoiceStyle(speed=1.4,pitch=1.5,range=1.25,effort=2.0,tilt=1.0,genre="advert")
+        4: VoiceStyle(speed=1.25,pitch=-1.0,range=0.85,effort=0.5,colour=0.6,record=0.15,genre="weather")
+        5: VoiceStyle(speed=1.35,pitch=1.0,range=1.2,effort=1.0,colour=1.0,record=0.4)
+        else: VoiceStyle()
 
 struct RadioSnapshot:
     khz = 1100.0
@@ -99,7 +129,7 @@ struct RadioSnapshot:
     morse_text: str = ""
     event = -1
     confidence = 1000
-    speech_available = false
+    speech_available = false        # the programme is being read aloud by the announcer
 
 struct Radio:
     stations: RadioStation[] = radio_stations()
@@ -123,6 +153,7 @@ struct Radio:
     tune_direction = 0
     tune_held = 0.0
     tune_travel = 0.0
+    speech = true                  # read bulletins aloud (false: Morse summaries only)
 
 radio_silence = (r: mut Radio):
     if r.voice >= 0: stop(r.voice)
@@ -205,6 +236,7 @@ radio_snapshot = (r: Radio) -> RadioSnapshot:
     view.programme = r.programme; view.title = r.content.title
     view.transcript = r.content.text; view.morse_text = r.content.code
     view.event = r.content.event; view.confidence = r.content.confidence
+    view.speech_available = r.speech and r.synth.voice_bank.ready and radio_spoken(r.station,r.programme) and r.content.text != ""
     view
 
 radio_prepare = (r: mut Radio):
@@ -224,18 +256,20 @@ radio_play = (r: mut Radio, seconds: f64, aboard: bool, engine: bool, throttle: 
     if not r.ready:
         r.synth = make_radio_synth(); r.ready = true
     music = r.station >= 0 and r.programme == .music
-    style = if music: radio_music_style(r.stations[r.station],r.minute) else: RadioStyle.morse
+    if r.speech: radio_voice_prepare(r.synth)
+    spoken = r.station >= 0 and r.speech and r.synth.voice_bank.ready and radio_spoken(r.station,r.programme) and r.content.text != ""
+    style = if music: radio_music_style(r.stations[r.station],r.minute) else: if spoken: RadioStyle.speech else: RadioStyle.morse
     # Station/programme slot ties music to the world clock, not time spent tuned in.
     seed = max(0,(r.minute+570)/30)*7+max(0,r.station)
-    key = "{r.station}:{r.programme}:{style}:{r.content.code}"
+    key = "{r.station}:{r.programme}:{style}:{r.content.code}:{if spoken: r.content.text else: ""}"
     desired = max(0,int(seconds*f64(RADIO_RATE)))
     queued = if r.voice >= 0: queued_samples(r.voice) else: 0
     discontinuity = abs(desired-(r.synth.cursor-queued)) > RADIO_RATE/2
     if r.voice < 0 or key != r.content_key or seed != r.programme_seed or discontinuity:
         if r.voice >= 0: stop(r.voice)
         r.voice = sound_stream(RADIO_RATE,1,0.0)
-        radio_synth_program(r.synth,style,seed,seconds,radio_morse(r.content.code))
         span = if r.programme == .weather or r.programme == .shipping: 30.0 else: 10.0
+        radio_synth_program(r.synth,style,seed,seconds,radio_morse(r.content.code),r.content.text,radio_item_style(r.station,r.programme,r.content),span)
         r.synth.morse_origin = int((floor((seconds+1140.0)/span)*span-1140.0)*f64(RADIO_RATE))
         r.content_key = key; r.programme_seed = seed
     # Faint at cruise; plainly audible with engine off. Engine mix is untouched.
@@ -244,7 +278,8 @@ radio_play = (r: mut Radio, seconds: f64, aboard: bool, engine: bool, throttle: 
     need = clamp(RADIO_RATE/4-queued_samples(r.voice),0,RADIO_BLOCK)
     # Underrun: resume the current broadcast instead of replaying an old queued timeline.
     if desired > r.synth.cursor+RADIO_RATE/4:
-        radio_synth_program(r.synth,style,seed,seconds,radio_morse(r.content.code))
+        span = if r.programme == .weather or r.programme == .shipping: 30.0 else: 10.0
+        radio_synth_program(r.synth,style,seed,seconds,radio_morse(r.content.code),r.content.text,radio_item_style(r.station,r.programme,r.content),span)
     loop need > 0:
         count = min(need,RADIO_BLOCK)
         delta = if r.station >= 0: r.khz-r.stations[r.station].khz else: 0.0
