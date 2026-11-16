@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain)
+- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
 - **Reference:** [Capture switches](#capture-switches)
 
@@ -2738,6 +2738,38 @@ No image: the tiers differ in budgets more than in any single view.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
   (the brain flies the player's aircraft; frames for a clip).
 
+### Going home
+
+- **Aliases:** breaking off, the formation home, landing in turn.
+- **Definition:** after the strait, each side flies to its base harbour: beaten (half lost and
+  outnumbered two to one) or with no enemy left. Its pilots form on the leader in their own slots
+  (the player's left open, marked with a faint ring), and land in turn at their moorings. The
+  radio says each step in words over a Morse cue.
+- **Code:** `src/combat.jo` `_turn_for_home`, `_homeward`, `home_leader`, `home_slot`,
+  `home_runway`, `BattleHome`; `src/scenarios.jo` `strait_homes`; `src/homeward_view.jo`; tests
+  `tests/homeward_test.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_STRAIT_AFTER=home|arrive`.
+
+### Pilots in the water
+
+- **Aliases:** survivors, ditching, the dye marker, rescue at sea, prisoners.
+- **Definition:** a pilot down in the sea, after a parachute or a ditching, waits in a life vest
+  with a green dye patch, waving at aircraft near. The player can land, taxi alongside, take them
+  aboard and set them ashore at a harbour: a friend thanked, a foe held as a prisoner or let go.
+- **Code:** `src/combat.jo` `_can_ditch`, `_ditch_controls`, `_ditched_out`;
+  `src/survivor_view.jo`; `src/rescue_exchange.jo`; the living world's `board_survivors`,
+  `land_survivors`; tests `tests/sea_rescue_flight_test.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_STRAIT_AFTER=rescue`.
+
+### Deeds
+
+- **Aliases:** what was done, the reputation's evidence.
+- **Definition:** an append-only log, saved with the world, of deeds: rescued a friend or a foe,
+  shot down, flew home in formation, left the fight, took or released a prisoner; each with the
+  actor, the country it touched, the place, who saw it and when. The reputation reads it.
+- **Code:** `src/deeds.jo` `deed_record`, `deeds_since`, `deeds_by`; `World.deeds`; tests
+  `tests/deeds_test.jo`.
+
 ### Water strikes
 
 - **Aliases:** bullet spouts, strikes on the water.
@@ -2894,6 +2926,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CRAFT_VIEW='yaw pitch distance'` | the free camera on the player's aircraft from that side (radians round from its nose and up, metres): moored with `AEGEAN_CRAFT`, or a few frames into `AEGEAN_FLYING` |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
+| `AEGEAN_CAPTURE_STRAIT_AFTER=rescue\|home\|arrive` | after the strait: a foe in the water ahead and the player landing beside them (F taken for the player); the flight forming up for home with the player in its slot; that flight near its base, landing in turn |
 | `AEGEAN_FRAMES='dir from to step'` | save every step-th frame from..to as `dir/fNNNNN.png` (for clips) |
 | `AEGEAN_CAPTURE_TAKEOFF=1\|worn` | the player's aircraft, serviced (or `worn`: as the save has it), at rest on the water off the home harbour, and the production take-off autopilot flying it off and up, the stick held back on a hydrofoil racer's foils (with `AEGEAN_CRAFT`, `AEGEAN_CAPTURE_ORBIT`, `AEGEAN_FRAMES`; see [Hydrofoil take-off](#hydrofoil-take-off)) |
 | `AEGEAN_CAPTURE_TAKEOFF=pad` | placed as `AEGEAN_CAPTURE_TAKEOFF`, serviced, but flown by the player's controls: script a gamepad with `SLOPPY_INPUT` (`40:rt=1 150:rt=0 930:lstick=0x0.8 1010:lstick=0x0.35`) |
