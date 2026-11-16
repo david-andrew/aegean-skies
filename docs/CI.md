@@ -24,8 +24,10 @@ shard-0 summary lists what is not run in CI:
 - `tests/river_depth_render_test.py`: needs a real GPU (software rendering has no hidden-bed pixels);
 - `tests/title_reel_detail_test.py` and `tests/title_over_play_test.py`: the software-rendered full
   game takes 16 min and over 25 min; run them with the manual dispatch input `slow: true`.
-- `tests/playtest_loops_test.py`: the whole game played through ten loops by `tools/playtest_probe.jo`
-  (about a minute a case, ten minutes in all); also with `slow: true`. One case alone:
+- `tests/playtest_loops_test.py` and `tests/playtest_town_test.py`: the whole game played through
+  ten loops by `tools/playtest_probe.jo`, the situations and flying in one, the town in the other
+  (a minute a case here, some six in CI, two at a time: each about 20 min in CI, with a 45 min
+  item timeout); also with `slow: true`. One case alone:
   `PLAYTEST_NO_DRAW=1 tools/playtest.sh <case> [AEGEAN_...]` (cases and their staging in the test).
 
 A new push to the same branch cancels the run before it.

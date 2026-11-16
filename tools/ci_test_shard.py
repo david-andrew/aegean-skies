@@ -33,11 +33,12 @@ GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rend
 # run only when CI_SLOW=1 (workflow_dispatch with slow: true): the whole game, software-rendered
 SLOW = {
     "tests/title_reel_detail_test.py": "slow under software rendering (about 16 min)",
-    "tests/playtest_loops_test.py": "the whole game played through ten loops (about 10 min)",
+    "tests/playtest_loops_test.py": "the whole game played through the situations and flying loops (about 20 min)",
+    "tests/playtest_town_test.py": "the whole game played through the town's loops (about 20 min)",
 }
 TIMEOUT = int(os.environ.get("CI_TEST_TIMEOUT", "1500"))
 # items that run longer than that by design (slow ones only)
-TIMEOUTS = {"tests/playtest_loops_test.py": 3600}
+TIMEOUTS = {"tests/playtest_loops_test.py": 2700, "tests/playtest_town_test.py": 2700}
 
 
 def skipped():
