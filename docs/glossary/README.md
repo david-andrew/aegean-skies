@@ -2759,6 +2759,8 @@ No image: the tiers differ in budgets more than in any single view.
   the aircraft.
 - **Code:** `src/tweaks.jo`; `src/combat.jo` `bullet_damage`, `Round.wide`, `Round.assist`,
   `_assist_target`; tests `tests/burst_test.jo`.
+- **Capture:** `AEGEAN_TWEAKS=aim` (the aim assist on), `AEGEAN_TWEAKS=plainhits` (generous hits
+  off); in `tools/dogfight_lab.jo`, `DOGFIGHT_AIM=1` and `DOGFIGHT_PLAIN_HITS=1`.
 
 ### Ground fire
 
