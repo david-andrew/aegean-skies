@@ -4,7 +4,7 @@
 // (init_<file> > the function it called: where the start goes).
 //
 // usage: node tools/phone_profile.mjs <page.html> [--query "AEGEAN_TITLE=1"] [--until first_frame|card_gone|<seconds>]
-//          [--top 40] [--under <function>] [--out profile.json]
+//          [--module local-copy.html (a URL page: its module, for the names)] [--top 40] [--under <function>] [--cold] [--out profile.json]
 //        node tools/phone_profile.mjs <page.html> --analyze profile.json   (again, from a saved profile)
 // Hold the phone lock: flock -w 1200 ~/dev/tmp/phone.lock node tools/phone_profile.mjs ...
 // (sampling every 1 ms costs some speed: the stages come out a little slower than tools/phone_run.mjs's)
@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // function; a function is named by the first call site inside its body (one without calls stays
 // wasm-function[N])
 const named = (() => {
-  const b = pageModule(page);
+  const b = pageModule(opt('module', page));
   let i = 8;
   const leb = () => { let r = 0, sh = 0, x; do { x = b[i++]; r += (x & 127) * 2 ** sh; sh += 7; } while (x & 128); return r; };
   const bodies = [];   // [start of the body after its size, end]
@@ -58,11 +58,11 @@ const record = async () => {
   adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'about:blank', '-p', 'com.android.chrome');
   adb('forward', 'tcp:9222', 'localabstract:chrome_devtools_remote');
   await sleep(1500);
-  const served = await openPage(page);
-  const port = new URL(served.url).port;
-  adb('reverse', `tcp:${port}`, `tcp:${port}`);
+  const served = /^https?:/.test(page) ? null : await openPage(page);
+  const port = served ? new URL(served.url).port : 0;
+  if (served) adb('reverse', `tcp:${port}`, `tcp:${port}`);
   const given = opt('query', '');
-  const url = served.url.replace('127.0.0.1', 'localhost') + '?' + (given ? given + '&' : '') + 'AEGEAN_FRAME_STATS=1&run=' + Date.now().toString(36);
+  const url = (served ? served.url.replace('127.0.0.1', 'localhost') : page) + '?' + (given ? given + '&' : '') + 'AEGEAN_FRAME_STATS=1&run=' + Date.now().toString(36);
   let target = (await (await fetch('http://localhost:9222/json')).json()).find((t) => t.type === 'page');
   if (!target) target = await (await fetch('http://localhost:9222/json/new?about:blank', {method: 'PUT'})).json();
   const ws = new WebSocket(`ws://localhost:9222/devtools/page/${target.id}`);
@@ -85,6 +85,8 @@ const record = async () => {
       if (document.getElementById('aegean-loading')) mark('card'); else if ('card' in P.stages) mark('card_gone');
     }).observe(document.body, {childList: true}));
   })();`});
+  // (--cold: the browser's cache emptied first, compiled wasm with it: a first visit)
+  if (args.includes('--cold')) { await send('Network.enable'); await send('Network.clearBrowserCache'); }
   await send('Profiler.enable');
   await send('Profiler.setSamplingInterval', {interval: 1000});
   await send('Profiler.start');
@@ -100,8 +102,7 @@ const record = async () => {
   const {profile} = await send('Profiler.stop');
   await send('Page.navigate', {url: 'about:blank'});
   ws.close();
-  adb('reverse', '--remove', `tcp:${port}`);
-  await served.close();
+  if (served) { adb('reverse', '--remove', `tcp:${port}`); await served.close(); }
   adb('shell', 'svc', 'power', 'stayon', 'false');
   if (opt('out', null)) writeFileSync(opt('out'), JSON.stringify(profile));
   return {profile, url, stages};

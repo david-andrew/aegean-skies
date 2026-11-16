@@ -1,4 +1,5 @@
 use 'water_field.jo'
+use 'baked_assets.jo'
 use 'water_types.jo'
 use 'depth_space.jo'
 use 'cloud_depth.jo'
@@ -70,6 +71,7 @@ struct SeaParams:
     inland_depth: f32 = -1.0
     inland_opacity_depth: f32 = 2.0
     inland_chop: f32 = 0.0           # a lake's wind chop: the sea's swell slopes and crests, scaled
+    inland_walls: vec4 = vec4(0,0,0,0)   # a walled canal (canal_render.jo): wall face's half width, wall top, facade top over the water; w 1 on
     moon: vec4 = vec4(0,0,0,0)       # the moon's direction and (w) its glitter's strength (night only)
     fleck_reference:vec3=vec3(0,0,0)
     opaque_depth: Texture
@@ -422,6 +424,28 @@ coast_sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
 
+# What a walled canal's water mirrors along rd: the dark stone wall, the trees and facades behind
+# the parapet, or the sky over them (each wall a vertical plane at the canal's half width).
+canal_mirror = (i: SeaOut, u: SeaParams, rd: vec3, skyc: vec3) -> vec3:
+    d = normalize(i.current+vec2(0.00001,0))
+    across = dot(rd.xz,vec2(-d.y,d.x))
+    lat = i.water_chart.y
+    gap = max(if across > 0.0: u.inland_walls.x-lat else: u.inland_walls.x+lat,0.0)
+    per = rd.y/max(abs(across),0.002)
+    light = u.sun*0.5+u.sky_top*0.45
+    at_wall = gap*per
+    soft = 0.15+gap*0.01
+    stone = vec3(0.17,0.20,0.23)*light
+    tree = vec3(0.06,0.16,0.12)*light
+    along = i.water_chart.x+(gap+8.0)*dot(rd.xz,d)/max(abs(across),0.002)
+    band = 0.9+0.12*step(0.5,fract(along/23.0))
+    facade = vec3(0.70,0.67,0.58)*light*band
+    at_tree = (gap+4.0)*per-u.inland_walls.y
+    at_facade = (gap+8.0)*per
+    over = mix(facade,skyc,smoothstep(u.inland_walls.z-soft,u.inland_walls.z+soft,at_facade))
+    over = mix(over,tree,(smoothstep(1.0,2.0,at_tree)-smoothstep(7.0,9.0,at_tree))*0.75)
+    mix(stone,over,smoothstep(u.inland_walls.y-soft,u.inland_walls.y+soft,at_wall))
+
 sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_detail:bool=true) -> vec4:
     local = i.world.xz
     p = local+u.origin.xz
@@ -526,7 +550,9 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     rd = reflect(-vdir, n)
     skyc = mix(u.sky_horizon, u.sky_top, clamp(rd.y * 1.4, 0.0, 1.0))
     low = 1.0 - smoothstep(0.1, 0.45, l.y)
-    c = mix(c, skyc, clamp(fres * (0.6 + 0.3 * low) * (1.0 - 0.3 * g), 0.0, 1.0))
+    walled = inland and u.inland_walls.w > 0.5
+    mirror = if walled: canal_mirror(i,u,rd,skyc) else: skyc
+    c = mix(c, mirror, clamp(fres * (0.6 + 0.3 * low) * (1.0 - 0.3 * g), 0.0, 1.0))
     # the painted crests, near to middle distance, more in a fresh wind
     # Wet weather retains broken crest light at formation altitude. Reuse
     # the existing swell/crest field: no extra noise layer or near-field marks.
@@ -539,7 +565,7 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     if whole: st = _crest_strokes(p + offa, sa, u.time, wd, ws, u.wind.w, dist) * wa + _crest_strokes(p + offb, sb, u.time, wd, ws, u.wind.w, dist) * wb
     st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)
     c = mix(c, mix(skyc, vec3(1, 1, 1), 0.55) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.85)
-    if inland:
+    if inland and not walled:
         # Sky reflection remains Fresnel-driven; banks tint the grazing shallow view.
         bank_reflection=vec3(0.10,0.16,0.08)*(u.sky_horizon+u.sun*0.25)
         c=mix(c,bank_reflection,fres*(1.0-smoothstep(1.0,7.0,depth))*0.45)
@@ -678,8 +704,9 @@ build_sea_mesh = () -> Mesh:
     sea_near_mesh = mesh(vs,close_idx)
     mesh(vs, idx)
 
-# the map of the sea floor's depth, for the water's color
-build_depth_texture = () -> Texture:
+# the map of the sea floor's depth, for the water's color (its image: depth in red, land in blue's
+# place as green until coast_shelter turns green into bays' shelter)
+build_depth_image = () -> Image:
     n = DEPTH_MAP
     rows = parallel_map([0..n), (j: int) -> f64[]:
         z = (f64(j) + 0.5) / f64(n) * DEPTH_EXTENT - DEPTH_EXTENT * 0.5
@@ -692,7 +719,28 @@ build_depth_texture = () -> Texture:
             d = clamp(-h / 60.0, 0.0, 1.0)
             img.set(i, j, vec4(f32(d), if h > 0.0: 1.0 else: 0.0, 0, 1))
     coast_shelter(img)
-    result = texture(img, true)
+    img
+
+# (baked by tools/bake.jo as assets/baked/sea-depth-v1.png, the same RGBA8 bytes, with
+# sea-depth-v1.key: the key of the land it was made from, a coarse lattice of its heights. Made
+# here when there is no bake or the land is not the one baked. About 0.7 s of a phone's start.)
+const DEPTH_MAP_BAKE = "sea-depth-v1"
+depth_map_key = () -> u64:
+    samples: f64[]
+    loop j in 0..64:
+        z = (f64(j) + 0.5) / 64.0 * DEPTH_EXTENT - DEPTH_EXTENT * 0.5
+        loop i in 0..64: samples.push(height((f64(i) + 0.5) / 64.0 * DEPTH_EXTENT - DEPTH_EXTENT * 0.5, z))
+    hash((samples, DEPTH_MAP, DEPTH_EXTENT))
+load_depth_image = () -> Image:
+    if let png = baked_asset(DEPTH_MAP_BAKE + ".png"):
+        if let key = baked_asset(DEPTH_MAP_BAKE + ".key"):
+            if str_from_bytes(key) == "{depth_map_key()}":
+                loaded = load_png(png)
+                if loaded is Image and loaded.width == DEPTH_MAP and loaded.height == DEPTH_MAP: return loaded
+    build_depth_image()
+
+build_depth_texture = () -> Texture:
+    result = texture(load_depth_image(), true)
     init_expanded_depth(result)
     result
 

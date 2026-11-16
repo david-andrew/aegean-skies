@@ -41,6 +41,29 @@ place_opening_voyage = (w: mut World,id: int,distance: int):
     w.far.vehicles[j.vehicle].velocity=if length(b-a)>0.001: normalize(b-a)*f32(f64(j.speed_mm_sec)/1000.0) else: vec3(0,0,0)
     w.far.journeys[id].provenance.cause="Opening voyage book: this paid load is bound for its agreed counter. "+j.provenance.cause
 
+# (one merchant service's opening voyage, if it has a worthwhile one: 1 when it set out)
+_opening_voyage = (w: mut World, vehicle: int) -> int:
+    v=w.far.vehicles[vehicle]
+    if v.duty!=.merchant or v.journey>=0 or v.cargo.roots.len()>0 or v.route<0: return 0
+    link=w.far.links[v.route]
+    at_a=counter_restock_order(w,vehicle,link.b,true)
+    at_b=counter_restock_order(w,vehicle,link.a,true)
+    a=opening_trade_score(w,vehicle,link.a,at_a); b=opening_trade_score(w,vehicle,link.b,at_b)
+    origin=if b.0>a.0 or (b.0==a.0 and b.1>a.1): link.b else: link.a
+    best=if origin==link.a: a else: b
+    if best.1<=0: return 0
+    before=w
+    w.far.vehicles[vehicle].place=origin
+    w.far.vehicles[vehicle].pos=if origin==link.a: link.points[0] else: link.points[link.points.len()-1]
+    w.far.vehicles[vehicle].buying_order=if origin==link.a: at_a else: at_b
+    w.far.vehicles[vehicle].next_departure=w.minute
+    if not far_depart(w,vehicle): w=before; return 0
+    id=w.far.vehicles[vehicle].journey
+    if w.far.journeys[id].survey: w=before; return 0
+    phase=200+int(mix64(w.seed xor u64(vehicle+491))%u64(601))
+    place_opening_voyage(w,id,link.length_mm*phase/1000)
+    1
+
 initialize_opening_trade = (w: mut World) -> int:
     if not w.far.populated or not w.far.opening_trade_pending or guard_blocked(): return 0
     # Never move a played/leased body, or reconstruct a voyage from a loaded old bank.
@@ -55,26 +78,46 @@ initialize_opening_trade = (w: mut World) -> int:
     count=0
     loop vehicle in 0..w.far.vehicles.len():
         if guard_blocked(): break
-        v=w.far.vehicles[vehicle]
-        if v.duty!=.merchant or v.journey>=0 or v.cargo.roots.len()>0 or v.route<0: continue
-        link=w.far.links[v.route]
-        at_a=counter_restock_order(w,vehicle,link.b,true)
-        at_b=counter_restock_order(w,vehicle,link.a,true)
-        a=opening_trade_score(w,vehicle,link.a,at_a); b=opening_trade_score(w,vehicle,link.b,at_b)
-        origin=if b.0>a.0 or (b.0==a.0 and b.1>a.1): link.b else: link.a
-        best=if origin==link.a: a else: b
-        if best.1<=0: continue
-        before=w
-        w.far.vehicles[vehicle].place=origin
-        w.far.vehicles[vehicle].pos=if origin==link.a: link.points[0] else: link.points[link.points.len()-1]
-        w.far.vehicles[vehicle].buying_order=if origin==link.a: at_a else: at_b
-        w.far.vehicles[vehicle].next_departure=w.minute
-        if not far_depart(w,vehicle): w=before; continue
-        id=w.far.vehicles[vehicle].journey
-        if w.far.journeys[id].survey: w=before; continue
-        phase=200+int(mix64(w.seed xor u64(vehicle+491))%u64(601))
-        place_opening_voyage(w,id,link.length_mm*phase/1000)
-        count+=1
+        count+=_opening_voyage(w,vehicle)
     failed=guard_failed(scope); guard_finish(w,scope)
     if failed: w.far.opening_trade_pending=false; return 0
     count
+
+# The opening voyages a few services a step (opening_trade_step), on a world nothing else changes
+# meanwhile: the same voyages as initialize_opening_trade. A fault while it runs puts the world
+# back as it was before them, as that function's guard does (without holding the guard's shared
+# depth open between steps, which other worlds' transactions would see).
+struct OpeningTradeJob:
+    stage: int = 0                  # 0 checks, 1 voyages, 2 done
+    vehicle: int = 0
+    count: int = 0
+    previous: World? = none
+    epoch: int = 0
+    result: int = 0
+
+opening_trade_step = (w: mut World, j: mut OpeningTradeJob, budget: f64) -> bool:
+    began = time()
+    loop j.stage < 2:
+        if j.stage == 0:
+            if not w.far.populated or not w.far.opening_trade_pending or guard_blocked(): j.stage = 2; break
+            untouched=w.minute==w.far.opening_minute and w.far.completed_journeys==0 and w.far.journeys.len()==0
+            loop v in w.far.vehicles:
+                if v.scene_owned: untouched=false
+            w.far.opening_trade_pending=false
+            if not untouched: j.stage = 2; break
+            j.previous = w; j.epoch = living_fault_epoch()
+            if w.far.harbors.len()>0 and w.war.last_hour<0: war_minute(w)
+            j.stage = 1; j.vehicle = 0
+        else:
+            failed = living_fault_epoch() != j.epoch
+            if j.vehicle >= w.far.vehicles.len() or failed:
+                if failed:
+                    if let old = j.previous: w = old
+                    w.far.opening_trade_pending=false
+                    j.result = 0
+                else: j.result = j.count
+                j.previous = none; j.stage = 2; break
+            j.count += _opening_voyage(w,j.vehicle)
+            j.vehicle += 1
+        if time() - began >= budget: break
+    j.stage >= 2
