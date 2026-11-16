@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
@@ -1715,6 +1715,49 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_AT='461.50 -6325.68 -0.891'` (a Porto Vecchio house behind the pilot).
 
 ---
+
+### Town look
+
+- **Aliases:** gap 8, the hill town, painted roofs.
+- **Definition:** how the island towns read (art direction gap 8). Walls are muted plaster (cream,
+  grey stone, grey-green) as the midday sun lights them, C* about 10-14, with one house in six an
+  accent (ochre, pink); the paints are near neutral because the sun is warm. Every pitched roof
+  shows a lit and a shaded pitch, painted (the one facing the midday sun lit, the other darker and
+  redder, roof_shade), so the town has its value step at any hour; the terracotta varies by house
+  (six weathered tones and a faded one), one roof in ten is slate, about three in ten hipped, one
+  in six flat. The home town and the villages climb the slope behind the waterfront in tiers that
+  taper up the hill, the front row two to four storeys, the rows behind lower; a garden with a fig,
+  an olive or a cypress between houses now and then; every nine to twelve houses a landmark of
+  another form (a bell tower with a lead dome or a hipped cap, a domed church, a tower house, a
+  stand of cypresses), the chapel among them.
+- **Code:** `src/objects.jo` (`WALLS`, `ROOFS`, `SLATE`, `LEAD`, `roof_shade`, `roof_lit_first`,
+  `add_gable`, `add_hip`, `add_dome`, `add_cypress`, `add_garden_tree`, `house_roof_kind`,
+  `build_town`'s tiers with their own random stream so the harbour's boats stay where they were);
+  `tests/town_look_test.jo`.
+- **Rules:** the targets (walls C* <= 14 with an accent in five to eight; roof pitches 12 apart in
+  L* or more; a home town that spans five tiers and 55 m up its slope; a landmark per fifteen
+  houses) are tests, judged as the midday sun lights the paints.
+
+### Wardrobe
+
+- **Aliases:** townsfolk clothing, dressed by trade.
+- **Definition:** what the town's people wear, by trade and standing, in the clothes of the
+  1920s-30s Mediterranean, each trade in a man's and a woman's version (a woman's by the town's
+  record, person_woman). Fishermen in jerseys and caps, the fish market's women in headscarves,
+  aprons and rolled sleeves; dockhands in shirtsleeves; shopkeepers in waistcoats and aprons, the
+  women in a blouse, skirt and apron; the well-to-do in light suits and boaters or a drop-waist
+  dress and a cloche; farmers and pressers in wide straw hats; the priest in a cassock and round
+  hat; the patrol in tunics and kepis; flyers in leather and helmets, the same for anyone; the
+  hotel's waiter in a white jacket and long apron, the barkeep in a waistcoat, the errand boy in a
+  cap. The band's players change into evening clothes (a frock with a low waist, a dark suit) out
+  of sight before their evening. Mostly pale and neutral, a clear colour about one in five; hats on
+  most men and half the women.
+- **Code:** `src/wardrobe.jo` (`outfit_for`, `evening_outfit`, `waiter_outfit`, `barkeep_outfit`,
+  `errand_boy_outfit`, `walker_outfit`); `src/folk.jo` (`Outfit`, `Garb`, `build_outfit_figure`,
+  `dress_outfit` for the old dress kinds); `person_figure` and `Folk.day`/`Folk.evening` in
+  `src/townsfolk.jo`; `tools/wardrobe_view.jo` shows them all; `tests/wardrobe_test.jo`.
+- **Rules:** built once into each person's figure (the same draws as before); a change of clothes
+  only out of sight.
 
 ## Living world
 
