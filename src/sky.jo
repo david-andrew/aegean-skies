@@ -130,17 +130,74 @@ draw_sky = (L: Light, t: f64):
     night = f64(L.stars)
     # (the sky writes no depth: it is behind everything, however far)
     glDepthMask(0)
-    # (twilight's glow: the plain sky's own sun glow, about a sun set just below the horizon on the
-    # real sun's bearing and coloured by the glow (look.jo glow_sky_sun): no shader of its own)
-    sun_dir = L.sun_dir; sun = L.sun
-    if L.afterglow.x > 0.0:
-        g = glow_sky_sun(L, f64(scene_camera().y))
-        sun_dir = g.0; sun = g.1
-    draw(sky_sh, sky_tri, SkyParams(render_rays(scene_view_proj()), L.sky_top, L.sky_horizon, L.haze, L.sea_deep, sun_dir, sun, f32(night), f32(t), scene_camera().y, L.moon_dir,if weather_active: weather_here.cirrus else: 0.0,L.planets))
+    draw(sky_sh, sky_tri, SkyParams(render_rays(scene_view_proj()), L.sky_top, L.sky_horizon, L.haze, L.sea_deep, L.sun_dir, L.sun, f32(night), f32(t), scene_camera().y, L.moon_dir,if weather_active: weather_here.cirrus else: 0.0,L.planets))
+    if L.afterglow.x > 0.0: draw_glow_band(L)
     glDepthMask(1)
+
+# ---------------- twilight's glow: a band of painted geometry ----------------
+# The amber band low on the sun's side after sunset (look.jo Light.afterglow), drawn over the sky
+# as a strip of the sky dome round the horizon: its colour and cover worked out at each vertex
+# (72 bearings by 10 heights; the band is a smooth gradient) and blended in, the pixels only
+# passing on what they are given. Any addition to the sky's or the sea's own shaders cost Intel
+# GPUs half a millisecond, even a single blend; this costs next to nothing on every tier.
+struct GlowVertex:
+    at: vec2                        # x the bearing from the sun's (rad), y the height above the horizon (rad)
+
+struct GlowParams:
+    view_proj: mat4
+    glow: vec4                      # Light.afterglow: strength, 1 / the band's height, the way to the sun (x, z)
+    dip: f32                        # how far below level the horizon lies (the eye's height)
+
+struct GlowOut:
+    pos: vec4
+    colour: vec4                    # premultiplied
+
+glow_band_vs = (v: GlowVertex, u: GlowParams) -> GlowOut:
+    bearing = atan2(u.glow.w, u.glow.z)+v.at.x
+    e = v.at.y-u.dip
+    dir = vec3(cos(e)*cos(bearing),sin(e),cos(e)*sin(bearing))
+    clip = u.view_proj*vec4(dir,0)
+    facing = cos(v.at.x)*0.5+0.5
+    side = facing*facing*facing
+    up = v.at.y*u.glow.y
+    warm = mix(vec3(0.92,0.53,0.25),vec3(0.93,0.8,0.55),clamp(up*1.18-0.06,0.0,1.0))
+    colour = mix(vec3(0.5,0.38,0.44),warm,clamp(facing*1.67-0.25,0.0,1.0))
+    a = min(u.glow.x*exp(-up*0.9)*mix(0.22,0.97,side),0.97)
+    GlowOut(vec4(clip.xy,clip.w*0.9999,clip.w),vec4(colour*a,a))
+
+glow_band_fs = (i: GlowOut, u: GlowParams) -> vec4: i.colour
+
+const GLOW_BEARINGS = 72
+GLOW_HEIGHTS = [0.0, 0.015, 0.04, 0.08, 0.13, 0.19, 0.27, 0.37, 0.5, 0.75]
+glow_band_sh = Shader()
+glow_band_mesh = Mesh()
+
+build_glow_band = () -> Mesh:
+    vs: GlowVertex[]
+    idx: u32[]
+    rows = GLOW_HEIGHTS.len()
+    loop i in 0..GLOW_BEARINGS+1:
+        a = (f64(i) / f64(GLOW_BEARINGS) * 2.0 - 1.0) * PI
+        loop j in 0..rows: vs.push(GlowVertex(vec2(f32(a), f32(GLOW_HEIGHTS[j]))))
+    loop i in 0..GLOW_BEARINGS:
+        loop j in 0..rows-1:
+            p = u32(i * rows + j); q = p + u32(rows)
+            idx.extend([p, q, p + 1, p + 1, q, q + 1])
+    mesh(vs, idx)
+
+draw_glow_band = (L: Light):
+    h = max(f64(scene_camera().y), 0.0)
+    dip = sqrt(h * (2.0 * EARTH_RADIUS + h)) / (EARTH_RADIUS + h)
+    glDisable(GL_CULL_FACE)
+    glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    draw(glow_band_sh, glow_band_mesh, GlowParams(scene_view_proj(), L.afterglow, f32(dip)))
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
 # (the GPU programs: made once the window is open)
 init_sky = ():
     global sky_sh, sky_tri
     sky_sh = make_background_shader(shader(sky_vs, sky_fs))
     sky_tri = mesh([SkyVertex(vec2(-1, -1)), SkyVertex(vec2(3, -1)), SkyVertex(vec2(-1, 3))])
+    global glow_band_sh, glow_band_mesh
+    glow_band_sh = make_background_shader(shader(glow_band_vs, glow_band_fs))
+    glow_band_mesh = build_glow_band()

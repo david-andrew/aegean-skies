@@ -1295,12 +1295,14 @@ On the rivers branch until it lands.
   sea lays a glitter path toward the band, and the moon's glitter takes over as the glow fades.
   The same on every quality tier.
 - **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
-  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`). Drawn with no
-  shader of its own: the sky takes a sun set just below the visible horizon on the real sun's
-  bearing, coloured by the glow (`glow_sky_sun`), so its own sun glow and low warm band paint the
-  amber band; the sea takes one a little above the horizon (`glow_sea_sun`), so its sheen and
-  glints lay the glitter path, its water's colour held at its dusk value. (Any addition to the sky
-  or sea shaders cost Intel UHD 620 about half a millisecond, even a single blend.)
+  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`). The band is
+  its own strip of the sky dome round the horizon (`draw_glow_band` in `src/sky.jo`: 72 bearings
+  by 10 heights, colour and cover worked out per vertex, the pixels only passing them on), drawn
+  over the plain sky; the sea's glitter path toward it comes from the sea's own sheen and glints
+  about a sun a little above the horizon on the real sun's bearing, once the real sun is down
+  (`glow_sea_sun`, `glow_sea_share` in `src/look.jo`), its water's colour held at its dusk value.
+  The same on every quality tier: any addition to the sky's or the sea's own shaders cost Intel
+  UHD 620 about half a millisecond, even a single blend.
 - **Capture:** `AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into the glow);
   `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
 
