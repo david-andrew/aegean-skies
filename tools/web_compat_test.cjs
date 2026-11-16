@@ -84,3 +84,4 @@ const desktop4k=resolutionPlan(2149,1209,1920,1080,2,518400,false);
 assert.deepEqual(desktop4k.display,[3840,2160]);
 assert.deepEqual(desktop4k.scene,[960,540]);
 
+

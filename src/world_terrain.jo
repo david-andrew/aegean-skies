@@ -11,6 +11,7 @@ use 'paint.jo'
 # Bounded regular-grid quadtree for the NEW geography. Legacy terrain remains
 # byte-for-byte the original canonical surface, drawn by terrain.jo.
 use 'quality.jo'
+use 'canopy.jo'
 use 'geography.jo'
 use 'world_source.jo'
 use 'terrain.jo'
@@ -71,11 +72,13 @@ world_generate_budget = WORLD_GENERATE_LIMIT
 # time to keep, lift it and so make tiles as fast as the old four-a-frame limit allows)
 world_generate_seconds = 0.005
 world_generate_until = 0.0
-# While land in view has nothing that can be drawn (just after a jump, a load or the title's
-# city shot), tiles get a larger slice of the frame: a few slower frames rather than seconds
-# of sea where the coast should be.
+# While most land in view has nothing that can be drawn (just after a jump, a load or the
+# title's city shot), tiles get a larger slice of the frame: a few slower frames rather than
+# seconds of sea where the coast should be. (Only most: a coastal tile or two hidden after
+# landing at a quay is no reason to slow every frame.)
 const WORLD_ARRIVAL_SECONDS = 0.015
-world_arriving = false
+world_arriving = false            # (land chosen hidden, tiles still to make: coarsest first)
+world_arriving_bare = false       # (and more of it hidden than drawn: the larger slice too)
 world_contact_requesting = false
 world_uploaded = 0
 world_draws = 0
@@ -439,7 +442,10 @@ world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundO
     result.working=sample(u.working_map,(inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.working_map)))
     result
 
-world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+world_fragment = (i: GroundOut,u: GroundParams) -> vec4: world_fragment_at(i,u,1)
+# (the low tier's: its own canopy, compiled without the full one)
+world_fragment_low = (i: GroundOut,u: GroundParams) -> vec4: world_fragment_at(i,u,0)
+world_fragment_at = (i: GroundOut,u: GroundParams,detail: int) -> vec4:
     # Canonical contact tiles replace coarse fallback geometry immediately,
     # even while the surrounding quadtree is still streaming after arrival.
     if i.tile_level>0.0 and i.world.x>=u.contact_rect.x and i.world.z>=u.contact_rect.y and i.world.x<u.contact_rect.z and i.world.z<u.contact_rect.w:discard()
@@ -454,7 +460,7 @@ world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     if transmission < 0.001:
         if behind_sea(i.world,u.cam): discard()
         return vec4(u.haze,1)
-    ground_material(i,u,true)
+    ground_material(i,u,true,false,detail)
 
 init_world_terrain = ():
     reset_coast_selection()
@@ -465,7 +471,7 @@ init_world_terrain = ():
     world_heights = texture(image(32*17,32*17),true)
     world_materials = texture(image(32*17,32*17),true)
     world_working = texture(image(32*17,32*17),true)
-    world_ground_sh = make_world_shader(shader(world_vertex,world_fragment))
+    world_ground_sh = make_world_shader(if render_quality.tier == 0: shader(world_vertex,world_fragment_low) else: shader(world_vertex,world_fragment))
 
 world_edge_state = (slot: int) -> (vec4,int):
     node = world_tiles[slot]
@@ -635,7 +641,7 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_generate_budget,world_generate_until
     world_generate_budget = if contact_burst: world_contact_budget(cam) else: WORLD_GENERATE_LIMIT
     world_frame += 1; world_clock = t; world_generated = 0; world_uploaded = 0
-    world_generate_until = time()+(if world_generate_seconds >= 1.0: world_generate_seconds else: if world_arriving: max(WORLD_ARRIVAL_SECONDS,build_slice(world_generate_seconds)) else: build_slice(world_generate_seconds))
+    world_generate_until = time()+(if world_generate_seconds >= 1.0: world_generate_seconds else: if world_arriving_bare: max(WORLD_ARRIVAL_SECONDS,build_slice(world_generate_seconds)) else: build_slice(world_generate_seconds))
     global world_next_level,world_want_key,world_want_level,world_want_cam,world_want_warm,world_view_missing
     world_next_level = if world_arriving or world_want_warm: world_want_level else: -1
     world_want_key = -1; world_want_level = -1; world_want_cam = cam; world_want_warm = false; world_view_missing = 0
@@ -648,13 +654,17 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     # Preserve these exact tiles even if balancing selected a coarse ancestor.
     loop slot in world_contact_slots:
         if not (slot in world_selected):world_selected.push(slot)
-    global world_arriving
+    global world_arriving,world_arriving_bare
     # (arriving while land chosen cannot be drawn and tiles asked for are still to be made: a
     # view with nothing left to make gains nothing from the larger slice)
-    world_arriving = false
+    world_arriving = false; world_arriving_bare = false
     if world_view_missing > 0:
+        hidden = 0; shown = 0
         loop slot in world_selected:
-            if world_tiles[slot].high > 0.0 and not world_tile_drawable(world_tiles[slot],cam): world_arriving = true
+            if world_tiles[slot].high > 0.0:
+                if world_tile_drawable(world_tiles[slot],cam): shown += 1 else: hidden += 1
+        world_arriving = hidden > 0
+        world_arriving_bare = hidden > shown
     if world_warm_views.len() > 0: world_warm_pass()
     loop slot in world_selected:
         node = world_tiles[slot]
@@ -722,8 +732,11 @@ draw_world_terrain = (L: Light,t: f64):
             coast_add_patch(coastal,node.cpu_heights,17,17,ox,oz,0,0,16,vec2(f32(slot%32*17),f32(slot/32*17)),cam,origin,focal,planes,limits,source_id=node.key)
             continue
         batches[mask].push(WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),0),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level))))
-    params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),meadow_wind(wind_now,origin),wind_now.drift,origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
+    params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),meadow_wind(wind_now,origin),meadow_gust_w(origin),origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
     params.pigment = paint_surface()
+    params.canopy = canopy_sheet()
+    params.grove = grove_new_world()
+    params.grass_gust = meadow_gust(origin)
     params.working_map=world_working
     params.river_map=river_material_texture()
     params.river_area=vec4(RIVER_BOUNDS.xy,RIVER_BOUNDS.zw-RIVER_BOUNDS.xy)

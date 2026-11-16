@@ -17,6 +17,7 @@ use 'coast_mesh.jo'
 use 'coast_atlas.jo'
 use 'quality.jo'
 use 'road_material.jo'
+use 'canopy.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -41,6 +42,7 @@ struct GroundParams:
     contact_rect: vec4 = vec4(0,0,0,0)
     grass_actor: vec4 = vec4(0,0,0,0)
     grass_airflow: vec4 = vec4(0,0,0,0)
+    grass_gust: vec4 = vec4(0,0,0,0)  # the meadow gust layers' offsets (src/look.jo meadow_gust); drift holds the warp layer's
     grass_view: vec4 = vec4(0,1,1,1)  # the grass egg: look x, z, side reach, behind reach (src/grass.jo grass_shape)
     roads: Texture = Texture()
     road_rect: vec4 = vec4(0,0,0,0)
@@ -49,6 +51,8 @@ struct GroundParams:
     working_map:Texture=Texture()
     lake_map:Texture=Texture()
     lake_area:vec4=vec4(0,0,0,0)
+    canopy: Texture = Texture()     # the crown mass sheet (src/canopy.jo)
+    grove: vec4 = vec4(0,0,0,0)     # canopy_paint's grove (src/canopy.jo grove_uniform)
 
 struct GroundOut:
     pos: vec4
@@ -109,6 +113,10 @@ coast_fs = (i: GroundOut,u: GroundParams) -> vec4:
 coast_world_fs = (i: GroundOut,u: GroundParams) -> vec4:
     ground_material(i,u,true,true)
 
+# (the low tier's: its own canopy, compiled without the full one)
+coast_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,0)
+coast_world_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0)
+
 coast_sh: Shader
 coast_world_sh: Shader
 
@@ -153,7 +161,7 @@ ground_strata=(i:GroundOut,u:GroundParams)->vec3:
     wav=sin(world.x*0.013+world.z*0.009)*2.5+i.tint.y*6.0+fracture*34.0
     vec3((i.world.y+wav)*0.55,fracture,pigment.x)
 
-ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false)->vec4:
+ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1)->vec4:
     if behind_sea(i.world,u.cam):discard()
     if i.world.y < -40.0:return vec4(u.haze*0.2,1)
     strata=vec3(0,0,0)
@@ -161,10 +169,11 @@ ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=f
     footprint=max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
     normal=if coastal:normalize(i.relief_normal) else:normalize(i.normal)
     ndl=dot(render_normal(normal,i.world,u.cam),normalize(u.sun_dir))
-    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65)
+    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail)
     vec4(col.xyz*paint_paper(i.pos.xy),col.w)
 
-ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0)->vec4:
+# canopy_detail: the canopy's (0 the low tier's, from its own shaders, so the full path is not compiled in)
+ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1)->vec4:
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
     if i.world.y < -40.0: return vec4(u.haze*0.2,1)
@@ -208,6 +217,10 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     veg: f32 = 0.0
     dry: f32 = 0.0
     crease: f32 = 0.0
+    canopy_bend = vec2(0,0)
+    canopy_lit: f32 = 0.0
+    canopy_offset: f32 = 0.0
+    canopy_shadow: f32 = 0.0
     # Underwater the wet sand/rock branch replaces every land contribution.
     if y >= (if coastal: 0.25 else: 0.6):
         canopy = sample(u.pigment,world.xz/320.0)
@@ -223,7 +236,8 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         if large_terrain:
             broad = vnoise(world.xz*0.006)
             wash = 0.5+(broad-0.5)*0.8
-        patch = smoothstep(0.30,0.67,i.tint.x*0.65+wash*0.35+(i.tint.y-0.5)*0.25)
+        field = i.tint.x*0.65+wash*0.35+(i.tint.y-0.5)*0.25
+        patch = smoothstep(0.30,0.67,field)
         cover = summer_cover(n,y,ridge,patch)
         dry = cover.x; woody = cover.y+cover.z
         grass = mix(vec3(0.49,0.47,0.30),vec3(0.69,0.57,0.35),dry)
@@ -251,6 +265,17 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         veg = (1.0-exposure)*smoothstep(0.6,1.5,y)
         if large_terrain: veg *= i.tint.w    # high land reuses bare limestone
         c = mix(stone, green, veg)
+        # The far canopy (src/canopy.jo): the maquis as scattered-to-closed crowns, the groves'
+        # own pines among them; its crowns light by their own rounded normals below. A stand
+        # thins out into the dry grass over some tens of metres past the summer cover's edge
+        # (canopy_stand), so outlying crowns stand in the savanna.
+        stand = max(woody,canopy_stand(n,ridge,field))*veg*(1.0-i.orchard*0.7)
+        if canopy_detail == 0:
+            c = canopy_paint_low(c,n,world.xz,y,footprint,i.tint.x,stand,length(i.world-u.cam),normalize(u.sun_dir),u.canopy,u.grove)
+        else:
+            paint = canopy_paint(c,n,world.xz,y,footprint,i.tint.x,stand,length(i.world-u.cam),normalize(u.sun_dir),u.canopy,u.grove)
+            c = paint.color
+            canopy_bend = paint.bend; canopy_lit = paint.crown; canopy_offset = paint.offset; canopy_shadow = paint.shadow
         # Parcels vary over hundreds of metres: vertex interpolation is sufficient
         # here. Broad rock/cover transitions above remain per fragment.
         orchard = i.orchard
@@ -317,9 +342,10 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         garden=mix(vec3(0.43,0.32,0.20),vec3(0.32,0.40,0.20),row)
         crop=(grain*i.working.x+vines*i.working.y+olive*i.working.z+garden*i.working.w)/max(cultivated,0.001)
         c=mix(c,crop,clamp(cultivated,0.0,1.0)*0.86)
+        canopy_lit*=1.0-clamp(cultivated,0.0,1.0);canopy_shadow*=1.0-clamp(cultivated,0.0,1.0)
     if large_terrain and y>0.5:
         road=road_coverage(u.roads,u.road_rect,i.world.xz,footprint)
-        c=mix(c,vec3(0.82,0.75,0.58),road);veg*=1.0-road
+        c=mix(c,vec3(0.82,0.75,0.58),road);veg*=1.0-road;canopy_lit*=1.0-road;canopy_shadow*=1.0-road
     riparian:f32=0.0
     if large_terrain and i.river.x>0.0:
         riparian=i.river.x
@@ -335,7 +361,7 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
             bank_wet=1.0-smoothstep(-3.0,2.0,-distance)
             pebble=mix(vec3(0.55,0.52,0.42),vec3(0.38,0.40,0.32),bank_wet*0.55)
             pebble=mix(pebble,vec3(0.61,0.59,0.51),bank.z*0.3)
-            c=mix(c,pebble,strip);veg*=1.0-strip
+            c=mix(c,pebble,strip);veg*=1.0-strip;canopy_lit*=1.0-strip;canopy_shadow*=1.0-strip
             # Reed beds in the shallows and on the wet margin, in patches.
             reed=(1.0-smoothstep(5.0,13.0,abs(distance-3.0)))*smoothstep(0.64,0.78,bank.y)
             c=mix(c,mix(vec3(0.37,0.42,0.20),vec3(0.46,0.47,0.26),bank.z),reed*0.85)
@@ -346,16 +372,14 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     light_normal = if coastal: normalize(i.relief_normal) else: n
     ndl = dot(render_normal(light_normal, i.world, u.cam), normalize(u.sun_dir))
     lit = paint_ramp(ndl,max(light_width,if coastal: 0.08 else: 0.015))
-    # Dappled rounded tree/maquis masses continue beyond individual grove meshes.
-    # The shared procedural tile varies crown radius/spacing, fading before aliasing.
-    if veg*woody > 0.02:
-        cap = canopy
-        visible = 1.0-smoothstep(3.0,12.0,footprint)
-        lobe = paint_ramp(dot(cap.xyz*2.0-vec3(1,1,1),normalize(u.sun_dir)),max(0.04,footprint/144.0))
-        # Separate cool rounded undersides from warm crown tops. Broad value
-        # masses carry the foliage at aerial scale, without extra tree geometry.
-        crown = mix(vec3(0.66,0.79,0.83),vec3(1.12,1.10,0.92),lobe)
-        c *= mix(vec3(1,1,1),crown+(cap.w-0.5)*0.16,veg*woody*visible)
+    # The canopy's crowns: each lit by its own rounded normal on the slope, through a wrapped
+    # painted ramp (the terminator shifted a little crown to crown, as a brush would place it).
+    if canopy_detail > 0 and canopy_lit > 0.0:
+        crown_normal = normalize(vec3(light_normal.x+canopy_bend.x*0.9,light_normal.y,light_normal.z+canopy_bend.y*0.9))
+        cdl = dot(render_normal(crown_normal,i.world,u.cam),normalize(u.sun_dir))
+        crown_lit = paint_ramp((cdl+0.28)/1.28+canopy_offset,max(light_width,0.05))
+        lit = mix(lit,crown_lit,canopy_lit)
+    if canopy_detail > 0: lit *= 1.0-canopy_shadow*(1.0-canopy_lit*0.3)
     shade = mix(u.shade,vec3(dot(u.shade,vec3(0.22,0.62,0.16))),(1.0-veg)*0.28)
     light = mix(shade*vec3(0.94,1.08,1.1)+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
     col = c * light
@@ -378,7 +402,7 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         meadow *= smoothstep(3.0,9.0+i.tint.x*8.0,y)
         # Advect the broad pigment wash with the same wind drift. Two layers
         # of per-fragment hash noise read as digital mottling at aerial scale.
-        wave = meadow_wave(i.world.xz,world.xz,u.wind)
+        wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,0.0)
         col += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow)
         # This is also the blade-root colour. No separate grass palette or
         # distant tint: the root-tip response is normalized in the blade shader.
@@ -386,6 +410,7 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
 
 # Both terrain paths share the same coastal and vegetation material rules.
 ground_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false)
+ground_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,0)
 
 ground_sh: Shader
 
@@ -435,8 +460,12 @@ draw_ground = (L: Light, t: f64):
             batches[lev * 16 + mask].push(TerrainInstance(at, vec2(f32(p.x), f32(p.z)), vec2(f32(1 << lev), f32(patch.lod - f64(lev))), edges))
             terrain_visible += 1
         params = GroundParams(relative_vp, render_eye(origin), L.sun_dir, L.sun, L.sky_top, L.shade, L.haze, f32(L.fog_density), f32(t),
-            meadow_wind(wind_now, origin), wind_now.drift, origin, tile.heights, tile.materials, scene_flow, vec4(scene_warp_a.x - origin.x, scene_warp_a.y - origin.z, scene_warp_a.z, scene_warp_a.w), scene_warp_b)
+            meadow_wind(wind_now, origin), meadow_gust_w(origin), origin, tile.heights, tile.materials, scene_flow, vec4(scene_warp_a.x - origin.x, scene_warp_a.y - origin.z, scene_warp_a.z, scene_warp_a.w), scene_warp_b)
         params.pigment = paint_surface()
+        params.canopy = canopy_sheet()
+        # (the islands' groves have their own placement: their painted crowns stand among them)
+        params.grove = grove_islands()
+        params.grass_gust = meadow_gust(origin)
         params.coast_pattern = coast_pattern_texture
         params.river_map = unread_map(); params.lake_map = unread_map()
         terrain_prepare += time() - prepare_start
@@ -455,8 +484,9 @@ draw_ground = (L: Light, t: f64):
 
 init_terrain = ():
     global ground_sh,coast_sh,coast_world_sh
-    ground_sh = make_world_shader(shader(ground_vs, ground_fs))
+    low = render_quality.tier == 0
+    ground_sh = make_world_shader(if low: shader(ground_vs,ground_fs_low) else: shader(ground_vs, ground_fs))
     init_coast_mesh()
     reset_coast_selection()
-    coast_sh = make_world_bounded_shader(shader(coast_vs,coast_fs))
-    coast_world_sh = make_world_bounded_shader(shader(coast_vs,coast_world_fs))
+    coast_sh = make_world_bounded_shader(if low: shader(coast_vs,coast_fs_low) else: shader(coast_vs,coast_fs))
+    coast_world_sh = make_world_bounded_shader(if low: shader(coast_vs,coast_world_fs_low) else: shader(coast_vs,coast_world_fs))
