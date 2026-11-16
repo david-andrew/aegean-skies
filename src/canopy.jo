@@ -1,22 +1,24 @@
-# The far canopy: trees as a painted surface beyond (and beneath) the grove meshes.
+# The far canopy: trees and maquis as a painted surface beyond (and under) the grove meshes.
 #
-# Two layers share the terrain's ground material (src/terrain.jo ground_surface):
-# - the grove crowns: the streamed groves' own trees (src/world_groves.jo), found again in the
-#   shader from the same pure cell query (grove_layout, grove_chances, grove_sibling,
-#   grove_kind_at), so a painted crown lies where its tree stands and the mesh lands on it;
-# - the crown mass: a dense sheet of smaller, scalloped crowns (maquis, young trees, the
-#   understory) that makes a wooded hillside one mottled, contiguous surface from afar,
-#   its cover driven by the same grove density field and the summer cover.
+# Two classes share the terrain's ground material (src/terrain.jo ground_surface):
+# - the trees: the streamed groves' own pines (src/world_groves.jo), found again in the shader
+#   from the same pure cell query (grove_layout, grove_chances, grove_sibling, grove_kind_at) and
+#   the same density field (the terrain's baked grove field, its tint.x). Where meshes stand, a
+#   kept tree's painted crown is only its shade on the ground and nothing is painted where no
+#   mesh stands; beyond the meshes' reach the painted crown is the tree. So the paint is as
+#   sparse or as dense as the trees themselves.
+# - the maquis: the summer cover's own class (scrub and pine understory), a sheet of smaller
+#   scalloped crowns and, farther off, the clumps they gather in, which make a wooded hillside
+#   one mottled, contiguous surface from afar; its edges break into scattered crowns.
 # Every value here comes from integer cell hashes (hash21), identical on the CPU and the GPU.
 use 'look.jo'
 use 'paint.jo'
 use 'quality.jo'
-use 'world.jo'
 use 'baked_assets.jo'
 
 const GROVE_CELL = 26.0
-# (the old islands' groves keep their own placement; this seeds the mainland's density field)
-const GROVE_SEED = 9.9
+# (the new world's grove field: the materials' fbm(x*0.004+3.3, z*0.004, 3))
+const GROVE_SEED = 3.3
 
 # Four 6-bit fields of one 24-bit cell hash, each in (0, 1). Exact in f32 on both sides.
 grove_bits = (h: f32) -> vec4:
@@ -30,7 +32,8 @@ grove_bits = (h: f32) -> vec4:
 grove_layout = (cell: vec2) -> vec4: grove_bits(hash21(cell+vec2(7919.0,104729.0)))
 # Its chances: (alpine cull, pine, bush, shade).
 grove_chances = (cell: vec2) -> vec4: grove_bits(hash21(cell+vec2(-31337.0,52361.0)))
-# Whether the cell's trees are drawn as meshes on a tier (under the tier's share).
+# Whether the cell's trees are drawn as meshes on a tier (under the tier's share), and when
+# past the meshes' reach a thinned one comes in as paint.
 grove_keep = (cell: vec2) -> f32: hash21(cell+vec2(1201.0,8803.0))
 # A pine's neighbour: (chance, offset x, offset z, scale).
 grove_sibling = (cell: vec2) -> vec4: grove_bits(hash21(cell+vec2(60493.0,-24611.0)))
@@ -46,92 +49,68 @@ grove_kind_at = (chance: vec4,dens: f32,slope: f32,h: f32) -> int:
     if dens > 0.4 and chance.z < 0.35: return 2
     -1
 
-# The groves' density field (fbm(x*0.006+seed, z*0.006, 3) on the CPU), in f32 for shaders.
-grove_density = (p: vec2,seed: f32) -> f32:
-    q = vec2(p.x*0.006+seed,p.y*0.006)
-    (vnoise(q)*0.5+vnoise(q*2.0)*0.25+vnoise(q*4.0)*0.125)/0.875
-
-# The same at a vertex spacing: octaves shorter than two spacings give way to their mean, so
-# coarse far tiles carry the field's broad pattern instead of aliasing its fine one.
-grove_density_filtered = (p: vec2,seed: f32,spacing: f32) -> f32:
-    q = vec2(p.x*0.006+seed,p.y*0.006)
-    a = mix(0.5,vnoise(q),1.0-smoothstep(0.25,0.5,spacing/167.0))
-    b = mix(0.5,vnoise(q*2.0),1.0-smoothstep(0.25,0.5,spacing/83.0))
-    c = mix(0.5,vnoise(q*4.0),1.0-smoothstep(0.25,0.5,spacing/42.0))
-    (a*0.5+b*0.25+c*0.125)/0.875
+# The grove density at a point of the new world, exactly as the terrain's materials carry it
+# (world_tile_job_rows: one byte), so the shader reads the trees' own field for free.
+grove_field = (x: f64,z: f64) -> f64: round(clamp(fbm(x*0.004+GROVE_SEED,z*0.004,3),0.0,1.0)*255.0)/255.0
 
 # The share of the new world's grove cells drawn as meshes on this tier (grove_keep under it):
 # the tier's stride, applied to the cells as it was twice to the lists (thin_grove, quality_trees).
 grove_kept_share = () -> f32: 1.0/f32(render_quality.tree_stride*render_quality.tree_stride)
 
-# The grove uniform (canopy_paint's grove) for ground near a point: the new world's, or the
-# nearest old island's (its own seed; its painted crowns stand among, not under, its meshes).
-grove_ground = (at: vec3) -> vec4:
-    if abs(at.x) >= 20000.0 or abs(at.z) >= 20000.0: return vec4(f32(GROVE_SEED),1,f32(render_quality.grove_distance),grove_kept_share())
-    best = 0; far: f32 = 1e30
-    loop k in 0..ISLANDS.len():
-        d = length(ISLANDS[k].center-at.xz)
-        if d < far: far = d; best = k
-    vec4(f32(ISLANDS[best].seed*3.0),1,0,1)
+# canopy_paint's grove uniform: (the meshes' reach from the camera, the kept share (0: meshes
+# not placed by the cell query, as on the old islands: nothing painted under them), detail
+# (0 low, 1 medium and high), 1 paint (0: the mean only, for grass blades)).
+grove_uniform = (reach: f64,share: f32) -> vec4: vec4(f32(reach),share,if render_quality.tier == 0: 0.0 else: 1.0,1)
+grove_new_world = () -> vec4: grove_uniform(render_quality.grove_distance-112.0,grove_kept_share())
+grove_islands = () -> vec4: grove_uniform(render_quality.tree_distance,0.0)
 
-# The expected share of candidate cells holding a tree, by kind: (pine, bush). The far
-# canopy's mean when crowns are too small to draw.
-grove_odds = (dens: f32,slope: f32,h: f32) -> vec2:
-    ok = (1.0-smoothstep(0.62,0.72,slope))*smoothstep(3.0,5.0,h)*(1.0-smoothstep(1500.0,2200.0,h))
-    pine = clamp((dens-0.45)*2.2,0.0,1.0)*smoothstep(0.50,0.54,dens)*(1.0-smoothstep(0.42,0.48,slope))
-    bush = 0.35*smoothstep(0.38,0.42,dens)*(1.0-pine)
-    vec2(pine,bush)*ok
+# The expected share of the ground under pine crowns: the far canopy's mean when crowns are too
+# small to draw (a pine crown about 80 m^2, 1.6 trees a cell where it holds a pine).
+grove_pine_cover = (dens: f32,slope: f32,h: f32) -> f32:
+    ok = (1.0-smoothstep(0.42,0.48,slope))*smoothstep(3.0,5.0,h)*(1.0-smoothstep(1500.0,2200.0,h))
+    clamp((dens-0.45)*2.2,0.0,1.0)*smoothstep(0.50,0.54,dens)*ok*0.19
 
-# ---------------- the grove crowns ----------------
+# ---------------- the trees ----------------
 
 struct GroveCrown:
-    normal: vec3 = vec3(0,1,0)      # the crown's rounded normal (world axes)
+    normal: vec2 = vec2(0,0)        # the crown's rounded normal (x, z), world axes
     cap: f32 = 0.0                  # 0 outside, 1 at the crown's top
     shade: f32 = 0.5                # the tree's own shade draw
-    pine: f32 = 0.0                 # 1 a pine, 0 a bush
     keep: f32 = 0.0                 # the cell's grove_keep
 
-# One crown on the ground plane: scalloped rim, rounded normal, cap height.
-_grove_disc = (d: vec2,radius: f32,seed: f32,crown: mut GroveCrown,shade: f32,pine: f32,height: f32,keep: f32):
-    # (scallops a fifth of the radius, from two sines of the direction: no atan, no noise)
-    n = d/max(length(d),0.001)
-    wobble = 1.0+0.10*sin(n.x*5.0+n.y*3.0+seed*40.0)+0.07*sin(n.y*7.0-n.x*2.0+seed*23.0)
-    q = d/(radius*wobble)
+# One crown on the ground plane: a slightly uneven ellipse, rounded normal, cap height.
+_grove_disc = (d: vec2,radius: f32,shape: f32,crown: mut GroveCrown,shade: f32,height: f32,keep: f32):
+    q = d/(radius*vec2(1.0+(shape-0.5)*0.25,1.0-(shape-0.5)*0.25))
     t = 1.0-dot(q,q)
     if t <= 0.0: return
     cap = sqrt(t)
-    if cap*height <= crown.cap*0.999: return
+    if cap*height <= crown.cap: return
     crown.cap = cap*height
-    crown.normal = normalize(vec3(q.x,cap*1.1,q.y))
+    crown.normal = q
     crown.shade = shade
-    crown.pine = pine
     crown.keep = keep
 
-# The topmost grove crown over a ground point (absolute world xz), from the 2x2 candidate cells
+# The topmost pine crown over a ground point (absolute world xz), from the 2x2 candidate cells
 # around it (a crown or its neighbour never reaches past half a cell). dens, slope and height
-# are the fragment's: the shader's stand-ins for the values at each tree.
+# are the fragment's: the shader's stand-ins for the values at each tree. (The groves' bushes
+# are the maquis' class here.)
 grove_crown = (p: vec2,dens: f32,slope: f32,h: f32) -> GroveCrown:
     crown = GroveCrown()
     base = floor(p/GROVE_CELL-vec2(0.5,0.5))
     loop k in 0..4:
         cell = base+vec2(f32(k%2),f32(k/2))
         lay = grove_layout(cell)
-        center = (cell+lay.xy)*GROVE_CELL
-        d = p-center
-        if dot(d,d) > 400.0: continue
+        d = p-(cell+lay.xy)*GROVE_CELL
+        if dot(d,d) > 169.0: continue
         chance = grove_chances(cell)
-        kind = grove_kind_at(chance,dens,slope,h)
-        if kind < 0: continue
-        scale = 0.75+0.55*lay.z
+        if grove_kind_at(chance,dens,slope,h) != 0: continue
         keep = grove_keep(cell)
-        if kind == 0:
-            _grove_disc(d,4.8*scale,lay.w,crown,chance.w,1.0,scale,keep)
-            sib = grove_sibling(cell)
-            if sib.x < 0.6:
-                off = (sib.yz*2.0-vec2(1,1))*GROVE_SIBLING_REACH
-                _grove_disc(d-off,4.8*(0.7+0.45*sib.w),sib.y+lay.w,crown,chance.w,1.0,0.7+0.45*sib.w,keep)
-        else:
-            _grove_disc(d,2.4*scale,lay.w,crown,chance.w,0.0,0.4*scale,keep)
+        scale = 0.75+0.55*lay.z
+        _grove_disc(d,4.8*scale,lay.w,crown,chance.w,scale,keep)
+        sib = grove_sibling(cell)
+        if sib.x < 0.6:
+            s2 = 0.7+0.45*sib.w
+            _grove_disc(d-(sib.yz*2.0-vec2(1,1))*GROVE_SIBLING_REACH,4.8*s2,sib.y,crown,chance.w,s2,keep)
     crown
 
 # ---------------- the crown mass sheet ----------------
@@ -216,6 +195,7 @@ canopy_sheet = () -> Texture:
 # metres per crown-mass cell
 const CANOPY_CELL = 9.0
 
+
 # ---------------- the painted canopy (ground shader) ----------------
 
 struct CanopyPaint:
@@ -223,87 +203,100 @@ struct CanopyPaint:
     bend: vec2 = vec2(0,0)          # the crowns' normal, added to the ground's (x, z)
     crown: f32 = 0.0                # how much of the pixel is crown (lit by the wrapped ramp)
     offset: f32 = 0.0               # per-crown shift of the painted terminator
-    shadow: f32 = 0.0               # cast by the next crown or clump sunward
+    shadow: f32 = 0.0               # cast by the next crown sunward (medium and high)
 
-# A sheet sample at a scale: its crown's presence under the cover, inside its rim.
+# A sheet sample's crown: present where its own random number is under the cover, inside its rim.
 _canopy_mass = (s: vec4,cover: f32,soft: f32,edge: f32) -> f32:
     smoothstep(s.w-soft,s.w+soft,cover)*smoothstep(0.0,edge,s.z)
 
-# grove: (density seed, exact grove crowns 0/1, the meshes' reach from the camera (0: none on
-# this ground), the share of grove trees kept as meshes on this tier)
-canopy_paint = (base: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,woody: f32,veg: f32,wash: f32,distance: f32,sun: vec3,sheet: Texture,grove: vec4) -> CanopyPaint:
-    out = CanopyPaint(base)
+# base: the ground's colour; dry: its bare summer grass; maquis: the cover's scrub and pine
+# understory (0 to 1); dens: the grove field (the materials' tint.x).
+canopy_paint = (base: vec3,dry: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maquis: f32,distance: f32,sun: vec3,sheet: Texture,grove: vec4) -> CanopyPaint:
     slope = length(n.xz)/max(n.y,0.1)
-    odds = grove_odds(dens,slope,y)
-    # (pine stands of any density read as woodland; a lone bush does not)
-    stand = smoothstep(0.05,0.40,odds.x)
-    cover = clamp(max(woody*0.85,stand*0.92+odds.y*0.3),0.0,1.0)*veg
-    if cover < 0.01 and odds.x < 0.001: return out
-    # (the sun's reach across the ground per metre of height, for the shadow probes)
-    reach = sun.xz/max(sun.y,0.3)
-    # Two octaves of one sheet, both fixed in the world: crowns (about 10 m) and the clumps they
-    # gather in (about 55 m). Each crown is present where its own random number is under the
-    # cover; as crowns shrink below a few pixels the presence test widens into the cover itself
-    # (the mipmaps average the rest), and the clumps carry the stand's texture on out.
+    pines = grove_pine_cover(dens,slope,y)
+    if maquis < 0.01 and pines <= 0.0: return CanopyPaint(base)
+    if grove.w == 0.0: return CanopyPaint(mix(base,vec3(0.12,0.22,0.13),pines*0.5))
+    # The maquis: one sheet at two physical scales, crowns (9 m cells) near and the clumps they
+    # gather in (54 m) beyond; one fetch, both only across the hand-over. Between its crowns the
+    # summer grass shows where the scrub is open, so the scrub's edges break into scattered
+    # crowns; where it closes, a shaded floor.
     span = f32(CANOPY_CELLS)*CANOPY_CELL
-    resolved = 1.0-smoothstep(2.0,7.0,footprint)
-    clumped = (1.0-resolved*0.7)*(1.0-smoothstep(28.0,60.0,footprint))
-    q = p/(span*6.0)+vec2(0.37,0.61)
-    k = sample(sheet,q)
-    ksoft = mix(0.5,0.08,1.0-smoothstep(12.0,40.0,footprint))
-    clump = _canopy_mass(k,cover*1.1,ksoft,max(0.2,footprint*0.02))
+    far = smoothstep(3.5,5.5,footprint)
+    color = base
+    bend = vec2(0,0)
+    lit: f32 = 0.0
+    offset: f32 = 0.0
     shadow: f32 = 0.0
-    if clumped > 0.0:
-        ks = sample(sheet,q+reach*(12.0/(span*6.0)))
-        shadow = clamp(_canopy_mass(ks,cover*1.1,ksoft,0.3)-clump*0.7,0.0,1.0)*clumped*0.55
-    # Crowns, within reach of the eye, gathered into the clumps: an open stand's crowns stand in
-    # groups with ground between, a closed one's fill it.
-    group = smoothstep(0.0,0.5,k.z)*smoothstep(k.w-0.2,k.w+0.2,cover*1.1)
-    near_cover = clamp(cover+(group-0.5)*0.9*(1.0-cover*0.6),0.0,1.0)
-    c = sample(sheet,p/span)
-    soft = mix(0.5,0.06,resolved)
-    mass = _canopy_mass(c,near_cover,soft,max(0.3,footprint*0.08))
-    if resolved > 0.0:
-        cs = sample(sheet,(p+reach*5.0)/span)
-        shadow = max(shadow,clamp(_canopy_mass(cs,near_cover,soft,0.3)*(cs.z-c.z*mass+0.25),0.0,1.0)*resolved*0.7)
-    # Each crown its own colour within the local palette (a broad wash links neighbours into
-    # patches of one kind); maquis grey-green, darker pine, a few dry olive-ochre crowns.
-    id = mix(0.5,c.w,resolved)
-    tone = fract(id*7.13)
-    pines = clamp(stand*0.7+woody*0.25+(wash-0.5)*0.5,0.0,1.0)
-    kind = mix(pines,smoothstep(0.42,0.58,pines+(fract(id*13.7)-0.5)*0.9),resolved)
-    maquis = mix(vec3(0.27,0.35,0.22),vec3(0.45,0.48,0.31),mix(0.5,tone,resolved))
-    pine = mix(vec3(0.13,0.25,0.14),vec3(0.23,0.35,0.18),mix(0.5,tone,resolved))
-    crown = mix(maquis,pine,kind)
-    crown = mix(crown,vec3(0.44,0.41,0.24),smoothstep(0.86,0.97,fract(id*3.31))*resolved*0.6)
-    # (the lower rim of each crown, its underside and the floor between, sees less sky)
-    crown *= mix(0.82,1.06,smoothstep(0.0,0.6,c.z))
-    # far off, a clump's crowns as one: lighter on top, the gaps between clumps the darkest
-    crown *= mix(1.0,mix(0.80,1.08,smoothstep(0.0,0.6,k.z)*clump),clumped)
-    ground = mix(base,base*vec3(0.46,0.52,0.54),smoothstep(0.2,0.8,cover)*0.9)
-    ground = mix(ground,ground*0.78,clumped*(1.0-clump)*smoothstep(0.3,0.8,cover))
-    sheet_mass = mix(mass,clump*mix(0.85,1.0,mass),clumped*(1.0-resolved))
-    color = mix(ground,crown,sheet_mass)
-    bend = vec2(c.x*2.0-1.0,c.y*2.0-1.0)*mass*resolved+vec2(k.x*2.0-1.0,k.y*2.0-1.0)*clump*clumped*0.6
-    lit = max(mass*resolved,clump*clumped)
-    offset = (id-0.5)*0.18
-    # The grove crowns: the groves' own trees, found from their cells. Within the meshes' reach
-    # they stand on these as their shade on the ground; beyond it the painted crown is the tree.
-    exact = (1.0-smoothstep(2.5,7.0,footprint))*grove.y
-    if exact > 0.0 and odds.x+odds.y > 0.0:
+    if far < 1.0:
+        s = sample(sheet,p/span)
+        mass = _canopy_mass(s,maquis,0.06,0.3)
+        tone = fract(s.w*7.13)
+        shrub = mix(vec3(0.30,0.37,0.24),vec3(0.38,0.43,0.28),tone)*mix(0.9,1.03,smoothstep(0.0,0.6,s.z))
+        shrub = mix(shrub,vec3(0.17,0.28,0.16),smoothstep(0.5,1.0,maquis)*0.35)
+        ground = mix(dry,base*0.84,smoothstep(0.45,0.9,maquis))
+        color = mix(ground,shrub,mass)
+        bend = (s.xy*2.0-vec2(1,1))*mass*0.5
+        lit = mass
+        offset = (s.w-0.5)*0.12
+        if grove.z > 0.0:
+            cs = sample(sheet,(p+sun.xz/max(sun.y,0.3)*3.0)/span)
+            shadow = clamp(_canopy_mass(cs,maquis,0.06,0.3)*(cs.z-s.z*mass),0.0,1.0)*0.35
+    if far > 0.0:
+        # Farther off, the clumps: the ground's own colour, lighter on the clumps' tops and
+        # darker in the gaps between them, so the mean (and the patch edges) stay the ground's.
+        k = sample(sheet,p/(span*6.0)+vec2(0.37,0.61))
+        hold = 1.0-smoothstep(40.0,80.0,footprint)
+        clump = _canopy_mass(k,maquis*1.1,0.12,0.25)*smoothstep(0.0,0.7,k.z)
+        value = mix(1.0,mix(0.80,1.10,clump),smoothstep(0.1,0.5,maquis)*hold)
+        color = mix(color,base*value,far)
+        bend = mix(bend,(k.xy*2.0-vec2(1,1))*clump*0.6*hold,far)
+        lit = mix(lit,clump*hold,far)
+        offset = mix(offset,(k.w-0.5)*0.12,far)
+        shadow *= 1.0-far
+    # The trees: the groves' own pines. Inside the meshes' reach a kept tree's crown is its
+    # shade on the ground, and nothing stands where no mesh does; past it the painted crown is
+    # the tree, the thinned ones coming in over the next 400 m, each at its own distance.
+    resolve = 1.0-smoothstep(if grove.z > 0.0: 3.0 else: 2.0,if grove.z > 0.0: 7.0 else: 5.0,footprint)
+    painted = 1.0
+    if pines > 0.0 and resolve > 0.0:
         g = grove_crown(p,dens,slope,y)
         if g.cap > 0.0:
-            on = smoothstep(0.0,max(0.08,footprint*0.12),g.cap)*exact*veg
-            treecol = if g.pine > 0.5: mix(vec3(0.10,0.21,0.11),vec3(0.18,0.31,0.14),g.shade) else: mix(vec3(0.22,0.31,0.17),vec3(0.30,0.38,0.20),g.shade)
-            treecol *= mix(0.70,1.06,smoothstep(0.0,0.5,g.cap))
-            under = if grove.z > 0.0 and g.keep < grove.w: 1.0-smoothstep(grove.z-80.0,grove.z,distance) else: 0.0
-            # (a cell's mesh may be thinned away on this tier: it keeps its painted crown)
-            color = mix(color,mix(treecol,color*vec3(0.55,0.62,0.66),under*0.75),on)
-            bend = mix(bend,g.normal.xz,on*(1.0-under))
-            lit = mix(lit,1.0,on*(1.0-under))
-            offset = mix(offset,(g.shade-0.5)*0.2,on)
-            shadow *= 1.0-on*(1.0-under)*smoothstep(0.2,0.6,g.cap)
-    # far off, the unresolved crowns' mean: darker than the floor they stand on
-    trees = clamp(odds.x*0.19+odds.y*0.03,0.0,1.0)*(1.0-exact)*veg
-    color = mix(color,vec3(0.12,0.22,0.13),trees)
-    CanopyPaint(color,bend,lit,offset,shadow*veg)
+            on = smoothstep(0.0,max(0.08,footprint*0.12),g.cap)*resolve
+            meshed = grove.y > 0.0 and g.keep < grove.y
+            if distance < grove.x:
+                if meshed: color = mix(color,color*vec3(0.62,0.68,0.72),on*0.8)
+                shadow *= 1.0-on
+            else:
+                arrive = if meshed: 1.0 else: smoothstep(grove.x+fract(g.keep*13.0)*400.0,grove.x+fract(g.keep*13.0)*400.0+40.0,distance)
+                tree = mix(vec3(0.11,0.22,0.12),vec3(0.19,0.31,0.15),g.shade)*mix(0.85,1.04,smoothstep(0.0,0.5,g.cap))
+                color = mix(color,tree,on*arrive)
+                bend = mix(bend,g.normal,on*arrive)
+                lit = mix(lit,1.0,on*arrive)
+                offset = mix(offset,(g.shade-0.5)*0.16,on*arrive)
+                shadow *= 1.0-on*arrive
+        painted = 1.0-resolve
+    # far off, the unresolved crowns' mean (and none inside the meshes' reach)
+    trees = pines*painted*smoothstep(grove.x,grove.x+400.0,distance)
+    color = mix(color,vec3(0.13,0.23,0.13),trees)
+    CanopyPaint(color,bend,lit,offset,shadow)
+
+# The low tier's canopy, compiled into its own terrain shaders (ground_surface's detail 0): the
+# maquis' crowns and clumps with their light painted into their colour, no second light ramp,
+# no shadow probe; the trees are the meshes only, and past their reach their mean.
+canopy_paint_low = (base: vec3,dry: vec3,n: vec3,p: vec2,y: f32,footprint: f32,dens: f32,maquis: f32,distance: f32,sun: vec3,sheet: Texture,grove: vec4) -> vec3:
+    pines = grove_pine_cover(dens,length(n.xz)/max(n.y,0.1),y)
+    if maquis < 0.01 and pines <= 0.0: return base
+    span = f32(CANOPY_CELLS)*CANOPY_CELL
+    near = footprint < 4.5
+    s = sample(sheet,if near: p/span else: p/(span*6.0)+vec2(0.37,0.61))
+    color = base
+    light = dot(s.xy*2.0-vec2(1,1),normalize(sun.xz+vec2(0.0001,0)))*(1.0-sun.y*0.5)
+    if near:
+        mass = _canopy_mass(s,maquis,0.06,0.3)
+        shrub = mix(vec3(0.30,0.37,0.24),vec3(0.38,0.43,0.28),fract(s.w*7.13))*mix(0.9,1.03,smoothstep(0.0,0.6,s.z))
+        shrub = mix(shrub,vec3(0.17,0.28,0.16),smoothstep(0.5,1.0,maquis)*0.35)
+        color = mix(mix(dry,base*0.84,smoothstep(0.45,0.9,maquis)),shrub*(1.0+light*0.12),mass)
+    else:
+        clump = _canopy_mass(s,maquis*1.1,0.12,0.25)*smoothstep(0.0,0.7,s.z)*(1.0-smoothstep(40.0,80.0,footprint))
+        color = base*mix(1.0,mix(0.80,1.10,clump)*(1.0+light*clump*0.08),smoothstep(0.1,0.5,maquis))
+    mix(color,vec3(0.13,0.23,0.13),pines*smoothstep(grove.x,grove.x+400.0,distance))
