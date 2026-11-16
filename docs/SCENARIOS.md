@@ -13,7 +13,10 @@ The first situation starts at 09:30 on day zero. Kalyra's blue-and-white Gull fl
 two to one by those still fighting; a side with no enemy left fighting turns for home too. Pilots
 going home, or withdrawing hurt, no longer hold the fight open (`Battle.finished`). Each side's base
 is its country's harbour nearest the strait (`strait_homes`: Kalyra to Ardevanti, 89 km;
-Orenthia to Lyravanoria, 4 km). Its pilots form on the leader in their own slots, the player's slot
+Orenthia to Lyravanoria, 4 km). Scattered by the fight, they first regroup at a rally point
+under the cloud (over the fight for the winners, 5 km toward home for the beaten): each flies to
+it and circles, calling in on the radio, for at least a minute and at most two and a half (a
+straggler waited for). Then its pilots form on the leader in their own slots, the player's slot
 left open and marked with a faint ring; the leader flies the autopilot's approach and the rest
 circle the bay, stacked, and land in turn 25 s apart, each taxiing to its own mooring along the
 quay, where its pilot stands afterwards. The radio's words show over each Morse cue
