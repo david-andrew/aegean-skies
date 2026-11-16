@@ -223,8 +223,13 @@ All shaders stay within WebGL2's guaranteed limits (`tools/check_web_shaders.cjs
   to 1 in a thunderstorm, plus the gust front under a storm. It reaches the flight
   model twice: eddies and drafts in the wind (`weather_turbulent_gust`), and roll,
   pitch and yaw kicks, each the change of a bounded displacement
-  (`_turbulence_kick`), so the aircraft is knocked about its path and comes back.
-  `tests/storm_test.jo` holds it flyable hands off.
+  (`_turbulence_kick`), so the aircraft is knocked about its path and comes back;
+  and a slow roll and pitch that wander over tens of seconds, so left alone in a
+  storm it drifts into a bank and a descent while a pilot holding it gets through.
+  `tests/storm_test.jo` flies every aircraft through the game's own storm air
+  (the cell, the deck and the cloud bodies, through `flight_env`, on the player's
+  speed scale): hands off it is in trouble no sooner than 8 s and within a minute
+  at the median; a correcting pilot gets through.
 
 ## Developer controls
 
