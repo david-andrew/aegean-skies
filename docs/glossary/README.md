@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -670,12 +670,24 @@ On the rivers branch until it lands.
      settles at a ride height by herself; the tail foil sits higher than the forward pair, so the
      ride is a little nose-up. Fast, a foil's lift per square metre tops out (cavitation), which
      keeps her from being pinned to the water.
-  3. **The clutch:** as soon as the foils have held the hull and the air propeller clear of the
-     water for half a second (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can
-     carry her (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by
-     itself (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then
-     the air propeller is clutched in and comes off its feather over about 1.4 s. In that gap
-     nothing much pushes and she slows.
+  3. **The clutch:** as soon as the foils have held the hull clear and the air propeller with
+     0.2 m of air under its lowest blade (`PROP_CLEAR_MARGIN`) for three quarters of a second
+     (`PROP_CLEAR_TIME`, against a passing crest), at a speed they can carry her
+     (`FOIL_CARRY_SPEED`, 11.5 m/s) and with the throttle open, the clutch goes over by itself
+     (or when `Controls.clutch` asks, the plate's key): the screw is let go first, then the air
+     propeller is clutched in and comes off its feather over about 1.4 s. In that gap nothing
+     much pushes and she slows. If she drops off her foils with the driven propeller in the sea
+     for `FALLEN_TIME` (0.75 s), the screw is clutched back in by itself, at any throttle, so she
+     climbs up and tries again: she is never stopped dead.
+  **At sea:** her foils hang on struts long enough that, riding them, the hull and the air
+  propeller clear a moderate swell; their lift tops out at the cavitation limit through a soft
+  knee (tanh), so it still answers the flow's angle and damps her heave over the waves; a blade
+  tip skimming a crest costs thrust in proportion to how far it is in (`air_drive`,
+  `CraftState.foil.prop_dip`), and only a propeller well into the sea, driven, takes real blows.
+  In the game's own swell (src/sea.jo, rising with the wind) she takes off hands off or with the
+  stick back from calm to wind 6 (swell to about 1.4 m) in 25-41 s at the player's speed scale;
+  `tests/italian_racers_test.jo` "the P.7 takes off from the open sea in calm and in a moderate
+  swell".
   On her foils she drags far less than a float plane on its step: the foils' lift is square to
   the flow over them, and at 14-25 m/s their drag with the struts' is 12-17% of her weight,
   against a float plane's 19-40%. The hard part is the hump, on the water screw (8.2 kN,
@@ -689,8 +701,8 @@ On the rivers branch until it lands.
   (under 70%, from wear: the screw barely gets her onto her foils and the drive plate says
   "engine too worn to lift her: have it serviced"; `FOIL_MIN_POWER`, `foil_power_short`); the nose is pushed down on the foils (the
   propeller dips into the sea and the engine is wrecked); the clutch is thrown with the propeller
-  in the water (it beats the sea, gives no thrust and hurts the engine); or the swell is big
-  (wind over about 8 m/s: the wing tips catch the waves and tear). Closing the throttle at under
+  in the water (it beats the sea, gives no thrust and hurts the engine); or the sea is rough
+  (wind about 8 m/s and over: the wing tips catch the waves and tear). Closing the throttle at under
   5 m/s on the water puts the clutch back to the screw for another try.
   **The air propeller as seen:** declutched, the engine drags it round through its feathered
   blades: it whirls with the throttle (12 rad/s idling, 33 flat out, about 315 rpm:
@@ -1781,6 +1793,33 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![Standing in the notebook](img/standing.png)
 
+### The pilot's name
+
+- **Aliases:** reputation, what people have heard of him, his name preceding him.
+- **Definition:** what the living world's people know of the pilot and think of him, carried in
+  how they behave and talk, never shown as a number. Four leanings (warmth, honour, daring,
+  reliability) and, from the deeds a listener knows, what he did to and for their own country's
+  people. **Deeds** worth telling (a rescue, a victory, a job, a debt) spread as news: the
+  witnesses and the town at once, through the town over two or three days of talk, about a town
+  a day along the roads and sea lanes while `weight × 0.7^hops` stays above 150, and to every
+  town on the wireless when big. Small acts (a chat, a table shared or refused, a tip) stay with
+  the people there and their town. It all fades with time. Known as keeping to himself, fewer
+  people come over; asked over, they say no, and why. Never a punishment.
+- **Code:** `src/reputation.jo` (`rep_record`, `rep_act`, `rep_view`, `reputation_minute`),
+  `src/reputation_talk.jo` (greetings, company, prices, the wireless, the notebook's words),
+  `src/reputation_types.jo` (`World.rep`); combat deeds come through `src/deeds.jo`
+  (`deed_record`). Design: `docs/reputation.md`. Tests: `tests/reputation_test.jo`.
+- **Rules:** a person knows of him if they dealt with him or saw a deed, or by the town's word: a
+  fixed draw from the seed and their id under the share of the town that has heard. Whoever has
+  heard a deed and hasn't met him mentions it once. Company at the hotel and the coffee house,
+  the "Ask … to join you" action, a keeper's bill (up to 6% down, 5% up) and a family's spare room
+  follow it.
+- **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
+  a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
+  he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
+  `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip (`AEGEAN_SEAT_FRAMES_STEP`
+  frames apart, the view turning `AEGEAN_SEAT_FRAMES_TURN` radians a frame, 0 to hold it).
+
 ### Contracts
 
 - **Aliases:** missions, commissions, military contracts.
@@ -2182,6 +2221,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   stool, and about half of them talk. Sitting, they pass an ordinary remark every half minute or
   so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
   them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
+  Fewer come to one known for turning people away, more to good company, and one who has heard of
+  something he did says so first ([The pilot's name](#the-pilots-name)); seated, "Ask … to join
+  you" asks whoever is near, who comes or says why not.
 - **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
   `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
   asking) in `aegean.jo`; `tests/company_test.jo`.
