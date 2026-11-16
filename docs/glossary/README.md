@@ -1600,7 +1600,8 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_WILD_POD="ahead d s"` (placed on the first frame from where the aircraft is),
   `AEGEAN_CAPTURE_TAKEOFF=1 AEGEAN_CAPTURE_TAXI=<seconds>` (taxi out, then the take-off run),
   `AEGEAN_WILD_DOLPHIN_HOLD=1` with `AEGEAN_WILD_PORTRAIT="dolphin d h bearing"` for turnarounds,
-  `AEGEAN_WILD_LOOK="pod|hauling d h b"`.
+  `AEGEAN_WILD_LOOK="pod|hauling d h b"`, `AEGEAN_WILD_RACECAM="side ahead up"` (held beside the player's
+  aircraft, looking across at the water off its floats).
 
 ### Pilot's scarf
 
