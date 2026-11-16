@@ -48,6 +48,8 @@ struct Fdm2Tuning:
     path_grip = 0.0              # per second: the way she goes turned toward the nose without a change
                                  # of speed (Sky Barons' grip). Makes no energy, but that part of a turn
                                  # costs no drag
+    rudder_skid = 0.16           # the skid a full rudder holds, rad (about 9 degrees): the nose put
+                                 # quickly onto a nearby aim, as a pilot's feet do
     spins = 0.0                  # 1: the stick held right back with full rudder takes the wing past
                                  # its stall and lets her spin; stick forward and opposite rudder recover
 
@@ -94,6 +96,19 @@ fdm2_tuning_parse = (spec: str, base: Fdm2Tuning = Fdm2Tuning()) -> Fdm2Tuning:
             _: pass
     t
 
+# A hop off a swell crest or a wake under flying speed, near the water: she is not flying yet, and
+# the earlier model's handling of the run (which the take-offs are tuned with) carries her back down
+# onto her floats or foils, or up and away, rather than v2's ballistic drop into the next crest. Up
+# to a little over the stall (a take-off handed over right at it would stall her), within a span
+# and a half of the water while she rises, six tenths of one as she comes down (an approach's flare
+# is v2's own).
+fdm2_hop = (k: CraftSpec, s: CraftState, e: FlightEnv) -> bool:
+    v_true = f64(length(s.velocity)) / max(pure_k(k), 1.0)
+    if v_true >= k.stall_speed * 1.1: return false
+    p = craft_point(s)
+    below = max(sea_surface(e, p.x, p.z, s.time).height, e.ground(p.x, p.z))
+    f64(s.position.y) - k.float_height - below < k.span * (if s.velocity.y > 0.0: 1.5 else: 0.6)
+
 # whether this aircraft flies the trial model in the air (the player's only; NPCs keep the liked one)
 fdm2_active = (k: CraftSpec) -> bool: tweaks.flight_model == 1 and (k.player or tweaks.fdm2_npcs)
 
@@ -108,11 +123,14 @@ fdm2_autopilot_pitch = (k: CraftSpec, s: CraftState, pitch: f64, climb: f64) -> 
     want = level + clamp((climb - path) * 1.2, -0.25, 0.25)
     min(pitch, want / max(k.pitch_rate, 0.1))
 
-# For an autopilot flying v2: no steeper a bank than the wing can hold up at this speed (about 30
-# degrees at 1.3 x stall, 60 by 2.2 x): past it, the roll asked for is turned back toward the limit.
+# For an autopilot flying v2: no steeper a bank than the wing can hold up at this speed with a
+# quarter of its lift to spare (about 22 degrees at 1.2 x stall, 38 at 1.3 x, 50 at 1.45 x, 60 at
+# 1.6 x, 75 from 2.3 x, a racer's pylon turn): past it, the roll asked for is turned back toward the
+# limit.
 fdm2_bank_limit = (k: CraftSpec, s: CraftState, roll: f64) -> f64:
     v_true = f64(length(s.velocity)) / max(pure_k(k), 1.0)
-    most = 0.52 + 0.53 * smoothstep(k.stall_speed * 1.3, k.stall_speed * 2.2, v_true)
+    r_v = v_true / max(k.stall_speed, 1.0)
+    most = clamp(acos(1.0 / max(r_v * r_v * 0.75, 1.0)), 0.3, 1.3)
     r = quat_rotate(s.orientation, vec3(1, 0, 0)); u = quat_rotate(s.orientation, vec3(0, 1, 0))
     bank = atan2(-f64(r.y), f64(u.y))
     if bank > most: return min(roll, -clamp((bank - most) * 3.0, 0.0, 1.0))
@@ -208,6 +226,9 @@ fdm2_thrust = (p: Fdm2Params, rpm: f64, v_axial: f64) -> f64:
 
 # The air step. Same contract as flight.jo `_fly_air`.
 fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
+    # (on her wheels at the last step: the stick works the elevator as it stands, no hand holding
+    # her flying, so a stick let go lets her settle onto them and the brakes bite)
+    wheels = s.on_ground
     s.on_water = false; s.on_ground = false; s.beached = false; s.planing = false
     s.water_age += dt
     p = fdm2_params(k)
@@ -226,7 +247,9 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     f = quat_rotate(q, vec3(0, 0, -1)); u = quat_rotate(q, vec3(0, 1, 0)); r = quat_rotate(q, vec3(1, 0, 0))
     # (the surface below: ground effect and rough air go by the drawn height, as the eye sees it)
     here = craft_point(s)
-    below = max(sea_surface(e, here.x, here.z, s.time).height, e.ground(here.x, here.z))
+    sea_h = sea_surface(e, here.x, here.z, s.time).height
+    land_h = e.ground(here.x, here.z)
+    below = max(sea_h, land_h)
     gap = f64(s.position.y) - k.float_height - below
     ge = 1.0 - smoothstep(0.0, k.span * 0.8, gap)
     rough = (0.12 + f64(length(e.wind)) / 14.0) * (0.35 + 0.65 * (1.0 - smoothstep(10.0, 150.0, gap)))
@@ -284,7 +307,10 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     maneuver = 1.0 + fdm2.slow_lift * max(stick, 0.0) * (1.0 - spin_w) * (1.0 - smoothstep(k.stall_speed * 1.2, k.stall_speed * max(fdm2.lift_reach, 1.3), speed))
     cl_total = f64(cls.x + cls.y) * 0.5 * cl_boost * maneuver
     attached_cl = (p.cl0 + p.slope * clamp(alpha, p.alpha_neg, p.alpha_stall)) * (1.0 - sigma) * maneuver
-    cd = p.cd0 * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0) + 0.5 * s.hull_damage + 1.6 * abs(left - right))
+    # (the air brake stands for a forward slip, the fuselage's side to the air: on a share of the clean
+    # airframe's drag, and a drag of its own, as a fast type's clean drag is too small to slow a glide)
+    ab = clamp(c.airbrake, 0.0, 1.0)
+    cd = p.cd0 * (1.0 + 2.5 * ab + 0.5 * s.hull_damage + 1.6 * abs(left - right)) + 0.02 * ab
     cd += p.ki * fdm2.energy * (1.0 - 0.5 * ge) * attached_cl * attached_cl
     cd += sigma * 1.6 * sin(alpha) * sin(alpha) + 0.5 * sin(beta) * sin(beta)
     # the engine and the propeller
@@ -319,6 +345,10 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     path_now = asin(clamp(f64(adir.y), -1.0, 1.0))
     low_w = (1.0 - smoothstep(k.span * 0.6, k.span * 2.5, gap)) * (1.0 - smoothstep(0.3, 0.6, abs(f64(r.y)))) * (1.0 - smoothstep(0.25, 0.5, abs(path_now)))
     low_w *= (1.0 - clamp(abs(stick) / 0.3, 0.0, 1.0)) * clamp(fdm2.skim, 0.0, 1.0) * (if k.player: 1.0 else: 0.0)
+    # (over the water only: over a field she is let down onto her wheels. And it is the hand's help,
+    # as the earlier model's level holds: an autopilot's take-off (assist 0) flies without it)
+    if land_h > sea_h: low_w = 0.0
+    low_w *= clamp(c.assist, 0.0, 1.0)
     skim_path = 0.03 * (1.0 - smoothstep(1.5, 4.0, gap))
     n_cmd += clamp((skim_path - path_now) * 2.0, -0.2, 0.2) * speed / FLIGHT_G * low_w
     n_cmd = clamp(n_cmd, -0.5 * fdm2.g_limit, fdm2.g_limit)
@@ -329,6 +359,11 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     # Less resistance lets a full stick go past it)
     limit = p.alpha_stall * cl_boost - 0.008 + (1.0 - clamp(fdm2.departure, 0.0, 1.0)) * 0.2 * smoothstep(0.9, 1.0, abs(stick))
     limit += spin_w * 0.35
+    # (just over the water with the stick near its middle, as she slows to land: the wing held well
+    # short of its stall, so she settles onto the water as the speed goes instead of hanging on
+    # to the last and dropping in)
+    settle = (1.0 - smoothstep(k.span * 0.5, k.span * 1.5, gap)) * (1.0 - clamp(abs(stick) / 0.3, 0.0, 1.0))
+    limit -= settle * 0.25 * p.alpha_stall * cl_boost
     a_cmd = clamp(a_cmd, p.alpha_neg + 0.03, limit)
     tail_q = (qbar + wash_q) / p.q_cruise
     stiff = p.sp * p.sp
@@ -340,7 +375,7 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     # (holding alpha in a pull also means beating the pitch damping at the path's rate)
     ff = stiff * qn * sin(a_cmd) + pitch_damp * path_pitch
     de = clamp((ff + fb) / max(elev * tail_q, 0.05), -1.0, 1.0)
-    de = stick + (de - stick) * hand
+    de = stick + (de - stick) * hand * (if wheels: 0.0 else: 1.0)
     # (with spins on and the controls crossed, the elevator's full travel: enough to hold the wing
     # deep in its stall)
     pitch_acc = -stiff * qn * sin(alpha) - stiff * qn * 0.12 * sigma + elev * (1.0 + 1.5 * spin_w) * tail_q * de * (0.15 + 0.85 * tail)
@@ -349,10 +384,13 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     aileron = clamp(c.roll, -1.0, 1.0) * (1.0 - 0.6 * sigma) * (0.2 + 0.8 * min(left, right) / max(max(left, right), 0.01))
     # (a steady rate of the catalog's from 1.3 x stall up, less below; reached in about a tenth of a
     # second at cruise, slower when slow; separated flow loses the aileron and the damping both)
-    roll_d = p.roll_damp * max(vn, 0.35) * (1.0 - 0.8 * sigma)
+    roll_d = p.roll_damp * max(vn, 0.35) * (1.0 - 0.8 * sigma) * (0.5 + 0.5 * min(left, right))
     roll_rate = k.roll_rate * fdm2.roll * min(speed / p.v_roll, 1.0)
     roll_acc = (roll_d + 0.8) * roll_rate * aileron
     roll_acc += f64(cls.x - cls.y) * qbar * p.area * 0.5 * k.span * 0.3 / k.inertia.z
+    # (a wing lost or shot to pieces: the stub drags and the good wing's weight hangs off one side, so
+    # she tumbles toward the loss, as in the earlier model, whatever her angle of attack)
+    roll_acc -= (right - left) * 4.0 * clamp(speed / k.stall_speed, 0.0, 3.0)
     roll_acc -= 4.0 * qn * sin(beta) * (1.0 - sigma)
     # (roll_acc is + to starboard; the reaction's + is to port)
     if tweaks.prop_torque: roll_acc -= prop_torque(k, s) / k.inertia.z
@@ -365,8 +403,14 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
     yaw_damp = 2.0 * 0.45 * p.yaw_freq * vn + 0.5 + 1.5 * sigma * fdm2.departure * (1.0 - 0.85 * clamp(fdm2.spins, 0.0, 1.0))
     rudder_acc = wf * sin(0.25) * tail_q * (0.15 + 0.85 * tail)
     # (the coordination: rudder against the slip, and enough to keep the nose turning with the path)
-    assist = clamp(beta * 5.0, -1.0, 1.0) + yaw_damp * path_yaw / max(rudder_acc, 0.5)
-    rudder = clamp(clamp(c.yaw, -1.0, 1.0) + fdm2.coordination * hand * assist * (1.0 - spin_w), -1.0, 1.0)
+    # (the pilot's rudder asks for a skid, up to rudder_skid at full (the mouse's fine aim uses it); the
+    # assist holds that skid rather than taking it away, so the rudder has its authority)
+    want_beta = -clamp(c.yaw, -1.0, 1.0) * fdm2.rudder_skid
+    # (the rudder that holds that skid against the fin's weathercocking, and a firm correction)
+    hold = -wf * qn * sin(want_beta) * (0.3 + 0.7 * tail) / max(rudder_acc, 0.5)
+    assist = hold + clamp((beta - want_beta) * 10.0, -1.0, 1.0) + yaw_damp * path_yaw / max(rudder_acc, 0.5)
+    co = clamp(fdm2.coordination * hand * (1.0 - spin_w), 0.0, 1.0)
+    rudder = clamp(clamp(c.yaw, -1.0, 1.0) * (1.0 - co) + assist * co, -1.0, 1.0)
     yaw_acc = wf * qn * sin(beta) * (0.3 + 0.7 * tail) + rudder_acc * (1.0 + 1.5 * spin_w) * rudder
     yaw_acc -= 0.016 * roll_d * roll_rate * aileron           # (adverse yaw)
     # (a stalled wing drags: the nose swings toward it, which deepens its stall: autorotation)
@@ -386,38 +430,147 @@ fly_air_v2 = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f6
             t_g = min(fdm2.path_grip * dt * (1.0 - sigma), 1.0)
             fwd_now = quat_rotate(s.orientation, vec3(0, 0, -1))
             v = normalize(v / f32(vs) + (fwd_now - v / f32(vs)) * f32(t_g)) * f32(vs)
+    # (low over the water or a field, the floats', hull's and fuselage's sides bite the air by the
+    # surface like a keel: a skid turns her way after the nose, so the rudder carries her round a
+    # canal's bend without banking a wingtip into the water)
+    keel = 1.0 - smoothstep(k.span * 0.8, k.span * 2.5, gap)
+    if keel > 0.0 and sigma < 0.5:
+        hv = vec3(v.x, 0, v.z); hs = f64(length(hv))
+        fh = quat_rotate(s.orientation, vec3(0, 0, -1)); fh.y = 0
+        if hs > 1.0 and length(fh) > 0.1:
+            t_k = min(2.0 * keel * dt, 1.0)
+            turned = normalize(hv / f32(hs) + (normalize(fh) - hv / f32(hs)) * f32(t_k)) * f32(hs)
+            v = vec3(turned.x, v.y, turned.z)
+    # (a storm, as in the earlier model: its eddies kick the attitude about its path (sharp roll and
+    # pitch jolts, a shudder), and its gusts and shear push the aircraft off its attitude and its
+    # course together, irregular roll, yaw and pitch, part a share of its own control rates and part
+    # common. Left alone it wanders off; the push on heading and climb is kept (gust_turn) so the
+    # mouse's aim turns with it and the pilot must bring it back)
+    if e.turbulence > 0.0:
+        storm = e.turbulence * smoothstep(10.0, 45.0, speed)
+        q0 = s.orientation
+        kick_r = turbulence_kick(tt, dt, [1.3, 4.1, 11.0, 23.0], [0.30, 0.16, 0.05, 0.02], 61.0)
+        kick_p = turbulence_kick(tt, dt, [1.1, 3.7, 12.0, 27.0], [0.10, 0.04, 0.008, 0.003], 73.0)
+        kick_y = turbulence_kick(tt, dt, [0.9, 3.3], [0.06, 0.03], 89.0)
+        qk = quat_mul(q0, quat_axis_angle(vec3(0, 0, 1), kick_r * storm))
+        qk = quat_mul(qk, quat_axis_angle(vec3(1, 0, 0), kick_p * storm))
+        qk = quat_mul(qk, quat_axis_angle(vec3(0, 1, 0), kick_y * storm))
+        f0 = quat_rotate(qk, vec3(0, 0, -1))
+        qp = quat_mul(qk, quat_axis_angle(vec3(0, 0, 1), storm_push(tt, 101.0) * (0.03 * k.roll_rate + 0.08) * storm * dt))
+        qp = quat_mul(qp, quat_axis_angle(vec3(1, 0, 0), storm_push(tt, 113.0) * (0.035 * k.pitch_rate + 0.04) * storm * dt))
+        # (the shear's push on the heading carries the way she goes round with it: off her course; the
+        # roll and pitch pushes are on her attitude, and the wings take the path after them)
+        yaw_push = storm_push(tt, 131.0) * (0.35 * k.yaw_rate + 0.12) * storm * dt
+        turn_q = quat_axis_angle(vec3(0, 1, 0), -yaw_push)
+        qp = normalize(quat_mul(turn_q, qp))
+        v = quat_rotate(turn_q, v)
+        s.orientation = qp
+        f1 = quat_rotate(qp, vec3(0, 0, -1))
+        turn = atan2(f64(f1.x), f64(-f1.z)) - atan2(f64(f0.x), f64(-f0.z))
+        turn = atan2(sin(turn), cos(turn))
+        s.gust_turn = vec2(f32(turn), f32(asin(clamp(f64(f1.y), -1.0, 1.0)) - asin(clamp(f64(f0.y), -1.0, 1.0))))
+    else: s.gust_turn = vec2(0, 0)
     s.velocity = v * f32(kk)
     craft_advance(s, dt)
 
 # Sky Barons' steer for the trial model: the same aim-to-stick, normalised by the rate she can
 # actually turn (the g limit at speed), and no rudder held toward the sky (the assist coordinates).
-steer_v2 = (k: CraftSpec, s: CraftState, want: vec3) -> Controls:
-    # (what is aimed: slow, the way she goes (the nose rides alpha above it, and aiming the nose
-    # would sink her on an approach); fast, as for the guns, the nose, which is then nearly the same)
-    v_true = f64(length(s.velocity)) / max(pure_k(k), 1.0)
-    path_b = if length(s.velocity) > 1.0: quat_rotate(quat_inverse(s.orientation), normalize(s.velocity)) else: vec3(0, 0, -1)
-    below_nose = atan2(f64(path_b.y), max(-f64(path_b.z), 0.1))
-    below_nose = clamp(below_nose, -0.35, 0.35) * (1.0 - smoothstep(k.stall_speed * 1.4, k.stall_speed * 2.2, v_true))
-    frame = quat_mul(s.orientation, quat_axis_angle(vec3(1, 0, 0), below_nose))
-    l = quat_rotate(quat_inverse(frame), normalize(want))
-    ahead = f64(-l.z)
-    a = max(ahead, 0.1)
+steer_v2 = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0, 0), firm: bool = false, flare: bool = false) -> Controls:
+    # A pilot's hands on the mouse's aim, for this model. The flight path is turned by the lift: the aim's
+    # error asks for a rate of turn of the path, so much sideways and so much up, and the lift that gives
+    # it (with the weight held up) sets the bank and the pull, so a small error is a gentle bank, and a
+    # bank-and-pull comes only as the error grows. The feet put the nose (the guns) onto a near aim at
+    # once with a skid, while the bank brings the path round after it. Pitch alone for an aim above or
+    # below. The pull goes on along the lift as it is, so she does not pull before she has banked.
+    kk = max(pure_k(k), 1.0)
+    v_true = max(f64(length(s.velocity)) / kk, 1.0)
+    # (through the air, as the wing meets it: in a head wind well over the speed over the ground)
+    v_air = if s.airspeed > 1.0: s.airspeed / kk else: v_true
+    vdir = if length(s.velocity) > 1.0: normalize(s.velocity) else: quat_rotate(s.orientation, vec3(0, 0, -1))
+    w = normalize(want)
+    fwd = quat_rotate(s.orientation, vec3(0, 0, -1))
+    up_b = quat_rotate(s.orientation, vec3(0, 1, 0))
+    # (what is aimed: the nose (the guns); slow, as on an approach, the way she goes, so the nose riding
+    # alpha above it does not sink her)
+    slow = 1.0 - smoothstep(k.stall_speed * 1.25, k.stall_speed * 1.6, v_air)
+    # (the way she goes through the air, not over the ground: the nose less alpha. In an up or down
+    # draught the ground path tilts with the air, and steering that level would dive or climb her)
+    right_b = quat_rotate(s.orientation, vec3(1, 0, 0))
+    air_path = quat_rotate(quat_axis_angle(right_b, -s.aoa), fwd)
+    nose = normalize(fwd + (air_path - fwd) * f32(slow))
+    # (an autopilot aims its path, not its guns: in a banked turn the rudder's skid tips the nose (and
+    # the nose less alpha) down off the path, and a pull to bring it up would take the bank out of
+    # the turn)
+    if firm: nose = vdir
+    side = cross(vdir, vec3(0, 1, 0))
+    side = if length(side) > 0.05: normalize(side) else: quat_rotate(s.orientation, vec3(1, 0, 0))
+    vup = normalize(cross(side, vdir))
+    # the errors: sideways from the path; up and down from the nose
+    e_lat = atan2(f64(dot(w, side)), f64(dot(w, vdir)))
+    e_up = atan2(f64(dot(w, vup)), f64(length(vec3(dot(w, vdir), dot(w, side), 0)))) - atan2(f64(dot(nose, vup)), f64(dot(nose, vdir)))
+    # (how fast the path is turning now, from the lift at this angle of attack less the weight: what
+    # damps the approach, so the path slows as it comes onto the aim instead of swinging past)
+    p = fdm2_params(k)
+    up_now = up_b - vdir * dot(up_b, vdir)
+    up_now = if length(up_now) > 0.05: normalize(up_now) else: vup
+    n_est = (p.cl0 + p.slope * clamp(s.aoa, p.alpha_neg, p.alpha_stall)) * 0.5 * 1.225 * v_air * v_air * p.area / p.weight
+    g_perp0 = vec3(0, f32(FLIGHT_G), 0) - vdir * f32(FLIGHT_G * f64(vdir.y))
+    a_net = up_now * f32(n_est * FLIGHT_G) - g_perp0
+    turning_lat = f64(dot(a_net, side)) / v_air
+    turning_up = f64(dot(a_net, vup)) / v_air
+    e_lat -= 0.4 * turning_lat
+    # (not for an autopilot: the estimate reads a fast aircraft's lift low, a sink that is not
+    # there, and the pull asked for to stop it takes the bank out of its turn; its own pitch limit
+    # holds the climb)
+    if not firm: e_up -= 0.25 * turning_up
+    # the path's rate of turn asked for: gentle for a small error, as fast as she turns for a big one
+    most = max(min(k.pitch_rate, fdm2.g_limit * FLIGHT_G / v_true), 0.1)
+    # (sideways the path turns gently for a small error, the feet doing the fine work; firmly from
+    # about ten degrees off)
+    # (an autopilot's turn (firm), its course already eased by the way it is set: the firm gain at once)
+    gain_lat = if firm: 1.15 else: 0.35 + 0.8 * smoothstep(0.035, 0.18, abs(e_lat))
+    # (the path is not asked to follow the aim's quick motions, only where it is: small fast moves are
+    # the feet's (the skid below leads the aim's motion), so they never become a bank)
+    w_lat = most * tanh(e_lat * gain_lat / most)
+    # (an autopilot's climbs and descents are gentle ones: brought on over a second or so, so a few
+    # meters' height to make up in a fast turn does not take the bank out of it; a flare's is crisp)
+    w_up = most * tanh(e_up * (if firm and not flare: 1.0 else: 3.2) / most)
+    turn = sqrt(w_lat * w_lat + w_up * w_up)
+    if turn > most: w_lat *= most / turn; w_up *= most / turn
+    # the lift that gives it: the turn, and the weight
+    g_perp = vec3(0, f32(FLIGHT_G), 0) - vdir * f32(FLIGHT_G * f64(vdir.y))
+    force = side * f32(v_true * w_lat) + vup * f32(v_true * w_up) + g_perp
+    f_side = f64(dot(force, side)); f_up = f64(dot(force, vup))
+    bank_want = atan2(f_side, f_up)
+    # (asked to push mostly down: wings level, a push, not a roll onto the back)
+    if f_up < 0.0 and abs(f_side) < abs(f_up) * 0.6: bank_want = atan2(-f_side, -f_up)
+    # (no steeper than 40 degrees to come round to an aim up to about fifteen degrees off; steeper
+    # as it lies further off, the steep, hard turn only for one well off to the side or behind)
+    # (an autopilot banks as its turn needs, its own limit by the speed applied after)
+    steep = if firm: 1.48 else: 0.7 + 0.78 * smoothstep(0.25, 1.2, abs(e_lat))
+    bank_want = clamp(bank_want, -steep, steep)
     right = quat_rotate(s.orientation, vec3(1, 0, 0))
-    rate = 6.0
-    pr = max(min(k.pitch_rate, fdm2.g_limit * FLIGHT_G / max(v_true, 1.0)), 0.1)
-    yr = max(k.yaw_rate, 0.1)
+    bank = atan2(-f64(right.y), f64(up_b.y))
     rr = max(k.roll_rate * fdm2.roll, 0.1)
-    near_pitch = clamp(f64(l.y) / a * rate / pr, -1.0, 1.0)
-    near_yaw = clamp(f64(l.x) / a * rate / yr * 0.4, -1.0, 1.0)
-    near_roll = clamp((f64(right.y) * 1.6 + f64(l.x) / a * 4.0) * 2.6 / rr, -1.0, 1.0)
-    err = atan2(f64(l.x), f64(l.y))
-    off = acos(clamp(ahead, -1.0, 1.0))
-    far_roll = clamp(err * 2.0 * min(1.0, 3.6 / rr), -1.0, 1.0)
-    far_pitch = (if abs(err) < 1.2: clamp(off * 3.0, 0.0, 1.0) else: 0.2) * min(1.0, 2.4 / pr)
-    blend = smoothstep(0.94, 0.995, ahead)
-    if l.y < 0.0 and abs(f64(l.x)) < 0.5 * abs(f64(l.y)) + 0.05: blend = max(blend, smoothstep(0.7, 0.85, ahead))
     c = Controls(assist = 0.0)
-    c.pitch = far_pitch + (near_pitch - far_pitch) * blend
-    c.roll = far_roll + (near_roll - far_roll) * blend
-    c.yaw = near_yaw * blend
+    # (with the roll's own rate damping it, so a jolt is not chased stick to stick)
+    p_roll = -f64(s.angular_velocity.z)
+    c.roll = clamp((angle_delta(bank_want, bank) * 4.0 - p_roll * 0.35) / rr, -1.0, 1.0)
+    # the pull, along the lift as it stands (the v2 stick asks for a rate of the path)
+    lift_now = up_now
+    # (and never a push past weightless: an aim below is reached by easing off, or by rolling and
+    # pulling for one far below, not by hanging her in her straps; the keys can still push)
+    n_now = max(f64(dot(force, lift_now)) / FLIGHT_G, 0.0)
+    c.pitch = clamp((n_now - f64(lift_now.y)) * FLIGHT_G / (max(k.pitch_rate, 0.1) * v_true), -1.0, 1.0)
+    # the feet: a skid that puts the nose on a near aim (fading out for a far one, left to the bank)
+    l = quat_rotate(quat_inverse(s.orientation), w)
+    e_nose = atan2(f64(l.x), max(-f64(l.z), 0.05))
+    vb = quat_rotate(quat_inverse(s.orientation), vdir)
+    skid = atan2(-f64(vb.x), max(-f64(vb.z), 0.05))
+    near = 1.0 - smoothstep(0.12, 0.3, abs(e_lat))
+    # (damped by the nose's own turning, less the path's in the bank: the skid settles, not swings)
+    r_nose = -f64(s.angular_velocity.y)
+    r_path = FLIGHT_G * tan(clamp(bank, -1.3, 1.3)) / v_true
+    r_aim = f64(dot(want_rate, quat_rotate(s.orientation, vec3(1, 0, 0))))
+    c.yaw = clamp((skid + 1.0 * e_nose - 0.3 * (r_nose - r_path - r_aim)) / max(fdm2.rudder_skid, 0.02), -1.0, 1.0) * near
     c
