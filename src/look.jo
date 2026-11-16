@@ -196,7 +196,7 @@ meadow_wrap = (x: f64) -> f64: x - floor(x / f64(GUST_PERIOD)) * f64(GUST_PERIOD
 
 # call once a frame with the wind's final speed (x, z unused: the gusts are fixed to the world, not the viewer)
 meadow_step = (w: Wind, x: f64, z: f64, dt: f64):
-    global meadow_state
+    global meadow_state, meadow_blob_ready
     if dt <= 0.0: return
     m = meadow_state
     mixed = m.axis + (w.dir - m.axis) * f32(min(1.0, dt * 1.5))
@@ -207,6 +207,11 @@ meadow_step = (w: Wind, x: f64, z: f64, dt: f64):
     m.a2 = vec2(f32(meadow_wrap(f64(m.a2.x) + d.x * c * 1.15)), f32(meadow_wrap(f64(m.a2.y) + d.y * c * 1.15)))
     m.aw = vec2(f32(meadow_wrap(f64(m.aw.x) + d.x * c * 0.6)), f32(meadow_wrap(f64(m.aw.y) + d.y * c * 0.6)))
     meadow_state = m
+    if not meadow_blob_ready and w.speed >= 7.0:
+        # first strong wind: a few blobs already under way
+        meadow_blob_ready = true
+        loop k in 0..60: meadow_blob_step(m.axis, w.speed, x, z, 0.25)
+    meadow_blob_step(m.axis, w.speed, x, z, dt)
 
 # the wind vector the shaders read: (lean direction x, z, speed, 0)
 meadow_wind = (w: Wind, origin: vec3) -> vec4:
@@ -219,6 +224,78 @@ meadow_gust = (origin: vec3) -> vec4:
     s1 = meadow_shift(meadow_state.a1, origin); s2 = meadow_shift(meadow_state.a2, origin)
     vec4(s1.x, s1.y, s2.x, s2.y)
 meadow_gust_w = (origin: vec3) -> vec2: meadow_shift(meadow_state.aw, origin)
+
+# Wind gusts as blobs. In strong wind the grass mostly stands, leaning steadily downwind; a good number of small,
+# soft, irregular blobs (cat's-paws) are born upwind of the viewer, run downwind, grow and fade over several
+# seconds, and press the grass down where they pass (overlaps add). Each blob's strength rises and falls
+# smoothly, so the lean never pops. Kept on the CPU in f64 world coordinates; the shaders read at most
+# MEADOW_BLOBS of them as uniform rows (two vec4 each) and evaluate them per blade. The blend into the
+# older gust field starts at 8 m/s and is complete at 16 m/s, so calm and fresh winds are untouched.
+const MEADOW_BLOBS = 10
+
+struct MeadowBlob:
+    x: f64
+    z: f64
+    r: f64                          # radius (m) when grown
+    peak: f64                       # strength at its fullest
+    age: f64 = 0.0
+    life: f64
+    aspect: f64                     # semi-axis along its heading over the cross semi-axis
+    turn: f64                       # heading off the wind (radians)
+    seed: f64
+
+meadow_blobs: MeadowBlob[]
+meadow_blob_rng = 20240601          # its own counter: never the world's random numbers
+meadow_blob_next = 0.0
+meadow_blob_ready = false
+
+meadow_blend = (speed: f32) -> f32: smoothstep(8.0, 16.0, speed)
+
+meadow_rand = () -> f64:
+    global meadow_blob_rng
+    meadow_blob_rng = (meadow_blob_rng * 1103515245 + 12345) % 2147483648
+    f64(meadow_blob_rng) / 2147483648.0
+
+# metres a blob travels per second: half the wind, between 1.5 and 12 m/s (a full-speed gale would cross a
+# gust's own width in under two seconds, which reads as flicker)
+meadow_blob_travel = (speed: f64) -> f64: clamp(0.5 * speed, 1.5, 12.0)
+
+meadow_blob_step = (axis: vec2, speed: f64, x: f64, z: f64, dt: f64):
+    global meadow_blobs, meadow_blob_next
+    c = meadow_blob_travel(speed)
+    d = vec2(f64(axis.x), f64(axis.y))
+    kept: MeadowBlob[]
+    loop b in meadow_blobs:
+        nb = b
+        nb.age += dt
+        nb.x += d.x * c * dt
+        nb.z += d.y * c * dt
+        dx = nb.x - x; dz = nb.z - z
+        if nb.age < nb.life and dx * dx + dz * dz < 320.0 * 320.0: kept.push(nb)
+    meadow_blobs = kept
+    meadow_blob_next -= dt
+    if meadow_blob_next <= 0.0 and speed >= 7.0 and meadow_blobs.len() < MEADOW_BLOBS:
+        life = 7.0 + 4.0 * meadow_rand()
+        up = c * life * 0.5 + 10.0 * meadow_rand()
+        across = (meadow_rand() - 0.5) * 70.0
+        meadow_blobs.push(MeadowBlob(x - d.x * up - d.y * across, z - d.y * up + d.x * across, 4.0 + 8.0 * meadow_rand(), 0.7 + 0.5 * meadow_rand(), 0.0, life, 0.8 + meadow_rand(), (meadow_rand() - 0.5), meadow_rand() * 6.2832))
+        meadow_blob_next = 0.95 * (0.5 + meadow_rand())
+
+# the uniform rows: per blob (x, z relative to the render origin, radius, strength now) and (heading x, z,
+# aspect, wobble phase); a strength of zero is an empty slot
+meadow_blob_rows = (origin: vec3) -> vec4[20]:
+    rows: vec4[20] = [vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0)]
+    n = min(meadow_blobs.len(), MEADOW_BLOBS)
+    loop k in 0..n:
+        b = meadow_blobs[k]
+        a = b.age / b.life
+        env = smoothstep(0.0, 0.3, a) * (1.0 - smoothstep(0.62, 1.0, a))
+        grow = 0.55 + 0.45 * smoothstep(0.0, 0.5, a)
+        cs = cos(b.turn); sn = sin(b.turn)
+        ax = f64(meadow_state.axis.x); az = f64(meadow_state.axis.y)
+        rows[k * 2] = vec4(f32(b.x - f64(origin.x)), f32(b.z - f64(origin.z)), f32(b.r * grow), f32(b.peak * env))
+        rows[k * 2 + 1] = vec4(f32(ax * cs - az * sn), f32(ax * sn + az * cs), f32(b.aspect), f32(b.seed + b.age * 0.4))
+    rows
 
 # (in shaders) smooth value noise on a lattice that repeats every 32 cells
 pnoise = (p: vec2) -> f32:
