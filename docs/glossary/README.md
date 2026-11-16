@@ -62,15 +62,23 @@ on that unmerged branch so far.
 
 - **Aliases:** the sun's glitter, sparkle, "small, hard sparkle" (`docs/ART.md`); close to the
   camera, the white ovals on the water.
-- **Definition:** **sun glints** are sparse, tiny facets, each tipped at random and re-tipped in
-  steps. Far off, each one is a pixel or two of hard white sparkle; close to the camera (beside the
-  floats on a take-off or landing run) the same glints are drawn as small, flat white ovals lying on
-  the water. Together they form the **glitter path**: the band of glints and soft sheen on the
-  water along the sun's bearing.
-- **Code:** `src/sea.jo:305 _glints`, with `sea_glint_possible` (a cheap early reject) and
-  `sea_glint_anchor`; used in `sea_material`.
-- **Rules:** the early reject must not thin the facets. The speed-fleck rule covers glints too:
-  keep their density, scale and intensity.
+- **Definition:** **sun glints** (and the moon's at night) are facets of the waves, one to a cell of
+  the water, each tipped at random and re-tipped a few times a second; the tilts gather toward
+  level, so the glitter is dense in its core and thins toward its edges, and a low light draws it
+  out into a column toward the eye. A facet that catches the light is painted as a short soft dash
+  across the view, a few pixels long whatever the distance (far off a pixel or so high, as the
+  water is foreshortened), leaning a little with the wave's slope; some are little crescents, a few
+  are larger, brighter flashes, and each fades in and out as its facet turns. The cells are about
+  three pixels high on the screen, so a glint never shrinks to one hard pixel. Close to the camera
+  (beside the floats on a take-off or landing run) they are small, flat white ovals and crescents
+  lying on the water. Together they form the **glitter path**: the band of glints and soft sheen
+  on the water along the light's bearing.
+- **Code:** `src/sea.jo _glints` (`GLINT_ACCEPT`, `SeaParams.glint_pixel`), with
+  `sea_glint_possible` (a cheap early reject) and `sea_glint_anchor`; used in `sea_material`.
+  `tools/glint_view.jo` shows the glitter for a chosen light height, eye and look.
+- **Rules:** the early reject must not thin the facets (its bound follows `GLINT_ACCEPT`). Keep the
+  glints' density and intensity as they are (the user asked for their shape in 2026-11: dashes and
+  crescents, never square pixels).
 - **Capture:** a low sun (`AEGEAN_HOUR` near 7 or 17) with the camera facing the sun;
   `tools/coast_capture.jo COAST_SITE=beach COAST_RANGE=300`; `tools/splash_frames.jo` close up.
 
@@ -130,18 +138,16 @@ blue discs that stay in every frame are **speed flecks**.
 
 ### Deep sea from height
 
-- **Aliases:** "Deeper sea from height" (the Tweaks checkbox), the navy sea.
-- **Definition:** a trial, off by default: the open sea's colour darkens toward navy as the eye
-  climbs (none below about 60 m, full by 700 m) and the look steepens, while the shallows band,
-  clear bays and the low-level sea keep their luminous teal. The haze over open water darkens a
-  little with it, so the sea's horizon band sits below the sky's.
-- **Code:** `tweaks.deep_sea_height`; `SeaParams.deep_dark`, set in `sea_params` and applied in
-  `sea_material` after the speed flecks and before the sun's sheen and glints.
-- **Rules:** one factor on the body and its marks together, so the speed flecks keep their density,
-  size and contrast to the body; never in water shallower than about 6 m. Whether it becomes the
-  default is the user's call (`docs/ART.md` asks for a luminous teal sea).
-- **Capture:** `AEGEAN_DEEP_SEA=1` with `AEGEAN_FLYING=600` or a free view looking down,
-  `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
+- **Aliases:** the navy sea; its opposite is "Brighter ocean" (the Tweaks checkbox).
+- **Definition:** the open sea's deep-water colour darkens toward navy as the eye climbs (none below
+  60 m, full by 700 m), and the haze over the sea darkens a little with it, so the sea's horizon
+  band sits below the sky's. The shallows band, clear bays and the low-level sea keep their
+  luminous teal; the speed flecks, glints and crest strokes are drawn over the body as before.
+- **Code:** `sea_from_height` in `src/sea.jo` (`DEEP_SEA_*`): `SeaParams.deep` and `.haze` set on the
+  CPU for the sea and the far sea only (lakes and rivers keep theirs); no shader work.
+  `tweaks.brighter_ocean` (`AEGEAN_BRIGHT_SEA=1`) skips it.
+- **Rules:** colour and gradients only: never thin, dim or restyle the sea's fine detail for it.
+- **Capture:** `AEGEAN_FLYING=600`, or a free view looking down, `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
 
 ### Shore foam
 
@@ -1277,27 +1283,31 @@ On the rivers branch until it lands.
 
 ### Afterglow
 
-- **Aliases:** "Dusk afterglow" (the Tweaks checkbox), twilight, golden hour, blue hour.
-- **Definition:** a trial, off by default: the light keyed by the sun's height, so that after
-  sunset the sky keeps a bright amber band low on the sun's side (orange at the horizon, peach-gold
-  above, a faint rose round the rest) for over an hour, while land, sea and cloud bellies go dark
-  beneath it as silhouettes; then a teal blue hour (about 19:45) and night by about 20:30. Dawn
-  mirrors it. The sea reflects the band.
-- **Code:** `tweaks.dusk_afterglow`; `twilight_light` and its `TWILIGHT_*` keyframes in
-  `src/look.jo`, `Light.afterglow`; `sky_afterglow` in `src/sky_air.jo`, used by `src/sky.jo` and
-  the sea's reflection in `src/sea.jo`.
-- **Capture:** `AEGEAN_AFTERGLOW=1 AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into
-  the glow); `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
+- **Aliases:** twilight, golden hour, blue hour.
+- **Definition:** the day's light keyed by the sun's height: after sunset the sky keeps a bright
+  amber band low on the sun's side (orange at the horizon, peach-gold above, a faint rose round
+  the rest) for over an hour, while land, sea and cloud bellies go dark beneath it as silhouettes;
+  then a teal blue hour (about 19:45) and night with stars by about 20:30. Dawn mirrors it. On the
+  high tier the sea reflects the band.
+- **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
+  (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`);
+  `sky_afterglow` in `src/sky_air.jo`. On the high tier the sky and the sea draw with glow variants
+  (`sky_glow_sh`, the glow worked out on a screen grid; `sea_glow_sh`) while it glows; the day's
+  shaders are unchanged. The low and medium tiers keep the plain sky and warm its horizon and haze
+  instead (`SKY_GLOW_LOW`): a softer band all round, at no cost (the variant costs Intel UHD 620
+  about 0.5 ms).
+- **Capture:** `AEGEAN_VIEW="0 200 9000 1.5708 -0.05 19.35"` (looking west into the glow);
+  `AEGEAN_HOUR_RATE` (hours per second) runs a whole dusk in a short clip.
 
 ### Warm bounce
 
-- **Aliases:** "Warm bounce in shade" (the Tweaks checkbox), bounce light.
-- **Definition:** a trial, off by default: plaster, paving and masonry in shade are lit by the sunlit
-  ground's bounce in the sun's own colour (straw and limestone) instead of a cool grey fill: the
-  same strength at noon, warm in the evening, gone with the sun.
-- **Code:** `tweaks.warm_bounce`; `paint_plaster_bounce` in `src/paint.jo`, reckoned once a frame
-  into `ObjParams.plaster_bounce` (`src/objects.jo`, `src/cockpit.jo`).
-- **Capture:** `AEGEAN_WARM_BOUNCE=1 AEGEAN_CAPTURE=port:10001:ground AEGEAN_HOUR=17`.
+- **Aliases:** bounce light.
+- **Definition:** plaster, paving and masonry in shade are lit by the sunlit ground's bounce in the
+  sun's own colour (straw and limestone) rather than a cool grey fill: as strong as the old fill at
+  noon, warm in the evening, gone with the sun.
+- **Code:** `paint_plaster_bounce` in `src/paint.jo`, reckoned once a frame into
+  `ObjParams.plaster_bounce` (`src/objects.jo`, `src/cockpit.jo`).
+- **Capture:** `AEGEAN_CAPTURE=port:10001:ground AEGEAN_HOUR=17`.
 
 ### Moon
 
