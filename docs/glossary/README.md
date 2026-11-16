@@ -49,11 +49,11 @@ on that unmerged branch so far.
   painted-look pass replaced them with larger, sparser brush marks, the user said "your sense of
   speed is completely gone". Every water surface you can take off from (rivers, canals, lakes)
   must use the same flecks at the same scale and density. Check a low fast pass over open water
-  (`AEGEAN_FLYING='60 150'`) before and after any change to water, depth, quality tiers or sky.
+  (`AEGEAN_FLYING='60 45.5'`) before and after any change to water, depth, quality tiers or sky.
   Whatever moves the eye must pass its velocity to the sea (`view_velocity`): a moving camera over
   a sea told it is still shows soft, faint marks (the title reel once did;
   `tests/title_reel_detail_test.py` now guards it).
-- **Capture:** `AEGEAN_FLYING='8 190'` or `AEGEAN_FLYING='60 150'`; `tools/precision_view.jo`
+- **Capture:** `AEGEAN_FLYING='8 57.6'` or `AEGEAN_FLYING='60 45.5'`; `tools/precision_view.jo`
   with `PRECISION_MARKS=1` isolates the fleck painter.
 
 ![Speed flecks streaming past below a Gull at 8 m](img/speed-flecks.png)
@@ -407,7 +407,7 @@ On the rivers branch until it lands.
 - **Rules:** off by day (`nav_light_level` 0 above sun height 0.12), full by sun height -0.10.
   Aircraft lamps sit on the outermost wing contact (biplanes: the wider wing) and are off when
   moored or wrecked. Vessels' bow is +z, so port (red) is +x for them and -x for aircraft.
-- **Capture:** `AEGEAN_FLYING="200 190" AEGEAN_HOUR=22`; distance: add
+- **Capture:** `AEGEAN_FLYING="200 57.6" AEGEAN_HOUR=22`; distance: add
   `AEGEAN_VIEW="2433 210 -3365 0.5711 -0.01 22" SLOPPY_INPUT="2:f2+ 3:f2-"`.
 
 ### Prop arcs
@@ -700,7 +700,7 @@ On the rivers branch until it lands.
 - **Aliases:** drawn speed versus true speed, pure scale, `liked-speed-3.3x`.
 - **Definition:** the world is flown at 3.3 times the aircraft's true speed. Drawn (visual)
   speed is true speed times the scale. The capture switch `AEGEAN_FLYING='alt speed'` takes the
-  drawn speed.
+  true speed (m/s, the speedometer's) and draws it at the scale; left out, 1.3 times the stall.
 - **Code:** `set_speed_scale` in `src/flight.jo`; the `pure_scale` flag in `src/tweaks.jo`;
   `pure_k` converts back to true speed.
 - **Rules:** a plain scalar, not a curve; the approved version is tagged `liked-speed-3.3x`.
@@ -793,7 +793,7 @@ On the rivers branch until it lands.
   but frames crosses the glass. `tests/cockpit_cabins_test.jo` casts rays from each cabin's eye:
   every direction must meet a face turned toward it or leave through a pane.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
-  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 165 cockpit'` (the speed is in world units at the 3.3 speed scale: give each type about its cruise × 3.3, or it spawns stalled).
+  `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 50 cockpit'` (the speed is the true airspeed; left out, a safe 1.3 times the type's stall).
 
 ### Cockpit lamp and luminous dials
 
@@ -2745,7 +2745,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 
 | Switch | What it does |
 |---|---|
-| `AEGEAN_FLYING='alt speed [cockpit]'` | start in the air off the home harbour (drawn speed, m/s); `cockpit`: in the cockpit view |
+| `AEGEAN_FLYING='alt [speed] [cockpit]'` | start in the air off the home harbour: altitude m, true airspeed m/s (the speedometer's; drawn 3.3 times faster), by default 1.3 times the aircraft's stall; `cockpit`: in the cockpit view |
 | `AEGEAN_AIRFIELD=stand|fuel|runway` | aboard at the nearest airfield: on its apron stand, at its fuel point, or at the strip's southern threshold heading down it (a landplane; with `AEGEAN_CRAFT`) |
 | `AEGEAN_CAPTURE_PANEL=aircraft` | the pause menu open on its Aircraft page (the picker) |
 | `AEGEAN_CAPTURE_PANEL=plane` | the pause menu open on its Plane page (fuel, damage, mending, the scales) |
