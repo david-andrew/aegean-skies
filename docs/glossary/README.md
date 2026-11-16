@@ -62,15 +62,23 @@ on that unmerged branch so far.
 
 - **Aliases:** the sun's glitter, sparkle, "small, hard sparkle" (`docs/ART.md`); close to the
   camera, the white ovals on the water.
-- **Definition:** **sun glints** are sparse, tiny facets, each tipped at random and re-tipped in
-  steps. Far off, each one is a pixel or two of hard white sparkle; close to the camera (beside the
-  floats on a take-off or landing run) the same glints are drawn as small, flat white ovals lying on
-  the water. Together they form the **glitter path**: the band of glints and soft sheen on the
-  water along the sun's bearing.
-- **Code:** `src/sea.jo:305 _glints`, with `sea_glint_possible` (a cheap early reject) and
-  `sea_glint_anchor`; used in `sea_material`.
-- **Rules:** the early reject must not thin the facets. The speed-fleck rule covers glints too:
-  keep their density, scale and intensity.
+- **Definition:** **sun glints** (and the moon's at night) are facets of the waves, one to a cell of
+  the water, each tipped at random and re-tipped a few times a second; the tilts gather toward
+  level, so the glitter is dense in its core and thins toward its edges, and a low light draws it
+  out into a column toward the eye. A facet that catches the light is painted as a short soft dash
+  across the view, a few pixels long whatever the distance (far off a pixel or so high, as the
+  water is foreshortened), leaning a little with the wave's slope; some are little crescents, a few
+  are larger, brighter flashes, and each fades in and out as its facet turns. The cells are about
+  three pixels high on the screen, so a glint never shrinks to one hard pixel. Close to the camera
+  (beside the floats on a take-off or landing run) they are small, flat white ovals and crescents
+  lying on the water. Together they form the **glitter path**: the band of glints and soft sheen
+  on the water along the light's bearing.
+- **Code:** `src/sea.jo _glints` (`GLINT_ACCEPT`, `SeaParams.glint_pixel`), with
+  `sea_glint_possible` (a cheap early reject) and `sea_glint_anchor`; used in `sea_material`.
+  `tools/glint_view.jo` shows the glitter for a chosen light height, eye and look.
+- **Rules:** the early reject must not thin the facets (its bound follows `GLINT_ACCEPT`). Keep the
+  glints' density and intensity as they are (the user asked for their shape in 2026-11: dashes and
+  crescents, never square pixels).
 - **Capture:** a low sun (`AEGEAN_HOUR` near 7 or 17) with the camera facing the sun;
   `tools/coast_capture.jo COAST_SITE=beach COAST_RANGE=300`; `tools/splash_frames.jo` close up.
 
@@ -1251,7 +1259,7 @@ On the rivers branch until it lands.
   amber band low on the sun's side (orange at the horizon, peach-gold above, a faint rose round
   the rest) for over an hour, while land, sea and cloud bellies go dark beneath it as silhouettes;
   then a teal blue hour (about 19:45) and night with stars by about 20:30. Dawn mirrors it. On the
-  medium and high tiers the sea reflects the band.
+  high tier the sea reflects the band.
 - **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
   (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`);
   `sky_afterglow` in `src/sky_air.jo`. The sky and the sea draw with glow variants of their
