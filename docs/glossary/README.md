@@ -599,18 +599,20 @@ On the rivers branch until it lands.
 
 ### One speed rule
 
-- **Aliases:** the speed rule; the historical speed rule.
-- **Definition:** a Tweaks trial (off by default: "One speed rule for historical aircraft") that
-  places every historical type by one curve from its real top speed: design top, true m/s = 80 ×
-  (real km/h ÷ 250)^0.76, the single curve closest to the three fleets' own scalings. Each type's
-  cruise moves with its top, its stall stays as designed, drag is set so thrust over drag makes the
-  new top, thrust is kept. The game's own sixteen designs are not changed. Switching it remakes every
-  aircraft's spec at once.
-- **Code:** `real_top_kmh`, `speed_rule`, `AIRCRAFT_RULED` in `src/aircraft_catalog.jo`;
-  `aircraft_profile` in `src/planes.jo`; `tests/speed_rule_test.jo`; `tools/speed_rule_table.jo`
-  (the table); `AEGEAN_TWEAKS=speedrule`, or `AEGEAN_SPEED_RULE=1` (also for running any test with it).
+- **Aliases:** the speed rule; the historical speed rule; how speeds are set.
+- **Definition:** how every historical type's speeds are set: one curve from its real top speed,
+  design top, true m/s = 80 × (real km/h ÷ 250)^0.76, the single curve closest to the three fleets'
+  first scalings (so the real order holds, and slow types sit a little faster than life, near the
+  game's own designs). Drag is set so the thrust makes that top (top = √(thrust ÷ drag), as every
+  design is balanced); thrust, stall and cruise are the profile's own (the cruise set at the rule's
+  top). A historical profile gives no top or drag of its own. The game's own sixteen designs keep
+  their hand-set figures.
+- **Code:** `real_top_kmh`, `speed_rule_top`, `speed_rule` in `src/aircraft_catalog.jo` (`AIRCRAFT`
+  is every profile with the rule applied); `tests/speed_rule_test.jo`; `tools/speed_rule_table.jo`
+  (the table of every aircraft's speeds).
 - **Rules:** every historical profile must carry `real_top_kmh` (a test checks every type after the
-  sixteen). The living world's trip times (`AIRFRAMES` cruise) are not changed by it.
+  sixteen) and its cruise between the stall and the top. The living world's trip times
+  (`AIRFRAMES` cruise) are not set by it.
 
 ### Big boats
 
@@ -679,8 +681,7 @@ On the rivers branch until it lands.
   the Macchi M.5 and M.7 and Hansa-Brandenburg CC flying-boat fighters (pusher inlines and a
   Gnome rotary over single-step hulls, tip floats; the CC's **star struts**, four struts meeting in
   the middle of each bay; the Donnet-Lévêque's tail on an open girder below the propeller), and the
-  Fiat C.R.20 landplane. Their speeds follow the fleet's rule, design m/s = 85 × (real km/h ÷
-  250)^0.6.
+  Fiat C.R.20 landplane. Their speeds follow the [One speed rule](#one-speed-rule).
 - **Code:** `src/aircraft_early.jo` (models, contacts), profiles in `src/aircraft_catalog.jo`;
   `tests/aircraft_early_test.jo`.
 
@@ -945,8 +946,9 @@ On the rivers branch until it lands.
   to its own layout: the M.33's shoulder wing and engine nacelle on N-struts above the hull, the
   R3C-2's tiny biplane wings with brass surface radiators, the S.6B's low wing with radiators over
   the wings and float tops, the Sea Lion II's biplane boat with its pusher between the wings. Their
-  `top` is the real top speed in true m/s (the S.6B's 655 km/h record; 600 m/s drawn at the 3.3
-  scale), so they compare with one another as they did; the original fictional types sit faster
+  speeds come from their real ones by the [One speed rule](#one-speed-rule) (the S.6B's 656 km/h
+  record: a top of 166.5 m/s true, 550 m/s drawn at the 3.3 scale), so they compare with one another
+  as they did; the original fictional types sit faster
   than real 1920s aircraft of their roles.
 - **Code:** models in `src/racer_planes.jo` (dispatched from `src/planes.jo`); profiles at the end
   of `AIRCRAFT` in `src/aircraft_catalog.jo`; `tests/aircraft_racers_test.jo`;
@@ -1051,7 +1053,7 @@ On the rivers branch until it lands.
   its dope a cool silver so it still reads silver in warm light. Its family is "greek": the
   [Paint page](#paint-page) offers them the Greek-service liveries and the civil ones, and the Greek
   and British insignia and rudders (`TYPE_NATIONS`). Their game speeds follow
-  the fleet's rule from `real_top_kmh` as the other Greek-service types' do (68 and 76 m/s); the
+  the [One speed rule](#one-speed-rule) from `real_top_kmh` as every historical type's do (60 and 70 m/s); the
   IIIF has a static pull of 1.3 (see Schneider racers, water thrust). Both are in the picker's
   Greek service group, and their struts are tagged for streamers (the racer kit's `rk_strut` and
   `rk_blade`).
