@@ -91,11 +91,6 @@ cloud, scaled up from 0.4 while the heaped form wears away inside it.
 skeleton of holes. Below the band only the heaped form shows, above it only
 the tower.
 
-Stratus slivers (weather kind 13): in fair and towers weather, thin, flat, faintly lit
-bands just above the cumulus bases, long along the wind, crossing in front of and
-below the towers. A single layer per air mass; none within 10-30 km of a storm, where
-they read as searchlights.
-
 ## Drawing (`src/cloud_volume.jo`)
 
 Each instance is a screen-space quad over its projected support box. The ray
