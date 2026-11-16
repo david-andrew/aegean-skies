@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -311,7 +311,9 @@ On the rivers branch until it lands.
   poplars, cast-iron lamps (lit after dark), benches and a few people before the front row of
   houses, or warehouses and works standing straight on the wall. Stairs down to the water sit in the
   wall's thickness with a landing at the foot. The workshop's yard and slipway keep a low quay 2 m
-  over the water, with stairs up to the street at either end. Contact (walls, parapets, streets,
+  over the water, with stairs up to the street at either end. The street behind an arm's wall runs
+  20 m back (the carve's bank falls below the sea's level within that, and the sea's surface would
+  show in the trench), clipped where it would meet the through-channel. Contact (walls, parapets, streets,
   stairs) and the drawing come from the same layout (`canal_banks`, `canal_solids`).
 - **Code:** `src/canal_geometry.jo` (`init_canal_geometry`, `canal_frontage`, `CANAL_WATER_STAIRS`);
   drawn by `src/canal_city.jo` (`canal_bank_mesh`, `canal_promenade`) through `src/canal_render.jo`.
@@ -347,12 +349,16 @@ On the rivers branch until it lands.
 - **Definition:** the city's blocks, 4-6 storeys on the water: muted cream, grey and stone stucco
   with one in six or seven an ochre, pink or rust accent; a darker rusticated base, string course,
   frieze and cornice; framed recessed windows with shutters (some closed), sills, balconies and
-  awnings; slate mansards, hipped tile roofs or flat roofs with a parapet; the roof pitches facing
-  north are painted darker. One in seven windows is lit after dark. Front rows are fully detailed,
+  awnings; roofs in the towns' palette: weathered terracotta in six tones with a lit pitch (facing
+  the midday sun) and a shaded, redder one, slate mansards, lead, and flat roofs with a tarred deck
+  inside a parapet. The arms are lined too: a row of plainer blocks on the wall's street and one
+  behind (kind 16). One in seven windows is lit after dark. Front rows are fully detailed,
   the next two rows have openings and trim, deeper rows are plain blocks on paved plinths. The
   skyline's set pieces (`CANAL_SKYLINE`: domed churches, bell towers, works chimneys) end the
-  canal's vistas at its bends.
-- **Code:** `src/canal_city.jo` (`canal_block`, `canal_church`, `canal_tower`, `canal_chimney`).
+  canal's vistas at its bends. The cells draw nearest first; the low tier keeps full detail within
+  300 m (750 m otherwise) and the promenade trees in their simpler build.
+- **Code:** `src/canal_city.jo` (`canal_block`, `canal_pitch`, `canal_church`, `canal_tower`,
+  `canal_chimney`); `src/canal_render.jo` (`init_canal`, `draw_canal`).
 
 ### Confluence
 
@@ -1407,9 +1413,16 @@ On the rivers branch until it lands.
   wrapped painted ramp (its terminator shifted crown to crown), with a short sunward shadow; on
   low its light is painted into its colour and the trees are the meshes alone, with their mean
   past their reach.
+  Far off, a third octave of **masses** (180 m cells; medium and high) keeps the far hills lumpy,
+  and every octave is modelled by the **canopy light**, the sun's bearing held low at every hour,
+  so even at noon each lump has a lit side and a shaded side. The far land itself is shaded by a
+  **land light** (the same held-low sun, weighted in; medium and high), so slopes turned from the
+  sun band darker, and takes the **land aerial**: with distance, scaled to the eye's height, it
+  turns toward a deep teal-blue (land in shadow, never a fog) before the shared haze takes it at
+  the horizon, so far ridges read as blue silhouettes a value step under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
   `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
-  `canopy_paint_low`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_aerial`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
   tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
   in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
   baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
@@ -1901,8 +1914,11 @@ you watch (`docs/SIM_SPEC.md`, `src/living_*.jo`).
 - **Code:** `struct Notice` in `src/panels.jo`; `job_notices` in `src/townsfolk.jo`;
   `military_notices` in `src/war_view.jo`.
 - **Rules:** townsfolk retell notices in their own words (past tense, with their source) rather
-  than reading them out; routine logistics notices are not repeated as news.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=notebook AEGEAN_HOUR=8 AEGEAN_CAPTURE_MINUTES=1170`.
+  than reading them out; routine logistics notices are not repeated as news. A card opens by a
+  click, a tap (on release), the keys' or a controller's focus with Enter or A, or 1-9 for the first
+  nine open ones. The Aegean Maritime Service's shipping notices read out two of the work posted on
+  the harbour with the most of it (`radio_work_words`, `src/radio_content.jo`).
+- **Capture:** `AEGEAN_UI=board`; `AEGEAN_CAPTURE_PANEL=notebook AEGEAN_HOUR=8 AEGEAN_CAPTURE_MINUTES=1170`.
 
 *Image to come: the notebook capture (`AEGEAN_CAPTURE_PANEL=notebook`) pins notices only when
 open home-board jobs exist at that minute, and none did when the glossary's images were made.*
@@ -2371,6 +2387,32 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### Pleasure flight
+
+- **Aliases:** a joyride, taking someone up, a passenger for the pleasure of it.
+- **Definition:** someone from the town in the second seat for a short flight:
+  - **How it starts:** they ask (about one approach in five to the moored aircraft, when someone
+    grown is within 15 m), or the pilot offers with K at the dock. Only types with a seat to spare
+    can take them.
+  - **Boarding:** they walk to the aircraft's side and sit in the second cockpit (or just behind
+    the pilot), drawn there; the pilot climbs aboard as usual.
+  - **In the air:** each moment is spoken of once, at most every seven seconds, nervous or calm by
+    their boldness: aboard, the throttle, the run, up, the boats below, their house (an arm out at
+    it) within 450 m, another town by name within 2.5 km, the height, coming down, landed, or a
+    ditching.
+  - **Back at a dock:** their thanks fit the flight. They climb out and go back to the town's
+    routine.
+- **Rules:** no fare, no needs, no penalty. On the pilot's name a flight given counts as a small
+  act of kindness, a gift (`rep_act(.gift)`: warmth for them and a little for their town; a kind
+  of its own could be added to `RepKind`); the world also remembers it as a private meeting
+  (`emit_event(.met)` with `remember`). A game saved mid-flight comes back without the passenger.
+- **Code:** `src/joyride.jo` (`Joyride`, `RideView`, `ride_step`, `ride_next`, `ride_thanks`);
+  `ride_candidate`, `ride_start`, `ride_tick`, `ride_finish`, `draw_ride_seated` and leisure stage
+  16 (the asking) in `aegean.jo`; `tests/joyride_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=ride-ask|ride-seated|ride-house|ride-thanks` (ride-house with
+  `AEGEAN_FLYING`); `AEGEAN_RIDE_FRAMES=<dir>` with `AEGEAN_CAPTURE_TAKEOFF=1` writes the take-off
+  clip's frames.
+
 ### A night under a roof
 
 - **Aliases:** the hotel room, staying the night, the family's spare room, supper with the family.
@@ -2385,6 +2427,14 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     There is coffee in the morning (05:30 to 11:30).
   - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
     window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **Lit and lived in:** walls, floor and ceiling are tiled and each room is baked three times
+  into its vertex colours (`bake_room`): by day, the window's cool light falling off into the room;
+  of an evening, the lamps' warm pools, turned by each surface's facing, with dark brown corners
+  beyond them (the film's interiors: a median value around L*30–40, lamp hotspots above 80);
+  asleep, the lamp out and moonlight at the window. They are drawn in a flat light that shows the
+  baked colours as they are (`stay_room_light`). A family's house shows its trade (`trade_of`): the
+  sea (nets, floats, an oar), the land (oil jars, sacks, a hoe), a craft (a workbench and tools),
+  reading (a desk and books), or the house (a sewing table).
 - **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
   needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
   The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
@@ -2396,6 +2446,34 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
   stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
   `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
+
+### A new pilot's welcome
+
+- **Aliases:** the newcomer's guidance, Paolo's welcome, the note by the compass, Hints.
+- **Definition:** how a new game shows the way, from the living world and never with arrows:
+  - **Paolo,** the home harbour's mechanic, is on the dock at the pilot's right hand as the game
+    opens. He is kept there for the first hour by his own day in the living world, so the scene and the
+    far simulation agree. A couple of seconds in he says *"You'll be the new pilot. Paolo — I keep the
+    engines here running."* Talking to him adds two answers. **Where's the work?** gives the board,
+    then the soonest-due open job on foot and a flying one, read from the real board. **How does
+    she handle?** gives the throttle and the take-off in a pilot's words. Walk off without a word and
+    he calls once after about 40 s.
+  - **A note by the compass,** in his hand, shows for 8 s the first time aboard: throttle, stick and
+    view.
+  - **A fisherman** about says once to wait for the float, after the first strike too soon.
+  - Every key is named as the player's hands have it: a keyboard's keys, the controller's bound
+    buttons and axes, or a touch screen's own controls.
+- **Rules:** it begins only with **New game** from the title (never in a scenario, never in a loaded
+  game: a world saved before it existed loads with it done). It ends for good with the first job
+  delivered, two minutes in the air, a job taken after asking Paolo, or **Hints** off (Options;
+  which also hides the corner's key hint). It is a few short lines, said once.
+- **Code:** `src/newcomer.jo` (`welcome_finished`, `welcome_jobs`, the words, `throttle_said` and
+  the rest by `Hands`); `src/living_life.jo` `welcome_begin`, `welcome_holds` (Paolo's day);
+  `World.welcome` (`WelcomeState`, `src/life_types.jo`); `welcome_frame`, `draw_welcome`,
+  `welcome_spot` and the talk panel's two answers in `aegean.jo`; `Options.hints`. Tests
+  `tests/newcomer_test.jo`.
+- **Capture:** `AEGEAN_TITLE=1` and New game (Enter at frame 300), or `AEGEAN_WELCOME=1` for a
+  welcome without the title.
 
 ### Company
 
