@@ -159,6 +159,7 @@ use 'src/combat_trails.jo'
 use 'src/combat_sound.jo'
 use 'src/battle_radio.jo'
 use 'src/homeward_view.jo'
+use 'src/rt_pad.jo'
 use 'src/cockpit.jo'
 use 'src/bailout.jo'
 use 'src/descent_view.jo'
@@ -187,6 +188,7 @@ use 'src/reputation.jo'
 use 'src/reputation_talk.jo'
 use 'src/stay.jo'
 use 'src/joyride.jo'
+use 'src/rescued_rider.jo'
 from 'src/living_events.jo' import emit_event
 from 'src/living_news.jo' import remember
 from 'src/living_life_seed.jo' import choose_life_venue
@@ -523,6 +525,8 @@ served_look_until = -1.0        # (a look at the table while what was ordered ar
 served_pending = false
 ride = Joyride()                 # (a pleasure flight with someone from the town: src/joyride.jo)
 ride_fig: Figure? = none
+rider = RescuedRider()              # (a pilot taken out of the water, seen aboard and walking off: src/rescued_rider.jo)
+rider_fig: Figure? = none
 ride_rolled = false              # (whether anyone asks: rolled once each time the pilot comes to the aircraft)
 ride_asker = -1                  # (the folk asking, while they ask)
 ride_asking_wait = false         # (the pilot stepped ashore with them seated: the choice is up)
@@ -1421,6 +1425,44 @@ draw_ride_seated = (m: CraftModel, at: mat4, L: Light):
         # (an arm out at their house; both hands on the cockpit's edge on the take-off run)
         arms = if t < ride.pointing_until: vec2(-9, 2.6) else: if ride.stage == .seated and pc.throttle > 0.3: vec2(1.0, 1.0) else: vec2(-9, -9)
         draw_figure_at(f, at * translation(seat - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true, offset = world_residual(craft_point(pc.state)), arms = arms)
+
+# The rescued pilot (src/rescued_rider.jo): their figure in flying kit, made once per person.
+rider_takes = (person: int, in_water: vec3):
+    global rider, rider_fig
+    rider = rider_board(person, in_water, t, ride.stage != .none)
+    p = living_world.people[person]
+    rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+
+rider_tick = (dt: f64):
+    global rider, rider_fig
+    # (after a load, whoever the world has aboard is back in the seat)
+    if rider.stage == .none:
+        aboard = rescue_aboard(living_world)
+        if aboard.len() > 0 and living_world.war.survivors[aboard[0]].person >= 0:
+            person = living_world.war.survivors[aboard[0]].person
+            rider = rider_seated(person, t, ride.stage != .none)
+            p = living_world.people[person]
+            rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+    rider_step(rider, t, dt, (x: f64, z: f64) -> f64?: (if walk_height(towns, x, z) > (if geography_enabled: water_at(x, z).level else: 0.0) + 0.3: walk_height(towns, x, z) else: none))
+    if rider.stage == .none: rider_fig = none
+
+draw_rider_seated = (m: CraftModel, at: mat4, L: Light):
+    if rider.stage != .aboard: return
+    if let f = rider_fig:
+        seat = rider_seat(ride_seat(m), rider.on_wing, pc.spec.span)
+        draw_figure_at(f, at * translation(seat - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true, offset = world_residual(craft_point(pc.state)))
+
+draw_rider_out = (L: Light):
+    if let f = rider_fig:
+        if rider.stage == .boarding:
+            seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span) - vec3(0, 1.55, 0))
+            p = rider_climb_point(rider.from, seat, (t - rider.since) / RIDER_CLIMB)
+            draw_figure(f, p, heading(pc.state), t * 3.0, 0.3, L, t, arms = vec2(2.6, 2.6))
+        else if rider.stage == .alighting:
+            p = rider_climb_point(rider.from - vec3(0, 1.55, 0), rider.pos, (t - rider.since) / RIDER_ALIGHT)
+            draw_figure(f, p, rider.yaw, 0.0, 0.0, L, t)
+        else if rider.stage == .walking:
+            draw_figure(f, rider.pos, rider.yaw, rider.phase, 0.8, L, t)
 
 draw_ride_talk = ():
     if ride.stage == .none or ride.person < 0 or ride.line == "" or t > ride.line_until: return
@@ -3838,6 +3880,7 @@ combat_visual = make_combat_view()
 combat_audio = if audio_enabled and not audio_deferred: start_combat_audio() else: CombatAudio()
 battle_radio = BattleRadio()
 homeward = HomewardView()           # after the strait: the way home (src/homeward_view.jo)
+rt = RtPad()                        # the R/T to one's own flight (src/rt_pad.jo)
 cockpit_model = build_cockpit()
 
 grass = GrassField(me.pos, instance_buffer([GrassCell(mat4(), vec4(1, 1, 1, 1),vec4(0,1,0,0))]), 0)
@@ -7360,6 +7403,61 @@ update_rescue = ():
                 rescue_name = rescue_aboard_name(living_world, aboard[0])
                 rescue_hold = living_world.war.survivors[aboard[0]].person >= 0 and rescue_can_hold(living_world, living_world.war.survivors[aboard[0]].country, place)
 
+# The R/T (src/rt_pad.jo): how many of the player's flight would hear it; opened by C (the R/T
+# plate's tap, the controller's R/T button), then a number, C again to step, F to send.
+rt_flight = () -> int:
+    me_i = combat_index(battle, living_world.people[living_world.player].craft)
+    if me_i < 0 or not battle.enabled: return 0
+    n = 0
+    loop a in battle.actors:
+        if a.side == battle.actors[me_i].side and not a.human and a.status == .flying and a.present: n += 1
+    n
+
+rt_tick = ():
+    global rt
+    if not rt.open:
+        if vpressed(.c):
+            if rt_flight() == 0: say_toast("No one on the R/T.")
+            else:
+                rt_open(rt, t)
+                rt.took_mouse = is_mouse_locked()
+                if rt.took_mouse: mouse_lock(false)
+        return
+    number = if vpressed(.n1): 1 else: if vpressed(.n2): 2 else: if vpressed(.n3): 3 else: if vpressed(.n4): 4 else: if vpressed(.n5): 5 else: 0
+    esc = vpressed(.escape)
+    if esc: take_escape()
+    chosen = rt_keys(rt, vpressed(.c), vpressed(.f) or vpressed(.enter), number, esc, t)
+    if chosen >= 0: rt_send(chosen)
+    if not rt.open and rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
+
+# Sends the chosen word: the battle's order, a wingman's answer on the radio.
+rt_send = (k: int):
+    me_craft = living_world.people[living_world.player].craft
+    me_i = combat_index(battle, me_craft)
+    kind = RT_KINDS[k]
+    target = -1
+    if kind == .attack and view_target.selected >= 0 and view_target.items[view_target.selected].kind == 0:
+        c = combat_index(battle, view_target.items[view_target.selected].id)
+        # (one gone into the cloud deck is out of the flight's sight)
+        if c >= 0 and me_i >= 0 and battle.actors[c].side != battle.actors[me_i].side and not in_deck(battle, battle.actors[c].state.position): target = battle.actors[c].craft
+    heard = if kind == .attack and target < 0: rt_flight() else: give_order(battle, me_craft, kind, target)
+    if heard == 0:
+        say_toast("No answer on the R/T.")
+        return
+    # (the nearest of the flight answers, by their number in it)
+    side = battle.actors[me_i].side
+    best = -1; near = 1e18; number = 0; count = 0
+    loop a in battle.actors:
+        if a.side != side: continue
+        count += 1
+        if a.human or a.status != .flying or not a.present: continue
+        d = f64(length(a.state.position - pc.state.position))
+        if d < near: near = d; best = a.craft; number = count
+    words = rt_answer(kind, target >= 0)
+    if rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
+    if active_scenario == "strait": radio_say(homeward, "rt{battle.tick}", call_sign(living_world, side, max(1, number)), words)
+    else: say_toast(words)
+
 do_rescue = (free: bool = false):
     now = clock_text(living_world, living_world.minute)
     if rescue_act == 1:
@@ -7370,6 +7468,8 @@ do_rescue = (free: bool = false):
             return
         rescue_card(rescue, if n == 1: "{name} is aboard" else: "{n} survivors aboard", ["Moor at a harbour to set them ashore."], t)
         log_note(notebook, "Took {name} aboard from the water.", now)
+        sv = living_world.war.survivors[rescue_id]
+        if sv.person >= 0: rider_takes(sv.person, sv.at + vec3(0, -1.2, 0))
     else if rescue_act == 2:
         s = living_world.war.survivors[rescue_id]
         name = rescue_name
@@ -7383,6 +7483,12 @@ do_rescue = (free: bool = false):
         place = harbour_name(living_world, rescue_place)
         held = rescue_hold and not free
         if s.person >= 0:
+            # (they climb out onto the quay beside the pilot and walk off into the town)
+            if rider.person == s.person and (rider.stage == .aboard or rider.stage == .boarding):
+                seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span))
+                inland = me.pos - pc.state.position
+                side = normalize(vec3(-inland.z, 0, inland.x) + vec3(0.0001, 0, 0))
+                rider_alight(rider, seat, me.pos + side * 1.2, inland, t)
             words = rescue_words(living_world, name, s.country, rescue_place, place, held, s.person)
             rescue_card(rescue, words.title, words.lines + ["Standing with {country}: {before} to {after}"], t)
             rescue.card_until = t + 11.0
@@ -7790,6 +7896,7 @@ update_frame = (dt: f64, saves: bool = true):
     if stay.active and ui == .leisure and leisure_ui == 15 and not skip.active: stay_look_step(dt)
     stay_tick()
     ride_tick(dt)
+    rider_tick(dt)
     service_step(dt)
     company_tick(dt)
     tip_thanks_step()
@@ -7821,6 +7928,7 @@ update_frame = (dt: f64, saves: bool = true):
             global radio_card_until
             radio_card_until = t + 2.5
         radio_knob_step(dt, t)
+        rt_tick()
     else:
         _ = radio.radio_hold_tune(cockpit_radio,0,0)
         global radio_knob
@@ -7832,12 +7940,12 @@ update_frame = (dt: f64, saves: bool = true):
         _ = save_value("radio-khz", radio_saved_khz)
     # (1 and 2 wind the hour only with no panel open: in a conversation, a board or the workshop
     # they choose what to say or do)
-    hour_keys = not typing and ui == .none and not notebook.open and not show_chart
+    hour_keys = not typing and ui == .none and not notebook.open and not show_chart and not rt.open
     if vdown(.n1) and hour_keys: hour = (hour - dt * 2.0 + 24.0) % 24.0
     if vdown(.n2) and hour_keys: hour = (hour + dt * 2.0) % 24.0
     if vpressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
-    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1:
+    if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1 and not rt.open:
         mouse_lock(true)
         global click_took_mouse
         click_took_mouse = true             # (that click only takes the mouse: it doesn't fire)
@@ -8752,6 +8860,7 @@ draw_world = (L: Light):
         draw_folk(folks, Lw, t, band.kit)
         draw_company(Lw)
         draw_ride_walking(Lw)
+        draw_rider_out(Lw)
         draw_leisure(Lw)
         draw_cats(cat_scene, L, t)
         zone("life");life_view.draw_life(living_world,life_meshes,L,t);zone_end()
@@ -8804,6 +8913,7 @@ draw_world = (L: Light):
             if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_disc_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft,radio_knob_level())
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true,offset=world_residual(craft_point(pc.state)))
         draw_ride_seated(pm, at, L)
+        draw_rider_seated(pm, at, L)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
     if legacy_clouds: draw_custom((): draw_clouds(puff_mesh,puffs,L,WorldPoint(wind_drift(wind_now).x*0.35,0,wind_drift(wind_now).z*0.35),t))
@@ -9115,6 +9225,15 @@ draw = ():
                 if not skip.active: prompt_card(fonts, if launch.outward: "F  skip the ride out" else: "F  skip the ride ashore", 90.0)
             else: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
     if active_scenario=="strait" and (me.mode == .aboard or me.mode == .walking): draw_homeward(homeward,fonts,t)
+    if me.mode == .aboard and rt.open:
+        chosen = draw_rt_pad(rt, fonts, t, pad.on)
+        if chosen >= 0: rt_send(chosen)
+    # (the R/T plate: by the radio in the cockpit, at the left otherwise, while there is a flight to hear)
+    if me.mode == .aboard and not rt.open and pad.on and rt_flight() > 0:
+        plate = if let r = radio_hit_rect: Rect(r.x, r.y - 34, 64, 28) else: Rect(16, f32(f64(screen_height()) * 0.30), 64, 28)
+        rect_rounded(f64(plate.x), f64(plate.y), f64(plate.w), f64(plate.h), 5, rgba(0.05, 0.07, 0.10, 0.7))
+        text_centered("R/T", vec2(plate.x + plate.w * 0.5, plate.y + plate.h * 0.5), 15, rgba(1, 0.97, 0.9, 0.9))
+        tap_card(plate, .c)
     draw_welcome()
     global radio_hit_rect
     radio_hit_rect = none
