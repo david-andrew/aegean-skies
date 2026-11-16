@@ -88,7 +88,7 @@ an arbitrary raid. Weather is a current harbor observation, not invented forecas
 notices read actual closure orders; old news of a closure does not masquerade as current status.
 
 Copy reads as a period announcer would say it, on air and in the transcript: the time of an
-event in clock words with its part of the day ("From the harbor office: at a quarter to one this
+event in clock words with its part of the day ("From the harbour office: at a quarter to one this
 afternoon, ..."; "yesterday evening", "last night"), wind as a Beaufort force ("Wind west, force
 four"; "Wind calm"), lists with "and", and no game-minute counts, digits or raw units
 (`tests/radio.jo` checks it).

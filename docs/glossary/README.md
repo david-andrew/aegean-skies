@@ -29,7 +29,7 @@ on that unmerged branch so far.
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
-- **Reference:** [Capture switches](#capture-switches)
+- **Reference:** [House style](#house-style) · [Capture switches](#capture-switches)
 
 ---
 
@@ -806,7 +806,7 @@ On the rivers branch until it lands.
 - **Definition:** Sky Barons' own `fly_air` (examples/skybarons/sim.jo) flying this game's aircraft,
   for reference beside the liked model and [flight model v2](#flight-model-v2): the nose turned at
   fixed rates, the path following it, speed from thrust, drag on speed squared and gravity along the
-  path. Worked in true units with the catalog's figures and drawn at the [speed scale](#speed-scale).
+  path. Worked in true units with the catalogue's figures and drawn at the [speed scale](#speed-scale).
   The water, land and contacts stay on the liked solver; the player's aircraft only.
 - **Code:** `src/flight_sb.jo` `fly_air_sb`; chosen on the pause menu's Flight v2 page (or
   `AEGEAN_TWEAKS=fdmsb`); `tests/flight_sb_test.jo`; a column of `tools/fdm_compare.jo`.
@@ -3071,6 +3071,20 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/controller.jo` (`pad_hints`, `pad_words`, `key_button_name`, `offer_button_name`,
   `pad_card_lines`, `controller_offers`); `offer_card_at` and `offer_pressed` in `aegean.jo`;
   `prompt_card`, `controls_card` and `keys_hint` in `src/hud.jo`.
+
+## House style
+
+Everything a player reads or hears (radio copy, notices, dialogue, menus, livery and vessel
+names, the notebook, the newspaper) is written in British spelling: harbour, colour, grey, metre
+and kilometre, centre, travelling and travelled, honour, labour, neighbour, manoeuvre, programme
+(a broadcast), moustache, and -ise rather than -ize (recognise, realise). Players never read or hear "quay": the
+waterside is a dock, pier, harbour or waterfront, whichever fits (see [Quay (code) and dock
+(player)](#quay-code-and-dock-player); `.quay` and other code names stay). Code keeps its own
+names: identifiers, field names inside interpolations, save keys and ids (such as `harbor-boat-{id}`)
+and internal failure codes are not text and are not renamed, so saves and checks keep working.
+Docs and comments follow the same spelling for new prose. `tests/spelling_test.jo` scans the
+sources' string literals for American spellings; a string that never reaches a player goes on its
+list of internal strings, with the reason.
 
 ## Capture switches
 
