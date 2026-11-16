@@ -7,7 +7,7 @@
 // thermal status. The server and the port mappings end with the tool.
 //
 // usage: node tools/phone_run.mjs <page.html | URL> [--secs 60] [--warm 20] [--query "AEGEAN_X=1&..."]
-//          [--out result.json] [--browser chrome|beta|chromium] [--keep] [--inject script.js]
+//          [--out result.json] [--browser chrome|beta|chromium] [--keep] [--inject script.js] [--cold]
 //   a URL (the Pages site) is opened as it is; a page file is served (index.html + index.wasm)
 //   --warm: seconds after the loading card goes before the measured window of --secs starts
 //   --keep: leave the tab open on the game afterwards (default: navigate it to about:blank)
@@ -141,6 +141,8 @@ await send('Page.enable');
 await send('Page.addScriptToEvaluateOnNewDocument', {source: probe});
 // (--inject f.js: a script of one's own run before the page's, for experiments)
 if (opt('inject', null)) await send('Page.addScriptToEvaluateOnNewDocument', {source: readFileSync(opt('inject'), 'utf8')});
+// (--cold: the browser's cache emptied first, compiled wasm with it: a first visit)
+if (flag('cold')) { await send('Network.enable'); await send('Network.clearBrowserCache'); }
 await send('Page.navigate', {url});
 console.log(`phone_run: ${url} (${browser}), battery ${before.battery_c} C, thermal ${before.thermal_status}, display ${before.refresh_hz} Hz`);
 if (before.battery_saver) console.log('phone_run: WARNING Battery Saver is on (30 Hz panel, CPU limited): `adb shell cmd power set-mode 0` turns it off');
@@ -160,7 +162,13 @@ if (shown) {
   const from = await evaluate('performance.now()');
   const mid = phoneState();
   const temps = [];
-  for (let s = 0; s < secs; s += 10) { await sleep(Math.min(10, secs - s) * 1000); temps.push({t: s + 10, ...phoneState()}); }
+  for (let s = 0; s < secs; s += 10) {
+    await sleep(Math.min(10, secs - s) * 1000);
+    // (memory with each sample: the JS heap, the wasm memory and, with --inject of a counter, GL objects)
+    const mem = JSON.parse(await evaluate('JSON.stringify({heap_mb: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : null, wasm_mb: sloppy.memory ? Math.round(sloppy.memory().buffer.byteLength / 1e6) : null, gl: window.__gl_live || null})') || '{}');
+    temps.push({t: s + 10, ...phoneState(), ...mem});
+    if (out) writeFileSync(out + '.partial', JSON.stringify(temps));   // (a long run's samples so far)
+  }
   const frames = JSON.parse(await evaluate(`JSON.stringify(window.__phone.frames.filter((t) => t >= ${from}))`));
   const gaps = frames.slice(1).map((t, i) => t - frames[i]).sort((a, b) => a - b);
   const q = (p) => gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(p * gaps.length))] : NaN;
