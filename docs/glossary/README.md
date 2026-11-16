@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1834,10 +1834,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
   distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
   the violin plays softer. Each evening starts one number further on, so every piece comes round.
-- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_set_position`, `singer_line`, `singer_render`,
-  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`draw_band`); clips with
+  The players are townspeople, and a number begins only when they are in their places (see
+  [The band's people](#the-bands-people)).
+- **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_band_position`, `singer_line`, `singer_render`,
+  `bar_room_sample`); the line-ups on the stand in `src/bar_scene.jo` (`band_spots`); clips with
   `tools/bar_music_clip.jo`; note sources and permissions in `data/music/SOURCES.md`.
-- **Rules:** scheduled on the living world's clock, so it is where it should be after resting.
+- **Rules:** kept by the living world (its minutes), so it is where it should be after resting.
 
 ### Live source
 
@@ -1896,13 +1898,46 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Capture:** `AEGEAN_LEISURE=tavli-choose|tavli|tavli-mid|tavli-plakoto`
   (`AEGEAN_TAVLI_GESTURE` for a gesture).
 
+### The band's people
+
+- **Aliases:** the musicians, the players walking on and off, the band as people.
+- **Definition:** the Hotel Ancora's players are Porto Vecchio people with the rest of their day:
+  Leila Demir (the telegraphist) sings, Yannis Markou (the clerk) plays the piano, Petros Laskaris
+  (a fisher) the guitar and the bass, Marta Bellini (a merchant) the violin, the mandolin and the
+  reeds. From 17:30 they make their way to the terrace and sit at the band's table by the stand.
+  When a number wants them they walk to the stand's step, step up, walk to their place, pick up the
+  instrument and settle; the number begins only when all its players have; the music is followed
+  as before. Between numbers those in the next stay put; those not in it put the instrument down
+  where it lives at the back of the stand (or close the piano), walk back to the step and down, and
+  sit again. After the last number of the evening (the one playing at 23:30 is finished) they all
+  do, and go home. One who can't come (at work, laid up, away, the weather) means their numbers are
+  passed over. Nobody appears or vanishes in view: off the stand they are the town's walkers.
+- **Code:** the people and where each is wanted in `src/band_roster.jo` (`BAND_ROSTER`,
+  `band_wanted`, `band_step_point`, `band_on_stage`); the programme in `src/band_life.jo`
+  (`band_minute`, each world minute after the daily life; `band_publish`); its state saved in the
+  world (`World.band`, `BandState`, `BandNumber` in `src/life_types.jo`); the intents in
+  `src/living_life.jo` (`life_daily_goal`, the band's table and steps in `set_life_destination`;
+  meetings leave a player at the stand alone, `src/living_social.jo`); the stand drawn in
+  `src/band_stage.jo` (`band_numbers`, `draw_band_people`); `tests/band_life_test.jo`.
+- **Rules:** the programme is the world's, so it runs the same near or far, and after a rest. A
+  number's start waits a minute for its players' climb and settling (`BAND_CLIMB`, `BAND_SETTLE`);
+  putting away and stepping down take `BAND_PACK`. The world keeps a player's place at the step while
+  they are on the stand; the town doesn't draw them there.
+- **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND_CAM` and `AEGEAN_CAPTURE_MINUTES`;
+  `AEGEAN_BAND_LOG=1` prints the band's state twice a second.
+
 ### Band request
 
 - **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
-  to the house). It is played as soon as the number playing (and the pause after it) is over, or it
-  opens the evening. The set then carries on where it was. Only one request may wait at a time.
-- **Code:** `BandRequest` (`src/band_request.jo`), `bar_set_position(tick, requests)` and
-  `bar_request_start` in `src/bar_band.jo`; `leisure_request` in `src/leisure.jo`.
+  to the house), at any hour the hotel is open. It is played as soon as the number playing (and the
+  pause after it) is over and its players are in their places; the set then carries on where it
+  was. Only one request may wait at a time. A player who isn't here (and won't be coming of
+  themselves: it isn't the evening) can be sent for: the house's boy goes, for a small tip (another
+  transfer to the house), and they come walking in from wherever they are a while later. Not in
+  the night, not one away or laid up, and not one busy with work.
+- **Code:** `band_ask`, `band_missing`, `band_fetch`, `band_fetch_refusal` in `src/band_life.jo`;
+  `leisure_request`, `leisure_fetch` (`FETCH_TIP`) in `src/leisure.jo`; the panel's second step
+  (`band_fetch_for`) in `aegean.jo`; `BandRequest` (`src/band_request.jo`) is the notebook's.
 - **Capture:** `AEGEAN_LEISURE=request|requested`.
 
 ### The paper
@@ -2754,6 +2789,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|bar|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk|listen-run` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
+| `AEGEAN_BAND_LOG=1` | print the hotel band's state (number, start, who is called, up, packing) twice a second |
 | `AEGEAN_BAND='piece lineup [from]'` | the hotel's band plays that catalogue piece in that line-up from that second, whatever the hour (not heard; see [Musicians at play](#musicians-at-play)) |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
 | `tools/splash_frames.jo` | `POLISH_CASE=takeoff|landing|skim|stall-in|turn|night`, `POLISH_TIME` |

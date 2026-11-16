@@ -134,7 +134,7 @@ funny or useful (time passes, people are met, the plane is looked after).
   back, and Escape asks before giving up. By finger: tap, tap.
 - The paper: wheel, arrow and page keys, a finger's drag, or the up and down buttons; Escape
   puts it down.
-- At the hotel in the evening: "Ask for a song". With fish: "Have your catch grilled" seated, or
+- At the hotel, any hour it is open: "Ask for a song" (a player who isn't here can be sent for: the panel offers the boy, for a tip). With fish: "Have your catch grilled" seated, or
   the card at the bar or the terrace table ("have the kitchen grill your catch").
 - Fishing: **F** at the water's edge on a dock in a harbour town. F, Space or the first button
   casts and strikes. With a fish in the hand: **B** (or the button) puts it in the bucket, **X** throws
