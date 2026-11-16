@@ -1648,7 +1648,12 @@ On the rivers branch until it lands.
   the boat sails the fleet's own sea lanes, round the land, and is seen coming; "Wait for them"
   skips the wait ([time skip](#time-skip)) to the last 60 m, or a tow to the harbour. The tow
   draws up alongside, takes the line and hauls the aircraft round onto it; in at the harbour the
-  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). The
+  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). A
+  wreck's pilot is taken off: they climb across onto the boat's after deck and ride in watching
+  the wreck in tow (the camera with them, F to skip ahead), stepping ashore by it at the harbour;
+  or, in a fight with a base, one of the flight lands, takes them into its second seat and flies
+  them back to the base (F skips the flight), the harbour's boat fetching the aircraft in after
+  for a fee. The
   cans are paid for at the nearest pier's price to the wingman, the tow by distance to the
   skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
   the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
@@ -1659,7 +1664,8 @@ On the rivers branch until it lands.
   `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
   `aegean.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
-  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
+  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`; HELP lines say what
+  happened.
 
 ### R/T
 
