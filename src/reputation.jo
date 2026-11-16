@@ -1,0 +1,616 @@
+# The pilot's name (docs/reputation.md): who knows him, what they think, and how word of him
+# travels: deeds, the town's word, personal opinions; gossip within a town, along the roads and
+# sea lanes between towns, and on the wireless; fading with time. The living world's minute runs
+# it (reputation_minute); the scene and the conversation only record acts and read views.
+use 'living_types.jo'
+use 'reputation_types.jo'
+use 'living_conditions.jo'
+use 'living_place_context.jo'
+use 'deeds.jo'
+
+const REP_DEEDS_MAX = 48
+const REP_OPINIONS_MAX = 600
+const REP_TOWN_DEEDS = 4
+const REP_OPINION_DEEDS = 3
+const REP_TRAVEL_FLOOR = 150          # a deed passes on while weight * 0.7^hops stays above this
+const REP_RADIO_WEIGHT = 650          # read on the wireless from this weight
+const REP_SMALL_CEILING = 400         # small acts make the pilot known to about this share
+const REP_FACE_CEILING = 300          # (and being seen about the town, to this)
+const REP_HOP_MINUTES = 720           # word sits in a town at least this long before travelling on
+const REP_KNOW_TAG = 7301
+const REP_HOP_TAG = 7302
+
+# ---------------- kinds ----------------
+
+rep_small = (kind: RepKind) -> bool:
+    kind == .talked or kind == .cut_short or kind == .kept_company or kind == .declined_company or kind == .asked_over or kind == .tipped or kind == .gift
+
+# What an act or deed does to the opinion of one who saw it, or heard it at first hand.
+rep_kind_lean = (kind: RepKind) -> RepLean:
+    match kind:
+        .talked: RepLean(warmth=15)
+        .cut_short: RepLean(warmth=-12)
+        .kept_company: RepLean(warmth=50)
+        .declined_company: RepLean(warmth=-60)
+        .asked_over: RepLean(warmth=45)
+        .tipped: RepLean(warmth=25,honour=10)
+        .gift: RepLean(warmth=60,honour=10)
+        .job_done: RepLean(reliability=90,honour=20)
+        .job_late: RepLean(reliability=-70)
+        .job_failed: RepLean(reliability=-160,honour=-40)
+        .debt_paid: RepLean(honour=70,reliability=40)
+        .debt_defaulted: RepLean(honour=-220,reliability=-80)
+        .rescued_foe: RepLean(honour=320,daring=150,warmth=40)
+        .rescued_friend: RepLean(honour=160,daring=110,warmth=50)
+        .rescued_survivors: RepLean(honour=180,daring=80,warmth=40)
+        .shot_down: RepLean(daring=140)
+        .flew_home_in_formation: RepLean(reliability=90,honour=30)
+        .left_the_fight: RepLean(daring=-160,reliability=-130,honour=-70)
+
+# How much talk it makes (0..1000), before the storm and the numbers.
+rep_kind_weight = (kind: RepKind) -> int:
+    match kind:
+        .talked: 30
+        .cut_short: 30
+        .kept_company: 80
+        .declined_company: 80
+        .asked_over: 80
+        .tipped: 60
+        .gift: 90
+        .job_done: 200
+        .job_late: 180
+        .job_failed: 260
+        .debt_paid: 150
+        .debt_defaulted: 320
+        .rescued_foe: 650
+        .rescued_friend: 520
+        .rescued_survivors: 520
+        .shot_down: 420
+        .flew_home_in_formation: 260
+        .left_the_fight: 380
+
+# How a deed sits with someone of `country`, by what it did to their own people.
+rep_side_effect = (d: RepDeed, country: int) -> int:
+    if country < 0 or d.side != country: return 0
+    match d.kind:
+        .rescued_foe: 380
+        .rescued_friend: 260
+        .rescued_survivors: 260
+        .shot_down: -200*min(3,max(1,d.people))
+        .flew_home_in_formation: 150
+        .left_the_fight: -220
+        else: 0
+
+_lean_add = (a: RepLean, b: RepLean, num: int, den: int) -> RepLean:
+    RepLean(warmth=clamp(a.warmth+b.warmth*num/den,-1000,1000),honour=clamp(a.honour+b.honour*num/den,-1000,1000),daring=clamp(a.daring+b.daring*num/den,-1000,1000),reliability=clamp(a.reliability+b.reliability*num/den,-1000,1000))
+
+_fade1 = (x: int, permille: int) -> int:
+    if x == 0: return 0
+    step = max(1,abs(x)*permille/1000)
+    if x > 0: max(0,x-step) else: min(0,x+step)
+
+_lean_fade = (a: RepLean, permille: int) -> RepLean:
+    RepLean(warmth=_fade1(a.warmth,permille),honour=_fade1(a.honour,permille),daring=_fade1(a.daring,permille),reliability=_fade1(a.reliability,permille))
+
+_lean_zero = (a: RepLean) -> bool: a.warmth == 0 and a.honour == 0 and a.daring == 0 and a.reliability == 0
+
+# weight * 0.7^hops
+rep_carried = (weight: int, hops: int) -> int:
+    v = weight
+    loop _ in 0..hops: v = v*7/10
+    v
+
+# Days a town keeps telling it.
+rep_deed_days = (weight: int) -> int: max(3,weight/8)
+
+# ---------------- towns ----------------
+
+# A core place index as its settlement id (the town key); far ids pass through.
+rep_town_of_place = (w: World, place: int) -> int:
+    if place >= 0 and place < w.places.len(): w.places[place].id else: -1
+
+# The town a person is in (their home while away on the road or the sea, -1 if none).
+rep_town_of = (w: World, person: int) -> int:
+    if person < 0 or person >= w.people.len(): return -1
+    p = w.people[person]
+    if p.far_home >= 0 or p.far_place >= 0: return if p.far_place >= 0: p.far_place else: p.far_home
+    if p.far_visit >= 0: return p.far_visit
+    if p.place >= 0: return rep_town_of_place(w,p.place)
+    rep_town_of_place(w,p.home)
+
+_core_index = (w: World, town: int) -> int:
+    loop i in 0..w.places.len():
+        if w.places[i].id == town: return i
+    -1
+
+rep_town_name = (w: World, town: int) -> str:
+    if town in w.place_contexts: return w.place_contexts[town].name
+    core = _core_index(w,town)
+    if core >= 0: life_place_name(w,core) else: "the open sea"
+
+rep_town_country = (w: World, town: int) -> int:
+    if town in w.place_contexts: return w.place_contexts[town].country
+    core = _core_index(w,town)
+    if core >= 0 and core < w.place_country.len(): w.place_country[core] else: 0
+
+rep_town_pos = (w: World, town: int) -> vec3:
+    if town in w.place_contexts: return w.place_contexts[town].center
+    core = _core_index(w,town)
+    if core >= 0 and core < w.harbors.len(): w.harbors[core].center else: vec3(0,0,0)
+
+rep_person_country = (w: World, person: int) -> int:
+    if person < 0 or person >= w.people.len(): return -1
+    if w.people[person].citizenship >= 0: return w.people[person].citizenship
+    rep_town_country(w,rep_town_of(w,person))
+
+# The town graph: every town, and each town's neighbours by road, cart, coaster and sea lane.
+# Derived from saved data (never saved itself), rebuilt when the catalogue changes.
+_rep_graph_key = u64(0)
+_rep_towns: int[] = []
+_rep_nbrs: {int: int[]} = {}
+
+_graph_key = (w: World) -> u64:
+    first = if w.far.links.len() > 0: (w.far.links[0].a,w.far.links[0].b) else: (-1,-1)
+    last = if w.far.links.len() > 0: (w.far.links[w.far.links.len()-1].a,w.far.links[w.far.links.len()-1].b) else: (-1,-1)
+    hash((w.place_contexts.len(),w.far.links.len(),w.places.len(),w.place_catalog_version,first,last,if w.places.len() > 0: w.places[0].id else: -1))
+
+rep_graph = (w: World):
+    global _rep_graph_key, _rep_towns, _rep_nbrs
+    key = _graph_key(w)
+    if key == _rep_graph_key and _rep_towns.len() > 0: return
+    towns: int[]
+    nbrs: {int: int[]}
+    if w.place_contexts.len() > 0:
+        towns = w.place_contexts.keys(); towns.sort()
+        loop id in towns:
+            ns = w.place_contexts[id].neighbors
+            nbrs[id] = ns
+        loop l in w.far.links:
+            if not (l.a in nbrs) or not (l.b in nbrs) or l.a == l.b: continue
+            a = nbrs[l.a]; a.push(l.b); nbrs[l.a] = a
+            b = nbrs[l.b]; b.push(l.a); nbrs[l.b] = b
+    else:
+        # (the six-harbour world: every harbour hears from every other, by the mail boats)
+        towns = [loop p in w.places: p.id]; towns.sort()
+        loop id in towns: nbrs[id] = [loop o in towns: if o != id: o]
+    loop id in towns:
+        ns = nbrs[id]; ns.sort()
+        out: int[]
+        loop n in ns:
+            if n != id and (out.len() == 0 or out[out.len()-1] != n): out.push(n)
+        nbrs[id] = out
+    _rep_towns = towns; _rep_nbrs = nbrs; _rep_graph_key = key
+
+rep_towns = (w: World) -> int[]:
+    rep_graph(w)
+    _rep_towns
+
+rep_neighbours = (w: World, town: int) -> int[]:
+    rep_graph(w)
+    _rep_nbrs.get(town,[])
+
+# ---------------- deeds ----------------
+
+rep_deed_index = (w: World, id: int) -> int:
+    # (ids rise with the list's order; a few dozen at most)
+    loop i in 0..w.rep.deeds.len():
+        if w.rep.deeds[i].id == id: return i
+    -1
+
+rep_deed = (w: World, id: int) -> RepDeed?:
+    i = rep_deed_index(w,id)
+    if i >= 0: w.rep.deeds[i] else: none
+
+_heard_value = (w: World, h: RepHeard) -> int:
+    i = rep_deed_index(w,h.deed)
+    if i < 0: return -1
+    rep_carried(w.rep.deeds[i].weight,h.hops)
+
+_sort_heard = (w: World, xs: mut RepHeard[]):
+    loop i in 1..xs.len():
+        j = i
+        loop j > 0 and (_heard_value(w,xs[j]) > _heard_value(w,xs[j-1]) or (_heard_value(w,xs[j]) == _heard_value(w,xs[j-1]) and xs[j].deed > xs[j-1].deed)):
+            tmp = xs[j-1]; xs[j-1] = xs[j]; xs[j] = tmp
+            j -= 1
+
+# A town hears a deed (first time, or by a shorter road). Returns whether it was news to them.
+rep_town_hear = (w: mut World, town: int, deed: int, hops: int) -> bool:
+    if town < 0: return false
+    i = rep_deed_index(w,deed)
+    if i < 0: return false
+    d = w.rep.deeds[i]
+    carried = rep_carried(d.weight,hops)
+    if hops > 0 and carried < REP_TRAVEL_FLOOR: return false
+    tw = w.rep.towns.get(town,TownWord(town=town))
+    loop h in tw.deeds:
+        if h.deed == deed: return false
+    tw.deeds.push(RepHeard(deed=deed,hops=hops,minute=w.minute))
+    _sort_heard(w,tw.deeds)
+    if tw.deeds.len() > REP_TOWN_DEEDS: tw.deeds.pop()
+    # (what it says of him, as it reaches them: fainter the further it came)
+    tw.lean = _lean_add(tw.lean,d.lean,carried,max(1,d.weight))
+    # (the first of them to hear it: a share of the town at once)
+    start = if hops == 0: min(950,d.weight/4+60*min(8,d.people)) else: carried/6
+    tw.heard = max(tw.heard,start)
+    tw.minute = w.minute
+    w.rep.towns[town] = tw
+    true
+
+_opinion = (w: World, person: int) -> RepOpinion: w.rep.opinions.get(person,RepOpinion(person=person,minute=w.minute))
+
+_opinion_knows = (w: mut World, person: int, deed: int, lean: RepLean, met: int):
+    if person < 0 or person >= w.people.len() or person == w.player: return
+    op = _opinion(w,person)
+    op.met += met
+    op.lean = _lean_add(op.lean,lean,1,1)
+    if deed >= 0 and not (deed in op.deeds):
+        op.deeds.insert(0,deed)
+        if op.deeds.len() > REP_OPINION_DEEDS: op.deeds.pop()
+    op.minute = w.minute
+    w.rep.opinions[person] = op
+    _trim_opinions(w)
+
+_opinion_score = (w: World, op: RepOpinion) -> int:
+    l = op.lean
+    op.met*200+(abs(l.warmth)+abs(l.honour)+abs(l.daring)+abs(l.reliability))/4+op.deeds.len()*60-(w.minute-op.minute)/1440
+
+_trim_opinions = (w: mut World):
+    if w.rep.opinions.len() <= REP_OPINIONS_MAX: return
+    keyed = [loop p, op in w.rep.opinions: (_opinion_score(w,op),p)]
+    keyed.sort()
+    loop k in 0..keyed.len()-REP_OPINIONS_MAX: w.rep.opinions.remove(keyed[k].1)
+
+# A small act with someone there (or nobody, -1): their own view, and a little of the town's.
+rep_act = (w: mut World, kind: RepKind, person: int, town: int = -2):
+    t = if town == -2: (if person >= 0: rep_town_of(w,person) else: rep_town_of(w,w.player)) else: town
+    lean = rep_kind_lean(kind)
+    if person >= 0 and person < w.people.len() and person != w.player:
+        op = _opinion(w,person)
+        day = day_index(w.minute)
+        if kind == .talked:
+            # (a chat counts once a day with each person)
+            if op.talk_day == day: return
+            op.talk_day = day
+        op.met += 1
+        op.lean = _lean_add(op.lean,lean,1,1)
+        op.minute = w.minute
+        w.rep.opinions[person] = op
+        _trim_opinions(w)
+    if t < 0: return
+    tw = w.rep.towns.get(t,TownWord(town=t))
+    tw.lean = _lean_add(tw.lean,lean,1,2)
+    if tw.heard < REP_SMALL_CEILING: tw.heard = min(REP_SMALL_CEILING,tw.heard+rep_kind_weight(kind)/3)
+    tw.minute = w.minute
+    w.rep.towns[t] = tw
+
+_deed_keep_score = (w: World, d: RepDeed) -> int:
+    age = (w.minute-d.minute)/1440
+    d.weight*max(0,rep_deed_days(d.weight)-age)/max(1,rep_deed_days(d.weight))
+
+# A deed worth telling. `town` where it happened (-1 at sea), `near` the town it was off.
+# `storm` the weather's severity there (-1: read it from the world). Returns the deed's id.
+rep_record = (w: mut World, kind: RepKind, town: int, near: int, other: int, side: int, people: int, witnesses: int[], storm: int = -1) -> int:
+    at = if town >= 0: town else: near
+    severity = if storm >= 0: storm else: if at >= 0: weather_severity(w,rep_town_pos(w,at)) else: 0
+    weight = rep_kind_weight(kind)
+    rescue = kind == .rescued_foe or kind == .rescued_friend or kind == .rescued_survivors
+    if rescue:
+        # (a landing in heavy water to pick someone up is talked of far and wide)
+        weight += severity*35/100
+        weight += 40*min(5,max(0,people-1))
+    if kind == .shot_down: weight += 60*min(4,max(0,people-1))
+    weight = min(1000,weight)
+    lean = rep_kind_lean(kind)
+    if rescue and severity > 400: lean.daring = min(1000,lean.daring+severity*3/10)
+    id = w.rep.next_deed; w.rep.next_deed += 1
+    d = RepDeed(id=id,kind=kind,minute=w.minute,town=town,near=near,other=other,side=side,people=max(1,people),weight=weight,storm=severity,lean=lean)
+    if weight >= REP_RADIO_WEIGHT: d.radio_minute = (w.minute/60+1)*60+120
+    w.rep.deeds.push(d)
+    if w.rep.deeds.len() > REP_DEEDS_MAX:
+        worst = 0
+        loop i in 1..w.rep.deeds.len():
+            if _deed_keep_score(w,w.rep.deeds[i]) < _deed_keep_score(w,w.rep.deeds[worst]): worst = i
+        w.rep.deeds.remove_at(worst)
+    if rep_deed_index(w,id) < 0: return id
+    loop p in witnesses: _opinion_knows(w,p,id,lean,0)
+    # (the one it was done for: they were there, and they remember it most)
+    if other >= 0: _opinion_knows(w,other,id,_lean_add(lean,lean,1,1),1)
+    if at >= 0: rep_town_hear(w,at,id,0)
+    id
+
+# ---------------- what someone thinks ----------------
+
+struct RepView:
+    known = false                   # they know who the pilot is
+    met = 0
+    lean: RepLean
+    side = 0                        # by what he did to and for their own people
+    regard = 0                      # all told, -1000..1000
+    deed = -1                       # the deed they'd mention, not yet told him
+    town = -1
+
+# Whether someone in the town knows of the pilot through the town's word: the same people every
+# time (a draw from the seed and their id), more of them as the word spreads.
+rep_knows_by_word = (w: World, person: int, tw: TownWord) -> bool:
+    tw.heard > 0 and draw1000000(w.seed,REP_KNOW_TAG,person,0)/1000 < tw.heard
+
+rep_view = (w: World, person: int) -> RepView:
+    v = RepView()
+    if person < 0 or person >= w.people.len() or person == w.player: return v
+    town = rep_town_of(w,person); v.town = town
+    has_op = person in w.rep.opinions
+    word = town >= 0 and town in w.rep.towns and rep_knows_by_word(w,person,w.rep.towns[town])
+    deeds: int[]
+    told: int[]
+    if has_op:
+        op = w.rep.opinions[person]
+        v.met = op.met; v.lean = op.lean; deeds = op.deeds; told = op.told
+        if word: v.lean = _lean_add(v.lean,w.rep.towns[town].lean,1,2)
+        v.known = op.met > 0 or op.deeds.len() > 0 or word
+    else if word:
+        v.lean = w.rep.towns[town].lean; v.known = true
+    if not v.known: return v
+    if word:
+        loop h in w.rep.towns[town].deeds:
+            if not (h.deed in deeds): deeds.push(h.deed)
+    country = rep_person_country(w,person)
+    best = -1; best_value = 0
+    loop id in deeds:
+        i = rep_deed_index(w,id)
+        if i < 0: continue
+        d = w.rep.deeds[i]
+        v.side = clamp(v.side+rep_side_effect(d,country),-1000,1000)
+        if rep_small(d.kind) or id in told or d.other == person: continue
+        if d.weight > best_value: best = id; best_value = d.weight
+    v.deed = best
+    l = v.lean
+    v.regard = clamp((l.warmth*3+l.honour*4+l.reliability*2+l.daring)/10+v.side,-1000,1000)
+    v
+
+# ---------------- the minute ----------------
+
+# The country the pilot has flown with: the one whose war work he has done most of, else his own.
+rep_pilot_side = (w: World) -> int:
+    best = -1; value = 0
+    loop c in 0..w.countries.len():
+        v = w.war.reputation.get("{w.player}:{c}",0)
+        if v > value: best = c; value = v
+    if best >= 0: best else: rep_person_country(w,w.player)
+
+_rep_kind_of_deed = (k: DeedKind) -> RepKind:
+    match k:
+        .rescued_foe: RepKind.rescued_foe
+        .rescued_friend: RepKind.rescued_friend
+        .shot_down: RepKind.shot_down
+        .flew_home_in_formation: RepKind.flew_home_in_formation
+        .left_the_fight: RepKind.left_the_fight
+
+# A rescue already told within three hours, of the same side: the same rescue, seen twice (the
+# pickup in the fight, the landing at the shelter). Grows it rather than telling it twice.
+_rep_same_rescue = (w: mut World, side: int, people: int) -> bool:
+    loop i in 0..w.rep.deeds.len():
+        k = w.rep.deeds.len()-1-i
+        d = w.rep.deeds[k]
+        if w.minute-d.minute > 180: break
+        if (d.kind == .rescued_foe or d.kind == .rescued_friend or d.kind == .rescued_survivors) and d.side == side:
+            if people > d.people:
+                w.rep.deeds[k].people = people
+                w.rep.deeds[k].weight = min(1000,d.weight+40*(people-d.people))
+            return true
+    false
+
+_rep_combat_deeds = (w: mut World):
+    loop d in deeds_take():
+        if d.actor != w.player: continue
+        kind = _rep_kind_of_deed(d.kind)
+        if (kind == .rescued_foe or kind == .rescued_friend) and _rep_same_rescue(w,d.subject_side,1): continue
+        rep_record(w,kind,-1,d.place,-1,d.subject_side,1,d.witnesses)
+
+_rep_rescue_receipts = (w: mut World):
+    loop r in w.war.rescue_receipts:
+        if r.id < w.rep.receipt_cursor: continue
+        w.rep.receipt_cursor = r.id+1
+        if r.actor != w.player or r.people <= 0: continue
+        if _rep_same_rescue(w,r.country,r.people): continue
+        side = rep_pilot_side(w)
+        kind = if r.people > 1: RepKind.rescued_survivors else: if side >= 0 and r.country != side: RepKind.rescued_foe else: RepKind.rescued_friend
+        survivor = if r.survivor in w.war.survivors: w.war.survivors[r.survivor].person else: -1
+        rep_record(w,kind,r.place,r.place,survivor,r.country,r.people,[])
+
+_rep_events = (w: mut World):
+    loop w.rep.event_cursor < w.next_event:
+        id = w.rep.event_cursor; w.rep.event_cursor += 1
+        if not (id in w.events): continue
+        e = w.events[id]
+        if e.actor != w.player: continue
+        town = rep_town_of_place(w,e.place)
+        other = if e.target >= 0: e.target else: e.reason.beneficiary
+        if e.kind == .delivery and other != w.player:
+            rep_record(w,.job_done,town,town,other,-1,1,e.witnesses,0)
+        else if e.kind == .late and not e.private_fact and e.reason.job >= 0:
+            rep_record(w,.job_late,town,town,other,-1,1,e.witnesses,0)
+
+_rep_dealings = (w: mut World):
+    # (the pilot's debts: paid off, or not)
+    open: {int: bool}
+    loop id in w.open_obligations:
+        if not (id in w.obligations): continue
+        o = w.obligations[id]
+        if o.debtor != w.player: continue
+        open[id] = true
+        if not (id in w.rep.owed): w.rep.owed[id] = o.creditor
+    gone: int[]
+    loop id, creditor in w.rep.owed:
+        if not (id in open): gone.push(id)
+    gone.sort()
+    loop id in gone:
+        creditor = w.rep.owed[id]
+        w.rep.owed.remove(id)
+        if not (id in w.obligations): continue
+        o = w.obligations[id]
+        town = rep_town_of_place(w,o.place)
+        if o.state == .fulfilled and o.original_cents > 0: rep_record(w,.debt_paid,town,town,creditor,-1,1,[],0)
+        else if o.state == .defaulted or o.state == .breached: rep_record(w,.debt_defaulted,town,town,creditor,-1,1,[],0)
+    # (the jobs he took on: those that came to nothing)
+    held: {int: bool}
+    loop id in w.active_jobs:
+        if not (id in w.jobs): continue
+        j = w.jobs[id]
+        if j.carrier != w.player or j.state != .claimed: continue
+        held[id] = true
+        if not (id in w.rep.carrying): w.rep.carrying[id] = j.poster
+    dropped: int[]
+    loop id, poster in w.rep.carrying:
+        if not (id in held): dropped.push(id)
+    dropped.sort()
+    loop id in dropped:
+        poster = w.rep.carrying[id]
+        w.rep.carrying.remove(id)
+        if not (id in w.jobs): continue
+        j = w.jobs[id]
+        if j.state == .failed or j.state == .expired:
+            town = rep_town_of_place(w,j.origin)
+            rep_record(w,.job_failed,town,town,poster,-1,1,[],0)
+
+# The wireless reads a big deed two hours after; each town hears it on its next hourly pass
+# (rep_town_hour), so the cost spreads over the hour.
+_rep_wireless = (w: mut World):
+    loop i in 0..w.rep.deeds.len():
+        d = w.rep.deeds[i]
+        if d.aired or d.radio_minute < 0 or w.minute < d.radio_minute: continue
+        w.rep.deeds[i].aired = true
+
+# The talking hours: the market and the dock of a morning, the bar of an evening.
+rep_talk_hour = (minute: int) -> bool:
+    h = local_minute(minute)/60
+    (h >= 7 and h < 11) or (h >= 18 and h < 23)
+
+_rep_ceiling = (w: World, tw: TownWord) -> int:
+    c = 0
+    loop h in tw.deeds:
+        i = rep_deed_index(w,h.deed)
+        if i < 0: continue
+        c = max(c,min(950,rep_carried(w.rep.deeds[i].weight,h.hops)+150))
+    # (and a strong sense of him, even from small things: one who turns everyone away is talked of)
+    l = tw.lean
+    sum = abs(l.warmth)+abs(l.honour)+abs(l.daring)+abs(l.reliability)
+    if sum > 100: c = max(c,min(700,sum+100))
+    c
+
+# One town's hour: it hears from its neighbours, talks among itself, sees the pilot about, fades.
+rep_town_hour = (w: mut World, town: int):
+    tw = w.rep.towns.get(town,TownWord(town=town))
+    had = town in w.rep.towns
+    hour = w.minute/60
+    # (the wireless, in the day after a big deed is read: a quarter of the town at least)
+    loop d in w.rep.deeds:
+        if not d.aired or w.minute-d.radio_minute >= 1440: continue
+        w.rep.towns[town] = tw
+        if rep_town_hear(w,town,d.id,2):
+            tw = w.rep.towns[town]
+            tw.heard = max(tw.heard,250)
+        else: tw = w.rep.towns[town]
+        had = true
+    # (word from the neighbours, carried by whoever travels: about a hop a day)
+    loop n in rep_neighbours(w,town):
+        if not (n in w.rep.towns): continue
+        nw = w.rep.towns[n]
+        loop h in nw.deeds:
+            if w.minute-h.minute < REP_HOP_MINUTES: continue
+            if draw1000000(w.seed,REP_HOP_TAG,town*31+n,hour,h.deed)%24 != 0: continue
+            w.rep.towns[town] = tw; had = true
+            rep_town_hear(w,town,h.deed,h.hops+1)
+            tw = w.rep.towns[town]
+        # (and the general sense of him, thinner for the distance)
+        carry = nw.heard*3/10
+        if carry > tw.heard and draw1000000(w.seed,REP_HOP_TAG+1,town*31+n,hour)%24 == 0:
+            tw.heard += (carry-tw.heard)/2
+            tw.lean = RepLean(warmth=_toward(tw.lean.warmth,nw.lean.warmth*3/10),honour=_toward(tw.lean.honour,nw.lean.honour*3/10),daring=_toward(tw.lean.daring,nw.lean.daring*3/10),reliability=_toward(tw.lean.reliability,nw.lean.reliability*3/10))
+            had = true
+    if not had: return
+    # (gossip: toward the share the best story in town reaches, quicker in the talking hours)
+    ceiling = _rep_ceiling(w,tw)
+    if ceiling > tw.heard: tw.heard += max(1,(ceiling-tw.heard)*(if rep_talk_hour(w.minute): 60 else: 15)/1000)
+    # (the pilot about the town on foot: known by sight)
+    me = w.people[w.player]
+    if me.trip < 0 and rep_town_of(w,w.player) == town and tw.heard < REP_FACE_CEILING: tw.heard += max(1,(REP_FACE_CEILING-tw.heard)*50/1000)
+    # (fading, once a day: the share by 1%, the leanings by 1.5%, old stories dropped)
+    if local_minute(w.minute)/60 == 4:
+        tw.heard = _fade1(tw.heard,if tw.deeds.len() > 0: 10 else: 30)
+        tw.lean = _lean_fade(tw.lean,15)
+        keep: RepHeard[]
+        loop h in tw.deeds:
+            i = rep_deed_index(w,h.deed)
+            if i >= 0 and (w.minute-w.rep.deeds[i].minute)/1440 < rep_deed_days(rep_carried(w.rep.deeds[i].weight,h.hops)): keep.push(h)
+        tw.deeds = keep
+    if tw.heard <= 0 and tw.deeds.len() == 0 and _lean_zero(tw.lean): w.rep.towns.remove(town)
+    else: w.rep.towns[town] = tw
+
+# Moves `x` toward `target` by half the gap, only when the target says more (further from 0).
+_toward = (x: int, target: int) -> int:
+    if abs(target) <= abs(x): return x
+    x+(target-x)/2
+
+_rep_day = (w: mut World):
+    # (personal opinions fade at half a town's pace; those who sat with him, slower still)
+    keys = w.rep.opinions.keys(); keys.sort()
+    loop p in keys:
+        op = w.rep.opinions[p]
+        op.lean = _lean_fade(op.lean,if op.met > 0: 5 else: 8)
+        keep: int[]
+        loop id in op.deeds:
+            i = rep_deed_index(w,id)
+            if i >= 0 and (w.minute-w.rep.deeds[i].minute)/1440 < rep_deed_days(w.rep.deeds[i].weight)*3/2: keep.push(id)
+        op.deeds = keep
+        op.told = [loop id in op.told: if id in keep: id]
+        if op.met == 0 and op.deeds.len() == 0 and _lean_zero(op.lean): w.rep.opinions.remove(p)
+        else: w.rep.opinions[p] = op
+    # (deeds nobody tells any more)
+    told: {int: bool}
+    loop _, tw in w.rep.towns:
+        loop h in tw.deeds: told[h.deed] = true
+    loop _, op in w.rep.opinions:
+        loop id in op.deeds: told[id] = true
+    w.rep.deeds = [loop d in w.rep.deeds: if (d.id in told) or (not d.aired and d.radio_minute >= 0) or w.minute-d.minute < 1440: d]
+
+reputation_minute = (w: mut World):
+    if not w.rep.started:
+        w.rep.started = true
+        w.rep.event_cursor = w.next_event
+        w.rep.receipt_cursor = w.war.next_rescue_receipt
+    _rep_events(w)
+    _rep_rescue_receipts(w)
+    _rep_combat_deeds(w)
+    _rep_wireless(w)
+    if w.minute%60 == 7: _rep_dealings(w)
+    if local_minute(w.minute) == 30: _rep_day(w)
+    # (a sixtieth of the towns each minute: each town once an hour)
+    towns = rep_towns(w)
+    slot = w.minute%60
+    k = slot
+    loop k < towns.len():
+        rep_town_hour(w,towns[k])
+        k += 60
+
+# ---------------- staging (captures and tests) ----------------
+
+# A town by its name (-1 if there is none).
+rep_town_named = (w: World, name: str) -> int:
+    loop t in rep_towns(w):
+        if rep_town_name(w,t) == name: return t
+    -1
+
+# As if the town has talked of the deed for a while: told there (by `hops`), known to `heard`.
+rep_stage_heard = (w: mut World, town: int, deed: int, hops: int, heard: int):
+    rep_town_hear(w,town,deed,hops)
+    if town in w.rep.towns:
+        tw = w.rep.towns[town]
+        tw.heard = max(tw.heard,heard)
+        w.rep.towns[town] = tw
+
+# As if the town had talked of him for some days: known to as many as its stories reach.
+rep_stage_talked = (w: mut World, town: int):
+    if not (town in w.rep.towns): return
+    tw = w.rep.towns[town]
+    tw.heard = max(tw.heard,_rep_ceiling(w,tw))
+    w.rep.towns[town] = tw
