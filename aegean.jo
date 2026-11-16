@@ -532,9 +532,6 @@ company = Company()              # (someone come to sit with the pilot, now and 
 company_line = ""                # (what they said last, and until when it shows)
 company_line_until = -1.0
 company_remarks = 0              # (remarks made at the table so far: the weather and their work, turn about)
-invite_who = -1                  # (someone asked over who said no, what they said, and until when)
-invite_line = ""
-invite_until = -1.0
 company_greeted = false          # (their first word said: one who has heard of him says so first)
 waiter = Waiter()                # (whoever brings what is ordered: the hotel's waiter, the barkeep, the coffee house's boy)
 taking = Taking()                # (the pilot and what is in front of him)
@@ -635,8 +632,15 @@ room_hour = () -> f64: f64(lt.local_minute(living_world.minute)) / 60.0
 
 # where one sits (or, at the bar, stands) and which way one faces
 # (at the bar: the second stool, the figure raised to its seat)
-leisure_seat = (key: str) -> vec3: if key == "coffee": coffee.seat else: if key == "bar": hotel.stools[1] else: hotel.seat
-leisure_seat_yaw = (key: str) -> f64: if key == "coffee": coffee.seat_yaw else: if key == "bar": hotel.bar_yaw else: hotel.seat_yaw
+leisure_seat = (key: str) -> vec3: if key == "coffee": coffee.seat else: if key == "bar": hotel.stools[1] else: if key == "guest": guest_seat else: hotel.seat
+leisure_seat_yaw = (key: str) -> f64: if key == "coffee": coffee.seat_yaw else: if key == "bar": hotel.bar_yaw else: if key == "guest": guest_yaw else: hotel.seat_yaw
+
+# The chair across someone else's table on the hotel's terrace, sat at as their guest ("Mind if I
+# sit?" in talk with them; the "guest" sitting key): the seat, the way it faces, and the table's
+# service (set by leisure_sit_with).
+guest_seat = vec3(0, 0, 0)
+guest_yaw = 0.0
+guest_spots = ServiceSpots(vec3(0, 0, 0), vec3(0, 0, 0), vec3(0, 0, 0), vec3(1, 0, 0), vec3(0, 0, 1))
 
 leisure_sit = (key: str):
     global ui, leisure_ui, leisure_at, leisure_spent, leisure_had, me, follow, waiter, taking
@@ -653,8 +657,6 @@ leisure_sit = (key: str):
     if let at = env("AEGEAN_COMPANY"): company.due = t + (to_float(at) ?? 2.0)
     leisure.sitting = key; leisure.served = []; leisure.coming = []
     waiter = Waiter(); taking = Taking()
-    global invite_refused
-    invite_refused = []
     leisure_at = key; leisure_spent = 0; leisure_had = []
     ui = .leisure; leisure_ui = 0
     mouse_lock(false)
@@ -1206,7 +1208,7 @@ const STREET_HEARD = 70.0           # (metres: as far as src/life_audio.jo plays
 draw_music_cues = ():
     if not options.music_notes or stay.active: return
     night = 1.0 - smoothstep(-0.06, 0.1, f64(sky_sun(hour).y))
-    if leisure.sitting != "hotel" and leisure.sitting != "bar":
+    if leisure.sitting != "hotel" and leisure.sitting != "bar" and leisure.sitting != "guest":
         draw_note_cue(band_cue, t, note_heard_alpha(band_heard.distance, band_heard.occlusion), night)
     if street_player >= 0 and street_player < folks.len():
         d = f64(length(folks[street_player].pos - scene_camera()))
@@ -1658,43 +1660,85 @@ company_come = ():
 
 tavli_active = () -> bool: ui == .leisure and (leisure_ui == 6 or leisure_ui == 7)
 
-# Asking someone near to come and sit: they come if what they've heard of him allows, and say so;
-# or they say why not. Either way, being asked is a kindness they remember (src/reputation.jo).
-_leisure_invite = (k: int):
-    global company, company_line, company_line_until, invite_who, invite_line, invite_until
-    if k < 0 or k >= folks.len(): return
-    f = folks[k]; p = f.person
+# Someone sat at a table on the hotel's terrace (as the town's routine sits them, src/townsfolk.jo):
+# the table's middle, the chair across from them and the way it faces, or none.
+_terrace_table = (k: int) -> (vec3, vec3, f64)?:
+    if k < 0 or k >= folks.len(): return none
+    f = folks[k]
+    if f.posture != 1 or not f.shown or not (f.person in living_world.daily_life): return none
+    intent = living_world.daily_life[f.person]
+    if not intent.arrived or intent.venue != .cafe or not intent.anchor.ends_with(social.TERRACE_VENUE_SUFFIX): return none
+    loop v in living_world.life_venues:
+        if v.key != intent.anchor: continue
+        if f64(length(v.pos - hotel.table)) > 60.0: return none
+        side = vec3(-v.facing.z, 0, v.facing.x)
+        best = v.pos; bd = 1000000.0
+        loop c in 0..4:
+            centre = v.pos + side * f32(f64(c - 1) * 4.4)
+            d = f64(length(centre.xz - f.pos.xz))
+            if d < bd: bd = d; best = centre
+        across = vec3(best.x - f.pos.x, 0, best.z - f.pos.z)
+        if f64(length(across)) < 0.2: return none
+        seat = vec3(best.x + across.x, f.pos.y, best.z + across.z)
+        return (best, seat, atan2(f64(-across.x), f64(-across.z)))
+    none
+
+# "Mind if I sit?": asked of someone sat at a terrace table while the house is open, once a day.
+sit_asked: {int: int} = {}        # (person -> the day they were asked)
+can_ask_to_sit = (k: int) -> bool:
+    if leisure.sitting != "" or k < 0 or k >= folks.len() or not leisure_open(living_world, hotel_place): return false
+    p = folks[k].person
+    if band_wanted(living_world, p) > 0 or sit_asked.get(p, -1) == lt.day_index(living_world.minute): return false
+    _terrace_table(k) != none
+
+# Their answer follows what they've heard of him (src/reputation_talk.jo); being asked is a
+# kindness either way. Yes: he sits across from them. No: they say why, in the talk.
+ask_to_sit = (k: int) -> str:
+    global sit_asked
+    p = folks[k].person
     roll = if env("AEGEAN_INVITE") == "no": 0.999 else: if env("AEGEAN_INVITE") == "yes": 0.0 else: random(0.0, 1.0)
-    yes = band_wanted(living_world, p) == 0 and rep_accepts(living_world, p, roll)
+    yes = rep_accepts(living_world, p, roll)
     said = if yes: rep_accept_line(living_world, p) else: rep_decline_line(living_world, p)
     rep_act(living_world, .asked_over, p)
-    if yes:
-        at_bar = leisure.sitting == "bar"
-        ground = (q: vec3) -> vec3: vec3(q.x, f32(walk_height(towns, f64(q.x), f64(q.z))), q.z)
-        seat = if at_bar: ground(hotel.stools[2]) + vec3(0, f32(STOOL_LIFT), 0) else: if leisure.sitting == "coffee": tavli_across() else: ground(hotel.table * 2.0 - hotel.seat)
-        yaw = if at_bar: hotel.bar_yaw else: if leisure.sitting == "coffee": coffee.seat_yaw + PI else: hotel.seat_yaw + PI
-        company = Company(at_bar = at_bar)
-        company_invite(company, Candidate(k, p, f.pos, 1.0), seat, yaw, t)
-        company.pos = room_way_in(hotel, seat, company.pos); company.from = company.pos
-        global company_greeted
-        company_greeted = false
-        company_line = said; company_line_until = t + 6.0
-        invite_who = -1
-    else:
-        invite_who = k; invite_line = said; invite_until = t + 8.0
-        global invite_refused
-        if not (p in invite_refused): invite_refused.push(p)
+    sit_asked[p] = lt.day_index(living_world.minute)
+    if yes: leisure_sit_with(k, said)
+    said
 
-invite_refused: int[] = []        # (those who said no to joining the pilot this sitting: not asked again)
-rep_invite_due = -1.0             # (capture: the staged invitation, and to whom)
-rep_invite_k = -1
+# Sitting down across from someone at their table: the hotel's sitting at the "guest" seat, and
+# them as the company already sat with him.
+leisure_sit_with = (k: int, said: str):
+    if let tb = _terrace_table(k):
+        global guest_seat, guest_yaw, guest_spots, company, company_line, company_line_until, company_greeted
+        centre = tb.0
+        guest_seat = tb.1; guest_yaw = tb.2
+        toward = normalize(vec3(guest_seat.x - centre.x, 0, guest_seat.z - centre.z))
+        side = vec3(-toward.z, 0, toward.x)
+        top = vec3(centre.x, hotel.table.y - hotel.seat.y + guest_seat.y, centre.z)
+        guest_spots = ServiceSpots(hotel.waiter_pass, top + side * 0.9 - vec3(0, top.y - guest_seat.y, 0), top, side, toward)
+        f = folks[k]
+        leisure_sit("guest")
+        company = Company(stage = .sitting, who = k, person = f.person, talks = true, pos = f.pos, yaw = atan2(f64(centre.x - f.pos.x), f64(centre.z - f.pos.z)), from = f.pos, seat = f.pos, since = t, next_line = t + COMPANY_FIRST_LINE)
+        company.seat_yaw = company.yaw
+        company_greeted = false
+        company_line = said; company_line_until = t + 5.0
+
+rep_ask_due = -1.0                # (capture: "Mind if I sit?" asked a moment after talk begins, and of whom)
+rep_ask_k = -1
+rep_talk_due = -1.0               # (capture: the talk begun a moment after the scene is seen)
 
 company_tick = (dt: f64):
-    global company, company_line, company_line_until, leisure_ui, rep_invite_due, company_remarks
-    if rep_invite_due >= 0.0 and t >= rep_invite_due and leisure.sitting != "":
-        rep_invite_due = -1.0
-        _leisure_invite(rep_invite_k)
-        print("REP invite: {invite_line}{company_line}")
+    global company, company_line, company_line_until, leisure_ui, company_remarks, rep_ask_due, rep_talk_due
+    if rep_talk_due >= 0.0 and t >= rep_talk_due:
+        rep_talk_due = -1.0
+        _leisure_talk(rep_ask_k)
+        print("REP talk: {ui_line}")
+    if rep_ask_due >= 0.0 and t >= rep_ask_due and ui == .talk:
+        rep_ask_due = -1.0
+        said = ask_to_sit(rep_ask_k)
+        if leisure.sitting == "":
+            global ui_line
+            ui_line = said_by(living_world.people[folks[rep_ask_k].person].name, said)
+        print("REP asked to sit: {said} (sitting {leisure.sitting})")
     if company_due(company, t) and seat_view(): company_come()
     if company.stage == .none: return
     # (one of the band's players, called to the stand: they excuse themselves and go to it, back
@@ -1787,9 +1831,6 @@ draw_tip_thanks = ():
             speech_bubble(fonts, from.1, split(living_world.people[tip_thanks_who].name, " ")[0], tip_thanks_line, f64(length(from.1 - scene_camera())), 30.0)
 
 draw_company_talk = ():
-    if invite_who >= 0 and invite_who < folks.len() and t < invite_until:
-        ih = folks[invite_who].pos + vec3(0, 1.7, 0)
-        speech_bubble(fonts, ih, split(living_world.people[folks[invite_who].person].name, " ")[0], invite_line, f64(length(ih - scene_camera())))
     if company.stage == .none or company.person < 0: return
     head = company.pos + vec3(0, if company.stage == .sitting: 1.25 else: 1.7, 0)
     name = split(living_world.people[company.person].name, " ")[0]
@@ -2384,6 +2425,7 @@ bar_top = () -> vec3: hotel.stools[1] - hotel.table_z * 0.85 + vec3(0, 1.17, 0)
 service_spots = (key: str) -> ServiceSpots:
     if key == "coffee": return ServiceSpots(transform_point(coffee.frame, vec3(0.2, 0, -3.0)), transform_point(coffee.frame, vec3(2.8, 0, -0.2)), coffee.table, coffee.table_x, coffee.table_z)
     if key == "bar": return ServiceSpots(hotel.bar_rest, hotel.bar_back, bar_top(), hotel.table_x, hotel.table_z)
+    if key == "guest": return guest_spots
     ServiceSpots(hotel.waiter_pass, hotel.waiter_serve, hotel.table, hotel.table_x, hotel.table_z)
 
 service_fig = (key: str) -> Figure: if key == "coffee": boy_fig else: if key == "bar": barkeep_fig else: waiter_fig
@@ -2450,7 +2492,7 @@ draw_service = (L: Light):
     if near_hotel and leisure_open(living_world, hotel_place):
         # (the hotel's people at their places when they are not the ones serving)
         if key != "bar": draw_figure(barkeep_fig, hotel.bar_rest, hotel.bar_yaw + PI, 0.0, 0.0, L, t)
-        if key != "hotel":
+        if key != "hotel" and key != "guest":
             d = hotel.waiter_serve - hotel.waiter_pass
             draw_figure(waiter_fig, hotel.waiter_pass, atan2(f64(d.x), f64(d.z)), 0.0, 0.0, L, t)
     if key == "" or not waiter.ready: return
@@ -2543,8 +2585,6 @@ leisure_panel = ():
             k_talk = if company.stage == .sitting and company.who >= 0 and company.who < folks.len(): company.who else: nearest_folk(folks, me.pos, 7.0)
             if k_talk >= 0:
                 actions.push("Talk to {split(w.people[folks[k_talk].person].name, " ")[0]}"); letters.push("K")
-                if company.stage == .none and not tavli_active() and not (folks[k_talk].person in invite_refused):
-                    actions.push("Ask {split(w.people[folks[k_talk].person].name, " ")[0]} to join you"); letters.push("J")
             actions.push("Get up"); letters.push("Esc")
             things = [loop s in leisure.served: take_label(s)]
             global table_input, table_put, table_bar_area
@@ -2567,7 +2607,6 @@ leisure_panel = ():
             else if pick == "Take a room":
                 leisure_ui = 2; leisure_at = key; leisure_line = ""
             else if pick.starts_with("Talk to"): _leisure_talk(k_talk)
-            else if pick.starts_with("Ask ") and pick.ends_with(" to join you"): _leisure_invite(k_talk)
             else if pick == "Get up": leisure_stand()
         1:
             lp = leisure_place(leisure_at)
@@ -2785,7 +2824,7 @@ leisure_capture_step = ():
                     ride.flew = true; ride.top = 620.0
                     _ = ride_thank(ride, t); ride.line_until = 1e9
                 if stage != "ride-thanks": me.mode = .aboard
-    if stage == "rep-remark" or stage == "rep-remark-strait" or stage == "rep-decline":
+    if stage == "rep-remark" or stage == "rep-remark-strait" or stage == "rep-decline" or stage == "rep-join":
         # (the pilot's name, staged: src/reputation.jo. rep-remark: a Kalyran pulled out of a
         # storm sea off Neravessa, talked of in Porto Vecchio for days; at the bar, someone who has
         # heard takes the next stool and says so (AEGEAN_COMPANY=<seconds> brings them).
@@ -2807,28 +2846,36 @@ leisure_capture_step = ():
             if env("AEGEAN_COMPANY") == none: company.due = t
             print("REP remark staged: deed {d} off {rep_town_name(living_world, if off >= 0: off else: here)}")
         else:
-            leisure_sit("bar")
-            company.due = -1.0
-            near: int[]
+            # (rep-decline: known for turning people away; he walks up to someone sat at a terrace
+            # table and asks to sit. rep-join: the same, liked, and they say yes)
+            if stage == "rep-decline":
+                # (a week of evenings: those at the terrace tables he turned away once or twice)
+                loop k in 0..folks.len():
+                    if _terrace_table(k) != none:
+                        rep_act(living_world, .declined_company, folks[k].person, here)
+                        rep_act(living_world, .declined_company, folks[k].person, here)
+                loop k in 0..12: rep_act(living_world, .declined_company, -1, here)
+                rep_stage_talked(living_world, here)
+            else:
+                loop k in 0..12: rep_act(living_world, .kept_company, -1, here)
+                rep_stage_talked(living_world, here)
+            target = -1; bd = 1e9
             loop k in 0..folks.len():
-                f = folks[k]
-                if not f.shown or f.performing or f.cycling or f.carrying or f.person == living_world.player or band_wanted(living_world, f.person) > 0: continue
-                if living_world.people[f.person].age < 16: continue
-                near.push(k)
-            near.sort((k: int): f64(length(folks[k].pos - me.pos)))
-            # (whoever the seat's bar offers to ask: the nearest within reach)
-            target = nearest_folk(folks, me.pos, 7.0)
-            if target < 0 and near.len() > 0: target = near[0]
-            # (a week of evenings turning people away, her among them, and the town's talk of it)
-            if target >= 0: rep_act(living_world, .declined_company, folks[target].person, here)
-            loop k in 0..13: rep_act(living_world, .declined_company, if near.len() > 0: folks[near[k % near.len()]].person else: -1, here)
-            rep_stage_talked(living_world, here)
-            if target >= 0:
-                global rep_invite_due, rep_invite_k
-                rep_invite_k = target; rep_invite_due = t + (to_float(env("AEGEAN_INVITE_AT") ?? "2.0") ?? 2.0)
+                if not can_ask_to_sit(k): continue
+                d = f64(length(folks[k].pos - hotel.seat))
+                if d < bd: bd = d; target = k
+            if let tb = _terrace_table(target):
+                # (standing at their table, by the empty chair, facing them)
                 fp = folks[target].pos
-                print("REP decline staged: {living_world.people[folks[target].person].name} at {f64(length(fp - me.pos)):.1f} m")
-                follow.yaw = atan2(f64(fp.x - me.pos.x), f64(fp.z - me.pos.z)) + PI + 0.45; follow.distance = 3.4; follow.pitch = 0.22
+                to = normalize(vec3(fp.x - tb.1.x, 0, fp.z - tb.1.z))
+                me.mode = .walking
+                me.pos = vec3(tb.1.x - to.x * 0.5, f32(walk_height(towns, f64(tb.1.x), f64(tb.1.z))), tb.1.z - to.z * 0.5)
+                me.yaw = atan2(f64(to.x), f64(to.z)); me.stride = 0.0
+                follow.yaw = me.yaw + PI + (to_float(env("AEGEAN_REP_CAM") ?? "0.7") ?? 0.7); follow.distance = 3.4; follow.pitch = 0.2; follow.height = 1.5
+                global rep_ask_due, rep_ask_k, rep_talk_due
+                rep_ask_k = target; rep_talk_due = t + 1.5; rep_ask_due = t + (to_float(env("AEGEAN_INVITE_AT") ?? "4.5") ?? 4.5)
+                print("REP {stage} staged: {living_world.people[folks[target].person].name}: {ui_line}")
+            else: print("REP {stage}: nobody sat at a terrace table")
     if stage.starts_with("stay-"):
         # (a stay: the hotel's room (evening, the window in the morning, asleep), or a family's
         # house (supper, in bed, the morning's coffee): the town's host with the largest household)
@@ -7943,7 +7990,7 @@ update_frame = (dt: f64, saves: bool = true):
         update_homeward(homeward,battle,living_world,hci,pc.state.position,pc.state.on_water or pc.state.moored,t,dt,audio_enabled and me.mode==.aboard)
     if not world_held(): update_folk(folks, living_world, towns, if me.mode==.free:free.pos else:if me.mode == .aboard: pc.state.position else: me.pos, dt)
     # (the hotel's bar room: its places moved in out of sight, and the terrace's people drawn there)
-    room_step(hotel, room_hour(), weather_here.rain, weather_here.storm, leisure.sitting == "hotel" or leisure.sitting == "bar", scene_camera())
+    room_step(hotel, room_hour(), weather_here.rain, weather_here.storm, leisure.sitting == "hotel" or leisure.sitting == "bar" or leisure.sitting == "guest", scene_camera())
     room_place_folk(folks, hotel)
     cat_at = if me.mode == .aboard: pc.state.position else: me.pos
     cat_said = update_cats(cat_scene, town_cat_homes(cat_at, f32(CAT_SEEN)), cat_at, me.mode == .walking, mooring_anchor(), pc.state.position, presentation.cat_bonds, living_world.minute, (x: f64, z: f64) -> f64: walk_height(towns, x, z), dt, t)
@@ -8519,7 +8566,7 @@ draw = ():
                 ear_forward = barber_face() - hotel.barber_mirror
             else if leisure.sitting != "" and t < served_look_until and leisure_ui != 1:
                 # (what was ordered arriving: the table seen from across it, the pilot beyond)
-                top = if leisure.sitting == "coffee": coffee.table else: if leisure.sitting == "bar": bar_top() else: hotel.table
+                top = service_spots(leisure.sitting).table
                 across = normalize(vec3(top.x - me.pos.x, 0, top.z - me.pos.z) + vec3(0.0001, 0, 0))
                 side = vec3(-across.z, 0, across.x)
                 eye = top + across * 1.45 + side * 0.45 + vec3(0, 0.8, 0)
@@ -9046,6 +9093,10 @@ draw_ui = ():
             rest_offer = f.place >= 0 and f.place == p.home and p.occupation != .patrol and p.occupation != .pirate and grateful_to_player(living_world, f.person)
             rest_k = answers.len() - ntop - work_k
             if rest_offer: answers.push("Could I rest at yours a while?")
+            # (someone sat at their table on the terrace: asking to sit with them)
+            sit_offer = can_ask_to_sit(ui_folk)
+            sit_k = answers.len() - ntop - work_k
+            if sit_offer: answers.push("Mind if I sit?")
             # (a bucket: theirs brought back, or the loan of it asked)
             carried_k = fish_carried(fish)
             bucket_back = carried_k >= 0 and fish.buckets[carried_k].owner == f.person
@@ -9103,6 +9154,9 @@ draw_ui = ():
                       ans = fish_ask_bucket(living_world, fish, f.person, fish_bucket_where_words(living_world, f.person), seller = fish_bucket_seller(living_world, f.person) != "")
                       ui_line = ans.line
                       if ans.lent: log_note(notebook, "{p.name} lent me a bucket.", clock_text(living_world, living_world.minute))
+              else if sit_offer and c == sit_k:
+                  said = ask_to_sit(ui_folk)
+                  if leisure.sitting == "": ui_line = said_by(p.name, said)
               else if rest_offer and c == rest_k:
                   global leisure_ui, leisure_host, leisure_line
                   leisure_host = f.person

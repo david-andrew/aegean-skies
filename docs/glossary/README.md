@@ -2046,7 +2046,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   a day along the roads and sea lanes while `weight × 0.7^hops` stays above 150, and to every
   town on the wireless when big. Small acts (a chat, a table shared or refused, a tip) stay with
   the people there and their town. It all fades with time. Known as keeping to himself, fewer
-  people come over; asked over, they say no, and why. Never a punishment.
+  people come over; asked if he may sit with them, they say no, and why. Never a punishment.
+  What people say of it is short and leaves most unsaid: one detail at most (the storm, the
+  nationality, the place or a name), less from a friend than from a stranger.
 - **Code:** `src/reputation.jo` (`rep_record`, `rep_act`, `rep_view`, `reputation_minute`),
   `src/reputation_talk.jo` (greetings, company, prices, the wireless, the notebook's words),
   `src/reputation_types.jo` (`World.rep`); combat deeds come through `src/deeds.jo`
@@ -2054,11 +2056,13 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Rules:** a person knows of him if they dealt with him or saw a deed, or by the town's word: a
   fixed draw from the seed and their id under the share of the town that has heard. Whoever has
   heard a deed and hasn't met him mentions it once. Company at the hotel and the coffee house,
-  the "Ask … to join you" action, a keeper's bill (up to 6% down, 5% up) and a family's spare room
+  "Mind if I sit?" (asked in talk of someone sat at a terrace table), a keeper's bill (up to 6% down, 5% up) and a family's spare room
   follow it.
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
   a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
-  he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
+  he walks up to someone at a terrace table and asks to sit; `AEGEAN_INVITE=no|yes` fixes the
+  answer's roll, `AEGEAN_REP_CAM` the view's angle); `AEGEAN_LEISURE=rep-join` (liked; they say
+  yes and he sits at their table); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
   `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip (`AEGEAN_SEAT_FRAMES_STEP`
   frames apart, the view turning `AEGEAN_SEAT_FRAMES_TURN` radians a frame, 0 to hold it).
 
@@ -2573,8 +2577,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
   them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
   Fewer come to one known for turning people away, more to good company, and one who has heard of
-  something he did says so first ([The pilot's name](#the-pilots-name)); seated, "Ask … to join
-  you" asks whoever is near, who comes or says why not.
+  something he did says so first ([The pilot's name](#the-pilots-name)). On foot, talking with
+  someone sat at a terrace table, "Mind if I sit?" asks to join them: yes, and he sits across
+  from them at their table (the "guest" sitting, `leisure_sit_with`), they the company already
+  sat; or they say why not.
 - **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
   `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
   asking) in `aegean.jo`; `tests/company_test.jo`.
