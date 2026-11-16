@@ -2252,7 +2252,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Walked into:** the ground floor's walls have two open doorways (from the terrace by the bar's
   end, and off the east walk), leaves folded back, reveals through the wall, stone sills; the room
   is drawn whenever one is within 70 m, its floor published for walking, its furniture solid. One
-  walks in and out: no button, no cut. Capture: `AEGEAN_LEISURE=walk-in|walk-in-side`.
+  walks in and out: no button, no cut. Capture: `AEGEAN_LEISURE=walk-in|walk-in-side`, and the
+  doorways close to: `doorway|doorway-in|doorway-side|doorway-side-in`.
 - **The world:** keeps the terrace's places (the band's numbers, the patrons' seats), so saves and
   replays don't change; whoever it has at the terrace's tables, bar or stand is drawn, found and
   talked to at the same place in the room (`room_place_folk`); those crossing the terrace aren't
@@ -2680,33 +2681,27 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Rising notes
 
 - **Aliases:** the floating notes, musical notes over the band.
-- **Definition:** every note of every part played in the world (not the radio), none skipped,
-  floats off from its player as written, like a line of music carried on the air. Each part has its
-  staff in a lane above the player (treble, bass, or a grand staff for a piano's two hands, its
-  five or ten lines faint in the air); a note's head sits on its line or space by its pitch, with
-  ledger lines and a sharp for a black key, and shows its written value (see
-  [Note value](#note-value)); notes played together are one chord (`note_chord`: the same part's
-  notes started within 35 ms, struck, rolled or strummed, as far as one hand reaches), heads
-  stacked on one stem, the longest setting the value. Each rises in an arc and drifts off across
-  the view, tilted into the depth with the wind (`note_cue_steer`), at a speed set by the piece so
-  the quickest tenth of its notes stand 0.26 m apart: the newest by the player, the older further
-  along, so a phrase reads left to right as it floats away and new notes never land on old ones;
-  placed by its onset, not the frame it was seen in. In the bar room the staves are smaller and
-  come down together under the ceiling. Ink by day, warm cream after dark; fainter with distance
-  about as the music is (gone at 140 m) and through walls; far off, heads and stems only. Shown
-  at the hotel's tables too. Options: "Musical notes rising from music played nearby" (on by
-  default).
+- **Definition:** each note played in the world (not the radio) leaves its player as it is played,
+  floats up and away, bobbing, drifting a little with the wind, and fades, so music heard from
+  afar can be found by looking round. Each is a real note from the source's note feed
+  (`src/live_notes.jo`), shown with its written value (see [Note value](#note-value)); a note's
+  height says nothing of its pitch. Notes played together (`note_chord`: the same part's notes
+  started within 35 ms, struck, rolled or strummed, as far as one hand reaches) float off as one
+  cluster, their heads spaced by their intervals as on a staff (no staff drawn), the longest
+  setting the value. Each sets off quickly, then floats, a little its own way so quick notes
+  spread; when notes come quickly the older ones still in the air fade sooner: never more than
+  four from one player at once. Under the bar room's ceiling they keep below it; no wind indoors.
+  Ink by day, warm cream after dark; fainter with distance about as the music is (gone at 140 m)
+  and through walls. Shown at the hotel's tables too. Options: "Musical notes rising from music
+  played nearby" (on by default).
 - **Sources:** the Hotel Ancora's band (its feed `band_notes`, as `band_step` keeps it with what is
   heard; each part from its player, `band_spots`) and the nearest street musician, the one
   `src/life_audio.jo` plays (their phrase, `street_events`, loaded as a feed about now; heard to
   70 m). A cue keeps its place in a feed by frame (`note_cue_take`), so a whole piece and a sliding
   window read alike, and it never steps the shared feed itself.
-- **Cost:** the busiest number (Ave Maria: violin, singer and the piano's running arpeggio, about
-  45 notes in the air) draws in 0.17 ms a frame on the desktop (`tools/note_draw_bench.jo`); each
-  staff's lines are a dozen-point polyline, each note's parts reckoned when it rises.
-- **Code:** `src/note_cue.jo` (`NoteCue`, `NoteStaff`, `note_cue_prepare`, `note_cue_take`,
-  `note_cue_rise`, `draw_note_cue`); `music_cues_step`, `draw_music_cues` in `aegean.jo`;
-  `tests/note_cue_test.jo`; `tools/note_cue_bench.jo`, `tools/note_draw_bench.jo`.
+- **Code:** `src/note_cue.jo` (`NoteCue`, `note_cue_take`, `note_cue_rise`, `note_pos`,
+  `draw_note_cue`); `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
+  `tools/note_cue_bench.jo`, `tools/note_draw_bench.jo`.
 - **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND='8 4 40'` (Ave Maria) or in the evening
   (`AEGEAN_CAPTURE_MINUTES=690`).
 
