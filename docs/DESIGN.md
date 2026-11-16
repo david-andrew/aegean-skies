@@ -266,6 +266,15 @@ Things agreed to build, roughly in the order they'll come:
   in the busiest places only, musicians: a world lived in.
 - War: battles that play out whether or not one joins them, leaning on Sky Barons (its AI pilots,
   smoke and fire when hit, parachutes); a larger overhaul of errands and the world's liveness.
+- Colour-blind settings (low priority, noted at the user's wish): a settings section that changes
+  how sides are told apart. The colours already live in one place, `src/side_colours.jo`
+  (`SidePalette`: enemy red-orange, ally blue, neutral cream; `set_side_palette`), and every marker
+  that shows a side takes its colour from there, so the setting swaps one palette: presets for
+  red-green deficiencies (enemy orange against ally blue, never red against green), blue-yellow
+  (enemy red, ally teal) and full colour-blindness, where colour can't carry the side alone and a
+  shape should too (a chevron on an enemy's mark, a ring on a friend's). Also for the setting:
+  the war chart's country inks (`src/war_view.jo`), which mark nations rather than sides, and
+  checking every marker against the sea, cloud and sky behind it in each preset.
 
 ## Daily life, conversation, and a wider society
 

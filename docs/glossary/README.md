@@ -27,7 +27,7 @@ on that unmerged branch so far.
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
-- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
+- **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
 - **Reference:** [House style](#house-style) · [Capture switches](#capture-switches)
 
@@ -3334,11 +3334,22 @@ No image: the tiers differ in budgets more than in any single view.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_DOGFIGHT_PILOT=1 AEGEAN_FRAMES="dir 840 1740 2"`
   (the brain flies the player's aircraft; frames for a clip).
 
+### Side colours
+
+- **Aliases:** friend and foe colours, the side palette.
+- **Definition:** one colour scheme for sides wherever the game marks them: enemies red-orange,
+  friends blue, everyone else cream. Lead rings, the target brackets and names, people in the
+  water, the formation's place and the radio's speakers all take it from one place, for a later
+  colour-blind setting (docs/DESIGN.md backlog).
+- **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `battle_standing`,
+  `country_standing`).
+
 ### Going home
 
 - **Aliases:** breaking off, the formation home, landing in turn.
 - **Definition:** after the strait, each side flies to its base harbour: beaten (half lost and
-  outnumbered two to one) or with no enemy left. Its pilots form on the leader in their own slots
+  outnumbered two to one) or with no enemy left. Scattered, they first regroup at a rally point,
+  circling and calling in for a minute or two; then its pilots form on the leader in their own slots
   (the player's left open, marked with a faint ring), and land in turn at their moorings. The
   radio says each step in words over a Morse cue.
 - **Code:** `src/combat.jo` `_turn_for_home`, `_homeward`, `home_leader`, `home_slot`,
@@ -3348,9 +3359,9 @@ No image: the tiers differ in budgets more than in any single view.
 
 ### Pilots in the water
 
-- **Aliases:** survivors, ditching, the dye marker, rescue at sea, prisoners.
+- **Aliases:** survivors, ditching, rescue at sea, prisoners.
 - **Definition:** a pilot down in the sea, after a parachute or a ditching, waits in a life vest
-  with a green dye patch, waving at aircraft near. The player can land, taxi alongside, take them
+  (kapok in buff canvas, as vests were before the bright yellow of the 1940s), waving at aircraft near. The player can land, taxi alongside, take them
   aboard and set them ashore at a harbour: a friend thanked, a foe held as a prisoner or let go.
 - **Code:** `src/combat.jo` `_can_ditch`, `_ditch_controls`, `_ditched_out`;
   `src/survivor_view.jo`; `src/rescue_exchange.jo`; the living world's `board_survivors`,
