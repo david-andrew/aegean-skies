@@ -13,10 +13,17 @@ use 'render_space.jo'
 #     duller far off: a bright copy of the engine close in crossfades into a muffled one as the
 #     air takes its highs away
 # Only the nearest few are given voices.
+# The period engines trial (tweaks.period_engines): each aircraft heard with its own type's engine
+# (src/engine_sound.jo make_outside: its propeller over its exhaust, at its own turning speed),
+# made once a type, a type a frame as they come into hearing; and those beyond the nearest few
+# folded into one distant bed, so a furball of sixteen costs no more than eight and a bed.
 
 use 'sound.jo'
 use 'airsound.jo'
 use 'aircraft_catalog.jo'
+use 'engine_sound.jo'
+use 'tweaks.jo'
+from 'planes.jo' import Craft, aircraft_profile
 
 const SOUND_SPEED = 343.0
 const HEARING = 6000.0              # meters: beyond this an engine is not heard
@@ -34,6 +41,7 @@ struct Heard:
     near_r = -1                     # (the copies off the sea)
     far_r = -1
     trail: SoundSample[]                   # where it was (x, y, z) and when (w, seconds of game time)
+    using = -1                      # (its type's own sounds, an index in Hearing.kinds; -1 the shared loops)
     seen = 0.0                      # (the last time it was among the sources)
 
 struct EngineSource:
@@ -47,15 +55,28 @@ struct EngineSource:
     voice: EngineVoice = .radial
     point:WorldPoint?=none
     gain = 1.0                      # (how loud against the rest: the title reel's racers sit under its music)
+    kind = -1                       # (its type: a Craft, for its own engine; -1 by its voice only)
 
 struct Hearing:
     near: Sound[]
     far: Sound[]
     heard: Heard[]
     ready = false
+    kinds: int[]                    # (the types whose own engines are made, and their sounds)
+    kind_near: Sound[]
+    kind_far: Sound[]
+    wanted: int[]                   # (types heard but not yet made: one at a time, a piece a frame)
+    kind_spec: EngineSpec[]         # (each made type's engine and cruise speed, for its turning speed)
+    kind_cruise: f64[]
+    making = -1
+    making_stage = 0
+    making_parts: Sound[]
+    making_muffle: Muffle = Muffle()
+    bed = -1                        # (the distant bed: those beyond the nearest few)
+    bed_kind = -2
 
 # The same filtering is applied to each family: distance never changes engine identity.
-_muffle_engine = (sound: Sound) -> Sound:
+muffle_engine = (sound: Sound, rounds: int = 3) -> Sound:
     src = sound.samples
     n = src.len() / 2
     lp = Biquad(); lp2 = Biquad()
@@ -65,7 +86,7 @@ _muffle_engine = (sound: Sound) -> Sound:
     lines: f64[][] = [loop d in delays: fill(0.0, d)]
     at = fill(0, delays.len())
     out = fill(f32(0), n * 2)
-    loop round in 0..3:
+    loop round in 0..rounds:
         loop i in 0..n:
             x = filt(lp2, filt(lp, f64(src[i * 2])))
             wet = 0.0
@@ -75,16 +96,46 @@ _muffle_engine = (sound: Sound) -> Sound:
                 at[k] = (at[k] + 1) % delays[k]
                 wet += y
             v = x * 0.45 + wet * 0.22
-            if round == 2:
+            if round == rounds - 1:
                 out[i * 2] = f32(v * 1.5)
                 out[i * 2 + 1] = f32(v * 1.5)
     Sound(out)
+
+# The same muffling made in two pieces (a type's own engine, a frame each): warmed on the loop's
+# last half second, so its start follows on from its end, then written.
+struct Muffle:
+    lp: Biquad = Biquad()
+    lp2: Biquad = Biquad()
+    delays: int[]
+    lines: f64[][]
+    at: int[]
+    out: f32[]
+muffle_begin = (n: int) -> Muffle:
+    m = Muffle()
+    lowpass(m.lp, 700.0); lowpass(m.lp2, 900.0)
+    m.delays = [loop d in [0.0297, 0.0371, 0.0411, 0.0437, 0.0533]: int(d * f64(MIX_RATE))]
+    m.lines = [loop d in m.delays: fill(0.0, d)]
+    m.at = fill(0, m.delays.len())
+    m.out = fill(f32(0), n * 2)
+    m
+muffle_run = (m: mut Muffle, src: f32[], from: int, to: int, write: bool):
+    loop i in from..to:
+        x = filt(m.lp2, filt(m.lp, f64(src[i * 2])))
+        wet = 0.0
+        loop k in 0..m.delays.len():
+            y = m.lines[k][m.at[k]]
+            m.lines[k][m.at[k]] = x + y * 0.72
+            m.at[k] = (m.at[k] + 1) % m.delays[k]
+            wet += y
+        if write:
+            v = f32((x * 0.45 + wet * 0.22) * 1.5)
+            m.out[i * 2] = v; m.out[i * 2 + 1] = v
 
 make_hearing = () -> Hearing:
     h = Hearing()
     loop i in 0..4:
         near = engine_outside_loop(EngineVoice(i))
-        h.near.push(near); h.far.push(_muffle_engine(near))
+        h.near.push(near); h.far.push(muffle_engine(near))
     h.ready = true
     h
 
@@ -175,6 +226,8 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
         tr = h.heard[k].trail
         if tr.len() == 0 or t - tr[tr.len() - 1].time >= 0.05: h.heard[k].trail.push(SoundSample(src.point ?? world_point(src.pos),t))
         loop h.heard[k].trail.len() > 2 and t - h.heard[k].trail[0].time > 12.0: h.heard[k].trail.remove_at(0)
+    # (the types' own engines made as they come into hearing: a piece a frame)
+    if tweaks.period_engines: _make_step(h)
     # the nearest few, by where their sound comes from now
     dist: (f64, int)[]
     loop i in 0..h.heard.len():
@@ -182,6 +235,8 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
         dist.push((f64(length(world_delta(p,listener))), i))
     sort(dist, (x: (f64, int)) -> f64: x.0)
     keep = fill(false, h.heard.len())
+    bed_power = 0.0; bed_x = 0.0; bed_y = 0.0; bed_z = 0.0; bed_pitch = 0.0; bed_weight = 0.0
+    bed_kind = -2; bed_voice = EngineVoice.radial; bed_loudest = 0.0
     loop j in 0..min(VOICES, dist.len()): keep[dist[j].1] = true
     i = 0
     loop i < h.heard.len():
@@ -200,19 +255,33 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
             continue
         if not keep[i] or not src.on:
             _silence(h, i)
+            if tweaks.period_engines and src.on:
+                # (beyond the nearest few: into the distant bed, by its own loudness and place)
+                p, _ = _was(hd.trail, t)
+                d = max(f64(length(world_delta(p,listener))), 1.0)
+                l = (0.45 + 0.55 * src.throttle) * _carry(d) * src.gain
+                bed_power += l * l; bed_x += f64(world_delta(p,listener).x) * l; bed_z += f64(world_delta(p,listener).z) * l; bed_y += f64(world_delta(p,listener).y) * l
+                bown = if src.kind >= 0: _own_engine(h, src.kind) else: -1
+                bed_pitch += (if bown >= 0: _own_pitch(h, bown, src) else: src.tone * engine_note(src.throttle, src.true_speed)) * l
+                bed_weight += l
+                if bed_kind == -2 or l > bed_loudest: bed_kind = src.kind; bed_voice = src.voice; bed_loudest = l
             i += 1
             continue
-        if hd.voice != src.voice:
+        own = if tweaks.period_engines and src.kind >= 0: _own_engine(h, src.kind) else: -1
+        if hd.voice != src.voice or hd.using != own:
             _silence(h, i)
             h.heard[i].voice = src.voice
+            h.heard[i].using = own
             hd = h.heard[i]
-        near = h.near[int(src.voice)]; far_sound = h.far[int(src.voice)]
+        near = if own >= 0: h.kind_near[own] else: h.near[int(src.voice)]
+        far_sound = if own >= 0: h.kind_far[own] else: h.far[int(src.voice)]
         p, v, d, doppler = heard_from(hd.trail, listener, ear_vel, t)
         power = 0.45 + 0.55 * src.throttle
         level = power * _carry(d) * src.gain
         far = smoothstep(150.0, 2000.0, d)
-        # (pitched as one's own engine is, by its throttle and its speed as designed)
-        base = src.tone * engine_note(src.throttle, src.true_speed)
+        # (pitched as one's own engine is, by its throttle and its speed as designed; its own
+        # engine by its own turning speed)
+        base = if own >= 0: _own_pitch(h, own, src) else: src.tone * engine_note(src.throttle, src.true_speed)
         pitch = base * doppler
         # (its image under the sea: the reflected sound, weaker, with its own path and Doppler)
         img = WorldPoint(p.x, -p.y, p.z)
@@ -242,12 +311,66 @@ hear_engines = (h: mut Hearing, sources: EngineSource[], ear: vec3, ear_vel: vec
         set_pitch(hd2.near_r, base * doppler2)
         set_pitch(hd2.far_r, base * doppler2)
         i += 1
+    _hear_bed(h, bed_kind, bed_voice, bed_power, vec3(f32(bed_x), f32(bed_y), f32(bed_z)) / f32(max(bed_weight, 1e-9)), if bed_weight > 0.0: bed_pitch / bed_weight else: 1.0, listener)
 
 # paused: the other engines silent too
 hush_engines = (h: Hearing):
     loop hd in h.heard:
         loop id in [hd.near_v, hd.far_v, hd.near_r, hd.far_r]:
             if id >= 0: set_volume(id, 0.0)
+    if h.bed >= 0: set_volume(h.bed, 0.0)
+
+# (a type's own engine sounds, an index in h.kinds; -1 until made, asking for them)
+_own_engine = (h: mut Hearing, kind: int) -> int:
+    loop k in 0..h.kinds.len():
+        if h.kinds[k] == kind: return k
+    if not h.wanted.contains(kind): h.wanted.push(kind)
+    -1
+_own_pitch = (h: Hearing, own: int, src: EngineSource) -> f64:
+    spec = h.kind_spec[own]
+    engine_pitch(spec, engine_rpm(spec, src.throttle, src.true_speed, h.kind_cruise[own], src.on))
+
+# One piece of making a type's own engine heard from outside: its exhaust, its propeller, its
+# tips, the three together, their muffled copy (each a few milliseconds).
+_make_step = (h: mut Hearing):
+    if h.making < 0:
+        loop h.wanted.len() > 0 and h.making < 0:
+            k = h.wanted[0]; h.wanted.remove_at(0)
+            if not h.kinds.contains(k): h.making = k; h.making_stage = 0; h.making_parts = []
+        if h.making < 0: return
+    spec = engine_spec(Craft(h.making))
+    if h.making_stage == 0: h.making_parts.push(make_exhaust(spec, true, 5))
+    else if h.making_stage == 1: h.making_parts.push(make_prop(spec))
+    else if h.making_stage == 2: h.making_parts.push(make_tips(spec, 6))
+    else if h.making_stage == 3: h.making_parts = [outside_mix(h.making_parts[0], h.making_parts[1], h.making_parts[2])]
+    else if h.making_stage == 4:
+        n = h.making_parts[0].samples.len() / 2
+        h.making_muffle = muffle_begin(n)
+        muffle_run(h.making_muffle, h.making_parts[0].samples, n - MIX_RATE / 2, n, false)
+    else if h.making_stage == 5:
+        muffle_run(h.making_muffle, h.making_parts[0].samples, 0, h.making_parts[0].samples.len() / 2, true)
+    else:
+        near = h.making_parts[0]
+        h.kinds.push(h.making); h.kind_near.push(near); h.kind_far.push(Sound(h.making_muffle.out)); h.making_muffle = Muffle()
+        h.kind_spec.push(spec); h.kind_cruise.push(aircraft_profile(Craft(h.making)).cruise)
+        h.making = -1; h.making_parts = []
+        return
+    h.making_stage += 1
+
+# The distant bed: those beyond the nearest few, as one muffled engine from where they are on
+# the whole, as loud as all of them together, at their mean pitch.
+_hear_bed = (h: mut Hearing, kind: int, voice: EngineVoice, power: f64, at: vec3, pitch: f64, listener: WorldPoint):
+    if power <= 0.0 or not tweaks.period_engines:
+        if h.bed >= 0: stop(h.bed); h.bed = -1; h.bed_kind = -2
+        return
+    own = if kind >= 0: _own_engine(h, kind) else: -1
+    want = if own >= 0: kind else: -1 - int(voice)
+    if h.bed >= 0 and h.bed_kind != want: stop(h.bed); h.bed = -1
+    if h.bed < 0:
+        h.bed = play(if own >= 0: h.kind_far[own] else: h.far[int(voice)], 0.0, looping = true, pitch = pitch)
+        h.bed_kind = want
+    move_world_sound(h.bed, world_offset(listener, at), sqrt(power), 1000000000.0)
+    set_pitch(h.bed, pitch)
 
 # Spatialize after subtracting in f64; never reconstruct an absolute f32 source
 # just for the audio API. Match its gain and camera-axis pan exactly.
