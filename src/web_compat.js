@@ -81,6 +81,17 @@
     if (/\bu\b/.test(result)) throw Error("Unsupported whole uniform struct use");
     return result;
   }
+  // GLSL ES gives sampler2D a default precision of lowp, and a texture lookup returns its
+  // sampler's precision, so "precision highp float" alone still reads every texture at fp16
+  // on phones (Adreno: lowp and mediump are fp16; desktop GPUs read at 32 bits regardless).
+  // The opaque-depth copy multiplies a sampled depth by 16777215: in fp16 it saturates at
+  // 65504, the sea then finds "opaque geometry" in front of it everywhere and discards itself
+  // (a flat sky-coloured sea on the LG V60). Declare samplers highp in every generated shader
+  // that asks for highp floats. Remove once Sloppy declares sampler precision itself.
+  function highpSamplers(source) {
+    if (!/^precision highp float;$/m.test(source) || /^precision \w+ sampler2D;$/m.test(source)) return source;
+    return source.replace(/^precision highp float;$/m, "precision highp float;\nprecision highp sampler2D;");
+  }
   function chooseTier(device) {
     if (["low", "medium", "high"].includes(device.override)) return ["low", "medium", "high"].indexOf(device.override);
     if (device.mobile || device.textureLimit <= 4096 || device.fragmentLimit <= 224) return 0;
@@ -155,7 +166,7 @@
     proto.getItem = function(key) { const value = get.call(this, key); return bodyKey(key) ? livingStoreDecode(value) : value; };
     Object.defineProperty(proto, "__aegeanWideLivingStore", {value:true});
   }
-  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
+  root.AegeanWeb = { specializeUniforms, highpSamplers, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
   if (typeof module !== "undefined") module.exports = root.AegeanWeb;
   if (typeof Storage !== "undefined") installLivingStorage(Storage.prototype);
   if (typeof WebGL2RenderingContext === "undefined") return;
@@ -297,7 +308,7 @@
   const proto = WebGL2RenderingContext.prototype;
   const shaderSource = proto.shaderSource, linkProgram = proto.linkProgram, uniformLocation = proto.getUniformLocation;
   proto.shaderSource = function (shader, source) {
-    return shaderSource.call(this, shader, specializeUniforms(source));
+    return shaderSource.call(this, shader, highpSamplers(specializeUniforms(source)));
   };
   proto.getUniformLocation = function (program, name) {
     return uniformLocation.call(this, program, name.replace(/^u\./, "aegean_u_"));
