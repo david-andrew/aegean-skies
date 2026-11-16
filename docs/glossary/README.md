@@ -143,8 +143,12 @@ blue discs that stay in every frame are **speed flecks**.
   60 m, full by 700 m), and the haze over the sea darkens a little with it, so the sea's horizon
   band sits below the sky's. The shallows band, clear bays and the low-level sea keep their
   luminous teal; the speed flecks, glints and crest strokes are drawn over the body as before.
-- **Code:** `sea_from_height` in `src/sea.jo` (`DEEP_SEA_*`): `SeaParams.deep` and `.haze` set on the
-  CPU for the sea and the far sea only (lakes and rivers keep theirs); no shader work.
+- **Code:** `sea_from_height` in `src/sea.jo` (`DEEP_SEA_NAVY`): `SeaParams.deep` and `.haze` set on
+  the CPU for the sea and the far sea only (lakes and rivers keep theirs); no shader work. The
+  darker air seen down from height (`air_down` in `src/look.jo`) is the land's too (the islands'
+  and the mainland's ground and the objects on it): with the sea's haze darker and the land's
+  not, islands 5-15 km off from 600 m up faded into flat, pale, stair-edged cut-outs of the sky's
+  haze against the navy.
   `tweaks.brighter_ocean` (`AEGEAN_BRIGHT_SEA=1`) skips it.
 - **Rules:** colour and gradients only: never thin, dim or restyle the sea's fine detail for it.
 - **Capture:** `AEGEAN_FLYING=600`, or a free view looking down, `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
