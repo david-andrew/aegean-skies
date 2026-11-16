@@ -43,7 +43,8 @@ against the listener's own country; nothing about it is stored per person.
 - **On the spot**: a deed's witnesses hold it at once; its town hears it with
   `heard` raised by its weight and witness count.
 - **Within a town**: hourly, the town's *heard* grows toward a ceiling set by the weightiest deed
-  it tells (a rescue can make almost everyone know; a kept table, a quarter of the bar's regulars),
+  it tells (a rescue can make almost everyone know), or by a strong sense of him (one who turns
+  everyone away is talked of, to most of the town at most; small acts alone, to two in five),
   fastest in the hours people talk: the morning market and the dock, and evenings at the bar.
   Most of a town has it in two or three days.
 - **Between towns**: hourly, a sixtieth of the towns each minute, each town hears from its
@@ -53,7 +54,8 @@ against the listener's own country; nothing about it is stored per person.
 - **The wireless**: a deed of weight 650 or more reaches the stations two hours later and is read
   in the news for a day. On the hour it is read every town hears it (two hops), and *heard*
   rises to a quarter of the town at least.
-- **Fading**: *heard* fades about 1% a day, leanings 1.5% a day toward nothing, and a town stops
+- **Fading**: *heard* fades about 1% a day (3% once the town has no story of him left to tell),
+  leanings 1.5% a day toward nothing, and a town stops
   telling a deed after `weight / 8` days (a rescue: two to four months; a job: a few weeks).
   Personal opinions fade at half that pace; those who sat with him remember longest. A town with
   nothing left drops out of the store.

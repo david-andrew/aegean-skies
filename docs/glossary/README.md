@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -1728,6 +1728,32 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ![Standing in the notebook](img/standing.png)
 
+### The pilot's name
+
+- **Aliases:** reputation, what people have heard of him, his name preceding him.
+- **Definition:** what the living world's people know of the pilot and think of him, carried in
+  how they behave and talk, never shown as a number. Four leanings (warmth, honour, daring,
+  reliability) and, from the deeds a listener knows, what he did to and for their own country's
+  people. **Deeds** worth telling (a rescue, a victory, a job, a debt) spread as news: the
+  witnesses and the town at once, through the town over two or three days of talk, about a town
+  a day along the roads and sea lanes while `weight × 0.7^hops` stays above 150, and to every
+  town on the wireless when big. Small acts (a chat, a table shared or refused, a tip) stay with
+  the people there and their town. It all fades with time. Known as keeping to himself, fewer
+  people come over; asked over, they say no, and why. Never a punishment.
+- **Code:** `src/reputation.jo` (`rep_record`, `rep_act`, `rep_view`, `reputation_minute`),
+  `src/reputation_talk.jo` (greetings, company, prices, the wireless, the notebook's words),
+  `src/reputation_types.jo` (`World.rep`); combat deeds come through `src/deeds.jo`
+  (`deed_record`). Design: `docs/reputation.md`. Tests: `tests/reputation_test.jo`.
+- **Rules:** a person knows of him if they dealt with him or saw a deed, or by the town's word: a
+  fixed draw from the seed and their id under the share of the town that has heard. Whoever has
+  heard a deed and hasn't met him mentions it once. Company at the hotel and the coffee house,
+  the "Ask … to join you" action, a keeper's bill (up to 6% down, 5% up) and a family's spare room
+  follow it.
+- **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
+  a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
+  he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
+  `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip.
+
 ### Contracts
 
 - **Aliases:** missions, commissions, military contracts.
@@ -2103,6 +2129,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   stool, and about half of them talk. Sitting, they pass an ordinary remark every half minute or
   so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
   them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
+  Fewer come to one known for turning people away, more to good company, and one who has heard of
+  something he did says so first ([The pilot's name](#the-pilots-name)); seated, "Ask … to join
+  you" asks whoever is near, who comes or says why not.
 - **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
   `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
   asking) in `aegean.jo`; `tests/company_test.jo`.
