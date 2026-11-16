@@ -96,8 +96,8 @@ engine or the pilot. Each round's damage is `BULLET_DAMAGE` divided by the part'
 (`PART_TOUGHNESS`); a tail shot away, a struck pilot (an NPC's: `PILOT_CHANCE` of a round through
 the cockpit) or a burnt-out engine takes the aircraft down. The player's own aircraft divides
 combat damage by Tweaks' **Player toughness** (2.0: about 1.8 times the bursts). The player's
-rounds hit within **Player hit margin** (0.7 m) of each part (Tweaks' **Generous hits**, on), and
-Tweaks' **Aim assist** (off) bends the player's rounds after the muzzle toward the enemy most
+rounds hit within **Player hit margin** (2 m) of each part (Tweaks' **Generous hits**, on), and
+Tweaks' **Aim assist** (on) bends the player's rounds after the muzzle toward the enemy most
 plainly in their path (within 3° and 700 m, at most 4°/s, for 0.6 s); it never touches the
 controls or the aircraft. `tests/burst_test.jo` measures bursts to a kill for each.
 
