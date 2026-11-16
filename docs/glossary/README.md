@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -2054,8 +2054,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   onset from the source's note feed (`src/live_notes.jo`), thinned to about two a second (never
   closer than 0.3 s), the tune's notes (the lead part or the singer's line) before the others,
   which show only when the tune has been quiet a while; no burst after a seek or a new number.
-  Higher notes rise from a little higher; louder ones are larger; a short note is an eighth with
-  its flag, a longer one a quarter. Ink by day, warm cream after dark; fainter with distance
+  Higher notes rise from a little higher; louder ones are larger. Each shows its written value
+  (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
+  a flag, a sixteenth with two, a dot after the head for a dotted one. Ink by day, warm cream after dark; fainter with distance
   about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
   table or the bar), where the band is in view. Options: "Musical notes rising from music played
   nearby" (on by default).
@@ -2068,6 +2069,23 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `music_cues_step`, `draw_music_cues` in `aegean.jo`; `tests/note_cue_test.jo`;
   `tools/note_cue_bench.jo` counts its work per frame.
 - **Capture:** `AEGEAN_LEISURE=notes|notes-near` in the evening (`AEGEAN_CAPTURE_MINUTES=644`).
+
+### Note value
+
+- **Aliases:** a note's written length, whole/half/quarter/eighth/sixteenth.
+- **Definition:** a played note's written value from how long it lasts against the score's
+  quarter note: its MIDI ticks over the ticks a quarter (PPQ), or its seconds against the tempo
+  (microseconds a quarter). Snapped to the nearest value by ratio (in log-time), the dotted values
+  (one and a half of the plain) among them; longer than a whole is a whole, shorter than a
+  sixteenth a sixteenth. The quarter's seconds per piece, as played, come from the source MIDI's
+  tempo map stretched by how much longer the performance is than the score (`MUSIC_TEMPO`); a
+  street musician's beat is an eighth, each note lasting to the next one played.
+- **Code:** `src/note_value.jo` (`NoteValue`, `note_value_of`, `note_value_ticks`,
+  `note_value_tempo`, `note_value_seconds`, `music_quarter_at`); `src/music_tempo.jo`, generated
+  by `tools/music_tempo.py` (no dependencies; run it after a score or `performance.json` changes);
+  `STREET_QUARTER` in `src/street_phrase.jo`; `tests/note_value_test.jo`.
+- **Rules:** the performance's rubato and legato move a note's length a little; a ratio within
+  about a fifth of a value still reads as that value.
 
 ### Time skip
 
