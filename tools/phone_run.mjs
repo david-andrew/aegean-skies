@@ -167,6 +167,7 @@ if (shown) {
     // (memory with each sample: the JS heap, the wasm memory and, with --inject of a counter, GL objects)
     const mem = JSON.parse(await evaluate('JSON.stringify({heap_mb: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : null, wasm_mb: sloppy.memory ? Math.round(sloppy.memory().buffer.byteLength / 1e6) : null, gl: window.__gl_live || null})') || '{}');
     temps.push({t: s + 10, ...phoneState(), ...mem});
+    if (out) writeFileSync(out + '.partial', JSON.stringify(temps));   // (a long run's samples so far)
   }
   const frames = JSON.parse(await evaluate(`JSON.stringify(window.__phone.frames.filter((t) => t >= ${from}))`));
   const gaps = frames.slice(1).map((t, i) => t - frames[i]).sort((a, b) => a - b);
