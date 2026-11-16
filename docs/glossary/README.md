@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Company](#company)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1978,11 +1978,29 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### Company
+
+- **Aliases:** someone joining the pilot, company at the table, a neighbour at the bar.
+- **Definition:** now and then (one sitting in about seven at a table, a little more at the bar)
+  someone from the town comes over while the pilot sits: one of the townsfolk about, a pilot more
+  likely at the hotel, and someone the pilot has talked with more likely than a stranger. At a
+  table they stop beside it and ask ("May I join you?": Please, sit down / I'd rather sit alone);
+  turned away, they go and nobody else comes that sitting. At the bar they simply take the next
+  stool, and about half of them talk. Sitting, they pass an ordinary remark every half minute or
+  so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
+  them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
+- **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
+  `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
+  asking) in `aegean.jo`; `tests/company_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=company-ask|company-sit|company-bar`; `AEGEAN_COMPANY=<seconds>`
+  makes someone come that soon after sitting, from a few steps away; `AEGEAN_SEAT_FRAMES=<dir>`
+  writes the seated clip's frames.
+
 ### Table service
 
 - **Aliases:** the waiter, the tray, drinking at one's own pace, holding a drink.
 - **Definition:** what is ordered is paid at once and brought: the hotel's waiter from the end of
-  the bar on a tray (three things a trip), the barkeep along the counter to one standing at the
+  the bar on a tray (three things a trip), the barkeep across the counter to one on a stool at the
   bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
   the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
   finished. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
@@ -1990,7 +2008,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   on the table and the fork goes to the mouth with a bite. Let go: the glass is held at the chest.
   Another item, or Escape, puts it down. Glasses and plates are drawn in two parts, the vessel
   and what is in it, which goes down (a glass's level, a plate's food all round); the hotel's
-  china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was.
+  china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was. Each
+  thing's button on the table's bar is a bar too, filled as far as there is still of it.
+- **Seated view:** at a table or on a bar stool (`hotel.stools`, the figure raised `STOOL_LIFT`),
+  the camera turns about the pilot as the taxiing orbit does: a drag of either mouse button begun
+  off the table's bar, the right stick, a finger; the wheel or a pinch for nearer and farther
+  (1.4 to 7 m), the follow camera keeping it out of the walls (`seat_orbit_step`).
 - **Code:** `src/table_service.jo` (`Waiter`, `waiter_step`, `Taking`, `take_step`, `take_label`);
   `Served.amount`, `held`, `empty_for` and `LeisureState.coming` in `src/leisure.jo`;
   `build_serve_parts`, `draw_serving` in `src/bar_scene.jo`; `service_step`, `draw_service`,
@@ -2620,8 +2643,9 @@ No image: the tiers differ in budgets more than in any single view.
   that scrolls, scrolls) and never brings a camera nearer or farther: every `Ui` state
   (conversations, the board, handling, trade, contracts, the map counter, fuel, the leisure panels
   with their table bar, bill of fare, book, tavli, paper, barber and fishing, the workshop), the
-  pause menu, the notebook, the chart and its maps, time passing, and sitting at a table or at the
-  bar. A new panel is covered by being a `Ui` state.
+  pause menu, the notebook, the chart and its maps, time passing, and a menu opened over a table
+  or the bar. A new panel is covered by being a `Ui` state. The one exception: sitting with only
+  the table's own bar along the bottom (`seat_view`), the wheel is the seated view's, which zooms.
 - **Code:** `src/ui_state.jo` (`Ui`, `Overlays`, `overlays_open`, `wheel_kept`); `menus_open()` in
   `aegean.jo`, applied after every camera step that can read the wheel: the walking follow camera
   (the library's zoom and the game's own), the aboard orbit camera (`fly`), the parachute camera.
