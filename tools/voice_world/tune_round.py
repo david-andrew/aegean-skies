@@ -420,6 +420,7 @@ ENERGY_ENVELOPE = False
 # High energy is parked (round 8): the per-energy steps are neither fitted nor calibrated, and the
 # game reads every station at the speaker's plain delivery (VOICE_ENERGY_PARKED). Set True to resume.
 ENERGY_LEVELS = False
+OUTPUT_PEAK_DB = -5.0           # the dry voice's peaks (99.9th percentile, dBFS) the studio stage was voiced for
 GAME_GENRE = {'war': 'war', 'news': 'news', 'ident': 'news', 'race': 'race', 'advert': 'advert', 'weather': 'weather'}
 NEUTRAL_STYLE = [1.0, 0.0, 1.0, 1.0]          # speed, pitch (st), range, pause scale: the plain reading
 
@@ -502,10 +503,14 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
         pack_voice(units, fit, lex, v, prior_fit)
         out = os.path.join(work, f'calibrate-{it}')
         syn = ev.synthesize(repo, sample, out, data=v, radio=False)
-        got, vfrac = {}, {}
+        got, vfrac, peaks = {}, {}, []
         for l in sample:
             dry, _, ph = syn[l['id']]
             x = ev.load16(dry)
+            if l['genre'] not in GAME_GENRE:
+                v = np.abs(x[np.abs(x) > 1e-3])
+                if len(v):
+                    peaks.append(float(np.percentile(v, 99.9)))
             an = wa.analyse(x)
             d = delivery(ph, an['f0'], dur_of=lambda p: p['dur'])
             if d:
@@ -536,6 +541,10 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
                 v = fit['tilts'].setdefault(key, [0.0] * 25)
                 w = 1.0 if g == 'plain' else len(ids) / (len(ids) + 1.0)
                 v[1] = round(float(np.clip(v[1] + w * (r['bright'] - y['bright']) / sens, -1.5, 1.5)), 4)
+            if g == 'plain' and peaks:
+                # output level: the plain reads' peaks (99.9th percentile) at OUTPUT_PEAK_DB, where the
+                # studio's carbon microphone was voiced; a hotter voice overdrives it into hiss and distortion
+                fit['output_gain'] = round(float(np.clip(fit.get('output_gain', 1.0) * 10 ** ((OUTPUT_PEAK_DB - 20 * np.log10(np.median(peaks))) / 20), 0.2, 3.0)), 4)
             if g == 'plain' and 'dyn' in r:
                 # sustain: a voiced frame no further below the vowels than the speaker's level movement allows
                 fit['sustain'] = round(float(np.clip(fit['sustain'] - (y['dyn'] - r['dyn']) / 4.343 * 1.5, 1.5, 9.0)), 3)

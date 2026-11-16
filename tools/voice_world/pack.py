@@ -289,6 +289,8 @@ def model_numbers(fit, superposition, prior=None):
         m['energy_effect'] = [float(x) for x in en['effect']]
         for g, r in sorted((en.get('refs') or {}).items()):
             m['energy_ref_' + g] = [float(r)]
+    if _num(fit.get('output_gain')) is not None:
+        m['output_gain'] = [float(fit['output_gain'])]
     if _num(fit.get('sustain')) is not None:
         m['sustain'] = [float(fit['sustain'])]
     for g, v in sorted((fit.get('tilts') or {}).items()):

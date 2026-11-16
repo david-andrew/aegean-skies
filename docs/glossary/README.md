@@ -2919,6 +2919,8 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | (the pause-menu panels) | `aircraft`, `plane`, `paint`, `scenarios`, `flight`, `flight-levers`, `tweaks`, `controls` pause at frame 60, once the camera is placed: paused from the first frame the world was drawn from an eye never put anywhere (terrain floating over the sea). Script `SLOPPY_INPUT` presses after frame 60 |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day |
+| `AEGEAN_RADIO=kc` | the cockpit radio on and tuned to that frequency from the start (780 Voice of Kalyra, 620 Archipelago Radio, 1260 the Maritime Service; heard aboard, with `AEGEAN_AUDIO_CAPTURE` for its sound) |
+| `AEGEAN_CAPTURE_MINUTES=m` | advance the living world m minutes before the start (the radio's programme clock follows it: news at each half hour) |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
