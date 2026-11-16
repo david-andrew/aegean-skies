@@ -174,6 +174,9 @@ use 'src/note_cue.jo'
 use 'src/note_value.jo'
 use 'src/table_service.jo'
 use 'src/company.jo'
+use 'src/stay.jo'
+from 'src/living_life_seed.jo' import choose_life_venue
+use 'src/stay_scene.jo'
 use 'src/tavli.jo'
 use 'src/tavli_view.jo'
 use 'src/tavli_sound.jo'
@@ -490,6 +493,10 @@ leisure_spent = 0               # (this sitting: for the notebook when one gets 
 leisure_had: str[]
 served_look_until = -1.0        # (a look at the table while what was ordered arrives)
 served_pending = false
+stay = Stay()                    # (a night under a roof: the hotel's room, or a family's: src/stay.jo)
+stay_rooms = build_stay_rooms()
+stay_host_fig: Figure? = none
+stay_figs: Figure[] = []         # (the household at the table)
 company = Company()              # (someone come to sit with the pilot, now and then: src/company.jo)
 company_line = ""                # (what they said last, and until when it shows)
 company_line_until = -1.0
@@ -572,12 +579,14 @@ struct TimeSkip:
     total = 0
     doing = ""
     fade = 0.0
-    after = 0                   # 1: wake at the hotel's door; else where one was
+    after = 0                   # 1: wake at the hotel's door; 3: wake in the room of a stay; else where one was
     folded = false
+    visible = false             # (a stay's: the room seen while time passes, no dark card)
+    rate = 15                   # (minutes passed a frame)
 skip = TimeSkip()
 
 # (the menu's search line has the keyboard: letters don't also work the game's keys)
-leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 0 or leisure_ui == 13 or leisure_ui == 14 or leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10 or leisure_ui == 12)
+leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 0 or leisure_ui == 15 or leisure_ui == 13 or leisure_ui == 14 or leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10 or leisure_ui == 12)
 
 leisure_place = (key: str) -> LeisurePlace: if key == "coffee": coffee_place else: hotel_place
 leisure_items = (key: str) -> MenuItem[]: if key == "coffee": coffee_menu else: hotel_menu
@@ -670,17 +679,19 @@ leisure_time_step = (dt: f64):
     life_audio.hush_life_audio(life_sound)
     radio.radio_silence(cockpit_radio)
     if skip.left > 0:
-        skip.fade = min(1.0, skip.fade + dt * 2.5)
-        if skip.fade < 1.0: return
+        if not skip.visible:
+            skip.fade = min(1.0, skip.fade + dt * 2.5)
+            if skip.fade < 1.0: return
         if not skip.folded:
             fold_living_scene_for_save(traffic, pc, living_world, traffic_scene)
             skip.folded = true
-        step = min(skip.left, 15)
+        step = min(skip.left, skip.rate)
         living.advance_minutes(living_world, step)
         skip.left -= step
         hour = f64(lt.local_minute(living_world.minute)) / 60.0
         if skip.left == 0:
             if skip.after == 2: finish_launch()
+            if skip.after == 3: stay_woke()
             if skip.after == 1:
                 me.pos = vec3(hotel.desk.x, f32(walk_height(towns, f64(hotel.desk.x), f64(hotel.desk.z))), hotel.desk.z)
                 # (facing along the waterfront, the camera behind on the quay, not in the hotel)
@@ -1127,7 +1138,7 @@ const STREET_HEARD = 70.0           # (metres: as far as src/life_audio.jo plays
 # Drawn over the scene, under the cards: none when the option is off; the band's none while one
 # sits at the hotel (at a table or the bar), where the band is plain to see.
 draw_music_cues = ():
-    if not options.music_notes: return
+    if not options.music_notes or stay.active: return
     night = 1.0 - smoothstep(-0.06, 0.1, f64(sky_sun(hour).y))
     if leisure.sitting != "hotel" and leisure.sitting != "bar":
         draw_note_cue(band_cue, t, note_heard_alpha(band_heard.distance, band_heard.occlusion), night)
@@ -1173,6 +1184,218 @@ paint_support_for = (kind: int) -> PaintSupport:
         paint_support_cache = paint_support(kind, CRAFT_NAMES[kind], (lv: Livery) -> int: build_craft(Craft(kind), lv).body.count, boat_paints(Craft(kind)))
         paint_support_cache.kind = kind
     paint_support_cache
+
+# ---------------- a night under a roof ----------------
+
+# The hotel's room upstairs, behind the French window at the balcony's x = 4 (the hotel's frame).
+stay_hotel_frame = () -> mat4: hotel.frame * translation(vec3(4.0, f32(DECK + 4.65), 16.0))
+
+stay_point = (local: vec3) -> vec3: transform_point(stay.frame, local)
+stay_yaw = (local: f64) -> f64:
+    fz = normalize((stay.frame * vec4(0, 0, 1, 0)).xyz)
+    atan2(f64(fz.x), f64(fz.z)) + local
+
+stay_begin_hotel = ():
+    global stay, ui, leisure_ui
+    stay = Stay(active = true, kind = .hotel, host = hotel_place.keeper, place = hotel_place.place, frame = stay_hotel_frame(), started = living_world.minute)
+    ui = .leisure; leisure_ui = 15
+    _ = mouse_lock(false)
+
+# The family's own house (their home in the living world): false when it isn't in the scene.
+stay_begin_family = (host: int) -> bool:
+    global stay, ui, leisure_ui, stay_host_fig, stay_figs
+    w = living_world
+    p = w.people[host]
+    home = choose_life_venue(w, p.home, .home, host)
+    if home == none: return false
+    v = home!
+    f = normalize(vec3(v.facing.x, 0, v.facing.z) + vec3(0.0001, 0, 0))
+    at = vec3(v.pos.x, f32(walk_height(towns, f64(v.pos.x), f64(v.pos.z))), v.pos.z)
+    ids = [loop r in w.households: r.id]
+    guardians = [loop r in w.households: r.guardian]
+    stay = Stay(active = true, kind = .family, host = host, place = p.home, frame = translation(at) * rotation_y(atan2(f64(f.x), f64(f.z))), started = w.minute)
+    stay.household = stay_household(guardians, ids, host)
+    stay_host_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+    stay_figs = [loop id in stay.household: build_figure(.fisher, id * 131 + 17, age = _resident_age(id))]
+    clock = lt.local_minute(w.minute)
+    if stay_supper_time(clock):
+        stay.stage = .supper; stay.had_supper = true; stay.next_line = t + 2.0
+    ui = .leisure; leisure_ui = 15
+    _ = mouse_lock(false)
+    log_note(notebook, "Went home with {split(p.name, " ")[0]} to {living.place_name(w, p.home)}.", clock_text(w, w.minute))
+    true
+
+_resident_age = (id: int) -> int:
+    loop r in living_world.households:
+        if r.id == id: return r.age
+    10
+
+# Time passes in the room, seen: the light at the window turns as the clock runs on.
+stay_sleep = (minutes: int, doing: str):
+    global skip, stay
+    stay.stage = .asleep
+    skip = TimeSkip(active = true, left = minutes, total = minutes, doing = doing, after = 3, visible = true, rate = if minutes > 120: 3 else: 1)
+
+stay_woke = ():
+    global stay
+    stay.slept = stay.slept or skip.total >= 240
+    clock = lt.local_minute(living_world.minute)
+    if stay.kind == .family and stay_supper_time(clock) and not stay.had_supper:
+        stay.stage = .supper; stay.had_supper = true
+    else if stay_morning_time(clock): stay.stage = .morning
+    else: stay.stage = .awake
+    stay.next_line = t + 1.5
+
+stay_end = ():
+    global stay, ui, me, follow, walker_point
+    w = living_world
+    host_name = if stay.host >= 0: split(w.people[stay.host].name, " ")[0] else: ""
+    log_note(notebook, stay_note(stay, host_name, living.place_name(w, stay.place), hotel_place.name), clock_text(w, w.minute))
+    if stay.kind == .hotel:
+        me.pos = vec3(hotel.desk.x, f32(walk_height(towns, f64(hotel.desk.x), f64(hotel.desk.z))), hotel.desk.z)
+        me.yaw = atan2(f64(hotel.table_x.x), f64(hotel.table_x.z))
+    else:
+        # (out of their door, a step into the street)
+        out = stay_point(vec3(-1.1, 0, -3.0))
+        me.pos = vec3(out.x, f32(walk_height(towns, f64(out.x), f64(out.z))), out.z)
+        me.yaw = stay_yaw(PI)
+    follow.yaw = me.yaw + PI; follow.distance = 5.5; follow.height = 1.6
+    walker_point = world_point(me.pos)
+    stay = Stay()
+    ui = .none
+    sync_folk(folks, living_world, towns)
+
+# the bar along the bottom: what one can do in the room now
+stay_frame = ():
+    global stay
+    if not stay.active or skip.active: return
+    w = living_world
+    hotel_stay = stay.kind == .hotel
+    host_first = if stay.host >= 0: split(w.people[stay.host].name, " ")[0] else: ""
+    place = if hotel_stay: "A room upstairs, {hotel_place.name}" else: "At {host_first}'s, {living.place_name(w, stay.place)}"
+    actions: str[] = []
+    if stay.stage == .window: actions = ["Back inside", "Leave the room"]
+    else if stay.stage == .supper: actions = ["Go to bed", "Thank them and go"]
+    else if stay.stage == .morning:
+        actions = if hotel_stay: ["Leave the room", "A little longer", "Look out of the window"] else: ["Thank them and go", "A little longer"]
+    else:
+        actions = ["Sleep until morning", "Rest until evening", "An hour's nap"]
+        actions.push(if hotel_stay: "Look out of the window" else: "Thank them and go")
+        if hotel_stay: actions.push("Leave the room")
+    said = if stay.stage == .supper: "Supper with the family" else: if stay.stage == .morning: (if hotel_stay: "Morning" else: "Coffee before you go") else: ""
+    r = sitting_bar(fonts, place, said, actions)
+    if vpressed(.escape): r.choice = actions.len() - 1
+    pick = if r.choice >= 0: actions[r.choice] else: ""
+    if pick == "Sleep until morning" or pick == "Go to bed": stay_sleep(rest_minutes(w, 420), "Asleep")
+    else if pick == "Rest until evening": stay_sleep(rest_minutes(w, 1110), "Resting")
+    else if pick == "An hour's nap" or pick == "A little longer": stay_sleep(60, "Dozing")
+    else if pick == "Look out of the window": stay.stage = .window
+    else if pick == "Back inside": stay.stage = .awake
+    else if pick == "Leave the room" or pick == "Thank them and go": stay_end()
+
+# what is said at the table, now and then
+stay_tick = ():
+    global stay
+    if not stay.active or skip.active: return
+    if not stay_line_due(stay, t): return
+    morning = stay.stage == .morning
+    speaker = if morning: -1 else: stay_next_speaker(stay, stay.household.len())
+    # (the host's own talk from the dialogue now and then, their day or the weather; between,
+    # the ordinary words of the table)
+    line = if speaker == -1 and stay.lines_said % 4 == 1 and stay.host >= 0: passing_line(living_world, stay.host) else: ""
+    if line == "": line = stay_line(stay, speaker, morning)
+    stay_said(stay, speaker, line, t)
+
+stay_eye = () -> vec3:
+    if stay.kind == .hotel:
+        if stay.stage == .window: return stay_point(HOTEL_WINDOW_EYE)
+        return stay_point(HOTEL_EYE)
+    if stay.stage == .asleep: return stay_point(FAMILY_BED_EYE)
+    stay_point(FAMILY_EYE)
+stay_look = () -> vec3:
+    if stay.kind == .hotel:
+        if stay.stage == .window: return stay_point(vec3(0.35, 1.25, 8.0))
+        return stay_point(HOTEL_LOOK)
+    if stay.stage == .asleep: return stay_point(FAMILY_BED_LOOK)
+    stay_point(FAMILY_LOOK)
+
+stay_camera = ():
+    eye = stay_eye()
+    render_camera(eye, stay_look() - eye, 62.0, 0.05, world_far(f64(eye.y)))
+
+# the room's light: the day through the window, a lamp's warmth after dark (out while asleep)
+stay_light = (L: Light) -> Light:
+    out = L
+    day = smoothstep(-0.05, 0.25, f64(normalize(L.sun_dir).y))
+    lamp = (1.0 - day) * (if stay.stage == .asleep: 0.0 else: 1.0)
+    out.sun = L.sun * f32(0.45 * day)
+    asleep = if stay.stage == .asleep: 1.0 else: 0.0
+    # (asleep in the dark: the lamp out, a little moonlight's blue to see the room by)
+    out.shade = L.shade * f32(0.55 + 0.35 * day) + vec3(0.5, 0.36, 0.2) * f32(lamp) + vec3(0.05, 0.06, 0.09) * f32(1.0 - day) + vec3(0.07, 0.08, 0.13) * f32((1.0 - day) * asleep)
+    out
+
+draw_stay = (L: Light):
+    clear_world_depth()
+    Ls = stay_light(L)
+    m = stay.frame
+    hotel_stay = stay.kind == .hotel
+    draw(obj_sh, if hotel_stay: stay_rooms.hotel else: stay_rooms.family, obj_params(Ls, t, m))
+    night = smoothstep(-0.05, 0.25, f64(normalize(L.sun_dir).y)) < 0.5
+    if night and stay.stage != .asleep: draw(obj_sh, if hotel_stay: stay_rooms.hotel_lamp else: stay_rooms.lamp, obj_params(Ls, t, m))
+    if not hotel_stay and not night: draw(obj_sh, stay_rooms.slits, obj_params(Ls, t, m))
+    me_f = player_figure()
+    if hotel_stay:
+        if stay.stage == .asleep: draw_figure(me_f, stay_point(vec3(HOTEL_BED.x, HOTEL_BED.y - 0.12, HOTEL_BED.z + 0.15)), stay_yaw(0.0), 0.0, 0.0, Ls, t, posture = 6)
+        else if stay.stage == .window: draw_figure(me_f, stay_point(HOTEL_AT_WINDOW), stay_yaw(0.0), 0.0, 0.0, Ls, t)
+        else: draw_figure(me_f, stay_point(HOTEL_CHAIR.at), stay_yaw(HOTEL_CHAIR.yaw), 0.0, 0.0, Ls, t, posture = 1)
+        return
+    # (the family's house: the pilot at the guest's place or in bed; the host across the table; at
+    # supper, those they look after round it, a plate each, the pot and the jug between)
+    if stay.stage == .asleep:
+        draw_figure(me_f, stay_point(vec3(FAMILY_BED.x - 0.2, FAMILY_BED.y - 0.1, FAMILY_BED.z)), stay_yaw(-PI * 0.5), 0.0, 0.0, Ls, t, posture = 6)
+        return
+    seat = FAMILY_SEATS[0]
+    draw_figure(me_f, stay_point(seat.at), stay_yaw(seat.yaw), 0.0, 0.0, Ls, t, posture = 1)
+    if let hf = stay_host_fig:
+        hs = FAMILY_SEATS[1]
+        draw_figure(hf, stay_point(hs.at), stay_yaw(hs.yaw), 0.0, 0.0, Ls, t, posture = 1, bounce = if stay.speaker == -1 and t < stay.line_until: 0.01 * sin(t * 9.0) else: 0.0)
+    top = FAMILY_TABLE + vec3(0, 0.775, 0)
+    supper = stay.stage == .supper
+    if supper:
+        loop k in 0..stay_figs.len():
+            s = FAMILY_SEATS[2 + k]
+            draw_figure(stay_figs[k], stay_point(s.at), stay_yaw(s.yaw), 0.0, 0.0, Ls, t, posture = 1)
+    places = 2 + (if supper: stay_figs.len() else: 0)
+    loop k in 0..places:
+        s = FAMILY_SEATS[k]
+        spot = top + (s.at - FAMILY_TABLE) * 0.55
+        item = if supper: MenuItem("Supper", "Food", "At home", serve = .bowl, food = true) else: MenuItem("Coffee", "Coffee", "At home", serve = .cup)
+        draw_serving(serve_parts, Served(item, 0, k, amount = 0.6), m * translation(vec3(spot.x, top.y, spot.z)) * rotation_y(f64(k)) * scaling(1.2), Ls, t)
+    if supper:
+        draw_serving(serve_parts, Served(MenuItem("Bread", "Food", "At home", serve = .plate, food = true), 0, 0, amount = 0.7), m * translation(top) * scaling(1.3), Ls, t)
+        draw_serving(serve_parts, Served(MenuItem("Wine", "Wine", "At home", serve = .bottle), 0, 0), m * translation(top + vec3(0.32, 0, 0.05)) * scaling(1.2), Ls, t)
+
+draw_stay_talk = ():
+    if stay.stage == .asleep:
+        # (a small clock while the time passes: no dark card, the room is there to see)
+        clock = lt.local_minute(living_world.minute)
+        tc = "{clock / 60:02}:{clock % 60:02}"
+        set_font(fonts.ui)
+        w = ptext_width(tc, 22) + 32.0
+        rect_rounded((f64(screen_width()) - w) * 0.5, 18, w, 40, 8, rgba(0.08, 0.1, 0.14, 0.55))
+        ptext_centered(tc, vec2(f32(f64(screen_width()) * 0.5), 38), 22, rgba(1, 0.97, 0.9, 1))
+        set_font()
+        return
+    if stay.line == "" or t > stay.line_until or stay.kind != .family: return
+    speaker_at = if stay.speaker == -1: FAMILY_SEATS[1].at else: FAMILY_SEATS[min(2 + stay.speaker, FAMILY_SEATS.len() - 1)].at
+    head = stay_point(speaker_at + vec3(0, 1.2, 0))
+    name = if stay.speaker == -1 and stay.host >= 0: split(living_world.people[stay.host].name, " ")[0] else: _resident_name(if stay.speaker >= 0 and stay.speaker < stay.household.len(): stay.household[stay.speaker] else: -1)
+    speech_bubble(fonts, head, name, stay.line, f64(length(head - scene_camera())))
+
+_resident_name = (id: int) -> str:
+    loop r in living_world.households:
+        if r.id == id: return split(r.name, " ")[0]
+    ""
 
 # ---------------- company at the table ----------------
 
@@ -2061,16 +2284,15 @@ leisure_panel = ():
                 _leisure_back()
         2:
             lp = leisure_place(leisure_at)
-            r = choice_panel(fonts, lp.name, "A room on the sea side, {phoenix_text(lp.room_cents)} a night", leisure_line, ["Sleep until morning", "Rest until evening", "Not now"])
-            if r.choice == 0 or r.choice == 1:
+            r = choice_panel(fonts, lp.name, "A room on the sea side, {phoenix_text(lp.room_cents)} a night", leisure_line, ["Take the room", "Not now"])
+            if r.choice == 0:
                 o = leisure_take_room(w, lp)
                 if o.ok:
                     if leisure.sitting != "": leisure_stand()
-                    ui = .none
                     log_note(notebook, "Took a room at the {lp.name}, {phoenix_text(o.cents)}.", clock_text(w, w.minute))
-                    leisure_skip(rest_minutes(w, if r.choice == 0: 420 else: 1110), "Asleep in a room at the {lp.name}", 1)
+                    stay_begin_hotel()
                 else: leisure_line = o.message
-            else if r.choice == 2 or r.closed: _leisure_back()
+            else if r.choice == 1 or r.closed: _leisure_back()
         3:
             c = w.people[w.player].craft
             choices = [loop j in TINKER_JOBS: "{j.label} ({j.minutes} min)"]
@@ -2098,12 +2320,15 @@ leisure_panel = ():
                 ui = .none
                 return
             name = w.people[leisure_host].name
-            r = choice_panel(fonts, name, "At home in {living.place_name(w, w.people[leisure_host].home)}", leisure_line, ["Sleep until morning", "Rest until evening", "Another time"])
-            if r.choice == 0 or r.choice == 1:
-                ui = .none
-                log_note(notebook, "Rested in the spare room at {name}'s.", clock_text(w, w.minute))
-                leisure_skip(rest_minutes(w, if r.choice == 0: 420 else: 1110), "Asleep in the spare room at {split(name, " ")[0]}'s")
-            else if r.choice == 2 or r.closed: ui = .none
+            r = choice_panel(fonts, name, "At home in {living.place_name(w, w.people[leisure_host].home)}", leisure_line, ["Go in with them", "Another time"])
+            if r.choice == 0:
+                if not stay_begin_family(leisure_host):
+                    # (no house of theirs in the scene: rest there all the same, the time passing on a card)
+                    ui = .none
+                    log_note(notebook, "Rested in the spare room at {name}'s.", clock_text(w, w.minute))
+                    leisure_skip(rest_minutes(w, 420), "Asleep in the spare room at {split(name, " ")[0]}'s")
+            else if r.choice == 1 or r.closed: ui = .none
+        15: stay_frame()
         6: tavli_choice_frame()
         7: tavli_frame()
         8: band_request_frame()
@@ -2166,6 +2391,29 @@ leisure_capture_step = ():
     if stage == "bill-coffee":
         leisure_sit("coffee")
         leisure_open_menu("coffee")
+    if stage.starts_with("stay-"):
+        # (a stay: the hotel's room (evening, the window in the morning, asleep), or a family's
+        # house (supper, in bed, the morning's coffee): the town's host with the largest household)
+        if stage.starts_with("stay-hotel"):
+            o = leisure_take_room(living_world, hotel_place)
+            print("STAY room {o.ok} {o.message}")
+            stay_begin_hotel()
+            if stage == "stay-hotel-window": stay.stage = .window
+        else:
+            best = -1; most = -1
+            loop k in 1..living_world.people.len():
+                pp = living_world.people[k]
+                if pp.home != 0 or pp.place != 0 or k == living_world.player: continue
+                n = [loop r in living_world.households: if r.guardian == k: 1].len()
+                if n > most and choose_life_venue(living_world, pp.home, .home, k) != none: best = k; most = n
+            print("STAY host {best} {if best >= 0: living_world.people[best].name else: ""} household {most}")
+            if best >= 0: _ = stay_begin_family(best)
+            if stage == "stay-family-morning": stay.stage = .morning
+            if stage == "stay-family-supper": stay.stage = .supper; stay.had_supper = true
+        if stage.ends_with("-asleep"):
+            stay_sleep(rest_minutes(living_world, 420), "Asleep")
+        global stay
+        stay.next_line = t + 0.5
     if stage.starts_with("seat") or stage.starts_with("company"):
         # (seated, the view about the seat; things on the table half gone, a glass at the lips;
         # company: someone come over, asking (at a table), sitting with the pilot, or on the next stool)
@@ -6177,6 +6425,7 @@ update_frame = (dt: f64, saves: bool = true):
     if frame_number() % 60 == 0: leisure_clear_table(living_world, leisure)
     let dt = frame_dt(if stress_frame_dt>0:stress_frame_dt else:dt)
     t += dt
+    stay_tick()
     service_step(dt)
     company_tick(dt)
     music_cues_step()
@@ -7005,7 +7254,7 @@ draw_world = (L: Light):
             zone("ambient crowd")
             ambient_draw(scene_camera(), L, t, hour)
             zone_end()
-        draw_hotel(hotel, leisure_light(L, hotel), t)
+        if not (stay.active and stay.kind == .hotel): draw_hotel(hotel, leisure_light(L, hotel), t)
         draw_coffee_house(coffee, leisure_light(L, hotel, coffee.seat), t)
         if me.mode==.walking: trace_walk_precision(walker_point,follow,follow_frame,towns)
         zone_end())
@@ -7163,6 +7412,8 @@ draw_world = (L: Light):
     draw_custom((): draw_trails(vapor_trails,L,t),transparent=true)
     draw_custom((): draw_rain(L,if me.mode==.aboard: pc.state.velocity else: vec3(0,0,0)),transparent=true)
     draw_custom((): draw_lightning(L),additive=true)
+    # (a stay's room over everything, its own depth: the town's walls never show through it)
+    if stay.active: draw_custom((): draw_stay(L))
     if me.mode==.aboard and pc.cockpit_view and weather_active and scene_camera().y < weather_here.ceiling+weather_here.storm*5200.0:
         draw_custom(():
             frame = cockpit_frame(craft_models[pc.model],pc.state,pc_at())
@@ -7213,7 +7464,10 @@ draw = ():
             # (after a few strong drinks, a gentle sway: Options can turn it off)
             sway = if options.tipsy_sway: leisure_sway(living_world, leisure) else: 0.0
             view = follow
-            if gaze.active:
+            if stay.active:
+                stay_camera()
+                ear_forward = stay_look() - stay_eye()
+            else if gaze.active:
                 gaze_camera()
                 ear_forward = gaze_dir(gaze)
             else if tavli_camera():
@@ -7233,7 +7487,7 @@ draw = ():
             else if sway > 0.0:
                 view.yaw += sway * 0.05 * sin(t * 0.61)
                 view.pitch += sway * 0.025 * sin(t * 0.47 + 1.3)
-            if not (leisure.sitting != "" and t < served_look_until and leisure_ui != 1) and not (ui == .leisure and leisure_ui == 12 and not skip.active) and not (ui == .leisure and leisure_ui == 7 and tavli_window().w > 0.0 and coffee.ok) and not gaze.active:
+            if not (leisure.sitting != "" and t < served_look_until and leisure_ui != 1) and not (ui == .leisure and leisure_ui == 12 and not skip.active) and not (ui == .leisure and leisure_ui == 7 and tavli_window().w > 0.0 and coffee.ok) and not gaze.active and not stay.active:
                 place_local_follow(view,follow_frame,58.0,0.3,world_far(f64(me.pos.y)))
                 ear_forward = aim(view) - position(view)
     if startup_aegean_target_frames!=none and me.mode==.aboard:
@@ -7396,6 +7650,7 @@ draw = ():
     draw_ui()
     notebook_panel(fonts, notebook, clock_text(living_world, living_world.minute))
     hud_nav(false)
+    if stay.active: draw_stay_talk()
     if skip.active: time_card(fonts, skip.doing, "{lt.local_minute(living_world.minute) / 60:02}:{lt.local_minute(living_world.minute) % 60:02}", skip.fade)
     if paused and not dbg.picking: rect(0, 0, f64(screen_width()), f64(screen_height()), rgba(0.03, 0.05, 0.08, 0.25))
     if dbg.open:
@@ -7450,6 +7705,11 @@ draw = ():
         if frame_number()>=60 and frame_number()%2==0:save_png("{directory}/{(frame_number()-60)/2:05}.png",screenshot())
     if let directory=startup_aegean_atmos_frames:
         if frame_number() in [2,360,780,1200,1800] or frame_number()%4==0 and (frame_number()<=120 or frame_number()>=720 and frame_number()<=960): save_png("{directory}/{frame_number()}.png",screenshot())
+    # AEGEAN_STAY_FRAMES=dir: a stay's clip, every other frame from 60 to 660 (at frame 120 the
+    # night begins, with AEGEAN_STAY_SLEEP)
+    if let directory = env("AEGEAN_STAY_FRAMES"):
+        if frame_number() == 120 and env("AEGEAN_STAY_SLEEP") != none and stay.active: stay_sleep(rest_minutes(living_world, 420), "Asleep")
+        if frame_number() >= 60 and frame_number() <= 660 and frame_number() % 2 == 0: save_png("{directory}/{(frame_number() - 60) / 2:04}.png", screenshot())
     # AEGEAN_SEAT_FRAMES=dir: the seat's clip, every other frame from 60 to 900 (the view turned
     # slowly about the seat; someone coming over, when AEGEAN_COMPANY says so)
     if let directory = env("AEGEAN_SEAT_FRAMES"):
