@@ -40,7 +40,7 @@ def no_title_layer_over_play(folder):
     """After each choice on the title (New, a Situation, Continue, a slot) the first seconds of play
     have no title layer up: the title closed, no choice left waiting, its dusk gone within a second
     (the dusk left fully up over a long first frame showed as a dark box over the game), no panel."""
-    for pick, frames in [('new', 1200), ('canal', 1000), ('continue', 1000), ('slot1', 1000)]:
+    for pick, frames in [('new', 1200), ('strait', 1000), ('canal', 1000), ('continue', 1000), ('slot1', 1000)]:
         rows = layers_after(folder, pick, frames)
         for frame, opened, leaving, dusk, panel in rows:
             assert not opened and not leaving and panel == 0, (pick, frame, opened, leaving, panel)
