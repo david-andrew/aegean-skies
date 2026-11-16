@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
@@ -1491,6 +1491,42 @@ On the rivers branch until it lands.
 - **Capture:** `tools/folkview.jo`; `tools/faceview.jo` (`FACEVIEW=pilot|follow|folk|cats`).
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
+
+### Wildlife
+
+- **Aliases:** the geese, the ducks, a raft, the harbour gulls, the goats.
+- **Definition:** animals about the camera, cosmetic like the cats. **Rafts** of waterfowl as the
+  1920s Aegean had them: greylag geese (more and larger rafts in winter; in summer some with
+  goslings), and on the lakes and wider river reaches mallards in pairs and coots among them.
+  Harbour corners hold greylags, now and then with a pair of mallards. A raft paddles in loose
+  lines with small wakes, drifts on the wind and roosts at night. Greylags and mallards **upend** to
+  feed: tipped forward, front half and head under, the rear third and tail up at about 55 degrees,
+  feet paddling and splashing at the surface. Coots **dive** instead. A raft that an aircraft taxis
+  or lands close to, or that someone walks up to, first **moves off**, then is **put up**: each bird
+  runs pattering over the water until its wings carry it (lift as the square of its speed; mallards
+  spring off soonest), and flies off low behind a leader of its own kind. **Gulls** fly themselves
+  too (banking into turns, gliding, flapping when slow or climbing), wheel over the harbours, perch
+  on the bollards at the water's edge and on ridges, squabble, and follow fishing caiques.
+  **Herds** of goats or sheep graze the slopes above villages; a low aircraft scatters them a little.
+  Every bird is cut at its **waterline** (`wild_fs`) and rides the sea's swell, so what is under
+  the water is not drawn through the transparent sea.
+- **Code:** `src/wildlife.jo` (`wild_scan`, `wild_harbour_raft`, `wild_hill_herd`,
+  `wild_raft_kinds`, `wild_threat_level`, `raft_step`, `colony_step`, `herd_step`, `wildlife_step`),
+  `src/wildlife_view.jo` (`_fowl_meshes`, `_pose_fowl`, `wild_fs`, `draw_wildlife`,
+  `draw_wildlife_marks`), `src/wildlife_sound.jo` (`wildlife_voices`: honks, quacks, coot calls,
+  gull cries, goat bells and bleats as ambience events; the instruments in `src/ambience_synth.jo`).
+- **Rules:** where they live comes from the world's places by hash (`wild_hash` of a settlement's
+  id, a lake's id, a river node), never from the camera, and is the same from anywhere; the islands'
+  town harbours keep a raft all year, others are seasonal. Nothing is saved and nothing touches the
+  living world. Zero cost with none in range; nothing simulated above 1,500 m. Tests:
+  `tests/wildlife_test.jo` (placement determinism, the take-off trigger, the species and the dive).
+- **Capture:** `AEGEAN_WILD_LOOK="raft|upend|duck|gulls|herd distance height bearing"` with
+  `AEGEAN_VIEW`; `AEGEAN_WILD_RAFT="ahead 170 14"` with `AEGEAN_CAPTURE_TAKEOFF=1` (and
+  `AEGEAN_LAKE=0` for a lake's run) and `AEGEAN_WILD_WATCH="22 1.4 0.5"` for a raft put up by a
+  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air; `AEGEAN_WILD_TRACE=1`.
+  On `t3/wildlife`.
+
+![Greylags with goslings and a pair of mallards off the home harbour, one goose upended feeding (the rear third and pale stern up), another tipping](img/wildlife.png)
 
 ### Pilot's scarf
 
