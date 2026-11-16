@@ -13,7 +13,7 @@ const [chrome,page,out]=process.argv.slice(2);
 if(!chrome||!page)throw new Error('Expected CHROMIUM PAGE.html [OUTPUT.json]');
 const served=await openPage(page);
 const profile=mkdtempSync(join(process.env.AEGEAN_SCRATCH??tmpdir(),'afterglow-'));
-const errors=[];let stderr='',id=0;const pending=new Map();let complete;
+const errors=[],consoleTail=[];let stderr='',id=0;const pending=new Map();let complete;
 const done=new Promise(r=>complete=r);let ready;const listening=new Promise(r=>ready=r);
 const browser=spawn(chrome,['--headless=new','--no-sandbox','--mute-audio','--use-angle=vulkan','--enable-features=Vulkan','--disable-vulkan-surface','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{env:{...process.env,DISPLAY:undefined,WAYLAND_DISPLAY:undefined},stdio:['ignore','ignore','pipe']});
 browser.on('error',error=>complete({error:String(error)}));
@@ -27,7 +27,7 @@ try{
   ws=new WebSocket(tab.webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));
   ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.id&&pending.has(m.id)){const [a,b]=pending.get(m.id);pending.delete(m.id);m.error?b(m.error):a(m.result)}
     if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails?.text??'exception');
-    if(m.method==='Runtime.consoleAPICalled'){const s=m.params.args.map(x=>x.value??x.description).join(' ');if(m.params.type==='error')errors.push(s)}});
+    if(m.method==='Runtime.consoleAPICalled'){const s=m.params.args.map(x=>x.value??x.description).join(' ');consoleTail.push(s);if(consoleTail.length>40)consoleTail.shift();if(m.params.type==='error')errors.push(s)}});
   const send=(method,params={})=>new Promise((a,b)=>{const n=++id;pending.set(n,[a,b]);ws.send(JSON.stringify({id:n,method,params}))});
   await send('Runtime.enable');await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
@@ -49,7 +49,8 @@ const gl=WebGL2RenderingContext.prototype,link=gl.linkProgram;gl.linkProgram=fun
     if(on&&probe.frames.filter(f=>f>on[0]).length>60)break;
     if(Date.now()>until){complete({timeout:true});break}
   }
-  const on=probe.marks.find(m=>m[1].startsWith('AFTERGLOW_ON')),queued=probe.marks.find(m=>m[1].startsWith('AFTERGLOW_QUEUED'));
+  const on=probe?.marks.find(m=>m[1].startsWith('AFTERGLOW_ON')),queued=probe?.marks.find(m=>m[1].startsWith('AFTERGLOW_QUEUED'));
+  if(!on){console.log(JSON.stringify({noGlow:true,frames:probe?.frames.length,links:probe?.links.length,marks:probe?.marks,consoleTail},null,1));process.exitCode=1;throw new Error('the sky never began to glow')}
   // (the frames round the first glowing one: from three before to three after)
   const at=probe.frames.findIndex(f=>f>=on[0]);
   const lo=probe.frames[Math.max(at-3,0)],hi=probe.frames[Math.min(at+4,probe.frames.length-1)];
