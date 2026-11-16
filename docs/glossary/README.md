@@ -17,7 +17,7 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
@@ -257,12 +257,65 @@ On the rivers branch until it lands.
   twelve quads across the channel between stations, in batches of four stations grouped by
   sixteen (one material anchor). It uses the sea's
   material with its inland options: the same [speed flecks](#speed-flecks) and
-  [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water. A
+  [sun glints](#sun-glints-and-the-glitter-path), carried by the current, on dark olive water (teal
+  to slate on Neravessa's canal: [canal mirror](#canal-mirror)). A
   group or batch wholly beyond 450 m (where flecks and ripples have faded out) uses the cheaper far
   material in one draw, which is exact there.
 - **Code:** `src/river_render.jo` (`init_rivers`, `draw_rivers`, `draw_inland_water`);
   the material is `src/sea.jo sea_material` with `inland=true`.
 - **Rules:** the speed-fleck rule applies in full. Lakes use the same seam (`draw_inland_water`).
+
+### Canal cut
+
+- **Aliases:** Neravessa's walls, the canal side, the deep cut.
+- **Definition:** Neravessa's canal and its arms run between dark slate stone walls standing 5 m over
+  the water (`CANAL_STREET`), with a wet band at the waterline, coursed joints, iron mooring plates,
+  and a stone parapet on top. Behind the wall the street is paved: an 8 m promenade with plane trees,
+  poplars, cast-iron lamps (lit after dark), benches and a few people before the front row of
+  houses, or warehouses and works standing straight on the wall. Stairs down to the water sit in the
+  wall's thickness with a landing at the foot. The workshop's yard and slipway keep a low quay 2 m
+  over the water, with stairs up to the street at either end. Contact (walls, parapets, streets,
+  stairs) and the drawing come from the same layout (`canal_banks`, `canal_solids`).
+- **Code:** `src/canal_geometry.jo` (`init_canal_geometry`, `canal_frontage`, `CANAL_WATER_STAIRS`);
+  drawn by `src/canal_city.jo` (`canal_bank_mesh`, `canal_promenade`) through `src/canal_render.jo`.
+  Over the cut the terrain keeps finer cells further out (`world_tile_canal` in
+  `src/world_terrain.jo`) so the cut stays open from the air.
+- **Rules:** player-facing text says canal side, dock or waterfront, never "quay".
+
+### Canal crossings
+
+- **Aliases:** the canal bridges.
+- **Definition:** a crossing every 100-300 m of the canal run (`CANAL_BRIDGES`): single-span stone
+  arches (a flat ellipse from wall to wall, springing ~3.6-4 m and crowned ~8-9 m over the water,
+  with a humped road, balustrades, lamps and someone leaning on the parapet), a high steel truss,
+  a low iron footbridge (5 m clear) and a pipe bridge. A planing Gull's top wing is ~3.9 m over the
+  water: held within ~8 m of the centre line it passes under every crossing with a metre or more
+  to spare; a pilot who lifts off early must stay under the arches or hop the decks.
+- **Code:** `src/canal_geometry.jo` (`CANAL_BRIDGES`, `canal_bridge_under`, `canal_bridge_top`);
+  `src/canal_city.jo` `canal_bridge_mesh`; `tests/canal_test.jo`.
+
+### Canal mirror
+
+- **Aliases:** the canal's reflections.
+- **Definition:** on Neravessa's canal the water is teal to slate, darker than its walls, and its
+  Fresnel reflection mirrors the cut instead of only the sky: the reflected ray is tested against
+  the two walls (vertical planes at the canal's half width), giving the dark stone up to the
+  parapet, then the promenade's trees and the facades, then the sky. Flecks and glints are unchanged.
+- **Code:** `src/sea.jo` `canal_mirror` (with `SeaParams.inland_walls`); set per batch in
+  `src/river_render.jo` (`RiverBatch.walls`, `CANAL_WATER_DEEP`, `CANAL_WATER_SHALLOW`).
+
+### Canal blocks
+
+- **Aliases:** Neravessa's houses, the canal facades.
+- **Definition:** the city's blocks, 4-6 storeys on the water: muted cream, grey and stone stucco
+  with one in six or seven an ochre, pink or rust accent; a darker rusticated base, string course,
+  frieze and cornice; framed recessed windows with shutters (some closed), sills, balconies and
+  awnings; slate mansards, hipped tile roofs or flat roofs with a parapet; the roof pitches facing
+  north are painted darker. One in seven windows is lit after dark. Front rows are fully detailed,
+  the next two rows have openings and trim, deeper rows are plain blocks on paved plinths. The
+  skyline's set pieces (`CANAL_SKYLINE`: domed churches, bell towers, works chimneys) end the
+  canal's vistas at its bends.
+- **Code:** `src/canal_city.jo` (`canal_block`, `canal_church`, `canal_tower`, `canal_chimney`).
 
 ### Confluence
 
@@ -2981,10 +3034,11 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_PANEL=controls` | the pause menu open on its Controls page (gamepads and flight sticks) |
 | (the pause-menu panels) | `aircraft`, `plane`, `paint`, `scenarios`, `flight`, `flight-levers`, `tweaks`, `controls` pause at frame 60, once the camera is placed: paused from the first frame the world was drawn from an eye never put anywhere (terrain floating over the sea). Script `SLOPPY_INPUT` presses after frame 60 |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
-| `AEGEAN_HOUR=h` | time of day |
+| `AEGEAN_HOUR=h` | time of day (also overrides a scenario's own start hour, for captures) |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
+| `AEGEAN_SETTLE=1` | terrain generation without its per-frame budget, so slow headless captures show settled ground |
 | `AEGEAN_AT='x z yaw'` | on foot at a spot |
 | `AEGEAN_SHOTS='dir 120 600'` | save those frames of a scripted (`SLOPPY_INPUT`) session as `dir/<frame>.png`, each with a `SHOT` line: mode, position, open panel, minute, purse, people within 40 m |
 | `AEGEAN_QUALITY=low|medium|high` | quality tier |
