@@ -191,6 +191,9 @@ use 'src/reputation_talk.jo'
 use 'src/pilot_day_types.jo'
 use 'src/pilot_talk.jo'
 use 'src/leads.jo'
+use 'src/adrift_types.jo'
+use 'src/living_adrift.jo'
+import 'src/living_boats.jo' as workboats_api
 import 'src/living_jobs.jo' as lead_jobs
 from 'src/living_talk_context.jo' import last_spoken
 use 'src/stay.jo'
@@ -609,15 +612,13 @@ pilot_talk_frame = ():
         pilot_did(living_world.pilot_day, Doing(.flew, living_world.minute, where = flight_from, rough = flight_rough(flight_storm, flight_rain, flight_wind), rain = flight_rain > 0.3))
 
 # Leads (src/leads.jo): what people mention the pilot could go and do; who has said what, today.
-lead_told: {str: int} = {}
 _lead_meets = () -> MeetNote[]: [loop m in air_events.meets: MeetNote(id = m.id, capital = m.capital, day = m.day, open = m.phase == .registration, fast = m.race_class == .schneider)]
 # What `person` mentions now, if anything they haven't said today: their words ("" if nothing).
+# (who has told him which lead is the world's, saved with it: World.rep.told_leads)
 tell_lead = (person: int) -> str:
-    global lead_told
     day = lt.day_index(living_world.minute)
-    lead_told = {loop k, d in lead_told: if d == day: k: d}
-    if let l = lead_to_tell(living_world, person, _lead_meets(), lead_told):
-        lead_told["{person}:{l.key}"] = day
+    if let l = lead_to_tell(living_world, person, _lead_meets(), living_world.rep.told_leads):
+        lead_told_now(living_world, person, l)
         line = lead_line(living_world, l, person, person + day)
         if env("AEGEAN_LEADS") != none: print("LEAD {living_world.people[person].name}: {line} ({l.key})")
         return line
@@ -7675,6 +7676,76 @@ cat_prompt_here = () -> str:
     cat_prompt(cat_scene, k, presentation.cat_bonds, living_world.minute, cat_food())
 rescue_place = -1
 rescue_name = ""
+
+# A boat in trouble at sea (src/living_adrift.jo): the one the aircraft lies alongside (its index
+# in World.adrift), the one whose skipper is aboard to be set ashore here, and what can be done.
+adrift_k = -1
+adrift_ashore_k = -1
+adrift_tow_skipper = -1
+
+_first_name = (p: int) -> str: split(living_world.people[p].name, " ")[0]
+
+update_adrift = ():
+    global adrift_k, adrift_ashore_k, adrift_tow_skipper
+    adrift_k = -1; adrift_ashore_k = -1; adrift_tow_skipper = -1
+    if paused or show_chart or notebook.open: return
+    st = pc.state
+    loop i in 0..living_world.adrift.len():
+        a = living_world.adrift[i]
+        if a.state == .home: continue
+        if me.mode == .aboard:
+            d = f64(length(vec2(a.at.x - st.position.x, a.at.z - st.position.z)))
+            # (seen: come within sight of it, low enough to make it out; no marker, no word)
+            if not a.found and d < 700.0 and f64(st.position.y) < 600.0: adrift_found(living_world, i)
+            if a.state == .adrift and (st.on_water or st.moored) and d < 45.0 and f64(length(st.velocity)) < 3.0:
+                adrift_k = i
+                adrift_tow_skipper = adrift_tow_boat(living_world, i, 4500.0)
+        else if me.mode == .walking and a.state == .aboard and near_own_craft() and holding_cargo() < 0:
+            here = living_world.people[living_world.player].place
+            if here >= 0 and here < living_world.places.len(): adrift_ashore_k = i
+
+# Alongside: take the crew aboard (he climbs up into the second seat), or get a line across to a
+# boat out fishing near, which tows her in.
+adrift_take = ():
+    if adrift_k < 0: return
+    a = living_world.adrift[adrift_k]
+    if not adrift_take_aboard(living_world, adrift_k): return
+    global rider_fig
+    rider_takes(a.person, a.at + vec3(0, -1.0, 0))
+    p = living_world.people[a.person]
+    rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+    off = living.place_name(living_world, adrift_near(living_world, a))
+    log_note(notebook, "Took {_first_name(a.person)} aboard from the boat off {off}.", clock_text(living_world, living_world.minute))
+    pilot_did(living_world.pilot_day, Doing(.rescued, living_world.minute, who = _first_name(a.person), where = off))
+    said = match a.cause:
+        .engine: "Thank God. The engine died on me out here."
+        .mast: "Thank God. The mast went, and I've been drifting since."
+        .lost: "I'd lost all idea of where I was. Thank you."
+    say_toast("{_first_name(a.person)}: {said}")
+
+adrift_line = ():
+    if adrift_k < 0 or adrift_tow_skipper < 0: return
+    a = living_world.adrift[adrift_k]
+    helper = adrift_tow_skipper
+    minutes = adrift_tow(living_world, adrift_k, helper)
+    if minutes < 0: return
+    log_note(notebook, "Got a line across from {_first_name(a.person)}'s boat to {_first_name(helper)}'s, to be towed in.", clock_text(living_world, living_world.minute))
+    say_toast("{_first_name(helper)}: I have her. We'll be in before long.")
+
+# At a harbour, the skipper aboard climbs out onto the dock and goes home; the worry's over.
+adrift_ashore = ():
+    if adrift_ashore_k < 0: return
+    a = living_world.adrift[adrift_ashore_k]
+    here = living_world.people[living_world.player].place
+    if not adrift_set_ashore(living_world, adrift_ashore_k, here): return
+    if rider.person == a.person and (rider.stage == .aboard or rider.stage == .boarding):
+        seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span))
+        inland = me.pos - pc.state.position
+        side = normalize(vec3(-inland.z, 0, inland.x) + vec3(0.0001, 0, 0))
+        rider_alight(rider, seat, me.pos + side * 1.2, inland, t)
+    name = _first_name(a.person)
+    log_note(notebook, "Set {name} ashore at {living.place_name(living_world, here)}.", clock_text(living_world, living_world.minute))
+    say_toast("{name}: {if here == a.home: "Home. I'll not forget this." else: "I'll find my way home from here. Thank you."}")
 rescue_hold = false                 # (setting ashore a foe in one's own country's harbour: the guard may hold them)
 
 rescue_prompt = () -> str:
@@ -8224,6 +8295,86 @@ do_rescue = (free: bool = false):
 # Captures only.
 capture_maps = env("AEGEAN_CAPTURE_MAPS")
 capture_rescue = env("AEGEAN_CAPTURE_RESCUE")
+# AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home stages Petros's boat adrift off Porto Vecchio
+# with its engine gone (src/living_adrift.jo). heard: two hours on, at the hotel's bar, whoever
+# sits by him tells of it (with AEGEAN_COMPANY, AEGEAN_LEADS=always); search: in the air 1.5 km
+# off it, flying toward it (with AEGEAN_FLYING); alongside: on the water beside it, Petros taken
+# aboard a moment later; home: moored at home with Petros aboard, set ashore a moment later.
+capture_adrift = env("AEGEAN_CAPTURE_ADRIFT")
+adrift_stage_frame = -1
+adrift_ask_due = -1.0
+stage_capture_adrift = (stage: str):
+    global adrift_stage_frame
+    if adrift_stage_frame < 0:
+        if frame_number() < 3: return
+        adrift_stage_frame = frame_number()
+        skipper = 7
+        trip = living_world.people[skipper].trip
+        if trip < 0 or living_world.trips[trip].reason.purpose != .fishing: trip = workboats_api.begin_fishing(living_world, skipper)
+        i = if trip >= 0: adrift_begin(living_world, trip, .engine) else: -1
+        print("ADRIFT staged: trip {trip} boat {i} at {if i >= 0: living_world.adrift[i].at else: vec3(0,0,0)}")
+        if i < 0: return
+        a = living_world.adrift[i]
+        if stage == "heard":
+            living.advance_minutes(living_world, 110)
+            sync_folk(folks, living_world, towns)
+            global hour
+            hour = f64(lt.local_minute(living_world.minute)) / 60.0
+            # (whoever is near in the town who has heard: he's stopped to talk to them)
+            best = -1; bd = 1e9
+            loop k in 0..folks.len():
+                q = folks[k].person
+                if not folks[k].shown or q == skipper or q == living_world.player or band_wanted(living_world, q) > 0: continue
+                knows = false
+                loop l in leads_for(living_world, q, []):
+                    if l.kind == .overdue: knows = true
+                d = f64(length(folks[k].pos - me.pos))
+                if knows and d < bd: bd = d; best = k
+            if best >= 0:
+                fp = folks[best].pos
+                away = normalize(vec3(me.pos.x - fp.x, 0, me.pos.z - fp.z) + vec3(0.0001, 0, 0))
+                me.mode = .walking
+                me.pos = vec3(fp.x + away.x * 1.6, f32(walk_height(towns, f64(fp.x + away.x * 1.6), f64(fp.z + away.z * 1.6))), fp.z + away.z * 1.6)
+                me.yaw = atan2(f64(-away.x), f64(-away.z)); me.stride = 0.0
+                follow.yaw = me.yaw + PI + 0.7; follow.distance = 3.6; follow.pitch = 0.2; follow.height = 1.5; follow.placed = false
+                global rep_ask_k, rep_talk_due, adrift_ask_due
+                rep_ask_k = best; rep_talk_due = t + 1.5; adrift_ask_due = t + 4.5
+                print("ADRIFT heard from {living_world.people[folks[best].person].name}")
+        else if stage == "search":
+            to = normalize(vec3(a.at.x - pc.state.position.x, 0, a.at.z - pc.state.position.z) + vec3(0.0001, 0, 0))
+            h = atan2(f64(to.x), -f64(to.z))
+            start = a.at - to * 1100.0 + vec3(-to.z, 0, to.x) * 60.0
+            spd = f64(length(pc.state.velocity))
+            pc.state.position = vec3(start.x, f32(110.0), start.z)
+            pc.state.velocity = heading_vector(h) * f32(spd)
+            pc.state.orientation = quat_euler(0, -h, 0)
+            pc.aim_heading = h; pc.placed = false
+        else if stage == "alongside":
+            out = normalize(vec3(a.at.x - home.docks[0].x, 0, a.at.z - home.docks[0].z) + vec3(0.0001, 0, 0))
+            p0 = a.at - out * 26.0 + vec3(-out.z, 0, out.x) * 9.0
+            h = atan2(f64(out.x), -f64(out.z))
+            pc.state = CraftState(position = vec3(p0.x, f32(pc.spec.float_height), p0.z), orientation = quat_euler(0, -h, 0), fuel = pc.spec.fuel_capacity, water_age = 1.0, on_water = true)
+            pc.throttle = 0.0
+            me.mode = .aboard
+            follow.yaw = h + PI + 0.35; follow.distance = 20.0; follow.pitch = 0.16
+        else if stage == "home":
+            _ = adrift_take_aboard(living_world, i)
+            global rider, rider_fig
+            rider = rider_seated(skipper, t, false)
+            p = living_world.people[skipper]
+            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+        return
+    wait = frame_number() - adrift_stage_frame
+    # (heard: in the talk, he asks what they've heard)
+    if stage == "heard" and adrift_ask_due >= 0.0 and t >= adrift_ask_due and ui == .talk:
+        global adrift_ask_due, ui_line, ui_turn
+        adrift_ask_due = -1.0
+        ui_turn = living.talk(living_world, folks[ui_folk].person, .news, living_world.player)
+        said = tell_lead(folks[ui_folk].person)
+        ui_line = if said != "": said else: turn_text(ui_turn)
+        print("ADRIFT told: {ui_line}")
+    if stage == "alongside" and wait == 200 and adrift_k >= 0: adrift_take()
+    if stage == "home" and wait == 150 and adrift_ashore_k >= 0: adrift_ashore()
 capture_stage_frame = -1
 stage_capture_maps = (stage: str):
     shop = if stage == "office": "porto-office" else: "porto-chandler"
@@ -8377,6 +8528,7 @@ walk_offers = () -> Offer[]:
     else if near_job_cargo() >= 0 and not fish_in_hand(fish) and not handover_waited(living_world.cargo[near_job_cargo()].job): offer_add(o, "cargo", "pick up {cargo_view.cargo_label(living_world,living_world.cargo[near_job_cargo()])}")
     if rescue_act == 2: offer_add(o, "rescue", offer_words(rescue_prompt()))
     if rescue_act == 2 and rescue_hold: offer_add(o, "rescue-free", "let {rescue_name} go ashore free")
+    if adrift_ashore_k >= 0: offer_add(o, "adrift-ashore", "help {_first_name(living_world.adrift[adrift_ashore_k].person)} ashore")
     if not held and near_own_craft():
         offer_add(o, "aboard", "climb aboard your {CRAFT_NAMES[int(pc.kind)]}")
         if pc.state.moored and not busy: offer_add(o, "tinker", "work on the aircraft", .g)
@@ -8410,6 +8562,10 @@ aboard_offers = () -> Offer[]:
     st = pc.state
     if me.mode != .aboard or ui != .none or paused or show_chart or notebook.open or st.crashed or st.capsized or st.beached: return o
     if rescue_act == 1: offer_add(o, "rescue", offer_words(rescue_prompt()))
+    if adrift_k >= 0:
+        who = _first_name(living_world.adrift[adrift_k].person)
+        offer_add(o, "adrift-take", "take {who} aboard")
+        if adrift_tow_skipper >= 0: offer_add(o, "adrift-line", "get a line across to {_first_name(adrift_tow_skipper)}'s caique", .g)
     # (lying to an anchor out at sea there is no shore to step to: no offer)
     if st.moored and vessel_mooring.vessel < 0 and (offshore != none or shore_point(towns, st.position) != none):
         if offshore != none: offer_add(o, "launch-ashore", "call the harbour launch to go ashore ({phoenix_text(launches.LAUNCH_FARE)})      Shift  open the throttle")
@@ -8681,10 +8837,12 @@ update_frame = (dt: f64, saves: bool = true):
     if let stage = capture_maps:
         if frame_number() == 3: stage_capture_maps(stage)
     if let stage = capture_rescue: stage_capture_rescue(stage)
+    if let stage = capture_adrift: stage_capture_adrift(stage)
     if let stage = capture_fuel: stage_capture_fuel(stage)
     if let stage = capture_workshop: stage_capture_workshop(stage)
     fuel_stop_step()
     update_rescue()
+    update_adrift()
     # (the rescue capture: F taken for the player once alongside)
     if capture_after=="rescue" and rescue_act==1 and not capture_after_took:
         global capture_after_took
@@ -8787,6 +8945,7 @@ update_frame = (dt: f64, saves: bool = true):
               if act == "handover": handover_act()
               if act == "rescue": do_rescue()
               if act == "rescue-free": do_rescue(free=true)
+              if act == "adrift-ashore": adrift_ashore()
               if gaze.active and vpressed(.t):
                   # (an hour goes by under the stars; the sky has turned when it has)
                   leisure_skip(60, "An hour passes under the stars")
@@ -9022,6 +9181,8 @@ update_frame = (dt: f64, saves: bool = true):
             act = if typing: "" else: offer_pressed(aboard_offers())
             if act == "rescue": do_rescue()
             if act == "rescue-free": do_rescue(free=true)
+            else if act == "adrift-take": adrift_take()
+            else if act == "adrift-line": adrift_line()
             else if act == "buoy":
                 if let m = buoy_spot(): moor_on_buoy(m)
             else if act == "launch-ashore": start_launch(false)
@@ -10394,6 +10555,13 @@ draw_ui = ():
             rest_k = answers.len() - ntop - work_k
             if rest_offer: answers.push("Could I rest at yours a while?")
             # (someone sat at their table on the terrace: asking to sit with them)
+            # (a boat he's seen lying out there, from this harbour: telling them where)
+            tell_k = -1
+            loop ai in 0..living_world.adrift.len():
+                aa = living_world.adrift[ai]
+                if aa.state == .adrift and aa.found and f.place == aa.home and f.person != aa.person: tell_k = ai
+            tell_at = answers.len() - ntop - work_k
+            if tell_k >= 0: answers.push("{_first_name(living_world.adrift[tell_k].person)}'s boat is lying off {living.place_name(living_world, adrift_near(living_world, living_world.adrift[tell_k]))}.")
             sit_offer = can_ask_to_sit(ui_folk)
             sit_k = answers.len() - ntop - work_k
             if sit_offer: answers.push("Mind if I sit?")
@@ -10459,6 +10627,12 @@ draw_ui = ():
                       ans = fish_ask_bucket(living_world, fish, f.person, fish_bucket_where_words(living_world, f.person), seller = fish_bucket_seller(living_world, f.person) != "")
                       ui_line = ans.line
                       if ans.lent: log_note(notebook, "{p.name} lent me a bucket.", clock_text(living_world, living_world.minute))
+              else if tell_k >= 0 and c == tell_at:
+                  name = _first_name(living_world.adrift[tell_k].person)
+                  minutes = adrift_report(living_world, tell_k)
+                  if minutes > 0:
+                      ui_line = said_by(p.name, if minutes < 75: "Thank God. I'll get word to the harbour; the launch can be out there within the hour." else: "Thank God. The launch will go out; it's a fair way.")
+                      log_note(notebook, "Told {p.name} where {name}'s boat is lying. The launch is going out.", clock_text(living_world, living_world.minute))
               else if sit_offer and c == sit_k:
                   said = ask_to_sit(ui_folk)
                   if leisure.sitting == "": ui_line = said_by(p.name, said)
