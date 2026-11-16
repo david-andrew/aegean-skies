@@ -59,9 +59,9 @@ def main():
         print("title: d-pad to Situations, A opened it, B came back")
 
         # the pause menu: Start; RB eight pages along to Controls (its focus on the page: the Gamepad
-        # tab); the d-pad down to Invert Y; A ticks it; B carries on
+        # tab); the d-pad down past "Left stick steers the aim" to Invert Y; A ticks it; B carries on
         parts = [press(70, "start")] + [press(90 + 8 * k, "rb") for k in range(8)]
-        parts += [press(190, "down"), press(225, "a"), press(245, "b")]
+        parts += [press(180, "down"), press(195, "down"), press(225, "a"), press(245, "b")]
         s = run(work, "pause", 270, " ".join(parts))
         assert at(s, 80)["paused"] == "true", at(s, 80)
         assert at(s, 160)["page"] == "11", at(s, 160)
