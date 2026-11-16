@@ -1634,6 +1634,45 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_CRAFT=<a big boat> AEGEAN_ABOARD=1 AEGEAN_CAPTURE_LAUNCH=lighter` (also
   `swing`: the wind held abeam, seen from above).
 
+### Call for help
+
+- **Aliases:** help on the R/T, a tow, the flare.
+- **Definition:** down on the sea and unable to go on (the tank dry, the engine or hull too far
+  gone, wrecked or aground), the [R/T](#rt) pad offers "Call for help" first (R does too on a
+  wreck). Whoever is really near answers. One of the player's flight (in a fight, for fuel only)
+  lands into the wind off to one side, taxis to lie alongside and hands over two two-gallon cans
+  out of its own tank, then takes off again. Failing that, the nearest passing ship of the living
+  world turns aside (a hull stands in for it, the ship itself held on its route and not drawn
+  meanwhile) and tows the aircraft into the nearest town harbour. Failing that, that harbour's
+  launch comes out and tows it in. The radio answers with a rough time ("about twenty minutes");
+  the boat sails the fleet's own sea lanes, round the land, and is seen coming; "Wait for them"
+  skips the wait ([time skip](#time-skip)) to the last 60 m, or a tow to the harbour. The tow
+  draws up alongside, takes the line and hauls the aircraft round onto it; in at the harbour the
+  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). The
+  cans are paid for at the nearest pier's price to the wingman, the tow by distance to the
+  skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
+  the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
+  reads "Fire a flare": a red star goes up and the nearest ship or harbour within 8 km comes.
+  When the flight turns for home its leader says where ("then back to Ardevanti").
+- **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
+  `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /
+  `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
+  `aegean.jo`.
+- **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
+  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
+
+### R/T
+
+- **Aliases:** the radio-telephone, the pad, orders to the flight.
+- **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
+  plate; a controller's D-pad left). Down on the sea in trouble its first line is the
+  [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
+  the flight leader's words follow: form on me, circle here and wait, attack my target, break off
+  and go home, lead me home. A number, a click or tap sends one, or C steps and F sends; Escape or
+  a few idle seconds close it. The nearest of the flight answers in a few plain words.
+- **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
+  in `aegean.jo`.
+
 ### Legacy towns
 
 - **Aliases:** the original six towns, the original archipelago.
