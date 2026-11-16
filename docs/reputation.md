@@ -81,13 +81,16 @@ so a scene, a headless run, near and far all record the same deeds at the same m
 
 - **Company**: the chance anyone comes over at all follows the town's warmth toward him (known as
   standoffish: about a third as often; known as good company: half again as often); each
-  candidate's pull follows their own view. **Asking someone over** ("Ask … to join you"): they
-  come if their view allows (strangers usually; known as standoffish, seldom; thought ill of, no),
-  and say why in plain words when they don't. Being standoffish means fewer approaches, never
+  candidate's pull follows their own view. **Asking to sit with someone**: he walks up to
+  someone sat at a terrace table and, talking with them, asks "Mind if I sit?". They say yes if
+  their view allows (strangers usually; known as standoffish, seldom; thought ill of, no) and he
+  sits across from them at their table; or they say why not, in a few words. Being standoffish means fewer approaches, never
   punishment; sitting with people mends it.
-- **Greetings**: someone who has heard of him and not met him says so ("You'll be the pilot from
-  Porto Vecchio."), and may remark on a deed they know ("You're the one who pulled that Kalyran
-  out of the water off Neravessa."), once. People who think ill of him give a short answer.
+- **Greetings**: people talk as people do: one detail at most, the rest understood. Someone who
+  has heard of him and not met him says so ("You'll be the Porto Vecchio pilot?"), and may
+  remark on a deed they know, once ("So you're the one who fished that Kalyran out of the
+  water.", "Heard about the storm. Brave or mad, I can't decide."); one who knows him says less
+  ("You and your rescues."). People who think ill of him give a short answer.
 - **Prices and favours at the margin**: a keeper who thinks well of him rounds the bill down
   (up to 6%), one who thinks ill rounds it up (5%). A family who has heard well of him may offer
   the spare room.

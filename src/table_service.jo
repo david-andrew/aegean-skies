@@ -13,7 +13,8 @@ use 'leisure.jo'
 
 struct Waiter:
     stage = 0                       # 0 at the pass, 1 walking out with the tray, 2 setting things
-                                    # down, 3 walking back, 4 walking out to clear, 5 picking up
+                                    # down, 3 walking back, 4 walking out to clear, 5 picking up,
+                                    # 6 walking out to ask, 7 asking ("Finished with this?")
     pos: vec3 = vec3(0, 0, 0)
     yaw = 0.0
     phase = 0.0                     # (his stride)
@@ -22,10 +23,14 @@ struct Waiter:
     clock = 0.0                     # (seconds in this stage)
     placed = 0                      # (how many he has set down this trip)
     ready = false                   # (placed at the pass once the venue is known)
+    clear_all = false               # (the pilot has gone: everything left is cleared, not only empties)
+    asking = -1                     # (the spot of the thing he is asking about)
 
 const WAITER_SPEED = 1.25           # m/s
 const SET_DOWN = 0.7                # seconds to set one thing down (or pick one up)
 const EMPTY_WAIT = 45.0             # seconds an empty glass or plate stands before he comes for it
+const ASK_AFTER = 150.0             # seconds a thing with some left stands untouched before he asks
+const NOT_YET = 240.0               # (told "not yet": as long again before he asks about it again)
 
 struct ServiceSpots:
     station: vec3                   # where the waiter waits (the bar, the door)
@@ -70,8 +75,11 @@ waiter_step = (wt: mut Waiter, sp: ServiceSpots, served: mut Served[], dt: f64, 
                 wt.tray = wt.pending[0..n]
                 wt.pending = wt.pending[n..wt.pending.len()]
                 wt.stage = 1; wt.clock = 0.0
-            else if _empty_ready(served):
+            else if _empty_ready(served) or (wt.clear_all and _any_left(served)):
                 wt.stage = 4; wt.clock = 0.0
+            else if not wt.clear_all and waiter_ask_ready(served) >= 0:
+                wt.asking = waiter_ask_ready(served)
+                wt.stage = 6; wt.clock = 0.0
         1:
             if _walk_to(wt, sp.serve, dt):
                 wt.stage = 2; wt.clock = 0.0; wt.placed = 0
@@ -100,8 +108,16 @@ waiter_step = (wt: mut Waiter, sp: ServiceSpots, served: mut Served[], dt: f64, 
                 wt.yaw = atan2(f64(sp.table.x - wt.pos.x), f64(sp.table.z - wt.pos.z))
         5:
             if wt.clock >= SET_DOWN:
-                wt.tray = _take_empties(served, 3)
+                wt.tray = if wt.clear_all: _take_all(served, 3) else: _take_empties(served, 3)
                 wt.stage = 3; wt.clock = 0.0
+        6:
+            if _walk_to(wt, sp.serve, dt):
+                wt.stage = 7; wt.clock = 0.0
+                wt.yaw = atan2(f64(sp.table.x - wt.pos.x), f64(sp.table.z - wt.pos.z))
+        7:
+            # (asking: he waits for the answer, waiter_answer; if the pilot has gone, it's cleared)
+            if wt.clear_all:
+                wt.stage = 5; wt.clock = 0.0; wt.asking = -1
         else: wt.stage = 0
     wt.pos = vec3(wt.pos.x, f32(height(f64(wt.pos.x), f64(wt.pos.z))), wt.pos.z)
 
@@ -110,6 +126,52 @@ _empty_ready = (served: Served[]) -> bool:
     loop s in served:
         if s.amount <= 0.0 and s.empty_for >= EMPTY_WAIT and not s.held: return true
     false
+
+# Something with some left that has stood untouched a good while: its spot, or -1.
+waiter_ask_ready = (served: Served[]) -> int:
+    best = -1; longest = ASK_AFTER
+    loop s in served:
+        if s.amount > 0.0 and not s.held and s.still >= longest: best = s.seat; longest = s.still
+    best
+
+_any_left = (served: Served[]) -> bool:
+    loop s in served:
+        if not s.held: return true
+    false
+
+# The pilot gone: everything on the table (but what is in hand), a trayful at a time.
+_take_all = (served: mut Served[], most: int) -> Served[]:
+    out: Served[]
+    i = 0
+    loop i < served.len():
+        if out.len() < most and not served[i].held:
+            out.push(served[i]); served.remove_at(i)
+        else: i += 1
+    out
+
+# The pilot's answer to "Finished with this?": yes, and he takes it (and any empties) away; not
+# yet, and it is left alone a good while longer. He goes back to the pass either way.
+waiter_answer = (wt: mut Waiter, served: mut Served[], yes: bool):
+    if wt.stage != 7: return
+    out: Served[]
+    i = 0
+    loop i < served.len():
+        if served[i].seat == wt.asking and not served[i].held:
+            if yes:
+                out.push(served[i]); served.remove_at(i)
+                continue
+            served[i].still = -NOT_YET
+        i += 1
+    if yes: out.extend(_take_empties(served, 3 - out.len()))
+    wt.tray = out
+    wt.asking = -1; wt.stage = 3; wt.clock = 0.0
+
+# what he is asking about (for the panel), or none
+waiter_asking_about = (wt: Waiter, served: Served[]) -> Served?:
+    if wt.stage != 7: return none
+    loop s in served:
+        if s.seat == wt.asking: return s
+    none
 
 _take_empties = (served: mut Served[], most: int) -> Served[]:
     out: Served[]
@@ -153,6 +215,9 @@ take_step = (tk: mut Taking, served: mut Served[], dt: f64, pressed: int, down: 
     # empties tick on toward the waiter's visit
     loop k in 0..served.len():
         if served[k].amount <= 0.0 and not served[k].held: served[k].empty_for += dt
+        # (left alone with some still in it: after a good while the waiter asks)
+        if served[k].amount > 0.0 and not served[k].held: served[k].still += dt
+        else if served[k].held: served[k].still = 0.0
     if put and tk.held >= 0:
         _put_down(tk, served)
     if pressed >= 0 and pressed < served.len() and pressed != tk.held:
@@ -184,7 +249,8 @@ _put_down = (tk: mut Taking, served: mut Served[]):
     if tk.held >= 0 and tk.held < served.len(): served[tk.held].held = false
     tk.held = -1; tk.busy = false
 
-# What a thing is, briefly, for its button: "Ouzo", "Meze plate (half)", "Wine (empty)".
+# What a thing is, briefly, for its button: "Ouzo", "Meze plate" (how much is left is the button's bar).
 take_label = (s: Served) -> str:
     name = if s.item.name.len() > 22: s.item.name[0..21] + "." else: s.item.name
-    if s.amount <= 0.0: "{name} (empty)" else: if s.amount < 0.35: "{name} (the last of it)" else: if s.amount < 0.7: "{name} (half)" else: name
+    # (its plain name: the button's bar shows how much is left)
+    name

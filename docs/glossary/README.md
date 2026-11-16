@@ -17,7 +17,7 @@ on that unmerged branch so far.
 
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
-- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
+- **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -236,14 +236,18 @@ blue discs that stay in every frame are **speed flecks**.
   round the float, bigger the harder it comes down; rough water throws more and taller; a flying
   boat's wingtip float digging in throws hard; a propeller low over rough water whips up mist.
   The spray curtains are the sheet at the float; the bank is what they leave behind.
+  The bank is one continuous wall: each float side's lobes are chained in the order they are
+  thrown, and neighbours are joined by low **bridging lobes** seated on the water, sized from both
+  ends, so there are no gaps while every lobe grows and shrinks on its own. Lobes vary in
+  proportions and turn a little off the run; crowns bulge out of the bigger ones.
 - **Code:** `src/spray_bank.jo` (`step_spray_bank`, `spray_run_puff`, `spray_burst`,
-  `spray_prop_mist`, `spray_bank_instances`); stepped and drawn in `src/splash.jo`
-  `draw_splashes`, on their own mesh (14x22 on the low tier, 20x32 otherwise).
+  `spray_prop_mist`, `spray_lobe`, `spray_bank_instances`); stepped and drawn in `src/splash.jo`
+  `draw_splashes`, on their own mesh (10x16 on the low tier, 20x32 otherwise).
 - **Rules:** presentation only (no forces, no shared particles, no draws on the game's random
   numbers); every puff seated on the water, never hanging in the air; bodies shrink, never fade;
   painted as the film's spray, a cream lit side and a flat aqua-grey shade about 20 L* below it;
-  lower within the chase camera's few spans so the aircraft stays in view. Cap: 120 puffs on the
-  low tier, 170 medium, 220 high.
+  lower within the chase camera's few spans so the aircraft stays in view. Cap: 80 puffs on the
+  low tier (no stacked lobes there, one bridge per gap), 170 medium, 220 high.
 - **Capture:** `AEGEAN_CAPTURE_TAKEOFF=1` (take-off), `=land` (a landing with a bounce),
   `AEGEAN_WATCH="ahead side up [look]"` (a fixed camera to watch a bank hang),
   `AEGEAN_WEATHER=meltemi` (rough water), `AEGEAN_CRAFT=5` (a flying boat).
@@ -320,6 +324,20 @@ On the rivers branch until it lands.
   Over the cut the terrain keeps finer cells further out (`world_tile_canal` in
   `src/world_terrain.jo`) so the cut stays open from the air.
 - **Rules:** player-facing text says canal side, dock or waterfront, never "quay".
+
+### Canal basin
+
+- **Aliases:** the basin, the lagoon, where the arm joins.
+- **Definition:** partway along the escape (stations 44-53), where the mill-water arm joins it, the
+  canal opens into a basin some 120 m across and 200 m long: room to turn, evade and line up on the
+  water between the narrow cuts. Its walls flare out along the wall line (the solids follow it too),
+  with promenades, trees and lamps all round, a stone arch at its entry (44) and exit (53), barges
+  and a launch moored 5 m off its walls and one barge at a buoy out on its water, and riflemen and a
+  machine gun on its far quays and the exit bridge's head.
+- **Code:** `tools/bake_river.py` (`canal_width`, baked into `src/river_data.jo`; `world.bin` and
+  `assets/living-routes.bin` follow it); `src/river_field.jo` (the carve's reach capped at 140 m past
+  a wide basin's wall); `src/canal_geometry.jo` (`canal_line_slab`); `src/canal_traffic.jo`;
+  `src/canal_ground_fire.jo`.
 
 ### Canal crossings
 
@@ -1222,8 +1240,9 @@ On the rivers branch until it lands.
   in a thunderstorm, and gusty under a storm. It acts through the flight model: eddies and
   drafts in the wind it meets (vertical jolts and airspeed swings), and roll, pitch and yaw
   kicks with a fast shudder that knock the aircraft about its path and let it come back,
-  and a slow wander of roll and pitch: left alone in a storm it drifts into a bank and a
-  descent over tens of seconds; held, it gets through.
+  and the storm's push, scaled to each type: left alone it is banked and off its heading
+  within seconds, and with the mouse steering it holds level but is turned off its course
+  (the aim turns with it), so a storm is flown by the instruments, correcting.
 - **Code:** `weather_turbulence`, `weather_turbulent_gust` in `src/weather_scene.jo`;
   `_turbulence_kick` in `src/flight.jo`; `tests/storm_test.jo`.
 
@@ -1590,7 +1609,11 @@ On the rivers branch until it lands.
   walking contact. The stair keeps climbing until the ground inland of its top carries on gently.
   Its parapet holds: a step off the treads onto ground more than 0.6 m below them is refused
   (`stair_parapet_blocks`, also on the island landings' stairs); its foot and top stay open. On a
-  stair the pilot walks at 3.4 m/s (`on_any_stair`).
+  stair the pilot walks at 3.4 m/s (`on_any_stair`). From its top a stepped lane carries on over
+  the hillside to the nearest house's front step (`plan_hill_lane`: a 1.5 m grid search keeping to
+  grades of 0.85 and less, clear of the houses, pulled into straight runs and resampled every 2 m
+  on the ground), drawn and walked as the stair's second run, its parapet only where the ground
+  falls away. An island landing's path already begins at its settlement's square.
 - **Where:** Kryfo Cove and Agios Nikolaos; the island landings below sea cliffs (see Landing
   cliff stair).
 
@@ -2048,7 +2071,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   a day along the roads and sea lanes while `weight × 0.7^hops` stays above 150, and to every
   town on the wireless when big. Small acts (a chat, a table shared or refused, a tip) stay with
   the people there and their town. It all fades with time. Known as keeping to himself, fewer
-  people come over; asked over, they say no, and why. Never a punishment.
+  people come over; asked if he may sit with them, they say no, and why. Never a punishment.
+  What people say of it is short and leaves most unsaid: one detail at most (the storm, the
+  nationality, the place or a name), less from a friend than from a stranger.
 - **Code:** `src/reputation.jo` (`rep_record`, `rep_act`, `rep_view`, `reputation_minute`),
   `src/reputation_talk.jo` (greetings, company, prices, the wireless, the notebook's words),
   `src/reputation_types.jo` (`World.rep`); combat deeds come through `src/deeds.jo`
@@ -2056,11 +2081,13 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Rules:** a person knows of him if they dealt with him or saw a deed, or by the town's word: a
   fixed draw from the seed and their id under the share of the town that has heard. Whoever has
   heard a deed and hasn't met him mentions it once. Company at the hotel and the coffee house,
-  the "Ask … to join you" action, a keeper's bill (up to 6% down, 5% up) and a family's spare room
+  "Mind if I sit?" (asked in talk of someone sat at a terrace table), a keeper's bill (up to 6% down, 5% up) and a family's spare room
   follow it.
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
   a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
-  he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
+  he walks up to someone at a terrace table and asks to sit; `AEGEAN_INVITE=no|yes` fixes the
+  answer's roll, `AEGEAN_REP_CAM` the view's angle); `AEGEAN_LEISURE=rep-join` (liked; they say
+  yes and he sits at their table); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
   `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip (`AEGEAN_SEAT_FRAMES_STEP`
   frames apart, the view turning `AEGEAN_SEAT_FRAMES_TURN` radians a frame, 0 to hold it).
 
@@ -2494,9 +2521,23 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   act of kindness, a gift (`rep_act(.gift)`: warmth for them and a little for their town; a kind
   of its own could be added to `RepKind`); the world also remembers it as a private meeting
   (`emit_event(.met)` with `remember`). A game saved mid-flight comes back without the passenger.
-- **Code:** `src/joyride.jo` (`Joyride`, `RideView`, `ride_step`, `ride_next`, `ride_thanks`);
-  `ride_candidate`, `ride_start`, `ride_tick`, `ride_finish`, `draw_ride_seated` and leisure stage
-  16 (the asking) in `aegean.jo`; `tests/joyride_test.jo`.
+- **Waiting:** stepping ashore with them seated, before they have flown, asks once: "Back in a few
+  minutes" or "Sorry, another day".
+  - **Back in a few minutes:** they wait in the seat (`RideStage.waiting`) up to an hour of the
+    world's time (`RIDE_WAIT_MINUTES`), or until the pilot leaves the island. Within 30 m they
+    say "Still going up?" after 20 minutes and once more after 40. Back aboard, the flight goes
+    on ("There you are! I'd started to wonder.").
+  - **Sorry, another day:** they climb out with a kind word and go home, and are not asked about
+    again for a day.
+  - **Giving up:** they go home. The pilot's name takes a mild mark (`rep_act(.cut_short)`), the
+    notebook has a line, and the next time they pass the pilot they say so ("I waited by your
+    aeroplane an hour! Another day, then."), instead of asking again from scratch.
+- **Code:** `src/joyride.jo` (`Joyride`, `RideView`, `ride_step`, `ride_next`, `ride_thanks`,
+  `ride_wait_begin`, `ride_wait_over`, `ride_wait_remark`, `ride_resume`, `ride_put_off`);
+  `ride_candidate`, `ride_start`, `ride_tick`, `ride_give_up`, `ride_finish`, `draw_ride_seated`,
+  leisure stage 16 (the asking) and 18 (stepping ashore) in `aegean.jo`; `tests/joyride_test.jo`.
+  `AEGEAN_RIDE_WAIT_SKIP=<frame>` moves the world on 25 minutes at that frame, and
+  `AEGEAN_RIDE_TRACE` prints the ride's stage.
 - **Capture:** `AEGEAN_LEISURE=ride-ask|ride-seated|ride-house|ride-thanks` (ride-house with
   `AEGEAN_FLYING`); `AEGEAN_RIDE_FRAMES=<dir>` with `AEGEAN_CAPTURE_TAKEOFF=1` writes the take-off
   clip's frames.
@@ -2538,14 +2579,16 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### A new pilot's welcome
 
 - **Aliases:** the newcomer's guidance, Paolo's welcome, the note by the compass, Hints.
-- **Definition:** how a new game shows the way, from the living world and never with arrows:
+- **Definition:** an opt-in welcome for a new pilot (Options, Accessibility: **Hints for a new
+  pilot**, off by default: the game is found by playing), from the living world and never with
+  arrows:
   - **Paolo,** the home harbour's mechanic, is on the dock at the pilot's right hand as the game
     opens. He is kept there for the first hour by his own day in the living world, so the scene and the
     far simulation agree. A couple of seconds in he says *"You'll be the new pilot. Paolo — I keep the
-    engines here running."* Talking to him adds two answers. **Where's the work?** gives the board,
-    then the soonest-due open job on foot and a flying one, read from the real board. **How does
-    she handle?** gives the throttle and the take-off in a pilot's words. Walk off without a word and
-    he calls once after about 40 s.
+    engines here running."* Walk off without a word and he calls once after about 40 s.
+  - **A mechanic's two answers,** for anyone who asks any mechanic, Hints or not: **Where's the
+    work?** gives the board, then the soonest-due open job on foot and a flying one, read from the
+    real board; **How does she handle?** gives the throttle and the take-off in a pilot's words.
   - **A note by the compass,** in his hand, shows for 8 s the first time aboard: throttle, stick and
     view.
   - **A fisherman** about says once to wait for the float, after the first strike too soon.
@@ -2553,15 +2596,16 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     buttons and axes, or a touch screen's own controls.
 - **Rules:** it begins only with **New game** from the title (never in a scenario, never in a loaded
   game: a world saved before it existed loads with it done). It ends for good with the first job
-  delivered, two minutes in the air, a job taken after asking Paolo, or **Hints** off (Options;
-  which also hides the corner's key hint). It is a few short lines, said once.
+  delivered, two minutes in the air, a job taken after asking Paolo, or the Hints turned off. It
+  is a few short lines, said once. The corner's "H  all the keys" stays for everyone, as do the
+  board's keys and the radio's work line.
 - **Code:** `src/newcomer.jo` (`welcome_finished`, `welcome_jobs`, the words, `throttle_said` and
   the rest by `Hands`); `src/living_life.jo` `welcome_begin`, `welcome_holds` (Paolo's day);
   `World.welcome` (`WelcomeState`, `src/life_types.jo`); `welcome_frame`, `draw_welcome`,
-  `welcome_spot` and the talk panel's two answers in `aegean.jo`; `Options.hints`. Tests
+  `welcome_spot` and the talk panel's two answers in `aegean.jo`; `Options.guidance`. Tests
   `tests/newcomer_test.jo`.
-- **Capture:** `AEGEAN_TITLE=1` and New game (Enter at frame 300), or `AEGEAN_WELCOME=1` for a
-  welcome without the title.
+- **Capture:** `AEGEAN_TITLE=1` and New game (Enter at frame 300) with `Options(guidance=true)` in
+  the save folder's options file, or `AEGEAN_WELCOME=1` for a welcome without the title.
 
 ### Company
 
@@ -2575,8 +2619,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   so (the dialogue's own passing talk: their day, the weather; never designer trivia), and Talk to
   them opens the whole conversation. They go when the pilot gets up, or after a few minutes.
   Fewer come to one known for turning people away, more to good company, and one who has heard of
-  something he did says so first ([The pilot's name](#the-pilots-name)); seated, "Ask … to join
-  you" asks whoever is near, who comes or says why not.
+  something he did says so first ([The pilot's name](#the-pilots-name)). On foot, talking with
+  someone sat at a terrace table, "Mind if I sit?" asks to join them: yes, and he sits across
+  from them at their table (the "guest" sitting, `leisure_sit_with`), they the company already
+  sat; or they say why not.
 - **Code:** `src/company.jo` (`company_plan`, `company_pick`, `company_step`, `company_answer`);
   `company_come`, `company_tick`, `draw_company`, `draw_company_talk` and leisure stage 14 (the
   asking) in `aegean.jo`; `tests/company_test.jo`.
@@ -2591,17 +2637,34 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the bar on a tray (three things a trip), the barkeep across the counter to one on a stool at the
   bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
   the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
-  finished. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
+  finished. Something with some left is never taken while the pilot sits; after it has stood
+  untouched a good while (`ASK_AFTER`, 150 s) the waiter comes and asks "Finished with this?"
+  (Yes, thank you / Not yet, leisure stage 19); "not yet" leaves it alone for longer
+  (`NOT_YET`), and a sip starts the wait again. Holding an item's number or button lifts it: a drink to the lips (the arm bent at
   the elbow, the forearm turned in), the level going down only while it is there; a plate stays
   on the table and the fork goes to the mouth with a bite. Let go: the glass is held at the chest.
   Another item, or Escape, puts it down. Glasses and plates are drawn in two parts, the vessel
   and what is in it, which goes down (a glass's level, a plate's food all round); the hotel's
   china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was. Each
-  thing's button on the table's bar is a bar too, filled as far as there is still of it.
+  thing's button on the table's bar is a bar too, filled as far as there is still of it; its
+  label is the thing's plain name.
+- **Left on the table:** getting up leaves what was served where it stood. Sitting at the same
+  table again before it is cleared finds it there to carry on with. Some while after the pilot
+  has gone (`AEGEAN_LEFT_WAIT`, 40 s by default) a second waiter (`clear_waiter`) walks out, puts
+  the lot on his tray and carries it back.
 - **Seated view:** at a table or on a bar stool (`hotel.stools`, the figure raised `STOOL_LIFT`),
   the camera turns about the pilot as the taxiing orbit does: a drag of either mouse button begun
   off the table's bar, the right stick, a finger; the wheel or a pinch for nearer and farther
-  (1.4 to 7 m), the follow camera keeping it out of the walls (`seat_orbit_step`).
+  (1.4 to 7 m), the follow camera keeping it out of the walls (`seat_orbit_step`). Each drag goes
+  on from where the last one left the view (`ViewTurn`, `view_turn` in `src/ui_state.jo`; a
+  press's first frame is ignored, since a touch screen's pointer jumps there). On a touch screen
+  the seated view has a pad mode of its own (4): fingers on the scene turn and pinch, and only the
+  top corner's buttons show. Getting up and sitting again starts from the usual view. A touch
+  screen never keeps the pointer locked (the browser would grant it on a tap): its first finger is
+  also the mouse, and a locked mouse turned the view, on foot or in the air, by that finger's jump
+  from where one touch lifted to where the next landed. The hotel
+  room's "look out of the window" turns the same way, within a window's reach
+  (`stay_look_step`).
 - **Code:** `src/table_service.jo` (`Waiter`, `waiter_step`, `Taking`, `take_step`, `take_label`);
   `Served.amount`, `held`, `empty_for` and `LeisureState.coming` in `src/leisure.jo`;
   `build_serve_parts`, `draw_serving` in `src/bar_scene.jo`; `service_step`, `draw_service`,
@@ -2609,7 +2672,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
-- **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties`.
+- **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
+  (the last five print a `TABLE` trace).
 
 ### Bill of fare
 
@@ -2888,8 +2952,45 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Definition:** each station's half-hour schedule: five minutes of news, five of editorial,
   advertisement or quiz, then music; it runs on the living world's clock. There are six stations,
-  including the Aegean Maritime Service (Morse bulletins) and The Night Gull (19:00 to 03:00).
+  including the Aegean Maritime Service (spoken weather, Morse shipping notices) and The Night Gull
+  (19:00 to 03:00). Spoken bulletins repeat on this clock.
 - **Code:** `src/radio.jo` (`radio_stations`, `radio_tune`, `radio_receive`); `docs/radio.md`.
+
+### Announcer
+
+- **Aliases:** the radio voice, the newsreader, the WORLD voice.
+- **Definition:** the synthesized voice that reads radio bulletins: a classical vocoder voice
+  (WORLD-style source/filter: pulses and noise mixed by band aperiodicity, shaped by a measured
+  spectral envelope), driven by a rule-based text stage and a prosody model measured from a
+  newsreel-style narrator. One voice; each station gives it its own pitch, tempo and diction.
+- **Code:** `src/voice_text.jo` (`voice_load`, `voice_tokens`, `voice_pronounce`, `voice_plan`),
+  `src/voice_synth.jo` (`make_voice_synth`, `voice_start`, `voice_render`), `src/voice_model.jo`
+  (generated prosody numbers); in the radio `src/radio_synth.jo radio_speech_program` and
+  `src/radio.jo radio_spoken`, `radio_voice_style`. Tools: `tools/voice_world/`, `tools/voicelab.jo`.
+- **Rules:** nothing recorded or AI-generated is shipped, only averaged spectral and prosodic
+  numbers with their provenance; reference narration stays in scratch. The stream must be
+  identical however it is cut into blocks (`tests/voice_test.jo`).
+
+### Diphone trajectory
+
+- **Aliases:** diphone unit, unit.
+- **Definition:** the announcer's measured spectral path from the middle of one phone to the middle
+  of the next (12 points of mel-cepstrum, band aperiodicity and voicing), averaged over the
+  narrator's tokens of that pair. Consecutive trajectories meet at phone centres, where the step
+  is smoothed; a missing pair borrows each half from its nearest observed neighbour.
+- **Code:** `tools/voice_world/build_units.py` (made), the announcer data file named by
+  `AEGEAN_VOICE_DATA` (outside the repository until a final voice is chosen),
+  `src/voice_text.jo voice_half`, `voice_frames` (used).
+
+### Broadcast colour
+
+- **Aliases:** studio colour, the carbon mic.
+- **Definition:** the period sound put on the announcer before the station and the receiver: a
+  small studio (reflections, tail, room tone, mains hum), a carbon microphone (resonant narrow
+  band, granule distortion, signal-dependent hiss) and transmitter compression and limiting.
+- **Code:** `src/radio_studio.jo` (`Studio`, `studio_sample`, `studio_block`); amount from
+  `VoiceStyle.colour`, applied in `src/radio_synth.jo radio_render`.
+- **Rules:** amount 0 is exactly transparent; deterministic, own noise stream (`tests/voice_test.jo`).
 
 ### Ambience
 
@@ -2897,23 +2998,34 @@ No image: the tiers differ in budgets more than in any single view.
   cafés, music, shore, nature, animals, ships and weather.
 - **Code:** `src/ambience.jo` (scheduler and mixer), `src/ambience_synth.jo` (instruments),
   `src/ambience_scene.jo`; `docs/ambience.md`.
-- **Rules:** sounds are synthesized, never recorded; ambient murmurs are never dialogue.
+- **Rules:** sounds are synthesized, except the recorded crowd and river beds (`docs/CREDITS.md`); ambient murmurs are never dialogue.
 
 ### Crowd bed
 
-- **Aliases:** the harbour murmur, the cafe murmur.
-- **Definition:** the looped sound of a crowd under the harbour and cafe ambience: three talkers
-  near and five across the square speaking invented syllables (consonants and vowels, never
-  words) in phrases whose pitch falls, conversations swelling and fading, the many beyond as a
-  breathing noise, low air under it, people walking past, a short outdoor reverb; stereo, the
-  ears partly alike. The cafe's has one more talker near, a smaller room and glasses and cups.
-  Its parameters are fitted to CC0 and public-domain recordings of real squares, promenades, a
-  wharf and cafes (`docs/crowd-reference.md`); nothing recorded ships.
-- **Code:** `src/ambience_crowd.jo` (`CrowdFit`, `crowd_bed`); `tools/crowdlab.jo`.
-- **Rules:** a 7 s loop with no loudness rhythm shorter than it and no held pure pitch; louder
-  single voices are events from real people, never baked into the loop (`tests/ambience.jo`).
-  The first version, four gated pure hums in a 2.4 s loop, was heard as a little repeating tune
-  (A F# A A F#) on the quay.
+- **Aliases:** the harbour murmur, the cafe murmur, the village chatter; recorded beds.
+- **Definition:** the looped sound of people talking under the harbour, square and cafe ambience:
+  recordings edited into seamless 30 s loops, streamed as they play. The harbour bed (a busy quay,
+  square or market), the village bed (a few people; an open terrace) and the bar bed (a cafe or bar
+  room), with the river bed beside them. Sources and licences: `docs/CREDITS.md`.
+- **Code:** `src/ambience_beds.jo`, `assets/ambience/`; `src/ambience_scene.jo` (`ambience_talk`:
+  the village bed for one to three people, crossfading into the harbour bed between four and fourteen).
+- **Rules:** only the edited beds named in `tools/check_tracked_files.py` `ALLOWED_AUDIO` may be
+  committed, never a raw recording. Louder single voices are events from real people, never baked
+  in. Two synthesized crowds came first: four gated pure hums, heard as a little tune on the quay,
+  then layered formant talkers, heard as "awful" beside these recordings and retired.
+
+### River sound
+
+- **Definition:** flowing water heard from the nearest bank of a river (a canal at a third of
+  the level, louder for a wider river, to about 160 m), from the recorded river bed.
+- **Code:** `src/ambience_scene.jo` (`ambience_river`), `src/ambience_beds.jo`.
+
+### Birdsong
+
+- **Definition:** single phrases of birds in the trees and fields about the listener by day (not
+  in rain or strong wind): four synthesized birds (a trill, a warble, chips, a whistled phrase),
+  notes of 10-60 ms at 3-8 kHz sweeping fast, each tree its own singer at uneven moments.
+- **Code:** `src/ambience_synth.jo` (`ambience_bird_note`), `src/ambience_scene.jo`.
 
 ### Uneven events
 
@@ -3409,6 +3521,9 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | (the pause-menu panels) | `aircraft`, `plane`, `paint`, `scenarios`, `flight`, `flight-levers`, `tweaks`, `controls` pause at frame 60, once the camera is placed: paused from the first frame the world was drawn from an eye never put anywhere (terrain floating over the sea). Script `SLOPPY_INPUT` presses after frame 60 |
 | `AEGEAN_SWITCH=id` | after the start, change to that aircraft (Craft ID) as the pause menu's Aircraft page does |
 | `AEGEAN_HOUR=h` | time of day (also overrides a scenario's own start hour, for captures) |
+| `AEGEAN_RADIO=kc` | the cockpit radio on and tuned to that frequency from the start (620 Archipelago Radio, 1100 Blue Lantern, 1260 the Maritime Service reach the home harbour by day; 780 Voice of Kalyra and 940 Orenthia National do not; heard aboard, with `AEGEAN_AUDIO_CAPTURE` for its sound) |
+| `AEGEAN_RADIO_VOLUME=0..1` | the radio's volume knob set there from the start (0.5 the usual level, 1 the top, 20 dB louder; kept with the options; captures) |
+| `AEGEAN_CAPTURE_MINUTES=m` | advance the living world m minutes before the start (the radio's programme clock follows it: news at each half hour) |
 | `AEGEAN_WEATHER=<name>` | weather fixture (`AEGEAN_WEATHER_CENTER='x z'` for storms) |
 | `AEGEAN_CAPTURE=<recipe>` | fixed cameras from `tools/judge_scene.jo`: `home`, `dock`, `flight`, `weather-above`, `weather-below`, `weather-storm`, `weather-fog`, `cliff`, `mainland`, `place:<kind>:air|ground|old`, `port:<id>:air|warehouse|board` |
 | `AEGEAN_VIEW='x y z yaw pitch hour'` | free camera |
