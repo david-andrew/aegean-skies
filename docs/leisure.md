@@ -143,6 +143,22 @@ funny or useful (time passes, people are met, the plane is looked after).
    under the low beam, and there is coffee in the morning before you go. They take nothing for it.
    The notebook remembers the night. See "A night under a roof" in the glossary.
 
+## Built (round ten)
+
+22. **A pleasure flight** with someone from the town. Now and then, as the pilot comes to the
+   aircraft at the dock, someone near asks to be taken up; or the pilot offers (K). They walk
+   over and sit in the second seat, drawn there, and talk as it goes: nerves on the water, the
+   take-off run, what they see below, their own house pointed out as the town passes under them,
+   another town by its name, the landing. Back at a dock they thank the pilot and go. There is no
+   fare. The world remembers it as a private meeting. See "Pleasure flight" in the glossary.
+23. **The rooms lived in.** The hotel's room and the families' houses have pictures and a mirror,
+   curtains, a wardrobe, jars on a shelf, garlic and herbs hung from the beam, a rug and a kilim,
+   and the pilot's bag. A family's trade shows in its house: nets, floats and an oar for those who
+   live by the sea; oil jars, sacks and a hoe for the land; a workbench and its tools for a
+   craftsman; a desk and books for those who read; a sewing table otherwise. The rooms are lit as
+   rooms are: the lamp's warm pool of an evening with dark corners beyond it, the window's cool
+   light by day, moonlight while one sleeps.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
@@ -179,6 +195,7 @@ funny or useful (time passes, people are met, the plane is looked after).
 - Stargazing: **L** at night on a hilltop or the end of the hotel's pier; Q, E and the arrows (or a
   finger) look round; **T** lets an hour pass; **L** gets up. On a phone both are buttons.
 - Options: "Musical notes rising from music played nearby" (on).
+- At one's moored aircraft with someone near: **K** offers them a flight (a seat to spare).
 
 ## Later (worth adding)
 

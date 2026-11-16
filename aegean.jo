@@ -184,6 +184,9 @@ use 'src/company.jo'
 use 'src/reputation.jo'
 use 'src/reputation_talk.jo'
 use 'src/stay.jo'
+use 'src/joyride.jo'
+from 'src/living_events.jo' import emit_event
+from 'src/living_news.jo' import remember
 from 'src/living_life_seed.jo' import choose_life_venue
 use 'src/stay_scene.jo'
 use 'src/tavli.jo'
@@ -514,6 +517,10 @@ leisure_spent = 0               # (this sitting: for the notebook when one gets 
 leisure_had: str[]
 served_look_until = -1.0        # (a look at the table while what was ordered arrives)
 served_pending = false
+ride = Joyride()                 # (a pleasure flight with someone from the town: src/joyride.jo)
+ride_fig: Figure? = none
+ride_rolled = false              # (whether anyone asks: rolled once each time the pilot comes to the aircraft)
+ride_asker = -1                  # (the folk asking, while they ask)
 stay = Stay()                    # (a night under a roof: the hotel's room, or a family's: src/stay.jo)
 stay_rooms = build_stay_rooms()
 stay_host_fig: Figure? = none
@@ -521,6 +528,7 @@ stay_figs: Figure[] = []         # (the household at the table)
 company = Company()              # (someone come to sit with the pilot, now and then: src/company.jo)
 company_line = ""                # (what they said last, and until when it shows)
 company_line_until = -1.0
+company_remarks = 0              # (remarks made at the table so far: the weather and their work, turn about)
 invite_who = -1                  # (someone asked over who said no, what they said, and until when)
 invite_line = ""
 invite_until = -1.0
@@ -613,7 +621,7 @@ struct TimeSkip:
 skip = TimeSkip()
 
 # (the menu's search line has the keyboard: letters don't also work the game's keys)
-leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 0 or leisure_ui == 15 or leisure_ui == 13 or leisure_ui == 14 or leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10 or leisure_ui == 12)
+leisure_typing = () -> bool: ui == .leisure and (leisure_ui == 0 or leisure_ui == 15 or leisure_ui == 16 or leisure_ui == 13 or leisure_ui == 14 or leisure_ui == 1 or leisure_ui == 7 or leisure_ui == 9 or leisure_ui == 10 or leisure_ui == 12)
 
 leisure_place = (key: str) -> LeisurePlace: if key == "coffee": coffee_place else: hotel_place
 leisure_items = (key: str) -> MenuItem[]: if key == "coffee": coffee_menu else: hotel_menu
@@ -642,6 +650,8 @@ leisure_sit = (key: str):
     if let at = env("AEGEAN_COMPANY"): company.due = t + (to_float(at) ?? 2.0)
     leisure.sitting = key; leisure.served = []; leisure.coming = []
     waiter = Waiter(); taking = Taking()
+    global invite_refused
+    invite_refused = []
     leisure_at = key; leisure_spent = 0; leisure_had = []
     ui = .leisure; leisure_ui = 0
     mouse_lock(false)
@@ -1232,6 +1242,139 @@ paint_support_for = (kind: int) -> PaintSupport:
         paint_support_cache.kind = kind
     paint_support_cache
 
+# ---------------- a pleasure flight with someone from the town ----------------
+
+# Who could be taken up: the nearest grown townsperson within reach of the aircraft at the dock,
+# when it is moored, has a seat to spare, and nobody is going up already.
+ride_candidate = (reach: f64) -> int:
+    if ride.stage != .none or me.mode != .walking or not pc.state.moored or not near_own_craft(): return -1
+    if lt.AIRFRAMES[int(pc.kind)].seats < 1: return -1
+    best = -1; bd = reach
+    loop k in 0..folks.len():
+        f = folks[k]
+        if not f.shown or f.performing or f.cycling or f.carrying: continue
+        p = living_world.people[f.person]
+        if p.age < 12 or f.person == living_world.player: continue
+        d = f64(length(f.pos - me.pos))
+        if d < bd: best = k; bd = d
+    best
+
+ride_start = (k: int):
+    global ride, ride_fig
+    f = folks[k]
+    p = living_world.people[f.person]
+    home = choose_life_venue(living_world, p.home, .home, f.person)
+    # (the town they set off from: where the pilot is, or (taken up mid-air, in a capture) theirs)
+    here = living_world.people[living_world.player].place
+    origin = if here >= 0: here else: p.home
+    ride = ride_begin(f.person, k, p.traits.boldness < 450, f.pos, if home != none: home!.pos else: vec3(0, 0, 0), home != none and p.home == origin)
+    ride.origin = origin
+    ride_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+    say_toast("{split(p.name, " ")[0]} climbs into the second seat.")
+    # (a short notice: gone by the time she's seated, not carried into the air)
+    global toast_until
+    toast_until = t + 3.0
+
+# where the second seat is, in the aircraft's frame (the second cockpit, or just behind the pilot)
+ride_seat = (m: CraftModel) -> vec3: if m.cockpits.len() >= 2: m.cockpits[1] else: m.cockpit + vec3(0, -0.05, 0.95)
+
+ride_height = () -> f64:
+    p = pc.state.position
+    f64(p.y) - max(0.0, surface_height(f64(p.x), f64(p.z)))
+
+ride_tick = (dt: f64):
+    global ride, ride_rolled, ride_asker, ui, leisure_ui
+    # (now and then, as the pilot comes to the aircraft, someone near asks to be taken up)
+    near = me.mode == .walking and near_own_craft() and pc.state.moored
+    if not near: ride_rolled = false
+    else if not ride_rolled and ride.stage == .none and ui == .none:
+        ride_rolled = true
+        k = ride_candidate(15.0)
+        if k >= 0 and ride_asks(random(0.0, 1.0)):
+            ride_asker = k; ui = .leisure; leisure_ui = 16
+            _ = mouse_lock(false)
+    if ride.stage == .none: return
+    if ride.stage == .walking:
+        # (over to the aircraft's side, then up into the seat)
+        goal = pc.state.position + quat_rotate(pc.state.orientation, vec3(1.6, 0, 0.6))
+        d = vec3(goal.x - ride.pos.x, 0, goal.z - ride.pos.z)
+        l = f64(length(d))
+        if l < 0.3 or l > 40.0: ride.stage = .seated; ride.next_line = t + 1.0
+        else:
+            step = min(l, 1.3 * dt)
+            ride.pos = ride.pos + d / f32(l) * f32(step)
+            ride.pos = vec3(ride.pos.x, f32(walk_height(towns, f64(ride.pos.x), f64(ride.pos.z))), ride.pos.z)
+            ride.yaw = atan2(f64(d.x), f64(d.z)); ride.phase += dt * 6.0
+        return
+    if ride.stage == .thanked:
+        if t > ride.line_until: ride_finish()
+        return
+    # (the pilot back ashore without having flown: another time)
+    if me.mode == .walking and (ride.stage == .seated or ride.stage == .landed):
+        ride.flew = ride.flew or ride.stage == .landed
+        _ = ride_thank(ride, t)
+        return
+    st = pc.state
+    v = RideView(moored = st.moored, on_water = st.on_water, speed = f64(length(st.velocity)), height = ride_height(), climb = f64(st.velocity.y), wrecked = st.crashed or st.capsized, throttle = pc.throttle)
+    home_town = ride.origin
+    loop k in 0..towns.len():
+        if f64(length(vec2(towns[k].center.x - st.position.x, towns[k].center.z - st.position.z))) < 700.0: v.over_town = true
+    # (their house in view and near: within a kilometre and a half and ahead, or just below)
+    to_home = vec2(ride.home.x - st.position.x, ride.home.z - st.position.z)
+    home_d = f64(length(to_home))
+    fwd = vec2(st.velocity.x, st.velocity.z)
+    ahead = f64(length(fwd)) > 1.0 and home_d > 1.0 and f64(dot(to_home / f32(home_d), normalize(fwd))) > 0.5
+    v.house_near = ride.has_home and v.height < 900.0 and (home_d < 350.0 or (home_d < 1500.0 and ahead))
+    loop p in 0..living_world.harbors.len():
+        if p == home_town: continue
+        if f64(length(vec2(living_world.harbors[p].center.x - st.position.x, living_world.harbors[p].center.z - st.position.z))) < 2500.0: v.place_seen = living.place_name(living_world, p)
+    _ = ride_step(ride, v, t)
+    if ride.stage == .landed and st.moored: _ = ride_thank(ride, t)
+
+# the ride over: they climb out and are back in the town's routine; the world remembers it
+ride_finish = ():
+    global ride
+    if ride.flew and ride.person >= 0:
+        # (the pilot's name: a flight given is a small act of kindness, as a gift is (src/reputation.jo
+        # rep_act; it warms them and a little of their town); and a private meeting they remember)
+        rep_act(living_world, .gift, ride.person)
+        place = living_world.people[living_world.player].place
+        if place >= 0:
+            ev = emit_event(living_world, .met, place, ride.person, living_world.player, lt.Reason(purpose = .passenger, actor = ride.person, counterparty = living_world.player, origin = place, destination = place), private = true)
+            if ev in living_world.events: remember(living_world, ride.person, living_world.player, living_world.events[ev])
+        log_note(notebook, "Took {split(living_world.people[ride.person].name, " ")[0]} up for a flight{if ride.top > 300.0: " round the island" else: ""}.", clock_text(living_world, living_world.minute))
+    ride = Joyride()
+
+hide_ride_folk = ():
+    global folks
+    if ride.stage != .none and ride.who >= 0 and ride.who < folks.len(): folks[ride.who].shown = false
+
+draw_ride_walking = (L: Light):
+    if ride.stage != .walking: return
+    if let f = ride_fig: draw_figure(f, ride.pos, ride.yaw, ride.phase, 0.8, L, t)
+
+draw_ride_seated = (m: CraftModel, at: mat4, L: Light):
+    if ride.stage == .none or ride.stage == .walking: return
+    if let f = ride_fig:
+        seat = ride_seat(m)
+        # (an arm out at their house; both hands on the cockpit's edge on the take-off run)
+        arms = if t < ride.pointing_until: vec2(-9, 2.6) else: if ride.stage == .seated and pc.throttle > 0.3: vec2(1.0, 1.0) else: vec2(-9, -9)
+        draw_figure_at(f, at * translation(seat - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true, offset = world_residual(craft_point(pc.state)), arms = arms)
+
+draw_ride_talk = ():
+    if ride.stage == .none or ride.person < 0 or ride.line == "" or t > ride.line_until: return
+    name = split(living_world.people[ride.person].name, " ")[0]
+    set_font(fonts.ui)
+    said = "{name}:  {ride.line}"
+    size = min(20.0, 20.0 * (f64(screen_width()) - 60.0) / max(ptext_width(said, 20), 1.0))
+    w = ptext_width(said, size) + 36.0
+    x = (f64(screen_width()) - w) * 0.5
+    # (below the compass, and below the touch buttons along the top where they reach)
+    y = max(64.0, pad_top_clear(x, x + w) + 6.0)
+    rect_rounded(x, y, w, 40, 8, rgba(0.95, 0.91, 0.8, 0.94))
+    ptext(said, vec2(f32(x + 18), f32(y + (40.0 - size) * 0.45)), size, rgba(0.25, 0.15, 0.07, 1))
+    set_font()
+
 # ---------------- a night under a roof ----------------
 
 # The hotel's room upstairs, behind the French window at the balcony's x = 4 (the hotel's frame).
@@ -1265,6 +1408,7 @@ stay_begin_family = (host: int) -> bool:
     # (the host and the children as the town draws them: a grown fisherman stood in for each child)
     stay_host_fig = person_figure(p)
     stay_figs = [loop id in stay.household: life_view.child_figure(_resident(id))]
+    stay_family_rooms(stay_rooms, trade_of(int(p.occupation)))
     clock = lt.local_minute(w.minute)
     if stay_supper_time(clock):
         stay.stage = .supper; stay.had_supper = true; stay.next_line = t + 2.0
@@ -1355,7 +1499,7 @@ stay_tick = ():
     speaker = if morning: -1 else: stay_next_speaker(stay, stay.household.len())
     # (the host's own talk from the dialogue now and then, their day or the weather; between,
     # the ordinary words of the table)
-    line = if speaker == -1 and stay.lines_said % 4 == 1 and stay.host >= 0: passing_line(living_world, stay.host) else: ""
+    line = if speaker == -1 and stay.lines_said % 4 == 1 and stay.host >= 0: table_remark(living_world, stay.host, stay.lines_said / 4) else: ""
     if line == "": line = stay_line(stay, speaker, morning)
     stay_said(stay, speaker, line, t)
 
@@ -1367,7 +1511,7 @@ stay_eye = () -> vec3:
     stay_point(FAMILY_EYE)
 stay_look = () -> vec3:
     if stay.kind == .hotel:
-        if stay.stage == .window: return stay_point(vec3(0.35, 1.25, 8.0))
+        if stay.stage == .window: return stay_point(vec3(-0.25, 1.2, 8.0))
         return stay_point(HOTEL_LOOK)
     if stay.stage == .asleep: return stay_point(FAMILY_BED_LOOK)
     stay_point(FAMILY_LOOK)
@@ -1389,17 +1533,23 @@ stay_light = (L: Light) -> Light:
 
 draw_stay = (L: Light):
     clear_world_depth()
-    Ls = stay_light(L)
-    m = stay.frame
     hotel_stay = stay.kind == .hotel
-    draw(obj_sh, if hotel_stay: stay_rooms.hotel else: stay_rooms.family, obj_params(Ls, t, m))
-    night = smoothstep(-0.05, 0.25, f64(normalize(L.sun_dir).y)) < 0.5
+    day = smoothstep(-0.05, 0.25, f64(normalize(L.sun_dir).y))
+    night = day < 0.5
+    # (the room baked three ways: by day, the window's light; of an evening, the lamp's pool;
+    # asleep, the lamp out; the day's dimmed toward dusk)
+    mode = if stay.stage == .asleep and night: 2 else: if night: 1 else: 0
+    rooms = if hotel_stay: stay_rooms.hotel else: stay_rooms.family
+    m = stay.frame
+    if rooms.len() == 3:
+        exposure = if mode == 0: 0.55 + 0.45 * day else: 1.0
+        draw(obj_sh, rooms[mode], obj_params(stay_room_light(L, exposure), t, m))
+    Ls = stay_light(L)
     if night and stay.stage != .asleep: draw(obj_sh, if hotel_stay: stay_rooms.hotel_lamp else: stay_rooms.lamp, obj_params(Ls, t, m))
-    if not hotel_stay and not night: draw(obj_sh, stay_rooms.slits, obj_params(Ls, t, m))
     me_f = player_figure()
     if hotel_stay:
         if stay.stage == .asleep: draw_figure(me_f, stay_point(vec3(HOTEL_BED.x, HOTEL_BED.y - 0.12, HOTEL_BED.z + 0.15)), stay_yaw(0.0), 0.0, 0.0, Ls, t, posture = 6)
-        else if stay.stage == .window: draw_figure(me_f, stay_point(HOTEL_AT_WINDOW), stay_yaw(0.0), 0.0, 0.0, Ls, t)
+        else if stay.stage == .window: draw_figure(me_f, stay_point(HOTEL_AT_WINDOW), stay_yaw(-0.35), 0.0, 0.0, Ls, t)
         else: draw_figure(me_f, stay_point(HOTEL_CHAIR.at), stay_yaw(HOTEL_CHAIR.yaw), 0.0, 0.0, Ls, t, posture = 1)
         return
     # (the family's house: the pilot at the guest's place or in bed; the host across the table; at
@@ -1523,12 +1673,15 @@ _leisure_invite = (k: int):
         invite_who = -1
     else:
         invite_who = k; invite_line = said; invite_until = t + 8.0
+        global invite_refused
+        if not (p in invite_refused): invite_refused.push(p)
 
+invite_refused: int[] = []        # (those who said no to joining the pilot this sitting: not asked again)
 rep_invite_due = -1.0             # (capture: the staged invitation, and to whom)
 rep_invite_k = -1
 
 company_tick = (dt: f64):
-    global company, company_line, company_line_until, leisure_ui, rep_invite_due
+    global company, company_line, company_line_until, leisure_ui, rep_invite_due, company_remarks
     if rep_invite_due >= 0.0 and t >= rep_invite_due and leisure.sitting != "":
         rep_invite_due = -1.0
         _leisure_invite(rep_invite_k)
@@ -1553,7 +1706,9 @@ company_tick = (dt: f64):
         global company_greeted
         line = if not company_greeted and rep_view(living_world, company.person).known: living.talk(living_world, company.person, .greeting, living_world.player).text else: ""
         company_greeted = true
-        if line == "": line = passing_line(living_world, company.person)
+        if line == "":
+            company_remarks += 1
+            line = table_remark(living_world, company.person, company_remarks)
         if env("AEGEAN_COMPANY") != none: print("COMPANY says {living_world.people[company.person].name}: {line}")
         if line != "":
             company_line = line; company_line_until = t + 7.0
@@ -2325,7 +2480,7 @@ leisure_panel = ():
             k_talk = if company.stage == .sitting and company.who >= 0 and company.who < folks.len(): company.who else: nearest_folk(folks, me.pos, 7.0)
             if k_talk >= 0:
                 actions.push("Talk to {split(w.people[folks[k_talk].person].name, " ")[0]}"); letters.push("K")
-                if company.stage == .none and not tavli_active():
+                if company.stage == .none and not tavli_active() and not (folks[k_talk].person in invite_refused):
                     actions.push("Ask {split(w.people[folks[k_talk].person].name, " ")[0]} to join you"); letters.push("J")
             actions.push("Get up"); letters.push("Esc")
             things = [loop s in leisure.served: take_label(s)]
@@ -2362,7 +2517,8 @@ leisure_panel = ():
                 leisure_ui = 0
                 return
             name = living_world.people[company.person].name
-            r = choice_panel(fonts, name, "at your table", "“May I join you?”", ["Please, sit down", "I'd rather sit alone"])
+            # (what they ask is in their speech bubble; the panel holds the answers)
+            r = choice_panel(fonts, name, "at your table", "", ["Please, sit down", "I'd rather sit alone"])
             if r.choice == 0:
                 rep_act(living_world, .kept_company, company.person)
                 company_answer(company, true, t); leisure_ui = 0
@@ -2437,6 +2593,20 @@ leisure_panel = ():
                     leisure_skip(rest_minutes(w, 420), "Asleep in the spare room at {split(name, " ")[0]}'s")
             else if r.choice == 1 or r.closed: ui = .none
         15: stay_frame()
+        16:
+            # (someone from the town, at the aircraft, asking to be taken up)
+            global ride_asker
+            if ride_asker < 0 or ride_asker >= folks.len() or ride.stage != .none:
+                ui = .none; leisure_ui = 0
+                return
+            pp = w.people[folks[ride_asker].person]
+            r = choice_panel(fonts, pp.name, "at your {CRAFT_NAMES[int(pc.kind)]}", "“{ride_ask_line(pp.traits.boldness < 450)}”", ["Climb in, then", "Another day"])
+            if r.choice == 0:
+                ui = .none; leisure_ui = 0
+                ride_start(ride_asker)
+            else if r.choice == 1 or r.closed:
+                ui = .none; leisure_ui = 0
+            if r.choice >= 0 or r.closed: ride_asker = -1
         6: tavli_choice_frame()
         7: tavli_frame()
         8: band_request_frame()
@@ -2499,6 +2669,56 @@ leisure_capture_step = ():
     if stage == "bill-coffee":
         leisure_sit("coffee")
         leisure_open_menu("coffee")
+    if stage.starts_with("ride-"):
+        # (a pleasure flight: someone asking at the aircraft; seated on the water at the dock; in
+        # the air (with AEGEAN_FLYING or AEGEAN_CAPTURE_TAKEOFF); their house below; landed back)
+        nearest = -1; nd = 1e9
+        loop k in 0..folks.len():
+            f = folks[k]
+            if not f.shown or f.performing or living_world.people[f.person].age < 16: continue
+            d = f64(length(f.pos - pc.state.position))
+            if d < nd: nearest = k; nd = d
+        print("RIDE with {if nearest >= 0: living_world.people[folks[nearest].person].name else: ""} {nd:.0} m")
+        if nearest >= 0:
+            if stage == "ride-ask":
+                if me.mode == .aboard: step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
+                me.mode = .walking
+                global ride_asker, ride_rolled
+                ride_asker = nearest; ride_rolled = true; ui = .leisure; leisure_ui = 16
+                # (facing the aircraft, the camera behind and above: the pilot, the asker and the Gull)
+                to = pc.state.position - me.pos
+                me.yaw = atan2(f64(to.x), f64(to.z))
+                follow.yaw = me.yaw + PI + 0.5; follow.distance = 7.0; follow.pitch = 0.35
+            else:
+                ride_start(nearest)
+                global ride
+                ride.stage = .seated; ride.next_line = t + 0.5
+                if stage == "ride-air" or stage == "ride-house":
+                    ride.stage = .flying; ride.flew = true; ride.said = ["aboard", "throttle", "run", "up"]
+                if stage == "ride-house":
+                    # (flying in toward their house from 1.4 km off: the line comes of itself
+                    # once it is near and ahead)
+                    ride.said = ["aboard", "throttle", "run", "up"]
+                    if ride.has_home:
+                        hf = normalize(vec3(ride.home.x - pc.state.position.x, 0, ride.home.z - pc.state.position.z) + vec3(0.0001, 0, 0))
+                        h = atan2(f64(hf.x), -f64(hf.z))
+                        start = ride.home - hf * 1400.0
+                        # (at AEGEAN_FLYING's own height and speed, turned toward the house)
+                        spd = f64(length(pc.state.velocity))
+                        alt = max(f64(pc.state.position.y), 160.0)
+                        pc.state.position = vec3(start.x, f32(alt), start.z)
+                        pc.state.velocity = heading_vector(h) * f32(spd)
+                        pc.state.orientation = quat_euler(0, -h, 0)
+                        pc.aim_heading = h; pc.placed = false
+                    print("RIDE house {ride.has_home} at {ride.home}")
+                if stage == "ride-air" or stage == "ride-house":
+                    # (boarded in the air for the capture: no boarding notice up there)
+                    global toast_until
+                    toast_until = 0.0
+                if stage == "ride-thanks":
+                    ride.flew = true; ride.top = 620.0
+                    _ = ride_thank(ride, t); ride.line_until = 1e9
+                if stage != "ride-thanks": me.mode = .aboard
     if stage == "rep-remark" or stage == "rep-remark-strait" or stage == "rep-decline":
         # (the pilot's name, staged: src/reputation.jo. rep-remark: a Kalyran pulled out of a
         # storm sea off Neravessa, talked of in Porto Vecchio for days; at the bar, someone who has
@@ -2589,7 +2809,7 @@ leisure_capture_step = ():
                 company_tick(0.05)
             if stage == "company-sit": company_answer(company, true, t)
             if company.stage == .sitting and company.talks:
-                company_line = passing_line(living_world, company.person); company_line_until = 1e9
+                company_line = table_remark(living_world, company.person, 0); company_line_until = 1e9
             if stage == "company-ask": leisure_ui = 14
             # (the camera to the side, both in view)
             follow.yaw = me.yaw + PI + (if stage == "company-bar": -1.0 else: 1.1); follow.distance = 3.6; follow.pitch = 0.32
@@ -6723,6 +6943,7 @@ offer_key_name = (k: Key) -> str:
         .r: "R"
         .g: "G"
         .t: "T"
+        .k: "K"
         .l: "L"
         .x: "X"
         .b: "B"
@@ -6786,6 +7007,8 @@ walk_offers = () -> Offer[]:
     if race >= 0: offer_add(o, "race", offer_words(race_offer_text(air_events, living_world, race)))
     offer_add(o, "cat", offer_words(cat_prompt_here()))
     fish_offers(o)
+    k_ride = ride_candidate(10.0)
+    if not held and not busy and k_ride >= 0: offer_add(o, "ride-offer", "offer {split(living_world.people[folks[k_ride].person].name, " ")[0]} a flight", .k)
     if not held and not busy and swim_here(): offer_add(o, "swim", "go for a swim", .g)
     if not held and not busy and stargaze_here(): offer_add(o, "gaze", "lie back and look at the stars", .l)
     if not held and not busy and not near_own_craft() and pc.state.moored:
@@ -6946,6 +7169,7 @@ update_frame = (dt: f64, saves: bool = true):
     let dt = frame_dt(if stress_frame_dt>0:stress_frame_dt else:dt)
     t += dt
     stay_tick()
+    ride_tick(dt)
     service_step(dt)
     company_tick(dt)
     music_cues_step()
@@ -7172,6 +7396,9 @@ update_frame = (dt: f64, saves: bool = true):
               if act == "cat" and not cat_busy(cat_scene):
                   me.yaw = cat_begin(cat_scene, cat_here(), cat_prompt_here().starts_with("F  give"), me.pos)
               if act == "launch-out": start_launch(true)
+              if act == "ride-offer":
+                  k = ride_candidate(10.0)
+                  if k >= 0: ride_start(k)
               if act == "aboard":
                   me.mode = .aboard
                   mouse_lock(true)
@@ -7853,8 +8080,10 @@ draw_world = (L: Light):
             draw_craft_gear(cm, L, t, at)
         Lw = leisure_light(L, hotel, coffee.seat)
         hide_company_folk()
+        hide_ride_folk()
         draw_folk(folks, Lw, t, band.kit)
         draw_company(Lw)
+        draw_ride_walking(Lw)
         draw_leisure(Lw)
         draw_cats(cat_scene, L, t)
         zone("life");life_view.draw_life(living_world,life_meshes,L,t);zone_end()
@@ -7906,6 +8135,7 @@ draw_world = (L: Light):
             if ci>=0:draw_player_hit_marks(combat_visual,battle.actors[ci],at,L,t,me.mode==.aboard and pc.cockpit_view)
             if me.mode==.aboard and pc.cockpit_view:draw_cockpit(cockpit_model,pm,pc.spec,pc.state,at,L,t,pc.last,bullet_scale,pc.instruments,cockpit_radio.khz,not cockpit_radio.muted,cockpit_radio.strength,pc.prop_angle,prop_disc_speed(pc.state,pc.feedback.speed),living_world.people[living_world.player].craft)
         if me.mode == .aboard and not pc.cockpit_view: draw_figure_at(me_fig, at * translation(pm.cockpit - vec3(0, 1.55, 0)), 0.0, 0.0, L, t, seated = true,offset=world_residual(craft_point(pc.state)))
+        draw_ride_seated(pm, at, L)
         if me.mode != .free or length(scene_camera() - grass.center) < 300.0: draw_grass(tuft, grass, L, t)
     )
     if legacy_clouds: draw_custom((): draw_clouds(puff_mesh,puffs,L,WorldPoint(wind_drift(wind_now).x*0.35,0,wind_drift(wind_now).z*0.35),t))
@@ -8146,6 +8376,7 @@ draw = ():
     set_font()
     draw_music_cues()
     draw_company_talk()
+    draw_ride_talk()
     # money
     set_font(fonts.ui)
     # (the purse: the phoenix in gold over its flame, the figure in cream, flush under the clock)
@@ -8288,6 +8519,9 @@ draw = ():
         if frame_number()>=60 and frame_number()%2==0:save_png("{directory}/{(frame_number()-60)/2:05}.png",screenshot())
     if let directory=startup_aegean_atmos_frames:
         if frame_number() in [2,360,780,1200,1800] or frame_number()%4==0 and (frame_number()<=120 or frame_number()>=720 and frame_number()<=960): save_png("{directory}/{frame_number()}.png",screenshot())
+    # AEGEAN_RIDE_FRAMES=dir: a pleasure flight's clip, every other frame from 60 to 900
+    if let directory = env("AEGEAN_RIDE_FRAMES"):
+        if frame_number() >= 60 and frame_number() <= 900 and frame_number() % 2 == 0: save_png("{directory}/{(frame_number() - 60) / 2:04}.png", screenshot())
     # AEGEAN_STAY_FRAMES=dir: a stay's clip, every other frame from 60 to 660 (at frame 120 the
     # night begins, with AEGEAN_STAY_SLEEP)
     if let directory = env("AEGEAN_STAY_FRAMES"):
