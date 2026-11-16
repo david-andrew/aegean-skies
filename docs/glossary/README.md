@@ -1752,7 +1752,8 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=1` (someone at the bar who has heard of
   a storm rescue off Neravessa); `AEGEAN_LEISURE=rep-decline` (known for turning people away,
   he asks someone over); both with `AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` for the evening;
-  `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip.
+  `AEGEAN_SEAT_FRAMES=<dir> AEGEAN_SEAT_FRAMES_END=<frame>` for a clip (`AEGEAN_SEAT_FRAMES_STEP`
+  frames apart, the view turning `AEGEAN_SEAT_FRAMES_TURN` radians a frame, 0 to hold it).
 
 ### Contracts
 
