@@ -1324,9 +1324,16 @@ On the rivers branch until it lands.
   wrapped painted ramp (its terminator shifted crown to crown), with a short sunward shadow; on
   low its light is painted into its colour and the trees are the meshes alone, with their mean
   past their reach.
+  Far off, a third octave of **masses** (180 m cells; medium and high) keeps the far hills lumpy,
+  and every octave is modelled by the **canopy light**, the sun's bearing held low at every hour,
+  so even at noon each lump has a lit side and a shaded side. The far land itself is shaded by a
+  **land light** (the same held-low sun, weighted in; medium and high), so slopes turned from the
+  sun band darker, and takes the **land aerial**: with distance, scaled to the eye's height, it
+  turns toward a deep teal-blue (land in shadow, never a fog) before the shared haze takes it at
+  the horizon, so far ridges read as blue silhouettes a value step under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
   `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
-  `canopy_paint_low`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_aerial`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
   tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
   in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
   baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
