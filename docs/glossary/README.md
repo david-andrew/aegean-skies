@@ -19,7 +19,7 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Stratus slivers](#stratus-slivers) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wildlife](#wildlife) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
@@ -940,6 +940,12 @@ On the rivers branch until it lands.
 
 ![Cloud bodies in towers weather from 300 m](img/cloud-bodies.png)
 
+### Stratus slivers
+
+- **Definition:** thin, flat, faintly lit bands just above the cumulus bases in fair and towers
+  weather, long along the wind, crossing in front of and below the towers; none near a storm.
+- **Code:** weather kind 13: the layer in `src/cloud_field.jo`, drawn in `src/cloud_volume.jo`.
+
 ### Cloud forms
 
 - **Definition:** the 28 procedural shapes a cloud body takes, built at their true proportions
@@ -990,7 +996,9 @@ On the rivers branch until it lands.
 - **Definition:** the dark patches with defined edges that the clouds cast on land, sea,
   rivers, lakes and towns, offset from each cloud by the sun's angle and moving with clouds
   and sun; deep water goes navy, clear shallows a deeper teal, land keeps some colour. The
-  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`).
+  edge is a quick ramp with a hint of softness (`cloud_shadow_edge`). Seen from height they
+  grow lighter and softer, and small clouds' shadows fade, as in the film; near the ground
+  they keep their edge.
 - **Code:** `src/cloud_shadow.jo`: the map (sun-projected coverage from each form's footprint
   slabs) and `apply_cloud_shadows`, a screen-space pass over the scene depth; the sea's glints
   per vertex in `src/sea.jo`. `AEGEAN_CLOUD_SHADOWS=0` turns them off.
@@ -1034,7 +1042,9 @@ On the rivers branch until it lands.
   ragged 1150 m base to above the highest an aircraft can climb, a tiered **shelf cloud** along
   its leading (downwind) edge, four embedded cells at their stages (towers, a mature anvil, a
   dissipating mass) under one painted **anvil canopy** near 9-10 km, rain shafts under the
-  cells. The air is rough throughout its deck and violent in the cells. Born about 30 km out, it
+  cells, and a slate rain veil from its base to the sea that reads from 10-40 km. Painted in
+  the film's storm palette: near-black slate belly and deck, cream-grey lit tops. The air is
+  rough throughout its deck and violent in the cells. Born about 30 km out, it
   crosses the home waters at 120 m a minute, closing the routes under it for about three and a
   half hours: one waits it out, goes round, or pushes through.
 - **Code:** `storm_cells` (the shared layout) in `src/lightning.jo`; `storm_system_clouds` in
