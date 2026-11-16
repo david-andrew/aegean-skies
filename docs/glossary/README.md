@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Uneven events](#uneven-events) · [Single voices](#single-voices) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -2294,6 +2294,24 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Capture:** `AEGEAN_LEISURE=band` with `AEGEAN_BAND_CAM` and `AEGEAN_CAPTURE_MINUTES`;
   `AEGEAN_BAND_LOG=1` prints the band's state twice a second.
 
+### Tip jar
+
+- **Definition:** a glass jar on the band's stand (on the piano when the band plays in the
+  [bar room](#bar-room)), filling over the evening. On foot by it, or seated at the hotel (a
+  table or the bar), while the band's evening is on: "Tip the band", a small coin (20 λ) or a note
+  (¤5). The tables drop coins in too, now and then after each number. Between numbers the player
+  at the front of the stand thanks the pilot; for a note, "This one's for the pilot."
+- **The world:** each tip is a ledger transfer to the house (the hotel's keeper), which keeps the
+  jar for the band (`BandState.jar`, `jar_pieces`); at closing the house pays it out in equal
+  shares to those who played that evening (`played_by`), as wages. A tip is a warm act toward the
+  front player (`.tipped`; a note, `.gift`).
+- **Code:** `band_tip`, `band_share_jar`, `band_jar_house` in `src/band_life.jo`; `leisure_tip`,
+  `band_front` in `src/leisure.jo`; `band_jar_at`, `build_tip_jar`, `draw_tip_jar`,
+  `band_thanks_from` in `src/band_stage.jo`; `tip_frame`, `tip_thanks_step` in `aegean.jo`.
+- **Capture:** `AEGEAN_LEISURE=tip|tip-panel|tip-jar|tip-thanks` (`AEGEAN_TIPS=n` drops n
+  coins and a note in first).
+- **Tests:** the tip jar in `tests/band_life_test.jo`.
+
 ### Band request
 
 - **Definition:** a number asked of the Hotel Ancora's band, with a phoenix in the hat (a transfer
@@ -2586,7 +2604,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   which show only when the tune has been quiet a while; no burst after a seek or a new number.
   Higher notes rise from a little higher; louder ones are larger. Each shows its written value
   (see [Note value](#note-value)): a whole or a half with an open head, a quarter, an eighth with
-  a flag, a sixteenth with two, a dot after the head for a dotted one. Ink by day, warm cream after dark; fainter with distance
+  a flag, a sixteenth with two, a dot after the head for a dotted one. Notes played together
+  rise as one chord (`note_chord`): those of the same part started within 35 ms (struck, rolled
+  or strummed), as far as one hand reaches (no gap over an octave: a left-hand chord stays apart
+  from the tune above it), up to five heads up the stave on one stem, a second's upper head on
+  the stem's other side; the chord's longest note sets its value. An accompanying chord may show
+  after 0.7 s of quiet in the tune (a single accompanying note after 1.1 s). Ink by day, warm cream after dark; fainter with distance
   about as the music is (gone at 140 m) and through walls. None while one sits at the hotel (a
   table or the bar), where the band is in view. Options: "Musical notes rising from music played
   nearby" (on by default).
