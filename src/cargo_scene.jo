@@ -52,57 +52,162 @@ _walk_dequeue = (heap: mut WalkFrontier[]) -> WalkFrontier:
 # Weighted A* prefers a prompt, valid street route over an optimal-length route.
 # Navigation is only run on a new walking leg, never for frame steering.
 # It obeys the same house, quay, sea and slope collision checks as the player.
-cargo_walk_path = (towns: Town[], from: vec3, target: vec3) -> vec3[]:
-    if not finite_living_point(from) or not finite_living_point(target):
-        living_fault("cargo_walk_path.nonfinite","from={from} target={target}")
-        return []
-    # A destination inside a newly published prop cannot be reached from any
-    # direction. Reject it before exploring the surrounding street network.
-    if length(town_avoid_buildings(towns,target.xz,f64(target.y))-target.xz)>0.15:return []
-    if _cargo_segment(towns, from, target): return [from, target]
+# The search can stop and resume (walk_search_step): the same checks in the same order,
+# so a search finished over many frames finds exactly the path cargo_walk_path finds.
+struct WalkSearch:
+    from: vec3
+    target: vec3
+    stage = 0                     # 0 checks, 1 the direct line, 2 the grid search, 3 done
+    segment = 1
+    segment_count = 0
+    segment_at: vec3
     cell = 1.5
+    xmin = 0
+    xmax = 0
+    zmin = 0
+    zmax = 0
+    nx = 1
+    parent: {int: int}
+    positions: {int: vec3}
+    cost: {int: f64}
+    closed: {int: bool}
+    queue: WalkFrontier[]
+    at = 0
+    goal = -1
+    node = -1                     # the node being expanded (-1: take the next from the queue)
+    node_at: vec3
+    direction = 0                 # its next neighbour, 0..7
+    path: vec3[]
+
+_WALK_DIRECTIONS = [vec2(1, 0), vec2(0, 1), vec2(-1, 0), vec2(0, -1), vec2(1, 1), vec2(-1, 1), vec2(-1, -1), vec2(1, -1)]
+
+walk_search = (from: vec3, target: vec3) -> WalkSearch: WalkSearch(from=from,target=target,segment_at=from)
+
+_walk_search_grid = (s: mut WalkSearch):
+    from=s.from; target=s.target; cell=s.cell
     dx = f64(target.x - from.x); dz = f64(target.z - from.z)
-    xmin = int(floor(min(0.0, dx) / cell)) - 24; xmax = int(ceil(max(0.0, dx) / cell)) + 24
-    zmin = int(floor(min(0.0, dz) / cell)) - 24; zmax = int(ceil(max(0.0, dz) / cell)) + 24
-    nx = xmax - xmin + 1
-    start = -xmin - zmin * nx
-    parent: {int: int}; parent[start] = -1
-    positions: {int: vec3}; positions[start] = from
-    cost: {int:f64}={};cost[start]=0
-    closed: {int:bool}={}
-    queue=[WalkFrontier(start,f64(length(target.xz-from.xz)))];at=0;goal= -1
-    loop queue.len()>0 and at<40000:
-        id=_walk_dequeue(queue).id
-        if id in closed:continue
-        closed[id]=true;at+=1
-        p = positions[id]
-        if length(p.xz - target.xz) < 2.0 and _cargo_segment(towns, p, target): goal = id; break
-        ix = id % nx + xmin; iz = id / nx + zmin
-        loop d in [vec2(1, 0), vec2(0, 1), vec2(-1, 0), vec2(0, -1), vec2(1, 1), vec2(-1, 1), vec2(-1, -1), vec2(1, -1)]:
-            x = ix + int(d.x); z = iz + int(d.y)
-            if x < xmin or x > xmax or z < zmin or z > zmax: continue
-            next_id = (x - xmin) + (z - zmin) * nx
-            if next_id in closed: continue
-            q = vec3(from.x + f32(f64(x) * cell), p.y, from.z + f32(f64(z) * cell))
-            next_cost=cost[id]+f64(length(q.xz-p.xz))
-            if next_cost>=cost.get(next_id,1e30):continue
-            moved = walk_step(towns, p, q.xz - p.xz)
-            if length(moved.xz - q.xz) > 0.15: continue
-            cost[next_id]=next_cost;parent[next_id]=id;positions[next_id]=moved
-            _walk_enqueue(queue,WalkFrontier(next_id,next_cost+2.0*max(0.0,f64(length(target.xz-moved.xz))-2.0)))
-    if goal < 0: return []
-    result = [target]
-    id = goal
+    s.xmin = int(floor(min(0.0, dx) / cell)) - 24; s.xmax = int(ceil(max(0.0, dx) / cell)) + 24
+    s.zmin = int(floor(min(0.0, dz) / cell)) - 24; s.zmax = int(ceil(max(0.0, dz) / cell)) + 24
+    s.nx = s.xmax - s.xmin + 1
+    start = -s.xmin - s.zmin * s.nx
+    s.parent[start] = -1; s.positions[start] = from; s.cost[start] = 0
+    s.queue=[WalkFrontier(start,f64(length(target.xz-from.xz)))]
+
+_walk_search_finish = (s: mut WalkSearch):
+    s.stage=3
+    if s.goal < 0: s.path=[]; return
+    result = [s.target]
+    id = s.goal
     loop id >= 0:
-        result.push(positions[id]); id = parent[id]
+        result.push(s.positions[id]); id = s.parent[id]
     result.reverse()
     # Keep only real corners; a person follows the same corridor, with fewer saved points.
     compact = [result[0]]
     loop i in 1..result.len() - 1:
         a = result[i].xz - result[i - 1].xz; b = result[i + 1].xz - result[i].xz
         if length(a) > 0.001 and length(b) > 0.001 and dot(normalize(a), normalize(b)) < 0.99: compact.push(result[i])
-    compact.push(target)
-    compact
+    compact.push(s.target)
+    s.path=compact
+    s.parent={}; s.positions={}; s.cost={}; s.closed={}; s.queue=[]
+
+# Work on the search for about budget_ms (at least one step); true once s.path is final.
+walk_search_step = (towns: Town[], s: mut WalkSearch, budget_ms: f64) -> bool:
+    started=time()
+    if s.stage==0:
+        from=s.from; target=s.target
+        if not finite_living_point(from) or not finite_living_point(target):
+            living_fault("cargo_walk_path.nonfinite","from={from} target={target}")
+            s.stage=3; s.path=[]; return true
+        # A destination inside a newly published prop cannot be reached from any
+        # direction. Reject it before exploring the surrounding street network.
+        if length(town_avoid_buildings(towns,target.xz,f64(target.y))-target.xz)>0.15: s.stage=3; s.path=[]; return true
+        s.segment_count=max(1, int(ceil(f64(length(target.xz - from.xz)) / 0.7)))
+        s.stage=1
+    if s.stage==1:
+        # The straight line first, as _cargo_segment walks it.
+        loop s.segment<=s.segment_count:
+            q = lerp(s.from, s.target, f32(f64(s.segment) / f64(s.segment_count)))
+            next = walk_step(towns, s.segment_at, q.xz - s.segment_at.xz)
+            if length(next.xz - q.xz) > 0.15: s.segment=s.segment_count+2; break
+            s.segment_at = next; s.segment+=1
+            if (time()-started)*1000>=budget_ms: return false
+        if s.segment==s.segment_count+1: s.stage=3; s.path=[s.from,s.target]; return true
+        _walk_search_grid(s); s.stage=2
+    if s.stage==2:
+        # One walk step at a time (a node's eight neighbours are visited in order and the
+        # search may stop between any two), so a single slice stays near its budget even
+        # where every step is costly.
+        target=s.target; cell=s.cell; nx=s.nx
+        loop true:
+            if s.node<0:
+                if s.queue.len()==0 or s.at>=40000: break
+                id=_walk_dequeue(s.queue).id
+                if id in s.closed: continue
+                s.closed[id]=true;s.at+=1
+                p = s.positions[id]
+                if length(p.xz - target.xz) < 2.0 and _cargo_segment(towns, p, target): s.goal = id; break
+                s.node=id; s.node_at=p; s.direction=0
+            id=s.node; p=s.node_at
+            ix = id % nx + s.xmin; iz = id / nx + s.zmin
+            loop s.direction<8:
+                d=_WALK_DIRECTIONS[s.direction]; s.direction+=1
+                x = ix + int(d.x); z = iz + int(d.y)
+                if x < s.xmin or x > s.xmax or z < s.zmin or z > s.zmax: continue
+                next_id = (x - s.xmin) + (z - s.zmin) * nx
+                if next_id in s.closed: continue
+                q = vec3(s.from.x + f32(f64(x) * cell), p.y, s.from.z + f32(f64(z) * cell))
+                next_cost=s.cost[id]+f64(length(q.xz-p.xz))
+                if next_cost>=s.cost.get(next_id,1e30):continue
+                moved = walk_step(towns, p, q.xz - p.xz)
+                if length(moved.xz - q.xz) <= 0.15:
+                    s.cost[next_id]=next_cost;s.parent[next_id]=id;s.positions[next_id]=moved
+                    _walk_enqueue(s.queue,WalkFrontier(next_id,next_cost+2.0*max(0.0,f64(length(target.xz-moved.xz))-2.0)))
+                if s.direction<8 and (time()-started)*1000>=budget_ms: return false
+            s.node= -1
+            if (time()-started)*1000>=budget_ms: return false
+        _walk_search_finish(s)
+    true
+
+cargo_walk_path = (towns: Town[], from: vec3, target: vec3) -> vec3[]:
+    s=walk_search(from,target)
+    loop not walk_search_step(towns,s,1e30): pass
+    s.path
+
+# ---------------- the scenes' path desk ----------------
+# People in the scenes (far residents, daily life, households, carriers) ask for their walking
+# paths here. One search is in progress at a time and works for at most the frame's budget;
+# the person waits where they stand until it is ready. Without walk_paths_frame (tests, tools)
+# every path is found at once, as cargo_walk_path finds it.
+_walk_budget = -1.0               # this frame's remaining milliseconds; negative: unlimited
+_walk_frame = 0
+_walk_key = ""
+_walk_asked = -1
+_walk_busy = false
+_walk_job: WalkSearch
+
+walk_paths_frame = (budget_ms: f64):
+    global _walk_budget, _walk_frame
+    _walk_budget=budget_ms; _walk_frame+=1
+
+# The finished path for this request, or none while it is still being searched (ask again
+# next frame with the same key). The key names the leg: a new target is a new key.
+scene_walk_path = (towns: Town[], key: str, from: vec3, target: vec3) -> vec3[]?:
+    global _walk_budget, _walk_key, _walk_asked, _walk_busy, _walk_job
+    if _walk_busy and _walk_key!=key:
+        # (a request nobody asked for since the last frame was abandoned: free the desk)
+        if _walk_asked>=_walk_frame-1: return none
+        _walk_busy=false
+    if not _walk_busy:
+        _walk_key=key; _walk_job=walk_search(from,target); _walk_busy=true
+    _walk_asked=_walk_frame
+    if _walk_budget==0: return none
+    started=time()
+    done=walk_search_step(towns,_walk_job,if _walk_budget<0: 1e30 else: _walk_budget)
+    if _walk_budget>0: _walk_budget=max(0.0,_walk_budget-(time()-started)*1000)
+    if not done: return none
+    _walk_busy=false; _walk_key=""
+    path=_walk_job.path; _walk_job=WalkSearch(from=vec3(0,0,0),target=vec3(0,0,0),segment_at=vec3(0,0,0))
+    path
 
 # A hold is out on the water; the person stands on the nearest walkable quay edge.
 _cargo_quay_access = (tw: Town, point: vec3) -> vec3:
@@ -121,7 +226,7 @@ _cargo_quay_access = (tw: Town, point: vec3) -> vec3:
 configure_cargo_scene = (w: mut World, towns: Town[]):
     loop place in 0..min(towns.len(),min(w.cargo_harbors.len(),SETTLEMENTS.len())):
         tw = towns[place]; old = w.cargo_harbors[place].warehouse
-        warehouse = _cargo_ground(towns, old)
+        warehouse = _cargo_ground(towns, town_store_spot(tw, old))
         w.cargo_harbors[place].warehouse = warehouse
         loading: vec3[]
         loop dock in tw.docks:
@@ -184,7 +289,9 @@ step_cargo_scene = (w: mut World, towns: Town[], observer: vec3, dt: f64):
             continue
         if task.scene_path_phase != task.phase:
             destination = task.route[task.route.len() - 1]
-            path = cargo_walk_path(towns, w.people[p].pose.pos, destination)
+            found = scene_walk_path(towns, "cargo:{id}:{task.phase}:{destination}", w.people[p].pose.pos, destination)
+            if found == none: continue
+            path = found!
             if path.len() == 0:
                 w.carriage[id].blocked = "the walking route is obstructed"; continue
             w.carriage[id].route = path; w.carriage[id].waypoint = 1

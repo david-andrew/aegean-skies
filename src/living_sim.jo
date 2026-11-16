@@ -20,11 +20,13 @@ use 'living_services.jo'
 use 'living_dispatch.jo'
 use 'living_money.jo'
 use 'living_life.jo'
+use 'band_life.jo'
 use 'living_social.jo'
 use 'living_stories.jo'
 use 'living_countries.jo'
 use 'living_maps.jo'
 use 'living_far_economy.jo'
+use 'living_far_checks.jo'
 use 'living_far_transport.jo'
 use 'living_far_people.jo'
 use 'living_commissions.jo'
@@ -48,97 +50,151 @@ step_minute = (w: mut World):
 
 # Scene clock commits physical outcomes at this tick before the minute's decisions.
 # Headless step_minute uses exactly the same procedure.
+# The minute's rules are ordered units (_minute_unit). minute_rules runs them all at once; a
+# game may run them a few at a time over frames (minute_run_step) while nothing else touches
+# the World: the same rules, in the same order, on the same World. Any fault ends the minute,
+# whose guarded checkpoint then restores the World as before (recovery mode) or panics (strict).
+# (districts, vehicles or journeys of the far check in one unit of a spread minute)
+const FAR_CHECK_PIECES = 128
+struct MinuteRun:
+    active = false
+    unit = 0
+    economy_due = false
+    index = 0                     # cursor inside a split phase
+    ids: int[]                    # that phase's journeys or due vehicles
+    scope: WorldGuard
+    checking = false              # the far check of far_economy_begin, under way
+    far_check: FarCheck
+
+minute_run_begin = (w: mut World) -> MinuteRun:
+    if guard_blocked(): return MinuteRun()
+    MinuteRun(active=true,scope=guard_begin(w))
+
+# Work on the minute for about budget_ms (at least one unit); true once it is complete.
+minute_run_step = (w: mut World, run: mut MinuteRun, budget_ms: f64) -> bool:
+    if not run.active: return true
+    started=time()
+    loop true:
+        more=_minute_unit(w,run)
+        if not more or guard_blocked():
+            guard_finish(w,run.scope); run.active=false
+            return true
+        if (time()-started)*1000>=budget_ms: return false
+
 _guarded_minute_rules = (w: mut World):
-    if not (money_balances(w) and goods_balance(w)):
-        living_fault("minute_rules.preexisting_balance",guard_context(w)+" goods={stock_totals(w)} expected={[loop g in 0..GOOD_COUNT: w.goods_ledger.opening[g]+w.goods_ledger.created[g]-w.goods_ledger.consumed[g]]}")
-        return
-    war_error=validate_war(w)
-    if war_error!="":
-        living_fault("war.minute_state",guard_context(w)+" "+war_error); return
-    far_economy_due=w.far.populated and w.far.last_minute<w.minute
-    far_economy_minute(w)
-    if guard_blocked(): return
-    # Standing border charters buy existing local hulls before their first merchant sailing.
-    if w.war.last_hour<0: war_minute(w)
-    far_transport_minute(w,checked_economy=far_economy_due)
-    sea_rescue_minute(w)
-    if guard_blocked(): return
-    far_commissions_minute(w)
-    if guard_blocked(): return
-    far_people_minute(w)
-    far_player_counter_news(w)
-    if guard_blocked(): return
-    weather_minute(w)
-    if guard_blocked(): return
-    advance_workboats(w)
-    if guard_blocked(): return
-    carriage_abstract(w,w.tick)
-    advance_trips(w,w.tick)
-    harbor_berths_minute(w)
-    flight_hazards(w)
-    if guard_blocked(): return
-    recovery_minute(w)
-    if guard_blocked(): return
-    advance_public_boats(w)
-    if guard_blocked(): return
-    service_recovery(w)
-    if guard_blocked(): return
-    update_people(w)
-    if guard_blocked(): return
-    advance_repairs(w)
-    if guard_blocked(): return
-    if local_minute(w.minute) == 0: accrue_interest(w)
-    loop person in 1..core_person_count(w):
-        if w.people[person].trip < 0 or w.people[person].occupation == .fisher: labor_minute(w,person)
-    market_minute(w)
-    if guard_blocked(): return
-    check_deadlines(w)
-    if guard_blocked(): return
-    post_import_receipts(w)
-    if guard_blocked(): return
-    jobs_minute(w)
-    if guard_blocked(): return
-    maintain_supply_jobs(w)
-    if guard_blocked(): return
-    local_errands_minute(w)
-    if guard_blocked(): return
-    advance_loads(w)
-    if guard_blocked(): return
-    pirates_minute(w)
-    if guard_blocked(): return
-    choices_minute(w)
-    if guard_blocked(): return
-    life_minute(w)
-    if guard_blocked(): return
-    news_minute(w)
-    bridge_core_news(w)
-    if guard_blocked(): return
-    social_minute(w)
-    far_social_minute(w)
-    if guard_blocked(): return
-    stories_minute(w)
-    if guard_blocked(): return
-    countries_minute(w)
-    if guard_blocked(): return
-    war_minute(w)
-    war_peace_minute(w)
-    war_force_notices(w)
-    convoys_minute(w)
-    begin_war_contacts(w)
-    advance_war_contacts(w)
-    privateers_minute(w)
-    displacement_minute(w)
-    missions_minute(w)
-    mission_offices_minute(w)
-    if guard_blocked(): return
-    map_rewards_minute(w)
-    if guard_blocked(): return
-    if local_minute(w.minute) == 0:
-        scratch = PresentationState()
-        prune_history(w,scratch)
-    if not (money_balances(w) and goods_balance(w)):
-        living_fault("living_sim.minute_rules.0",guard_context(w)+" goods={stock_totals(w)} expected={[loop g in 0..GOOD_COUNT: w.goods_ledger.opening[g]+w.goods_ledger.created[g]-w.goods_ledger.consumed[g]]}")
-        return
+    run=MinuteRun(active=true)
+    loop _minute_unit(w,run) and not guard_blocked(): pass
+
+# One unit of the minute's rules; false when the minute is over (complete, or refused).
+# Units run in the order the rules always ran; split phases keep their own order.
+_minute_unit = (w: mut World, run: mut MinuteRun) -> bool:
+    k=run.unit; run.unit+=1
+    if k==0:
+        if not (money_balances(w) and goods_balance(w)):
+            living_fault("minute_rules.preexisting_balance",guard_context(w)+" goods={stock_totals(w)} expected={[loop g in 0..GOOD_COUNT: w.goods_ledger.opening[g]+w.goods_ledger.created[g]-w.goods_ledger.consumed[g]]}")
+            return false
+        war_error=validate_war(w)
+        if war_error!="":
+            living_fault("war.minute_state",guard_context(w)+" "+war_error); return false
+        run.economy_due=w.far.populated and w.far.last_minute<w.minute
+        return true
+    if k==1:
+        # far_economy_minute, a place at a time. Its begin (far_economy_begin) is a far check,
+        # itself run a few districts, vehicles or journeys at a time: the same checks in the
+        # same order on a World nothing writes meanwhile, so the same verdict.
+        if not w.far.populated or w.far.last_minute>=w.minute: run.unit=3; return true
+        if not run.checking:
+            run.checking=true
+            run.far_check=if living_strict(): FarCheck() else: FarCheck(route_points=false,slice=w.minute%FAR_CHECK_SLICES,slices=FAR_CHECK_SLICES)
+        if not far_check_step(w,run.far_check,FAR_CHECK_PIECES): run.unit=1; return true
+        run.checking=false
+        if run.far_check.error!="":
+            # (as far_economy_begin refusing: the fault, then on past the economy)
+            living_fault("far.economy_state",guard_context(w)+" "+run.far_check.error); run.unit=3; return true
+        run.index=w.minute%60
+        return true
+    if k==2:
+        if run.index<w.far.place_ids.len():
+            far_economy_place(w,run.index); run.index+=60; run.unit=2
+        else: w.far.last_minute=w.minute
+        return true
+    if k==3:
+        # Standing border charters buy existing local hulls before their first merchant sailing.
+        if w.war.last_hour<0: war_minute(w)
+        # far_transport_minute: journeys a few at a time, meals, then each due departure
+        if far_transport_begin(w,run.economy_due): run.ids=far_advance_ids(w); run.index=0
+        else: run.unit=7
+        return true
+    if k==4:
+        last=min(run.index+16,run.ids.len())
+        loop i in run.index..last: far_advance_journey(w,run.ids[i],w.tick)
+        run.index=last
+        if run.index<run.ids.len(): run.unit=4
+        return true
+    if k==5:
+        far_crew_meals(w)
+        run.ids=far_departures_due(w); run.index=0
+        return true
+    if k==6:
+        if run.index<run.ids.len():
+            far_depart(w,run.ids[run.index]); run.index+=1; run.unit=6
+        return true
+    if k==7: sea_rescue_minute(w); return true
+    if k==8: far_commissions_minute(w); return true
+    if k==9: far_people_minute(w); far_player_counter_news(w); return true
+    if k==10: weather_minute(w); return true
+    if k==11: advance_workboats(w); return true
+    if k==12:
+        carriage_abstract(w,w.tick)
+        advance_trips(w,w.tick)
+        harbor_berths_minute(w)
+        flight_hazards(w)
+        return true
+    if k==13: recovery_minute(w); return true
+    if k==14: advance_public_boats(w); return true
+    if k==15: service_recovery(w); return true
+    if k==16: update_people(w); return true
+    if k==17: advance_repairs(w); return true
+    if k==18:
+        if local_minute(w.minute) == 0: accrue_interest(w)
+        loop person in 1..core_person_count(w):
+            if w.people[person].trip < 0 or w.people[person].occupation == .fisher: labor_minute(w,person)
+        market_minute(w)
+        return true
+    if k==19: check_deadlines(w); return true
+    if k==20: post_import_receipts(w); return true
+    if k==21: jobs_minute(w); return true
+    if k==22: maintain_supply_jobs(w); return true
+    if k==23: local_errands_minute(w); return true
+    if k==24: advance_loads(w); return true
+    if k==25: pirates_minute(w); return true
+    if k==26: choices_minute(w); return true
+    if k==27: life_minute(w); band_minute(w); return true
+    if k==28: news_minute(w); bridge_core_news(w); return true
+    if k==29: social_minute(w); far_social_minute(w); return true
+    if k==30: stories_minute(w); return true
+    if k==31: countries_minute(w); return true
+    if k==32:
+        war_minute(w)
+        war_peace_minute(w)
+        war_force_notices(w)
+        convoys_minute(w)
+        begin_war_contacts(w)
+        advance_war_contacts(w)
+        privateers_minute(w)
+        displacement_minute(w)
+        missions_minute(w)
+        mission_offices_minute(w)
+        return true
+    if k==33: map_rewards_minute(w); return true
+    if k==34:
+        if local_minute(w.minute) == 0:
+            scratch = PresentationState()
+            prune_history(w,scratch)
+        if not (money_balances(w) and goods_balance(w)):
+            living_fault("living_sim.minute_rules.0",guard_context(w)+" goods={stock_totals(w)} expected={[loop g in 0..GOOD_COUNT: w.goods_ledger.opening[g]+w.goods_ledger.created[g]-w.goods_ledger.consumed[g]]}")
+        return false
+    false
 
 advance_ticks = (w: mut World, ticks: int):
     if not (ticks >= 0):
@@ -155,7 +211,5 @@ advance_minutes = (w: mut World, minutes: int): advance_ticks(w,minutes * TICKS_
 
 # Recovery boundaries share one checkpoint when nested; strict mode retains loud failures.
 minute_rules = (w: mut World):
-    if guard_blocked(): return
-    scope = guard_begin(w)
-    _guarded_minute_rules(w)
-    guard_finish(w,scope)
+    run=minute_run_begin(w)
+    loop not minute_run_step(w,run,1e30): pass

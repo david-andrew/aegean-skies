@@ -1,0 +1,256 @@
+# The air arm: a country's fighters based at an aerodrome (airfields.jo), flown by its own pilots.
+# Two C.R.20s at each aerodrome, registered through the living world as the capital clubs' are
+# (a real aircraft and pilot, the purchase from the town's household purse, a harbour berth for
+# the books, fuel from its market). Each flies once a day: the first the morning circuits, the
+# second the afternoon display over the town. On the ground they taxi from their stand to the
+# threshold, take off on the strip, fly, come round onto a long final, flare, roll out on the
+# brakes and taxi back to the stand. Only the flight model's controls move them.
+use 'airfields.jo'
+use 'air_race.jo'
+from 'air_classes.jo' import AIR_CLUB_PILOTS
+use 'air_pilot.jo'
+use 'flight.jo'
+use 'planes.jo'
+use 'world_point.jo'
+import 'living_types.jo' as data
+import 'living_far_aircraft.jo' as registry
+import 'living_scene.jo' as scene
+import 'living_conditions.jo' as conditions
+
+const ARM_CIRCUIT_AGL = 260.0          # metres over the field
+const ARM_DISPLAY_MSL = 330.0          # over the town
+const ARM_GLIDE = 0.06                 # final approach slope (about 3.5 degrees)
+const ARM_LAPS = 2
+const ARM_DISPLAY_TICKS = 60 * 180     # three minutes over the town
+const ARM_TIMEOUT_TICKS = 60 * 60 * 40 # a sortie gone wrong is abandoned, the aircraft left where it is
+
+# The field's frame (u along the strip, v across) as world points; heights from `ground`.
+_arm_xz = (f: Airfield, u: f64, v: f64) -> vec3:
+    p = airfield_world(f, u, v)
+    vec3(p.x, 0, p.y)
+_arm_threshold = (f: Airfield) -> f64: -f.half_length + 45.0      # where the run starts
+_arm_touchdown = (f: Airfield) -> f64: -f.half_length + 110.0     # where the final aims
+
+# The circuit flown round the field: a racetrack at ARM_CIRCUIT_AGL, on the side away from the
+# hangars first; its last point is the downwind end, from where the final is joined.
+arm_circuit = (f: Airfield) -> vec2[]:
+    e = f.half_length + 1100.0; s = 1300.0
+    [vec2(f32(e), 0), vec2(f32(e), f32(s)), vec2(f32(-e), f32(s)), vec2(f32(-e), f32(-s)), vec2(f32(e), f32(-s)), vec2(f32(e), f32(s)), vec2(f32(-e), f32(s))]
+
+# The taxi route out from a stand to the run's start, and back in from where the roll ended.
+_arm_route_out = (f: Airfield, stand: vec2) -> vec2[]:
+    [vec2(stand.x, -72), vec2(-285, -40), vec2(f32(_arm_threshold(f) - 25.0), 0)]
+_arm_route_in = (f: Airfield, stand: vec2, at_u: f64) -> vec2[]:
+    u = clamp(at_u, -270.0, 30.0)
+    [vec2(f32(at_u), f32(-f.half_width - 8.0)), vec2(f32(u), -45), vec2(stand.x, -72), stand]
+
+# Taxi: rudder toward the next point, a little throttle, held to a walking-to-running pace.
+_arm_taxi = (spec: CraftSpec, s: CraftState, target: vec3, slow: bool) -> Controls:
+    d = target - s.position; d.y = 0
+    want = atan2(f64(d.x), -f64(d.z)); err = angle_delta(want, heading(s))
+    v = f64(length(s.velocity))
+    limit = if slow: 3.0 else: 7.0
+    c = Controls(assist = 0.0, yaw = clamp(err * 3.0, -1.0, 1.0))
+    c.throttle = if v > limit: 0.0 else: (if abs(err) > 0.7: 0.22 else: 0.3)
+    if v > limit + 1.5: c.water_brake = 0.5
+    c
+
+# One tick of a sortie: the controls for this phase, then the flight model's step.
+arm_tick = (p: mut ArmPilot, spec: CraftSpec, f: Airfield, town: vec3, e: FlightEnv, tick: int):
+    s = p.state
+    fwd = airfield_forward(f)
+    stand = AIRFIELD_STANDS[clamp(p.stand, 0, AIRFIELD_STANDS.len() - 1)]
+    q = airfield_local(f, s.position.xz)
+    ground_here = e.ground(f64(s.position.x), f64(s.position.z))
+    c = Controls()
+    if p.phase == .parked:
+        # (brought to a stop on its brakes, then left standing: no physics while it stands)
+        if length(s.velocity) > 0.05 and not s.crashed:
+            step(spec, p.state, Controls(water_brake = 1.0), e, 1.0 / 60.0)
+        return
+    if s.crashed or tick - p.launched > ARM_TIMEOUT_TICKS:
+        p.phase = .parked; p.failed = true; return
+    if p.phase == .taxi_out or p.phase == .taxi_in:
+        route = if p.phase == .taxi_out: _arm_route_out(f, stand) else: _arm_route_in(f, stand, p.roll_u)
+        if p.wp >= route.len():
+            if p.phase == .taxi_in:
+                p.phase = .parked; c = Controls(water_brake = 1.0)
+            else:
+                # lined up on the strip: turn to its heading, then the run
+                err = angle_delta(f.heading, heading(s))
+                v = f64(length(s.velocity))
+                c = Controls(assist = 0.0, yaw = clamp(err * 3.0, -1.0, 1.0), throttle = if abs(err) > 0.05 and v < 2.5: 0.24 else: 0.0)
+                if abs(err) <= 0.05 or v > 3.5: c.water_brake = 0.6
+                if abs(err) < 0.06 and v < 1.0: p.phase = .takeoff
+        else:
+            w = route[p.wp]; target = _arm_xz(f, f64(w.x), f64(w.y))
+            last = p.wp == route.len() - 1
+            c = _arm_taxi(spec, s, target, last and length((target - s.position).xz) < 60.0)
+            if length((target - s.position).xz) < (if last: 5.0 else: 14.0): p.wp += 1
+    else if p.phase == .takeoff:
+        # full throttle, the stick left in the middle (the wheels' assist lifts the tail and
+        # rotates), straight down the strip on the rudder; climbing away once clear
+        err = angle_delta(f.heading, heading(s))
+        c = Controls(throttle = 1.0, yaw = clamp(err * 3.0, -1.0, 1.0))
+        if not s.on_ground:
+            c = air_waypoint_controls(spec, s, e, _arm_xz(f, f.half_length + 1100.0, 0), ground_here + ARM_CIRCUIT_AGL, spec.stall_speed * 1.8)
+            c.throttle = 1.0
+            if f64(s.position.y) - ground_here > 40.0: p.phase = .mission; p.wp = 0; p.mission_tick = tick
+    else if p.phase == .mission:
+        field_h = e.ground(f64(f.center.x), f64(f.center.y))
+        if p.mission == 0:
+            path = arm_circuit(f)
+            # laps of the racetrack (points 1..4 repeat), then on to its downwind end
+            k = if p.wp < 1: 0 else: 1 + (p.wp - 1) % 4
+            last_lap = (p.wp - 1) / 4 >= ARM_LAPS - 1
+            if p.wp >= 1 and last_lap and k == 2: k = 6
+            w = path[k]; aim = _arm_xz(f, f64(w.x), f64(w.y))
+            c = air_waypoint_controls(spec, s, e, aim, field_h + ARM_CIRCUIT_AGL, spec.stall_speed * 1.8)
+            if length((aim - s.position).xz) < 350.0:
+                if k == 6: p.phase = .approach; p.wp = 0
+                else: p.wp += 1
+        else:
+            # a broad figure eight over the town, then back to the field's downwind end
+            if tick - p.mission_tick < ARM_DISPLAY_TICKS:
+                a = f64(tick - p.mission_tick) / 60.0 / 14.0 + f64(p.stand) * PI
+                side = vec3(fwd.y, 0, -fwd.x); out = vec3(fwd.x, 0, fwd.y)
+                aim = town + side * f32(sin(a) * 900.0) + out * f32(sin(a * 2.0) * 420.0)
+                c = air_waypoint_controls(spec, s, e, aim, ARM_DISPLAY_MSL + f64(p.stand) * 60.0, spec.stall_speed * 2.4)
+                c.roll += sin(f64(tick) / 60.0 * 1.7) * 0.12
+            else:
+                w = arm_circuit(f)[6]; aim = _arm_xz(f, f64(w.x), f64(w.y))
+                c = air_waypoint_controls(spec, s, e, aim, field_h + ARM_CIRCUIT_AGL, spec.stall_speed * 1.8)
+                if length((aim - s.position).xz) < 400.0: p.phase = .approach; p.wp = 0
+    else if p.phase == .approach:
+        # base leg onto a long final: a fix out on the extended centre line, at the glide's height
+        out = f.half_length + 2200.0
+        fix = _arm_xz(f, -out, 0)
+        td = _arm_xz(f, _arm_touchdown(f), 0)
+        td_h = e.ground(f64(td.x), f64(td.z))
+        c = air_waypoint_controls(spec, s, e, fix, td_h + (out + _arm_touchdown(f)) * ARM_GLIDE + 40.0, spec.stall_speed * 1.4)
+        if length((fix - s.position).xz) < 450.0 or (f64(q.x) > -out - 200.0 and f64(q.x) < -f.half_length and abs(f64(q.y)) < 250.0): p.phase = .landing; p.wp = 0
+    else if p.phase == .landing:
+        td_u = _arm_touchdown(f)
+        td = _arm_xz(f, td_u, 0)
+        td_h = e.ground(f64(td.x), f64(td.z))
+        along = f64(q.x) - td_u
+        wheels = f64(s.position.y) - ground_here - 1.5
+        if wheels <= 3.0: p.wp = 1     # (the flare, once begun, is held to the ground)
+        if p.wp == 0:
+            # down the glide on the centre line, at 1.3 stall
+            ahead = along + 450.0
+            aim = _arm_xz(f, td_u + ahead, 0); aim.y = f32(td_h + 2.0 + max(0.0, -ahead) * ARM_GLIDE)
+            c = steer(spec, s, normalize(aim - s.position))
+            v = f64(length(s.velocity))
+            c.throttle = clamp(0.3 + (spec.stall_speed * 1.2 - v) * 0.08, 0.0, 0.9)
+            # (too fast down the glide: the slip, as a pilot side-slips off speed)
+            c.airbrake = clamp((v - spec.stall_speed * 1.2) * 0.3, 0.0, 1.0)
+        else:
+            # the flare: throttle closed, held off over the grass as it sinks, wings level
+            pitch = asin(clamp(f64(forward(s).y), -1.0, 1.0))
+            bank = atan2(-f64(quat_rotate(s.orientation, vec3(1, 0, 0)).y), f64(quat_rotate(s.orientation, vec3(0, 1, 0)).y))
+            aim_pitch = 0.02 + clamp(-f64(s.velocity.y) * 0.04, 0.0, 0.05)
+            c = Controls(assist = 0.0, throttle = 0.0, airbrake = 1.0, pitch = clamp((aim_pitch - pitch) * 3.0, -0.4, 0.4),
+                roll = clamp(-bank * 2.0 - f64(q.y) * 0.004, -0.5, 0.5), yaw = clamp(angle_delta(f.heading, heading(s)) * 2.0, -1.0, 1.0))
+        if s.on_ground: p.phase = .rollout
+    else if p.phase == .rollout:
+        err = angle_delta(f.heading, heading(s))
+        c = Controls(throttle = 0.0, water_brake = 1.0, yaw = clamp(err * 3.0 - f64(q.y) * 0.02, -1.0, 1.0))
+        if length(s.velocity) < 3.0: p.phase = .taxi_in; p.wp = 0; p.roll_u = f64(q.x)
+    step(spec, p.state, c, e, 1.0 / 60.0)
+    p.prop += (8.0 + 70.0 * p.state.throttle) / 60.0
+
+# A fresh pilot's aircraft, parked on its stand (its three-point attitude on the ground there).
+arm_park = (spec: CraftSpec, f: Airfield, stand: int, ground: (f64, f64) -> f64) -> CraftState:
+    s = AIRFIELD_STANDS[clamp(stand, 0, AIRFIELD_STANDS.len() - 1)]
+    at = _arm_xz(f, f64(s.x), f64(s.y)); at.y = f32(ground(f64(at.x), f64(at.z)))
+    ground_start(spec, at, airfield_stand_heading(f))
+
+# The day's sorties, by the field's local clock (minutes after midnight): the first pilot's
+# circuits at 09:30, the second's display over the town at 16:00, each for about half an hour.
+arm_sortie_minute = (slot: int) -> int: if slot == 0: 570 else: 960
+
+arm_launch = (p: mut ArmPilot, tick: int, day: int):
+    p.phase = .taxi_out; p.wp = 0; p.launched = tick; p.sortie_day = day; p.failed = false
+    p.mission = if p.stand == 0: 0 else: 1
+
+# ---- the living world: registration, the day's sorties, fuel and the world's record ----
+
+arm_spec = (p: ArmPilot, models: CraftModel[]) -> CraftSpec:
+    spec = craft_spec(.fiat_cr20, models[p.model].contacts)
+    spec.fuel_capacity = f64(data.AIRFRAMES[int(data.Airframe.fiat_cr20)].tank_ml) / 1000.0
+    spec.fuel_burn = f64(data.AIRFRAMES[int(data.Airframe.fiat_cr20)].burn_ml_sec) / 1000.0
+    spec
+
+arm_index = (events: AirEvents, craft: int) -> int:
+    loop i in 0..events.arm.len(): if events.arm[i].craft == craft: return i
+    -1
+
+# Once a minute: each aerodrome's two fighters, bought once by the town it serves when its purse can
+# spare the price (the clubs' rule), and kept for good; a saved pilot is restored as it was.
+prepare_air_arm = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64):
+    if not w.far.populated: return
+    loop k in 0..AIRFIELDS.len():
+        f = AIRFIELDS[k]; place = f.place
+        if not (place in w.far.districts) or not (place in w.far.harbors): continue
+        funder = w.far.districts[place].household_account
+        # (the air arm's two pilots are a reservation on top of the flying club's cohort, as an
+        # authored mobilisation is: the club keeps its own, air_classes.jo)
+        w.far.districts[place].pilot_slots = max(w.far.districts[place].pilot_slots, AIR_CLUB_PILOTS + 2)
+        loop slot in 0..2:
+            key = "air-arm:{place}:{slot}"
+            existing = w.far.air_registrations.get(key, -1)
+            if existing < 0 and w.accounts[funder].cents / 20 < data.AIRFRAMES[int(data.Airframe.fiat_cr20)].price_cents: continue
+            stand_at = _arm_xz(f, f64(AIRFIELD_STANDS[slot].x), f64(AIRFIELD_STANDS[slot].y)); stand_at.y = f32(ground(f64(stand_at.x), f64(stand_at.z)))
+            registration = registry.register_far_aircraft(w, place, .fiat_cr20, funder, key, stand_at)
+            if registration.craft < 0 or arm_index(events, registration.craft) >= 0: continue
+            id = registration.craft
+            model = default_craft_model(.fiat_cr20)
+            w.aircraft[id].model_index = model
+            p = ArmPilot(id, registration.person, k, slot, model, CraftState(), last_tick = w.tick)
+            p.state = arm_park(arm_spec(p, models), f, slot, ground)
+            p.state.fuel = f64(w.aircraft[id].fuel_ml) / 1000.0
+            w.aircraft[id].state = .moored; w.aircraft[id].pose.pos = p.state.position; w.aircraft[id].pose.rot = p.state.orientation
+            if w.aircraft[id].scene_extension != "":
+                saved = from_text[ArmPilot](w.aircraft[id].scene_extension)
+                if saved is ArmPilot and saved.craft == id and saved.person == registration.person: p = saved
+            events.arm.push(p)
+
+# Every tick: launch the day's sortie at its hour (fuel from the town's market; none in bad
+# weather, a damaged engine or a wreck), fly it, and tell the world where the aircraft is.
+update_air_arm = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64):
+    prepare_air_arm(events, w, models, ground)
+    clock = data.local_minute(w.minute); day = data.day_index(w.minute)
+    loop k in 0..events.arm.len():
+        p = events.arm[k]; c = w.aircraft[p.craft]
+        if c.owner != p.person or w.people[p.person].craft != p.craft or p.last_tick == w.tick: continue
+        f = AIRFIELDS[clamp(p.field, 0, AIRFIELDS.len() - 1)]
+        spec = arm_spec(p, models)
+        if p.phase == .parked and p.sortie_day != day and clock >= arm_sortie_minute(p.stand) and clock < arm_sortie_minute(p.stand) + 30:
+            p.sortie_day = day
+            # (an abandoned sortie that ended on its wheels is fetched back to its stand overnight)
+            if p.failed and not p.state.crashed: p.state = arm_park(spec, f, p.stand, ground); p.state.fuel = f64(c.fuel_ml) / 1000.0; p.failed = false
+            safe = conditions.weather_severity(w, p.state.position) < 650
+            if safe and not p.failed and not p.state.crashed and c.engine > 700:
+                funder = w.far.districts[f.place].household_account
+                registry.fill_far_tank(w, p.craft, f.place, 80000 - c.fuel_ml, funder)
+                c = w.aircraft[p.craft]; p.state.fuel = f64(c.fuel_ml) / 1000.0
+                if c.fuel_ml >= 40000:
+                    arm_launch(p, w.tick, day)
+                    w.aircraft[p.craft].move_owner = .scene; w.aircraft[p.craft].revision += 1
+                    w.far.people[p.person].vehicle = p.craft
+        elapsed = clamp(w.tick - p.last_tick, 0, 15); p.last_tick = w.tick
+        moving = p.phase != .parked or length(p.state.velocity) > 0.05
+        if not moving: events.arm[k] = p; continue
+        e = FlightEnv(ground = ground, wind = conditions.wind_at(w, p.state.position))
+        town = if f.place in w.place_contexts: w.place_contexts[f.place].center else: vec3(f.center.x, 0, f.center.y)
+        loop n in 0..elapsed: arm_tick(p, spec, f, town, e, w.tick - elapsed + n + 1)
+        phase = if p.state.crashed: data.CraftState.wrecked else: if p.phase == .parked: data.CraftState.moored else: if p.state.on_ground: data.CraftState.taxi else: data.CraftState.airborne
+        revision = scene.scene_motion(w, p.craft, w.aircraft[p.craft].revision, data.Pose(pos = p.state.position, vel = p.state.velocity, rot = p.state.orientation, throttle = int(p.state.throttle * 1000)),
+            max(0, int(round(p.state.fuel * 1000))), max(0, int((1.0 - p.state.hull_damage) * 1000)), max(0, int((1.0 - p.state.engine_damage) * 1000)), phase, false, false)
+        if revision >= 0: w.aircraft[p.craft].state = phase
+        w.people[p.person].pose.pos = p.state.position
+        if p.phase == .parked and (length(p.state.velocity) <= 0.05 or p.state.crashed):
+            w.aircraft[p.craft].move_owner = .abstract_world
+            if not p.state.crashed: w.far.people[p.person].vehicle = -1
+        events.arm[k] = p

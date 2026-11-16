@@ -1,0 +1,529 @@
+# Fishing from a dock: cast, wait for the float to bob, strike when it goes under. A fish landed
+# is in the angler's hand (FishHold): he can't cast again until it goes into his bucket or back
+# into the sea. The catch is not yet in the living world's stock: it enters it only at the end,
+# sold at the town's market (production into the angler's pocket there, then sold through the
+# ledger) or grilled at the Hotel Ancora's kitchen (production, then eaten, recorded as consumed),
+# so the goods balance holds at every step.
+# Pure: the scene draws the rod, the line, the float, the fish and the bucket; the game decides
+# when the keys go.
+
+use 'phoenix.jo'
+use 'living_types.jo'
+use 'living_money.jo'
+use 'living_cargo.jo'
+use 'living_seed.jo'
+
+const FISH = 0                      # the living world's fish (GoodKind.fish)
+
+struct FishKind:
+    name: str                       # "a red mullet"
+    plural: str                     # "red mullet"
+    lo: int                         # grams
+    hi: int
+    odds: int                       # how often, of 1000
+    dusk: bool = false              # (bites best at dawn and dusk)
+
+FISH_KINDS: FishKind[] = [
+    FishKind("a sardine", "sardines", 40, 110, 240),
+    FishKind("a red mullet", "red mullet", 80, 350, 200, true),
+    FishKind("a bogue", "bogues", 90, 300, 170),
+    FishKind("a mackerel", "mackerel", 150, 600, 140, true),
+    FishKind("a bream", "bream", 200, 1200, 110, true),
+    FishKind("a scorpion fish", "scorpion fish", 150, 700, 70),
+    FishKind("a sea bass", "sea bass", 300, 2500, 45, true),
+    FishKind("an octopus", "octopus", 400, 2500, 25)
+]
+
+struct Catch:
+    kind: int                       # into FISH_KINDS
+    grams: int
+
+struct Angling:
+    stage = 0                       # 0 ready, 1 the cast in the air, 2 waiting, 3 a bite, 4 just landed or lost
+    clock = 0.0                     # seconds in this stage
+    wait = 0.0                      # (waiting: when the bite comes)
+    nibbles: f64[]                  # (waiting: little false bobs before it)
+    hooked = -1                     # (the fish on, while it bites)
+    hooked_grams = 0
+    line = ""                       # what just happened
+    casts = 0
+    caught: Catch[]                 # this outing
+    place = -1
+
+_r = (seed: u64, k: int) -> f64: f64(mix64(seed xor u64(k * 7919 + 13)) % u64(1000000)) / 1000000.0
+
+# How long until something bites (seconds): sooner at dawn and dusk, slower in the heat of the day.
+fishing_wait = (seed: u64, cast: int, local: int) -> f64:
+    hour = f64(local) / 60.0
+    lively = if (hour >= 5.0 and hour < 8.5) or (hour >= 18.0 and hour < 21.0): 0.65 else: if hour >= 12.0 and hour < 16.0: 1.35 else: 1.0
+    (5.0 + _r(seed, cast) * 16.0) * lively
+
+# What bites, and how big.
+fishing_fish = (seed: u64, cast: int, local: int) -> Catch:
+    hour = f64(local) / 60.0
+    dusky = (hour >= 5.0 and hour < 8.5) or (hour >= 18.0 and hour < 21.0)
+    total = 0
+    loop f in FISH_KINDS: total += f.odds * (if dusky and f.dusk: 2 else: 1)
+    pick = int(_r(seed, cast + 101) * f64(total))
+    k = 0
+    loop i in 0..FISH_KINDS.len():
+        o = FISH_KINDS[i].odds * (if dusky and FISH_KINDS[i].dusk: 2 else: 1)
+        if pick < o:
+            k = i; break
+        pick -= o
+    f = FISH_KINDS[k]
+    # (most are small; a few are big)
+    u = _r(seed, cast + 202)
+    Catch(k, f.lo + int(f64(f.hi - f.lo) * u * u))
+
+# Cast: the float flies out; the bite is set to come.
+fishing_cast = (a: mut Angling, seed: u64, local: int):
+    a.casts += 1
+    a.stage = 1; a.clock = 0.0
+    a.wait = fishing_wait(seed, a.casts, local)
+    a.nibbles = [loop k in 0..3: if _r(seed, a.casts * 5 + k) < 0.6: a.wait * _r(seed, a.casts * 5 + k + 50)]
+    fish = fishing_fish(seed, a.casts, local)
+    a.hooked = fish.kind; a.hooked_grams = fish.grams
+    a.line = ""
+
+const STRIKE_WINDOW = 1.1           # seconds the float stays under
+
+# One step of the outing. `strike`: the angler struck this frame. Returns a landed fish, if any.
+fishing_step = (a: mut Angling, dt: f64, strike: bool) -> Catch?:
+    a.clock += dt
+    match a.stage:
+        1:
+            if a.clock >= 0.8:
+                a.stage = 2; a.clock = 0.0
+        2:
+            if strike:
+                a.stage = 4; a.clock = 0.0
+                a.line = "Too soon: nothing there yet."
+            else if a.clock >= a.wait:
+                a.stage = 3; a.clock = 0.0
+        3:
+            if strike:
+                a.stage = 4; a.clock = 0.0
+                landed = Catch(a.hooked, a.hooked_grams)
+                a.line = "{_cap(FISH_KINDS[landed.kind].name)}, {_weight(landed.grams)}."
+                return landed
+            if a.clock >= STRIKE_WINDOW:
+                a.stage = 4; a.clock = 0.0
+                a.line = "It took the bait and went."
+        4:
+            if a.clock >= 2.5: a.stage = 0
+        else: pass
+    none
+
+# the float's depth under its rest (0 floating .. 1 pulled under), for drawing
+fishing_float_dip = (a: Angling) -> f64:
+    if a.stage == 3: return clamp(a.clock * 8.0, 0.0, 1.0)
+    if a.stage == 2:
+        d = 0.0
+        loop n in a.nibbles:
+            u = a.clock - n
+            if u > 0.0 and u < 0.35: d = max(d, sin(u / 0.35 * PI) * 0.3)
+        return d
+    0.0
+
+_cap = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper() + s[1..s.len()]
+
+_weight = (grams: int) -> str: if grams < 1000: "{grams} g" else: "{f64(grams) / 1000.0:.1} kg"
+
+# What has been caught this outing, in words: "a red mullet and a bream, 850 grams in all"
+# ("Nothing yet." before the first).
+fishing_tally = (a: Angling) -> str:
+    if a.caught.len() == 0: return "Nothing yet."
+    fish_words(a.caught) + (if a.caught.len() > 1: " in all" else: "")
+
+# ---------------- the catch in hand, and the buckets ----------------
+
+const BUCKET_FISH = 6               # a handful of fish
+const BUCKET_CENTS = 45             # a zinc bucket, at a chandler's
+const GRILL_CENTS = 60              # the kitchen's charge for grilling one's own catch
+const PLATE_GRAMS = 250             # (a plate: one fish, or small ones until there's this much)
+
+# Where a bucket is. It is always somewhere: nothing comes from nowhere into the hand.
+const BUCKET_DOWN = 0               # set down where someone left it (a dock, a quay)
+const BUCKET_CARRIED = 1            # in the angler's hand
+const BUCKET_LOCKER = 2             # in the player's own locker, by the home mooring
+const BUCKET_HOME = 3               # at its owner's: by their boat, their shed or their counter
+
+# A bucket: whose it is, where it is, and the fish in it.
+struct Bucket:
+    id = 0
+    owner = -1                      # the person it belongs to (the player's own: the world's player)
+    place = -1                      # the town its owner keeps it in
+    where = 0                       # BUCKET_DOWN, _CARRIED, _LOCKER or _HOME
+    at: vec3                        # where it stands (set down, or at home)
+    yaw = 0.0
+    home: vec3                      # its owner's spot for it
+    home_yaw = 0.0
+    lent = false                    # (its owner has lent it to the angler)
+    lent_minute = 0
+    pail: Catch[]
+
+# What an owner remembers of lending the angler a bucket.
+struct BucketLoan:
+    owner = -1
+    lent = 0                        # times lent
+    returned = 0                    # brought back
+    late = 0                        # brought back after a day or more, or never yet
+    last_minute = 0
+
+# What the angler has of his catch: a fish in the hand (flapping a while after it is landed), the
+# buckets of the world he has to do with (his own, those lent him, those lent before) and what
+# their owners remember. Saved with the game; no fish of it is the living world's stock until it
+# is sold or eaten.
+struct FishHold:
+    hand: Catch[]                   # (none or one)
+    remainder = 0                   # (grams x 1000 not yet a whole milli-package, carried to the next sale)
+    buckets: Bucket[]
+    carrying = -1                   # (the id of the bucket in the hand, -1: none)
+    loans: BucketLoan[]
+    seeded = false                  # (the world's buckets put where they are kept)
+    next_id = 1
+    # (older saves: one bought bucket, with these; made a Bucket of the player's own on loading)
+    bucket = false
+    pail: Catch[]
+    down = false
+    at: vec3
+    yaw = 0.0
+
+fish_in_hand = (h: FishHold) -> bool: h.hand.len() > 0
+
+# the bucket with this id (its index), -1 if none
+fish_bucket_index = (h: FishHold, id: int) -> int:
+    loop k in 0..h.buckets.len():
+        if h.buckets[k].id == id: return k
+    -1
+
+# the bucket in the hand (its index), -1 if none
+fish_carried = (h: FishHold) -> int: if h.carrying < 0: -1 else: fish_bucket_index(h, h.carrying)
+
+# the fish in the bucket in the hand
+fish_pail = (h: FishHold) -> Catch[]:
+    k = fish_carried(h)
+    if k < 0: [] else: h.buckets[k].pail
+
+fish_bucket_room = (h: FishHold, k: int) -> bool: k >= 0 and k < h.buckets.len() and h.buckets[k].pail.len() < BUCKET_FISH
+
+# A landed fish into the hand. (One at a time: false while the hand is full.)
+fish_take = (h: mut FishHold, c: Catch) -> bool:
+    if fish_in_hand(h): return false
+    h.hand = [c]
+    true
+
+# The fish in the hand into a bucket within reach (the game says which).
+fish_into_bucket = (h: mut FishHold, k: int) -> bool:
+    if not fish_in_hand(h) or not fish_bucket_room(h, k): return false
+    h.buckets[k].pail.push(h.hand[0])
+    h.hand = []
+    true
+
+# Back into the sea (the game makes the splash). Returns what went, if anything.
+fish_throw_back = (h: mut FishHold) -> Catch?:
+    if not fish_in_hand(h): return none
+    c = h.hand[0]
+    h.hand = []
+    c
+
+# what one has about one to sell or eat: the fish in the hand and in the bucket carried
+fish_all = (h: FishHold) -> Catch[]:
+    out: Catch[]
+    loop c in h.hand: out.push(c)
+    loop c in fish_pail(h): out.push(c)
+    out
+
+fish_count = (h: FishHold) -> int: fish_all(h).len()
+
+# (the hand and the carried bucket emptied of what was sold or eaten)
+_fish_clear = (h: mut FishHold):
+    h.hand = []
+    k = fish_carried(h)
+    if k >= 0: h.buckets[k].pail = []
+
+# whose a bucket is, in words: "your", "Nikos's"
+fish_bucket_whose = (w: World, b: Bucket) -> str:
+    if b.owner == w.player or b.owner < 0 or b.owner >= w.people.len(): "your" else: "{split(w.people[b.owner].name, " ")[0]}'s"
+
+# A bucket can be picked up by the angler: his own (wherever it is), one lent him, or one set down
+# by him. Not someone else's at home, unless they've lent it.
+fish_may_take = (w: World, b: Bucket) -> bool:
+    if b.where == BUCKET_CARRIED: return false
+    if b.owner == w.player: return true
+    if b.where == BUCKET_HOME: return b.lent
+    b.lent
+
+# Into the hand (the bucket stays where it is in the world until he picks it up).
+fish_pick_up = (w: World, h: mut FishHold, k: int) -> bool:
+    if k < 0 or k >= h.buckets.len() or h.carrying >= 0 or not fish_may_take(w, h.buckets[k]): return false
+    h.buckets[k].where = BUCKET_CARRIED
+    h.carrying = h.buckets[k].id
+    true
+
+# Down where he stands, or into his locker (`locker`), or back at its owner's (`home`).
+fish_put_down = (h: mut FishHold, at: vec3, yaw: f64, where: int = BUCKET_DOWN) -> bool:
+    k = fish_carried(h)
+    if k < 0: return false
+    h.buckets[k].where = where
+    h.buckets[k].at = if where == BUCKET_HOME: h.buckets[k].home else: at
+    h.buckets[k].yaw = if where == BUCKET_HOME: h.buckets[k].home_yaw else: yaw
+    h.carrying = -1
+    true
+
+# A new bucket of the angler's own, put somewhere real (the chandler's counter, the locker).
+fish_new_bucket = (h: mut FishHold, owner: int, place: int, where: int, at: vec3, yaw: f64, home: vec3, home_yaw: f64) -> int:
+    h.buckets.push(Bucket(id = h.next_id, owner = owner, place = place, where = where, at = at, yaw = yaw, home = home, home_yaw = home_yaw))
+    h.next_id += 1
+    h.buckets.len() - 1
+
+fish_grams = (cs: Catch[]) -> int:
+    total = 0
+    loop c in cs: total += c.grams
+    total
+
+
+# Some fish, in words: "a red mullet", "3 sardines and a bream, 1.2 kilos".
+fish_words = (cs: Catch[]) -> str:
+    if cs.len() == 0: return "nothing"
+    counts = fill(0, FISH_KINDS.len())
+    loop c in cs: counts[c.kind] += 1
+    parts: str[]
+    loop k in 0..FISH_KINDS.len():
+        if counts[k] == 1: parts.push(FISH_KINDS[k].name)
+        else if counts[k] > 1: parts.push("{counts[k]} {FISH_KINDS[k].plural}")
+    said = if parts.len() == 1: parts[0] else: join(parts[0..parts.len() - 1], ", ") + " and " + parts[parts.len() - 1]
+    "{said}, {_weight(fish_grams(cs))}"
+
+fish_hand_words = (c: Catch) -> str: "{FISH_KINDS[c.kind].name}, {_weight(c.grams)}"
+fish_hand_line = (c: Catch) -> str: _cap(fish_hand_words(c))
+
+# grams into the ledger's milli-packages of fish, with the sub-package remainder carried
+_fish_milli = (w: World, h: FishHold, grams: int) -> int:
+    pkg = w.goods[FISH].package_grams
+    if pkg <= 0: return 0
+    (grams * 1000 + h.remainder) / pkg
+
+_fish_carry = (w: World, h: mut FishHold, grams: int):
+    pkg = w.goods[FISH].package_grams
+    if pkg > 0: h.remainder = (grams * 1000 + h.remainder) % pkg
+
+# The fish enters the world at the angler's feet as production: into his pocket, at this place.
+_fish_mint = (w: mut World, place: int, milli: int):
+    p = w.player
+    w.people[p].pocket.qty[FISH] += milli
+    record_creation(w, FISH, milli)
+    _ = cargo_mint(w, .pocket, p, FISH, milli, p, place, .production)
+
+# What the market here would pay for all one has (after its duty), 0 if it couldn't take it.
+fish_quote = (w: World, h: FishHold, place: int) -> int:
+    if place < 0 or place >= w.places.len() or fish_count(h) == 0: return 0
+    milli = _fish_milli(w, h, fish_grams(fish_all(h)))
+    if milli <= 0: return 0
+    p = w.player
+    raw = milli * w.places[place].market.price_cents[FISH] + w.quote_residual.get("{p}:{place}:{FISH}:false", 0)
+    cents = raw / 1000
+    if w.accounts[w.places[place].market.account].cents < cents: return 0
+    tax = if place == 5 or cents == 0: 0 else: max(1, cents * 2 / 100)
+    cents - tax
+
+# Sell everything in the hand and the carried bucket to the market here, at its price, through the
+# ledger: the fish enters the world's stock (production into the pocket at the market) and is
+# sold into the market's inventory at once. Returns what one was paid (0: not sold, nothing
+# changed).
+fish_sell = (w: mut World, h: mut FishHold) -> int:
+    p = w.player
+    place = w.people[p].place
+    if place < 0 or w.people[p].trip >= 0 or fish_count(h) == 0: return 0
+    if w.goods[FISH].illegal and place != 5: return 0
+    grams = fish_grams(fish_all(h))
+    milli = _fish_milli(w, h, grams)
+    if milli <= 0 or fish_quote(w, h, place) <= 0: return 0
+    a = w.people[p].account
+    before = w.accounts[a].cents
+    _fish_mint(w, place, milli)
+    if not trade(w, p, place, FISH, milli, false):
+        # (the market refused at the last: the fish stays in the pocket, honestly in the stock)
+        _fish_clear(h)
+        _fish_carry(w, h, grams)
+        return 0
+    _fish_clear(h)
+    _fish_carry(w, h, grams)
+    w.accounts[a].cents - before
+
+# The plate the kitchen would grill: the fish in the hand, else from the bucket until there's
+# enough for one (indices into fish_all).
+fish_plate = (h: FishHold) -> int[]:
+    all = fish_all(h)
+    if all.len() == 0: return []
+    if fish_in_hand(h): return [0]
+    out: int[]
+    grams = 0
+    loop k in 0..all.len():
+        if grams >= PLATE_GRAMS: break
+        out.push(k); grams += all[k].grams
+    out
+
+# The kitchen grills a plate of one's own catch: the fish enters the world and is eaten at once
+# (production, then consumption, both recorded), and the cook's charge goes to the house.
+# Returns the grams eaten, or 0.
+fish_grill = (w: mut World, h: mut FishHold, keeper_account: int) -> int:
+    p = w.player
+    place = w.people[p].place
+    plate = fish_plate(h)
+    if plate.len() == 0 or place < 0 or not account_valid(w, keeper_account): return 0
+    if w.accounts[w.people[p].account].cents < GRILL_CENTS: return 0
+    all = fish_all(h)
+    grams = 0
+    loop k in plate: grams += all[k].grams
+    if not transfer(w, w.people[p].account, keeper_account, GRILL_CENTS, .trade): return 0
+    milli = _fish_milli(w, h, grams)
+    _fish_carry(w, h, grams)
+    if milli > 0:
+        _fish_mint(w, place, milli)
+        cargo_consume(w, .pocket, p, FISH, milli)
+        w.people[p].pocket.qty[FISH] -= milli
+        record_consumption(w, FISH, milli)
+    if fish_in_hand(h): h.hand = []
+    else:
+        b = fish_carried(h)
+        h.buckets[b].pail = [loop k in 0..h.buckets[b].pail.len(): if not (k in plate): h.buckets[b].pail[k]]
+    grams
+
+# A bucket of one's own, bought at a chandler's: the money to the shop, and the bucket set on its
+# counter (`at`) for him to pick up. Returns its index, or -1.
+fish_buy_bucket = (w: mut World, h: mut FishHold, seller_account: int, place: int, at: vec3, yaw: f64) -> int:
+    if not account_valid(w, seller_account): return -1
+    if not transfer(w, w.people[w.player].account, seller_account, BUCKET_CENTS, .trade): return -1
+    fish_new_bucket(h, w.player, place, BUCKET_DOWN, at, yaw, at, yaw)
+
+# ---------------- lending and borrowing ----------------
+
+fish_loan_index = (h: FishHold, owner: int) -> int:
+    loop k in 0..h.loans.len():
+        if h.loans[k].owner == owner: return k
+    -1
+
+# the bucket a person keeps for lending, -1 if none
+fish_bucket_of = (h: FishHold, owner: int) -> int:
+    loop k in 0..h.buckets.len():
+        if h.buckets[k].owner == owner: return k
+    -1
+
+# What someone says to being asked for the loan of a bucket, and whether they lend it.
+struct BucketAnswer:
+    lent = false
+    line = ""
+
+_affinity = (w: mut World, person: int) -> int:
+    seed_relationship(w, person, w.player)
+    w.relationships[w.relationship_index[RelationshipKey(person, w.player)]].affinity
+
+_warm = (w: mut World, person: int, by: int):
+    seed_relationship(w, person, w.player)
+    rid = w.relationship_index[RelationshipKey(person, w.player)]
+    w.relationships[rid].affinity = clamp(w.relationships[rid].affinity + by, -1000, 1000)
+    w.relationships[rid].last_contact_minute = w.minute
+
+# (their regard for the angler, set outright: captures and tests)
+fish_set_regard = (w: mut World, person: int, value: int):
+    seed_relationship(w, person, w.player)
+    w.relationships[w.relationship_index[RelationshipKey(person, w.player)]].affinity = clamp(value, -1000, 1000)
+
+# How willing they are: their regard for the angler, and what they remember of lending him one
+# before (brought back: warmer; kept, or brought back days late: cooler). A chandler would rather
+# sell one.
+fish_lend_willing = (w: mut World, h: FishHold, owner: int, seller: bool = false) -> int:
+    score = _affinity(w, owner)
+    i = fish_loan_index(h, owner)
+    if i >= 0: score += 40 * h.loans[i].returned - 160 * h.loans[i].late
+    if seller: score -= 120
+    score
+
+# Asked for the loan of their bucket. It stays where they keep it (by their boat, shed or counter)
+# for the angler to fetch; the answer says where.
+fish_ask_bucket = (w: mut World, h: mut FishHold, owner: int, where_words: str, seller: bool = false) -> BucketAnswer:
+    k = fish_bucket_of(h, owner)
+    if k < 0: return BucketAnswer(false, "I haven't a bucket to spare, I'm afraid.")
+    b = h.buckets[k]
+    if b.lent and b.where != BUCKET_HOME: return BucketAnswer(false, "You've still got my bucket. Bring that one back first.")
+    if b.lent: return BucketAnswer(true, "It's {where_words}, where it always is. Take it.")
+    if b.where != BUCKET_HOME: return BucketAnswer(false, "Someone's got it just now.")
+    willing = fish_lend_willing(w, h, owner, seller)
+    i = fish_loan_index(h, owner)
+    if i >= 0 and h.loans[i].late > 0 and willing < 60:
+        return BucketAnswer(false, "Last time it was days before I saw it again. Buy your own.")
+    if seller and willing < 0: return BucketAnswer(false, "I sell them; I don't lend them. {BUCKET_CENTS} lepta, and it's yours.")
+    if willing < -60: return BucketAnswer(false, "I'd rather not. I need it myself.")
+    h.buckets[k].lent = true
+    h.buckets[k].lent_minute = w.minute
+    if i < 0:
+        h.loans.push(BucketLoan(owner = owner))
+        i = h.loans.len() - 1
+    h.loans[i].lent += 1
+    h.loans[i].last_minute = w.minute
+    line = if willing >= 150: "Of course. It's {where_words}; take it, and bring it back when you're done." else: if i >= 0 and h.loans[i].returned > 0: "You brought it back last time. It's {where_words}." else: "Mind you bring it back. It's {where_words}."
+    BucketAnswer(true, line)
+
+# Back to its owner (handed over, or set at their boat, shed or counter): it goes home, they
+# remember it, and they think the better of the angler for it. The fish in it go with the angler
+# (sold, eaten or thrown back first: what's left goes into the sea). Returns their word on it.
+fish_return_bucket = (w: mut World, h: mut FishHold, k: int) -> str:
+    if k < 0 or k >= h.buckets.len(): return ""
+    b = h.buckets[k]
+    if b.owner == w.player or b.owner < 0: return ""
+    if b.where == BUCKET_CARRIED: h.carrying = -1
+    h.buckets[k].where = BUCKET_HOME
+    h.buckets[k].at = b.home; h.buckets[k].yaw = b.home_yaw
+    h.buckets[k].lent = false
+    h.buckets[k].pail = []
+    i = fish_loan_index(h, b.owner)
+    if i < 0:
+        h.loans.push(BucketLoan(owner = b.owner, lent = 1))
+        i = h.loans.len() - 1
+    late = w.minute - b.lent_minute >= 24 * 60
+    h.loans[i].returned += 1
+    if late and h.loans[i].last_minute != -1: h.loans[i].late += 1      # (unless already noted)
+    h.loans[i].last_minute = w.minute
+    _warm(w, b.owner, if late: -10 else: 8)
+    if late: "So it comes back at last." else: "Thank you for bringing it back."
+
+# (each day: a loan out a day and more is remembered as late, once)
+fish_note_late = (w: World, h: mut FishHold):
+    loop b in h.buckets:
+        if not b.lent or b.where == BUCKET_HOME or w.minute - b.lent_minute < 24 * 60: continue
+        i = fish_loan_index(h, b.owner)
+        if i >= 0 and h.loans[i].last_minute == b.lent_minute:
+            h.loans[i].late += 1
+            h.loans[i].last_minute = -1     # (noted)
+
+# Older saves kept one bought bucket in the hold's own fields: make it a Bucket of the player's own.
+fish_upgrade = (h: mut FishHold, player: int):
+    if not h.bucket or h.buckets.len() > 0: return
+    k = fish_new_bucket(h, player, -1, if h.down: BUCKET_DOWN else: BUCKET_CARRIED, h.at, h.yaw, h.at, h.yaw)
+    h.buckets[k].pail = h.pail
+    if not h.down: h.carrying = h.buckets[k].id
+    h.bucket = false; h.pail = []; h.down = false
+
+# (a saved hold that makes sense: "" when it does)
+fish_hold_error = (h: FishHold, people: int = 1000000) -> str:
+    if h.hand.len() > 1 or h.remainder < 0 or h.pail.len() > BUCKET_FISH: return "Invalid saved catch."
+    carried = 0
+    ids: {int: bool}
+    loop b in h.buckets:
+        if b.id in ids or b.id <= 0 or b.id >= h.next_id: return "Invalid saved bucket."
+        ids[b.id] = true
+        if b.where < BUCKET_DOWN or b.where > BUCKET_HOME or b.pail.len() > BUCKET_FISH or b.owner < -1 or b.owner >= people: return "Invalid saved bucket."
+        if b.where == BUCKET_CARRIED:
+            carried += 1
+            if h.carrying != b.id: return "Invalid saved bucket."
+        loop p in [b.at, b.home]:
+            if not (is_finite(p.x) and is_finite(p.y) and is_finite(p.z)): return "Invalid saved bucket."
+        loop c in b.pail:
+            if c.kind < 0 or c.kind >= FISH_KINDS.len() or c.grams <= 0 or c.grams > 10000: return "Invalid saved catch."
+    if carried > 1 or (h.carrying >= 0 and carried == 0): return "Invalid saved bucket."
+    loop c in h.hand + h.pail:
+        if c.kind < 0 or c.kind >= FISH_KINDS.len() or c.grams <= 0 or c.grams > 10000: return "Invalid saved catch."
+    if not (is_finite(h.at.x) and is_finite(h.at.y) and is_finite(h.at.z) and is_finite(h.yaw)): return "Invalid saved catch."
+    ""

@@ -7,11 +7,13 @@
 import {spawn, execFileSync} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve, join} from 'node:path';
+import {openPage} from './web_page.mjs';
 import assert from 'node:assert/strict';
 
 const [chrome, pageArg, outArg] = process.argv.slice(2);
 assert(chrome && pageArg && outArg, 'chromium, built page and scratch output directory required');
 const page=resolve(pageArg), out=resolve(outArg);
+const served=await openPage(page);
 readFileSync(page); mkdirSync(out,{recursive:true});
 const profile=mkdtempSync(join(out,'chromium-'));
 const gpu=process.env.WEB_NEAR_GPU==='native'
@@ -57,7 +59,7 @@ try {
     {id:'pheryalara',env:{AEGEAN_AT:'14263.08 -170005.45 -1.176',SLOPPY_INPUT:'60:w+ 239:w-'}},
     {id:'cockpit',env:{AEGEAN_ABOARD:'1',SLOPPY_INPUT:'60:v+ 61:v-'}},
     {id:'orbit',env:{AEGEAN_CAPTURE_ORBIT:'9 0.8 0.35'}},
-    {id:'cloud',env:{AEGEAN_FLYING:'950 190',AEGEAN_WEATHER:'overcast',SLOPPY_INPUT:'60:v+ 61:v-'}}
+    {id:'cloud',env:{AEGEAN_FLYING:'950 57.6',AEGEAN_WEATHER:'overcast',SLOPPY_INPUT:'60:v+ 61:v-'}}
   ];
   const cases=[...['low','medium'].map(quality=>({quality,full:false,id:'quay',env:{}})),{quality:'medium',full:true,id:'quay',env:{}},
     ...extraScenes.flatMap(scene=>[false,true].map(full=>({...scene,quality:'medium',full})))];
@@ -65,12 +67,12 @@ try {
   const results=[];
   for(const {quality,full,id,env:sceneEnv} of cases.filter(c=>(!selected||selected.includes(c.id))&&(!process.env.WEB_NEAR_LINEAR||!c.full))) {
     const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'full-log':'split'}`;
-    const query=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
+    const query=new URLSearchParams({AEGEAN_TITLE:'0',SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
       AEGEAN_CAPTURE_READY:'1',AEGEAN_HOUR:'9.75',AEGEAN_QUALITY:quality,AEGEAN_STRESS_FRAME_DT:String(1/60),SLOPPY_FRAMES:'241',...sceneEnv});
     if(process.env.WEB_NEAR_LINEAR)query.set('AEGEAN_LINEAR_DEPTH','1');
     if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
     errors.length=0;loaded=false;
-    await send('Page.navigate',{url:'file://'+page+'?'+query});
+    await send('Page.navigate',{url:served.url+'?'+query});
     await until(()=>loaded);
     await until(async()=>{
       const r=await send('Runtime.evaluate',{returnByValue:true,expression:'globalThis.quayFrames||0'});
@@ -143,6 +145,7 @@ print(json.dumps({name:sum(ImageStat.Stat(ImageChops.difference(a.crop(box),b.cr
   writeFileSync(join(out,'stability.json'),JSON.stringify(stability,null,2)+'\n');
   console.log('PASS: close-camera coverage and split/full WebGL depth comparisons');
 } finally {
+  await served.close();
   ws?.close();
   const exited=new Promise(r=>browser.once('exit',r));
   if(browser.exitCode===null){browser.kill();const guard=setTimeout(()=>browser.kill('SIGKILL'),5000);await exited;clearTimeout(guard);}

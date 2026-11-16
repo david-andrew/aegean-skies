@@ -3,6 +3,12 @@
 use 'phoenix.jo'
 use 'air_events.jo'
 use 'air_race.jo'
+use 'air_classes.jo'
+from 'planes.jo' import Craft, CRAFT_NAMES
+
+# (captures only: ticks added to the race clock of a staged race, AEGEAN_CAPTURE_RACE)
+race_capture_clock = 0
+race_capture_kinds: (int, str)[] = []      # (staged entry's craft, its aircraft's name)
 use 'hud.jo'
 use 'touch.jo'
 use 'panels.jo'
@@ -29,21 +35,33 @@ _race_clock = (ticks: int) -> str:
     m = int(s / 60.0)
     "{m}:{s - f64(m) * 60.0:04.1}"
 
-# The meets ahead, nearest first: today's if still open, then feast days in the next two days.
-# Each is (distance, place, race minute, course).
-_meets_ahead = (events: AirEvents, w: data.World, from: vec3) -> (f64, str, int, str)[]:
-    picks: (f64, str, int, str)[]
+# A meet's name on the cards: "Air race" for the club class, "Schneider race" for the open class.
+race_title = (c: AirClass) -> str: if c == .schneider: "Schneider race" else: "Air race"
+
+# The course in words: laps, gates, and for a larger course how far apart the gates are.
+_course_words = (meet: AirMeet) -> str:
+    laps = if meet.laps == 2: "Two" else: "{meet.laps}"
+    if meet.scale > 1.0 and meet.gates.len() > 1: "{laps} laps of {meet.gates.len()} gates {length(meet.gates[1].center - meet.gates[0].center) / 1000.0:.1} km apart"
+    else: "{laps} laps of {meet.gates.len()} gates"
+
+# The meets ahead, nearest first: today's if still open, then feast days in the next two days
+# (a race in each class). Each is (distance, place, race minute, course, class).
+_meets_ahead = (events: AirEvents, w: data.World, from: vec3) -> (f64, str, int, str, AirClass)[]:
+    picks: (f64, str, int, str, AirClass)[]
     today = data.day_index(w.minute)
     loop meet in events.meets:
         if meet.phase != .registration or w.tick >= meet.race_tick or meet.gates.len() == 0: continue
-        picks.push((f64(length(meet.gates[0].center - from)), _meet_place(w, meet.capital, meet.name), meet.race_tick / data.TICKS_PER_MINUTE, "{if meet.laps == 2: "Two" else: "{meet.laps}"} laps of {meet.gates.len()} gates"))
+        picks.push((f64(length(meet.gates[0].center - from)), _meet_place(w, meet.capital, meet.name), meet.race_tick / data.TICKS_PER_MINUTE, _course_words(meet), meet.race_class))
     loop country in w.countries:
         capital = country.capital_id
         if not (capital in w.far.harbors) or not (capital in w.place_contexts): continue
         start = calendar.next_capital_feast_minute(capital, w.minute)
         if start < 0 or data.day_index(start) <= today or data.day_index(start) > today + 2: continue
-        picks.push((f64(length(w.place_contexts[capital].center - from)), _meet_place(w, capital), start, "Two laps of a pylon course"))
-    picks.sort(key = (p: (f64, str, int, str)): p.0)
+        loop c in [AirClass.schneider, AirClass.club]:
+            if not club_fields(events, w, capital, c): continue
+            course = if c == .schneider: "Two laps of a long pylon course" else: "Two laps of a pylon course"
+            picks.push((f64(length(w.place_contexts[capital].center - from)), _meet_place(w, capital), start - air_class_start(.club) + air_class_start(c), course, c))
+    picks.sort(key = (p: (f64, str, int, str, AirClass)): (p.0, p.2))
     picks
 
 # How far an aircraft can fly to a meet at a part-throttle cruise and still have the fuel the
@@ -68,9 +86,11 @@ air_meet_notices = (events: AirEvents, w: data.World, from: vec3, clock: (int) -
     loop k in 0..min(limit, picks.len()):
         p = picks[k]; place = p.1
         short = if p.0 > reach: " " + _fuel_line(place, p.0, pier_sells) else: ""
-        out.push(Notice(-1 - k, "{place} flying club", "Air race at {place}",
-            "{p.3} over the harbour. Entries at {place}, in your own aircraft, fuelled and sound. The fee is returned to any who withdraw before the start.{short}",
-            AIR_MEET_FEE_CENTS, clock(p.2), pay_text = "Entry {phoenix_text(AIR_MEET_FEE_CENTS)}"))
+        fee = air_class_fee(p.4)
+        who = if p.4 == .schneider: "in your own Schneider racer" else: "in your own aircraft"
+        out.push(Notice(-1 - k, "{place} flying club", "{race_title(p.4)} at {place}",
+            "{p.3} over the harbour. Entries at {place}, {who}, fuelled and sound. The fee is returned to any who withdraw before the start.{short}",
+            fee, clock(p.2), pay_text = "Entry {phoenix_text(fee)}"))
     out
 
 # The fuel pier of the harbour the position is at, when it is open and has fuel to sell now (a home
@@ -94,7 +114,10 @@ race_offer = (events: AirEvents, w: data.World, position: vec3) -> int:
         meet = events.meets[k]
         if meet.phase != .registration or w.tick >= meet.race_tick or meet.gates.len() == 0 or meet.entries.len() >= 8: continue
         if player_air_entry(meet, w.player) != none: continue
-        if length(meet.gates[0].center - position) < 12000: return k
+        # (only a race the player's own aircraft is eligible for: its class)
+        c = w.people[w.player].craft
+        if c < 0 or c >= w.aircraft.len() or air_class_of(Craft(int(w.aircraft[c].kind))) != meet.race_class: continue
+        if air_meet_near(meet, position): return k
     -1
 
 # The meet the player may withdraw from here, or -1: entered, not yet started, near its harbor.
@@ -103,7 +126,7 @@ race_withdraw_offer = (events: AirEvents, w: data.World, position: vec3) -> int:
         meet = events.meets[k]
         if meet.phase != .registration or w.tick >= meet.race_tick or meet.gates.len() == 0: continue
         if player_air_entry(meet, w.player) == none: continue
-        if length(meet.gates[0].center - position) < 12000: return k
+        if air_meet_near(meet, position): return k
     -1
 
 race_offer_text = (events: AirEvents, w: data.World, k: int) -> str:
@@ -112,7 +135,7 @@ race_offer_text = (events: AirEvents, w: data.World, k: int) -> str:
     if let entry = player_air_entry(meet, w.player):
         back = air_withdraw_refund(meet, entry, w.tick)
         return if back > 0: "F  withdraw from the race, {phoenix_text(back)} returned" else: "F  withdraw from the race"
-    "F  enter the race at {place}, {phoenix_text(AIR_MEET_FEE_CENTS)}"
+    "F  enter the {if meet.race_class == .schneider: "Schneider race" else: "race"} at {place}, {phoenix_text(air_meet_fee(meet))}"
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -187,12 +210,21 @@ _big_word = (fonts: Fonts, s: str, alpha: f64):
     set_font()
 
 # The next gate: brackets between its two pylons, or a chevron at the screen's edge.
-draw_race_gate = (fonts: Fonts, gate: AirGate, label: str):
+# The label sits above or below the bracket, whichever keeps it off the player's aircraft (`craft`,
+# its position aboard, `craft_span` its size), pushed clear of the aircraft if need be.
+draw_race_gate = (fonts: Fonts, gate: AirGate, label: str, craft: vec3? = none, craft_span: f64 = 10.0):
     eye = scene_camera()
     p = render_warped(gate.center, eye, scene_warp_a, scene_warp_b)
     clip = scene_view_proj() * vec4(p, 1)
     sw = f64(screen_width()); sh = f64(screen_height())
     c = vec2(sw * 0.5, sh * 0.5)
+    # (the aircraft's area on screen: its centre and a radius from its size at its distance)
+    craft_at = vec2(-1.0e9, -1.0e9); craft_r = 0.0
+    if let at_craft = craft:
+        q = scene_view_proj() * vec4(render_warped(at_craft, eye, scene_warp_a, scene_warp_b), 1)
+        if q.w > 0:
+            craft_at = vec2(f32(sw * 0.5 + f64(q.x) / f64(q.w) * sw * 0.5), f32(sh * 0.5 - f64(q.y) / f64(q.w) * sh * 0.5))
+            craft_r = craft_span * 0.55 * sh * 0.5 / max(f64(q.w), 1.0) * 1.2
     d = vec2(clip.x, -clip.y) / max(abs(clip.w), 0.001) * vec2(sw * 0.5, sh * 0.5)
     edge = clip.w <= 0 or abs(d.x) > sw * 0.5 - 55 or abs(d.y) > sh * 0.5 - 100
     if clip.w <= 0: d = -d
@@ -216,9 +248,26 @@ draw_race_gate = (fonts: Fonts, gate: AirGate, label: str):
     set_font(fonts.ui)
     tw = ptext_width(label, 14)
     x = clamp(f64(at.x), tw * 0.5 + 8, sw - tw * 0.5 - 8)
-    ptext_centered(label, vec2(f32(x + 1), f32(f64(at.y) + 23)), 14, rgba(0.03, 0.04, 0.05, 0.9))
-    ptext_centered(label, vec2(f32(x), f32(f64(at.y) + 22)), 14, color)
+    # (below the bracket or above it, whichever clears the aircraft; clear of it either way)
+    hits = (y: f64) -> bool: abs(y - f64(craft_at.y)) < craft_r + 9.0 and abs(x - f64(craft_at.x)) < craft_r * 1.4 + tw * 0.5
+    below = f64(at.y) + 22.0; above = f64(at.y) - 22.0
+    ly = if not hits(below): below else: (if not hits(above): above else: (if f64(craft_at.y) > f64(at.y): f64(craft_at.y) - craft_r - 14.0 else: f64(craft_at.y) + craft_r + 14.0))
+    ptext_centered(label, vec2(f32(x + 1), f32(ly + 1)), 14, rgba(0.03, 0.04, 0.05, 0.9))
+    ptext_centered(label, vec2(f32(x), f32(ly)), 14, color)
     set_font()
+
+# The field as it stands, a line each: place, pilot, aircraft and time (or how far they had got).
+race_field_lines = (w: data.World, standings: AirEntry[], clock_extra: int = 0, laps: int = 2) -> str[]:
+    out: str[]
+    loop j in 0..min(standings.len(), 6):
+        e = standings[j]
+        who = if e.person >= 0 and e.person < w.people.len(): w.people[e.person].name else: "A club pilot"
+        if e.human: who = "You"
+        kind = if e.craft >= 0 and e.craft < w.aircraft.len(): CRAFT_NAMES[int(w.aircraft[e.craft].kind)] else: ""
+        loop staged in race_capture_kinds: if staged.0 == e.craft: kind = staged.1
+        how = if e.disqualified: "did not finish" else: (if e.finished_tick >= 0: _race_clock(e.finished_tick - e.started_tick + clock_extra) else: "lap {min(e.laps + 1, laps)}")
+        out.push("{j + 1}.  {who}{if kind != "": ", " + kind else: ""}     {how}")
+    out
 
 _finish_card = (fonts: Fonts, title: str, lines: str[], alpha: f64):
     if alpha <= 0.0: return
@@ -239,50 +288,52 @@ _finish_card = (fonts: Fonts, title: str, lines: str[], alpha: f64):
     set_font()
 
 # Everything the entered player sees during the meet, drawn over the scene while aboard.
-draw_race_hud = (fonts: Fonts, events: AirEvents, w: data.World, k: int, position: vec3, show_gate: bool = true):
+draw_race_hud = (fonts: Fonts, events: AirEvents, w: data.World, k: int, position: vec3, show_gate: bool = true, span: f64 = 10.0):
     meet = events.meets[k]; place = _meet_place(w, meet.capital, meet.name)
     e0 = player_air_entry(meet, w.player)
     if e0 == none: return
     e = e0!
     tick = w.tick
     if meet.phase == .cancelled:
-        _race_card(fonts, ["Air race at {place}"], "Called off: {meet.cancellation.lower()}")
+        _race_card(fonts, ["{race_title(meet.race_class)} at {place}"], "Called off: {meet.cancellation.lower()}")
         return
     standings = air_standings(meet)
     rank = 1
     loop j in 0..standings.len(): if standings[j].craft == e.craft: rank = j + 1
     if e.finished_tick >= 0:
         a = 1.0 - smoothstep(720.0, 900.0, f64(tick - e.finished_tick))
-        _finish_card(fonts, "Air race at {place}", ["Finished {_ordinal(rank)} of {meet.entries.len()}", "Time {_race_clock(e.finished_tick - e.started_tick)}"], a)
+        lines = ["Finished {_ordinal(rank)} of {meet.entries.len()}, {_race_clock(e.finished_tick - e.started_tick + race_capture_clock)}", ""]
+        lines.extend(race_field_lines(w, standings, race_capture_clock, meet.laps))
+        _finish_card(fonts, "{race_title(meet.race_class)} at {place}", lines, a)
         return
     if e.disqualified:
         since = if meet.phase == .display: tick - meet.display_tick else: 0
-        _finish_card(fonts, "Air race at {place}", ["Did not finish"], 1.0 - smoothstep(720.0, 900.0, f64(since)))
+        _finish_card(fonts, "{race_title(meet.race_class)} at {place}", ["Did not finish"], 1.0 - smoothstep(720.0, 900.0, f64(since)))
         return
     if meet.phase == .registration:
         left = meet.race_tick - tick
         if left > 4 * 60:
-            _race_card(fonts, ["Air race at {place}", "Start in {_race_clock(left)[0..(_race_clock(left).len() - 2)]}"], "")
+            _race_card(fonts, ["{race_title(meet.race_class)} at {place}", "Start in {_race_clock(left)[0..(_race_clock(left).len() - 2)]}"], "")
         else:
-            _race_card(fonts, ["Air race at {place}", "Fly through the first gate at the start"], "")
+            _race_card(fonts, ["{race_title(meet.race_class)} at {place}", "Fly through the first gate at the start"], "")
             n = (left + 59) / 60
             if n >= 1 and n <= 3: _big_word(fonts, "{n}", 1.0)
-        if show_gate: draw_race_gate(fonts, meet.gates[0], "Start  {length(meet.gates[0].center - position) / 1000.0:.1} km")
+        if show_gate: draw_race_gate(fonts, meet.gates[0], "Start  {length(meet.gates[0].center - position) / 1000.0:.1} km", position, span)
         return
     gate = meet.gates[e.gate]
     dist = "{length(gate.center - position) / 1000.0:.1} km"
     if e.started_tick < 0:
         since = tick - meet.race_tick
         if since < 90: _big_word(fonts, "Go", 1.0 - smoothstep(45.0, 90.0, f64(since)))
-        _race_card(fonts, ["Air race at {place}", "Fly through the first gate to start"], "")
-        if show_gate: draw_race_gate(fonts, gate, "Start  {dist}")
+        _race_card(fonts, ["{race_title(meet.race_class)} at {place}", "Fly through the first gate to start"], "")
+        if show_gate: draw_race_gate(fonts, gate, "Start  {dist}", position, span)
         return
     lap = min(meet.laps, e.laps + 1)
     final_gate = e.gate == 0
     lines = ["Lap {lap} of {meet.laps}     Gate {if final_gate: meet.gates.len() else: e.gate} of {meet.gates.len()}     {_ordinal(rank)} of {meet.entries.len()}",
-        _race_clock(tick - e.started_tick)]
+        "{race_title(meet.race_class)}     {_race_clock(tick - e.started_tick + race_capture_clock)}"]
     warn = if e.missed: "Missed the gate: go back through it" else: ""
     _race_card(fonts, lines, warn)
     if show_gate:
         name = if final_gate: (if e.laps + 1 >= meet.laps: "Finish" else: "Lap gate") else: "Gate {e.gate}"
-        draw_race_gate(fonts, gate, "{name}  {dist}")
+        draw_race_gate(fonts, gate, "{name}  {dist}", position, span)

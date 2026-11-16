@@ -67,11 +67,11 @@ def build():
     if A.force or not output.exists() or not done.exists() or done.read_text()!=stamp:
         assert run([SLOPPY,'build','--release','--target','wasm','aegean.jo','-o',output],P/'logs/build-web.log')==0
         write(done,stamp)
-    # Keep the embedded build for file:// probing and the production split for byte counts.
+    # Keep the single-file build for file:// probing and the production build (page and
+    # index.wasm beside it, as Pages has it) for byte counts.
     web=P/'web';web.mkdir(exist_ok=True)
-    for old in web.glob('aegean.*.wasm'):old.unlink()
-    shutil.copy2(output,web/'index.html')
-    assert run(['python3','tools/package_web.py',web/'index.html'],P/'logs/package-web.log')==0
+    for old in web.glob('*.wasm'):old.unlink()
+    assert run([SLOPPY,'build','--release','--target','wasm','--wasm-file','aegean.jo','-o',web/'index.html'],P/'logs/build-web-split.log')==0
     assert all(digest(ROOT/'assets'/n)==digest(P/'assets'/n) for n in names),'An asset changed during the build; restore frozen assets and rerun build'
     write(P/'numbers/web-size.json',{str(f.relative_to(P)):dict(bytes=f.stat().st_size,gzip_bytes=len(gzip.compress(f.read_bytes(),mtime=0))) for f in [output,*web.glob('*.html'),*web.glob('*.wasm')]})
 
@@ -114,23 +114,23 @@ def images():
     capture('capital-old-quarter','Capital old-quarter hill and streets, elevated view, 09:30',dict(AEGEAN_CAPTURE='place:0:old'))
     capture('mainland-4000','Kalyra mainland, camera at 4000 m, 09:30',dict(AEGEAN_CAPTURE='mainland'))
     capture('cliff-coast','Thera Minor limestone cliff coast, 09:30',dict(AEGEAN_CAPTURE='cliff'))
-    capture('low-crossing','Low sea crossing off the home harbor; 8 m / 190 m/s initial drawn speed, 09:30',dict(AEGEAN_FLYING='8 190'))
+    capture('low-crossing','Low sea crossing off the home harbor; 8 m / 57.6 m/s initial true speed, 09:30',dict(AEGEAN_FLYING='8 57.6'))
     capture('evening-square','Home town square with people following real evening routines; day 2, approximately 18:20; daily-life scene fixture',dict(LIFE_CAPTURE='evening'),frames=31,binary='lifelab')
     for i,name in enumerate(CRAFT):
         capture(f'aircraft-{i:02}-dock',f'{name} at the home dock, 09:30',dict(AEGEAN_CAPTURE='dock',AEGEAN_CRAFT=str(i)))
-        capture(f'aircraft-{i:02}-flight',f'{name} flying off home harbor, 09:30; initial altitude 300 m and drawn speed 190 m/s',dict(AEGEAN_FLYING='300 190',AEGEAN_CRAFT=str(i),AEGEAN_CAPTURE='flight'))
+        capture(f'aircraft-{i:02}-flight',f'{name} flying off home harbor, 09:30; initial altitude 300 m and true speed 57.6 m/s',dict(AEGEAN_FLYING='300 57.6',AEGEAN_CRAFT=str(i),AEGEAN_CAPTURE='flight'))
     for mode in ['dock','flight']:
         sheet([P/'images'/f'aircraft-{i:02}-{mode}.png' for i in range(16)],P/'sheets'/f'aircraft-{mode}.png',CRAFT)
     capture('first-view','Unmodified opening view at the home quay, 1.5 s after start',dict(AEGEAN_CAPTURE_READY=''))
     capture('controls-help','Keyboard help opened with H at the starting quay, 09:30',dict(SLOPPY_INPUT='2:h+ 92:h-'))
-    capture('cockpit','Gull cockpit with brass compass and radio dial, off home harbor, 09:30',dict(AEGEAN_FLYING='300 190',SLOPPY_INPUT='2:v+ 3:v-'))
+    capture('cockpit','Gull cockpit with brass compass and radio dial, off home harbor, 09:30',dict(AEGEAN_FLYING='300 57.6',SLOPPY_INPUT='2:v+ 3:v-'))
     capture('battle','Thirty-aircraft battle fixture over sea, t=6 s, 14:30 lighting',dict(COMBAT_SEEK='360',COMBAT_FREEZE='1',COMBAT_STATIC_CAMERA='1'),2,'combatlab')
     capture('chart-world','Whole-world chart with pocket compass, at home harbor, 09:30',dict(AEGEAN_CHART='1'))
     capture('chart-local','Local archipelago chart with pocket compass, at home harbor, 09:30',dict(AEGEAN_CHART='1',SLOPPY_INPUT='2:tab+ 3:tab-'))
     capture('pause','Pause menu from the starting quay, 09:30',dict(SLOPPY_INPUT='60:p+ 61:p-'))
     capture('conversation','Conversation with the nearest person at the starting quay, 09:30; real greeting',dict(AEGEAN_TALK='1'))
     capture('notebook','Notebook with available real home-board notices pinned by the capture hook; day 2 at 08:00',dict(AEGEAN_CAPTURE_PANEL='notebook',AEGEAN_HOUR='8',AEGEAN_CAPTURE_MINUTES='1170'))
-    for name,e in [('touch-flight',dict(AEGEAN_FLYING='300 190')),('touch-cockpit',dict(AEGEAN_FLYING='300 190',SLOPPY_INPUT='2:v+ 3:v-')),('touch-quay',{})]:
+    for name,e in [('touch-flight',dict(AEGEAN_FLYING='300 57.6')),('touch-cockpit',dict(AEGEAN_FLYING='300 57.6',SLOPPY_INPUT='2:v+ 3:v-')),('touch-quay',{})]:
         capture(name,f'Phone-like 844×390 low-tier {name.removeprefix("touch-")}; native layout proxy, 09:30',e|dict(AEGEAN_TOUCH='1',AEGEAN_QUALITY='low'),size='844x390')
 
     additions()
@@ -151,9 +151,9 @@ def additions():
 # 12 successive 60 Hz states, nine frames apart = 0.15 s. Full traces accompany the excerpts.
 SEQUENCES={
  'takeoff':(dict(AEGEAN_ABOARD='1',SLOPPY_INPUT='1:shift+ 120:shift- 720:s+ 1800:s-'),810),
- 'loop':(dict(AEGEAN_FLYING='600 210',SLOPPY_INPUT='1:s+ 1000:s-'),150),
- 'water-landing':(dict(AEGEAN_FLYING='3 70',AEGEAN_CAPTURE_ATTITUDE='-0.025',SLOPPY_INPUT='1:z+ 90:z-'),9),
- 'dive-into-sea':(dict(AEGEAN_FLYING='100 190',AEGEAN_CAPTURE_ATTITUDE='-0.75'),12),
+ 'loop':(dict(AEGEAN_FLYING='600 63.6',SLOPPY_INPUT='1:s+ 1000:s-'),150),
+ 'water-landing':(dict(AEGEAN_FLYING='3 21.2',AEGEAN_CAPTURE_ATTITUDE='-0.025',SLOPPY_INPUT='1:z+ 90:z-'),9),
+ 'dive-into-sea':(dict(AEGEAN_FLYING='100 57.6',AEGEAN_CAPTURE_ATTITUDE='-0.75'),12),
 }
 def sequences():
     for name,(e,start) in SEQUENCES.items():
@@ -413,10 +413,10 @@ These are private review references copied into scratch, not game assets or orig
 - The original islands' sizes and distances are right; the surrounding world is about 500×400 km.
 - Mobile controls follow Sky Barons: drag to aim and a Walk button. The user liked them.
 - Tilt for fine aiming was liked; it is available in Options.
-- Chaotic stalls were liked and are now the default.
+- Chaotic stalls (separated-wing stalls and spins) were tried and retired on 2026-11-15; the arcade stall is the game's.
 - Clouds are known not to match the film references yet. They are work in progress; judge them anyway.
-- Optional trials belong behind the pause menu's Tweaks checkboxes, off by default. The accepted
-  chaotic-stall behavior above is now a default, not a rejected trial.
+- Optional trials belong behind the pause menu's Tweaks checkboxes, off by default; a trial judged
+  bad is removed, not kept in the menu.
 - Read [FEEL.md](references/FEEL.md) and the user feedback in DESIGN.md before proposing to undo
   accepted work. Treat any older world-size wording there as superseded by the ruling above.
 

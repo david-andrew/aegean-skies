@@ -7,26 +7,6 @@ use 'flight_feedback.jo'
 use 'aircraft_catalog.jo'
 from 'planes.jo' import Craft, aircraft_profile
 
-# a loop of noise passed through a one-pole low-pass (cut: 0..1, lower is deeper), its loudness
-# rising and falling `swells` times over its length (a surf's breathing)
-_noise_loop = (seconds: f64, cut: f64, swells: f64, depth: f64, seed: int) -> Sound:
-    seed_random(seed)
-    n = int(seconds * f64(MIX_RATE))
-    out = fill(f32(0), n * 2)
-    a = 0.0
-    b = 0.0
-    loop i in 0..n:
-        a += (random(-1.0, 1.0) - a) * cut
-        b += (a - b) * cut
-        u = f64(i) / f64(n)
-        env = 1.0 - depth * (0.5 + 0.5 * cos(u * TAU * swells))
-        # (the ends meet: faded across the loop's seam)
-        seam = min(1.0, min(u, 1.0 - u) * 40.0)
-        v = f32(b * env * 2.2 * (0.6 + 0.4 * seam))
-        out[i * 2] = v
-        out[i * 2 + 1] = v
-    Sound(out)
-
 # a radial engine: a beat of firing pulses (each a short, rough thump) with a low drone under it.
 # At pitch 1 it beats 30 times a second; set_pitch turns it up with the throttle.
 engine_loop = (voice: EngineVoice = .radial) -> Sound:
@@ -64,17 +44,23 @@ engine_outside_loop = (voice: EngineVoice = .radial) -> Sound:
     beat = timbre.firing
     blade = timbre.blades
     rough = 0.0
+    # (each harmonic's fixed offset and level, worked out once rather than at every sample:
+    # the same values, so the same sound)
+    offset = [loop k in 1..22: f64(k * k) * 0.7]
+    level = [loop k in 1..22: pow(f64(k), if voice == .inline: 1.05 else: 0.85)]
     loop i in 0..n:
         t = f64(i) / f64(MIX_RATE)
         # (the buzz: a bright sawtooth-like stack, each harmonic a touch out of step, the whole
         # swelling with each firing)
         wob = 0.25 * sin(t * TAU * 3.0) + 0.15 * sin(t * TAU * 7.0)
         buzz = 0.0
+        turn = t * TAU * blade
+        beats = t * TAU * timbre.beating
         loop k in 1..22:
-            ph0 = t * TAU * blade * f64(k) + wob * f64(k) * 0.3 + f64(k * k) * 0.7
+            ph0 = turn * f64(k) + wob * f64(k) * 0.3 + offset[k - 1]
             wave = sin(ph0)
-            if timbre.beating > 0: wave = 0.5 * (wave + sin(ph0 + t * TAU * timbre.beating * f64(k)))
-            buzz += wave / pow(f64(k), if voice == .inline: 1.05 else: 0.85)
+            if timbre.beating > 0: wave = 0.5 * (wave + sin(ph0 + beats * f64(k)))
+            buzz += wave / level[k - 1]
         ph = t * beat
         f = ph - floor(ph)
         rough += (random(-1.0, 1.0) - rough) * 0.5
@@ -180,6 +166,7 @@ struct Audio:
     pump: Sound = Sound([])
     engine: int = -1
     engine_voice: EngineVoice = .radial
+    engine_bank: int = -1            # (a second, detuned loop: many engines beating against each other)
     engine_loops: Sound[]
     wind: int = -1
     water_run: int = -1
@@ -210,7 +197,7 @@ start_audio = (environment: bool = true) -> Audio:
     a.flex_down = [loop k in 0..6: make_oilcan(10 + k, false)]
     a.shot = _gunshot(7)
     if environment:
-        a.surf = play(_noise_loop(8.0, 0.05, 1.0, 0.75, 9), 0.0, looping = true)
+        a.surf = play(make_surf(), 0.0, looping = true)
         a.gulls = [_gull(1), _gull(2), _gull(3)]
     a.splash = make_water_slap()
     a.crunch = _impact(true, 22)
@@ -228,6 +215,8 @@ update_audio = (a: mut Audio, dt: f64, engine_on: bool, throttle: f64, airspeed:
     profile = aircraft_profile(kind)
     if a.engine_voice != profile.voice and a.engine_loops.len() == 4:
         if a.engine >= 0: stop(a.engine)
+        if a.engine_bank >= 0: stop(a.engine_bank)
+        a.engine_bank = -1
         a.engine_voice = profile.voice
         a.engine = play(a.engine_loops[int(profile.voice)], 0.0, looping = true)
     if a.engine >= 0:
@@ -237,6 +226,14 @@ update_audio = (a: mut Audio, dt: f64, engine_on: bool, throttle: f64, airspeed:
         lv = 0.22 + 0.33 * throttle + 0.12 * clamp(airspeed / 85.0, 0.0, 1.4)
         set_volume(a.engine, if engine_on and (not feedback.ready or feedback.powered): lv else: 0.0)
         set_pitch(a.engine, loaded_engine_note(engine_note(throttle, airspeed),feedback.climb) * profile.tone)
+        # (more than two engines: a second loop of the same voice, a little sharp, so the bank of
+        # them beats and drifts as real ones out of synchronisation do)
+        if profile.engines > 2 and a.engine_bank < 0 and a.engine_loops.len() == 4:
+            a.engine_bank = play(a.engine_loops[int(profile.voice)], 0.0, looping = true)
+        if a.engine_bank >= 0:
+            many = profile.engines > 2
+            set_volume(a.engine_bank, if many and engine_on and (not feedback.ready or feedback.powered): lv * (0.45 + 0.02 * f64(min(profile.engines, 12))) else: 0.0)
+            set_pitch(a.engine_bank, loaded_engine_note(engine_note(throttle, airspeed),feedback.climb) * profile.tone * 1.019)
     if a.water_run >= 0:
         set_volume(a.water_run,if engine_on and a.air_on: 0.30*feedback.water else: 0.0)
         set_pitch(a.water_run,0.65+0.65*feedback.water)
@@ -329,7 +326,7 @@ airframe_sounds = (a: mut Audio, airspeed: f64, load: f64, cloth_air: f64, dt: f
 
 # paused: every running sound silent (update_audio and airframe_sounds bring them back)
 hush_audio = (a: Audio):
-    loop v in [a.engine, a.wind, a.whistle, a.water_run, a.surf, a.flap, a.flap_heavy, a.rumble, a.howl, a.deep, a.gale]:
+    loop v in [a.engine, a.engine_bank, a.wind, a.whistle, a.water_run, a.surf, a.flap, a.flap_heavy, a.rumble, a.howl, a.deep, a.gale]:
         if v >= 0: set_volume(v, 0.0)
 
 # taking on fuel: a hand pump's strokes at the pier, each a clack of the lever and a gulp of petrol
@@ -378,6 +375,21 @@ make_water_run = (seconds: f64 = 4.0) -> Sound:
         t = f64(i)/f64(MIX_RATE)
         m[i] = (slow*2.5+(v-fast)*0.18)*(0.84+0.16*wander(t,3.2,61.0))
     seamless(m,fade,0.18)
+
+# The surf heard on foot by the shore: a wash whose loudness wanders at random, seamless across
+# its 9 s. (It once swelled exactly once a loop, with a dip at the seam: a wave every 8 s to the
+# sample; single waves now come from the ambience, src/ambience_scene.jo.)
+make_surf = () -> Sound:
+    r = rng(9)
+    fade = MIX_RATE/2
+    n = MIX_RATE*9+fade
+    m = fill(0.0,n)
+    a = 0.0; b = 0.0
+    loop i in 0..n:
+        a += (r.next_float()*2.0-1.0-a)*0.05
+        b += (a-b)*0.05
+        m[i] = b*(0.8+0.2*wander(f64(i)/f64(MIX_RATE),0.25,93.0))
+    seamless(m,fade,0.098)
 
 # Shared by the live mixer and the offline presentation sample.
 make_water_slap=()->Sound:_impact(false,21)

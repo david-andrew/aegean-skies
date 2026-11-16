@@ -1,0 +1,208 @@
+use '../src/title_shots.jo'
+use '../src/title_battle.jo'
+use '../src/scenarios.jo'
+use '../src/combat.jo'
+use '../src/flight.jo'
+use '../src/planes.jo'
+
+# A made-up sea: an island 3 km across at the origin, a town on its east shore, a canal town
+# far off (its "canal" a straight line), and open water everywhere else.
+_ground = (x: f64, z: f64) -> f64:
+    d = sqrt(x * x + z * z)
+    if d < 3000.0: return 60.0 * (1.0 - d / 3000.0) + 2.0
+    if abs(x - 40000.0) < 2000.0 and abs(z) < 2000.0: return 8.0
+    -40.0
+_sun = (h: f64) -> vec3: normalize(vec3(-1, f32(0.4 - (h - 17.0) * 0.3), 0.2))
+_sites = () -> TitleSite[]:
+    canal = [loop k in 0..12: vec3(f32(39000.0 + f64(k) * 150.0), 0, 0)]
+    [TitleSite(name = "Shore", center = vec3(3000, 0, 0), radius = 300.0, out = vec2(1, 0)),
+     TitleSite(name = "Canals", center = vec3(40000, 0, 0), radius = 900.0, out = vec2(0, 1), route = canal)]
+
+test "the reel never repeats a kind, and keeps to fair weather and its hours":
+    r = TitleRng(s = u64(12345))
+    previous: TitleShotKind? = none
+    seen: {str: bool} = {}
+    loop n in 0..60:
+        shot = title_next_shot(r, previous, vec3(0, 0, 0), _sites(), _ground, _sun)
+        if previous != none: assert(shot.kind != previous!, "the same kind twice running")
+        assert([0, 1, 7, 8].contains(shot.weather), "rain or worse on the title: {shot.weather}")
+        assert(shot.length >= 15.0 and shot.length <= 30.0, "length {shot.length}")
+        seen["{shot.kind}"] = true
+        previous = shot.kind
+    assert(seen.len() == 3, "all three kinds turn up")
+
+test "a low pass stays over open water, at the chase camera's height, at the top speed, banking gently":
+    r = TitleRng(s = u64(99))
+    loop n in 0..12:
+        shot = title_next_shot(r, none, vec3(0, 0, 0), _sites(), _ground, _sun, "low")
+        assert(shot.kind == .low and shot.speed >= 120.0)
+        age = 0.0
+        loop age <= shot.length:
+            v = title_view(shot, age, _ground)
+            assert(_ground(f64(v.eye.x), f64(v.eye.z)) < -4.0, "over land at {age}")
+            assert(f64(v.eye.y) > 12.0 and f64(v.eye.y) < 17.0, "height {v.eye.y}")
+            assert(f64(length(v.velocity)) >= 120.0, "the eye moves at the top speed (the flecks streak with it)")
+            assert(f64(v.up.y) > cos(if shot.pace == 2: 0.26 else: 0.13), "banked past 7 degrees (a race's swing after its racers, 15)")
+            if v.paced: assert(f64(length(v.pace_at - v.eye)) > 4.0, "the paced aircraft runs into the camera")
+            age += 0.5
+
+test "a city shot looks across its town, never straight down into the streets":
+    r = TitleRng(s = u64(7))
+    loop n in 0..24:
+        shot = title_next_shot(r, none, vec3(0, 0, 0), _sites(), _ground, _sun, if n % 2 == 0: "city-Shore" else: "city-Canals")
+        assert(shot.kind == .city)
+        if shot.site == "Canals": assert(shot.style == 2 or shot.style == 1)
+        age = 0.0
+        loop age <= shot.length:
+            v = title_view(shot, age, _ground)
+            assert(f64(v.dir.y) > -0.45, "looking down {v.dir.y} in style {shot.style}")
+            assert(f64(v.eye.y) > _ground(f64(v.eye.x), f64(v.eye.z)) + 20.0, "too near the ground")
+            if shot.style == 0: assert(_ground(f64(v.eye.x), f64(v.eye.z)) < -2.0, "a harbour run over land")
+            age += 1.0
+
+test "the high shot watches the sun go down from above the clouds":
+    r = TitleRng(s = u64(3))
+    shot = title_next_shot(r, none, vec3(0, 0, 0), _sites(), _ground, _sun, "high-clear")
+    v0 = title_view(shot, 0.0, _ground)
+    v1 = title_view(shot, shot.length, _ground)
+    assert(f64(v0.eye.y) > 2500.0)
+    assert(v0.hour < 18.0 and v1.hour > v0.hour + 0.4, "the sun goes down over the shot: {v0.hour} -> {v1.hour}")
+
+test "a race: two racers overtake the camera and pull hard round the pylon across its view, a beat apart, the camera swinging after them":
+    r = TitleRng(s = u64(51))
+    shot = title_next_shot(r, none, vec3(0, 0, 0), _sites(), _ground, _sun, "low-race")
+    assert(shot.kind == .low and shot.pace == 2 and shot.turn == 0.0 and shot.length <= 21.0)
+    # (flown by the flight model, at the game's speed scale, a fixed step: the same every time)
+    set_speed_scale(3.3)
+    title_fly_race(shot, craft_spec(.falco, []))
+    again = shot
+    title_fly_race(again, craft_spec(.falco, []))
+    assert(shot.race[0].at[600] == again.race[0].at[600] and shot.race[1].at[900] == again.race[1].at[900], "the race flies the same twice")
+    most_bank = 0.0; slowest = 1e9; fastest = 0.0; lowest = 1e9; highest = 0.0
+    loop track in shot.race:
+        loop k in 0..track.at.len():
+            right = quat_rotate(track.turn[k], vec3(1, 0, 0))
+            most_bank = max(most_bank, abs(asin(clamp(f64(right.y), -1.0, 1.0))))
+            sp = f64(length(track.velocity[k]))
+            slowest = min(slowest, sp); fastest = max(fastest, sp)
+            lowest = min(lowest, f64(track.at[k].y)); highest = max(highest, f64(track.at[k].y))
+    print("race: most bank {most_bank * 57.3:.0} degrees, speeds {slowest:.0}-{fastest:.0} m/s, heights {lowest:.1}-{highest:.1} m")
+    assert(lowest > 4.0, "a racer skims the sea: {lowest:.1} m")
+    # (a hard racing pylon turn, not a flick of heading alone: snapped over to a steep bank in
+    # under half a second, then pulled round at some 5 g, the heading swinging at 40 degrees a second
+    # or more, through 60 to 120 degrees; the second racer a beat behind the first)
+    assert(most_bank > 1.2 and most_bank < 1.5, "the bank in the pull: {most_bank * 57.3:.0} degrees")
+    starts: f64[]
+    loop track in shot.race:
+        fastest = 0.0; heaviest = 0.0; began = -1.0; steep = -1.0
+        loop k in 6..track.at.len():
+            h0 = atan2(f64(track.velocity[k - 6].x), -f64(track.velocity[k - 6].z)); h1 = atan2(f64(track.velocity[k].x), -f64(track.velocity[k].z))
+            fastest = max(fastest, abs(atan2(sin(h1 - h0), cos(h1 - h0))) * 10.0)
+            heaviest = max(heaviest, track.load[k])
+            bank = asin(clamp(f64(quat_rotate(track.turn[k], vec3(1, 0, 0)).y), -1.0, 1.0))
+            if began < 0.0 and bank > 0.09: began = f64(k) / 60.0
+            if steep < 0.0 and bank > 1.05: steep = f64(k) / 60.0
+        last = track.velocity[track.velocity.len() - 1]
+        turned = atan2(f64(last.x), -f64(last.z)) - shot.heading
+        turned = atan2(sin(turned), cos(turned))
+        print("race: rolls over in {steep - began:.2} s, pulls {heaviest:.1} g, turns at up to {fastest * 57.3:.0} degrees a second, through {-turned * 57.3:.0} degrees")
+        assert(steep - began < 0.5, "the roll in: {steep - began:.2} s")
+        assert(heaviest > 4.0 and heaviest < 7.5, "the pull: {heaviest:.1} g")
+        assert(fastest > 0.7, "the heading swings at {fastest * 57.3:.0} degrees a second")
+        assert(turned < -1.05 and turned > -2.1, "the turn through {-turned * 57.3:.0} degrees")
+        starts.push(began)
+    assert(starts[1] - starts[0] > 0.25 and starts[1] - starts[0] < 1.2, "the second racer a beat behind: {starts[1] - starts[0]:.2} s")
+    fwd = vec3(f32(sin(shot.heading)), 0, f32(-cos(shot.heading)))
+    ahead = (v: TitleView, p: vec3) -> f64: f64(dot(p - v.eye, fwd))
+    v0 = title_view(shot, 0.0, _ground)
+    assert(v0.racers.len() == 2 and v0.pylon and v0.racers[0].model != v0.racers[1].model, "two racers in two liveries, and a pylon")
+    loop racer in v0.racers: assert(ahead(v0, racer.at) < 0.0, "they start behind the camera")
+    passed = false
+    framed = 0.0
+    nearest_pylon = 1e9
+    age = 0.0
+    loop age <= shot.length:
+        v = title_view(shot, age, _ground)
+        loop racer in v.racers:
+            assert(f64(length(racer.at - v.eye)) > 5.0, "a racer runs into the camera at {age}")
+            assert(f64(racer.at.y) > 3.0, "a racer in the water at {age}")
+        if ahead(v, v.racers[0].at) > 30.0 and ahead(v, v.racers[1].at) > 30.0: passed = true
+        # (in the frame: both within 40 degrees of where the camera looks)
+        if age > starts[0] and f64(dot(normalize(v.racers[0].at - v.eye), v.dir)) > 0.77 and f64(dot(normalize(v.racers[1].at - v.eye), v.dir)) > 0.77: framed += 0.1
+        nearest_pylon = min(nearest_pylon, f64(length(vec3(v.pylon_at.x - v.eye.x, 0, v.pylon_at.z - v.eye.z))))
+        age += 0.1
+    print("race: both framed for {framed:.1} s from the turn; the pylon {nearest_pylon:.0} m from the camera at the closest")
+    assert(passed, "both overtake the camera")
+    assert(framed > 2.5, "they leave the frame {framed:.1} s into the turn")
+    assert(nearest_pylon > 12.0, "the pylon {nearest_pylon:.0} m from the camera")
+
+test "a sunset shot: a calm plane well ahead, flown on into the sun, level and steady":
+    r = TitleRng(s = u64(8))
+    shot = title_next_shot(r, none, vec3(0, 0, 0), _sites(), _ground, _sun, "high-plane")
+    assert(shot.kind == .high and shot.pace == 3 and shot.turn == 0.0)
+    set_speed_scale(3.3)
+    f = TitleFlying()
+    # (flown a slice at a time, as the reel does, and the same as all at once)
+    loop not title_flight_step(shot, f, craft_spec(.gull, []), 0.0): pass
+    again = shot
+    title_fly_race(again, craft_spec(.gull, []))
+    assert(shot.race.len() == 1 and shot.race[0].at.len() == again.race[0].at.len() and shot.race[0].at[400] == again.race[0].at[400], "sliced and whole flights differ")
+    most_bank = 0.0; nearest = 1e9; farthest = 0.0
+    age = 0.0
+    loop age <= shot.length:
+        v = title_view(shot, age, _ground)
+        p = v.racers[0]
+        right = quat_rotate(p.turn, vec3(1, 0, 0))
+        most_bank = max(most_bank, abs(asin(clamp(f64(right.y), -1.0, 1.0))))
+        d = f64(length(p.at - v.eye))
+        nearest = min(nearest, d); farthest = max(farthest, d)
+        assert(f64(dot(p.at - v.eye, v.dir)) > 0.0, "the plane behind the camera at {age}")
+        age += 0.5
+    print("sunset: plane {nearest:.0}-{farthest:.0} m ahead, most bank {most_bank * 57.3:.1} degrees")
+    assert(nearest > 60.0 and farthest < 250.0, "the plane {nearest:.0}-{farthest:.0} m off")
+    assert(most_bank < 0.15, "a calm flight, not banking {most_bank * 57.3:.1} degrees")
+
+test "the strait's merge: the two formations close head on and pass through each other, and the shot ends before anyone is down":
+    set_speed_scale(3.3)
+    r = TitleRng(s = u64(4))
+    shot = title_next_shot(r, none, vec3(0, 0, 0), _sites(), _ground, _sun, "high-battle", strait_origin(0))
+    assert(shot.kind == .high and shot.pace == 4 and shot.turn == 0.0)
+    models = build_craft_models()
+    f = TitleBattling()
+    loop not title_battle_step(shot, f, models, _ground, 0.0): pass
+    print("merge: first round fired {f.first_shot:.1} s into the shot, first aircraft down {f.first_down:.1} s")
+    assert(shot.race.len() == 16)
+    assert(f.first_down < 0.0, "an aircraft down in the shot")
+    nearest_pair = 1e9; passed_at = 0.0; nearest_eye = 1e9
+    age = 0.0
+    loop age <= shot.length:
+        v = title_view(shot, age, _ground)
+        loop i in 0..8:
+            loop j in 8..16: nearest_pair = min(nearest_pair, f64(length(v.racers[i].at - v.racers[j].at)))
+        # (the leaders abreast: Orenthia's no longer ahead of Kalyra's)
+        if passed_at == 0.0 and f64(dot(v.racers[8].at - v.racers[0].at, v.dir)) < 0.0: passed_at = age
+        loop racer in v.racers: nearest_eye = min(nearest_eye, f64(length(racer.at - v.eye)))
+        age += 0.1
+    print("merge: the leaders pass {passed_at:.1} s in, the nearest pair {nearest_pair:.0} m apart; nearest to the camera {nearest_eye:.0} m")
+    assert(passed_at > 6.0 and passed_at < shot.length - 2.0, "the merge {passed_at:.1} s into a {shot.length:.0} s shot")
+    assert(nearest_pair < 150.0, "the formations never close: {nearest_pair:.0} m")
+    assert(nearest_eye > 8.0, "an aircraft through the camera")
+    # (the rounds fired drawn as tracers, and heard)
+    late = title_view(shot, f.first_shot + 1.0, _ground)
+    assert(shot.shots.len() > 0 and late.rounds.len() > 0 and title_view(shot, 0.5, _ground).rounds.len() == 0, "tracers {late.rounds.len()}, shots {shot.shots.len()}")
+    # (the camera starts behind the player's Gull, behind Kalyra's V: its leader well ahead)
+    v0 = title_view(shot, 0.0, _ground)
+    assert(f64(dot(v0.racers[0].at - v0.eye, v0.dir)) > 300.0 and f64(length(v0.racers[0].at - v0.eye)) < 520.0, "the leader ahead of the camera")
+    # (the camera keeps a fixed course and pace; the Gull ahead of it draws away into the V, then
+    # manoeuvres in the fight)
+    v1 = title_view(shot, 1.0, _ground); v5 = title_view(shot, 5.0, _ground)
+    assert(length(v1.velocity - v5.velocity) < 0.01 and length(v1.dir - v5.dir) < 0.01, "the camera turns or changes pace")
+    gap = (v: TitleView) -> f64: f64(dot(v.racers[TITLE_PLAYER].at - v.eye, v.dir))
+    assert(gap(v0) > 25.0 and gap(v5) > gap(v0) + 40.0, "the Gull draws ahead: {gap(v0):.0} -> {gap(v5):.0} m")
+    me_gull = shot.race[TITLE_PLAYER]
+    most = 0.0
+    loop k in 0..me_gull.at.len():
+        h = atan2(f64(me_gull.velocity[k].x), -f64(me_gull.velocity[k].z))
+        most = max(most, abs(atan2(sin(h), cos(h))))
+    print("merge: the Gull draws ahead {gap(v0):.0} -> {gap(v5):.0} m in 5 s, then turns up to {most * 57.3:.0} degrees off its course")
+    assert(most > 0.5, "the Gull never leaves its course: {most * 57.3:.0} degrees")

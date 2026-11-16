@@ -1,0 +1,860 @@
+# The tavli board at the coffee house, drawn in code in the period style: a walnut case with a
+# Greek-key inlay, a pale olive-wood field, the points in dark and light wood, bone and ebony
+# checkers, and two bone dice thrown with a little physics (they tumble, bounce off the case and
+# each other, and settle on the numbers the game threw). Played with the mouse (click or drag),
+# the keyboard (arrows, Enter, Space, Backspace) or a finger (tap a checker, tap where it goes).
+#
+# Board space: the case is 1000 x 760 units; the layout scales it to the screen.
+
+use 'phoenix.jo'
+use 'touch.jo'
+use 'controller.jo'
+use 'hud.jo'
+use 'touch.jo'
+use 'panels.jo'
+use 'tavli.jo'
+
+const TB_W = 1000.0
+const TB_H = 760.0
+const TB_FIELD_L = 34.0             # the left field's left edge
+const TB_COL = 66.0                 # a point's width
+const TB_BAR_L = 430.0              # the bar between the halves
+const TB_BAR_R = 494.0
+const TB_TRAY_L = 890.0             # the tray for borne-off checkers
+const TB_TRAY_R = 964.0
+const TB_TOP = 34.0
+const TB_BOTTOM = 726.0
+const TB_POINT = 292.0              # a point's length
+const TB_R = 30.0                   # a checker's radius
+const TB_DIE = 46.0                 # a die's side
+
+# ---------------- the board's geometry ----------------
+
+# the middle of a point's column and whether it hangs from the top
+_tb_column = (i: int) -> (f64, bool):
+    if i < 6: (TB_BAR_R + TB_COL * (f64(5 - i) + 0.5), false)
+    else if i < 12: (TB_FIELD_L + TB_COL * (f64(11 - i) + 0.5), false)
+    else if i < 18: (TB_FIELD_L + TB_COL * (f64(i - 12) + 0.5), true)
+    else: (TB_BAR_R + TB_COL * (f64(i - 18) + 0.5), true)
+
+# where the k-th checker of n stands on a point (from its base outward)
+tb_checker_at = (i: int, k: int, n: int) -> vec2:
+    c = _tb_column(i)
+    step = if n <= 5: TB_R * 2.0 else: (TB_POINT - TB_R * 2.0) / f64(n - 1)
+    y = if c.1: TB_TOP + TB_R + f64(k) * step else: TB_BOTTOM - TB_R - f64(k) * step
+    vec2(f32(c.0), f32(y))
+
+tb_bar_at = (side: int, k: int, n: int) -> vec2:
+    step = min(TB_R * 2.0, 150.0 / f64(max(1, n)))
+    x = (TB_BAR_L + TB_BAR_R) * 0.5
+    y = if side == 0: TB_H * 0.5 + 60.0 + f64(k) * step else: TB_H * 0.5 - 60.0 - f64(k) * step
+    vec2(f32(x), f32(y))
+
+# a spot's own place on the board (where a picked checker comes from or goes to)
+tb_spot_at = (b: TavliBoard, side: int, spot: int) -> vec2:
+    if spot == TAVLI_BAR: return tb_bar_at(side, b.bar[side], b.bar[side] + 1)
+    if spot == TAVLI_OFF:
+        x = (TB_TRAY_L + TB_TRAY_R) * 0.5
+        return vec2(f32(x), f32(if side == 0: TB_BOTTOM - 20.0 - f64(b.off[side]) * 13.0 else: TB_TOP + 20.0 + f64(b.off[side]) * 13.0))
+    n = b.pts[spot]
+    n = (if n < 0: -n else: n) + (if b.plakoto and b.pinned[spot] >= 0: 1 else: 0)
+    tb_checker_at(spot, n, n + 1)
+
+# what is under a point on the board: a point index, TAVLI_BAR, TAVLI_OFF, or -3 nothing
+tb_spot = (p: vec2) -> int:
+    x = f64(p.x); y = f64(p.y)
+    if y < TB_TOP - 10.0 or y > TB_BOTTOM + 10.0: return -3
+    top = y < TB_H * 0.5
+    if x >= TB_FIELD_L and x < TB_BAR_L:
+        col = clamp(int((x - TB_FIELD_L) / TB_COL), 0, 5)
+        return if top: 12 + col else: 11 - col
+    if x >= TB_BAR_L and x < TB_BAR_R: return TAVLI_BAR
+    if x >= TB_BAR_R and x < TB_TRAY_L:
+        col = clamp(int((x - TB_BAR_R) / TB_COL), 0, 5)
+        return if top: 18 + col else: 5 - col
+    if x >= TB_TRAY_L and x < TB_TRAY_R + 20.0: return TAVLI_OFF
+    -3
+
+# ---------------- the dice ----------------
+
+struct TavliDie:
+    pos: vec2 = vec2(0, 0)
+    vel: vec2 = vec2(0, 0)
+    angle = 0.0
+    spin = 0.0
+    h = 0.0                         # height over the board
+    vh = 0.0
+    face = 1                        # what shows
+    value = 1                       # what it will settle on
+    settled = true
+    shown = false                   # on the board at all
+    zone = 0                        # the half it was thrown into (0 the right, 1 the left)
+    knock = 0.0                     # (how hard it struck the board or the case this step: for its clack)
+
+_tb_hash = (a: f64) -> f64:
+    v = sin(a * 12.9898 + 78.233) * 43758.5453
+    v - floor(v)
+
+# Throw a die into a half of the board (side 0 from the bottom into the right half, side 1 from
+# the top into the left), to settle on `value`.
+tb_throw_die = (d: mut TavliDie, side: int, value: int, seed: f64):
+    r1 = _tb_hash(seed); r2 = _tb_hash(seed + 1.7); r3 = _tb_hash(seed + 3.1)
+    if side == 0:
+        d.pos = vec2(f32(TB_BAR_R + 90.0 + r1 * 240.0), f32(TB_BOTTOM - 30.0))
+        d.vel = vec2(f32((r2 - 0.5) * 520.0), f32(-(780.0 + r3 * 420.0)))
+    else:
+        d.pos = vec2(f32(TB_FIELD_L + 90.0 + r1 * 240.0), f32(TB_TOP + 30.0))
+        d.vel = vec2(f32((r2 - 0.5) * 520.0), f32(780.0 + r3 * 420.0))
+    d.h = 70.0; d.vh = 260.0 + r2 * 120.0
+    d.angle = r3 * TAU; d.spin = (r1 - 0.5) * 22.0
+    d.face = 1 + int(r2 * 6.0) % 6
+    d.value = value
+    d.settled = false; d.shown = true; d.zone = side
+
+# One step of the dice: gravity and bounces, the case's walls, each other, friction; the faces
+# turn over at each bounce and the last one lands on the number thrown.
+tb_dice_step = (dice: mut TavliDie[], dt: f64):
+    half = TB_DIE * 0.55
+    loop k in 0..dice.len():
+        if dice[k].settled or not dice[k].shown: continue
+        d = dice[k]
+        d.knock = 0.0
+        lo_x = if d.zone == 0: TB_BAR_R else: TB_FIELD_L
+        hi_x = if d.zone == 0: TB_TRAY_L else: TB_BAR_L
+        d.vh -= 2200.0 * dt
+        d.h += d.vh * dt
+        if d.h <= 0.0:
+            d.h = 0.0
+            if abs(d.vh) > 140.0:
+                d.knock = clamp(abs(d.vh) / 450.0, 0.1, 1.0)
+                d.vh = -d.vh * 0.42
+                d.vel = d.vel * 0.78
+                d.spin *= 0.6
+                d.face = if abs(d.vh) < 170.0: d.value else: 1 + (d.face + 1 + int(_tb_hash(d.angle) * 4.0)) % 6
+            else:
+                d.vh = 0.0
+                d.face = d.value
+        if d.h == 0.0 and d.vh == 0.0:
+            d.vel = d.vel * f32(exp(-4.0 * dt))
+            d.spin *= exp(-5.0 * dt)
+        d.pos = d.pos + d.vel * f32(dt)
+        d.angle += d.spin * dt
+        if f64(d.pos.x) < lo_x + half:
+            d.knock = max(d.knock, clamp(abs(f64(d.vel.x)) / 900.0, 0.05, 0.8))
+            d.pos.x = f32(lo_x + half); d.vel.x = -d.vel.x * 0.6; d.spin = -d.spin * 0.8
+        if f64(d.pos.x) > hi_x - half:
+            d.knock = max(d.knock, clamp(abs(f64(d.vel.x)) / 900.0, 0.05, 0.8))
+            d.pos.x = f32(hi_x - half); d.vel.x = -d.vel.x * 0.6; d.spin = -d.spin * 0.8
+        if f64(d.pos.y) < TB_TOP + half:
+            d.pos.y = f32(TB_TOP + half); d.vel.y = -d.vel.y * 0.6
+        if f64(d.pos.y) > TB_BOTTOM - half:
+            d.pos.y = f32(TB_BOTTOM - half); d.vel.y = -d.vel.y * 0.6
+        if d.h == 0.0 and d.vh == 0.0 and f64(length(d.vel)) < 14.0 and abs(d.spin) < 0.4:
+            d.settled = true; d.face = d.value
+        dice[k] = d
+    # the two dice knock each other apart
+    if dice.len() == 2 and dice[0].shown and dice[1].shown and dice[0].zone == dice[1].zone:
+        gap = dice[1].pos - dice[0].pos
+        dist = f64(length(gap))
+        if dist < TB_DIE * 1.05 and dist > 0.001:
+            n = gap / f32(dist)
+            push = f32((TB_DIE * 1.05 - dist) * 0.5)
+            dice[0].pos = dice[0].pos - n * push
+            dice[1].pos = dice[1].pos + n * push
+            va = f64(dot(dice[0].vel, n)); vb = f64(dot(dice[1].vel, n))
+            if va - vb > 0.0:
+                dice[0].vel = dice[0].vel + n * f32(vb - va)
+                dice[1].vel = dice[1].vel + n * f32(va - vb)
+                dice[0].spin += 3.0; dice[1].spin -= 3.0
+                if dice[0].settled: dice[0].settled = false
+                if dice[1].settled: dice[1].settled = false
+
+tb_dice_settled = (dice: TavliDie[]) -> bool:
+    loop d in dice:
+        if d.shown and not d.settled: return false
+    true
+
+# ---------------- the view ----------------
+
+struct TavliView:
+    dice: TavliDie[] = [TavliDie(), TavliDie()]
+    dice_side = 0                   # whose half the dice are in
+    rolling = false                 # dice in the air (nothing moves till they settle)
+    selected = -3                   # the spot picked up, or -3
+    dragging = false
+    cursor = 0                      # keyboard: index into the targets
+    said = ""                       # the townsperson's last remark
+    said_at = -100.0
+    line = ""                       # what is happening (whose turn, what to do)
+    wait = 0.0                      # the townsperson's thinking
+    queue: TavliMove[]              # their moves still to make
+    fly = 0.0                       # (a checker of theirs on its way: 0..1)
+    last_theirs: TavliMove[]        # (where they moved last: shown faintly)
+    settled = false                 # the game's end has been reckoned
+    result = ""                     # (and what it came to)
+    confirm_leave = false
+    keys = false                    # (the keyboard has been used: its cursor is shown)
+    remarks = 0
+    started_at = 0.0
+    gesture = 0                     # the townsperson's: 1 a shrug, 2 slapping a checker down, 3 a laugh
+    gesture_at = -100.0
+    sounds: vec3[]                  # (for the game to play: x kind 0 the dice rattled, 1 a die's clack,
+                                    # 2 a checker put down; y how hard 0..1; z pan -1..1)
+
+struct TavliAct:
+    finished = false                # the game ended this frame: reckon it
+    leave = false                   # get up from the board
+    resign = false                  # give up the game (the other side wins a single)
+    again = false                   # another game
+
+# The colours of the case and the pieces.
+TB_WALNUT = rgba(0.33, 0.2, 0.12, 1)
+TB_WALNUT_DARK = rgba(0.22, 0.13, 0.08, 1)
+TB_FIELD = rgba(0.72, 0.55, 0.34, 1)
+TB_FIELD_GRAIN = rgba(0.6, 0.43, 0.25, 0.35)
+TB_POINT_DARK = rgba(0.36, 0.13, 0.09, 1)
+TB_POINT_LIGHT = rgba(0.93, 0.86, 0.68, 1)
+TB_INLAY = rgba(0.94, 0.88, 0.72, 0.9)
+TB_BONE = rgba(0.94, 0.9, 0.8, 1)
+TB_BONE_EDGE = rgba(0.76, 0.69, 0.56, 1)
+TB_EBONY = rgba(0.16, 0.1, 0.08, 1)
+TB_EBONY_EDGE = rgba(0.34, 0.22, 0.15, 1)
+TB_BRASS = rgba(0.78, 0.62, 0.3, 1)
+TB_GLOW = rgba(1.0, 0.86, 0.36, 0.55)
+
+struct TbFrame:
+    o: vec2                         # the case's top left on screen
+    s: f64                          # screen units per board unit
+    board: Rect
+    side: Rect                      # where the words and buttons go
+    wide: bool                      # (side by side; else the words below the board)
+    header: f64                     # the line with the name above the board
+    compact = false                 # (no line above: the name is in the side panel)
+    window: Rect = Rect(0, 0, 0, 0) # where the scene shows through: the opponent across the table
+
+_tb_layout = () -> TbFrame:
+    sw = f64(screen_width()); sh = f64(screen_height())
+    top = max(10.0, pad_top_clear(10.0, sw - 10.0) + 4.0)
+    wide = sw / max(1.0, sh) >= 1.3
+    # (a short, wide screen: the name goes in the side panel and the board takes the height)
+    compact = wide and sh < 600.0
+    header = if compact: 0.0 else: 54.0
+    if wide:
+        side_w = if compact: clamp(sw * 0.2, 170.0, 260.0) else: clamp(sw * 0.24, 170.0, 300.0)
+        # (compact: the board takes the full height, right of the touch pad's buttons at top left)
+        if compact: top = 8.0
+        left_clear = if compact and pad.on: min(f64(screen_width()), f64(screen_height())) * 0.055 * 7.35 + 6.0 else: 0.0
+        aw = sw - side_w - 30.0 - left_clear; ah = sh - top - header - 14.0
+        s = min(aw / TB_W, ah / TB_H)
+        bw = TB_W * s; bh = TB_H * s
+        total = bw + 12.0 + side_w
+        x0 = max(left_clear + 6.0, (sw - total) * 0.5)
+        y0 = top + header + max(0.0, (ah - bh) * 0.5)
+        # (the top of the side column is a window onto the table, the opponent across it)
+        wh = bh * (if compact: 0.34 else: 0.38)
+        return TbFrame(vec2(f32(x0), f32(y0)), s, Rect(x0, y0, bw, bh), Rect(x0 + bw + 12.0, y0 + wh + 8.0, side_w, bh - wh - 8.0), true, y0 - header, compact, Rect(x0 + bw + 12.0, y0, side_w, wh))
+    below = 150.0
+    aw = sw - 16.0; ah = sh - top - header - below - 14.0
+    s = min(aw / TB_W, ah / TB_H)
+    bw = TB_W * s; bh = TB_H * s
+    x0 = (sw - bw) * 0.5
+    y0 = top + header + max(0.0, (ah - bh) * 0.35)
+    # (upright: the room under the words, else above the name, is the window onto the table)
+    below_room = sh - (y0 + bh + 8.0 + below) - 12.0
+    room = y0 - header - top - 10.0
+    window = if below_room >= 120.0: Rect(8.0, y0 + bh + below + 16.0, sw - 16.0, below_room) else: if room >= 80.0: Rect(x0, top + 2.0, bw, room) else: Rect(0, 0, 0, 0)
+    TbFrame(vec2(f32(x0), f32(y0)), s, Rect(x0, y0, bw, bh), Rect(8.0, y0 + bh + 8.0, sw - 16.0, below), false, y0 - header, false, window)
+
+_tb_p = (f: TbFrame, p: vec2) -> vec2: f.o + p * f32(f.s)
+_tb_r = (f: TbFrame, r: f64) -> f64: r * f.s
+
+# ---------------- drawing ----------------
+
+# a Greek key along a horizontal strip (board units): a key every 4 cells, `u` units tall
+_tb_meander = (f: TbFrame, x0: f64, y0: f64, length: f64, u: f64, col: vec4):
+    count = max(1, int(length / u))
+    step = length / f64(count)
+    g = u / 4.0
+    th = max(1.0, _tb_r(f, 2.2))
+    pts = [vec2(0, 4), vec2(0, 0), vec2(3, 0), vec2(3, 3), vec2(1, 3), vec2(1, 1), vec2(2, 1)]
+    at = (x: f64, y: f64) -> vec2: _tb_p(f, vec2(f32(x), f32(y)))
+    loop k in 0..count:
+        base = x0 + f64(k) * step
+        loop j in 0..pts.len() - 1:
+            line(at(base + f64(pts[j].x) * g, y0 + f64(pts[j].y) * g), at(base + f64(pts[j + 1].x) * g, y0 + f64(pts[j + 1].y) * g), th, col)
+        line(at(base, y0 + 4.0 * g), at(base + step, y0 + 4.0 * g), th, col)
+
+# wood grain: long, faintly wavering streaks across a rectangle (board units)
+_tb_grain = (f: TbFrame, x: f64, y: f64, w: f64, h: f64, col: vec4, count: int, seed: f64, vertical: bool = false):
+    th = max(1.0, _tb_r(f, 1.6))
+    loop k in 0..count:
+        r = _tb_hash(seed + f64(k) * 7.3)
+        off = (f64(k) + r) / f64(count)
+        amp = 2.0 + _tb_hash(seed + f64(k)) * 6.0
+        segs = 10
+        loop j in 0..segs:
+            u0 = f64(j) / f64(segs); u1 = f64(j + 1) / f64(segs)
+            w0 = sin(u0 * 7.0 + r * 20.0) * amp; w1 = sin(u1 * 7.0 + r * 20.0) * amp
+            a = if vertical: vec2(f32(x + off * w + w0), f32(y + u0 * h)) else: vec2(f32(x + u0 * w), f32(y + off * h + w0))
+            b = if vertical: vec2(f32(x + off * w + w1), f32(y + u1 * h)) else: vec2(f32(x + u1 * w), f32(y + off * h + w1))
+            line(_tb_p(f, a), _tb_p(f, b), th, col)
+
+_tb_rect = (f: TbFrame, x: f64, y: f64, w: f64, h: f64, col: vec4):
+    p = _tb_p(f, vec2(f32(x), f32(y)))
+    rect(f64(p.x), f64(p.y), w * f.s, h * f.s, col)
+
+_tb_rosette = (f: TbFrame, c: vec2, r: f64, col: vec4):
+    pts: vec2[]
+    loop k in 0..16:
+        a = f64(k) * TAU / 16.0
+        rr = if k % 2 == 0: r else: r * 0.45
+        pts.push(_tb_p(f, c + vec2(f32(cos(a) * rr), f32(sin(a) * rr))))
+    polygon(pts, col)
+    circle(_tb_p(f, c), _tb_r(f, r * 0.22), TB_WALNUT_DARK)
+
+tb_draw_case = (f: TbFrame):
+    # the case: walnut, a darker rim, grain, and the Greek key on the long sides
+    p0 = _tb_p(f, vec2(0, 0))
+    rect_rounded(f64(p0.x) + 5, f64(p0.y) + 7, TB_W * f.s, TB_H * f.s, _tb_r(f, 16.0), rgba(0, 0, 0, 0.35))
+    rect_rounded(f64(p0.x), f64(p0.y), TB_W * f.s, TB_H * f.s, _tb_r(f, 16.0), TB_WALNUT)
+    _tb_grain(f, 0, 0, TB_W, TB_H, rgba(0.2, 0.11, 0.06, 0.35), 36, 1.0)
+    # the fields: olive wood, the grain running across
+    loop half in [(TB_FIELD_L, TB_BAR_L), (TB_BAR_R, TB_TRAY_L)]:
+        _tb_rect(f, half.0, TB_TOP, half.1 - half.0, TB_BOTTOM - TB_TOP, TB_FIELD)
+        _tb_grain(f, half.0, TB_TOP, half.1 - half.0, TB_BOTTOM - TB_TOP, TB_FIELD_GRAIN, 14, half.0, true)
+    # the tray
+    _tb_rect(f, TB_TRAY_L + 6.0, TB_TOP, TB_TRAY_R - TB_TRAY_L - 6.0, TB_BOTTOM - TB_TOP, TB_WALNUT_DARK)
+    _tb_rect(f, TB_TRAY_L + 6.0, TB_H * 0.5 - 3.0, TB_TRAY_R - TB_TRAY_L - 6.0, 6.0, TB_WALNUT)
+    # the points
+    loop i in 0..24:
+        c = _tb_column(i)
+        x = c.0; top = c.1
+        base = if top: TB_TOP else: TB_BOTTOM
+        tip = if top: TB_TOP + TB_POINT else: TB_BOTTOM - TB_POINT
+        col = if i % 2 == 0: TB_POINT_DARK else: TB_POINT_LIGHT
+        a = _tb_p(f, vec2(f32(x - TB_COL * 0.47), f32(base)))
+        b = _tb_p(f, vec2(f32(x + TB_COL * 0.47), f32(base)))
+        t = _tb_p(f, vec2(f32(x), f32(tip)))
+        triangle(a, b, t, col)
+        edge = if i % 2 == 0: rgba(0.55, 0.3, 0.18, 1) else: rgba(0.62, 0.48, 0.3, 1)
+        th = max(1.0, _tb_r(f, 1.5))
+        line(a, t, th, edge); line(b, t, th, edge)
+        # (a small inlaid dot at each point's base)
+        circle(_tb_p(f, vec2(f32(x), f32(if top: TB_TOP + 10.0 else: TB_BOTTOM - 10.0))), _tb_r(f, 3.0), if i % 2 == 0: TB_INLAY else: TB_POINT_DARK)
+    # the bar: walnut with brass hinges and a rosette
+    _tb_rect(f, TB_BAR_L, 0, TB_BAR_R - TB_BAR_L, TB_H, TB_WALNUT_DARK)
+    _tb_grain(f, TB_BAR_L, 0, TB_BAR_R - TB_BAR_L, TB_H, rgba(0.12, 0.07, 0.04, 0.4), 5, 9.0, true)
+    loop y in [TB_H * 0.2, TB_H * 0.8]:
+        hp = _tb_p(f, vec2(f32(TB_BAR_L + 14.0), f32(y - 26.0)))
+        rect_rounded(f64(hp.x), f64(hp.y), _tb_r(f, TB_BAR_R - TB_BAR_L - 28.0), _tb_r(f, 52.0), _tb_r(f, 4.0), TB_BRASS)
+        line(_tb_p(f, vec2(f32((TB_BAR_L + TB_BAR_R) * 0.5), f32(y - 26.0))), _tb_p(f, vec2(f32((TB_BAR_L + TB_BAR_R) * 0.5), f32(y + 26.0))), max(1.0, _tb_r(f, 2.0)), rgba(0.45, 0.33, 0.12, 1))
+    _tb_rosette(f, vec2(f32((TB_BAR_L + TB_BAR_R) * 0.5), f32(TB_H * 0.5)), 22.0, TB_INLAY)
+    # the Greek key along the top and bottom rims, and a fine inlay line round the fields
+    _tb_meander(f, 60.0, 8.0, TB_BAR_L - 90.0, 18.0, TB_INLAY)
+    _tb_meander(f, TB_BAR_R + 30.0, 8.0, TB_TRAY_L - TB_BAR_R - 60.0, 18.0, TB_INLAY)
+    _tb_meander(f, 60.0, TB_BOTTOM + 8.0, TB_BAR_L - 90.0, 18.0, TB_INLAY)
+    _tb_meander(f, TB_BAR_R + 30.0, TB_BOTTOM + 8.0, TB_TRAY_L - TB_BAR_R - 60.0, 18.0, TB_INLAY)
+    loop half in [(TB_FIELD_L, TB_BAR_L), (TB_BAR_R, TB_TRAY_L)]:
+        q = _tb_p(f, vec2(f32(half.0 - 3.0), f32(TB_TOP - 3.0)))
+        rect_outline(f64(q.x), f64(q.y), (half.1 - half.0 + 6.0) * f.s, (TB_BOTTOM - TB_TOP + 6.0) * f.s, max(1.0, _tb_r(f, 2.0)), TB_INLAY)
+
+tb_draw_checker = (f: TbFrame, at: vec2, side: int, lifted: bool = false, ghost: bool = false):
+    c = _tb_p(f, at)
+    r = _tb_r(f, TB_R)
+    a = if ghost: 0.35 else: 1.0
+    if not ghost: circle(c + vec2(f32(_tb_r(f, if lifted: 7.0 else: 2.5)), f32(_tb_r(f, if lifted: 9.0 else: 3.0))), r, rgba(0, 0, 0, if lifted: 0.3 else: 0.35))
+    face = if side == 0: TB_BONE else: TB_EBONY
+    edge = if side == 0: TB_BONE_EDGE else: TB_EBONY_EDGE
+    circle(c, r, rgba(edge.x, edge.y, edge.z, f32(a)))
+    circle(c, r * 0.9, rgba(face.x, face.y, face.z, f32(a)))
+    ring(c, r * 0.62, max(1.0, r * 0.07), rgba(edge.x, edge.y, edge.z, f32(a * 0.9)))
+    circle(c, r * 0.18, rgba(edge.x, edge.y, edge.z, f32(a * 0.7)))
+    arc(c, r * 0.8, max(1.0, r * 0.08), -2.6, -1.2, rgba(1, 1, 1, f32(a * (if side == 0: 0.6 else: 0.18))))
+
+# the checkers on the board (one lifted off `hide` if it is being moved)
+tb_draw_checkers = (f: TbFrame, b: TavliBoard, hide: int = -3, hide_side: int = 0):
+    loop i in 0..24:
+        n = b.pts[i]
+        if n == 0: continue
+        side = if n > 0: 0 else: 1
+        count = if n > 0: n else: -n
+        if i == hide and side == hide_side: count -= 1
+        # (Plakoto: a pinned checker lies at the point's base, the pinner's stack over it)
+        under = if b.plakoto and b.pinned[i] >= 0: 1 else: 0
+        total = count + under
+        if under == 1: tb_draw_checker(f, tb_checker_at(i, 0, total), b.pinned[i])
+        loop k in 0..count: tb_draw_checker(f, tb_checker_at(i, k + under, total), side)
+        if total > 5:
+            top = tb_checker_at(i, total - 1, total)
+            ptext_centered("{count}", _tb_p(f, top), _tb_r(f, 26.0), if side == 0: INK else: TB_BONE)
+    loop side in 0..2:
+        count = b.bar[side] - (if hide == TAVLI_BAR and hide_side == side: 1 else: 0)
+        loop k in 0..count: tb_draw_checker(f, tb_bar_at(side, k, count), side)
+        # borne off: on edge in the tray, a stack of slabs
+        loop k in 0..b.off[side]:
+            y = if side == 0: TB_BOTTOM - 12.0 - f64(k) * 13.0 else: TB_TOP + 1.0 + f64(k) * 13.0
+            q = _tb_p(f, vec2(f32(TB_TRAY_L + 12.0), f32(y)))
+            rect_rounded(f64(q.x), f64(q.y), _tb_r(f, TB_TRAY_R - TB_TRAY_L - 18.0), _tb_r(f, 11.0), _tb_r(f, 3.0), if side == 0: TB_BONE else: TB_EBONY)
+            rect_rounded_outline(f64(q.x), f64(q.y), _tb_r(f, TB_TRAY_R - TB_TRAY_L - 18.0), _tb_r(f, 11.0), _tb_r(f, 3.0), 1.0, if side == 0: TB_BONE_EDGE else: TB_EBONY_EDGE)
+
+_PIPS: vec2[][] = [
+    [vec2(0, 0)],
+    [vec2(-1, -1), vec2(1, 1)],
+    [vec2(-1, -1), vec2(0, 0), vec2(1, 1)],
+    [vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(1, 1)],
+    [vec2(-1, -1), vec2(1, -1), vec2(0, 0), vec2(-1, 1), vec2(1, 1)],
+    [vec2(-1, -1), vec2(1, -1), vec2(-1, 0), vec2(1, 0), vec2(-1, 1), vec2(1, 1)]
+]
+
+tb_draw_die = (f: TbFrame, d: TavliDie, dim: bool = false):
+    if not d.shown: return
+    lift = 1.0 + d.h / 260.0
+    half = TB_DIE * 0.5 * lift
+    c = d.pos
+    shadow = c + vec2(f32(4.0 + d.h * 0.35), f32(6.0 + d.h * 0.5))
+    ca = cos(d.angle); sa = sin(d.angle)
+    corner = (u: f64, v: f64, at: vec2) -> vec2: _tb_p(f, at + vec2(f32(u * ca - v * sa), f32(u * sa + v * ca)))
+    # a rounded square: corners cut by small arcs
+    shape = (at: vec2, hh: f64) -> vec2[]:
+        pts: vec2[]
+        rr = hh * 0.28
+        loop q in 0..4:
+            cx = if q == 0 or q == 3: hh - rr else: -(hh - rr)
+            cy = if q < 2: hh - rr else: -(hh - rr)
+            base = f64(q) * PI * 0.5
+            loop j in 0..4:
+                a = base + f64(j) / 3.0 * PI * 0.5
+                pts.push(corner(cx + cos(a) * rr, cy + sin(a) * rr, at))
+        pts
+    polygon(shape(shadow, half), rgba(0, 0, 0, 0.3))
+    polygon(shape(c, half), if dim: rgba(0.8, 0.77, 0.7, 1) else: rgba(0.96, 0.93, 0.85, 1))
+    polygon(shape(c, half * 0.86), if dim: rgba(0.86, 0.83, 0.76, 1) else: rgba(0.99, 0.97, 0.91, 1))
+    pr = _tb_r(f, TB_DIE * 0.085 * lift)
+    face = clamp(d.face, 1, 6)
+    loop p in _PIPS[face - 1]:
+        u = f64(p.x) * half * 0.5; v = f64(p.y) * half * 0.5
+        circle(corner(u, v, c), pr, if face == 1: rgba(0.65, 0.1, 0.08, 1) else: rgba(0.12, 0.08, 0.06, 1))
+
+# a soft marker on a spot: a point's tip, the bar, or the tray
+_tb_mark = (f: TbFrame, b: TavliBoard, side: int, spot: int, col: vec4, ring_only: bool = false):
+    at = if spot == TAVLI_OFF: vec2(f32((TB_TRAY_L + TB_TRAY_R) * 0.5), f32(if side == 0: TB_BOTTOM - 80.0 else: TB_TOP + 80.0)) else: tb_spot_at(b, side, spot)
+    if spot >= 0 and spot < 24:
+        n = abs(b.pts[spot]) + (if b.plakoto and b.pinned[spot] >= 0: 1 else: 0)
+        at = if n > 0: tb_checker_at(spot, n - 1, n) else: tb_checker_at(spot, 0, 1)
+    if ring_only: ring(_tb_p(f, at), _tb_r(f, TB_R + 5.0), max(2.0, _tb_r(f, 5.0)), col)
+    else:
+        circle_gradient(_tb_p(f, at), _tb_r(f, TB_R * 1.4), col, rgba(col.x, col.y, col.z, 0))
+
+# ---------------- playing ----------------
+
+# The spots a player may pick up now, and for a picked one, where it may go (each with the moves
+# that take it there: one, or two with the same checker).
+struct TbTarget:
+    spot: int
+    moves: TavliMove[]
+
+tb_sources = (g: TavliGame) -> int[]:
+    out: int[]
+    loop m in tavli_options(g):
+        if not (m.from in out): out.push(m.from)
+    out
+
+tb_targets = (g: TavliGame, from: int) -> TbTarget[]:
+    out: TbTarget[]
+    loop m in tavli_options(g):
+        if m.from != from: continue
+        found = false
+        loop k in 0..out.len():
+            if out[k].spot == m.to: found = true
+        if not found: out.push(TbTarget(m.to, [m]))
+    # (two steps with the same checker, both dice, when the first lands somewhere it may stop)
+    if g.dice.len() >= 2:
+        loop m in tavli_options(g):
+            if m.from != from or m.to == TAVLI_OFF: continue
+            h = g
+            if not tavli_move(h, m): continue
+            loop m2 in tavli_options(h):
+                if m2.from != m.to: continue
+                found = false
+                loop k in 0..out.len():
+                    if out[k].spot == m2.to: found = true
+                if not found: out.push(TbTarget(m2.to, [m, m2]))
+    out
+
+# the screen order of spots (left to right, the top row then the bottom) for the keyboard
+_tb_order = (spot: int) -> f64:
+    if spot == TAVLI_BAR: return 6.5
+    if spot == TAVLI_OFF: return 13.5
+    c = _tb_column(spot)
+    (if c.1: 0.0 else: 1000.0) + c.0
+
+tb_keyboard_targets = (g: TavliGame, v: TavliView) -> int[]:
+    spots = if v.selected == -3: tb_sources(g) else: [loop t in tb_targets(g, v.selected): t.spot]
+    spots.sort((s: int) -> f64: _tb_order(s))
+    spots
+
+# Pick up a spot, or put down what is picked up there. Returns true when a move was made.
+tb_pick = (g: mut TavliGame, v: mut TavliView, spot: int) -> bool:
+    if v.selected == -3:
+        if spot in tb_sources(g):
+            ts = tb_targets(g, spot)
+            # (one place to go: it goes there at once)
+            if ts.len() == 1 and ts[0].moves.len() == 1:
+                return tavli_move(g, ts[0].moves[0])
+            v.selected = spot; v.cursor = 0
+        return false
+    if spot == v.selected:
+        v.selected = -3; return false
+    loop t in tb_targets(g, v.selected):
+        if t.spot == spot:
+            loop m in t.moves: _ = tavli_move(g, m)
+            v.selected = -3
+            return true
+    # (another of one's own: pick that up instead)
+    v.selected = -3
+    _ = tb_pick(g, v, spot)
+    false
+
+# ---------------- the panel ----------------
+
+struct TavliFace:
+    name: str                       # "Yannis"
+    full: str                       # "Yannis Petrou"
+    about: str                      # "fisherman; plays fast and loose"
+    stake: str                      # "for 50 lepta a point"
+    record: str                     # "You 2, Yannis 1"
+    cents = 0                       # the player's money
+
+_tb_button = (r: Rect, label: str, hot: bool, size: f64) -> bool:
+    over = contains(r, mouse_pos())
+    fill = if hot: (if over: rgba(0.5, 0.65, 0.4, 1) else: rgba(0.42, 0.56, 0.34, 1)) else: (if over: rgba(0.85, 0.74, 0.5, 0.9) else: rgba(0.88, 0.82, 0.68, 1))
+    rect_rounded(r.x, r.y, r.w, r.h, 6, fill)
+    ptext_centered(fit_text(label, r.w - 10, size), vec2(f32(r.x + r.w * 0.5), f32(r.y + r.h * 0.5)), size, if hot: rgba(1, 0.97, 0.9, 1) else: rgba(0.32, 0.2, 0.1, 1))
+    mouse_pressed(.left) and over
+
+# what the townsperson does with their arms as they say it
+_tb_gesture_for = (what: str, cheerful: bool) -> int:
+    match what:
+        "hit", "pin", "win": if cheerful: 3 else: 2
+        "double": if cheerful: 3 else: 2
+        "hit_me", "pin_me", "your_double", "stuck", "lose": 1
+        else: 0
+
+tb_gesture = (v: mut TavliView, kind: int):
+    if kind <= 0: return
+    v.gesture = kind; v.gesture_at = elapsed()
+
+# The pose of a gesture now: the arms' angles (left, right), the body's lift, and how far the arms
+# open out sideways.
+tb_gesture_pose = (v: TavliView) -> (vec2, f64, f64):
+    a = elapsed() - v.gesture_at
+    rest = 0.85 + sin(elapsed() * 0.9) * 0.03
+    match v.gesture:
+        1:
+            if a < 1.0:
+                # (a shrug: the hands come up and out, palms open, the shoulders lift)
+                u = sin(PI * a / 1.0)
+                return (vec2(f32(rest + 0.75 * u), f32(rest + 0.75 * u)), 0.05 * u, 0.75 * u)
+        2:
+            if a < 0.5:
+                r = if a < 0.22: rest + (2.5 - rest) * a / 0.22 else: if a < 0.3: 2.5 - (2.5 - 0.5) * (a - 0.22) / 0.08 else: 0.5 + (rest - 0.5) * (a - 0.3) / 0.2
+                return (vec2(f32(rest), f32(r)), 0.0, 0.0)
+        3:
+            if a < 1.5:
+                # (a laugh: thrown back a little and shaking, the arms wide)
+                fade = 1.0 - a / 1.5
+                shake = abs(sin(a * 13.0)) * fade
+                return (vec2(f32(rest + 0.5 * fade), f32(rest + 0.5 * fade)), 0.03 + 0.06 * shake, 0.45 * fade)
+        else: pass
+    (vec2(f32(rest), f32(rest)), 0.0, 0.0)
+
+tb_sound = (v: mut TavliView, kind: int, strength: f64, pan: f64):
+    if v.sounds.len() < 16: v.sounds.push(vec3(f32(kind), f32(clamp(strength, 0.0, 1.0)), f32(clamp(pan, -1.0, 1.0))))
+
+tb_say = (v: mut TavliView, g: TavliGame, what_was: str):
+    # (Plakoto pins where Portes hits)
+    what = if g.board.plakoto and what_was == "hit": "pin" else: if g.board.plakoto and what_was == "hit_me": "pin_me" else: what_was
+    tb_gesture(v, _tb_gesture_for(what, g.style.words == 1))
+    line = tavli_says(g.style, what, v.remarks + g.throws)
+    if line == "": return
+    v.said = line; v.said_at = elapsed(); v.remarks += 1
+
+# The whole game on the screen, for one frame: the board, the dice, the words and the buttons.
+tavli_panel = (fonts: Fonts, g: mut TavliGame, v: mut TavliView, face: TavliFace) -> TavliAct:
+    act = TavliAct()
+    dt = clamp(frame_time(), 0.0, 0.05)
+    sw = f64(screen_width()); sh = f64(screen_height())
+    f = _tb_layout()
+    # the room darkened round the board, except the window onto the table
+    dim = rgba(0.05, 0.04, 0.03, 0.72)
+    wn = f.window
+    if wn.w > 0.0:
+        rect(0, 0, sw, wn.y, dim); rect(0, wn.y + wn.h, sw, sh - wn.y - wn.h, dim)
+        rect(0, wn.y, wn.x, wn.h, dim); rect(wn.x + wn.w, wn.y, sw - wn.x - wn.w, wn.h, dim)
+        rect_outline(wn.x - 3, wn.y - 3, wn.w + 6, wn.h + 6, 4, TB_WALNUT)
+    else: rect(0, 0, sw, sh, dim)
+    # ---- the townsperson's turn, the dice ----
+    moved_before = g.done.len()
+    if v.rolling:
+        tb_dice_step(v.dice, dt)
+        loop d in v.dice:
+            if d.knock > 0.0: tb_sound(v, 1, d.knock, (f64(d.pos.x) / TB_W - 0.5) * 1.4)
+        if tb_dice_settled(v.dice):
+            v.rolling = false
+            if g.phase == .move and g.turn == 0:
+                if g.roll[0] == g.roll[1] and g.done.len() == 0 and g.throws > 2: tb_say(v, g, "your_double")
+            if g.phase == .move and g.turn == 1:
+                v.queue = tavli_their_play(g)
+                v.wait = g.style.pace * 0.6
+                if g.roll[0] == g.roll[1]: tb_say(v, g, "double")
+                if v.queue.len() == 0: tb_say(v, g, "stuck")
+    else if g.phase == .opening:
+        pass
+    else if g.turn == 1 and g.phase == .roll:
+        v.wait -= dt
+        if v.wait <= 0.0:
+            tavli_throw(g)
+            v.dice[0].shown = true; v.dice[1].shown = true
+            tb_throw_die(v.dice[0], 1, g.roll[0], f64(g.throws) * 1.3)
+            tb_throw_die(v.dice[1], 1, g.roll[1], f64(g.throws) * 2.9 + 0.5)
+            v.dice_side = 1; v.rolling = true
+            v.last_theirs = []
+            tb_sound(v, 0, 0.8, -0.3)
+    else if g.turn == 1 and g.phase == .move:
+        if v.queue.len() > 0:
+            if v.wait > 0.0: v.wait -= dt
+            else:
+                v.fly = min(1.0, v.fly + dt / 0.32)
+                if v.fly >= 1.0:
+                    m = v.queue[0]
+                    v.queue.remove_at(0)
+                    if m.hit: tb_say(v, g, "hit")
+                    else if elapsed() - v.gesture_at > 1.0: tb_gesture(v, 2)
+                    _ = tavli_move(g, m)
+                    tb_sound(v, 2, 0.9, if m.to >= 0 and m.to < 24: (_tb_column(m.to).0 / TB_W - 0.5) * 1.4 else: 0.5)
+                    v.last_theirs.push(m)
+                    v.fly = 0.0
+                    v.wait = g.style.pace * 0.45
+        else if g.phase == .move:
+            v.wait -= dt
+            if v.wait <= 0.0 and tavli_turn_complete(g):
+                tavli_pass(g)
+                v.wait = 0.0
+    # ---- the game's end ----
+    if g.phase == .done and not v.settled:
+        v.settled = true
+        act.finished = true
+        tb_say(v, g, if g.winner == 1: "win" else: "lose")
+    # ---- the player's hands ----
+    my_turn = g.phase == .move and g.turn == 0 and not v.rolling
+    mouse_board = (mouse_pos() - f.o) / f32(f.s)
+    under = tb_spot(mouse_board)
+    if my_turn and not v.confirm_leave:
+        if mouse_pressed(.left) and contains(f.board, mouse_pos()) and under != -3:
+            sel_before = v.selected
+            _ = tb_pick(g, v, under)
+            v.dragging = v.selected != -3 and sel_before == -3
+        if mouse_released(.left) and v.dragging:
+            v.dragging = false
+            if under != -3 and under != v.selected: _ = tb_pick(g, v, under)
+        if mouse_pressed(.right): v.selected = -3
+        # the keyboard: arrows choose among what can be picked (or where it can go), Enter picks
+        spots = tb_keyboard_targets(g, v)
+        if mkey(.right) or mkey(.left) or mkey(.up) or mkey(.down): v.keys = true
+        if mouse_pressed(.left): v.keys = false
+        if spots.len() > 0:
+            if mrepeat(.right) or mrepeat(.down): v.cursor = (v.cursor + 1) % spots.len()
+            if mrepeat(.left) or mrepeat(.up): v.cursor = (v.cursor + spots.len() - 1) % spots.len()
+            v.cursor = clamp(v.cursor, 0, spots.len() - 1)
+            if mkey(.enter) and not tavli_turn_complete(g): _ = tb_pick(g, v, spots[v.cursor])
+    if g.turn == 0 and g.done.len() > moved_before:
+        tb_sound(v, 2, 0.7, 0.0)
+        # (the player hit them, or pinned one: they say so)
+        hit = false
+        loop k in moved_before..g.done.len():
+            if g.done[k].hit: hit = true
+        if hit: tb_say(v, g, "hit_me")
+    # ---- the board ----
+    tb_draw_case(f)
+    hide = -3; hide_side = 0
+    flying: TavliMove? = none
+    if g.turn == 1 and v.queue.len() > 0 and v.wait <= 0.0 and v.fly > 0.0:
+        flying = v.queue[0]
+        hide = v.queue[0].from; hide_side = 1
+    if v.dragging and v.selected != -3:
+        hide = v.selected; hide_side = 0
+    # (where they moved last, faintly, until one moves)
+    if g.turn == 0 and g.done.len() == 0:
+        loop m in v.last_theirs:
+            if m.to != TAVLI_OFF: _tb_mark(f, g.board, 1, m.to, rgba(0.95, 0.6, 0.3, 0.45), true)
+    tb_draw_checkers(f, g.board, hide, hide_side)
+    if my_turn:
+        if v.selected != -3:
+            _tb_mark(f, g.board, 0, v.selected, rgba(1.0, 0.9, 0.5, 0.95), true)
+            loop t in tb_targets(g, v.selected):
+                _tb_mark(f, g.board, 0, t.spot, TB_GLOW)
+                if t.spot != TAVLI_OFF: tb_draw_checker(f, tb_spot_at(g.board, 0, t.spot), 0, false, true)
+        else:
+            loop s in tb_sources(g): _tb_mark(f, g.board, 0, s, rgba(1.0, 0.9, 0.5, 0.45), true)
+        spots = tb_keyboard_targets(g, v)
+        if spots.len() > 0 and v.keys:
+            s = spots[clamp(v.cursor, 0, spots.len() - 1)]
+            _tb_mark(f, g.board, 0, s, rgba(0.35, 0.75, 1.0, 0.9), true)
+    if let m = flying:
+        a = tb_spot_at(g.board, 1, m.from)
+        if m.from >= 0:
+            n = abs(g.board.pts[m.from]) + (if g.board.plakoto and g.board.pinned[m.from] >= 0: 1 else: 0)
+            a = tb_checker_at(m.from, n - 1, n)
+        b = tb_spot_at(g.board, 1, m.to)
+        u = v.fly * v.fly * (3.0 - 2.0 * v.fly)
+        at = a + (b - a) * f32(u) + vec2(0, f32(-sin(u * PI) * 40.0))
+        tb_draw_checker(f, at, 1, true)
+    if v.dragging and v.selected != -3:
+        tb_draw_checker(f, mouse_board, 0, true)
+    # the dice: the ones still to play bright, the used ones dimmed
+    loop k in 0..2:
+        d = v.dice[k]
+        used = g.phase == .move and not v.rolling and g.turn == v.dice_side and not (d.value in g.dice) and g.roll[0] != g.roll[1]
+        tb_draw_die(f, d, used)
+    # ---- the words ----
+    if not f.compact:
+        set_font(fonts.title)
+        ptext(fit_text(face.full, sw * 0.6, 24), vec2(f32(f.board.x), f32(f.header + 4)), 24, PAPER)
+        set_font(fonts.ui)
+        ptext(fit_text("{face.about}; {face.stake}", sw - f.board.x - 60, 15), vec2(f32(f.board.x), f32(f.header + 32)), 15, rgba(0.95, 0.91, 0.8, 0.75))
+    set_font(fonts.ui)
+    close = if f.wide: Rect(f.side.x + f.side.w - 38, f.side.y + 4, 34, 34) else: Rect(sw - 46, f.header, 36, 36)
+    if not f.wide: ptext_centered("×", vec2(f32(close.x + 18), f32(close.y + 16)), 32, if contains(close, mouse_pos()): PAPER else: rgba(0.95, 0.91, 0.8, 0.7))
+    leave_asked = (mouse_pressed(.left) and contains(close, mouse_pos())) or vpressed(.escape)
+    side = f.side
+    # what is happening, and the buttons
+    status = ""
+    if v.confirm_leave: status = "Give up this game? {face.name} wins a single point."
+    else if g.phase == .opening: status = "Each throws one die; the higher starts."
+    else if g.phase == .done: status = v.result
+    else if v.rolling: status = ""
+    else if g.turn == 0 and g.phase == .roll: status = "Your throw."
+    else if g.turn == 0:
+        left = g.duty.need - g.done.len()
+        status = if g.duty.need == 0: "{g.roll[0]} and {g.roll[1]}: no move. Pass." else: if left > 0: "{g.roll[0]} and {g.roll[1]}: move {left} more." else: "Done? Or take it back."
+    else: status = "{face.name} {if v.queue.len() > 0: "moves" else: "is thinking"}."
+    said = if v.said != "" and elapsed() - v.said_at < 6.0: "{face.name}: \"{v.said}\"" else: ""
+    pips = "{tavli_game_name(g)}. Pips: you {tavli_pips(g.board, 0)}, {face.name} {tavli_pips(g.board, 1)}"
+    buttons: str[]
+    if v.confirm_leave: buttons = ["Give up the game", "Play on"]
+    else if g.phase == .opening: buttons = ["Throw for the start"]
+    else if g.phase == .done: buttons = ["Another game", "Get up"]
+    else if my_turn or (g.turn == 0 and g.phase == .roll and not v.rolling):
+        if g.phase == .roll: buttons = ["Throw"]
+        else:
+            if g.done.len() > 0: buttons.push("Take back")
+            if tavli_turn_complete(g): buttons.push(if g.duty.need == 0: "Pass" else: "Done")
+    size = if f.wide: 17.0 else: 16.0
+    bh = if pad.on: 44.0 else: 36.0
+    if f.wide:
+        y = side.y
+        rect_rounded(side.x, side.y, side.w, side.h, 8, rgba(0.95, 0.91, 0.8, 0.94))
+        if f.compact:
+            set_font(fonts.title)
+            ptext(fit_text(face.full, side.w - 50, 17), vec2(f32(side.x + 12), f32(y + 10)), 17, INK)
+            set_font(fonts.ui)
+            ptext_centered("×", vec2(f32(close.x + 17), f32(close.y + 15)), 28, if contains(close, mouse_pos()): INK else: LIGHT_INK)
+            ptext(fit_text(face.stake, side.w - 24, 13), vec2(f32(side.x + 12), f32(y + 34)), 13, LIGHT_INK)
+            y += 44.0
+        set_font(fonts.ui)
+        if not f.compact: ptext_centered("×", vec2(f32(close.x + 17), f32(close.y + 15)), 28, if contains(close, mouse_pos()): INK else: LIGHT_INK)
+        loop l in wrap_text(face.record, side.w - 44, 15):
+            ptext(l, vec2(f32(side.x + 12), f32(y + 12)), 15, LIGHT_INK); y += 20.0
+        ptext(fit_text(pips, side.w - 24, 14), vec2(f32(side.x + 12), f32(y + 12)), 14, LIGHT_INK); y += 30.0
+        line(vec2(f32(side.x + 12), f32(y)), vec2(f32(side.x + side.w - 12), f32(y)), 1.5, PAPER_DARK); y += 10.0
+        loop l in wrap_text(status, side.w - 24, 18):
+            ptext(l, vec2(f32(side.x + 12), f32(y)), 18, INK); y += 24.0
+        # the dice still to play, small
+        if g.phase == .move and g.turn == 0 and not v.rolling and g.dice.len() > 0:
+            dx = side.x + 14.0
+            mini = TbFrame(vec2(0, 0), 0.62, Rect(0, 0, 0, 0), Rect(0, 0, 0, 0), true, 0)
+            loop d in g.dice:
+                tb_draw_die(mini, TavliDie(pos = vec2(f32((dx + 14.0) / 0.62), f32((y + 16.0) / 0.62)), face = d, value = d, shown = true))
+                dx += 38.0
+            y += 42.0
+        y += 8.0
+        loop l in wrap_text(said, side.w - 24, 16):
+            ptext(l, vec2(f32(side.x + 12), f32(y)), 16, STAMP); y += 21.0
+        by = side.y + side.h - 12.0 - f64(buttons.len()) * (bh + 8.0)
+        help = if pad.on: "Tap a checker, then where it goes." else: (if pad_hints(): "The d-pad and A choose a checker and where it goes; X throws and finishes; Y takes back; B leaves." else: "Click a checker, then where it goes (or drag it). Arrows and Enter choose; Space throws and finishes; Backspace takes back.")
+        hl = wrap_text(help, side.w - 24, 13)
+        hy = by - 34.0 - f64(hl.len()) * 17.0
+        if hy > y + 6.0 and g.phase != .done:
+            loop k in 0..hl.len(): ptext(hl[k], vec2(f32(side.x + 12), f32(hy + f64(k) * 17.0)), 13, LIGHT_INK)
+        loop k in 0..buttons.len():
+            r = Rect(side.x + 12, by + f64(k) * (bh + 8.0), side.w - 24, bh)
+            if _tb_button(r, buttons[k], k == 0, size): act = _tb_choose(g, v, buttons[k], act)
+        ptext(fit_text(phoenix_text(face.cents), side.w - 24, 14), vec2(f32(side.x + 12), f32(by - 26)), 14, LIGHT_INK)
+    else:
+        y = side.y
+        rect_rounded(side.x, side.y, side.w, side.h, 8, rgba(0.95, 0.91, 0.8, 0.94))
+        ptext(fit_text(status, side.w - 24, 17), vec2(f32(side.x + 12), f32(y + 10)), 17, INK)
+        if g.phase == .move and g.turn == 0 and not v.rolling and g.dice.len() > 0:
+            dx = side.x + side.w - 12.0 - f64(g.dice.len()) * 30.0
+            mini = TbFrame(vec2(0, 0), 0.5, Rect(0, 0, 0, 0), Rect(0, 0, 0, 0), true, 0)
+            loop d in g.dice:
+                tb_draw_die(mini, TavliDie(pos = vec2(f32((dx + 13.0) / 0.5), f32((y + 20.0) / 0.5)), face = d, value = d, shown = true))
+                dx += 30.0
+        ptext(fit_text(if said != "": said else: "{face.record}. {pips}", side.w - 24, 15), vec2(f32(side.x + 12), f32(y + 38)), 15, if said != "": STAMP else: LIGHT_INK)
+        if said != "": ptext(fit_text("{face.record}. {pips}", side.w - 24, 13), vec2(f32(side.x + 12), f32(y + 60)), 13, LIGHT_INK)
+        if buttons.len() == 0 and my_turn:
+            ptext(fit_text(if pad.on: "Tap a checker, then where it goes." else: "Click a checker, then where it goes.", side.w - 24, 13), vec2(f32(side.x + 12), f32(side.y + side.h - 30.0)), 13, LIGHT_INK)
+        bw = (side.w - 24.0 - 8.0 * f64(max(0, buttons.len() - 1))) / f64(max(1, buttons.len()))
+        bw = min(bw, 220.0)
+        bx = side.x + 12.0
+        loop k in 0..buttons.len():
+            r = Rect(bx + f64(k) * (bw + 8.0), side.y + side.h - bh - 12.0, bw, bh)
+            if _tb_button(r, buttons[k], k == 0, size): act = _tb_choose(g, v, buttons[k], act)
+    # the keys
+    if not v.confirm_leave:
+        if key_pressed(.space) or key_pressed(.r) or ctl_menu(.b):
+            if g.phase == .opening: act = _tb_choose(g, v, "Throw for the start", act)
+            else if g.turn == 0 and g.phase == .roll and not v.rolling: act = _tb_choose(g, v, "Throw", act)
+            else if my_turn and tavli_turn_complete(g): act = _tb_choose(g, v, "Done", act)
+        if (key_pressed(.backspace) or key_pressed(.u) or ctl_menu(.s)) and my_turn and g.done.len() > 0: act = _tb_choose(g, v, "Take back", act)
+        if mkey(.enter) and my_turn and tavli_turn_complete(g): act = _tb_choose(g, v, "Done", act)
+    if v.confirm_leave and mkey(.enter): act = _tb_choose(g, v, "Give up the game", act)
+    else if leave_asked:
+        if v.selected != -3: v.selected = -3
+        else if g.phase == .done or g.phase == .opening: act.leave = true
+        else: v.confirm_leave = not v.confirm_leave
+    set_font()
+    act
+
+_tb_choose = (g: mut TavliGame, v: mut TavliView, what: str, act: TavliAct) -> TavliAct:
+    out = act
+    if what == "Throw for the start":
+        tavli_opening(g)
+        v.dice[0].shown = true; v.dice[1].shown = true
+        tb_throw_die(v.dice[0], 0, g.opening[0], f64(g.throws) * 1.1)
+        tb_throw_die(v.dice[1], 1, g.opening[1], f64(g.throws) * 2.3)
+        v.dice_side = g.turn; v.rolling = true
+        v.wait = 0.8
+        tb_sound(v, 0, 0.9, 0.0)
+        # (the dice show each one's opening throw; whoever starts plays them both)
+    else if what == "Throw":
+        tavli_throw(g)
+        tb_throw_die(v.dice[0], 0, g.roll[0], f64(g.throws) * 1.7 + elapsed())
+        tb_throw_die(v.dice[1], 0, g.roll[1], f64(g.throws) * 3.1 + elapsed())
+        v.dice_side = 0; v.rolling = true
+        tb_sound(v, 0, 0.8, 0.3)
+    else if what == "Take back":
+        tavli_undo(g); v.selected = -3
+    else if what == "Done" or what == "Pass":
+        tavli_pass(g); v.selected = -3
+        v.wait = g.style.pace
+    else if what == "Give up the game":
+        v.confirm_leave = false
+        out.resign = true
+    else if what == "Play on": v.confirm_leave = false
+    else if what == "Another game": out.again = true
+    else if what == "Get up": out.leave = true
+    out
+
+# Where the scene shows through the board's panel (the opponent across the table), for the camera.
+tavli_window = () -> Rect: _tb_layout().window

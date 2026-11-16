@@ -1,0 +1,89 @@
+# Run the whole test suite on every push to a t3/** branch (and on manual dispatch), split across
+# parallel jobs. Never runs on main: Pages (pages.yml) covers main. See docs/CI.md.
+name: Tests
+on:
+  push:
+    branches: ['t3/**']
+  workflow_dispatch:
+    inputs:
+      slow:
+        description: Also run the two slow software-rendered title tests (about 16 and 25+ minutes)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # keep in sync with SLOPPY_VERSION in .github/workflows/pages.yml
+  SLOPPY_VERSION: v0.37.2
+  SHARDS: 6
+  CI_SLOW: ${{ inputs.slow && '1' || '0' }}
+jobs:
+  guard:
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # first step: nothing that must stay out of git may be tracked or committed on this branch
+      - name: Guard (no scratch, recordings, soundfonts or big binaries)
+        run: |
+          python3 tools/check_tracked_files.py
+          git fetch --no-tags origin main
+          python3 tools/check_tracked_files.py --range origin/main..HEAD
+  shards:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Sloppy
+        run: |
+          curl -fsSL https://sloppy-lang.org/install | bash -s "$SLOPPY_VERSION"
+          echo "$HOME/.sloppy/bin" >> "$GITHUB_PATH"
+      - name: Python test dependencies
+        run: python3 -m pip install Pillow numpy scipy mido
+      - name: Bake the land, clouds and registries
+        run: sloppy --release tools/bake.jo
+      - name: Test shard ${{ matrix.shard }}
+        run: python3 tools/ci_test_shard.py --shard ${{ matrix.shard }} --shards "$SHARDS" --workers 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timings-${{ matrix.shard }}
+          path: ci-results/
+          if-no-files-found: ignore
+  summary:
+    needs: [guard, shards]
+    if: always() && needs.guard.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: timings-*
+          path: all-timings
+          merge-multiple: true
+      - name: Timings (refresh tools/ci_test_weights.json from these)
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, json
+          items, walls = {}, []
+          for f in sorted(glob.glob('all-timings/shard-*.json')):
+              d = json.load(open(f)); walls.append((d['shard'], d['wall'])); items.update(d['items'])
+          print('## Test run: %d files, slowest shard %.0f s' % (len(items), max([w for _, w in walls] or [0])))
+          print('Shard wall seconds: ' + ', '.join('%d: %.0f' % w for w in walls))
+          json.dump(dict(sorted(items.items())), open('all-timings/weights.json', 'w'), indent=1)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weights
+          path: all-timings/weights.json
+          if-no-files-found: ignore

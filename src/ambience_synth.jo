@@ -1,47 +1,396 @@
 # Original environmental instruments. No sample assets, device access or global RNG.
 use 'airsound.jo'
+use 'ambience_crowd.jo'
 
-enum AmbienceKind: bell, murmur, hammer, rope, rigging, cafe, beach, cliff, trees, grass, cicada, cricket, owl, dog, goat, donkey, ship_engine, luff, whistle, rain_sea, rain_roof, thunder, gull
-const AMBIENCE_KINDS = 23
+enum AmbienceKind: bell, murmur, hammer, rope, rigging, cafe, beach, cliff, trees, grass, cicada, cricket, owl, dog, goat, donkey, ship_engine, luff, whistle, rain_sea, rain_roof, thunder, gull, spring, songbird, wave, surge, call, laugh, greet, ask, answer, goose, bleat, quack, coot
+const AMBIENCE_KINDS = 36
 const AMBIENCE_CATEGORIES = 9
 AMBIENCE_LABELS = ["Bells","Harbour","Cafes","Music","Shore","Nature","Animals","Ships","Weather"]
+# (the muffled copies are kept at a quarter of the rate: nothing is left above 850 Hz to need more)
+const AMBIENCE_SOFT_STEP = 4
 ambience_category = (kind: AmbienceKind) -> int:
     match kind:
         .bell: 0
-        .murmur, .hammer, .rope, .rigging: 1
+        .murmur, .hammer, .rope, .rigging, .call, .laugh, .greet, .ask, .answer: 1
         .cafe: 2
-        .beach, .cliff: 4
-        .trees, .grass, .cicada, .cricket, .owl, .gull: 5
-        .dog, .goat, .donkey: 6
+        .beach, .cliff, .spring, .wave, .surge: 4
+        .trees, .grass, .cicada, .cricket, .owl, .gull, .songbird: 5
+        .dog, .goat, .donkey, .goose, .bleat, .quack, .coot: 6
         .ship_engine, .luff, .whistle: 7
         _: 8
+ambience_voice = (kind: AmbienceKind) -> bool: kind == .call or kind == .laugh or kind == .greet or kind == .ask or kind == .answer
+# The beds that loop. Everything else is a single event, played at uneven times (ambience_due).
 ambience_loop = (kind: AmbienceKind) -> bool:
-    not (kind == .bell or kind == .hammer or kind == .owl or kind == .dog or kind == .goat or kind == .donkey or kind == .whistle or kind == .thunder or kind == .gull)
+    match kind:
+        .murmur, .cafe, .beach, .cliff, .trees, .grass, .cicada, .cricket, .ship_engine, .luff, .rain_sea, .rain_roof, .spring: true
+        _: false
 ambience_seconds = (kind: AmbienceKind) -> f64:
     match kind:
         .bell: 3.5
         .thunder: 4.5
-        .beach, .cliff: 3.2
-        .murmur, .cafe: 2.4
+        .beach: 4.4
+        .cliff: 4.8
+        .murmur, .cafe: 7.0
+        .trees: 4.2
+        .grass: 3.8
+        .luff: 3.4
+        .spring: 3.3
+        .wave: 4.0
+        .surge: 3.5
         .owl, .donkey, .whistle: 1.8
         .gull: 1.1
+        .goose: 0.65
+        .quack: 0.75
+        .coot: 0.3
+        .bleat: 0.95
         .hammer, .goat, .dog: 0.75
+        .rope: 1.1
+        .rigging: 0.8
+        .call: 1.2
+        .laugh: 1.5
+        .greet, .ask, .answer: 0.9
         _: 1.6
+# how many takes of each event the bank holds (a voice's: two men's, then two women's)
+ambience_variants = (kind: AmbienceKind) -> int:
+    if ambience_voice(kind): return 4
+    match kind:
+        .rope, .gull, .songbird, .hammer, .wave, .goose, .quack: 3
+        .rigging, .surge, .dog, .goat, .owl, .bleat: 2
+        _: 1
+
+# A nasal voice (a goose's honk, a duck's quack): the first dozen harmonics of f0, those near the
+# two formants strongest, so the call is reedy without a sawtooth's fizz to the top of the band.
+ambience_nasal = (phase: f64,f0: f64,f1: f64,f2: f64) -> f64:
+    v = 0.0
+    loop n in 1..13:
+        hz = f0*f64(n)
+        a = exp(-pow((hz-f1)/450.0,2.0))+0.6*exp(-pow((hz-f2)/650.0,2.0))+0.12/f64(n)
+        v += sin(TAU*phase*f64(n))*a
+    v*0.45
 
 ambience_noise = (state: mut u64) -> f64:
     state = (state*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
     f64(state)/2147483648.0-1.0
 
+# (0..1, well mixed: neighbouring talkers' seeds give unrelated streams, unlike the LCG above)
+ambience_unit = (state: mut u64) -> f64:
+    state += (u64(0x9E3779B9)<<32 or u64(0x7F4A7C15))
+    z = state
+    z = (z xor (z>>30))*(u64(0xBF58476D)<<32 or u64(0x1CE4E5B9))
+    z = (z xor (z>>27))*(u64(0x94D049BB)<<32 or u64(0x133111EB))
+    f64((z xor (z>>31))>>11)/9007199254740992.0
+
+# ---------------- single events: voices, creaks, slaps, waves, drips ----------------
+# Each take is made from its own seed, so the bank's few takes of one event differ in timing,
+# pitch and colour; the scheduler varies pitch and level again for every event it plays.
+
+struct VoiceSyllable:
+    at: f64                 # seconds into the take
+    length: f64
+    vowel: int              # VOICE_VOWELS
+    from: f64               # pitch at its start and end, times the speaker's own
+    to: f64
+    loud = 1.0
+    breath = 0.25           # air on its onset: a laugh's "h", a sigh
+
+VOICE_VOWELS = [vec2(760,1250),vec2(520,1800),vec2(480,900),vec2(330,2200),vec2(370,820),vec2(280,1050)]   # a e o i u m
+
+# Part of a syllable of a speaker into `out`, from sample `e.i` for up to `count` (its formants in
+# e.a, e.b, e.c from its first sample): a buzzing voice through three formants, its pitch carried
+# smoothly from syllable to syllable (e.y the glottal phase, e.z its tilt), a quick onset and a
+# softer fall. Vowels only: nothing in it is a word. True once the syllable is done.
+ambience_utter_part = (e: mut EventBuild,syl: VoiceSyllable,rng: mut u64,count: int) -> bool:
+    rate = f64(MIX_RATE)
+    shift = if e.female: 1.16 else: 1.0
+    f0 = e.x
+    if e.i == 0:
+        e.a = Biquad(); e.b = Biquad(); e.c = Biquad()
+        formant = VOICE_VOWELS[syl.vowel]
+        bandpass(e.a,f64(formant.x)*shift,4.0); bandpass(e.b,f64(formant.y)*shift,6.0); bandpass(e.c,2650.0*shift,7.0)
+    phase = e.y; tilt = e.z; f1 = e.a; f2 = e.b; f3 = e.c
+    start = int(syl.at*rate); length = max(1,int(syl.length*rate))
+    whole = length+int(rate*0.03)
+    end = min(whole,e.i+max(1,count))
+    over = false
+    loop k in e.i..end:
+        at = start+k
+        if at >= e.out.len(): over = true; break
+        u = min(1.0,f64(k)/f64(length))
+        phase += f0*(syl.from+(syl.to-syl.from)*u)*(1.0+0.006*sin(TAU*5.3*f64(at)/rate))/rate
+        saw = 2.0*(phase-floor(phase))-1.0
+        tilt += (saw-tilt)*0.45
+        onset = min(1.0,f64(k)/rate/0.045)
+        air = (ambience_unit(rng)-0.5)*(0.3+syl.breath*(1.0-onset)*2.2)
+        voiced = tilt*(1.0-syl.breath*(1.0-onset))
+        env = if k < length: min(1.0,u*9.0)*pow(1.0-u,0.8) else: 0.0
+        x = (voiced+air)*env*syl.loud
+        e.out[at] += filt(f1,x)+filt(f2,x)*0.55+filt(f3,x)*0.2
+    e.y = phase; e.z = tilt; e.a = f1; e.b = f2; e.c = f3
+    e.i = end
+    over or end >= whole
+
+# a vowel for a syllable: open ones mostly
+voice_vowel = (rng: mut u64) -> int: [0,0,1,1,2,3,4][int(ambience_unit(rng)*6.999)]
+
+# The plan of a take of the town's single voices (kind, seed 1-4: seeds 3 and 4 are women's).
+ambience_voice_plan = (e: mut EventBuild,rng: mut u64):
+    kind = e.kind
+    e.female = e.seed >= 3
+    e.x = (if e.female: 200.0 else: 112.0)*(0.92+ambience_unit(rng)*0.16)
+    syllables: VoiceSyllable[]
+    t = 0.03
+    match kind:
+        .call:
+            # a call across the quay: a short lift, then a long open vowel falling away
+            first = 0.16+ambience_unit(rng)*0.1
+            syllables.push(VoiceSyllable(t,first,[1,2][int(ambience_unit(rng)*1.999)],1.18,1.36,0.85,0.2))
+            t += first+0.03+ambience_unit(rng)*0.05
+            syllables.push(VoiceSyllable(t,0.45+ambience_unit(rng)*0.25,[0,2][int(ambience_unit(rng)*1.999)],1.4,1.0,1.0,0.1))
+        .laugh:
+            count = 4+int(ambience_unit(rng)*3.999)
+            pitch = 1.3+ambience_unit(rng)*0.15; loud = 1.0
+            loop k in 0..count:
+                length = 0.065+ambience_unit(rng)*0.04
+                syllables.push(VoiceSyllable(t,length,[0,1][int(ambience_unit(rng)*1.999)],pitch,pitch*0.94,loud,0.75))
+                t += length+0.06+ambience_unit(rng)*0.06
+                pitch *= 0.95; loud *= 0.86
+        .greet:
+            count = 2+int(ambience_unit(rng)*1.999)
+            loop k in 0..count:
+                length = if k == count-1: 0.2+ambience_unit(rng)*0.12 else: 0.1+ambience_unit(rng)*0.08
+                rise = if k == 0: 1.0 else: 1.16
+                syllables.push(VoiceSyllable(t,length,voice_vowel(rng),rise,if k == count-1: 0.86 else: 1.14,1.0-f64(k)*0.1,0.3))
+                t += length+0.02+ambience_unit(rng)*0.05
+        .ask, .answer:
+            asking = kind == .ask
+            count = 2+int(ambience_unit(rng)*2.999)
+            loop k in 0..count:
+                last = k == count-1
+                length = if last: 0.16+ambience_unit(rng)*0.1 else: 0.08+ambience_unit(rng)*0.08
+                level = 0.98+ambience_unit(rng)*0.08
+                from = level; to = level
+                if last and asking: from = 1.04; to = 1.32
+                if last and not asking: from = 1.0; to = 0.8
+                vowel = if k == 0 and not asking and ambience_unit(rng) < 0.5: 5 else: voice_vowel(rng)
+                syllables.push(VoiceSyllable(t,length,vowel,from,to,0.85+ambience_unit(rng)*0.15,0.25))
+                t += length+0.015+ambience_unit(rng)*0.06
+        _: pass
+    e.syllables = syllables
+
+# A single event's take, made a piece at a time (a syllable, a knock, a drop or a run of samples):
+# the same arithmetic in the same order as made at once (ambience_event_take), so the same samples.
+#   voices    x f0, y glottal phase, z tilt; unit the syllable
+#   rope      a mooring line or a fender creaking as a hull moves: stick-slip pulses through a
+#             woody resonance, the pulse rate rising and falling once (x length, y base rate,
+#             z pulse phase; a body, b upper)
+#   rigging   a halyard slapping a wooden mast: one to three knocks close together (t, unit, count)
+#   wave      one wave on a beach (surge: against a cliff): the roar building to the break, then
+#   surge     the foam hissing back down the sand; each take breaks at its own moment and size
+#             (x crest, z fizz; a roar, b boom, c foam)
+#   spring    a spout running into a basin: drops at uneven moments, each its own pitch, gliding
+#             up as its bubble rings (t)
+struct EventBuild:
+    kind: AmbienceKind = .bell
+    seed = 1
+    n = 0
+    out: f64[]
+    rng = u64(0)
+    made = true
+    i = 0
+    unit = 0
+    count = 0
+    t = 0.0
+    a: Biquad = Biquad()
+    b: Biquad = Biquad()
+    c: Biquad = Biquad()
+    x = 0.0
+    y = 0.0
+    z = 0.0
+    female = false
+    syllables: VoiceSyllable[]
+
+ambience_event_kind = (kind: AmbienceKind) -> bool: ambience_voice(kind) or kind == .rope or kind == .rigging or kind == .wave or kind == .surge or kind == .spring
+
+ambience_event_begin = (kind: AmbienceKind,seed: int,n: int) -> EventBuild:
+    e = EventBuild(kind = kind,seed = seed,n = n,made = false)
+    if ambience_voice(kind):
+        rng = u64(seed*1000003+int(kind)*7919+101)
+        ambience_voice_plan(e,rng)
+        e.rng = rng
+    else if kind == .rope:
+        rng = u64(seed*1000003+71)
+        e.x = 0.4+ambience_unit(rng)*0.55
+        e.y = 30.0+ambience_unit(rng)*45.0
+        bandpass(e.a,560.0+ambience_unit(rng)*520.0,9.0)
+        bandpass(e.b,1500.0+ambience_unit(rng)*700.0,7.0)
+        e.rng = rng
+    else if kind == .rigging:
+        rng = u64(seed*1000003+83)
+        e.count = 1+int(ambience_unit(rng)*2.999)
+        e.t = 0.01
+        e.rng = rng
+    else if kind == .wave or kind == .surge:
+        rock = kind == .surge
+        rng = u64(seed*1000003+(if rock: 97 else: 89))
+        e.x = if rock: 0.12+ambience_unit(rng)*0.2 else: 0.7+ambience_unit(rng)*0.6
+        lowpass(e.a,if rock: 260.0 else: 520.0)
+        lowpass(e.b,110.0)
+        bandpass(e.c,2400.0+ambience_unit(rng)*900.0,0.7)
+        e.rng = rng
+    else if kind == .spring:
+        rng = u64(seed*1000003+61)
+        e.t = ambience_unit(rng)*0.1
+        e.rng = rng
+    else: e.made = true
+    e
+
+# About `count` more samples' worth (at least one syllable, knock or drop); true once made.
+ambience_event_run = (e: mut EventBuild,count: int) -> bool:
+    if e.made: return true
+    rate = f64(MIX_RATE); n = e.n
+    rng = e.rng
+    if e.out.len() == 0:
+        e.out = fill(0.0,n)                 # (its buffer, a piece of its own)
+        return false
+    if ambience_voice(e.kind):
+        if e.unit < e.syllables.len():
+            if ambience_utter_part(e,e.syllables[e.unit],rng,count): e.unit += 1; e.i = 0
+        if e.unit >= e.syllables.len(): e.made = true
+    else if e.kind == .rope:
+        end = min(n,e.i+max(1,count))
+        body = e.a; upper = e.b; phase = e.z; length = e.x; base = e.y
+        loop i in e.i..end:
+            u = f64(i)/rate/length
+            env = if u < 1.0: pow(sin(PI*u),0.7) else: 0.0
+            phase += base*(1.0+0.9*sin(PI*min(u,1.0)))*(0.85+0.3*ambience_unit(rng))/rate
+            pulse = 0.0
+            if phase >= 1.0: phase -= 1.0; pulse = 0.6+0.4*ambience_unit(rng)
+            x = (pulse+(ambience_unit(rng)-0.5)*0.03)*env
+            e.out[i] = filt(body,x)+filt(upper,x)*0.35
+        e.a = body; e.b = upper; e.z = phase; e.i = end
+        if end >= n: e.made = true
+    else if e.kind == .rigging:
+        if e.unit < e.count:
+            k = e.unit
+            knock = Biquad(); bandpass(knock,850.0+ambience_unit(rng)*600.0,3.0)
+            thump = 140.0+ambience_unit(rng)*70.0
+            level = 1.0-f64(k)*0.25*ambience_unit(rng)
+            start = int(e.t*rate)
+            loop i in 0..int(rate*0.18):
+                if start+i >= n: break
+                t = f64(i)/rate
+                e.out[start+i] += (filt(knock,ambience_unit(rng)-0.5)*exp(-t*55.0)*2.5+sin(TAU*thump*t)*exp(-t*32.0)*0.5)*level*min(1.0,t*3000.0)
+            e.t += 0.08+ambience_unit(rng)*0.17
+            e.unit += 1
+        if e.unit >= e.count: e.made = true
+    else if e.kind == .wave or e.kind == .surge:
+        rock = e.kind == .surge
+        end = min(n,e.i+max(1,count))
+        roar = e.a; boom = e.b; foam = e.c; crest = e.x; fizz = e.z
+        loop i in e.i..end:
+            t = f64(i)/rate
+            x = ambience_unit(rng)-0.5
+            build = if t < crest: pow(t/crest,2.0) else: exp(-(t-crest)*(if rock: 1.6 else: 2.2))
+            hiss = if t < crest: 0.0 else: (1.0-exp(-(t-crest)*12.0))*exp(-(t-crest)*1.1)
+            fizz += ((if ambience_unit(rng) < 0.02: 1.0 else: 0.0)-fizz)*0.2
+            v = filt(roar,x)*4.0*build+filt(foam,x)*hiss*(0.6+fizz*1.2)
+            if rock: v += filt(boom,x)*14.0*build*build
+            e.out[i] = v
+        e.a = roar; e.b = boom; e.c = foam; e.z = fizz; e.i = end
+        if end >= n: e.made = true
+    else if e.kind == .spring:
+        worked = 0
+        loop e.t < f64(n)/rate and worked < max(1,count):
+            hz = 1300.0+ambience_unit(rng)*1300.0
+            level = 0.4+ambience_unit(rng)*0.6
+            start = int(e.t*rate); phase = 0.0
+            loop i in 0..int(rate*0.06):
+                if start+i >= n: break
+                t = f64(i)/rate
+                phase += hz*(1.0+t*9.0)/rate
+                e.out[start+i] += sin(TAU*phase)*exp(-t*70.0)*level*0.055
+            e.t += 0.03+pow(ambience_unit(rng),1.6)*0.32
+            worked += int(rate*0.06)
+        if e.t >= f64(n)/rate: e.made = true
+    e.rng = rng
+    e.made
+
+# A take made at once: the same pieces, all of them.
+ambience_event_take = (kind: AmbienceKind,seed: int,n: int) -> f64[]:
+    e = ambience_event_begin(kind,seed,n)
+    loop not ambience_event_run(e,1000000): pass
+    e.out
+
+BELL_PARTIALS = [0.5,1.0,1.19,1.51,2.0,2.76,3.08]
+
+# A sound under construction, so that it can be made a slice at a time (a game spreads the
+# ambience over its first frames): the same arithmetic in the same order, so the same samples.
+# A crowd bed is made by its own pieces (src/ambience_crowd.jo crowd_run), a single event's take
+# first by its own (ambience_event_run), then the rest of it sample by sample.
+struct AmbienceBuild:
+    kind: AmbienceKind = .bell
+    seed = 1
+    seconds = 0.0
+    looped = false
+    fade = 0
+    n = 0
+    i = 0
+    mono: f64[]
+    rng = u64(0)
+    low = 0.0
+    deep = 0.0
+    phase = 0.0
+    band: Biquad = Biquad()
+    event: EventBuild = EventBuild()
+    crowded = false
+    crowd: CrowdBuild = CrowdBuild()
+    finishing = 0                   # 0 not yet, 1 measuring it, 2 writing it, 3 made (in `result`)
+    j = 0
+    measure = 0.0
+    result: f32[]
+
+ambience_build_begin = (kind: AmbienceKind,seed: int = 1) -> AmbienceBuild:
+    b = AmbienceBuild(kind = kind,seed = seed)
+    b.seconds = ambience_seconds(kind)
+    if kind == .murmur or kind == .cafe:
+        # (stereo and already round: src/ambience_crowd.jo)
+        b.crowded = true
+        b.crowd = crowd_begin(int(b.seconds*f64(MIX_RATE)+0.5),seed,if kind == .cafe: CROWD_CAFE else: CROWD_QUAY)
+        return b
+    b.looped = ambience_loop(kind)
+    b.fade = if b.looped: int(f64(MIX_RATE)*0.12) else: 0
+    b.n = int(b.seconds*f64(MIX_RATE)+0.5)+b.fade
+    b.rng = u64(17+seed*1031+int(kind)*7919)
+    bandpass(b.band,if kind == .cicada: 4200 else: if kind == .cricket: 3400 else: 1400,2.5)
+    if ambience_event_kind(kind): b.event = ambience_event_begin(kind,seed,b.n)
+    b
+
 make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
-    seconds = ambience_seconds(kind)
-    looped = ambience_loop(kind)
-    fade = if looped: int(f64(MIX_RATE)*0.12) else: 0
-    n = int(seconds*f64(MIX_RATE))+fade
-    mono = fill(0.0,n)
-    rng = u64(17+seed*1031+int(kind)*7919)
-    low = 0.0; deep = 0.0; phase = 0.0
-    band = Biquad(); bandpass(band,if kind == .cicada: 4200 else: if kind == .cricket: 3400 else: 1400,2.5)
-    loop i in 0..n:
+    b = ambience_build_begin(kind,seed)
+    loop not ambience_build_run(b,1000000): pass
+    ambience_build_finish(b)
+
+# Up to `count` more samples (a crowd: a piece per CROWD_CHUNK of them, at least one); true once
+# the whole sound is made and ambience_build_finish can give it.
+ambience_build_run = (b: mut AmbienceBuild,count: int) -> bool:
+    if b.finishing > 0: return ambience_build_finishing(b,count)
+    if b.crowded:
+        if crowd_run(b.crowd,max(1,count/CROWD_CHUNK)): b.finishing = 1; b.j = 0; b.measure = 0.0
+        return false
+    if b.mono.len() == 0:
+        b.mono = fill(0.0,b.n)              # (its buffer, a piece of its own)
+        return false
+    if not b.event.made:
+        e = b.event
+        _ = ambience_event_run(e,count)
+        b.event = e
+        return false
+    kind = b.kind; seed = b.seed; seconds = b.seconds; looped = b.looped
+    rng = b.rng; low = b.low; deep = b.deep; phase = b.phase; band = b.band
+    take = f64(seed-1)          # (a take's own small differences)
+    drift = f64(seed*13+int(kind))
+    start = b.i; end = min(b.n,b.i+max(1,count))
+    loop i in start..end:
         t = f64(i)/f64(MIX_RATE)
         noise = ambience_noise(rng)
         low += (noise-low)*0.07
@@ -50,48 +399,43 @@ make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
         v = 0.0
         match kind:
             .bell, .goat:
-                hz = if kind == .bell: 330.0+f64(seed%3)*22.0 else: 1050.0
+                hz = if kind == .bell: 330.0+f64(seed%3)*22.0 else: 1050.0*(1.0+take*0.12)
                 decay = if kind == .bell: 1.2 else: 7.5
-                loop k in 0.. and ratio in [0.5,1.0,1.19,1.51,2.0,2.76,3.08]:
+                loop k in 0.. and ratio in BELL_PARTIALS:
                     v += sin(TAU*hz*ratio*t)*exp(-t*(decay+f64(k)*0.28))/(1.0+f64(k)*0.6)
                 v *= min(1.0,t*500.0)
-            .murmur, .cafe:
-                # Indistinct, asynchronous vowel hums; no intelligible invented dialogue.
-                loop k in 0..4:
-                    f = 105.0+f64(k)*39.0
-                    env = pow(max(0.0,sin(t*(4.1+f64(k)*0.51)+f64(k)*2.1)),2.0)
-                    v += env*(sin(TAU*f*t)*0.05+sin(TAU*f*3.0*t)*0.035+breath*0.12)
-                if kind == .cafe:
-                    hit = t%0.71
-                    v += (sin(TAU*2300*t)+sin(TAU*3710*t)*0.5)*exp(-hit*70.0)*0.15
+            .murmur, .cafe: pass               # (ambience_crowd.jo, above)
             .hammer:
-                v = (sin(TAU*180*t)*0.65+sin(TAU*413*t)*0.2+low*2.0)*exp(-t*19.0)*min(1.0,t*1500.0)
-            .rope:
-                phase += (180+55*sin(t*6.3))/f64(MIX_RATE)
-                v = sin(TAU*phase)*pow(max(0.0,sin(t*4.0)),5.0)*0.2+low*0.05
-            .rigging, .luff:
-                rate = if kind == .luff: 7.0 else: 3.0
-                v = (noise*0.3+low*2.0)*pow(max(0.0,sin(t*TAU*rate+sin(t*11))),12.0)+deep*0.5
+                hz = [180.0,163.0,197.0][(seed-1)%3]
+                v = (sin(TAU*hz*t)*0.65+sin(TAU*hz*2.29*t)*0.2+low*2.0)*exp(-t*(19.0-take*2.5))*min(1.0,t*1500.0)
+            .rope, .rigging, .wave, .surge, .spring, .call, .laugh, .greet, .ask, .answer:
+                v = b.event.out[i]
+                if kind == .spring: v += low*1.3+noise*0.025
+            .luff:
+                # a sail shaking: its flutter quickening and slowing at random
+                phase += (6.0+2.5*wander(t,1.3,drift))/f64(MIX_RATE)
+                v = (noise*0.3+low*2.0)*pow(max(0.0,sin(TAU*phase)),10.0)*(0.7+0.3*wander(t,0.7,drift+5.0))+deep*0.5
             .beach, .cliff:
-                swell = pow(0.5-0.5*cos(t*TAU/3.2),2.0)
-                v = (low*2.0+noise*0.045)*swell
-                if kind == .cliff: v += deep*6.0*pow(swell,3.0)+sin(TAU*48*t)*swell*0.08
+                # the wash under the waves (wave, surge): no swell of its own
+                v = (low*2.0+noise*0.045)*(0.75+0.25*wander(t,0.35,drift))
+                if kind == .cliff: v += deep*3.0*(0.7+0.3*wander(t,0.25,drift+7.0))
             .trees, .grass:
-                gust = 0.6+0.2*sin(t*2.7)+0.2*sin(t*7.2)
+                # gusts that come and go at random, never in step with the loop
+                gust = 0.62+0.25*wander(t,0.55,drift)+0.13*wander(t,1.9,drift+3.0)
                 v = (if kind == .trees: low*2.5+noise*0.07 else: breath*0.8+noise*0.06)*gust
             .cicada:
-                v = breath*(0.4+0.6*pow(max(0.0,sin(TAU*73*t)),2.0))*(0.6+0.4*sin(t*3.2))
+                v = breath*(0.4+0.6*pow(max(0.0,sin(TAU*73*t)),2.0))
             .cricket:
                 chirp = pow(max(0.0,sin(TAU*29*t)),8.0)
                 group = pow(max(0.0,sin(TAU*2.5*t)),3.0)
                 v = (sin(TAU*3400*t)*0.25+breath*0.3)*chirp*group
             .owl:
                 u = t/1.8; pulse = max(0.0,sin(u*PI*3.0))
-                phase += (420-100*u+18*sin(u*8))/f64(MIX_RATE)
+                phase += (420-100*u+18*sin(u*8))*(1.0-take*0.09)/f64(MIX_RATE)
                 v = (sin(TAU*phase)+sin(TAU*phase*2)*0.12)*pulse*pulse*0.35
             .dog:
-                phase += (190-90*min(t*3,1.0))/f64(MIX_RATE)
-                env = exp(-(t%0.33)*18.0)*min(1.0,t*500)
+                phase += (190-90*min(t*3,1.0))*(1.0+take*0.1)/f64(MIX_RATE)
+                env = exp(-(t%(0.33-take*0.04))*18.0)*min(1.0,t*500)
                 v = (sin(TAU*phase)+sin(TAU*phase*3)*0.6+breath*2)*env*0.3
             .donkey:
                 u = t/1.8; env = pow(max(0.0,sin(PI*u*2)),0.5)
@@ -109,20 +453,119 @@ make_ambience = (kind: AmbienceKind,seed: int = 1) -> Sound:
                 drip = if noise > 0.96: 1.0 else: 0.0
                 v = low*0.7+noise*0.06+drip*sin(TAU*2100*t)*0.8
             .gull:
-                u = (t%0.48)/0.48
-                phase += (1700-600*u+40*sin(u*50))/f64(MIX_RATE)
+                call = [0.48,0.41,0.55][(seed-1)%3]
+                u = (t%call)/call
+                phase += (1700-600*u+40*sin(u*50))*[1.0,1.08,0.93][(seed-1)%3]/f64(MIX_RATE)
                 v = (sin(TAU*phase)*0.6+sin(TAU*phase*2)*0.2)*sin(PI*u)*pow(1-u,1.5)
+            .goose:
+                # a honk: reedy and nasal, rising into its peak and breaking off ("ah-HONK"); the
+                # second take honks twice, the third is a younger, higher "hink"
+                len = [0.34,0.21,0.24][(seed-1)%3]
+                s = if seed%3 == 2 and t >= 0.31: 0.31 else: 0.02
+                u = (t-s)/len
+                if u >= 0.0 and u <= 1.0:
+                    f0 = [330.0,350.0,480.0][(seed-1)%3]*(0.8+0.3*min(1.0,u*3.0)-0.15*max(0.0,u-0.7))
+                    phase += f0/f64(MIX_RATE)
+                    v = (ambience_nasal(phase,f0,900.0,2200.0)+breath*0.25)*smoothstep(0.0,0.12,u)*(1.0-smoothstep(0.72,1.0,u))*0.5
+            .quack:
+                # a mallard: a duck's loud series falling away ("QUACK quack quack quack"), a single
+                # quack, or a drake's soft rasping "raeb raeb"
+                take3 = (seed-1)%3
+                calls = [4,1,2][take3]
+                gap = [0.16,0.3,0.24][take3]
+                len = [0.13,0.17,0.15][take3]
+                k = int(t/gap)
+                u = (t-f64(k)*gap)/len
+                if k < calls and u <= 1.0:
+                    f0 = (if take3 == 2: 170.0 else: 290.0)*(1.0-0.06*f64(k))*(1.05-0.12*u)
+                    phase += f0/f64(MIX_RATE)
+                    tone = ambience_nasal(phase,f0,1000.0,2500.0)
+                    rasp = if take3 == 2: breath*0.6 else: breath*0.2
+                    loud = (if take3 == 0: 1.0-0.18*f64(k) else: 1.0)*(if take3 == 2: 0.6 else: 1.0)
+                    v = (tone+rasp)*smoothstep(0.0,0.08,u)*(1.0-smoothstep(0.6,1.0,u))*loud*0.45
+            .coot:
+                # a coot's short sharp "kowk"
+                u = t/0.16
+                if u <= 1.0:
+                    phase += 620.0*(1.0+0.25*(1.0-u))/f64(MIX_RATE)
+                    tone = sin(TAU*phase)*0.5+sin(TAU*phase*2.0)*0.35+sin(TAU*phase*3.0)*0.2
+                    v = (tone+breath*0.3)*smoothstep(0.0,0.05,u)*(1.0-smoothstep(0.5,1.0,u))*0.45
+            .bleat:
+                # a bleat: a quavering "baa", the voice shaking at about seven times a second
+                len = [0.85,0.62][(seed-1)%2]
+                u = t/len
+                if u <= 1.0:
+                    phase += [210.0,300.0][(seed-1)%2]*(1.0+0.05*sin(TAU*6.5*t))*(1.05-0.1*u)/f64(MIX_RATE)
+                    tone = sin(TAU*phase)*0.3+sin(TAU*phase*2.0)*0.35+sin(TAU*phase*3.0)*0.45+sin(TAU*phase*4.0)*0.3+sin(TAU*phase*5.0)*0.15
+                    v = (tone+breath*0.3)*smoothstep(0.0,0.08,u)*(1.0-smoothstep(0.7,1.0,u))*(0.65+0.35*sin(TAU*7.0*t))*0.4
+            .songbird:
+                pace=[0.31,0.26,0.37][(seed-1)%3]
+                syllable=t%pace;gate=pow(max(0.0,sin(PI*syllable/0.18)),3.0)
+                if syllable>0.18:gate=0
+                phase+=(2400+800*sin(syllable*18)+300*sin(t*9))*[1.0,1.15,0.9][(seed-1)%3]/f64(MIX_RATE)
+                v=sin(TAU*phase)*gate*0.23*min(1.0,t*15)*max(0.0,1-t/seconds)
             .thunder:
                 env = min(1.0,t*8)*pow(max(0.0,1-t/seconds),1.5)
                 v = (deep*8+low*0.8*exp(-t*3))*(0.7+0.3*sin(t*11))*env
         if not looped: v *= min(1.0,max(0.0,seconds-t)*25.0)
-        mono[i] = v
-    if looped:
-        s = seamless(mono,fade,0.11)
-        # One common crest bound makes a strict combined mixer budget possible.
-        loop i in 0..s.samples.len(): s.samples[i] = f32(clamp(f64(s.samples[i]),-0.45,0.45))
-        return s
-    one_shot(mono,0.45)
+        b.mono[i] = v
+    b.i = end
+    b.rng = rng; b.low = low; b.deep = deep; b.phase = phase; b.band = band
+    if b.i >= b.n: b.finishing = 1; b.j = 0; b.measure = 0.0
+    false
+
+# The finish, in slices too: a crowd bed brought to its level (crowd_sound), a loop's seam
+# crossfaded and its level set (seamless) under the common crest bound, a single event brought to
+# its peak (one_shot). The same arithmetic in the same order, so the same samples.
+ambience_build_finishing = (b: mut AmbienceBuild,count: int) -> bool:
+    if b.finishing == 3: return true
+    chunk = max(1,count)*4
+    if b.crowded:
+        n = b.crowd.l.len(); end = min(n,b.j+chunk)
+        if b.finishing == 1:
+            loop i in b.j..end: b.measure += b.crowd.l[i]*b.crowd.l[i]+b.crowd.r[i]*b.crowd.r[i]
+        else:
+            g = (if b.kind == .murmur: 0.091 else: 0.097)/max(sqrt(b.measure/f64(2*n)),1e-9)
+            loop i in b.j..end:
+                b.result[i*2] = f32(clamp(b.crowd.l[i]*g,-0.45,0.45)); b.result[i*2+1] = f32(clamp(b.crowd.r[i]*g,-0.45,0.45))
+        b.j = end
+        if end >= n: ambience_finish_next(b,n*2)
+    else if b.looped:
+        n = b.mono.len()-b.fade; end = min(n,b.j+chunk)
+        if b.finishing == 1:
+            loop i in b.j..end: b.measure += b.mono[i]*b.mono[i]
+        else:
+            g = 0.11/max(sqrt(b.measure/f64(n)),1e-9)
+            loop i in b.j..end:
+                v = b.mono[i]
+                if i < b.fade:
+                    w = f64(i)/f64(b.fade)*PI*0.5
+                    v = b.mono[i]*sin(w)+b.mono[n+i]*cos(w)
+                # (one common crest bound makes a strict combined mixer budget possible)
+                x = f32(clamp(f64(f32(v*g)),-0.45,0.45))
+                b.result[i*2] = x; b.result[i*2+1] = x
+        b.j = end
+        if end >= n: ambience_finish_next(b,n*2)
+    else:
+        n = b.mono.len(); end = min(n,b.j+chunk)
+        if b.finishing == 1:
+            loop i in b.j..end: b.measure = max(b.measure,abs(b.mono[i]))
+        else:
+            g = 0.45/max(b.measure,1e-9)
+            loop i in b.j..end:
+                b.result[i*2] = f32(b.mono[i]*g); b.result[i*2+1] = f32(b.mono[i]*g)
+        b.j = end
+        if end >= n: ambience_finish_next(b,n*2)
+    b.finishing == 3
+
+ambience_finish_next = (b: mut AmbienceBuild,samples: int):
+    b.j = 0
+    if b.finishing == 1: b.finishing = 2; b.result = fill(f32(0),samples)
+    else:
+        b.finishing = 3; b.mono = []
+        if b.crowded: b.crowd = CrowdBuild()
+
+ambience_build_finish = (b: AmbienceBuild) -> Sound: Sound(b.result)
 
 # Filtered copy crossfades with direct sound: no runtime DSP allocation/filters.
 ambience_soften = (s: Sound) -> Sound:
@@ -133,6 +576,80 @@ ambience_soften = (s: Sound) -> Sound:
         v = f32(filt(f,f64(s.samples[i*2])))
         out[i*2] = v; out[i*2+1] = v
     Sound(out)
+
+# The bank keeps most instruments at half the rate (played at twice the pitch): nothing in them
+# needs more than 10 kHz. The bright ones (insects, grass, rain) keep the full rate.
+ambience_rate_step = (kind: AmbienceKind) -> int:
+    match kind:
+        .cicada, .cricket, .grass, .rain_sea, .rain_roof: 1
+        _: 2
+ambience_decimate = (s: Sound,step: int) -> Sound:
+    if step <= 1: return s
+    c = ambience_copy_begin(s,step,f64(MIX_RATE)/f64(step)*0.42,f64(MIX_RATE)/f64(step)*0.42)
+    loop not ambience_copy_run(c,1000000): pass
+    Sound(c.out)
+
+# The bank's muffled copy: the same softening, kept at a quarter of the rate (played at
+# AMBIENCE_SOFT_STEP times the pitch). A second pole pair keeps what folds down out of hearing.
+ambience_soften_bank = (s: Sound) -> Sound:
+    c = ambience_soften_begin(s)
+    loop not ambience_copy_run(c,1000000): pass
+    Sound(c.out)
+ambience_soften_begin = (s: Sound) -> CopyBuild: ambience_copy_begin(s,AMBIENCE_SOFT_STEP,850.0,1700.0)
+
+# A copy through two low-passes, keeping one sample in `step`, made a slice at a time: each ear
+# in turn, the filters warmed round the whole loop first so the seam carries no transient.
+struct CopyBuild:
+    source: Sound = Sound()
+    step = 1
+    first = 0.0
+    second = 0.0
+    out: f32[]
+    ear = 0
+    round = 0
+    i = 0
+    f: Biquad = Biquad()
+    g: Biquad = Biquad()
+    made = false
+
+ambience_copy_begin = (s: Sound,step: int,first: f64,second: f64) -> CopyBuild:
+    c = CopyBuild(source = s,step = step,first = first,second = second,out = fill(f32(0),(s.samples.len()/2/step)*2))
+    lowpass(c.f,first); lowpass(c.g,second)
+    c
+
+# A filter's memory below 1e-30 set to nothing: a decaying tail otherwise sinks into denormal
+# numbers, a hundred times slower to work with, far below anything heard.
+copy_quiet = (f: mut Biquad):
+    if abs(f.x1) < 1e-30: f.x1 = 0.0
+    if abs(f.x2) < 1e-30: f.x2 = 0.0
+    if abs(f.y1) < 1e-30: f.y1 = 0.0
+    if abs(f.y2) < 1e-30: f.y2 = 0.0
+
+# Up to `count` more samples; true once the copy is made (its samples in `out`).
+ambience_copy_run = (c: mut CopyBuild,count: int) -> bool:
+    if c.made: return true
+    n = c.source.samples.len()/2; step = c.step; ch = c.ear
+    end = min(n,c.i+max(1,count))
+    f = c.f; g = c.g
+    if c.round == 0:
+        loop i in c.i..end:
+            _ = filt(g,filt(f,f64(c.source.samples[i*2+ch])))
+            if i%64 == 0: copy_quiet(f); copy_quiet(g)
+    else:
+        loop i in c.i..end:
+            v = filt(g,filt(f,f64(c.source.samples[i*2+ch])))
+            if i%step == 0 and i/step < c.out.len()/2: c.out[(i/step)*2+ch] = f32(v)
+            if i%64 == 0: copy_quiet(f); copy_quiet(g)
+    c.f = f; c.g = g; c.i = end
+    if end < n: return false
+    c.i = 0; c.round += 1
+    if c.round < 2: return false
+    c.round = 0; c.ear += 1
+    if c.ear < 2:
+        c.f = Biquad(); c.g = Biquad(); lowpass(c.f,c.first); lowpass(c.g,c.second)
+        return false
+    c.made = true
+    true
 
 # A few quiet early reflections, baked once per plucked note; no delay voices.
 ambience_square_reverb = (s: Sound) -> Sound:

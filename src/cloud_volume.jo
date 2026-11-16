@@ -10,6 +10,7 @@ use 'paint.jo'
 use 'render_space.jo'
 use 'quality.jo'
 use 'weather_scene.jo'
+use 'cloud_shadow_apply.jo'
 const WEATHER_STEPS = 4
 
 struct CloudVolume:
@@ -22,6 +23,9 @@ struct CloudVolume:
     growth: vec4 = vec4(0,0,0,0)    # erosion distance, rolling phase, roll, shear
     precise:WorldPoint?=none
     thermal: f32 = 0.0             # cached land heating, CPU only
+    stamp: f32 = 0.0               # which procedural form (cloud_density.jo)
+    mirror: f32 = 1.0              # +-1: the form mirrored across its width
+    alt: f32 = -1.0                # a tower's form while the air builds none, CPU only
 
 struct VolumeVertex:
     corner: vec2
@@ -34,6 +38,8 @@ struct VolumeInstance:
     weather: vec2
     growth: vec4
     air: vec3
+    slab: vec4                      # the form's atlas slices: origin, per row, count
+    voxels: vec4                    # its voxel grid x, y, channel, mirror
 
 struct VolumeParams:
     rays: mat4
@@ -52,6 +58,9 @@ struct VolumeParams:
     low_size: vec2
     edge_pass: f32
     lightning: f32 = 0.0
+    bolt: vec3 = vec3(0,0,0)        # where the strike lights its cloud from inside (chart-local)
+    inside: vec4 = vec4(40,0.55,1,0)  # in-cloud: drifting mass size (m), its contrast, brightness
+    paint: vec2 = vec2(1,1)           # brushed silhouettes, brush strokes (developer cost checks)
     paint_light: vec3 = vec3(0.78,0.90,0.93)
     paint_shade: vec3 = vec3(0.40,0.64,0.70)
     repair_ready: f32 = 0.0
@@ -65,10 +74,12 @@ struct VolumeOut:
     weather: vec2
     growth: vec4
     air: vec3
+    slab: vec4
+    voxels: vec4
 
 volume_vs = (v: VolumeVertex, inst: VolumeInstance, u: VolumeParams) -> VolumeOut:
     ndc = mix(inst.rect.xy, inst.rect.zw, v.corner)
-    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air)
+    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air,inst.slab,inst.voxels)
 
 cloud_to_local = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x + p.z * yaw.y, p.y, -p.x * yaw.y + p.z * yaw.x)
 cloud_to_world = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x - p.z * yaw.y, p.y, p.x * yaw.y + p.z * yaw.x)
@@ -107,6 +118,25 @@ cloud_layer_noise = (p: vec2) -> vec3:
 
 volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
     if max(abs(p.x), max(abs(p.y), abs(p.z))) > 1.0: return vec4(0.5, 1, 0.5, 0)
+    if kind == 8.0:
+        # A thunderstorm's rain shafts: a few dark columns and curtains hanging
+        # from the anvil's base to the sea under its core, clear air between
+        # them, the lower rain carried downwind (the box's x runs downwind).
+        q = p.xz+vec2(p.y*0.03,0)
+        rain: f32 = 0.0
+        ragged = (vnoise(q*vec2(160.0,60.0))-0.5)*0.5
+        loop k in 0..4:
+            at = vec2(vec4(-0.13,0.05,0.16,-0.03)[k],vec4(0.04,-0.11,0.10,0.19)[k])
+            size = vec2(vec4(0.07,0.05,0.06,0.09)[k],vec4(0.04,0.06,0.035,0.03)[k])
+            rain = max(rain,1.0-smoothstep(0.55,1.0,length((q-at)/size)+ragged))
+        streaks = 0.65+0.35*vnoise(q*vec2(420.0,140.0))
+        body = smoothstep(-0.59,-0.52,p.y)*(1.0-smoothstep(0.80,0.87,p.y))
+        # Ragged scud hanging under the anvil's base breaks its straight edge.
+        scud: f32 = 0.0
+        if p.y > 0.55:
+            core = 1.0-smoothstep(0.30,0.40,length(q/vec2(0.83,0.64)))
+            scud = smoothstep(0.55,0.80,p.y)*(1.0-smoothstep(0.84,0.87,p.y))*smoothstep(0.58,0.75,vnoise(q*vec2(90.0,70.0))*0.7+vnoise(q*260.0)*0.3)*core
+        return vec4(0.5,0,0.5,body*rain*streaks*0.14+scud*0.08)
     if kind == 6.0:
         # Slanted, vertically coherent curtains below the deck. Their broad
         # density groups read from the air; fine rain remains the near streaks.
@@ -131,20 +161,60 @@ volume_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
         if kind == 7.0: density *= 0.22
         normal = vec3(0,if p.y < 0.0: -1.0 else: 1.0,0)
         if kind == 4.0 and density > 0.005:
-            normal = normalize(vec3(-broad_field.y*21.0,if p.y < 0.0: -1.0 else: 1.0,-broad_field.z*21.0))
+            # (the vertical part turns over smoothly through the layer's middle: a hard
+            # flip there split the view from inside the deck along a stepped horizon)
+            normal = normalize(vec3(-broad_field.y*21.0,clamp(p.y*10.0,-1.0,1.0),-broad_field.z*21.0))
         return vec4(normal*0.5+vec3(0.5,0.5,0.5),density)
-    field = cloud_stamp_sample(atlas,p,kind)
-    vec4(field.xyz,clamp((field.w-0.5)*14.0,0.0,1.0))
+    vec4(0.5,1,0.5,0)
 
-cloud_stamp_sample = (atlas: Texture, p: vec3, kind: f32) -> vec4:
-    if max(abs(p.x),max(abs(p.y),abs(p.z))) > 1.0: return vec4(0.5,1,0.5,0)
-    stamp = if kind == 5.0: 4.0 else: kind
-    q = (p * 0.5 + vec3(0.5, 0.5, 0.5)) * f32(CLOUD_VOXELS - 1)
-    z0 = floor(q.z); z1 = min(z0 + 1.0, f32(CLOUD_VOXELS - 1))
-    slice0 = stamp*f32(CLOUD_VOXELS)+z0; slice1 = stamp*f32(CLOUD_VOXELS)+z1
-    a = vec2(slice0-floor(slice0/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice0/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
-    b = vec2(slice1-floor(slice1/f32(CLOUD_TILES))*f32(CLOUD_TILES),floor(slice1/f32(CLOUD_TILES)))*f32(CLOUD_SLICE)+q.xy+vec2(1.5,1.5)
-    mix(sample(atlas, a / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), sample(atlas, b / vec2(f32(CLOUD_ATLAS_W), f32(CLOUD_ATLAS_H))), q.z - z0)
+# A form's encoded distance (.5 at the surface, larger inside). Each texel
+# holds four forms, one per channel; a form's grid has its box's aspect.
+cloud_stamp_value = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4) -> f32:
+    if max(abs(p.x),max(abs(p.y),abs(p.z))) > 1.0: return 0.0
+    q = (vec3(p.x*voxels.w,p.y,p.z)*0.5+vec3(0.5,0.5,0.5))*(vec3(voxels.x,voxels.y,slab.w)-vec3(1,1,1))
+    z0 = floor(q.z); z1 = min(z0+1.0,slab.w-1.0)
+    tile = vec2(voxels.x+2.0,voxels.y+2.0)
+    a = slab.xy+vec2(z0-floor(z0/slab.z)*slab.z,floor(z0/slab.z))*tile+q.xy+vec2(1.5,1.5)
+    b = slab.xy+vec2(z1-floor(z1/slab.z)*slab.z,floor(z1/slab.z))*tile+q.xy+vec2(1.5,1.5)
+    size = vec2(f32(CLOUD_ATLAS_W),f32(CLOUD_ATLAS_H))
+    texel = mix(sample(atlas,a/size),sample(atlas,b/size),q.z-z0)
+    if voxels.z < 0.5: return texel.x
+    if voxels.z < 1.5: return texel.y
+    if voxels.z < 2.5: return texel.z
+    texel.w
+
+# The same from the form's index alone: (index+1)*mirror. Loops that march many
+# clouds keep one value live instead of the eight of slab and voxels (on Intel
+# GPUs that keeps their SIMD16 compile). Equal to cloud_stamp_slab/voxels
+# (sky_test checks every form).
+cloud_stamp_slab_of = (packed: f32) -> vec4:
+    g = floor((abs(packed)-1.0)/4.0+0.01)
+    if g < 2.0: return vec4(0,g*56.0,31,48)
+    if g < 4.0: return vec4(0,112.0+(g-2.0)*92.0,31,56)
+    if g < 6.0: return vec4(0,296.0+(g-4.0)*132.0,40,48)
+    vec4(0,560,31,56)
+cloud_stamp_voxels_of = (packed: f32) -> vec4:
+    s = abs(packed)-1.0
+    g = floor(s/4.0+0.01)
+    v = vec4(64,26,s-g*4.0,if packed < 0.0: -1.0 else: 1.0)
+    if g >= 2.0 and g < 4.0: v.y = 44.0
+    if g >= 4.0 and g < 6.0: v.x = 48.0; v.y = 64.0
+    if g >= 6.0: v.y = 56.0
+    v
+cloud_stamp_value_of = (atlas: Texture, p: vec3, packed: f32) -> f32:
+    cloud_stamp_value(atlas,p,cloud_stamp_slab_of(packed),cloud_stamp_voxels_of(packed))
+
+# The outward gradient of the form's distance in local box coordinates, from
+# four tetrahedral taps `reach` voxels apart. A wide reach gives the lobes'
+# broad shoulders rather than every crevice (painted light, not pockmarks).
+# Divide by the extent for a world normal.
+cloud_stamp_gradient = (atlas: Texture, p: vec3, slab: vec4, voxels: vec4, reach: f32 = 3.4) -> vec3:
+    h = vec3(reach/(voxels.x-1.0),reach/(voxels.y-1.0),reach/(slab.w-1.0))
+    a = cloud_stamp_value(atlas,p+vec3(h.x,-h.y,-h.z),slab,voxels)
+    b = cloud_stamp_value(atlas,p+vec3(-h.x,-h.y,h.z),slab,voxels)
+    c = cloud_stamp_value(atlas,p+vec3(-h.x,h.y,-h.z),slab,voxels)
+    d = cloud_stamp_value(atlas,p+vec3(h.x,h.y,h.z),slab,voxels)
+    -vec3(a-b-c+d,-a-b+c+d,-a+b-c+d)/h
 
 cloud_growth_padding = (growth: vec4) -> vec3: vec3(abs(growth.z)+abs(growth.w),0,abs(growth.z))
 
@@ -155,44 +225,160 @@ cloud_growing_point = (p: vec3, growth: vec4) -> vec3:
     q.z += cos(p.y*4.0-growth.y+p.x*3.0)*growth.z
     q
 
+# Fine relief for clouds seen close: two octaves of value noise in the cloud's
+# own metres (it drifts and turns with the cloud), faded out before a
+# low-resolution pixel could resolve it, and kept off the flat base.
+cloud_vnoise3 = (q: vec3) -> f32:
+    k = floor(q.y); f = q.y-k; f = f*f*(3.0-2.0*f)
+    mix(vnoise(q.xz+vec2(k*17.31,k*31.73)),vnoise(q.xz+vec2((k+1.0)*17.31,(k+1.0)*31.73)),f)
+
+# Signed metres added to the distance (positive erodes, negative bulges).
+# Billowed noise: rounded bulges with creases between them, as cauliflower.
+cloud_relief = (m: vec3, fade: vec2, seed: f32) -> f32:
+    r: f32 = 0.0
+    if fade.x > 0.0: r -= (abs(cloud_vnoise3(m/95.0+vec3(seed,seed*0.7,seed*1.3))*2.0-1.0)-0.35)*26.0*fade.x
+    if fade.y > 0.0: r -= (abs(cloud_vnoise3(m/38.0+vec3(seed*1.7,seed,seed*0.4))*2.0-1.0)-0.35)*7.0*fade.y
+    r
+
+# Relief fades in by metres per low-resolution pixel; none on the base.
+cloud_relief_fade = (mpp: f32) -> vec2: vec2(1.0-smoothstep(10.0,30.0,mpp),1.0-smoothstep(4.0,12.0,mpp))
+
+# Painted edge breakup at every distance: scalloped brush dabs a few pixels
+# across, whatever the cloud's distance. Their size steps through octaves in
+# the cloud's own metres (blended, so nothing swims as the camera closes in).
+# Signed metres added to the distance, as cloud_relief.
+cloud_brush_octave = (mpp: f32) -> f32: max(log2(max(mpp,1.0)*7.0/95.0),0.0)
+cloud_brush = (m: vec3, mpp: f32, seed: f32) -> f32:
+    level = cloud_brush_octave(mpp)
+    n = floor(level); f = level-n
+    size = 95.0*pow(2.0,n)
+    # (each octave alone over most of its range; both only in the middle third
+    # of the hand-over, so most steps pay for one noise)
+    w = smoothstep(0.33,0.67,f)
+    a: f32 = 0.0; b: f32 = 0.0
+    # (a 2D noise sheared through height: dabs fixed to the cloud at half the
+    # price of a 3D one, as the march evaluates them at every step near the surface)
+    if w < 1.0:
+        q = m/size
+        a = abs(vnoise(q.xz+q.y*vec2(0.71,1.29)+vec2(seed*1.3,seed))*2.0-1.0)-0.4
+    if w > 0.0:
+        q = m/(size*2.0)
+        b = abs(vnoise(q.xz+q.y*vec2(1.23,0.67)+vec2(seed*0.8,seed*1.9))*2.0-1.0)-0.4
+    -mix(a*size,b*size*2.0,w)*0.3
+
+# Brush strokes inside the painted bands: streaks along the terminator,
+# curling round each lobe with its normal, a few pixels wide at any distance.
+cloud_strokes = (m: vec3, normal: vec3, sun: vec3, mpp: f32) -> f32:
+    along = cross(normal,sun)
+    along = if length(along) > 0.001: normalize(along) else: vec3(1,0,0)
+    across = cross(normal,along)
+    level = max(log2(max(mpp,0.5)*3.0/6.0),0.0)
+    n = floor(level); f = level-n
+    width = 6.0*pow(2.0,n)
+    q = vec2(dot(m,along)/(width*5.0),dot(m,across)/width)
+    mix(vnoise(q),vnoise(q*0.5+vec2(31.7,17.3)),f)-0.5
+cloud_relief_keep = (p: vec3) -> f32: smoothstep(f32(-CLOUD_BASE),f32(-CLOUD_BASE)+0.08,p.y)
+
+# A strike's light inside its cloud: bright near the channel, glowing through
+# a few kilometres of the storm around it.
+cloud_flash = (world: vec3, u: VolumeParams) -> f32:
+    if u.lightning <= 0.0: return 0.0
+    u.lightning*exp(-length(world-u.bolt)/3200.0)
+
+# The visible surface at a point of the body: colour and opacity.
+cloud_body_hit = (p: vec3, world: vec3, ray: vec3, t: f32, d: f32, leave: f32, fade: vec2, seed: f32, mpp: f32, i: VolumeOut, u: VolumeParams) -> vec4:
+    scale = i.extent.x
+    path = max(leave-t,0.0)
+    local = cloud_stamp_gradient(u.atlas,p,i.slab,i.voxels)/i.extent
+    # (just outside the form's distance band, where a brush dab can reach, the
+    # gradient vanishes: the form's mass gives the light there)
+    local = if length(local) > 0.0000001: normalize(local) else: normalize(p*vec3(0.8,0.55,0.8)+vec3(0,0.18,0))
+    if fade.x+fade.y > 0.0:
+        m = p*i.extent; h: f32 = 6.0
+        keep = cloud_relief_keep(p)
+        r0 = cloud_relief(m,fade,seed)
+        g = vec3(cloud_relief(m+vec3(h,0,0),fade,seed)-r0,cloud_relief(m+vec3(0,h,0),fade,seed)-r0,cloud_relief(m+vec3(0,0,h),fade,seed)-r0)/h
+        # The relief breaks the silhouette; the light keeps its broad painted
+        # masses (full relief shading reads as crumpled paper).
+        local = normalize(local+g*(keep*0.3))
+    if t < 0.01 and d < 0.0:
+        # Looking outward near an exit thins continuously; inward rays
+        # see the dense interior rather than a turning sheet.
+        outward = dot(normalize(cloud_to_world(local,i.meta.xy)),ray)
+        if outward > 0.05: path = min(path,-d*scale/outward)
+    opacity = i.weather.x*(1.0-exp(-path*0.018))
+    color = cloud_paint(local,p,world,ray,mpp,i,u)
+    inside = smoothstep(0.0,0.035,-d)*step(t,0.01)
+    if inside > 0.0:
+        # Inside: darker and lighter masses of the cloud drifting past at a
+        # few tens of metres, felt as speed and turbulence (cloud_inside_*).
+        mist = mix(u.paint_shade,u.shade*0.7,i.weather.y)*mix(1.0,0.48,i.weather.y)*u.inside.z
+        patch: f32 = 0.0
+        loop k in 0..3:
+            reach = u.inside.x*(0.6+f32(k)*1.4)
+            patch += (cloud_vnoise3((u.cam+ray*reach)/(u.inside.x*(1.0+f32(k)*0.8))+vec3(f32(k)*7.3,0,0))-0.5)*(1.0-f32(k)*0.25)
+        mist *= 1.0+patch*u.inside.y
+        mist += vec3(0.7,0.78,1.0)*cloud_flash(world,u)*i.weather.y*1.4
+        color = mix(color,mist,inside)
+    vec4(color*opacity,opacity)
+
 # Surface values are deliberately grouped into broad painted regions, with
 # narrow transitions and gentle washes inside them. The silhouette comes from the distance field,
 # rather than an accumulation of widely spaced translucent samples.
-cloud_paint = (form: vec4, p: vec3, world: vec3, ray: vec3, i: VolumeOut, u: VolumeParams) -> vec3:
-    normal = cloud_to_world((form.xyz*2.0-vec3(1,1,1))/i.extent,i.meta.xy)
+cloud_paint = (local_normal: vec3, p: vec3, world: vec3, ray: vec3, mpp: f32, i: VolumeOut, u: VolumeParams) -> vec3:
+    normal = cloud_to_world(local_normal,i.meta.xy)
     normal /= max(length(normal),0.000001)
     sun = normalize(u.sun_dir)
     facing = dot(normal,sun)
     wash = vnoise(p.xz*19.0+vec2(p.y*13.0,p.y*7.0))-0.5
+    # Brush strokes in the cloud's own metres, curling round each lobe. They
+    # break every band edge into dry-brush ragged cuts, as a painter's would.
+    stroke: f32 = if u.paint.y > 0.0: cloud_strokes(p*i.extent,normalize(local_normal),cloud_to_local(sun,i.meta.xy),mpp) else: 0.0
     # A broad wash links neighboring heads; local normals retain the lobe cuts.
     # Otherwise every shoulder becomes an identical isolated dark crescent.
     mass_normal = p*vec3(0.8,0.55,0.8)+vec3(0,0.18,0)
     mass_normal = cloud_to_world(mass_normal/max(length(mass_normal),0.000001),i.meta.xy)
-    value = mix(facing,dot(mass_normal,sun),0.3)+wash*0.08
+    storm = i.weather.y
+    value = mix(facing,dot(mass_normal,sun),0.3+0.3*storm)+wash*0.08+stroke*0.22
+    if storm > 0.0 and u.paint.y > 0.0:
+        # A storm's cloud at its own scale: broad brush strokes a fiftieth of
+        # its width layer the bands, darker and heavier toward the base and
+        # brighter toward the top, as the towers' are at theirs.
+        big = cloud_strokes(p*i.extent,normalize(local_normal),cloud_to_local(sun,i.meta.xy),i.extent.x*0.02)
+        value += (big*0.35+(p.y*0.45+0.05)*0.4)*storm
     shade = mix(u.shade*0.9,u.paint_shade,smoothstep(-0.12,0.15,sun.y))
     shade = mix(shade,vec3(0.08,0.23,0.37)*u.sun,i.weather.y*0.8)
     white = u.sun*u.paint_light
     shade = mix(shade,white,0.32*(1.0-i.weather.y))
     middle = mix(shade,white,0.82)
-    # Narrow transitions retain a drawn terminator on every rounded head.
-    light = mix(shade,middle,smoothstep(-0.28,-0.12,value))
-    light = mix(light,white,smoothstep(0.20,0.38,value))
-    light *= 0.93+0.07*smoothstep(-0.3,0.9,facing)
+    # Flat painted bands with narrow, brushed transitions: a drawn terminator
+    # on every rounded head, no smooth airbrushed gradient.
+    light = mix(shade,middle,smoothstep(-0.23,-0.15,value))
+    # (a storm's shaded side keeps a second, darker layer under the first)
+    light = mix(light,shade*0.72,(1.0-smoothstep(-0.52,-0.44,value))*storm)
+    light = mix(light,white*0.9,smoothstep(0.24,0.32,value))
+    # A last flat band of full white on the lumps turned most to the sun:
+    # under a high sun, seen from above, the lumps still read as shapes.
+    light = mix(light,white,smoothstep(0.66,0.72,facing+stroke*0.3)*smoothstep(0.24,0.32,value))
     under = smoothstep(f32(-CLOUD_BASE+0.01),f32(-CLOUD_BASE+0.04),p.y)
     if u.shadows > 0.0:
-        probe = cloud_stamp_sample(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.16,i.meta.z).w
-        light = mix(light,shade,smoothstep(0.51,0.53,probe)*0.38)
+        # Broad self-shadow from the next mass sunward, not every crevice.
+        probe = cloud_stamp_value(u.atlas,p+cloud_to_local(sun,i.meta.xy)/i.extent*min(i.extent.x,min(i.extent.y,i.extent.z))*0.26,i.slab,i.voxels)
+        # (never on faces turned to the sun: there it reads as a crater)
+        # (not on a storm's cloud: at its size the probe's cut drew round dark holes)
+        light = mix(light,shade,smoothstep(0.54,0.58,probe+stroke*0.04)*0.24*(1.0-smoothstep(0.0,0.4,facing))*(1.0-storm))
     edge = 1.0-abs(dot(normal,ray))
-    rim = smoothstep(0.80,0.96,edge)*smoothstep(0.0,0.15,facing)
+    rim = smoothstep(0.80,0.90,edge+stroke*0.1)*smoothstep(0.0,0.15,facing)
     light = mix(light,white*1.04,rim*0.45)
     # The shared condensation floor reads as one cool plane.
-    light = mix(shade*0.94,light,under)
-    # Fine pigment, independent of lobe lighting; no broad mottled gradients.
-    pigment = vnoise(p.xy*47.0+vec2(p.z*23.0,0))-0.5
-    tooth = hash21(floor(p.xy*1400.0)+floor(p.z*1400.0)*vec2(17,31))-0.5
-    light *= 1.0+pigment*0.12+tooth*0.025
+    # (a little darker than the shaded sides: seen from below, a near cloud's
+    # base separates it from the farther clouds it overlaps)
+    light = mix(shade*0.86,light,under)
+    # Pigment pooling along the strokes; screen-sized paper grain is added
+    # in the composite.
+    light *= 1.0+stroke*0.08
     light *= 1.0-i.weather.y*0.18*(1.0-under*0.45)
-    if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
+    light += vec3(0.7,0.78,1.0)*cloud_flash(world,u)*i.weather.y*(1.0+under*1.2)
     distance = length(world-u.cam)
     air = 1.0-exp(-distance*max(u.fog,0.000001)*0.30)
     mix(light,i.air,air)
@@ -245,42 +431,59 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         inside = (u.cam-i.center)/i.extent
         if i.meta.z == 4.0 and length(inside.xz/vec2(0.83,0.64)) < 0.55 and inside.y > -0.35 and inside.y < 0.12:
             leave = min(leave,enter+4000.0/max(i.weather.x,0.02))
+    if i.meta.z == 8.0:
+        # (the shafts' cylinder under the storm's body: all six samples inside it)
+        c = vec2(0.45*0.83,0.45*0.64)*i.extent.xz
+        o = origin.xz/c; dd = direction.xz/c
+        qa = dot(dd,dd); qb = dot(o,dd); qc = dot(o,o)-1.0
+        disc = qb*qb-qa*qc
+        # (qa is about 1/(4 km)^2: only a ray straight up or down has none)
+        if disc <= 0.0 or qa < 1e-16: discard()
+        root = sqrt(disc)
+        enter = max(enter,(-qb-root)/qa); leave = min(leave,(-qb+root)/qa)
     if leave <= enter: discard()
     distance = length(i.center - u.cam)
     steps = mix(u.steps, 8.0, smoothstep(12000.0, 65000.0, distance))
-    if i.meta.z >= 4.0 and i.meta.z != 5.0: steps = f32(WEATHER_STEPS)
+    if i.meta.z >= 4.0 and i.meta.z != 5.0: steps = if i.meta.z == 8.0: 6.0 else: f32(WEATHER_STEPS)
     if i.meta.z < 4.0 or i.meta.z == 5.0:
         # Conservative distance steps skip empty air; quantization and warped
         # ellipsoid gradients get a safety margin. Refine only the visible shell.
-        scale = min(i.extent.x,min(i.extent.y,i.extent.z))
-        ray_scale = 1.0/max(length(direction/i.extent)+leave/(f32(EARTH_RADIUS)*i.extent.y),0.000001)
+        # Distances are in units of the form's half width (uniform scale).
+        scale = i.extent.x
+        ray_scale = scale/(1.0+leave/f32(EARTH_RADIUS))
         pixel = max(fwidth(i.ndc.x),fwidth(i.ndc.y))*0.4
+        seed = i.meta.w*61.0
+        fade_far = 1.0-smoothstep(125000.0,150000.0,distance)
         t = enter
-        loop k in 0..80:
+        # The ray's closest pass outside the surface, in units of the hit
+        # tolerance: a near miss is partly covered, so a low-resolution
+        # silhouette is antialiased rather than stepped when enlarged.
+        near_r: f32 = 1000.0; near_t: f32 = 0.0
+        loop k in 0..96:
             if t >= leave: break
             world = u.cam+ray*t
             world.y += world_drop(ray.xz*t)
             p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
-            form = cloud_stamp_sample(u.atlas,p,i.meta.z)
-            d = (0.5-form.w)*0.5+i.growth.x
-            epsilon = max(0.005,t*pixel/scale*0.55)
+            d = (0.5-cloud_stamp_value(u.atlas,p,i.slab,i.voxels))/f32(CLOUD_ENCODE)+i.growth.x
+            epsilon = max(0.004,t*pixel/scale*0.55)
+            mpp = t*pixel*1.5
+            fade = cloud_relief_fade(mpp)
+            relief = d*scale < 60.0 and fade.x > 0.0
+            if relief: d += cloud_relief(p*i.extent,fade,seed)*cloud_relief_keep(p)/scale
+            # (beyond the close relief, the painted brush dabs carry the edge)
+            # (only within the dabs' reach, never more than a tenth of the cloud)
+            brush = u.paint.x > 0.0 and fade.x < 1.0 and d*scale < min(95.0*pow(2.0,ceil(cloud_brush_octave(mpp)))*0.7,0.12*scale)
+            # (never more than a tenth of the cloud: a far, small cloud keeps its shape)
+            if brush: d += clamp(cloud_brush(p*i.extent,mpp,seed),-0.1*scale,0.1*scale)*(1.0-fade.x)*cloud_relief_keep(p)/scale
             if d < epsilon:
-                path = max(leave-t,0.0)
-                if t < 0.01 and d < 0.0:
-                    # Looking outward near an exit thins continuously; inward rays
-                    # see the dense interior rather than a turning sheet.
-                    normal = normalize(cloud_to_world((form.xyz*2.0-vec3(1,1,1))/i.extent,i.meta.xy))
-                    outward = dot(normal,ray)
-                    if outward > 0.05: path = min(path,-d*scale/outward)
-                opacity = i.weather.x*(1.0-exp(-path*0.018))
-                color = cloud_paint(form,p,world,ray,i,u)
-                inside = smoothstep(0.0,0.035,-d)*step(t,0.01)
-                mist = mix(u.paint_shade,u.shade*0.7,i.weather.y)*mix(1.0,0.48,i.weather.y)
-                mist += vec3(0.7,0.78,1.0)*u.lightning*i.weather.y
-                color = mix(color,mist*(0.94+0.08*vnoise(p.xz*32.0+vec2(p.y*17.0,i.growth.y))),inside)
-                fade = 1.0-smoothstep(125000.0,150000.0,distance)
-                return vec4(color*opacity,opacity)*fade
-            t += max((d-0.001)*ray_scale*0.72,epsilon*ray_scale*0.5)
+                return cloud_body_hit(p,world,ray,t,d,leave,if relief: fade else: vec2(0,0),seed,mpp,i,u)*fade_far
+            if d/epsilon < near_r: near_r = d/epsilon; near_t = t
+            t += max((d-0.001)*ray_scale*(if relief: 0.45 else: if brush: 0.62 else: 0.72),epsilon*ray_scale*0.5)
+        if near_r < 3.0:
+            world = u.cam+ray*near_t
+            world.y += world_drop(ray.xz*near_t)
+            p = cloud_growing_point(cloud_to_local(world-i.center,i.meta.xy)/i.extent,i.growth)
+            return cloud_body_hit(p,world,ray,near_t,0.0,leave,vec2(0,0),seed,near_t*pixel*1.5,i,u)*(fade_far*(1.0-smoothstep(1.0,3.0,near_r)))
         return vec4(0,0,0,0)
     dt = (leave - enter) / steps
     # Midpoints are stable in world/view space. No frame-random dither/history.
@@ -295,7 +498,7 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
         p = cloud_to_local(world - i.center, i.meta.xy) / i.extent
         form = volume_sample(u.atlas, p, i.meta.z)
         density = form.w*i.weather.x
-        if density > (if i.meta.z == 6.0: 0.0005 else: 0.005):
+        if density > (if i.meta.z == 6.0 or i.meta.z == 8.0: 0.0005 else: 0.005):
             normal = cloud_to_world((form.xyz * 2.0 - vec3(1, 1, 1)) / i.extent, i.meta.xy)
             normal = normal / max(length(normal), 0.000001)
             under = smoothstep(-0.58, 0.05, p.y)
@@ -306,10 +509,12 @@ volume_fs = (i: VolumeOut, u: VolumeParams) -> vec4:
             light *= 1.0-i.weather.y*0.48*(1.0-under*0.5)
             if i.meta.z == 4.0: light *= 0.72+0.28*vnoise(p.xz*93.0)
             if i.meta.z == 6.0: light = mix(u.shade,u.haze,0.35)*0.85
-            if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*u.lightning*(0.4+under*0.6)
+            if i.meta.z == 8.0: light = u.shade*0.45+vec3(0.7,0.78,1.0)*cloud_flash(world,u)*0.5
+            if i.meta.z == 5.0: light += vec3(0.7,0.78,1.0)*cloud_flash(world,u)*(0.6+under*0.9)
             forward = pow(max(dot(ray, sun), 0.0), 12.0)
-            light += u.sun * (forward * (if i.meta.z == 6.0: 0.07 else: 0.28) * (1.0 - density))
-            light = aerial(light, world, u.cam, u.haze, u.fog)
+            light += u.sun * (forward * (if i.meta.z == 6.0 or i.meta.z == 8.0: 0.07 else: 0.28) * (1.0 - density))
+            # (rain shafts take the clouds' lighter haze: they stay dark under a far storm)
+            light = if i.meta.z == 8.0: mix(light,u.haze,1.0-exp(-length(world-u.cam)*max(u.fog,0.000001)*0.30)) else: aerial(light, world, u.cam, u.haze, u.fog)
             opacity = 1.0 - exp(-density * dt * 0.009)
             color += light * (trans * opacity)
             trans *= 1.0 - opacity
@@ -328,6 +533,19 @@ volume_visible = 0
 volume_paint_light = vec3(0.78,0.90,0.93)
 volume_paint_shade = vec3(0.40,0.64,0.70)
 volume_paint_grain: f32 = 0.06
+# AEGEAN_CLOUD_BRUSH=0 and AEGEAN_CLOUD_STROKES=0 drop the brushed silhouettes
+# and the brush strokes (developer cost measurements).
+cloud_paint_switches = vec2(if env("AEGEAN_CLOUD_BRUSH") == "0": 0.0 else: 1.0,if env("AEGEAN_CLOUD_STROKES") == "0": 0.0 else: 1.0)
+# The look from inside a cloud, for tuning against film: the size (m) of the
+# darker and lighter masses drifting past, their contrast, the mist's
+# brightness. AEGEAN_CLOUD_INSIDE="40 0.55 1" overrides them.
+const CLOUD_INSIDE_SIZE: f32 = 40.0
+const CLOUD_INSIDE_CONTRAST: f32 = 0.55
+const CLOUD_INSIDE_BRIGHTNESS: f32 = 1.0
+cloud_inside_look = (() -> vec4:
+    words = (env("AEGEAN_CLOUD_INSIDE") ?? "").split()
+    if words.len() != 3: return vec4(CLOUD_INSIDE_SIZE,CLOUD_INSIDE_CONTRAST,CLOUD_INSIDE_BRIGHTNESS,0)
+    vec4(f32(to_float(words[0]) ?? 40.0),f32(to_float(words[1]) ?? 0.55),f32(to_float(words[2]) ?? 1.0),0))()
 
 paint_env_color = (key: str, fallback: vec3) -> vec3:
     words = (env(key) ?? "").split()
@@ -502,13 +720,13 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         if v.shape < 4.0: paint_coverage += area
         if v.shape >= 4.0: weather_coverage += area
         if v.shape == 4.0: deck_coverage += area
-        if v.shape == 6.0: rain_coverage += area
+        if v.shape == 6.0 or v.shape == 8.0: rain_coverage += area
         # A distant thunderhead can be costly while occupying less area than
         # a broad deck. Use the same weather target once it is visibly substantial.
         if v.shape == 5.0 and area > 0.03: weather_coverage = max(weather_coverage,0.31)
         composite_low = min(composite_low,rect.xy); composite_high = max(composite_high,rect.zw)
         air = sky_air_color(normalize(render_world(v.center,cam)-cam).y,cam.y,L.sun_dir.y,L.sky_top,L.sky_horizon,L.haze)
-        instances.push(VolumeInstance(rect, world_local(cloud_point(v),chart), v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air))
+        instances.push(VolumeInstance(rect, world_local(cloud_point(v),chart), v.extent, vec4(cos(v.heading), sin(v.heading), v.shape, v.tone), v.weather,v.growth,air,cloud_stamp_slab(int(v.stamp)),cloud_stamp_voxels(int(v.stamp),v.mirror)))
     volume_visible = instances.len()
     set_instances(volume_instances, instances)
     rays = render_rays(vp)
@@ -536,6 +754,11 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         # turn the same sunlit crown brown when viewed from inside the deck.
         p.sun = light_at(weather_hour_now).sun
         p.lightning = weather_lightning()
+        if weather_strike.key >= 0: p.bolt = world_local(weather_strike.center,chart)+vec3(0,if weather_strike.ground: 1000.0 else: 1200.0,0)
+    p.inside = cloud_inside_look
+    # (the low tier keeps the strokes and bands, not the brushed silhouettes:
+    # their noise at every march step near a surface cost redfox about 0.3 ms)
+    p.paint = vec2(if render_quality.tier == 0: 0.0 else: cloud_paint_switches.x,cloud_paint_switches.y)
     p.paint_light = volume_paint_light; p.paint_shade = volume_paint_shade
     sun_clip = vp * vec4(L.sun_dir, 0)
     sun_uv = sun_clip.xy / max(sun_clip.w, 0.0001) * 0.5 + vec2(0.5, 0.5)
@@ -555,6 +778,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(tex.id), 0)
         volume_color = RenderTarget(tex, fbo, 0)
+    cloud_shadow_factor_pass(chart,vp)
     glBindFramebuffer(GL_FRAMEBUFFER, u32(volume_color.fbo))
     glViewport(0, 0, i32(w), i32(h))
     glDisable(GL_DEPTH_TEST); glDepthMask(0)
@@ -569,6 +793,7 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     # attachment out temporarily. Color and the actual scene depth are preserved.
     detach_cloud_depth()
     glViewport(0, 0, i32(cloud_scene_depth.width), i32(cloud_scene_depth.height))
+    cloud_shadow_multiply()
     # With no shafts, clear pixels outside every projected cloud cannot
     # contribute. Include two low-resolution texels for reconstruction taps.
     # This uses the same conservative curved bounds as the volume/edge passes.

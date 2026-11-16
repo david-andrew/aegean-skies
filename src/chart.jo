@@ -39,59 +39,90 @@ const SHEET_PX = 384
 const CHART_LIST_W = 250.0
 const SHEET_DETAIL = 30000.0        # sheets narrower than this get their own finer painting
 
-build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n: int = CHART_PX) -> Texture:
-    rows = parallel_map([0..n), (j: int) -> f64[]:
-        z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
-        row: f64[]
-        loop i in 0..n:
-            x = cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5
-            # Whole-world pixels span ~780 m; don't calculate metre-scale erosion.
-            row.push(if extent > CHART_EXTENT and (abs(x) >= LEGACY_RESERVE or abs(z) >= LEGACY_RESERVE): new_land_base(x,z).0 else: height(x,z))
-        row
-    )
-    # (inland lakes, from the lake source: painted as still water with their own inked shore)
-    lakes = parallel_map([0..n), (j: int) -> bool[]:
-        z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
-        [loop i in 0..n: lake_at(cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5,z).wet]
-    )
-    img = image(n, n)
+# The chart's paper is made a row at a time, in three passes: each row's heights, each row's lakes,
+# then each row painted (it reads the rows either side). build_chart_texture makes it at once;
+# ChartTextureBuild makes the same pixels a few rows a frame (chart_texture_step).
+_chart_height_row = (extent: f64, depth: f64, cx: f64, cz: f64, n: int, j: int) -> f64[]:
+    z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
+    row: f64[]
+    loop i in 0..n:
+        x = cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5
+        # Whole-world pixels span ~780 m; don't calculate metre-scale erosion.
+        row.push(if extent > CHART_EXTENT and (abs(x) >= LEGACY_RESERVE or abs(z) >= LEGACY_RESERVE): new_land_base(x,z).0 else: height(x,z))
+    row
+
+# (inland lakes, from the lake source: painted as still water with their own inked shore)
+_chart_lake_row = (extent: f64, depth: f64, cx: f64, cz: f64, n: int, j: int) -> bool[]:
+    z = cz + (f64(j) + 0.5) / f64(n) * depth - depth * 0.5
+    [loop i in 0..n: lake_at(cx+(f64(i)+0.5)/f64(n)*extent-extent*0.5,z).wet]
+
+_chart_paint_row = (img: mut Image, rows: f64[][], lakes: bool[][], n: int, j: int):
     paper = vec3(0.93, 0.88, 0.76)
-    loop j in 0..n:
-        loop i in 0..n:
-            h = rows[j][i]
-            hx = rows[j][min(i + 1, n - 1)] - rows[j][max(i - 1, 0)]
-            hz = rows[min(j + 1, n - 1)][i] - rows[max(j - 1, 0)][i]
-            grain = f32(noise(f64(i) * 0.9, f64(j) * 0.9) * 0.06 + noise(f64(i) * 0.08, f64(j) * 0.08) * 0.08)
-            c = paper
-            lake = lakes[j][i]
-            if lake:
-                # (a lake: one pale wash, a shade deeper than the shallows)
-                c = mix(mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), 0.3), paper, 0.25)
-            else if h <= 0.0:
-                # watercolor sea: paler near the coast, bands of depth
-                d = clamp(-h / 60.0, 0.0, 1.0)
-                band = f32(floor(d * 4.0) / 4.0)
-                c = mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), band)
-                c = mix(c, paper, 0.25)
-            else:
-                # land: ochre low ground, green above, shaded from the north-west
-                g = f32(clamp(h / 220.0, 0.0, 1.0))
-                c = mix(vec3(0.86, 0.76, 0.55), vec3(0.55, 0.62, 0.4), g)
-                shade = f32(clamp((hx + hz) * 0.02, -0.25, 0.25))
-                c = c * (1.0 - shade)
-                # contour lines every 50 m
-                if floor(h / 50.0) != floor((h + abs(hx) * 0.5 + abs(hz) * 0.5) / 50.0): c = c * 0.82
-            # the coastline in ink
-            hn = [rows[j][min(i + 1, n - 1)], rows[min(j + 1, n - 1)][i], rows[j][max(i - 1, 0)], rows[max(j - 1, 0)][i]]
-            coast = false
-            loop q in hn:
-                if (q > 0.0) != (h > 0.0): coast = true
-            if not lake and h > 0.0:
-                if lakes[j][min(i + 1, n - 1)] or lakes[min(j + 1, n - 1)][i] or lakes[j][max(i - 1, 0)] or lakes[max(j - 1, 0)][i]: coast = true
-            if coast: c = vec3(0.25, 0.2, 0.16)
-            c = c * (1.0 - grain)
-            img.set(i, j, vec4(c.x, c.y, c.z, 1))
+    loop i in 0..n:
+        h = rows[j][i]
+        hx = rows[j][min(i + 1, n - 1)] - rows[j][max(i - 1, 0)]
+        hz = rows[min(j + 1, n - 1)][i] - rows[max(j - 1, 0)][i]
+        grain = f32(noise(f64(i) * 0.9, f64(j) * 0.9) * 0.06 + noise(f64(i) * 0.08, f64(j) * 0.08) * 0.08)
+        c = paper
+        lake = lakes[j][i]
+        if lake:
+            # (a lake: one pale wash, a shade deeper than the shallows)
+            c = mix(mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), 0.3), paper, 0.25)
+        else if h <= 0.0:
+            # watercolor sea: paler near the coast, bands of depth
+            d = clamp(-h / 60.0, 0.0, 1.0)
+            band = f32(floor(d * 4.0) / 4.0)
+            c = mix(vec3(0.72, 0.86, 0.86), vec3(0.42, 0.62, 0.75), band)
+            c = mix(c, paper, 0.25)
+        else:
+            # land: ochre low ground, green above, shaded from the north-west
+            g = f32(clamp(h / 220.0, 0.0, 1.0))
+            c = mix(vec3(0.86, 0.76, 0.55), vec3(0.55, 0.62, 0.4), g)
+            shade = f32(clamp((hx + hz) * 0.02, -0.25, 0.25))
+            c = c * (1.0 - shade)
+            # contour lines every 50 m
+            if floor(h / 50.0) != floor((h + abs(hx) * 0.5 + abs(hz) * 0.5) / 50.0): c = c * 0.82
+        # the coastline in ink
+        hn = [rows[j][min(i + 1, n - 1)], rows[min(j + 1, n - 1)][i], rows[j][max(i - 1, 0)], rows[max(j - 1, 0)][i]]
+        coast = false
+        loop q in hn:
+            if (q > 0.0) != (h > 0.0): coast = true
+        if not lake and h > 0.0:
+            if lakes[j][min(i + 1, n - 1)] or lakes[min(j + 1, n - 1)][i] or lakes[j][max(i - 1, 0)] or lakes[max(j - 1, 0)][i]: coast = true
+        if coast: c = vec3(0.25, 0.2, 0.16)
+        c = c * (1.0 - grain)
+        img.set(i, j, vec4(c.x, c.y, c.z, 1))
+
+build_chart_texture = (extent: f64, depth: f64, cx: f64 = 0.0, cz: f64 = 0.0, n: int = CHART_PX) -> Texture:
+    rows = parallel_map([0..n), (j: int) -> f64[]: _chart_height_row(extent, depth, cx, cz, n, j))
+    lakes = parallel_map([0..n), (j: int) -> bool[]: _chart_lake_row(extent, depth, cx, cz, n, j))
+    img = image(n, n)
+    loop j in 0..n: _chart_paint_row(img, rows, lakes, n, j)
     texture(img, true)
+
+struct ChartTextureBuild:
+    extent: f64
+    depth: f64
+    n: int = CHART_PX
+    stage: int = 0                  # 0 heights, 1 lakes, 2 painting, 3 done
+    j: int = 0
+    rows: f64[][] = []
+    lakes: bool[][] = []
+    img: Image = image(1, 1)
+
+# rows of the build until `budget` seconds have gone; true once every pixel is painted
+chart_texture_step = (b: mut ChartTextureBuild, budget: f64) -> bool:
+    began = time()
+    loop b.stage < 3:
+        if b.stage == 0: b.rows.push(_chart_height_row(b.extent, b.depth, 0.0, 0.0, b.n, b.j))
+        else if b.stage == 1: b.lakes.push(_chart_lake_row(b.extent, b.depth, 0.0, 0.0, b.n, b.j))
+        else:
+            if b.j == 0: b.img = image(b.n, b.n)
+            _chart_paint_row(b.img, b.rows, b.lakes, b.n, b.j)
+        b.j += 1
+        if b.j >= b.n: b.stage += 1; b.j = 0
+        if time() - began >= budget: break
+    b.stage >= 3
 
 chart_local = false
 chart_extent = () -> f64: if geography_enabled and not chart_local: WORLD_WIDTH else: CHART_EXTENT
@@ -100,6 +131,23 @@ chart_depth = () -> f64: if geography_enabled and not chart_local: WORLD_DEPTH e
 build_chart = () -> Chart:
     local = build_chart_texture(CHART_EXTENT,CHART_EXTENT)
     Chart(local,if geography_enabled: build_chart_texture(WORLD_WIDTH,WORLD_DEPTH) else: local)
+
+# The whole chart (its local sheet, then the world's) a few rows a frame: chart_step makes rows
+# until `budget` seconds have gone and gives the chart once both are done (the same pixels as
+# build_chart); with a budget of 1e9 it finishes at once
+struct ChartBuild:
+    local: ChartTextureBuild = ChartTextureBuild(CHART_EXTENT, CHART_EXTENT)
+    world: ChartTextureBuild = ChartTextureBuild(WORLD_WIDTH, WORLD_DEPTH)
+    local_tex: Texture = Texture()
+
+chart_step = (b: mut ChartBuild, budget: f64) -> Chart?:
+    began = time()
+    if b.local_tex.id == 0:
+        if not chart_texture_step(b.local, budget): return none
+        b.local_tex = texture(b.local.img, true)
+    if not geography_enabled: return Chart(b.local_tex, b.local_tex)
+    if not chart_texture_step(b.world, max(0.0, budget - (time() - began))): return none
+    Chart(b.local_tex, texture(b.world.img, true))
 
 # the ground the chart spans: its middle and its width and depth, in metres
 struct ChartView:
@@ -125,6 +173,12 @@ chart_view = () -> ChartView:
             w = min(max((east-west)*1.12,1500.0),chart_extent()*1.12); d = min(max((south-north)*1.12,1500.0),chart_depth()*1.12)
             return ChartView((west+east)*0.5,(north+south)*0.5,w,d)
     ChartView(0.0,0.0,chart_extent(),chart_depth())
+
+# An aerodrome on the chart: where its sheet puts it (x, z), its strip's direction, its name.
+struct ChartField:
+    at: vec2
+    heading: f64
+    name: str
 
 # where a world point is on the chart drawn in rect r
 chart_point = (r: Rect, x: f64, z: f64) -> vec2:
@@ -214,25 +268,29 @@ _draw_sheets = (ch: Chart, r: Rect, sheets: ChartSheet[]):
 chart_sheet_list = (sheets: ChartSheet[], text_size: f64 = 15.0) -> int:
     global hud_style
     r = chart_rect()
-    lw = CHART_LIST_W; row = 28.0; gap = 4.0
+    # (larger on a small screen, so its type reads)
+    k = readable_k(text_size)
+    lw = CHART_LIST_W * k; row = 28.0 * k; gap = 4.0
+    # (as wide as the room left of the chart allows, before it would lie over the chart)
+    lw = max(min(lw, r.x - 40.0), min(lw, 170.0))
     x = r.x - 14.0 - lw - 14.0
     if x < 12.0: x = r.x + 10.0
-    h = 40.0 + f64(sheets.len()+1)*(row+gap) + 6.0
+    h = 40.0 * k + f64(sheets.len()+1)*(row+gap) + 6.0
     y = max(12.0, r.y - 14.0, pad_top_clear(x, x + lw))
     # (under the chart, as wide as its frame, and clear of the prompt cards along the bottom)
     bottom = 12.0
     if _chart_list_under(r.w, r.h):
         x = r.x - 14.0; lw = r.w + 28.0; y = r.y + r.h + 28.0; bottom = 120.0
     saved = hud_style
-    hud_style.text_size = text_size
+    hud_style.text_size = text_size * k
     hud_style.panel = rgba(0.06, 0.08, 0.12, 0.82)
     hud_style.button = rgba(0.14, 0.17, 0.22, 1)
     hud_style.hover = rgba(0.22, 0.27, 0.34, 1)
     h = min(h, f64(screen_height()) - y - bottom)
     hud_panel(Rect(x, y, lw, h))
-    text("Maps", vec2(f32(x + 12.0), f32(y + 10.0)), 17, rgba(1, 0.97, 0.9, 0.9))
+    text("Maps", vec2(f32(x + 12.0), f32(y + 10.0)), 17.0 * k, rgba(1, 0.97, 0.9, 0.9))
     picked = -2
-    box = Rect(x, y + 36.0, lw, h - 40.0)
+    box = Rect(x, y + 36.0 * k, lw, h - 40.0 * k)
     off = hud_scroll(box, f64(sheets.len()+1)*(row+gap), "chart-maps")
     clip(box)
     yy = box.y + 2.0 - off
@@ -342,7 +400,7 @@ _label_water = (r: Rect, labels: mut vec4[], name: str, from: int, to: int, show
         text(name, vec2(f32(x), f32(y)), size, ink)
         return
 
-draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, others: vec4[] = [], ships: Vessel[] = [], lanes: SeaLane[] = [],player_point:WorldPoint?=none,other_points:WorldPoint[]=[]):
+draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, others: vec4[] = [], ships: Vessel[] = [], lanes: SeaLane[] = [],player_point:WorldPoint?=none,other_points:WorldPoint[]=[],fields:ChartField[]=[],buoys:vec2[]=[]):
     r = chart_rect()
     rect_rounded(r.x - 14, r.y - 14, r.w + 28, r.h + 28, 6, rgb(0.42, 0.3, 0.2))
     if let sheets = chart_sheets: _draw_sheets(ch,r,sheets)
@@ -389,6 +447,29 @@ draw_chart = (ch: Chart, towns: Town[], player: vec3, heading: f64, hour: f64, o
                 if blocked: continue
                 labels.push(vec4(label.x,label.y,f32(width),f32(font)))
                 text(s.name,label,font,ink)
+    # Aerodromes, as the sheets print them: a strip in its own direction, a ring, the name.
+    loop f in fields:
+        if not charted(f64(f.at.x),f64(f.at.y)): continue
+        p = chart_point(r,f64(f.at.x),f64(f.at.y))
+        e = chart_point(r,f64(f.at.x)+sin(f.heading)*650.0,f64(f.at.y)-cos(f.heading)*650.0)-p
+        if length(e) < 5.0: e = normalize(e+vec2(0.0001,0))*5.0
+        line(p-e,p+e,2.2,ink)
+        ring(p,4.5,1.2,ink)
+        font = 11.0; width = f64(f.name.len())*font*0.62
+        label = vec2(f32(clamp(f64(p.x)+7.0,r.x+6.0,r.x+r.w-width-6.0)),f32(clamp(f64(p.y)+3.0,r.y+42.0,r.y+r.h-font-8.0)))
+        blocked = false
+        loop q in labels:
+            if label.x < q.x+q.z+4.0 and label.x+f32(width)+4.0 > q.x and label.y < q.y+q.w+4.0 and label.y+f32(font)+4.0 > q.y: blocked = true
+        if blocked: continue
+        labels.push(vec4(label.x,label.y,f32(width),f32(font)))
+        text(f.name,label,font,ink)
+    # A big aircraft's mooring buoys about: a little red and white buoy each (where it can make fast)
+    loop b in buoys:
+        if not charted(f64(b.x),f64(b.y)): continue
+        p = chart_point(r,f64(b.x),f64(b.y))
+        circle(p,4.2,rgba(0.96,0.93,0.84,1))
+        triangle(p+vec2(-4,0),p+vec2(4,0),p+vec2(0,-4.2),rgba(0.72,0.16,0.12,1))
+        ring(p,4.2,1.0,ink)
     loop tw in towns:
         if whole or not charted(f64(tw.center.x),f64(tw.center.z)): continue
         p = chart_point(r, f64(tw.center.x), f64(tw.center.z))

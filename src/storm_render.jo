@@ -1,0 +1,162 @@
+use 'lightning.jo'
+use 'weather_scene.jo'
+use 'cloud_transparency.jo'
+use 'depth_space.jo'
+use 'render_space.jo'
+use 'world_point.jo'
+use 'look.jo'
+# What a thunderstorm shows besides its cloud: the lightning bolts and the
+# rain on the windscreen. Both draw only while there is something to show.
+
+# ---- Bolts: each segment of the channel is a ribbon facing the camera, a
+# white core in a blue glow, kept at least a pixel or two wide with distance.
+struct BoltVertex:
+    corner: vec2                   # x along the segment 0..1, y across -1..1
+
+struct BoltInstance:
+    a: vec3
+    b: vec3
+    size: vec2                     # core half-width (m), relative brightness
+
+struct BoltParams:
+    clouds: CloudVeil
+    vp: mat4
+    cam: vec3
+    light: f32
+    color: vec3
+
+struct BoltOut:
+    pos: vec4
+    world: vec3
+    across: f32
+    light: f32
+
+const BOLT_GLOW = 8.0
+
+bolt_vs = (v: BoltVertex, inst: BoltInstance, u: BoltParams) -> BoltOut:
+    p = mix(inst.a,inst.b,v.corner.x)
+    distance = length(p-u.cam)
+    # (never under about two and a half pixels across, however far)
+    core = max(inst.size.x,distance*0.0032)
+    side = cross(inst.b-inst.a,p-u.cam)
+    side *= core*BOLT_GLOW/max(length(side),0.00001)
+    world = p+side*v.corner.y
+    BoltOut(u.vp*vec4(render_world(world,u.cam),1),world,v.corner.y,inst.size.y)
+
+bolt_fs = (i: BoltOut, u: BoltParams) -> vec4:
+    x = abs(i.across)*BOLT_GLOW
+    core = 1.0-smoothstep(0.4,1.0,x)
+    # (a bloom round the channel: the air lit by it)
+    glow = exp(-x*0.45)*0.65
+    # (seen through rain or a cloud's edge it dims, never vanishes: the channel
+    # is the brightest thing in the storm)
+    seen = cloud_transmittance(i.world,u.clouds)
+    a = min(core*i.light*u.light*1.6,1.0)*max(seen,0.7)+min(glow*i.light*u.light,1.0)*max(seen,0.4)
+    vec4(mix(u.color,vec3(1,1,1),core),a)
+
+bolt_sh = Shader()
+bolt_quad = Mesh()
+bolt_instances: InstanceBuffer[BoltInstance]
+bolt_key = -1
+bolt_ready = false
+# The cloud base the channels start from (the anvil's, cloud_field.jo).
+const BOLT_CLOUD_BASE: f32 = 800.0
+
+draw_lightning = (L: Light):
+    global bolt_sh,bolt_quad,bolt_instances,bolt_key,bolt_ready
+    s = weather_strike
+    if s.key < 0 or weather_strike_light <= 0.0: return
+    zone("lightning")
+    origin = render_origin(scene_camera())
+    if not bolt_ready:
+        bolt_sh = make_world_shader(shader(bolt_vs,bolt_fs))
+        bolt_quad = mesh([BoltVertex(vec2(0,-1)),BoltVertex(vec2(1,-1)),BoltVertex(vec2(0,1)),BoltVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+        empty: BoltInstance[]
+        bolt_instances = instance_buffer(empty)
+        bolt_ready = true
+    # (the bolt's place is fixed in the world; its rows are rebuilt per strike
+    # and per frame only by the render origin's shift)
+    at = world_local(s.center,origin)
+    rows: BoltInstance[]
+    loop seg in lightning_bolt(s,BOLT_CLOUD_BASE):
+        rows.push(BoltInstance(at+seg.a,at+seg.b,vec2(seg.width,seg.light)))
+    set_instances(bolt_instances,rows)
+    bolt_key = s.key
+    glDepthMask(0)
+    glDisable(GL_CULL_FACE)
+    light = weather_strike_light/max(s.weight,0.05)*min(s.weight*2.0,1.0)
+    draw_instanced(bolt_sh,bolt_quad,bolt_instances,BoltParams(cloud_veil,render_view_proj(origin),render_eye(origin),light,vec3(0.62,0.70,1.0)))
+    zone_end()
+
+# ---- Rain on the windscreen: beads landing on the glass and running up and
+# back with the airflow, faster the faster the aircraft flies, leaving thin
+# wet trails. Drawn on the glass itself, in the cockpit's own frame.
+struct ScreenVertex:
+    pos: vec3
+    uv: vec2                       # metres across and up the glass
+
+struct ScreenRainParams:
+    vp: mat4
+    model: mat4
+    time: f32
+    rain: f32
+    speed: f32
+    sky: vec3
+
+struct ScreenRainOut:
+    pos: vec4
+    uv: vec2
+
+screen_rain_vs = (v: ScreenVertex, u: ScreenRainParams) -> ScreenRainOut:
+    ScreenRainOut(u.vp*(u.model*vec4(v.pos,1)),v.uv)
+
+# One layer of beads: a cell holds at most one, which lands, sits, then is
+# blown up the glass; its trail stays wet below it.
+screen_rain_layer = (q: vec2, cell: f32, flow: f32, time: f32, rain: f32, seed: f32) -> vec2:
+    g = q/cell
+    lane = floor(g.x)
+    run = time*flow/cell*(0.7+hash21(vec2(lane,seed))*0.6)
+    g.y -= run
+    id = floor(g); f = g-id-vec2(0.5,0.5)
+    if hash21(id+vec2(seed,seed*1.7)) > rain: return vec2(0,0)
+    # (scattered, not on a grid: anywhere in the cell, of any size)
+    c = vec2(hash21(id+vec2(3.1,seed))-0.5,hash21(id+vec2(seed,5.7))-0.5)*0.7
+    stretch = 1.0+min(flow*1.5,2.0)
+    d = (f-c)*vec2(1.0,1.0/stretch)
+    r = 0.06+0.16*pow(hash21(id+vec2(9.3,seed)),2.0)
+    bead = 1.0-smoothstep(r*0.65,r,length(d))
+    # (a highlight on the bead's upper edge, toward the light)
+    rim = smoothstep(r*0.3,r*0.8,length(d-vec2(-0.25,0.35)*r))
+    trail = (1.0-smoothstep(0.02,0.06,abs(f.x-c.x)))*step(f.y,c.y)*smoothstep(-0.5,c.y,f.y)
+    vec2(bead*(0.6+0.4*rim),trail*0.35)
+
+screen_rain_fs = (i: ScreenRainOut, u: ScreenRainParams) -> vec4:
+    flow = 0.04+u.speed*0.014
+    a = screen_rain_layer(i.uv,0.045,flow,u.time,u.rain*0.7,1.0)
+    b = screen_rain_layer(i.uv+vec2(0.37,0.11),0.023,flow*1.3,u.time,u.rain*0.55,7.0)
+    beads = max(a.x,b.x); trails = max(a.y,b.y)
+    alpha = clamp(beads*0.55+trails*0.25,0.0,0.7)
+    # (water on glass: darker where it bends the bright sky away, light at the rims)
+    color = mix(u.sky*0.55,u.sky*1.25,clamp(beads,0.0,1.0)*0.5)
+    vec4(color,alpha)
+
+screen_rain_sh = Shader()
+screen_rain_mesh = Mesh()
+screen_rain_ready = false
+
+# The glass's trapezoid in the cockpit's frame (cockpit.jo draws its frame).
+draw_windscreen_rain = (vp: mat4, model: mat4, rain: f32, speed: f32, sky: vec3, time: f64):
+    global screen_rain_sh,screen_rain_mesh,screen_rain_ready
+    if rain < 0.02: return
+    if not screen_rain_ready:
+        screen_rain_sh = make_world_shader(shader(screen_rain_vs,screen_rain_fs))
+        corners = [vec3(-0.45,-0.23,-0.66),vec3(0.45,-0.23,-0.66),vec3(-0.33,0.23,-0.74),vec3(0.33,0.23,-0.74)]
+        vs: ScreenVertex[]
+        loop c in corners: vs.push(ScreenVertex(c,vec2(c.x,c.y)))
+        screen_rain_mesh = mesh(vs,[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+        screen_rain_ready = true
+    zone("windscreen rain")
+    glDepthMask(0)
+    glDisable(GL_CULL_FACE)
+    draw(screen_rain_sh,screen_rain_mesh,ScreenRainParams(vp,model,f32(time%1000.0),min(rain,1.0),speed,sky))
+    zone_end()

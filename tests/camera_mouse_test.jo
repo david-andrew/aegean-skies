@@ -1,0 +1,208 @@
+use '../src/sea.jo'
+use '../src/world_point.jo'
+use '../src/flight.jo'
+use '../src/targets.jo'
+use '../src/weather_scene.jo'
+use '../src/pilot.jo'
+use '../src/head_look.jo'
+use '../src/options.jo'
+
+# The user's case: target view through a long fight (loops, rolls, a target passing overhead and
+# round behind), then the camera must be upright again and the mouse must move the aim ring the
+# way it moved on the screen.
+
+struct Leg:
+    seconds: f64
+    rates: vec3          # body pitch, yaw, roll rates (rad/s)
+
+const SPEED = 80.0
+const DT = 1.0/60.0
+
+# Kinematic aircraft: body rates turn it, it flies along its nose.
+fly_leg = (f: mut Flyer, rates: vec3, dt: f64):
+    q = f.state.orientation
+    q = quat_mul(q, quat_axis_angle(vec3(1,0,0), f64(rates.x)*dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0,1,0), f64(rates.y)*dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0,0,-1), f64(rates.z)*dt))
+    f.state.orientation = normalize(q)
+    f.state.velocity = quat_rotate(f.state.orientation, vec3(0,0,-1))*f32(SPEED)
+    f.state.position += f.state.velocity*f32(dt)
+    f.state.precise_ready = false
+    f.state.time += dt
+
+# Where the aim ring is drawn: its position on the screen plane of the frame drawn last.
+on_screen = (f: Flyer, a: vec3) -> vec2:
+    right = normalize(cross(f.screen_view, f.screen_up))
+    depth = dot(a, f.screen_view)
+    vec2(dot(a, right)/depth, dot(a, f.screen_up)/depth)
+
+screen_move = (f: Flyer, turn: vec2) -> vec2:
+    g = f
+    before = on_screen(g, aim_dir(g))
+    screen_aim(g, turn)
+    on_screen(g, aim_dir(g))-before
+
+# Mouse right moves the ring right, mouse up moves it up, on the screen actually drawn
+# (wherever the ring is drawn: in front of the eye and inside a wide view).
+check_mapping = (f: Flyer, label: str) -> bool:
+    if abs(f.aim_climb) > 1.3: return false
+    a = aim_dir(f)
+    if dot(a, f.screen_view) < 0.35: return false
+    d = screen_move(f, vec2(0.01, 0))
+    assert(d.x > 0.009 and abs(d.y) < 0.02*d.x, "{label}: mouse right moved the ring {d}")
+    d = screen_move(f, vec2(-0.01, 0))
+    assert(d.x < -0.008 and abs(d.y) < -0.02*d.x, "{label}: mouse left moved the ring {d}")
+    d = screen_move(f, vec2(0, -0.01))
+    assert(d.y > 0.008 and abs(d.x) < 0.02*d.y, "{label}: mouse up moved the ring {d}")
+    d = screen_move(f, vec2(0, 0.01))
+    assert(d.y < -0.008 and abs(d.x) < -0.02*d.y, "{label}: mouse down moved the ring {d}")
+    true
+
+test "target view rights itself after a long fight and the mouse follows the screen":
+    k = craft_spec(.gull, [])
+    s = CraftState(position=vec3(0,600,0), velocity=vec3(0,0,-f32(SPEED)))
+    f = Flyer(.gull, 0, k, s, cam_pos=vec3(0,604,15), fov=62)
+    f.mouse_mode = true
+    v = TargetView(items=[ViewTarget(0,1,"Orenthian",vec3(0,600,-300),0,0,true)], selected=0, looking=true)
+    # Loops, rolls and turns, while the target circles over the top and round behind.
+    legs = [Leg(2,vec3(0,0,0)), Leg(6,vec3(1.05,0,0)), Leg(3,vec3(0,0,2.1)), Leg(5,vec3(0.6,0,0)),
+        Leg(4,vec3(0.3,0.2,1.2)), Leg(6,vec3(-0.9,0,0)), Leg(3,vec3(0,0,-2.1)), Leg(6,vec3(1.05,0,0.4)),
+        Leg(4,vec3(0.4,-0.3,-0.8)), Leg(5,vec3(0.7,0,1.3))]
+    clock = 0.0; frames = 0; worst = 1.0; checked = 0
+    previous: ChaseCamera? = none
+    loop leg in legs:
+        loop _ in 0..int(leg.seconds/DT):
+            fly_leg(f, leg.rates, DT)
+            clock += DT
+            # The target loops over the player's head in a vertical circle, then round behind.
+            angle = clock*0.35
+            v.items[0].position = f.state.position+vec3(f32(120.0*sin(clock*0.11)), f32(260.0*sin(angle)), f32(-260.0*cos(angle)))
+            chase(f, DT)
+            step_target_view(v, f.cam_pos, f.look, DT)
+            frame = chase_frame(f, clock, v.bearing, v.weight)
+            assert(abs(length(frame.up)-1.0) < 0.0001 and abs(dot(frame.up, frame.view)) < 0.0001)
+            if let last = previous:
+                worst = min(worst, f64(dot(last.up, frame.up)))
+                assert(dot(last.up, frame.up) > 0.99, "camera up flipped at {clock:.2}s: {last.up} -> {frame.up}")
+            previous = frame
+            frames += 1
+            if frames % 10 == 0 and check_mapping(f, "manoeuvre at {clock:.2}s"): checked += 1
+    # Level again; the target holds a level bearing off the quarter. The camera rights itself.
+    f.state.orientation = quat_euler(0, 0.4, 0)
+    loop _ in 0..int(4.0/DT):
+        fly_leg(f, vec3(0,0,0), DT)
+        clock += DT
+        v.items[0].position = f.state.position+vec3(-220,10,-260)
+        chase(f, DT)
+        step_target_view(v, f.cam_pos, f.look, DT)
+        frame = chase_frame(f, clock, v.bearing, v.weight)
+        if let last = previous: assert(dot(last.up, frame.up) > 0.99)
+        previous = frame
+    print("CAMERA after {frames} frames of manoeuvre ({checked} mouse checks): up {f.screen_up} worst frame-to-frame up dot {worst:.5}")
+    assert(f.screen_up.y > 0.95, "target view stayed rolled: up {f.screen_up}")
+    assert(checked > 40, "only {checked} frames showed the ring")
+    assert(check_mapping(f, "level, target ahead"))
+    # Mouse to controls, upright aircraft: right turns right, up climbs (target ahead of the nose).
+    f.aim_heading = heading(f.state); f.aim_climb = 0.0
+    screen_aim(f, vec2(0.08, 0))
+    c = steer(f.spec, f.state, aim_dir(f))
+    assert(c.roll > 0.2, "mouse right should bank right, roll {c.roll}")
+    f.aim_heading = heading(f.state); f.aim_climb = 0.0
+    screen_aim(f, vec2(0, -0.08))
+    c = steer(f.spec, f.state, aim_dir(f))
+    assert(c.pitch > 0.2, "mouse up should climb, pitch {c.pitch}")
+
+test "looking aft at a target, screen right swings the nose to screen right":
+    k = craft_spec(.gull, [])
+    s = CraftState(position=vec3(0,600,0), velocity=vec3(0,0,-f32(SPEED)))
+    f = Flyer(.gull, 0, k, s, cam_pos=vec3(0,604,15), fov=62)
+    f.mouse_mode = true
+    v = TargetView(items=[ViewTarget(0,1,"Orenthian",vec3(0,610,400),0,0,true)], selected=0, looking=true)
+    clock = 0.0
+    loop _ in 0..int(3.0/DT):
+        fly_leg(f, vec3(0,0,0), DT)
+        clock += DT
+        v.items[0].position = f.state.position+vec3(0,10,400)
+        chase(f, DT)
+        step_target_view(v, f.cam_pos, f.look, DT)
+        _ = chase_frame(f, clock, v.bearing, v.weight)
+    assert(f.screen_view.z > 0.9 and f.screen_up.y > 0.95, "looking aft, upright: {f.screen_view} {f.screen_up}")
+    f.aim_heading = heading(f.state); f.aim_climb = 0.0
+    right = normalize(cross(f.screen_view, f.screen_up))
+    before = aim_dir(f)
+    g = f
+    screen_aim(g, vec2(0.01, 0))
+    assert(dot(aim_dir(g)-before, right) > 0.008, "aft view: mouse right moved the aim {dot(aim_dir(g)-before, right)} along screen right")
+    # Screen right is the aircraft's left here: the same push banks it left.
+    screen_aim(f, vec2(0.08, 0))
+    c = steer(f.spec, f.state, aim_dir(f))
+    assert(c.roll < -0.2, "aft view: screen right should bank toward screen right (left wing), roll {c.roll}")
+
+test "screen aim stops at the zenith of a level view and never jumps with a tilted one":
+    k = craft_spec(.gull, [])
+    f = Flyer(.gull, 0, k, CraftState(position=vec3(0,600,0)), aim_heading=0.7, aim_climb=1.2)
+    f.screen_ready = true; f.screen_view = vec3(0,0,-1); f.screen_up = vec3(0,1,0)
+    loop _ in 0..300: screen_aim(f, vec2(0, -0.02))
+    assert(abs(f.aim_heading-0.7) < 0.0001 and abs(f.aim_climb-1.55) < 0.0001, "{f.aim_heading} {f.aim_climb}")
+    loop _ in 0..40: screen_aim(f, vec2(0, 0.02))
+    assert(abs(f.aim_heading-0.7) < 0.0001 and f.aim_climb < 1.0)
+    # A camera looking up past the zenith: the aim may pass over the top, but continuously.
+    f.screen_view = normalize(vec3(0,0.8,-0.6)); f.screen_up = normalize(vec3(0,0.6,0.8))
+    loop _ in 0..200:
+        before = aim_dir(f)
+        screen_aim(f, vec2(0.003, -0.02))
+        assert(length(aim_dir(f)-before) < 0.03, "aim jumped {before} -> {aim_dir(f)}")
+
+# The Options page's "Mouse steers the aircraft" off: the mouse only looks. In flight, a fortnight's
+# worth of mouse movement leaves the controls exactly as the keys alone make them, and turns the view
+# instead, within the limits for that view (src/head_look.jo); on, the same movement steers.
+test "with mouse steering off, the mouse never changes the controls, only where the view looks":
+    k = craft_spec(.gull, [])
+    fly = (steers: bool, moves: vec2[], cockpit: bool) -> (Controls[], Flyer):
+        options.mouse_steers = steers
+        f = Flyer(.gull, 0, k, CraftState(position = vec3(0, 600, 0), velocity = vec3(0, 0, -f32(SPEED))), cam_pos = vec3(0, 604, 15), fov = 62)
+        f.cockpit_view = cockpit
+        out: Controls[]
+        loop m in moves:
+            fly_leg(f, vec3(0, 0, 0), DT)
+            out.push(key_controls(f, DT, m))
+        (out, f)
+    moves = [loop i in 0..240: vec2(f32(60.0 * sin(f64(i) * 0.11)), f32(-35.0 * cos(f64(i) * 0.07)))]
+    still = [loop i in 0..240: vec2(0, 0)]
+    loop cockpit in [false, true]:
+        moved = fly(false, moves, cockpit)
+        quiet = fly(false, still, cockpit)
+        loop i in 0..moves.len():
+            a = moved.0[i]; b = quiet.0[i]
+            assert(a.pitch == b.pitch and a.roll == b.roll and a.yaw == b.yaw and a.throttle == b.throttle, "frame {i}: the mouse changed the controls ({cockpit})")
+        f = moved.1
+        assert(not f.mouse_mode, "the aim never takes over")
+        if not cockpit:
+            # (outside: the taxiing orbit about the aircraft, in the air too; no turn of the head)
+            assert(f.orbiting, "outside, the mouse orbits the view about the aircraft")
+            assert(f.look_yaw == 0.0 and f.look_pitch == 0.0, "no head turn outside")
+            continue
+        lim = look_limits(.gull, cockpit)
+        assert(abs(f.look_yaw) + abs(f.look_pitch) > 0.05, "the view turned")
+        assert(f.look_pitch <= lim.up + 1e-9 and f.look_pitch >= -lim.down - 1e-9, "pitch within the limits")
+        if not lim.wrap: assert(abs(f.look_yaw) <= lim.yaw + 1e-9)
+        # (pushed far to one side the head stops at the limit)
+        far = fly(false, [loop i in 0..120: vec2(-80, -60)], cockpit).1
+        if not lim.wrap: assert(abs(far.look_yaw - lim.yaw) < 1e-6, "cockpit yaw stops at {lim.yaw}: {far.look_yaw}")
+        assert(abs(far.look_pitch - lim.up) < 1e-6, "pitch stops at {lim.up}: {far.look_pitch}")
+    # (on, as it has always been: the same movement steers)
+    steered = fly(true, moves, false)
+    plain = fly(true, still, false)
+    differs = false
+    loop i in 0..moves.len():
+        if steered.0[i].roll != plain.0[i].roll or steered.0[i].pitch != plain.0[i].pitch: differs = true
+    assert(differs and steered.1.mouse_mode, "with mouse steering on the mouse flies")
+    options.mouse_steers = true
+
+test "the look limits: open cockpits turn far, big boats' decks less, the orbit all round":
+    open = look_limits(.gull, true)
+    deck = look_limits(.dornier_dox, true)
+    orbit = look_limits(.gull, false)
+    assert(open.yaw > deck.yaw and open.up > deck.up and orbit.wrap and not open.wrap)
+    held = limit_look(4.0, 2.0, orbit)
+    assert(abs(held.0 - (4.0 - TAU)) < 1e-9 and held.1 == orbit.up)

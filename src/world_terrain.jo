@@ -1,12 +1,17 @@
+use 'runtime_options.jo'
+use 'build_slice.jo'
 use 'river_material.jo'
 use 'water_field.jo'
 use 'lake_field.jo'
+use 'lake_data.jo'
+use 'lake_material.jo'
 use 'river_data.jo'
 use 'depth_space.jo'
 use 'paint.jo'
 # Bounded regular-grid quadtree for the NEW geography. Legacy terrain remains
 # byte-for-byte the original canonical surface, drawn by terrain.jo.
 use 'quality.jo'
+use 'canopy.jo'
 use 'geography.jo'
 use 'world_source.jo'
 use 'terrain.jo'
@@ -18,12 +23,14 @@ use 'coast_mesh.jo'
 use 'coast_atlas.jo'
 use 'coast_field.jo'
 use 'coast_pattern.jo'
+use 'road_material.jo'
+use 'settlement_purpose.jo'
 
 const WORLD_TILE_CELLS = 16
 const WORLD_TILE_SPAN = 224.0
 const WORLD_ROOT_LEVEL = 12
 const WORLD_ROOT_ORIGIN = -458752.0
-const WORLD_CACHE_SLOTS = 512
+const WORLD_CACHE_SLOTS = 1024
 const WORLD_ATLAS_COLS = 32
 const WORLD_TILE_PIXELS = 17
 const WORLD_GENERATE_LIMIT = 4
@@ -41,8 +48,8 @@ struct WorldTile:
     lod: f64
     published: bool = false
     cpu_heights: f32[] = []
-    inland_water: bool = false
     cpu_materials: u8[] = []
+    inland_water: bool = false
 
 struct WorldInstance:
     origin: vec2
@@ -58,12 +65,28 @@ world_contact_rect = vec4(0,0,0,0)
 world_frame = 0
 world_generated = 0
 world_generate_budget = WORLD_GENERATE_LIMIT
+# Past the first tile of a frame, tiles are made only until this time(): a fast low flight
+# asks for more than a frame can make, and the coarser tile stands in a frame or two. The
+# walker's own 3x3 contact neighbourhood is exempt (it is never a stand-in).
+# (a variable: checks of what streaming converges to, run frame after frame with no frame
+# time to keep, lift it and so make tiles as fast as the old four-a-frame limit allows)
+world_generate_seconds = 0.005
+world_generate_until = 0.0
+# While most land in view has nothing that can be drawn (just after a jump, a load or the
+# title's city shot), tiles get a larger slice of the frame: a few slower frames rather than
+# seconds of sea where the coast should be. (Only most: a coastal tile or two hidden after
+# landing at a quay is no reason to slow every frame.)
+const WORLD_ARRIVAL_SECONDS = 0.015
+world_arriving = false            # (land chosen hidden, tiles still to make: coarsest first)
+world_arriving_bare = false       # (and more of it hidden than drawn: the larger slice too)
+world_contact_requesting = false
 world_uploaded = 0
 world_draws = 0
 world_triangles = 0
 world_clock = 0.0
 world_heights: Texture
 world_materials: Texture
+world_working:Texture
 world_ground_sh: Shader
 
 world_tile_key = (x: int,z: int,level: int) -> int: level * 100000000 + x * 8192 + z
@@ -112,46 +135,141 @@ world_upload_tile = (t: Texture,img: Image,slot: int):
     glPixelStorei(GL_UNPACK_ALIGNMENT,1)
     gl_tex_sub_image((slot%WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,(slot/WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,WORLD_TILE_PIXELS,WORLD_TILE_PIXELS,GL_RGBA,GL_UNSIGNED_BYTE,data(img.pixels),img.pixels.len())
 
-world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
-    ox,oz = world_tile_origin(x,z,level)
-    cell = 14.0*f64(1<<level)
-    h = image(17,17); m = image(17,17)
-    low = 1e9; high = -1e9
+# A tile's samples are taken a row at a time, so a tile can be made over a few frames (the
+# coarser tile above it stands in meanwhile); the textures go up when the last row is done.
+struct WorldTileJob:
+    key: int = -1
+    x: int = 0
+    z: int = 0
+    level: int = 0
+    row: int = 0
+    asked: int = -100             # (the frame it was last asked for)
+    advanced: int = -100          # (the frame it last took a row)
+    h: Image
+    m: Image
+    working: Image
+    low: f64 = 1e9
+    high: f64 = -1e9
     values: f32[]
-    material_bytes:u8[]
-    loop j in 0..17:
+    material_bytes: u8[]
+
+world_tile_job_start = (x: int,z: int,level: int) -> WorldTileJob:
+    WorldTileJob(world_tile_key(x,z,level),x,z,level,h=image(17,17),m=image(17,17),working=image(17,17))
+
+# Rows until `until` (a time()), at least one; true once all 17 are done.
+world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
+    ox,oz = world_tile_origin(job.x,job.z,job.level)
+    cell = 14.0*f64(1<<job.level)
+    loop job.row < 17:
+        if job.advanced == world_frame and time() > until: return false
+        job.advanced = world_frame
+        j = job.row
         loop i in 0..17:
             wx = ox + f64(i)*cell; wz = oz+f64(j)*cell
             sy,ridge = world_source_sample(wx,wz)
             y = round(sy*4096.0)/4096.0
-            low = min(low,y); high = max(high,y)
-            values.push(f32(y))
+            job.low = min(job.low,y); job.high = max(job.high,y)
+            job.values.push(f32(y))
             packed = int(round((y+64.0)*4096.0))
             a = (j*17+i)*4
-            h.pixels[a] = u8(packed & 255)
-            h.pixels[a+1] = u8((packed>>8)&255)
-            h.pixels[a+2] = u8((packed>>16)&255)
-            h.pixels[a+3] = u8(round(clamp(ridge*0.5+0.5,0.0,1.0)*255.0))
+            job.h.pixels[a] = u8(packed & 255)
+            job.h.pixels[a+1] = u8((packed>>8)&255)
+            job.h.pixels[a+2] = u8((packed>>16)&255)
+            job.h.pixels[a+3] = u8(round(clamp(ridge*0.5+0.5,0.0,1.0)*255.0))
             # Normals use a fixed world-space footprint at every LOD, so shared
             # samples keep the same material as neighboring tiles refine.
             nx = world_source_sample(wx-5.0,wz).0-world_source_sample(wx+5.0,wz).0
             nz = world_source_sample(wx,wz-5.0).0-world_source_sample(wx,wz+5.0).0
             normal = normalize(vec3(f32(nx),10,f32(nz)))
-            m.set(i,j,vec4(normal.x*0.5+0.5,normal.z*0.5+0.5,f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011))))
-            material_bytes.push(h.pixels[a+3])
-            loop c in 0..4:material_bytes.push(m.pixels[a+c])
-    world_upload_tile(world_heights,h,slot)
-    world_upload_tile(world_materials,m,slot)
-    WorldTile(world_tile_key(x,z,level),x,z,level,world_frame,world_clock,low,high,f64(level+1),false,values,world_tile_inland(x,z,level),material_bytes)
+            job.m.set(i,j,vec4(normal.x*0.5+0.5,normal.z*0.5+0.5,f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011))))
+            job.working.set(i,j,working_landuse(vec2(f32(wx),f32(wz)),y,f64(length(normal.xz)/max(normal.y,0.1))))
+            job.material_bytes.push(job.h.pixels[a+3])
+            loop c in 0..4:job.material_bytes.push(job.m.pixels[a+c])
+        job.row += 1
+    true
+
+world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
+    world_upload_tile(world_heights,job.h,slot)
+    world_upload_tile(world_materials,job.m,slot)
+    world_upload_tile(world_working,job.working,slot)
+    WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
+
+world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
+    job = world_tile_job_start(x,z,level)
+    _ = world_tile_job_rows(job,1e30)
+    world_tile_job_finish(job,slot)
+
+world_tile_job = WorldTileJob()
+# While arriving (world_arriving), the job takes only tiles of the coarsest level asked for and
+# not made last frame (first asked first among them). Fine tiles near the camera are of
+# no use until the coarser ones around them exist, as balancing folds them back into their
+# ancestors; made nearest first, a jump to a coast drew nothing until some 300 tiles were
+# made. Otherwise the first asked is made first (the contact ring ahead, then nearest).
+world_next_level = -1
+world_want_key = -1
+world_want_level = -1
+world_want_distance = 0.0
+world_want_cam = vec3(0,0,0)
+world_want = (key: int,x: int,z: int,level: int):
+    global world_want_key,world_want_level,world_want_distance,world_want_warm
+    if level < world_want_level: return
+    ox,oz = world_tile_origin(x,z,level)
+    d = world_distance(ox,oz,world_tile_size(level),world_want_cam)
+    if world_warming and world_want_main: return
+    if level > world_want_level or d < world_want_distance:
+        world_want_key = key; world_want_level = level; world_want_distance = d; world_want_warm = world_warming
+
+# Warming views ahead of the camera: the title's next shot, a jump or a load about to land.
+# world_warm(views) asks for the tiles each view would draw (and a ground-level view's
+# contact tiles) every frame, after the camera's own and within the same slices, coarsest
+# first; world_warm_settled() is true once a whole pass over them found every tile made.
+# Keep it to a view or two at a time: each holds its tiles (100-300 of the 1024) in the cache.
+struct WorldWarmView:
+    eye: vec3
+    look: vec3                     # a point looked at
+    fov: f64 = 70.0                # vertical, degrees
+    aspect: f64 = 0.0              # width over height (0: the screen's)
+world_warm_views: WorldWarmView[]
+world_warm_selected: int[] = []    # (the tiles the warm views chose last frame, and each one's eye: for the groves)
+world_warm_eyes: vec3[] = []
+world_warming = false
+world_want_main = false
+world_want_warm = false
+world_warm_missing = 0
+world_warm_ready = false
+world_warm_slice = 0.0
+# (slice: seconds of each frame the warming may take beyond the camera's own tiles; 0: none
+# beyond the ordinary allowance)
+world_warm = (views: WorldWarmView[], slice: f64 = 0.0):
+    global world_warm_views,world_warm_ready,world_warm_slice
+    world_warm_views = views; world_warm_ready = false; world_warm_slice = slice
+world_warm_clear = (): world_warm([])
+world_warm_settled = () -> bool: world_warm_views.len() > 0 and world_warm_ready
+# The camera's own view: none of the tiles it asked for last frame is missing.
+world_view_missing = 0
+world_view_settled = () -> bool: world_view_missing == 0
 
 world_request_tile = (x: int,z: int,level: int) -> int:
-    global world_tiles,world_cache,world_generated,world_uploaded
+    global world_tiles,world_cache,world_generated,world_uploaded,world_tile_job,world_next_level
     key = world_tile_key(x,z,level)
     if key in world_cache:
         slot = world_cache[key]
         world_tiles[slot].used = world_frame
         return slot
+    global world_warm_missing,world_view_missing
+    if world_warming: world_warm_missing += 1 else: world_view_missing += 1
     if world_generated >= world_generate_budget: return -1
+    # Outside the walker's contact tiles one tile is made at a time, a few rows a frame within
+    # the frame's allowance; a tile no longer asked for gives way to the next one asked.
+    if not world_contact_requesting:
+        if world_tile_job.key != key:
+            world_want(key,x,z,level)
+            if world_tile_job.key >= 0 and world_tile_job.asked >= world_frame-1: return -1
+            if world_next_level >= 0 and level < world_next_level: return -1
+            if time() > world_generate_until: return -1
+            world_tile_job = world_tile_job_start(x,z,level)
+        world_tile_job.asked = world_frame
+        if not world_tile_job_rows(world_tile_job,world_generate_until): return -1
     slot = -1; oldest = world_frame-2
     loop i in 0..WORLD_CACHE_SLOTS:
         if world_tiles[i].key < 0: slot = i; break
@@ -159,8 +277,15 @@ world_request_tile = (x: int,z: int,level: int) -> int:
         if world_tiles[i].used < oldest: oldest = world_tiles[i].used; slot = i
     if slot < 0: return -1
     if world_tiles[slot].key >= 0: world_cache.remove(world_tiles[slot].key)
-    world_tiles[slot] = world_make_tile(x,z,level,slot)
+    if world_tile_job.key == key:
+        # (finished here; a contact tile asked for while it was under way is finished at once)
+        _ = world_tile_job_rows(world_tile_job,1e30)
+        world_tiles[slot] = world_tile_job_finish(world_tile_job,slot)
+        world_tile_job = WorldTileJob()
+        world_next_level = -1
+    else: world_tiles[slot] = world_make_tile(x,z,level,slot)
     world_cache[key] = slot
+    if world_warming: world_warm_missing -= 1 else: world_view_missing -= 1
     world_generated += 1
     world_uploaded += 17*17*8
     slot
@@ -170,7 +295,8 @@ world_request_tile = (x: int,z: int,level: int) -> int:
 world_tile_inland = (tx:int,tz:int,level:int) -> bool:
     x,z=world_tile_origin(tx,tz,level);size=world_tile_size(level)
     outside_river=x>f64(RIVER_BOUNDS.z) or x+size<f64(RIVER_BOUNDS.x) or z>f64(RIVER_BOUNDS.w) or z+size<f64(RIVER_BOUNDS.y)
-    if outside_river and not lake_at(x+size*0.5,z+size*0.5).found:return false
+    if lake_touches(x,z,size):return true
+    if outside_river:return false
     r=water_at(x+size*0.5,z+size*0.5)
     r.found and r.distance<size*0.71+r.width*3.0
 
@@ -230,30 +356,57 @@ world_neighbor_side = (a: WorldTile,b: WorldTile) -> int:
         if az+asize == bz: return 3
     -1
 
+world_side = (ax: int,az: int,asize: int,bx: int,bz: int,bsize: int) -> int:
+    if az < bz+bsize and az+asize > bz:
+        if ax == bx+bsize: return 0
+        if ax+asize == bx: return 1
+    if ax < bx+bsize and ax+asize > bx:
+        if az == bz+bsize: return 2
+        if az+asize == bz: return 3
+    -1
+
+# Each round finds the first pair (in selection order) of a tile and an adjacent tile at least
+# two levels coarser whose coarser-by-one ancestor is cached, and replaces what that ancestor
+# covers with it. A tile so much coarser always covers a whole side of its neighbour (quadtree
+# cells nest), so one look at the cell beside each side finds it: four lookups a tile, not a
+# comparison with every other selected tile, and the same pair as that full comparison.
 world_balance = ():
     global world_selected
     loop balance_round in 0..WORLD_CACHE_SLOTS:
-        changed = false
-        loop ia in 0..world_selected.len():
-            a = world_tiles[world_selected[ia]]
-            loop ib in 0..world_selected.len():
-                b = world_tiles[world_selected[ib]]
-                if b.level <= a.level+1 or world_neighbor_side(a,b) < 0: continue
-                level = b.level-1
-                x = a.x >> (level-a.level); z = a.z >> (level-a.level)
-                key = world_tile_key(x,z,level)
-                if not (key in world_cache): continue
-                parent = world_cache[key]
-                next: int[]
-                loop slot in world_selected:
-                    c = world_tiles[slot]
-                    if c.level <= level and (c.x>>(level-c.level)) == x and (c.z>>(level-c.level)) == z: continue
-                    next.push(slot)
-                next.push(parent); world_selected = next
-                changed = true
-                break
-            if changed: break
-        if not changed: break
+        n = world_selected.len()
+        tx: int[]; tz: int[]; tl: int[]
+        at: {int: int} = {}
+        loop k in 0..n:
+            t = world_tiles[world_selected[k]]
+            tx.push(t.x); tz.push(t.z); tl.push(t.level)
+            at[world_tile_key(t.x,t.z,t.level)] = k
+        found_a = -1; found_b = -1
+        loop ia in 0..n:
+            rs = 1 << tl[ia]; rx = tx[ia]*rs; rz = tz[ia]*rs
+            best = -1
+            loop side in 0..4:
+                cx = if side == 0: rx-1 else: if side == 1: rx+rs else: rx
+                cz = if side == 2: rz-1 else: if side == 3: rz+rs else: rz
+                if cx < 0 or cz < 0: continue
+                # (the selected tile covering that base cell, if any)
+                ib = -1
+                loop level in tl[ia]+2..WORLD_ROOT_LEVEL+1:
+                    if let k = at.get(world_tile_key(cx >> level,cz >> level,level)):
+                        ib = k; break
+                if ib < 0 or (best >= 0 and ib >= best): continue
+                level = tl[ib]-1
+                if not (world_tile_key(tx[ia] >> (level-tl[ia]),tz[ia] >> (level-tl[ia]),level) in world_cache): continue
+                best = ib
+            if best >= 0: found_a = ia; found_b = best; break
+        if found_a < 0: break
+        level = tl[found_b]-1
+        x = tx[found_a] >> (level-tl[found_a]); z = tz[found_a] >> (level-tl[found_a])
+        parent = world_cache[world_tile_key(x,z,level)]
+        next: int[]
+        loop k in 0..n:
+            if tl[k] <= level and (tx[k]>>(level-tl[k])) == x and (tz[k]>>(level-tl[k])) == z: continue
+            next.push(world_selected[k])
+        next.push(parent); world_selected = next
 
 world_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> TerrainSample:
     if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return land_sample(u.heights,u.materials,base+p)
@@ -285,9 +438,14 @@ world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundO
     curved.y -= world_drop(local.xz-u.cam.xz)
     tint = sample.tint
     tint.w = 1.0-smoothstep(1700.0,2300.0,absolute.y)   # (the treeline: wooded below, bare above)
-    GroundOut(u.view_proj*vec4(curved,1),local,normalize(sample.normal),tint,orchard_cover(absolute.xz,absolute.y,length(sample.normal.xz)/max(sample.normal.y,0.1)),inst.state.z,vec3(0,0,0),ground_riparian(u,absolute.xz,local.y))
+    result=GroundOut(u.view_proj*vec4(curved,1),local,normalize(sample.normal),tint,orchard_cover(absolute.xz,absolute.y,length(sample.normal.xz)/max(sample.normal.y,0.1)),inst.state.z,vec3(0,0,0),ground_riparian(u,absolute.xz,local.y))
+    result.working=sample(u.working_map,(inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.working_map)))
+    result
 
-world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+world_fragment = (i: GroundOut,u: GroundParams) -> vec4: world_fragment_at(i,u,1)
+# (the low tier's: its own canopy, compiled without the full one)
+world_fragment_low = (i: GroundOut,u: GroundParams) -> vec4: world_fragment_at(i,u,0)
+world_fragment_at = (i: GroundOut,u: GroundParams,detail: int) -> vec4:
     # Canonical contact tiles replace coarse fallback geometry immediately,
     # even while the surrounding quadtree is still streaming after arrival.
     if i.tile_level>0.0 and i.world.x>=u.contact_rect.x and i.world.z>=u.contact_rect.y and i.world.x<u.contact_rect.z and i.world.z<u.contact_rect.w:discard()
@@ -302,16 +460,18 @@ world_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     if transmission < 0.001:
         if behind_sea(i.world,u.cam): discard()
         return vec4(u.haze,1)
-    ground_material(i,u,true)
+    ground_material(i,u,true,false,detail)
 
 init_world_terrain = ():
     reset_coast_selection()
-    global world_tiles,world_heights,world_materials,world_ground_sh
+    global world_tiles,world_heights,world_materials,world_working,world_ground_sh,world_balance_input,world_balance_output,world_balance_registry
+    world_balance_input=[];world_balance_output=[];world_balance_registry={}
     if coast_grids.len() == 0: init_terrain()
     world_tiles = [loop i in 0..WORLD_CACHE_SLOTS: WorldTile()]
-    world_heights = texture(image(32*17,16*17),true)
-    world_materials = texture(image(32*17,16*17),true)
-    world_ground_sh = make_world_shader(shader(world_vertex,world_fragment))
+    world_heights = texture(image(32*17,32*17),true)
+    world_materials = texture(image(32*17,32*17),true)
+    world_working = texture(image(32*17,32*17),true)
+    world_ground_sh = make_world_shader(if render_quality.tier == 0: shader(world_vertex,world_fragment_low) else: shader(world_vertex,world_fragment))
 
 world_edge_state = (slot: int) -> (vec4,int):
     node = world_tiles[slot]
@@ -380,12 +540,13 @@ world_prepare_edge_states=():
     if stamps==world_edge_stamps and world_edge_neighbors.len()==world_selected.len():return
     world_edge_stamps=stamps
     neighbors:(int,int)[][]
-    loop slot in world_selected:
+    rx=[loop t in stamps:t.x*(1<<t.level)];rz=[loop t in stamps:t.z*(1<<t.level)];rs=[loop t in stamps:1<<t.level]
+    loop i in 0..stamps.len():
         row:(int,int)[]
-        loop other in world_selected:
-            if other==slot:continue
-            side=world_neighbor_side(world_tiles[slot],world_tiles[other])
-            if side>=0:row.push((other,side))
+        loop j in 0..stamps.len():
+            if stamps[j].slot==stamps[i].slot:continue
+            side=world_side(rx[i],rz[i],rs[i],rx[j],rz[j],rs[j])
+            if side>=0:row.push((stamps[j].slot,side))
         neighbors.push(row)
     world_edge_neighbors=neighbors
     world_edge_rebuilds+=1
@@ -427,7 +588,7 @@ world_contact_budget = (cam: vec3) -> int:
 # tree. A newly arrived walker must never stand on a 14 m CPU surface while
 # the renderer morphs a kilometre-sized fallback under their feet.
 world_prepare_contact = (cam: vec3,enabled: bool = true):
-    global world_contact_slots,world_contact_rect,world_generate_budget
+    global world_contact_slots,world_contact_rect,world_generate_budget,world_contact_requesting
     world_contact_slots=[];world_contact_rect=vec4(0,0,0,0)
     if not enabled:return
     if abs(cam.x)<LEGACY_RESERVE and abs(cam.z)<LEGACY_RESERVE:return
@@ -438,20 +599,54 @@ world_prepare_contact = (cam: vec3,enabled: bool = true):
     # Nine uploads only on a cold arrival; walking across an edge adds three.
     ordinary_budget=world_generate_budget
     world_generate_budget=max(world_generate_budget,WORLD_CONTACT_GENERATE_LIMIT)
+    # All nine are made at once, never a slice at a time: until the nine are there the
+    # contact area is off and a coarser tile still draws under the walker beside the fine
+    # ones. (The ring the camera is heading into is made ahead, in slices: world_prefetch_contact.)
+    world_contact_requesting=true
     loop dz in [-1,0,1]:
         loop dx in [-1,0,1]:
             slot=world_request_tile(cx+dx,cz+dz,0)
             if slot>=0:world_contact_slots.push(slot)
+    world_contact_requesting=false
     world_generate_budget=max(ordinary_budget,world_generated)
     if world_contact_slots.len()!=9:return
     x,z=world_tile_origin(cx-1,cz-1,0)
     world_contact_rect=vec4(f32(x),f32(z),f32(x+WORLD_TILE_SPAN*3),f32(z+WORLD_TILE_SPAN*3))
 
+# Make the contact neighbourhood the camera is heading into (six seconds on, at most 400 m)
+# a tile or so a frame under the ordinary limits, so arriving there, by a walk across a tile
+# edge or a seaplane coming into a harbour, rarely leaves anything for the burst above.
+world_contact_track = vec3(1e9,1e9,1e9)
+world_contact_track_t = 0.0
+world_contact_course = vec3(0,0,0)
+world_prefetch_contact = (cam: vec3):
+    global world_contact_track,world_contact_track_t,world_contact_course
+    if abs(cam.x)<LEGACY_RESERVE and abs(cam.z)<LEGACY_RESERVE:return
+    now = time(); dt = now-world_contact_track_t
+    if dt >= 0.25:
+        world_contact_course = if dt < 2.0: (cam-world_contact_track)/f32(dt) else: vec3(0,0,0)
+        world_contact_track = cam; world_contact_track_t = now
+    ahead = world_contact_course.xz*6.0
+    if length(ahead) < 20.0: return
+    if length(ahead) > 400.0: ahead = ahead*(400.0/length(ahead))
+    p = cam.xz+ahead
+    ground = new_land_surface(f64(p.x),f64(p.y))
+    if ground < -40.0 or f64(cam.y)-ground > 150.0: return
+    cx=int(floor((f64(p.x)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+    cz=int(floor((f64(p.y)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+    loop dz in [-1,0,1]:
+        loop dx in [-1,0,1]: _ = world_request_tile(cx+dx,cz+dz,0)
+
 prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
-    global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_generate_budget
+    global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_generate_budget,world_generate_until
     world_generate_budget = if contact_burst: world_contact_budget(cam) else: WORLD_GENERATE_LIMIT
     world_frame += 1; world_clock = t; world_generated = 0; world_uploaded = 0
+    world_generate_until = time()+(if world_generate_seconds >= 1.0: world_generate_seconds else: if world_arriving_bare: max(WORLD_ARRIVAL_SECONDS,build_slice(world_generate_seconds)) else: build_slice(world_generate_seconds))
+    global world_next_level,world_want_key,world_want_level,world_want_cam,world_want_warm,world_view_missing
+    world_next_level = if world_arriving or world_want_warm: world_want_level else: -1
+    world_want_key = -1; world_want_level = -1; world_want_cam = cam; world_want_warm = false; world_view_missing = 0
     world_prepare_contact(cam,contact_burst)
+    if contact_burst: world_prefetch_contact(cam)
     planes = land_planes(vp)
     world_selected = []
     world_visit(0,0,WORLD_ROOT_LEVEL,cam,planes)
@@ -459,6 +654,18 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     # Preserve these exact tiles even if balancing selected a coarse ancestor.
     loop slot in world_contact_slots:
         if not (slot in world_selected):world_selected.push(slot)
+    global world_arriving,world_arriving_bare
+    # (arriving while land chosen cannot be drawn and tiles asked for are still to be made: a
+    # view with nothing left to make gains nothing from the larger slice)
+    world_arriving = false; world_arriving_bare = false
+    if world_view_missing > 0:
+        hidden = 0; shown = 0
+        loop slot in world_selected:
+            if world_tiles[slot].high > 0.0:
+                if world_tile_drawable(world_tiles[slot],cam): shown += 1 else: hidden += 1
+        world_arriving = hidden > 0
+        world_arriving_bare = hidden > shown
+    if world_warm_views.len() > 0: world_warm_pass()
     loop slot in world_selected:
         node = world_tiles[slot]
         ox,oz = world_tile_origin(node.x,node.z,node.level); size = world_tile_size(node.level)
@@ -473,6 +680,31 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
         if node.level == 0 and distance < size*1.5: birth = 1.0
         node.lod = if slot in world_contact_slots: 0.0 else:f64(node.level)+max(transition,1.0-birth)
         world_tiles[slot] = node
+
+world_warm_pass = ():
+    global world_selected,world_warming,world_want_main,world_warm_missing,world_warm_ready,world_want_cam,world_generate_until,world_warm_selected,world_warm_eyes
+    main = world_selected; main_cam = world_want_cam
+    if world_warm_slice > 0.0 and world_generate_seconds < 1.0: world_generate_until = max(world_generate_until,time()+world_warm_slice)
+    world_want_main = world_want_key >= 0
+    world_warming = true; world_warm_missing = 0
+    world_warm_selected = []; world_warm_eyes = []
+    loop v in world_warm_views:
+        world_want_cam = v.eye
+        ground = new_land_surface(f64(v.eye.x),f64(v.eye.z))
+        if ground >= -40.0 and f64(v.eye.y)-ground <= 80.0 and not (abs(v.eye.x)<LEGACY_RESERVE and abs(v.eye.z)<LEGACY_RESERVE):
+            cx=int(floor((f64(v.eye.x)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+            cz=int(floor((f64(v.eye.z)-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+            loop dz in [-1,0,1]:
+                loop dx in [-1,0,1]: _ = world_request_tile(cx+dx,cz+dz,0)
+        aspect = if v.aspect > 0.0: v.aspect else: f64(max(screen_width(),1))/f64(max(screen_height(),1))
+        vp = perspective(v.fov*PI/180.0,aspect,0.3,world_far(f64(v.eye.y)))*look_at(v.eye,v.look,vec3(0,1,0))
+        world_selected = []
+        world_visit(0,0,WORLD_ROOT_LEVEL,v.eye,land_planes(vp))
+        loop slot in world_selected:
+            world_warm_selected.push(slot); world_warm_eyes.push(v.eye)
+    world_warming = false
+    world_selected = main; world_want_cam = main_cam
+    world_warm_ready = world_warm_missing == 0
 
 draw_world_terrain = (L: Light,t: f64):
     global world_frame,world_clock,world_generated,world_uploaded,world_selected,world_tiles,world_draws,world_triangles
@@ -500,11 +732,28 @@ draw_world_terrain = (L: Light,t: f64):
             coast_add_patch(coastal,node.cpu_heights,17,17,ox,oz,0,0,16,vec2(f32(slot%32*17),f32(slot/32*17)),cam,origin,focal,planes,limits,source_id=node.key)
             continue
         batches[mask].push(WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),0),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level))))
-    params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),0),wind_now.drift,origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
+    params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,L.haze,f32(L.fog_density),f32(t),meadow_wind(wind_now,origin),meadow_gust_w(origin),origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
     params.pigment = paint_surface()
+    params.canopy = canopy_sheet()
+    params.grove = grove_new_world()
+    params.grass_gust = meadow_gust(origin)
+    params.working_map=world_working
     params.river_map=river_material_texture()
     params.river_area=vec4(RIVER_BOUNDS.xy,RIVER_BOUNDS.zw-RIVER_BOUNDS.xy)
     params.coast_pattern = coast_pattern_texture
+    prepare_road_field(cam)
+    params.roads=road_field
+    params.road_rect=road_field_rect-vec4(origin.x,origin.z,0,0)
+    params.lake_map=unread_map()
+    nearest_lake= -1;lake_distance:f32=5500.0
+    loop k in 0..SETTLEMENT_LAKES.len():
+        distance=length(SETTLEMENT_LAKES[k].center-cam.xz)
+        if distance<lake_distance:nearest_lake=k;lake_distance=distance
+    if nearest_lake>=0:
+        lake=SETTLEMENT_LAKES[nearest_lake]
+        params.lake_map=lake_material_texture(nearest_lake)
+        # Texture texel centres coincide with the actual relief sample stations.
+        params.lake_area=vec4(lake.origin-origin.xz-vec2(f32(lake.step*0.5),f32(lake.step*0.5)),vec2(f32(lake.nx),f32(lake.nz))*f32(lake.step))
     zone("world coast")
     draw_coast_batches(coastal,params,true)
     zone_end()
@@ -515,6 +764,6 @@ draw_world_terrain = (L: Light,t: f64):
         grid = terrain_grids[16+i]
         draw_instanced(world_ground_sh,grid,batches[i],params)
         world_draws += 1; world_triangles += grid.index_count/3*batches[i].len()
-    if env("AEGEAN_LOD_STATS") != none and world_frame%60 == 1:
+    if startup_aegean_lod_stats != none and world_frame%60 == 1:
         print("WORLD tiles={world_selected.len()} cache={world_cache.len()}/{WORLD_CACHE_SLOTS} generated={world_generated} upload={world_uploaded} draws={world_draws} triangles={world_triangles}")
     zone_end()

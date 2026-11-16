@@ -10,7 +10,9 @@
 # Buttons hold virtual keys the game reads alongside the keyboard (vdown, vpressed), so flying,
 # walking and the panels work the same by finger as by key.
 
-struct PadButton:
+use 'controller.jo'
+
+struct TouchButton:
     label: str
     key: Key
     at: vec2                        # its center, in screen units
@@ -33,7 +35,7 @@ struct TouchPad:
     throttle_now = 0.0              # (the throttle as it is, for drawing the slider)
     held: Key[]                     # virtual keys held this frame
     pressed: Key[]                  # and those pressed this frame
-    buttons: PadButton[]
+    buttons: TouchButton[]
     cards: Rect[]                   # (the prompt cards drawn last frame, and their keys)
     card_keys: Key[]
     next_cards: Rect[]              # (and those being drawn this frame)
@@ -56,11 +58,33 @@ set_touch_pad = (on: bool):
     global pad
     pad.on = on
 
-# a key held: on the keyboard or on the pad
-vdown = (k: Key) -> bool: key_down(k) or pad.held.contains(k)
+# (the game's keys left alone while the world runs behind the title screen, which has its own)
+keys_muted = false
 
-# a key pressed this frame: on the keyboard or on the pad
-vpressed = (k: Key) -> bool: key_pressed(k) or pad.pressed.contains(k)
+# a key held: on the keyboard, on the pad, or by a gamepad's or flight stick's button (controller.jo)
+vdown = (k: Key) -> bool: not keys_muted and (key_down(k) or pad.held.contains(k) or ctl_down(k))
+
+# a key pressed this frame: on the keyboard, on the pad, or by a controller's button
+vpressed = (k: Key) -> bool: not keys_muted and (key_pressed(k) or pad.pressed.contains(k) or ctl_pressed(k))
+
+# in a menu (the title, a panel): a key pressed, or the controller's d-pad (the arrows), A (Enter),
+# B (Escape) and Start (P)
+mkey = (k: Key) -> bool: key_pressed(k) or ctl_menu(k)
+# (and an arrow held, repeating: the keyboard's, or the controller's)
+mrepeat = (k: Key) -> bool: key_repeat(k) or ctl_menu(k)
+
+# On foot: the way to walk (x right, y back), from the arrows and W A S D and a controller's stick
+# (not its d-pad, whose buttons are the game's keys)
+walk_axis = () -> vec2:
+    v = vec2(0, 0)
+    if not keys_muted:
+        if key_down(.left) or key_down(.a): v.x -= 1
+        if key_down(.right) or key_down(.d): v.x += 1
+        if key_down(.up) or key_down(.w): v.y -= 1
+        if key_down(.down) or key_down(.s): v.y += 1
+        v = v + ctl.walk
+    if length(v) > 1.0: v = normalize(v)
+    v
 
 # a prompt card drawn this frame at r, for key k: a finger on it holds k
 tap_card = (r: Rect, k: Key):
@@ -68,6 +92,29 @@ tap_card = (r: Rect, k: Key):
     if not pad.on: return
     pad.next_cards.push(r)
     pad.next_card_keys.push(k)
+
+# ---------------- readable type ----------------
+# How many points (a page's CSS pixels; desktop pixels) one 2D unit takes on this screen: 1 in a
+# 1280 x 720 window, about 0.54 on a phone on its side. Type is never set smaller than
+# READABLE_POINTS on the screen: readable(size) is a size in units, at least that big.
+const READABLE_POINTS = 12.5
+ui_points = () -> f64:
+    p = pixel_size() / f32(max(pixel_ratio(), 0.1))
+    max(0.1, min(f64(p.x) / f64(max(screen_width(), 1)), f64(p.y) / f64(max(screen_height(), 1))))
+readable = (size: f64) -> f64: max(size, READABLE_POINTS / ui_points())
+# (how much a panel laid out for type of `size` grows, 1 where it is readable already)
+readable_k = (size: f64) -> f64: readable(size) / size
+
+# Where a panel goes on a phone on its side, clear of the pad's buttons along the top: where it
+# is if they don't reach it, below them if it fits there, else slid to the right, past them.
+# (x, y, w, h) and the screen (sw, sh) in the panel's own units, kz of them to a screen unit.
+panel_clear_of_pad = (x: f64, y: f64, w: f64, h: f64, sw: f64, sh: f64, kz: f64 = 1.0) -> vec2:
+    clear = pad_top_clear(x * kz, (x + w) * kz) / kz
+    if clear <= y: return vec2(f32(x), f32(y))
+    if clear + h <= sh - 4.0: return vec2(f32(x), f32(clear))
+    x2 = max(4.0, sw - w - 8.0)
+    clear2 = pad_top_clear(x2 * kz, (x2 + w) * kz) / kz
+    vec2(f32(x2), f32(if clear2 <= y: y else: max(4.0, min(clear2, sh - h - 4.0))))
 
 _unit = () -> f64: min(f64(screen_width()), f64(screen_height()))
 
@@ -95,10 +142,15 @@ pad_top_clear = (x0: f64, x1: f64, aboard: bool = false) -> f64:
     if x1 > right: y = max(y, full)
     if y > 0.0: y + 6.0 else: 0.0
 
-# the Walk button, by the right thumb
+# the Walk button, by the right thumb (or the left, by the player's choice in Options)
+walk_on_left = false
+set_walk_left = (on: bool):
+    global walk_on_left
+    walk_on_left = on
 walk_button = () -> vec2:
     u = _unit()
-    vec2(f32(f64(screen_width()) - u * 0.085 * 1.6), f32(f64(screen_height()) - u * 0.085 * 1.6))
+    inset = u * 0.085 * 1.6
+    vec2(f32(if walk_on_left: inset else: f64(screen_width()) - inset), f32(f64(screen_height()) - inset))
 
 # the throttle's slider, along the left edge
 throttle_track = () -> Rect:
@@ -106,40 +158,43 @@ throttle_track = () -> Rect:
     sh = f64(screen_height())
     Rect(u * 0.05, sh - u * 0.66, u * 0.075, u * 0.42)
 
-_layout = (mode: int, guns: bool) -> PadButton[]:
+# (lever: "Clutch" for the P.7's hand clutch on the water, "Gear" for the Albatross's wheels, both on X)
+_layout = (mode: int, guns: bool, lever: str = "") -> TouchButton[]:
     u = _unit()
     sw = f64(screen_width())
     sh = f64(screen_height())
     big = u * 0.085
     small = u * 0.055
-    bs: PadButton[]
+    bs: TouchButton[]
     top = small * 1.3
     # (along the top left: the clock and the money are top right)
-    bs.push(PadButton("II", .p, vec2(f32(small * 1.4), f32(top)), small, false))
-    bs.push(PadButton("Map", .m, vec2(f32(small * 3.8), f32(top)), small, false))
-    bs.push(PadButton("Log", .j, vec2(f32(small * 6.2), f32(top)), small, false))
+    bs.push(TouchButton("II", .p, vec2(f32(small * 1.4), f32(top)), small, false))
+    bs.push(TouchButton("Map", .m, vec2(f32(small * 3.8), f32(top)), small, false))
+    bs.push(TouchButton("Log", .j, vec2(f32(small * 6.2), f32(top)), small, false))
     aboard = mode == 0 or mode == 1
     if aboard:
         # (a second row under the first, clear of the compass along the top)
-        bs.push(PadButton("View", .v, vec2(f32(small * 1.4), f32(top + small * 2.6)), small, false))
-        bs.push(PadButton("Radio", .f9, vec2(f32(small * 3.8), f32(top + small * 2.6)), small, false))
-        bs.push(PadButton("Look", .tab, vec2(f32(small * 6.2), f32(top + small * 2.6)), small))
+        bs.push(TouchButton("View", .v, vec2(f32(small * 1.4), f32(top + small * 2.6)), small, false))
+        bs.push(TouchButton("Radio", .f9, vec2(f32(small * 3.8), f32(top + small * 2.6)), small, false))
+        bs.push(TouchButton("Look", .tab, vec2(f32(small * 6.2), f32(top + small * 2.6)), small))
     # (fullscreen: top right, under the clock and the money, clear of the compass)
-    if can_fullscreen() and not is_fullscreen(): bs.push(PadButton("Full", .f11, vec2(f32(sw - small * 1.4), f32(top + small * 2.6)), small, false))
+    if can_fullscreen() and not is_fullscreen(): bs.push(TouchButton("Full", .f11, vec2(f32(sw - small * 1.4), f32(top + small * 2.6)), small, false))
     rx = sw - big * 1.5
     ry = sh - big * 1.5
     match mode:
         0:
-            if guns: bs.push(PadButton("Fire", .space, vec2(f32(rx), f32(ry)), big))
-            bs.push(PadButton("Safe", .g, vec2(f32(rx), f32(ry - big * 2.1)), small, false))
-            bs.push(PadButton("Jump", .t, vec2(f32(rx - big * 1.9), f32(ry - big * 2.1)), small, false))
-        1: bs.push(PadButton("Brake", .space, vec2(f32(rx), f32(ry)), big))
+            if guns: bs.push(TouchButton("Fire", .space, vec2(f32(rx), f32(ry)), big))
+            bs.push(TouchButton("Safe", .g, vec2(f32(rx), f32(ry - big * 2.1)), small, false))
+            bs.push(TouchButton("Jump", .t, vec2(f32(rx - big * 1.9), f32(ry - big * 2.1)), small, false))
+        1: bs.push(TouchButton("Brake", .space, vec2(f32(rx), f32(ry)), big))
         _: pass
+    # (above the right thumb's buttons, clear of the gauges at the bottom)
+    if lever != "" and (mode == 0 or mode == 1): bs.push(TouchButton(lever, .x, vec2(f32(rx), f32(ry - (if mode == 0: big * 3.9 else: big * 2.1))), small, false))
     bs
 
 # each frame, before the game reads its input. mode: 0 in the air, 1 on the water, 2 on foot, 3 a
 # panel open; throttle: the aircraft's now (0..1), for the slider
-update_pad = (mode: int, guns: bool, throttle: f64, dt: f64):
+update_pad = (mode: int, guns: bool, throttle: f64, dt: f64, lever: str = ""):
     global pad
     if not pad.on: return
     prev = pad.held
@@ -157,7 +212,7 @@ update_pad = (mode: int, guns: bool, throttle: f64, dt: f64):
     pad.card_keys = pad.next_card_keys
     pad.next_cards = []
     pad.next_card_keys = []
-    pad.buttons = _layout(if mode == 3: 2 else: mode, guns)
+    pad.buttons = _layout(if mode == 3: 2 else: mode, guns, lever)
     # (a panel open: only the top left row, so the panels can use the screen's width; Full comes
     # back when it shuts)
     if mode == 3: pad.buttons = [loop b in pad.buttons: if b.key == .p or b.key == .m or b.key == .j: b]
@@ -289,3 +344,11 @@ draw_pad = ():
         size = max(b.r * 0.55, 13.0)
         w = text_width(b.label, size)
         text(b.label, b.at - vec2(f32(w * 0.5), f32(size * 0.55)), size, rgba(1, 0.97, 0.9, 0.9))
+
+# A panel's own button (a panel that draws its buttons itself), a box Sloppy's hud_nav reaches
+# (hud_nav_box): clicked as the panel has it (the mouse going down: a held press still holds), or
+# chosen with the keys or a controller (the box's own click, on letting go, is that same click)
+pad_hit = (r: Rect, clicked: bool, enabled: bool = true) -> bool:
+    if not enabled: return clicked
+    chosen = hud_nav_box(r)
+    clicked or (chosen and not mouse_released(.left))

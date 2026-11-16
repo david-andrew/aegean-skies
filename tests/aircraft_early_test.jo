@@ -1,0 +1,191 @@
+# The early aircraft (src/aircraft_early.jo): the Donnet-Lévêque, Macchi M.5 and M.7 and the
+# Hansa-Brandenburg CC on the water, the Fiat C.R.20 on land. Each builds, flies straight and level, takes off and lands
+# in its own medium and is deterministic; the C.R.20 ditches on water. Headless:
+# SLOPPY_THREADS=1 sloppy test tests/aircraft_early_test.jo
+import '../src/planes.jo' as planes
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/living_types.jo' as living
+import '../src/aircraft_early.jo' as early
+
+const BOATS = [planes.Craft.macchi_m5, planes.Craft.hansa_cc, planes.Craft.macchi_m7, planes.Craft.donnet_leveque]
+const EARLY = [planes.Craft.macchi_m5, planes.Craft.hansa_cc, planes.Craft.macchi_m7, planes.Craft.fiat_cr20, planes.Craft.donnet_leveque]
+
+_finite = (s: fl.CraftState):
+    assert(abs(f64(s.position.x)) < 1e7 and abs(f64(s.position.y)) < 1e7 and abs(f64(s.position.z)) < 1e7)
+    assert(abs(f64(length(s.orientation)) - 1.0) < 0.0001)
+
+_spec = (kind: planes.Craft, player: bool) -> fl.CraftSpec:
+    fl.set_speed_scale(if player: 3.3 else: 1.0)
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = player
+    k
+
+# flat dry ground 60 m up everywhere (the airfield's plateau stands 145 m up)
+const FIELD = 60.0
+_land = () -> fl.FlightEnv: fl.FlightEnv(ground = (x: f64, z: f64) -> f64: FIELD)
+
+test "early aircraft build with their parts, liveries and economy":
+    loop kind in EARLY:
+        id = int(kind); p = planes.aircraft_profile(kind)
+        assert(early.is_early_craft(kind) and str(kind) == str(living.Airframe(id)))
+        assert(planes.DEFAULT_LIVERIES[id] == living.AIRFRAME_LIVERIES[id] and planes.DEFAULT_LIVERIES[id] < planes.LIVERIES.len())
+        assert(planes.LIVERY_NAMES.len() == planes.LIVERIES.len())
+        # (livery tables are positional: each default must still name this type's own paint)
+        own = ["Varnished Hull", "Field Grey", "Dark Varnish", "Aluminium Dope", "Natural Linen"]
+        assert(planes.LIVERY_NAMES[planes.DEFAULT_LIVERIES[id]] == own[EARLY.index_of(kind) ?? 0])
+        m = planes.build_craft(kind, planes.LIVERIES[planes.DEFAULT_LIVERIES[id]])
+        k = fl.craft_spec(kind, m.contacts)
+        assert(m.parts.len() == 7 and m.prop_hubs.len() == 1 and m.cockpits.len() == p.cockpit_count)
+        loop part in m.parts: assert(part.mesh.count > 0)
+        # (hubs where the profile says: the engine's strikes and the guns go by it)
+        assert(length(m.prop_hubs[0] - vec3(0, f32(p.engine_y), f32(p.engine_z + (if p.pusher: 0.65 else: -0.65)))) < 0.001)
+        assert(k.landplane == (kind == .fiat_cr20) and (k.gear_contacts.len() == 3) == (kind == .fiat_cr20))
+        assert(planes.is_boat(kind) == (kind != .fiat_cr20))
+        print("{planes.CRAFT_NAMES[id]}: {m.body.count / 3} triangles, {m.contacts.len()} contacts, {k.mass:.0f} kg, stall {k.stall_speed:.0f} top {k.max_speed:.0f}")
+
+# The production autopilot: rest, takeoff, climb; a level turn; a held-off water landing.
+_boat_cycle = (kind: planes.Craft, player: bool):
+    k = _spec(kind, player); e = fl.FlightEnv()
+    s = fl.water_start(k, vec3(0, 0, 0))
+    loop i in 0..600: fl.step(k, s, fl.Controls(), e, 1.0 / 30.0)
+    print("{kind} player={player} rest y={s.position.y:.3} expected={k.float_height:.3}")
+    assert(abs(f64(s.position.y) - k.float_height) < 0.12 and length(s.velocity) < 0.1 and not s.crashed)
+    s = fl.water_start(k, vec3(0, 0, 0))
+    took_off = false; plan = fl.FlightPlan()
+    loop i in 0..60 * 90:
+        fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+        if not s.on_water and s.position.y > k.float_height + 5: took_off = true; break
+    print("{kind} player={player} takeoff t={s.time:.2} distance={length(s.position.xz):.1} damage={s.hull_damage:.4}")
+    assert(took_off and not s.crashed and s.hull_damage < 0.01 and length(s.position.xz) < (if player: 5000 else: 1800))
+    before = s.position.y
+    loop i in 0..60 * 45:
+        fl.step(k, s, fl.autopilot(k, s, plan, e), e, 1.0 / 60.0)
+        if s.position.y > before + 60: break
+    _finite(s)
+    assert(s.position.y > before + 15 and not s.crashed)
+    s = fl.CraftState(position = vec3(0, 500, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, throttle = 0.75)
+    loop i in 0..120: fl.step(k, s, fl.Controls(throttle = 0.75, roll = 0.12, yaw = 0.2), e, 1.0 / 60.0)
+    assert(fl.heading(s) > 0.05 and fl.heading(s) < 1.4 and s.position.y > 450 and not s.crashed)
+    s = fl.CraftState(position = vec3(0, k.float_height + 3, 0), velocity = vec3(0, -0.6, -k.stall_speed * 1.15 * fl.pure_k(k)),
+        orientation = quat_euler(-0.02, 0, 0), fuel = k.fuel_capacity)
+    touched = false; rebound = 0.0
+    loop i in 0..60 * 120:
+        fl.step(k, s, fl.Controls(assist = 0, water_brake = 0.4), e, 1.0 / 60.0)
+        if s.on_water: touched = true
+        if touched: rebound = max(rebound, f64(s.velocity.y))
+    print("{kind} player={player} landing speed={length(s.velocity):.3} rebound={rebound:.2} damage={s.hull_damage:.4}")
+    assert(touched and not s.crashed and s.hull_damage < 0.05 and rebound < 2)
+    assert(abs(f64(s.position.y) - k.float_height) < 0.15 and length(s.velocity) < 0.2)
+    fl.set_speed_scale(1.0)
+
+test "early flying boats: rest, takeoff, climb, turn and land on the water (NPC scale)":
+    loop kind in BOATS: _boat_cycle(kind, false)
+
+test "early flying boats: rest, takeoff, climb, turn and land on the water (player 3.3 scale)":
+    loop kind in BOATS: _boat_cycle(kind, true)
+
+# straight and level: cruise throttle at cruise speed holds height and heading for half a minute
+test "every early aircraft flies straight and level":
+    loop kind in EARLY:
+        loop player in [false, true]:
+            k = _spec(kind, player); e = fl.FlightEnv()
+            s = fl.CraftState(position = vec3(0, 800, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, throttle = 0.7, water_age = 1.0)
+            loop i in 0..60 * 30: fl.step(k, s, fl.Controls(throttle = 0.7), e, 1.0 / 60.0)
+            print("{kind} player={player} level: y={s.position.y:.1} heading={fl.heading(s):.4} speed={length(s.velocity):.1}")
+            _finite(s)
+            assert(abs(f64(s.position.y) - 800.0) < 120.0 and abs(fl.heading(s)) < 0.1 and not s.crashed)
+            assert(f64(length(s.velocity)) > k.stall_speed * fl.pure_k(k))
+    fl.set_speed_scale(1.0)
+
+_ground_run = (player: bool, v2: bool) -> fl.CraftState:
+    tw.set_tweaks(tw.Tweaks(flight_model = if v2: 1 else: 0))
+    k = _spec(.fiat_cr20, player); e = _land()
+    s = fl.ground_start(k, vec3(0, f32(FIELD), 0))
+    # at rest on wheels and skid, nose up, still
+    loop i in 0..240: fl.step(k, s, fl.Controls(), e, 1.0 / 60.0)
+    pitch = asin(f64(fl.forward(s).y))
+    print("cr20 player={player} v2={v2} rest y={s.position.y - f32(FIELD):.3} pitch={pitch:.3} speed={length(s.velocity):.3} on_ground={s.on_ground}")
+    assert(s.on_ground and not s.crashed and length(s.velocity) < 0.05 and pitch > 0.15 and pitch < 0.35)
+    # taxi and turn: a little throttle and full rudder swings it round at a walk
+    h0 = fl.heading(s)
+    loop i in 0..60 * 3: fl.step(k, s, fl.Controls(throttle = 0.25, yaw = 1.0), e, 1.0 / 60.0)
+    print("cr20 taxi turn {fl.angle_delta(fl.heading(s), h0):.3} speed={length(s.velocity):.2}")
+    assert(fl.angle_delta(fl.heading(s), h0) > 0.5 and fl.angle_delta(fl.heading(s), h0) < 2.5 and s.on_ground and not s.crashed and s.hull_damage < 0.001)
+    # brakes: throttle closed, it stops
+    loop i in 0..60 * 6: fl.step(k, s, fl.Controls(water_brake = 1.0), e, 1.0 / 60.0)
+    assert(length(s.velocity) < 0.1)
+    # takeoff: full throttle, stick in the middle; it leaves the ground and climbs
+    start = s.position
+    off = -1.0
+    loop i in 0..60 * 90:
+        # (stick in the middle on the ground; once off, a pilot's gentle climb at 0.15 rad)
+        climb = if s.on_ground or s.position.y < f32(FIELD) + 3: 0.0 else: clamp((0.15 - asin(f64(fl.forward(s).y))) * 2.0, -0.5, 0.5)
+        fl.step(k, s, fl.Controls(throttle = 1.0, pitch = climb), e, 1.0 / 60.0)
+        if off < 0 and not s.on_ground and s.position.y > f32(FIELD) + 3: off = f64(length(s.position.xz - start.xz))
+        if s.position.y > f32(FIELD) + 60: break
+    print("cr20 player={player} v2={v2} takeoff run={off:.0f} m, t={s.time:.1f}, y={s.position.y - f32(FIELD):.1f} damage={s.hull_damage:.4}")
+    assert(off > 0 and off < (if player: 1100.0 else: 400.0) and s.position.y > f32(FIELD) + 60 and not s.crashed and s.hull_damage < 0.01)
+    s
+
+test "the C.R.20 rests, taxis, brakes and takes off from flat ground (NPC scale)":
+    _ = _ground_run(false, false)
+    tw.set_tweaks(tw.Tweaks()); fl.set_speed_scale(1.0)
+
+test "the C.R.20 rests, taxis, brakes and takes off from flat ground (player 3.3 scale)":
+    _ = _ground_run(true, false)
+    tw.set_tweaks(tw.Tweaks()); fl.set_speed_scale(1.0)
+
+test "the C.R.20 takes off on flight model v2":
+    _ = _ground_run(true, true)
+    tw.set_tweaks(tw.Tweaks()); fl.set_speed_scale(1.0)
+
+# A held-off approach over flat ground: touches down on its wheels and rolls out on the brakes in
+# well under the 1300 m strip, undamaged and without nosing over. (The float before touchdown is
+# the pure scale's, the same over water for every aircraft: the player bleeds it off, or slips.)
+_ground_landing = (player: bool) -> (f64, fl.CraftState):
+    k = _spec(.fiat_cr20, player); e = _land()
+    s = fl.CraftState(position = vec3(0, f32(FIELD + 15.0), 0), velocity = vec3(0, -1.5, f32(-k.stall_speed * 1.2 * fl.pure_k(k))),
+        orientation = quat_euler(0.0, 0, 0), fuel = k.fuel_capacity, water_age = 1.0)
+    touched = -1.0; rebound = 0.0
+    loop i in 0..60 * 90:
+        high = f64(s.position.y) - FIELD
+        # (down the glide, then a flare held off just over the grass)
+        pitch = asin(f64(fl.forward(s).y))
+        aim = if high > 4.0: -0.04 else: 0.04 + clamp(-f64(s.velocity.y) * 0.08, 0.0, 0.12)
+        stick = if touched >= 0: 0.0 else: clamp((aim - pitch) * 3.0, -0.4, 0.4)
+        fl.step(k, s, fl.Controls(assist = 0, pitch = stick, water_brake = if touched >= 0: 1.0 else: 0.0), e, 1.0 / 60.0)
+        if s.on_ground and touched < 0: touched = f64(-s.position.z)
+        if touched >= 0: rebound = max(rebound, f64(s.velocity.y))
+    roll = f64(-s.position.z) - touched
+    print("cr20 player={player} landing: touchdown at {touched:.0f} m, roll {roll:.0f} m, rebound {rebound:.2f}, speed {length(s.velocity):.3f}, damage {s.hull_damage:.4f}")
+    assert(touched >= 0 and s.on_ground and not s.crashed and s.hull_damage < 0.03 and rebound < 2.0 and length(s.velocity) < 0.1)
+    (roll, s)
+
+test "the C.R.20 lands on flat ground and stops inside the strip":
+    loop player in [false, true]:
+        r = _ground_landing(player)
+        assert(r.0 < 600.0 and asin(f64(fl.forward(r.1).y)) > 0.15)
+    fl.set_speed_scale(1.0)
+
+test "the C.R.20 ditches on water: it does not float":
+    k = _spec(.fiat_cr20, true); e = fl.FlightEnv()
+    s = fl.CraftState(position = vec3(0, 6, 0), velocity = vec3(0, -1, f32(-k.stall_speed * 1.1 * fl.pure_k(k))), fuel = k.fuel_capacity, water_age = 1.0)
+    loop i in 0..60 * 30: fl.step(k, s, fl.Controls(assist = 0, pitch = if s.position.y > 2: -0.15 else: 0.0), e, 1.0 / 60.0)
+    print("cr20 ditched: crashed={s.crashed} y={s.position.y:.2} speed={length(s.velocity):.2}")
+    assert(s.crashed)
+    # it settles low in the water, its belly well under: nothing like a float's height
+    assert(f64(s.position.y) < 0.2)
+    fl.set_speed_scale(1.0)
+
+test "early aircraft are deterministic":
+    loop kind in [planes.Craft.macchi_m5, planes.Craft.fiat_cr20, planes.Craft.donnet_leveque]:
+        runs: vec3[]
+        loop r in 0..2:
+            k = _spec(kind, true)
+            e = if kind == .fiat_cr20: _land() else: fl.FlightEnv()
+            s = if kind == .fiat_cr20: fl.ground_start(k, vec3(0, f32(FIELD), 0)) else: fl.water_start(k, vec3(0, 0, 0))
+            loop i in 0..60 * 40: fl.step(k, s, fl.Controls(throttle = 1.0, pitch = if i > 60 * 25: 0.3 else: 0.0, roll = if i > 60 * 32: 0.4 else: 0.0), e, 1.0 / 60.0)
+            runs.push(s.position)
+        assert(runs[0] == runs[1])
+    fl.set_speed_scale(1.0)

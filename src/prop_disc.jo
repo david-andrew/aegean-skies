@@ -177,14 +177,22 @@ _prop_disc_lists = ():
 # at the lowest disc speed it peaks at exactly the blades' own speed, so the turning blades hand
 # over to the turning pattern without a jump. Below that the bands turn with the blades.
 PROP_TOP_SPEED = 78.0               # 8+70 rad/s at full throttle
+PROP_DRIFT_HOLD = 2.0              # how long the drift lingers fast (0: the plain sawtooth)
 prop_band_speed = (rpm: f64) -> f64:
     if rpm <= PROP_BLADES_BELOW: return rpm
     x = clamp((PROP_TOP_SPEED-rpm)/(PROP_TOP_SPEED-PROP_BLADES_BELOW),0.0,1.0)
-    k = 0.9                         # how sharp the sawtooth's reversals are (1: a hard jump)
+    k = 0.7                         # how sharp the sawtooth's reversals are (1: a hard jump)
     u = 0.03+(2.0+acos(-k)/TAU-0.03)*x
     th = u*TAU
     shape = atan2(k*sin(th),1.0+k*cos(th))/asin(k)
-    (5.0+(PROP_BLADES_BELOW-5.0)*x*x)*shape
+    # Hold the drift near its fast extremes for most of the range, so the slow passages through
+    # still are brief blips; eased in from full power, which keeps its slow creep.
+    e = clamp(x/0.2,0.0,1.0); e = e*e*(3.0-2.0*e)
+    g = 1.0+PROP_DRIFT_HOLD*e
+    shape = tanh(g*shape)/tanh(g)
+    # Fast over most of the range, nearly a blur, from a slow creep at full power.
+    r = clamp(x/0.35,0.0,1.0); r = r*r*(3.0-2.0*r)
+    (5.0+(PROP_BLADES_BELOW-5.0)*r)*shape
 
 # Each aircraft's band angle, integrated frame by frame from prop_band_speed, keyed by its
 # persistent craft id (-1: aircraft drawn without one share an integrator).
@@ -214,10 +222,18 @@ prop_band_angle = (key: int, angle: f64, rpm: f64, blades: int, t: f64) -> f64:
         loop id in stale: prop_bands.remove(id)
     b.angle
 
+_disc_mod = (x: f64, m: f64) -> f64: ((x%m)+m)%m
+
 # One disc. frame: the hub's frame in drawing space (rotation and position, no scale); to_eye:
 # from the hub toward the eye, world axes. angle: the prop's shaft angle; rpm: rad/s; band: the
 # bands' angle (prop_band_angle; by default with the blades).
-prop_disc_instance = (frame: mat4, radius: f64, blades: int, to_eye: vec3, L: Light, angle: f64, rpm: f64, t: f64, seed: f64, band: f64 = 1.0e30) -> PropDiscInstance:
+# turn: the way the prop is drawn turning (planes.jo prop_turn): 1 the original way, -1 the mirror
+# image (a right-hand prop): the disc's own frame is mirrored across its x axis, so its bands, their
+# drift and precession, the twist that faces the sun and the sun-side arc are the original's mirror
+# image, at the same moments; nothing else differs.
+prop_disc_instance = (frame0: mat4, radius: f64, blades: int, to_eye: vec3, L: Light, angle: f64, rpm: f64, t: f64, seed: f64, band: f64 = 1.0e30, turn: f64 = 1.0) -> PropDiscInstance:
+    frame = frame0
+    if turn < 0.0: frame[0] = -frame0[0]
     blur = smoothstep(PROP_DISC_FROM,PROP_DISC_FULL,rpm)
     streak = smoothstep(PROP_STREAK_FROM,PROP_STREAK_FULL,rpm)
     # Redrawn on twos (12 drawings a second): each drawing all new strokes; the bands themselves
@@ -229,13 +245,13 @@ prop_disc_instance = (frame: mat4, radius: f64, blades: int, to_eye: vec3, L: Li
     daylight = 0.12+0.88*smoothstep(-0.03,0.2,f64(L.sun_dir.y))
     count = f64(blades)             # one band per blade
     # build_prop lays blade 0 along +y.
-    sweep = (angle+PI*0.5)%(TAU/f64(blades))
+    sweep = _disc_mod(angle+PI*0.5,TAU/f64(blades))
     # Some cowling faces lie in the prop plane: lift the disc 6 cm along its axis toward the
     # side it is seen from, so it never fights them for depth.
     axis = frame[2].xyz
     lifted = frame
     lifted[3] = vec4(frame[3].xyz+axis*f32(if dot(axis,to_eye) >= 0.0: 0.06 else: -0.06),1)
-    PropDiscInstance(lifted*scaling(radius),vec4(f32(blur),f32(streak),f32(sweep),f32(phase%TAU)),vec4(local,f32(daylight)),
+    PropDiscInstance(lifted*scaling(radius),vec4(f32(blur),f32(streak),f32(sweep),f32(_disc_mod(phase,TAU))),vec4(local,f32(daylight)),
         vec4(f32(blades),f32((step_t%97.0)*3.71),0.16,f32(count)))
 
 # Called while drawing an aircraft (craft space `at` in the same chart as obj_params). Returns
@@ -253,8 +269,10 @@ queue_prop_discs = (model: CraftModel, at: mat4, anchor: WorldPoint?, angle: f64
         hub = frame*translation(model.prop_hubs[i])
         to_eye = eye-hub[3].xyz
         if length(to_eye) > PROP_DISC_RANGE: continue
+        # (a contra-rotating or pusher hub turns the other way: its blades and its bands mirrored)
+        # (a hub turning the other way, a contra-rotating rotor or a right-hand prop: its disc mirrored)
         a = angle+f64(i)*0.8
-        prop_discs.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,to_eye,L,a,rpm,t,f64(i)*0.37+f64(model.prop_hubs[i].x)*0.11,band+f64(i)*0.8))
+        prop_discs.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,to_eye,L,a,rpm,t,f64(i)*0.37+f64(model.prop_hubs[i].x)*0.11,band+f64(i)*0.8,prop_turn(model,i)))
     prop_disc_blurred(rpm)
 
 # The cockpit's own discs, in its camera-relative frame (eye at the origin).
@@ -265,7 +283,7 @@ queue_cockpit_prop_discs = (model: CraftModel, relative: mat4, angle: f64, rpm: 
     _prop_disc_lists()
     loop i in 0..model.prop_hubs.len():
         hub = relative*translation(model.prop_hubs[i])
-        prop_discs_near.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,-hub[3].xyz,L,angle+f64(i)*0.8,rpm,t,f64(i)*0.37,band+f64(i)*0.8))
+        prop_discs_near.push(prop_disc_instance(hub,model.prop_radius,model.prop_blades,-hub[3].xyz,L,angle+f64(i)*0.8,rpm,t,f64(i)*0.37,band+f64(i)*0.8,prop_turn(model,i)))
 
 # In a transparent pass after the aircraft and the sea.
 draw_prop_discs = (L: Light):

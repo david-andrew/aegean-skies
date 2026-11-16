@@ -1,0 +1,108 @@
+# The air arm's sorties (src/air_arm.jo), flown by the flight model's controls over flat ground at
+# the aerodrome's geometry: from the stand to the threshold, off the strip, the circuits (or the
+# display over the town), a long final, the flare, the roll on the brakes and back to the stand.
+# SLOPPY_THREADS=1 sloppy test tests/air_arm_test.jo
+use '../src/air_arm.jo'
+use '../src/air_race.jo'
+use '../src/airfields.jo'
+use '../src/flight.jo'
+use '../src/planes.jo'
+
+const FIELD = 163.0
+_env = () -> FlightEnv: FlightEnv(ground = (x: f64, z: f64) -> f64: FIELD)
+
+_sortie = (stand: int) -> ArmPilot:
+    set_speed_scale(3.3)
+    f = AIRFIELDS[0]
+    spec = craft_spec(.fiat_cr20, build_craft(.fiat_cr20, LIVERIES[0]).contacts)
+    e = _env()
+    town = vec3(f.center.x + 2300.0, 0, f.center.y - 2800.0)
+    p = ArmPilot(0, 0, 0, stand, 0, arm_park(spec, f, stand, e.ground))
+    p.state.fuel = spec.fuel_capacity
+    home = p.state.position
+    arm_launch(p, 0, 0)
+    seen: {str: bool}
+    touchdown = vec2(1e9, 1e9)
+    tick = 0
+    loop tick < 60 * 60 * 40 and p.phase != .parked:
+        before = p.phase
+        arm_tick(p, spec, f, town, e, tick)
+        if p.phase != before:
+            seen[str(p.phase)] = true
+            print("t={f64(tick) / 60.0:.0f}s {before} -> {p.phase} at u,v={airfield_local(f, p.state.position.xz)} y={p.state.position.y - f32(FIELD):.1f} v={length(p.state.velocity):.1f}")
+            if p.phase == .rollout and touchdown.x > 1e8: touchdown = airfield_local(f, p.state.position.xz)
+        tick += 1
+    print("stand {stand}: parked={p.phase == .parked} failed={p.failed} t={f64(tick) / 60.0:.0f}s from home {length((p.state.position - home).xz):.1f} m damage={p.state.hull_damage:.4f}")
+    assert(not p.failed and p.phase == .parked and not p.state.crashed and p.state.hull_damage < 0.02)
+    loop phase in ["takeoff", "mission", "approach", "landing", "rollout", "taxi_in"]: assert(phase in seen, "never reached {phase}")
+    # on the strip, and back on the stand
+    assert(abs(f64(touchdown.x)) < f.half_length and abs(f64(touchdown.y)) < f.half_width)
+    assert(length((p.state.position - home).xz) < 8.0 and p.state.on_ground)
+    set_speed_scale(1.0)
+    p
+
+test "the morning circuits: stand, threshold, two laps, a long final, the roll and the stand again":
+    _ = _sortie(0)
+
+test "the afternoon display over the town, then home":
+    _ = _sortie(1)
+
+test "a sortie is deterministic":
+    a = _sortie(0); b = _sortie(0)
+    assert(a.state.position == b.state.position)
+
+use '../src/air_events.jo'
+use '../src/living_commissions.jo'
+use '../src/life_types.jo'
+use '../src/living_far_types.jo'
+use '../src/living_far_economy.jo'
+use '../src/living_place_context.jo'
+import '../src/living_types.jo' as data
+import '../src/living_seed.jo' as seed
+import '../src/living_checks.jo' as checks
+import '../src/living_save.jo' as save
+
+# A world with the aerodrome's town as a populated far place, its harbour and its purse.
+_arm_world = () -> data.World:
+    w = seed.build_world(u64(42))
+    place = AIRFIELDS[0].place
+    contexts: LifePlaceContext[]
+    loop k in 0..6: contexts.push(LifePlaceContext(k, "Core {k}", 0, k, w.harbors[k].center, true, k))
+    contexts.push(LifePlaceContext(place, "Kalyrassa", 1, place, vec3(AIRFIELDS[0].center.x + 2300.0, 0, AIRFIELDS[0].center.y - 2800.0)))
+    assert(publish_place_contexts(w, 1, contexts, [-1, place, -1]))
+    assert(populate_settlement_economy(w, 1, [FarPlaceSeed(place, 3200, 1, 3)], []))
+    h = vec3(AIRFIELDS[0].center.x + 3000.0, 0, AIRFIELDS[0].center.y - 3000.0)
+    assert(publish_far_harbors(w, [FarHarbor(place, vec3(0, 0, -1), [h + vec3(-70, 0, 0), h + vec3(70, 0, 0)], [h + vec3(-70, 2, 10), h + vec3(70, 2, 10)], h + vec3(0, 0, -100))]))
+    w.people[w.player].pose.pos = vec3(20000, 0, 0); w.aircraft[0].pose.pos = vec3(20000, 0, 0)
+    w
+
+test "the town buys its two fighters once; the morning's circuits are flown through the world and the books balance":
+    set_speed_scale(3.3)
+    w = _arm_world(); models = build_craft_models(); events = AirEvents()
+    ground = (x: f64, z: f64) -> f64: FIELD
+    opening = w.ledger.external_in_cents; craft_before = w.aircraft.len()
+    prepare_air_arm(events, w, models, ground)
+    prepare_air_arm(events, w, models, ground)
+    print("arm pilots={events.arm.len()} aircraft {craft_before} -> {w.aircraft.len()}")
+    assert(events.arm.len() == 2 and w.aircraft.len() == craft_before + 2)
+    loop p in events.arm: assert(w.aircraft[p.craft].kind == .fiat_cr20 and p.state.on_ground)
+    # the clock to just before half past nine, then the morning: the first pilot flies its circuits
+    w.minute = data.day_index(w.minute) * 1440 + 569 - data.EPOCH_LOCAL_MINUTE + 1440
+    w.minute = max(w.minute, 0); w.tick = w.minute * data.TICKS_PER_MINUTE
+    first = events.arm[0]; home = first.state.position
+    flew = false
+    loop i in 0..60 * 60 * 20:
+        w.tick += 1; w.minute = w.tick / data.TICKS_PER_MINUTE
+        update_air_arm(events, w, models, ground)
+        if events.arm[0].phase == .mission: flew = true
+        if flew and events.arm[0].phase == .parked and length(events.arm[0].state.velocity) < 0.05: break
+    p = events.arm[0]
+    print("after: flew={flew} phase={p.phase} failed={p.failed} from stand {length((p.state.position - home).xz):.1f} m fuel {p.state.fuel:.1f} record {w.aircraft[p.craft].state}")
+    assert(flew and p.phase == .parked and not p.failed and length((p.state.position - home).xz) < 8.0)
+    assert(w.aircraft[p.craft].move_owner == .abstract_world and w.aircraft[p.craft].pose.pos == p.state.position)
+    assert(events.arm[1].sortie_day < 0 or events.arm[1].phase == .parked)
+    assert(w.ledger.external_in_cents == opening and checks.money_balances(w) and checks.goods_balance(w))
+    # saved and read back as it stands
+    restored = from_text[AirEvents](snapshot_air_events(events, w))
+    assert(restored is AirEvents and restored == events)
+    set_speed_scale(1.0)

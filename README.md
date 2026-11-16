@@ -15,8 +15,8 @@ every push).
 ```sh
 sloppy --release tools/bake.jo                     # once: bake the original islands and compact world data
 sloppy aegean.jo                                   # play
-sloppy build aegean.jo --target wasm --release -o site/index.html
-python3 tools/package_web.py site/index.html       # HTML loader + separate wasm
+sloppy build aegean.jo --target wasm --release --wasm-file -o site/index.html
+                                                   # the page and index.wasm beside it (serve over http)
 ```
 
 The world spans 500 × 400 km around the unchanged original archipelago. Open the

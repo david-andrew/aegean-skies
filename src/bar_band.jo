@@ -10,6 +10,9 @@
 use 'music_data.jo'
 use 'music_synth.jo'
 use 'live_source.jo'
+use 'band_request.jo'
+use 'life_types.jo'
+use 'live_notes.jo'
 
 struct SetPiece:
     piece: int                      # MUSIC_PIECES index
@@ -21,7 +24,7 @@ struct SetPiece:
 # The evening's numbers, in order, played round until the band stops: a quiet set for a harbour
 # terrace (src/music_data.jo; sources and permissions in data/music/SOURCES.md).
 BAR_SET: SetPiece[] = [
-    SetPiece(7, 4, 0, 67, []),                  # Satie, Gymnopedie No. 1: piano and violin
+    SetPiece(7, 0, 6, 67, []),                  # Satie, Gymnopedie No. 1: the pianist alone
     SetPiece(8, 4, 0, 55, [vec2(14, 268)]),     # Gounod, Ave Maria: the singer takes the violin's line
     SetPiece(9, 0, 6, 72, []),                  # Debussy, Clair de lune: the pianist alone
     SetPiece(10, 5, 8, 52, []),                 # Tarrega, Adelita: guitar and mandolin
@@ -37,29 +40,17 @@ struct SetPosition:
     playing = false
     index = 0                       # into BAR_SET
     seconds = 0.0                   # into the piece
+    left = 0.0                      # seconds until the next number starts
+    request = false                 # (a number someone asked for)
 
-_piece_seconds = (k: int) -> f64: f64(MUSIC_PIECES[BAR_SET[k].piece].frames) / f64(MUSIC_RATE)
-
-# Where the band is at a given world tick (120 ticks a minute; the epoch is 09:30 local).
-bar_set_position = (tick: int) -> SetPosition:
-    minute = tick / 120
-    local = ((minute + 570) % 1440 + 1440) % 1440
-    if local < BAR_START or local >= BAR_END: return SetPosition()
-    day_start_tick = (minute - (local - BAR_START)) * 120
-    t = f64(tick - day_start_tick) / f64(BAR_TICKS_PER_SECOND)
-    total = 0.0
-    loop k in 0..BAR_SET.len(): total += _piece_seconds(k) + BAR_GAP
-    # (an evening is shorter than the whole set: each evening starts one number further on)
-    day = (minute + 570 - local) / 1440
-    loop k in 0..((day % BAR_SET.len()) + BAR_SET.len()) % BAR_SET.len(): t += _piece_seconds(k) + BAR_GAP
-    t = t - floor(t / total) * total
-    loop k in 0..BAR_SET.len():
-        d = _piece_seconds(k)
-        if t < d: return SetPosition(true, k, t)
-        t -= d
-        if t < BAR_GAP: return SetPosition(false, k, 0.0)
-        t -= BAR_GAP
-    SetPosition()
+# Where the band is now, from its state in the world (src/band_life.jo: a number starts when its
+# players are in their places, not on a timetable).
+bar_band_position = (b: BandState, tick: int) -> SetPosition:
+    if b.index < 0 or b.index >= BAR_SET.len(): return SetPosition()
+    playing = b.start >= 0 and tick >= b.start and tick < b.ends
+    seconds = if playing: f64(tick - b.start) / f64(BAR_TICKS_PER_SECOND) else: 0.0
+    left = if b.start >= 0: f64(b.ends - tick) / f64(BAR_TICKS_PER_SECOND) + BAR_GAP else: 0.0
+    SetPosition(playing, b.index, seconds, left, b.request)
 
 bar_singing = (p: SetPosition) -> bool:
     if not p.playing: return false
@@ -240,6 +231,8 @@ bar_music_load = (m: mut BarMusic, index: int, seconds: f64):
         m.synth = make_music_synth(); m.space = make_live_spatial(); m.ready = true
     sp = BAR_SET[index]
     m.synth.piece = -1
+    # (the bar's piano is its upright, whatever the number)
+    music_set_piano(m.synth, true)
     music_load(m.synth, sp.piece)
     m.synth.wet = 0.05
     notes = singer_line(m.synth.events, sp)
@@ -270,8 +263,7 @@ bar_music_stop = (m: mut BarMusic):
 
 # Each frame: keep a little queued (a tenth of a second, so turning is heard at once) while the
 # band plays and the listener is within reach.
-bar_music_update = (m: mut BarMusic, tick: int, hearing: LiveHearing, audio: bool):
-    p = bar_set_position(tick)
+bar_music_update = (m: mut BarMusic, p: SetPosition, hearing: LiveHearing, audio: bool):
     m.hearing = hearing
     if not audio or not p.playing or hearing.distance > 150.0:
         bar_music_stop(m)
@@ -287,3 +279,74 @@ bar_music_update = (m: mut BarMusic, tick: int, hearing: LiveHearing, audio: boo
     left = m.synth.frames - m.synth.cursor
     need = min(need, left)
     if need > 0: push_samples(m.voice, bar_music_render(m, need))
+
+# ---------------- what the band plays, note by note ----------------
+# The band's note feed (src/live_notes.jo): loaded with the number's note events when it starts,
+# and the singer's line as a part of its own; stepped to the frame being heard: the stream's
+# position while it plays (what was pushed less what still waits), the schedule's when silent.
+
+const SINGER_PART = 14              # (the singer's line in a feed: the choir's instrument number)
+
+struct BandFeed:
+    feed: LiveNoteFeed = LiveNoteFeed()
+    piece = -1                      # (what it is loaded with: a catalogue piece,
+    index = -1                      # and the set's number, -1 for none)
+    frame = -1                      # the frame being heard (-1: the band isn't playing)
+    heard = false                   # (from the stream)
+    ready: LiveNoteFeed[]           # (each number of the set, loaded ahead: bar_feed_warm)
+
+# A piece's events with the singer's line added (for a number of the set that has one).
+bar_note_events = (piece: int, index: int) -> MusicEvent[]:
+    s = MusicSynth()
+    music_load(s, piece)
+    events = s.events
+    if index >= 0:
+        loop n in singer_line(events, BAR_SET[index]):
+            events.push(MusicEvent(n.start, max(n.end - n.start, 1), int(round(n.pitch)), SINGER_PART, 0.6, 0.6))
+    events
+
+_bar_feed_load = (b: mut BandFeed, piece: int, index: int):
+    if b.piece == piece and b.index == index: return
+    if index >= 0 and index < b.ready.len():
+        b.feed = b.ready[index]; b.feed.next = 0; b.feed.frame = -1
+    else: live_notes_load(b.feed, bar_note_events(piece, index), if index >= 0: BAR_SET[index].lead else: -1)
+    b.piece = piece; b.index = index
+
+# Every number of the set loaded ahead (at the start), so a number starting costs nothing.
+bar_feed_warm = (b: mut BandFeed):
+    b.ready = []
+    loop k in 0..BAR_SET.len():
+        f = LiveNoteFeed()
+        live_notes_load(f, bar_note_events(BAR_SET[k].piece, k), BAR_SET[k].lead)
+        b.ready.push(f)
+
+# The key a feed's contents go by (for a Performance's motions).
+bar_feed_key = (piece: int, index: int) -> str: "{piece}/{index}"
+
+# Step the band's feed to now: the notes that started since the last step.
+bar_note_feed = (b: mut BandFeed, m: BarMusic, p: SetPosition) -> LiveNote[]:
+    if not p.playing:
+        b.frame = -1; b.heard = false
+        return []
+    _bar_feed_load(b, BAR_SET[p.index].piece, p.index)
+    b.heard = m.voice >= 0 and m.index == p.index
+    b.frame = if b.heard: live_notes_heard_frame(m.rendered, queued_samples(m.voice)) else: live_notes_clock_frame(p.seconds)
+    live_notes_step(b.feed, b.frame)
+
+# (captures: any catalogue piece, from a given second, as if the band played it)
+bar_note_feed_forced = (b: mut BandFeed, piece: int, seconds: f64) -> LiveNote[]:
+    index = -1
+    loop k in 0..BAR_SET.len():
+        if BAR_SET[k].piece == piece: index = k
+    _bar_feed_load(b, piece, index)
+    b.heard = false
+    b.frame = live_notes_clock_frame(seconds)
+    live_notes_step(b.feed, b.frame)
+
+# Whether the singer sings at a point of a piece (captures; the set's own windows).
+bar_piece_sung = (piece: int, seconds: f64) -> bool:
+    loop sp in BAR_SET:
+        if sp.piece == piece:
+            loop w in sp.sung:
+                if seconds >= f64(w.x) and seconds < f64(w.y): return true
+    false

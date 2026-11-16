@@ -3,6 +3,8 @@
 use 'scenario_catalog.jo'
 use 'canal_geometry.jo'
 use 'canal_traffic.jo'
+use 'canal_ground_fire.jo'
+use 'slipway.jo'
 use 'river_data.jo'
 use 'life_types.jo'
 use 'combat.jo'
@@ -28,6 +30,12 @@ const STRAIT_RED_MODEL = 5
 const STRAIT_ENGAGEMENT = 1000000
 const STRAIT_CENTER = vec3(138000,440,-73000)
 
+# The strait's pilots by formation slot: skill, aggression, caution, and the slot whose wing it
+# flies on (-1 none). Kalyra's (with the player behind the V) first, then Orenthia's: a reckless
+# ace at the point, a cautious pair behind him, and pairs of steadier hands.
+STRAIT_PILOTS = [vec4(0.86,0.6,0.5,-1),vec4(0.74,0.5,0.55,-1),vec4(0.7,0.45,0.6,1),vec4(0.78,0.65,0.4,-1),vec4(0.66,0.55,0.45,3),vec4(0.72,0.5,0.5,-1),vec4(0.64,0.45,0.55,5),vec4(0.7,0.5,0.5,-1),
+    vec4(0.93,0.95,0.15,-1),vec4(0.74,0.3,0.85,-1),vec4(0.72,0.3,0.85,1),vec4(0.76,0.6,0.4,-1),vec4(0.64,0.55,0.45,3),vec4(0.7,0.65,0.35,-1),vec4(0.62,0.5,0.5,5),vec4(0.68,0.45,0.6,-1)]
+
 enum ScenarioMode: walking, aboard, free
 struct ScenarioState:
     world: data.World
@@ -40,6 +48,7 @@ struct ScenarioState:
     camera_yaw = 0.0
     camera_pitch = 0.25
     vessels: VesselFleet
+    slipway = false                # opens with the slipway launch (the loader starts it)
 
 # Fixture grants are explicit in the books. Subsequent use remains finite and conserved.
 _scenario_fuel = (w: mut data.World, craft: int, ml: int):
@@ -48,13 +57,66 @@ _scenario_fuel = (w: mut data.World, craft: int, ml: int):
     else: w.goods_ledger.consumed[int(data.GoodKind.fuel)] -= difference
     w.aircraft[craft].fuel_ml = ml
 
-_scenario_body = (w: mut data.World, craft: int, model: int, models: CraftModel[], at: vec3, h: f64) -> Combatant:
-    person = w.aircraft[craft].owner
+# A strait Gull in flight: its spec, and its state at `at` on heading h at the formation's pace.
+strait_gull = (model: int, models: CraftModel[], at: vec3, h: f64) -> (CraftSpec,CraftState):
     k = craft_spec(.gull,models[model].contacts)
     k.fuel_capacity = f64(data.AIRFRAMES[0].tank_ml)/1000.0
     k.fuel_burn = f64(data.AIRFRAMES[0].burn_ml_sec)/1000.0
     power=clamp(k.arc_drag*(k.cruise_speed*0.86)^2/k.arc_thrust,0.2,1.0)
-    s = CraftState(position=at,velocity=heading_vector(h)*f32(k.cruise_speed*0.86),orientation=quat_euler(0,-h,0),fuel=k.fuel_capacity,throttle=power,water_age=1)
+    (k,CraftState(position=at,velocity=heading_vector(h)*f32(k.cruise_speed*0.86),orientation=quat_euler(0,-h,0),fuel=k.fuel_capacity,throttle=power,water_age=1))
+
+# One side's combatant as the strait opens (side 0 Kalyra's, 1 Orenthia's): its pilot and its
+# place in the loose V (slot 0 the leader; `behind`, the player's place behind the V's centre).
+# where each side's leader opens the strait, and its heading (Kalyra's from the south, Orenthia's from the north)
+strait_origin = (side: int) -> vec3: STRAIT_CENTER+vec3(if side==0:-65 else:65,if side==0:0 else:35,if side==0:3000 else:-3000)
+strait_heading = (side: int) -> f64: if side==0:0.0 else:PI
+
+strait_combatant = (craft: int, person: int, side: int, slot: int, leader: int, wing: int, behind: bool, models: CraftModel[]) -> Combatant:
+    h=strait_heading(side)
+    origin=strait_origin(side)
+    row=(slot+1)/2
+    offset=if slot==0:vec3(0,0,0) else:if behind:vec3(0,24,400) else:vec3((if slot%2==1:-1 else:1)*row*36,row*7,row*70)
+    model=if side==0:STRAIT_BLUE_MODEL else:STRAIT_RED_MODEL
+    body=strait_gull(model,models,origin+quat_rotate(quat_euler(0,-h,0),offset),h)
+    k=body.0
+    a=Combatant(craft,person,if model==STRAIT_BLUE_MODEL:1 else:2,k,body.1,model=model,
+        pilot=CombatPilot(skill=0.78,nerve=0.85,formation=true,formation_heading=h,formation_speed=k.cruise_speed*0.86))
+    a.pilot.leader=leader
+    a.pilot.formation_offset=offset
+    a.pilot.skill=0.70+f64(slot%4)*0.055
+    if slot<STRAIT_PILOTS.len()/2:
+        c=STRAIT_PILOTS[slot+(if side==0:0 else:STRAIT_PILOTS.len()/2)]
+        a.pilot.skill=c.x;a.pilot.aggression=c.y;a.pilot.caution=c.z
+        # (pairs: the second of each flies on the first's wing)
+        if c.w>=0 and wing>=0:a.pilot.role=.wingman;a.pilot.wing=wing
+    a
+
+# the slot whose wing a strait slot flies on (-1 none)
+strait_wing_slot = (side: int, slot: int) -> int:
+    if slot>=STRAIT_PILOTS.len()/2: return -1
+    int(STRAIT_PILOTS[slot+(if side==0:0 else:STRAIT_PILOTS.len()/2)].w)
+
+# the strait's weather: an overcast with a squall in it over the whole strait (from `minute`)
+const STRAIT_HOUR = 9.5
+strait_weather = (w: mut data.World, minute: int):
+    w.weather=[data.Weather(id=991,kind=.overcast,center=STRAIT_CENTER.xz,radius_m=100000,born_minute=minute-60,expires_minute=minute+1440),
+        data.Weather(id=992,kind=.squall,center=STRAIT_CENTER.xz,radius_m=100000,severity=240,born_minute=minute-60,expires_minute=minute+1440)]
+    w.next_weather=993
+
+# the strait's battle, from its combatants, as the scenario opens it
+strait_engagement = (actors: Combatant[]) -> Battle:
+    b=start_engagement(STRAIT_ENGAGEMENT,1934,STRAIT_CENTER,actors)
+    b.retreat_radius=18000;b.bullet_scale=5
+    # (the fight stays under the overcast's 650 m base, where it can be seen)
+    b.ceiling=600
+    b
+
+_scenario_body = (w: mut data.World, craft: int, model: int, models: CraftModel[], at: vec3, h: f64) -> Combatant:
+    person = w.aircraft[craft].owner
+    body = strait_gull(model,models,at,h)
+    k = body.0
+    s = body.1
+    power = s.throttle
     c = w.aircraft[craft]
     c.kind=.gull; c.model_index=model; c.livery_index=if model==STRAIT_BLUE_MODEL:4 else:2
     c.pose=data.Pose(pos=at,vel=s.velocity,rot=s.orientation,throttle=int(power*1000))
@@ -113,25 +175,19 @@ build_strait = (towns: Town[], models: CraftModel[], per_side:int = 8) -> Scenar
     loop side in 0..2:
         members=if side==0:ids[0]+[mine] else:ids[1]
         h=if side==0:0.0 else:PI
-        origin=STRAIT_CENTER+vec3(if side==0:-65 else:65,if side==0:0 else:35,if side==0:3000 else:-3000)
         loop slot in 0..members.len():
             # A loose V, with the player behind its centre: every wing pair is visible.
-            row=(slot+1)/2
-            offset=if slot==0:vec3(0,0,0) else:if members[slot]==mine:vec3(0,24,400) else:vec3((if slot%2==1:-1 else:1)*row*36,row*7,row*70)
-            a=_scenario_body(w,members[slot],if side==0:STRAIT_BLUE_MODEL else:STRAIT_RED_MODEL,models,origin+quat_rotate(quat_euler(0,-h,0),offset),h)
-            a.pilot.leader=members[0]
-            a.pilot.formation_offset=offset
-            a.pilot.skill=0.70+f64(slot%4)*0.055
+            # (the registered body, then its pilot and place as the strait opens)
+            ws=strait_wing_slot(side,slot)
+            a=strait_combatant(members[slot],w.aircraft[members[slot]].owner,side,slot,members[0],if ws>=0 and ws<members.len():members[ws] else:-1,members[slot]==mine,models)
+            _ = _scenario_body(w,members[slot],a.model,models,a.state.position,h)
             a.human=a.craft==mine;a.external=a.human;a.spec.player=a.human
             actors.push(a)
-    b=start_engagement(STRAIT_ENGAGEMENT,1934,STRAIT_CENTER,actors)
-    b.retreat_radius=18000;b.bullet_scale=5
+    b=strait_engagement(actors)
     a=b.actors[combat_index(b,mine)]
     f=Flyer(kind=.gull,model=STRAIT_BLUE_MODEL,spec=a.spec,state=a.state,throttle=a.state.throttle,guns_locked=false,aim_heading=0)
-    w.weather=[data.Weather(id=991,kind=.overcast,center=STRAIT_CENTER.xz,radius_m=100000,born_minute=-60,expires_minute=1440),
-        data.Weather(id=992,kind=.squall,center=STRAIT_CENTER.xz,radius_m=100000,severity=240,born_minute=-60,expires_minute=1440)]
-    w.next_weather=993
-    ScenarioState(world=w,flyer=f,battle=b,mode=.aboard,position=f.state.position,hour=9.5)
+    strait_weather(w,0)
+    ScenarioState(world=w,flyer=f,battle=b,mode=.aboard,position=f.state.position,hour=STRAIT_HOUR)
 
 # The original quay start, reconstructed from seed rather than a snapshot of a played world.
 build_start_game = (towns:Town[],models:CraftModel[]) -> ScenarioState:
@@ -150,18 +206,21 @@ build_start_game = (towns:Town[],models:CraftModel[]) -> ScenarioState:
     register_combat_body(battle,w,w.people[w.player].craft,f.spec,f.state,true)
     ScenarioState(world=w,flyer=f,battle=battle,position=position,yaw=yaw,camera_yaw=yaw+PI)
 
-# A freshly repaired aircraft at an original canal workshop. The pursuers are
-# registered finite aircraft, using the same combat owner as the strait fixture.
+# A freshly repaired aircraft on the cradle at the head of an original canal workshop's slipway,
+# engine running. The pursuers are registered finite aircraft, using the same combat owner as the
+# strait fixture; Orenthian riflemen and machine guns hold roofs, bridges and quays along the run.
+const CANAL_LAUNCH_SECONDS = 11.0
 build_canal_takeoff=(towns:Town[],models:CraftModel[])->ScenarioState:
     init_canal_geometry()
     s=build_strait(towns,models,2)
     mine=s.world.people[s.world.player].craft
     f=s.flyer
     f.state=water_start(f.spec,canal_launch,canal_heading)
-    f.state.throttle=0.22;f.throttle=0.22;f.aim_heading=canal_heading
+    slip_pose(f,SLIP_START,0.0)
+    f.state.throttle=0.22;f.throttle=0.22;f.aim_heading=slip_heading()
     f.spec.player=true
-    s.flyer=f;s.position=f.state.position;s.hour=9.5
-    s.camera_yaw=canal_heading+PI;s.camera_pitch=0.22
+    s.flyer=f;s.position=f.state.position;s.hour=9.5;s.slipway=true
+    s.camera_yaw=slip_heading()+PI;s.camera_pitch=0.22
     s.world.weather=[]
     forward=heading_vector(canal_heading)
     loop k in 0..s.battle.actors.len():
@@ -170,8 +229,8 @@ build_canal_takeoff=(towns:Town[],models:CraftModel[])->ScenarioState:
             actor.state=f.state;actor.spec=f.spec
         else:
             # The allied courier is already leaving; the two pursuers approach
-            # behind the repair quarter, leaving seconds to get through its bridges.
-            offset=if actor.side==1:2200.0 else:-1500.0-f64(k)*160.0
+            # behind the repair quarter, arriving a few seconds into the water run.
+            offset=if actor.side==1:2200.0 else:-1500.0-CANAL_LAUNCH_SECONDS*250.0-f64(k)*160.0
             at=canal_launch+forward*f32(offset)+vec3(f32(k*55),if actor.side==1:260 else:190,0)
             actor=_scenario_body(s.world,actor.craft,actor.model,models,at,canal_heading)
             actor.pilot.formation=false
@@ -180,6 +239,7 @@ build_canal_takeoff=(towns:Town[],models:CraftModel[])->ScenarioState:
         s.battle.actors[k]=actor
     s.battle=start_engagement(STRAIT_ENGAGEMENT+1,1935,canal_launch,s.battle.actors)
     s.battle.retreat_radius=18000;s.battle.bullet_scale=5
+    s.battle.ground=canal_ground_fire(2,int(CANAL_LAUNCH_SECONDS*60.0))
     c=s.world.aircraft[mine]
     c.pose=data.Pose(pos=f.state.position,vel=f.state.velocity,rot=f.state.orientation,throttle=220)
     c.previous_pos=f.state.position;c.state=.taxi;c.hull=1000;c.engine=1000;c.move_owner=.scene

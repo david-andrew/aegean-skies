@@ -6,6 +6,11 @@ use 'world_point.jo'
 from 'planes.jo' import Craft, PartId, PartSpec, craft_parts, craft_wing_contacts, contact_part, aircraft_profile, is_boat, craft_gear_contacts
 use 'damage.jo'
 use 'tweaks.jo'
+use 'flight_v2.jo'
+use 'flight_sb.jo'
+from 'racer_planes.jo' import racer_torque
+use 'hydrofoil.jo'
+use 'hydrofoil_solver.jo'
 
 const FLIGHT_G = 9.81
 
@@ -37,6 +42,7 @@ struct CraftSpec:
     parts: PartSpec[]
     contacts: vec3[]
     gear_contacts: vec3[]           # fully extended wheels, empty on water-only aircraft
+    landplane = false               # fixed wheels and a tail skid; water is a ditching (aircraft_early.jo)
     wing_contacts = [vec3(-4.7, -0.31, -0.3), vec3(4.7, -0.31, -0.3), vec3(-5.5, 1.55, -0.55), vec3(5.5, 1.55, -0.55)]
     volumes: f64[]                   # displaced m³ at 1 m immersion, per contact
     float_height = 2.0               # calm-water equilibrium CG height
@@ -44,11 +50,23 @@ struct CraftSpec:
     fuel_burn = 0.025                # kg/s at full throttle
     water_drag = 1.0                # hull/float planing resistance, catalog-specific
     spool_time = 1.5
+    ground_lift = 1.0               # the wing's lift on and just off the water over the free air's
+    water_thrust = 1.0              # the pull at a standstill over the force model's (a racer's
+                                    # high-speed propeller is stalled at low speed), full by the stall
     # (the air, after Sky Barons' fly_air: thrust as an acceleration, drag on speed squared,
     # how quickly the way it goes turns to follow the nose)
     arc_thrust = 12.0
     arc_drag = 0.0031
     arc_grip = 2.3
+    # (the propellers: the first hub and radius, and the net share of one propeller's torque
+    # reaction (0 for a contra-rotating pair or a push-pull tandem); the prop torque trial's)
+    prop_hub = vec3(0, 0, -4.0)
+    prop_radius = 1.25
+    torque_share = 1.0
+    prop_hand = 1.0                 # 1 right-hand (clockwise from the cockpit), -1 left-hand
+    hull_planing = 1.0              # how much a planing hull lifts and sheds drag (a foil craft's hull little)
+    foils: FoilSpec[] = []          # hydrofoils (src/hydrofoil.jo); empty on every other craft
+    screw = vec3(0, 0, 0)           # the water screw's place, with foils
 
 # Positive pitch = nose up (+body x). Positive roll = right wing down (-body z).
 # Positive yaw = nose right (-body y). Heading 0 is north/-z, +PI/2 east/+x.
@@ -66,6 +84,7 @@ struct Controls:
     airbrake = 0.0                 # landing drag: abstracts a deliberate forward slip, no extra lift
     anchor = false
     gear = false                   # amphibian wheels; presentation may expose a lever
+    clutch = false                 # hydrofoil craft: hand the engine to the air propeller now
 
 struct CraftState:
     position = vec3(0, 3, 0)       # compatibility snapshot, not an accumulator
@@ -75,7 +94,7 @@ struct CraftState:
     velocity = vec3(0, 0, 0)
     orientation = vec4(0, 0, 0, 1)
     angular_velocity = vec3(0, 0, 0) # body axes, rad/s
-    stall_blend = 0.0              # diagnostic: departure solver contribution, zero in attached cruise
+    stall_blend = 0.0              # diagnostic: flight model v2's departure blend (0 in the liked model)
     throttle = 0.0
     fuel = 180.0
     damage: DamageState = DamageState()
@@ -96,10 +115,12 @@ struct CraftState:
     airspeed = 0.0
     stalled = false
     water_age = 1.0                 # time since last wet contact; a fresh airborne state can impact
-    wing_separation = vec2(0, 0)    # trial: left/right detached flow, 0..1 (also telemetry)
-    buffet = 0.0                    # trial: pre-break flow unsteadiness, 0..1
+    wing_separation = vec2(0, 0)    # flight model v2 only: left/right detached flow, 0..1 (telemetry)
+    buffet = 0.0                    # flight model v2 only: pre-break flow unsteadiness, 0..1
     trim_held = false               # (auto-trim, a trial: the stick let go, the way it went held)
     trim_path = 0.0                 # (the climb or descent held, radians)
+    rpm = 0.0                       # (flight model v2: the propeller's rpm, a fraction of rated)
+    foil: FoilDrive = FoilDrive()   # hydrofoil craft: the screw/air propeller clutch, foil telemetry
 
 # External teleports through the snapshot reset the precise owner. Saved states
 # retain both halves; old snapshots default to the compatibility position.
@@ -128,6 +149,8 @@ struct FlightEnv:
     swell: (f64, f64) -> vec3 = (x: f64, z: f64) -> vec3: vec3(0, 0, 0)
     has_swell = false
     swell_ceiling = 1e30            # optional conservative height bound; custom seas default to full sampling
+    # (how rough the air is, 0..1: inside cloud, violent in a thunderstorm; its gusts are in `wind`)
+    turbulence = 0.0
 
 struct SeaSample:
     height: f64
@@ -151,17 +174,9 @@ sea_surface = (env: FlightEnv, x: f64, z: f64, t: f64) -> SeaSample:
 
 # the "true speed": the speed as it would be in the world as designed (the speedometer's, the
 # sounds', the airframe's flexing and the cloth's, the harm of a crash, the handling). The same as
-# the speed drawn up to a little past the stall (taxiing, taking off and landing are as designed);
-# above that the extra the speed scale gives is taken off, so the drawn top speed reads as the
-# designed top speed. (The speed drawn, the "visual speed", is the state's velocity.)
-true_speed = (k: CraftSpec, v: f64) -> f64:
-    # (as it was: simply the drawn speed / the scale; the curve is a trial, Tweaks)
-    if not tweaks.true_curve: return v / max(k.handling_scale, 1.0)
-    if k.handling_scale <= 1.0001: return v
-    knee = k.stall_speed * 1.3
-    if v <= knee: return v
-    top = k.max_speed / k.handling_scale
-    knee + (v - knee) * (top - knee) / max(k.max_speed - knee, 1.0)
+# the speed drawn divided by the speed scale. (The speed drawn, the "visual speed", is the state's
+# velocity.)
+true_speed = (k: CraftSpec, v: f64) -> f64: v / max(k.handling_scale, 1.0)
 
 # (the pure speed scale, a trial (Tweaks): the drawn speed / this is the true speed the aircraft's
 # lift, stall, handling and the water's forces go by, while its acceleration stays as drawn)
@@ -211,6 +226,7 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
             s.pitch_rate = 1.8; s.roll_rate = 4.2; s.yaw_rate = 0.6
             s.arc_thrust = 22.0; s.arc_drag = 0.0014; s.arc_grip = 3.4
         _: pass
+    s.prop_hand = if aircraft_profile(kind).prop_hand < 0.0: -1.0 else: 1.0
     if int(kind) >= 4:
         p = aircraft_profile(kind)
         s.mass = p.mass; s.span = p.span; s.wing_area = p.area
@@ -220,6 +236,17 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         s.arc_thrust = p.thrust; s.arc_drag = p.drag; s.arc_grip = p.grip
         s.fuel_capacity = p.tank; s.fuel_burn = p.burn; s.water_drag = p.water_drag
         s.spool_time = if p.engine_x > 0: 2.4 else: 1.5
+        s.ground_lift = p.ground_lift
+        s.water_thrust = p.water_thrust
+        s.prop_radius = p.prop_radius
+        s.prop_hub = vec3(p.engine_x * -1.0, p.engine_y, p.engine_z + (if p.pusher: 0.65 else: -0.65))
+        # (a racer with its own torque swing (racer_planes.jo) takes no second torque here)
+        s.torque_share = if p.contra or p.push_pull or p.swing > 0.0: 0.0 else: 1.0
+        if p.hydrofoil:
+            s.foils = P7_FOILS; s.screw = P7_SCREW; s.hull_planing = 0.15
+            s.prop_hub = vec3(0, 0, -4.55)
+        if p.engines > 2: s.spool_time = 3.2
+        s.landplane = p.landplane
     s.cl0 = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.cruise_speed * s.cruise_speed)
     s.cl_max = s.mass * FLIGHT_G / (0.5 * 1.225 * s.wing_area * s.stall_speed * s.stall_speed)
     s.stall_angle = (s.cl_max - s.cl0) / s.lift_slope
@@ -234,6 +261,7 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
     bottom = 0.0
     loop p in s.contacts: bottom = min(bottom, f64(p.y))
     s.float_height = -bottom - (if kind == .heron: 0.55 else: (if is_boat(kind): min(0.55, aircraft_profile(kind).width * 0.5) else: 0.35))
+    if aircraft_profile(kind).draft > 0: s.float_height = -bottom - aircraft_profile(kind).draft
     nf = 0; na = 0; zf = 0.0; za = 0.0
     loop p in s.contacts:
         if -s.float_height - f64(p.y) > 0.04:
@@ -245,6 +273,10 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
         depth = -s.float_height - f64(p.y)
         share = if p.z < 0: front_share / max(nf, 1) else: (1.0 - front_share) / max(na, 1)
         s.volumes.push(if depth > 0.04: s.mass / 1000.0 * share / depth else: s.mass / 1000.0 * 0.08)
+    # (a landplane's belly gives a fraction of the buoyancy it would need: on the water it settles
+    # and is lost, a ditching)
+    if s.landplane:
+        loop i in 0..s.volumes.len(): s.volumes[i] *= 0.15
     s.wing_contacts = craft_wing_contacts(kind)
     s.parts = craft_parts(kind, s.contacts)
     s.gear_contacts = craft_gear_contacts(kind)
@@ -258,13 +290,31 @@ craft_spec = (kind: Craft, contacts: vec3[]) -> CraftSpec:
     s
 
 forward = (s: CraftState) -> vec3: quat_rotate(s.orientation, vec3(0, 0, -1))
+
+# The propellers' torque reaction about the thrust axis, the Tweaks trial's "prop torque": a fifth
+# of the static thrust at the blade tip for one propeller, against its turning: a right-hand
+# propeller (clockwise from the cockpit) rolls her to port, a left-hand one to starboard. N m about
+# the body's +z (aft) axis, so + is to port. None for a contra-rotating pair or a push-pull tandem,
+# whose two reactions cancel, nor for a racer with its own swing (racer_planes.jo).
+prop_torque = (k: CraftSpec, s: CraftState) -> f64:
+    k.prop_hand * k.torque_share * 0.22 * k.max_thrust * k.prop_radius * s.throttle * foil_air_share(k, s)
 heading = (s: CraftState) -> f64:
     f = forward(s)
     atan2(f64(f.x), -f64(f.z))
 heading_vector = (h: f64) -> vec3: vec3(sin(h), 0, -cos(h))
 angle_delta = (a: f64, b: f64) -> f64: atan2(sin(a - b), cos(a - b))
 water_start = (spec: CraftSpec, at: vec3, h: f64 = 0.0) -> CraftState:
-    CraftState(position = vec3(at.x, at.y + f32(spec.float_height), at.z), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, on_water = true, water_age = 0.0)
+    CraftState(position = vec3(at.x, at.y + f32(spec.float_height), at.z), orientation = quat_euler(0, -h, 0), fuel = spec.fuel_capacity, on_water = true, water_age = 0.0,
+        foil = if spec.foils.len() > 0: water_drive() else: FoilDrive())
+
+# A landplane at rest on its wheels and skid (its three-point attitude) on ground of height `ground`.
+ground_start = (spec: CraftSpec, at: vec3, h: f64 = 0.0) -> CraftState:
+    g = spec.gear_contacts
+    tilt = if g.len() >= 3: atan2(f64(g[2].y - g[0].y), f64(g[2].z - g[0].z)) else: 0.0
+    q = quat_mul(quat_euler(0, -h, 0), quat_axis_angle(vec3(1, 0, 0), tilt))
+    low = 0.0
+    loop p in g: low = min(low, f64(quat_rotate(q, p).y))
+    CraftState(position = vec3(at.x, f32(f64(at.y) - low - 0.08), at.z), orientation = q, fuel = spec.fuel_capacity, on_ground = true, water_age = 1.0, gear = 1.0)
 
 trim_aoa = (spec: CraftSpec, speed: f64, density: f64 = 1.225) -> f64:
     cl = spec.mass * FLIGHT_G / max(0.5 * density * spec.wing_area * speed * speed, 1.0)
@@ -378,6 +428,9 @@ _clear_of_water = (k: CraftSpec, s: CraftState, e: FlightEnv, margin: f64) -> bo
                 if f64(p.y) < ceiling+margin:
                     sea=sea_surface(e,f64(p.x),f64(p.z),s.time)
                     if f64(p.y) < sea.height+margin:return false
+    loop foil in k.foils:
+        p = s.position + quat_rotate(s.orientation, foil.point)
+        if f64(p.y) < sea_surface(e,f64(p.x),f64(p.z),s.time).height+margin:return false
     true
 
 # Flight in the air, Sky Barons' fly_air as it is (sim.jo): the stick turns the aircraft at its
@@ -419,35 +472,11 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # the throttle open: a hammerhead's pivot at the top)
     wash = max(auth, 0.7 * s.throttle) * (0.15 + 0.85 * tail)
     q = s.orientation
-    trial = 0.0
-    flow = StallFlow()
-    flow_active = false
-    if tweaks.chaotic_stalls:
-        sea = sea_surface(e, f64(s.position.x), f64(s.position.z), s.time).height
-        clearance = f64(s.position.y) - k.float_height - max(sea, e.ground(f64(s.position.x), f64(s.position.z)))
-        # Exactly the liked path up to one span clear, then a smooth transition. This preserves
-        # the pure-scale takeoff hop and low-water hold, including their existing rotations.
-        trial = f64(smoothstep(k.span, k.span * 3.0, clearance))
-        if trial > 0.0:
-            stall_speed = k.stall_speed * sqrt(mass / max(wings, 0.12))
-            flow = _stall_flow(k, s, c, e, stall_speed, dt)
-            flow_active = true
-            # Altitude alone used to replace ALL controls with a damped rate servo. An
-            # attached wing must retain the normal game's rates, even during a hard turn.
-            # Separation remembers local AoA/rate history; flying speed and reattachment
-            # release the departure dynamics without a timer or an attitude target.
-            departure = max(1.0-smoothstep(stall_speed*1.05,stall_speed*1.25,ts),smoothstep(0.08,0.35,flow.separation))
-            trial *= max(departure,flow.reverse)
-    s.stall_blend = trial
-    if not flow_active:
-        s.wing_separation = vec2(0, 0); s.buffet = 0.0
-    # Asymmetric lift and torn skin act even with the stick centered. Keep impact momentum
-    # through the arcade/contact boundary; only an intact airframe follows the original rates.
-    if trial > 0.0:
-        _stall_rotation(k, s, c, flow, auth, wash, dt)
-        spin = f64(length(s.angular_velocity))
-        if spin > 0.00001: q = quat_mul(q, quat_axis_angle(s.angular_velocity, spin * trial * dt))
-    else if s.hull_damage > 0.000001:
+    # (the liked model: no separated flow; only flight model v2 writes these)
+    s.stall_blend = 0.0
+    s.wing_separation = vec2(0, 0); s.buffet = 0.0
+    if s.hull_damage > 0.000001:
+        # (lost wing or torn skin: it tumbles the way the damage leans it)
         imbalance = right - left
         a = clamp(speed / k.stall_speed, 0.0, 3.0)
         loss_torque = vec3((1.0 - tail) * sin(s.time * 5.0) * a, imbalance * 0.45 * a, imbalance * 4.0 * a)
@@ -463,12 +492,26 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     bump_r = (noise(tt * 1.7, 23.0) - 0.5) * 0.7 + (noise(tt * 6.1, 31.0) - 0.5) * 0.3
     q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), bump_p * rough * 0.35 * dt))
     q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), bump_r * rough * 0.8 * dt))
+    # (in cloud and storm the eddies jolt the wings unevenly: sharp roll and pitch kicks and a
+    # fast shudder of the airframe, growing with the air's roughness and the speed. Each kick is
+    # the change of a bounded displacement, so the airframe is knocked about its path and comes
+    # back, rather than wandering off it)
+    if e.turbulence > 0.0:
+        storm = e.turbulence * f64(smoothstep(10.0, 45.0, ts))
+        kick_r = _turbulence_kick(tt, dt, [1.3, 4.1, 11.0, 23.0], [0.30, 0.16, 0.05, 0.02], 61.0)
+        kick_p = _turbulence_kick(tt, dt, [1.1, 3.7, 12.0, 27.0], [0.10, 0.04, 0.008, 0.003], 73.0)
+        kick_y = _turbulence_kick(tt, dt, [0.9, 3.3], [0.06, 0.03], 89.0)
+        q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), kick_r * storm))
+        q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), kick_p * storm))
+        q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), kick_y * storm))
     # (the wings can only pull so many g: fast, the nose comes round slower, and pulling out of a
     # steep dive takes room)
     g_lim = (if tweaks.skybarons_response:8.0 else:6.0) * FLIGHT_G / max(true_speed(k, speed), 1.0)
-    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, g_lim) * (1.0 - trial) * dt))
-    q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), -clamp(c.roll, -1.0, 1.0) * k.roll_rate * (if tweaks.skybarons_response:1.125 else:1.0) * auth * (1.0 - trial) * dt))
-    q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash * (1.0 - trial) * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, g_lim) * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), -clamp(c.roll, -1.0, 1.0) * k.roll_rate * (if tweaks.skybarons_response:1.125 else:1.0) * auth * dt))
+    q = quat_mul(q, quat_axis_angle(vec3(0, 1, 0), -clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash * dt))
+    # (a racer's propeller torque rolls it to port while slow, a tweak)
+    if tweaks.torque_swing and k.player: q = quat_mul(q, quat_axis_angle(vec3(0, 0, 1), racer_torque(k.kind, s.throttle, ts / k.stall_speed) * 0.25 * dt))
     fwd = quat_rotate(q, vec3(0, 0, -1))
     vdir = fwd
     if speed > 0.1: vdir = air * f32(1.0 / speed)
@@ -481,14 +524,12 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # only badly hurt ones lose lift, and that sinks it rather than stalling it)
     lift_v = f64(smoothstep(stall * 0.75, stall * 1.15, ts))
     lift = lift_v * clamp(wings / 0.8, 0.0, 1.0)
-    if trial > 0.0:
-        lift *= 1.0 - trial * (1.0 - flow.support)
-    s.stalled = lift_v < 0.999 or (trial > 0.0 and flow.separation > 0.25)
+    s.stalled = lift_v < 0.999
     if lift_v < 1.0:
         axis = cross(fwd, normalize(vdir + vec3(0, -0.7, 0)))
         # (pure scale, low over the water: a hop off it doesn't drop the nose; it sinks back level)
         near_water = if pure_k(k) > 1.0001: 1.0 - f64(smoothstep(k.span * 1.0, k.span * 3.0, gap)) else: 0.0
-        if length(axis) > 0.001: q = quat_mul(quat_axis_angle(axis, (1.0 - lift_v) * 1.6 * (1.0 - near_water) * (1.0 - trial) * dt), q)
+        if length(axis) > 0.001: q = quat_mul(quat_axis_angle(axis, (1.0 - lift_v) * 1.6 * (1.0 - near_water) * dt), q)
     tilt = 1.0 - max(f64(quat_rotate(q, vec3(0, 1, 0)).y), 0.0)
     axis = cross(quat_rotate(q, vec3(0, 0, -1)), vec3(0, -1, 0))
     if length(axis) > 0.001: q = quat_mul(quat_axis_angle(normalize(axis), tilt * lift * 0.5 * k.yaw_rate * dt), q)
@@ -539,14 +580,7 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             want = s.trim_path + clamp(s.trim_path - path_now, -0.1, 0.1)
             trim = 0.0
             q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), clamp((want - nose) * 2.5, -0.3, 0.3) * upright * away * dt))
-    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), trim * tail * (1.0 - trial * flow.separation) * dt))
-    if flow_active and trial == 0.0 and s.hull_damage < 0.000001:
-        # Seed the departure with the rotation already in progress. This state is measured
-        # from the unmodified kinematic pose; it never feeds back while the wing is attached.
-        dq=quat_mul(quat_inverse(s.orientation),normalize(q))
-        if dq.w<0:dq=-dq
-        n=f64(length(dq.xyz))
-        s.angular_velocity=if n>0.0000001:dq.xyz*f32(2.0*atan2(n,f64(dq.w))/(n*dt)) else:vec3(0,0,0)
+    q = quat_mul(q, quat_axis_angle(vec3(1, 0, 0), trim * tail * dt))
     s.orientation = normalize(q)
     fwd = quat_rotate(s.orientation, vec3(0, 0, -1))
     up = quat_rotate(s.orientation, vec3(0, 1, 0))
@@ -555,7 +589,6 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # (pulling costs drag; pushing, as in holding a dive, doesn't)
     pull = max(clamp(c.pitch, -1.0, 1.0), 0.0) * auth
     drag = k.arc_drag * (1.0 + 2.5 * clamp(c.airbrake, 0.0, 1.0)) * (1.0 + 0.5 * s.hull_damage + 1.6 * abs(left - right)) / mass
-    if trial > 0.0: drag += 0.008 * trial * flow.separation / (pure_k(k) * pure_k(k))
     # (gravity along the way it goes trades speed for height and back; pulling hard costs a little
     # more drag; with no drag, a loop or a zoom climb gives back all it took)
     # (pure scale: gravity along the way trades the true speed for height at its real rate, so a
@@ -563,18 +596,9 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # The optional combat comparison restores true-speed engine acceleration. Scale thrust
     # AND drag together, retaining the same equilibrium speed and honest climb gravity.
     energy_scale=if tweaks.skybarons_response:pure_k(k) else:1.0
-    acc = (k.arc_thrust * s.throttle * thin / mass - drag * flight_drag_scale * speed * speed * (1.0 + 0.35 * pull))*energy_scale - FLIGHT_G * pure_k(k) * f64(vdir.y)
-    next_speed = speed + acc * dt
-    if trial > 0.0 and next_speed < 0.0:
-        # At the top of a vertical zoom, gravity reverses the flow. Clamping to zero here
-        # would pin a perfectly vertical aircraft at the apex instead of letting it tail-slide.
-        speed = -next_speed
-        vdir = -vdir
-    else: speed = max(next_speed, 0.0)
-    # (the way it goes follows the nose; at a drawn speed many times the true one, it follows
-    # quicker, so the turn isn't a long slide)
-    ratio = if tweaks.quick_grip and speed > 1.0: speed / max(true_speed(k, speed), 1.0) else: 1.0
-    t = min(k.arc_grip * sqrt(ratio) * lift * dt, 1.0)
+    acc = (k.arc_thrust * s.throttle * thin * hydrofoil_air(k, s, c, dt) / mass - drag * flight_drag_scale * speed * speed * (1.0 + 0.35 * pull))*energy_scale - FLIGHT_G * pure_k(k) * f64(vdir.y)
+    speed = max(speed + acc * dt, 0.0)
+    t = min(k.arc_grip * lift * dt, 1.0)
     vdir = normalize(vdir + (fwd - vdir) * f32(t))
     air = vdir * f32(speed)
     level = max(f64(up.y), 0.0)
@@ -588,112 +612,30 @@ _fly_air = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     s.velocity = air + wind
     craft_advance(s,dt)
 
-# The stall trial augments the arcade flight path with two lifting panels and a flying tail.
-# No random draws or attitude targets: local flow includes roll/yaw velocity at each panel.
-# Beyond the lift peak, a falling wing loses lift and gains drag, sustaining autorotation;
-# forward stick unloads both panels and opposite rudder removes the yaw feeding the split.
-struct StallFlow:
-    separation = 0.0
-    support = 1.0
-    torque = vec3(0, 0, 0)
-    alpha = 0.0
-    pressure = 0.0
-    reverse = 0.0
-
-_stall_flow = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, stall: f64, dt: f64) -> StallFlow:
-    flow = StallFlow()
-    air = quat_rotate(quat_inverse(s.orientation), (s.velocity - e.wind) / f32(pure_k(k)))
-    speed = f64(length(air))
-    flow.alpha = atan2(-f64(air.y), -f64(air.z))
-    flow.reverse = f64(smoothstep(0.0, 5.0, f64(air.z)))
-    flow.pressure = clamp(speed * speed / (stall * stall), 0.0, 4.0)
-    # Broad, lightly loaded wings break gradually; racers have a narrow lift peak.
-    loading = k.mass / k.wing_area
-    sharp = f64(smoothstep(38.0, 78.0, loading))
-    critical = 0.30 - 0.08 * sharp
-    width = 0.24 - 0.16 * sharp
-    beta = atan2(f64(air.x), max(abs(f64(air.z)), 2.0))
-    lever = k.span * 0.32
-    lifts = vec2(0, 0); drags = vec2(0, 0)
-    warning = 0.0
-    loop i in 0..2:
-        side = if i == 0: -1.0 else: 1.0
-        local = air + cross(s.angular_velocity, vec3(side * lever, 0, 0))
-        vf = -f64(local.z)
-        # Incidence represents the load the arcade wing carries at zero geometric AoA.
-        # Requiring more lift at low true speed brings it to the peak naturally.
-        incidence = critical * 0.72 * stall * stall / max(vf * vf, stall * stall * 0.4)
-        aileron = -side * clamp(c.roll, -1.0, 1.0) * 0.065
-        alpha = atan2(-f64(local.y), vf) + incidence + side * beta * 0.12 + aileron
-        health = if i == 0: wing_lift(s.damage, .left_wing) else: wing_lift(s.damage, .right_wing)
-        peak = critical * (0.8 + 0.2 * health)
-        separated = f64(smoothstep(peak, peak + width, abs(alpha)))
-        previous = if i == 0: f64(s.wing_separation.x) else: f64(s.wing_separation.y)
-        # Reattachment takes longer than the initial break. This is flow memory, not a timer
-        # holding the aircraft in a pose; it also allows alternating falling-leaf wing drops.
-        sep = previous + (separated - previous) * min(dt / (if separated > previous: 0.10 else: 0.24), 1.0)
-        if i == 0: s.wing_separation.x = f32(sep)
-        else: s.wing_separation.y = f32(sep)
-        pressure = min(f64(dot(local, local)) / (stall * stall), 4.0)
-        cl = clamp(alpha / critical, -1.2, 1.2) * (1.0 - 0.88 * sep)
-        load = pressure * cl * health
-        drag = pressure * (0.06 + 0.85 * sep) * health
-        if i == 0: lifts.x = f32(load); drags.x = f32(drag)
-        else: lifts.y = f32(load); drags.y = f32(drag)
-        warning = max(warning, f64(smoothstep(peak * 0.75, peak, abs(alpha))) * (1.0 - 0.75 * sep))
-    flow.separation = f64(s.wing_separation.x + s.wing_separation.y) * 0.5
-    flow.support = 1.0 - 0.88 * flow.separation
-    s.buffet = warning
-    # Only the outer half of each semispan contributes to the differential load; the
-    # attached inner panel still carries weight but has little rolling/yawing leverage.
-    weight = k.mass * FLIGHT_G * 0.25
-    flow.torque.z = f32((f64(lifts.y - lifts.x)) * weight * lever)
-    flow.torque.y = f32((f64(drags.x - drags.y)) * weight * lever)
-    # The centre of pressure moves aft as lift separates. Tail load keeps pitching into
-    # the relative wind, including backward flow in a tail slide; no prescribed nose rate.
-    tail = part_health(s.damage, .tail)
-    chord = k.wing_area / k.span
-    flow.torque.x = f32(-k.mass * FLIGHT_G * chord * (0.18 * flow.separation + 0.55 * sin(flow.alpha) * flow.pressure) * tail)
-    # Dihedral and the fin oppose sideslip while they still see attached flow.
-    flow.torque.z += f32(beta * k.mass * FLIGHT_G * k.span * 0.035 * flow.pressure * (1.0 - flow.separation))
-    flow.torque.y -= f32(beta * k.mass * FLIGHT_G * chord * 0.18 * flow.pressure * tail)
-    # A rotary biases the break and couples pitch/yaw through its spinning mass.
-    if aircraft_profile(k.kind).voice == .rotary:
-        flow.torque += vec3(-f64(s.angular_velocity.y) * 260.0, f64(s.angular_velocity.x) * 260.0, 420.0) * f32(s.throttle * (0.15 + flow.separation))
-    # Incommensurate shedding frequencies, clocked by deterministic simulation time.
-    phase = s.time * (17.0 + speed * 0.13) + f64(int(k.kind)) * 1.7
-    flow.torque += vec3(sin(phase * 1.31) * 0.12, 0, sin(phase) * 0.24) * f32(warning * k.mass * FLIGHT_G * chord)
-    flow
-
-_stall_rotation = (k: CraftSpec, s: mut CraftState, c: Controls, flow: StallFlow, auth: f64, wash: f64, dt: f64):
-    sep = flow.separation
-    # Tail retains propwash; the ailerons lose authority and their local incidence/drag above
-    # can deepen a stalled wing. Damping changes sign in the panel forces, not in a spin script.
-    tail_flow = 1.0 - 2.0 * flow.reverse * (1.0 - s.throttle)
-    desired = vec3(tail_flow * clamp(c.pitch, -1.0, 1.0) * min(k.pitch_rate * wash, 6.0 * FLIGHT_G / max(true_speed(k, s.airspeed), 1.0)),
-        -tail_flow * clamp(c.yaw, -1.0, 1.0) * k.yaw_rate * 1.6 * wash,
-        -clamp(c.roll, -1.0, 1.0) * k.roll_rate * auth * (1.0 - sep))
-    damping = vec3(2.8, 2.2 * (1.0 - 0.78 * sep), 3.0 * (1.0 - 0.85 * sep))
-    drive = vec3(2.8, 2.2, 3.0 * (1.0 - sep))
-    moment = flow.torque
-    accel = vec3(moment.x / k.inertia.x, moment.y / k.inertia.y, moment.z / k.inertia.z)
-    # Finite air damping grows with angular speed. No angular-rate clamp or fixed spin speed.
-    damping += vec3(1, 1, 1) * (length(s.angular_velocity) * f32(0.45))
-    s.angular_velocity = (s.angular_velocity + (desired * drive + accel) * f32(dt)) / (vec3(1, 1, 1) + damping * f32(dt))
+# The change over one step of a sum of noise octaves (frequencies in Hz, amplitudes in
+# radians): an angle kick whose total stays bounded.
+_turbulence_kick = (t: f64, dt: f64, freqs: f64[], amps: f64[], seed: f64) -> f64:
+    kick = 0.0
+    loop k in 0..freqs.len():
+        kick += (noise(t * freqs[k], seed + f64(k) * 7.0) - noise((t - dt) * freqs[k], seed + f64(k) * 7.0)) * amps[k] * 2.0
+    kick
 
 # Sky Barons' steer (sim.jo): stick and rudder that turn the aircraft toward a direction: far off,
 # rolled toward it and pulled; nearly there (or a little below), small corrections with the wings
 # level; between, some of each. Each correction closes on the aim in about a sixth of a second.
 steer = (k: CraftSpec, s: CraftState, want: vec3) -> Controls:
+    if fdm2_active(k): return steer_v2(k, s, want)
     l = quat_rotate(quat_inverse(s.orientation), normalize(want))     # (-z ahead, +x right, +y up)
     ahead = f64(-l.z)
     a = max(ahead, 0.1)
     right = quat_rotate(s.orientation, vec3(1, 0, 0))
     up = quat_rotate(s.orientation, vec3(0, 1, 0))
     rate = 6.0
-    pr = max(if tweaks.skybarons_response:min(k.pitch_rate,8.0*FLIGHT_G/max(1.0,true_speed(k,f64(length(s.velocity))))) else:k.pitch_rate,0.1)
+    # (Sky Barons' own model, flight_model 2, steers as sim.jo does, whatever the response trial)
+    sbr = tweaks.skybarons_response and not fdmsb_active(k)
+    pr = max(if sbr:min(k.pitch_rate,8.0*FLIGHT_G/max(1.0,true_speed(k,f64(length(s.velocity))))) else:k.pitch_rate,0.1)
     yr = max(k.yaw_rate, 0.1)
-    rr = max(k.roll_rate*(if tweaks.skybarons_response:1.125 else:1.0),0.1)
+    rr = max(k.roll_rate*(if sbr:1.125 else:1.0),0.1)
     near_pitch = clamp(f64(l.y) / a * rate / pr, -1.0, 1.0)
     near_yaw = clamp(f64(l.x) / a * rate / yr * 0.4, -1.0, 1.0)
     near_roll = clamp((f64(right.y) * 1.6 + f64(l.x) / a * 4.0) * 2.6 / rr, -1.0, 1.0)
@@ -713,16 +655,45 @@ steer = (k: CraftSpec, s: CraftState, want: vec3) -> Controls:
         c.yaw = clamp(c.yaw + hold, -1.0, 1.0)
     c
 
+# A landplane's wheel or tail skid on the ground: a stiff sprung leg with damping, rolling on
+# grass (the skid drags), brakes on the main wheels (the water-brake control; held when parked),
+# and grip across. Under the pure scale the run's slowing acts on the drawn speed, so a landing
+# rolls out in about the true time rather than the scale's times longer.
+_landplane_wheel = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, index: int, arm: vec3, p: vec3, land: f64, mass: f64, pk: f64, parked: bool, force: mut vec3, torque: mut vec3, dt: f64):
+    s.on_ground = true
+    rel = s.velocity+cross(quat_rotate(s.orientation,s.angular_velocity),arm)
+    normal = normalize(vec3(e.ground(f64(p.x)-0.25,f64(p.z))-e.ground(f64(p.x)+0.25,f64(p.z)),0.5,
+        e.ground(f64(p.x),f64(p.z)-0.25)-e.ground(f64(p.x),f64(p.z)+0.25)))
+    vn = f64(dot(rel,normal))
+    n = f64(k.gear_contacts.len())
+    load = max(0.0,mass/n*(110.0*min(land-f64(p.y),0.5)-14.0*vn))
+    f = forward(s); flat_f = vec3(f.x,0,f.z)
+    flat_f = if length(flat_f) < 0.001: vec3(0,0,-1) else: normalize(flat_f)
+    flat_r = vec3(-flat_f.z,0,flat_f.x)
+    longitudinal = f64(dot(rel,flat_f)); lateral = f64(dot(rel,flat_r))
+    skid = index >= 2
+    grip = if skid: 0.3 else: 0.04+0.41*(if parked: 1.0 else: clamp(c.water_brake,0.0,1.0))
+    slow = clamp(longitudinal*mass*0.3,-load*grip,load*grip)
+    friction = -flat_f*f32(slow)-flat_r*f32(clamp(lateral*mass/n,-load*0.7,load*0.7))
+    b = normal*f32(load)+friction
+    # (the scale's extra slowing goes to the speed alone: the wheels' pitching moment stays the
+    # true one, so braking hard does not stand it on its nose)
+    force += b-flat_f*f32(if skid: 0.0 else: slow*(max(pk,1.0)-1.0))
+    torque += quat_rotate(quat_inverse(s.orientation),cross(arm,b))
+    _contact_load(k,s,0,p,normal,normal*f32(min(vn,0.0)),normal*f32(load*dt),5.0,.crunch)
+
 _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64):
     s.time += dt
-    if k.gear_contacts.len() > 0: s.gear = move_toward(s.gear,if c.gear: 1.0 else: 0.0,dt*0.4)
+    if k.gear_contacts.len() > 0: s.gear = if k.landplane: 1.0 else: move_toward(s.gear,if c.gear: 1.0 else: 0.0,dt*0.4)
     if c.anchor and s.on_water and length(s.velocity) < 0.8 and not s.crashed: moor(s, s.position, heading(s))
     if s.moored:
         s.position = s.mooring_point; s.precise_ready=false; s.orientation = s.mooring_orientation
         s.velocity = vec3(0, 0, 0); s.angular_velocity = vec3(0, 0, 0); s.throttle = 0
         return
     if _clear_of_water(k, s, e, max(0.6, f64(length(s.velocity)) * dt + f64(length(s.angular_velocity)) * k.span * dt)):
-        _fly_air(k, s, c, e, dt)
+        if fdm2_active(k): fly_air_v2(k, s, c, e, dt)
+        else if fdmsb_active(k): fly_air_sb(k, s, c, e, dt)
+        else: _fly_air(k, s, c, e, dt)
         return
     # (pure scale: the forces are worked out from the true velocity (the drawn one / the scale, along
     # the water; its rise and fall as they are), and their acceleration given to the drawn one, so
@@ -760,9 +731,10 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     lift_dir = cross(r, adir)
     if length(lift_dir) > 0.001: lift_dir = normalize(lift_dir)
     else: lift_dir = u
-    force = lift_dir * f32(q * k.wing_area * cl) - adir * f32(q * k.wing_area * cd) + vec3(0, -mass * FLIGHT_G, 0)
+    force = lift_dir * f32(q * k.wing_area * cl * k.ground_lift) - adir * f32(q * k.wing_area * cd) + vec3(0, -mass * FLIGHT_G, 0)
     thin = clamp(1.0 - max(f64(s.position.y), 0.0) / 10000.0, 0.25, 1.0)
-    force += f * f32(k.max_thrust * s.throttle * thin / (1.0 + (speed / k.thrust_speed)^2))
+    pull_now = k.max_thrust * (k.water_thrust + (1.0 - k.water_thrust) * f64(smoothstep(0.0, k.stall_speed * 1.2, speed)))
+    force += f * f32(pull_now * s.throttle * thin * foil_air_share(k, s) / (1.0 + (speed / k.thrust_speed)^2))
     grip = f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.25, speed)) * (1.0 - 0.75 * f64(separation))
     force -= r * f32(vr * k.mass * k.grip * grip)
     auth = clamp(speed / (k.stall_speed * 1.45), 0.2, 1.0)
@@ -792,9 +764,12 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     if pk0 > 1.0001:
         lw = (1.0 - f64(smoothstep(0.25, 0.5, abs(pitch)))) * (1.0 - f64(smoothstep(0.3, 0.6, abs(bank)))) * (1.0 - clamp(abs(c.pitch) / 0.3, 0.0, 1.0))
         want = if s.on_water: 0.09 * f64(smoothstep(k.stall_speed * 0.45, k.stall_speed * 0.8, speed)) else: 0.06
+        # (a landplane just off its wheels keeps the rotation it lifted off with: no water to help)
+        if k.landplane and not s.on_water: want += 0.12 * f64(smoothstep(k.stall_speed * 0.85, k.stall_speed * 1.05, speed))
         pr += clamp((want - pitch) * 3.5, -0.45, 0.45) * lw
     pr *= 0.15 + 0.85 * tail; yr *= 0.15 + 0.85 * tail; rr *= 0.2 + 0.8 * wings
     torque = vec3((1.0 - tail) * sin(s.time * 5.0) * k.inertia.x, (right - left) * q * k.wing_area * 0.04, (right - left) * q * k.wing_area * k.span * 0.12)
+    if tweaks.prop_torque: torque.z += f32(prop_torque(k, s))
     wet = 0.0; ground_hit = false
     s.on_ground = false
     water_velocity = s.velocity - e.current - e.current_at(craft_point(s).x, craft_point(s).z)
@@ -802,11 +777,22 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     if length(flat_f) < 0.001: flat_f = vec3(0, 0, -1)
     else: flat_f = normalize(flat_f)
     flat_r = vec3(-flat_f.z, 0, flat_f.x)
+    # (a landplane at rest with the throttle closed holds its brakes: parked)
+    parked = k.landplane and c.throttle < 0.05 and length(s.velocity) < 2.0
     if s.gear > 0.95 and s.damage.parts[0].attached:
-        loop point in k.gear_contacts:
+        loop gi in 0..k.gear_contacts.len():
+            point = k.gear_contacts[gi]
             arm = quat_rotate(s.orientation,point); p = s.position+arm
             land = e.ground(f64(p.x),f64(p.z))
-            if land <= sea_surface(e,f64(p.x),f64(p.z),s.time).height or p.y >= land: continue
+            sea_here = sea_surface(e,f64(p.x),f64(p.z),s.time).height
+            # (a landplane's wheels in the water: ditched)
+            if k.landplane and land <= sea_here and f64(p.y) < sea_here and not s.crashed:
+                s.crashed = true
+                impact_event(s.damage,ImpactEvent(p,vec3(0,1,0),0.5*k.mass*f64(dot(s.velocity,s.velocity)),.splash,.body,s.velocity*f32(k.mass)))
+            if land <= sea_here or p.y >= land: continue
+            if k.landplane:
+                _landplane_wheel(k,s,c,e,gi,arm,p,land,mass,pk,parked,force,torque,dt)
+                continue
             s.on_ground = true
             rel = s.velocity+cross(quat_rotate(s.orientation,s.angular_velocity),arm)
             # A sprung rolling contact: vertical loads go to the hull, not to the tip floats.
@@ -827,11 +813,11 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     # Each buoyant point carries its own normal, lateral and digging load. Removing a float
     # removes its support and drag. Undamaged forward planing retains the calibrated old force.
     hump = 1.0 + 0.8 * exp(-((abs(water_speed) - 9.0) / 5.0)^2)
-    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane) * k.water_drag * (1.0 + s.gear * 0.6)
+    drag = (0.10 * water_speed + 0.007 * water_speed * abs(water_speed)) * hump * (1.0 - 0.85 * plane * k.hull_planing) * k.water_drag * (1.0 + s.gear * 0.6)
     # (pure scale: the water's drag never more than about half what the engine can pull, so every
     # aircraft can always push through it to its liftoff speed)
     if pk0 > 1.0001:
-        cap = 0.45 * k.max_thrust / k.mass
+        cap = 0.45 * pull_now / k.mass
         drag = clamp(drag, -cap, cap)
     drag += clamp(c.water_brake, 0.0, 1.0) * water_speed * 0.65
     loop i in 0..k.contacts.len():
@@ -862,7 +848,8 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             shear = -flat_r * f32(k.mass * local_side * (3.0 + 0.10 * abs(water_speed)) * share)
             _contact_load(k, s, id, p, sea.normal, contact_v, shear * f32(dt), 8.0, .splash)
             # A bow/keel presented across the flow digs in. Level high-speed planing does not.
-            across = max(0.0, abs(f64(dot(contact_v, u))) - 5.5)
+            # (racers landing faster than the Falco have floats cut for it: more before they dig)
+            across = max(0.0, abs(f64(dot(contact_v, u))) - 5.5 - max(0.0, k.stall_speed - 38.0) * 0.4)
             dig = -contact_v * f32(min(k.mass * across * 0.12 * share, mass / dt * share))
             _contact_load(k, s, id, p, sea.normal, contact_v, dig * f32(dt), 5.5, .splash)
             force += b + shear + dig - flat_f * f32(k.mass * drag * share)
@@ -871,6 +858,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             catch = clamp((abs(local_side) - 8.0) / 12.0, 0.0, 1.0)
             torque += quat_rotate(quat_inverse(s.orientation), cross(arm, b + shear * f32(catch) + dig))
             wet += share
+    wet += hydrofoil_contacts(k, s, c, e, omega_world, force, torque, dt)
     # Wing tips and exposed engine/body/tail also resolve actual contact impulses.
     loop id in 0..k.parts.len():
         if not s.damage.parts[id].attached: continue
@@ -917,25 +905,47 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     wet = min(wet, 1.0)
     if wet > 0:
         s.water_age = 0
-        force += vec3(0, k.mass * FLIGHT_G * 0.45 * plane * wet, 0)
+        force += vec3(0, k.mass * FLIGHT_G * 0.45 * plane * wet * k.hull_planing, 0)
         # Air pushes the exposed hull; small leeway, strong keel resistance, weathercock yaw.
         force += (e.wind - s.velocity) * f32(k.mass * 0.012 * wet)
         yr = -clamp(c.yaw, -1.0, 1.0) * 0.5 * clamp(abs(water_speed) / 3.0 + s.throttle * 0.4, 0.0, 1.0)
         wind_side = f64(dot(e.wind - e.current, flat_r))
         yr += wind_side * 0.008 * wet
+        # (a racer's propeller torque, a tweak: the port float pressed in, the nose swung to port
+        # until the rudder bites)
+        if tweaks.torque_swing and k.player:
+            tq = racer_torque(k.kind, s.throttle, abs(water_speed) / k.stall_speed)
+            yr += tq * 0.4 * (1.0 - plane)
+            torque.z += f32(tq * k.inertia.z * 0.5 * (1.0 - 0.7 * plane))
         # Water attitude damping stops porpoising; rate controls cannot roll a resting hull.
         pr *= plane * 0.6; rr *= 0.12
         pr -= pitch * 1.7 * wet
         support = min(part_health(s.damage, .left_float), part_health(s.damage, .right_float))
         rr += bank * 2.0 * wet * support
     else: s.water_age += dt
-    if s.on_ground:
+    if s.on_ground and k.landplane:
+        # On its wheels: the rudder steers (with the slipstream, so a burst of throttle swings it
+        # at a crawl, less as it runs fast: no ground loop), the elevator lifts the tail as the
+        # speed comes and, stick near the middle, holds it a little nose up, then rotates near the
+        # stall (the pilot's ordinary takeoff); ailerons hardly act.
+        elev = f64(smoothstep(k.stall_speed * 0.3, k.stall_speed * 0.75, speed))
+        pr = clamp(c.pitch, -1.0, 1.0) * k.pitch_rate * 0.6 * elev
+        want = 0.05 + 0.13 * f64(smoothstep(k.stall_speed * 0.85, k.stall_speed * 1.05, speed))
+        # (braking, or the throttle closed rolling out: tail down, as a pilot holds the stick back)
+        down = max(clamp(c.water_brake, 0.0, 1.0), 1.0 - clamp(c.throttle / 0.3, 0.0, 1.0))
+        want += (0.3 - want) * down
+        lw = 1.0 - clamp(abs(c.pitch) / 0.3, 0.0, 1.0)
+        pr += clamp((want - pitch) * 3.0, -0.45, 0.45) * elev * lw
+        rr = -clamp(c.roll, -1.0, 1.0) * k.roll_rate * 0.15 * elev
+        yr = -clamp(c.yaw,-1.0,1.0)*0.7*clamp(abs(water_speed)/5.0+s.throttle*0.6,0.0,1.0)*(1.0-0.55*f64(smoothstep(15.0,35.0,abs(water_speed))))
+    else if s.on_ground:
         pr = 0; rr = 0
         yr = -clamp(c.yaw,-1.0,1.0)*0.45*clamp(abs(water_speed)/4.0,0.0,1.0)
     s.on_water = wet > 0 or (s.on_water and s.water_age < 0.12)
     s.planing = wet > 0 and plane > 0.5
     if wet > 0 and u.y < 0.0:
         s.capsized = true; s.crashed = true
+    if wet > 0 and k.landplane: s.crashed = true
     if s.capsized:
         pr = 0; rr = 0; yr = 0
     # Low-energy beaching settles; a moving wreck keeps its momentum and can tumble/slide.
@@ -978,7 +988,6 @@ struct FlightPlan:
     approach_distance = 1800.0
     clearance_altitude = 0.0        # highest terrain on departure-to-destination corridor
     go_arounds = 0
-    arrival_setup = false            # NPC adapter: first join the extended approach centreline
     touchdown = vec3(0, 0, 0)        # recorded first landing contact
 
 _air_controls = (k: CraftSpec, s: CraftState, e: FlightEnv, direction: vec3, altitude: f64, speed: f64) -> Controls:
@@ -993,6 +1002,7 @@ _air_controls = (k: CraftSpec, s: CraftState, e: FlightEnv, direction: vec3, alt
     want = normalize(d + vec3(0, f32(climb), 0))
     c = steer(k, s, want)
     c.roll = clamp(c.roll, -0.8, 0.8)
+    if fdm2_active(k): c.roll = fdm2_bank_limit(k, s, c.roll); c.pitch = fdm2_autopilot_pitch(k, s, c.pitch, climb)
     c.airbrake = clamp((airspeed - speed - 2.0) * 0.12, 0.0, 1.0)
     target_v = sqrt(max(k.arc_thrust / k.arc_drag, 1.0))
     base = clamp((speed / target_v) ^ 2.0, 0.2, 1.0)

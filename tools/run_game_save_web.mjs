@@ -3,7 +3,8 @@
 import {spawn} from 'node:child_process';
 import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-const [chrome,page,scratch,query='']=process.argv.slice(2);mkdirSync(scratch,{recursive:true});
+import {openPage} from './web_page.mjs';
+const [chrome,page,scratch,query='']=process.argv.slice(2);mkdirSync(scratch,{recursive:true});const served=await openPage(page);
 const profile=mkdtempSync(join(resolve(scratch),'save-web-'));
 const child=spawn(chrome,['--headless','--no-sandbox','--mute-audio','--enable-unsafe-swiftshader','--use-angle=swiftshader','--remote-debugging-port=0',`--user-data-dir=${profile}`,'--window-size=640,360','about:blank']);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));let stderr='',ws;child.stderr.on('data',d=>stderr+=d);
@@ -27,9 +28,9 @@ try{
  });
  await send('Runtime.enable');await send('Page.enable');
  await send('Emulation.setDeviceMetricsOverride',{width:640,height:360,deviceScaleFactor:1,mobile:false});
- await send('Page.navigate',{url:'file://'+resolve(page)+'?SLOPPY_NO_AUDIO=1&AEGEAN_QUALITY=low&AEGEAN_STRESS_FRAME_DT=0.0166666666667&'+query});
+ await send('Page.navigate',{url:served.url+'?SLOPPY_NO_AUDIO=1&AEGEAN_QUALITY=low&AEGEAN_STRESS_FRAME_DT=0.0166666666667&'+query});
  await done;clearTimeout(timer);
  const storage=await send('Runtime.evaluate',{expression:'navigator.storage.estimate().then(e=>({indexedDB:e.usage,localStorageKeys:localStorage.length,wasmBytes:sloppy.memory().buffer.byteLength}))',awaitPromise:true,returnByValue:true});
  console.log('WEB_SAVE_STORAGE',JSON.stringify(storage?.result?.value));
  const shot=await send('Page.captureScreenshot',{format:'png'});if(shot?.data)writeFileSync(join(resolve(scratch),'save-web.png'),Buffer.from(shot.data,'base64'));
-}finally{clearTimeout(timer);ws?.close();child.kill();await new Promise(r=>child.once('exit',r));}
+}finally{clearTimeout(timer);ws?.close();await served.close();child.kill();await new Promise(r=>child.once('exit',r));}

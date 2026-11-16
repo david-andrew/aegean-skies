@@ -2,12 +2,15 @@
 # from the living world's guarded APIs. A club is never a second aircraft/person registry.
 use 'phoenix.jo'
 use 'air_race.jo'
+use 'air_classes.jo'
 use 'air_pilot.jo'
 use 'flight.jo'
 use 'planes.jo'
 use 'traffic.jo'
 use 'world.jo'
 use 'flight_ground.jo'
+use 'air_arm.jo'
+use 'airfields.jo'
 import 'living_types.jo' as data
 import 'living_calendar.jo' as calendar
 import 'living_far_aircraft.jo' as registry
@@ -29,6 +32,29 @@ air_meet_index = (events: AirEvents, id: int) -> int:
     loop i in 0..events.meets.len(): if events.meets[i].id == id: return i
     -1
 
+# A meet's stable ID: the club class keeps its original capital * 100000 + day (saves).
+air_meet_id = (capital: int, day: int, c: AirClass) -> int: capital * 100000 + day + (if c == .schneider: 50000 else: 0)
+
+# The class a club aircraft races in (the club class for anything unlisted).
+club_class = (w: data.World, craft: int) -> AirClass: air_class_of(Craft(int(w.aircraft[craft].kind))) ?? .club
+
+# Whether a capital's club fields an aircraft of this class: the club class is always held (the
+# player may race alone, as before); the Schneider race only when the club has a racer for it.
+club_fields = (events: AirEvents, w: data.World, capital: int, c: AirClass) -> bool:
+    if c == .club: return true
+    loop p in events.pilots:
+        if p.capital == capital and club_class(w, p.craft) == c: return true
+    false
+
+# How near a meet's harbour a position is, for entries and drawing: the start gate's distance,
+# with room for a larger course.
+air_meet_near = (meet: AirMeet, position: vec3, reach: f64 = 12000.0) -> bool:
+    meet.gates.len() > 0 and f64(length(meet.gates[0].center - position)) < reach * max(meet.scale, 1.0)
+
+# A club slot's registration key: club-class slots keep their original keys (saves); the
+# Schneider slots have their own.
+_club_key = (capital: int, c: AirClass, slot: int) -> str: if c == .schneider: "air-club:{capital}:s{slot}" else: "air-club:{capital}:{slot}"
+
 # Call once a minute after the world's clock. Failed purchases remain failures, not free
 # replacement aircraft. Two club purchases each spend at most 5% of today's household purse.
 prepare_air_events = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64 = flight_surface_height):
@@ -37,17 +63,24 @@ prepare_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMod
     day = data.day_index(w.minute)
     # Retain a month of results, bounded independently of frame rate or visits.
     events.meets = [loop meet in events.meets: if day - meet.day <= 28: meet]
-    loop country in w.countries:
-        capital = country.capital_id
+    loop ci in 0..w.countries.len():
+        capital = w.countries[ci].capital_id
         if not (capital in w.far.harbors) or not (capital in w.far.districts): continue
         harbor = w.far.harbors[capital]; district = w.far.districts[capital]
         funder = district.household_account
-        loop slot in 0..2:
-            key = "air-club:{capital}:{slot}"
+        # (the capital's flying club keeps its own cohort of pilots, air_classes.jo)
+        if district.pilot_slots < AIR_CLUB_PILOTS: w.far.districts[capital].pilot_slots = AIR_CLUB_PILOTS
+        # The club's fleet by class: two club-class slots, then three Schneider slots from the
+        # country's racing tradition, each the newest type the purse allows (air_classes.jo).
+        slots: (AirClass, int, data.Airframe[], int)[] = [(.club, 0, CLUB_LINES[0], 0), (.club, 1, CLUB_LINES[1], 0)]
+        loop k in 0..3: slots.push((.schneider, k, SCHNEIDER_LINES[ci % 2], k))
+        loop sl in slots:
+            key = _club_key(capital, sl.0, sl.1)
             # Registered ownership is permanent; never recreate a destroyed or sold aircraft.
             existing = w.far.air_registrations.get(key, -1)
-            kind = if slot == 0: data.Airframe.swift else: data.Airframe.falco
-            if existing < 0 and (w.accounts[funder].cents / 20 < data.AIRFRAMES[int(kind)].price_cents): continue
+            kind = data.Airframe.swift
+            if existing < 0:
+                kind = air_club_pick(sl.2, sl.3, w.accounts[funder].cents) ?? continue
             registration = registry.register_far_aircraft(w, capital, kind, funder, key)
             if registration.craft < 0: continue
             id = registration.craft
@@ -63,23 +96,30 @@ prepare_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMod
                 if saved is AirClubPilot and saved.craft == id and saved.person == registration.person: pilot = saved
             events.pilots.push(pilot)
         if not calendar.capital_feast_day(capital, day): continue
-        id = capital * 100000 + day
-        if air_meet_index(events, id) >= 0: continue
-        center = w.place_contexts[capital].center
-        gates = air_course(center, harbor.out, ground)
-        if gates.len() == 0: continue
-        start = (day * 1440 + 1020 - data.EPOCH_LOCAL_MINUTE) * data.TICKS_PER_MINUTE
-        meet = AirMeet(id, capital, day, w.place_contexts[capital].name + " air meeting", gates,
-            race_tick = start, display_tick = start + 120 * data.TICKS_PER_MINUTE, end_tick = start + 240 * data.TICKS_PER_MINUTE)
-        # Venue data counts residents but never instantiates named people a second time.
-        loop gathering in calendar.capital_gatherings(w, start / data.TICKS_PER_MINUTE):
-            if gathering.place == capital: meet.audience = min(48, gathering.cohort_people)
-        if harbor.quays.len() > 0:
-            right = vec3(-harbor.out.z, 0, harbor.out.x)
-            meet.quay_a = harbor.quays[0] - right * 12.0; meet.quay_b = harbor.quays[0] + right * 12.0
-        loop pilot in events.pilots:
-            if pilot.capital == capital: enter_air_meet(meet, pilot.craft, pilot.person, false, w.tick)
-        events.meets.push(meet)
+        # A feast day holds a meet for each class: the Schneider race late in the morning, the
+        # club race at five.
+        loop race_class in [AirClass.club, AirClass.schneider]:
+            id = air_meet_id(capital, day, race_class)
+            if air_meet_index(events, id) >= 0 or not club_fields(events, w, capital, race_class): continue
+            center = w.place_contexts[capital].center
+            gates: AirGate[]; scale = 1.0
+            loop k in air_class_scales(race_class):
+                if gates.len() == 0:
+                    gates = air_course(center, harbor.out, ground, k); scale = k
+            if gates.len() == 0: continue
+            start = (day * 1440 + air_class_start(race_class) - data.EPOCH_LOCAL_MINUTE) * data.TICKS_PER_MINUTE
+            meet = AirMeet(id, capital, day, w.place_contexts[capital].name + " air meeting", gates,
+                race_tick = start, display_tick = start + air_class_racing_minutes(race_class) * data.TICKS_PER_MINUTE, end_tick = start + air_class_meet_minutes(race_class) * data.TICKS_PER_MINUTE,
+                race_class = race_class, scale = scale)
+            # Venue data counts residents but never instantiates named people a second time.
+            loop gathering in calendar.capital_gatherings(w, start / data.TICKS_PER_MINUTE):
+                if gathering.place == capital: meet.audience = min(48, gathering.cohort_people)
+            if harbor.quays.len() > 0:
+                right = vec3(-harbor.out.z, 0, harbor.out.x)
+                meet.quay_a = harbor.quays[0] - right * 12.0; meet.quay_b = harbor.quays[0] + right * 12.0
+            loop pilot in events.pilots:
+                if pilot.capital == capital and club_class(w, pilot.craft) == race_class: enter_air_meet(meet, pilot.craft, pilot.person, false, w.tick)
+            events.meets.push(meet)
 
 struct AirEntryResult:
     accepted = false
@@ -87,6 +127,8 @@ struct AirEntryResult:
 
 # The entry fee goes to the host capital's household purse, through the ledger like any purchase.
 AIR_MEET_FEE_CENTS = 2000
+# (by class: the club fee above; the Schneider class's is higher, air_classes.jo)
+air_meet_fee = (meet: AirMeet) -> int: air_class_fee(meet.race_class)
 
 air_meet_fee_account = (w: data.World, capital: int) -> int:
     if capital in w.far.districts: w.far.districts[capital].household_account else: -1
@@ -97,20 +139,23 @@ enter_player_air_meet = (events: mut AirEvents, w: mut data.World, meet_id: int)
     c = w.people[w.player].craft
     if c < 0: return AirEntryResult(reason = "An aircraft is needed.")
     body = w.aircraft[c]
-    if body.hull < 700 or body.engine < 700 or body.fuel_ml < 10000: return AirEntryResult(reason = "Repair and refuel before entering.")
-    if length(body.pose.pos - events.meets[i].gates[0].center) > 12000: return AirEntryResult(reason = "Enter at the host harbor.")
     meet = events.meets[i]
+    if (air_class_of(Craft(int(body.kind))) ?? .club) != meet.race_class or air_class_of(Craft(int(body.kind))) == none:
+        return AirEntryResult(reason = "This is a {AIR_CLASS_NAMES[int(meet.race_class)].lower()} race: it needs {air_class_eligible(meet.race_class)}.")
+    if body.hull < 700 or body.engine < 700 or body.fuel_ml < 10000: return AirEntryResult(reason = "Repair and refuel before entering.")
+    if not air_meet_near(meet, body.pose.pos): return AirEntryResult(reason = "Enter at the host harbor.")
     if meet.phase != .registration or w.tick >= meet.race_tick or meet.entries.len() >= 8: return AirEntryResult(reason = "Entries are closed.")
     loop entry in meet.entries: if entry.craft == c or entry.person == w.player: return AirEntryResult(reason = "Already entered.")
     payer = w.people[w.player].account; purse = air_meet_fee_account(w, meet.capital)
-    if payer < 0 or purse < 0 or w.accounts[payer].cents < AIR_MEET_FEE_CENTS: return AirEntryResult(reason = "The entry fee is {phoenix_text(AIR_MEET_FEE_CENTS)}.")
-    if not money.transfer(w, payer, purse, AIR_MEET_FEE_CENTS, .trade): return AirEntryResult(reason = "The entry fee is {phoenix_text(AIR_MEET_FEE_CENTS)}.")
+    fee = air_meet_fee(meet)
+    if payer < 0 or purse < 0 or w.accounts[payer].cents < fee: return AirEntryResult(reason = "The entry fee is {phoenix_text(fee)}.")
+    if not money.transfer(w, payer, purse, fee, .trade): return AirEntryResult(reason = "The entry fee is {phoenix_text(fee)}.")
     if not enter_air_meet(events.meets[i], c, w.player, true, w.tick):
         # (refused after the fee moved: the same purse gives it back, so no lepton is made or lost)
-        _ = money.transfer(w, purse, payer, AIR_MEET_FEE_CENTS, .refund)
+        _ = money.transfer(w, purse, payer, fee, .refund)
         return AirEntryResult(reason = "Entries are closed.")
     loop mut entry in events.meets[i].entries:
-        if entry.person == w.player and entry.human: entry.fee = AIR_MEET_FEE_CENTS
+        if entry.person == w.player and entry.human: entry.fee = fee
     AirEntryResult(true, "")
 
 # The fee the club returns on withdrawal now, by the meet's rule (0 once the race has begun).
@@ -162,7 +207,7 @@ withdraw_air_meet = (events: mut AirEvents, meet_id: int, craft: int) -> bool:
     false
 
 nearby_air_meets = (events: AirEvents, position: vec3) -> AirMeet[]:
-    [loop meet in events.meets: if meet.gates.len() > 0 and length(meet.gates[0].center - position) < 15000: meet]
+    [loop meet in events.meets: if air_meet_near(meet, position, 15000.0): meet]
 
 # Display is a broad horizontal figure eight, staggered in height and phase, with wing
 # greetings on the straight passes. It uses control inputs, never animated aircraft poses.
@@ -201,12 +246,16 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
             continue
         spec = club_spec(p, w, models)
         if p.last_tick == w.tick: continue
-        meeting = -1
+        meeting = -1; racing_class = club_class(w, p.craft)
         loop i in 0..events.meets.len():
             m = events.meets[i]
-            if m.capital == p.capital and m.phase != .finished and m.phase != .cancelled and w.tick >= m.race_tick - 120 * data.TICKS_PER_MINUTE: meeting = i
+            if m.capital == p.capital and m.race_class == racing_class and m.phase != .finished and m.phase != .cancelled and w.tick >= m.race_tick - 120 * data.TICKS_PER_MINUTE: meeting = i
         clock = data.local_minute(w.minute); day = data.day_index(w.minute)
-        practice = meeting < 0 and clock >= 600 and clock < 660 and p.practice_day != day
+        # (the Schneider racers fly only for their meets: no morning practice circuits)
+        # (and none on a race day: the club flies its races)
+        race_day = false
+        loop m in events.meets: if m.capital == p.capital and m.day == day: race_day = true
+        practice = meeting < 0 and not race_day and racing_class == .club and clock >= 600 and clock < 660 and p.practice_day != day
         launch_meet = meeting >= 0 and p.meet != events.meets[meeting].id
         if not p.active and (launch_meet or practice) and not p.state.crashed and c.engine > 700:
             # Morning practice and meet preparation can make every club ready
@@ -227,7 +276,7 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
             runway = air_runway(w.place_contexts[p.capital].center, h.out, conditions.wind_at(w, p.state.position), ground, 220)
             if not runway.valid: p.last_tick = w.tick; events.pilots[k] = p; continue
             p.plan = FlightPlan(target = runway.touchdown, taxi_target = h.docks[dock], altitude = 220,
-                takeoff_heading = runway.heading, landing_heading = runway.heading, speed = spec.stall_speed * 1.5)
+                takeoff_heading = runway.heading, landing_heading = runway.heading, speed = spec.stall_speed * (if racing_class == .schneider: 1.8 else: 1.5))
             p.departure = runway.start; p.departing = true; p.active = true; p.waypoint = 0
             p.state.fuel = f64(c.fuel_ml) / 1000.0; unmoor(p.state)
             p.meet = if meeting >= 0: events.meets[meeting].id else: -1
@@ -243,9 +292,15 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
             returning = if p.meet >= 0: mi < 0 or events.meets[mi].phase == .finished or events.meets[mi].phase == .cancelled else: tick >= p.practice_until
             returning = returning or p.state.fuel < 22.0
             approach_busy = false
-            if returning:
+            # (one already down, taxiing, or on its final approach keeps it)
+            if returning and not p.state.on_water and p.plan.phase != .land and p.plan.phase != .taxi and p.plan.phase != .done:
                 loop other in events.pilots:
-                    if other.craft < p.craft and other.capital == p.capital and other.active and not other.state.on_water: approach_busy = true
+                    if other.craft < p.craft and other.capital == p.capital and other.active and not other.state.on_water:
+                        # (only a clubmate coming home too has the approach; one going out to its
+                        # own class's race does not hold this one up)
+                        mo = air_meet_index(events, other.meet)
+                        other_home = if other.meet >= 0: mo < 0 or events.meets[mo].phase == .finished or events.meets[mo].phase == .cancelled else: tick >= other.practice_until
+                        if other_home or other.state.fuel < 22.0: approach_busy = true
             if tick >= p.next_think:
                 p.next_think = tick + 6
                 air_think(p.air, AirProfile(temperament = .racer, altitude = 260, pace = min(1.0, 140.0 / spec.cruise_speed)), p.craft, p.capital, p.state, spec, p.plan.target, contacts, [], -1, tick, e)
@@ -258,20 +313,24 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
                     p.controls = air_autopilot(spec, p.state, p.plan, e)
                 else:
                     task = air_display_task(p, w.place_contexts[p.capital].center + h.out * 2200.0, h.out, tick, spec.cruise_speed)
+                    pace = min(spec.cruise_speed, 140.0)
                     if mi >= 0:
                         loop entry in events.meets[mi].entries:
                             if entry.craft == p.craft:
                                 if let race = air_race_task(events.meets[mi], entry, p.state.position):
-                                    task = race; task.altitude = 130 + f64(p.craft % 2) * 140.0
+                                    task = race
+                                    # (staggered heights; the fast class lower, well under its ceiling)
+                                    task.altitude = if events.meets[mi].race_class == .schneider: 140.0 + f64(p.craft % 2) * 70.0 else: 130 + f64(p.craft % 2) * 140.0
+                                    pace = air_class_pace(events.meets[mi].race_class, spec.cruise_speed, spec.max_speed, events.meets[mi].scale)
                     if approach_busy: task.altitude = 400; task.aim += h.out * 1500.0; task.pace = 0.60
-                    p.controls = air_waypoint_controls(spec, p.state, e, task.aim, task.altitude, min(spec.cruise_speed, 140.0) * task.pace)
+                    p.controls = air_waypoint_controls(spec, p.state, e, task.aim, task.altitude, pace * task.pace)
                     if mi >= 0 and events.meets[mi].phase == .display: p.controls.roll += sin(f64(tick) / 60.0 * 2.0) * 0.18
                 if p.air.avoiding:
                     if p.state.on_water:
                         if p.air.yield_water: p.controls.throttle = 0; p.controls.water_brake = 1.0
                     else: p.controls = air_waypoint_controls(spec, p.state, e, p.air.aim, p.air.altitude, p.air.speed)
             if p.plan.phase == .failed and p.state.on_water and not p.state.crashed and not p.state.beached and p.state.fuel > 0: p.plan.phase = .taxi
-            step(spec, p.state, air_stabilize(spec, p.state, e, p.controls), e, 1.0 / 60.0)
+            step(spec, p.state, p.controls, e, 1.0 / 60.0)
             p.prop += (8 + 70 * p.state.throttle) / 60.0
             if mi >= 0: sample_air_entry(events.meets[mi], p.craft, p.state.position, tick, not p.state.crashed)
         phase = if p.state.crashed: data.CraftState.wrecked else: if p.state.moored: data.CraftState.moored else: if p.state.on_water: data.CraftState.taxi else: data.CraftState.airborne
@@ -287,9 +346,18 @@ update_air_events = (events: mut AirEvents, w: mut data.World, models: CraftMode
                 w.people[p.person].pose.pos = h.quays[berth.dock]
             # A wreck keeps its occupant bound until the living rescue owner takes over.
         events.pilots[k] = p
+    # (the aerodromes' fighters, on the same ground the player's wheels meet: the turf on it)
+    update_air_arm(events, w, models, (x: f64, z: f64) -> f64: ground(x, z) + airfield_turf(x, z))
 
 air_event_traffic = (events: AirEvents, w: data.World, models: CraftModel[]) -> Traffic[]:
     result: Traffic[]
+    loop p in events.arm:
+        f = AIRFIELDS[clamp(p.field, 0, AIRFIELDS.len() - 1)]
+        town = if f.place in w.place_contexts: w.place_contexts[f.place].name else: "the town"
+        why = if p.phase == .parked: "Standing at {f.name}" else: (if p.mission == 0: "Air arm circuits at {f.name}" else: "Air arm display over {town}")
+        result.push(Traffic(craft = p.craft, person = p.person, name = w.people[p.person].name, why = why,
+            reason = data.Reason(purpose = .patrol, actor = p.person), kind = .fiat_cr20, model = p.model, spec = arm_spec(p, models), state = p.state, plan = FlightPlan(), town = -1, dock = -1,
+            flying = p.phase != .parked, materialized = true, prop_angle = p.prop))
     loop p in events.pilots:
         kind = Craft(int(w.aircraft[p.craft].kind))
         result.push(Traffic(craft = p.craft, person = p.person, name = w.people[p.person].name, why = if p.meet >= 0: "Flying at the capital air meeting" else: "Flying a local club circuit",
@@ -301,6 +369,9 @@ air_event_traffic = (events: AirEvents, w: data.World, models: CraftModel[]) -> 
 # Restoring the AirEvents value preserves race progress and sampled gate segments.
 snapshot_air_events = (events: AirEvents, w: mut data.World) -> str:
     loop p in events.pilots:
+        w.aircraft[p.craft].scene_extension = to_text(p)
+        w.aircraft[p.craft].scene_extension_tick = w.tick
+    loop p in events.arm:
         w.aircraft[p.craft].scene_extension = to_text(p)
         w.aircraft[p.craft].scene_extension_tick = w.tick
     to_text(events)

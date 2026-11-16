@@ -1,4 +1,7 @@
+use 'water_field.jo'
+use 'access_bridges.jo'
 use 'canal_geometry.jo'
+use 'lake_ports.jo'
 # Deterministic places, independent of rendering and living-world save state.
 # IDs 0..5 are reserved for the original harbors. Generated IDs derive from
 # geography and candidate coordinates, never a list length or the camera.
@@ -7,6 +10,7 @@ use 'geography.jo'
 use 'world_source.jo'
 use 'settlement_ports.jo'
 use 'town_region.jo'
+use 'baked_assets.jo'
 
 enum SettlementKind: capital, port, market, fishing, hill, monastery, hamlet, farm, lighthouse, chapel
 
@@ -33,6 +37,7 @@ struct WorldSettlement:
     neighbors: int[]                # settlement IDs, never array indices
     roads: int[]                    # indices in settlement_roads
     legacy: int = -1
+    remote_harbor = false            # landing belongs to this town, outside its house layout
     old: vec2                       # old-quarter hill in local tangent/inland coordinates
 
 struct SettlementRoad:
@@ -53,7 +58,8 @@ settlement_by_id: {int: int} = {}
 settlement_bins: {int: int[]} = {}
 settlement_registry_ready = true
 settlement_island_cursor = 0
-const SETTLEMENT_VERSION = 3
+settlement_generation = 0
+const SETTLEMENT_VERSION = 4
 const PLACE_SPACING = 20.0
 SETTLEMENT_COUNTRIES = ["Archipelago", "Kalyra", "Orenthia"]
 
@@ -116,15 +122,29 @@ place_add = (id: int,kind: SettlementKind,region_id: int,p: vec2,out: vec2,coast
         tangent = vec2(-out.y,out.x)
         reach = if kind == .capital: 240.0 else: (if kind == .port: 110.0 else: 55.0)
         qa = p-out*40.0; qb = p+out*f32(reach)
+        # A berth needs water under the hull and a clear swing circle: no rock
+        # within a wing's reach. Step a little further out or wider if needed.
+        berth_clear = (q: vec2) -> bool:
+            if place_ground(q) >= -2.0: return false
+            loop k in 0..12:
+                if place_ground(q+vec2(f32(cos(f64(k)*TAU/12.0)),f32(sin(f64(k)*TAU/12.0)))*6.0) > -0.3: return false
+            true
         loop side in [-1.0,1.0]:
             at = p+out*f32(reach-20.0)+tangent*f32(side*14.0)
+            clear = berth_clear(at)
+            if not clear:
+                loop shift in [vec2(8,0),vec2(8,4),vec2(14,4)]:
+                    q = p+out*f32(reach-20.0+f64(shift.x))+tangent*f32(side*(14.0+f64(shift.y)))
+                    if berth_clear(q): at = q; clear = true; break
+            # A berth that cannot swing clear is dropped while the other one serves.
+            if not clear and (side < 0.0 or docks.len() > 0) and place_ground(p+out*f32(reach-20.0)-tangent*f32(side*14.0)) < -2.0: continue
             if place_ground(at) < -2.0:
                 docks.push(MooringPlace(vec3(at.x,0,at.y),qa,qb,if kind == .capital: 12.0 else: 7.0,vec3(at.x+out.x*38.0,0,at.y+out.y*38.0),deck=2.4))
         if docks.len() == 0: return
     name = if kind == .capital: (if region_id == 1: "Kalyrassa" else: "Orenthessa") else: place_name(seed)
-    # Names remain deterministic and unique, with a geographic qualifier on collisions.
+    # Reserve the authored canal city name before its record is appended; reroll collisions deterministically.
     loop attempt in 0..32:
-        duplicate = false
+        duplicate = name == CANAL_CITY_NAME
         loop other in world_settlements:
             if other.name == name: duplicate = true; break
         if not duplicate: break
@@ -204,7 +224,7 @@ place_inside = (s: WorldSettlement,q: vec2) -> bool:
     f64(length(q)) <= edge
 
 place_reserved = (s: WorldSettlement,q: vec2) -> bool:
-    if s.legacy<0 and s.harbor.len()>0 and q.y>-48.0 and q.y<32.0 and abs(q.x)<f32(port_span(s)+20.0): return true
+    if s.legacy<0 and s.harbor.len()>0 and not s.remote_harbor and q.y>-48.0 and q.y<32.0 and abs(q.x)<f32(port_span(s)+20.0): return true
     if s.kind == .capital and q.y > -45.0 and q.y < 45.0 and q.x > -65.0 and q.x < 230.0: return true
     if s.kind == .monastery and abs(q.x) < 48.0 and q.y > 10.0 and q.y < 65.0: return true
     if s.size >= 100:
@@ -266,13 +286,22 @@ place_lot = (s: WorldSettlement,i: int,j: int) -> PlaceLot?:
         w = 12.0+f64(seed%7); d = 10.0+f64((seed/7)%5)
         floors = if q.y < 160.0: 3+seed%2 else: (if edge < 0.65: 2+seed%2 else: 1+seed%2)
     if not place_inside(s,q) or place_reserved(s,q): return none
-    if s.harbor.len() > 0 and q.y < -45.0: return none
+    if s.harbor.len() > 0 and not s.remote_harbor and q.y < -45.0: return none
     if s.size > 1 and length(q) < 23.0: return none
+    # The church (or lighthouse) at the head of the square has its own footprint;
+    # a house lot that reaches it would be built into its walls.
+    if s.kind != .farm:
+        scale = if s.kind == .capital: 1.6 else: 1.0
+        half = if s.kind == .lighthouse: vec2(3,3) else: vec2(f32(4.5*scale),f32(7.0*scale))
+        gap = max(abs(q-vec2(0,26))-half,vec2(0,0))
+        if f64(length(gap)) < 0.5*sqrt(w*w+d*d)+1.0: return none
     PlaceLot(q,yaw,w,d,floors,seed)
 
 place_ground_lot = (s: WorldSettlement,lot: PlaceLot,canonical: bool = true) -> PlaceParcel?:
     p = place_to_world(s,lot.local)
     h = if canonical: place_ground(p) else: place_base(p)
+    water=water_at(f64(p.x),f64(p.y))
+    if water.wet:return none
     if h < 2.0 or h > (if s.kind == .monastery: 1200.0 else: 850.0): return none
     yaw = atan2(f64(s.out.x),f64(s.out.y))-lot.yaw
     right = vec2(f32(cos(yaw)),f32(-sin(yaw))); forward = vec2(f32(sin(yaw)),f32(cos(yaw)))
@@ -293,7 +322,19 @@ place_ground_lot = (s: WorldSettlement,lot: PlaceLot,canonical: bool = true) -> 
             if lo >= 1.2 and hi-lo <= 5.0: accepted = true; break
             if s.size == 1: break
         if not accepted: return none
-    PlaceParcel(vec3(p.x,f32(lo),p.y),yaw,width,depth,f64(lot.floors)*town_floor_height(s.country)+1.0+hi-lo,lot.seed,lot.floors,s.country,if s.kind==.farm: 2 else: if s.kind==.hamlet or s.kind==.hill: 1 else: 0)
+    # Cut into the hill, as Aegean hill towns are: a drop of about a storey becomes a lower
+    # storey with its own windows on the downhill side, taken out of the storeys seen from
+    # uphill, so the face towards the sea keeps the designed height; only the remainder, under
+    # 2 m, is plain wall. A house squeezed narrow by a steep lane stays low. Stretching the
+    # whole house over the drop pushed its windows up and left blank towers from the sea.
+    fh = town_floor_height(s.country)
+    drop = hi-lo
+    cut = int(floor(drop/fh+0.5))
+    floors = max(lot.floors,cut+1)
+    if cut > 0 or width < lot.width or depth < lot.depth: floors = min(floors,max(cut+1,int(min(width,depth)/3.2)))
+    floors = min(4,floors)   # (the region house meshes go to four storeys)
+    rest = max(0.0,drop-f64(cut)*fh)
+    PlaceParcel(vec3(p.x,f32(lo),p.y),yaw,width,depth,f64(floors)*fh+1.0+rest,lot.seed,floors,s.country,if s.kind==.farm: 2 else: if s.kind==.hamlet or s.kind==.hill: 1 else: 0)
 
 place_parcel = (s: WorldSettlement,i: int,j: int) -> PlaceParcel?:
     if let lot = place_lot(s,i,j): return place_ground_lot(s,lot)
@@ -392,6 +433,8 @@ place_landmarks = (s: WorldSettlement) -> PlaceLandmark[]:
     result
 
 init_settlements = (roads: bool = false,defer_islands: bool = false):
+    global settlement_generation
+    settlement_generation+=1
     global world_settlements,settlement_roads,settlement_by_id,settlement_road_bins,settlement_registry_ready,settlement_island_cursor,port_cache
     port_cache=[]
     settlement_registry_ready = not geography_enabled; settlement_island_cursor = 0
@@ -464,10 +507,58 @@ init_settlements = (roads: bool = false,defer_islands: bool = false):
     qa=canal_launch.xz+side*21.0-dir*12.0;qb=canal_launch.xz+side*21.0+dir*12.0
     harbor=[MooringPlace(canal_launch,qa,qb,3.0,canal_launch,deck=f64(canal_workshop.y))]
     world_settlements.push(WorldSettlement(CANAL_CITY_ID,CANAL_CITY_NAME,.port,80,1,1,canal_workshop,vec2(0,1),1100.0,CANAL_CITY_ID,harbor))
+    attach_lake_landings()
     plan_settlement_roads()
     index_settlement_bins()
+    if defer_islands: use_baked_registry()
     if not defer_islands or roads: finish_settlement_registry()
     if roads: build_settlement_roads()
+
+# The small islands' places, as prepare_settlement_registry would append them, baked by
+# tools/bake.jo (assets/baked). Taken only when what they were made from is the same: the places
+# and roads made so far (the mainland, from the same terrain, geography, canal and lake data) and
+# the islands themselves. Otherwise the islands are made a few a frame, as without a bake.
+const SETTLEMENT_REGISTRY_BAKE = "settlement-registry-v1.bin"
+struct BakedSettlementRegistry:
+    key: u64
+    settlements: WorldSettlement[]
+    roads: SettlementRoad[]
+    by_id: {int: int}
+    bins: {int: int[]}
+settlement_registry_use_bake = true          # (false: the bake itself, and its check)
+
+settlement_registry_key = () -> u64:
+    hash((world_settlements,settlement_roads,settlement_by_id,settlement_bins,small_islands))
+
+baked_settlement_registry = () -> BakedSettlementRegistry:
+    BakedSettlementRegistry(0,world_settlements,settlement_roads,settlement_by_id,settlement_bins)
+
+use_baked_registry = () -> bool:
+    global world_settlements,settlement_roads,settlement_by_id,settlement_bins,settlement_registry_ready,settlement_island_cursor
+    if settlement_registry_ready or not settlement_registry_use_bake: return false
+    packed = baked_asset(SETTLEMENT_REGISTRY_BAKE)
+    if packed == none: return false
+    text = inflate(packed!)
+    if text == none: return false
+    baked = from_text[BakedSettlementRegistry](str_from_bytes(text!))
+    if baked is TextError: return false
+    if baked.key != settlement_registry_key(): return false
+    world_settlements = baked.settlements; settlement_roads = baked.roads
+    settlement_by_id = baked.by_id; settlement_bins = baked.bins
+    settlement_island_cursor = small_islands.len(); settlement_registry_ready = true
+    true
+
+# tools/bake.jo: the mainland made (init_settlements(false,true)), the islands made as the game
+# would make them, all of it packed with the key of what it was made from
+bake_settlement_registry = () -> u8[]:
+    global settlement_registry_use_bake
+    settlement_registry_use_bake = false
+    init_settlements(false,true)
+    key = settlement_registry_key()
+    finish_settlement_registry()
+    baked = baked_settlement_registry(); baked.key = key
+    settlement_registry_use_bake = true
+    deflate(bytes(to_text(baked)))
 
 # Mainland places (including capitals) are immediately available. The game can
 # append small-island records in authored order after its first frame. This same
@@ -503,6 +594,7 @@ prepare_settlement_registry = () -> bool:
     stop = min(small_islands.len(),settlement_island_cursor+4)
     loop k in settlement_island_cursor..stop: append_island_settlements(small_islands[k])
     settlement_island_cursor = stop
+    attach_shore_landings(first)
     plan_settlement_roads(first)
     index_settlement_bins(first)
     settlement_registry_ready = stop == small_islands.len()
@@ -514,62 +606,144 @@ finish_settlement_registry = ():
 # Bounded A* in a corridor around a pair. Elevation change costs more than
 # distance, so roads choose valleys and contours; sea and steep grades forbid
 # an edge. A final finer canonical check rejects shortcuts across narrow coves.
-place_route = (a: vec2,b: vec2) -> vec3[]:
+route_heap_before = (fa: f64,ka: int,fb: f64,kb: int) -> bool: fa < fb or (fa == fb and ka < kb)
+route_heap_push = (fs: mut f64[],ks: mut int[],f: f64,k: int):
+    fs.push(f); ks.push(k)
+    i = fs.len()-1
+    loop i > 0:
+        up = (i-1)/2
+        if not route_heap_before(fs[i],ks[i],fs[up],ks[up]): break
+        tf = fs[i]; fs[i] = fs[up]; fs[up] = tf
+        tk = ks[i]; ks[i] = ks[up]; ks[up] = tk
+        i = up
+route_heap_pop = (fs: mut f64[],ks: mut int[]):
+    last = fs.len()-1
+    fs[0] = fs[last]; ks[0] = ks[last]
+    fs.pop(); ks.pop()
+    i = 0
+    loop true:
+        l = i*2+1; r = l+1; m = i
+        if l < fs.len() and route_heap_before(fs[l],ks[l],fs[m],ks[m]): m = l
+        if r < fs.len() and route_heap_before(fs[r],ks[r],fs[m],ks[m]): m = r
+        if m == i: break
+        tf = fs[i]; fs[i] = fs[m]; fs[m] = tf
+        tk = ks[i]; ks[i] = ks[m]; ks[m] = tk
+        i = m
+
+# A road search that can stop between pieces and go on another frame: the grid's heights a
+# row at a time, then the A* a few nodes at a time, then the path. place_route runs it whole;
+# the same grid, the same choices and the same path either way.
+struct RouteSearch:
+    a: vec2 = vec2(0,0)
+    b: vec2 = vec2(0,0)
+    stage: int = 0                   # 0 the grid, 1 the search, 2 the path, 3 done
+    row: int = 0
+    iteration: int = 0
+    reached: bool = false
+    step: f64 = 0.0
+    forward: vec2 = vec2(0,0)
+    side: vec2 = vec2(0,0)
+    points: vec2[]
+    heights: f64[]
+    cost: f64[]
+    parent: int[]
+    closed: bool[]
+    open_f: f64[]
+    open_k: int[]
+    path: vec3[]
+    backwards: vec2[]
+    leg: int = 0
+    failed: bool = false
+
+route_search = (a: vec2,b: vec2) -> RouteSearch:
     distance = f64(length(b-a))
-    if distance < 100.0: return []
-    step = distance/20.0
-    forward = normalize(b-a); side = vec2(-forward.y,forward.x)
-    points: vec2[]; heights: f64[]; cost: f64[]; parent: int[]; closed: bool[]
-    loop j in 0..31:
-        loop i in 0..31:
-            p = a+forward*f32(f64(i-5)*step)+side*f32(f64(j-15)*step)
-            points.push(p); heights.push(place_base(p)); cost.push(1e30); parent.push(-1); closed.push(false)
+    if distance < 100.0: return RouteSearch(a,b,stage=3)
+    forward = normalize(b-a)
+    RouteSearch(a,b,step=distance/20.0,forward=forward,side=vec2(-forward.y,forward.x))
+
+# Pieces until `until` (a time()), at least one; true once the search is done (r.path).
+route_search_step = (r: mut RouteSearch,until: f64) -> bool:
     start = 15*31+5; goal = 15*31+25
-    cost[start] = 0.0
-    reached = false
-    loop iteration in 0..700:
-        best = -1; score = 1e30
-        loop k in 0..cost.len():
-            if closed[k] or cost[k] >= 1e29: continue
-            f = cost[k]+f64(length(points[k]-b))
-            if f < score: score = f; best = k
-        if best < 0: break
-        if best == goal: reached = true; break
-        closed[best] = true
+    first = true
+    loop r.stage == 0:
+        if not first and time() > until: return false
+        first = false
+        j = r.row
+        loop i in 0..31:
+            p = r.a+r.forward*f32(f64(i-5)*r.step)+r.side*f32(f64(j-15)*r.step)
+            r.points.push(p); r.heights.push(place_base(p)); r.cost.push(1e30); r.parent.push(-1); r.closed.push(false)
+        r.row += 1
+        if r.row == 31:
+            r.cost[start] = 0.0
+            # The open nodes in a heap by (estimate, index): the same choice as scanning every
+            # node for the lowest estimate (the lowest index among equals), without the scan.
+            r.open_f = [f64(length(r.points[start]-r.b))]; r.open_k = [start]
+            r.stage = 1
+    loop r.stage == 1:
+        if not first and r.iteration%8 == 0 and time() > until: return false
+        first = false
+        if r.iteration >= 700:
+            r.stage = 2; break
+        r.iteration += 1
+        best = -1
+        loop r.open_k.len() > 0:
+            f = r.open_f[0]; k = r.open_k[0]
+            route_heap_pop(r.open_f,r.open_k)
+            if r.closed[k] or f != r.cost[k]+f64(length(r.points[k]-r.b)): continue
+            best = k; break
+        if best < 0: r.stage = 2; break
+        if best == goal: r.reached = true; r.stage = 2; break
+        r.closed[best] = true
         loop dz in -1..2:
             loop dx in -1..2:
                 if dx == 0 and dz == 0: continue
                 i = best%31+dx; j = best/31+dz
                 if i < 0 or i >= 31 or j < 0 or j >= 31: continue
                 k = j*31+i
-                if closed[k] or heights[k] < 2.0 or heights[k] > 1100.0: continue
-                len = f64(length(points[k]-points[best]))
-                dh = abs(heights[k]-heights[best])
+                if r.closed[k] or r.heights[k] < 2.0 or r.heights[k] > 1100.0: continue
+                len = f64(length(r.points[k]-r.points[best]))
+                dh = abs(r.heights[k]-r.heights[best])
                 if dh/len > 0.24: continue
-                mid = place_base((points[k]+points[best])*0.5)
-                if mid < 2.0 or abs(mid-(heights[k]+heights[best])*0.5) > len*0.12: continue
-                next = cost[best]+len+dh*9.0
-                if next < cost[k]: cost[k] = next; parent[k] = best
-    if not reached: return []
-    backwards: vec2[]; k = goal
-    loop k != start:
-        backwards.push(points[k]); k = parent[k]
-        if k < 0: return []
-    backwards.push(a)
-    path: vec3[]
-    loop n in 0..backwards.len()-1:
-        p = backwards[backwards.len()-1-n]; q = backwards[backwards.len()-2-n]
-        count = max(1,int(ceil(f64(length(q-p))/55.0)))
-        loop j in 0..count:
-            here = mix(p,q,f32(f64(j)/f64(count)))
-            at = place_point(here)
-            if at.y < 1.0: return []
-            if path.len() > 0:
-                last = path[path.len()-1]
-                if abs(at.y-last.y) > length(at.xz-last.xz)*0.38: return []
-            path.push(at)
-    path.push(place_point(b))
-    path
+                mid = place_base((r.points[k]+r.points[best])*0.5)
+                if mid < 2.0 or abs(mid-(r.heights[k]+r.heights[best])*0.5) > len*0.12: continue
+                next = r.cost[best]+len+dh*9.0
+                if next < r.cost[k]:
+                    r.cost[k] = next; r.parent[k] = best
+                    route_heap_push(r.open_f,r.open_k,next+f64(length(r.points[k]-r.b)),k)
+    if r.stage == 2:
+        if not r.reached: r.stage = 3; return true
+        if r.backwards.len() == 0:
+            k = goal
+            loop k != start:
+                r.backwards.push(r.points[k]); k = r.parent[k]
+                if k < 0: r.failed = true; break
+            r.backwards.push(r.a)
+            if r.failed: r.stage = 3; return true
+        # (the path down to the ground, a leg at a time: a sample and a bridge check each 55 m)
+        loop r.leg < r.backwards.len()-1:
+            if not first and time() > until: return false
+            first = false
+            n = r.leg; r.leg += 1
+            p = r.backwards[r.backwards.len()-1-n]; q = r.backwards[r.backwards.len()-2-n]
+            count = max(1,int(ceil(f64(length(q-p))/55.0)))
+            loop j in 0..count:
+                here = mix(p,q,f32(f64(j)/f64(count)))
+                at = place_point(here)
+                at.y=f32(access_bridge_height(here,f64(at.y)))
+                if at.y < 1.0: r.failed = true; break
+                if r.path.len() > 0:
+                    last = r.path[r.path.len()-1]
+                    if abs(at.y-last.y) > length(at.xz-last.xz)*0.38: r.failed = true; break
+                r.path.push(at)
+            if r.failed: r.path = []; r.stage = 3; return true
+        r.path.push(place_point(r.b))
+        r.stage = 3
+    true
+
+place_route = (a: vec2,b: vec2) -> vec3[]:
+    r = route_search(a,b)
+    _ = route_search_step(r,1e30)
+    r.path
 
 # Candidate identities depend only on place order, not camera or cache history.
 # Adapters must check ready and points.len() before treating a link as traversable.
@@ -603,13 +777,21 @@ compact_place_route = (path: vec3[]) -> vec3[]:
     result.push(path[path.len()-1])
     result
 
+# (counts roads made: what depends on the road network can tell it has grown)
+settlement_road_revision = 0
 ensure_settlement_road = (id: int):
-    global settlement_roads,world_settlements
     if settlement_roads[id].ready: return
     road = settlement_roads[id]
     ai = settlement_by_id[road.a]; bi = settlement_by_id[road.b]
-    path = place_route(world_settlements[ai].center.xz,world_settlements[bi].center.xz)
+    finish_settlement_road(id,place_route(world_settlements[ai].center.xz,world_settlements[bi].center.xz))
+
+# The road's route found (or none): it is ready, and its towns know it.
+finish_settlement_road = (id: int,path: vec3[]):
+    global settlement_roads,world_settlements,settlement_road_revision
+    road = settlement_roads[id]
+    ai = settlement_by_id[road.a]; bi = settlement_by_id[road.b]
     settlement_roads[id].ready = true
+    settlement_road_revision += 1
     if path.len() < 2: return
     settlement_roads[id].points = compact_place_route(path)
     # Sorted reciprocal indices remain identical under arbitrary request order.
@@ -624,14 +806,33 @@ build_settlement_roads = ():
     loop id in 0..settlement_roads.len(): ensure_settlement_road(id)
 
 # One bounded search per request. The chart can request the next unevaluated link;
-# scene streaming only touches corridors near the camera, never the whole planet.
-prepare_settlement_roads = (p: vec2,chart: bool = false) -> bool:
+# scene streaming only touches corridors near the camera, never the whole planet, and with
+# `until` (a time()) takes its search a slice a frame, the search under way finished first.
+settlement_road_search = RouteSearch()
+settlement_road_searching = -1
+prepare_settlement_roads = (p: vec2,chart: bool = false,until: f64 = 1e30) -> bool:
+    global settlement_road_search,settlement_road_searching
+    if settlement_road_searching >= 0 and not settlement_roads[settlement_road_searching].ready:
+        id = settlement_road_searching
+        if not route_search_step(settlement_road_search,until): return false
+        finish_settlement_road(id,settlement_road_search.path)
+        settlement_road_searching = -1; settlement_road_search = RouteSearch()
+        return true
+    settlement_road_searching = -1
     loop id in 0..settlement_roads.len():
         road = settlement_roads[id]
         if road.ready: continue
         b = road.bounds
         if not chart and (p.x < b.x-1200.0 or p.y < b.y-1200.0 or p.x > b.z+1200.0 or p.y > b.w+1200.0): continue
-        ensure_settlement_road(id)
+        if until >= 1e29 or chart:
+            ensure_settlement_road(id)
+            return true
+        ai = settlement_by_id[road.a]; bi = settlement_by_id[road.b]
+        settlement_road_search = route_search(world_settlements[ai].center.xz,world_settlements[bi].center.xz)
+        settlement_road_searching = id
+        if not route_search_step(settlement_road_search,until): return false
+        finish_settlement_road(id,settlement_road_search.path)
+        settlement_road_searching = -1; settlement_road_search = RouteSearch()
         return true
     false
 
@@ -641,6 +842,7 @@ index_settlement_bins = (first: int = 0):
     if first == 0: settlement_bins = {}
     loop index in first..world_settlements.len():
         s = world_settlements[index]; r = s.radius+600.0
+        if s.remote_harbor:r=max(r,f64(length(s.harbor[0].quay_a-s.center.xz))+700.0)
         loop z in int(floor((f64(s.center.z)-r)/16000.0))..int(floor((f64(s.center.z)+r)/16000.0))+1:
             loop x in int(floor((f64(s.center.x)-r)/16000.0))..int(floor((f64(s.center.x)+r)/16000.0))+1:
                 key = (x+32)*128+z+32
@@ -687,7 +889,7 @@ settlement_avoid_buildings = (p: vec2) -> vec2:
     result = p
     loop index in settlement_bins.get(geography_bin(f64(p.x),f64(p.y)),[]):
         s = world_settlements[index]
-        if s.legacy >= 0 or length(p-s.center.xz) > f32(s.radius+20.0): continue
+        if s.legacy >= 0 or s.id == CANAL_CITY_ID or length(p-s.center.xz) > f32(s.radius+20.0): continue
         if s.harbor.len()>0 and length(p-s.center.xz)<f32(port_span(s)+120.0):
             loop b in settlement_port(s).buildings:
                 side=vec2(-s.out.y,s.out.x); delta=result-b.at.xz
@@ -721,51 +923,63 @@ struct PlaceStreet:
 
 # Streets are data, available without a GPU and in the same district coordinates
 # as the renderer. People/routines can pick endpoints and sample canonical ground.
+# The whole street plan of a settlement, in its local frame (x along the shore, y inland) with
+# its width; made once and clipped by every district that asks.
+place_street_plans: {int: PlaceStreet[]}
+place_street_plan = (s: WorldSettlement) -> PlaceStreet[]:
+    global place_street_plans
+    if let plan = place_street_plans.get(s.id): return plan
+    plan: PlaceStreet[]
+    if s.size >= 100:
+        loop ring in 1..int(place_old_radius(s)/75.0)+1:
+            loop k in 0..48:
+                angle = (f64(k)+0.5)*TAU/48.0
+                if sin(angle*2.0+f64(ring*5)) > -0.35: place_plan_street(plan,place_ring(s,f64(ring)*75.0,f64(k)*TAU/48.0),place_ring(s,f64(ring)*75.0,f64(k+1)*TAU/48.0),5.0)
+        angle = atan2(-f64(s.old.y)/0.82,-f64(s.old.x))
+        loop spoke in 0..4:
+            a = angle+f64(spoke)*TAU/4.0
+            loop k in 0..int(place_old_radius(s)/15.0)+1: place_plan_street(plan,place_ring(s,f64(k)*15.0,a),place_ring(s,f64(k+1)*15.0,a),4.0)
+        n = int(ceil(s.radius/154.0))
+        loop j in -n..n+1:
+            loop k in 0..int(s.radius/22.0)+1:
+                a = vec2(f32(j*154),f32(k*22)); b = a+vec2(0,22)
+                if place_ring_coordinates(s,(a+b)*0.5).x > f32(place_old_radius(s)+14.0): place_plan_street(plan,a,b,7.0)
+        loop j in 0..n+1:
+            loop k in -int(s.radius/22.0)..int(s.radius/22.0)+1:
+                a = vec2(f32(k*22),f32(j*154)); b = a+vec2(22,0)
+                if place_ring_coordinates(s,(a+b)*0.5).x > f32(place_old_radius(s)+14.0): place_plan_street(plan,a,b,7.0)
+        place_plan_street(plan,vec2(0,0),s.old,5.0)
+    else:
+        loop k in 0..24: place_plan_street(plan,place_ring(s,22.5,f64(k)*TAU/24.0),place_ring(s,22.5,f64(k+1)*TAU/24.0),2.8)
+        place_plan_street(plan,vec2(0,-25),s.old,3.0)
+    place_street_plans[s.id] = plan
+    plan
+place_plan_street = (plan: mut PlaceStreet[],a: vec2,b: vec2,width: f64): plan.push(PlaceStreet(a,b,width,true))
+
 place_streets = (s: WorldSettlement,x: int,z: int) -> PlaceStreet[]:
     streets: PlaceStreet[]
     if s.legacy >= 0 or s.size <= 1: return streets
     lo = vec2(f32(x*160),f32(z*160)); hi = lo+vec2(160,160)
     paved = s.size >= 100 or s.kind == .monastery
     # Segment ownership/clipping is exact; adjacent districts never draw twice.
-    emit = (a: vec2,b: vec2,width: f64):
-        d = b-a; t0 = 0.0; t1 = 1.0
+    loop street in place_street_plan(s):
+        a = street.a; b = street.b; width = street.width
+        d = b-a; t0 = 0.0; t1 = 1.0; outside = false
         loop axis in 0..2:
             av = if axis == 0: a.x else: a.y
             dv = if axis == 0: d.x else: d.y
             low = if axis == 0: lo.x else: lo.y
             high = if axis == 0: hi.x else: hi.y
             if abs(dv) < 0.0001:
-                if av < low or av >= high: return
+                if av < low or av >= high: outside = true
             else:
                 u = f64((low-av)/dv); v = f64((high-av)/dv)
                 t0 = max(t0,min(u,v)); t1 = min(t1,max(u,v))
-        if t1 <= t0: return
+        if outside or t1 <= t0: continue
         p = a+d*f32(t0); q = a+d*f32(t1)
-        if not place_inside(s,(p+q)*0.5): return
-        if s.harbor.len() > 0 and (p.y+q.y)*0.5 < -35.0: return
+        if not place_inside(s,(p+q)*0.5): continue
+        if s.harbor.len() > 0 and not s.remote_harbor and (p.y+q.y)*0.5 < -35.0: continue
         streets.push(PlaceStreet(place_to_world(s,p),place_to_world(s,q),width,paved))
-    if s.size >= 100:
-        loop ring in 1..int(place_old_radius(s)/75.0)+1:
-            loop k in 0..48:
-                angle = (f64(k)+0.5)*TAU/48.0
-                if sin(angle*2.0+f64(ring*5)) > -0.35: emit(place_ring(s,f64(ring)*75.0,f64(k)*TAU/48.0),place_ring(s,f64(ring)*75.0,f64(k+1)*TAU/48.0),5.0)
-        angle = atan2(-f64(s.old.y)/0.82,-f64(s.old.x))
-        loop spoke in 0..4:
-            a = angle+f64(spoke)*TAU/4.0
-            loop k in 0..int(place_old_radius(s)/15.0)+1: emit(place_ring(s,f64(k)*15.0,a),place_ring(s,f64(k+1)*15.0,a),4.0)
-        n = int(ceil(s.radius/154.0))
-        loop j in -n..n+1:
-            loop k in 0..int(s.radius/22.0)+1:
-                a = vec2(f32(j*154),f32(k*22)); b = a+vec2(0,22)
-                if place_ring_coordinates(s,(a+b)*0.5).x > f32(place_old_radius(s)+14.0): emit(a,b,7.0)
-        loop j in 0..n+1:
-            loop k in -int(s.radius/22.0)..int(s.radius/22.0)+1:
-                a = vec2(f32(k*22),f32(j*154)); b = a+vec2(22,0)
-                if place_ring_coordinates(s,(a+b)*0.5).x > f32(place_old_radius(s)+14.0): emit(a,b,7.0)
-        emit(vec2(0,0),s.old,5.0)
-    else:
-        loop k in 0..24: emit(place_ring(s,22.5,f64(k)*TAU/24.0),place_ring(s,22.5,f64(k+1)*TAU/24.0),2.8)
-        emit(vec2(0,-25),s.old,3.0)
     streets
 
 # Coarse bins store road IDs once, not a copy of every 55 m sample. Canonical

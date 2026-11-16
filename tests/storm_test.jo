@@ -1,0 +1,124 @@
+# Thunderstorms from inside: rough air through the flight model, and the
+# lightning schedule shared by the bolts, the cloud's flash and the thunder.
+# env -u DISPLAY -u WAYLAND_DISPLAY SLOPPY_NO_AUDIO=1 sloppy test tests/storm_test.jo
+import '../src/flight.jo' as fl
+import '../src/planes.jo' as planes
+import '../src/lightning.jo' as lg
+import '../src/living_types.jo' as lt
+use '../src/weather_scene.jo'
+use '../src/world_point.jo'
+use '../src/pilot.jo'
+
+_spec = (kind: planes.Craft) -> fl.CraftSpec:
+    model = planes.build_craft(kind, planes.LIVERIES[0])
+    fl.craft_spec(kind, model.contacts)
+_kinds = [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]
+
+_storm = () -> lt.Weather:
+    lt.Weather(id=991,kind=.storm,center=vec2(0,0),radius_m=9000,aspect=vec2(1,1),severity=950,wind_milli_m_per_sec=vec2(0,0),born_minute=-100,expires_minute=10000)
+
+_bank = (s: fl.CraftState) -> f64:
+    right = quat_rotate(s.orientation, vec3(1, 0, 0))
+    f64(asin(clamp(right.y, -1.0, 1.0)))
+
+# Hands off at cruise for a minute, in the given air: altitude band, the
+# largest bank, the largest change of vertical speed in a step (m/s^2), the
+# largest airspeed swing.
+_fly = (k: fl.CraftSpec, rough: f64, gusts: bool) -> vec4:
+    e = fl.FlightEnv(); e.turbulence = rough
+    s = fl.CraftState(position = vec3(0, 1500, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, water_age = 1.0)
+    c = fl.Controls(throttle = 0.75)
+    s.throttle = c.throttle
+    lo = 1500.0; bank = 0.0; jolt = 0.0; speed_lo = 1e9; speed_hi = 0.0
+    loop i in 0..3600:
+        if gusts: e.wind = weather_turbulent_gust(s.position, f32(rough))
+        before = s.velocity.y
+        fl.step(k, s, c, e, 1.0 / 60.0)
+        lo = min(lo, f64(s.position.y))
+        bank = max(bank, abs(_bank(s)))
+        jolt = max(jolt, abs(f64(s.velocity.y - before)) * 60.0)
+        if i > 300: speed_lo = min(speed_lo, s.airspeed); speed_hi = max(speed_hi, s.airspeed)
+        if s.crashed:
+            print("crashed {k.kind} rough {rough} at {i} y={s.position.y:.0} speed {s.airspeed:.1} bank {_bank(s):.2} hull {s.hull_damage:.2} wind {e.wind}")
+            break
+    assert(not s.crashed)
+    vec4(f32(lo), f32(bank), f32(jolt), f32(speed_hi - speed_lo))
+
+test "a thunderstorm's air jolts every aircraft hard yet it stays flyable hands off":
+    weather_seconds = 0.0
+    loop kind in _kinds:
+        k = _spec(kind)
+        calm = _fly(k, 0.0, false)
+        storm = _fly(k, 1.0, true)
+        print("{kind}: calm bank {calm.y:.3} jolt {calm.z:.1} swing {calm.w:.1}; storm lowest {storm.x:.0}m bank {storm.y:.3} jolt {storm.z:.1}m/s2 swing {storm.w:.1}m/s")
+        assert(storm.y > calm.y + 0.08)       # rolled about by the eddies
+        assert(storm.z > 6.0 and storm.z < 50.0)   # vertical jolts of half a g to five
+        assert(storm.w > calm.w + 4.0)        # the airspeed swings
+        assert(storm.y < 1.2)                 # never thrown on its back hands off
+        assert(storm.x > 900.0)               # nor into the sea
+
+test "rough air is felt inside cloud bodies, violent in a storm's, and nowhere in clear air":
+    weather_active = true
+    weather_cells = []
+    weather_bodies = [WeatherBody(WorldPoint(0,3000,0),vec3(4000,3500,4000),vec2(1,0),1.0),WeatherBody(WorldPoint(20000,1200,0),vec3(800,400,800),vec2(1,0),0.12)]
+    assert(weather_turbulence(vec3(0,3000,0)) > 0.9)
+    assert(weather_turbulence(vec3(20000,1100,0)) > 0.08 and weather_turbulence(vec3(20000,1100,0)) < 0.2)
+    assert(weather_turbulence(vec3(10000,1500,0)) == 0.0)
+    assert(length(weather_turbulent_gust(vec3(5,1500,9),0.0)) == 0.0)
+    weather_active = false
+
+test "lightning strikes are fixed by the storm and the clock, and each is heard after its distance":
+    cell = _storm()
+    found = lg.lightning_strikes_between([cell], 0.0, 300.0)
+    print("strikes in 300 s: {found.len()}")
+    assert(found.len() > 30 and found.len() < 60)            # one every five to ten seconds
+    ground = 0
+    loop s in found:
+        if s.ground: ground += 1
+        # (the same strike is alight from its first stroke for its life, and dark after)
+        assert(lg.lightning_strike_at(cell, s.time + 0.01).key == s.key)
+        assert(lg.lightning_brightness(s, 0.0) > 0.9 and lg.lightning_brightness(s, lg.LIGHTNING_LIFE) == 0.0)
+        assert(length(vec2(f32(s.center.x), f32(s.center.z))) < 4000.0)
+    assert(ground > 8 and ground < found.len() - 8)
+    # Split windows find exactly the same strikes.
+    a = lg.lightning_strikes_between([cell], 0.0, 137.3)
+    b = lg.lightning_strikes_between([cell], 137.3, 300.0)
+    assert(a.len() + b.len() == found.len())
+
+test "a cloud to ground bolt runs from inside the cloud to the sea with branches; an in-cloud one stays under the base":
+    cell = _storm()
+    found = lg.lightning_strikes_between([cell], 0.0, 300.0)
+    seen_ground = false; seen_cloud = false
+    loop s in found:
+        segs = lg.lightning_bolt(s, 800.0)
+        lowest = 1e9; highest = -1e9
+        loop g in segs: lowest = min(lowest, f64(min(g.a.y, g.b.y))); highest = max(highest, f64(max(g.a.y, g.b.y)))
+        if s.ground:
+            seen_ground = true
+            assert(lowest <= 0.0 and highest >= 1100.0 and segs.len() > 40)
+        else:
+            seen_cloud = true
+            assert(highest <= 870.0 and lowest > 0.0 and segs.len() > 30)
+    assert(seen_ground and seen_cloud)
+
+test "the pilot's head is knocked about by storm jolts, springs back, and stays within ten centimetres and six degrees":
+    k = _spec(planes.Craft.gull)
+    loop rough in [0.0, 1.0]:
+        f = Flyer(planes.Craft.gull, 0, k, fl.CraftState(position = vec3(0, 1500, 0), velocity = vec3(0, 0, -k.cruise_speed), fuel = k.fuel_capacity, water_age = 1.0, throttle = 0.75))
+        e = fl.FlightEnv(); e.turbulence = rough
+        most = 0.0; turn = 0.0; snap = 0.0; last = vec3(0, 0, 0)
+        loop i in 0..1800:
+            e.wind = weather_turbulent_gust(f.state.position, f32(rough))
+            fl.step(k, f.state, fl.Controls(throttle = 0.75), e, 1.0 / 60.0)
+            head_step(f, rough, 1.0 / 60.0)
+            most = max(most, f64(length(f.head_pos))); turn = max(turn, f64(length(f.head_rot)))
+            assert(abs(f.head_pos.x) <= 0.1 and abs(f.head_pos.y) <= 0.1 and abs(f.head_rot.z) <= 0.105)
+            # (no single-frame snap: the whole turn, buzz and all, moves no more a frame than a
+            # smooth two-degree wobble at 15 Hz does, about three and a half degrees)
+            shook = head_shake(f, f64(i) / 60.0).1
+            if i > 0: snap = max(snap, f64(length(shook - last)))
+            last = shook
+        print("rough {rough}: head up to {most * 100.0:.1} cm, {turn * 57.3:.2} deg, at most {snap * 57.3:.2} deg a frame")
+        assert(snap < 0.061)
+        if rough == 0.0: assert(most < 0.004 and turn < 0.004)
+        else: assert(most > 0.03 and turn > 0.04)

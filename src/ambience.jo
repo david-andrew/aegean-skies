@@ -3,11 +3,12 @@ use 'ambience_synth.jo'
 use 'calendar.jo'
 import 'living_types.jo' as life
 import 'living_conditions.jo' as conditions
+use 'lightning.jo'
 use 'vessel_types.jo'
 
 const AMBIENCE_LOOPS = 6
-const AMBIENCE_HITS = 4
-const AMBIENCE_PENDING = 24
+const AMBIENCE_HITS = 8
+const AMBIENCE_PENDING = 32
 struct AmbienceSource:
     key: int
     kind: AmbienceKind
@@ -16,6 +17,7 @@ struct AmbienceSource:
     reach: f64
     soft: f64 = 0.0
     pitch: f64 = 1.0
+    variant = 0                     # which take of an event (ambience_variants)
 struct AmbienceEvent:
     source: AmbienceSource
     due: f64
@@ -29,25 +31,122 @@ struct AmbienceVoice:
 struct Ambience:
     enabled: bool[] = fill(true,AMBIENCE_CATEGORIES)
     sounds: Sound[]
-    soft: Sound[]
+    soft: Sound[]                   # (at a quarter of the rate: ambience_soften_bank)
+    first: int[]                    # each kind's first take in sounds (empty: one take each, by kind)
     loops: AmbienceVoice[]
     hits: AmbienceVoice[]
     pending: AmbienceEvent[]
     sources: AmbienceSource[]
     last_time = -1.0
+    last_bell_minute = -1
     refresh = 0.0
     muted = false
     active = false
     playback = false
     duck = 1.0                      # live music close by hushes the background (the cafe's own murmur excepted)
+    # (for play the instruments are made after the first frame, a few milliseconds a frame:
+    # which kinds are made, the take being made and how far it has got)
+    ready: bool[]
+    next_take = 0
+    next_kind = AMBIENCE_KINDS      # (a place in AMBIENCE_BUILD_ORDER)
+    making = 0                      # 0 its sound, 1 its finish, 2 its half-rate copy, 3 its muffled copy, 4 the next begun
+    whole: Sound = Sound()
+    build: AmbienceBuild = AmbienceBuild()
+    copy: CopyBuild = CopyBuild()
 
 build_ambience = (render_only: bool = false) -> Ambience:
     a = Ambience(active=render_only or env("SLOPPY_NO_AUDIO") == none,playback=not render_only and env("SLOPPY_NO_AUDIO") == none)
     if not a.active: return a
+    if a.playback:
+        # (heard in play: nothing here delays the first frame; ambience_build_step makes them)
+        ambience_build_later(a)
+        return a
     loop k in 0..AMBIENCE_KINDS:
-        s = make_ambience(AmbienceKind(k))
-        a.sounds.push(s); a.soft.push(ambience_soften(s))
+        a.first.push(a.sounds.len())
+        loop take in 0..ambience_variants(AmbienceKind(k)):
+            s = make_ambience(AmbienceKind(k),take+1)
+            a.sounds.push(ambience_decimate(s,ambience_rate_step(AmbienceKind(k)))); a.soft.push(ambience_soften_bank(s))
+    a.ready = fill(true,AMBIENCE_KINDS); a.next_kind = AMBIENCE_KINDS
     a
+
+ambience_build_later = (a: mut Ambience):
+    a.first = []; total = 0
+    loop k in 0..AMBIENCE_KINDS:
+        a.first.push(total); total += ambience_variants(AmbienceKind(k))
+    a.sounds = fill(Sound(),total); a.soft = fill(Sound(),total)
+    a.ready = fill(false,AMBIENCE_KINDS)
+    a.next_kind = 0; a.next_take = 0; a.making = 0
+    a.build = ambience_build_begin(AMBIENCE_BUILD_ORDER[0],1)
+
+# Makes the instruments still to be made, for about `budget_ms` this frame: the same sounds
+# build_ambience would have made at once (they draw on no shared random numbers). Each take is
+# made in slices (a crowd bed piece by piece), then finished, then its half-rate copy and its
+# muffled copy are made in slices too: no piece of it takes long.
+const AMBIENCE_BUILD_SLICE = 1024
+# (what is heard soonest is made first: a fresh game starts on a quay by the sea)
+AMBIENCE_BUILD_ORDER = [AmbienceKind.beach,.murmur,.wave,.rope,.rigging,.gull,.hammer,.bell,.greet,.laugh,.call,.ask,.answer,.cafe,.ship_engine,.luff,.dog,.cliff,.surge,.trees,.grass,.cicada,.songbird,.spring,.goat,.donkey,.cricket,.owl,.whistle,.rain_sea,.rain_roof,.thunder,.goose,.bleat,.quack,.coot]
+const AMBIENCE_COPY_SLICE = 8192
+ambience_build_step = (a: mut Ambience,budget_ms: f64):
+    began = time()
+    # (at least one piece a frame, however small the budget)
+    loop a.next_kind < AMBIENCE_KINDS:
+        ambience_build_piece(a)
+        if (time()-began)*1000.0 >= budget_ms: return
+
+# One piece of the making: a slice of a take's sound, its finish, or a slice of one of its copies.
+ambience_build_piece = (a: mut Ambience):
+    if a.next_kind >= AMBIENCE_KINDS: return
+    kind = AMBIENCE_BUILD_ORDER[a.next_kind]
+    at = a.first[int(kind)]+a.next_take
+    if a.making == 0:
+        if ambience_build_run(a.build,AMBIENCE_BUILD_SLICE): a.making = 1
+    else if a.making == 1:
+        a.whole = ambience_build_finish(a.build); a.build = AmbienceBuild()
+        step = ambience_rate_step(kind)
+        if step <= 1: a.sounds[at] = a.whole; a.making = 3; a.copy = ambience_soften_begin(a.whole)
+        else: a.making = 2; a.copy = ambience_copy_begin(a.whole,step,f64(MIX_RATE)/f64(step)*0.42,f64(MIX_RATE)/f64(step)*0.42)
+    else if a.making == 2:
+        if ambience_copy_run(a.copy,AMBIENCE_COPY_SLICE):
+            a.sounds[at] = Sound(a.copy.out); a.making = 3; a.copy = ambience_soften_begin(a.whole)
+    else if a.making == 3:
+        if ambience_copy_run(a.copy,AMBIENCE_COPY_SLICE):
+            a.soft[at] = Sound(a.copy.out); a.copy = CopyBuild(); a.whole = Sound()
+            a.next_take += 1
+            if a.next_take >= ambience_variants(kind):
+                a.ready[int(kind)] = true; a.next_kind += 1; a.next_take = 0
+            a.making = 4
+    else:
+        # (the next take begun, a piece of its own)
+        a.build = ambience_build_begin(kind,a.next_take+1); a.making = 0
+
+ambience_ready = (a: Ambience,kind: AmbienceKind) -> bool: int(kind) < a.ready.len() and a.ready[int(kind)]
+
+# the playback pitch of a take: the bank's rate made up (the muffled copies at a quarter). A copy
+# kept at half the mixer's rate holds half the samples for the same seconds, so the mixer steps
+# through it at half a sample per sample it makes (2 here played every take four times too fast,
+# two octaves high).
+ambience_step = (a: Ambience,kind: AmbienceKind,muffled: bool) -> f64:
+    if a.first.len() == 0: return 1.0
+    if muffled: 1.0/f64(AMBIENCE_SOFT_STEP) else: 1.0/f64(ambience_rate_step(kind))
+ambience_take = (a: Ambience,s: AmbienceSource) -> int:
+    if a.first.len() == 0: return int(s.kind)
+    a.first[int(s.kind)]+s.variant%ambience_variants(s.kind)
+
+# 0..1 from a key, a count and a salt: the same answer every time, unrelated across keys
+ambience_hash = (key: int,n: int,salt: int) -> f64:
+    state = u64((key*1000003+n*7919+salt*104729+12345) and 0x7fffffffffffffff)
+    ambience_unit(state)
+
+# The cell of an uneven event if one falls between the last scan and this one, else -1. Time is
+# cut in cells of `seconds` and each holds one event at its own hashed moment, so the gaps run
+# from almost nothing to nearly twice `seconds`, never a beat (a fixed period, the old way, was
+# heard as a metronome: hull hammering every 4.7 s to the frame).
+ambience_due = (previous: f64,now: f64,key: int,seconds: f64) -> int:
+    if previous < 0 or now <= previous or now-previous > 1.5 or seconds <= 0: return -1
+    loop c in int(floor(previous/seconds))..int(floor(now/seconds))+1:
+        at = (f64(c)+ambience_hash(key,c,1))*seconds
+        if at > previous and at <= now: return c
+    -1
 
 ambience_score = (s: AmbienceSource,listener: vec3) -> f64:
     s.gain*pow(max(0.0,1.0-f64(length(s.pos-listener))/max(1.0,s.reach)),2.0)*(1.0-0.72*s.soft)
@@ -66,17 +165,20 @@ ambience_offer = (list: mut AmbienceSource[],s: AmbienceSource,listener: vec3,li
         if ambience_score(list[k],listener) < ambience_score(list[worst],listener): worst = k
     if ambience_score(s,listener) > ambience_score(list[worst],listener): list[worst] = s
 
+# Up, out and about: not the player, travelling, carried, gone, resting, asleep or at home.
+ambience_awake = (w: life.World,p: life.Person) -> bool:
+    if p.id == w.player or p.trip >= 0 or p.carriage >= 0 or p.state == .departed or p.state == .resting: return false
+    if p.id in w.far.people:
+        resident = w.far.people[p.id]
+        if resident.anchor == resident.home_key and length(p.pose.pos-resident.home_pos) < 4: return false
+    if p.id in w.daily_life:
+        a = w.daily_life[p.id]
+        if a.activity == .sleep or a.activity == .rest: return false
+    true
 ambience_people = (w: life.World,listener: vec3) -> vec3[]:
     points: vec3[]
     loop p in w.people:
-        if p.id == w.player or p.trip >= 0 or p.carriage >= 0 or p.state == .departed or p.state == .resting: continue
-        if length(p.pose.pos-listener) > 250: continue
-        if p.id in w.far.people:
-            resident = w.far.people[p.id]
-            if resident.anchor == resident.home_key and length(p.pose.pos-resident.home_pos) < 4: continue
-        if p.id in w.daily_life:
-            a = w.daily_life[p.id]
-            if a.activity == .sleep or a.activity == .rest: continue
+        if length(p.pose.pos-listener) > 250 or not ambience_awake(w,p): continue
         points.push(p.pose.pos)
     loop h in w.households:
         if h.activity != .sleep and h.activity != .rest and length(h.pose-listener) <= 250: points.push(h.pose)
@@ -102,7 +204,10 @@ ambience_bell_count = (minute: int) -> int:
     if hour%12 == 0: 12 else: hour%12
 ambience_bells = (a: mut Ambience,churches: AmbienceSource[],minute: int,now: f64,listener: vec3):
     count = ambience_bell_count(minute)
-    if count == 0: return
+    if count == 0 or a.last_bell_minute == minute: return
+    # Audible time and calendar time differ while taking the waters. Several
+    # scans can see one hour boundary; schedule that peal only once.
+    a.last_bell_minute = minute
     # The nearest church, with a bounded queue shared across every event source.
     closest: AmbienceSource[]
     loop s in churches: ambience_offer(closest,s,listener,1)
@@ -112,22 +217,16 @@ ambience_bells = (a: mut Ambience,churches: AmbienceSource[],minute: int,now: f6
             if count == 16: hit.pitch = [1.0,1.25,1.5,1.25][k%4]
             ambience_queue(a,hit,now+f64(k)*(if count == 16: 0.9 else: 1.0)+f64(s.key%7)*0.025,listener)
 
-# Same 23-second identity/phase as the visible two-pulse lightning. The second
-# optical pulse is one strike, not a second thunderclap. Distance is physical metres.
+# Thunder from the strikes that are seen (lightning.jo): each strike's channel,
+# heard after the distance at the speed of sound. Distance is physical metres.
 ambience_thunder = (a: mut Ambience,w: life.World,previous: f64,now: f64,listener: vec3):
     if previous < 0 or now <= previous or now-previous > 1.0: return
-    loop cell in w.weather:
-        if cell.kind != .storm: continue
-        shift = f64(cell.id)*7.13
-        cycle = floor((now+shift-2.0)/23.0)
-        strike = cycle*23.0+2.0-shift
-        if strike <= previous or strike > now: continue
-        pos = vec3(cell.center.x,0,cell.center.y)
-        weight = conditions.weather_weight(cell,f64(w.tick)/f64(life.TICKS_PER_MINUTE),pos)
-        if weight <= 0.0: continue
+    loop s in lightning_strikes_between(w.weather,previous,now):
+        pos = vec3(f32(s.center.x),if s.ground: 400.0 else: 900.0,f32(s.center.z))
         distance = f64(length(pos-listener))
-        if distance > 12000: continue
-        ambience_queue(a,AmbienceSource(cell.id,.thunder,pos,0.35*f64(weight),12000,soft=clamp(distance/6000,0.0,1.0)),strike+distance/343.0,listener)
+        if distance > 14000: continue
+        loud = (if s.ground: 0.45 else: 0.3)*f64(s.weight)
+        ambience_queue(a,AmbienceSource(s.key,.thunder,pos,loud,14000,soft=clamp(distance/6000,0.0,1.0)),s.time+distance/343.0,listener)
 
 ambience_ship_source = (v: Vessel,wind: vec3) -> AmbienceSource?:
     if v.status != .underway or v.speed < 0.15: return none
@@ -174,9 +273,9 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         exists = false
         loop v in a.loops:
             if v.source.key == s.key and v.source.kind == s.kind: exists = true
-        if exists or a.loops.len() >= AMBIENCE_LOOPS: continue
-        direct = play_at(a.sounds[int(s.kind)],s.pos,0.0,s.reach,pitch=s.pitch,looping=true)
-        soft = play_at(a.soft[int(s.kind)],s.pos,0.0,s.reach,pitch=s.pitch,looping=true)
+        if exists or a.loops.len() >= AMBIENCE_LOOPS or not ambience_ready(a,s.kind): continue
+        direct = play_at(a.sounds[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,false),looping=true)
+        soft = play_at(a.soft[ambience_take(a,s)],s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,true),looping=true)
         a.loops.push(AmbienceVoice(s,direct,soft))
     total = 0.0
     loop v in a.loops: total += v.level
@@ -185,7 +284,7 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
         gain = v.level*scale*(1.0-0.72*v.source.soft)*(if v.source.kind == .cafe: 1.0 else: a.duck)
         move_sound(v.direct,v.source.pos,gain*(1.0-v.source.soft),v.source.reach)
         move_sound(v.muffled,v.source.pos,gain*v.source.soft,v.source.reach)
-        set_pitch(v.direct,v.source.pitch); set_pitch(v.muffled,v.source.pitch)
+        set_pitch(v.direct,v.source.pitch*ambience_step(a,v.source.kind,false)); set_pitch(v.muffled,v.source.pitch*ambience_step(a,v.source.kind,true))
     live: AmbienceVoice[]
     loop v in a.hits:
         if now >= v.expires or not a.enabled[ambience_category(v.source.kind)]: ambience_stop_voice(v)
@@ -195,11 +294,12 @@ ambience_mix = (a: mut Ambience,listener: vec3,dt: f64,now: f64,flying: bool):
     loop e in a.pending:
         if not a.enabled[ambience_category(e.source.kind)]: continue
         if e.due > now: waiting.push(e); continue
-        if now-e.due > 0.3 or a.hits.len() >= AMBIENCE_HITS: continue
+        if now-e.due > 0.3 or a.hits.len() >= AMBIENCE_HITS or not ambience_ready(a,e.source.kind): continue
         s = e.source
         if ambience_score(s,listener) <= 0.00005: continue
-        sample = if s.soft > 0.45: a.soft[int(s.kind)] else: a.sounds[int(s.kind)]
-        voice = play_at(sample,s.pos,0.0,s.reach,pitch=s.pitch)
+        muffled = s.soft > 0.45
+        sample = if muffled: a.soft[ambience_take(a,s)] else: a.sounds[ambience_take(a,s)]
+        voice = play_at(sample,s.pos,0.0,s.reach,pitch=s.pitch*ambience_step(a,s.kind,muffled))
         a.hits.push(AmbienceVoice(s,voice,expires=now+ambience_seconds(s.kind)/s.pitch))
     a.pending = waiting
     # Update every active hit too: flight/teleport/mute cannot leave a loud old tail.

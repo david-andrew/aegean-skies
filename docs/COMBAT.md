@@ -47,6 +47,59 @@ step_battle(b, environment, physical_observer)
 - The caller owns lifecycle: retain disabled aircraft through the wreck/descent, consume outcomes,
   then retire an engagement or build the next one. Do not append indefinitely to an old Battle.
 
+`Battle.ground` holds a scenario's fixed ground guns (`GroundGun`: rifle or machine gun, stable
+negative owner IDs, never people). `step_ground_fire` runs after the aircraft guns each tick: a
+target from flying hostiles in reach with clear sight (terrain samples plus `FlightEnv.solid` in
+short pieces), combat's `intercept` lead with drop, skill wander, a limited swing rate, a reaction
+time, stateless scatter. Their rounds, shot and hit events are ordinary; rounds from other sides
+hit a post's small ellipsoid and silence it when its health runs out. A post swings only within
+`arc` of its `facing` (machine-gun nests 1.9 rad). Deterministic and text-serialized with the
+Battle. Their sounds (`GroundSounds`, built by `prepare_ground_audio` only when a scenario has
+ground guns) are reports with the canal's flutter echo, heard to 1.6 km and late by distance/343 s,
+a supersonic snap for their close passes, and spout splashes for every gun's water strikes.
+
+**Dogfighting** (`_dogfight` in `src/combat.jo`) follows Sky Barons' fighter (`sim.jo`
+`bot_fighter`, Aces' `bot_pad`): targets chosen by distance weighted to the nose (now also one on
+this aircraft's tail, then one on a friend's), lead pursuit misjudged by skill, breaking off up
+and away when too close, a spread approach, throttling back close behind. What its physics gave
+its pilots for free is flown explicitly: lag pursuit against a hard-turning target, a defensive
+break into an attacker (scissors when it overshoots) and then turning on it, head-on passes held by
+nerve and broken right (or up for the bold), extending to break a stalemate or a chase that does
+not close and coming back, unloading by hand for speed, zooming on an energy advantage and never
+hanging on the propeller after a zooming target, and wingmen (`CombatPilot.wing`) covering their
+leader. `aggression` and `caution` join `skill` and `nerve`; the mistakes are deliberate: late
+reactions, wrong-way breaks, fixing on a shot with an enemy behind, overshoots. Pulls ease toward
+the stall; pull-outs are flown by hand (upright first, straight through near vertical) from five
+seconds of sink above the water, with the terrain sampled along the path. `Battle.ceiling` is a
+soft top (the strait's cloud base). `Battle.tactics` counts each behaviour.
+`tools/dogfight_lab.jo` runs N strait battles headless (`DOGFIGHT_N`, `DOGFIGHT_SECONDS`,
+`DOGFIGHT_MODEL=default|skybarons|v2|sb`, `DOGFIGHT_TRACE="actor from every"`,
+`DOGFIGHT_DOWNS=1`) and writes a report: time to first kill and kills per minute, the player
+seat's shots, hits and kills, how often NPCs are close to their target and lined up, and every
+round followed to its target (hit rate by range and crossing angle, misses by nearest pass).
+
+**Gunnery** (`_gun_aim`): the lead (`intercept`), misjudged by skill; the nose put where the aim
+is going, leading its swing by 0.12–0.24 s (a proportional steering law alone trails a turning
+target by a few degrees and misses by 5–20 m); fired within the pilot's reach and cone. A pilot
+on a gun run far from the player (LOD 1–2, whose full brain runs every 15 or 30 ticks) re-aims
+every six ticks between thoughts (`_retrack`: stick and trigger only, no actor scans).
+
+The **lead marks** (`src/lead_marker.jo`) are HUD only and drawn as Sky Barons draws its lead
+ring: a small ring (6 px radius, 2 px line) in the hostile colour where the rounds and the target
+would meet (`lead_from`, at the Battle's muzzle speed), on every hostile within 700 m whose own
+place is on screen.
+
+**Damage tuning.** Two to four solid bursts from twin guns at fighting range bring an aircraft
+down; glancing hits do partial damage, and one-burst kills come only from a lucky hit to the
+engine or the pilot. Each round's damage is `BULLET_DAMAGE` divided by the part's toughness
+(`PART_TOUGHNESS`); a tail shot away, a struck pilot (an NPC's: `PILOT_CHANCE` of a round through
+the cockpit) or a burnt-out engine takes the aircraft down. The player's own aircraft divides
+combat damage by Tweaks' **Player toughness** (2.0: about 1.8 times the bursts). The player's
+rounds hit within **Player hit margin** (0.7 m) of each part (Tweaks' **Generous hits**, on), and
+Tweaks' **Aim assist** (off) bends the player's rounds after the muzzle toward the enemy most
+plainly in their path (within 3° and 700 m, at most 4°/s, for 0.6 s); it never touches the
+controls or the aircraft. `tests/burst_test.jo` measures bursts to a kill for each.
+
 Guns use real forward muzzle/convergence vectors, inherited aircraft velocity, gravity and
 seeded scatter. Moving aircraft are hit in local part ellipsoids, with nearest-hit ordering and
 stable ID tie breaks. Terrain/sea is sampled nine times along each bullet step; this is a bounded
@@ -234,9 +287,7 @@ Combat NPC specs set `combat_flight` so their pure-scale lift, gravity and energ
 match the player. Ordinary route traffic keeps its existing calibration. The off-by-default
 **Sky Barons energy and response** Tweaks option raises the load limit to 8 g, roll authority
 by 1.125, key smoothing to 9/s, and scales both thrust and drag by the pure speed scale without
-changing equilibrium speed. It applies equally to player and combat NPCs. Chaotic stalls now
-contribute only near low airspeed, separation or reverse flow; attached flight retains normal
-kinematic response.
+changing equilibrium speed. It applies equally to player and combat NPCs.
 
 A swept 128 m spatial grid reduces bullet/body candidate tests while preserving narrow-phase
 hit ordering. Exceptional long sweeps fall back to the bounded complete list. Firing order
@@ -245,7 +296,9 @@ capped at 6/10/16 on low/medium/high; further aircraft use instanced silhouettes
 ribbons are compacted, not retained until the hard cap.
 
 **Tab** cycles targets and **C** toggles target-follow camera; right mouse keeps free look.
-Mouse/drag flight steering stays independent of the viewed target. Touch **Look** cycles on
+Mouse/drag flight steering stays independent of the viewed target, but moves the aim ring along
+the drawn camera's own right and up (`screen_aim`), so the ring follows the hand in any view. The
+target view's up rolls back to the horizon at a bounded rate (`camera_horizon_up`). Touch **Look** cycles on
 release after a tap, or toggles follow after a .45-second hold. Combat candidates include all
 hostiles without a cap, sorted by immediate threat then distance, followed by nearby friends.
 Outside combat, at most six relevant aircraft, job destinations/ships and nearby landmarks
@@ -265,7 +318,7 @@ own attenuation. Synthesis uses Sky Barons' short two-band noise crack/whizz.
 
 `build_scenario(key,towns,models,per_side=8)` supports up to 64 per side. For captures use
 `AEGEAN_SCENARIO=strait AEGEAN_BATTLE_SIDE=64`; the normal button remains eight per side.
-`AEGEAN_TWEAKS=energy` or `stalls` enables the corresponding comparison. `Start of the game`
+`AEGEAN_TWEAKS=energy` enables the corresponding comparison. `Start of the game`
 rebuilds the initial seed, quay/player, weather, handling and title while preserving rendering
 options and loaded resources.
 

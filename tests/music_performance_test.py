@@ -60,7 +60,7 @@ class Performance(unittest.TestCase):
   # zlib and zlib-ng can select different deflate blocks for the same scalar bytes.
   raw=zlib.decompress(actual,wbits=-15)
   self.assertEqual(zlib.decompress(pack_models(data),wbits=-15),raw)
-  self.assertEqual(raw[:8],b'TIM1\x10\x07\x03\x20')
+  self.assertEqual(raw[:8],b'TIM1\x11\x07\x03\x20')
   header=11+raw[4]*7
   values=struct.unpack('<'+str((len(raw)-header)//4)+'f',raw[header:])
   self.assertTrue(all(math.isfinite(x) and x>=0 for x in values))

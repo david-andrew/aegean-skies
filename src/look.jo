@@ -134,10 +134,91 @@ advance_wind=(w:mut Wind,dt:f64):
     w.drift_point=world_advance(wind_drift(w),vec3(w.dir.x,0,w.dir.y),w.speed*dt*0.9)
     w.drift=world_vec(w.drift_point).xz;w.drift_published=w.drift
 
-# Shared travelling meadow front, in drift-relative metres in either render chart.
-meadow_wave = (q: vec2,wind: vec4) -> f32:
-    front = 0.5+0.5*sin(dot(q,wind.xy)*0.32+sin(dot(q,vec2(0.07,-0.09)))*0.8)
-    front*front*clamp(wind.z/8.0,0.0,1.2)
+# Meadow gusts. Irregular patches of bent, paler grass morph and blow downwind across the meadow: a
+# domain-warped, two-octave value noise (cells of 4.5 m and 2.25 m, the warp on 14 m) whose three layers
+# are carried downwind by separate offsets at different speeds, so the shapes change as they travel.
+# The scales are fixed; wind speed only raises how fast the layers travel, so a point is swept more often
+# in stronger wind. The offsets are plain translations accumulated in f64 on the CPU (a turning wind
+# only turns the direction they advance in): no direction-dependent phase, so no field-wide pulse.
+# The noise lattice repeats every GUST_PERIOD metres, which every offset is wrapped by.
+const GUST_PERIOD = 4032.0
+
+struct MeadowPhase:
+    a1 = vec2(0,0)                  # offset of the 4.5 m layer (world x, z, wrapped to GUST_PERIOD)
+    a2 = vec2(0,0)                  # the 2.25 m layer (travels faster)
+    aw = vec2(0,0)                  # the warp layer (travels slower)
+    axis = vec2(0.8,0.6)            # the wind's direction, eased (the lean's direction)
+
+meadow_state = MeadowPhase()
+
+# metres a gust layer travels per second: 1.7 m/s in a calm, 4.8 m/s at 8 m/s wind, 13 m/s at 30 m/s
+meadow_travel = (speed: f64) -> f64: 5.5 * (0.3 + 0.07 * clamp(speed, 0.0, 40.0))
+
+meadow_wrap = (x: f64) -> f64: x - floor(x / f64(GUST_PERIOD)) * f64(GUST_PERIOD)
+
+# call once a frame with the wind's final speed (x, z unused: the gusts are fixed to the world, not the viewer)
+meadow_step = (w: Wind, x: f64, z: f64, dt: f64):
+    global meadow_state
+    if dt <= 0.0: return
+    m = meadow_state
+    mixed = m.axis + (w.dir - m.axis) * f32(min(1.0, dt * 1.5))
+    if length(mixed) > 0.05: m.axis = normalize(mixed)
+    c = meadow_travel(w.speed) * dt
+    d = vec2(f64(m.axis.x), f64(m.axis.y))
+    m.a1 = vec2(f32(meadow_wrap(f64(m.a1.x) + d.x * c)), f32(meadow_wrap(f64(m.a1.y) + d.y * c)))
+    m.a2 = vec2(f32(meadow_wrap(f64(m.a2.x) + d.x * c * 1.15)), f32(meadow_wrap(f64(m.a2.y) + d.y * c * 1.15)))
+    m.aw = vec2(f32(meadow_wrap(f64(m.aw.x) + d.x * c * 0.6)), f32(meadow_wrap(f64(m.aw.y) + d.y * c * 0.6)))
+    meadow_state = m
+
+# the wind vector the shaders read: (lean direction x, z, speed, 0)
+meadow_wind = (w: Wind, origin: vec3) -> vec4:
+    vec4(meadow_state.axis.x, meadow_state.axis.y, f32(w.speed), 0)
+
+# layer offsets for a render origin, so a chart-local position p reads the noise at p + shift
+meadow_shift = (a: vec2, origin: vec3) -> vec2:
+    vec2(f32(meadow_wrap(f64(origin.x) - f64(a.x))), f32(meadow_wrap(f64(origin.z) - f64(a.y))))
+meadow_gust = (origin: vec3) -> vec4:
+    s1 = meadow_shift(meadow_state.a1, origin); s2 = meadow_shift(meadow_state.a2, origin)
+    vec4(s1.x, s1.y, s2.x, s2.y)
+meadow_gust_w = (origin: vec3) -> vec2: meadow_shift(meadow_state.aw, origin)
+
+# (in shaders) smooth value noise on a lattice that repeats every 32 cells
+pnoise = (p: vec2) -> f32:
+    i = floor(p)
+    f = p - i
+    u = f * f * (vec2(3, 3) - f * 2.0)
+    i0 = i - floor(i / 32.0) * 32.0
+    i1 = i0 + vec2(1, 1)
+    i1 = i1 - floor(i1 / 32.0) * 32.0
+    a = hash21(i0)
+    b = hash21(vec2(i1.x, i0.y))
+    c = hash21(vec2(i0.x, i1.y))
+    d = hash21(i1)
+    mix(mix(a, b, u.x), mix(c, d, u.x), u.y)
+
+# (in shaders) one gust field, 0..1.2. `local` is the render position; g = meadow_gust (4.5 m and 2.25 m layer
+# offsets) and gw = meadow_gust_w (the warp layer). detail 1 (blades) warps the field and adds the fine layer;
+# 0 is a cheap sine version of the coarse layer (the ground's sheen).
+meadow_wave = (local: vec2, g: vec4, gw: vec2, speed: f32, detail: f32) -> f32:
+    if detail < 0.5:
+        # the ground's sheen: interlocking warped sines on the same advected layer, periodic in GUST_PERIOD
+        # (no hashing: this runs for every pixel that has meadow)
+        q = local + g.xy
+        m = 0.5 + 0.28 * sin(q.x * 1.396 + 1.8 * sin(q.y * 0.4488)) + 0.22 * sin(q.y * 0.698 + 1.3 * sin(q.x * 0.4488))
+        return smoothstep(0.32, 0.78, m) * (0.35 + 0.85 * smoothstep(0.0, 10.0, speed))
+    warp = vec2(0, 0)
+    if detail > 0.5:
+        angle = pnoise((local + gw) / 14.0 + vec2(3.1, 7.7)) * 6.2832
+        warp = vec2(cos(angle), sin(angle)) * 3.0
+    n = pnoise((local + g.xy + warp) / 4.5)
+    if detail > 0.5: n = n * 0.65 + pnoise((local + g.zw + warp * 0.6) / 2.25 + vec2(13, 5)) * 0.35
+    smoothstep(0.32, 0.78, n) * (0.35 + 0.85 * smoothstep(0.0, 10.0, speed))
+
+# lean (metres per unit blade height factor): a steady push and the swing of the bands on top of it,
+# both growing with the wind speed
+meadow_lean = (speed: f32) -> vec2:
+    s = clamp(speed, 0.0, 30.0)
+    vec2(0.07 + 0.02 * s, 0.14 + 0.016 * s)
 
 # Small achromatic contrast around the visible mass mean. Wind sheen is
 # added separately by the shared terrain material, never darkened by roots.

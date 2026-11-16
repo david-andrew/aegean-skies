@@ -8,8 +8,12 @@
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
+import {openPage} from './web_page.mjs';
 
-const [chrome, page, out, secs = "6", query = ""] = process.argv.slice(2);
+const [chrome, page, out, secs = "6", given = ""] = process.argv.slice(2);
+const served = await openPage(page);
+// (straight into the game, past the title screen, unless the query asks for it: AEGEAN_TITLE=1)
+const query = /AEGEAN_TITLE=/i.test(given) ? given : (given ? given + "&" : "?") + "AEGEAN_TITLE=0";
 readFileSync(page); // Fail before opening Chromium when the requested build is missing.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dir = mkdtempSync(join(process.env.WEBSHOT_TMP || dirname(out), "webshot-"));
@@ -53,7 +57,7 @@ try {
   p.linkProgram=function(prog){link.call(this,prog);mobileProbe.programs.push({linked:this.getProgramParameter(prog,this.LINK_STATUS),log:this.getProgramInfoLog(prog),sources:this.getAttachedShaders(prog).map(s=>this.getShaderSource(s))});};
   window.addEventListener('error',e=>mobileProbe.errors.push(String(e.error||e.message)));
   `});
-  await send("Page.navigate", { url: "file://" + page + query });
+  await send("Page.navigate", { url: served.url + query });
   await sleep(parseFloat(secs) * 1000);
   const mobile=await send("Runtime.evaluate",{returnByValue:true,expression:`({quality:globalThis.AegeanWeb?.quality,canvas:[document.querySelector('canvas')?.width,document.querySelector('canvas')?.height],...window.mobileProbe})`});
   writeFileSync(out+'.json',JSON.stringify(mobile.result.value,null,2));
@@ -94,6 +98,7 @@ try {
   }
   console.log("browser tree RSS KiB", memory(b.pid));
 } finally {
+  await served.close();
   b.kill();
   await new Promise(r => b.once("exit", r));
   rmSync(dir,{recursive:true,force:true});

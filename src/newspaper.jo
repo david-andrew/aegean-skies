@@ -1,0 +1,317 @@
+# Today's paper at the coffee house: a period broadsheet column made from what the town has
+# actually heard. It holds:
+#   - the harbour's news (its received-news queue);
+#   - the telegrams and letters the town's people carry (their far reports: the crisis, convoys,
+#     arrivals);
+#   - the market's prices here, and the latest word of prices elsewhere;
+#   - the harbour office's weather observation;
+#   - the notices the game passes in (posted work, the air club's meets).
+# Read-only: reading the paper teaches nobody anything and changes nothing in the world.
+
+use 'phoenix.jo'
+use 'calendar.jo'
+use 'living_types.jo'
+use 'living_far_types.jo'
+use 'living_far_news.jo'
+use 'living_text.jo'
+use 'living_news.jo'
+use 'living_talk_words.jo'
+import 'living_conditions.jo' as conditions
+
+struct PaperPiece:
+    section: str                    # "Abroad", "Shipping", "The air", "Notices"...
+    head: str                       # the headline
+    body: str
+    weight = 0                      # (the bigger, the higher in its section)
+
+struct PaperPrice:
+    good: str                       # "Fish"
+    here: int                       # cents a package at this harbour
+    word: str                       # "dear", "cheap" or ""
+    elsewhere: str                  # "Mikra ¤4.20, Tuesday"
+
+struct Paper:
+    title: str
+    dateline: str
+    cents = 10                      # what it costs
+    lead: PaperPiece? = none        # the day's big story
+    pieces: PaperPiece[]
+    prices: PaperPrice[]
+    weather = ""
+
+const PAPER_CENTS = 10
+
+_cap = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper() + s[1..s.len()]
+
+PAPER_SECTIONS: str[] = ["Shipping", "The islands", "Abroad", "The air", "The market", "Weather", "Advertisements", "Notices"]
+
+_far_head = (r: FarReport) -> str:
+    match r.kind:
+        "war_declared": "War Declared"
+        "armistice": "Armistice Signed"
+        "mobilization": "Mobilization Ordered"
+        "blockade": "Blockade"
+        "occupation": "Town Occupied"
+        "border_warning": "Warning on the Border"
+        "ceasefire_request": "A Ceasefire Sought"
+        "evacuation": "Evacuation"
+        "convoy": "A Convoy Sails"
+        "letter_of_marque": "Letters of Marque"
+        "prize_sale": "A Prize Sold"
+        "rescue", "rescue_needed": "Rescue at Sea"
+        "convoy_arrival": "Convoy In"
+        "aircraft_arrival": "Aircraft In"
+        "service_arrival": "Arrived"
+        "arsenal": "The Arsenal"
+        else: ""
+
+_far_section = (r: FarReport) -> str:
+    match r.kind:
+        "convoy_arrival", "aircraft_arrival", "service_arrival", "convoy": "Shipping"
+        "rescue", "rescue_needed": "The islands"
+        else: "Abroad"
+
+# ---------------- the paper's voice ----------------
+# Plain, spoken, of its day: headlines may be fragments ("Seven Cargoes In"), items are short and
+# say the same kind of thing differently from day to day, and people are named only where it
+# matters (a raider and his victim, the merchant who has nothing to sell, a pilot coming in).
+
+_pick = (lines: str[], seed: int) -> str: lines[((seed % lines.len()) + lines.len()) % lines.len()]
+
+_title = (s: str) -> str: join([loop wd in split(s, " "): (if wd == "of" or wd == "at" or wd == "and" or wd == "the" or wd == "a" or wd == "in": wd else: _cap(wd))], " ")
+
+_and = (xs: str[]) -> str:
+    if xs.len() == 0: return ""
+    if xs.len() == 1: return xs[0]
+    join(xs[0..xs.len() - 1], ", ") + " and " + xs[xs.len() - 1]
+
+# when a set of things happened, in one phrase: "yesterday", "this morning", "these two days"
+_when = (w: World, minutes: int[]) -> str:
+    if minutes.len() == 0: return ""
+    today = day_index(w.minute)
+    days: {int: bool}
+    loop m in minutes: days[day_index(m)] = true
+    if days.len() == 1:
+        d = day_index(minutes[0])
+        return if d == today: "today" else: if d == today - 1: "yesterday" else: "the day before yesterday"
+    if days.len() == 2 and (today in days or (today - 1) in days): "these two days" else: "this week"
+
+struct _Cargo:
+    good: int
+    milli: int
+    from: int
+    for: int
+    minute: int
+
+struct _Story:
+    score: int
+    section: str
+    head: str
+    body: str
+
+# The day's paper for a town (the core place index), with the game's own notices added.
+newspaper = (w: World, place: int, extra: PaperPiece[]) -> Paper:
+    date = calendar_date(day_index(w.minute))
+    weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    town = place_name(place)
+    paper = Paper(title = "The {town} Courier", dateline = "{town}, {weekdays[date.weekday]} {date.day} {months[date.month - 1]} {date.year}")
+    if let feast = calendar_feast(date): paper.dateline = "{paper.dateline}: {feast}"
+    if place < 0 or place >= w.places.len(): return paper
+    day = day_index(w.minute)
+    seed = day * 7 + place
+    stories: _Story[]
+    # ---- what the town has heard: the harbour's own queue, then its people's ----
+    heard: NewsItem[]
+    events: {int: bool}
+    loop n in w.places[place].news:
+        if not (n.event in events):
+            events[n.event] = true; heard.push(n)
+    loop p in w.people:
+        if p.home != place or p.place != place: continue
+        loop n in p.news:
+            if not (n.event in events):
+                events[n.event] = true; heard.push(n)
+    heard.sort((n: NewsItem) -> int: -n.occurred_minute)
+    cargoes: _Cargo[]
+    ins: str[]
+    outs: str[]
+    move_minutes: int[]
+    fishing = 0
+    short: {int: int[]}             # (place: the goods it is short of)
+    shorts_minutes: int[]
+    loop n in heard:
+        if n.private_fact or n.confidence < 500 or w.minute - n.occurred_minute > 2880: continue
+        r = n.reason
+        ago = say_ago(w, n.occurred_minute)
+        unsure = n.confidence < 1000
+        match n.kind:
+            .delivery:
+                if n.origin == place and r.good >= 0: cargoes.push(_Cargo(r.good, r.quantity, r.origin, r.beneficiary, n.occurred_minute))
+            .arrived, .departed:
+                if n.origin != place: continue
+                if r.purpose == .fishing:
+                    if n.kind == .departed: fishing += 1
+                    continue
+                who = short_name(w, r.actor)
+                if n.kind == .arrived and ins.len() < 4 and not (who in ins):
+                    ins.push(if r.origin >= 0 and r.origin != place: "{who} from {place_name(r.origin)}" else: who)
+                if n.kind == .departed and outs.len() < 4 and r.destination != place and r.destination >= 0: outs.push("{who} for {place_name(r.destination)}")
+                move_minutes.push(n.occurred_minute)
+            .shortage:
+                at = r.destination
+                if not (at in short): short[at] = []
+                if not (r.good in short[at]): short[at].push(r.good)
+                shorts_minutes.push(n.occurred_minute)
+            .raid, .theft:
+                victim = person_name(w, r.counterparty)
+                where = if n.origin < 0: "at sea" else: "off {place_name(n.origin)}"
+                what = if r.good >= 0: say_load(w, r.good, max(r.quantity, 1000)) else: "the cargo"
+                taker = if r.actor >= 0: person_name(w, r.actor) else: ""
+                body = _pick(["{_cap(what)} bound for {victim} was taken {where} {ago}.", "{victim} lost {what} {where} {ago}, taken by force."], seed + n.event)
+                if taker != "": body = "{body} {_pick(["The talk on the waterfront names {taker}.", "{taker} is named for it.", "Those who saw it name {taker}."], seed + n.event)}"
+                if unsure: body = "{body} The harbour office has not confirmed it."
+                stories.push(_Story(700 + n.severity / 4, "The islands", _pick(["Cargo Taken {_title(where)}", "Raided {_title(where)}", "Piracy {_title(where)}"], seed + n.event), body))
+            .rescue:
+                stories.push(_Story(500 + n.severity / 5, "The islands", if n.origin < 0: "Saved from the Sea" else: "Brought Ashore at {place_name(n.origin)}", "{person_name(w, r.actor)} was brought ashore{if n.origin >= 0: " at " + place_name(n.origin) else: ""} {ago}{if unsure: ", it is said" else: ""}."))
+            .ditch:
+                stories.push(_Story(450 + n.severity / 5, "The islands", _pick(["Down in the Sea", "An Aircraft Down"], seed + n.event), "{person_name(w, r.actor)}'s aircraft came down {if n.origin < 0: "at sea" else: "near " + place_name(n.origin)} {ago}; the harbour boats went out."))
+            .closure:
+                stories.push(_Story(420, "Shipping", "{place_name(n.origin)} Shut", _pick(["The harbour at {place_name(n.origin)} was closed for the weather {ago}.", "{place_name(n.origin)} closed its harbour to traffic {ago}; the weather."], seed + n.event)))
+            .celebration:
+                stories.push(_Story(150, "The islands", _pick(["Feasting at {place_name(n.origin)}", "A Gathering at {place_name(n.origin)}"], seed + n.event), "People gathered at {place_name(n.origin)} {ago}."))
+            else: pass
+    # ---- cargoes landed, as one item ----
+    if cargoes.len() > 0:
+        count = cargoes.len()
+        lead_for = -1; most = 0
+        tally: {int: int}
+        loop c in cargoes:
+            tally[c.for] = tally.get(c.for, 0) + 1
+            if tally[c.for] > most: most = tally[c.for]; lead_for = c.for
+        goods: int[]
+        loop c in cargoes:
+            if not (c.good in goods): goods.push(c.good)
+        parts: str[]
+        loop g in goods:
+            froms: str[]
+            total = 0
+            loop c in cargoes:
+                if c.good != g: continue
+                total += c.milli
+                if c.from >= 0 and c.from != place and not (place_name(c.from) in froms): froms.push(place_name(c.from))
+            parts.push("{say_load(w, g, total)}{if froms.len() > 0: ", from " + _and(froms) else: ""}")
+        landed = _when(w, [loop c in cargoes: c.minute])
+        n_words = if count == 1: "One cargo" else: "{_cap(num_words(count))} cargoes"
+        whose = if count >= 3 and most * 2 >= count and lead_for >= 0: ", {if most == count: "all" else: num_words(most)} of them for {_house(w, lead_for)}" else: ""
+        body = "{n_words} landed {landed}{whose}: {join(parts, "; ")}."
+        head = if count >= 4: _pick(["{_cap(num_words(count))} Cargoes In", "A Busy Waterfront", "Cargoes In: {_cap(num_words(count))}"], seed) else: _pick(["Cargoes Landed", "On the Quay"], seed)
+        stories.push(_Story(180 + count * 25, "Shipping", head, body))
+    if ins.len() > 0 or outs.len() > 0 or fishing > 0:
+        bits: str[]
+        if ins.len() > 0: bits.push("In: {_and(ins)}.")
+        if outs.len() > 0: bits.push("Out: {_and(outs)}.")
+        if fishing > 0: bits.push(_pick(["The fishing boats were out {if fishing > 2: num_words(fishing) + " times" else: ""}.".replace(" .", "."), "The boats went out for fish."], seed))
+        stories.push(_Story(60, "Shipping", "Comings and Goings", join(bits, " ")))
+    # ---- shortages and prices ----
+    market = w.places[place].market
+    if short.len() > 0:
+        places = [loop k, _ in short: k]
+        places.sort((k: int) -> int: if k == place: -1 else: k)
+        parts: str[]
+        loop at in places:
+            parts.push("{_and([loop g in short[at]: good_name(w, g)])} {if at == place: "here" else: "at " + place_name(at)}")
+        home_short = place in short
+        head = if home_short: _title("{_and([loop g in short[place]: good_name(w, g)])} short") else: _pick(["Wanted at the Harbours", "What the Harbours Lack"], seed)
+        stories.push(_Story(if home_short: 320 else: 120, "The market", head, "{_pick(["Short", "Wanted", "Scarce"], seed)}: {_and(parts)}.{if home_short: " " + _pick(["Prices are up.", "Dearer for it, too.", "The price shows it."], seed + 3) else: ""}"))
+    dearest = -1; ratio = 0
+    loop g in 0..GOOD_COUNT:
+        if w.goods[g].illegal or w.goods[g].base_cents <= 0: continue
+        rr = market.price_cents[g] * 100 / w.goods[g].base_cents
+        if rr > ratio: ratio = rr; dearest = g
+    if dearest >= 0 and ratio >= 150:
+        stories.push(_Story(250 + ratio / 4, "The market", if ratio >= 190: "{_cap(good_name(w, dearest))} at Twice Its Price" else: "{_cap(good_name(w, dearest))} Dear", "{_cap(good_name(w, dearest))} fetches {phoenix_text(market.price_cents[dearest])} a load here, against {phoenix_text(w.goods[dearest].base_cents)} in an ordinary week."))
+    # ---- telegrams: what the town's people have heard from away ----
+    seen: {int: bool}
+    loop p in w.people:
+        if p.home != place or p.place != place: continue
+        loop r in p.far_reports:
+            if r.id in seen or not far_report_current(w, r) or r.confidence < 400: continue
+            head = _far_head(r)
+            if head == "" or r.text == "": continue
+            seen[r.id] = true
+            stories.push(_Story(r.severity, _far_section(r), head, "By telegraph: {r.text} ({_cap(say_ago(w, r.occurred_minute))}.)"))
+    # the lead: the most notable fact of the day; the rest as items
+    stories.sort((s: _Story) -> int: -s.score)
+    if stories.len() > 0 and stories[0].score >= 200:
+        paper.lead = PaperPiece(stories[0].section, stories[0].head, stories[0].body, stories[0].score)
+        stories.remove_at(0)
+    loop s in stories: paper.pieces.push(PaperPiece(s.section, s.head, s.body, s.score))
+    paper.pieces.extend(_adverts(w, place, day))
+    paper.pieces.extend(extra)
+    paper.pieces.sort((p: PaperPiece) -> int: _section_rank(p.section) * 100000 - p.weight)
+    # ---- the market's prices ----
+    loop g in 0..GOOD_COUNT:
+        if w.goods[g].illegal: continue
+        here = market.price_cents[g]
+        base = w.goods[g].base_cents
+        word = if base > 0 and here * 100 >= base * 118: "dear" else: if base > 0 and here * 100 <= base * 85: "cheap" else: ""
+        # (the latest word of this good's price at another harbour, from anyone in town)
+        latest = -1; at = -1; cents = 0
+        loop p in w.people:
+            if p.home != place or p.place != place: continue
+            loop b in p.prices:
+                if b.good == g and b.place != place and b.place >= 0 and b.observed_minute > latest:
+                    latest = b.observed_minute; at = b.place; cents = b.cents
+        elsewhere = if at >= 0: "{place_name(at)} {phoenix_text(cents)}, {say_ago(w, latest)}" else: ""
+        paper.prices.push(PaperPrice(_cap(good_name(w, g)), here, word, elsewhere))
+    # ---- the weather, as the harbour office observed it ----
+    if place < w.harbors.len():
+        pos = w.harbors[place].center
+        severity = conditions.weather_severity(w, pos)
+        wind = conditions.wind_at(w, pos)
+        from = if abs(wind.x) > abs(wind.z): (if wind.x > 0: "west" else: "east") else: (if wind.z > 0: "north" else: "south")
+        knots = f64(length(wind)) * 1.944
+        sky = if severity >= 800: "Storm" else: if severity >= 400: "Squalls" else: _pick(["Fair", "Fine and clear", "Fair weather"], seed)
+        closed = [loop p in 0..w.places.len(): if w.places[p].harbor_closed: place_name(p)]
+        paper.weather = "{sky}, {say_wind(knots, from)}, by the harbour office's glass.{if closed.len() > 0: " Closed: " + _and(closed) + "." else: " All harbours open."}"
+    paper
+
+# whose a delivery was, as the waterfront says it: the office or house, or the merchant by name
+_house = (w: World, person: int) -> str:
+    if person < 0 or person >= w.people.len(): return "the harbour"
+    match w.people[person].occupation:
+        .clerk: "the harbour office"
+        .quartermaster: "the stores"
+        .innkeeper, .hotelier: "the hotel"
+        .merchant: "{w.people[person].name}'s warehouse"
+        else: w.people[person].name
+
+# Small advertisements from the town's own businesses (two a day, turn about).
+_adverts = (w: World, place: int, day: int) -> PaperPiece[]:
+    ads: PaperPiece[]
+    loop p in w.people:
+        if p.home != place: continue
+        first = split(p.name, " ")[0]
+        match p.occupation:
+            .hotelier, .innkeeper: ads.push(PaperPiece("Advertisements", if place == 0: "Hotel Ancora" else: "{p.name}'s Inn", _pick(["Dinner on the terrace. The band from seven o'clock; requests gladly taken.", "Rooms on the sea side. Music nightly from seven.", "The terrace bar: wines of every country, and the band in the evening."], day), 0))
+            .merchant: ads.push(PaperPiece("Advertisements", "{p.name}, Chandler and Merchant", _pick(["Rope, paint, lamp oil and tinned goods. On the waterfront.", "Everything for the boat and the aircraft. Fair prices; ask {first}."], day + p.id), 0))
+            .mechanic: ads.push(PaperPiece("Advertisements", "Engines Serviced", _pick(["Plugs, timing and carburettors set right. {p.name}, at the slipway.", "Engine trouble? {p.name}, mechanic, at the slipway. Prompt work."], day + p.id), 0))
+            .fisher: ads.push(PaperPiece("Advertisements", "Fresh Fish", "At the quay at first light. {p.name}.", 0))
+            .telegraphist: ads.push(PaperPiece("Advertisements", "Telegrams", "Sent and received daily at the office. {p.name}.", 0))
+            else: pass
+    # (the coffee house, where the paper is sold, puts in its own)
+    ads.push(PaperPiece("Advertisements", "The Coffee House", _pick(["Coffee, sweets and the morning paper. Tavli boards for the asking.", "Greek coffee as it should be. Boards for tavli; the paper daily."], day), 0))
+    if ads.len() <= 2: return ads
+    # (the hotel's every day it can; the rest in turn)
+    out: PaperPiece[]
+    loop a in ads:
+        if a.head == "Hotel Ancora" and out.len() == 0: out.push(a)
+    rest = [loop a in ads: if a.head != "Hotel Ancora": a]
+    loop k in 0..(2 - out.len()): out.push(rest[(day + k) % rest.len()])
+    out
+
+_section_rank = (s: str) -> int:
+    loop k in 0..PAPER_SECTIONS.len():
+        if PAPER_SECTIONS[k] == s: return k
+    PAPER_SECTIONS.len()

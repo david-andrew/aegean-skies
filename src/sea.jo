@@ -10,11 +10,13 @@ use 'cloud_depth.jo'
 use 'world.jo'
 use 'geography.jo'
 use 'look.jo'
+use 'celestial.jo'
 use 'render_space.jo'
 use 'weather_scene.jo'
 use 'coast_atlas.jo'
 use 'coast_pattern.jo'
 use 'quality.jo'
+use 'cloud_shadow_map.jo'
 
 const DEPTH_MAP = 1024
 const DEPTH_EXTENT = 24000.0        # the depth map's square, meters across (past it: open sea)
@@ -66,11 +68,17 @@ struct SeaParams:
     glint_phase: vec4
     inland_phase:vec4=vec4(0,0,0,0)
     inland_depth: f32 = -1.0
+    inland_opacity_depth: f32 = 2.0
+    inland_chop: f32 = 0.0           # a lake's wind chop: the sea's swell slopes and crests, scaled
+    moon: vec4 = vec4(0,0,0,0)       # the moon's direction and (w) its glitter's strength (night only)
     fleck_reference:vec3=vec3(0,0,0)
     opaque_depth: Texture
     reject_depth: f32 = 0
     depth_mode:vec2=vec2(20,0)
     mark_phase: vec4[3]             # fractional cell origin xy, integer cell identity zw
+    cloud_shadow: Texture = Texture()  # cloud_shadow_map.jo: the sun's glints and sheen go in cloud shadow
+    cloud_area: vec4 = vec4(0,0,0,0)
+    cloud_slope: vec4 = vec4(0,0,0,0)
 
 struct SeaOut:
     pos: vec4
@@ -80,6 +88,7 @@ struct SeaOut:
     water_chart:vec2=vec2(0,0)
     bank_impact:f32=0.0
     water_flow:vec2=vec2(0,0)
+    sun_lost:f32=0.0                # cloud shadow (per vertex): no glints or sheen there
 
 struct SeaDepthOut:
     pos:vec4
@@ -90,6 +99,7 @@ struct SeaDepthOut:
     water_chart:vec2=vec2(0,0)
     bank_impact:f32=0.0
     water_flow:vec2=vec2(0,0)
+    sun_lost:f32=0.0
 
 # the swells: height and slope (dh/dx, dh/dz) at a point, running mostly with the wind. Each
 # fades out where it is too short for the pixels to show it (dist: from the camera).
@@ -124,11 +134,13 @@ sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
     s = sea_swell(p,u,r)
     w = vec3(p.x, s.x * near, p.y)
     clip=u.view_proj * vec4(render_warped(w,u.cam,u.warp_a,u.warp_b),1)
-    SeaOut(clip,w)
+    # (the colour's shadow is the screen pass's, cloud_shadow.jo; only the sun's
+    # reflections need the water's own knowledge, and coarsely)
+    SeaOut(clip,w,sun_lost=cloud_shadow_vertex(u.cloud_shadow,u.cloud_area,u.cloud_slope,vec3(w.x,0,w.z)))
 
 sea_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
     i=sea_vs(v,u)
-    SeaDepthOut(i.pos,i.world,i.pos)
+    SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost)
 
 # Wave directions/frequencies and the anchor/time phase are reduced on the CPU.
 # Small local dot products retain sub-centimetre wave motion at every world corner.
@@ -405,10 +417,10 @@ sea_depth_hidden=(clip:vec4,u:SeaParams)->bool:
     world_scene_depth_encode(clip.w,u.depth_mode)>nearest+0.00000012
 sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
-    sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow),u)
+    sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
 coast_sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
-    coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow),u)
+    coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
 
 sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_detail:bool=true) -> vec4:
     local = i.world.xz
@@ -468,6 +480,11 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         pair=sea_marks_pair(detail_a,detail_b,(u.rush.xz+u.flow.xy*near)*(0.6/60.0),dist,u)
         inland_marks=if abs(pair.x)*detail_wa>abs(pair.y)*detail_wb:pair.x*min(detail_wa*detail_keep,1.0) else:pair.y*min(detail_wb*detail_keep,1.0)
     s = if inland:vec3(0,0,0) else:sea_swell(local,u,dist)
+    # Open lake water carries a short wind chop: only its slopes (light, sky and
+    # sun), never a height; a river's moving surface keeps its own marks.
+    if inland and u.inland_chop>0.0:
+        chop=sea_swell(local*2.3,u,dist)
+        s=vec3(0,chop.y*u.inland_chop,chop.z*u.inland_chop)
     sa = s
     sb = s
     whole = not inland and u.flow.w > 0.5 and near > 0.0
@@ -518,7 +535,7 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     crest_fade = mix(1.0-smoothstep(180.0,650.0,dist),1.0-smoothstep(700.0,1900.0,dist),wet_crests)
     sfade = crest_fade*(1.0-sh*0.8)
     crest_amp = u.wind.w*(1.0-wet_crests*smoothstep(400.0,1800.0,dist)*0.5)
-    st = if inland:0.0 else:_crest_strokes(p, s, u.time, wd, ws, crest_amp, dist,wet_crests)
+    st = if inland and u.inland_chop<=0.0:0.0 else:_crest_strokes(p, s, u.time, wd, ws, crest_amp*(if inland:u.inland_chop else:1.0), dist,wet_crests)
     if whole: st = _crest_strokes(p + offa, sa, u.time, wd, ws, u.wind.w, dist) * wa + _crest_strokes(p + offb, sb, u.time, wd, ws, u.wind.w, dist) * wb
     st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)
     c = mix(c, mix(skyc, vec3(1, 1, 1), 0.55) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.85)
@@ -561,7 +578,19 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     if sea_glint_possible(n,vdir,l,hv,rough):
         gl = _glints(detail_a,n,vdir,l,dist,u.time,rough,u)
         if detail_blend:gl=gl*detail_wa+_glints(detail_b,n,vdir,l,dist,u.time,rough,u)*detail_wb
-    c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)*(1.0-u.rain*0.75)
+    c = c + u.sun * (sheen + gl * 14.0) * day * (1.0 - shd)*(1.0-u.rain*0.75)*(1.0-i.sun_lost)
+    # the moon's glitter at night: the same sheen and glint field, lit by the moon, silver and faint
+    # (only once the sun is properly down: the evening's light is left as it was)
+    night_w = 1.0 - smoothstep(-0.15, -0.03, l.y)
+    if u.moon.w > 0.0 and night_w > 0.0:
+        ml = normalize(u.moon.xyz)
+        mhv = normalize(ml + vdir)
+        mnh = max(dot(n, mhv), 0.0)
+        msheen = pow(mnh, mix(90.0, 55.0, variance)) * 0.22 + pow(mnh, mix(600.0, 160.0, variance)) * 0.5
+        mgl: f32 = 0.0
+        if sea_glint_possible(n,vdir,ml,mhv,rough):
+            mgl = _glints(detail_a,n,vdir,ml,dist,u.time,rough,u)
+        c = c + vec3(0.78,0.84,0.95) * (msheen + mgl * 14.0) * u.moon.w * night_w * (1.0 - shd)*(1.0-u.rain*0.75)
     shore_depth = depth
     if refined and u.coast_near_area.w > 1.0:
         contact = coast_height_lookup(u.coast_near,u.coast_far,u.coast_near_area,u.coast_far_area,local,u.coast_roll)
@@ -590,7 +619,7 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         clear_alpha = clamp(1.0-exp(-depth*absorption)*(1.0-fres*0.85)*0.95+foam+gl+u.rain*0.12,0.0,1.0)
         a = mix(a,clear_alpha,clear_bay)
     if inland:
-        a=clamp(smoothstep(0.0,2.0,depth)+fres*0.4+foam+gl,0.0,1.0)
+        a=clamp(smoothstep(0.0,u.inland_opacity_depth,depth)+fres*0.4+foam+gl,0.0,1.0)
     c = aerial(c, i.world, u.cam, u.haze, u.fog)
     vec4(c, a)
 
@@ -797,6 +826,7 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     p.view_proj = render_view_proj(p.origin)
     p.cam = render_eye(p.origin)
     p.warp_a = render_anchor(p.warp_a,p.origin)
+    p.cloud_shadow = cloud_shadow_map(); p.cloud_area = cloud_shadow_area(p.origin,"sea"); p.cloud_slope = cloud_shadow_slope()
     offset = shadows.origin-p.origin
     loop k in 0..shadows.n*2: p.shade[k] += vec4(offset.x,offset.z,offset.x,offset.z)
     sea_phases(p,t)
@@ -818,6 +848,9 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     p.coast_near_area = if coast_height_valid: coast_height_near_area else: vec4(0,0,0,0)
     p.coast_far_area = coast_height_far_area
     p.coast_roll = coast_height_roll
+    # (the moon's glitter: its phase lit by the sun, and only once it is up)
+    lit = moon_illumination(normalize(L.sun_dir), normalize(L.moon_dir))
+    p.moon = vec4(L.moon_dir, f32(0.35 * lit * smoothstep(0.02, 0.2, f64(normalize(L.moon_dir).y))))
     p
 
 sea_phases = (p: mut SeaParams,t: f64):

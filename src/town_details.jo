@@ -165,9 +165,59 @@ town_paving_ground=(p:vec2,origin:vec3)->f64:
     if abs(x)<LEGACY_RESERVE and abs(z)<LEGACY_RESERVE:return surface_height(x,z)-f64(origin.y)
     world_source_surface(x,z)-f64(origin.y)
 
+# Paving follows sub-metre relief, so its own facets tilt a few degrees this way and that.
+# Lit flat, a low evening sun put whole facets on the dark side of the painted ramp: dark
+# triangles across a level square. Each vertex takes the ground's slope over 6 m instead,
+# as stones laid on a bed follow the street's fall but not every hummock under it.
+town_paving_normal = (p: vec3,origin: vec3) -> vec3:
+    d: f32 = 3.0
+    hx = town_paving_ground(p.xz+vec2(d,0),origin)-town_paving_ground(p.xz-vec2(d,0),origin)
+    hz = town_paving_ground(p.xz+vec2(0,d),origin)-town_paving_ground(p.xz-vec2(0,d),origin)
+    normalize(vec3(-f32(hx),d*2.0,-f32(hz)))
+
+# Corners are shared by up to six triangles; their normals are cached for one build.
+# Keys are local to the build's origin, so another origin starts a fresh cache.
+# (Two origins are kept, the districts' and the close kit's, as their builds now take turns
+# within a frame; a third origin replaces the one used longer ago.)
+town_paving_normals: {(int,int): vec3}
+town_paving_normals_origin = vec3(0,0,0)
+town_paving_normals_other: {(int,int): vec3}
+town_paving_normals_other_origin = vec3(1e9,1e9,1e9)
+town_paving_corner = (p: vec3,origin: vec3) -> vec3:
+    global town_paving_normals,town_paving_normals_origin,town_paving_normals_other,town_paving_normals_other_origin
+    if origin != town_paving_normals_origin:
+        if origin == town_paving_normals_other_origin:
+            swap = town_paving_normals; town_paving_normals = town_paving_normals_other; town_paving_normals_other = swap
+        else:
+            town_paving_normals_other = town_paving_normals
+            town_paving_normals = {}
+        town_paving_normals_other_origin = town_paving_normals_origin; town_paving_normals_origin = origin
+    if town_paving_normals.len() > 65536: town_paving_normals = {}
+    key = (int(floor(f64(p.x)*64.0+0.5)),int(floor(f64(p.z)*64.0+0.5)))
+    if let n = town_paving_normals.get(key): return n
+    n = town_paving_normal(p,origin)
+    town_paving_normals[key] = n
+    n
+
+town_paving_face = (vs: mut Vertex3D[],a: vec3,b: vec3,c: vec3,col: vec4,origin: vec3):
+    up = cross(b-a,c-a).y >= 0.0
+    loop p in (if up: [a,b,c] else: [a,c,b]): vs.push(Vertex3D(p,town_paving_corner(p,origin),vec2(0,0),col))
+
 # Paving is cached with its district. Sample the contact surface while building
 # it, rather than leaving a 14 m chord through the new sub-grid relief.
-town_paving_triangle = (vs: mut Vertex3D[],a: vec3,b: vec3,c: vec3,col: vec4,edge: f64,offset: f64 = 0.12,depth: int = 0,origin:vec3=vec3(0,0,0)):
+# A triangle of paving waiting to be drawn or halved (the subdivision as a stack, so a heavy
+# cell on steep ground can stop between triangles and go on next frame).
+struct PaveTri:
+    a: vec3
+    b: vec3
+    c: vec3
+    depth: int
+
+# The top triangle: drawn when flat enough (or deep enough), else its two halves go on the
+# stack, the first on top, so they come off in the order the recursion took them.
+town_paving_pop = (vs: mut Vertex3D[],stack: mut PaveTri[],col: vec4,edge: f64,offset: f64,origin: vec3):
+    t = stack[stack.len()-1]; stack.pop()
+    a = t.a; b = t.b; c = t.c; depth = t.depth
     ab = f64(length(a.xz-b.xz)); bc = f64(length(b.xz-c.xz)); ca = f64(length(c.xz-a.xz))
     longest = max(ab,max(bc,ca))
     flat = longest <= edge
@@ -183,29 +233,70 @@ town_paving_triangle = (vs: mut Vertex3D[],a: vec3,b: vec3,c: vec3,col: vec4,edg
                     break
             if not flat: break
     if flat or depth >= 16:
-        add_outward_triangle(vs,a,b,c,col,a-vec3(0,2,0))
+        town_paving_face(vs,a,b,c,col,origin)
         return
     if ab >= bc and ab >= ca:
         p = (a.xz+b.xz)*0.5
         mid = vec3(p.x,f32(town_paving_ground(p,origin)+offset),p.y)
-        town_paving_triangle(vs,a,mid,c,col,edge,offset,depth+1,origin)
-        town_paving_triangle(vs,mid,b,c,col,edge,offset,depth+1,origin)
+        stack.push(PaveTri(mid,b,c,depth+1)); stack.push(PaveTri(a,mid,c,depth+1))
     else if bc >= ca:
         p = (b.xz+c.xz)*0.5
         mid = vec3(p.x,f32(town_paving_ground(p,origin)+offset),p.y)
-        town_paving_triangle(vs,a,b,mid,col,edge,offset,depth+1,origin)
-        town_paving_triangle(vs,a,mid,c,col,edge,offset,depth+1,origin)
+        stack.push(PaveTri(a,mid,c,depth+1)); stack.push(PaveTri(a,b,mid,depth+1))
     else:
         p = (c.xz+a.xz)*0.5
         mid = vec3(p.x,f32(town_paving_ground(p,origin)+offset),p.y)
-        town_paving_triangle(vs,a,b,mid,col,edge,offset,depth+1,origin)
-        town_paving_triangle(vs,mid,b,c,col,edge,offset,depth+1,origin)
+        stack.push(PaveTri(mid,b,c,depth+1)); stack.push(PaveTri(a,b,mid,depth+1))
+
+town_paving_triangle = (vs: mut Vertex3D[],a: vec3,b: vec3,c: vec3,col: vec4,edge: f64,offset: f64 = 0.12,depth: int = 0,origin:vec3=vec3(0,0,0)):
+    stack = [PaveTri(a,b,c,depth)]
+    loop stack.len() > 0: town_paving_pop(vs,stack,col,edge,offset,origin)
+
+# One path to pave (town_path's arguments), queued by builds that pave a piece at a time.
+struct TownPave:
+    a: vec2
+    b: vec2
+    width: f64
+    paved: bool
+    origin: vec3 = vec3(0,0,0)
+
+# While a build records (the close kit, a site at a time), town_path queues each path with
+# the place in the vertex list it belongs at, instead of paving it there and then; the build
+# paves the queue a piece at a time and splices the pieces back in that order.
+town_path_recording = false
+town_path_recorded: TownPave[]
+town_path_recorded_at: int[]
 
 town_path = (vs: mut Vertex3D[],a: vec2,b: vec2,width: f64,paved: bool,origin:vec3=vec3(0,0,0)):
+    global town_path_recorded,town_path_recorded_at
+    if town_path_recording:
+        town_path_recorded.push(TownPave(a,b,width,paved,origin)); town_path_recorded_at.push(vs.len())
+        return
+    cur = PaveCursor()
+    _ = town_path_part(vs,a,b,width,paved,origin,cur,1e30)
 
+# Where a path's paving has got to: the 14 m cell, which of its two triangles, which fan
+# triangle of that, and the subdivision stack (so a build can stop anywhere and go on).
+struct PaveCursor:
+    cell: int = 0
+    open: bool = false
+    tri: int = 0
+    ready: bool = false
+    fan: int = 1
+    x: f64 = 0.0
+    z: f64 = 0.0
+    hs: f64[]
+    refined: bool = false
+    edge: f64 = 0.875
+    points: vec3[]
+    stack: PaveTri[]
+
+# The path's paving from `cur` on until `until` (a time()), at least one piece; true once the
+# path is done. A build that pauses anywhere makes exactly the vertices of one town_path call.
+town_path_part = (vs: mut Vertex3D[],a: vec2,b: vec2,width: f64,paved: bool,origin:vec3,cur: mut PaveCursor,until: f64) -> bool:
     start=vs.len()
     len = f64(length(b-a))
-    if len < 0.1: return
+    if len < 0.1: return true
     direction = normalize(b-a); normal = vec2(-direction.y,direction.x)
     side = normal*f32(width*0.5)
     low = min(min(a-side,a+side),min(b-side,b+side))
@@ -225,37 +316,69 @@ town_path = (vs: mut Vertex3D[],a: vec2,b: vec2,width: f64,paved: bool,origin:ve
             break
     # Work in a local frame for clipping; world-sized dot products lose the
     # centimetres that separate paving from the ground at 250 km coordinates.
-    loop j in int(floor((f64(low.y)-oz)/14.0))..int(floor((f64(high.y)-oz)/14.0))+1:
-        loop i in int(floor((f64(low.x)-ox)/14.0))..int(floor((f64(high.x)-ox)/14.0))+1:
-            x = ox+f64(i)*14.0; z = oz+f64(j)*14.0
+    j0 = int(floor((f64(low.y)-oz)/14.0)); j1 = int(floor((f64(high.y)-oz)/14.0))+1
+    i0 = int(floor((f64(low.x)-ox)/14.0)); i1 = int(floor((f64(high.x)-ox)/14.0))+1
+    columns = i1-i0; cells = (j1-j0)*columns
+    col = if paved: rgb(0.76,0.72,0.64) else: rgb(0.64,0.51,0.33)
+    worked = false; done = false
+    loop true:
+        if not cur.open:
+            if cur.cell >= cells: done = true; break
+            if worked and time() > until: break
+            j = j0+cur.cell/columns; i = i0+cur.cell%columns
+            cur.x = ox+f64(i)*14.0; cur.z = oz+f64(j)*14.0
+            x = cur.x; z = cur.z
             corners = [vec2(f32(x),f32(z)),vec2(f32(x+14.0),f32(z)),vec2(f32(x),f32(z+14.0)),vec2(f32(x+14.0),f32(z+14.0))]
-            hs = [loop p in corners: place_ground(p)]
-            hlow = min(min(hs[0],hs[1]),min(hs[2],hs[3]))
-            hhigh = max(max(hs[0],hs[1]),max(hs[2],hs[3]))
-            refined = hlow < 192.0 and hhigh > -10.0
-            paving_edge = if (hhigh-hlow)/14.0 > 1.0: 0.4375 else: 0.875
-            loop tri in [[0,1,2],[3,2,1]]:
-                poly = [loop k in tri: corners[k]-a]
-                poly = town_clip(poly,direction,0.0)
-                poly = town_clip(poly,-direction,len)
-                poly = town_clip(poly,normal,width*0.5)
-                poly = town_clip(poly,-normal,width*0.5)
-                if poly.len() < 3: continue
-                points: vec3[]
-                dry = true
-                loop local in poly:
-                    p = local+a
-                    h = triangle_height(hs[0],hs[1],hs[2],hs[3],(f64(p.x)-x)/14.0,(f64(p.y)-z)/14.0)
-                    if refined: h = place_ground(p)
-                    if h < 0.2: dry = false
-                    points.push(vec3(f32(f64(p.x)-f64(origin.x)),f32(h+offset)-origin.y,f32(f64(p.y)-f64(origin.z))))
-                if not dry: continue
-                col = if paved: rgb(0.76,0.72,0.64) else: rgb(0.64,0.51,0.33)
-                loop k in 1..points.len()-1:
-                    if length(cross(points[k]-points[0],points[k+1]-points[0])) < 0.0001: continue
-                    if refined: town_paving_triangle(vs,points[0],points[k],points[k+1],col,paving_edge,offset=offset,origin=origin)
-                    else: add_outward_triangle(vs,points[0],points[k],points[k+1],col,points[0]-vec3(0,2,0))
+            cur.hs = [loop p in corners: place_ground(p)]
+            hlow = min(min(cur.hs[0],cur.hs[1]),min(cur.hs[2],cur.hs[3]))
+            hhigh = max(max(cur.hs[0],cur.hs[1]),max(cur.hs[2],cur.hs[3]))
+            cur.refined = hlow < 192.0 and hhigh > -10.0
+            cur.edge = if (hhigh-hlow)/14.0 > 1.0: 0.4375 else: 0.875
+            cur.open = true; cur.tri = 0; cur.ready = false
+        if cur.tri >= 2:
+            cur.open = false; cur.cell += 1
+            continue
+        if not cur.ready:
+            x = cur.x; z = cur.z
+            corners = [vec2(f32(x),f32(z)),vec2(f32(x+14.0),f32(z)),vec2(f32(x),f32(z+14.0)),vec2(f32(x+14.0),f32(z+14.0))]
+            tri = if cur.tri == 0: [0,1,2] else: [3,2,1]
+            poly = [loop k in tri: corners[k]-a]
+            poly = town_clip(poly,direction,0.0)
+            poly = town_clip(poly,-direction,len)
+            poly = town_clip(poly,normal,width*0.5)
+            poly = town_clip(poly,-normal,width*0.5)
+            if poly.len() < 3:
+                cur.tri += 1
+                continue
+            points: vec3[]
+            dry = true
+            loop local in poly:
+                p = local+a
+                h = triangle_height(cur.hs[0],cur.hs[1],cur.hs[2],cur.hs[3],(f64(p.x)-x)/14.0,(f64(p.y)-z)/14.0)
+                if cur.refined: h = place_ground(p)
+                if h < 0.2: dry = false
+                points.push(vec3(f32(f64(p.x)-f64(origin.x)),f32(h+offset)-origin.y,f32(f64(p.y)-f64(origin.z))))
+            if not dry:
+                cur.tri += 1
+                continue
+            cur.points = points; cur.fan = 1; cur.ready = true
+        if cur.stack.len() > 0:
+            if worked and time() > until: break
+            town_paving_pop(vs,cur.stack,col,cur.edge,offset,origin)
+            worked = true
+            continue
+        if cur.fan >= cur.points.len()-1:
+            cur.tri += 1; cur.ready = false
+            continue
+        k = cur.fan; cur.fan += 1
+        p0 = cur.points[0]; pk = cur.points[k]; pk1 = cur.points[k+1]
+        if length(cross(pk-p0,pk1-p0)) < 0.0001: continue
+        if cur.refined: cur.stack.push(PaveTri(p0,pk,pk1,0))
+        else:
+            add_outward_triangle(vs,p0,pk,pk1,col,p0-vec3(0,2,0))
+            worked = true
     # Treads belong to explicit TownEntry plans with matching walking contact.
     # Overlapping slope-conforming lanes must not each add a flight of boxes.
     if paved:
         loop k in start..vs.len(): vs[k].uv=vec2(183,0)
+    done

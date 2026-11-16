@@ -47,10 +47,87 @@ empty slot saves at once; saving over a slot, Load and Delete ask for a yes. But
 while `busy`. A note under the slots says what the last request came to (`Saved in slot 2.`, an
 error text, `Slot 1 deleted.`) and where the autosave goes or why it is off. A successful load
 unpauses and closes the menu. A finished autosave shows only the quiet Saved card
-(`src/hud.jo saved_toast`), never a menu note. There is no start screen, so no Continue offer:
-a fresh start plays on and the player loads from the page. `tools/game_menu_probe.jo` drives the
+(`src/hud.jo saved_toast`), never a menu note. `tools/game_menu_probe.jo` drives the
 page's requests end to end (autosave and its card, save, change, load, delete; position, purse, a
 cat's friendship and a seen battle card restored).
+
+## The title screen
+
+The game starts on a title screen (`src/title_screen.jo`, wired in `aegean.jo` beside the
+game-slot block) over the **title reel** (`src/title_shots.jo`): the live world, seen through a
+free camera the reel flies, in unordered shots of 18-28 seconds with a short dip to dusk between
+them, each with its own hour and fair weather (never rain):
+
+- **Low pass:** low over open water at the top speed (about 450 km/h), the speed flecks streaming
+  past as in flight, banking gently (never past 7 degrees); flying free, chasing a Gull ahead,
+  overtaken by one, or a **race**: two Falcos in two liveries, flown by the game's own flight
+  model (`step` with their real spec), come from behind and overtake close in lanes to the right
+  (the NPC controller `air_waypoint_controls` holding lane, height and a jockeying pace), bank hard
+  round an air-race pylon (the meets' banded pylon) as the shared steering law (`steer`) turns them,
+  and are lined up on the next leg, shrinking ahead as the camera flies straight on past the pylon.
+  The race is flown once when its shot is cut, at a fixed 1/60 s step, and kept: repeatable. The eye is at flight's chase-camera height, 13-16 m (lower, the flecks grow
+  large and sparse on the screen), the Gull 4-5 m below it. The sea, rivers and lakes are given the
+  reel camera's true velocity (`view_velocity`), so the flecks streak and keep their strength as
+  at that speed in flight. The Gull is the player's own aircraft, drawn where the reel puts it for
+  that frame only.
+- **High at sunset:** 2.7-3.4 km up, above the clouds, drifting towards the sun as it goes down.
+- **A town and its waterfront:** a low oblique run along the harbour front from just offshore
+  (boats, the quay and the seaplanes in frame, the town rising behind); a higher, slow arc at
+  golden hour, the roofs a texture; or in Neravessa along its canals. Porto Vecchio, Kalyrassa and
+  Neravessa; never a camera looking straight down into the streets.
+
+Behind the title the world runs as in play (traffic, vessels, people, weather), with the game's
+own keys muted, nothing autosaved and no slot touched; the world's own sounds are silent. Its rows
+are the pause menu's (`game_rows` over the same cached headers) and it uses the same requests:
+
+- **Continue** loads the newest usable slot (`SaveSummary.saved_at`, the unix time of the save,
+  added for this; an older header without it falls back to its world time). It is the default:
+  Enter, or a tap, starts it with no second question. A successful load begins play.
+- **New game** puts back the world as the startup built it: a copy taken when the title opened
+  (Sloppy's values: the running world never touches it), installed through the scenario path
+  (`load_scenario("start", state)`), keeping the notebook already loaded; about 10 ms. The autosave
+  takes the first empty slot as before; when all three hold games it asks first: choose a slot to
+  save over (that slot becomes the autosave's), or start without saving (autosave stays off, as the
+  policy above says).
+- **Saved games** lists the slots to load (at once: nothing is unsaved yet) or delete (asks).
+- **Situations**, quieter, are the scenario picker's set pieces (the start one is New game).
+- With nothing saved there is only New game (and the quiet Situations). Until the slots have been
+  read the screen says "Reading saved games..."; a load says "Loading slot N...".
+
+**Sound.** The Adagietto plays as if from a cockpit radio: through the receiver chain with station
+levelling (the pause menu's music player, `MusicAudition`); it leads. Under it on a low pass only a
+very faint bed of engine and rushing air, about 20 dB down, faded in and out with the shot; a
+race's engines (the engine hearing's own, with Doppler, at an `EngineSource.gain` of 0.04) are
+barely there. In a browser
+the music begins at the first click, tap or key (browsers allow sound only then); nothing on the
+screen says so. When play begins the music fades away over three seconds.
+
+**Loading.** Before the title there are no words: a small two-bladed propeller turns slowly in the
+middle of the dusk, a faint ring round it filling as the preparation goes. In a browser it is the
+page's own card (`src/web_compat.js`, inline SVG turned by the compositor), so it turns while the
+module loads and the world is built, steps the page cannot draw during; natively the game draws
+the same (`src/title_screen.jo draw_loading_propeller`). Before the title's first frame the game
+finishes the islands' places a few a frame and populates the far economy in one step (about 4 s on
+the desktop): the same work play does a few seconds in, in a stall, so the reel and its music
+never stall for it and a new game starts populated.
+
+**Capture switches.** `AEGEAN_TITLE_SHOT=low|low-free|low-chase|low-pass|high|city|city-<Town>`
+(with `:run` or `:arc`) repeats a kind; `AEGEAN_TITLE_SEED=n` fixes the order; `AEGEAN_TITLE_FRAMES=dir`
+saves every 10th frame (`AEGEAN_TITLE_FRAME_STEP=n`: every nth). `AEGEAN_FRAME_STATS=1` prints the
+frame statistics every 120 frames, in the title and in play alike, for timing runs.
+`AEGEAN_TITLE_BARE=1` draws the reel without the menu; `low-free@14` flies a low pass at that
+height; `low-race` the race.
+
+**Guard.** `python3 tests/title_reel_detail_test.py` (needs a GPU; too slow for the software
+renderer) renders the reel's low pass and real flight at 125 m/s at fixed frames and requires the
+reel's fine water detail to reach 0.7 of flight's (measured 0.79; a parked sea, 0.2).
+
+Test and capture runs start straight in the game: a program that imports `aegean.jo` (its
+`PROGRAM_NAME` is not "Aegean Skies"), a run with `SLOPPY_FRAMES` or `SLOPPY_SCREENSHOT`, and a run
+or page with any `AEGEAN_` option other than `AEGEAN_QUALITY`, `AEGEAN_TOUCH` and `AEGEAN_TITLE`.
+`AEGEAN_TITLE=0` (in a page, `?AEGEAN_TITLE=0`) skips it and `AEGEAN_TITLE=1` forces it.
+`tools/webshot.mjs`, `measure_web.mjs` and `text_probe.mjs` add `AEGEAN_TITLE=0` unless their
+query names it.
 
 ## What persists
 
@@ -85,9 +162,28 @@ Autosave waits for three stable safe seconds after reaching a mooring or a town 
 30-second minimum between attempts. It then saves every 180 unpaused simulation seconds while
 safe. Idle sitting is safe; trading/dialogue/menu transactions, cat interaction, refuelling,
 rest/tinkering skips, flight/descent/free-camera and nearby fighting/raids defer it.
-Failures back off for at least 30 safe seconds instead of retrying every frame. Manual saves can
+Failures back off for at least 30 safe seconds instead of retrying every frame. Storage being
+busy (as during the save itself) is not leaving the safe place: only an actual departure re-arms
+the arrival save, so a successful autosave is followed by the 180-second one, not another after
+30 seconds. Manual saves can
 checkpoint flight/combat as well as the quay. No world or serialization work is done per frame
 by the eligibility check; it uses bounded registry bins and scene state.
+
+## Saving without a stall
+
+Saving a game is spread over frames (`save_game_slot(..., spread=true)`, stepped by
+`step_game_slots` after each frame's update, about 3 ms a frame, 12 ms while paused, standing
+aside on a frame that ran a world minute). The request frame only takes the checkpoint: the scene
+folded into a copy-on-write copy (`capture_game_snapshot`, with the structural check folding needs).
+The following frames run the save check in short steps (`save_check_step`: the same rules as
+`validate_save_world`, the far check in 32 slices), write the canonical World text a container
+element at a time from a small template (`src/living_save_stream.jo`, byte for byte
+`canonical_text`), hash it as it goes, compress it with a resumable deflate (`src/save_stream.jo`,
+4096-symbol blocks: a raw deflate stream as before), then store it. The format is unchanged.
+Choosing the bank to overwrite reads only the headers and body sizes; the full check of a stored
+game (inflate, parse, every World rule, the session) happens when it is loaded. A failing check
+refuses the save and keeps both banks. Tests and tools call `save_game_slot` without `spread`
+and get the same work done at once.
 
 ## Storage and failure handling
 
@@ -104,7 +200,8 @@ Three complete worlds plus recovery banks cannot fit localStorage's small UTF-16
 slots therefore use IndexedDB (`aegean-skies-game-v1`), with raw compressed ArrayBuffers and atomic
 header/body transactions. Only small slot headers are read at startup. A selected slot's bodies
 are read on demand; candidates are decoded newest first, keeping one parsed World at a time.
-Pending operations retain compressed bytes, never a live World projection across frames. A
+A save in progress holds its checkpoint (a copy-on-write World) until its text is written,
+then only compressed bytes. A
 stale-tab writer is refused. Browser denial/quota/transaction failures surface through `error`;
 there is no false success or silent fallback into an overfull localStorage store.
 
@@ -118,9 +215,15 @@ that much disk space. The existing legacy localStorage compact codec remains unc
 - `tests/game_session.jo`, `tests/game_slots.jo`: full snapshots, live-lease isolation, exact
   physics/fuel/presentation/clock, version/malformed refusal, three-slot isolation, corruption
   fallback, size/write preservation, deletion and bounded autosave retries.
+- `tests/save_stream.jo`, `tests/living_save_stream.jo`: streamed deflate and hash equal the
+  library's, streamed text equals `canonical_text` on living worlds, stepped checks match
+  `validate_save_world`, a save spread over many steps loads back identically, a failing world is
+  refused with both banks kept.
+- `tools/stutter_trace.jo` with `STUTTER_AUTOSAVE_AT` (`tools/test_stutter.py --autosave-at`): a
+  measured stay that spans a real autosave.
 - `tools/game_save_probe.jo`: actual game autosave, a real paid fuel purchase, paused manual
   save/load/delete, exact restoration, then 120 resumed frames and full conservation. `GAME_SAVE_CASE=flight`
-  with `AEGEAN_FLYING='300 150'` also checks that flight is not autosaved and manual flight works.
+  with `AEGEAN_FLYING='300 45.5'` also checks that flight is not autosaved and manual flight works.
 - `tools/run_game_save_web.mjs CHROME PAGE.html SCRATCH`: the compiled probe through the real
   Wasm/IndexedDB bridge. Web probes draw before saving and after restore, with intermediate
   renderer work reduced; this is a compatibility/functional proxy, not a phone FPS measurement.
