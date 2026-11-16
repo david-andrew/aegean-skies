@@ -417,6 +417,9 @@ def speaker_lex(base, subset):
 # The learned energy envelope made the synthesis's syllable energies less like the speaker's
 # (round 5: 0.69 against 0.72 without it, on the held-out lines), so voices do not carry it.
 ENERGY_ENVELOPE = False
+# High energy is parked (round 8): the per-energy steps are neither fitted nor calibrated, and the
+# game reads every station at the speaker's plain delivery (VOICE_ENERGY_PARKED). Set True to resume.
+ENERGY_LEVELS = False
 GAME_GENRE = {'war': 'war', 'news': 'news', 'ident': 'news', 'race': 'race', 'advert': 'advert', 'weather': 'weather'}
 NEUTRAL_STYLE = [1.0, 0.0, 1.0, 1.0]          # speed, pitch (st), range, pause scale: the plain reading
 
@@ -906,7 +909,7 @@ def main():
             # the delivery, fitted by synthesis against the speaker's takes of each genre
             prog.set('fit', f'Calibrating the delivery of the {n}-line voice against your takes', 38 + 55 * (i + 0.2) / len(sizes))
             # a line's own energy within its genre: measured from the takes, then corrected by synthesis
-            fit['energy'] = energy_effect([l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, root)
+            fit['energy'] = energy_effect([l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, root) if ENERGY_LEVELS else None
             fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
             if fit.get('energy'):
                 ee = fit['energy']['effect']

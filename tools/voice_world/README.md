@@ -181,6 +181,34 @@ left against the line's distance from its genre's usual energy. Above the usual 
 of the learned contour shrink by that fall factor per step, so short falling phrases no longer
 drag a loud line's register down.
 
+### High energy: parked (round 8), an open question
+
+Rounds 6 to 7 fitted genre styles and per-energy steps from about 30 war and race takes, and the
+loud lines' register came within 4.5 st of the speaker's. To the speaker they sounded bad: many
+poorly formed phonemes and artifacts. So high energy is parked: `VOICE_ENERGY_PARKED` makes a
+fitted voice read every station at the speaker's plain delivery, and `ENERGY_LEVELS = False`
+stops the tuning from fitting energy. The code, the energy mapping of radio items
+(`RadioContent.energy`) and the calibration stay for later.
+
+What high energy would need, as open questions rather than work:
+
+- **More hot takes:** the speaker's high-energy reads vary far more than their plain ones (in
+  register, range, timing and voice quality), so 30 takes cover little of it; a usable model
+  probably needs hundreds, spread over the energy levels.
+- **The plain recordings could carry most of the voice:** the units of the plain voice are many
+  and clean; the loud takes could supply only what changes with effort.
+  - *Shared phone inventory:* keep the plain diphone units and learn, per phone class, how the
+    envelope and aperiodicity move with effort (a few vectors per class, from phone-matched plain
+    and loud vowels and consonants), instead of separate loud units or one global tilt.
+  - *Energy as a transform of the plain voice:* raised voice as pitch, range, tempo and spectral
+    changes applied to the plain synthesis (each a function of energy), fitted so the transformed
+    plain synthesis of a loud line matches its take; what is not explained (pressed phonation,
+    shouted vowels) needs its own source model.
+  - *Why it went wrong:* the vocoder's units are measured at the plain register; synthesising
+    them an octave higher (the speaker's loud reads sit 12 to 16 st above the plain ones) samples
+    the envelope sparsely and smears the phones. A source-filter model that adjusts the envelope
+    with pitch (formant shift with effort, wider harmonics) may be the real requirement.
+
 The voice studio's "Tune" button starts a round. The recordings, voices and rounds all stay in
 scratch.
 
