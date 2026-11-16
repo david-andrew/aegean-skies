@@ -1494,32 +1494,39 @@ On the rivers branch until it lands.
 
 ### Wildlife
 
-- **Aliases:** the geese, a raft, the harbour gulls, the goats.
-- **Definition:** animals about the camera, cosmetic like the cats: **rafts** of 5–20 geese on
-  the lakes, wider river reaches and sheltered harbour corners (paddling in loose lines with small
-  wakes, **upending** to feed tail up and head under, preening, drifting on the wind, roosting at
-  night; goslings in some summer rafts); **gulls** wheeling over the harbours, perching on the
-  bollards and ridges, squabbling, and following fishing boats; **herds** of goats or sheep grazing
-  the slopes above villages. A raft that an aircraft taxis or lands close to, or that someone walks
-  up to, first **moves off**, then is **put up**: each goose runs pattering over the water until its
-  wings carry it (lift as the square of its speed) and flies off low behind a leader. Gulls fly
-  themselves too (banking to turn, gliding, flapping when slow or climbing). Low aircraft scatter a
-  herd a little way.
+- **Aliases:** the geese, the ducks, a raft, the harbour gulls, the goats.
+- **Definition:** animals about the camera, cosmetic like the cats. **Rafts** of waterfowl as the
+  1920s Aegean had them: greylag geese (more and larger rafts in winter; in summer some with
+  goslings), and on the lakes and wider river reaches mallards in pairs and coots among them.
+  Harbour corners hold greylags, now and then with a pair of mallards. A raft paddles in loose
+  lines with small wakes, drifts on the wind and roosts at night. Greylags and mallards **upend** to
+  feed: tipped forward, front half and head under, the rear third and tail up at about 55 degrees,
+  feet paddling and splashing at the surface. Coots **dive** instead. A raft that an aircraft taxis
+  or lands close to, or that someone walks up to, first **moves off**, then is **put up**: each bird
+  runs pattering over the water until its wings carry it (lift as the square of its speed; mallards
+  spring off soonest), and flies off low behind a leader of its own kind. **Gulls** fly themselves
+  too (banking into turns, gliding, flapping when slow or climbing), wheel over the harbours, perch
+  on the bollards at the water's edge and on ridges, squabble, and follow fishing caiques.
+  **Herds** of goats or sheep graze the slopes above villages; a low aircraft scatters them a little.
+  Every bird is cut at its **waterline** (`wild_fs`) and rides the sea's swell, so what is under
+  the water is not drawn through the transparent sea.
 - **Code:** `src/wildlife.jo` (`wild_scan`, `wild_harbour_raft`, `wild_hill_herd`,
-  `wild_threat_level`, `raft_step`, `colony_step`, `herd_step`, `wildlife_step`),
-  `src/wildlife_view.jo` (`build_wild_meshes`, `draw_wildlife`, `draw_wildlife_marks`),
-  `src/wildlife_sound.jo` (`wildlife_voices`: honks, cries, bells and bleats as ambience events).
+  `wild_raft_kinds`, `wild_threat_level`, `raft_step`, `colony_step`, `herd_step`, `wildlife_step`),
+  `src/wildlife_view.jo` (`_fowl_meshes`, `_pose_fowl`, `wild_fs`, `draw_wildlife`,
+  `draw_wildlife_marks`), `src/wildlife_sound.jo` (`wildlife_voices`: honks, quacks, coot calls,
+  gull cries, goat bells and bleats as ambience events; the instruments in `src/ambience_synth.jo`).
 - **Rules:** where they live comes from the world's places by hash (`wild_hash` of a settlement's
   id, a lake's id, a river node), never from the camera, and is the same from anywhere; the islands'
-  town harbours keep a raft all year, others are seasonal (more and larger in winter). Nothing is
-  saved and nothing touches the living world. Zero cost with none in range; nothing simulated above
-  1,500 m. Tests: `tests/wildlife_test.jo` (placement determinism, the take-off trigger).
-- **Capture:** `AEGEAN_WILD_LOOK="raft|gulls|flying|herd distance height bearing"` with
-  `AEGEAN_VIEW`; `AEGEAN_WILD_RAFT="ahead 160 14"` with `AEGEAN_CAPTURE_TAKEOFF=1` and
-  `AEGEAN_WILD_WATCH="30 1.8 0.5"` for a raft put up by a taxiing aircraft; `AEGEAN_WILD_TRACE=1`.
+  town harbours keep a raft all year, others are seasonal. Nothing is saved and nothing touches the
+  living world. Zero cost with none in range; nothing simulated above 1,500 m. Tests:
+  `tests/wildlife_test.jo` (placement determinism, the take-off trigger, the species and the dive).
+- **Capture:** `AEGEAN_WILD_LOOK="raft|upend|duck|gulls|herd distance height bearing"` with
+  `AEGEAN_VIEW`; `AEGEAN_WILD_RAFT="ahead 170 14"` with `AEGEAN_CAPTURE_TAKEOFF=1` (and
+  `AEGEAN_LAKE=0` for a lake's run) and `AEGEAN_WILD_WATCH="22 1.4 0.5"` for a raft put up by a
+  taxiing aircraft; `AEGEAN_WILD_CHASE="3.5 0.6"` beside a gull in the air; `AEGEAN_WILD_TRACE=1`.
   On `t3/wildlife`.
 
-![A raft of geese off the home harbour, two upended feeding, goslings among them](img/wildlife.png)
+![Greylags, a pair of mallards and goslings off the home harbour, one goose upended feeding](img/wildlife.png)
 
 ### Pilot's scarf
 
