@@ -36,6 +36,8 @@ SLOW = {
     "tests/playtest_loops_test.py": "the whole game played through ten loops (about 10 min)",
 }
 TIMEOUT = int(os.environ.get("CI_TEST_TIMEOUT", "1500"))
+# items that run longer than that by design (slow ones only)
+TIMEOUTS = {"tests/playtest_loops_test.py": 3600}
 
 
 def skipped():
@@ -75,11 +77,11 @@ def run_item(item, env, savedir):
     os.makedirs(e["SLOPPY_SAVE_DIR"], exist_ok=True)
     t0 = time.time()
     try:
-        r = subprocess.run(cmd, cwd=ROOT, env=e, capture_output=True, text=True, timeout=TIMEOUT)
+        r = subprocess.run(cmd, cwd=ROOT, env=e, capture_output=True, text=True, timeout=TIMEOUTS.get(item, TIMEOUT))
         out, code = r.stdout + r.stderr, r.returncode
     except subprocess.TimeoutExpired as ex:
         out = (ex.stdout or b"").decode(errors="replace") if isinstance(ex.stdout, bytes) else (ex.stdout or "")
-        out += "\nTIMEOUT after %d s" % TIMEOUT
+        out += "\nTIMEOUT after %d s" % TIMEOUTS.get(item, TIMEOUT)
         code = 124
     dt = time.time() - t0
     print("%s %-45s %6.1f s" % ("ok  " if code == 0 else "FAIL", item, dt), flush=True)

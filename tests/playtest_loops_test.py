@@ -28,10 +28,15 @@ CASES = [
 
 def main():
     scratch = Path(os.environ.get("PLAYTEST_DIR", str(Path.home() / "dev/tmp/aegean-skies/playtest-test")))
+    scratch.mkdir(parents=True, exist_ok=True)
+    # (built once: compiling the game again for every case is most of a case's time in CI)
+    probe = scratch / "playtest-probe"
+    built = subprocess.run(["sloppy", "build", "tools/playtest_probe.jo", "--release", "-o", str(probe)], cwd=ROOT, capture_output=True, text=True)
+    assert built.returncode == 0, built.stdout[-3000:] + built.stderr[-3000:]
     failed = []
     for case, frames, extra in CASES:
         env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY") and not k.startswith("AEGEAN_")}
-        env.update(PLAYTEST_DIR=str(scratch), PLAYTEST_FRAMES=str(frames), PLAYTEST_NO_DRAW="1", **extra)
+        env.update(PLAYTEST_DIR=str(scratch), PLAYTEST_BIN=str(probe), PLAYTEST_FRAMES=str(frames), PLAYTEST_NO_DRAW="1", **extra)
         out = subprocess.run(["sh", "tools/playtest.sh", case], cwd=ROOT, env=env, capture_output=True, text=True, timeout=1800)
         ok = out.returncode == 0 and f"PLAYTEST PASS {case}" in out.stdout
         print(("PASS " if ok else "FAIL ") + case, flush=True)
