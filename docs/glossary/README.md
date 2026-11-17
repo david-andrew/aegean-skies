@@ -1781,7 +1781,8 @@ On the rivers branch until it lands.
 ### The Ierax (seaplane tender)
 
 - **Aliases:** the tender, the depot ship, Kalyra's forward base.
-- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s, anchored as a depot
+- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s the size of HMS
+  Pegasus (101.5 m by 13.1 m, 4.6 m draught, 3,070 tons), anchored as a depot
   ship in the bight on the west coast of the island 25 km west of the strait, in the lee of its
   southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
   Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
