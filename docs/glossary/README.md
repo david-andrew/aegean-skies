@@ -15,17 +15,17 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -131,10 +131,13 @@ blue discs that stay in every frame are **speed flecks**.
 - **Definition:** the depth-driven colour ramp from cobalt in deep water, through turquoise, to
   see-through water at the shore. It reaches deep blue at 12 m on open shelves and 24 m in
   sheltered coves. The sandy seabed shows through with a faint caustic shimmer.
-- **Code:** `src/sea.jo:326 sea_shallow_mix(depth, shelter)` and the body colour in
-  `sea_material`; seabed caustics in `src/terrain.jo` (`ground_material`, "caustic shimmer").
-- **Rules:** only the colour weight may change. Add no texture, sampler, varying or world record
-  for it (`docs/painted-materials.md`).
+- **Code:** `src/sea.jo sea_shallow_mix(depth, shelter)` (the weight) and `sea_shallow_ramp` (the
+  colour) in `sea_material`; the seabed (pale sand tinted by the water above it, scattered weed
+  beds and stones, the drifting caustic network) in `src/terrain.jo ground_surface`.
+- **Rules:** the shallow/deep weight and the shallows' own depth ramp (`sea_shallow_ramp`: clear
+  aqua over the sand, turquoise, teal; no green in the water itself) may change. Add no texture,
+  sampler, varying or world record for it, and never touch the deep sea's flecks, marks or glints
+  (`docs/painted-materials.md`).
 
 ### Deep sea from height
 
@@ -152,6 +155,24 @@ blue discs that stay in every frame are **speed flecks**.
   `tweaks.brighter_ocean` (`AEGEAN_BRIGHT_SEA=1`) skips it.
 - **Rules:** colour and gradients only: never thin, dim or restyle the sea's fine detail for it.
 - **Capture:** `AEGEAN_FLYING=600`, or a free view looking down, `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
+
+### Cliff beds and lip
+
+- **Aliases:** strata, ledges, the cliff top, the fringe, the cliff's foot.
+- **Definition:** limestone cliffs painted as the film paints them: stacked beds about 3 m thick,
+  each its own tone, with a lit lip and a cool violet shadow under the bed above, ledges coming and
+  going along the face, tufts on them. At the top the scrub hangs over the edge in ragged tongues
+  with a soil band and root-stained rock below; at the foot, rock down to the water, wet at the
+  waterline. The rock is lit as bold planes by the way it faces.
+- **Code:** `src/terrain.jo ground_surface` (the strata block, the fringe block under "Where cliff
+  meets the green", the plane lighting under `light_normal`); `cliff_edge` from `ground_material`.
+- **Rules:** decide classification per pixel, never from values interpolated across a 14 m
+  terrain triangle (they draw sawteeth and dark wedges). `cliff_edge` (the slope changing fast
+  across a triangle) marks a cliff's lip and foot; ordinary hillsides skip all cliff work. The low
+  tier keeps only the per-pixel foot and edge rules: its ground shader on the laptop's GPU cannot
+  afford the ledges, tufts, streaks or plane lighting.
+- **Capture:** `AEGEAN_VIEW="4793 25 -5162 -2.129 -0.024 12.5"` (cliff from the sea, island),
+  `"139848 25 79652 -0.783 -0.073 12.5"` (mainland).
 
 ### Shore foam
 
@@ -901,6 +922,17 @@ On the rivers branch until it lands.
 - **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
   path is held. The default stays the liked model until the user prefers v2.
 - **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+- **Every type, as a player flies it:** `tools/type_survey.jo` flies each player-selectable aircraft
+  on the mouse's aim (as `src/pilot.jo` steers) and sets out a table: the take-off in calm water and
+  in wind 3's swell from three places (landplanes on flat grass), the cruise and the top speed level,
+  a level 45 degree turn, a stall and its recovery, a landing, a taxi turn and coming to rest, and
+  the aim's step, tracking and wiggle. The player's own mouse steering (`steer_v2` for her aircraft,
+  not another's nor an autopilot's) holds the nose's attitude on the wheels, and never asks the path to turn harder than the
+  wing can at that speed, so a landplane is not sat on her tail on the grass and a flying boat just
+  off the water climbs away instead of being pulled into a stall. A flying boat's hull below its
+  middle (and the S.55's twin hulls) running through the sea is judged by its sink into the water,
+  not by its run along its length, so it is not broken up in a moderate swell, while a hard drop
+  still crushes it (`src/flight.jo` `_substep`); `tests/type_flight_test.jo`.
 
 ### Sky Barons port
 
@@ -2218,7 +2250,11 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   story), music at the Ancora tonight (the band's evening). Said plainly, once by each person a
   day (kept in the World, so not again after a load: `World.rep.told_leads`), one kind a day each;
   nearest home first. No quest log and no marker: the player remembers
-  it, or writes it in the notebook. Mostly when asked what they've heard (half the time) and at
+  it, or writes it in the notebook. Each leads somewhere: the lift's taker is asked in talk; a
+  load's owner is named where it waits ("Nefeli's had a load on the dock a while."), and its
+  crates carry a label ("read the label on the crates"; someone near says where the owner is);
+  the race is entered at the club's table on the capital's quay (the club posts its meeting the
+  day before); the music is spoken of only when two of the band's players are in town to play. Mostly when asked what they've heard (half the time) and at
   the table (a third of the remarks), now and then in passing (one remark in seven).
 - **Code:** `src/leads.jo` (`leads_for`, `lead_real`, `lead_line`, `lead_to_tell`); `tell_lead`,
   `_lead_meets` and the three places it is said in `aegean.jo`; `tests/leads_test.jo` (every lead
@@ -2227,6 +2263,23 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   AEGEAN_CAPTURE_MINUTES=450 AEGEAN_HOUR=17` (someone at the bar tells of a lift wanted, the band,
   a load); `AEGEAN_LEISURE=lead-ride` (he has walked up to the one who wants the lift).
 
+
+### The club's table
+
+- **Aliases:** the race committee's table, the entry table, giving one's name for a race.
+- **Definition:** at a capital's air meeting, from the day before (when the club posts it) until
+  the start, a trestle table on the harbour's quay with the entry sheet and the cash box, the
+  club's maroon pennant on a pole, and the club's clerk behind it. A race is entered there, on foot
+  at the table (no longer from anywhere within twelve kilometres, nor from the water), with one's
+  own aircraft fuelled, sound and moored at the host harbour. Afterwards the result is told: a deed
+  of the pilot's name (a win talked of far and wide, a Schneider win on the wireless), people's
+  remarks ("Heard you came second at Kalyrassa."), the paper of a town that has heard ("Air race at
+  Kalyrassa"), and the pilot's day ("Raced at Kalyrassa. Came second.").
+- **Code:** `src/club_desk.jo` (`club_desk_at`, `club_desk_near`, `draw_club_desks`);
+  `race_offer_here`, `draw_club_tables`, `race_results_told` in `aegean.jo`; `rep_record_race` in
+  `src/reputation.jo`; `rep_paper_pieces` in `src/reputation_talk.jo`; the day-ahead posting in
+  `prepare_air_events` (`src/air_events.jo`).
+- **Capture:** `AEGEAN_CAPTURE_RACELEAD=heard|arrive|desk|after|paper` (the race lead followed).
 ### A boat adrift
 
 - **Aliases:** an overdue boat, a boat in trouble, Petros's boat.
@@ -2235,10 +2288,15 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   on the sea lane out of its harbour, two to four kilometres out, drifting slowly along it. Its
   trip is held there, so it is overdue: the town worries (the missing-boat story) and people say
   so (a [lead](#leads)). It is really there, drawn where it lies; found by flying over and
-  looking, with no marker. Landed alongside, the pilot takes the skipper aboard (he climbs into
-  the second seat, as a rescued pilot does) and sets him ashore at a harbour; or gets a line
-  across to another boat out fishing near, which tows it home; or, having seen it, tells someone
-  of its harbour where it lies, and the launch goes out. Left alone, the lost find their way home
+  looking, with no marker; a boat that lost its mast is drawn with it snapped off and the sail
+  over the side. Landed alongside, the pilot takes the skipper aboard (he climbs into the second
+  seat, as a rescued pilot does, and is back in it after a load) and sets him ashore at a harbour;
+  or signals a passing caique on its way, which turns aside and tows it in; or gets a line across
+  to another boat out fishing near; or, having seen it, tells someone of its harbour where it lies,
+  and the launch puts out from its berth. The launch and the caique are seen: they come out on the
+  fleet's sea lanes, draw up alongside, make fast, and tow the boat in astern on a line to the
+  harbour (`src/adrift_help.jo`, with the radio help's pieces); the world waits for them while they
+  are in sight and finishes by its own clock once the pilot is far off. Left alone, the lost find their way home
   in some hours, and the others are brought in by a passing boat late the next day. The skipper
   remembers who came for him; the worried and the harbour tell of it ("Heard you found Petros.");
   the pilot's day has it ("Found Petros off Porto Vecchio.").
@@ -2246,7 +2304,8 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   `adrift_set_ashore`, `adrift_tow`, `adrift_report`), `src/adrift_types.jo` (`World.adrift`, saved);
   the hold in `advance_workboats`; the deed `found_boat` in `src/reputation.jo`; `update_adrift`,
   the offers and the talk card's "… boat is lying off …" in `aegean.jo`; `tests/adrift_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home` (heard: with
+- **Capture:** `AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home|launch` (launch: the launch
+  putting out, the long ways out and in skipped to their last stretch; heard: with
   `AEGEAN_LEADS=always`; search: with `AEGEAN_FLYING=110`).
 ### Contracts
 
@@ -3239,6 +3298,17 @@ No image: the tiers differ in budgets more than in any single view.
   per type; `engine_sound_update`); `src/sound.jo` `update_audio`; `tests/engine_sound_test.jo`.
 - **Rules:** procedural only; loops baked once for the aircraft chosen, at the same overall level
   as the shared engine loops they replace (the title's music still leads by about 20 dB).
+
+### The sea about her
+
+- **Aliases:** sea sounds (a trial on the Tweaks page, off by default).
+- **Definition:** the sea heard about the aircraft: the open water's wash by the sea state (many
+  small wavelets breaking over a low heave), fading with height; lapping at the floats and hull
+  while she lies still or slow; the breeze while moored; the hull planing through the chop on a run
+  (thuds at the waves, the bow wave, the spray); slaps as it meets a crest, the spray thrown up a
+  moment after. Before it, away from a shore the open sea was silent.
+- **Code:** `src/sea_sound.jo`; `src/flight_feedback.jo` (`afloat`, `height`, `over_sea`,
+  `sea_wind`); `tests/sea_sound_test.jo`.
 
 ### Uneven events
 
