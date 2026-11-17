@@ -1,15 +1,17 @@
 # The field map: the farmland's layout baked once into a texture around the camera, so the
-# ground shader reads hedgerows, lanes and field edges with two texture samples instead of
-# working out districts, rows and hedges for every pixel (one look on every tier, at about
-# low's cost).
+# ground shader reads hedgerows, lanes, field edges and hedge shadows with one texture sample
+# instead of working out districts, rows and hedges for every pixel (one look on every tier, at
+# about low's cost).
 #
 # A world-anchored wrap-around texture (1024 texels of 3 m, about 3 km square): texel i holds
 # world texel I with i = I mod 1024, so it is read with repeat addressing at world/span. It is
 # kept in 64-texel blocks; as the camera moves, the blocks entering the window are drawn by a
 # small GPU pass (src/fields.jo field_at per texel), the rest stay. RGBA: R a hedgerow's cover
 # (scalloped crowns), G a lane's pale track, B a field's edge (a thin line where fields meet),
-# A 1. Whether a field is there at all, and its colour, comes from the terrain (field_share,
-# the working channel).
+# A a hedgerow's shadow under the canopy light (held low): so the ground reads all of it with
+# one sample. When the light's bearing turns, the map is redrawn a few blocks a frame. Whether
+# a field is there at all, and its colour, comes from the terrain (field_share, the working
+# channel).
 use 'fields.jo'
 use 'coast_pattern.jo'
 use 'quality.jo'
@@ -28,6 +30,7 @@ struct FieldMapBlock:
 
 struct FieldMapParams:
     pattern: Texture                # the coast pattern (the fields' warp noise)
+    light: vec4                     # toward the light (x, z, unit), a hedge's shadow length (m)
 
 struct FieldMapOut:
     pos: vec4
@@ -57,7 +60,11 @@ field_layout = (p: vec2,warp: vec2) -> vec3:
 
 field_map_fs = (i: FieldMapOut,u: FieldMapParams) -> vec4:
     warp = sample(u.pattern,i.world/6000.0).xy*2.0-vec2(1,1)
-    vec4(field_layout(i.world,warp),1)
+    here = field_layout(i.world,warp)
+    # (the hedge that far toward the light shades this point)
+    sun = i.world+u.light.xy*u.light.w
+    cast = field_layout(sun,sample(u.pattern,sun/6000.0).xy*2.0-vec2(1,1)).x
+    vec4(here,cast*(1.0-here.x))
 
 field_map_target = RenderTarget()
 field_map_sh: Shader
@@ -68,15 +75,17 @@ field_map_ready = false
 field_map_slots: ivec2[] = []
 field_map_frame = -1
 field_map_window = vec4(0,0,0,0)    # world min x, z of the valid window, its size; 0 size: none
+field_map_light = vec4(0,0,0,0)     # the light the map's shadows were drawn under
+field_map_relight = -1               # the next slot to redraw under a turned light (-1: none)
 
 field_map_span = () -> f64: f64(FIELD_MAP_SIZE)*FIELD_MAP_TEXEL
 
 # Bring the map to the camera: the blocks of the 16 x 16 window round it that the wrap-around
 # slots don't hold yet are drawn (a row or column of them as the camera crosses a block, all of
 # them after a jump). Once a frame, before the ground is drawn.
-update_field_map = (cam: vec3):
+update_field_map = (cam: vec3,canopy: vec4):
     global field_map_target,field_map_sh,field_map_quad,field_map_blocks_buffer,field_map_ready
-    global field_map_slots,field_map_frame,field_map_window
+    global field_map_slots,field_map_frame,field_map_window,field_map_light,field_map_relight
     if field_map_frame == frame_number(): return
     field_map_frame = frame_number()
     if __soft or not __post_active: field_map_window = vec4(0,0,0,0); return
@@ -94,6 +103,13 @@ update_field_map = (cam: vec3):
         field_map_target = RenderTarget(tex,fbo,0)
         field_map_slots = [loop k in 0..FIELD_MAP_BLOCKS*FIELD_MAP_BLOCKS: ivec2(-999999,-999999)]
         field_map_ready = true
+    # (the shadows' light: the canopy light's bearing, held low; a turn of a few degrees and the
+    # map is redrawn 24 blocks a frame, its old shadows standing meanwhile)
+    h = vec2(canopy.x,canopy.z)
+    toward = if length(h) > 0.001: normalize(h) else: vec2(0,1)
+    light = vec4(toward.x,toward.y,0,6.0/max(canopy.y,0.3)*canopy.w)
+    if dot(light.xy,field_map_light.xy) < 0.9986 or abs(light.w-field_map_light.w) > 0.5:
+        field_map_light = light; field_map_relight = 0
     block_m = f64(FIELD_MAP_BLOCK)*FIELD_MAP_TEXEL
     bx = int(floor(f64(cam.x)/block_m))-FIELD_MAP_BLOCKS/2
     bz = int(floor(f64(cam.z)/block_m))-FIELD_MAP_BLOCKS/2
@@ -104,10 +120,14 @@ update_field_map = (cam: vec3):
             sx = ((wb.x%FIELD_MAP_BLOCKS)+FIELD_MAP_BLOCKS)%FIELD_MAP_BLOCKS
             sz = ((wb.y%FIELD_MAP_BLOCKS)+FIELD_MAP_BLOCKS)%FIELD_MAP_BLOCKS
             slot = sz*FIELD_MAP_BLOCKS+sx
-            if field_map_slots[slot] == wb: continue
+            stale = field_map_relight >= 0 and slot >= field_map_relight and slot < field_map_relight+24
+            if field_map_slots[slot] == wb and not stale: continue
             field_map_slots[slot] = wb
             r = f32(1.0/f64(FIELD_MAP_BLOCKS))
             blocks.push(FieldMapBlock(vec4(f32(sx)*r,f32(sz)*r,f32(sx+1)*r,f32(sz+1)*r),vec4(f32(f64(wb.x)*block_m),f32(f64(wb.y)*block_m),f32(block_m),f32(block_m))))
+    if field_map_relight >= 0:
+        field_map_relight += 24
+        if field_map_relight >= FIELD_MAP_BLOCKS*FIELD_MAP_BLOCKS: field_map_relight = -1
     field_map_window = vec4(f32(f64(bx)*block_m),f32(f64(bz)*block_m),f32(f64(FIELD_MAP_BLOCKS)*block_m),f32(field_map_span()))
     if blocks.len() == 0: return
     zone("field map")
@@ -115,7 +135,7 @@ update_field_map = (cam: vec3):
     glBindFramebuffer(GL_FRAMEBUFFER,u32(field_map_target.fbo))
     glViewport(0,0,i32(FIELD_MAP_SIZE),i32(FIELD_MAP_SIZE))
     glDisable(GL_DEPTH_TEST); glDepthMask(0); glDisable(GL_CULL_FACE); glDisable(GL_BLEND)
-    draw_instanced(field_map_sh,field_map_quad,field_map_blocks_buffer,FieldMapParams(coast_pattern_texture))
+    draw_instanced(field_map_sh,field_map_quad,field_map_blocks_buffer,FieldMapParams(coast_pattern_texture,field_map_light))
     rt = __scene_rt
     glBindFramebuffer(GL_FRAMEBUFFER,u32(rt.fbo))
     glViewport(0,0,i32(rt.texture.width),i32(rt.texture.height))
