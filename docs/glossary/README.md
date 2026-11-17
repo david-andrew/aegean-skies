@@ -1724,14 +1724,24 @@ On the rivers branch until it lands.
   gone, wrecked or aground), the [R/T](#rt) pad offers "Call for help" first (R does too on a
   wreck). Whoever is really near answers. One of the player's flight (in a fight, for fuel only)
   lands into the wind off to one side, taxis to lie alongside and hands over two two-gallon cans
-  out of its own tank, then takes off again. Failing that, the nearest passing ship of the living
+  out of its own tank, then takes off again. Outside a fight, a pilot of the world flying a trip
+  within 15 km does the same (the cans paid to them at the pier's price), or for a wreck takes the
+  pilot along to wherever they are bound, the harbour there fetching the aircraft in after for a
+  fee; their trip is taken up again once they are back up. Failing that, the nearest passing ship of the living
   world turns aside (a hull stands in for it, the ship itself held on its route and not drawn
   meanwhile) and tows the aircraft into the nearest town harbour. Failing that, that harbour's
   launch comes out and tows it in. The radio answers with a rough time ("about twenty minutes");
   the boat sails the fleet's own sea lanes, round the land, and is seen coming; "Wait for them"
   skips the wait ([time skip](#time-skip)) to the last 60 m, or a tow to the harbour. The tow
   draws up alongside, takes the line and hauls the aircraft round onto it; in at the harbour the
-  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). The
+  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). A
+  wreck's pilot is taken off: they drop into the water, swim across in their vest (the camera
+  behind them) and climb onto the boat's after deck, and ride in watching
+  the wreck in tow (the camera with them, F to skip ahead), stepping ashore by it at the harbour;
+  or, in a fight with a base, one of the flight lands, they swim to its float and up into its
+  second seat, and it flies
+  them back to the base (F skips the flight), the harbour's boat fetching the aircraft in after
+  for a fee. The
   cans are paid for at the nearest pier's price to the wingman, the tow by distance to the
   skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
   the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
@@ -1742,7 +1752,9 @@ On the rivers branch until it lands.
   `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
   `aegean.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
-  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
+  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`,
+  `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=passing|passwreck` (ahead of the first world aircraft seen
+  flying), `AEGEAN_CAPTURE_HELP=tender`; HELP lines say what happened.
 
 ### Wireless
 
@@ -1765,6 +1777,29 @@ On the rivers branch until it lands.
   a few idle seconds close it. The nearest of the flight answers in a few plain words.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
+
+### The Ierax (seaplane tender)
+
+- **Aliases:** the tender, the depot ship, Kalyra's forward base.
+- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s, anchored as a depot
+  ship in the bight on the west coast of the island 25 km west of the strait, in the lee of its
+  southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
+  Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
+  past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
+  strait's Kalyran flight comes home to her: it lands to seaward and moors in turn along the booms
+  and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
+  lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
+  to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
+  else), and be lowered over the side again. Her launch answers a call for help when she is nearer
+  than any harbour, and tows the aircraft in to her moorings.
+- **Code:** `src/tender.jo` (`TENDER_AT`, `tender_slot`, `tender_home`, `hoist_point`); the booms
+  and derrick in `src/vessel_models.jo`; `strait_homes` in `src/scenarios.jo`; `tender_fuel`,
+  `tender_hoist_start`, `tender_step`, `tender_repair` and the help call's `by_tender` in `aegean.jo`.
+- **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_TENDER=hoist`; `AEGEAN_ABOARD=1
+  AEGEAN_CAPTURE_HELP=tender`; the flight home: `AEGEAN_SCENARIO=strait
+  AEGEAN_CAPTURE_STRAIT_AFTER=arrive AEGEAN_ARRIVE_KM=3 AEGEAN_ARRIVE_FORMED=1
+  AEGEAN_CAPTURE_TENDER_CAM=1` (with `AEGEAN_FRAMES` and `AEGEAN_FRAMES_ONLY=1` for a time-lapse).
 
 ### Legacy towns
 
