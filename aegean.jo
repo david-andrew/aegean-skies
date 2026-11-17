@@ -203,6 +203,7 @@ use 'src/living_adrift.jo'
 import 'src/living_boats.jo' as workboats_api
 use 'src/adrift_help.jo'
 use 'src/club_desk.jo'
+use 'src/errand_words.jo'
 import 'src/living_jobs.jo' as lead_jobs
 from 'src/living_talk_context.jo' import last_spoken
 use 'src/stay.jo'
@@ -1908,6 +1909,13 @@ rider_tick = (dt: f64):
             rider = rider_seated(person, t, ride.stage != .none)
             p = living_world.people[person]
             rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+    # (a passenger the pilot carries for a job: seen in the second seat, src/errands.jo too)
+    if rider.stage == .none:
+        person = job_passenger_aboard()
+        if person >= 0:
+            rider = rider_seated(person, t, ride.stage != .none)
+            p = living_world.people[person]
+            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
     # (and a skipper taken off a boat adrift: src/living_adrift.jo)
     if rider.stage == .none:
         person = adrift_aboard_person(living_world)
@@ -4518,14 +4526,32 @@ near_board = () -> int:
         if length(board_spots[k] - me.pos) < 3.2: return k
     -1
 
-# jobs the player carries for this place, delivered on arrival (paid then)
+# A passenger the pilot carries for a job, aboard his aircraft now (-1 none).
+job_passenger_aboard = () -> int:
+    craft = living_world.people[living_world.player].craft
+    if craft < 0 or craft >= living_world.aircraft.len(): return -1
+    loop id in living_world.active_jobs:
+        j = living_world.jobs[id]
+        if j.state == .claimed and j.carrier == living_world.player and j.purpose == .passenger and j.passenger >= 0 and j.passenger in living_world.aircraft[craft].passengers: return j.passenger
+    -1
+
+# jobs the player carries for this place, delivered on arrival (paid then): the passenger climbs out
+# onto the dock beside the pilot, thanks him, and goes on into the town
 deliver_here = (place: int):
     loop id in living_world.active_jobs:
         j = living_world.jobs[id]
         if j.state != .claimed or j.carrier != living_world.player or j.destination != place or j.purpose != .passenger: continue
         before = player_cents()
+        late = living_world.minute > j.due_minute
         if living.deliver_job(living_world, id, living_world.player):
-            say_toast("Delivered for {living_world.people[j.poster].name}: {phoenix_text(player_cents() - before)}")
+            p = j.passenger
+            if rider.person == p and (rider.stage == .aboard or rider.stage == .boarding):
+                seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span))
+                inland = me.pos - pc.state.position
+                side = normalize(vec3(-inland.z, 0, inland.x) + vec3(0.0001, 0, 0))
+                rider_alight(rider, seat, me.pos + side * 1.2, inland, t)
+            thanks = if let e = errand_of(living_world, id): errand_thanks(living_world, e, late) else: ["Here already. Thank you.", "Safe and sound. Thank you.", "That was quicker than the boat."][(p + living_world.minute) % 3]
+            say_toast("{split(living_world.people[p].name, " ")[0]}: {thanks}  {phoenix_text(player_cents() - before)} from {split(living_world.people[j.poster].name, " ")[0]}.")
 spray_ps = WorldParticles(gravity = vec3(0, -9.8, 0), drag = 1.5,billowing=true)
 smoke_ps = WorldParticles(gravity = vec3(0, 1.5, 0), drag = 2.0)
 vapor_trails = [Trail(), Trail()]
@@ -5384,6 +5410,8 @@ recipient_of = (id: int) -> int:
 # what a job carries, in a few words
 job_cargo = (id: int) -> str:
     j = living_world.jobs[id]
+    if let e = errand_of(living_world, id):
+        if e.kind != .nurse: return errand_label(e.kind)
     if j.purpose == .passenger: return living_world.people[j.passenger].name
     if j.cargo_mode == .sealed: return "the sealed bag"
     "the {living_world.goods[j.good].key}"
@@ -8483,6 +8511,148 @@ stage_capture_racelead = (stage: str):
             say_toast(if entry.accepted: "Entered. The race starts at {clock_text(living_world, air_events.meets[racelead_meet].race_tick / 120)}" else: entry.reason)
             print("RACELEAD entered {entry.accepted} {entry.reason}")
 
+# (the mail errand capture: the world on to the morning a bag is made up for an island, then on to
+# a quarter past eight, the office open)
+errand_cap_find = () -> int:
+    loop m in 0..3 * 1440:
+        loop id, e in living_world.errands:
+            if e.kind == .mail and living_world.jobs[id].origin == 0 and living_world.jobs[id].state == .open: return id
+        living.advance_minutes(living_world, 1)
+    -1
+_errand_cap_beside = (k: int, dist: f64):
+    global me, follow
+    fp = folks[k].pos
+    away = normalize(vec3(me.pos.x - fp.x, 0, me.pos.z - fp.z) + vec3(0.0001, 0, 0))
+    me.mode = .walking
+    me.pos = vec3(fp.x + away.x * f32(dist), f32(walk_height(towns, f64(fp.x + away.x * f32(dist)), f64(fp.z + away.z * f32(dist)))), fp.z + away.z * f32(dist))
+    me.yaw = atan2(f64(-away.x), f64(-away.z)); me.stride = 0.0
+    follow.yaw = me.yaw + PI + 0.9; follow.distance = 4.6; follow.pitch = 0.06; follow.height = 0.5; follow.placed = false
+    portage.cargo_person_pose(living_world, living_world.player, me.pos)
+_errand_cap_folk = (person: int) -> int:
+    loop i in 0..folks.len():
+        if folks[i].shown and folks[i].person == person: return i
+    -1
+stage_capture_errand = (stage: str):
+    global errand_stage_frame, errand_cap_job, errand_cap_folk, hour
+    if errand_stage_frame < 0:
+        if frame_number() < 3 or not living_world.far.populated: return
+        errand_stage_frame = frame_number()
+        id = errand_cap_find()
+        errand_cap_job = id
+        if id < 0:
+            print("ERRAND none posted")
+            return
+        print("ERRAND found {id} at {lt.local_minute(living_world.minute)} day {lt.day_index(living_world.minute)} state {living_world.jobs[id].state} posted {living_world.errands[id].posted}")
+        # (a quarter past eight: the office open, the bag waiting)
+        loop lt.local_minute(living_world.minute) < 495 and id in living_world.jobs: living.advance_minutes(living_world, 1)
+        if not (id in living_world.jobs):
+            print("ERRAND job {id} gone at {lt.local_minute(living_world.minute)}")
+            errand_cap_job = -1
+            return
+        j = living_world.jobs[id]
+        e = living_world.errands[id]
+        print("ERRAND job {id} {job_cargo(id)} from {living_world.people[j.poster].name} to {living_world.people[e.recipient].name} at {living.place_name(living_world, j.destination)}; {phoenix_text(j.reward_cents)} state {j.state}")
+        if stage == "arrive":
+            # (on his way over with it, half an hour after the bag came aboard)
+            living.advance_minutes(living_world, 75)
+        if stage == "handover":
+            took = agree_cargo_job(id, .automatic)
+            print("ERRAND took: {took}")
+            waited = 0
+            loop waited < 180 and not living_world.jobs[id].loaded:
+                living.advance_minutes(living_world, 1); waited += 1
+            print("ERRAND loaded {living_world.jobs[id].loaded} after {waited} minutes")
+            gone = living_scene.scene_player_departure(living_world)
+            cr = living_world.people[living_world.player].craft
+            print("ERRAND departed {gone}: trip {living_world.aircraft[cr].trip} place {living_world.aircraft[cr].place} state {living_world.aircraft[cr].state}")
+            living.advance_minutes(living_world, 35)
+        sync_folk(folks, living_world, towns)
+        hour = f64(lt.local_minute(living_world.minute)) / 60.0
+        if stage == "offer":
+            k = _errand_cap_folk(j.poster)
+            print("ERRAND poster folk {k}")
+            if k >= 0:
+                _errand_cap_beside(k, 1.6)
+                global rep_ask_k, rep_talk_due
+                rep_ask_k = k; rep_talk_due = t + 1.5
+        else if stage == "arrive":
+            tw = towns[j.destination]
+            d = tw.docks[0]; out = vec3(tw.out.x, 0, tw.out.y)
+            to = vec3(-out.x, 0, -out.z)
+            start = d + out * 1300.0 + vec3(-to.z, 0, to.x) * 60.0
+            h = atan2(f64(to.x), -f64(to.z))
+            spd = f64(length(pc.state.velocity))
+            pc.state.position = vec3(start.x, f32(120.0), start.z)
+            pc.state.velocity = heading_vector(h) * f32(spd)
+            pc.state.orientation = quat_euler(0, -h, 0)
+            pc.aim_heading = h; pc.placed = false
+        else if stage == "handover":
+            tw = towns[j.destination]
+            d = tw.docks[0]; out = vec3(tw.out.x, 0, tw.out.y)
+            h = atan2(f64(-out.x), f64(out.z))
+            pc.state = water_start(pc.spec, vec3(d.x + out.x * 8.0, 0, d.z + out.z * 8.0), h)
+            pc.throttle = 0.0; pc.aim_heading = h; pc.placed = false
+            moor(pc.state, vec3(d.x, f32(pc.spec.float_height), d.z), h)
+            tie_up()
+            # (the world has him in: the trip ended at that dock, as the mooring does)
+            cr = living_world.people[living_world.player].craft
+            living_world.aircraft[cr].pose.pos = living_world.harbors[j.destination].docks[0]
+            living_world.aircraft[cr].pose.vel = vec3(0, 0, 0)
+            arrived = living_scene.scene_player_arrival(living_world, j.destination, 0)
+            print("ERRAND arrived {arrived}")
+            living.advance_minutes(living_world, 1)
+            sync_folk(folks, living_world, towns)
+            k = _errand_cap_folk(e.recipient)
+            errand_cap_folk = k
+            print("ERRAND recipient folk {k} awaited {portage.cargo_awaited(living_world, e.recipient)} craft place {living_world.aircraft[living_world.people[living_world.player].craft].place}")
+            if k >= 0:
+                # (the pilot stepped onto the dock at the loading place; the postmaster a few steps
+                # off, come down from the town as the aircraft tied up)
+                spot = portage.cargo_meeting_spot(living_world, id)
+                tw = towns[j.destination]
+                inland = normalize(vec3(-tw.out.x, 0, -tw.out.y))
+                fp = spot + inland * 9.0
+                fp = vec3(fp.x, f32(walk_height(towns, f64(fp.x), f64(fp.z))), fp.z)
+                folks[k].pos = fp
+                living_world.people[e.recipient].pose.pos = fp
+                me.mode = .walking
+                me.pos = vec3(spot.x, f32(walk_height(towns, f64(spot.x), f64(spot.z))), spot.z)
+                me.yaw = atan2(f64(inland.x), f64(inland.z)); me.stride = 0.0
+                follow.yaw = me.yaw + PI + 0.5; follow.distance = 4.4; follow.pitch = 0.1; follow.height = 1.0; follow.placed = false
+                portage.cargo_person_pose(living_world, living_world.player, me.pos)
+        return
+    wait = frame_number() - errand_stage_frame
+    if errand_cap_job < 0: return
+    id = errand_cap_job
+    # (offer: the card up a moment, then the pilot takes it, the porter called for)
+    if stage == "offer" and wait == 200 and ui == .talk:
+        global ui_line, ui_turn
+        ui_turn = living.ask_for_work(living_world, folks[ui_folk].person, living_world.player)
+        ui_line = turn_text(ui_turn)
+        print("ERRAND asked for work: {ui_line}")
+    if stage == "offer" and wait == 480 and ui == .talk:
+        global ui_line
+        ui_line = said_by(living_world.people[living_world.jobs[id].poster].name, agree_cargo_job(id, .automatic))
+        print("ERRAND offer taken: {ui_line}")
+    # (handover: walked up to the postmaster, then handed it)
+    if stage == "handover" and errand_cap_folk >= 0 and wait > 60:
+        fp = folks[errand_cap_folk].pos
+        dd = vec2(fp.x - me.pos.x, fp.z - me.pos.z)
+        if f64(length(dd)) > 1.7 and wait < 400:
+            dir = normalize(dd)
+            step_player_walk(dir * f32(1.5 / 60.0))
+            me.yaw = approach_angle(me.yaw, atan2(f64(dir.x), f64(dir.y)), 6.0, 1.0 / 60.0)
+            me.stride = approach(me.stride, 0.7, 8.0, 1.0 / 60.0); me.phase += 1.0 / 60.0 * 1.5 * 5.0
+            portage.cargo_person_pose(living_world, living_world.player, me.pos)
+        else if living_world.jobs[id].state == .claimed and errand_cap_folk >= 0:
+            me.stride = approach(me.stride, 0.0, 8.0, 1.0 / 60.0)
+            if wait % 30 == 0:
+                k, hid = handover_here()
+                print("ERRAND at the postmaster: {k} {hid}")
+                if hid == id:
+                    handover_act()
+                    errand_cap_folk = -1
+
 # A race the pilot flew, once he is in or out of it: placed, talked of (src/reputation.jo).
 race_results_told = ():
     if capture_racelead == "list" and frame_number() % 600 == 0:
@@ -10037,6 +10207,16 @@ capture_rescue = env("AEGEAN_CAPTURE_RESCUE")
 # aboard a moment later; home: moored at home with Petros aboard, set ashore a moment later.
 capture_adrift = env("AEGEAN_CAPTURE_ADRIFT")
 capture_racelead = env("AEGEAN_CAPTURE_RACELEAD") ?? ""
+# AEGEAN_CAPTURE_ERRAND=offer|arrive|handover: the mail bag out of Porto Vecchio, from offer to
+# thanks (src/errands.jo; captures). The world run on to the next morning the office makes up a bag
+# for an island. offer: on foot by the postmaster; asked for work, he asks it; taken a moment later.
+# arrive: on the way over, in the air 1.3 km off the island's pier, heading in (with AEGEAN_FLYING).
+# handover: taken, loaded and flown, moored at its dock, the pilot on the dock and the postmaster come
+# down from the town, who is walked up to and handed it.
+capture_errand = env("AEGEAN_CAPTURE_ERRAND") ?? ""
+errand_stage_frame = -1
+errand_cap_job = -1
+errand_cap_folk = -1
 adrift_stage_frame = -1
 adrift_ask_due = -1.0
 # (launch: the camera on the launch putting out; at 420 frames the long way out skipped to the last
@@ -10673,6 +10853,7 @@ update_frame = (dt: f64, saves: bool = true):
     update_adrift()
     race_results_told()
     if capture_racelead != "" and capture_racelead != "list": stage_capture_racelead(capture_racelead)
+    if capture_errand != "": stage_capture_errand(capture_errand)
     # (the rescue capture: F taken for the player once alongside)
     if capture_after=="arrive" and env("AEGEAN_CAPTURE_TENDER_CAM")!=none: tender_cam_step()
     if capture_after=="rescue" and rescue_act==1 and not capture_after_took:
@@ -11319,7 +11500,7 @@ update_frame = (dt: f64, saves: bool = true):
                 if said != "": folks[k].line = said; plain = false
             # (one waiting for the pilot's cargo asks after it)
             awaited = portage.cargo_awaited(living_world, folks[k].person)
-            if awaited >= 0: folks[k].line = "Is that {job_cargo(awaited)} from {split(living_world.people[living_world.jobs[awaited].poster].name, " ")[0]}?"
+            if awaited >= 0: folks[k].line = if let e = errand_of(living_world, awaited): errand_waiting(living_world, e) else: "Is that {job_cargo(awaited)} from {split(living_world.people[living_world.jobs[awaited].poster].name, " ")[0]}?"
             # (one who waited in the second seat and gave up says so, in passing)
             if folks[k].person in ride_owed: folks[k].line = ride_gave_up_line(living_world.people[folks[k].person].traits.boldness < 450)
             folks[k].line_t = t
@@ -12391,6 +12572,7 @@ handover_thanks = (id: int) -> str:
     w = living_world
     sender = split(w.people[w.jobs[id].poster].name, " ")[0]
     late = w.minute > w.jobs[id].due_minute
+    if let e = errand_of(w, id): return errand_thanks(w, e, late)
     if late: "There it is at last. I'll take it from here." else: "From {sender}? Thank you, I'll take it from here."
 
 # Each frame: the waiting receivers wave at the pilot coming in; a handover signed for is paid
@@ -12615,9 +12797,11 @@ draw_ui = ():
                 if choice == .player:
                     portage.choose_collection(living_world,id,living_world.player,.player)
                     ui_line = "Please bring it to the marked delivery point. " + portage.cargo_status(living_world,id)
-                else if living.deliver_job(living_world, id, living_world.player):
-                    ui_line = "Thank you. That's what was promised: {phoenix_text(player_cents() - before)}."
-                else: ui_line = portage.cargo_status(living_world,id)
+                else:
+                    thanks = handover_thanks(id)
+                    if living.deliver_job(living_world, id, living_world.player):
+                        ui_line = if errand_of(living_world, id) != none: "{thanks} {phoenix_text(player_cents() - before)}." else: "Thank you. That's what was promised: {phoenix_text(player_cents() - before)}."
+                    else: ui_line = portage.cargo_status(living_world,id)
             else if c >= nerr and c < nrep:
                 ui_turn = living.reply(living_world, f.person, replies[c - nerr].reply, living_world.player)
                 ui_line = turn_text(ui_turn)
