@@ -1532,16 +1532,22 @@ On the rivers branch until it lands.
   shadow onto the field away from the canopy light (held low, so they read at noon). Lanes run
   between districts, a hedgerow along about half. A settlement's working land and the olive
   country are drawn as the same patchwork, taking their own crops. Woods keep the pine stands;
-  the lowland's maquis gives way to the fields. Far off, the fields turn to their mean. On low,
-  the fields' colour is baked into the terrain tiles on the CPU (soft edges, no hedgerows; the
-  fields' mean on coarse tiles).
-- **Code:** `src/fields.jo` (`field_at`, `field_crop`, `field_hedges`, `field_share`,
-  `field_bake`, `field_crop_low`, `field_palette`); used by `ground_surface` in
-  `src/terrain.jo`; baked for low in `world_tile_job_rows` (`src/world_terrain.jo`).
+  the lowland's maquis gives way to the fields. Far off, the fields turn to their mean. One look
+  on every tier, at about low's cost: each terrain sample's field colour and share are baked on
+  the CPU (the new world's tiles, the old islands' tiles at load, each grass cell), and the
+  hedgerows, lanes, field edges and hedge shadows come from the field map, a wrap-around texture
+  of 3 m texels round the camera drawn in 64-texel blocks by a small GPU pass as the camera
+  moves (redrawn a few blocks a frame when the light's bearing turns). The ground reads it with
+  one sample.
+- **Code:** `src/fields.jo` (`field_at`, `field_share`, `field_bake`, `field_crop_low`,
+  `field_colour`, `field_palette`); `src/field_map.jo` (`field_layout`, `update_field_map`);
+  used by `ground_surface` in `src/terrain.jo`; baked in `world_tile_job_rows`
+  (`src/world_terrain.jo`), `island_working` (`src/terrain_lod.jo`) and `grass_build_step`
+  (`src/grass.jo`).
 - **Rules:** the palette is a switch until the look is decided: `AEGEAN_FIELD_PALETTE=dry` gives
   the dry straw summer (docs/ART.md); green valleys by default. Low's terrain shader is at a
   register-pressure cliff on redfox: measure any addition to its low path there, alone and
-  together.
+  together. Field detail goes into the bake or the field map, not into per-pixel work.
 ---
 
 ## Towns and people
