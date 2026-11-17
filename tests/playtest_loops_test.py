@@ -4,9 +4,11 @@ delivery handed over and paid (saved and loaded on the dock), fuel bought and ke
 hotel's room to morning (and a save in the room loaded back by the desk), a pleasure flight brought
 in, a wreck towed home, broke and dry at home with work still to be had, and the strait (won and
 lost) and the canal escape handing back to the ordinary game on arrival, which then saves.
-Slow (a minute or so a case here, several in CI): in CI only with slow: true. This file plays the
-situations and the flying loops; tests/playtest_town_test.py the town's (two shards' worth in CI).
-Two cases at a time: python3 tests/playtest_loops_test.py [town|flying|all].
+Slow (a minute or so a case here, several in CI). This file plays the flying loops and
+tests/playtest_town_test.py the town's, both in CI only with slow: true; tests/playtest_situations_test.py
+plays the strait and the canal escape, on a real GPU only (under CI's software rendering the strait
+ran some 300 frames in 14 minutes). Two cases at a time: python3 tests/playtest_loops_test.py
+[town|flying|situations|all].
 """
 import concurrent.futures as cf
 import os
@@ -27,6 +29,8 @@ GROUPS = {
     "flying": [
         ("ride", 4000, dict(AEGEAN_LEISURE="ride-air", AEGEAN_FLYING="120")),
         ("tow", 2000, dict(AEGEAN_FLYING="60")),
+    ],
+    "situations": [
         ("strait-home", 9000, dict(AEGEAN_SCENARIO="strait", AEGEAN_CAPTURE_STRAIT_AFTER="arrive", PLAYTEST_COME_IN="3000")),
         ("strait-lose", 4000, dict(AEGEAN_SCENARIO="strait")),
         ("canal", 9000, dict(AEGEAN_SCENARIO="canal", AEGEAN_CAPTURE_CANAL_RUN="1", PLAYTEST_COME_IN="3600")),
@@ -35,7 +39,7 @@ GROUPS = {
 
 
 def main(group="flying"):
-    cases = GROUPS["town"] + GROUPS["flying"] if group == "all" else GROUPS[group]
+    cases = [c for g in GROUPS.values() for c in g] if group == "all" else GROUPS[group]
     scratch = Path(os.environ.get("PLAYTEST_DIR", str(Path.home() / "dev/tmp/aegean-skies/playtest-test"))) / group
     scratch.mkdir(parents=True, exist_ok=True)
     # (built once: compiling the game again for every case is most of a case's time in CI)

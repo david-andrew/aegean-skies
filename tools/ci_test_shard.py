@@ -29,11 +29,12 @@ WEIGHTS = ROOT / "tools" / "ci_test_weights.json"
 RELEASE = {"tests/sky_test.jo", "tests/nature_test.jo"}
 # never run in CI: they need a real GPU (the depth prepass differs under software rendering: the
 # test passes on the desktop, and gives 0 hidden-bed pixels under SLOPPY_SOFTWARE=1)
-GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)"}
+GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)",
+            "tests/playtest_situations_test.py": "needs a real GPU (the strait's battle runs some 300 frames in 14 min under software rendering)"}
 # run only when CI_SLOW=1 (workflow_dispatch with slow: true): the whole game, software-rendered
 SLOW = {
     "tests/title_reel_detail_test.py": "slow under software rendering (about 16 min)",
-    "tests/playtest_loops_test.py": "the whole game played through the situations and flying loops (about 20 min)",
+    "tests/playtest_loops_test.py": "the whole game played through the flying loops (about 10 min)",
     "tests/playtest_town_test.py": "the whole game played through the town's loops (about 20 min)",
 }
 TIMEOUT = int(os.environ.get("CI_TEST_TIMEOUT", "1500"))
