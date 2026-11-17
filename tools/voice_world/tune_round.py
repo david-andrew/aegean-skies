@@ -176,6 +176,8 @@ def corpus_files(subset, aligned, work):
 
 PLAIN = ('neutral', 'contrast', 'news')     # reads without a performed delivery
 SHRINK = dict(duration=8, phrases=30, pauses=10, fricatives=10)
+# (a clean voice's prior is generic, not a measured speaker: the speaker's takes outweigh it sooner)
+CLEAN_SHRINK = dict(duration=4, phrases=15, pauses=5, fricatives=5)
 
 
 def toward(prior, user, w):
@@ -185,7 +187,7 @@ def toward(prior, user, w):
     return round(float(prior + w * (user - prior)), 4)
 
 
-def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=()):
+def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=(), ks=None):
     """The user's diphone units and prosody from the subset. Returns (units, fit, notes).
 
     More data must never make the voice worse, so the prosody:
@@ -197,6 +199,7 @@ def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=()):
     Lines in `exclude` (the validation lines) never shape the prosody.
     """
     os.makedirs(work, exist_ok=True)
+    SHRINK = ks or globals()['SHRINK']
     phones_json, words_json, npz, speakers = corpus_files(subset, None, work)
     notes = []
     # diphone units: the user's voice only (missing diphones borrow halves inside it, at runtime)
@@ -670,6 +673,18 @@ def energy_effect(lines, takes, aligned, root, lam=4.0):
                 refs=refs, n=len(rows), levels=levels)
 
 
+# Formant emphasis values to try for each voice on the validation lines (0.25: the synthesizer's
+# default). Off: ten validation lines are too few to choose it (a clean voice's chose 0.25 by one
+# point there, while all 18 held-out lines put 0 five points ahead); a voice's own value can still
+# be set in its fit ('postfilter').
+POSTFILTERS = ()
+
+
+def units_for_postfilter(clean, adapted, user):
+    """The units the postfilter is chosen with: the speaker's own for a clean voice, else the adapted."""
+    return user if clean else adapted
+
+
 GUARD_FLOOR = 0.05     # word accuracy a choice with more of the speaker's data may give up; within it the user's ear decides     # word accuracy a choice with more of the speaker's data may give up
 
 
@@ -701,7 +716,9 @@ def pack_voice(units, fit, lex, out, prior=None):
 def evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr=None):
     """Scores a voice on the held-out lines; a finished scoring of the same voice file on the same
     held-out takes is reused, so a retried round only scores what it had not finished."""
-    key = dict(voice=file_hash(data), lines=[f"{l['id']}-{takes[l['id']]['n']}" for l in heldout], full=bool(full), asr=asr is not None)
+    # (the synthesizer's settings too: a scoring at another postfilter is another scoring)
+    key = dict(voice=file_hash(data), lines=[f"{l['id']}-{takes[l['id']]['n']}" for l in heldout], full=bool(full), asr=asr is not None,
+               synth='voice-postfilter', post=os.environ.get('VOICE_POST'))
     done = os.path.join(outdir, 'entries.json')
     if os.path.exists(done):
         try:
@@ -926,7 +943,7 @@ def main():
             share = '' if full else f' ({round(100 * n / len(order))}%)'
             prog.set('fit', f'Fitting voices to {n} lines{share}', 38 + 55 * i / len(sizes))
             work = os.path.join(root, 'tune', 'work', f'{rnd_id}-{n}')
-            user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids)
+            user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids, ks=CLEAN_SHRINK if a.clean else None)
             # (clean: the speaker's units throughout, where the guard and calibration use a voice)
             adapted, phones_seen = (user, 0) if a.clean else adapt_units(narr['units'], user, M)
             lex_n, own_words, rules = speaker_lex(lex, subset)
@@ -975,6 +992,22 @@ def main():
                 notes = notes + [f"per energy step (from {fit['energy']['n']} takes): pitch {ee[0]:+.1f} st, range x{np.exp(ee[1]):.2f}, "
                                  f"tempo x{np.exp(ee[2]):.2f}, tilt {ee[3]:+.2f} dB/octave" + (f", falls x{np.exp(ee[4]):.2f}" if len(ee) > 4 else '') + ", calibrated by synthesis, about each genre's usual energy "
                                  + ', '.join(f'{g} {r:.1f}' for g, r in fit['energy']['refs'].items())]
+            # the formant emphasis that makes this voice best understood (validation lines only)
+            if val and POSTFILTERS:
+                pf_acc = {}
+                for pv in POSTFILTERS:
+                    v = os.path.join(work, f'postfilter-{pv:.2f}.z')
+                    pack_voice(units_for_postfilter(a.clean, adapted, user), dict(fit, postfilter=pv), lex_n, v, prior_fit)
+                    prog.set('fit', f'Checking formant emphasis {pv:.2f} on {len(val)} validation lines', 38 + 55 * (i + 0.3) / len(sizes))
+                    ents = evaluate_voice(a.repo, val, takes, v, os.path.join(work, f'postfilter-{pv:.2f}'), root, '', False, asr)
+                    pf_acc[pv] = float(np.mean([e['metrics']['word_acc'] for e in ents]))
+                best_pf = max(pf_acc, key=lambda k: (round(pf_acc[k], 3), -abs(k - 0.25)))
+                fit['postfilter'] = best_pf
+                notes = notes + [f'formant emphasis {best_pf:.2f} (validation word accuracy ' + ', '.join(f'{k:.2f} {v:.0%}' for k, v in pf_acc.items()) + ')']
+                if best_pf != 0.25:
+                    # (the delivery was calibrated at the default emphasis: again at the chosen one)
+                    prog.set('fit', f'Calibrating the {n}-line voice again at that emphasis', 38 + 55 * (i + 0.4) / len(sizes))
+                    fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
             last = cal[-1]
             notes = notes + ['delivery fitted to your takes: ' + '; '.join(
                 f"{g} {v[0]:.2f}x tempo, {v[1]:+.1f} st, range {v[2]:.2f}, pauses {v[3]:.2f}" for g, v in sorted(fit['styles'].items()) if g in last)
