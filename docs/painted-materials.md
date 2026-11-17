@@ -70,6 +70,11 @@ blue palette at 12 m, sheltered coves retain a 24 m ramp. Physical bathymetry,
 seabed transparency, shoreline opacity, waves, wakes and shelter data are
 unchanged. The restored pre-painted sea microdetail is preserved byte-for-byte:
 no change to mark/glint density, scale, advection, intensity or reflection.
-Only the shallow/deep body-colour interpolation weight changes. Low fast
+The shallow/deep body-colour interpolation weight and the shallows' own colour
+ramp may change (approved 2026-11-16, `t3/coast-art`): `sea_shallow_ramp` runs
+by depth from a clear aqua over the sand at the edge through turquoise to teal,
+scaled by the hour's shallow palette; green comes only from the weed beneath,
+never the water. The shallows are see-through near the waterline and the seabed
+takes the water's colour with depth. Low fast
 passes (`AEGEAN_FLYING="60 45.5"`) belong in every future sea visual check.
 The shader adds no texture, sampler, varying or world record.
