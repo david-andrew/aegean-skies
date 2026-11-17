@@ -1,0 +1,393 @@
+# Every player-selectable aircraft flown on its player flight model (v2 by default) as a player flies
+# it, with the mouse aim (flight.jo `steer`, eased as src/pilot.jo eases the stick), checked and set
+# out as a table: the take-off (calm, and wind 3's swell from three places), the cruise and top
+# speed, a level 45 degree turn, a stall and its recovery, a landing, a taxi turn and coming to rest.
+# Landplanes do theirs on flat ground. Headless and deterministic.
+#   sloppy --release tools/type_survey.jo      (SURVEY_ONLY="gull,heron" for some; SURVEY_MODEL=0 the earlier model)
+# Lines "R,..." are one type's figures, true units (m/s, m), degrees; "N,..." are its notes.
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+import '../src/sea.jo' as sea
+import '../src/look.jo' as look
+
+const K = 3.3
+const HZ = 60.0
+const D = 57.2958
+const FIELD = 60.0
+trace = env("SURVEY_TRACE") == "1"
+
+spec_for = (kind: planes.Craft) -> fl.CraftSpec:
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = true
+    k
+
+dir_of = (heading: f64, climb: f64) -> vec3:
+    vec3(f32(sin(heading) * cos(climb)), f32(sin(climb)), f32(-cos(heading) * cos(climb)))
+
+pitch_of = (s: fl.CraftState) -> f64: asin(clamp(f64(fl.forward(s).y), -1.0, 1.0))
+bank_of = (s: fl.CraftState) -> f64:
+    r = quat_rotate(s.orientation, vec3(1, 0, 0)); u = quat_rotate(s.orientation, vec3(0, 1, 0))
+    atan2(-f64(r.y), f64(u.y))
+vt = (s: fl.CraftState) -> f64: f64(length(s.velocity)) / K
+path_of = (s: fl.CraftState) -> f64: asin(clamp(f64(s.velocity.y) / max(f64(length(s.velocity)), 0.1), -1.0, 1.0))
+
+# The player's hand on the mouse: the aim put on a direction, the stick eased toward what steer asks
+struct Hand:
+    last = fl.Controls()
+    seen = vec3(0, 0, 0)
+    rate = vec3(0, 0, 0)
+
+# On the water (or the ground) the game's own law, src/pilot.jo: the aim holds the nose's attitude and
+# the rudder its heading, the assist off (the touch screen's; the desktop's keys do the same by hand)
+on_surface = (h: mut Hand, s: fl.CraftState, climb: f64, heading: f64, throttle: f64) -> fl.Controls:
+    c = fl.Controls(throttle = throttle, assist = 0.0)
+    c.pitch = clamp((climb - pitch_of(s)) * 3.0, -1.0, 1.0)
+    c.yaw = clamp(fl.angle_delta(heading, fl.heading(s)) * 2.5, -1.0, 1.0)
+    h.last = c; h.seen = vec3(0, 0, 0); h.rate = vec3(0, 0, 0)
+    c
+
+fly = (h: mut Hand, k: fl.CraftSpec, s: fl.CraftState, aim: vec3, throttle: f64) -> fl.Controls:
+    if length(h.seen) > 0.5: h.rate += ((aim - h.seen) * f32(HZ) - h.rate) * f32(1.0 - exp(-10.0 / HZ))
+    h.seen = aim
+    c = fl.steer(k, s, aim, h.rate)
+    ease = 1.0 - exp(-30.0 / HZ)
+    c.pitch = h.last.pitch + (c.pitch - h.last.pitch) * ease
+    c.roll = h.last.roll + (c.roll - h.last.roll) * ease
+    c.yaw = h.last.yaw + (c.yaw - h.last.yaw) * ease
+    c.throttle = throttle
+    h.last = c
+    c
+
+# The pitch's wobble about its own half-second average, while it runs on the water (degrees, RMS):
+# a hull that porpoises rocks a degree and more, a clean run a few tenths.
+struct Wobble:
+    hist: f64[]
+    sum = 0.0
+    n = 0
+    peak = 0.0
+
+wobble_add = (w: mut Wobble, p: f64):
+    w.hist.push(p)
+    if w.hist.len() > 30:
+        mid = w.hist[w.hist.len() - 16]
+        avg = 0.0
+        loop j in w.hist.len() - 30..w.hist.len(): avg += w.hist[j]
+        avg /= 30.0
+        d = (mid - avg) * D
+        w.sum += d * d; w.n += 1
+        w.peak = max(w.peak, abs(d))
+
+wobble_rms = (w: Wobble) -> f64: sqrt(w.sum / f64(max(w.n, 1)))
+
+env_for = (wind: f64, land: bool) -> fl.FlightEnv:
+    look.wind_now = look.Wind(dir = vec2(0.8, 0.6), speed = wind)
+    if land: return fl.FlightEnv(ground = (x: f64, z: f64) -> f64: FIELD)
+    if wind <= 0.0: return fl.FlightEnv()
+    fl.FlightEnv(wind = vec3(0.8, 0, 0.6) * f32(wind * 0.7), swell = (x: f64, z: f64) -> vec3: sea.swell_at(x, z, 0.0), has_swell = true, swell_ceiling = sea.swell_height_bound())
+
+struct Takeoff:
+    ok = false
+    t = -1.0
+    run = 0.0                       # true metres
+    wobble = 0.0
+    wobble_peak = 0.0
+    bounces = 0
+    damage = 0.0
+    note = ""
+
+# Full throttle, the aim a little above the horizon (as a player holds it on the run), then a steady
+# climb once off; done when well up, or failed after 90 s
+takeoff = (k: fl.CraftSpec, kind: planes.Craft, wind: f64, x0: f64, land: bool) -> Takeoff:
+    r = Takeoff()
+    surface = if land: FIELD else: 0.0
+    s = if land: fl.ground_start(k, vec3(f32(x0), f32(FIELD), 0)) else: fl.water_start(k, vec3(f32(x0), 0, 0))
+    if land and planes.aircraft_profile(kind).amphibian: s.gear = 1.0
+    start = s.position
+    h = Hand(); w = Wobble()
+    off = -1.0; was_off = false
+    lift_aim = 0.0; left_at = 0.0
+    t = 0.0
+    loop i in 0..int(HZ * 90.0):
+        tt = t
+        e = env_for(wind, land)
+        if wind > 0.0 and not land: e.swell = (x: f64, z: f64) -> vec3: sea.swell_at(x, z, tt)
+        down = s.on_water or s.on_ground
+        # (the stick in the middle until she is near flying speed, then the nose to 6 degrees)
+        # (on the ground the game flies the mouse's aim as in the air (src/pilot.jo): held on the
+        # horizon on the roll, lifted to 8 degrees once she is off)
+        # (off the water the aim starts where the nose is, as the game sets it (src/pilot.jo), and the
+        # player lifts it to 8 degrees over three seconds)
+        if down: lift_aim = clamp(pitch_of(s), -0.2, 0.3); left_at = s.time
+        climb = if s.on_ground: (if vt(s) > k.stall_speed * 0.85: 4.0 / D else: 0.0) else: lift_aim + (8.0 / D - lift_aim) * clamp((s.time - left_at) / 3.0, 0.0, 1.0)
+        c = if s.on_water: on_surface(h, s, 6.0 / D, 0.0, 1.0) else: fly(h, k, s, dir_of(0.0, climb), 1.0)
+        if s.on_water and vt(s) < k.stall_speed * 0.85: c.pitch = 0.0
+        fl.step(k, s, c, e, 1.0 / HZ)
+        t += 1.0 / HZ
+        if trace and i % 15 == 0 and env("SURVEY_PARTS") == "1": print("P,{t:.2},{vt(s):.1},{s.damage.parts[0].health:.3},{s.damage.parts[1].health:.3},{s.damage.parts[2].health:.3},{s.damage.parts[3].health:.3},{s.damage.parts[4].health:.3},{s.damage.parts[5].health:.3},{s.damage.parts[6].health:.3},{bank_of(s) * D:.1}")
+        if trace and i % 15 == 0: print("T,{t:.2},{vt(s):.1},{pitch_of(s) * D:.1},{s.on_water},{s.on_ground},{c.pitch:.2},{(f64(s.position.y) - surface) / K:.2},{s.hull_damage:.3},{s.stalled}")
+        if down and vt(s) > k.stall_speed * 0.5: wobble_add(w, pitch_of(s))
+        high = f64(s.position.y) - surface - k.float_height
+        if off < 0.0 and not s.on_water and not s.on_ground and high > 1.0:
+            off = s.time; r.run = f64(length(s.position.xz - start.xz)) / K; was_off = true
+        if was_off and (s.on_water or s.on_ground): r.bounces += 1; was_off = false
+        if off >= 0.0 and not s.on_water and not s.on_ground: was_off = true
+        if s.crashed or s.capsized: r.note = if s.crashed: "crashed" else: "capsized"; break
+        if off >= 0.0 and high > 60.0: break
+    r.t = off
+    r.ok = off > 0.0 and not s.crashed and not s.capsized and f64(s.position.y) - surface > 30.0 and s.hull_damage < 0.05
+    r.wobble = wobble_rms(w); r.wobble_peak = w.peak
+    r.damage = s.hull_damage
+    r
+
+air_state = (k: fl.CraftSpec, v_true: f64, alt: f64) -> fl.CraftState:
+    s = fl.CraftState(position = vec3(0, f32(alt), 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
+    thr = fl.cruise_throttle(k, v_true)
+    s.throttle = thr; s.rpm = thr
+    s
+
+# Level at a throttle for a while, the path held level (v2's stick asks for a turn of the path): the
+# speed it settles to, and where the nose sits then (degrees above the path's horizon: where a player
+# must hold the aim to fly level at that speed)
+level = (k: fl.CraftSpec, v0: f64, throttle: f64, secs: f64) -> vec2:
+    s = air_state(k, v0, 900.0)
+    loop i in 0..int(HZ * secs):
+        c = fl.Controls(throttle = throttle, pitch = clamp(-path_of(s) * 2.0 / max(k.pitch_rate, 0.1), -1.0, 1.0))
+        fl.step(k, s, c, fl.FlightEnv(), 1.0 / HZ)
+    vec2(f32(vt(s)), f32(pitch_of(s) * D))
+
+struct Turn:
+    bank = 0.0                      # its mean bank through the turn (degrees)
+    dh = 0.0                        # height change (true m)
+    dv = 0.0                        # speed change
+    secs = 0.0                      # a full circle's time
+    stalled = false
+
+# A level turn at 45 degrees of bank at cruise: the aim led round the circle at the rate a 45 degree
+# turn gives (g / V), on the horizon, at a little more than cruise power, for one full circle
+turn45 = (k: fl.CraftSpec) -> Turn:
+    v = k.cruise_speed / K
+    s = air_state(k, v, 900.0)
+    h = Hand()
+    omega = 9.81 / v
+    secs = 2.0 * PI / omega
+    r = Turn(secs = secs)
+    thr = min(1.0, fl.cruise_throttle(k, v) * 1.3)
+    n = 0
+    # (a pilot's hands: the roll held at 45 degrees, the stick asking for the path's turn that a
+    # level 45 degree turn needs (v2's stick asks for a rate of the path) and correcting the climb)
+    need = 9.81 * (1.0 / cos(PI / 4.0) - cos(PI / 4.0)) / v
+    last = fl.heading(s); turned = 0.0
+    loop i in 0..int(HZ * secs * 1.5):
+        t = f64(i) / HZ
+        bank = bank_of(s)
+        c = fl.Controls(throttle = thr)
+        c.roll = clamp((fl.angle_delta(PI / 4.0, bank) * 4.0 + f64(s.angular_velocity.z) * 0.35) / max(k.roll_rate, 0.1), -1.0, 1.0)
+        c.pitch = clamp((need - path_of(s) * 2.0) / max(k.pitch_rate, 0.1), -1.0, 1.0)
+        fl.step(k, s, c, fl.FlightEnv(), 1.0 / HZ)
+        hd = fl.heading(s)
+        turned += abs(fl.angle_delta(hd, last))
+        last = hd
+        if t > 4.0: r.bank += abs(bank_of(s)) * D; n += 1
+        if s.stalled: r.stalled = true
+        if turned > 2.0 * PI: r.secs = t; break
+    r.bank /= f64(max(n, 1))
+    r.dh = (f64(s.position.y) - 900.0) / K
+    r.dv = vt(s) - v
+    r
+
+struct Stall:
+    broke = 0.0                     # the speed it broke at (true)
+    lost = 0.0                      # height lost from the break to flying level again (true m)
+    secs = -1.0                     # from the break to flying again
+    roll = 0.0                      # the largest bank from the break (degrees): a wing drop
+    turned = 0.0                    # heading swung through after the break (degrees): a spin
+    note = ""
+
+# The stick held right back at idle from cruise until she breaks (or 20 s), then neutral and full power
+stall = (k: fl.CraftSpec) -> Stall:
+    s = air_state(k, k.stall_speed * 1.4, 1500.0)
+    r = Stall()
+    broke = -1.0; top = 0.0; flying = -1.0; slow_since = -1.0
+    last_heading = fl.heading(s); swing = 0.0
+    loop i in 0..int(HZ * 130.0):
+        # (the textbook entry: level at idle while she slows, the stick coming back to hold her up,
+        # then eased right back over three seconds from 1.1 times the stall)
+        if slow_since < 0.0 and vt(s) < k.stall_speed * 1.1: slow_since = s.time
+        ramp = if slow_since < 0.0: 0.0 else: clamp((s.time - slow_since) / 3.0, 0.0, 1.0)
+        hold = clamp((0.0 - path_of(s)) * 2.0 / max(k.pitch_rate, 0.1), -1.0, 1.0)
+        c = fl.Controls(throttle = 0.0, pitch = hold + (1.0 - hold) * ramp)
+        if broke >= 0.0:
+            # (the textbook recovery: stick forward and the wings levelled while she is stalled, power
+            # on; then eased out of the dive)
+            bank = bank_of(s)
+            level_roll = clamp((-bank * 2.0 + f64(s.angular_velocity.z) * 0.3) / max(k.roll_rate, 0.1), -1.0, 1.0)
+            c = if s.stalled or vt(s) < k.stall_speed * 1.1: fl.Controls(throttle = 1.0, pitch = -0.3, roll = level_roll) else: fl.Controls(throttle = 1.0, pitch = clamp((-0.05 - path_of(s)) * 2.0 / max(k.pitch_rate, 0.1), -1.0, 1.0), roll = level_roll)
+        fl.step(k, s, c, fl.FlightEnv(), 1.0 / HZ)
+        if trace and i % 15 == 0: print("S,{s.time:.2},{vt(s):.1},{pitch_of(s) * D:.0},{bank_of(s) * D:.0},{path_of(s) * D:.0},{s.stalled},{c.pitch:.2},{c.roll:.2},{s.aoa * D:.1},{s.angular_velocity.x:.2},{s.angular_velocity.y:.2},{s.angular_velocity.z:.2},{(f64(s.position.y)) / K:.0}")
+        hd = fl.heading(s)
+        if broke >= 0.0:
+            swing += abs(fl.angle_delta(hd, last_heading))
+            r.roll = max(r.roll, abs(bank_of(s)) * D)
+        last_heading = hd
+        if broke < 0.0 and (s.stalled or path_of(s) < -0.17 or vt(s) < k.stall_speed * 0.7 or s.time > 90.0):
+            broke = s.time; r.broke = vt(s); top = f64(s.position.y)
+        if broke >= 0.0 and flying < 0.0 and s.time > broke + 0.5 and not s.stalled and path_of(s) > -0.05 and vt(s) > k.stall_speed * 1.05:
+            flying = s.time; break
+        if s.position.y < 50.0: r.note = "no recovery"; break
+    r.secs = if flying > 0.0: flying - broke else: -1.0
+    r.lost = (top - f64(s.position.y)) / K
+    r.turned = swing * D
+    r
+
+struct Landing:
+    ok = false
+    sink = 0.0                      # at touchdown, true m/s
+    bounces = 0
+    wobble = 0.0
+    damage = 0.0
+    roll = 0.0                      # touchdown to rest, true m
+    turn = 0.0                      # a taxi turn's heading change in 6 s, degrees
+    heel = 0.0                      # the most it heels in the taxi turn, degrees
+    rest = false
+    note = ""
+
+# An approach at 1.3 times the stall, 3 degrees down, the aim lifted to the horizon from 6 m to a
+# flare; then the water brake (or the wheel brakes), a taxi turn with full rudder and a little power,
+# and coming to rest
+landing = (k: fl.CraftSpec, kind: planes.Craft, land: bool) -> Landing:
+    r = Landing()
+    surface = if land: FIELD else: 0.0
+    v = k.stall_speed * 1.3
+    s = air_state(k, v, surface + 45.0 * K)
+    s.velocity = vec3(0, f32(-v * K * sin(3.0 / D)), f32(-v * K * cos(3.0 / D)))
+    if land and planes.aircraft_profile(kind).amphibian: s.gear = 1.0
+    e = env_for(0.0, land)
+    h = Hand(); w = Wobble()
+    touched = -1.0; at = vec3(0, 0, 0); was_down = false
+    closed = false; flare = max(6.0, k.span * 0.2); trim = 0.0
+    loop i in 0..int(HZ * 120.0):
+        down = s.on_water or s.on_ground
+        hgt = (f64(s.position.y) - surface - k.float_height) / K
+        # (the flare from a height that grows with her size, to an aim a degree below the horizon
+        # that lets her settle on; the power off for good once it begins)
+        if hgt < flare: closed = true
+        want = if hgt > flare: -3.0 / D else: -1.0 / D - 2.0 / D * max(hgt - 0.5, 0.0) / (flare - 0.5)
+        # (the player watches the way she goes and puts the aim where it gets her that path)
+        trim = clamp(trim + (want - path_of(s)) * 0.8 / HZ, -5.0 / D, 5.0 / D)
+        climb = if touched >= 0.0: 0.0 else: want + trim
+        thr = if touched >= 0.0 or closed: 0.0 else: fl.cruise_throttle(k, v) * 0.55
+        c = if touched >= 0.0 and down: on_surface(h, s, 0.0, 0.0, 0.0) else: fly(h, k, s, dir_of(0.0, climb), thr)
+        if touched >= 0.0: c.water_brake = 1.0
+        before = f64(s.velocity.y) / K
+        fl.step(k, s, c, e, 1.0 / HZ)
+        if trace and i % 30 == 0: print("L,{s.time:.2},{vt(s):.1},{hgt:.2},{pitch_of(s) * D:.1},{path_of(s) * D:.1},{c.pitch:.2},{s.on_water},{s.stalled},{s.gear:.1},{c.throttle:.2}")
+        if (s.on_water or s.on_ground) and touched < 0.0: touched = s.time; r.sink = -before; at = s.position
+        if touched >= 0.0:
+            if s.on_water or s.on_ground:
+                if not was_down and s.time > touched + 0.1: r.bounces += 1
+                was_down = true
+                if vt(s) > k.stall_speed * 0.3: wobble_add(w, pitch_of(s))
+            else: was_down = false
+        if s.crashed or s.capsized: r.note = if s.crashed: "crashed" else: "capsized"; break
+        if touched >= 0.0 and vt(s) < 0.3: break
+    r.roll = f64(length(s.position.xz - at.xz)) / K
+    r.wobble = wobble_rms(w); r.damage = s.hull_damage
+    r.ok = touched >= 0.0 and not s.crashed and not s.capsized and s.hull_damage < 0.05
+    if not r.ok: return r
+    # (the taxi turn: a little power and full rudder for 6 s)
+    h0 = fl.heading(s)
+    loop i in 0..int(HZ * 6.0):
+        fl.step(k, s, fl.Controls(throttle = 0.25, yaw = 1.0), e, 1.0 / HZ)
+        r.heel = max(r.heel, abs(bank_of(s)) * D)
+    r.turn = abs(fl.angle_delta(fl.heading(s), h0)) * D
+    # (and coming to rest: throttle closed and the brake on, 15 s)
+    loop i in 0..int(HZ * 15.0): fl.step(k, s, fl.Controls(water_brake = 1.0), e, 1.0 / HZ)
+    r.rest = vt(s) < 0.3 and not s.capsized and not s.crashed and abs(bank_of(s)) * D < 12.0
+    r
+
+struct Aim:
+    settle = -1.0                   # a 10 degree step to the right: settled within a degree for 1 s
+    overshoot = 0.0                 # how far past it the gun line swung (degrees)
+    turn_rms = 0.0                  # tracking a target in a gentle turn ahead (6 deg/s): RMS error
+    wiggle_bank = 0.0               # small 2 degree corrections: the most they bank her
+
+# The mouse aim at cruise, as tools/aim_track.jo flies it: the aim put exactly on the target
+aim_case = (k: fl.CraftSpec, case: str) -> vec4:
+    v = k.cruise_speed / K
+    s = air_state(k, v, 900.0)
+    thr = fl.cruise_throttle(k, v)
+    h = Hand()
+    settle = -1.0; within = -1.0; over = 0.0; crossed = false; sum = 0.0; n = 0; bank = 0.0
+    loop i in 0..int(HZ * 12.0):
+        t = f64(i) / HZ
+        aim = match case:
+            "step": dir_of(10.0 / D, 0.0)
+            "turn": dir_of(6.0 / D * t, 2.0 / D * sin(t * 0.8))
+            _: dir_of(2.0 / D * sin(t * PI), 0.0)
+        fl.step(k, s, fly(h, k, s, aim, thr), fl.FlightEnv(), 1.0 / HZ)
+        gun = fl.forward(s)
+        err = acos(clamp(f64(dot(gun, aim)), -1.0, 1.0)) * D
+        bank = max(bank, abs(bank_of(s)) * D)
+        if case == "step":
+            if err < 1.0:
+                if within < 0.0: within = t
+                if settle < 0.0 and t - within >= 1.0: settle = within
+            else: within = -1.0
+            if err < 3.0: crossed = true
+            if crossed and f64(dot(gun - aim, aim - vec3(0, 0, -1))) > 0.0: over = max(over, err)
+        else if t >= 2.0:
+            sum += err * err; n += 1
+    vec4(f32(settle), f32(over), f32(sqrt(sum / f64(max(n, 1)))), f32(bank))
+
+aim_checks = (k: fl.CraftSpec) -> Aim:
+    a = aim_case(k, "step"); b = aim_case(k, "turn"); c = aim_case(k, "wiggle")
+    Aim(settle = f64(a.x), overshoot = f64(a.y), turn_rms = f64(b.z), wiggle_bank = f64(c.w))
+
+_listed = (only: str, name: str, key: str) -> bool:
+    loop w in split(only, ","):
+        if w == name or w == key: return true
+    false
+
+main = ():
+    model = to_int(env("SURVEY_MODEL") ?? "1") ?? 1
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks(flight_model = model))
+    only = env("SURVEY_ONLY") ?? ""
+    print("R,aircraft,base,stall,cruise,top,cruise_flown,top_flown,calm_ok,calm_t,calm_run,calm_wobble,calm_peak,calm_bounces,wind3_ok,wind3_t,wind3_damage,turn_bank,turn_dh,turn_dv,turn_stalled,stall_broke,stall_lost,stall_secs,stall_roll,stall_turned,land_ok,land_sink,land_bounces,land_wobble,land_roll,taxi_turn,taxi_heel,rest,aim_settle,aim_overshoot,aim_turn_rms,aim_wiggle_bank")
+    loop id in 0..planes.CRAFT_NAMES.len():
+        kind = planes.Craft(id)
+        name = planes.CRAFT_NAMES[id]
+        if only != "" and not _listed(only, name, "{kind}"): continue
+        k = spec_for(kind)
+        p = planes.aircraft_profile(kind)
+        land = p.landplane
+        base = if land: "land" else: (if p.amphibian: "water+wheels" else: "water")
+        stall_v = k.stall_speed; cruise = k.cruise_speed / K; top = k.max_speed / K
+        if trace:
+            if env("SURVEY_TRACE_PART") == "stall": _ = stall(k)
+            else if env("SURVEY_TRACE_PART") == "land": _ = landing(k, kind, land)
+            else if env("SURVEY_TRACE_PART") == "wind": _ = takeoff(k, kind, 3.0, to_float(env("SURVEY_X0") ?? "0") ?? 0.0, land)
+            else: _ = takeoff(k, kind, 0.0, 0.0, land)
+            continue
+        cr = level(k, cruise, fl.cruise_throttle(k, cruise), 40.0)
+        tp = level(k, cruise, 1.0, 90.0)
+        calm = takeoff(k, kind, 0.0, 0.0, land)
+        wok = 0; wt = 0.0; wd = 0.0
+        if land:
+            wok = -1
+        else:
+            loop n in 0..3:
+                r = takeoff(k, kind, 3.0, f64(n) * 61.0, false)
+                if r.ok: wok += 1
+                wt = max(wt, r.t); wd = max(wd, r.damage)
+        tn = turn45(k)
+        st = stall(k)
+        ld = landing(k, kind, land)
+        am = aim_checks(k)
+        print("R,{name},{base},{stall_v:.1},{cruise:.1},{top:.1},{cr.x:.1},{tp.x:.1}/{tp.y:.0},{calm.ok},{calm.t:.1},{calm.run:.0},{calm.wobble:.2},{calm.wobble_peak:.1},{calm.bounces},{wok},{wt:.1},{wd:.3},{tn.bank:.0},{tn.dh:.0},{tn.dv:.1},{tn.stalled},{st.broke:.1},{st.lost:.0},{st.secs:.1},{st.roll:.0},{st.turned:.0},{ld.ok}/{ld.damage:.3},{ld.sink:.2},{ld.bounces},{ld.wobble:.2},{ld.roll:.0},{ld.turn:.0},{ld.heel:.0},{ld.rest},{am.settle:.2},{am.overshoot:.2},{am.turn_rms:.2},{am.wiggle_bank:.1}")
+        notes = [calm.note, st.note, ld.note]
+        loop nt in notes:
+            if nt != "": print("N,{name},{nt}")
+    look.wind_now = look.Wind()
+    tw.set_tweaks(tw.Tweaks()); fl.set_speed_scale(1.0)
