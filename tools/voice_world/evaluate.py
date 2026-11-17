@@ -52,7 +52,9 @@ def trim(x, floor_db=None, pad=0.08):
     e = np.array([np.mean(x[i:i + hop] ** 2) + 1e-12 for i in range(0, max(1, len(x) - hop), hop)])
     db = 10 * np.log10(e)
     floor = floor_db if floor_db is not None else np.percentile(db, 10)
-    on = np.nonzero(db > floor + 15)[0]
+    # (in a short line with little silence the quietest tenth is speech: a soft final vowel, the
+    # "-ey" of "journey", was cut; anything within 35 dB of the loudest frame is kept)
+    on = np.nonzero(db > min(floor + 15, db.max() - 35))[0]
     if len(on) == 0:
         return x
     a = max(0, on[0] * hop - int(pad * wa.RATE))
