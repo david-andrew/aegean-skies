@@ -17,7 +17,7 @@ use 'flight_feedback.jo'
 
 # (each piece of the making a few milliseconds at most on the laptop)
 const SEA_WASH_SECONDS = 6
-const SEA_WASH_PIECES = 30
+const SEA_WASH_PIECES = 60
 const SEA_SLICES = 12              # (the breeze, the heave and the planing each made in twelve slices)
 
 struct SeaSound:
@@ -40,6 +40,8 @@ struct SeaSound:
     fb: Biquad = Biquad()
     slow = 0.0
     target = 0.0
+    fin_gain = 0.0                  # (a loop being finished: its gain, and its stereo samples so far)
+    fin_out: f32[]
 
 # a band of noise for `count` samples, its envelope a raised cosine (a wavelet breaking), into m
 sea_wavelet = (m: mut f64[],r: mut EngineNoise,start: int,count: int,hz: f64,q: f64,amp: f64):
@@ -49,11 +51,10 @@ sea_wavelet = (m: mut f64[],r: mut EngineNoise,start: int,count: int,hz: f64,q: 
         env = 0.5-0.5*cos(TAU*f64(i)/f64(count))
         m[(start+i)%n] += filt(f,engine_signed(r))*env*amp
 
-# One piece of the wash: a thirtieth of its wavelets.
+# One piece of the wash: two of its wavelets.
 sea_wash_piece = (s: mut SeaSound,piece: int):
     rate = f64(ENGINE_RATE); n = ENGINE_RATE*SEA_WASH_SECONDS
     r = EngineNoise(s = u64(9001+piece*7919))
-    if piece == 0: s.wash_m = fill(0.0,n)
     # (some twenty wavelets a second, most small and quick, a few long and loud)
     loop k in 0..20*SEA_WASH_SECONDS/SEA_WASH_PIECES:
         start = int(engine_unit(r)*f64(n))
@@ -70,7 +71,6 @@ sea_heave_slice = (s: mut SeaSound,slice: int):
         if i%int(rate*0.7) == 0: s.target = engine_unit(s.r)
         s.slow += (s.target-s.slow)*0.0004
         s.wash_m[i] += filt(s.fa,engine_signed(s.r))*2.5*(0.5+s.slow)
-    if slice == SEA_SLICES-1: s.wash = engine_sound_of(s.wash_m,0.1); s.wash_m = []
 
 # the breeze: low air gusting, a breathy band over it, for 8 s (a slice of it; the last finishes it)
 sea_breeze_slice = (s: mut SeaSound,slice: int):
@@ -84,7 +84,6 @@ sea_breeze_slice = (s: mut SeaSound,slice: int):
         s.slow += (s.target-s.slow)*0.00015
         x = engine_signed(s.r)
         s.m[i] = (filt(s.fa,x)*1.6+filt(s.fb,x)*0.35*s.slow)*(0.35+0.65*s.slow)
-    if slice == SEA_SLICES-1: s.breeze = engine_sound_of(s.m,0.1); s.m = []
 
 # planing for 4 s at the reference speed: thuds at the waves (about eight a second), the bow wave's
 # rush and the spray's hiss, each chopped by the waves going by (a slice of it; the last adds the
@@ -102,11 +101,11 @@ sea_planing_slice = (s: mut SeaSound,slice: int):
             x = engine_signed(s.r)
             s.m[i] = filt(s.fa,x)*1.3*(0.5+0.5*s.slow)+filt(s.fb,x)*0.5*(0.3+0.7*s.slow*s.slow)
         return
-    t = 0.0
-    loop t < 4.0:
+    # (the thuds, the first two seconds' then the last two's)
+    t = if slice == SEA_SLICES: 0.0 else: 2.0
+    loop t < (if slice == SEA_SLICES: 2.0 else: 4.0):
         engine_ring_at(s.m,int(t*rate),70.0+60.0*engine_unit(s.r),40.0,1.5+engine_unit(s.r))
         t += 0.06+0.2*engine_unit(s.r)
-    s.planing = engine_sound_of(s.m,0.1); s.m = []
 
 # (a low thud into m at a sample: a ringing of a fifth of a second)
 engine_ring_at = (m: mut f64[],start: int,hz: f64,decay: f64,amp: f64):
@@ -156,17 +155,49 @@ make_slap = (seed: int) -> Sound:
         m[at+i] += filt(spray,engine_signed(r))*0.9*sin(PI*min(1.0,u*3.0))*(1.0-u)
     one_shot(m,0.5)
 
-# One piece of the making, until all is made (a frame each).
+# A loop's finish in three pieces, as engine_sound_of makes it at once: its level found (at the
+# rms asked, its peaks under 0.7), then each half of it written out in stereo.
+sea_finish = (s: mut SeaSound,m: f64[],part: int) -> Sound?:
+    n = m.len()
+    if part == 0:
+        sum = 0.0; top = 0.0
+        loop v in m: sum += v*v; top = max(top,abs(v))
+        s.fin_gain = min(0.1/max(sqrt(sum/f64(n)),1e-12),0.7/max(top,1e-12))
+        s.fin_out = fill(f32(0),n*2)
+        return none
+    from = if part == 1: 0 else: n/2
+    to = if part == 1: n/2 else: n
+    g = s.fin_gain
+    loop i in from..to:
+        v = f32(m[i]*g); s.fin_out[i*2] = v; s.fin_out[i*2+1] = v
+    if part == 1: return none
+    out = Sound(s.fin_out); s.fin_out = []
+    out
+
+# One piece of the making, until all is made (a frame each): the wash's buffer, its wavelets, its
+# heave, its finish; the breeze's slices and finish; the planing's slices, thuds and finish; the
+# laps and the slaps one by one.
 sea_sound_build_step = (s: mut SeaSound):
     if s.ready: return
     k = s.stage
-    w = SEA_WASH_PIECES
-    if k < w: sea_wash_piece(s,k)
-    else if k < w+SEA_SLICES: sea_heave_slice(s,k-w)
-    else if k < w+2*SEA_SLICES: sea_breeze_slice(s,k-w-SEA_SLICES)
-    else if k < w+3*SEA_SLICES+1: sea_planing_slice(s,k-w-2*SEA_SLICES)
-    else if k < w+3*SEA_SLICES+7: s.laps.push(make_lap(k-w-3*SEA_SLICES))
-    else if k < w+3*SEA_SLICES+11: s.slaps.push(make_slap(k-w-3*SEA_SLICES-6))
+    w = SEA_WASH_PIECES; c = SEA_SLICES
+    wash_at = 1; heave_at = wash_at+w; wash_fin = heave_at+c
+    breeze_at = wash_fin+3; breeze_fin = breeze_at+c
+    planing_at = breeze_fin+3; planing_fin = planing_at+c+2
+    laps_at = planing_fin+3; slaps_at = laps_at+6; done_at = slaps_at+4
+    if k == 0: s.wash_m = fill(0.0,ENGINE_RATE*SEA_WASH_SECONDS)
+    else if k < heave_at: sea_wash_piece(s,k-wash_at)
+    else if k < wash_fin: sea_heave_slice(s,k-heave_at)
+    else if k < breeze_at:
+        if let done = sea_finish(s,s.wash_m,k-wash_fin): s.wash = done; s.wash_m = []
+    else if k < breeze_fin: sea_breeze_slice(s,k-breeze_at)
+    else if k < planing_at:
+        if let done = sea_finish(s,s.m,k-breeze_fin): s.breeze = done; s.m = []
+    else if k < planing_fin: sea_planing_slice(s,k-planing_at)
+    else if k < laps_at:
+        if let done = sea_finish(s,s.m,k-planing_fin): s.planing = done; s.m = []
+    else if k < slaps_at: s.laps.push(make_lap(k-laps_at))
+    else if k < done_at: s.slaps.push(make_slap(k-slaps_at))
     else: s.ready = true
     s.stage += 1
 # (all at once: tools and tests)
