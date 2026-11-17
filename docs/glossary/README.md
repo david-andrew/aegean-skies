@@ -3588,7 +3588,8 @@ No image: the tiers differ in budgets more than in any single view.
   of worn grass before arched hangars, the office, a fuel point and windsocks that stream with the
   wind. It lies on naturally flat ground, never regraded. The **turf** is laid on the terrain's own
   14 m lattice cells and stands 0.2 m above them inside, meeting the ground over its edge cells;
-  the wheels and feet stand on the turf, the same surface that is drawn. The fuel point sells from
+  the wheels and feet stand on the turf, the same surface that is drawn (`airfield_surface`: on the
+  turf, its own triangles, never the flight ground's sub-grid coast detail). The fuel point sells from
   the stores of the town the field serves.
 - **The fields:** four, each with its **layout** (`AIRFIELD_LAYOUTS`, by the field's `kind`):
   - **Kalyrassa aerodrome** (Kalyra's air arm, military: two hangars, the office), 1.6 km.
