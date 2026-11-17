@@ -2756,6 +2756,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     on ("There you are! I'd started to wonder.").
   - **Sorry, another day:** they climb out with a kind word and go home, and are not asked about
     again for a day.
+  - The question comes only once the pilot has been aboard with them seated (`ride_boarded`).
+    Seated while he is still on the dock, they simply wait for him.
+  - **Offered (K):** they answer out loud ("Really? Now? Oh, yes please!", `ride_accept_line`) in
+    the caption at the top. While they're out of view (behind the camera, or off the side), a small
+    marker with their name sits at the screen's edge and points toward them (`offscreen_pointer`
+    in `src/panels.jo`). Capture: `AEGEAN_LEISURE=ride-offer`.
   - **Giving up:** they go home. The pilot's name takes a mild mark (`rep_act(.cut_short)`), the
     notebook has a line, and the next time they pass the pilot they say so ("I waited by your
     aeroplane an hour! Another day, then."), instead of asking again from scratch.
@@ -2783,6 +2789,28 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     There is coffee in the morning (05:30 to 11:30).
   - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
     window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **By its things, not buttons:** there is no button bar in a room. One taps or clicks the thing
+  itself (`src/room_walk.jo`): the bed, the chair (at a family's, one's place at their table), the
+  hotel's French window, or the door.
+  - **Getting there:** the pilot gets up out of the chair or the bed by degrees, walks round the
+    furniture (`room_path`: straight when the floor is clear, else by the open floor), turns to
+    the thing, and sits or lies down by degrees (`RoomPilot`, `room_step`, `room_body`; the
+    figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
+    one of its places to the next.
+  - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
+    evening (`room_sleep_until`). A click, a tap or a key wakes him early. He stays lying until
+    he's sent somewhere, and the bed clicked again gets him up.
+  - **The window:** he stands at it and the view goes out over the harbour. Clicking it again, or
+    Escape, brings him back to the chair.
+  - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
+  - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Enter or A
+    to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
+    vertices, cut from the baked room). A small label over it says what it does now (`room_label`:
+    "Sleep", "Lie down", "Get up", "Sit", "Look out", "Back inside", "Leave").
+  - **The view:** it turns all the way round by a drag, a finger or the right stick, so the door
+    can be behind. On a phone held upright it is wider. The pilot isn't drawn while he passes
+    within a metre of the eye. One small corner line lists the keys; with a pointer or a finger,
+    nothing else is shown.
 - **Lit and lived in:** walls, floor and ceiling are tiled and each room is baked three times
   into its vertex colours (`bake_room`): by day, the window's cool light falling off into the room;
   of an evening, the lamps' warm pools, turned by each surface's facing, with dark brown corners
@@ -2796,12 +2824,17 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
   show through them; a game saved during a stay loads with the pilot outside, where he went in.
 - **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
-  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`); `stay_begin_hotel`,
-  `stay_begin_family`, `stay_sleep`, `stay_woke`, `stay_end`, `stay_frame`, `draw_stay` and
-  leisure stage 15 in `aegean.jo`; the time skip's `visible` mode; `tests/stay_test.jo`.
+  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`), `src/room_walk.jo`
+  (`room_objects`, `room_furniture`, `room_hubs`, `room_pick`, `room_path`, `room_step`,
+  `room_body`, `room_label`); `stay_begin_hotel`, `stay_begin_family`, `stay_sleep`, `stay_woke`,
+  `stay_end`, `room_setup`, `room_use`, `room_arrive`, `room_step_frame`, `stay_frame`, `draw_stay`,
+  `draw_room_label` and leisure stage 15 in `aegean.jo`; the time skip's `visible` mode;
+  `tests/stay_test.jo`, `tests/room_walk_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
   stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
   `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
+  `AEGEAN_ROOM_SCRIPT="<frame>:<bed|chair|window|door|focus-<thing>|wake> ..."` sends him to a thing
+  at that frame, lights one, or wakes him, and prints a `ROOM` trace.
 
 ### A new pilot's welcome
 
@@ -2899,6 +2932,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
+- **Going over to sit:** on foot, the pilot's table, the bar's stool and the coffee house's table
+  can be tapped or clicked (the mouse free): he walks over and sits, as F does there
+  (`foot_things`, `foot_pick`, `foot_go`). A small label over the thing says "Sit" or "Sit at the
+  bar". Walking himself cancels it. Capture: `AEGEAN_LEISURE=foot-hotel AEGEAN_FOOT_GO=<frame>:<k>`.
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
 
