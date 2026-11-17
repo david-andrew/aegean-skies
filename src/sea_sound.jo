@@ -1,0 +1,243 @@
+# The sea about the aircraft (a trial: tweaks.sea_sounds). Before it, away from a shore the open
+# sea was silent: moored, drifting or low over the water nothing was heard of it but the planing
+# hiss on a run and one splash. With it:
+#   the wash: the open water's own sound, many small wavelets breaking, each its own band of noise
+#     swelling and dying, over a low heave; by the sea state (the wind), fading with height
+#   lapping: small plocks and gurgles against the floats and hull while she lies still or slow,
+#     more often and harder in a breeze, each one played at its own moment and pitch
+#   the breeze: gusty air heard while moored or slow (the air past her is the wind itself)
+#   planing: the hull through the chop on a run, thudding at the waves, the bow wave rushing and the
+#     spray hissing, brighter and denser as she gathers speed and lifts
+#   slaps: the hull hitting a crest on the run, a thump and the spray thrown up a moment after
+# All of it made here, at half the mixer's rate (src/engine_sound.jo ENGINE_RATE), a piece a frame
+# when the trial is first heard. Nothing recorded.
+use 'airsound.jo'
+use 'engine_sound.jo'
+use 'flight_feedback.jo'
+
+# (each piece of the making a few milliseconds at most on the laptop)
+const SEA_WASH_SECONDS = 6
+const SEA_WASH_PIECES = 60
+const SEA_SLICES = 12              # (the breeze, the heave and the planing each made in twelve slices)
+
+struct SeaSound:
+    stage = 0
+    ready = false
+    wash_m: f64[]                   # (the wash, half made)
+    wash: Sound = Sound([])
+    breeze: Sound = Sound([])
+    planing: Sound = Sound([])
+    laps: Sound[]
+    slaps: Sound[]
+    ids: int[]                      # wash, breeze, planing
+    quiet: bool[]
+    next_lap = 0.0
+    noise: EngineNoise = EngineNoise(s = u64(31415))
+    # (a loop being made a slice at a time: its buffer, its noise, its filters and its slow wander)
+    m: f64[]
+    r: EngineNoise = EngineNoise()
+    fa: Biquad = Biquad()
+    fb: Biquad = Biquad()
+    slow = 0.0
+    target = 0.0
+    fin_gain = 0.0                  # (a loop being finished: its gain, and its stereo samples so far)
+    fin_out: f32[]
+
+# a band of noise for `count` samples, its envelope a raised cosine (a wavelet breaking), into m
+sea_wavelet = (m: mut f64[],r: mut EngineNoise,start: int,count: int,hz: f64,q: f64,amp: f64):
+    f = Biquad(); bandpass(f,ehz(hz),q)
+    n = m.len()
+    loop i in 0..count:
+        env = 0.5-0.5*cos(TAU*f64(i)/f64(count))
+        m[(start+i)%n] += filt(f,engine_signed(r))*env*amp
+
+# One piece of the wash: two of its wavelets.
+sea_wash_piece = (s: mut SeaSound,piece: int):
+    rate = f64(ENGINE_RATE); n = ENGINE_RATE*SEA_WASH_SECONDS
+    r = EngineNoise(s = u64(9001+piece*7919))
+    # (some twenty wavelets a second, most small and quick, a few long and loud)
+    loop k in 0..20*SEA_WASH_SECONDS/SEA_WASH_PIECES:
+        start = int(engine_unit(r)*f64(n))
+        size = pow(engine_unit(r),2.0)
+        count = int(rate*(0.12+0.5*size))
+        hz = 500.0+2200.0*engine_unit(r)
+        sea_wavelet(s.wash_m,r,start,count,hz,0.9+engine_unit(r),0.3+1.2*size)
+
+# A slice of the heave under the wash: low noise rising and falling slowly; the last slice finishes it.
+sea_heave_slice = (s: mut SeaSound,slice: int):
+    rate = f64(ENGINE_RATE); n = ENGINE_RATE*SEA_WASH_SECONDS
+    if slice == 0: s.r = EngineNoise(s = u64(4711)); s.fa = Biquad(); lowpass(s.fa,ehz(180.0)); s.slow = 0.0; s.target = 0.0
+    loop i in n*slice/SEA_SLICES..n*(slice+1)/SEA_SLICES:
+        if i%int(rate*0.7) == 0: s.target = engine_unit(s.r)
+        s.slow += (s.target-s.slow)*0.0004
+        s.wash_m[i] += filt(s.fa,engine_signed(s.r))*2.5*(0.5+s.slow)
+
+# the breeze: low air gusting, a breathy band over it, for 8 s (a slice of it; the last finishes it)
+sea_breeze_slice = (s: mut SeaSound,slice: int):
+    rate = f64(ENGINE_RATE); n = ENGINE_RATE*8
+    if slice == 0:
+        s.m = fill(0.0,n); s.r = EngineNoise(s = u64(2024))
+        s.fa = Biquad(); lowpass(s.fa,ehz(420.0)); s.fb = Biquad(); bandpass(s.fb,ehz(1300.0),0.8)
+        s.slow = 0.0; s.target = 0.5
+    loop i in n*slice/SEA_SLICES..n*(slice+1)/SEA_SLICES:
+        if i%int(rate*1.3) == 0: s.target = engine_unit(s.r)
+        s.slow += (s.target-s.slow)*0.00015
+        x = engine_signed(s.r)
+        s.m[i] = (filt(s.fa,x)*1.6+filt(s.fb,x)*0.35*s.slow)*(0.35+0.65*s.slow)
+
+# planing for 4 s at the reference speed: thuds at the waves (about eight a second), the bow wave's
+# rush and the spray's hiss, each chopped by the waves going by (a slice of it; the last adds the
+# thuds and finishes it)
+sea_planing_slice = (s: mut SeaSound,slice: int):
+    rate = f64(ENGINE_RATE); n = ENGINE_RATE*4
+    if slice == 0:
+        s.m = fill(0.0,n); s.r = EngineNoise(s = u64(777))
+        s.fa = Biquad(); bandpass(s.fa,ehz(900.0),0.7); s.fb = Biquad(); bandpass(s.fb,ehz(4200.0),0.9)
+        s.slow = 0.0; s.target = 0.0
+    if slice < SEA_SLICES:
+        loop i in n*slice/SEA_SLICES..n*(slice+1)/SEA_SLICES:
+            if i%int(rate*0.06) == 0: s.target = engine_unit(s.r)
+            s.slow += (s.target-s.slow)*0.004
+            x = engine_signed(s.r)
+            s.m[i] = filt(s.fa,x)*1.3*(0.5+0.5*s.slow)+filt(s.fb,x)*0.5*(0.3+0.7*s.slow*s.slow)
+        return
+    # (the thuds, the first two seconds' then the last two's)
+    t = if slice == SEA_SLICES: 0.0 else: 2.0
+    loop t < (if slice == SEA_SLICES: 2.0 else: 4.0):
+        engine_ring_at(s.m,int(t*rate),70.0+60.0*engine_unit(s.r),40.0,1.5+engine_unit(s.r))
+        t += 0.06+0.2*engine_unit(s.r)
+
+# (a low thud into m at a sample: a ringing of a fifth of a second)
+engine_ring_at = (m: mut f64[],start: int,hz: f64,decay: f64,amp: f64):
+    k = fill(0.0,int(f64(ENGINE_RATE)*0.2))
+    engine_ring(k,hz,decay,amp,0.0)
+    loop i in 0..k.len(): m[(start+i)%m.len()] += k[i]
+
+# a lap at the floats: a plock (a cavity rung, its pitch rising as the bubble closes), a soft knock
+# under it and now and then a trickle of drops after
+make_lap = (seed: int) -> Sound:
+    r = EngineNoise(s = u64(seed*1009+3))
+    rate = f64(ENGINE_RATE); n = int(rate*0.6)
+    m = fill(0.0,n)
+    hz = 280.0+600.0*engine_unit(r)
+    phase = 0.0; g = 1.0; shrink = exp(-28.0/rate)
+    loop i in 0..int(rate*0.25):
+        phase += hz*(1.0+2.2*f64(i)/rate)/rate
+        m[i] += sin(TAU*phase)*g*min(1.0,f64(i)/24.0)
+        g *= shrink
+    engine_ring(m,90.0+60.0*engine_unit(r),35.0,0.6,0.0)
+    wash = fill(0.0,int(rate*0.12)); engine_crack(wash,r,40.0,0.25)
+    f = Biquad(); bandpass(f,ehz(1400.0),0.7)
+    loop i in 0..wash.len(): m[i] += filt(f,wash[i])
+    if engine_unit(r) < 0.6:
+        loop d in 0..2+int(engine_unit(r)*3.0):
+            at = int(rate*(0.12+0.4*engine_unit(r)))
+            drop = fill(0.0,int(rate*0.05)); engine_ring(drop,1600.0+1400.0*engine_unit(r),90.0,0.25,0.0)
+            loop i in 0..drop.len():
+                if at+i < n: m[at+i] += drop[i]
+    one_shot(m,0.5)
+
+# a slap on the run: the hull hitting a crest (a heavy thump and a crack of water), then the spray
+# thrown up falling back, a moment after
+make_slap = (seed: int) -> Sound:
+    r = EngineNoise(s = u64(seed*2003+11))
+    rate = f64(ENGINE_RATE); n = int(rate*0.7)
+    m = fill(0.0,n)
+    engine_ring(m,90.0+70.0*engine_unit(r),22.0,1.4,0.0)
+    crack = fill(0.0,int(rate*0.08)); engine_crack(crack,r,70.0,1.0)
+    f = Biquad(); bandpass(f,ehz(800.0+400.0*engine_unit(r)),0.8)
+    loop i in 0..crack.len(): m[i] += filt(f,crack[i])
+    spray = Biquad(); bandpass(spray,ehz(4000.0),0.8)
+    at = int(rate*(0.06+0.06*engine_unit(r)))
+    loop i in 0..int(rate*0.45):
+        if at+i >= n: break
+        u = f64(i)/(rate*0.45)
+        m[at+i] += filt(spray,engine_signed(r))*0.9*sin(PI*min(1.0,u*3.0))*(1.0-u)
+    one_shot(m,0.5)
+
+# A loop's finish in three pieces, as engine_sound_of makes it at once: its level found (at the
+# rms asked, its peaks under 0.7), then each half of it written out in stereo.
+sea_finish = (s: mut SeaSound,m: f64[],part: int) -> Sound?:
+    n = m.len()
+    if part == 0:
+        sum = 0.0; top = 0.0
+        loop v in m: sum += v*v; top = max(top,abs(v))
+        s.fin_gain = min(0.1/max(sqrt(sum/f64(n)),1e-12),0.7/max(top,1e-12))
+        s.fin_out = fill(f32(0),n*2)
+        return none
+    from = if part == 1: 0 else: n/2
+    to = if part == 1: n/2 else: n
+    g = s.fin_gain
+    loop i in from..to:
+        v = f32(m[i]*g); s.fin_out[i*2] = v; s.fin_out[i*2+1] = v
+    if part == 1: return none
+    out = Sound(s.fin_out); s.fin_out = []
+    out
+
+# One piece of the making, until all is made (a frame each): the wash's buffer, its wavelets, its
+# heave, its finish; the breeze's slices and finish; the planing's slices, thuds and finish; the
+# laps and the slaps one by one.
+sea_sound_build_step = (s: mut SeaSound):
+    if s.ready: return
+    k = s.stage
+    w = SEA_WASH_PIECES; c = SEA_SLICES
+    wash_at = 1; heave_at = wash_at+w; wash_fin = heave_at+c
+    breeze_at = wash_fin+3; breeze_fin = breeze_at+c
+    planing_at = breeze_fin+3; planing_fin = planing_at+c+2
+    laps_at = planing_fin+3; slaps_at = laps_at+6; done_at = slaps_at+4
+    if k == 0: s.wash_m = fill(0.0,ENGINE_RATE*SEA_WASH_SECONDS)
+    else if k < heave_at: sea_wash_piece(s,k-wash_at)
+    else if k < wash_fin: sea_heave_slice(s,k-heave_at)
+    else if k < breeze_at:
+        if let done = sea_finish(s,s.wash_m,k-wash_fin): s.wash = done; s.wash_m = []
+    else if k < breeze_fin: sea_breeze_slice(s,k-breeze_at)
+    else if k < planing_at:
+        if let done = sea_finish(s,s.m,k-breeze_fin): s.breeze = done; s.m = []
+    else if k < planing_fin: sea_planing_slice(s,k-planing_at)
+    else if k < laps_at:
+        if let done = sea_finish(s,s.m,k-planing_fin): s.planing = done; s.m = []
+    else if k < slaps_at: s.laps.push(make_lap(k-laps_at))
+    else if k < done_at: s.slaps.push(make_slap(k-slaps_at))
+    else: s.ready = true
+    s.stage += 1
+# (all at once: tools and tests)
+sea_sound_make = (s: mut SeaSound):
+    loop not s.ready: sea_sound_build_step(s)
+
+# (a voice's level: paused while silent)
+sea_level = (s: mut SeaSound,k: int,volume: f64):
+    loop s.quiet.len() <= k: s.quiet.push(false)
+    if volume < 0.0002:
+        if not s.quiet[k]: set_volume(s.ids[k],0.0); pause(s.ids[k]); s.quiet[k] = true
+        return
+    if s.quiet[k]: resume(s.ids[k]); s.quiet[k] = false
+    set_volume(s.ids[k],volume)
+
+# Each frame (once made): her state on the water and in the air (src/flight_feedback.jo), her
+# speed through the air and how far the listener is from her: the cockpit hears the water close.
+sea_sound_update = (s: mut SeaSound,dt: f64,f: FlightFeedback,airspeed: f64,cockpit: bool):
+    if not s.ready: return
+    if s.ids.len() == 0: s.ids = [play(s.wash,0.0,looping = true),play(s.breeze,0.0,looping = true),play(s.planing,0.0,looping = true)]
+    state = smoothstep(2.0,14.0,f.sea_wind)                         # (the sea state, by the wind)
+    sea = if f.over_sea or f.afloat > 0.5: 1.0 else: 0.0
+    near = if f.afloat > 0.5: 1.0 else: 1.0-smoothstep(1.0,30.0,f.height)
+    # (still or slow on the water: moored in a breeze the air past her is the wind, so by the water)
+    slow = 1.0-smoothstep(0.05,0.35,f.water)
+    view = if cockpit: 1.0 else: 0.8
+    sea_level(s,0,sea*near*(0.05+0.2*state)*view)
+    set_pitch(s.ids[0],ENGINE_PLAY)
+    sea_level(s,1,f.afloat*slow*(0.03+0.22*state)*view)
+    set_pitch(s.ids[1],ENGINE_PLAY*(0.9+0.2*state))
+    sea_level(s,2,0.34*f.water*view)
+    set_pitch(s.ids[2],ENGINE_PLAY*(0.75+0.55*f.water))
+    # lapping: while she lies still or slow, at uneven moments, more and harder in a breeze
+    s.next_lap -= dt
+    if f.afloat > 0.5 and slow > 0.2 and s.next_lap <= 0.0 and s.laps.len() > 0:
+        s.next_lap = -log(max(1e-6,engine_unit(s.noise)))*(1.4-1.0*state)
+        play(s.laps[int(engine_unit(s.noise)*f64(s.laps.len())*0.9999)],(0.05+0.14*state)*(0.5+0.5*engine_unit(s.noise))*view*slow,pitch = ENGINE_PLAY*(0.85+0.35*engine_unit(s.noise)))
+    # a slap on the run, as the hull meets a crest
+    if f.slap_hit > 0.0 and s.slaps.len() > 0:
+        play(s.slaps[int(engine_unit(s.noise)*f64(s.slaps.len())*0.9999)],(0.1+0.22*f.slap_hit)*view,pitch = ENGINE_PLAY*(0.9+0.2*engine_unit(s.noise)))
+
+sea_sound_hush = (s: mut SeaSound):
+    loop k in 0..s.ids.len(): sea_level(s,k,0.0)

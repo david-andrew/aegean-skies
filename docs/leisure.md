@@ -172,6 +172,42 @@ funny or useful (time passes, people are met, the plane is looked after).
 26. **The seated view keeps its turn.** Each drag, by finger, mouse or stick, goes on from where
    the last one left it, at a table, on a stool, at supper and at the hotel room's window.
 
+## Built (round twelve)
+
+27. **The rooms by their things.** No buttons in a room. Tap or click the bed to lie down (sleep
+   of an evening, rest by day), the chair to sit, the window to look out, the door to leave. The
+   pilot gets up, walks round the furniture and sits or lies down by degrees, never jumping. What
+   the pointer, the arrow keys or a pad's d-pad picks out is a shade brighter, with a small label.
+   A tap wakes him early.
+28. **Over to the table.** On foot, tapping or clicking the pilot's table, the bar's stool or the
+   coffee house's table walks him over and sits him down.
+29. **A passenger answers out loud** when offered a flight, and a marker at the screen's edge
+   points to them while they're out of view.
+
+## Built (round thirteen)
+
+30. **Things to tap, everywhere cheap.** One's own aircraft (the cockpit to climb aboard, the engine
+   to work on her), the hotel's desk, the barber's chair, the band's jar and stand, and the coffee
+   house's tavli board and paper are tapped or clicked instead of their cards. He walks over and
+   does what the card would. The people about are clicked to talk, as touch already did. Seated,
+   the band, the jar, the board and the paper are no longer buttons on the table's bar.
+31. **The gleam.** On a touch screen, what can be tapped catches the light for a moment when the
+   view comes to rest. There are no words.
+32. **A family's view** is up over the door. His way round the table to the back room stays in
+   sight.
+
+## Built (round fourteen)
+
+33. **Taking the waters.** At a hot spring's terraces: tap the keeper at the bathhouse door (thirty
+   lepta), change in the cabin, and tap the pool. He walks down by the stairs and settles into the
+   water among a few of the town's people, who talk now and then (small talk, their own remarks,
+   once a lead) while the morning passes unhurried. Tap the steps to get out and change back.
+   Now and then the one who asks for a flight wants a lift to the springs' harbour, and pays a
+   little there.
+34. **Rooms, from the phone:** a tap while he sleeps wakes him and sends him to what was tapped;
+   Back gets him up in the room, not out of it. The night paid for, the desk offers his room. The
+   hotel's terrace no longer offers to fish.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar

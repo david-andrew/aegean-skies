@@ -1,0 +1,151 @@
+# The field map: the farmland's layout baked once into a texture around the camera, so the
+# ground shader reads hedgerows, lanes, field edges and hedge shadows with one texture sample
+# instead of working out districts, rows and hedges for every pixel (one look on every tier, at
+# about low's cost).
+#
+# A world-anchored wrap-around texture (1024 texels of 3 m, about 3 km square): texel i holds
+# world texel I with i = I mod 1024, so it is read with repeat addressing at world/span. It is
+# kept in 64-texel blocks; as the camera moves, the blocks entering the window are drawn by a
+# small GPU pass (src/fields.jo field_at per texel), the rest stay. RGBA: R a hedgerow's cover
+# (scalloped crowns), G a lane's pale track, B a field's edge (a thin line where fields meet),
+# A a hedgerow's shadow under the canopy light (held low): so the ground reads all of it with
+# one sample. When the light's bearing turns, the map is redrawn a few blocks a frame. Whether
+# a field is there at all, and its colour, comes from the terrain (field_share, the working
+# channel).
+use 'fields.jo'
+use 'coast_pattern.jo'
+use 'quality.jo'
+
+const FIELD_MAP_SIZE = 1024
+const FIELD_MAP_TEXEL = 3.0
+const FIELD_MAP_BLOCK = 64
+const FIELD_MAP_BLOCKS = 16       # FIELD_MAP_SIZE / FIELD_MAP_BLOCK
+
+struct FieldMapVertex:
+    corner: vec2
+
+struct FieldMapBlock:
+    rect: vec4                      # the block's map uv rectangle
+    world: vec4                     # its world x, z (the min corner) and size (metres)
+
+struct FieldMapParams:
+    pattern: Texture                # the coast pattern (the fields' warp noise)
+    light: vec4                     # toward the light (x, z, unit), a hedge's shadow length (m)
+
+struct FieldMapOut:
+    pos: vec4
+    world: vec2
+
+field_map_vs = (v: FieldMapVertex,inst: FieldMapBlock,u: FieldMapParams) -> FieldMapOut:
+    uv = mix(inst.rect.xy,inst.rect.zw,v.corner)
+    FieldMapOut(vec4(uv*2.0-vec2(1,1),0,1),inst.world.xy+v.corner*inst.world.zw)
+
+# A field's layout at a point: (hedge cover, lane track, field edge).
+field_layout = (p: vec2,warp: vec2) -> vec3:
+    cell = field_at(p,warp)
+    hedge: f32 = 0.0
+    loop axis in 0..2:
+        first = if axis == 0: cell.edge.x < cell.edge.y else: cell.edge.z < cell.edge.w
+        on = if axis == 0: (if first: cell.hedge.x else: cell.hedge.y) else: (if first: cell.hedge.z else: cell.hedge.w)
+        if on < 0.5: continue
+        dist = if axis == 0: min(cell.edge.x,cell.edge.y) else: min(cell.edge.z,cell.edge.w)
+        run = if axis == 0: cell.local.y else: cell.local.x
+        half = 2.6+1.6*abs(fract(run*0.09)-0.5)*abs(fract(run*0.037+0.3)-0.5)*8.0
+        hedge = max(hedge,1.0-clamp((dist-half)/1.5,0.0,1.0))
+    lane_hedge = (1.0-clamp((abs(cell.lane-4.5)-1.8)/1.5,0.0,1.0))*step(0.5,cell.lane_hedge)
+    hedge = max(hedge,lane_hedge)
+    lane = 1.0-clamp((cell.lane-1.8)/1.5,0.0,1.0)
+    edge = 1.0-clamp((min(min(cell.edge.x,cell.edge.y),min(cell.edge.z,cell.edge.w))-0.6)/1.2,0.0,1.0)
+    vec3(hedge,lane*(1.0-hedge),edge*(1.0-hedge))
+
+field_map_fs = (i: FieldMapOut,u: FieldMapParams) -> vec4:
+    warp = sample(u.pattern,i.world/6000.0).xy*2.0-vec2(1,1)
+    here = field_layout(i.world,warp)
+    # (the hedge that far toward the light shades this point)
+    sun = i.world+u.light.xy*u.light.w
+    cast = field_layout(sun,sample(u.pattern,sun/6000.0).xy*2.0-vec2(1,1)).x
+    vec4(here,cast*(1.0-here.x))
+
+field_map_target = RenderTarget()
+field_map_sh: Shader
+field_map_quad: Mesh
+field_map_blocks_buffer: InstanceBuffer[FieldMapBlock]
+field_map_ready = false
+# (which world block each wrap-around slot holds: slot = block mod 16 on each axis)
+field_map_slots: ivec2[] = []
+field_map_frame = -1
+field_map_window = vec4(0,0,0,0)    # world min x, z of the valid window, its size; 0 size: none
+field_map_light = vec4(0,0,0,0)     # the light the map's shadows were drawn under
+field_map_relight = -1               # the next slot to redraw under a turned light (-1: none)
+
+field_map_span = () -> f64: f64(FIELD_MAP_SIZE)*FIELD_MAP_TEXEL
+
+# Bring the map to the camera: the blocks of the 16 x 16 window round it that the wrap-around
+# slots don't hold yet are drawn (a row or column of them as the camera crosses a block, all of
+# them after a jump). Once a frame, before the ground is drawn.
+update_field_map = (cam: vec3,canopy: vec4):
+    global field_map_target,field_map_sh,field_map_quad,field_map_blocks_buffer,field_map_ready
+    global field_map_slots,field_map_frame,field_map_window,field_map_light,field_map_relight
+    if field_map_frame == frame_number(): return
+    field_map_frame = frame_number()
+    if __soft: field_map_window = vec4(0,0,0,0); return
+    if not field_map_ready:
+        field_map_sh = make_shader(shader(field_map_vs,field_map_fs))
+        field_map_quad = mesh([FieldMapVertex(vec2(0,0)),FieldMapVertex(vec2(1,0)),FieldMapVertex(vec2(0,1)),FieldMapVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+        empty: FieldMapBlock[]
+        field_map_blocks_buffer = instance_buffer(empty)
+        tex = texture(image(FIELD_MAP_SIZE,FIELD_MAP_SIZE),true)
+        set_mipmaps(tex,false)
+        set_repeat(tex,true)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        field_map_target = RenderTarget(tex,fbo,0)
+        field_map_slots = [loop k in 0..FIELD_MAP_BLOCKS*FIELD_MAP_BLOCKS: ivec2(-999999,-999999)]
+        field_map_ready = true
+    # (the shadows' light: the canopy light's bearing, held low; a turn of a few degrees and the
+    # map is redrawn 24 blocks a frame, its old shadows standing meanwhile)
+    h = vec2(canopy.x,canopy.z)
+    toward = if length(h) > 0.001: normalize(h) else: vec2(0,1)
+    light = vec4(toward.x,toward.y,0,6.0/max(canopy.y,0.3)*canopy.w)
+    if dot(light.xy,field_map_light.xy) < 0.9986 or abs(light.w-field_map_light.w) > 0.5:
+        field_map_light = light; field_map_relight = 0
+    block_m = f64(FIELD_MAP_BLOCK)*FIELD_MAP_TEXEL
+    bx = int(floor(f64(cam.x)/block_m))-FIELD_MAP_BLOCKS/2
+    bz = int(floor(f64(cam.z)/block_m))-FIELD_MAP_BLOCKS/2
+    blocks: FieldMapBlock[]
+    loop j in 0..FIELD_MAP_BLOCKS:
+        loop i in 0..FIELD_MAP_BLOCKS:
+            wb = ivec2(bx+i,bz+j)
+            sx = ((wb.x%FIELD_MAP_BLOCKS)+FIELD_MAP_BLOCKS)%FIELD_MAP_BLOCKS
+            sz = ((wb.y%FIELD_MAP_BLOCKS)+FIELD_MAP_BLOCKS)%FIELD_MAP_BLOCKS
+            slot = sz*FIELD_MAP_BLOCKS+sx
+            stale = field_map_relight >= 0 and slot >= field_map_relight and slot < field_map_relight+24
+            if field_map_slots[slot] == wb and not stale: continue
+            field_map_slots[slot] = wb
+            r = f32(1.0/f64(FIELD_MAP_BLOCKS))
+            blocks.push(FieldMapBlock(vec4(f32(sx)*r,f32(sz)*r,f32(sx+1)*r,f32(sz+1)*r),vec4(f32(f64(wb.x)*block_m),f32(f64(wb.y)*block_m),f32(block_m),f32(block_m))))
+    if field_map_relight >= 0:
+        field_map_relight += 24
+        if field_map_relight >= FIELD_MAP_BLOCKS*FIELD_MAP_BLOCKS: field_map_relight = -1
+    field_map_window = vec4(f32(f64(bx)*block_m),f32(f64(bz)*block_m),f32(f64(FIELD_MAP_BLOCKS)*block_m),f32(field_map_span()))
+    if blocks.len() == 0: return
+    zone("field map")
+    set_instances(field_map_blocks_buffer,blocks)
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(field_map_target.fbo))
+    glViewport(0,0,i32(FIELD_MAP_SIZE),i32(FIELD_MAP_SIZE))
+    glDisable(GL_DEPTH_TEST); glDepthMask(0); glDisable(GL_CULL_FACE); glDisable(GL_BLEND)
+    draw_instanced(field_map_sh,field_map_quad,field_map_blocks_buffer,FieldMapParams(coast_pattern_texture,field_map_light))
+    # (back to what the frame draws into: the post effects' picture, or the screen without them)
+    __bind_current()
+    glEnable(GL_DEPTH_TEST); glDepthMask(1)
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+    zone_end()
+
+# The map for a ground draw: its texture (a 1x1 stand-in before the first update) and window.
+field_map_texture = () -> Texture: if field_map_ready: field_map_target.texture else: unread_field_map()
+field_map_unread: Texture = Texture()
+unread_field_map = () -> Texture:
+    global field_map_unread
+    if field_map_unread.id == 0: field_map_unread = texture(image(1,1),false)
+    field_map_unread

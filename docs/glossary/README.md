@@ -15,17 +15,17 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -131,10 +131,13 @@ blue discs that stay in every frame are **speed flecks**.
 - **Definition:** the depth-driven colour ramp from cobalt in deep water, through turquoise, to
   see-through water at the shore. It reaches deep blue at 12 m on open shelves and 24 m in
   sheltered coves. The sandy seabed shows through with a faint caustic shimmer.
-- **Code:** `src/sea.jo:326 sea_shallow_mix(depth, shelter)` and the body colour in
-  `sea_material`; seabed caustics in `src/terrain.jo` (`ground_material`, "caustic shimmer").
-- **Rules:** only the colour weight may change. Add no texture, sampler, varying or world record
-  for it (`docs/painted-materials.md`).
+- **Code:** `src/sea.jo sea_shallow_mix(depth, shelter)` (the weight) and `sea_shallow_ramp` (the
+  colour) in `sea_material`; the seabed (pale sand tinted by the water above it, scattered weed
+  beds and stones, the drifting caustic network) in `src/terrain.jo ground_surface`.
+- **Rules:** the shallow/deep weight and the shallows' own depth ramp (`sea_shallow_ramp`: clear
+  aqua over the sand, turquoise, teal; no green in the water itself) may change. Add no texture,
+  sampler, varying or world record for it, and never touch the deep sea's flecks, marks or glints
+  (`docs/painted-materials.md`).
 
 ### Deep sea from height
 
@@ -152,6 +155,24 @@ blue discs that stay in every frame are **speed flecks**.
   `tweaks.brighter_ocean` (`AEGEAN_BRIGHT_SEA=1`) skips it.
 - **Rules:** colour and gradients only: never thin, dim or restyle the sea's fine detail for it.
 - **Capture:** `AEGEAN_FLYING=600`, or a free view looking down, `AEGEAN_VIEW="0 600 9000 0 -0.5 11"`.
+
+### Cliff beds and lip
+
+- **Aliases:** strata, ledges, the cliff top, the fringe, the cliff's foot.
+- **Definition:** limestone cliffs painted as the film paints them: stacked beds about 3 m thick,
+  each its own tone, with a lit lip and a cool violet shadow under the bed above, ledges coming and
+  going along the face, tufts on them. At the top the scrub hangs over the edge in ragged tongues
+  with a soil band and root-stained rock below; at the foot, rock down to the water, wet at the
+  waterline. The rock is lit as bold planes by the way it faces.
+- **Code:** `src/terrain.jo ground_surface` (the strata block, the fringe block under "Where cliff
+  meets the green", the plane lighting under `light_normal`); `cliff_edge` from `ground_material`.
+- **Rules:** decide classification per pixel, never from values interpolated across a 14 m
+  terrain triangle (they draw sawteeth and dark wedges). `cliff_edge` (the slope changing fast
+  across a triangle) marks a cliff's lip and foot; ordinary hillsides skip all cliff work. The low
+  tier keeps only the per-pixel foot and edge rules: its ground shader on the laptop's GPU cannot
+  afford the ledges, tufts, streaks or plane lighting.
+- **Capture:** `AEGEAN_VIEW="4793 25 -5162 -2.129 -0.024 12.5"` (cliff from the sea, island),
+  `"139848 25 79652 -0.783 -0.073 12.5"` (mainland).
 
 ### Shore foam
 
@@ -695,7 +716,23 @@ On the rivers branch until it lands.
   ground controls in `_substep`, `ground_start`; the gear points `landplane_gear_contacts` in
   `src/aircraft_early.jo`; `AircraftProfile.landplane` in `src/aircraft_catalog.jo`.
 - **Rules:** a landplane is never put on the water: the pause menu's switch, the tow after a wreck
-  and the start put it on an [airfield](#airfield)'s stand.
+  and the start put it on an [airfield](#airfield)'s stand, and so does a saved or new game whose
+  record has it at a harbour's berth (`landplane_ashore`).
+- **On the ground, as a player has it (flight model v2):** the mouse's (and the touch screen's) aim
+  steers on the wheels by the nose's heading, leaving the stick in the middle at a taxi, so a tail-
+  dragger is not pushed onto her nose, and lifts the nose only near flying speed; the stick held back
+  on the run (the keys, a gamepad) asks for her best lift, the nose brought to just under her stall,
+  the tail lifted off the grass if she sat on it there (her three-point attitude is past it). In a
+  crosswind the tyres keep her track (the air's grip that drifts her with the wind is off on the
+  wheels), the pilot's hand holds her wings level on the run, and just off the grass the mouse's bank
+  is kept within what her wing tip clears. An amphibian on her wheels (the Albatross, the Bat Boat)
+  has the same elevator, and brakes as a landplane does. Away from an aerodrome at rest (in a field,
+  out of fuel), or an amphibian ashore whose run no strip is long enough for, a lorry or a team can be
+  sent for (`stranded_on_land`, `fetch_home`): never a dead end. `tools/ground_survey.jo` (taxiing,
+  turning, braking, crosswind take-offs and landings, mouse and keys), `tests/landplane_ground_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_CIRCUIT=1` (with `AEGEAN_CRAFT` a landplane and `AEGEAN_AIRFIELD=stand`):
+  taxied out from the visitors' stand, off the strip, once round a short circuit, landed and taxied
+  back, as the air arm's sorties go, on the player's own steering.
 
 ### Ditching
 
@@ -919,6 +956,33 @@ On the rivers branch until it lands.
 - **Rules:** the stick asks for a rate of the flight path (as the liked model's); released, the
   path is held. The default stays the liked model until the user prefers v2.
 - **Capture:** `AEGEAN_TWEAKS=fdm2`; strobes with `tools/fdm_frames.jo` (`FDM_MODEL=0|1`).
+- **Every type, as a player flies it:** `tools/type_survey.jo` flies each player-selectable aircraft
+  on the mouse's aim (as `src/pilot.jo` steers) and sets out a table: the take-off in calm water and
+  in wind 3's swell from three places (landplanes on flat grass), the cruise and the top speed level,
+  a level 45 degree turn, a stall and its recovery, a landing, a taxi turn and coming to rest, and
+  the aim's step, tracking and wiggle. The player's own mouse steering (`steer_v2` for her aircraft,
+  not another's nor an autopilot's) holds the nose's attitude on the wheels, and never asks the path to turn harder than the
+  wing can at that speed, so a landplane is not sat on her tail on the grass and a flying boat just
+  off the water climbs away instead of being pulled into a stall. A flying boat's hull below its
+  middle (and the S.55's twin hulls) running through the sea is judged by its sink into the water,
+  not by its run along its length, so it is not broken up in a moderate swell, while a hard drop
+  still crushes it (`src/flight.jo` `_substep`); `tests/type_flight_test.jo`.
+  On v2 the cruise throttle (`cruise_throttle`) is v2's own balance (`fdm2_cruise_throttle`), so every
+  type cruises at its catalog cruise on it. The player's steering aims the nose (the guns) wherever she
+  flies, and the way she goes only on an approach, the throttle back and slow (under 1.45 times the
+  stall, the nose again by 1.6), never while fighting (the guns in use, or a target's lead shown on
+  the gunsight: `Flyer.fighting`), so she flies down an approach's aim rather than a degree or two
+  below it and a correction of a degree at the guns still lands on the gun line; and a small correction's gentle turn is eased for the fast types (to the
+  bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
+  while a big one turns them as briskly as ever.
+  The other aircraft on v2 (`fdm2_npcs`) take off on the autopilot's attitude hold, not the mouse's
+  steering, and climb away only once flying (1.1 times the stall), so they never pitched up into the
+  stall as the player did; thrown off a crest below flying speed they are held low and level. The
+  autopilot gives a giant a final as long as her size asks (60 spans) and a slow-nosed type a flare
+  begun higher, and a hydrofoil runs straight out on her foils before turning for the dock and
+  taxies on her screw at up to half throttle. `tools/npc_survey.jo` flies every type as the other
+  aircraft do (take-offs calm and in wind 3, a trip to a dock, the air arm's sortie);
+  `tests/npc_flight_test.jo`.
 
 ### Sky Barons port
 
@@ -979,6 +1043,19 @@ On the rivers branch until it lands.
   every direction must meet a face turned toward it or leave through a pane.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
   `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 50 cockpit'` (the speed is the true airspeed; left out, a safe 1.3 times the type's stall).
+
+### Fuel gauge (cockpit)
+
+- **Aliases:** the sight glass, the float gauge, the fuel dial.
+- **Definition:** every cockpit reads the tank's real contents (including while refuelling) on
+  the coaming beside the compass, where the eye already goes and inside a phone's narrow view.
+  Open cockpits have a period sight glass with a cork float: an amber column over pale glass, its
+  foot painted red. Cabins and flight decks have a round FUEL dial with a red sector at the empty
+  end. Below 15% the float or needle sits in the red (the column itself turns red). The third-person
+  HUD keeps its own fuel bar (`src/hud.jo instruments`, beside the throttle).
+- **Code:** `src/cockpit.jo` `_cockpit_fuel_face`, `cockpit_fuel_at`, the moving part in
+  `draw_cockpit_instruments`; `draw_cockpit(..., fuel01)` from `fuel_reading()` in `aegean.jo`.
+- **Capture:** `tools/cockpitlab.jo` with `COCKPIT_FUEL=0..1`.
 
 ### Cockpit lamp and luminous dials
 
@@ -1539,6 +1616,33 @@ On the rivers branch until it lands.
   redfox). The old islands' groves keep their own placement; nothing is painted under their
   meshes.
 
+
+### Farmland
+
+- **Aliases:** the fields, the patchwork, hedgerows, tree lines, lanes.
+- **Definition:** the gentle lowland drawn as a patchwork of straight-edged fields (about 30 to
+  110 m), each one flat crop colour (greens, straw, tilled brown, striped vines and olive rows),
+  in districts of about 500 m whose direction varies, as the film's farmland is. Hedgerows and
+  tree lines run along a share of the field edges, scalloped, lit on their sun side, casting a
+  shadow onto the field away from the canopy light (held low, so they read at noon). Lanes run
+  between districts, a hedgerow along about half. A settlement's working land and the olive
+  country are drawn as the same patchwork, taking their own crops. Woods keep the pine stands;
+  the lowland's maquis gives way to the fields. Far off, the fields turn to their mean. One look
+  on every tier, at about low's cost: each terrain sample's field colour and share are baked on
+  the CPU (the new world's tiles, the old islands' tiles at load, each grass cell), and the
+  hedgerows, lanes, field edges and hedge shadows come from the field map, a wrap-around texture
+  of 3 m texels round the camera drawn in 64-texel blocks by a small GPU pass as the camera
+  moves (redrawn a few blocks a frame when the light's bearing turns). The ground reads it with
+  one sample.
+- **Code:** `src/fields.jo` (`field_at`, `field_share`, `field_bake`, `field_crop_low`,
+  `field_colour`, `field_palette`); `src/field_map.jo` (`field_layout`, `update_field_map`);
+  used by `ground_surface` in `src/terrain.jo`; baked in `world_tile_job_rows`
+  (`src/world_terrain.jo`), `island_working` (`src/terrain_lod.jo`) and `grass_build_step`
+  (`src/grass.jo`).
+- **Rules:** the palette is a switch until the look is decided: `AEGEAN_FIELD_PALETTE=dry` gives
+  the dry straw summer (docs/ART.md); green valleys by default. Low's terrain shader is at a
+  register-pressure cliff on redfox: measure any addition to its low path there, alone and
+  together. Field detail goes into the bake or the field map, not into per-pixel work.
 ---
 
 ## Towns and people
@@ -1631,6 +1735,90 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_CRAFT=<a big boat> AEGEAN_ABOARD=1 AEGEAN_CAPTURE_LAUNCH=lighter` (also
   `swing`: the wind held abeam, seen from above).
 
+### Call for help
+
+- **Aliases:** help on the R/T, a tow, the flare.
+- **Definition:** down on the sea and unable to go on (the tank dry, the engine or hull too far
+  gone, wrecked or aground), the [R/T](#rt) pad offers "Call for help" first (R does too on a
+  wreck). Whoever is really near answers. One of the player's flight (in a fight, for fuel only)
+  lands into the wind off to one side, taxis to lie alongside and hands over two two-gallon cans
+  out of its own tank, then takes off again. Outside a fight, a pilot of the world flying a trip
+  within 15 km does the same (the cans paid to them at the pier's price), or for a wreck takes the
+  pilot along to wherever they are bound, the harbour there fetching the aircraft in after for a
+  fee; their trip is taken up again once they are back up. Failing that, the nearest passing ship of the living
+  world turns aside (a hull stands in for it, the ship itself held on its route and not drawn
+  meanwhile) and tows the aircraft into the nearest town harbour. Failing that, that harbour's
+  launch comes out and tows it in. The radio answers with a rough time ("about twenty minutes");
+  the boat sails the fleet's own sea lanes, round the land, and is seen coming; "Wait for them"
+  skips the wait ([time skip](#time-skip)) to the last 60 m, or a tow to the harbour. The tow
+  draws up alongside, takes the line and hauls the aircraft round onto it; in at the harbour the
+  aircraft is warped in to a free berth (a wreck patched up, as the old tow home had it). A
+  wreck's pilot is taken off: they drop into the water, swim across in their vest (the camera
+  behind them) and climb onto the boat's after deck, and ride in watching
+  the wreck in tow (the camera with them, F to skip ahead), stepping ashore by it at the harbour;
+  or, in a fight with a base, one of the flight lands, they swim to its float and up into its
+  second seat, and it flies
+  them back to the base (F skips the flight), the harbour's boat fetching the aircraft in after
+  for a fee. The
+  cans are paid for at the nearest pier's price to the wingman, the tow by distance to the
+  skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
+  the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
+  reads "Fire a flare": a red star goes up and the nearest ship or harbour within 8 km comes.
+  When the flight turns for home its leader says where ("then back to Ardevanti").
+- **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
+  `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /
+  `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
+  `aegean.jo`.
+- **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
+  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`,
+  `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=passing|passwreck` (ahead of the first world aircraft seen
+  flying), `AEGEAN_CAPTURE_HELP=tender`; HELP lines say what happened.
+
+### Wireless
+
+- **Aliases:** the cockpit radio, the receiver, the set (in code: `radio`).
+- **Definition:** the broadcast receiver in the cockpit: stations, music, bulletins and Morse.
+  Named "wireless" on screen (the period British word for a broadcast set: the touch screen's
+  Wireless button, Settings → Sound → Wireless volume, "Wireless off"), so it is never confused
+  with the [R/T](#rt), which sends orders to one's own flight.
+- **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
+
+### R/T
+
+- **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
+  the broadcast set).
+- **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
+  plate; a controller's D-pad left). Down on the sea in trouble its first line is the
+  [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
+  the flight leader's words follow: form on me, circle here and wait, attack my target, break off
+  and go home, lead me home. A number, a click or tap sends one, or C steps and F sends; Escape or
+  a few idle seconds close it. The nearest of the flight answers in a few plain words.
+- **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
+  in `aegean.jo`.
+
+### The Ierax (seaplane tender)
+
+- **Aliases:** the tender, the depot ship, Kalyra's forward base.
+- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s, anchored as a depot
+  ship in the bight on the west coast of the island 25 km west of the strait, in the lee of its
+  southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
+  Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
+  past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
+  strait's Kalyran flight comes home to her: it lands to seaward and moors in turn along the booms
+  and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
+  lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
+  to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
+  else), and be lowered over the side again. Her launch answers a call for help when she is nearer
+  than any harbour, and tows the aircraft in to her moorings.
+- **Code:** `src/tender.jo` (`TENDER_AT`, `tender_slot`, `tender_home`, `hoist_point`); the booms
+  and derrick in `src/vessel_models.jo`; `strait_homes` in `src/scenarios.jo`; `tender_fuel`,
+  `tender_hoist_start`, `tender_step`, `tender_repair` and the help call's `by_tender` in `aegean.jo`.
+- **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_TENDER=hoist`; `AEGEAN_ABOARD=1
+  AEGEAN_CAPTURE_HELP=tender`; the flight home: `AEGEAN_SCENARIO=strait
+  AEGEAN_CAPTURE_STRAIT_AFTER=arrive AEGEAN_ARRIVE_KM=3 AEGEAN_ARRIVE_FORMED=1
+  AEGEAN_CAPTURE_TENDER_CAM=1` (with `AEGEAN_FRAMES` and `AEGEAN_FRAMES_ONLY=1` for a time-lapse).
+
 ### Legacy towns
 
 - **Aliases:** the original six towns, the original archipelago.
@@ -1701,6 +1889,40 @@ On the rivers branch until it lands.
 - **Definition:** a lake town's houses lining the path from its square to the jetty, timber boat
   sheds open to the water with slipways, and a dressed stone edge along the shore at the jetty root.
 - **Code:** `lake_waterfront` (`src/lake_ports.jo`), `lake_waterfront_mesh` (`src/lake_port_mesh.jo`).
+
+### Taking the waters
+
+- **Aliases:** the hot springs, the baths, a soak, the bathhouse keeper.
+- **Definition:** an opt-in leisure at the [thermal terraces](#thermal-terraces), done by the things
+  themselves rather than cards (`src/bath.jo`):
+  - **The keeper:** tap him at the bathhouse door. He asks thirty lepta for the waters (paid to the
+    town's innkeeper if it has one, else the town's account), good all that day at that spring.
+  - **Changing:** he goes into the cabin, is out of sight a moment, and comes out in a bathing
+    costume (`build_figure(bathing = true)`).
+  - **Getting in:** tap the hot pool. He walks to its steps by the terraces' stairs and round the
+    pool's coping (`bath_route_to`, `_round_pool`), steps over and settles into the water by
+    degrees (`bath_path`).
+  - **Soaking:** a few of the town's grown people sit in the water to their shoulders, the same
+    ones all day. They talk in turn every ten seconds or so: the water's small talk, the dialogue's
+    own remark for them (`table_remark`), and once a soak a lead ("Marta has oil for Kalamos, I
+    heard. If you're flying that way.", from the town's or its harbour's open jobs). The world's
+    clock runs on unhurried, about a minute a second. F (an hour) and T (until evening) still hurry
+    it. There are no cards: the steps are the way out.
+  - **Getting out:** tap the steps, or R, or walk. He comes up out of the water by degrees, goes
+    back to the cabin, and comes out dressed.
+- **Lifts:** now and then the one who asks at the aircraft for a flight wants a lift instead: to the
+  harbour below the nearest springs within 120 km ("Would you be going anywhere near the
+  Saryerenos baths? I'd pay for a lift as far as Delyavouna."). Set down there, they pay ¤1.50 if
+  they have it and thank the pilot. Set down anywhere else, they say "Not here, I'm afraid" and
+  stay in the seat (`ride_lift_choice`, `Joyride.dest`).
+- **History:** springs like Loutraki, Aidipsos, Ikaria and Methana were in use in the islands then,
+  with plain bathhouses and a keeper taking a few lepta.
+- **Code:** `src/bath.jo` (`Bath`, `bath_pick_line`, `bath_pay`, `lift_fare_pay`); `bath_step`,
+  `bath_go_in`, `bath_walk_to`, `bath_get_out`, `draw_bath_people`, `draw_bath_talk` and leisure
+  stage 21 (the keeper) in `aegean.jo`; `ride_lift_*` in `src/joyride.jo`; `tests/bath_test.jo`.
+- **Capture:** `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters` walks up
+  from the path, pays, changes and gets in. `AEGEAN_LEISURE=ride-ask AEGEAN_RIDE_LIFT=1` shows a lift
+  being asked for.
 
 ### Thermal terraces
 
@@ -2161,10 +2383,78 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   the notebook logs them, and the bubble in `draw_company_talk` (`aegean.jo`); `passing_topic` in
   `src/speech.jo`; `tests/pilot_talk_test.jo`.
 - **Rules:** on by default; Options, Character: "Your pilot makes small talk". The day's doings
-  are kept for the session (the world's deeds, which it also reads, are saved).
+  are kept in the World (`World.pilot_day`, `src/pilot_day_types.jo`), saved with the game; an
+  older save loads with an empty day.
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=0.5 AEGEAN_SMALL_TALK=always
   AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` (he answers every remark; a bumpy flight over from
   Kalamos and a load brought in are on his day).
+
+### Leads
+
+- **Aliases:** what's going on, things to look into, something he could go and do.
+- **Definition:** now and then people mention something real the pilot could go and do: someone
+  after a lift (an open passenger job), a load left on a dock a while (an open cargo job), a race
+  at a capital on a named day (a club meeting taking entries), a boat overdue (a missing-boat
+  story), music at the Ancora tonight (the band's evening). Said plainly, once by each person a
+  day (kept in the World, so not again after a load: `World.rep.told_leads`), one kind a day each;
+  nearest home first. No quest log and no marker: the player remembers
+  it, or writes it in the notebook. Each leads somewhere: the lift's taker is asked in talk; a
+  load's owner is named where it waits ("Nefeli's had a load on the dock a while."), and its
+  crates carry a label ("read the label on the crates"; someone near says where the owner is);
+  the race is entered at the club's table on the capital's quay (the club posts its meeting the
+  day before); the music is spoken of only when two of the band's players are in town to play. Mostly when asked what they've heard (half the time) and at
+  the table (a third of the remarks), now and then in passing (one remark in seven).
+- **Code:** `src/leads.jo` (`leads_for`, `lead_real`, `lead_line`, `lead_to_tell`); `tell_lead`,
+  `_lead_meets` and the three places it is said in `aegean.jo`; `tests/leads_test.jo` (every lead
+  real, over days of the world; gone once taken, closed or over).
+- **Capture:** `AEGEAN_LEISURE=lead-bar AEGEAN_COMPANY=0.5 AEGEAN_COMPANY_GAP=10 AEGEAN_LEADS=always
+  AEGEAN_CAPTURE_MINUTES=450 AEGEAN_HOUR=17` (someone at the bar tells of a lift wanted, the band,
+  a load); `AEGEAN_LEISURE=lead-ride` (he has walked up to the one who wants the lift).
+
+
+### The club's table
+
+- **Aliases:** the race committee's table, the entry table, giving one's name for a race.
+- **Definition:** at a capital's air meeting, from the day before (when the club posts it) until
+  the start, a trestle table on the harbour's quay with the entry sheet and the cash box, the
+  club's maroon pennant on a pole, and the club's clerk behind it. A race is entered there, on foot
+  at the table (no longer from anywhere within twelve kilometres, nor from the water), with one's
+  own aircraft fuelled, sound and moored at the host harbour. Afterwards the result is told: a deed
+  of the pilot's name (a win talked of far and wide, a Schneider win on the wireless), people's
+  remarks ("Heard you came second at Kalyrassa."), the paper of a town that has heard ("Air race at
+  Kalyrassa"), and the pilot's day ("Raced at Kalyrassa. Came second.").
+- **Code:** `src/club_desk.jo` (`club_desk_at`, `club_desk_near`, `draw_club_desks`);
+  `race_offer_here`, `draw_club_tables`, `race_results_told` in `aegean.jo`; `rep_record_race` in
+  `src/reputation.jo`; `rep_paper_pieces` in `src/reputation_talk.jo`; the day-ahead posting in
+  `prepare_air_events` (`src/air_events.jo`).
+- **Capture:** `AEGEAN_CAPTURE_RACELEAD=heard|arrive|desk|after|paper` (the race lead followed).
+### A boat adrift
+
+- **Aliases:** an overdue boat, a boat in trouble, Petros's boat.
+- **Definition:** now and then (about one fishing trip in forty, more in bad weather) a fishing
+  boat that has gone further out loses its engine or its mast, or loses its way, and lies adrift
+  on the sea lane out of its harbour, two to four kilometres out, drifting slowly along it. Its
+  trip is held there, so it is overdue: the town worries (the missing-boat story) and people say
+  so (a [lead](#leads)). It is really there, drawn where it lies; found by flying over and
+  looking, with no marker; a boat that lost its mast is drawn with it snapped off and the sail
+  over the side. Landed alongside, the pilot takes the skipper aboard (he climbs into the second
+  seat, as a rescued pilot does, and is back in it after a load) and sets him ashore at a harbour;
+  or signals a passing caique on its way, which turns aside and tows it in; or gets a line across
+  to another boat out fishing near; or, having seen it, tells someone of its harbour where it lies,
+  and the launch puts out from its berth. The launch and the caique are seen: they come out on the
+  fleet's sea lanes, draw up alongside, make fast, and tow the boat in astern on a line to the
+  harbour (`src/adrift_help.jo`, with the radio help's pieces); the world waits for them while they
+  are in sight and finishes by its own clock once the pilot is far off. Left alone, the lost find their way home
+  in some hours, and the others are brought in by a passing boat late the next day. The skipper
+  remembers who came for him; the worried and the harbour tell of it ("Heard you found Petros.");
+  the pilot's day has it ("Found Petros off Porto Vecchio.").
+- **Code:** `src/living_adrift.jo` (`adrift_minute`, `adrift_begin`, `adrift_take_aboard`,
+  `adrift_set_ashore`, `adrift_tow`, `adrift_report`), `src/adrift_types.jo` (`World.adrift`, saved);
+  the hold in `advance_workboats`; the deed `found_boat` in `src/reputation.jo`; `update_adrift`,
+  the offers and the talk card's "… boat is lying off …" in `aegean.jo`; `tests/adrift_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_ADRIFT=heard|search|alongside|home|launch` (launch: the launch
+  putting out, the long ways out and in skipped to their last stretch; heard: with
+  `AEGEAN_LEADS=always`; search: with `AEGEAN_FLYING=110`).
 ### Contracts
 
 - **Aliases:** missions, commissions, military contracts.
@@ -2581,6 +2871,38 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### Things to tap
+
+- **Aliases:** clicking the thing itself, walking over to it, the gleam.
+- **Definition:** the game's standing preference is the thing in the world over a button or a card.
+  On foot, these are tapped or clicked (with the mouse free) instead of their cards:
+  - one's own aircraft at her mooring: the cockpit ("Climb aboard"), and the engine ("Work on her");
+  - the pilot's table and the bar's stool ("Sit", "Sit at the bar");
+  - the hotel's desk ("Ask for a room") and the barber's chair ("A shave");
+  - the band's jar ("Tip the band") and its stand ("Ask for a song");
+  - the coffee house's table, its closed tavli board ("A game of tavli") and the folded paper
+    ("The paper");
+  - the people about: walk over and talk.
+- **How it works:** he walks over until what the thing's card would offer is in reach, then does it,
+  exactly as the card's key does (`foot_things`, `foot_go`, `foot_pick`; the act is matched in the
+  walk's own offers). The board and the paper then open once he has sat down. Walking himself
+  cancels the walk. So does no progress for three seconds, or 25 seconds gone. A thing is offered
+  only from the same side of the bar room's walls (`way_clear`), except the desk, which stands at
+  its door. The keys work as ever. A card whose thing is on the screen isn't shown
+  (`shown_offers`), unless a pad is in use, whose buttons go by the cards' order.
+- **Seated:** at a table or the bar, the band's stand and the jar are tapped or clicked the same
+  way, and so are the board and the paper at the coffee house (`seat_things`). They are no longer
+  buttons on the table's bar, but their keys T, P, S and B still work.
+- **Pointed at:** with the mouse free, a small label over the thing says what it does
+  (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
+  and in view catch the light for a moment instead, and again every eight seconds while it stays
+  still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
+  works in the rooms of a stay and at a table too.
+- **The mouse locked to the view:** what the middle of the screen is on is lit and labelled, and a
+  click there goes to it, so the mouse needn't be freed first (`foot_aim`).
+- **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
+  index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
+
 ### Pleasure flight
 
 - **Aliases:** a joyride, taking someone up, a passenger for the pleasure of it.
@@ -2608,6 +2930,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     on ("There you are! I'd started to wonder.").
   - **Sorry, another day:** they climb out with a kind word and go home, and are not asked about
     again for a day.
+  - The question comes only once the pilot has been aboard with them seated (`ride_boarded`).
+    Seated while he is still on the dock, they simply wait for him.
+  - **Offered (K):** they answer out loud ("Really? Now? Oh, yes please!", `ride_accept_line`) in
+    the caption at the top. While they're out of view (behind the camera, or off the side), a small
+    marker with their name sits at the screen's edge and points toward them (`offscreen_pointer`
+    in `src/panels.jo`). Capture: `AEGEAN_LEISURE=ride-offer`.
   - **Giving up:** they go home. The pilot's name takes a mild mark (`rep_act(.cut_short)`), the
     notebook has a line, and the next time they pass the pilot they say so ("I waited by your
     aeroplane an hour! Another day, then."), instead of asking again from scratch.
@@ -2635,6 +2963,31 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     There is coffee in the morning (05:30 to 11:30).
   - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
     window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **By its things, not buttons:** there is no button bar in a room. One taps or clicks the thing
+  itself (`src/room_walk.jo`): the bed, the chair (at a family's, one's place at their table), the
+  hotel's French window, or the door.
+  - **Getting there:** the pilot gets up out of the chair or the bed by degrees, walks round the
+    furniture (`room_path`: straight when the floor is clear, else by the open floor), turns to
+    the thing, and sits or lies down by degrees (`RoomPilot`, `room_step`, `room_body`; the
+    figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
+    one of its places to the next.
+  - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
+    evening (`room_sleep_until`). A tap or click on a thing wakes him, and once he's up he goes
+    there. A key wakes him only (Back or Escape among them, never also the way out). He stays
+    lying until he's sent somewhere: the bed clicked again, or Back, gets him up in the room.
+  - **The night paid for:** the room is his until eleven the next morning. The desk then offers
+    "go up to your room" (`hotel_room_paid`), not another night.
+  - **The window:** he stands at it and the view goes out over the harbour. Clicking it again, or
+    Escape, brings him back to the chair.
+  - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
+  - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Enter or A
+    to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
+    vertices, cut from the baked room). A small label over it says what it does now (`room_label`:
+    "Sleep", "Lie down", "Get up", "Sit", "Look out", "Back inside", "Leave").
+  - **The view:** it turns all the way round by a drag, a finger or the right stick, so the door
+    can be behind. On a phone held upright it is wider. The pilot isn't drawn while he passes
+    within a metre of the eye. One small corner line lists the keys; with a pointer or a finger,
+    nothing else is shown.
 - **Lit and lived in:** walls, floor and ceiling are tiled and each room is baked three times
   into its vertex colours (`bake_room`): by day, the window's cool light falling off into the room;
   of an evening, the lamps' warm pools, turned by each surface's facing, with dark brown corners
@@ -2648,12 +3001,17 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
   show through them; a game saved during a stay loads with the pilot outside, where he went in.
 - **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
-  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`); `stay_begin_hotel`,
-  `stay_begin_family`, `stay_sleep`, `stay_woke`, `stay_end`, `stay_frame`, `draw_stay` and
-  leisure stage 15 in `aegean.jo`; the time skip's `visible` mode; `tests/stay_test.jo`.
+  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`), `src/room_walk.jo`
+  (`room_objects`, `room_furniture`, `room_hubs`, `room_pick`, `room_path`, `room_step`,
+  `room_body`, `room_label`); `stay_begin_hotel`, `stay_begin_family`, `stay_sleep`, `stay_woke`,
+  `stay_end`, `room_setup`, `room_use`, `room_arrive`, `room_step_frame`, `stay_frame`, `draw_stay`,
+  `draw_room_label` and leisure stage 15 in `aegean.jo`; the time skip's `visible` mode;
+  `tests/stay_test.jo`, `tests/room_walk_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
   stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
   `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
+  `AEGEAN_ROOM_SCRIPT="<frame>:<bed|chair|window|door|focus-<thing>|wake> ..."` sends him to a thing
+  at that frame, lights one, or wakes him, and prints a `ROOM` trace.
 
 ### A new pilot's welcome
 
@@ -2751,6 +3109,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
+- **Going over to sit:** on foot, the pilot's table, the bar's stool and the coffee house's table
+  are tapped or clicked: he walks over and sits ([Things to tap](#things-to-tap)).
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
 
@@ -3119,6 +3479,28 @@ No image: the tiers differ in budgets more than in any single view.
   per type; `engine_sound_update`); `src/sound.jo` `update_audio`; `tests/engine_sound_test.jo`.
 - **Rules:** procedural only; loops baked once for the aircraft chosen, at the same overall level
   as the shared engine loops they replace (the title's music still leads by about 20 dB).
+
+### The sea about her
+
+- **Aliases:** sea sounds (a trial on the Tweaks page, off by default).
+- **Definition:** the sea heard about the aircraft: the open water's wash by the sea state (many
+  small wavelets breaking over a low heave), fading with height; lapping at the floats and hull
+  while she lies still or slow; the breeze while moored; the hull planing through the chop on a run
+  (thuds at the waves, the bow wave, the spray); slaps as it meets a crest, the spray thrown up a
+  moment after. Before it, away from a shore the open sea was silent.
+- **Code:** `src/sea_sound.jo`; `src/flight_feedback.jo` (`afloat`, `height`, `over_sea`,
+  `sea_wind`); `tests/sea_sound_test.jo`.
+
+### On foot
+
+- **Aliases:** footsteps (a trial on the Tweaks page, off by default).
+- **Definition:** walking heard: a footfall each half stride by the ground underfoot (the jetty's
+  planks over the water, stone quays, stairs, cobbles, earth, sand, the bar room's boards with the
+  room's echoes), climbing into and out of the aircraft, a chair or a stool as one sits and stands,
+  a glass or a plate set down at the table; and the bar room's talk and the terrace's crossing over
+  through its doorways by how far in one is. Before it, nothing of walking was heard.
+- **Code:** `src/foot_sound.jo`; `aegean.jo` (`foot_ground`, `foot_sounds_frame`,
+  `hotel_indoor_amount`); `src/ambience_scene.jo` (`indoor_amount`); `tests/foot_sound_test.jo`.
 
 ### Uneven events
 

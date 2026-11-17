@@ -1,0 +1,221 @@
+# A call for help on the R/T, down on the sea: out of fuel, the engine or the hull too far gone to
+# go on, or wrecked. Who answers is whoever is really near: one of the flight lands alongside with
+# two cans of fuel; failing that, a passing caique turns aside and tows the aircraft into the
+# nearest harbour; failing that, that harbour sends its launch. The radio answers with a rough
+# time, the boat is seen coming (it sails the fleet's own sea lanes, round the land), and the wait
+# can be skipped. Out of the R/T's reach, a flare brings the nearest boat that sees it. A wreck's
+# pilot is taken off: aboard the boat (the wreck towed in behind), or into the wingman's second seat
+# and flown back to the flight's base.
+# The choosing, the times, the fees and the tow's geometry: the scene glue (aegean.jo) acts.
+use 'world_point.jo'
+use 'flight.jo'
+use 'vessel_types.jo'
+use 'sea_routes.jo'
+use 'settlements.jo'
+use 'world.jo'
+import 'living_types.jo' as lt
+from 'living_money.jo' import transfer, account_valid
+from 'living_seed.jo' import seed_obligation
+
+enum HelpNeed: none, fuel, tow
+enum HelpBy: none, wingman, pilot, ship, launch
+enum HelpStage: none, routing, coming, alongside, towing, carrying, done
+
+struct HelpCall:
+    stage: HelpStage = .none
+    by: HelpBy = .none
+    need: HelpNeed = .none
+    who = -1                    # the wingman's craft, the far ship's id, the launch's harbour
+    name = ""                   # who comes, as said ("the launch from Ardevanti")
+    kind: VesselKind = .canal_launch
+    vessel = -1                 # the boat's id in the scene's fleet
+    lane = -1                   # the lane it is on now
+    harbour = -1                # where a tow goes (settlement id)
+    harbour_name = ""
+    alongside: vec3 = vec3(0,0,0)
+    flare = false               # brought by a flare, not the radio
+    eta = 0                     # minutes, as told
+    since = 0.0                 # seconds in this stage
+    fee = 0                     # cents for the tow, or the cans
+    hidden = -1                 # the far ship this boat stands in for (not drawn meanwhile)
+    aboard = false              # the pilot taken off the wreck: on the boat's deck, or in the wingman's second seat
+    climbed = 0.0               # when they climbed across (s)
+
+const HELP_VESSEL = 690000000
+const RADIO_REACH = 40000.0     # an aircraft's R/T: to a harbour, or the flight (m)
+const FLARE_REACH = 8000.0      # a flare by day, seen from a boat's deck (m)
+const PASSING_REACH = 15000.0   # another pilot flying near enough to come down (m)
+const SHIP_REACH = 12000.0      # a passing ship the harbour can call over (m)
+const CANS_ML = 18180           # two two-gallon cans
+const TOW_BASE = 300            # cents, and per km towed
+const TOW_PER_KM = 40
+const LAUNCH_CALL = 400         # the launch's call-out, on top of the tow
+const TOW_LINE = 28.0           # metres of line astern
+const SEEN_COMING = 60.0        # metres of the boat's way left to be seen after a skipped wait
+const ALONGSIDE_GAP = 14.0      # metres off the aircraft's wingtip
+
+# What the aircraft needs, sitting on the water: nothing (fly on), fuel, or a tow.
+help_need = (s: CraftState, tank: f64) -> HelpNeed:
+    if not (s.on_water or s.moored or s.crashed or s.capsized or s.beached): return .none
+    if s.crashed or s.capsized or s.beached or s.engine_damage > 0.7 or s.hull_damage > 0.75: return .tow
+    if s.fuel <= max(2.0,tank*0.04): return .fuel
+    .none
+
+# Minutes for a boat to come `distance` metres at `speed`, casting off and finding the aircraft
+# included.
+help_minutes = (distance: f64, speed: f64) -> int: max(2,int(ceil(distance/max(speed,0.5)/60.0)))+3
+
+_NUMBER_WORDS = ["", "five", "ten", "fifteen", "twenty", "twenty-five", "thirty", "thirty-five", "forty", "forty-five"]
+
+# A time as said on the radio: rough, never to the minute.
+help_eta_words = (minutes: int) -> str:
+    if minutes <= 7: return "a few minutes"
+    if minutes < 48:
+        n = clamp((minutes+2)/5,1,9)
+        return "about {_NUMBER_WORDS[n]} minutes"
+    if minutes < 75: return "about an hour"
+    if minutes < 105: return "an hour and a half"
+    hours = (minutes+30)/60
+    words = ["", "one", "two", "three", "four", "five", "six"]
+    if hours < words.len(): "about {words[hours]} hours" else: "some hours"
+
+# The tow's price for `distance` metres; the launch's call-out on top when it is the harbour's.
+tow_fee = (distance: f64, launch: bool) -> int: TOW_BASE+int(distance/1000.0*f64(TOW_PER_KM))+(if launch: LAUNCH_CALL else: 0)
+
+# Where a boat (or the wingman) comes to rest: abeam of the aircraft, off its wingtip, to one side
+# of the way it comes (so it draws up alongside, not at it), and far enough off for its own length
+# (`hull`: a boat keeps its bow clear of what lies ahead).
+help_alongside = (at: vec3, from: vec3, span: f64, hull: f64 = 0.0) -> vec3:
+    d = vec3(from.x-at.x,0,from.z-at.z)
+    if length(d) < 1.0: d = vec3(1,0,0)
+    d = normalize(d)
+    side = vec3(-d.z,0,d.x)
+    gap = max(span*0.5+ALONGSIDE_GAP,hull*0.5+18.0)
+    at+side*f32(gap)+d*f32(hull*0.25)
+
+# The towed aircraft: astern of the boat on the line, nosed after it (a flight heading).
+tow_place = (v: Vessel, line: f64) -> (vec3, f64):
+    spec = vessel_spec(v.kind)
+    forward = vec3(f32(sin(v.yaw)),0,f32(cos(v.yaw)))
+    at = v.position-forward*f32(spec.length*0.5+line)
+    (vec3(at.x,0,at.z), atan2(f64(forward.x),-f64(forward.z)))
+
+# The boat's stern, where the line is made fast.
+tow_stern = (v: Vessel) -> vec3:
+    spec = vessel_spec(v.kind)
+    forward = vec3(f32(sin(v.yaw)),0,f32(cos(v.yaw)))
+    v.position-forward*f32(spec.length*0.5)+vec3(0,f32(spec.deck),0)
+
+# Metres left along a vessel's lane.
+lane_left = (f: VesselFleet, v: Vessel) -> f64:
+    li = sea_lane_index(f,v.lane)
+    if li < 0: return 0.0
+    pts = f.lanes[li].points
+    if v.segment >= pts.len()-1: return 0.0
+    left = f64(length(pts[v.segment+1]-pts[v.segment]))-v.progress
+    loop k in v.segment+1..pts.len()-1: left += f64(length(pts[k+1]-pts[k]))
+    max(0.0,left)
+
+# Time passed (a skipped wait): the vessel carried `metres` along its lane, but kept `keep` metres
+# short of its end so the last of the way is seen.
+lane_advance = (f: mut VesselFleet, id: int, metres: f64, keep: f64):
+    k = vessel_index(f,id)
+    if k < 0: return
+    v = f.ships[k]
+    li = sea_lane_index(f,v.lane)
+    if li < 0 or f.lanes[li].status != .ready: return
+    pts = f.lanes[li].points
+    go = min(metres,lane_left(f,v)-keep)
+    loop go > 0.0 and v.segment < pts.len()-1:
+        a = pts[v.segment]; b = pts[v.segment+1]
+        span = f64(length(b-a))
+        step = min(go,span-v.progress)
+        v.progress += step; go -= step
+        if v.progress >= span-0.001 and v.segment < pts.len()-2: v.segment += 1; v.progress = 0.0
+        else if v.progress >= span-0.001: break
+    a = pts[v.segment]; b = pts[min(v.segment+1,pts.len()-1)]
+    dir = b-a; l = f64(length(dir))
+    dir = if l > 0.001: dir/f32(l) else: vec2(0,1)
+    p = a+dir*f32(v.progress)
+    v.precise = WorldPoint(f64(p.x),0.0,f64(p.y)); v.position = world_vec(v.precise); v.published = v.position; v.precise_ready = true
+    v.yaw = atan2(f64(dir.x),f64(dir.y)); v.previous_ready = false
+    v.speed = vessel_spec(v.kind).speed*0.6; v.velocity = vec3(dir.x*f32(v.speed),0,dir.y*f32(v.speed))
+    v.status = .underway
+    f.ships[k] = v
+
+# The passing ship that could come: under way on a journey, sound, in no fight, nearest within
+# `reach` of the aircraft (-1 none).
+help_pick_ship = (w: lt.World, at: vec3, reach: f64) -> int:
+    best = -1; near = reach
+    loop v in w.far.vehicles:
+        if v.kind != .ship or v.journey < 0 or v.hull <= 500 or v.battle >= 0 or v.motion_blocked != "": continue
+        d = f64(length(vec3(v.pos.x-at.x,0,v.pos.z-at.z)))
+        if d < near: near = d; best = v.id
+    best
+
+# The harbour nearest the aircraft within `reach` that a launch can put out from (settlement id):
+# a town's harbour, a port or a fishing village's, not a landing stage at a hamlet or a hotel.
+help_harbour = (at: vec3, reach: f64) -> int:
+    best = -1; near = reach
+    loop s in world_settlements:
+        if s.harbor.len() == 0 or abs(f64(s.harbor[0].at.y)) > 0.5: continue
+        if not (s.kind == .capital or s.kind == .port or s.kind == .market or s.kind == .fishing): continue
+        if s.legacy >= 0 and s.legacy < SETTLEMENTS.len() and (SETTLEMENTS[s.legacy].kind == .hotel or SETTLEMENTS[s.legacy].kind == .cove): continue
+        if f64(length(s.center.xz-at.xz)) > reach+1500.0: continue
+        d = f64(length(s.harbor[0].at.xz-at.xz))
+        if d < near and vessel_berth(s.id,.canal_launch) != none: near = d; best = s.id
+    best
+
+help_harbour_name = (place: int) -> str:
+    if place in settlement_by_id: world_settlements[settlement_by_id[place]].name else: "the harbour"
+
+# A free berth at a harbour for the towed aircraft, and the heading it lies on (out to sea).
+help_dock = (place: int, taken: vec3[]) -> (vec3, f64)?:
+    if not (place in settlement_by_id): return none
+    s = world_settlements[settlement_by_id[place]]
+    h = atan2(f64(s.out.x),-f64(s.out.y))
+    loop d in s.harbor:
+        free = true
+        loop o in taken:
+            if f64(length(o.xz-d.at.xz)) < 12.0: free = false
+        if free: return (d.at,h)
+    if s.harbor.len() > 0: return (s.harbor[0].at,h)
+    none
+
+# A help paid for: from the player's purse to `to` (an account), now if the purse holds it, else
+# owed (a debt, due in a day: the world's dealings keep it, and the reputation it makes). True
+# when paid now.
+help_pay = (w: mut lt.World, to: int, cents: int, key: str, place: int) -> bool:
+    if cents <= 0: return true
+    payer = w.people[w.player].account
+    if account_valid(w,payer) and account_valid(w,to) and payer != to and w.accounts[payer].cents >= cents:
+        if transfer(w,payer,to,cents,.repair): return true
+    o = seed_obligation(w,"help-{w.minute}-{to}",w.player,-1,.debt,w.minute+1440,w.minute+2880,cents,place)
+    if o >= 0: w.obligations[o].interest_enabled = false
+    false
+
+# The cans handed over: fuel out of one aircraft's tank into another's (millilitres moved).
+help_cans = (w: mut lt.World, from: int, to: int, ml: int) -> int:
+    if from < 0 or to < 0 or from >= w.aircraft.len() or to >= w.aircraft.len(): return 0
+    room = lt.AIRFRAMES[int(w.aircraft[to].kind)].tank_ml-w.aircraft[to].fuel_ml
+    n = max(0,min(ml,min(room,w.aircraft[from].fuel_ml-20000)))
+    w.aircraft[from].fuel_ml -= n; w.aircraft[from].revision += 1
+    w.aircraft[to].fuel_ml += n; w.aircraft[to].revision += 1
+    n
+
+const CLIMB_ACROSS = 2.4         # seconds climbing from the wreck to the boat or the second seat
+
+# Where a pilot sits on a boat's after deck, facing aft (to watch the tow): the place and a folk
+# turn (faces (sin, cos)).
+boat_deck_seat = (v: Vessel) -> (vec3, f64):
+    spec = vessel_spec(v.kind)
+    forward = vec3(f32(sin(v.yaw)),0,f32(cos(v.yaw)))
+    at = v.position-forward*f32(spec.length*0.5-1.6)+vec3(0,f32(spec.deck),0)
+    (at, atan2(-f64(forward.x),-f64(forward.z)))
+
+# A harbour's water, where its launch lies (settlement id).
+help_harbour_at = (place: int) -> vec3:
+    if place in settlement_by_id:
+        s = world_settlements[settlement_by_id[place]]
+        if s.harbor.len() > 0: return s.harbor[0].at
+    vec3(0,0,0)
