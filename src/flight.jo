@@ -114,6 +114,8 @@ struct CraftState:
     time = 0.0                     # local simulation clock, wave phase = time + env.wave_time
     aoa = 0.0                      # telemetry, radians
     airspeed = 0.0
+    gap = 1000.0                    # (telemetry) her height over the water or ground under her, drawn
+                                    # (flight model v2's air step; 0 on the surface)
     stalled = false
     water_age = 1.0                 # time since last wet contact; a fresh airborne state can impact
     wing_separation = vec2(0, 0)    # flight model v2 only: left/right detached flow, 0..1 (telemetry)
@@ -706,7 +708,11 @@ _landplane_wheel = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, 
     skid = index >= 2
     grip = if skid: 0.3 else: 0.04+0.41*(if parked: 1.0 else: clamp(c.water_brake,0.0,1.0))
     slow = clamp(longitudinal*mass*0.3,-load*grip,load*grip)
-    friction = -flat_f*f32(slow)-flat_r*f32(clamp(lateral*mass/n,-load*0.7,load*0.7))
+    # (the tyres hold her on her line as long as they roll on the grass: lightened near her lift-off,
+    # still not let slide sideways off the strip before she is up)
+    side = max(load * 0.7, mass * FLIGHT_G / n * 0.12 * (if land - f64(p.y) > -0.05: 1.0 else: 0.0))
+    # (the tyres stiffly, the tail skid sliding as a skid does, so she still swings round it to taxi)
+    friction = -flat_f*f32(slow)-flat_r*f32(clamp(lateral*mass/n*(if skid: 1.0 else: 4.0),-side,side))
     b = normal*f32(load)+friction
     # (the scale's extra slowing goes to the speed alone: the wheels' pitching moment stays the
     # true one, so braking hard does not stand it on its nose)
@@ -727,6 +733,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         else if fdmsb_active(k): fly_air_sb(k, s, c, e, dt)
         else: _fly_air(k, s, c, e, dt)
         return
+    s.gap = 0.0
     # (pure scale: the forces are worked out from the true velocity (the drawn one / the scale, along
     # the water; its rise and fall as they are), and their acceleration given to the drawn one, so
     # it takes as long as ever to gain speed, and must be going the scale's times faster to lift)
@@ -768,6 +775,10 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     pull_now = k.max_thrust * (k.water_thrust + (1.0 - k.water_thrust) * f64(smoothstep(0.0, k.stall_speed * 1.2, speed)))
     force += f * f32(pull_now * s.throttle * thin * foil_air_share(k, s) / (1.0 + (speed / k.thrust_speed)^2))
     grip = f64(smoothstep(k.stall_speed * 0.65, k.stall_speed * 1.25, speed)) * (1.0 - 0.75 * f64(separation))
+    # (on her wheels her tyres keep her track, not the air's grip: in a crosswind it would set her
+    # drifting off the strip with the wind, faster than the tyres could hold her)
+    wheels = s.on_ground and k.gear_contacts.len() > 0 and s.gear > 0.95
+    if wheels: grip = 0.0
     force -= r * f32(vr * k.mass * k.grip * grip)
     auth = clamp(speed / (k.stall_speed * 1.45), 0.2, 1.0)
     bank = atan2(-f64(r.y), f64(u.y))
@@ -778,7 +789,7 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
     if not s.on_water:
         # Coordinated bank turn matches the sideways component of wing lift.
         yr -= FLIGHT_G / max(if pk > 1.0001: speed else: true_speed(k, speed), k.stall_speed) * clamp(tan(bank), -2.0, 2.0) * grip
-        yr -= clamp(vr / max(speed, 1.0), -0.6, 0.6) * 0.65
+        if not wheels: yr -= clamp(vr / max(speed, 1.0), -0.6, 0.6) * 0.65
         assist = clamp(c.assist, 0.0, 1.0)
         if abs(c.pitch) < 0.02:
             pr += clamp((trim_aoa(k, speed, rho) + c.trim - pitch) * 0.9 - f64(s.velocity.y) * 0.018, -0.22, 0.22) * assist
@@ -833,10 +844,13 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
             vn = f64(dot(rel,normal))
             load = max(0.0,mass/f64(k.gear_contacts.len())*(35.0*min(land-f64(p.y),0.7)-8.0*vn))
             longitudinal = f64(dot(rel,flat_f)); lateral = f64(dot(rel,flat_r))
-            brake = 0.025+0.65*clamp(c.water_brake,0.0,1.0)
-            friction = -flat_f*f32(clamp(longitudinal*mass*0.3,-load*brake,load*brake))-flat_r*f32(clamp(lateral*mass,-load*0.7,load*0.7))
+            # (an amphibian's wheels brake as a landplane's: firmly, the pure scale's extra slowing
+            # given to her speed alone, so braking hard does not stand her on her nose)
+            brake = 0.025+0.42*clamp(c.water_brake,0.0,1.0)
+            slow = clamp(longitudinal*mass*0.3,-load*brake,load*brake)
+            friction = -flat_f*f32(slow)-flat_r*f32(clamp(lateral*mass,-load*0.7,load*0.7))
             b = normal*f32(load)+friction
-            force += b
+            force += b-flat_f*f32(slow*(max(pk,1.0)-1.0))
             torque += quat_rotate(quat_inverse(s.orientation),cross(arm,b))
             _contact_load(k,s,0,p,normal,normal*f32(min(vn,0.0)),normal*f32(load*dt),5.0,.crunch)
     water_speed = f64(dot(water_velocity, flat_f))
@@ -974,7 +988,9 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         support = min(part_health(s.damage, .left_float), part_health(s.damage, .right_float))
         rr += bank * 2.0 * wet * support
     else: s.water_age += dt
-    if s.on_ground and k.landplane:
+    # (a landplane, or an amphibian on her wheels: the elevator works on them as on any aeroplane's,
+    # or she could never lift her nose to fly off a strip)
+    if s.on_ground and (k.landplane or (k.gear_contacts.len() > 0 and s.gear > 0.95)):
         # On its wheels: the rudder steers (with the slipstream, so a burst of throttle swings it
         # at a crawl, less as it runs fast: no ground loop), the elevator lifts the tail as the
         # speed comes and, stick near the middle, holds it a little nose up, then rotates near the
@@ -987,11 +1003,27 @@ _substep = (k: CraftSpec, s: mut CraftState, c: Controls, e: FlightEnv, dt: f64)
         want += (0.3 - want) * down
         lw = 1.0 - clamp(abs(c.pitch) / 0.3, 0.0, 1.0)
         pr += clamp((want - pitch) * 3.0, -0.45, 0.45) * elev * lw
+        # (the stick held back on the run asks for her best lift, as a pilot rotates her: the nose
+        # brought to just under her stall, the tail lifted off the grass if she sat on it there, for
+        # her three-point attitude is past it and she would only drag along, stalled, never flying)
+        if c.pitch > 0.0:
+            top = k.stall_angle * 0.9
+            target = want + (top - want) * clamp(c.pitch / 0.5, 0.0, 1.0)
+            pr = clamp((target - pitch) * 3.0, -0.45, 0.45) * elev
+
         rr = -clamp(c.roll, -1.0, 1.0) * k.roll_rate * 0.15 * elev
+        # (and the pilot's hand holds her wings level on the run, as into a crosswind, which leans
+        # her off the wind against her wheels and would put a wing tip on the grass)
+        rr += clamp(bank * 2.0, -0.6, 0.6) * (1.0 - clamp(abs(c.roll) / 0.3, 0.0, 1.0))
         yr = -clamp(c.yaw,-1.0,1.0)*0.7*clamp(abs(water_speed)/5.0+s.throttle*0.6,0.0,1.0)*(1.0-0.55*f64(smoothstep(15.0,35.0,abs(water_speed))))
     else if s.on_ground:
         pr = 0; rr = 0
         yr = -clamp(c.yaw,-1.0,1.0)*0.45*clamp(abs(water_speed)/4.0,0.0,1.0)
+    # (and hopping just off the grass with the stick still back, before the air takes her: the same,
+    # the nose held at her best lift, or each bounce pitches her up past her stall again)
+    if (k.landplane or (k.gear_contacts.len() > 0 and s.gear > 0.95)) and not s.on_ground and wet <= 0.0 and c.pitch > 0.0:
+        top = k.stall_angle * 0.9
+        pr = min(pr, clamp((top - pitch) * 3.0, -0.45, 0.45))
     s.on_water = wet > 0 or (s.on_water and s.water_age < 0.12)
     s.planing = wet > 0 and plane > 0.5
     if wet > 0 and u.y < 0.0:
