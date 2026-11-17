@@ -95,6 +95,7 @@ use 'src/traffic.jo'
 use 'src/air_view.jo'
 use 'src/air_events.jo'
 use 'src/air_race.jo'
+from 'src/air_arm.jo' import arm_launch, arm_tick
 use 'src/air_meet_view.jo'
 use 'src/race_view.jo'
 use 'src/air_classes.jo'
@@ -412,6 +413,21 @@ pc.spec.player = true
 moored: Moored[]
 traffic = make_living_traffic(living_world, craft_models)
 bind_living_player(pc, living_world, traffic_scene)
+
+# A landplane is never left on the water: bound to a record that has her at a harbour's berth (a
+# new game begun in one, or a record from before she was a landplane), she is put on the nearest
+# aerodrome's stand instead, and the record with her
+landplane_ashore = ():
+    global pc
+    if not pc.spec.landplane or surface_height(f64(pc.state.position.x), f64(pc.state.position.z)) > 0.5: return
+    pc = landplane_at_airfield(pc.kind, pc.model, pc.state.position)
+    pc.spec.player = true
+    c = living_world.people[living_world.player].craft
+    if c >= 0:
+        living_world.aircraft[c].pose = lt.Pose(pos = pc.state.position, vel = pc.state.velocity, rot = pc.state.orientation)
+        lt.place_pose(living_world.aircraft[c].pose, craft_point(pc.state))
+        living_world.aircraft[c].revision += 1
+landplane_ashore()
 
 # ---------------- the people of the towns, the boards, talking and trading ----------------
 
@@ -4705,6 +4721,11 @@ capture_takeoff_worn=env("AEGEAN_CAPTURE_TAKEOFF")=="worn"
 # the aim as tools/type_survey.jo holds it: on the horizon, four degrees up near flying speed on the
 # wheels (the nose held at six degrees on the water, as src/pilot.jo's touch law), eight once off
 capture_takeoff_mouse=env("AEGEAN_CAPTURE_TAKEOFF")=="mouse"
+# AEGEAN_CAPTURE_CIRCUIT=1 (captures only, a landplane): from the aerodrome's visitors' stand the
+# player's aircraft is taxied out, flown off the strip, once round a short circuit, landed, rolled out
+# and taxied back to its stand, as the air arm's sorties go (air_arm.jo), on the player's own steering
+capture_circuit_on=env("AEGEAN_CAPTURE_CIRCUIT")!=none
+capture_circuit=ArmPilot(-1,-1,0,AIRFIELD_VISITOR_STAND,0,CraftState(),laps=0)
 capture_mouse_heading = -1000.0    # (the heading she starts on, held down the strip and away)
 capture_mouse_controls = (f: Flyer) -> Controls:
     global capture_mouse_heading
@@ -5649,6 +5670,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     traffic_scene=living_scene.SceneAdapter()
     traffic=make_living_traffic(living_world,craft_models)
     bind_living_player(pc,living_world,traffic_scene)
+    landplane_ashore()
     me=Player(mode=if next.mode==.aboard:Mode.aboard else:if next.mode==.free:Mode.free else:Mode.walking,pos=next.position,yaw=next.yaw)
     folks=[];sync_folk(folks,living_world,towns);folk_sync_t=0
     air_events=AirEvents();all_air_traffic=traffic;view_target=TargetView();target_scan=0
@@ -5808,7 +5830,7 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     living_world=game.world;presentation=game.presentation;pc=session.flyer;air_events=session.air
     band_publish(living_world, band_numbers(hotel), BAR_START, BAR_END, int(BAR_GAP * 60.0))
     traffic_scene=living_scene.SceneAdapter(accumulator=session.accumulator)
-    traffic=make_living_traffic(living_world,craft_models);bind_living_player(pc,living_world,traffic_scene)
+    traffic=make_living_traffic(living_world,craft_models);bind_living_player(pc,living_world,traffic_scene);landplane_ashore()
     restore_air_owners(air_events,living_world)
     vessels=fleet;battle=fight;vessel_bindings=VesselBindings();vessel_mooring=session.mooring
     loop ship in vessels.ships:
@@ -9403,6 +9425,7 @@ aboard_offers = () -> Offer[]:
         if offshore != none: offer_add(o, "launch-ashore", "call the harbour launch to go ashore ({phoenix_text(launches.LAUNCH_FARE)})      Shift  open the throttle")
         else: offer_add(o, "ashore", "step ashore      Shift  open the throttle")
     if landplane_parked(): offer_add(o, "ashore", "climb down      Shift  open the throttle")
+    if stranded_on_land(): offer_add(o, "fetch", if pc.spec.landplane: "send for a lorry to take her to the aerodrome" else: "send for a team to bring her down to the harbour", .g)
     if not st.moored and buoy_spot() != none: offer_add(o, "buoy", "make fast to the buoy")
     offer_add(o, "lighter", lighter_offer())
     if not st.moored and (dock_spot() != none or find_vessel_mooring(vessels, st, pc.spec.span) != none): offer_add(o, "moor", "moor here")
@@ -9412,6 +9435,28 @@ aboard_offers = () -> Offer[]:
     o
 
 offers_now = () -> Offer[]: if me.mode == .aboard: aboard_offers() else: walk_offers()
+
+# Brought home from wherever she is: towed to a free dock, or a landplane carried to its aerodrome,
+# and patched up (the bill comes later)
+fetch_home = ():
+    global pc
+    dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
+    # (a landplane is towed to its airfield, not to a dock)
+    pc = if pc.spec.landplane: landplane_at_airfield(pc.kind, pc.model, pc.state.position) else: make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
+    pc.spec.player = true
+    ci=combat_index(battle,living_world.people[living_world.player].craft)
+    if ci>=0:battle.actors[ci]=Combatant(battle.actors[ci].craft,living_world.player,0,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=pc.model)
+    pc.placed = false
+    tie_up()
+
+# On her wheels at rest where she cannot fly on from: a landplane come down away from the aerodrome
+# (in a field, short of fuel), or an amphibian ashore, whose run is longer than any strip: never a
+# dead end, she can be fetched home
+stranded_on_land = () -> bool:
+    st = pc.state
+    if me.mode != .aboard or st.crashed or st.capsized or st.moored or not st.on_ground or length(st.velocity) > 0.3 * pure_k(pc.spec) or pc.throttle > 0.05: return false
+    if pc.spec.landplane: return airfield_at(st.position.xz) < 0 or st.fuel <= 0.0
+    st.gear > 0.95
 
 # the offer whose key went down this frame ("" for none); a controller's A (X, Y) chooses the first
 # (second, third) whatever its key
@@ -9973,6 +10018,19 @@ update_frame = (dt: f64, saves: bool = true):
                     e=flight_env(t,pc.state.position)
                     step(pc.spec,pc.state,canal_run_controls(pc,capture_canal_plan,e),e,dt)
                     pc.prop_angle+=dt*prop_rotation_speed(pc.state,pc.feedback.speed);pc.sea_t=t;feel(pc,dt,e.wind)
+                else if capture_circuit_on:
+                    # (captures only: the aerodrome's taxi, circuit and landing, the player's aircraft)
+                    global capture_circuit
+                    if capture_circuit.phase == .parked and capture_circuit.launched == 0:
+                        capture_circuit.state = pc.state; capture_circuit.model = pc.model
+                        arm_launch(capture_circuit, frame_number(), 0); capture_circuit.mission = 0
+                        capture_circuit.launched = max(frame_number(), 1)
+                    capture_circuit.state = pc.state
+                    was_phase = capture_circuit.phase
+                    arm_tick(capture_circuit, pc.spec, AIRFIELDS[0], vec3(0, 0, 0), flight_env(t, pc.state.position), frame_number())
+                    if capture_circuit.phase != was_phase: print("CIRCUIT frame {frame_number()} {was_phase} -> {capture_circuit.phase} speed {true_speed(pc.spec, f64(length(pc.state.velocity))):.1} damage {pc.state.hull_damage:.3}")
+                    pc.state = capture_circuit.state; pc.throttle = pc.state.throttle
+                    pc.prop_angle+=dt*prop_rotation_speed(pc.state,pc.feedback.speed);pc.sea_t=t;feel(pc,dt,flight_env(t,pc.state.position).wind)
                 else if capture_takeoff:
                     # (captures only: the take-off autopilot flies the player's aircraft)
                     # (a serviced aircraft: the save's wear kept off, so the engine gives its full power;
@@ -10096,6 +10154,7 @@ update_frame = (dt: f64, saves: bool = true):
             else if act == "launch-ashore": start_launch(false)
             else if act == "lighter": call_lighter()
             else if act == "fuel": open_fuel_pier()
+            else if act == "fetch" and stranded_on_land(): fetch_home()
             else if act == "ashore" and landplane_parked():
                 step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
             else if act == "ashore" or act == "moor":
@@ -10119,16 +10178,7 @@ update_frame = (dt: f64, saves: bool = true):
             if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached) and not pc.spec.landplane:
                 # (a seaplane: the R/T's call for help, a boat to tow her in)
                 if sos.stage == .none: help_call(not help_in_reach())
-            else if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached):
-                # towed home to a free dock and patched up (the bill comes later)
-                dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
-                # (a landplane is towed to its airfield, not to a dock)
-                pc = if pc.spec.landplane: landplane_at_airfield(pc.kind, pc.model, pc.state.position) else: make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
-                pc.spec.player = true
-                ci=combat_index(battle,living_world.people[living_world.player].craft)
-                if ci>=0:battle.actors[ci]=Combatant(battle.actors[ci].craft,living_world.player,0,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=pc.model)
-                pc.placed = false
-                tie_up()
+            else if vpressed(.r) and (pc.state.crashed or pc.state.capsized or pc.state.beached): fetch_home()
     if was_moored and not pc.state.moored and rope.tied:
         was_moored = false
         off = vec3(pc.state.position.x - rope.anchor.x, 0, pc.state.position.z - rope.anchor.z)
@@ -11060,7 +11110,7 @@ draw = ():
         .aboard:
             if sos.stage != .none and sos.stage != .done and sos.by != .wingman: prompt_card(fonts, help_card(), 180.0)
             else if pc.state.crashed or pc.state.capsized: prompt_card(fonts, if pc.spec.landplane: "Wrecked.  R  to be towed to the aerodrome" else: "Wrecked.  R  call for help", 180.0)
-            else if pc.state.beached: prompt_card(fonts, "Run aground.  R  call for help", 180.0)
+            else if pc.state.beached: prompt_card(fonts, if pc.spec.landplane: "Run aground.  R  to be towed to the aerodrome" else: "Run aground.  R  call for help", 180.0)
             else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
             else: draw_offers(aboard_offers(), 196.0)
         .descent: pass

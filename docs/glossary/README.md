@@ -698,7 +698,23 @@ On the rivers branch until it lands.
   ground controls in `_substep`, `ground_start`; the gear points `landplane_gear_contacts` in
   `src/aircraft_early.jo`; `AircraftProfile.landplane` in `src/aircraft_catalog.jo`.
 - **Rules:** a landplane is never put on the water: the pause menu's switch, the tow after a wreck
-  and the start put it on an [airfield](#airfield)'s stand.
+  and the start put it on an [airfield](#airfield)'s stand, and so does a saved or new game whose
+  record has it at a harbour's berth (`landplane_ashore`).
+- **On the ground, as a player has it (flight model v2):** the mouse's (and the touch screen's) aim
+  steers on the wheels by the nose's heading, leaving the stick in the middle at a taxi, so a tail-
+  dragger is not pushed onto her nose, and lifts the nose only near flying speed; the stick held back
+  on the run (the keys, a gamepad) asks for her best lift, the nose brought to just under her stall,
+  the tail lifted off the grass if she sat on it there (her three-point attitude is past it). In a
+  crosswind the tyres keep her track (the air's grip that drifts her with the wind is off on the
+  wheels), the pilot's hand holds her wings level on the run, and just off the grass the mouse's bank
+  is kept within what her wing tip clears. An amphibian on her wheels (the Albatross, the Bat Boat)
+  has the same elevator, and brakes as a landplane does. Away from an aerodrome at rest (in a field,
+  out of fuel), or an amphibian ashore whose run no strip is long enough for, a lorry or a team can be
+  sent for (`stranded_on_land`, `fetch_home`): never a dead end. `tools/ground_survey.jo` (taxiing,
+  turning, braking, crosswind take-offs and landings, mouse and keys), `tests/landplane_ground_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_CIRCUIT=1` (with `AEGEAN_CRAFT` a landplane and `AEGEAN_AIRFIELD=stand`):
+  taxied out from the visitors' stand, off the strip, once round a short circuit, landed and taxied
+  back, as the air arm's sorties go, on the player's own steering.
 
 ### Ditching
 

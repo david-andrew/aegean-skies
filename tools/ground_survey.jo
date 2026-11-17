@@ -1,0 +1,186 @@
+# The wheeled types on the ground as a player handles them, on flight model v2 at the player's pure
+# scale, over flat grass: taxiing, turning, braking, and a take-off and a landing in a crosswind, on
+# the mouse's aim (the touch screen's is the same law: flight.jo `steer`) and on the keys or a
+# gamepad's stick (the controls as they are). Headless and deterministic.
+#   sloppy --release tools/ground_survey.jo
+# Lines "G,..." are one type's figures, true units (m/s, m), degrees.
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+
+const K = 3.3
+const HZ = 60.0
+const D = 57.2958
+const FIELD = 60.0
+
+spec_for = (kind: planes.Craft) -> fl.CraftSpec:
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = true
+    k
+
+ground = (wind_true: vec3) -> fl.FlightEnv: fl.FlightEnv(ground = (x: f64, z: f64) -> f64: FIELD, wind = wind_true * f32(K))
+
+start = (k: fl.CraftSpec, kind: planes.Craft) -> fl.CraftState:
+    s = fl.ground_start(k, vec3(0, f32(FIELD), 0))
+    if planes.aircraft_profile(kind).amphibian: s.gear = 1.0
+    e = ground(vec3(0, 0, 0))
+    loop i in 0..120: fl.step(k, s, fl.Controls(gear = true), e, 1.0 / HZ)
+    s
+
+vt = (s: fl.CraftState) -> f64: f64(length(s.velocity)) / K
+bank_of = (s: fl.CraftState) -> f64:
+    r = quat_rotate(s.orientation, vec3(1, 0, 0)); u = quat_rotate(s.orientation, vec3(0, 1, 0))
+    atan2(-f64(r.y), f64(u.y))
+pitch_of = (s: fl.CraftState) -> f64: asin(clamp(f64(fl.forward(s).y), -1.0, 1.0))
+dir_of = (heading: f64, climb: f64) -> vec3: vec3(f32(sin(heading) * cos(climb)), f32(sin(climb)), f32(-cos(heading) * cos(climb)))
+
+# the controls a player gives: on the mouse's aim (heading, climb), or on the stick as it is
+mouse = (k: fl.CraftSpec, s: fl.CraftState, heading: f64, climb: f64, throttle: f64) -> fl.Controls:
+    c = fl.steer(k, s, dir_of(heading, climb))
+    c.throttle = throttle; c.gear = true
+    c
+keys = (s: fl.CraftState, heading: f64, throttle: f64) -> fl.Controls:
+    # (a pilot on the rudder pedals or the stick's twist, holding the heading by eye)
+    fl.Controls(throttle = throttle, gear = true, yaw = clamp(fl.angle_delta(heading, fl.heading(s)) * 2.0, -1.0, 1.0))
+
+struct Taxi:
+    speed = 0.0                     # settled at a fifth of the throttle
+    drift = 0.0                     # heading wander, degrees
+    turn_secs = -1.0                # a half turn: seconds
+    turn_radius = 0.0               # its radius, true m
+    turn_heel = 0.0
+    key_turn_secs = -1.0            # the same on full rudder
+    key_turn_radius = 0.0
+
+taxi = (k: fl.CraftSpec, kind: planes.Craft) -> Taxi:
+    r = Taxi()
+    e = ground(vec3(0, 0, 0))
+    s = start(k, kind)
+    h0 = fl.heading(s)
+    loop i in 0..int(HZ * 25.0):
+        fl.step(k, s, mouse(k, s, h0, 0.0, 0.2), e, 1.0 / HZ)
+        if i > int(HZ * 15.0): r.drift = max(r.drift, abs(fl.angle_delta(fl.heading(s), h0)) * D)
+    r.speed = vt(s)
+    # (the half turn on the mouse: the aim put round behind, at the same throttle)
+    a = s.position; turned = 0.0; last = fl.heading(s)
+    loop i in 0..int(HZ * 40.0):
+        cm = mouse(k, s, h0 + PI * 0.95, 0.0, 0.2)
+        fl.step(k, s, cm, e, 1.0 / HZ)
+        if env("TURN_TRACE") == "1" and i % 30 == 0: print("U,{s.time:.1},{vt(s):.2},{fl.angle_delta(fl.heading(s), h0) * D:.0},{cm.yaw:.2},{cm.pitch:.2},{cm.roll:.2},{pitch_of(s) * D:.1},{s.on_ground}")
+        turned += abs(fl.angle_delta(fl.heading(s), last)); last = fl.heading(s)
+        r.turn_heel = max(r.turn_heel, abs(bank_of(s)) * D)
+        if turned > PI * 0.9:
+            r.turn_secs = f64(i) / HZ; r.turn_radius = f64(length(s.position.xz - a.xz)) / K * 0.5; break
+    # (and on full rudder, from a straight taxi again)
+    s = start(k, kind)
+    loop i in 0..int(HZ * 15.0): fl.step(k, s, keys(s, h0, 0.2), e, 1.0 / HZ)
+    a = s.position; turned = 0.0; last = fl.heading(s)
+    loop i in 0..int(HZ * 40.0):
+        fl.step(k, s, fl.Controls(throttle = 0.2, yaw = 1.0, gear = true), e, 1.0 / HZ)
+        turned += abs(fl.angle_delta(fl.heading(s), last)); last = fl.heading(s)
+        if turned > PI * 0.9:
+            r.key_turn_secs = f64(i) / HZ; r.key_turn_radius = f64(length(s.position.xz - a.xz)) / K * 0.5; break
+    r
+
+struct Brake:
+    dist = 0.0                      # from 0.6 x the stall to a stop, true m
+    secs = 0.0
+    nose = 0.0                      # the nose's lowest (degrees): standing on it?
+    tipped = false
+
+brake = (k: fl.CraftSpec, kind: planes.Craft) -> Brake:
+    r = Brake()
+    e = ground(vec3(0, 0, 0))
+    s = start(k, kind)
+    h0 = fl.heading(s)
+    # (up to 0.6 x the stall on full throttle, then closed and the brakes on hard)
+    loop i in 0..int(HZ * 60.0):
+        fl.step(k, s, keys(s, h0, 1.0), e, 1.0 / HZ)
+        if vt(s) > k.stall_speed * 0.6: break
+    a = s.position; t0 = s.time; r.nose = pitch_of(s) * D
+    loop i in 0..int(HZ * 40.0):
+        c = keys(s, h0, 0.0); c.water_brake = 1.0
+        fl.step(k, s, c, e, 1.0 / HZ)
+        r.nose = min(r.nose, pitch_of(s) * D)
+        if s.crashed: r.tipped = true
+        if vt(s) < 0.2: break
+    r.dist = f64(length(s.position.xz - a.xz)) / K; r.secs = s.time - t0
+    r
+
+struct Cross:
+    off = -1.0                      # take-off: off the grass, s
+    swing = 0.0                     # the most the heading swung from the strip's on the run (degrees)
+    drift = 0.0                     # sideways off the line 3 m up, true m
+    wheels_drift = 0.0              # and as the wheels left the grass (the strip is 8.5 m each side, true)
+    heel = 0.0                      # the most a wing went down on the run
+    land_swing = 0.0                # landing: the heading's swing on the roll-out
+    land_drift = 0.0
+    land_ok = false
+    note = ""
+
+# A take-off in a crosswind (5 m/s, from the right) holding the strip's heading, then a landing on it
+crosswind = (k: fl.CraftSpec, kind: planes.Craft, on_mouse: bool) -> Cross:
+    r = Cross()
+    w = vec3(-5, 0, 0)
+    e = ground(w)
+    s = start(k, kind)
+    h0 = fl.heading(s)
+    a = s.position
+    lat = vec3(f32(cos(h0)), 0, f32(sin(h0)))
+    loop i in 0..int(HZ * 80.0):
+        c = if on_mouse: mouse(k, s, h0, if vt(s) > k.stall_speed * 0.85: 0.07 else: 0.0, 1.0) else: keys(s, h0, 1.0)
+        # (on the keys: the stick eased back near flying speed to rotate, then, once off, a gentle
+        # climb held by eye, the stick no further back than that)
+        if not on_mouse and s.on_ground and vt(s) > k.stall_speed * 0.9: c.pitch = 0.3
+        if not on_mouse and not s.on_ground:
+            path = asin(clamp(f64(s.velocity.y) / max(f64(length(s.velocity)), 0.1), -1.0, 1.0))
+            c.pitch = clamp((0.09 - path) * 2.0 / max(k.pitch_rate, 0.1), -1.0, 1.0)
+        fl.step(k, s, c, e, 1.0 / HZ)
+        if env("GROUND_TRACE") == "1" and i % 30 == 0: print("X,{on_mouse},{s.time:.2},{vt(s):.1},{fl.angle_delta(fl.heading(s), h0) * D:.1},{bank_of(s) * D:.1},{pitch_of(s) * D:.1},{s.on_ground},{c.yaw:.2},{c.pitch:.2},{f64(dot(s.position - a, lat)) / K:.1},{(f64(s.position.y) - FIELD) / K:.2},{f64(dot(s.velocity, lat)) / K:.2},{s.on_ground}")
+        if s.on_ground:
+            r.swing = max(r.swing, abs(fl.angle_delta(fl.heading(s), h0)) * D)
+            r.heel = max(r.heel, abs(bank_of(s)) * D)
+            r.wheels_drift = abs(f64(dot(s.position - a, lat))) / K
+        if s.crashed: r.note = "crashed on the run"; break
+        if not s.on_ground and f64(s.position.y) > FIELD + 3.0 * K:
+            r.off = s.time; r.drift = abs(f64(dot(s.position - a, lat))) / K; break
+    # (the landing: from 1.3 x the stall a few metres up on the strip's line, settled on, held straight)
+    v = k.stall_speed * 1.25
+    s = fl.CraftState(position = vec3(0, f32(FIELD + 2.0 * K), 0), velocity = vec3(f32(sin(h0) * v * K), f32(-0.8 * K), f32(-cos(h0) * v * K)), orientation = quat_euler(0.1, -h0, 0), fuel = k.fuel_capacity, water_age = 1.0)
+    if planes.aircraft_profile(kind).amphibian: s.gear = 1.0
+    touched = false; a = s.position
+    loop i in 0..int(HZ * 60.0):
+        c = if on_mouse: mouse(k, s, h0, -0.02, 0.0) else: keys(s, h0, 0.0)
+        if touched: c.water_brake = 1.0
+        fl.step(k, s, c, e, 1.0 / HZ)
+        if s.on_ground: touched = true
+        if touched:
+            r.land_swing = max(r.land_swing, abs(fl.angle_delta(fl.heading(s), h0)) * D)
+        if s.crashed: r.note = "crashed landing"; break
+        if touched and vt(s) < 0.3: break
+    r.land_drift = abs(f64(dot(s.position - a, lat))) / K
+    r.land_ok = touched and not s.crashed and s.hull_damage < 0.05
+    r
+
+# A calm take-off on the mouse from rest: the run's length (true m) and time, against the strip's
+calm_run = (k: fl.CraftSpec, kind: planes.Craft) -> vec2:
+    e = ground(vec3(0, 0, 0))
+    s = start(k, kind)
+    h0 = fl.heading(s); a = s.position
+    loop i in 0..int(HZ * 150.0):
+        fl.step(k, s, mouse(k, s, h0, if vt(s) > k.stall_speed * 0.85: 0.07 else: 0.0, 1.0), e, 1.0 / HZ)
+        if not s.on_ground and f64(s.position.y) > FIELD + 3.0 * K: return vec2(f32(f64(length(s.position.xz - a.xz)) / K), f32(s.time))
+    vec2(-1, -1)
+
+main = ():
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks())
+    print("G,aircraft,taxi_speed,taxi_drift,mouse_turn_s,mouse_turn_r,turn_heel,rudder_turn_s,rudder_turn_r,brake_dist,brake_s,brake_nose,tipped,x_mouse_off,x_mouse_swing,x_mouse_drift,x_mouse_heel,x_mouse_land_swing,x_mouse_land_ok,x_keys_off,x_keys_swing,x_keys_drift,x_keys_land_swing,x_keys_land_ok,notes")
+    loop kind in [planes.Craft.fiat_cr20, planes.Craft.kea_chelidon, planes.Craft.albatross, planes.Craft.sopwith_bat_boat]:
+        k = spec_for(kind)
+        t = taxi(k, kind); b = brake(k, kind)
+        m = crosswind(k, kind, true); g = crosswind(k, kind, false)
+        cr = calm_run(k, kind)
+        print("C,{planes.CRAFT_NAMES[int(kind)]},calm run {cr.x:.0} m true in {cr.y:.1} s (the strip is {1316.0 / K:.0} m true at the pure scale... drawn {1316:.0})")
+        print("G,{planes.CRAFT_NAMES[int(kind)]},{t.speed:.1},{t.drift:.1},{t.turn_secs:.1},{t.turn_radius:.1},{t.turn_heel:.1},{t.key_turn_secs:.1},{t.key_turn_radius:.1},{b.dist:.0},{b.secs:.1},{b.nose:.1},{b.tipped},{m.off:.1},{m.swing:.1},{m.wheels_drift:.1}/{m.drift:.1},{m.heel:.1},{m.land_swing:.1},{m.land_ok},{g.off:.1},{g.swing:.1},{g.wheels_drift:.1}/{g.drift:.1},{g.land_swing:.1},{g.land_ok},{m.note} {g.note}")
+    tw.set_tweaks(tw.Tweaks()); fl.set_speed_scale(1.0)
