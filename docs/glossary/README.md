@@ -1693,9 +1693,19 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
   `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
 
+### Wireless
+
+- **Aliases:** the cockpit radio, the receiver, the set (in code: `radio`).
+- **Definition:** the broadcast receiver in the cockpit: stations, music, bulletins and Morse.
+  Named "wireless" on screen (the period British word for a broadcast set: the touch screen's
+  Wireless button, Settings → Sound → Wireless volume, "Wireless off"), so it is never confused
+  with the [R/T](#rt), which sends orders to one's own flight.
+- **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
+
 ### R/T
 
-- **Aliases:** the radio-telephone, the pad, orders to the flight.
+- **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
+  the broadcast set).
 - **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
   plate; a controller's D-pad left). Down on the sea in trouble its first line is the
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
