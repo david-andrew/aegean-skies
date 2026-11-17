@@ -358,7 +358,7 @@ On the rivers branch until it lands.
 
 ### Canal basin
 
-- **Aliases:** the basin, the lagoon, where the arm joins.
+- **Aliases:** the basin, where the arm joins.
 - **Definition:** partway along the escape (stations 44-53), where the mill-water arm joins it, the
   canal opens into a basin some 120 m across and 200 m long: room to turn, evade and line up on the
   water between the narrow cuts. Its walls flare out along the wall line (the solids follow it too),
@@ -370,13 +370,31 @@ On the rivers branch until it lands.
   a wide basin's wall); `src/canal_geometry.jo` (`canal_line_slab`); `src/canal_traffic.jo`;
   `src/canal_ground_fire.jo`.
 
+### Canal lagoon
+
+- **Aliases:** the lagoon, the open water, the wide reach.
+- **Definition:** beside the canal's last straight (stations 58-67, past the footbridge at 57) the
+  water opens into a lagoon some 280 m across and 900 m long, where the escape gets into the air:
+  room to line up, dodge boats and climb out. It opens away from the river: a stadium of water of its
+  own (a straight arm 140 m in half width, closed by round walls at both ends) laid beside the cut,
+  its river-side edge just inside the cut's river-side wall, so the cut's far wall gives way to it
+  and the round ends meet that wall at about 40 degrees. Houses stand round its walls; barges lie
+  moored along both sides, a barge and a rowing boat at buoys out on the water, and two patrol
+  launches circle across the run. In the escape each launch carries a rifleman, and riflemen and
+  machine guns hold both walls.
+- **Code:** `tools/bake_river.py` (`LAGOON_RADIUS`, `LAGOON_OUT`, baked into `src/river_data.jo`;
+  `assets/living-routes.bin` follows it); `src/canal_geometry.jo` (`canal_frontage` 3 along it, the
+  arms' round ends); `src/river_render.jo` and `src/river_field.jo` (`river_arm_open_start`: water
+  over its first end too); `src/canal_traffic.jo` (`CANAL_PATROLS`, `canal_patrol_loop`);
+  `src/canal_ground_fire.jo` (`canal_launch_guns`, `canal_ride_launches`).
+
 ### Canal crossings
 
 - **Aliases:** the canal bridges.
 - **Definition:** a crossing every 100-300 m of the canal run (`CANAL_BRIDGES`): single-span stone
   arches (a flat ellipse from wall to wall, springing ~3.6-4 m and crowned ~8-9 m over the water,
-  with a humped road, balustrades, lamps and someone leaning on the parapet), a high steel truss,
-  a low iron footbridge (5 m clear) and a pipe bridge. A planing Gull's top wing is ~3.9 m over the
+  with a humped road, balustrades, lamps and someone leaning on the parapet), a high steel truss
+  and a low iron footbridge (5 m clear) at the lagoon's mouth. A planing Gull's top wing is ~3.9 m over the
   water: held within ~8 m of the centre line it passes under every crossing with a metre or more
   to spare; a pilot who lifts off early must stay under the arches or hop the decks.
 - **Code:** `src/canal_geometry.jo` (`CANAL_BRIDGES`, `canal_bridge_under`, `canal_bridge_top`);
@@ -4062,6 +4080,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_TAKEOFF=pad` | placed as `AEGEAN_CAPTURE_TAKEOFF`, serviced, but flown by the player's controls: script a gamepad with `SLOPPY_INPUT` (`40:rt=1 150:rt=0 930:lstick=0x0.8 1010:lstick=0x0.35`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
+| `AEGEAN_CAPTURE_CANAL_EYE="x y z"` | with the run: past the footbridge (57), a camera fixed there follows her across the lagoon and up |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|bar|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk|listen-run` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
