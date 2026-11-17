@@ -15,6 +15,8 @@ use 'planes.jo'
 use 'world_point.jo'
 import 'living_types.jo' as data
 import 'living_far_aircraft.jo' as registry
+import 'living_far_people.jo' as residents
+from 'living_far_types.jo' import FarRole
 import 'living_scene.jo' as scene
 import 'living_conditions.jo' as conditions
 
@@ -40,9 +42,11 @@ arm_circuit = (f: Airfield) -> vec2[]:
 
 # The taxi route out from a stand to the run's start, and back in from where the roll ended.
 _arm_route_out = (f: Airfield, stand: vec2) -> vec2[]:
-    [vec2(stand.x, -72), vec2(-285, -40), vec2(f32(_arm_threshold(f) - 25.0), 0)]
+    ap = airfield_layout(f).apron
+    [vec2(stand.x, -72), vec2(ap.x - 5.0, -40), vec2(f32(_arm_threshold(f) - 25.0), 0)]
 _arm_route_in = (f: Airfield, stand: vec2, at_u: f64) -> vec2[]:
-    u = clamp(at_u, -270.0, 30.0)
+    ap = airfield_layout(f).apron
+    u = clamp(at_u, f64(ap.x) + 10.0, f64(ap.z) - 10.0)
     [vec2(f32(at_u), f32(-f.half_width - 8.0)), vec2(f32(u), -45), vec2(stand.x, -72), stand]
 
 # Taxi: rudder toward the next point, a little throttle, held to a walking-to-running pace.
@@ -60,7 +64,7 @@ _arm_taxi = (spec: CraftSpec, s: CraftState, target: vec3, slow: bool) -> Contro
 arm_tick = (p: mut ArmPilot, spec: CraftSpec, f: Airfield, town: vec3, e: FlightEnv, tick: int):
     s = p.state
     fwd = airfield_forward(f)
-    stand = AIRFIELD_STANDS[clamp(p.stand, 0, AIRFIELD_STANDS.len() - 1)]
+    stand = airfield_stand_uv(f, p.stand)
     q = airfield_local(f, s.position.xz)
     ground_here = e.ground(f64(s.position.x), f64(s.position.z))
     # (the stall as drawn: under the pure scale, the scale's times the true one)
@@ -101,7 +105,12 @@ arm_tick = (p: mut ArmPilot, spec: CraftSpec, f: Airfield, town: vec3, e: Flight
             if f64(s.position.y) - ground_here > 40.0: p.phase = .mission; p.wp = 0; p.mission_tick = tick
     else if p.phase == .mission:
         field_h = e.ground(f64(f.center.x), f64(f.center.y))
-        if p.mission == 0:
+        if p.ferry.len() > 0:
+            # the ferry's legs, at its height clear of the hills on the way
+            aim = vec3(p.ferry[0].x, 0, p.ferry[0].y)
+            c = air_waypoint_controls(spec, s, e, aim, max(p.ferry_msl, field_h + ARM_CIRCUIT_AGL), st * 1.8)
+            if length((aim - s.position).xz) < 600.0: p.ferry = p.ferry[1..p.ferry.len()]
+        else if p.mission == 0:
             path = arm_circuit(f)
             # laps of the racetrack (points 1..4 repeat), then on to its downwind end
             k = if p.wp < 1: 0 else: 1 + (p.wp - 1) % 4
@@ -175,7 +184,7 @@ arm_tick = (p: mut ArmPilot, spec: CraftSpec, f: Airfield, town: vec3, e: Flight
 
 # A fresh pilot's aircraft, parked on its stand (its three-point attitude on the ground there).
 arm_park = (spec: CraftSpec, f: Airfield, stand: int, ground: (f64, f64) -> f64) -> CraftState:
-    s = AIRFIELD_STANDS[clamp(stand, 0, AIRFIELD_STANDS.len() - 1)]
+    s = airfield_stand_uv(f, stand)
     at = _arm_xz(f, f64(s.x), f64(s.y)); at.y = f32(ground(f64(at.x), f64(at.z)))
     ground_start(spec, at, airfield_stand_heading(f))
 
@@ -205,6 +214,8 @@ prepare_air_arm = (events: mut AirEvents, w: mut data.World, models: CraftModel[
     if not w.far.populated: return
     loop k in 0..AIRFIELDS.len():
         f = AIRFIELDS[k]; place = f.place
+        # (the military fields only: a club's and the mail's have no fighters)
+        if f.kind != 0: continue
         if not (place in w.far.districts) or not (place in w.far.harbors): continue
         funder = w.far.districts[place].household_account
         # (the air arm's two pilots are a reservation on top of the flying club's cohort, as an
@@ -214,7 +225,7 @@ prepare_air_arm = (events: mut AirEvents, w: mut data.World, models: CraftModel[
             key = "air-arm:{place}:{slot}"
             existing = w.far.air_registrations.get(key, -1)
             if existing < 0 and w.accounts[funder].cents / 20 < data.AIRFRAMES[int(data.Airframe.fiat_cr20)].price_cents: continue
-            stand_at = _arm_xz(f, f64(AIRFIELD_STANDS[slot].x), f64(AIRFIELD_STANDS[slot].y)); stand_at.y = f32(ground(f64(stand_at.x), f64(stand_at.z)))
+            stand_at = _arm_xz(f, f64(airfield_stand_uv(f, slot).x), f64(airfield_stand_uv(f, slot).y)); stand_at.y = f32(ground(f64(stand_at.x), f64(stand_at.z)))
             registration = registry.register_far_aircraft(w, place, .fiat_cr20, funder, key, stand_at)
             if registration.craft < 0 or arm_index(events, registration.craft) >= 0: continue
             id = registration.craft
@@ -228,6 +239,33 @@ prepare_air_arm = (events: mut AirEvents, w: mut data.World, models: CraftModel[
                 saved = from_text[ArmPilot](w.aircraft[id].scene_extension)
                 if saved is ArmPilot and saved.craft == id and saved.person == registration.person: p = saved
             events.arm.push(p)
+
+# Each field's keeper: one of the town's people posted there, who lives in the office (or the post
+# office) and is about the field from six till nine: the aerodromes' and the club's mechanic, the
+# mail field's clerk. Promoted once, kept for good (a saved keeper is found by the post).
+airfield_post = (k: int) -> str: "airfield:{k}:{AIRFIELDS[k].kind}"
+airfield_keeper = (w: data.World, k: int) -> int:
+    key = airfield_post(k)
+    loop id, a in w.far.people:
+        if a.post == key: return id
+    -1
+prepare_airfield_keepers = (w: mut data.World):
+    if not w.far.populated: return
+    loop k in 0..AIRFIELDS.len():
+        f = AIRFIELDS[k]; place = f.place
+        if not (place in w.far.districts) or not (place in w.place_contexts) or airfield_keeper(w, k) >= 0: continue
+        key = airfield_post(k)
+        id = residents.promote_far_person(w, place, if f.kind == 2: FarRole.clerk else: FarRole.artisan, key)
+        if id < 0: continue
+        office = airfield_layout(f).buildings[0]
+        loop b in airfield_layout(f).buildings:
+            if b.kind == 1: office = b
+        door = airfield_point(f, office.u - office.width * 0.5 + 2.0 + (office.width - 4.0) / 3.0, office.v + office.depth * 0.5 + 0.8)
+        out = airfield_point(f, office.u + office.width * 0.5 + 4.0, office.v + office.depth * 0.5 + 6.0)
+        w.far.people[id].post = key; w.far.people[id].post_pos = out
+        w.far.people[id].home_key = "{key}:house"; w.far.people[id].home_pos = door
+        w.far.people[id].target = out; w.far.people[id].anchor = ""
+        w.people[id].pose.pos = out; w.people[id].pose.precise_ready = false
 
 # Every tick: launch the day's sortie at its hour (fuel from the town's market; none in bad
 # weather, a damaged engine or a wreck), fly it, and tell the world where the aircraft is.
@@ -249,6 +287,7 @@ step_air_arm_held = (events: mut AirEvents, w: data.World, models: CraftModel[],
 
 update_air_arm = (events: mut AirEvents, w: mut data.World, models: CraftModel[], ground: (f64, f64) -> f64):
     prepare_air_arm(events, w, models, ground)
+    prepare_airfield_keepers(w)
     clock = data.local_minute(w.minute); day = data.day_index(w.minute)
     loop k in 0..events.arm.len():
         p = events.arm[k]; c = w.aircraft[p.craft]

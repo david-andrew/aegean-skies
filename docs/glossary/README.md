@@ -714,7 +714,8 @@ On the rivers branch until it lands.
   turning, braking, crosswind take-offs and landings, mouse and keys), `tests/landplane_ground_test.jo`.
 - **Capture:** `AEGEAN_CAPTURE_CIRCUIT=1` (with `AEGEAN_CRAFT` a landplane and `AEGEAN_AIRFIELD=stand`):
   taxied out from the visitors' stand, off the strip, once round a short circuit, landed and taxied
-  back, as the air arm's sorties go, on the player's own steering.
+  back, as the air arm's sorties go, on the player's own steering. `AEGEAN_CAPTURE_CIRCUIT=ferry:k`:
+  over to field k instead (`ArmPilot.ferry`: points flown first, then that field's circuit joined).
 
 ### Ditching
 
@@ -3581,16 +3582,31 @@ No image: the tiers differ in budgets more than in any single view.
 
 ## Airfield
 
-- **Aliases:** aerodrome, strip, turf, apron.
-- **Definition:** a grass military field for landplanes: a mown **strip** (bands of light and dark
+- **Aliases:** aerodrome, landing ground, strip, turf, apron.
+- **Definition:** a grass field for landplanes: a mown **strip** (bands of light and dark
   turf, white boundary markers and threshold bars, a landing circle and a landing T), the **apron**
   of worn grass before arched hangars, the office, a fuel point and windsocks that stream with the
   wind. It lies on naturally flat ground, never regraded. The **turf** is laid on the terrain's own
   14 m lattice cells and stands 0.2 m above them inside, meeting the ground over its edge cells;
   the wheels and feet stand on the turf, the same surface that is drawn. The fuel point sells from
   the stores of the town the field serves.
+- **The fields:** four, each with its **layout** (`AIRFIELD_LAYOUTS`, by the field's `kind`):
+  - **Kalyrassa aerodrome** (Kalyra's air arm, military: two hangars, the office), 1.6 km.
+  - **Orenthessa aerodrome** (Orenthia's air arm, military), 2.1 km: the long one, laid out for the
+    bigger machines.
+  - **Saryerio aero club** on the Southern island (a flying club: one hangar, the clubhouse), 1.6 km.
+  - **Olytharandra mail field** on the Long island, halfway between the capitals (the air mail's
+    stop: a small hangar, the post office), 1.5 km.
+  Every strip holds the C.R.20's and the Chelidon's take-off runs (1.1 and 1.3 km drawn at the pure
+  scale) with room to spare. The amphibians use the water: the Bat Boat's run on her wheels
+  (1.4 km) fits only Orenthessa's field, and the Albatross's (4 km) none.
+- **Keeper:** each field has one, a person of the town it serves posted there (`FarPerson.post`,
+  `prepare_airfield_keepers` in `src/air_arm.jo`): the aerodromes' and the club's mechanic, the mail
+  field's clerk. The keeper lives in the office and is about the field from six till nine, over and
+  above the town's three named locals.
 - **Code:** `src/airfields.jo` (data, turf, contact, walls), `src/airfield_render.jo` (meshes,
-  windsocks), `src/airfield_audit.jo` (audit checks), `tools/airfield_survey.jo` (site search).
+  windsocks), `src/airfield_audit.jo` (audit checks), `tools/airfield_survey.jo` (site search, and
+  `check x z heading length` for one site); `tests/landing_grounds_test.jo`.
 - **Rules:** a field is axis-aligned and on the 14 m lattice; trees are cleared from the whole
   field, tall grass from the turf; no road or house may cross the field (the audit checks).
 - **In the living world:** a save made on the field is named after it and filed under its town;
@@ -3598,11 +3614,12 @@ No image: the tiers differ in budgets more than in any single view.
   print airfields (the military sheets, the pilots' mooring sheet) list it, and the chart draws it
   (a strip, a ring, its name) where the sheet prints it, survey error and all
   (`publish_airfield_features` in `src/map_scene.jo`, `chart_fields` in `aegean.jo`). Stands 0 and
-  1 are the [air arm](#air-arm)'s, stand 2 the visitors' (the player's landplane).
+  1 are the [air arm](#air-arm)'s (at a military field), stand 2 the visitors' (the player's
+  landplane). A landplane is started, put ashore, or fetched home to the nearest field.
 
 ### Air arm
 
-- **Definition:** a country's fighters at an aerodrome: two C.R.20s bought once by the town the
+- **Definition:** a country's fighters at a military aerodrome: two C.R.20s bought once by the town the
   field serves (its household purse, two pilots reserved over the civil cohort, no harbour berth:
   their stands), each flying once a day by the flight model's controls alone: the first the
   morning circuits at 09:30 (two laps of a racetrack round the field), the second a display over
