@@ -933,6 +933,12 @@ On the rivers branch until it lands.
   middle (and the S.55's twin hulls) running through the sea is judged by its sink into the water,
   not by its run along its length, so it is not broken up in a moderate swell, while a hard drop
   still crushes it (`src/flight.jo` `_substep`); `tests/type_flight_test.jo`.
+  On v2 the cruise throttle (`cruise_throttle`) is v2's own balance (`fdm2_cruise_throttle`), so every
+  type cruises at its catalog cruise on it. The player's steering aims the way she goes through an
+  approach (to 1.45 times the stall, the nose from 1.85 times), so she flies down the aim rather than
+  a degree or two below it; and a small correction's gentle turn is eased for the fast types (to the
+  bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
+  while a big one turns them as briskly as ever.
 
 ### Sky Barons port
 
