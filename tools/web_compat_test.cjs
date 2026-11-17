@@ -23,7 +23,11 @@ const two=source.replace('f_main_2(S_Params l_u_2)', 'f_main_2(S_Params l_u_2, S
 assert.match(specializeUniforms(two),/frag_color=f_main_2\(\)/);
 assert.throws(()=>specializeUniforms(source.replace('return p*l_u_1.tint_;','l_u_1.tint_ = p; return p;')),/Mutable/);
 assert.throws(()=>specializeUniforms(source.replace('f_main_2(u);','f_main_2(other);')),/Non-global/);
-assert.equal(chooseTier({mobile:true}),0);
+assert.equal(chooseTier({mobile:true,renderer:'ANGLE (Qualcomm, Adreno (TM) 650, OpenGL ES 3.2)',textureLimit:4096,fragmentLimit:256}),1);
+assert.equal(chooseTier({mobile:true,renderer:'ANGLE (Qualcomm, Adreno (TM) 506, OpenGL ES 3.2)',textureLimit:4096,fragmentLimit:256}),0);
+assert.equal(chooseTier({mobile:true,renderer:'Mali-G52',fragmentLimit:256}),0);
+assert.equal(chooseTier({mobile:true,renderer:'ANGLE (Qualcomm, Adreno (TM) 650, OpenGL ES 3.2)',fragmentLimit:256,stepDown:true}),0);
+assert.equal(chooseTier({renderer:'NVIDIA',textureLimit:4096,fragmentLimit:1024}),0);
 assert.equal(chooseTier({mobile:true,override:'high'}),2);
 assert.equal(chooseTier({renderer:'Intel UHD 620'}),1);
 assert.equal(chooseTier({renderer:'NVIDIA',fragmentLimit:224}),0);

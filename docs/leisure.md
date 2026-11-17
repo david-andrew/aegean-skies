@@ -172,6 +172,18 @@ funny or useful (time passes, people are met, the plane is looked after).
 26. **The seated view keeps its turn.** Each drag, by finger, mouse or stick, goes on from where
    the last one left it, at a table, on a stool, at supper and at the hotel room's window.
 
+## Built (round twelve)
+
+27. **The rooms by their things.** No buttons in a room. Tap or click the bed to lie down (sleep
+   of an evening, rest by day), the chair to sit, the window to look out, the door to leave. The
+   pilot gets up, walks round the furniture and sits or lies down by degrees, never jumping. What
+   the pointer, the arrow keys or a pad's d-pad picks out is a shade brighter, with a small label.
+   A tap wakes him early.
+28. **Over to the table.** On foot, tapping or clicking the pilot's table, the bar's stool or the
+   coffee house's table walks him over and sits him down.
+29. **A passenger answers out loud** when offered a flight, and a marker at the screen's edge
+   points to them while they're out of view.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
