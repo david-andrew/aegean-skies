@@ -934,9 +934,11 @@ On the rivers branch until it lands.
   not by its run along its length, so it is not broken up in a moderate swell, while a hard drop
   still crushes it (`src/flight.jo` `_substep`); `tests/type_flight_test.jo`.
   On v2 the cruise throttle (`cruise_throttle`) is v2's own balance (`fdm2_cruise_throttle`), so every
-  type cruises at its catalog cruise on it. The player's steering aims the way she goes through an
-  approach (to 1.45 times the stall, the nose from 1.85 times), so she flies down the aim rather than
-  a degree or two below it; and a small correction's gentle turn is eased for the fast types (to the
+  type cruises at its catalog cruise on it. The player's steering aims the nose (the guns) wherever she
+  flies, and the way she goes only on an approach, the throttle back and slow (under 1.45 times the
+  stall, the nose again by 1.6), never while fighting (the guns in use, or a target's lead shown on
+  the gunsight: `Flyer.fighting`), so she flies down an approach's aim rather than a degree or two
+  below it and a correction of a degree at the guns still lands on the gun line; and a small correction's gentle turn is eased for the fast types (to the
   bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
   while a big one turns them as briskly as ever.
   The other aircraft on v2 (`fdm2_npcs`) take off on the autopilot's attitude hold, not the mouse's
