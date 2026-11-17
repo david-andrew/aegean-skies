@@ -1641,7 +1641,10 @@ On the rivers branch until it lands.
   gone, wrecked or aground), the [R/T](#rt) pad offers "Call for help" first (R does too on a
   wreck). Whoever is really near answers. One of the player's flight (in a fight, for fuel only)
   lands into the wind off to one side, taxis to lie alongside and hands over two two-gallon cans
-  out of its own tank, then takes off again. Failing that, the nearest passing ship of the living
+  out of its own tank, then takes off again. Outside a fight, a pilot of the world flying a trip
+  within 15 km does the same (the cans paid to them at the pier's price), or for a wreck takes the
+  pilot along to wherever they are bound, the harbour there fetching the aircraft in after for a
+  fee; their trip is taken up again once they are back up. Failing that, the nearest passing ship of the living
   world turns aside (a hull stands in for it, the ship itself held on its route and not drawn
   meanwhile) and tows the aircraft into the nearest town harbour. Failing that, that harbour's
   launch comes out and tows it in. The radio answers with a rough time ("about twenty minutes");
@@ -1666,8 +1669,9 @@ On the rivers branch until it lands.
   `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
   `aegean.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
-  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`; HELP lines say what
-  happened.
+  `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`,
+  `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=passing|passwreck` (ahead of the first world aircraft seen
+  flying), `AEGEAN_CAPTURE_HELP=tender`; HELP lines say what happened.
 
 ### R/T
 
