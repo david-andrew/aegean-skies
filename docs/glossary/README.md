@@ -1872,6 +1872,40 @@ On the rivers branch until it lands.
   sheds open to the water with slipways, and a dressed stone edge along the shore at the jetty root.
 - **Code:** `lake_waterfront` (`src/lake_ports.jo`), `lake_waterfront_mesh` (`src/lake_port_mesh.jo`).
 
+### Taking the waters
+
+- **Aliases:** the hot springs, the baths, a soak, the bathhouse keeper.
+- **Definition:** an opt-in leisure at the [thermal terraces](#thermal-terraces), done by the things
+  themselves rather than cards (`src/bath.jo`):
+  - **The keeper:** tap him at the bathhouse door. He asks thirty lepta for the waters (paid to the
+    town's innkeeper if it has one, else the town's account), good all that day at that spring.
+  - **Changing:** he goes into the cabin, is out of sight a moment, and comes out in a bathing
+    costume (`build_figure(bathing = true)`).
+  - **Getting in:** tap the hot pool. He walks to its steps by the terraces' stairs and round the
+    pool's coping (`bath_route_to`, `_round_pool`), steps over and settles into the water by
+    degrees (`bath_path`).
+  - **Soaking:** a few of the town's grown people sit in the water to their shoulders, the same
+    ones all day. They talk in turn every ten seconds or so: the water's small talk, the dialogue's
+    own remark for them (`table_remark`), and once a soak a lead ("Marta has oil for Kalamos, I
+    heard. If you're flying that way.", from the town's or its harbour's open jobs). The world's
+    clock runs on unhurried, about a minute a second. F (an hour) and T (until evening) still hurry
+    it. There are no cards: the steps are the way out.
+  - **Getting out:** tap the steps, or R, or walk. He comes up out of the water by degrees, goes
+    back to the cabin, and comes out dressed.
+- **Lifts:** now and then the one who asks at the aircraft for a flight wants a lift instead: to the
+  harbour below the nearest springs within 120 km ("Would you be going anywhere near the
+  Saryerenos baths? I'd pay for a lift as far as Delyavouna."). Set down there, they pay ¤1.50 if
+  they have it and thank the pilot. Set down anywhere else, they say "Not here, I'm afraid" and
+  stay in the seat (`ride_lift_choice`, `Joyride.dest`).
+- **History:** springs like Loutraki, Aidipsos, Ikaria and Methana were in use in the islands then,
+  with plain bathhouses and a keeper taking a few lepta.
+- **Code:** `src/bath.jo` (`Bath`, `bath_pick_line`, `bath_pay`, `lift_fare_pay`); `bath_step`,
+  `bath_go_in`, `bath_walk_to`, `bath_get_out`, `draw_bath_people`, `draw_bath_talk` and leisure
+  stage 21 (the keeper) in `aegean.jo`; `ride_lift_*` in `src/joyride.jo`; `tests/bath_test.jo`.
+- **Capture:** `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters` walks up
+  from the path, pays, changes and gets in. `AEGEAN_LEISURE=ride-ask AEGEAN_RIDE_LIFT=1` shows a lift
+  being asked for.
+
 ### Thermal terraces
 
 - **Definition:** a bath set into a hillside in three terraces: bathhouse and inn on the upper one
@@ -2846,6 +2880,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
+- **The mouse locked to the view:** what the middle of the screen is on is lit and labelled, and a
+  click there goes to it, so the mouse needn't be freed first (`foot_aim`).
 - **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
   index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
 
@@ -2918,8 +2954,11 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
     one of its places to the next.
   - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
-    evening (`room_sleep_until`). A click, a tap or a key wakes him early. He stays lying until
-    he's sent somewhere, and the bed clicked again gets him up.
+    evening (`room_sleep_until`). A tap or click on a thing wakes him, and once he's up he goes
+    there. A key wakes him only (Back or Escape among them, never also the way out). He stays
+    lying until he's sent somewhere: the bed clicked again, or Back, gets him up in the room.
+  - **The night paid for:** the room is his until eleven the next morning. The desk then offers
+    "go up to your room" (`hotel_room_paid`), not another night.
   - **The window:** he stands at it and the view goes out over the harbour. Clicking it again, or
     Escape, brings him back to the chair.
   - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
