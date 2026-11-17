@@ -994,6 +994,19 @@ On the rivers branch until it lands.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
   `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 50 cockpit'` (the speed is the true airspeed; left out, a safe 1.3 times the type's stall).
 
+### Fuel gauge (cockpit)
+
+- **Aliases:** the sight glass, the float gauge, the fuel dial.
+- **Definition:** every cockpit reads the tank's real contents (including while refuelling) on
+  the coaming beside the compass, where the eye already goes and inside a phone's narrow view.
+  Open cockpits have a period sight glass with a cork float: an amber column over pale glass, its
+  foot painted red. Cabins and flight decks have a round FUEL dial with a red sector at the empty
+  end. Below 15% the float or needle sits in the red (the column itself turns red). The third-person
+  HUD keeps its own fuel bar (`src/hud.jo instruments`, beside the throttle).
+- **Code:** `src/cockpit.jo` `_cockpit_fuel_face`, `cockpit_fuel_at`, the moving part in
+  `draw_cockpit_instruments`; `draw_cockpit(..., fuel01)` from `fuel_reading()` in `aegean.jo`.
+- **Capture:** `tools/cockpitlab.jo` with `COCKPIT_FUEL=0..1`.
+
 ### Cockpit lamp and luminous dials
 
 - **Aliases:** the panel lamp, instrument glow, night cockpit.
