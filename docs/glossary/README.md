@@ -939,6 +939,14 @@ On the rivers branch until it lands.
   a degree or two below it; and a small correction's gentle turn is eased for the fast types (to the
   bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
   while a big one turns them as briskly as ever.
+  The other aircraft on v2 (`fdm2_npcs`) take off on the autopilot's attitude hold, not the mouse's
+  steering, and climb away only once flying (1.1 times the stall), so they never pitched up into the
+  stall as the player did; thrown off a crest below flying speed they are held low and level. The
+  autopilot gives a giant a final as long as her size asks (60 spans) and a slow-nosed type a flare
+  begun higher, and a hydrofoil runs straight out on her foils before turning for the dock and
+  taxies on her screw at up to half throttle. `tools/npc_survey.jo` flies every type as the other
+  aircraft do (take-offs calm and in wind 3, a trip to a dock, the air arm's sortie);
+  `tests/npc_flight_test.jo`.
 
 ### Sky Barons port
 
