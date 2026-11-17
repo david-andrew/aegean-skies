@@ -1673,6 +1673,29 @@ On the rivers branch until it lands.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
 
+### The Ierax (seaplane tender)
+
+- **Aliases:** the tender, the depot ship, Kalyra's forward base.
+- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s, anchored as a depot
+  ship in the bight on the west coast of the island 25 km west of the strait, in the lee of its
+  southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
+  Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
+  past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
+  strait's Kalyran flight comes home to her: it lands to seaward and moors in turn along the booms
+  and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
+  lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
+  to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
+  else), and be lowered over the side again. Her launch answers a call for help when she is nearer
+  than any harbour, and tows the aircraft in to her moorings.
+- **Code:** `src/tender.jo` (`TENDER_AT`, `tender_slot`, `tender_home`, `hoist_point`); the booms
+  and derrick in `src/vessel_models.jo`; `strait_homes` in `src/scenarios.jo`; `tender_fuel`,
+  `tender_hoist_start`, `tender_step`, `tender_repair` and the help call's `by_tender` in `aegean.jo`.
+- **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_TENDER=hoist`; `AEGEAN_ABOARD=1
+  AEGEAN_CAPTURE_HELP=tender`; the flight home: `AEGEAN_SCENARIO=strait
+  AEGEAN_CAPTURE_STRAIT_AFTER=arrive AEGEAN_ARRIVE_KM=3 AEGEAN_ARRIVE_FORMED=1
+  AEGEAN_CAPTURE_TENDER_CAM=1` (with `AEGEAN_FRAMES` and `AEGEAN_FRAMES_ONLY=1` for a time-lapse).
+
 ### Legacy towns
 
 - **Aliases:** the original six towns, the original archipelago.
