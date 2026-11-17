@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -2760,6 +2760,36 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### Things to tap
+
+- **Aliases:** clicking the thing itself, walking over to it, the gleam.
+- **Definition:** the game's standing preference is the thing in the world over a button or a card.
+  On foot, these are tapped or clicked (with the mouse free) instead of their cards:
+  - one's own aircraft at her mooring: the cockpit ("Climb aboard"), and the engine ("Work on her");
+  - the pilot's table and the bar's stool ("Sit", "Sit at the bar");
+  - the hotel's desk ("Ask for a room") and the barber's chair ("A shave");
+  - the band's jar ("Tip the band") and its stand ("Ask for a song");
+  - the coffee house's table, its closed tavli board ("A game of tavli") and the folded paper
+    ("The paper");
+  - the people about: walk over and talk.
+- **How it works:** he walks over until what the thing's card would offer is in reach, then does it,
+  exactly as the card's key does (`foot_things`, `foot_go`, `foot_pick`; the act is matched in the
+  walk's own offers). The board and the paper then open once he has sat down. Walking himself
+  cancels the walk. So does no progress for three seconds, or 25 seconds gone. A thing is offered
+  only from the same side of the bar room's walls (`way_clear`), except the desk, which stands at
+  its door. The keys work as ever. A card whose thing is on the screen isn't shown
+  (`shown_offers`), unless a pad is in use, whose buttons go by the cards' order.
+- **Seated:** at a table or the bar, the band's stand and the jar are tapped or clicked the same
+  way, and so are the board and the paper at the coffee house (`seat_things`). They are no longer
+  buttons on the table's bar, but their keys T, P, S and B still work.
+- **Pointed at:** with the mouse free, a small label over the thing says what it does
+  (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
+  and in view catch the light for a moment instead, and again every eight seconds while it stays
+  still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
+  works in the rooms of a stay and at a table too.
+- **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
+  index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
+
 ### Pleasure flight
 
 - **Aliases:** a joyride, taking someone up, a passenger for the pleasure of it.
@@ -2964,9 +2994,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
 - **Going over to sit:** on foot, the pilot's table, the bar's stool and the coffee house's table
-  can be tapped or clicked (the mouse free): he walks over and sits, as F does there
-  (`foot_things`, `foot_pick`, `foot_go`). A small label over the thing says "Sit" or "Sit at the
-  bar". Walking himself cancels it. Capture: `AEGEAN_LEISURE=foot-hotel AEGEAN_FOOT_GO=<frame>:<k>`.
+  are tapped or clicked: he walks over and sits ([Things to tap](#things-to-tap)).
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
 

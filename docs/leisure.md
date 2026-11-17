@@ -184,6 +184,18 @@ funny or useful (time passes, people are met, the plane is looked after).
 29. **A passenger answers out loud** when offered a flight, and a marker at the screen's edge
    points to them while they're out of view.
 
+## Built (round thirteen)
+
+30. **Things to tap, everywhere cheap.** One's own aircraft (the cockpit to climb aboard, the engine
+   to work on her), the hotel's desk, the barber's chair, the band's jar and stand, and the coffee
+   house's tavli board and paper are tapped or clicked instead of their cards. He walks over and
+   does what the card would. The people about are clicked to talk, as touch already did. Seated,
+   the band, the jar, the board and the paper are no longer buttons on the table's bar.
+31. **The gleam.** On a touch screen, what can be tapped catches the light for a moment when the
+   view comes to rest. There are no words.
+32. **A family's view** is up over the door. His way round the table to the back room stays in
+   sight.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
