@@ -1,17 +1,21 @@
-# Cockpit radio
+# Cockpit radio (the wireless)
+
+On screen the broadcast receiver is the **wireless** (the period British word): the touch
+screen's Wireless button, Settings → Sound → Wireless volume, "Wireless off". The R/T (orders
+to one's own flight, `src/rt_pad.jo`) is a different set. In code it stays `radio`.
 
 The receiver starts muted. While aboard, with no panel or text field taking input:
 
 * `/` toggles mute.
 * `,` and `.` tune down/up by 5 kHz.
 * Shift with either tuning key seeks the previous/next station currently on air, wrapping the dial.
-* F9 (the touch screen's Radio button, a tap or click on the radio in the cockpit) steps to the
+* F9 (the touch screen's Wireless button, a tap or click on the radio in the cockpit) steps to the
   next station on the air, and off after the last.
 * **Volume**: the knob in the dial's lower left corner. Drag up or down on the radio (the mouse,
   once it is free of the view, or a finger), turn the wheel over it, or press `[` and `]`. A
-  gamepad or flight stick has a Radio button to bind on the Controls page (unbound at first:
+  gamepad or flight stick has a Wireless button to bind on the Gamepad page (unbound at first:
   every button is taken aboard): a tap steps the stations, and while it is held the look stick
-  turns the volume (up and down) and tunes (across). The same level is Options → Sound → Radio
+  turns the volume (up and down) and tunes (across). The same level is Settings → Sound → Wireless
   volume, kept with the options. Half way is the level the radio always had; the knob spans
   20 dB either side of it in even steps of loudness (`radio_volume_gain`), and 0 is silent. At
   the top, at cruise, the announcer is about 5 dB under the engine rather than 25; moored, the
@@ -176,7 +180,7 @@ there from the first flight. Later, the stations could be **found**:
   station's place on the scale. The marks build up through a career, in the pilot's hand (or set
   down by the pilot on their own the first time a station is heard clearly). A station heard of
   but not yet found might get a faint question mark at its rough place.
-* **Tuning with the marks.** Shift-seek (and the Radio button) would step between marked stations
+* **Tuning with the marks.** Shift-seek (and the Wireless button) would step between marked stations
   rather than every station on the air; free tuning stays for searching.
 * **What it touches:** a found-stations set in the saved game; mentions in talk, the
   newspaper and the bar (`living_*`, `radio_content.jo` for listings); the card drawn in

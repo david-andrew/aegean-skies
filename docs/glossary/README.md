@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -939,6 +939,14 @@ On the rivers branch until it lands.
   a degree or two below it; and a small correction's gentle turn is eased for the fast types (to the
   bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
   while a big one turns them as briskly as ever.
+  The other aircraft on v2 (`fdm2_npcs`) take off on the autopilot's attitude hold, not the mouse's
+  steering, and climb away only once flying (1.1 times the stall), so they never pitched up into the
+  stall as the player did; thrown off a crest below flying speed they are held low and level. The
+  autopilot gives a giant a final as long as her size asks (60 spans) and a slow-nosed type a flare
+  begun higher, and a hydrofoil runs straight out on her foils before turning for the dock and
+  taxies on her screw at up to half throttle. `tools/npc_survey.jo` flies every type as the other
+  aircraft do (take-offs calm and in wind 3, a trip to a dock, the air arm's sortie);
+  `tests/npc_flight_test.jo`.
 
 ### Sky Barons port
 
@@ -999,6 +1007,19 @@ On the rivers branch until it lands.
   every direction must meet a face turned toward it or leave through a pane.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
   `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 50 cockpit'` (the speed is the true airspeed; left out, a safe 1.3 times the type's stall).
+
+### Fuel gauge (cockpit)
+
+- **Aliases:** the sight glass, the float gauge, the fuel dial.
+- **Definition:** every cockpit reads the tank's real contents (including while refuelling) on
+  the coaming beside the compass, where the eye already goes and inside a phone's narrow view.
+  Open cockpits have a period sight glass with a cork float: an amber column over pale glass, its
+  foot painted red. Cabins and flight decks have a round FUEL dial with a red sector at the empty
+  end. Below 15% the float or needle sits in the red (the column itself turns red). The third-person
+  HUD keeps its own fuel bar (`src/hud.jo instruments`, beside the throttle).
+- **Code:** `src/cockpit.jo` `_cockpit_fuel_face`, `cockpit_fuel_at`, the moving part in
+  `draw_cockpit_instruments`; `draw_cockpit(..., fuel01)` from `fuel_reading()` in `aegean.jo`.
+- **Capture:** `tools/cockpitlab.jo` with `COCKPIT_FUEL=0..1`.
 
 ### Cockpit lamp and luminous dials
 
@@ -1699,9 +1720,19 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
   `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
 
+### Wireless
+
+- **Aliases:** the cockpit radio, the receiver, the set (in code: `radio`).
+- **Definition:** the broadcast receiver in the cockpit: stations, music, bulletins and Morse.
+  Named "wireless" on screen (the period British word for a broadcast set: the touch screen's
+  Wireless button, Settings → Sound → Wireless volume, "Wireless off"), so it is never confused
+  with the [R/T](#rt), which sends orders to one's own flight.
+- **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
+
 ### R/T
 
-- **Aliases:** the radio-telephone, the pad, orders to the flight.
+- **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
+  the broadcast set).
 - **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
   plate; a controller's D-pad left). Down on the sea in trouble its first line is the
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
@@ -3343,6 +3374,17 @@ No image: the tiers differ in budgets more than in any single view.
   moment after. Before it, away from a shore the open sea was silent.
 - **Code:** `src/sea_sound.jo`; `src/flight_feedback.jo` (`afloat`, `height`, `over_sea`,
   `sea_wind`); `tests/sea_sound_test.jo`.
+
+### On foot
+
+- **Aliases:** footsteps (a trial on the Tweaks page, off by default).
+- **Definition:** walking heard: a footfall each half stride by the ground underfoot (the jetty's
+  planks over the water, stone quays, stairs, cobbles, earth, sand, the bar room's boards with the
+  room's echoes), climbing into and out of the aircraft, a chair or a stool as one sits and stands,
+  a glass or a plate set down at the table; and the bar room's talk and the terrace's crossing over
+  through its doorways by how far in one is. Before it, nothing of walking was heard.
+- **Code:** `src/foot_sound.jo`; `aegean.jo` (`foot_ground`, `foot_sounds_frame`,
+  `hotel_indoor_amount`); `src/ambience_scene.jo` (`indoor_amount`); `tests/foot_sound_test.jo`.
 
 ### Uneven events
 
