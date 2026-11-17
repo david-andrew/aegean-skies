@@ -1,0 +1,102 @@
+use 'world_point.jo'
+use 'depth_space.jo'
+use 'look.jo'
+use 'render_space.jo'
+use 'cloud_volume.jo'
+use 'cloud_transparency.jo'
+use 'flight.jo'
+use 'trails.jo'
+# Vapour over the wings: in a hard pull in very damp air, the low pressure over the top of each
+# wing cools the air there below its dew point, and a thin white sheet shimmers on the upper
+# surface, densest over its front third, gone the moment the pull eases. It forms only where it
+# really does: harder pulls and damper air than the wingtips' trails need (src/trails.jo), so it
+# is brief and rare. A few quads in the aircraft's own frame, drawn with the trails' vertex shader
+# and nothing at all while there is none.
+
+# (0..1: how much forms, from the true speed in m/s, the load in g and the air's damp, as
+# flight_feedback.jo's vapour_dampness gives it)
+wing_vapour_strength = (speed: f64, load: f64, damp: f64) -> f64:
+    smoothstep(38.0, 52.0, speed) * smoothstep(0.8, 1.0, damp) * smoothstep(5.0, 7.0, load)
+
+# one aircraft's sheet: how much there is now, forming quickly and gone a little slower
+struct WingVapour:
+    amount = 0.0
+    time = -1.0
+
+wing_vapour_step = (w: mut WingVapour, target: f64, t: f64):
+    dt = if w.time < 0.0 or t < w.time: 0.0 else: min(0.1, t - w.time)
+    w.time = t
+    rate = if target > w.amount: 16.0 else: 10.0
+    w.amount += (target - w.amount) * (1.0 - exp(-rate * dt))
+    if w.amount < 0.004: w.amount = 0.0
+
+# The sheet's quads over the top wing of an aircraft (`spec`, at `state`), each wing whole
+# (left, right), added to `vs` in render-local coordinates about `origin`.
+wing_vapour_add = (vs: mut TrailVertex[], spec: CraftSpec, state: CraftState, amount: f64, left: bool, right: bool, origin: vec3, t: f64):
+    if amount <= 0.0 or spec.wing_contacts.len() == 0: return
+    # (the top wing: the highest of the wingtip contacts; a biplane's area shared by its two)
+    top = spec.wing_contacts[0].y
+    loop p in spec.wing_contacts: top = max(top, p.y)
+    levels = 0
+    tip = spec.wing_contacts[0]
+    loop p in spec.wing_contacts:
+        if abs(p.y - top) < 0.05:
+            levels += 1
+            if abs(p.x) > abs(tip.x) or abs(tip.y - top) >= 0.05: tip = p
+    many = if spec.wing_contacts.len() > levels: 2.0 else: 1.0
+    reach = f64(abs(tip.x))
+    chord = clamp(spec.wing_area / max(spec.span, 1.0) / many, 0.6, 3.0)
+    # (where the sheet sits on the wing: u across the span, root to tip; v along the chord, the
+    # leading edge to a little behind the trailing edge, a thin layer lifting off the surface)
+    at = (side: f64, u: f64, v: f64) -> vec3:
+        x = side * mix(0.12, 0.92, u) * reach
+        z = f64(tip.z) + (v - 0.4) * chord * 1.25
+        y = f64(top) + chord * (0.07 + 0.14 * v)
+        world_local(craft_offset(state, quat_rotate(state.orientation, vec3(f32(x), f32(y), f32(z)))), origin)
+    phase = f32(t % 1000.0)
+    loop side in [-1.0, 1.0]:
+        if (side < 0.0 and not left) or (side > 0.0 and not right): continue
+        loop i in 0..4:
+            loop j in 0..3:
+                u0 = f64(i) / 4.0; u1 = f64(i + 1) / 4.0; v0 = f64(j) / 3.0; v1 = f64(j + 1) / 3.0
+                a = TrailVertex(at(side, u0, v0), vec4(f32(u0), f32(v0), f32(amount), phase))
+                b = TrailVertex(at(side, u1, v0), vec4(f32(u1), f32(v0), f32(amount), phase))
+                c = TrailVertex(at(side, u0, v1), vec4(f32(u0), f32(v1), f32(amount), phase))
+                d = TrailVertex(at(side, u1, v1), vec4(f32(u1), f32(v1), f32(amount), phase))
+                vs.push(a); vs.push(b); vs.push(c)
+                vs.push(c); vs.push(b); vs.push(d)
+
+# (soft at the root and the tip, densest over the front third and thinning toward the trailing
+# edge, in shimmering streaks along the chord; lit as the trails are)
+wing_vapour_fs = (i: TrailOut, u: TrailParams) -> vec4:
+    s = i.data.x; c = i.data.y; ph = i.data.w
+    across = smoothstep(0.0, 0.3, s) * (1.0 - smoothstep(0.75, 1.0, s))
+    along = smoothstep(0.0, 0.12, c) * (1.0 - smoothstep(0.3, 1.0, c))
+    streak = 0.55 + 0.45 * sin(s * 37.0 + ph * 23.0) * sin(s * 13.0 - ph * 31.0 + c * 5.0)
+    a = across * along * streak * i.data.z * 0.5
+    if a < 0.01: discard()
+    a *= cloud_transmittance(i.world, u.clouds)
+    if a < 0.001: discard()
+    col = vec3(1, 1, 1) * (u.sun * 0.8 + u.sky * 0.4)
+    vec4(aerial(col, i.world, u.cam, u.haze, u.fog), a)
+
+wing_vapour_sh: Shader
+wing_vapour_mesh: Mesh
+wing_vapour_ready = false
+
+# (made only when first drawn: no cost to a game where none ever forms)
+_wing_vapour_init = ():
+    global wing_vapour_sh, wing_vapour_mesh, wing_vapour_ready
+    wing_vapour_sh = make_world_shader(shader(trail_vs, wing_vapour_fs), false)
+    wing_vapour_mesh = mesh([TrailVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), TrailVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0)), TrailVertex(vec3(0, 0, 0), vec4(0, 0, 0, 0))])
+    wing_vapour_ready = true
+
+# Draw the sheets (`vs`, from wing_vapour_add about render_origin(scene_camera())); call inside a
+# transparent draw_custom
+draw_wing_vapour = (vs: TrailVertex[], L: Light):
+    if vs.len() < 3: return
+    if not wing_vapour_ready: _wing_vapour_init()
+    origin = render_origin(scene_camera())
+    update_mesh(wing_vapour_mesh, vs)
+    u = TrailParams(view_proj = render_view_proj(origin), cam = render_eye(origin), sun = L.sun, sky = L.sky_top, haze = L.haze, fog = f32(L.fog_density), warp_a = render_anchor(scene_warp_a, origin), warp_b = scene_warp_b, clouds = cloud_veil)
+    draw(wing_vapour_sh, wing_vapour_mesh, u)

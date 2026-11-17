@@ -23,9 +23,9 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -933,6 +933,20 @@ On the rivers branch until it lands.
   middle (and the S.55's twin hulls) running through the sea is judged by its sink into the water,
   not by its run along its length, so it is not broken up in a moderate swell, while a hard drop
   still crushes it (`src/flight.jo` `_substep`); `tests/type_flight_test.jo`.
+  On v2 the cruise throttle (`cruise_throttle`) is v2's own balance (`fdm2_cruise_throttle`), so every
+  type cruises at its catalog cruise on it. The player's steering aims the way she goes through an
+  approach (to 1.45 times the stall, the nose from 1.85 times), so she flies down the aim rather than
+  a degree or two below it; and a small correction's gentle turn is eased for the fast types (to the
+  bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
+  while a big one turns them as briskly as ever.
+  The other aircraft on v2 (`fdm2_npcs`) take off on the autopilot's attitude hold, not the mouse's
+  steering, and climb away only once flying (1.1 times the stall), so they never pitched up into the
+  stall as the player did; thrown off a crest below flying speed they are held low and level. The
+  autopilot gives a giant a final as long as her size asks (60 spans) and a slow-nosed type a flare
+  begun higher, and a hydrofoil runs straight out on her foils before turning for the dock and
+  taxies on her screw at up to half throttle. `tools/npc_survey.jo` flies every type as the other
+  aircraft do (take-offs calm and in wind 3, a trip to a dock, the air arm's sortie);
+  `tests/npc_flight_test.jo`.
 
 ### Sky Barons port
 
@@ -993,6 +1007,19 @@ On the rivers branch until it lands.
   every direction must meet a face turned toward it or leave through a pane.
 - **Capture:** `tools/cockpitlab.jo` (`COCKPIT_KIND`, `COCKPIT_LOOK="yaw pitch"`, `COCKPIT_HOUR`,
   `COCKPIT_OUTSIDE="yaw pitch distance"`); in the game `AEGEAN_CRAFT=25 AEGEAN_FLYING='80 50 cockpit'` (the speed is the true airspeed; left out, a safe 1.3 times the type's stall).
+
+### Fuel gauge (cockpit)
+
+- **Aliases:** the sight glass, the float gauge, the fuel dial.
+- **Definition:** every cockpit reads the tank's real contents (including while refuelling) on
+  the coaming beside the compass, where the eye already goes and inside a phone's narrow view.
+  Open cockpits have a period sight glass with a cork float: an amber column over pale glass, its
+  foot painted red. Cabins and flight decks have a round FUEL dial with a red sector at the empty
+  end. Below 15% the float or needle sits in the red (the column itself turns red). The third-person
+  HUD keeps its own fuel bar (`src/hud.jo instruments`, beside the throttle).
+- **Code:** `src/cockpit.jo` `_cockpit_fuel_face`, `cockpit_fuel_at`, the moving part in
+  `draw_cockpit_instruments`; `draw_cockpit(..., fuel01)` from `fuel_reading()` in `aegean.jo`.
+- **Capture:** `tools/cockpitlab.jo` with `COCKPIT_FUEL=0..1`.
 
 ### Cockpit lamp and luminous dials
 
@@ -1693,9 +1720,19 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
   `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans`; HELP lines say what happened.
 
+### Wireless
+
+- **Aliases:** the cockpit radio, the receiver, the set (in code: `radio`).
+- **Definition:** the broadcast receiver in the cockpit: stations, music, bulletins and Morse.
+  Named "wireless" on screen (the period British word for a broadcast set: the touch screen's
+  Wireless button, Settings → Sound → Wireless volume, "Wireless off"), so it is never confused
+  with the [R/T](#rt), which sends orders to one's own flight.
+- **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
+
 ### R/T
 
-- **Aliases:** the radio-telephone, the pad, orders to the flight.
+- **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
+  the broadcast set).
 - **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
   plate; a controller's D-pad left). Down on the sea in trouble its first line is the
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
@@ -2744,6 +2781,36 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and `radio_music_program` (`src/radio_synth.jo`); `MusicPiece.piano` is only the usual venue's
   piano, for the tools. See `docs/music-orchestra.md`.
 
+### Things to tap
+
+- **Aliases:** clicking the thing itself, walking over to it, the gleam.
+- **Definition:** the game's standing preference is the thing in the world over a button or a card.
+  On foot, these are tapped or clicked (with the mouse free) instead of their cards:
+  - one's own aircraft at her mooring: the cockpit ("Climb aboard"), and the engine ("Work on her");
+  - the pilot's table and the bar's stool ("Sit", "Sit at the bar");
+  - the hotel's desk ("Ask for a room") and the barber's chair ("A shave");
+  - the band's jar ("Tip the band") and its stand ("Ask for a song");
+  - the coffee house's table, its closed tavli board ("A game of tavli") and the folded paper
+    ("The paper");
+  - the people about: walk over and talk.
+- **How it works:** he walks over until what the thing's card would offer is in reach, then does it,
+  exactly as the card's key does (`foot_things`, `foot_go`, `foot_pick`; the act is matched in the
+  walk's own offers). The board and the paper then open once he has sat down. Walking himself
+  cancels the walk. So does no progress for three seconds, or 25 seconds gone. A thing is offered
+  only from the same side of the bar room's walls (`way_clear`), except the desk, which stands at
+  its door. The keys work as ever. A card whose thing is on the screen isn't shown
+  (`shown_offers`), unless a pad is in use, whose buttons go by the cards' order.
+- **Seated:** at a table or the bar, the band's stand and the jar are tapped or clicked the same
+  way, and so are the board and the paper at the coffee house (`seat_things`). They are no longer
+  buttons on the table's bar, but their keys T, P, S and B still work.
+- **Pointed at:** with the mouse free, a small label over the thing says what it does
+  (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
+  and in view catch the light for a moment instead, and again every eight seconds while it stays
+  still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
+  works in the rooms of a stay and at a table too.
+- **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
+  index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
+
 ### Pleasure flight
 
 - **Aliases:** a joyride, taking someone up, a passenger for the pleasure of it.
@@ -2771,6 +2838,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     on ("There you are! I'd started to wonder.").
   - **Sorry, another day:** they climb out with a kind word and go home, and are not asked about
     again for a day.
+  - The question comes only once the pilot has been aboard with them seated (`ride_boarded`).
+    Seated while he is still on the dock, they simply wait for him.
+  - **Offered (K):** they answer out loud ("Really? Now? Oh, yes please!", `ride_accept_line`) in
+    the caption at the top. While they're out of view (behind the camera, or off the side), a small
+    marker with their name sits at the screen's edge and points toward them (`offscreen_pointer`
+    in `src/panels.jo`). Capture: `AEGEAN_LEISURE=ride-offer`.
   - **Giving up:** they go home. The pilot's name takes a mild mark (`rep_act(.cut_short)`), the
     notebook has a line, and the next time they pass the pilot they say so ("I waited by your
     aeroplane an hour! Another day, then."), instead of asking again from scratch.
@@ -2798,6 +2871,28 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     There is coffee in the morning (05:30 to 11:30).
   - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
     window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
+- **By its things, not buttons:** there is no button bar in a room. One taps or clicks the thing
+  itself (`src/room_walk.jo`): the bed, the chair (at a family's, one's place at their table), the
+  hotel's French window, or the door.
+  - **Getting there:** the pilot gets up out of the chair or the bed by degrees, walks round the
+    furniture (`room_path`: straight when the floor is clear, else by the open floor), turns to
+    the thing, and sits or lies down by degrees (`RoomPilot`, `room_step`, `room_body`; the
+    figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
+    one of its places to the next.
+  - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
+    evening (`room_sleep_until`). A click, a tap or a key wakes him early. He stays lying until
+    he's sent somewhere, and the bed clicked again gets him up.
+  - **The window:** he stands at it and the view goes out over the harbour. Clicking it again, or
+    Escape, brings him back to the chair.
+  - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
+  - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Enter or A
+    to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
+    vertices, cut from the baked room). A small label over it says what it does now (`room_label`:
+    "Sleep", "Lie down", "Get up", "Sit", "Look out", "Back inside", "Leave").
+  - **The view:** it turns all the way round by a drag, a finger or the right stick, so the door
+    can be behind. On a phone held upright it is wider. The pilot isn't drawn while he passes
+    within a metre of the eye. One small corner line lists the keys; with a pointer or a finger,
+    nothing else is shown.
 - **Lit and lived in:** walls, floor and ceiling are tiled and each room is baked three times
   into its vertex colours (`bake_room`): by day, the window's cool light falling off into the room;
   of an evening, the lamps' warm pools, turned by each surface's facing, with dark brown corners
@@ -2811,12 +2906,17 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
   show through them; a game saved during a stay loads with the pilot outside, where he went in.
 - **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
-  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`); `stay_begin_hotel`,
-  `stay_begin_family`, `stay_sleep`, `stay_woke`, `stay_end`, `stay_frame`, `draw_stay` and
-  leisure stage 15 in `aegean.jo`; the time skip's `visible` mode; `tests/stay_test.jo`.
+  `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`), `src/room_walk.jo`
+  (`room_objects`, `room_furniture`, `room_hubs`, `room_pick`, `room_path`, `room_step`,
+  `room_body`, `room_label`); `stay_begin_hotel`, `stay_begin_family`, `stay_sleep`, `stay_woke`,
+  `stay_end`, `room_setup`, `room_use`, `room_arrive`, `room_step_frame`, `stay_frame`, `draw_stay`,
+  `draw_room_label` and leisure stage 15 in `aegean.jo`; the time skip's `visible` mode;
+  `tests/stay_test.jo`, `tests/room_walk_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=stay-hotel|stay-hotel-window|stay-hotel-asleep|stay-family-supper|
   stay-family-asleep|stay-family-morning`; `AEGEAN_STAY_FRAMES=<dir>` writes a clip's frames, and
   `AEGEAN_STAY_SLEEP=1` sends the pilot to sleep at frame 120.
+  `AEGEAN_ROOM_SCRIPT="<frame>:<bed|chair|window|door|focus-<thing>|wake> ..."` sends him to a thing
+  at that frame, lights one, or wakes him, and prints a `ROOM` trace.
 
 ### A new pilot's welcome
 
@@ -2914,6 +3014,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `elbows`, `reach`, `twist`, `figure_hand_local`) in `src/folk.jo`; `table_bar` in
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
+- **Going over to sit:** on foot, the pilot's table, the bar's stool and the coffee house's table
+  are tapped or clicked: he walks over and sits ([Things to tap](#things-to-tap)).
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
 
@@ -3293,6 +3395,17 @@ No image: the tiers differ in budgets more than in any single view.
   moment after. Before it, away from a shore the open sea was silent.
 - **Code:** `src/sea_sound.jo`; `src/flight_feedback.jo` (`afloat`, `height`, `over_sea`,
   `sea_wind`); `tests/sea_sound_test.jo`.
+
+### On foot
+
+- **Aliases:** footsteps (a trial on the Tweaks page, off by default).
+- **Definition:** walking heard: a footfall each half stride by the ground underfoot (the jetty's
+  planks over the water, stone quays, stairs, cobbles, earth, sand, the bar room's boards with the
+  room's echoes), climbing into and out of the aircraft, a chair or a stool as one sits and stands,
+  a glass or a plate set down at the table; and the bar room's talk and the terrace's crossing over
+  through its doorways by how far in one is. Before it, nothing of walking was heard.
+- **Code:** `src/foot_sound.jo`; `aegean.jo` (`foot_ground`, `foot_sounds_frame`,
+  `hotel_indoor_amount`); `src/ambience_scene.jo` (`indoor_amount`); `tests/foot_sound_test.jo`.
 
 ### Uneven events
 
