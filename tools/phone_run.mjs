@@ -16,6 +16,7 @@
 import {execFileSync} from 'node:child_process';
 import {writeFileSync, readFileSync} from 'node:fs';
 import {openPage} from './web_page.mjs';
+import {claimBrowser, checkBrowser} from './phone_browser.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; };
@@ -60,9 +61,11 @@ adb('shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--set', '0');  
 adb('shell', 'svc', 'power', 'stayon', 'usb');
 adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP');
 adb('shell', 'wm', 'dismiss-keyguard');
+const claimed = claimBrowser(browser, devport);
 adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'about:blank', '-p', packages[browser]);
 adb('forward', `tcp:${devport}`, `localabstract:${sockets[browser]}`);
 await sleep(1500);
+const browserVersion = await checkBrowser(devport, browser);
 
 let served = null, url = page;
 if (!/^https?:/.test(page)) {
@@ -156,7 +159,7 @@ for (let i = 0; i < 600; i++) {
   if (!('card' in stages) && 'first_frame' in stages && stamp() > 30) break;   // (a page without the card: AEGEAN_TITLE=0 and staged)
 }
 const shown = 'card_gone' in stages || ('first_frame' in stages && !('error' in stages));
-let result = {url, browser, stages_ms: stages, shown};
+let result = {url, browser, browser_package: claimed.package, browser_version: claimed.version, devtools_browser: browserVersion, stages_ms: stages, shown};
 if (shown) {
   await sleep(warm * 1000);
   const from = await evaluate('performance.now()');

@@ -698,7 +698,23 @@ On the rivers branch until it lands.
   ground controls in `_substep`, `ground_start`; the gear points `landplane_gear_contacts` in
   `src/aircraft_early.jo`; `AircraftProfile.landplane` in `src/aircraft_catalog.jo`.
 - **Rules:** a landplane is never put on the water: the pause menu's switch, the tow after a wreck
-  and the start put it on an [airfield](#airfield)'s stand.
+  and the start put it on an [airfield](#airfield)'s stand, and so does a saved or new game whose
+  record has it at a harbour's berth (`landplane_ashore`).
+- **On the ground, as a player has it (flight model v2):** the mouse's (and the touch screen's) aim
+  steers on the wheels by the nose's heading, leaving the stick in the middle at a taxi, so a tail-
+  dragger is not pushed onto her nose, and lifts the nose only near flying speed; the stick held back
+  on the run (the keys, a gamepad) asks for her best lift, the nose brought to just under her stall,
+  the tail lifted off the grass if she sat on it there (her three-point attitude is past it). In a
+  crosswind the tyres keep her track (the air's grip that drifts her with the wind is off on the
+  wheels), the pilot's hand holds her wings level on the run, and just off the grass the mouse's bank
+  is kept within what her wing tip clears. An amphibian on her wheels (the Albatross, the Bat Boat)
+  has the same elevator, and brakes as a landplane does. Away from an aerodrome at rest (in a field,
+  out of fuel), or an amphibian ashore whose run no strip is long enough for, a lorry or a team can be
+  sent for (`stranded_on_land`, `fetch_home`): never a dead end. `tools/ground_survey.jo` (taxiing,
+  turning, braking, crosswind take-offs and landings, mouse and keys), `tests/landplane_ground_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_CIRCUIT=1` (with `AEGEAN_CRAFT` a landplane and `AEGEAN_AIRFIELD=stand`):
+  taxied out from the visitors' stand, off the strip, once round a short circuit, landed and taxied
+  back, as the air arm's sorties go, on the player's own steering.
 
 ### Ditching
 
@@ -934,9 +950,11 @@ On the rivers branch until it lands.
   not by its run along its length, so it is not broken up in a moderate swell, while a hard drop
   still crushes it (`src/flight.jo` `_substep`); `tests/type_flight_test.jo`.
   On v2 the cruise throttle (`cruise_throttle`) is v2's own balance (`fdm2_cruise_throttle`), so every
-  type cruises at its catalog cruise on it. The player's steering aims the way she goes through an
-  approach (to 1.45 times the stall, the nose from 1.85 times), so she flies down the aim rather than
-  a degree or two below it; and a small correction's gentle turn is eased for the fast types (to the
+  type cruises at its catalog cruise on it. The player's steering aims the nose (the guns) wherever she
+  flies, and the way she goes only on an approach, the throttle back and slow (under 1.45 times the
+  stall, the nose again by 1.6), never while fighting (the guns in use, or a target's lead shown on
+  the gunsight: `Flyer.fighting`), so she flies down an approach's aim rather than a degree or two
+  below it and a correction of a degree at the guns still lands on the gun line; and a small correction's gentle turn is eased for the fast types (to the
   bank a 75 m/s type takes for it), so the racers no longer bank 7 to 8 degrees for 2 degrees of aim,
   while a big one turns them as briskly as ever.
   The other aircraft on v2 (`fdm2_npcs`) take off on the autopilot's attitude hold, not the mouse's
@@ -1591,16 +1609,22 @@ On the rivers branch until it lands.
   shadow onto the field away from the canopy light (held low, so they read at noon). Lanes run
   between districts, a hedgerow along about half. A settlement's working land and the olive
   country are drawn as the same patchwork, taking their own crops. Woods keep the pine stands;
-  the lowland's maquis gives way to the fields. Far off, the fields turn to their mean. On low,
-  the fields' colour is baked into the terrain tiles on the CPU (soft edges, no hedgerows; the
-  fields' mean on coarse tiles).
-- **Code:** `src/fields.jo` (`field_at`, `field_crop`, `field_hedges`, `field_share`,
-  `field_bake`, `field_crop_low`, `field_palette`); used by `ground_surface` in
-  `src/terrain.jo`; baked for low in `world_tile_job_rows` (`src/world_terrain.jo`).
+  the lowland's maquis gives way to the fields. Far off, the fields turn to their mean. One look
+  on every tier, at about low's cost: each terrain sample's field colour and share are baked on
+  the CPU (the new world's tiles, the old islands' tiles at load, each grass cell), and the
+  hedgerows, lanes, field edges and hedge shadows come from the field map, a wrap-around texture
+  of 3 m texels round the camera drawn in 64-texel blocks by a small GPU pass as the camera
+  moves (redrawn a few blocks a frame when the light's bearing turns). The ground reads it with
+  one sample.
+- **Code:** `src/fields.jo` (`field_at`, `field_share`, `field_bake`, `field_crop_low`,
+  `field_colour`, `field_palette`); `src/field_map.jo` (`field_layout`, `update_field_map`);
+  used by `ground_surface` in `src/terrain.jo`; baked in `world_tile_job_rows`
+  (`src/world_terrain.jo`), `island_working` (`src/terrain_lod.jo`) and `grass_build_step`
+  (`src/grass.jo`).
 - **Rules:** the palette is a switch until the look is decided: `AEGEAN_FIELD_PALETTE=dry` gives
   the dry straw summer (docs/ART.md); green valleys by default. Low's terrain shader is at a
   register-pressure cliff on redfox: measure any addition to its low path there, alone and
-  together.
+  together. Field detail goes into the bake or the field map, not into per-pixel work.
 ---
 
 ## Towns and people
