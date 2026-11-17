@@ -6,8 +6,8 @@ in, a wreck towed home, broke and dry at home with work still to be had, and the
 lost) and the canal escape handing back to the ordinary game on arrival, which then saves.
 Slow (a minute or so a case here, several in CI). This file plays the flying loops and
 tests/playtest_town_test.py the town's, both in CI only with slow: true; tests/playtest_situations_test.py
-plays the strait and the canal escape, on a real GPU only (under CI's software rendering the strait
-ran some 300 frames in 14 minutes). Two cases at a time: python3 tests/playtest_loops_test.py
+plays a wreck towed in by the call for help, the strait and the canal escape, on a real GPU only
+(under CI's software rendering the strait ran some 300 frames in 14 minutes, and the tow over 30). Two cases at a time: python3 tests/playtest_loops_test.py
 [town|flying|situations|all].
 """
 import concurrent.futures as cf
@@ -28,9 +28,9 @@ GROUPS = {
     ],
     "flying": [
         ("ride", 4000, dict(AEGEAN_LEISURE="ride-air", AEGEAN_FLYING="120")),
-        ("tow", 6000, dict(AEGEAN_FLYING="60")),
     ],
     "situations": [
+        ("tow", 6000, dict(AEGEAN_FLYING="60")),
         ("strait-home", 9000, dict(AEGEAN_SCENARIO="strait", AEGEAN_CAPTURE_STRAIT_AFTER="arrive", PLAYTEST_COME_IN="3000")),
         ("strait-lose", 8000, dict(AEGEAN_SCENARIO="strait")),
         ("canal", 9000, dict(AEGEAN_SCENARIO="canal", AEGEAN_CAPTURE_CANAL_RUN="1", PLAYTEST_COME_IN="3600")),
