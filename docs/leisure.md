@@ -196,6 +196,18 @@ funny or useful (time passes, people are met, the plane is looked after).
 32. **A family's view** is up over the door. His way round the table to the back room stays in
    sight.
 
+## Built (round fourteen)
+
+33. **Taking the waters.** At a hot spring's terraces: tap the keeper at the bathhouse door (thirty
+   lepta), change in the cabin, and tap the pool. He walks down by the stairs and settles into the
+   water among a few of the town's people, who talk now and then (small talk, their own remarks,
+   once a lead) while the morning passes unhurried. Tap the steps to get out and change back.
+   Now and then the one who asks for a flight wants a lift to the springs' harbour, and pays a
+   little there.
+34. **Rooms, from the phone:** a tap while he sleeps wakes him and sends him to what was tapped;
+   Back gets him up in the room, not out of it. The night paid for, the desk offers his room. The
+   hotel's terrace no longer offers to fish.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
