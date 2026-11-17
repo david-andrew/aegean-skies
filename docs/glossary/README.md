@@ -1895,14 +1895,20 @@ On the rivers branch until it lands.
 - **Lifts:** now and then the one who asks at the aircraft for a flight wants a lift instead: to the
   harbour below the nearest springs within 120 km ("Would you be going anywhere near the
   Saryerenos baths? I'd pay for a lift as far as Delyavouna."). Set down there, they pay ¤1.50 if
-  they have it and thank the pilot. Set down anywhere else, they say "Not here, I'm afraid" and
+  they have it and thank the pilot ("there" is moored within 1.5 km of the harbour on the map:
+  the living world's own places are the old harbours only). Set down anywhere else, they say "Not here, I'm afraid" and
   stay in the seat (`ride_lift_choice`, `Joyride.dest`).
+- **The sign** reads "THERMAL BATHS", by the game's convention for signs: Latin capitals and plain
+  English trade words ("BARBER", "INN", the notice boards, the airfields' names), with only the
+  hotel's own Italian name, "HOTEL ANCORA". There is no Greek lettering anywhere. Both springs
+  are in the invented mainland countries, Kalyra and Orenthia, not the Greek archipelago.
 - **History:** springs like Loutraki, Aidipsos, Ikaria and Methana were in use in the islands then,
   with plain bathhouses and a keeper taking a few lepta.
 - **Code:** `src/bath.jo` (`Bath`, `bath_pick_line`, `bath_pay`, `lift_fare_pay`); `bath_step`,
   `bath_go_in`, `bath_walk_to`, `bath_get_out`, `draw_bath_people`, `draw_bath_talk` and leisure
   stage 21 (the keeper) in `aegean.jo`; `ride_lift_*` in `src/joyride.jo`; `tests/bath_test.jo`.
-- **Capture:** `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters` walks up
+- **Capture:** `AEGEAN_LEISURE=ride-lift-land AEGEAN_RIDE_TRACE=1` sets a lift down at Delyavouna's
+  dock and shows the fare paid. `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters;3000:bath-out` walks up
   from the path, pays, changes and gets in. `AEGEAN_LEISURE=ride-ask AEGEAN_RIDE_LIFT=1` shows a lift
   being asked for.
 
