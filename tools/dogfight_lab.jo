@@ -33,7 +33,10 @@ model=env("DOGFIGHT_MODEL") ?? "default"
 average_player=(env("DOGFIGHT_PLAYER") ?? "")=="average"
 t=Tweaks()
 if model=="skybarons": t.skybarons_response=true
-if model=="v2": t.flight_model=1; t.fdm2_npcs=true
+if model=="v2": t.flight_model=1; t.fdm2_npcs=true; t.fdm2_fighters=true
+# (v2player: the player's seat on v2, the other aircraft on the earlier model; old: everyone on it)
+if model=="v2player": t.flight_model=1; t.fdm2_npcs=false
+if model=="old": t.flight_model=0; t.fdm2_npcs=false
 if model=="sb": t.flight_model=2
 # (DOGFIGHT_AIM=1: the aim assist on for the player's seat; DOGFIGHT_PLAIN_HITS=1: generous hits off)
 if env("DOGFIGHT_AIM")!=none: t.aim_assist=true
@@ -57,17 +60,37 @@ struct Tracked:
 const REACT = 15                    # ticks of reaction time
 const HISTORY = 32
 
+# The player's hand as the game takes it (src/pilot.jo, the mouse or a finger): the aim's motion
+# measured and smoothed into the steering (the rudder's lead), the controls eased toward what is
+# asked at the game's rate.
+struct SeatHand:
+    seen: vec3 = vec3(0, 0, 0)
+    rate: vec3 = vec3(0, 0, 0)
+    last: Controls = Controls()
+
+hand_steer = (h: mut SeatHand, k: CraftSpec, s: CraftState, want: vec3) -> Controls:
+    aim = normalize(want)
+    if length(h.seen) > 0.5: h.rate += ((aim - h.seen) * 60.0 - h.rate) * f32(1.0 - exp(-10.0 / 60.0))
+    h.seen = aim
+    c = steer(k, s, aim, h.rate)
+    ease = 1.0 - exp(-30.0 / 60.0)
+    c.pitch = h.last.pitch + (c.pitch - h.last.pitch) * ease
+    c.roll = h.last.roll + (c.roll - h.last.roll) * ease
+    c.yaw = h.last.yaw + (c.yaw - h.last.yaw) * ease
+    h.last = c
+    c
+
 # The average player's controls this tick, from what it saw REACT ticks ago.
-average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3[][], tick: int, e: FlightEnv) -> (Controls,bool):
+average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3[][], tick: int, e: FlightEnv, h: mut SeatHand) -> (Controls,bool):
     a = b.actors[me]; s = a.state
     fwd = quat_rotate(s.orientation,vec3(0,0,-1))
     g = max(0.0,e.ground(f64(s.position.x),f64(s.position.z)))
     if f64(s.position.y)-g < 140.0 or (f64(fwd.y) < -0.35 and f64(s.position.y)-g < 300.0):
-        c = steer(a.spec,s,vec3(fwd.x,0.8,fwd.z)); c.throttle = 1.0
+        c = hand_steer(h,a.spec,s,vec3(fwd.x,0.8,fwd.z)); c.throttle = 1.0
         return (c,false)
     if target < 0:
         # (no enemy near: hold the formation's heading, level)
-        c = steer(a.spec,s,heading_vector(a.pilot.formation_heading)+vec3(0,f32(clamp((420.0-f64(s.position.y))/400.0,-0.3,0.3)),0)); c.throttle = 1.0
+        c = hand_steer(h,a.spec,s,heading_vector(a.pilot.formation_heading)+vec3(0,f32(clamp((420.0-f64(s.position.y))/400.0,-0.3,0.3)),0)); c.throttle = 1.0
         return (c,false)
     then = (tick-REACT+HISTORY*1000)%HISTORY
     seen = past[then][target]; seenv = pastv[then][target]
@@ -78,7 +101,7 @@ average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3
     aim = intercept(delta,seenv-s.velocity,420.0*b.bullet_scale)
     wander = f32(min(dist*0.02,9.0))
     aim += vec3(f32(sin(f64(tick)*0.023))*wander,f32(cos(f64(tick)*0.019))*wander,f32(sin(f64(tick)*0.011))*wander)
-    c = steer(a.spec,s,normalize(aim))
+    c = hand_steer(h,a.spec,s,aim)
     st = a.spec.stall_speed*pure_k(a.spec)
     c.pitch = min(c.pitch,0.15+0.85*smoothstep(st*1.1,st*1.45,f64(length(s.velocity))))
     true_delta = b.actors[target].state.position-s.position
@@ -156,7 +179,7 @@ loop n in 0..battles:
     idle=fill(0,b.actors.len());slow=fill(0,b.actors.len());fired=fill(0,b.actors.len())
     past=[loop _ in 0..HISTORY: [loop a in b.actors: a.state.position]]
     pastv=[loop _ in 0..HISTORY: [loop a in b.actors: a.state.velocity]]
-    chasing=-1;engaged_at=-1;targeted=0;cleared=-1
+    chasing=-1;engaged_at=-1;targeted=0;cleared=-1;hand=SeatHand()
     loop tick in 0..int(seconds*60.0):
         observer=b.actors[stand].state.position
         loop i in 0..b.actors.len(): past[tick%HISTORY][i]=b.actors[i].state.position;pastv[tick%HISTORY][i]=b.actors[i].state.velocity
@@ -164,7 +187,7 @@ loop n in 0..battles:
             env0=flight_env(f64(tick)/60.0,observer)
             chasing=average_target(b,stand,chasing)
             if chasing>=0 and engaged_at<0:engaged_at=tick
-            c,f=average_controls(b,stand,chasing,past,pastv,tick,env0)
+            c,f=average_controls(b,stand,chasing,past,pastv,tick,env0,hand)
             b.actors[stand].pilot.controls=c;b.actors[stand].pilot.trigger=f
         if tick%60==0:
             loop o in b.actors:
