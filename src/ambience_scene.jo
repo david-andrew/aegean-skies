@@ -1,5 +1,6 @@
 # Geometry adapter: sources are fixed in world space, not random offsets around an ear.
 use 'ambience.jo'
+use 'tweaks.jo'
 use 'ambience_synth.jo'
 use 'objects.jo'
 use 'settlements.jo'
@@ -32,6 +33,7 @@ struct AmbienceScene:
     previous_scan = -1.0
     ships: {int: VesselStatus} = {}
     indoors = false                 # (the listener inside a building the game knows as a room: the hotel)
+    indoor_amount = 0.0             # (and how far in: 0 outside, 1 a couple of metres past the walls)
 
 # A crossing of the authoritative coast height field, then classify with the same
 # slope criterion as the terrain's beach material (no independent shoreline map).
@@ -181,42 +183,6 @@ ambience_event = (scene: mut AmbienceScene,s: AmbienceSource,cell: int,at: f64,l
     e.pitch = s.pitch*(1.0+(ambience_hash(s.key,cell,3)-0.5)*2.0*spread)
     ambience_queue(scene.sound,e,at,listener)
 
-# A voice's pitch for a body: children high, the old a little lower.
-ambience_voice_pitch = (age: int) -> f64: if age < 14: 1.35 else: clamp(1.0+f64(35-age)*0.004,0.88,1.08)
-
-# Now and then one of the people about the listener says something: a greeting, a laugh, a call
-# across the quay, or a question that the person with them answers. From where they stand, a
-# few a minute in a crowd, none from those indoors, asleep or travelling; past 40 m only calls. (src/life_view.jo
-# dresses even ids as men, odd as women: their voices follow.)
-ambience_voices = (scene: mut AmbienceScene,w: life.World,listener: vec3,previous: f64,now: f64,hour: f64):
-    if previous < 0: return
-    quiet = if hour < 7 or hour >= 22: 2.5 else: 1.0
-    loop p in w.people:
-        far = f64(length(p.pose.pos-listener))
-        if far > 90 or not ambience_awake(w,p): continue
-        cell = ambience_due(previous,now,7700000+p.id,75.0*quiet*(if far > 40: 2.5 else: 1.0))
-        if cell < 0: continue
-        h = ambience_hash(p.id,cell,4)
-        at = p.pose.pos+vec3(0,1.6,0)
-        female = p.id%2 == 1
-        pitch = ambience_voice_pitch(p.age)
-        take = (if female: 2 else: 0)+int(ambience_hash(p.id,cell,5)*1.999)
-        other = -1
-        if p.id in w.daily_life:
-            c = w.daily_life[p.id].companion
-            if c >= 0 and c < w.people.len() and length(w.people[c].pose.pos-p.pose.pos) < 6 and ambience_awake(w,w.people[c]): other = c
-        if far > 40: h = 0.9            # (beyond 40 m only a call carries)
-        if other >= 0 and h < 0.5:
-            q = w.people[other]
-            ambience_event(scene,AmbienceSource(7700000+p.id,.ask,at,0.06,60,pitch=pitch,variant=take),cell,now,listener)
-            reply = (if q.id%2 == 1: 2 else: 0)+int(ambience_hash(q.id,cell,5)*1.999)
-            ambience_event(scene,AmbienceSource(7800000+q.id,.answer,q.pose.pos+vec3(0,1.6,0),0.06,60,pitch=ambience_voice_pitch(q.age),variant=reply),cell,now+0.8+ambience_hash(q.id,cell,6)*0.6,listener)
-        else:
-            kind = if h < 0.65: AmbienceKind.greet else: if h < 0.85: AmbienceKind.laugh else: AmbienceKind.call
-            gain = if kind == .call: 0.09 else: 0.065
-            ambience_event(scene,AmbienceSource(7700000+p.id,kind,at,gain,if kind == .call: 160 else: 70,pitch=pitch,variant=take),cell,now,listener)
-        return
-
 ambience_scene_offer = (sound: Ambience,sources: mut AmbienceSource[],s: AmbienceSource,listener: vec3):
     if sound.enabled[ambience_category(s.kind)]: ambience_offer(sources,s,listener)
 
@@ -299,7 +265,14 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
             gain = min(1.0,f64(ambience_count(people,venue.pos,22))/6)*0.12
             # (a room's talk indoors; a terrace's out in the open air; inside the room the
             # terrace belongs to, the room's talk all about the listener)
-            inside = scene.indoors and length(venue.pos-listener) < 40
+            near_room = length(venue.pos-listener) < 40
+            if tweaks.on_foot and near_room and not venue.covered and scene.indoor_amount > 0.0:
+                # (through the doorways the room's talk and the terrace's cross over, by how far in)
+                inside_share = scene.indoor_amount
+                ambience_scene_offer(scene.sound,sources,AmbienceSource(7000000+venue.place,.cafe,listener+vec3(0,0.3,0),gain*inside_share,65),listener)
+                if inside_share < 0.999: ambience_scene_offer(scene.sound,sources,AmbienceSource(7000000+venue.place,.chatter,venue.pos,gain*(1.0-inside_share),65),listener)
+                continue
+            inside = scene.indoors and near_room
             ambience_scene_offer(scene.sound,sources,AmbienceSource(7000000+venue.place,if venue.covered or inside: AmbienceKind.cafe else: .chatter,if inside: listener+vec3(0,0.3,0) else: venue.pos,gain,65),listener)
         if let river = ambience_river(listener): ambience_scene_offer(scene.sound,sources,river,listener)
         if scene.has_shore:
@@ -345,7 +318,6 @@ ambience_scene_step = (scene: mut AmbienceScene,w: life.World,fleet: VesselFleet
             if ship.id in scene.ships and scene.ships[ship.id] != ship.status and vessel_spec(ship.kind).steam and (ship.status == .underway or ship.status == .docked):
                 ambience_queue(scene.sound,AmbienceSource(8000000+ship.id,.whistle,ship.position+vec3(0,5,0),0.20,1200),now,listener)
         scene.ships = current
-        ambience_voices(scene,w,listener,scene.previous_scan,now,hour)
         # The scan can straddle the boundary by <=0.5s, so retain the hour edge until scanned.
         if scene.previous_scan >= 0 and now-scene.previous_scan <= 1.5:
             before = int(scene.previous_scan/2)
