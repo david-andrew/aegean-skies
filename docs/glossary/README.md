@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1871,6 +1871,32 @@ On the rivers branch until it lands.
 - **Definition:** a lake town's houses lining the path from its square to the jetty, timber boat
   sheds open to the water with slipways, and a dressed stone edge along the shore at the jetty root.
 - **Code:** `lake_waterfront` (`src/lake_ports.jo`), `lake_waterfront_mesh` (`src/lake_port_mesh.jo`).
+
+### A picnic
+
+- **Aliases:** the picnic basket, a blanket on the shore.
+- **Definition:** an opt-in leisure (`src/picnic.jo`):
+  - **The basket:** "A picnic basket" is on the bill of fare at the hotel (bread, cheese, olives,
+    tomatoes and a bottle of the house's white, with a blanket, ¤2.40) and the coffee house
+    (¤1.80). It isn't brought to the table: it's made up and handed over, and he carries it on his
+    arm, aboard and wherever he flies.
+  - **A spot:** low land above the water and under four metres high, with the sea within twenty
+    metres. Not a quay or a pier (the land itself must be above the sea, with nothing built up
+    over it), and not a town (no house within a dozen metres) (`picnic_spot_at`).
+  - **Spreading the blanket:** with the basket along, tap or click the sand there. With the mouse,
+    a small label says "Spread the blanket", or F where he stands. He walks over, the striped
+    blanket unrolls, he sits down by degrees facing the sea, and the basket, bread, olives and
+    bottle are set out.
+  - **Sitting:** the afternoon goes by unhurried, about a minute of the world's clock a second. A
+    bite now and then, his hand to his mouth. The view sits behind him and to one side.
+  - **Packing up:** tap the basket, or Escape, or walk off. He gets up by degrees, and the notebook
+    has a line ("A picnic on the shore near Porto Vecchio: bread, cheese and the sea.").
+- **Code:** `src/picnic.jo` (`Picnic`, `picnic_sea_angle`, `picnic_spot_ok`, `picnic_note`);
+  `picnic_spot_at`, `picnic_begin`, `picnic_step`, `picnic_pack`, `draw_picnic` and the basket's
+  ordering in `_leisure_order` in `aegean.jo`; `PICNIC_ITEM` in `src/leisure_menu.jo`;
+  `tests/picnic_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=picnic AEGEAN_FOOT_GO=60:picnic;1300:pack` takes the basket to a
+  quiet shore across the bay from the hotel.
 
 ### Taking the waters
 
