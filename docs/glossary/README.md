@@ -2308,8 +2308,8 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   it'd be wanted, each to a named person who meets the aircraft on the dock (the
   [dock handover](#dock-handover)) and says something fitting as it's handed over. The mail bag
   at half past seven, out from Porto Vecchio's post to one island one day and back the next, a
-  postmaster (clerk, telegraphist, teacher or priest) at each end; the morning papers at five, for
-  an island's innkeeper by breakfast; block ice from the ice works every other morning for a
+  postmaster (clerk, telegraphist, teacher or priest) at each end; the morning papers at five (for a
+  pilot up at dawn; the island couriers leave them), for an island's innkeeper by breakfast; block ice from the ice works every other morning for a
   fishmonger, two hours before it's water (late, and the thanks say so); a diver's sponges from
   Mikra every third day for a Porto Vecchio merchant; now and then the nurse from Agios Nikolaos,
   flown to a sick child's family in another harbour (a passenger who sits beside the pilot and
