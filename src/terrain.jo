@@ -49,7 +49,7 @@ struct GroundParams:
     grass_lag: vec4 = vec4(0,0,0,0)     # and its phase offsets (meadow_lag)
     meadow_a: vec4 = vec4(0,0,0,0)      # the wind study (Tweaks): its two gust layers' offsets (look.jo meadow_study_gust)
     meadow_b: vec4 = vec4(0,0,0,0)      # its two dab layers' offsets (meadow_study_dabs)
-    meadow_c: vec4 = vec4(0,0,0,0)      # (xy spare), the dabs' travel (z, m/s), on (w: 1)
+    meadow_c: vec4 = vec4(0,0,0,0)      # the gusts' reach (x, m), the dabs' (y), the dabs' travel (z, m/s), on (w: 1)
     meadow_noise: Texture = Texture()   # its noise tile (look.jo meadow_noise_texture)
     grass_view: vec4 = vec4(0,1,1,1)  # the grass egg: look x, z, side reach, behind reach (src/grass.jo grass_shape)
     roads: Texture = Texture()
@@ -128,9 +128,27 @@ coast_world_fs = (i: GroundOut,u: GroundParams) -> vec4:
 # (the low tier's: its own canopy, compiled without the full one)
 coast_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,0)
 coast_world_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0)
+# (the wind study's (Tweaks): the same with its sheen compiled in; main's shaders never carry its code)
+coast_fs_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,1,1)
+coast_world_fs_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,1,1)
+coast_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,0,1)
+coast_world_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0,1)
 
 coast_sh: Shader
 coast_world_sh: Shader
+coast_sh_ws: Shader
+coast_world_sh_ws: Shader
+terrain_study_ready = false
+
+# the wind study's ground shaders, made the first time its Tweaks box is on
+terrain_study_shaders = ():
+    global coast_sh_ws,coast_world_sh_ws,ground_sh_ws,terrain_study_ready
+    if terrain_study_ready: return
+    low = render_quality.tier == 0
+    ground_sh_ws = make_world_shader(if low: shader(ground_vs,ground_fs_low_ws) else: shader(ground_vs,ground_fs_ws),false)
+    coast_sh_ws = make_world_bounded_shader(if low: shader(coast_vs,coast_fs_low_ws) else: shader(coast_vs,coast_fs_ws),false)
+    coast_world_sh_ws = make_world_bounded_shader(if low: shader(coast_vs,coast_world_fs_low_ws) else: shader(coast_vs,coast_world_fs_ws),false)
+    terrain_study_ready = true
 
 draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: bool = false):
     global coast_triangles,coast_instances,coast_draws
@@ -138,6 +156,9 @@ draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: boo
     loop level in 0..COAST_LEVELS:
         if batches[level].len() == 0: continue
         sh=if large:coast_world_sh else:coast_sh
+        if params.meadow_c.w > 0.0:
+            terrain_study_shaders()
+            sh=if large:coast_world_sh_ws else:coast_sh_ws
         near=false
         when TARGET=="wasm":
             near=world_split_depth_active() and params.warp_b.x==0 and coast_batch_near(batches[level],params.cam)
@@ -173,7 +194,7 @@ ground_strata=(i:GroundOut,u:GroundParams)->vec3:
     wav=sin(world.x*0.013+world.z*0.009)*2.5+i.tint.y*6.0+fracture*34.0
     vec3((i.world.y+wav)*0.55,fracture,pigment.x)
 
-ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1)->vec4:
+ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1,wind_study:int=0)->vec4:
     if behind_sea(i.world,u.cam):discard()
     if i.world.y < -40.0:return vec4(u.haze*0.2,1)
     strata=vec3(0,0,0)
@@ -181,19 +202,23 @@ ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=f
     footprint=max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
     normal=if coastal:normalize(i.relief_normal) else:normalize(i.normal)
     ndl=dot(render_normal(normal,i.world,u.cam),normalize(u.sun_dir))
-    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail)
+    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail,vec2(-1,0),wind_study)
     vec4(col.xyz*paint_paper(i.pos.xy),col.w)
 
 # canopy_detail: the canopy's (0 the low tier's, from its own shaders, so the full path is not compiled in)
 # (in shaders) the wind study's field at a render position (look.jo explains it): x the dabs' strength (0..1, the
-# grass laid over in a passing cat's paw), y the gust's (0..1); dabs: 0 skips the fine layers (far ground).
-meadow_study = (local: vec2, u: GroundParams, dabs: f32) -> vec2:
+# grass laid over in a passing cat's paw), y the gust's (0..1); dabs: 0 skips the fine layers (far ground);
+# lone: 1 reads the first gust layer alone (spread to the pair's deviation), for the far ground: one texture read.
+meadow_study = (local: vec2, u: GroundParams, dabs: f32, lone: f32 = 0.0) -> vec2:
     qa = local + u.meadow_a.xy
-    qb = local + u.meadow_a.zw
     # gust layers turned by whole-number matrices (periods 2016/sqrt 5 and 1344/sqrt 5 m)
     a = sample_lod(u.meadow_noise, vec2(2.0 * qa.x + qa.y, 2.0 * qa.y - qa.x) / 2016.0, 0.0).x
-    b = sample_lod(u.meadow_noise, vec2(qb.x - 2.0 * qb.y, 2.0 * qb.x + qb.y) / 1344.0, 0.0).y
-    gust = smoothstep(0.5, 0.72, 0.62 * a + 0.38 * b) * smoothstep(2.5, 10.0, u.wind.z)
+    n = 0.5 + 0.727 * (a - 0.5)
+    if lone < 1.0:
+        qb = local + u.meadow_a.zw
+        b = sample_lod(u.meadow_noise, vec2(qb.x - 2.0 * qb.y, 2.0 * qb.x + qb.y) / 1344.0, 0.0).y
+        n = mix(0.62 * a + 0.38 * b, n, lone)
+    gust = smoothstep(0.5, 0.72, n) * smoothstep(2.5, 10.0, u.wind.z)
     dab: f32 = 0.0
     if dabs > 0.0:
         q1 = local + u.meadow_b.xy
@@ -217,14 +242,36 @@ meadow_fill = (p: GroundParams, origin: vec3) -> GroundParams:
     if tweaks.wind_study_grass:
         q.meadow_a = meadow_study_gust(origin)
         q.meadow_b = meadow_study_dabs(origin)
-        q.meadow_c = vec4(0, 0, f32(meadow_travel(meadow_state.speed)), 1)
+        low = render_quality.tier == 0
+        q.meadow_c = vec4(if low: 1600 else: 2600, if low: 300 else: 600, f32(meadow_travel(meadow_state.speed)), 1)
         q.meadow_noise = meadow_noise_texture()
     else:
         q.meadow_c = vec4(0,0,0,0)
         q.meadow_noise = coast_pattern_texture
     q
 
-ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1,study_known:vec2=vec2(-1,0))->vec4:
+# (in shaders, the wind study's ground shaders only) the sheen over the meadows: main's waves in a calm or light
+# air, the study's gusts from 5 m/s, which carry on to the far fields (1.4-2.6 km; 0.9-1.6 km on the low tier)
+# where main's waves stop at the near envelope. The study's gusts are 100-250 m patches that never repeat over
+# a hill, so they may go further. A blade passes in what it already read at its root (known).
+meadow_study_sheen = (i:GroundOut,u:GroundParams,col:vec3,meadow_in:f32,near:f32,riparian:f32,y:f32,known:vec2)->vec3:
+    out = col
+    study = meadow_study_share(u)
+    reach = length(i.world-u.cam)
+    far_meadow = meadow_in*(1.0-smoothstep(u.meadow_c.x*0.55,u.meadow_c.x,reach))*study*(1.0-riparian)
+    meadow = meadow_in*near*(1.0-riparian)
+    if (meadow > 0.0 or far_meadow > 0.0) and y > 3.0:
+        rise = smoothstep(3.0,9.0+i.tint.x*8.0,y)
+        if study < 1.0:
+            wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)*(1.0-study)
+            out += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow*rise)
+        if far_meadow > 0.0:
+            # the gust's laid-over grass, near and far, and the dabs (a few metres across: out to 150-600 m)
+            s = if known.x >= 0.0: known else: meadow_study(i.world.xz,u,1.0-smoothstep(u.meadow_c.y*0.25,u.meadow_c.y,reach),smoothstep(u.meadow_c.y*0.5,u.meadow_c.y,reach))
+            out += vec3(0.055,0.048,0.026)*u.sun*(s.y*2.2+s.x*2.6)*far_meadow*rise
+    out
+
+ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1,study_known:vec2=vec2(-1,0),wind_study:int=0)->vec4:
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
     if i.world.y < -40.0: return vec4(u.haze*0.2,1)
@@ -495,36 +542,29 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     # The wind wash and blade-mean tint share the near-detail envelope on
     # mainland and islands: unchanged to 60 m, absent by 260 m. Neither may
     # repeat over whole hills from altitude.
-    # (the wind study, a Tweaks trial: its gusts carry on to the far fields, 1.4-2.6 km; main's waves stop at the near
-    # envelope. The study's gusts are 100-250 m patches that never repeat over a hill, so they may go further.)
-    study = meadow_study_share(u)
-    far_meadow = meadow * (1.0 - smoothstep(1400.0, 2600.0, length(i.world - u.cam))) * study
-    meadow *= near
-    # Coastal maquis replaces the old bare shelf, not a new grass meadow.
-    # Retain the original height envelope for the animated grass wash.
-    meadow*=1.0-riparian
-    far_meadow*=1.0-riparian
-    if (meadow > 0.0 or far_meadow > 0.0) and y > 3.0:
-        rise = smoothstep(3.0,9.0+i.tint.x*8.0,y)
-        meadow *= rise
-        far_meadow *= rise
-        # Advect the broad pigment wash with the same wind drift. Two layers
-        # of per-fragment hash noise read as digital mottling at aerial scale.
-        wave: f32 = 0.0
-        if study < 1.0: wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)*(1.0-study)
-        col += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow)
-        if study > 0.0 and far_meadow > 0.0:
-            # the gust's laid-over grass, near and far, and the dabs (a few metres across: out to 150-600 m)
-            # (a blade passes in what it already read at its root)
-            s = if study_known.x >= 0.0: study_known else: meadow_study(i.world.xz,u,1.0-smoothstep(150.0,600.0,length(i.world-u.cam)))
-            col += vec3(0.055,0.048,0.026)*u.sun*(s.y*2.2+s.x*2.6)*far_meadow
-        # This is also the blade-root colour. No separate grass palette or
-        # distant tint: the root-tip response is normalized in the blade shader.
+    if wind_study == 1:
+        col = meadow_study_sheen(i,u,col,meadow,near,riparian,y,study_known)
+    else:
+        meadow *= near
+        # Coastal maquis replaces the old bare shelf, not a new grass meadow.
+        # Retain the original height envelope for the animated grass wash.
+        meadow*=1.0-riparian
+        if meadow > 0.0 and y > 3.0:
+            meadow *= smoothstep(3.0,9.0+i.tint.x*8.0,y)
+            # Advect the broad pigment wash with the same wind drift. Two layers
+            # of per-fragment hash noise read as digital mottling at aerial scale.
+            wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)
+            col += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow)
+            # This is also the blade-root colour. No separate grass palette or
+            # distant tint: the root-tip response is normalized in the blade shader.
     vec4(land_aerial(col, i.world, u.cam, u.haze, u.fog), 1)
 
 # Both terrain paths share the same coastal and vegetation material rules.
 ground_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false)
 ground_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,0)
+ground_fs_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,1,1)
+ground_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,0,1)
+ground_sh_ws: Shader
 
 ground_sh: Shader
 
@@ -589,7 +629,7 @@ draw_ground = (L: Light, t: f64):
         draw_coast_batches(coastal,params)
         loop i in 0..96:
             if batches[i].len() == 0: continue
-            draw_instanced(ground_sh, terrain_grids[i], batches[i], params)
+            draw_instanced(if params.meadow_c.w > 0.0: ground_sh_ws else: ground_sh, terrain_grids[i], batches[i], params)
             terrain_draws += 1
             terrain_triangles += terrain_grids[i].index_count / 3 * batches[i].len()
             terrain_upload += batches[i].len() * 40
