@@ -25,7 +25,7 @@ on that unmerged branch so far.
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -939,7 +939,7 @@ On the rivers branch until it lands.
   deep navy on the sea, deep green on grass. It slides over the swell and the terrain as drawn.
 - **Code:** `src/craft_shadow.jo`. Each frame the nearby aircraft's own meshes are flattened along
   the sunlight into a small top-down mask under the player's shadow (`craft_shadow_mask_pass`, 80 m
-  square, 16 cm texels; 31 cm on the low tier); in the cloud pass's depth-detached window one
+  square, 16 cm texels; 31 cm on the low tier); in the cloud composite framebuffer one
   full-resolution pass over the mask's rectangle on screen rebuilds each pixel's world point from
   the scene depth, carries it along the sunlight into the mask and multiplies the scene by a cool
   tint (`craft_shadow_multiply`). The mask keeps each caster's lowest point, so an aircraft never
@@ -1841,12 +1841,13 @@ On the rivers branch until it lands.
 
 - **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
   the broadcast set).
-- **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
-  plate; a controller's D-pad left). Down on the sea in trouble its first line is the
+- **Definition:** a small pad of set words by the cockpit radio, opened with Y (a tap on the R/T
+  plate; a controller's D-pad left). It stays open, however long one reads it, until a word is
+  sent or it is put away (Escape, or its Close line). Down on the sea in trouble its first line is the
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
   the flight leader's words follow: form on me, circle here and wait, attack my target, break off
-  and go home, lead me home. A number, a click or tap sends one, or C steps and F sends; Escape or
-  a few idle seconds close it. The nearest of the flight answers in a few plain words.
+  and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
+  nearest of the flight answers in a few plain words.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
 
@@ -1858,8 +1859,9 @@ On the rivers branch until it lands.
   southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
   Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
   past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
-  strait's Kalyran flight comes home to her: it lands to seaward and moors in turn along the booms
-  and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  strait's Kalyran flight comes home to her: round the island's low north end (its ridge of 1,200 m
+  lies between her and the strait; the leader takes the flight round it, a point at a time, at a pace
+  the player's own aircraft cruises at), lands to seaward and moors in turn along the booms and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
   to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
@@ -3073,7 +3075,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   reading (a desk and books), or the house (a sewing table).
 - **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
   needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
-  The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
+  The rooms are drawn last over a cleared depth (`clear_depth`), so the town's walls never
   show through them; a game saved during a stay loads with the pilot outside, where he went in.
 - **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
   `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`), `src/room_walk.jo`
@@ -3334,23 +3336,15 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Reversed depth
 
 - **Aliases:** reversed Z, reversed float depth.
-- **Definition:** on native Vulkan the depth buffer is a float with near at 1 and far at 0, which
-  spreads precision evenly over huge distances.
-- **Code:** `src/depth_space.jo` (`enable_world_depth`, `world_reverse_depth_active`,
-  `world_depth_compare`).
-- **Rules:** clear value, compare and decode must change together. Software and Metal fall back to
-  conventional depth. `AEGEAN_LOG_DEPTH` turns it off.
+- **Definition:** the depth buffer holds the camera near distance divided by view distance. The near plane is 1 and clear sky is 0. Sloppy selects an infinite reversed perspective and the corresponding comparisons and clears.
+- **Code:** `src/depth_space.jo` (`enable_world_depth`, `world_depth_params`).
 
 ### Log depth
 
-- **Aliases:** logarithmic depth, full-log.
-- **Definition:** on WebGL2 (which has no reversed Z) depth is written per fragment as
-  `log2(1 + distance)`. **Split depth** is the default there: ordinary depth below 128 m and log
-  depth beyond, so near geometry keeps early depth testing.
-- **Code:** `src/depth_space.jo` (`world_log_depth`, `world_depth_encode`,
-  `world_split_depth_active`, `world_bounded_shader`).
-- **Rules:** vertex-only log depth is not allowed: it breaks large shoreline triangles.
-  `AEGEAN_FULL_LOG_DEPTH=1` and `AEGEAN_LINEAR_DEPTH` are diagnostic controls.
+- **Aliases:** logarithmic depth.
+- **Definition:** when reversed depth is unavailable, each world fragment writes `log2(1 + view_distance) / 20`. Reciprocal clip w gives the distance across coarse triangles.
+- **Code:** `src/depth_space.jo` (`world_depth_encode`, `world_depth_decode`).
+- **Diagnostics:** `AEGEAN_LOG_DEPTH=1` forces this path. `AEGEAN_LINEAR_DEPTH=1` selects conventional perspective depth.
 
 ### Z-fighting
 
@@ -3362,9 +3356,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Near clipping
 
 - **Aliases:** near plane, the web-near bug, cut-away quay.
-- **Definition:** geometry cut away because it is closer than the near plane (3.5 cm here). In
+- **Definition:** geometry cut away because it is closer than the active camera’s near plane. In
   browsers a bug once clipped whole quay triangles that crossed behind the eye; it was fixed by
-  giving every vertex the same affine clip depth.
+  keeping the camera projection for clipping and writing logarithmic depth in the fragment stage.
 - **Code:** `src/depth_space.jo`; regression check `tools/test_web_near.mjs`.
 
 ### Crisp-text split
@@ -3539,43 +3533,6 @@ No image: the tiers differ in budgets more than in any single view.
   in rain or strong wind): four synthesized birds (a trill, a warble, chips, a whistled phrase),
   notes of 10-60 ms at 3-8 kHz sweeping fast, each tree its own singer at uneven moments.
 - **Code:** `src/ambience_synth.jo` (`ambience_bird_note`), `src/ambience_scene.jo`.
-
-### Period engines
-
-- **Aliases:** each aircraft's own engine (a trial on the Tweaks page, off by default).
-- **Definition:** an aircraft's engine heard as its real engine sounded: its exhaust pulsing at
-  its firing rate (cylinders/2 a turn: a nine-cylinder radial near 140 Hz at cruise, a Rolls-Royce
-  R near 320 Hz), each firing a crack rung through its stacks, hard on load and ragged on the
-  overrun; a rotary's open ports raspy and its blip switch cutting in and out at low power; the
-  propeller's blade-pass "whup" and, at speed, its tips' buzz-saw growing with their speed through
-  the air; pops and crackle when the throttle comes back and on a gliding approach. Several
-  engines are heard as banks drifting against each other.
-- **Code:** `src/engine_sound.jo` (`engine_spec`: cylinders, layout, rpm, reduction gear, blades
-  per type; `engine_sound_update`); `src/sound.jo` `update_audio`; `tests/engine_sound_test.jo`.
-- **Rules:** procedural only; loops baked once for the aircraft chosen, at the same overall level
-  as the shared engine loops they replace (the title's music still leads by about 20 dB).
-
-### The sea about her
-
-- **Aliases:** sea sounds (a trial on the Tweaks page, off by default).
-- **Definition:** the sea heard about the aircraft: the open water's wash by the sea state (many
-  small wavelets breaking over a low heave), fading with height; lapping at the floats and hull
-  while she lies still or slow; the breeze while moored; the hull planing through the chop on a run
-  (thuds at the waves, the bow wave, the spray); slaps as it meets a crest, the spray thrown up a
-  moment after. Before it, away from a shore the open sea was silent.
-- **Code:** `src/sea_sound.jo`; `src/flight_feedback.jo` (`afloat`, `height`, `over_sea`,
-  `sea_wind`); `tests/sea_sound_test.jo`.
-
-### On foot
-
-- **Aliases:** footsteps (a trial on the Tweaks page, off by default).
-- **Definition:** walking heard: a footfall each half stride by the ground underfoot (the jetty's
-  planks over the water, stone quays, stairs, cobbles, earth, sand, the bar room's boards with the
-  room's echoes), climbing into and out of the aircraft, a chair or a stool as one sits and stands,
-  a glass or a plate set down at the table; and the bar room's talk and the terrace's crossing over
-  through its doorways by how far in one is. Before it, nothing of walking was heard.
-- **Code:** `src/foot_sound.jo`; `aegean.jo` (`foot_ground`, `foot_sounds_frame`,
-  `hotel_indoor_amount`); `src/ambience_scene.jo` (`indoor_amount`); `tests/foot_sound_test.jo`.
 
 ### Uneven events
 
@@ -3966,6 +3923,15 @@ No image: the tiers differ in budgets more than in any single view.
 
 ---
 ## Input
+
+### Passing on foot
+
+Near the pilot, a walker looks ahead for people in the way and steps to one side. A tight pass
+shortens the stride and turns the shoulders. At a blocked opening the walker waits, steps back
+to give room and checks for a way past. The pilot's shoulders also turn slightly while walking
+close to someone. Walls, stairs and quay edges constrain the paths through the walking collision
+queries. The detour is drawn from transient state in `src/walk_avoidance.jo`. The living world
+advances the person's route on its fixed clock.
 
 ### Panels own the wheel
 
