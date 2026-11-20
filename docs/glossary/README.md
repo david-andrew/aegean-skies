@@ -1628,11 +1628,11 @@ On the rivers branch until it lands.
 - **Definition:** the far land's aerial perspective, painted in layers: the land keeps its own
   colour a long way (about two thirds at 5 km, half at 10, a quarter at 20), each farther ridge a
   step paler and bluer, turning to the haze only far off. Valleys hold extra air, so a far ridge's
-  foot is paler than its crest, and far shading flattens toward one tone (its hue kept). The
+  foot is paler than its crest. The
   **Painted layers** trial (Tweaks › Look, off by default, `AEGEAN_PAINTED_LAYERS=1`) reckons the
   air at bands twice as far apart each time (1, 2, 4 ... 32 km) in air twice as thick, so the land
   parts into soft-edged painted layers by distance even on rounded hills.
-- **Code:** `land_aerial` in `src/canopy.jo` (`LAND_FADE`, `LAND_MIST`, `LAND_FLAT`;
+- **Code:** `land_aerial` in `src/canopy.jo` (`LAND_FADE`, `LAND_MIST`;
   `GroundParams.land_steps` for the trial). Trees and other objects use look.jo `aerial`; foliage
   that should layer with the ground calls `land_aerial`.
 

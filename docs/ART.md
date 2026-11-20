@@ -56,5 +56,5 @@ tone-mapping from the engine), so the palette below is what reaches the screen.
   sunlit ground (more so in the evening), with broad neutral ambient fill.
   Richer cool shadows belong to foliage/cloud masses, not a blue dye over every wall.
 - Distance fades to a pale blue haze, warm gold in the evening. Far land fades in layers: each
-  farther ridge a clear step paler and bluer, its shading flattened to one tone, the valleys
-  holding the air; never a pale flat cut-out.
+  farther ridge a clear step paler and bluer, the valleys holding the air; never a pale flat
+  cut-out.
