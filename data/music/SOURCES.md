@@ -76,6 +76,31 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | The Hebrides (Fingal's Cave) (an arrangement for wind band) | Felix Mendelssohn (1809–1847), 1833 | [Bob Bolton, score 5937390](https://musescore.com/user/29446660/scores/5937390) | CC0 1.0 |
 | Humoresque Op. 101 No. 7 (violin and cello) | Dvořák, 1894 | [AllmusicLab, score 5936751](https://musescore.com/user/33963911/scores/5936751) | CC0 1.0 |
 | Rigoletto: La donna è mobile (orchestra) | Verdi, 1851 | [chiefyblues, score 5664313](https://musescore.com/user/1680641/scores/5664313) | CC0 1.0 |
+| Coriolan Overture | Beethoven, 1808 | [janjawohl, score 5925510](https://musescore.com/user/26915832/scores/5925510) | CC0 1.0 |
+| Egmont Overture | Beethoven, 1810 | [janjawohl, score 5925491](https://musescore.com/user/26915832/scores/5925491) | CC0 1.0 |
+| Piano Concerto No. 5 "Emperor", I | Beethoven, 1811 | [leol91417, score 5742868](https://musescore.com/user/29120318/scores/5742868) | CC0 1.0 |
+| Piano Concerto No. 5 "Emperor", II | Beethoven, 1811 | [tonic64, score 4205196](https://musescore.com/user/22249306/scores/4205196) | CC0 1.0 |
+| Symphony No. 9, I | Beethoven, 1826 | [violin-altair, score 4499721](https://musescore.com/user/337881/scores/4499721) | CC0 1.0 |
+| Symphony No. 9, IV (orchestra and chorus) | Beethoven, 1826 | [shilaher67, score 5942325](https://musescore.com/user/34003467/scores/5942325) | CC0 1.0 |
+| Water Music (an arrangement for wind band) | Handel (1685–1759), 1733 | [lpwevers, score 5844795](https://musescore.com/user/21735231/scores/5844795) | CC0 1.0 |
+| Music for the Royal Fireworks: La Réjouissance | Handel, 1749 | [C_Richardson, score 5769837](https://musescore.com/crichardson/scores/5769837) | CC0 1.0 |
+| Oboe Concerto No. 3 in G minor | Handel, 1863 (Händel-Gesellschaft) | [matthewClarkson, score 5848348](https://musescore.com/user/30345247/scores/5848348) | CC0 1.0 |
+| Symphony No. 5, II: Stürmisch bewegt | Mahler, 1904 | [mooing, score 4889732](https://musescore.com/user/1397281/scores/4889732) | CC0 1.0 |
+| Symphony No. 9, III: Rondo-Burleske (two pianos, four hands) | Mahler, 1912 | [Clarin Pardo, score 193041](https://musescore.com/user/84251/scores/193041) | CC0 1.0 |
+| Clarinet Concerto K. 622, I | Mozart, 1801 | [NekMib_, score 5294134](https://musescore.com/user/16850931/scores/5294134) | CC0 1.0 |
+| Symphony No. 40, IV | Mozart, 1798 | [eduardomezencio, score 1916356](https://musescore.com/eduardomezencio/scores/1916356) | CC0 1.0 |
+| Symphony No. 41 "Jupiter" | Mozart, 1793 | [Vigo KovaÄiÄ, score 4676996](https://musescore.com/user/6755401/scores/4676996) | CC0 1.0 |
+| La Gioconda: Dance of the Hours | Amilcare Ponchielli (1834–1886), 1876 | [MikeStokesberry, score 5903108](https://musescore.com/user/15377981/scores/5903108) | CC0 1.0 |
+| Swan Lake, Act II: Scene (an arrangement for wind band) | Tchaikovsky, 1877 | [Pringle Abilla, score 5969235](https://musescore.com/user/28335048/scores/5969235) | CC0 1.0 |
+| Symphony No. 4, IV | Tchaikovsky, 1878 | [Deyziel, score 5975276](https://musescore.com/user/26806535/scores/5975276) | CC0 1.0 |
+| The Nutcracker: Waltz of the Snowflakes | Tchaikovsky, 1892 | [Eva House, score 4982042](https://musescore.com/user/13976176/scores/4982042) | CC0 1.0 |
+| The Nutcracker: Dance of the Sugar Plum Fairy (an arrangement for wind band) | Tchaikovsky, 1892 | [Austin Volkmer, score 5892725](https://musescore.com/user/24130321/scores/5892725) | CC0 1.0 |
+| Messa da Requiem: Sanctus | Verdi, 1874 | [chiefyblues, score 6302023](https://musescore.com/user/1680641/scores/6302023) | CC0 1.0 |
+| Ballade No. 2 | Frédéric Chopin (1810–1849), 1840 | [hmscomp, score 1115241](https://musescore.com/user/24069/scores/1115241) | CC0 1.0 |
+| Berceuse, Op. 57 | Chopin, 1845 | [hmscomp, score 932306](https://musescore.com/user/24069/scores/932306) | CC0 1.0 |
+| Fantaisie-Impromptu, Op. 66 | Chopin, 1855 | [venson72150, score 6219891](https://musescore.com/user/33306646/scores/6219891) | CC0 1.0 |
+| Nocturne Op. 15 No. 2 | Chopin, 1833 | [venson72150, score 6047021](https://musescore.com/user/33306646/scores/6047021) | CC0 1.0 |
+| Polonaise Op. 26 No. 1 | Chopin, 1836 | [Y.Murakami@TYO, score 3783671](https://musescore.com/user/3797871/scores/3783671) | CC0 1.0 |
 
 CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
 
