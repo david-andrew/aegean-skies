@@ -80,7 +80,7 @@ struct VolumeOut:
 
 volume_vs = (v: VolumeVertex, inst: VolumeInstance, u: VolumeParams) -> VolumeOut:
     ndc = mix(inst.rect.xy, inst.rect.zw, v.corner)
-    VolumeOut(vec4(ndc, 0, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air,inst.slab,inst.voxels)
+    VolumeOut(vec4(ndc, 0.5, 1), ndc, inst.center, inst.extent, inst.meta, inst.weather,inst.growth,inst.air,inst.slab,inst.voxels)
 
 cloud_to_local = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x + p.z * yaw.y, p.y, -p.x * yaw.y + p.z * yaw.x)
 cloud_to_world = (p: vec3, yaw: vec2) -> vec3: vec3(p.x * yaw.x - p.z * yaw.y, p.y, p.x * yaw.y + p.z * yaw.x)
@@ -800,7 +800,7 @@ volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
             if f32(k) >= u.shaft_steps: break
             q = mix(i.uv, u.sun_uv, (f32(k) + 0.5) / u.shaft_steps * 0.85)
             if q.x < 0.0 or q.y < 0.0 or q.x > 1.0 or q.y > 1.0: continue
-            clear = step(0.999999, sample(u.depth, q).x)
+            clear: f32 = if world_has_depth(sample(u.depth, q).x, u.depth_ab): 0.0 else: 1.0
             light += (1.0 - sample(u.color, q).w) * clear / u.shaft_steps
         path = 1.0 - exp(-center * 0.00025)
         cone = exp(-dot(i.uv - u.sun_uv, i.uv - u.sun_uv) * 1.8)
@@ -812,7 +812,7 @@ volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
     paper = (paint_paper(i.pos.xy)-1.0)/0.06
     vec4(result.xyz*(1.0+paper*u.grain_gain),result.w)
 
-# Mark resolved pixels in the scene target's spare depth renderbuffer. Hardware
+# Mark resolved pixels in the cloud composite's depth renderbuffer. Hardware
 # depth rejection then skips every weather layer at those pixels, without an
 # extra texture allocation or repeating the guide decision in each layer.
 struct VolumeRepairParams:
@@ -823,7 +823,7 @@ struct VolumeRepairParams:
 
 volume_repair_vs = (v: VolumeVertex,u: VolumeRepairParams) -> VolumeCompositeOut:
     uv = mix(u.rect.xy,u.rect.zw,v.corner)
-    VolumeCompositeOut(vec4(uv*2.0-vec2(1,1),0,1),uv)
+    VolumeCompositeOut(vec4(uv*2.0-vec2(1,1),0.5,1),uv)
 
 volume_repair_fs = (i: VolumeCompositeOut,u: VolumeRepairParams) -> vec4:
     nearest = (floor(i.uv*u.size)+vec2(0.5,0.5))/u.size
@@ -879,7 +879,7 @@ volume_bounds = (v: CloudVolume, cam: vec3, vp: mat4) -> vec4:
 
 draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     global volume_visible, volume_color, volume_weather_small,volume_rain_small,volume_occluders
-    if not __post_active or cloud_scene_depth.id == 0: return
+    if not __post_active or scene_depth().id == 0: return
     zone("cloud volumes")
     cam = scene_camera(); chart = render_origin(cam)
     vp = render_view_proj(chart); planes = __frustum(vp)
@@ -934,8 +934,8 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     # cards measured 3.2ms on UHD620; thirds measured 2.75ms. Grain and opaque
     # edge repair stay at output resolution, preserving thin aircraft/trails.
     divisor = if volume_rain_small: 4 else: 3
-    w = max(1, cloud_scene_depth.width / divisor); h = max(1, cloud_scene_depth.height / divisor)
-    p = VolumeParams(rays, render_eye(chart), normalize(rays[2].xyz), L.sun_dir, L.sun, L.shade, L.haze, f32(L.fog_density), world_depth_params(), volume_atlas, cloud_scene_depth, steps, if render_quality.tier == 0: 0.0 else: 1.0, vec2(f32(w), f32(h)), 0.0)
+    w = max(1, scene_depth().width / divisor); h = max(1, scene_depth().height / divisor)
+    p = VolumeParams(rays, render_eye(chart), normalize(rays[2].xyz), L.sun_dir, L.sun, L.shade, L.haze, f32(L.fog_density), world_depth_params(), volume_atlas, scene_depth(), steps, if render_quality.tier == 0: 0.0 else: 1.0, vec2(f32(w), f32(h)), 0.0)
     if weather_active:
         # The cloud blocks sunlight for the observer, not for its own exposed top.
         # Surface normals/self-shadowing handle that; camera weather dimming would
@@ -970,18 +970,16 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
     cloud_shadow_factor_pass(chart,vp)
     glBindFramebuffer(GL_FRAMEBUFFER, u32(volume_color.fbo))
     glViewport(0, 0, i32(w), i32(h))
-    glDisable(GL_DEPTH_TEST); glDepthMask(0)
-    glClearColor(0, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT)
-    glEnable(GL_BLEND)
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
-    glDisable(GL_CULL_FACE)
+    depth_test(.off); depth_write(false)
+    clear(vec4(0,0,0,0))
+    blend(.premultiplied)
+    cull(.none)
     zone("cloud color")
     draw_instanced(volume_sh, volume_quad, volume_instances, p)
     zone_end()
-    # The final full-resolution reconstruction samples scene depth, so swap its
-    # attachment out temporarily. Color and the actual scene depth are preserved.
-    detach_cloud_depth()
-    glViewport(0, 0, i32(cloud_scene_depth.width), i32(cloud_scene_depth.height))
+    # Sample scene depth through the full-resolution composite framebuffer.
+    bind_cloud_composite()
+    glViewport(0, 0, i32(scene_depth().width), i32(scene_depth().height))
     craft_shadow_multiply(chart,vp)
     cloud_shadow_multiply()
     # With no shafts, clear pixels outside every projected cloud cannot
@@ -993,29 +991,28 @@ draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
         composite_rect = vec4(max(vec2(0,0),composite_low*0.5+vec2(0.5,0.5)-pad_uv),min(vec2(1,1),composite_high*0.5+vec2(0.5,0.5)+pad_uv))
     zone("cloud composite")
     if shaft > 0.0 or instances.len() > 0:
-        draw(volume_composite_sh, volume_quad, VolumeCompositeParams(volume_color.texture, cloud_scene_depth, vec2(f32(w), f32(h)), p.depth_ab, sun_uv, L.sun, shaft, if render_quality.tier == 0: 4.0 else: 8.0, vec2(f32(cloud_scene_depth.width),f32(cloud_scene_depth.height)),composite_rect,if volume_weather_small or volume_rain_small: 0.0 else: volume_paint_grain))
+        draw(volume_composite_sh, volume_quad, VolumeCompositeParams(volume_color.texture, scene_depth(), vec2(f32(w), f32(h)), p.depth_ab, sun_uv, L.sun, shaft, if render_quality.tier == 0: 4.0 else: 8.0, vec2(f32(scene_depth().width),f32(scene_depth().height)),composite_rect,if volume_weather_small or volume_rain_small: 0.0 else: volume_paint_grain))
     zone_end()
-    # The actual scene depth is detached and sampled read-only. Its spare
-    # renderbuffer is disposable: clear to far, write 0.5 where reconstruction
-    # succeeded, then render edge quads at 0.5 with LESS. Only holes pass.
+    # Mark resolved pixels in the composite framebuffer's disposable depth.
+    # Edge quads at the same depth pass the strict nearer test only in holes.
     # Large nearby paintings benefit from the same early depth rejection as
     # weather: don't shade every overlapping full-resolution quad in clear sky.
     if volume_weather_small or volume_rain_small or paint_coverage > 0.7:
-        glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(1)
-        glClear(GL_DEPTH_BUFFER_BIT)
-        glColorMask(0,0,0,0)
+        depth_test(.nearer); depth_write(true)
+        clear_depth()
+        color_write(false)
         rect = vec4(composite_low*0.5+vec2(0.5,0.5),composite_high*0.5+vec2(0.5,0.5))
         zone("cloud guide")
-        draw(volume_repair_sh,volume_quad,VolumeRepairParams(cloud_scene_depth,p.low_size,p.depth_ab,rect))
+        draw(volume_repair_sh,volume_quad,VolumeRepairParams(scene_depth(),p.low_size,p.depth_ab,rect))
         zone_end()
-        glColorMask(1,1,1,1); glDepthMask(0)
+        color_write(true); depth_write(false)
         p.repair_ready = 1.0
     p.edge_pass = 1.0
     zone("cloud edges")
     draw_instanced(volume_sh, volume_quad, volume_instances, p)
     zone_end()
-    glDepthFunc(world_depth_compare())
-    restore_cloud_depth()
+    depth_test(.nearer_or_equal)
+    __rebind_target()
     zone_end()
 
 cloud_point=(v:CloudVolume)->WorldPoint:
