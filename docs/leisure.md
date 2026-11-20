@@ -119,7 +119,7 @@ funny or useful (time passes, people are met, the plane is looked after).
 
 18. **Sitting down at the bar too**: ordering at the bar seats the pilot on a stool, and what is
    ordered is brought there. Seated anywhere, the view turns about him (a drag with either mouse
-   button off the table's bar, the right stick, a finger) and the wheel or a pinch brings it
+   button off the table's bar, a finger; never a controller's stick) and the wheel or a pinch brings it
    nearer or farther, kept out of the walls; Get up stands apart at the end of the bar.
 19. **Each thing's button is a bar** of how much of it is left, draining as one eats or drinks,
    as the plate and the glass on the table do.
@@ -207,6 +207,12 @@ funny or useful (time passes, people are met, the plane is looked after).
 34. **Rooms, from the phone:** a tap while he sleeps wakes him and sends him to what was tapped;
    Back gets him up in the room, not out of it. The night paid for, the desk offers his room. The
    hotel's terrace no longer offers to fish.
+
+## Built (round fifteen)
+
+35. **A picnic.** A basket from the hotel or the coffee house goes along on his arm, and in the
+   aircraft. On a quiet shore, tap the sand: the blanket is spread, he sits facing the sea, and the
+   afternoon goes by, a bite now and then. Tap the basket to pack up.
 
 ## Controls
 

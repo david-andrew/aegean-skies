@@ -156,6 +156,7 @@ use 'src/vessel_scene.jo'
 use 'src/far_transport_scene.jo'
 use 'src/war_scene.jo'
 use 'src/vessel_view.jo'
+use 'src/vessel_spray.jo'
 use 'src/guns.jo'
 use 'src/combat.jo'
 use 'src/scenarios.jo'
@@ -196,6 +197,7 @@ use 'src/reputation.jo'
 use 'src/reputation_talk.jo'
 use 'src/pilot_day_types.jo'
 use 'src/pilot_talk.jo'
+use 'src/town_chat.jo'
 use 'src/leads.jo'
 use 'src/adrift_types.jo'
 use 'src/living_adrift.jo'
@@ -207,6 +209,7 @@ import 'src/living_jobs.jo' as lead_jobs
 from 'src/living_talk_context.jo' import last_spoken
 use 'src/stay.jo'
 use 'src/bath.jo'
+use 'src/picnic.jo'
 use 'src/inland_access_data.jo'
 use 'src/joyride.jo'
 use 'src/rescued_rider.jo'
@@ -245,6 +248,7 @@ use 'src/plane_work.jo'
 use 'src/live_source.jo'
 use 'src/walk_shapes.jo'
 use 'src/music_data.jo'
+use 'src/build_label.jo'
 import 'src/cargo_scene.jo' as cargo_scene
 import 'src/cargo_view.jo' as cargo_view
 import 'src/life_view.jo' as life_view
@@ -257,8 +261,8 @@ from 'src/living_money.jo' import craft_grams
 
 use 'tools/judge_scene.jo'
 
-enable_world_depth()
 window("Aegean Skies", 1280, 720)
+enable_world_depth()
 init_quality()
 # The CPU rasterizer cannot sample its depth buffer through the GL texture API.
 # Keep its existing opaque cloud path for CI/software use, as well as A/B runs.
@@ -526,7 +530,7 @@ band = make_band()
 band_dressed = (role: int) -> Figure:
     p = living_world.people[BAND_ROSTER[role]]
     woman = person_woman(p.name)
-    build_outfit_figure(evening_outfit(role, p.appearance_seed, woman), p.appearance_seed, age = p.age, mustache = if woman: 0 else: -1)
+    build_outfit_figure(evening_outfit(role, p.appearance_seed, woman), p.appearance_seed, age = p.age, woman = woman)
 band.singer = band_dressed(0); band.pianist = band_dressed(1)
 band.bassist = band_dressed(2); band.reeds = band_dressed(3)
 # (the band's players are townspeople: the world keeps their programme, src/band_life.jo)
@@ -602,46 +606,61 @@ company_line = ""                # (what they said last, and until when it shows
 company_line_until = -1.0
 # The pilot's small talk (src/pilot_talk.jo; the option "Your pilot makes small talk"): what he did
 # today, his answer waiting to be said (a moment after the remark), and the line he is saying.
-pilot_reply = ""
-pilot_reply_due = -1.0
-pilot_line = ""
-pilot_line_until = -1.0
-pilot_talk_seq = 0
+town_speech = TownSpeech()
+pilot_chat_trace = env("AEGEAN_SMALL_TALK")
 flight_on = false                # (a flight under way: the worst of the air met on it, and where from)
 flight_storm = 0.0
 flight_rain = 0.0
 flight_wind = 0.0
 flight_from = ""
 
-# Someone passed him a remark: he may answer it, a moment later.
-pilot_respond = (topic: SmallTopic, deed: int, sat_with: bool):
-    global pilot_reply, pilot_reply_due, pilot_talk_seq
-    if not options.small_talk or pilot_reply_due >= 0.0: return
-    roll = if env("AEGEAN_SMALL_TALK") == "always": 0.0 else: random(0.0, 1.0)
-    if not pilot_answers(topic, sat_with, roll): return
-    pilot_talk_seq += 1
-    said = pilot_answer(living_world, living_world.pilot_day, topic, deed, weather_here.rain > 0.3, f64(length(weather_here.wind)), pilot_talk_seq)
-    if said == "": return
-    pilot_reply = said; pilot_reply_due = t + 2.2
+# A deliberate walk to an action, carrying a load, or a panel needs the pilot's attention.
+chat_busy = () -> bool:
+    if me.mode != .walking or menus_open() or job.active or foot_goal >= 0 or me.stride > 0.85: return true
+    if swim.active or gaze.active or stay.active or cat_busy(cat_scene) or fish_hands_busy(): return true
+    chat_on_business(living_world,me.stride > 0.2)
 
-# What was just said to him by `speaker`, read off their last line: a deed of his, or his name.
-pilot_heard_topic = (speaker: int, otherwise: SmallTopic) -> (SmallTopic, int):
-    if let l = last_spoken(living_world, speaker):
-        if l.key.starts_with("rep-deed:"):
-            parts = split(l.key, ":")
-            if parts.len() >= 2:
-                if let id = to_int(parts[1]): return (.deed, id)
-        if l.key.starts_with("rep-heard"): return (.heard, -1)
-    (otherwise, -1)
+# Weather moves with the world minute. Between remarks, check it at most once a second.
+storm_check_at = -1.0
+chat_at = (speaker: int, place: int, seated: bool, warnings_only: bool = false) -> str:
+    global town_speech, storm_check_at
+    if world_held(): return ""
+    storm_check_at = t + 1.0
+    if town_speech.turn.tag.starts_with("storm:"): return ""
+    c = ChatContact(speaker,place,seated=seated,busy=chat_busy(),warnings_only=warnings_only,rain=weather_here.rain > 0.3,
+        wind=f64(length(weather_here.wind)),answers=options.small_talk,first_at_table=seated and not company_greeted,
+        forced=pilot_chat_trace == "always" or env("AEGEAN_LEADS") == "always")
+    turn = town_chat(living_world,presentation.town_chat,c,() -> MeetNote[]?:
+        if _lead_now(if seated: 0.33 else: 0.14): _lead_meets() else: none)
+    if turn.opening != "":
+        town_speech = TownSpeech(speaker,seated,turn,t)
+        if pilot_chat_trace != none: print("TOWN {living_world.people[speaker].name}: {turn.opening}")
+    turn.opening
 
-# Each frame: his answer said when due; the flight's air noted while aboard and in the air, and the
-# flight kept among the day's doings when it ends.
+# Run after input, including frames that opened a menu or paused the world.
+pilot_reply_frame = ():
+    global town_speech
+    if ui == .talk and ui_folk >= 0 and ui_folk < folks.len():
+        f = folks[ui_folk]
+        n = presentation.town_chat.len()
+        if n == 0 or presentation.town_chat[n-1] != ChatVisit(living_world.minute,f.person,f.place,"conversation"):
+            chat_remember(presentation.town_chat,living_world.minute,f.person,f.place,"conversation")
+    if town_speech.speaker < 0: return
+    seated = seat_view()
+    listener = -1
+    if seated and company.stage == .sitting: listener = company.person
+    else if not seated and me.mode == .walking:
+        k = nearest_folk(folks,me.pos,7.0)
+        if k >= 0 and folks[k].line == "": listener = folks[k].person
+    was = town_speech
+    chat_step(town_speech,t,listener,seated,chat_busy(),options.small_talk)
+    if was.seated and town_speech.speaker < 0 and company_line == was.turn.opening:
+        global company_line_until
+        company_line_until = -1.0
+    if pilot_chat_trace != none and not was.answered and town_speech.answered: print("PILOT says: {town_speech.turn.reply}")
+
 pilot_talk_frame = ():
-    global pilot_reply_due, pilot_line, pilot_line_until, flight_on, flight_storm, flight_rain, flight_wind, flight_from
-    if pilot_reply_due >= 0.0 and t >= pilot_reply_due:
-        pilot_reply_due = -1.0
-        if options.small_talk: pilot_line = pilot_reply; pilot_line_until = t + 4.5
-        if env("AEGEAN_SMALL_TALK") != none: print("PILOT says: {pilot_reply}")
+    global flight_on, flight_storm, flight_rain, flight_wind, flight_from
     st = pc.state
     up = me.mode == .aboard and not st.on_water and not st.moored and not st.on_ground and not st.crashed
     if up and not flight_on:
@@ -660,18 +679,11 @@ _lead_meets = () -> MeetNote[]: [loop m in air_events.meets: MeetNote(id = m.id,
 # What `person` mentions now, if anything they haven't said today: their words ("" if nothing).
 # (who has told him which lead is the world's, saved with it: World.rep.told_leads)
 tell_lead = (person: int) -> str:
-    day = lt.day_index(living_world.minute)
-    if let l = lead_to_tell(living_world, person, _lead_meets(), living_world.rep.told_leads):
-        lead_told_now(living_world, person, l)
-        line = lead_line(living_world, l, person, person + day)
-        if env("AEGEAN_LEADS") != none: print("LEAD {living_world.people[person].name}: {line} ({l.key})")
-        return line
-    ""
+    chat_lead(living_world,person,_lead_meets())
 # (how often a lead comes up: asked what they've heard, half the time; a third of the table's
 # remarks; one passing remark in seven. AEGEAN_LEADS=always: whenever there is one)
 _lead_now = (chance: f64) -> bool: env("AEGEAN_LEADS") == "always" or random(0.0, 1.0) < chance
 
-company_remarks = 0              # (remarks made at the table so far: the weather and their work, turn about)
 company_greeted = false          # (their first word said: one who has heard of him says so first)
 waiter = Waiter()                # (whoever brings what is ordered: the hotel's waiter, the barkeep, the coffee house's boy)
 taking = Taking()                # (the pilot and what is in front of him)
@@ -845,6 +857,7 @@ leisure_stand = ():
         left_key = leisure.sitting; left_spots = service_spots(leisure.sitting); left_at = t
         clear_waiter = Waiter()
     leisure.sitting = ""; leisure.served = []; leisure.coming = []
+    set_life_reserved_seat(none)
     waiter = Waiter(); taking = Taking()
     follow.distance = 5.5; follow.height = 1.6
     ui = .none
@@ -867,9 +880,28 @@ leisure_skip = (minutes: int, doing: str, after: int = 0):
     global skip
     skip = TimeSkip(active = true, left = minutes, total = minutes, doing = doing, after = after)
 
+# Any table on the terrace (while dining is out there, not in the bar room for the rain): the free
+# chair nearest `p` within `reach`, as (table, chair), or (-1, -1). A chair someone sits on, or
+# just stands at, is not free.
+hotel_sit_target: vec3? = none       # (the chair a tap on a table walked him to)
+hotel_free_chair = (p: vec3, reach: f64) -> (int, int):
+    if not hotel.ok or bar_room.level == 2: return (-1, -1)
+    best = (-1, -1); bd = reach
+    loop k in 0..hotel_table_count():
+        loop c in 0..hotel_chair_count(k):
+            at = hotel_chair(hotel, k, c)
+            d = f64(length(vec3(at.x - p.x, 0, at.z - p.z)))
+            if d >= bd: continue
+            taken = false
+            loop f in folks:
+                if f.shown and f64(length(vec3(f.pos.x - at.x, 0, f.pos.z - at.z))) < 0.55: taken = true
+            if not taken: best = (k, c); bd = d
+    best
+
 # what one can do here, on foot (the card says it; F does it)
 leisure_prompt = () -> str:
     if me.mode != .walking or holding_cargo() >= 0 or not hotel.ok: return ""
+    if hotel_free_chair(me.pos, 2.4).0 >= 0: return "F  sit at a table on the terrace"
     if f64(length(me.pos - hotel.seat)) < 2.4: return if room_point_inside(hotel, hotel.seat): "F  sit at a table" else: "F  sit at a table on the terrace"
     if f64(length(me.pos - hotel.counter)) < 2.4: return "F  order at the bar"
     if f64(length(me.pos - hotel.desk)) < 2.8: return if hotel_room_paid(): "F  go up to your room" else: "F  ask at the desk for a room"
@@ -889,7 +921,20 @@ leisure_act = ():
     if said.contains("tip the band"):
         ui = .leisure; leisure_ui = 20; leisure_line = ""
         mouse_lock(false)
-    else if said.contains("sit at a table"): leisure_sit("hotel")
+    else if said.contains("sit at a table"):
+        # (at whichever table he is by: the nearest free chair there is his)
+        # (walked over to a table: its chair; else the nearest free one)
+        global hotel_sit_target
+        ch = hotel_free_chair(me.pos, 2.4)
+        if let at = hotel_sit_target:
+            exact = hotel_free_chair(at, 0.3)
+            if exact.0 >= 0: ch = exact
+        hotel_sit_target = none
+        if ch.0 >= 0: hotel_take_table(hotel, ch.0, ch.1)
+        if foot_go_script != "": print("FOOT table {ch.0} chair {ch.1} seat {hotel.seat.x:.1} {hotel.seat.z:.1}")
+        leisure_sit("hotel")
+        # (his chair is his: the evening's patrons are sent to the others)
+        set_life_reserved_seat(hotel.seat)
     else if said.contains("barber"): barber_begin()
     else if said.contains("order at the bar"):
         leisure_sit("bar")
@@ -963,8 +1008,19 @@ _foot_things_now = () -> FootThing[]:
         e = m.prop_at; r = f32(min(m.prop_radius, 1.1))
         out.push(FootThing("tinker", "", "", "Work on her", e - vec3(r, r, 0.7), e + vec3(r, r, 0.7), p, origin = p, rot = q))
     if hotel.ok and f64(length(me.pos - hotel.counter)) < 45.0:
-        tb = hotel.table
-        out.push(_thing("leisure", "sit at a table", "", "Sit", tb - vec3(0, 0.8, 0), vec3(0.55, 0, 0.55), 0.95, hotel.seat))
+        # (any table on the terrace: a tap on it walks him to its nearest free chair; inside for the
+        # rain, his own table there)
+        if bar_room.level == 2:
+            tb = hotel.table
+            out.push(_thing("leisure", "sit at a table", "", "Sit", tb - vec3(0, 0.8, 0), vec3(0.55, 0, 0.55), 0.95, hotel.seat))
+        else:
+            loop k in 0..hotel_table_count():
+                top = hotel_table_top(hotel, k)
+                ch = hotel_free_chair(top, 2.0)
+                if ch.0 != k: continue
+                # (the chair on the aisle's side, when it is free: the one reached first)
+                aisle = if k < hotel_table_count() - 1 and hotel_free_chair(hotel_chair(hotel, k, AISLE_CHAIR), 0.3).1 == AISLE_CHAIR: AISLE_CHAIR else: ch.1
+                out.push(_thing("leisure", "sit at a table", "", "Sit", top - vec3(0, 0.8, 0), vec3(0.6, 0, 0.6), 0.95, hotel_chair(hotel, k, aisle)))
         if hotel.stools.len() > 1:
             out.push(_thing("leisure", "order at the bar", "", "Sit at the bar", hotel.stools[1], vec3(0.3, 0, 0.3), 0.85, hotel.counter))
         out.push(_thing("leisure", if hotel_room_paid(): "your room" else: "desk", "", if hotel_room_paid(): "Your room" else: "Ask for a room", hotel.desk, vec3(0.6, 0, 0.6), 2.2, _step_out(hotel.desk, 0.8)))
@@ -1011,13 +1067,17 @@ seat_things = () -> FootThing[]:
     out
 
 # what a point on the screen is on, of those (-1 nothing); the nearest thing first
+# (a thing far off is a small mark for a finger: its box grows a little with distance, a centimetre
+# and a half a metre, up to a metre)
 foot_pick = (things: FootThing[], p: vec2) -> int:
     o, d = screen_ray(p)
     best = -1; bt = 60.0
     loop k in 0..things.len():
         th = things[k]
         inv = quat_inverse(th.rot)
-        tt = ray_box(quat_rotate(inv, o - th.origin), quat_rotate(inv, d), th.lo, th.hi)
+        far = f64(length(thing_top(th) - o))
+        g = f32(clamp(far * 0.015, 0.0, 1.0))
+        tt = ray_box(quat_rotate(inv, o - th.origin), quat_rotate(inv, d), th.lo - vec3(g, g * 0.5, g), th.hi + vec3(g, g * 0.5, g))
         if tt >= 0.0 and tt < bt: best = k; bt = tt
     best
 
@@ -1040,6 +1100,9 @@ foot_goal_best = 1e9                # (the nearest he's got, and when)
 foot_goal_best_t = -1.0
 foot_then = ""                      # (to do once the card's act has been done: sat down, then the board)
 foot_hover = -1
+foot_press = vec2(-1, -1)           # (the trial pointer: where the left button went down, and whether it then dragged)
+foot_dragged = false
+show_pointer = env("AEGEAN_SHOW_POINTER") == "1"   # (captures: the pointer drawn, which a screenshot leaves out)
 seat_hover = -1
 seat_press = vec2(-1, -1)
 talk_pick = -1                      # (the person a click or tap chose to talk to, over the nearest)
@@ -1051,6 +1114,13 @@ foot_go = (things: FootThing[], k: int):
     foot_goal = k; foot_goal_act = th.act; foot_goal_sub = th.sub; foot_goal_then = th.then; foot_goal_folk = th.folk
     foot_goal_at = th.stand; foot_goal_since = t
     bath_route_to(th.stand)
+    # (a table on the terrace: by the aisle, round the other tables, to its chair)
+    if th.sub == "sit at a table" and hotel.ok and bar_room.level != 2:
+        ch = hotel_free_chair(th.stand, 0.3)
+        if ch.0 >= 0:
+            global foot_route
+            way = hotel_table_way(hotel, me.pos, ch.0, ch.1)
+            foot_goal_at = way[0]; way.remove_at(0); foot_route = way
 
 # What comes after: the board, the paper, the band's request, the tip jar.
 run_then = (what: str):
@@ -1064,6 +1134,7 @@ run_then = (what: str):
     else if what == "tip":
         ui = .leisure; leisure_ui = 20; leisure_line = ""
         mouse_lock(false)
+    else if what == "picnic": picnic_begin()
     else if what == "bath-keeper":
         ui = .leisure; leisure_ui = 21; leisure_line = ""
         mouse_lock(false)
@@ -1146,8 +1217,28 @@ draw_gleams = ():
 # where the mouse points: the pointer, or with the mouse locked to the view, the screen's middle
 foot_aim = () -> vec2: if is_mouse_locked(): vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5)) else: mouse_pos()
 
+# the mouse on the sand of a picnic spot, the basket along
+picnic_ground_hover = () -> bool:
+    if not picnic.basket or picnic.active or me.mode != .walking or ui != .none or pad.on: return false
+    if let g = ground_under(foot_aim()):
+        if f64(length(g - me.pos)) < 40.0: return picnic_spot_at(g).0
+    false
+
 draw_foot_label = ():
     if pad.on: return
+    # (the mouse locked to the view, the screen's middle on a thing: a small dot there, so the aim is
+    # seen; nothing when it is on nothing)
+    if is_mouse_locked() and ui == .none and foot_hover >= 0:
+        c = vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5))
+        circle(c, 4.0, rgba(0, 0, 0, 0.35))
+        circle(c, 2.6, rgba(1, 0.97, 0.88, 0.9))
+    if show_pointer and not is_mouse_locked():
+        m = mouse_pos()
+        triangle(m, m + vec2(0, 18), m + vec2(12, 13), rgba(0.05, 0.05, 0.05, 0.9))
+        triangle(m + vec2(1.5, 3.5), m + vec2(1.5, 14), m + vec2(9, 11.5), rgba(1, 1, 1, 0.95))
+    if ui == .none and foot_hover < 0 and picnic_ground_hover():
+        if let g = ground_under(foot_aim()):
+            draw_thing_label(FootThing("", "", "", "Spread the blanket", g, g, g))
     if ui == .none and foot_hover >= 0:
         things = foot_things()
         if foot_hover < things.len(): draw_thing_label(things[foot_hover])
@@ -1724,7 +1815,7 @@ ride_start = (k: int):
     ride.origin = origin
     global ride_boarded
     ride_boarded = false
-    ride_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+    ride_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age, woman = person_woman(p.name))
     # (their answer, said: in the caption at the top, which a marker at the screen's edge points
     # from toward them while they're out of view, behind the camera or off to the side)
     ride.line = ride_accept_line(ride.nervous); ride.line_until = t + 4.5
@@ -1744,6 +1835,11 @@ ride_lift_choice = () -> int:
         d = f64(length(settlement_registry.world_settlements[settlement_registry.settlement_by_id[landing]].center.xz - at.xz))
         if d < bd: best = k; bd = d
     best
+ride_at_dest = () -> bool:
+    if not (ride.dest in settlement_registry.settlement_by_id): return false
+    c = settlement_registry.world_settlements[settlement_registry.settlement_by_id[ride.dest]].center
+    f64(length(c.xz - pc.state.position.xz)) < 1500.0
+
 ride_lift_harbour = (k: int) -> str:
     landing = INLAND_ACCESS[THERMAL_SITES[k].place].landing
     if landing in settlement_registry.settlement_by_id: settlement_registry.world_settlements[settlement_registry.settlement_by_id[landing]].name else: living.place_name(living_world, landing)
@@ -1814,13 +1910,14 @@ ride_tick = (dt: f64):
         ride.flew = true
         # (a lift: set down where they asked, they pay and thank; anywhere else, they say so and stay)
         if ride.dest >= 0:
-            here = living_world.people[living_world.player].place
-            if here != ride.dest:
+            # (there: moored within a mile or so of the harbour they asked for, by its place on the
+            # map; the living world's own places are the old harbours only)
+            if not ride_at_dest():
                 if not ride.told_not_here:
                     ride.told_not_here = true
                     ride.line = ride_lift_not_here(ride.dest_name); ride.line_until = t + 5.0
                 return
-            paid = ride.fare > 0 and lift_fare_pay(living_world, ride.person, ride.fare, here)
+            paid = ride.fare > 0 and lift_fare_pay(living_world, ride.person, ride.fare, -1)
             _ = ride_thank(ride, t)
             ride.line = ride_lift_thanks(paid)
             if paid: say_toast("{phoenix_text(ride.fare)} for the lift.")
@@ -1896,7 +1993,7 @@ rider_takes = (person: int, in_water: vec3):
     global rider, rider_fig
     rider = rider_board(person, in_water, t, ride.stage != .none)
     p = living_world.people[person]
-    rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+    rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age, woman = person_woman(p.name))
 
 rider_tick = (dt: f64):
     global rider, rider_fig
@@ -1907,21 +2004,21 @@ rider_tick = (dt: f64):
             person = living_world.war.survivors[aboard[0]].person
             rider = rider_seated(person, t, ride.stage != .none)
             p = living_world.people[person]
-            rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age)
+            rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age, woman = person_woman(p.name))
     # (a passenger the pilot carries for a job: seen in the second seat, src/errands.jo too)
     if rider.stage == .none:
         person = job_passenger_aboard()
         if person >= 0:
             rider = rider_seated(person, t, ride.stage != .none)
             p = living_world.people[person]
-            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age, woman = person_woman(p.name))
     # (and a skipper taken off a boat adrift: src/living_adrift.jo)
     if rider.stage == .none:
         person = adrift_aboard_person(living_world)
         if person >= 0:
             rider = rider_seated(person, t, ride.stage != .none)
             p = living_world.people[person]
-            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age, woman = person_woman(p.name))
     # (gone into the town only out of sight: off the screen, or far off)
     unseen = rider.stage == .walking and (hud_point(rider.pos + vec3(0, 1, 0)) == none or f64(length(rider.pos - scene_camera())) > 120.0)
     rider_step(rider, t, dt, (x: f64, z: f64) -> f64?: (if walk_height(towns, x, z) > (if geography_enabled: water_at(x, z).level else: 0.0) + 0.3: walk_height(towns, x, z) else: none), unseen)
@@ -2214,7 +2311,7 @@ stay_light = (L: Light) -> Light:
     out
 
 draw_stay = (L: Light):
-    clear_world_depth()
+    clear_depth()
     hotel_stay = stay.kind == .hotel
     day = smoothstep(-0.05, 0.25, f64(normalize(L.sun_dir).y))
     night = day < 0.5
@@ -2237,7 +2334,7 @@ draw_stay = (L: Light):
     body = room_body(room_me, room_objs)
     # (not while he passes right under the view: a body a hand's breadth from the eye would fill it)
     near_eye = f64(length(stay_point(body.pos + vec3(0, 1.3, 0)) - scene_camera())) < 1.1
-    if not near_eye: draw_figure(player_figure(), stay_point(body.pos), stay_yaw(body.yaw), room_me.phase, room_me.stride, Ls, t, posture = (if body.posture == 2: 6 else: body.posture), settle = body.amount)
+    if not near_eye: draw_figure(player_figure(), stay_point(body.pos), stay_yaw(body.yaw), room_me.phase, room_me.stride, Ls, t, posture = (if body.posture == 2: 6 else: if body.posture == 3: 7 else: body.posture), settle = body.amount)
     if hotel_stay: return
     # (the family's house: the host across the table; at supper, those they look after round it, a
     # plate each, the pot and the jug between; asleep, the house is abed)
@@ -2431,7 +2528,7 @@ rep_ask_k = -1
 rep_talk_due = -1.0               # (capture: the talk begun a moment after the scene is seen)
 
 company_tick = (dt: f64):
-    global company, company_line, company_line_until, leisure_ui, company_remarks, rep_ask_due, rep_talk_due
+    global company, company_line, company_line_until, leisure_ui, rep_ask_due, rep_talk_due
     if rep_talk_due >= 0.0 and t >= rep_talk_due:
         rep_talk_due = -1.0
         _leisure_talk(rep_ask_k)
@@ -2458,26 +2555,16 @@ company_tick = (dt: f64):
         company.from = goal
     st = company_step(company, t, dt, leisure.sitting != "", (x: f64, z: f64) -> f64: walk_height(towns, x, z))
     if st.asks and leisure.sitting != "" and ui == .leisure and leisure_ui == 0: leisure_ui = 14
-    if st.speak:
-        # (the first word, from one who has heard of him: what they heard; src/reputation_talk.jo)
+    if company.stage == .sitting and (st.speak or t >= storm_check_at):
         global company_greeted
-        greeting = not company_greeted and rep_view(living_world, company.person).known
-        line = if greeting: living.talk(living_world, company.person, .greeting, living_world.player).text else: ""
-        company_greeted = true
-        # (the pilot may answer: what they heard of him, their day or the weather; src/pilot_talk.jo)
+        line = chat_at(company.person,lt.person_place(living_world,company.person),true,warnings_only=not st.speak)
         if line != "":
-            heard = pilot_heard_topic(company.person, .day)
-            if heard.0 != .day: pilot_respond(heard.0, heard.1, true)
-        if line == "" and _lead_now(0.33): line = tell_lead(company.person)
-        if line == "":
-            company_remarks += 1
-            line = table_remark(living_world, company.person, company_remarks)
-            if line != "": pilot_respond(if company_remarks % 2 == 1: SmallTopic.day else: SmallTopic.weather, -1, true)
-        if env("AEGEAN_COMPANY") != none: print("COMPANY says {living_world.people[company.person].name}: {line}")
-        if line != "":
+            company_greeted = true
+            if env("AEGEAN_COMPANY") != none: print("COMPANY says {living_world.people[company.person].name}: {line}")
             company_line = line; company_line_until = t + 7.0
         # (captures: AEGEAN_COMPANY_GAP=<seconds> between their remarks)
-        if let gap = env("AEGEAN_COMPANY_GAP"): company.next_line = t + (to_float(gap) ?? 12.0)
+        if st.speak:
+            if let gap = env("AEGEAN_COMPANY_GAP"): company.next_line = t + (to_float(gap) ?? 12.0)
     if st.gone: company_line = ""
 
 # (the one who has come over is drawn by the table, not where the town's routine has them)
@@ -2549,9 +2636,9 @@ draw_tip_thanks = ():
 
 draw_company_talk = ():
     # (the pilot's own word, over his head)
-    if pilot_line != "" and t < pilot_line_until:
+    if town_speech.answered:
         ph = me.pos + vec3(0, if leisure.sitting != "": 1.25 else: 1.75, 0)
-        speech_bubble(fonts, ph, "", pilot_line, f64(length(ph - scene_camera())))
+        speech_bubble(fonts, ph, "", town_speech.turn.reply, f64(length(ph - scene_camera())))
     if company.stage == .none or company.person < 0: return
     head = company.pos + vec3(0, if company.stage == .sitting: 1.25 else: 1.7, 0)
     name = split(living_world.people[company.person].name, " ")[0]
@@ -2613,7 +2700,9 @@ fish_water_ahead = () -> bool:
     out = me.pos + _ahead() * 3.0
     # (a floor over the water is no water: the bar room's)
     if walk_floor_height(out.xz, -1e9) > -1e8: return false
-    # (nor is the hotel's terrace a dock: its tables, its band, its rail over the water)
+    # (nor is the hotel's terrace a dock: its tables, its band, its rail over the water; nor its bar
+    # room, whose windows look over the water)
+    if hotel.ok and room_point_inside(hotel, me.pos): return false
     if hotel.ok:
         loop tb in hotel.tables:
             if f64(length(vec2(tb.x - me.pos.x, tb.z - me.pos.z))) < 6.5: return false
@@ -3157,6 +3246,7 @@ draw_leisure = (L: Light):
     draw_service(L)
     draw_boy_errand(L)
     draw_table_things(L)
+    draw_picnic(L)
 
 # ---------------- service at the table ----------------
 
@@ -3338,6 +3428,12 @@ _leisure_order = (key: str, item: MenuItem):
     if o.ok:
         leisure_spent += o.cents
         leisure_had.push(if item.food: item.name.lower() else: item.name)
+        # (a picnic basket isn't brought to the table: it's made up and handed over, to take along)
+        if item.name == PICNIC_ITEM:
+            global picnic
+            if leisure.coming.len() > 0: leisure.coming.remove_at(leisure.coming.len() - 1)
+            picnic.basket = true
+            menu_view.line = "A basket made up for you, {phoenix_text(o.cents)}. Take it where you like."
 
 _leisure_back = ():
     global ui, leisure_ui
@@ -3627,6 +3723,29 @@ leisure_capture_step = ():
         loop name in ["Meze plate", "Ouzo, the house's", "Aviation", "Bread and olives", "Fix"]: _leisure_order("hotel", pick(name))
     if stage == "menu": leisure_open_book("hotel")
     if stage == "bill": leisure_open_menu("hotel")
+    if stage == "picnic":
+        # (the basket along, on foot a few steps up from a quiet bit of shore near the town)
+        global picnic, picnic_capture_spot
+        picnic.basket = true
+        c = towns[0].center
+        found = false
+        loop ring in 6..80:
+            if found: break
+            loop k in 0..48:
+                a = f64(k) * TAU / 48.0
+                q = c + vec3(f32(cos(a) * f64(ring) * 8.0), 0, f32(sin(a) * f64(ring) * 8.0))
+                g = vec3(q.x, f32(walk_height(towns, f64(q.x), f64(q.z))), q.z)
+                okang = picnic_spot_at(g)
+                if okang.0:
+                    picnic_capture_spot = g
+                    back = vec3(f32(-sin(okang.1)), 0, f32(-cos(okang.1)))
+                    st = g + back * 6.0
+                    me.mode = .walking
+                    me.pos = vec3(st.x, f32(walk_height(towns, f64(st.x), f64(st.z))), st.z)
+                    me.yaw = okang.1; follow.yaw = me.yaw + PI + 0.6; follow.distance = 6.0; follow.pitch = 0.3
+                    walker_point = world_point(me.pos)
+                    print("PICNIC spot {g} sea {okang.1:.2}")
+                    found = true; break
     if stage == "foot-craft":
         # (on foot on the dock, a few steps from one's own aircraft at her mooring, facing her)
         if me.mode == .aboard: step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
@@ -3655,7 +3774,27 @@ leisure_capture_step = ():
             if d < nd: nearest = k; nd = d
         print("RIDE with {if nearest >= 0: living_world.people[folks[nearest].person].name else: ""} {nd:.0} m")
         if nearest >= 0:
-            if stage == "ride-offer":
+            if stage == "ride-lift-land":
+                # (a lift flown to the springs' harbour: moored at its dock with them in the seat,
+                # the pilot stepping ashore; they pay and thank him)
+                k = 0
+                landing = INLAND_ACCESS[THERMAL_SITES[k].place].landing
+                docks = harbour_docks(landing)
+                print("RIDE lift-land {ride_lift_harbour(k)} docks {docks.len()} cash {player_cents()}")
+                if docks.len() > 0:
+                    ride_start(nearest)
+                    global ride
+                    ride.dest = landing; ride.dest_name = ride_lift_harbour(k); ride.fare = RIDE_LIFT_CENTS
+                    ride.stage = .landed; ride.flew = true
+                    d = docks[0]
+                    pc.state.position = vec3(d.x, d.y, d.z)
+                    moor_at_dock(pc, d)
+                    pc.throttle = 0.0
+                    tie_up()
+                    step_ashore(d)
+                    me.mode = .walking
+                    walker_point = world_point(me.pos)
+            else if stage == "ride-offer":
                 # (offered from the dock, the one who answers behind the camera: the caption says
                 # it, and a marker at the screen's edge points round to them)
                 if me.mode == .aboard: step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
@@ -5642,6 +5781,7 @@ if let tw = env("AEGEAN_TWEAKS"):
             "plainhits": dbg.tweaks.generous_hits = false
             "wingvapour": dbg.tweaks.wing_vapour = true
             "windstudy": dbg.tweaks.wind_study_grass = true
+            "surf": dbg.tweaks.surf = true
             _: pass
     set_tweaks(dbg.tweaks)
 # AEGEAN_FDM2="lift=1.35,slow=1.3,..." (the Flight v2 page's copied line) sets flight model v2's numbers
@@ -5738,8 +5878,16 @@ apply_speed_scale = (k: f64):
         traffic[i].spec.fuel_burn = o.fuel_burn
 
 # the debugging panel: how things are now, for it to show and change
+# (copies handed over by the World page's map boxes: where each came from, to be put back there)
+debug_maps_given: {int: (str, int)}
 debug_view = () -> DebugView:
     v = DebugView()
+    # (the World page's map boxes: every edition in the world, by title, ticked where he has a copy)
+    if dbg.open and dbg.page == 3:
+        have: {str: bool}
+        loop c in living.owned_maps(living_world, living_world.player): have[c.edition] = true
+        loop edition, m in living_world.maps.editions: v.maps.push(DebugMap(edition, m.title, have.get(edition, false)))
+        v.maps.sort((a: DebugMap): a.title)
     v.craft = int(pc.kind)                # (the type, as the menu lists them; the model index differs past the first four)
     v.fuel = pc.state.fuel / max(pc.spec.fuel_capacity, 0.001)
     v.parts = [loop k in 0..pc.spec.parts.len(): part_health(pc.state.damage, pc.spec.parts[k].id)]
@@ -5864,6 +6012,8 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     radio.radio_silence(cockpit_radio);cockpit_radio=radio.Radio()
     broadcast.radio_place_transmitters(cockpit_radio,height)
     radio_bulletin=broadcast.RadioBulletinCache();radio_card_until=-1
+    global town_speech
+    town_speech = TownSpeech()
     living_world=next.world;pc=next.flyer;battle=next.battle
     hush_homeward(homeward);homeward=HomewardView()
     band_publish(living_world, band_numbers(hotel), BAR_START, BAR_END, int(BAR_GAP * 60.0))
@@ -6073,6 +6223,8 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     life_audio.hush_life_audio(life_sound);ambience_hush(world_ambience.sound);radio.radio_silence(cockpit_radio)
     set_speed_scale(session.speed);lt.scale_airframes(session.speed);set_lift_scale(session.lift);set_bullet_scale(session.bullets)
     dbg.tweaks=session.feel;set_tweaks(session.feel)
+    global town_speech
+    town_speech = TownSpeech()
     living_world=game.world;presentation=game.presentation;pc=session.flyer;air_events=session.air
     band_publish(living_world, band_numbers(hotel), BAR_START, BAR_END, int(BAR_GAP * 60.0))
     traffic_scene=living_scene.SceneAdapter(accumulator=session.accumulator)
@@ -6917,6 +7069,21 @@ debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
         .wreck: detach_part(pc.state.damage, pc.spec.parts, .body, pc.spec.mass, st.position, st.orientation, st.velocity, st.angular_velocity)
         .money_add: debug_cents(player_cents() + 100000)
         .maps_all: _ = living.grant_every_map(living_world,living_world.player)
+        .map_one:
+            global debug_maps_given
+            if r.map_on:
+                g = living.grant_map_edition(living_world, r.map_edition, living_world.player)
+                if g.0 >= 0: debug_maps_given[g.0] = (g.1, g.2)
+                else: say_toast("No copy of that map is on a counter.")
+            else:
+                given = -1
+                loop c in living.owned_maps(living_world, living_world.player):
+                    if c.edition == r.map_edition and c.id in debug_maps_given: given = c.id
+                if given >= 0:
+                    from = debug_maps_given[given]
+                    living.return_map_to_shop(living_world, given, from.0, from.1, living_world.player)
+                    debug_maps_given.remove(given)
+                else: say_toast("That map was bought or found in play: kept.")
         .money_set: debug_cents(r.phoenixes * 100)
         .to_altitude:
             p0 = if me.mode == .aboard: pc.state.position else: me.pos
@@ -7467,6 +7634,130 @@ cat_capture_update = ():
             if k >= 0 and not cat_scene.cats[k].act == .walk: me.yaw = cat_begin(cat_scene, k, cat_capture == "feed", me.pos)
 
 thermal_credit=0.0
+# ---------------- a picnic (src/picnic.jo) ----------------
+# The basket carried along (flown wherever one likes); on a quiet shore a tap on the sand (or F
+# standing there) spreads the blanket: he sits, the sea in front of him, and the afternoon goes
+# by; a bite now and then. Tap the basket (or Escape, or walk off) to pack up.
+picnic = Picnic()
+picnic_credit = 0.0
+picnic_capture_spot = vec3(0, 0, 0)
+picnic_mesh: Mesh? = none
+picnic_basket_mesh: Mesh? = none
+
+# Whether a point on the ground is a picnic spot, and which way the sea is from it.
+picnic_spot_at = (p: vec3) -> (bool, f64):
+    h = walk_height(towns, f64(p.x), f64(p.z))
+    # (the land itself, not a quay or a pier over the water: the ground there above the sea, and
+    # nothing built up over it)
+    land = surface_height(f64(p.x), f64(p.z))
+    # (nor in a town: no house within a dozen metres)
+    paved = land < 0.15 or h - land > 0.3
+    tk = town_here(p)
+    if tk >= 0:
+        loop c in towns[tk].houses:
+            if f64(length(vec2(c.x - p.x, c.z - p.z))) < 12.0: paved = true; break
+    depths: f64[] = []
+    loop k in 0..12:
+        a = f64(k) * TAU / 12.0
+        deepest = 0.0
+        loop r in [8.0, 14.0, PICNIC_SEA_REACH]:
+            q = vec2(f32(f64(p.x) + sin(a) * r), f32(f64(p.z) + cos(a) * r))
+            deepest = max(deepest, -surface_height(f64(q.x), f64(q.y)))
+        depths.push(deepest)
+    ang = picnic_sea_angle(depths)
+    (picnic_spot_ok(h, paved, ang), ang)
+
+picnic_begin = ():
+    global picnic, me, follow
+    ok, ang = picnic_spot_at(me.pos)
+    if not ok or not picnic.basket: return
+    picnic.active = true; picnic.at = me.pos; picnic.yaw = ang; picnic.since = t; picnic.settle = 0.0
+    picnic.next_bite = t + 5.0; picnic.bites = 0
+    tk = town_here(me.pos)
+    picnic.place = if tk >= 0: towns[tk].name else: ""
+    me.yaw = ang; me.stride = 0.0
+    mouse_lock(false)
+
+# packing up: up off the blanket by degrees, the basket emptied and done with
+picnic_pack = ():
+    global picnic
+    if not picnic.active or picnic.settle < 0.0: return
+    picnic.settle = min(picnic.settle, 1.0) - 1e-6
+    picnic.since = -1.0             # (packing)
+
+# where the basket stands on the blanket (for a tap on it)
+picnic_basket_at = () -> vec3: picnic.at + vec3(f32(sin(picnic.yaw + 1.9) * 0.75), 0, f32(cos(picnic.yaw + 1.9) * 0.75))
+
+picnic_basket_hit = (p: vec2) -> bool:
+    o, d = screen_ray(p)
+    b = picnic_basket_at()
+    ray_box(o, d, b - vec3(0.45, 0.1, 0.45), b + vec3(0.45, 0.6, 0.45)) >= 0.0
+
+# Each frame on the blanket: settling, the world's clock, a bite now and then, the view, and the
+# ways to pack up. True while it has the walking to itself.
+picnic_step = (dt: f64) -> bool:
+    global picnic, me, walker_point, walker_published, follow, follow_frame, picnic_credit, hour
+    if not picnic.active: return false
+    if picnic.since < 0.0:
+        picnic.settle -= dt / 0.9
+        if picnic.settle <= 0.0:
+            log_note(notebook, picnic_note(picnic), clock_text(living_world, living_world.minute))
+            picnic = Picnic()
+            return true
+    else:
+        picnic.settle = min(1.0, picnic.settle + dt / 1.0)
+        # (unhurried: about a minute of the world's clock a second)
+        picnic_credit += dt * PICNIC_MINUTES_A_SECOND
+        if picnic_credit >= 1.0:
+            picnic_credit -= 1.0
+            living.advance_minutes(living_world, 1)
+            hour = f64(lt.local_minute(living_world.minute)) / 60.0
+        if picnic_bite_due(picnic, t): picnic.bites += 1; picnic.next_bite = t + PICNIC_BITE_EVERY
+        # (the basket tapped or clicked, Escape, or walking off: pack up)
+        tapped = (pad.tapped and picnic_basket_hit(pad.tap_at)) or (not pad.on and mouse_pressed(.left) and picnic_basket_hit(foot_aim()))
+        if tapped or vpressed(.escape) or length(walk_axis()) > 0.1 or pad.walking: picnic_pack()
+    me.pos = picnic.at; me.yaw = picnic.yaw; me.stride = 0.0
+    walker_point = world_point(me.pos); walker_published = me.pos
+    follow.yaw = approach_angle(follow.yaw, picnic.yaw + PI + 0.55, 1.0, dt)
+    follow.distance = approach(follow.distance, 4.6, 1.2, dt)
+    follow.pitch = approach(follow.pitch, 0.16, 1.2, dt)
+    update_player_follow(dt, input = false)
+    true
+
+# (his right hand to his mouth for a moment after each bite)
+picnic_biting = () -> bool: picnic.active and picnic.bites > 0 and t < picnic.next_bite - PICNIC_BITE_EVERY + 1.4
+
+# The blanket and what is on it, or the basket on his arm as he walks.
+draw_picnic = (L: Light):
+    global picnic_mesh, picnic_basket_mesh
+    if not picnic.basket: return
+    if picnic_basket_mesh == none:
+        vs: Vertex3D[]
+        add_box(vs, vec3(0, 0.12, 0), vec3(0.42, 0.24, 0.28), rgb(0.66, 0.5, 0.28))
+        loop k in 0..4: add_box(vs, vec3(0, f32(0.04 + f64(k) * 0.06), 0), vec3(0.43, 0.012, 0.29), rgb(0.5, 0.36, 0.18))
+        add_box(vs, vec3(0, 0.25, 0), vec3(0.4, 0.02, 0.26), rgb(0.86, 0.82, 0.72))
+        loop side in [-1.0, 1.0]: add_box(vs, vec3(f32(side * 0.15), 0.36, 0), vec3(0.025, 0.24, 0.025), rgb(0.5, 0.36, 0.18))
+        add_box(vs, vec3(0, 0.47, 0), vec3(0.33, 0.025, 0.025), rgb(0.5, 0.36, 0.18))
+        picnic_basket_mesh = custom_mesh(vs)
+    if not picnic.active:
+        if me.mode != .walking: return
+        side = vec3(f32(cos(me.yaw)), 0, f32(-sin(me.yaw)))
+        if let m = picnic_basket_mesh: draw(obj_sh, m, obj_params(L, t, translation(me.pos + side * 0.32 + vec3(0, 0.42, 0)) * rotation_y(me.yaw) * scaling(0.85)))
+        return
+    if picnic_mesh == none:
+        vs: Vertex3D[]
+        loop k in 0..7: add_box(vs, vec3(f32(-0.78 + f64(k) * 0.26), 0.01, 0), vec3(0.26, 0.012, 1.3), if k % 2 == 0: rgb(0.62, 0.17, 0.14) else: rgb(0.9, 0.84, 0.7))
+        picnic_mesh = custom_mesh(vs)
+    open = clamp(picnic.settle, 0.0, 1.0)
+    if let m = picnic_mesh: draw(obj_sh, m, obj_params(L, t, translation(picnic.at + vec3(0, 0.005, 0)) * rotation_y(picnic.yaw) * scaling(vec3(f32(open), 1.0, f32(open)))))
+    if let m = picnic_basket_mesh: draw(obj_sh, m, obj_params(L, t, translation(picnic_basket_at()) * rotation_y(picnic.yaw + 0.4)))
+    if open > 0.9:
+        ahead = vec3(f32(sin(picnic.yaw)), 0, f32(cos(picnic.yaw))); right = vec3(f32(cos(picnic.yaw)), 0, f32(-sin(picnic.yaw)))
+        spot = picnic.at + ahead * 0.55
+        draw_serving(serve_parts, Served(MenuItem("Bread", "Food", "Picnic", serve = .plate, food = true), 0, 0, amount = 0.7), translation(spot - right * 0.25 + vec3(0, 0.02, 0)) * scaling(1.2), L, t)
+        draw_serving(serve_parts, Served(MenuItem("Wine", "Wine", "Picnic", serve = .bottle), 0, 0), translation(spot + right * 0.3 + vec3(0, 0.02, 0)) * scaling(1.2), L, t)
+        draw_serving(serve_parts, Served(MenuItem("Olives", "Food", "Picnic", serve = .bowl, food = true), 0, 0, amount = 0.6), translation(spot + ahead * 0.2 + vec3(0, 0.02, 0)) * scaling(1.2), L, t)
+
 # ---------------- taking the waters (src/bath.jo) ----------------
 # By the things themselves: the keeper at the bathhouse door (pay), the hot pool (get in: changing
 # first), the steps (get out). The keys work as before: F at the pool's edge, R to come out.
@@ -7477,7 +7768,7 @@ bath_keeper_fig: Figure? = none
 
 # where things are at a site, in the world (its frame: +z downhill, x across)
 bath_keeper_at = (site: ThermalSite) -> vec3: thermal_world(site, vec3(-6.4, 0, -1.2))
-bath_cabin_door = (site: ThermalSite) -> vec3: thermal_world(site, vec3(-8.0, 0, -1.4))
+bath_cabin_door = (site: ThermalSite) -> vec3: thermal_world(site, vec3(-8.0, 0, -0.9))
 bath_steps = (site: ThermalSite) -> vec3: thermal_world(site, vec3(THERMAL_POOL.x, f32(-site.drops.x), THERMAL_POOL.y + 5.0))
 bath_spot = (site: ThermalSite, k: int) -> vec3:
     a = [2.25, 3.35, 4.3][k % 3]
@@ -7523,7 +7814,7 @@ bath_fig = (person: int, bathing: bool) -> Figure:
     key = person * 2 + (if bathing: 1 else: 0)
     if key in bath_figs: return bath_figs[key]
     pp = living_world.people[person]
-    f = build_figure(dress_of(pp.occupation), pp.appearance_seed, age = pp.age, bathing = bathing)
+    f = build_figure(dress_of(pp.occupation), pp.appearance_seed, age = pp.age, bathing = bathing, woman = person_woman(pp.name))
     bath_figs[key] = f
     f
 
@@ -7550,7 +7841,8 @@ bath_route_to = (at: vec3):
     loop lv != b:
         down = b > lv
         st = stairs[min(if down: lv else: lv - 1, stairs.len() - 1)]
-        top = thermal_world(site, vec3(f32(st.x), f32(-st.top), f32(st.z0 - 0.6)))
+        # (the top on the first step itself, so the way on from it clears the houses' corners)
+        top = thermal_world(site, vec3(f32(st.x), f32(-st.top), f32(st.z0 + 0.15)))
         bottom = thermal_world(site, vec3(f32(st.x), f32(-st.bottom), f32(st.z1 + 0.6)))
         if down: foot_route.push(top); foot_route.push(bottom)
         else: foot_route.push(bottom); foot_route.push(top)
@@ -8021,8 +8313,9 @@ tender_cam_step = ():
     spec = vessel_spec(.seaplane_tender)
     eye = tender_local(vec3(2, f32(spec.deck + 16.0), 4))
     target = tender_slot(3)
-    low = 1e9; moored = 0; flying = 0
+    low = 1e9; moored = 0; flying = 0; down = 0
     loop a in battle.actors:
+        if a.side == 1 and a.present and not a.human and a.status != .flying: down += 1
         if a.side != 1 or not a.present or a.status != .flying: continue
         if a.pilot.home_done:
             moored += 1
@@ -8046,7 +8339,10 @@ tender_cam_step = ():
         # (in: off her seaward quarter, looking back at her side and booms, the flight taxiing in)
         off = TENDER_AT + tender_port() * 140.0 - tender_forward() * 40.0 + vec3(0, 30, 0)
         judge_camera = JudgeView(off, TENDER_AT + tender_port() * 30.0 + vec3(0, 2, 0), "off the Ierax's quarter")
-    if frame_number() % 300 == 0: print("TENDER frame {frame_number()}: {moored} moored, {flying} still flying, the lowest at {low:.0} m, {length(target - TENDER_AT):.0} m off")
+    if frame_number() % 300 == 0:
+        print("TENDER frame {frame_number()}: {moored} moored, {flying} still flying, {down} down, the lowest at {low:.0} m, {length(target - TENDER_AT):.0} m off; wind {length(wind_now_vec()):.1} m/s")
+        loop a in battle.actors:
+            if a.side == 1 and a.present and not a.human and (a.status != .flying or a.state.crashed or a.state.capsized): print("TENDER down: {a.craft} status {a.status} crashed {a.state.crashed} capsized {a.state.capsized} at {a.state.position.x:.0},{a.state.position.y:.1},{a.state.position.z:.0} phase {a.pilot.plan.phase} hull {a.state.hull_damage:.2}")
 
 # Flies the player's aircraft for AEGEAN_CAPTURE_STRAIT_AFTER: the autopilot down beside the
 # survivor; in the formation's slot on the leader; round the bay till the rest are down; then in.
@@ -9070,7 +9366,7 @@ adrift_take = ():
     global rider_fig
     rider_takes(a.person, a.at + vec3(0, -1.0, 0))
     p = living_world.people[a.person]
-    rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+    rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age, woman = person_woman(p.name))
     off = living.place_name(living_world, adrift_near(living_world, a))
     log_note(notebook, "Took {_first_name(a.person)} aboard from the boat off {off}.", clock_text(living_world, living_world.minute))
     pilot_did(living_world.pilot_day, Doing(.rescued, living_world.minute, who = _first_name(a.person), where = off))
@@ -9219,7 +9515,7 @@ rt_lines = () -> int[]:
 rt_tick = ():
     global rt
     if not rt.open:
-        if vpressed(.c):
+        if vpressed(.y):
             lines = rt_lines()
             if lines.len() == 0: say_toast("No one on the R/T.")
             else:
@@ -9230,7 +9526,7 @@ rt_tick = ():
     number = if vpressed(.n1): 1 else: if vpressed(.n2): 2 else: if vpressed(.n3): 3 else: if vpressed(.n4): 4 else: if vpressed(.n5): 5 else: 0
     esc = vpressed(.escape)
     if esc: take_escape()
-    chosen = rt_keys(rt, vpressed(.c), vpressed(.f) or vpressed(.enter), number, esc, t)
+    chosen = rt_keys(rt, vpressed(.y), vpressed(.f) or vpressed(.enter), number, esc, t)
     if chosen >= 0: rt_send(chosen)
     if not rt.open and rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
 
@@ -9812,7 +10108,7 @@ help_carried_home = ():
     pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, at.0, at.1)
     pc.spec.player = true
     ci = combat_index(battle, living_world.people[living_world.player].craft)
-    if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, 0, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model)
+    if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, battle.actors[ci].side, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model, engagement = battle.actors[ci].engagement)
     pc.placed = false
     rope.tied = false
     if at_tender:
@@ -9913,9 +10209,9 @@ help_pilot_home = ():
 help_card = () -> str:
     match sos.stage:
         .routing: "{capital(sos.name)} is putting out."
-        .coming: "{capital(sos.name)} is coming.   C  R/T"
+        .coming: "{capital(sos.name)} is coming.   Y  R/T"
         .alongside: "{capital(sos.name)} is alongside."
-        .towing: if sos.aboard: "Aboard {sos.name}, the aircraft in tow, for {sos.harbour_name}.   F  skip ahead" else: "Under tow to {sos.harbour_name}.   C  R/T"
+        .towing: if sos.aboard: "Aboard {sos.name}, the aircraft in tow, for {sos.harbour_name}.   F  skip ahead" else: "Under tow to {sos.harbour_name}.   Y  R/T"
         .carrying: if help_carrier_up(): "In {sos.name}'s second seat, for {sos.harbour_name}.   F  skip ahead" else: "In {sos.name}'s second seat."
         _: ""
 
@@ -10284,7 +10580,7 @@ stage_capture_adrift = (stage: str):
             global rider, rider_fig
             rider = rider_seated(skipper, t, false)
             p = living_world.people[skipper]
-            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age)
+            rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age, woman = person_woman(p.name))
         return
     wait = frame_number() - adrift_stage_frame
     # (heard: in the talk, he asks what they've heard)
@@ -10417,18 +10713,22 @@ offer_words = (s: str) -> str:
         if t.starts_with(prefix): t = t[prefix.len()..t.len()]
     t
 
+# Every offer stays reachable: its own key if it is free, else the next free one of the offer
+# keys (F, R, G, T, K, L, X; its card names the key it got). None is dropped (a third offer on F,
+# or a second on G, once was). On a touch screen each card is its own button and a controller
+# chooses them in order, whatever their keys.
+OFFER_KEYS: Key[] = [.f, .r, .g, .t, .k, .l, .x]
 offer_add = (o: mut Offer[], act: str, words: str, key: Key = .f, hold: bool = false):
     if words == "": return
-    has_f = false
-    has_r = false
-    has_own = false
-    loop e in o:
-        if e.key == .f: has_f = true
-        if e.key == .r: has_r = true
-        if e.key == key: has_own = true
+    used = [loop e in o: e.key]
+    taken = (k: Key) -> bool: used.contains(k)
     k = key
-    if k == .f and has_f: k = .r
-    if (k == .r and has_r) or (k != .r and k != .f and has_own): return
+    if taken(k):
+        loop c in OFFER_KEYS:
+            if not taken(c):
+                k = c
+                break
+    if taken(k): return                 # (seven at once: there is no key left)
     o.push(Offer(k, words, act, hold))
 
 # on foot (the baths, once in them, keep their own keys: F an hour, T till evening, R leave)
@@ -10477,6 +10777,7 @@ walk_offers = () -> Offer[]:
     k_ride = ride_candidate(10.0)
     if not held and not busy and k_ride >= 0: offer_add(o, "ride-offer", "offer {split(living_world.people[folks[k_ride].person].name, " ")[0]} a flight", .k)
     if not held and not busy and swim_here(): offer_add(o, "swim", "go for a swim", .g)
+    if not held and not busy and picnic.basket and not picnic.active and picnic_spot_at(me.pos).0: offer_add(o, "picnic", "spread the blanket here")
     if not held and not busy and stargaze_here(): offer_add(o, "gaze", "lie back and look at the stars", .l)
     if not held and not busy and not near_own_craft() and pc.state.moored:
         if let a = mooring_anchor():
@@ -10611,6 +10912,7 @@ update = (dt: f64):
     living_scene.set_scene_minute_budget(if calm: MINUTE_FRAME_MS else: -1.0)
     if not calm: finish_held_minute(traffic,living_world,traffic_scene,battle)
     update_frame(dt)
+    pilot_reply_frame()
     # (in a browser: whether a panel is open, so the phone's Back closes it rather than the page)
     when TARGET == "wasm": __aegean_panel_open(i32(if menus_open(): 1 else: 0))
     step_game_save()
@@ -10793,8 +11095,31 @@ update_frame = (dt: f64, saves: bool = true):
     global foot_hover
     # (the mouse locked to the view: what the middle of the screen is on, over his shoulder)
     foot_hover = if me.mode == .walking and ui == .none and not pad.on and not notebook.open and not show_chart: foot_pick(foot_things(), foot_aim()) else: -1
-    if mouse_pressed(.left) and foot_hover >= 0:
+    # (the trial: on foot the mouse stays a pointer; a click (pressed and let go in one place) uses
+    # what it is on, or walks to the ground there; a drag turns the view)
+    pointer_trial = tweaks.pointer_on_foot and me.mode == .walking and not pad.on
+    if pointer_trial:
+        global foot_press, foot_dragged
+        if is_mouse_locked() and ui == .none: mouse_lock(false)
+        if mouse_pressed(.left): foot_press = mouse_pos(); foot_dragged = false
+        if mouse_down(.left) and foot_press.x >= 0.0:
+            if f64(length(mouse_pos() - foot_press)) > 8.0: foot_dragged = true
+            if foot_dragged and ui == .none:
+                md = mouse_delta()
+                global follow
+                follow.yaw -= f64(md.x) * 0.005
+                follow.pitch = clamp(follow.pitch + f64(md.y) * 0.004, follow.min_pitch, follow.max_pitch)
+        if mouse_released(.left) and foot_press.x >= 0.0 and not foot_dragged and ui == .none and not notebook.open and not show_chart:
+            if foot_hover >= 0: foot_go(foot_things(), foot_hover)
+            else if picnic_ground_hover():
+                if let g = ground_under(foot_aim()): bath_walk_to(g, "picnic")
+            else if let g = ground_under(mouse_pos()):
+                if f64(length(g - me.pos)) < 60.0: bath_walk_to(g, "")
+        if not mouse_down(.left): foot_press = vec2(-1, -1)
+    else if mouse_pressed(.left) and foot_hover >= 0:
         foot_go(foot_things(), foot_hover)
+    else if mouse_pressed(.left) and picnic_ground_hover():
+        if let g = ground_under(foot_aim()): bath_walk_to(g, "picnic")
     else if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1 and not rt.open:
         mouse_lock(true)
         global click_took_mouse
@@ -10869,7 +11194,7 @@ update_frame = (dt: f64, saves: bool = true):
               update_player_follow(dt, input = false)
           else if ui != .none: update_player_follow(dt, input = false)
           bath_step(dt)
-          thermal_handled=bath.stage==.getting_in or (ui==.none and not notebook.open and not show_chart and thermal_walk(dt))
+          thermal_handled=(ui==.none and picnic_step(dt)) or bath.stage==.getting_in or (ui==.none and not notebook.open and not show_chart and thermal_walk(dt))
           if bath.stage==.getting_in:update_player_follow(dt,input=false)
           if ui == .none and not notebook.open and not show_chart and not thermal_handled:
               if vdown(.q): follow.yaw += dt * 2.0
@@ -10900,6 +11225,10 @@ update_frame = (dt: f64, saves: bool = true):
                   ft = foot_things()
                   fk = foot_pick(ft, pad.tap_at)
                   if fk >= 0: foot_go(ft, fk); tapped_thing = true
+                  # (the basket along: a tap on the sand of a quiet shore, and he spreads the blanket there)
+                  else if picnic.basket:
+                      if let g = ground_under(pad.tap_at):
+                          if picnic_spot_at(g).0: bath_walk_to(g, "picnic"); tapped_thing = true
               # (walking himself, the keys or the Walk button, he forgets where he was going; there,
               # the card's act is done where the cards are read (offers, below), or a person is
               # talked to, or what comes after done)
@@ -10966,9 +11295,14 @@ update_frame = (dt: f64, saves: bool = true):
               act = if typing: "" else: offer_pressed(offers)
               # (walking over to a thing: there when its card would be offered, and done as its key does)
               if act == "" and foot_goal >= 0 and foot_goal_act != "" and foot_goal_folk < 0:
+                  # (a table on the terrace: there at the chair chosen, not at the first one passed)
+                  at_chair = foot_route.len() == 0 and f64(length(vec3(me.pos.x - foot_goal_at.x, 0, me.pos.z - foot_goal_at.z))) < 1.8
                   loop e in offers:
-                      if e.act == foot_goal_act and (foot_goal_sub == "" or e.words.contains(foot_goal_sub)):
+                      if e.act == foot_goal_act and (foot_goal_sub == "" or e.words.contains(foot_goal_sub)) and (foot_goal_sub != "sit at a table" or at_chair):
                           act = e.act; foot_then = foot_goal_then; foot_goal = -1
+                          if foot_goal_sub == "sit at a table":
+                              global hotel_sit_target
+                              hotel_sit_target = foot_goal_at
                           break
               if offer_held(offers, "haul"): haul_in(dt)
               if act == "cargo": _ = cargo_interact()
@@ -11005,6 +11339,7 @@ update_frame = (dt: f64, saves: bool = true):
                   ui_place = near_board()
                   mouse_lock(false)
               if act == "leisure": leisure_act()
+              if act == "picnic": picnic_begin()
               # (sat down at the coffee house to the board, or the paper: those next)
               if foot_then != "" and act != "":
                   if leisure.sitting != "": run_then(foot_then)
@@ -11466,22 +11801,21 @@ update_frame = (dt: f64, saves: bool = true):
     # A contact/bark event commits words once; drawing the bubble only reads them.
     if me.mode == .walking and ui == .none and not world_held():
         k = nearest_folk(folks,me.pos,7.0)
-        if k >= 0 and t-folks[k].line_t > 20.0 and not (welcome_active(living_world) and folks[k].person == living_world.welcome.greeter):
-            about = passing_topic(living_world, folks[k].person)
-            folks[k].line = passing_line(living_world,folks[k].person)
-            plain = folks[k].line != ""
-            if plain and _lead_now(0.14):
-                said = tell_lead(folks[k].person)
-                if said != "": folks[k].line = said; plain = false
-            # (one waiting for the pilot's cargo asks after it)
-            awaited = portage.cargo_awaited(living_world, folks[k].person)
-            if awaited >= 0: folks[k].line = if let e = errand_of(living_world, awaited): errand_waiting(living_world, e) else: "Is that {job_cargo(awaited)} from {split(living_world.people[living_world.jobs[awaited].poster].name, " ")[0]}?"
-            # (one who waited in the second seat and gave up says so, in passing)
-            if folks[k].person in ride_owed: folks[k].line = ride_gave_up_line(living_world.people[folks[k].person].traits.boldness < 450)
+        if k >= 0 and welcome_active(living_world) and folks[k].person == living_world.welcome.greeter: k = -1
+        if k >= 0 and t-folks[k].line_t > 20.0:
+            speaker = folks[k].person
+            awaited = portage.cargo_awaited(living_world,speaker)
+            if speaker in ride_owed:
+                folks[k].line = ride_gave_up_line(living_world.people[speaker].traits.boldness < 450)
+                ride_owed.remove(speaker)
+            else if awaited >= 0:
+                folks[k].line = if let e = errand_of(living_world,awaited): errand_waiting(living_world,e) else: "Is that {job_cargo(awaited)} from {split(living_world.people[living_world.jobs[awaited].poster].name, " ")[0]}?"
+            else:
+                folks[k].line = ""
+                _ = chat_at(speaker,folks[k].place,false)
             folks[k].line_t = t
-            # (and the pilot, now and then, answers in passing: src/pilot_talk.jo)
-            if plain and not (folks[k].person in ride_owed) and portage.cargo_awaited(living_world, folks[k].person) < 0: pilot_respond(if about == .home: SmallTopic.day else: SmallTopic.weather, -1, false)
-            if folks[k].person in ride_owed: ride_owed.remove(folks[k].person)
+        else if k >= 0 and folks[k].line == "" and t >= storm_check_at:
+            _ = chat_at(folks[k].person,folks[k].place,false,warnings_only=true)
     if not world_held(): update_air_events(air_events,living_world,craft_models,pc.state.position,me.mode==.aboard,other_air=[loop tr in traffic:if tr.visible:AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored)])
     else:
         # (while a world minute is in progress the club and the air arm fly on, as the scene's traffic does)
@@ -11762,7 +12096,7 @@ draw_world = (L: Light):
     frame_clouds = cloud_frame_list
     draw_custom(():
         render_cloud_shadows(frame_clouds,L)
-        begin_cloud_depth())
+        clear_depth())
     draw_custom(():
         bow = transform_point(afloat_transform(craft_transform(pc),t), rope_bow())
         draw_rope(rope, pc.state.moored, bow, L, t)
@@ -11889,7 +12223,7 @@ draw_world = (L: Light):
             draw_figure(player_figure(), seat.0, seat.1, 0.0, 0.0, Lw, t, offset=world_residual(world_point(seat.0)), posture=1)
         # (out of sight in the bathhouse's cabin while he changes)
         else if me.mode == .walking and bath.stage == .changing: pass
-        else if me.mode == .walking: draw_figure(player_figure(), me.pos, me.yaw, me.phase, player_stride(), Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=(if bath.stage == .getting_in or bath.stage == .getting_out: 1 else: player_posture()),settle=(if bath.stage == .getting_in or bath.stage == .getting_out: bath.settle else: 1.0),arms=(if let ap = pilot_arm_pose(): vec2(-9, f32(ap.angle)) else: fish_arms()),elbows=vec2(0,f32(if let ap = pilot_arm_pose(): ap.bend else: 0.0)),reach=(if let ap = pilot_arm_pose(): ap.reach else: 0.0),twist=(if let ap = pilot_arm_pose(): ap.twist else: 0.0),shoulder=pilot_shoulder)
+        else if me.mode == .walking: draw_figure(player_figure(), me.pos, me.yaw, me.phase, player_stride(), Lw, t, carrying=holding_cargo() >= 0,offset=world_residual(walker_point),posture=(if bath.stage == .getting_in or bath.stage == .getting_out or picnic.active: 1 else: player_posture()),settle=(if bath.stage == .getting_in or bath.stage == .getting_out: bath.settle else: if picnic.active: clamp(picnic.settle, 0.0, 1.0) else: 1.0),arms=(if picnic_biting(): vec2(-9, 2.25) else: if let ap = pilot_arm_pose(): vec2(-9, f32(ap.angle)) else: fish_arms()),elbows=vec2(0,f32(if let ap = pilot_arm_pose(): ap.bend else: 0.0)),reach=(if let ap = pilot_arm_pose(): ap.reach else: 0.0),twist=(if let ap = pilot_arm_pose(): ap.twist else: 0.0),shoulder=pilot_shoulder)
         draw_traffic(all_air_traffic,craft_models,L,t,battle,1800)
         draw_air_meets(air_meet_view,air_events,L,t)
         draw_club_tables(L)
@@ -11951,6 +12285,7 @@ draw_world = (L: Light):
             continue
         m = translation(st.position) * quat_to_mat4(st.orientation)
         loop j in 0..cm.shade.len() / 2: add_sea_shadow(sea_sh, m, cm.shade[j * 2], cm.shade[j * 2 + 1], L.sun_dir, a)
+    snapshot_water_depth()
     draw_custom((): draw_sea(sea_mesh, depth_tex, L, t, wind_now, view_velocity(), sea_sh), transparent = true)
     draw_custom((): draw_rivers(depth_tex,L,t,view_velocity()),transparent=true)
     draw_custom((): zone("lakes");draw_lakes(depth_tex,L,t,view_velocity());zone_end(),transparent=true)
@@ -11973,6 +12308,7 @@ draw_world = (L: Light):
         draw_custom((): draw_wakes(wakes, L, t), transparent = true)
         if title.open and title_shot.kind == .low and title_shot.pace == 2: draw_custom((): draw_wakes(title_wakes, L, t), transparent = true)
         draw_custom((): draw_vessel_wakes(vessel_view,L,t), transparent = true)
+        draw_vessel_spray(vessel_spray,L,t)
         draw_custom((): draw_wildlife_marks(wildlife, L, t), transparent = true)
     draw_custom((): draw_vessel_smoke(vessel_view,L,t), transparent = true)
     if me.mode == .aboard: draw_custom((): draw_flight_effects(pc,craft_models[pc.model],pc_at(),L,t),transparent=true)
@@ -12010,7 +12346,8 @@ draw_world = (L: Light):
         seat = pc_at() * translation(craft_models[pc.model].cockpit - vec3(0, 1.55, 0)) * scaling(f64(me_fig.height))
         draw_custom((): draw_cloths(scarf_mesh, pilot_scarf(), seat, wind_now_vec() - cloth_vel, L, t, cloth_top, offset=world_residual(craft_point(pc.state)), back=f64(me_fig.back)))
     # (not while he lies back looking at the stars, or swims)
-    else if me.mode == .walking and not presentation.thermal.active and not gaze.active and not swim.active:
+    # (nor in his bathing suit at the springs: the scarf stays with his clothes in the cabin)
+    else if me.mode == .walking and not presentation.thermal.active and not gaze.active and not swim.active and not bath.costume and bath.stage != .changing:
         fwd = vec3(f32(sin(me.yaw)), 0, f32(cos(me.yaw)))
         fig = player_figure()
         body = translation(me.pos) * rotation_y(me.yaw + PI) * scaling(f64(fig.height)) * figure_pose(fig, me.phase, player_stride(), player_posture())
@@ -12067,7 +12404,7 @@ draw = ():
     sun(L.sun_dir, L.sun, 0.0)
     hide_sky()
     fog(L.haze, L.fog_density, 0.0012)
-    post_effects(0.35, 0.85, 0.22, 1.08)
+    post_effects(0.35, 0.85, 0.22, 1.08, scene_depth = true)
     global ear_forward
     match me.mode:
         .free:
@@ -12203,6 +12540,11 @@ draw = ():
     set_font(fonts.ui)
     clock_size = readable(22.0)
     clock_words = "{int(hour):02}:{int((hour - floor(hour)) * 60.0):02}"
+    # (a soft dark plate behind the clock and the purse: cream on a bright sky was about 2:1, on
+    # the plate about 4.5:1)
+    if not dbg.open:
+        corner_w = max(text_width(clock_words, clock_size), ptext_width(phoenix_text(player_cents()), readable(20.0))) + 20.0
+        rect_rounded(f64(screen_width()) - 14.0 - corner_w, 12.0, corner_w, 18.0 + clock_size + readable(20.0), 8, rgba(0.03, 0.05, 0.08, 0.4))
     if not dbg.open: text(clock_words, vec2(f32(f64(screen_width()) - 24.0 - text_width(clock_words, clock_size)), 18), clock_size, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
     set_font()
     draw_music_cues()
@@ -12236,7 +12578,8 @@ draw = ():
         loop e in near: name_tag(fonts, folk_view_position(folks[e.1]) + vec3(0, 1.7, 0), living_world.people[folks[e.1].person].name, e.0, tags)
         if k >= 0 and not (welcome_active(living_world) and folks[k].person == living_world.welcome.greeter):
             d = f64(length(folks[k].pos - me.pos))
-            speech_bubble(fonts, folk_view_position(folks[k]) + vec3(0, 1.7, 0), living_world.people[folks[k].person].name, folks[k].line, d, 8.0)
+            words = if not town_speech.seated and town_speech.speaker == folks[k].person: town_speech.turn.opening else: folks[k].line
+            speech_bubble(fonts, folk_view_position(folks[k]) + vec3(0, 1.7, 0), living_world.people[folks[k].person].name, words, d, 8.0)
     # Deterministic typography capture, using the real projected speech widget.
     if startup_aegean_capture_panel == "speech":
         speech_bubble(fonts, me.pos + vec3(0,1.7,0), "Nikos", "The fishing boats are back in the harbour.", 2.0, 8.0)
@@ -12312,7 +12655,7 @@ draw = ():
             # (not while one is close enough to take aboard: the offer names them, and the mark's
             # words would sit over it)
             if rescue_act != 1:
-                loop k in 0..min(marks.len(), 3): draw_rescue_mark(fonts, marks[k].pos, pc.state.position, survivor_name(living_world, marks[k]), side_colour(survivor_standing(living_world, marks[k].country), 0.95))
+                loop k in 0..min(marks.len(), 3): draw_rescue_mark(fonts, marks[k].pos, pc.state.position, survivor_name(living_world, marks[k]), side_colour(survivor_standing(living_world, marks[k].country), 0.95), survivor_standing(living_world, marks[k].country), true)
             # (a claimed contract's packet or survivor: where to collect it, then where it is to go)
             if packets_now.len() > 0: draw_rescue_mark(fonts, packets_now[0].pos, pc.state.position, packets_now[0].label, rgba(0.78, 0.86, 1.0, 0.95))
     if (me.mode == .aboard or me.mode == .walking) and not paused and not show_chart and ui == .none: draw_battle_card(fonts, battle_card, t)
@@ -12367,6 +12710,8 @@ draw = ():
                 if picked >= 0: _ = living.select_map(living_world,picked,living_world.player)
     # (on a touch screen: the stick and the buttons, over everything)
     draw_pad()
+    # (which build this is: always in the pause menu, in play while the setting is on)
+    draw_build_label(fonts, dbg.open or (options.build_label and not title.open))
     quality_next_frame()
     if let directory=startup_aegean_target_frames:
         if frame_number()%6==0:save_png("{directory}/{frame_number()}.png",screenshot())
@@ -12391,7 +12736,8 @@ draw = ():
     # (AEGEAN_FOOT_GO="<frame>:<thing>": at that frame, on foot, he's sent over to one of
     # foot_things as a tap there would; a trace of where he is and whether he sat)
     if foot_go_script != "":
-        kv = split(foot_go_script, ":")
+      loop step in split(foot_go_script, ";"):
+        kv = split(step, ":")
         if kv.len() == 2 and frame_number() == (to_int(kv[0]) ?? -1):
             ft = foot_things()
             # (by its label, or its place in the list)
@@ -12405,7 +12751,11 @@ draw = ():
                     run_then(st[i].then)
             print("FOOT things {[loop th in ft: th.label]} going {kv[1]} ({k}); cards {[loop o in shown_offers(walk_offers()): o.words]} of {[loop o in walk_offers(): o.words]}")
             if k >= 0: foot_go(ft, k)
-        if frame_number() % 30 == 0: print("FOOT f{frame_number()} at {me.pos.x:.1} {me.pos.y:.1} {me.pos.z:.1} goal {foot_goal} route {foot_route.len()} mode {me.mode} sitting {leisure.sitting} ui {ui}/{leisure_ui} bath {bath.stage} costume {bath.costume} {bath.settle:.2} soak {presentation.thermal.active} min {lt.local_minute(living_world.minute)} line {bath.line}")
+            if kv[1] == "bath-out": bath_get_out()
+            if kv[1] == "picnic": bath_walk_to(picnic_capture_spot, "picnic")
+            if kv[1] == "pack": picnic_pack()
+      if frame_number() % 30 == 0 and picnic.basket: print("PICNIC f{frame_number()} active {picnic.active} settle {picnic.settle:.2} bites {picnic.bites} min {lt.local_minute(living_world.minute)} at {me.pos.x:.1} {me.pos.z:.1} goal {foot_goal}")
+      if frame_number() % 30 == 0: print("FOOT f{frame_number()} in-seat {[loop f in folks: if f.shown and f64(length(vec3(f.pos.x - hotel.seat.x, 0, f.pos.z - hotel.seat.z))) < 0.6: 1].len()} near {[loop f in folks: if f.shown and f64(length(vec3(f.pos.x - hotel.seat.x, 0, f.pos.z - hotel.seat.z))) < 3.0: 1].len()} at {me.pos.x:.1} {me.pos.y:.1} {me.pos.z:.1} goal {foot_goal} route {foot_route.len()} mode {me.mode} sitting {leisure.sitting} ui {ui}/{leisure_ui} bath {bath.stage} costume {bath.costume} {bath.settle:.2} soak {presentation.thermal.active} min {lt.local_minute(living_world.minute)} line {bath.line}")
     # (the room capture's script, AEGEAN_ROOM_SCRIPT="<frame>:<bed|chair|window|door|focus-<thing>|wake> ...":
     # sends him to a thing at that frame, or lights one as the arrow keys would; a trace of where he is)
     if room_script != "" and stay.active:
@@ -12441,7 +12791,7 @@ draw = ():
     if table_script != "" and frame_number() % 20 == 0: print("TABLE f{frame_number()} sitting {leisure.sitting} served {[loop s in leisure.served: s.amount]} left {left_key} {[loop s in left_table: s.amount]} clearer {clear_waiter.stage} tray {clear_waiter.tray.len()} waiter {waiter.stage} ui {leisure_ui}")
     if env("AEGEAN_SEAT_TRACE") != none and frame_number() % 5 == 0: print("SEAT f{frame_number()} yaw {follow.yaw:.3} pitch {follow.pitch:.3} look {stay_look_turn.yaw:.3} {stay_look_turn.pitch:.3}")
     if let f = env("AEGEAN_RIDE_TRACE"):
-        if frame_number() % 30 == 0: print("RIDE f{frame_number()} stage {ride.stage} mode {me.mode} ui {ui}/{leisure_ui} line {ride.line} d {length(me.pos - pc.state.position):.1}")
+        if frame_number() % 30 == 0: print("RIDE f{frame_number()} stage {ride.stage} mode {me.mode} ui {ui}/{leisure_ui} line {ride.line} d {length(me.pos - pc.state.position):.1} place {living_world.people[living_world.player].place} dest {ride.dest} cash {player_cents()}")
     # AEGEAN_RIDE_FRAMES=dir: a pleasure flight's clip, every other frame from 60 to 900
     if let directory = env("AEGEAN_RIDE_FRAMES"):
         if frame_number() >= 60 and frame_number() <= 900 and frame_number() % 2 == 0: save_png("{directory}/{(frame_number() - 60) / 2:04}.png", screenshot())
