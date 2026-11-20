@@ -73,6 +73,8 @@ struct SeaParams:
     coast_roll: vec4 = vec4(0,0,0,0)
     swell_phase: vec4[6]
     ripple_phase: vec4[5]
+    glint_facets: Texture = Texture()
+    specular_sun: vec4 = vec4(0,1,0,1)  # real disc direction and visible fraction
     glint_phase: vec4
     glint_pixel: f32 = 0.0016       # metres across a pixel per metre of distance (1 / the focal length in pixels)
     inland_phase:vec4=vec4(0,0,0,0)
@@ -80,11 +82,11 @@ struct SeaParams:
     inland_opacity_depth: f32 = 2.0
     inland_chop: f32 = 0.0           # a lake's wind chop: the sea's swell slopes and crests, scaled
     inland_walls: vec4 = vec4(0,0,0,0)   # a walled canal (canal_render.jo): wall face's half width, wall top, facade top over the water; w 1 on
-    moon: vec4 = vec4(0,0,0,0)       # the moon's direction and (w) its glitter's strength (night only)
+    moon: vec4 = vec4(0,0,0,0)       # the moon's direction and (w) its glitter's strength
     fleck_reference:vec3=vec3(0,0,0)
     opaque_depth: Texture
     reject_depth: f32 = 0
-    depth_mode:vec2=vec2(20,0)
+    far_z: f32 = 0.9999
     mark_phase: vec4[3]             # fractional cell origin xy, integer cell identity zw
     cloud_shadow: Texture = Texture()  # cloud_shadow_map.jo: the sun's glints and sheen go in cloud shadow
     cloud_area: vec4 = vec4(0,0,0,0)
@@ -378,9 +380,6 @@ _crest_strokes = (p: vec2, s: vec3, t: f32, wd: vec2, ws: f32, amp: f32, dist: f
     cap = smoothstep(lvl + 0.18, lvl + 0.3, hn) * smoothstep(5.0, 10.0, ws+wet*6.0) * step(0.6+wet*0.22, r)
     clamp(line * face * on + cap * 0.6, 0.0, 1.0)
 
-# the sun's glints: a sparse field of tiny facets, each tipped at random and re-tipped several
-# times a second; one that sends the sun into the eye flashes as a point. Cells grow with distance
-# (in steps of two) so a glint stays a pixel or two across.
 # Conservative reflection bound for every possible random facet tilt. A unit
 # normal perturbed by a vector of length <=r turns by at most asin(r). The
 # reflected-light dot is <= (1+v.l)*(nf.h)^2-v.l. Reject only when even that
@@ -395,56 +394,86 @@ sea_glint_possible = (n: vec3,v: vec3,l: vec3,h: vec3,rough: f32) -> bool:
     vl=dot(v,l)
     (1.0+vl)*bound*bound-vl>=GLINT_ACCEPT-0.0005
 
-# The glints: facets of the waves tipped toward the sun (or the moon) for a moment. Each cell of the
-# water holds one facet, re-tipped a few times a second; its tilts gather toward level (a peaked
-# spread), so the glitter is dense in its core and thins toward its edges, and a low light draws
-# it out into a column toward the eye. A facet that catches the light is painted as a short soft
-# dash across the view, a few pixels long whatever the distance (far off a pixel or so high, as
-# the water is foreshortened; rounder close by), leaning a little with the wave's slope; some are
-# little crescents, a few are larger, brighter flashes; each fades in and out as its facet turns.
-# Cells are about three pixels high on the screen, so a dash never shrinks to one hard pixel.
-const GLINT_ACCEPT: f32 = 0.986     # how near the light a facet's reflection must point to flash
+# A patch of wave facets, drawn once when the sea is initialized. Each cell
+# seeds four independent centres anywhere inside it. Dashes and crescent lips
+# extend across cell and tile edges. Red is their energy; the other channels
+# carry energy-weighted orientation, tilt and phase, so filtering across an
+# empty texel preserves the properties of the facet that supplied the light.
+const GLINT_ACCEPT: f32 = 0.986
+const GLINT_CELLS = 32
+const GLINT_TEXELS = 8
+const GLINT_TILE = GLINT_CELLS*GLINT_TEXELS
+sea_facet_tile: Texture
+sea_facet_image = () -> Image:
+    img = image(GLINT_TILE,GLINT_TILE)
+    loop row in 0..GLINT_CELLS/2:
+        loop col in 0..GLINT_CELLS/2:
+            r = rng(2129+row*7919+col*104729)
+            loop k in 0..4:
+                cx = (f64(col)+r.next_float())*2.0*GLINT_TEXELS
+                cy = (f64(row)+r.next_float())*2.0*GLINT_TEXELS
+                angle = r.next_float()*TAU
+                ax = cos(angle); ay = sin(angle)
+                large = r.next_float()>0.93
+                width = (2.5+1.25*r.next_float())*(if large: 1.5 else: 1.0)
+                height = width*(0.42+0.48*r.next_float())
+                lip = r.next_float()>0.65
+                strength = f32((0.35+0.5*r.next_float())*(if large: 1.17 else: 1.0))
+                props = vec4(1,f32(r.next_float()),f32(r.next_float()),f32(r.next_float()))
+                loop y in int(floor(cy-width))..int(ceil(cy+width))+1:
+                    loop x in int(floor(cx-width))..int(ceil(cx+width))+1:
+                        dx = f64(x)+0.5-cx; dy = f64(y)+0.5-cy
+                        a = (dx*ax+dy*ay)/width
+                        b = (dy*ax-dx*ay)/height
+                        edge = max(1.0-a*a-b*b,0.0)
+                        if lip: edge *= smoothstep(0.38,0.8,a*a+(b-0.58)*(b-0.58))
+                        energy = strength*f32(edge*sqrt(edge))
+                        u = x & (GLINT_TILE-1); v = y & (GLINT_TILE-1)
+                        if energy>img.get(u,v).x: img.set(u,v,props*energy)
+    img
+
+# Equal-area rotations and offsets decorrelate successive octaves. Every
+# octave samples the same distribution. Its projected cell area tracks the
+# pixel footprint on the water, including foreshortening at grazing angles.
 _glints = (p: vec2, n: vec3, v: vec3, l: vec3, dist: f32, t: f32, rough: f32, u: SeaParams) -> f32:
-    px = dist*u.glint_pixel                 # metres across one pixel here
-    vy = clamp(v.y,0.05,1.0)                # how steeply the water is seen
-    base: f32 = 0.3
-    lev = max(floor(log(max(px*3.0/vy,base)/base)*1.442695),0.0)
-    size = base*pow(2.0,lev)
-    anchor = sea_glint_anchor(u.glint_phase,pow(2.0,min(lev,15.0)))
-    q = p/size+anchor.xy
-    cell = floor(q)+anchor.zw
-    f = fract(q)
-    r1 = hash21(cell+vec2(lev*31.0,7.0))
-    r2 = hash21(cell+vec2(13.0,lev*17.0))
-    ph = t*(1.5+3.0*r1)+r2*10.0
-    tick = floor(ph)
-    # (the facet's tilt: any way round, its size gathering toward level, never past half the
-    # roughness's reach: a round spread, so the glitter's outline is the light's own ellipse and
-    # the gusts' roughness ragged at its edge, never a box along the world's axes)
-    spin = hash21(cell+vec2(5.0,3.0+tick))*TAU
-    lean = hash21(cell+vec2(9.0+tick,11.0))
-    tilt = vec2(cos(spin),sin(spin))*(lean*lean*0.5*(0.22+0.45*rough))
-    nf = normalize(n+vec3(tilt.x,0,tilt.y))
-    hit = smoothstep(GLINT_ACCEPT,0.999,dot(reflect(-v,nf),l))
-    if hit <= 0.0: return 0.0
-    r5 = hash21(cell+vec2(lev*7.0,29.0))
-    big = step(0.93,r5)
-    s = (0.7+0.6*r5)*(1.0+0.7*big)
-    across = normalize(vec2(-v.z,v.x)+vec2(n.z,-n.x)*1.5+vec2(0.0001,0))
-    along = vec2(-across.y,across.x)
-    ra = clamp(3.5*s*px,size*0.24*s,size*0.45)         # half its length (m)
-    rb = clamp(0.75*s*px/vy,size*0.17*s,size*0.42)     # half its height (m)
-    c = (vec2(0.3,0.3)+vec2(r1,r2)*0.4-f)*size
-    e = vec2(dot(c,across)/ra,dot(c,along)/rb)
-    sharp = max(min(ra,rb*vy)/px,0.5)                  # its smaller half-axis, in pixels
-    # (soft: brightest at its middle, fading to its tips; antialiased however small)
-    d2 = dot(e,e)
-    taper = max(1.0-d2,0.0)
-    spot = taper*sqrt(taper)*clamp((1.0-sqrt(d2))*sharp+0.5,0.0,1.0)
-    # (a crescent: the lit lip of a facet, once it is big enough on the screen to show one)
-    if r1 > 0.65 and sharp > 2.0: spot *= clamp((length(e-vec2(0,0.55))-0.8)*sharp+0.5,0.0,1.0)
-    # (mostly faint, now and then a bright flash; each fades in and out as its facet turns)
-    hit*spot*sin(fract(ph)*PI)*(0.25+0.6*r2*r2)*(1.0+1.2*big)
+    px = dist*u.glint_pixel
+    footprint = px/sqrt(max(v.y,0.012))
+    lod = clamp(log(max(footprint*5.0/0.3,1.0))*1.442695,0.0,15.0)
+    level = floor(lod)
+    divisor = pow(2.0,level)
+    anchor = sea_glint_anchor(u.glint_phase,divisor)
+    # Both orientations repeat after 5 tiles (the rotation is 3/5,4/5).
+    # Keep a multiple of two as well so the adjacent octave wraps identically.
+    period:f32 = 10.0*f32(GLINT_CELLS)
+    cell = anchor.zw-floor(anchor.zw/period)*period
+    uv = (p/(0.3*divisor)+anchor.xy+cell)/f32(GLINT_CELLS)
+    odd = fract(level*0.5)>0.25
+    rotated = vec2(0.6*uv.x-0.8*uv.y,0.8*uv.x+0.6*uv.y)
+    blend = fract(lod)
+    # Give both representatives the same prefilter once the base facets are
+    # subpixel. Averaging two different slope distributions biases the path
+    # brightness at the handover. Close to the floats retain the full lip.
+    mip = 0.75*min(footprint*(5.0/0.3),1.0)
+    result:f32 = 0.0
+    loop k in 0..2:
+        coarse = k==1
+        pos = if odd!=coarse: rotated else: uv
+        scale = if coarse: 0.5 else: 1.0
+        pos = pos*scale+vec2(0.393,0.719)*(level+f32(k))
+        facet = sample_lod(u.glint_facets,pos,mip)
+        props = facet.yzw/max(facet.x,0.0001)
+        # Stagger the handover per facet. Complementary weights on the same
+        # rank distribution preserve expected energy without a belt of half-lit dots.
+        replace = smoothstep(0.0,1.0,(blend-props.z*0.70)/0.30)
+        share = if coarse: replace else: 1.0-replace
+        # Filtered rates would shear one glint apart as elapsed time grows.
+        spin = props.x*TAU+t*2.3
+        lean = props.y*props.y*0.5*(0.22+0.45*rough)
+        normal = normalize(n+vec3(cos(spin)*lean,0,sin(spin)*lean))
+        hit = smoothstep(GLINT_ACCEPT,0.999,dot(reflect(-v,normal),l))
+        pulse = 0.52+0.48*sin(t*6.7+props.x*TAU+props.y*3.0)
+        result += share*hit*facet.x*pulse
+    result
 
 # Optical colour falloff is separate from physical depth/shoreline opacity.
 # Enclosed bays retain their longer clear-water ramp; open shelves turn blue.
@@ -467,14 +496,18 @@ sea_shallow_mix = (depth: f32, shelter: f32) -> f32:
 sea_depth_hidden=(clip:vec4,u:SeaParams)->bool:
     if u.reject_depth<0.5:return false
     uv=clip.xy/clip.w*0.5+vec2(0.5,0.5)
-    packed=sample(u.opaque_depth,uv).xyz
-    nearest=dot(packed,vec3(65536,256,1))*(255.0/16777215.0)
-    world_scene_depth_encode(clip.w,u.depth_mode)>nearest+0.00000012
+    pixel = sample(u.opaque_depth, uv)
+    stored = pixel.x
+    when TARGET == "macos":
+        if u.reject_depth > 1.5: stored = dot(pixel.xyz, vec3(65536,256,1)) * (255.0 / 16777215.0)
+    world_depth_encode(clip.w) > stored + 0.00000012
 sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
+    set_depth(world_depth_encode(1.0 / i.pos.w))
     sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
 coast_sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
+    set_depth(world_depth_encode(1.0 / i.pos.w))
     coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
 
 # What a walled canal's water mirrors along rd: the dark stone wall, the trees and facades behind
@@ -658,28 +691,27 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         shd = _shadowed(local, u, 0.08 + dist * 0.0015)
         c = mix(c, c * 0.42 + vec3(0.0, 0.02, 0.05), shd)
     # the sun: a soft sheen along its path, and the glints
-    hv = normalize(l + vdir)
+    sun_l = u.specular_sun.xyz
+    hv = normalize(sun_l + vdir)
     nh = max(dot(n, hv), 0.0)
-    day = smoothstep(-0.05, 0.12, l.y)
+    day = u.specular_sun.w
     variance = smoothstep(300.0, 3000.0, dist) * clamp(u.wind.w * 80.0, 0.0, 1.0)
     sheen = pow(nh, mix(90.0, 55.0, variance)) * 0.22 + pow(nh, mix(600.0, 160.0, variance)) * 0.5
-    # the moon's glitter at night: the same sheen and glint field, lit by the moon, silver and faint
-    # (only once the sun is properly down: the evening's light is left as it was)
-    night_w = 1.0 - smoothstep(-0.15, -0.03, l.y)
-    moon_on = u.moon.w > 0.0 and night_w > 0.0
+    # Moonlight uses the same facets, with a silver tint and phase-dependent strength.
+    moon_on = u.moon.w > 0.0
     ml = normalize(u.moon.xyz)
     mhv = normalize(ml + vdir)
     # (the glints at one call site, a loop the compiler cannot unroll: the sun's at one detail point
     # or two blended, then the moon's; three copies of _glints were a quarter of each sea, coast
     # and river program's link on a phone)
-    sun_glint = sea_glint_possible(n,vdir,l,hv,rough)
+    sun_glint = day>0.0 and sea_glint_possible(n,vdir,sun_l,hv,rough)
     moon_glint = moon_on and sea_glint_possible(n,vdir,ml,mhv,rough)
     gl: f32=0.0
     mgl: f32 = 0.0
     loop k in 0..(if moon_glint: 3 else: 2):
         if k == 0 and not sun_glint: continue
         if k == 1 and not (sun_glint and detail_blend): continue
-        g = _glints(if k == 1: detail_b else: detail_a,n,vdir,if k == 2: ml else: l,dist,u.time,rough,u)
+        g = _glints(if k == 1: detail_b else: detail_a,n,vdir,if k == 2: ml else: sun_l,dist,u.time,rough,u)
         if k == 0: gl = g
         else if k == 1: gl = gl*detail_wa+g*detail_wb
         else: mgl = g
@@ -687,7 +719,7 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     if moon_on:
         mnh = max(dot(n, mhv), 0.0)
         msheen = pow(mnh, mix(90.0, 55.0, variance)) * 0.22 + pow(mnh, mix(600.0, 160.0, variance)) * 0.5
-        c = c + vec3(0.78,0.84,0.95) * (msheen + mgl * 14.0) * u.moon.w * night_w * (1.0 - shd)*(1.0-u.rain*0.75)
+        c = c + vec3(0.78,0.84,0.95) * (msheen + mgl * 14.0) * u.moon.w * (1.0 - shd)*(1.0-u.rain*0.75)
     shore_depth = depth
     if refined and u.coast_near_area.w > 1.0:
         contact = coast_height_lookup(u.coast_near,u.coast_far,u.coast_near_area,u.coast_far_area,local,u.coast_roll)
@@ -713,13 +745,13 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     # the water is clear: at the shore one sees the sand through it
     # (see-through at the waterline, closing smoothly with depth: the seabed reads through the
     # first metres instead of a milky film over it)
-    a = clamp(1.0-exp(-depth*0.42)*0.9+fres*0.4+foam+gl,0.0,1.0)
+    a = clamp(1.0-exp(-depth*0.42)*0.9+fres*0.4+foam+gl*day,0.0,1.0)
     if not inland and clear_bay > 0.005:
         absorption = mix(0.12,0.055,clear_bay)
-        clear_alpha = clamp(1.0-exp(-depth*absorption)*(1.0-fres*0.85)*0.95+foam+gl+u.rain*0.12,0.0,1.0)
+        clear_alpha = clamp(1.0-exp(-depth*absorption)*(1.0-fres*0.85)*0.95+foam+gl*day+u.rain*0.12,0.0,1.0)
         a = mix(a,clear_alpha,clear_bay)
     if inland:
-        a=clamp(smoothstep(0.0,u.inland_opacity_depth,depth)+fres*0.4+foam+gl,0.0,1.0)
+        a=clamp(smoothstep(0.0,u.inland_opacity_depth,depth)+fres*0.4+foam+gl*day,0.0,1.0)
     c = aerial(c, i.world, u.cam, u.haze, u.fog)
     vec4(c, a)
 
@@ -744,7 +776,7 @@ struct FarSeaOut:
     pos: vec4
     ndc: vec2
 far_sea_vs = (v: FarSeaVertex, u: SeaParams) -> FarSeaOut:
-    FarSeaOut(vec4(v.pos, 1, 1), v.pos)
+    FarSeaOut(vec4(v.pos, u.far_z, 1), v.pos)
 far_sea_fs = (i: FarSeaOut, u: SeaParams) -> vec4:
     dir = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
     dist = sea_intersection(dir, u.cam.y)
@@ -958,7 +990,7 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     offset = shadows.origin-p.origin
     loop k in 0..shadows.n*2: p.shade[k] += vec4(offset.x,offset.z,offset.x,offset.z)
     sea_phases(p,t)
-    p.depth_mode=world_depth_params()
+    p.far_z = far_depth()
     # (the screen's focal length in pixels: the glints keep their size in pixels)
     vp = scene_view_proj()
     p.glint_pixel = 1.0/max(length(vec3(vp[0].y,vp[1].y,vp[2].y))*f32(screen_height())*0.5,1.0)
@@ -979,19 +1011,31 @@ sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows:
     p.coast_near_area = if coast_height_valid: coast_height_near_area else: vec4(0,0,0,0)
     p.coast_far_area = coast_height_far_area
     p.coast_roll = coast_height_roll
-    # (the moon's glitter: its phase lit by the sun, and only once it is up)
-    lit = moon_illumination(normalize(L.sun_dir), normalize(L.moon_dir))
-    p.moon = vec4(L.moon_dir, f32(0.35 * lit * smoothstep(0.02, 0.2, f64(normalize(L.moon_dir).y))))
-    # (twilight's glow on the water: the sun's own sheen and glints about a sun just above the
-    # horizon on its bearing, coloured by the glow (look.jo glow_sea_sun): a glitter path toward
-    # the glow, no shader of its own. The water's own colour keeps its dusk value, and the moon's
-    # glitter comes in as the glow goes)
+    # Use the same curved horizon and painted disc edge as the sky. Twilight's
+    # diffuse water colour can still follow the glow after the actual disc sets.
+    h = max(f64(cam.y),0.0)
+    dip = acos(EARTH_RADIUS/(EARTH_RADIUS+h))
+    sun = normalize(L.sun_dir); moon = normalize(L.moon_dir)
+    p.specular_sun = vec4(sun,sea_disc_fraction(sun.y,dip))
+    # A lit daytime Moon can catch a facet too, faint against the sunlit water.
+    lunar_contrast = mix(1.0,0.025,smoothstep(-0.15,0.03,f64(sun.y)))
+    p.moon = vec4(moon,f32(0.35*moon_illumination(sun,moon)*lunar_contrast)*sea_disc_fraction(moon.y,dip))
+    p.glint_facets = sea_facet_tile
     if L.afterglow.x > 0.0 and glow_sea_share(L) > 0.0:
         g = glow_sea_sun(L)
         keep = (mix(L.sun,vec3(1,1,1),0.45)*0.7)/(mix(g.1,vec3(1,1,1),0.45)*0.76)
         p.sun_dir = g.0; p.sun = g.1
         p.deep = p.deep*keep; p.shallow = p.shallow*keep
     p
+
+# Area of a circular segment. Evaluate once per draw; the last sliver
+# vanishes exactly where the outer edge of the sky disc touches the horizon.
+sea_disc_fraction = (height: f32,dip: f64) -> f32:
+    radius = acos(f64(SKY_DISC_OUTER))
+    y = (asin(clamp(f64(height),-1.0,1.0))+dip)/radius
+    if y>=1.0: return 1.0
+    if y<= -1.0: return 0.0
+    f32((acos(-y)+y*sqrt(1.0-y*y))/PI)
 
 sea_phases = (p: mut SeaParams,t: f64):
     turns = [0.0,0.45,-0.5,0.9,-0.25,0.2,0.3,-0.35,0.75,-0.8,0.05]
@@ -1030,23 +1074,25 @@ draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = 
     # the already-drawn seabed. Both record the water endpoint for later wakes,
     # particles and geometry. Existing nearer clouds fail the depth test here.
     zone("sea surface")
-    if world_log_depth_active() and cloud_scene_depth.id!=0:
-        p.opaque_depth=snapshot_opaque_depth();p.reject_depth=1
-    glDepthMask(1)
-    glEnable(GL_CULL_FACE)
+    if water_depth.id != 0:
+        p.opaque_depth = water_depth; p.reject_depth = 1
+        when TARGET == "macos":
+            if not __vk and not __soft: p.reject_depth = 2
+    depth_write(true)
+    cull(.back)
     draw(sea_sh, m, p)
     draw(if coast_height_valid: coast_sea_sh else: sea_sh,sea_near_mesh,p)
-    glDisable(GL_CULL_FACE)
-    glDepthMask(0)
+    cull(.none)
+    depth_write(false)
     zone_end()
 
 draw_far_sea = (depth: Texture, L: Light, t: f64, w: Wind):
     p = sea_params(depth, L, t, w, vec3(0, 0, 0), SeaShadows())
     sea_from_height(p, L)
     zone("sea horizon")
-    glDepthMask(0)
+    depth_write(false)
     draw(far_sea_sh, far_sea_tri, p)
-    glDepthMask(1)
+    depth_write(true)
     zone_end()
 
 # how strongly the sea streaks past for a camera moving at vel (fast and low)
@@ -1058,13 +1104,17 @@ rush_of = (vel: vec3,water_level:f64=0.0) -> vec4:
 
 # (the GPU programs: made once the window is open)
 init_sea = ():
+    global sea_facet_tile
+    sea_facet_tile = texture(sea_facet_image(),true)
+    set_repeat(sea_facet_tile,true)
+    set_mipmaps(sea_facet_tile,true)
     global sea_sh, far_sea_sh, far_sea_tri,coast_sea_sh
-    far_sea_sh = make_background_shader(shader(far_sea_vs, far_sea_fs))
+    far_sea_sh = make_shader(shader(far_sea_vs, far_sea_fs))
     far_sea_tri = mesh([FarSeaVertex(vec2(-1, -1)), FarSeaVertex(vec2(3, -1)), FarSeaVertex(vec2(-1, 3))])
     # Both optical-only and refined shore materials keep native hardware early Z;
     # WebGL's full-depth variants share the immutable opaque-depth rejection.
-    sea_sh = make_world_shader(if world_log_depth_active():shader(sea_depth_vs,sea_depth_fs) else:shader(sea_vs,sea_fs))
-    coast_sea_sh = make_world_shader(if world_log_depth_active():shader(sea_depth_vs,coast_sea_depth_fs) else:shader(sea_vs,coast_sea_fs))
+    sea_sh = make_shader(if world_logarithmic:shader(sea_depth_vs,sea_depth_fs) else:shader(sea_vs,sea_fs))
+    coast_sea_sh = make_shader(if world_logarithmic:shader(sea_depth_vs,coast_sea_depth_fs) else:shader(sea_vs,coast_sea_fs))
 
 # the sea's surface where the eye sees it (the same swells the sea is drawn with): height and slope
 swell_at = (x: f64, z: f64, t: f64) -> vec3:

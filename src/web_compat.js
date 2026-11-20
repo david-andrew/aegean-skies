@@ -84,6 +84,16 @@
   // (phones: medium, the look a 2020 phone (an LG V60, Adreno 650) keeps at 30 fps, unless the GPU
   // is an older family's or an earlier visit's frames ran long on medium (remembered: stepDown))
   const OLD_MOBILE_GPU = /Adreno \(TM\) [1-5]\d\d\b|Mali-[T4]|Mali-G(31|51|52|57|71|72)\b|PowerVR|SwiftShader|llvmpipe/i;
+  function prepareShader(source) {
+    // On the V60's Adreno 650, reading gl_FragCoord.w through the generated
+    // fragment input struct can yield the wrong depth. Read the same builtin
+    // directly for the Sloppy 0.40.0 log-depth call. Its formula and the
+    // set_depth output stay compiler generated.
+    const glsl = specializeUniforms(source);
+    return glsl.replace(/(gl_FragDepth = f_world_depth_encode_\d+\(\(1\.0 \/ )l_\w+\.pos_\.w(?=\)\))/g,
+      "$1gl_FragCoord.w");
+  }
+
   function chooseTier(device) {
     if (["low", "medium", "high"].includes(device.override)) return ["low", "medium", "high"].indexOf(device.override);
     if (device.mobile) return device.stepDown || OLD_MOBILE_GPU.test(device.renderer || "") || device.fragmentLimit <= 224 ? 0 : 1;
@@ -159,7 +169,7 @@
     proto.getItem = function(key) { const value = get.call(this, key); return bodyKey(key) ? livingStoreDecode(value) : value; };
     Object.defineProperty(proto, "__aegeanWideLivingStore", {value:true});
   }
-  root.AegeanWeb = { specializeUniforms, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
+  root.AegeanWeb = { prepareShader, specializeUniforms, chooseTier, cappedSize, resolutionPlan, livingStoreEncode, livingStoreDecode, installLivingStorage };
   if (typeof module !== "undefined") module.exports = root.AegeanWeb;
   if (typeof Storage !== "undefined") installLivingStorage(Storage.prototype);
   if (typeof WebGL2RenderingContext === "undefined") return;
@@ -346,7 +356,7 @@
   const proto = WebGL2RenderingContext.prototype;
   const shaderSource = proto.shaderSource, linkProgram = proto.linkProgram, uniformLocation = proto.getUniformLocation;
   proto.shaderSource = function (shader, source) {
-    return shaderSource.call(this, shader, specializeUniforms(source));
+    return shaderSource.call(this, shader, prepareShader(source));
   };
   proto.getUniformLocation = function (program, name) {
     return uniformLocation.call(this, program, name.replace(/^u\./, "aegean_u_"));
