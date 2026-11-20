@@ -34,6 +34,9 @@ write `log2(1 + view_distance) / 20`, recovering view distance from reciprocal c
 The ordinary material entry points preserve hardware early depth on reversed renderers.
 `AEGEAN_LOG_DEPTH=1` forces the fallback for comparisons. Cloud and shadow passes read
 the float scene-depth attachment and decode it with the active camera projection.
+On the logarithmic path, water reads a snapshot of opaque depth for early rejection.
+Apple OpenGL 4.1 packs that snapshot into a nearest-filtered RGBA8 target because its
+depth blit fails in Sloppy 0.40.0. Metal and the other backends use a float depth copy.
 
 World `vec3`/`mat4` values are f32. Existing CPU state and baked absolute geometry retain their
 original quantization (1.5625 cm at 250 km); this render chart preserves model detail but cannot
