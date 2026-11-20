@@ -221,6 +221,9 @@ def pauses(phrases):
             gap = nxt['phones'][0]['start'] - phr['phones'][-1]['end']
             if 0.05 <= gap <= 1.5:
                 out['stop'].append(gap)
+        elif phr['punct'] == 'stop' and phr['pause'] is not None and phr['pause'] >= 0.05:
+            # (a full stop inside one segment: a take of several sentences)
+            out['stop'].append(phr['pause'])
     for phr in phrases:
         if phr['punct'] == 'stop':
             continue

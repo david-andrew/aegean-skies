@@ -1,0 +1,160 @@
+# Every type as the other aircraft fly it (fdm2_npcs: flight model v2, at the player's pure scale), on
+# the production autopilot (flight.jo `autopilot`): the take-off from the water in calm and in wind 3's
+# swell from three places (the first seconds off the water watched for a pitch-up into the stall), and
+# a whole trip to a dock 4 km away: the landing, the run out and the taxi to it. The air arm's C.R.20
+# flies its own sortie off the grass (src/air_arm.jo). Headless and deterministic.
+#   sloppy --release tools/npc_survey.jo      (SURVEY_ONLY="gull,heron")
+# Lines "R,..." are one type's figures, true units (m/s, m), degrees.
+import '../src/flight.jo' as fl
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+import '../src/sea.jo' as sea
+import '../src/look.jo' as look
+use '../src/air_arm.jo'
+use '../src/air_race.jo'
+use '../src/airfields.jo'
+
+const K = 3.3
+const HZ = 30.0
+const D = 57.2958
+trace = env("SURVEY_TRACE") == "1"
+
+spec_for = (kind: planes.Craft) -> fl.CraftSpec:
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = false
+    k
+
+pitch_of = (s: fl.CraftState) -> f64: asin(clamp(f64(fl.forward(s).y), -1.0, 1.0))
+vt = (s: fl.CraftState) -> f64: f64(length(s.velocity)) / K
+
+env_for = (wind: f64, t: f64) -> fl.FlightEnv:
+    look.wind_now = look.Wind(dir = vec2(0.8, 0.6), speed = wind)
+    if wind <= 0.0: return fl.FlightEnv()
+    fl.FlightEnv(wind = vec3(0.8, 0, 0.6) * f32(wind * 0.7), swell = (x: f64, z: f64) -> vec3: sea.swell_at(x, z, t), has_swell = true, swell_ceiling = sea.swell_height_bound())
+
+struct Off:
+    ok = false
+    t = -1.0                        # off the water (1 m up)
+    steepest = 0.0                  # the nose's highest in the 15 s after (degrees)
+    stalled = false                 # stalled in the air in those 15 s for more than half a second in all
+    stall_secs = 0.0
+    slowest = 9.0                   # the slowest in them, over the stall
+    fell = false                    # back on the water in them
+    damage = 0.0
+
+# The autopilot's take-off and climb, out to sea: watched until 15 s after leaving the water
+takeoff = (k: fl.CraftSpec, wind: f64, x0: f64) -> Off:
+    r = Off()
+    s = fl.water_start(k, vec3(f32(x0), 0, 0))
+    plan = fl.FlightPlan(target = vec3(f32(x0), 0, -40000), taxi_target = vec3(f32(x0), 0, -40100), altitude = 250.0)
+    t = 0.0
+    loop i in 0..int(HZ * 100.0):
+        e = env_for(wind, t)
+        c = fl.autopilot(k, s, plan, e)
+        fl.step(k, s, c, e, 1.0 / HZ)
+        t += 1.0 / HZ
+        if trace and i % 8 == 0: print("T,{t:.2},{vt(s):.1},{pitch_of(s) * D:.1},{s.on_water},{c.pitch:.2},{f64(s.position.y) / K:.2},{s.stalled},{plan.phase}")
+        high = f64(s.position.y) - k.float_height
+        if r.t < 0.0 and not s.on_water and high > 1.0 * K: r.t = s.time
+        if r.t >= 0.0 and s.time < r.t + 15.0:
+            r.steepest = max(r.steepest, pitch_of(s) * D)
+            if s.stalled and not s.on_water: r.stall_secs += 1.0 / HZ
+            if not s.on_water: r.slowest = min(r.slowest, vt(s) / k.stall_speed)
+            if s.on_water and s.time > r.t + 0.5: r.fell = true
+        if s.crashed or s.capsized: break
+        if r.t >= 0.0 and s.time > r.t + 15.0: break
+    r.damage = s.hull_damage
+    r.stalled = r.stall_secs > 0.5
+    r.ok = r.t > 0.0 and not r.stalled and not r.fell and not s.crashed and not s.capsized and s.hull_damage < 0.05
+    r
+
+struct Trip:
+    done = false
+    secs = 0.0
+    sink = 0.0                      # at touchdown, true m/s
+    bounces = 0
+    arounds = 0
+    damage = 0.0
+    off = 0.0                       # touchdown from the target, true m
+    dock = 0.0                      # finally from the dock, true m
+
+# A whole trip: off the water, 4 km to a dock across the wind, down, the run out and the taxi in
+trip = (k: fl.CraftSpec, wind: f64) -> Trip:
+    r = Trip()
+    s = fl.water_start(k, vec3(0, 0, 0), 0.4)
+    plan = fl.FlightPlan(target = vec3(3000, 0, -4000), taxi_target = vec3(3020, 0, -4050), takeoff_heading = 0.4)
+    landed = false; down = false; t = 0.0
+    loop i in 0..int(HZ * 900.0):
+        e = env_for(wind, t)
+        before = f64(s.velocity.y) / K
+        c = fl.autopilot(k, s, plan, e)
+        fl.step(k, s, c, e, 1.0 / HZ)
+        t += 1.0 / HZ
+        if env("TRIP_TRACE") == "1" and i % 15 == 0 and plan.phase != .cruise and plan.phase != .climb: print("P,{t:.1},{plan.phase},{vt(s):.1},{f64(s.position.y) / K:.2},{pitch_of(s) * D:.1},{c.pitch:.2},{c.throttle:.2},{s.on_water},{s.hull_damage:.3},{s.foil.engaged},{plan.go_arounds},{length(s.position.xz - plan.target.xz) / K:.0}")
+        if plan.phase == .land or plan.phase == .taxi:
+            if s.on_water and not landed: landed = true; r.sink = -before; r.off = f64(length(s.position.xz - plan.target.xz)) / K
+            if landed:
+                if s.on_water and not down and s.time > 0.0: down = true
+                if not s.on_water and down and f64(s.position.y) > k.float_height + 0.3: r.bounces += 1; down = false
+        if plan.phase == .done or plan.phase == .failed or s.crashed: break
+    r.done = plan.phase == .done and not s.crashed
+    r.secs = s.time; r.arounds = plan.go_arounds; r.damage = s.hull_damage
+    r.dock = f64(length(s.position.xz - plan.taxi_target.xz)) / K
+    r
+
+_listed = (only: str, name: str, key: str) -> bool:
+    loop w in split(only, ","):
+        if w == name or w == key: return true
+    false
+
+# The air arm's C.R.20 off the grass, round its circuits and back to its stand (tests/air_arm_test.jo)
+arm_row = ():
+    f = AIRFIELDS[0]
+    spec = fl.craft_spec(.fiat_cr20, planes.build_craft(.fiat_cr20, planes.LIVERIES[0]).contacts)
+    e = fl.FlightEnv(ground = (x: f64, z: f64) -> f64: 163.0)
+    town = vec3(f.center.x + 2300.0, 0, f.center.y - 2800.0)
+    p = ArmPilot(0, 0, 0, 0, 0, arm_park(spec, f, 0, e.ground))
+    p.state.fuel = spec.fuel_capacity
+    arm_launch(p, 0, 0)
+    tick = 0; off = -1.0; steepest = 0.0; stalled = false; touchdown = vec2(1e9, 1e9)
+    loop tick < int(60.0 * 60.0 * 40.0) and p.phase != .parked:
+        arm_tick(p, spec, f, town, e, tick)
+        s = p.state
+        if off < 0.0 and not s.on_ground and f64(s.position.y) > 163.0 + 3.0: off = s.time
+        if off >= 0.0 and s.time < off + 15.0:
+            steepest = max(steepest, pitch_of(s) * D)
+            if s.stalled: stalled = true
+        if p.phase == .rollout and touchdown.x > 1e8: touchdown = airfield_local(f, s.position.xz)
+        tick += 1
+    print("A,Fiat C.R.20 (air arm),off at {off:.1} s,steepest {steepest:.0},stalled {stalled},touchdown {touchdown.x:.0} m along / {touchdown.y:.0} across,parked {p.phase == .parked},damage {p.state.hull_damage:.3}")
+
+main = ():
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks())
+    only = env("SURVEY_ONLY") ?? ""
+    print("R,aircraft,calm_ok,calm_t,calm_steepest,calm_stall_s,calm_slowest,calm_fell,wind3_ok,wind3_steepest,wind3_stall_s,wind3_slowest,wind3_fell,wind3_damage,trip_done,trip_secs,touch_sink,touch_bounces,go_arounds,touch_off,dock_off,trip_damage")
+    loop id in 0..planes.CRAFT_NAMES.len():
+        kind = planes.Craft(id)
+        name = planes.CRAFT_NAMES[id]
+        if only != "" and not _listed(only, name, "{kind}"): continue
+        if planes.aircraft_profile(kind).landplane: continue
+        k = spec_for(kind)
+        calm = takeoff(k, if trace: to_float(env("SURVEY_WIND") ?? "0") ?? 0.0 else: 0.0, 0.0)
+        if trace:
+            print("O,{calm.ok},{calm.t:.1},{calm.steepest:.0},{calm.stall_secs:.1},{calm.slowest:.2},{calm.fell},{calm.damage:.3}")
+            continue
+        if env("TRIP_TRACE") == "1":
+            _ = trip(k, 0.0)
+            continue
+        wok = 0; wsteep = 0.0; wdmg = 0.0; wstall = 0.0; wslow = 9.0; wfell = 0
+        loop n in 0..3:
+            w = takeoff(k, 3.0, f64(n) * 61.0)
+            if w.ok: wok += 1
+            if w.fell: wfell += 1
+            wsteep = max(wsteep, w.steepest); wdmg = max(wdmg, w.damage); wstall = max(wstall, w.stall_secs); wslow = min(wslow, w.slowest)
+        tr = trip(k, 0.0)
+        if env("TRIP_TRACE") == "1": continue
+        print("R,{name},{calm.ok},{calm.t:.1},{calm.steepest:.0},{calm.stall_secs:.1},{calm.slowest:.2},{calm.fell},{wok},{wsteep:.0},{wstall:.1},{wslow:.2},{wfell},{wdmg:.3},{tr.done},{tr.secs:.0},{tr.sink:.2},{tr.bounces},{tr.arounds},{tr.off:.0},{tr.dock:.1},{tr.damage:.3}")
+    if only == "" or _listed(only, "air_arm", "air_arm"): arm_row()
+    look.wind_now = look.Wind()
+    tw.set_tweaks(tw.Tweaks()); fl.set_speed_scale(1.0)

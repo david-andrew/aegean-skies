@@ -35,7 +35,7 @@ The announcer data file (raw deflate, format `AVX1`, written by `pack.py`):
 - 145 letter-to-sound rules (`lts.py`, written for this project) for words not in the lexicon,
   mostly the living world's invented names;
 - the fitted **prosody model** (`prosody_fit.py`), as named number lists that
-  `src/voice_model.jo` reads (the repository only has neutral placeholder defaults):
+  `src/voice_model.jo` reads (the repository only has neutral defaults: see `--clean` below):
   - durations: per-phone base durations (stressed and reduced vowels separate: schwa AX is not the
     vowel of "strut" AH; IX, AXR, IYX likewise) and multiplicative factors for function words,
     word position, clusters, polysyllables, phrase-final rhymes and stress, with a separate rate
@@ -105,6 +105,22 @@ units elsewhere), and the speaker's units only. Each is scored on the held-out l
 at the time of the run (with the starting voice and earlier rounds' voices scored again on the same
 lines), including word accuracy, and the round is published with a learning curve per kind. A failed run says at which stage and why, and `--round rN` retries it,
 reusing every finished scoring.
+
+### A clean voice (`--clean`)
+
+`tune_round.py --clean --prior-fit NEUTRAL.json` makes a voice from the speaker's recordings
+alone. It reads no reference voice: only the speaker's own diphone units (no adapted or blended
+kinds), alignment by the phone classifier (not by synthesizing a reference voice), and a
+**neutral prior** used only where the speaker's takes are too few. The neutral prior (built in
+scratch, `neutral_prior.py` beside the speaker's studio) has Klatt's inherent durations (MITalk,
+Allen, Hunnicutt & Klatt 1987) with hand-set factors from Klatt's rules, generic accent shapes and
+microprosody, fricative caps at 1.4 times Klatt's durations, a 150 Hz register, and the 1942
+newsreel's pauses, declination and final fall (public domain). `src/voice_model.jo`'s defaults are
+the same neutral numbers. The synthesis calibration fits every remaining number to the speaker
+by synthesis, now including `breath_band`, each band's scale on the stored aperiodicity (it was a
+constant in `voice_synth.jo`; without it in the data, no scaling). `--start-voice` scores another
+voice file beside the round for comparison only. The scratch `SOURCES.md` next to the clean
+voice lists where every number came from.
 
 More of the speaker's data must never make the voice worse, so the fitter:
 

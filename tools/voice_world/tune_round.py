@@ -3,6 +3,14 @@ button, or by hand):
 
   python tune_round.py --root VOICE_USER_DIR --repo REPO --prior-data NARRATOR.z --prior-fit FIT.json
                        [--round rN] [--fractions 0.25,0.5,1] [--listen 2]
+  python tune_round.py --clean --root VOICE_USER_DIR --repo REPO --prior-fit NEUTRAL.json
+                       [--start-voice VOICE.z --start-label "..."] [--round ID --label "..."]
+
+--clean makes a voice from the speaker's recordings alone: no reference speaker's data is read
+(only the speaker's own units, no adapted or blended kinds), and the prior is a neutral fit (made
+from general phonetics, not measured from a speaker), used only where the speaker's takes are
+too few. --start-voice scores another voice file as the round's starting point for comparison
+(it shapes nothing).
 
 1. Pool: every accepted take of a training line; the held-out lines with accepted takes are only
    ever scored, never fitted.
@@ -168,6 +176,8 @@ def corpus_files(subset, aligned, work):
 
 PLAIN = ('neutral', 'contrast', 'news')     # reads without a performed delivery
 SHRINK = dict(duration=8, phrases=30, pauses=10, fricatives=10)
+# (a clean voice's prior is generic, not a measured speaker: the speaker's takes outweigh it sooner)
+CLEAN_SHRINK = dict(duration=4, phrases=15, pauses=5, fricatives=5)
 
 
 def toward(prior, user, w):
@@ -177,7 +187,7 @@ def toward(prior, user, w):
     return round(float(prior + w * (user - prior)), 4)
 
 
-def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=()):
+def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=(), ks=None):
     """The user's diphone units and prosody from the subset. Returns (units, fit, notes).
 
     More data must never make the voice worse, so the prosody:
@@ -189,6 +199,7 @@ def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=()):
     Lines in `exclude` (the validation lines) never shape the prosody.
     """
     os.makedirs(work, exist_ok=True)
+    SHRINK = ks or globals()['SHRINK']
     phones_json, words_json, npz, speakers = corpus_files(subset, None, work)
     notes = []
     # diphone units: the user's voice only (missing diphones borrow halves inside it, at runtime)
@@ -236,6 +247,13 @@ def fit_user(subset, work, prior_fit, plain_only=True, shrink=True, exclude=()):
         if len(plain) >= 150:
             dur['factors'] = d['factors']; dur['elasticity'] = d['elasticity']; dur['reference_rate'] = d['reference_rate']
             notes.append('duration factors and tempo elasticities from your takes')
+        elif len(every) >= 150:
+            # (relative factors describe the speaker's timing in any delivery: every take's phrases
+            # carry them when the plain reads alone are too few; the tempo stays the plain reads')
+            da = pf.fit_durations(every, pack.PHONES)
+            dur['factors'] = da['factors']; dur['elasticity'] = da['elasticity']
+            dur['reference_rate'] = round(prior_fit['durations']['reference_rate'] / ratio, 3)
+            notes.append(f'duration factors and tempo elasticities from all {len(every)} phrases of your takes')
         else:
             dur['reference_rate'] = round(prior_fit['durations']['reference_rate'] / ratio, 3)
             notes.append('duration factors and tempo elasticities from the prior (fewer than 150 phrases)')
@@ -495,6 +513,9 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
             if sp:
                 rec[l['id']].update(sp)
     sens = brightness_per_c1()
+    # the takes' band aperiodicity in voiced frames (the target for breath_band)
+    rec_ap = band_ap([aligned[l['id']][1] for l in sample])
+    fit['breath_band'] = list(fit.get('breath_band') or [1.0] * len(wa.BANDS))
     fit['tilts'] = {g: list(v) for g, v in (fit.get('tilts') or {}).items()}
     fit['sustain'] = 9.0
     report = []
@@ -503,7 +524,7 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
         pack_voice(units, fit, lex, v, prior_fit)
         out = os.path.join(work, f'calibrate-{it}')
         syn = ev.synthesize(repo, sample, out, data=v, radio=False)
-        got, vfrac, peaks = {}, {}, []
+        got, vfrac, peaks, syn_an = {}, {}, [], []
         for l in sample:
             dry, _, ph = syn[l['id']]
             x = ev.load16(dry)
@@ -512,6 +533,7 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
                 if len(v):
                     peaks.append(float(np.percentile(v, 99.9)))
             an = wa.analyse(x)
+            syn_an.append(an)
             d = delivery(ph, an['f0'], dur_of=lambda p: p['dur'])
             if d:
                 sp = spectral(x, an['f0'])
@@ -521,6 +543,11 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
             vp = os.path.join(out, f"{l['id']}-voicing.txt")
             if os.path.exists(vp):
                 vfrac[l['id']] = np.loadtxt(vp, ndmin=1)
+        # breath: each band's noise scaled so the synthesis re-analyses to the takes' own
+        syn_ap = band_ap(syn_an)
+        if rec_ap is not None and syn_ap is not None:
+            fit['breath_band'] = [round(float(np.clip(b * np.clip(r / max(y, 1e-3), 0.5, 2.0) ** 0.8, 0.05, 2.0)), 4)
+                                  for b, r, y in zip(fit['breath_band'], rec_ap, syn_ap)]
         groups = {}
         for l in sample:
             if l['id'] in got:
@@ -597,8 +624,19 @@ def calibrate(repo, lines, takes, aligned, units, fit, lex, prior_fit, work, pas
                 en['effect'] = [round(float(np.clip(ef[0] + adj[0], -3, 5)), 3), round(float(np.clip(ef[1] + adj[1], -0.5, 0.4)), 4),
                                 round(float(np.clip(ef[2] + adj[2], -0.3, 0.3)), 4), ef[3], round(float(np.clip(ef[4] + adj[3], -0.8, 0.3)), 4)]
                 step['energy'] = dict(n=len(rows), adjust=[round(a, 3) for a in adj], effect=en['effect'])
+        step['breath_band'] = dict(rec=rec_ap, syn=syn_ap, scale=fit['breath_band'])
         report.append(step)
     return fit, report
+
+
+def band_ap(analyses):
+    """Median band aperiodicity over the voiced frames of analyses (dicts with f0 and ap), or None."""
+    rows = [np.asarray(a['ap'])[np.asarray(a['f0']) > 0] for a in analyses if 'ap' in a]
+    rows = [r for r in rows if len(r)]
+    if not rows:
+        return None
+    allr = np.concatenate(rows)
+    return [float(x) for x in np.median(allr, axis=0)] if len(allr) > 200 else None
 
 
 def energy_effect(lines, takes, aligned, root, lam=4.0):
@@ -635,6 +673,18 @@ def energy_effect(lines, takes, aligned, root, lam=4.0):
                 refs=refs, n=len(rows), levels=levels)
 
 
+# Formant emphasis values to try for each voice on the validation lines (0.25: the synthesizer's
+# default). Off: ten validation lines are too few to choose it (a clean voice's chose 0.25 by one
+# point there, while all 18 held-out lines put 0 five points ahead); a voice's own value can still
+# be set in its fit ('postfilter').
+POSTFILTERS = ()
+
+
+def units_for_postfilter(clean, adapted, user):
+    """The units the postfilter is chosen with: the speaker's own for a clean voice, else the adapted."""
+    return user if clean else adapted
+
+
 GUARD_FLOOR = 0.05     # word accuracy a choice with more of the speaker's data may give up; within it the user's ear decides     # word accuracy a choice with more of the speaker's data may give up
 
 
@@ -666,7 +716,9 @@ def pack_voice(units, fit, lex, out, prior=None):
 def evaluate_voice(repo, heldout, takes, data, outdir, root, rel_base, full, asr=None):
     """Scores a voice on the held-out lines; a finished scoring of the same voice file on the same
     held-out takes is reused, so a retried round only scores what it had not finished."""
-    key = dict(voice=file_hash(data), lines=[f"{l['id']}-{takes[l['id']]['n']}" for l in heldout], full=bool(full), asr=asr is not None)
+    # (the synthesizer's settings too: a scoring at another postfilter is another scoring)
+    key = dict(voice=file_hash(data), lines=[f"{l['id']}-{takes[l['id']]['n']}" for l in heldout], full=bool(full), asr=asr is not None,
+               synth='voice-postfilter', post=os.environ.get('VOICE_POST'))
     done = os.path.join(outdir, 'entries.json')
     if os.path.exists(done):
         try:
@@ -747,7 +799,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', required=True)
     ap.add_argument('--repo', required=True)
-    ap.add_argument('--prior-data', required=True)
+    ap.add_argument('--prior-data', default='', help='the reference voice (not read with --clean)')
     ap.add_argument('--prior-fit', required=True)
     ap.add_argument('--round', default='')
     ap.add_argument('--fractions', default='0.25,0.5,1')
@@ -757,7 +809,16 @@ def main():
     ap.add_argument('--aligner-vocab', default='')
     ap.add_argument('--asr', default='', help='speech recognizer model directory (scratch), for word accuracy')
     ap.add_argument('--dtw', action='store_true', help='use the old DTW alignment (not recommended)')
+    ap.add_argument('--clean', action='store_true', help="the speaker's recordings and a neutral prior only")
+    ap.add_argument('--start-voice', default='', help='a voice file scored as the starting point, for comparison only')
+    ap.add_argument('--start-label', default='', help='its name on the Compare tab')
+    ap.add_argument('--label', default='', help='the round\'s name on the Compare tab (default: Round N)')
     a = ap.parse_args()
+    if a.clean:
+        a.prior_data = ''
+    elif not a.prior_data:
+        ap.error('--prior-data is needed (or --clean)')
+    start_label = a.start_label or 'starting voice'
     # the phone aligner and the recognizer are the defaults wherever their scratch copies exist
     models = os.environ.get('VOICE_ANALYSIS_MODELS', os.path.expanduser('~/dev/tmp/aegean-skies/radio/voice4/models'))
     if not a.aligner and not a.dtw and os.path.isdir(os.path.join(models, 'aligner')):
@@ -772,7 +833,7 @@ def main():
     rnd_id = a.round or f'r{max([0] + nums) + 1}'
     prog = Progress(root, rnd_id)
     if a.round and os.path.isdir(os.path.join(root, 'compare', rnd_id)):
-        prog.set('baseline', f'Resuming round {rnd_id[1:]}: finished alignments and scorings are reused', 0)
+        prog.set('baseline', f'Resuming {a.label or "round " + rnd_id[1:]}: finished alignments and scorings are reused', 0)
     try:
         script = json.load(open(os.path.join(root, 'script.json')))
         manifest = json.load(open(os.path.join(root, 'manifest.json')))
@@ -818,9 +879,12 @@ def main():
             json.dump(ra, open(ra_path + '.tmp', 'w')); os.replace(ra_path + '.tmp', ra_path)
             rec_acc = round(float(np.mean([ra[f"{l['id']}-{takes[l['id']]['n']}"] for l in heldout])), 3)
         # 1. the starting voice, scored on today's held-out set
-        prog.set('baseline', f'Scoring the starting voice on {len(heldout)} held-out lines', 4)
-        start = evaluate_voice(a.repo, heldout, takes, a.prior_data, os.path.join(base_dir, 'start'), root, f'compare/{rnd_id}/start', False, asr)
-        curve.append(dict(lines=0, kind='start', label='starting voice', summary=summary(start)))
+        start_voice = a.start_voice or a.prior_data
+        start = []
+        if start_voice:
+            prog.set('baseline', f'Scoring {start_label} on {len(heldout)} held-out lines', 4)
+            start = evaluate_voice(a.repo, heldout, takes, start_voice, os.path.join(base_dir, 'start'), root, f'compare/{rnd_id}/start', False, asr)
+            curve.append(dict(lines=0, kind='start', label=start_label, summary=summary(start)))
         # earlier rounds' voices, scored again on the same held-out lines
         for r0 in [r for r in idx['rounds'] if r.get('voice') and os.path.exists(os.path.join(root, r['voice']))][-3:]:
             prog.set('baseline', f"Scoring {r0['id']}'s voice on today's held-out lines", 6)
@@ -840,6 +904,8 @@ def main():
         todo = [l for l in pool if not os.path.exists(os.path.join(cache, key(l) + '.json'))]
         syn = {}
         if todo and aligner is None:
+            if a.clean:
+                raise RuntimeError('a clean voice needs the phone aligner (the old alignment synthesizes a reference voice)')
             prog.set('align', f'Synthesizing {len(todo)} new lines to align against', 8)
             syn = ev.synthesize(a.repo, todo, os.path.join(root, 'tune', 'align-synth'), data=a.prior_data, radio=False)
         aligned = {}
@@ -853,8 +919,8 @@ def main():
         random.Random(20261114).shuffle(order)
         fractions = sorted(set(float(x) for x in a.fractions.split(',')))
         prior_fit = json.load(open(a.prior_fit))
-        narr = voicefile.read(a.prior_data)
-        M = narr['M']
+        narr = None if a.clean else voicefile.read(a.prior_data)
+        M = wa.ORDER + 1 if a.clean else narr['M']
         # the dictionary for every word of the script (the game's own text has its own), then the
         # speaker's pronunciations per subset; the room's noise comes off every analysed frame
         lex, _ = pack.lexicon(a.repo, extra_text=' '.join(l['text'] for l in script['lines']))
@@ -877,8 +943,9 @@ def main():
             share = '' if full else f' ({round(100 * n / len(order))}%)'
             prog.set('fit', f'Fitting voices to {n} lines{share}', 38 + 55 * i / len(sizes))
             work = os.path.join(root, 'tune', 'work', f'{rnd_id}-{n}')
-            user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids)
-            adapted, phones_seen = adapt_units(narr['units'], user, M)
+            user, fit, notes = fit_user(subset, work, prior_fit, exclude=val_ids, ks=CLEAN_SHRINK if a.clean else None)
+            # (clean: the speaker's units throughout, where the guard and calibration use a voice)
+            adapted, phones_seen = (user, 0) if a.clean else adapt_units(narr['units'], user, M)
             lex_n, own_words, rules = speaker_lex(lex, subset)
             # sentence intonation, the energy envelope and each genre's vocal effort, learned from the takes
             items = [(l, al['phones'], an) for l, al, an in subset if l['id'] not in val_ids]
@@ -895,7 +962,7 @@ def main():
             likeness = {}
             if val:
                 if chosen is None:        # before any of the speaker's prosody: the prior's, at the speaker's pitch
-                    chosen = ('starting prosody at your pitch', dict(prior_fit, f0_st=fit.get('f0_st', prior_fit['f0_st'])))
+                    chosen = ('neutral prosody at your pitch' if a.clean else 'starting prosody at your pitch', dict(prior_fit, f0_st=fit.get('f0_st', prior_fit['f0_st'])))
                 cands = [(f'yours from {n} lines', fit),
                          (f'yours from {n} lines, intonation as before', dict(fit, superposition=chosen[1]['superposition'], tune=chosen[1].get('tune'))),
                          (f'as before ({chosen[0]})', chosen[1])]
@@ -925,14 +992,30 @@ def main():
                 notes = notes + [f"per energy step (from {fit['energy']['n']} takes): pitch {ee[0]:+.1f} st, range x{np.exp(ee[1]):.2f}, "
                                  f"tempo x{np.exp(ee[2]):.2f}, tilt {ee[3]:+.2f} dB/octave" + (f", falls x{np.exp(ee[4]):.2f}" if len(ee) > 4 else '') + ", calibrated by synthesis, about each genre's usual energy "
                                  + ', '.join(f'{g} {r:.1f}' for g, r in fit['energy']['refs'].items())]
+            # the formant emphasis that makes this voice best understood (validation lines only)
+            if val and POSTFILTERS:
+                pf_acc = {}
+                for pv in POSTFILTERS:
+                    v = os.path.join(work, f'postfilter-{pv:.2f}.z')
+                    pack_voice(units_for_postfilter(a.clean, adapted, user), dict(fit, postfilter=pv), lex_n, v, prior_fit)
+                    prog.set('fit', f'Checking formant emphasis {pv:.2f} on {len(val)} validation lines', 38 + 55 * (i + 0.3) / len(sizes))
+                    ents = evaluate_voice(a.repo, val, takes, v, os.path.join(work, f'postfilter-{pv:.2f}'), root, '', False, asr)
+                    pf_acc[pv] = float(np.mean([e['metrics']['word_acc'] for e in ents]))
+                best_pf = max(pf_acc, key=lambda k: (round(pf_acc[k], 3), -abs(k - 0.25)))
+                fit['postfilter'] = best_pf
+                notes = notes + [f'formant emphasis {best_pf:.2f} (validation word accuracy ' + ', '.join(f'{k:.2f} {v:.0%}' for k, v in pf_acc.items()) + ')']
+                if best_pf != 0.25:
+                    # (the delivery was calibrated at the default emphasis: again at the chosen one)
+                    prog.set('fit', f'Calibrating the {n}-line voice again at that emphasis', 38 + 55 * (i + 0.4) / len(sizes))
+                    fit, cal = calibrate(a.repo, [l for l, _, _ in subset if l['id'] not in val_ids], takes, aligned, adapted, fit, lex_n, prior_fit, work, root=root)
             last = cal[-1]
             notes = notes + ['delivery fitted to your takes: ' + '; '.join(
                 f"{g} {v[0]:.2f}x tempo, {v[1]:+.1f} st, range {v[2]:.2f}, pauses {v[3]:.2f}" for g, v in sorted(fit['styles'].items()) if g in last)
                 + f"; register {100 * 2 ** (fit['f0_st']['median'] / 12):.0f} Hz, shape gain {fit['shape'][0]:.2f}, pitch limit {fit['shape'][1]:.1f} st, voicing above {fit['shape'][2]:.2f}"
-                + f", sustain {fit['sustain']:.1f}, brightness " + ', '.join(f"{g or 'plain'} {v[1]:+.2f}" for g, v in sorted(fit['tilts'].items()))]
-            calibration_log.append(dict(lines=n, styles=fit['styles'], shape=fit['shape'], passes=cal))
-            blended, own = blend_units(adapted, user)
-            kinds = [('adapt', adapted, f'starting voice adapted to you ({phones_seen} phones measured)'),
+                + f", sustain {fit['sustain']:.1f}, noise by band x" + '/'.join(f'{b:.2f}' for b in fit.get('breath_band') or []) + ", brightness " + ', '.join(f"{g or 'plain'} {v[1]:+.2f}" for g, v in sorted(fit['tilts'].items()))]
+            calibration_log.append(dict(lines=n, styles=fit['styles'], shape=fit['shape'], breath_band=fit.get('breath_band'), passes=cal))
+            blended, own = (user, len(user)) if a.clean else blend_units(adapted, user)
+            kinds = [('units', user, f'your units only ({len(user)}), prosody from your takes and a neutral prior')] if a.clean else [('adapt', adapted, f'starting voice adapted to you ({phones_seen} phones measured)'),
                      ('blend', blended, f'your units where you have them ({own}), adapted elsewhere'),
                      ('units', user, f'your units only ({len(user)})')]
             for j, (kind, units, about) in enumerate(kinds):
@@ -954,7 +1037,7 @@ def main():
         entries = full_entries[best]
         start_by = {e['line']: e for e in start}
         for e in entries:
-            e['variants'] = [dict(label='starting voice', synth=start_by[e['line']]['synth'])]
+            e['variants'] = [dict(label=start_label, synth=start_by[e['line']]['synth'])] if e['line'] in start_by else []
             e['variants'] += [dict(label=c['label'], synth=c['listen'][e['line']]) for c in curve
                               if c.get('listen') and e['line'] in c['listen'] and not (c['kind'] == best and c['lines'] == len(order))]
         acc = {c['label']: c['summary'].get('word_acc') for c in curve}
@@ -974,11 +1057,12 @@ def main():
         for f in os.listdir(os.path.join(root, 'voices')):
             if f.startswith(rnd_id + '-') and f not in keep_voices:
                 os.remove(os.path.join(root, 'voices', f))
-        publish(root, dict(id=rnd_id, label=f'Round {rnd_id[1:]}: {len(order)} of your lines, best: {best}', note=note, date=date,
+        publish(root, dict(id=rnd_id, label=(a.label or f'Round {rnd_id[1:]}') + f': {len(order)} of your lines, best: {best}', note=note, date=date,
                            heldout=len(heldout), heldout_lines=held_ids, recordings_word_acc=rec_acc, lines=len(order),
                            kind=best, summary=summary(entries), entries=entries, curve=curve, voice=main_voice,
-                           aligner='phone' if aligner else 'dtw', guard=guard_log, calibration=calibration_log, validation_lines=sorted(val_ids)))
-        prog.finish('done', f'Round {rnd_id[1:]} is ready on the Compare tab'
+                           aligner='phone' if aligner else 'dtw', guard=guard_log, calibration=calibration_log, validation_lines=sorted(val_ids),
+                           clean=bool(a.clean)))
+        prog.finish('done', f'{a.label or "Round " + rnd_id[1:]} is ready on the Compare tab'
                     + (f' ({evaluate_voice.reused} scorings reused from the earlier attempt)' if evaluate_voice.reused else ''))
     except Exception as e:
         import traceback

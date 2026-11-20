@@ -48,6 +48,10 @@ struct GroundParams:
     grass_gust: vec4 = vec4(0,0,0,0)  # the meadow gust layers' offsets (src/look.jo meadow_gust); drift holds the warp layer's
     grass_spring: vec4 = vec4(1,1,1,0)  # the meadow spring's gains per wave train (src/look.jo meadow_spring)
     grass_lag: vec4 = vec4(0,0,0,0)     # and its phase offsets (meadow_lag)
+    meadow_a: vec4 = vec4(0,0,0,0)      # the wind study (Tweaks): its two gust layers' offsets (look.jo meadow_study_gust)
+    meadow_b: vec4 = vec4(0,0,0,0)      # its two dab layers' offsets (meadow_study_dabs)
+    meadow_c: vec4 = vec4(0,0,0,0)      # the gusts' reach (x, m), the dabs' (y), the dabs' travel (z, m/s), on (w: 1)
+    meadow_noise: Texture = Texture()   # its noise tile (look.jo meadow_noise_texture)
     grass_view: vec4 = vec4(0,1,1,1)  # the grass egg: look x, z, side reach, behind reach (src/grass.jo grass_shape)
     roads: Texture = Texture()
     road_rect: vec4 = vec4(0,0,0,0)
@@ -129,9 +133,28 @@ coast_world_fs = (i: GroundOut,u: GroundParams) -> vec4:
 # (the low tier's: its own canopy, compiled without the full one)
 coast_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,0)
 coast_world_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0)
+# (the wind study's (Tweaks): the same with its sheen compiled in; main's shaders never carry its code)
+coast_fs_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,1,1)
+coast_world_fs_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,1,1)
+# (the low tier's read two layers, not four: wind_study 2)
+coast_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,0,2)
+coast_world_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0,2)
 
 coast_sh: Shader
 coast_world_sh: Shader
+coast_sh_ws: Shader
+coast_world_sh_ws: Shader
+terrain_study_ready = false
+
+# the wind study's ground shaders, made the first time its Tweaks box is on
+terrain_study_shaders = ():
+    global coast_sh_ws,coast_world_sh_ws,ground_sh_ws,terrain_study_ready
+    if terrain_study_ready: return
+    low = render_quality.tier == 0
+    ground_sh_ws = make_world_shader(if low: shader(ground_vs,ground_fs_low_ws) else: shader(ground_vs,ground_fs_ws),false)
+    coast_sh_ws = make_world_bounded_shader(if low: shader(coast_vs,coast_fs_low_ws) else: shader(coast_vs,coast_fs_ws),false)
+    coast_world_sh_ws = make_world_bounded_shader(if low: shader(coast_vs,coast_world_fs_low_ws) else: shader(coast_vs,coast_world_fs_ws),false)
+    terrain_study_ready = true
 
 draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: bool = false):
     global coast_triangles,coast_instances,coast_draws
@@ -139,6 +162,9 @@ draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: boo
     loop level in 0..COAST_LEVELS:
         if batches[level].len() == 0: continue
         sh=if large:coast_world_sh else:coast_sh
+        if params.meadow_c.w > 0.0:
+            terrain_study_shaders()
+            sh=if large:coast_world_sh_ws else:coast_sh_ws
         near=false
         when TARGET=="wasm":
             near=world_split_depth_active() and params.warp_b.x==0 and coast_batch_near(batches[level],params.cam)
@@ -176,7 +202,7 @@ ground_strata=(i:GroundOut,u:GroundParams)->vec3:
     wav=sin(world.x*0.013+world.z*0.009)*2.5+i.tint.y*6.0+fracture*34.0
     vec3((i.world.y+wav)*0.55,fracture,pigment.x)
 
-ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1)->vec4:
+ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1,wind_study:int=0)->vec4:
     if behind_sea(i.world,u.cam):discard()
     if i.world.y < -40.0:return vec4(u.haze*0.2,1)
     strata=vec3(0,0,0)
@@ -184,11 +210,83 @@ ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=f
     footprint=max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
     normal=if coastal:normalize(i.relief_normal) else:normalize(i.normal)
     ndl=dot(render_normal(normal,i.world,u.cam),normalize(u.sun_dir))
-    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail)
+    # (a cliff's lip or foot: the terrain triangle there runs from a flat vertex to a sheer one, so
+    # the interpolated slope changes fast per metre; on an even hillside it hardly changes)
+    cliff_edge=smoothstep(0.025,0.05,fwidth(1.0-normalize(i.normal).y)/footprint)
+    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail,cliff_edge,vec2(-1,0),wind_study)
     vec4(col.xyz*paint_paper(i.pos.xy),col.w)
 
 # canopy_detail: the canopy's (0 the low tier's, from its own shaders, so the full path is not compiled in)
-ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1)->vec4:
+# (in shaders) the wind study's field at a render position (look.jo explains it): x the dabs' strength (0..1, the
+# grass laid over in a passing cat's paw), y the gust's (0..1); dabs: 0 skips the fine layers (far ground);
+# lone: 1 reads the first gust layer alone (spread to the pair's deviation), for the far ground: one texture read;
+# lite: 1 (the low tier's shaders) reads one gust layer and one dab layer everywhere, blades and ground alike.
+meadow_study = (local: vec2, u: GroundParams, dabs: f32, lone: f32 = 0.0, lite: int = 0) -> vec2:
+    qa = local + u.meadow_a.xy
+    # gust layers turned by whole-number matrices (periods 2016/sqrt 5 and 1344/sqrt 5 m)
+    a = sample_lod(u.meadow_noise, vec2(2.0 * qa.x + qa.y, 2.0 * qa.y - qa.x) / 2016.0, 0.0).x
+    n = 0.5 + 0.727 * (a - 0.5)
+    if lite == 0 and lone < 1.0:
+        qb = local + u.meadow_a.zw
+        b = sample_lod(u.meadow_noise, vec2(qb.x - 2.0 * qb.y, 2.0 * qb.x + qb.y) / 1344.0, 0.0).y
+        n = mix(0.62 * a + 0.38 * b, n, lone)
+    gust = smoothstep(0.5, 0.72, n) * smoothstep(2.5, 10.0, u.wind.z)
+    dab: f32 = 0.0
+    if dabs > 0.0:
+        q1 = local + u.meadow_b.xy
+        q2 = local + u.meadow_b.zw
+        r1 = sample_lod(u.meadow_noise, vec2(q1.x + 2.0 * q1.y, q1.y - 2.0 * q1.x) / 144.0, 0.0).z
+        m = 0.5 + 0.72 * (r1 - 0.5)
+        if lite == 0:
+            r2 = sample_lod(u.meadow_noise, q2 / 224.0, 0.0).w
+            m = 0.6 * r1 + 0.4 * r2
+        dab = smoothstep(0.49, 0.71, m) * dabs
+    # dabs everywhere (the field is never still), stronger inside the gusts
+    vec2(dab * (0.42 + 0.58 * gust), gust)
+
+# how much of the study replaces main's waves: none in a calm or light air (those keep main's look), all of it
+# from 5 m/s
+meadow_study_share = (u: GroundParams) -> f32: u.meadow_c.w * smoothstep(2.5, 5.0, u.wind.z)
+
+# the meadow wind's uniforms for a render origin (main's waves, and the study's when its Tweaks box is on)
+meadow_fill = (p: GroundParams, origin: vec3) -> GroundParams:
+    q = p
+    q.grass_gust = meadow_gust(origin)
+    q.grass_spring = meadow_spring()
+    q.grass_lag = meadow_lag()
+    if tweaks.wind_study_grass:
+        q.meadow_a = meadow_study_gust(origin)
+        q.meadow_b = meadow_study_dabs(origin)
+        low = render_quality.tier == 0
+        q.meadow_c = vec4(if low: 1600 else: 2600, if low: 300 else: 600, f32(meadow_travel(meadow_state.speed)), 1)
+        q.meadow_noise = meadow_noise_texture()
+    else:
+        q.meadow_c = vec4(0,0,0,0)
+        q.meadow_noise = coast_pattern_texture
+    q
+
+# (in shaders, the wind study's ground shaders only) the sheen over the meadows: main's waves in a calm or light
+# air, the study's gusts from 5 m/s, which carry on to the far fields (1.4-2.6 km; 0.9-1.6 km on the low tier)
+# where main's waves stop at the near envelope. The study's gusts are 100-250 m patches that never repeat over
+# a hill, so they may go further. A blade passes in what it already read at its root (known).
+meadow_study_sheen = (i:GroundOut,u:GroundParams,col:vec3,meadow_in:f32,near:f32,riparian:f32,y:f32,known:vec2,lite:int)->vec3:
+    out = col
+    study = meadow_study_share(u)
+    reach = length(i.world-u.cam)
+    far_meadow = meadow_in*(1.0-smoothstep(u.meadow_c.x*0.55,u.meadow_c.x,reach))*study*(1.0-riparian)
+    meadow = meadow_in*near*(1.0-riparian)
+    if (meadow > 0.0 or far_meadow > 0.0) and y > 3.0:
+        rise = smoothstep(3.0,9.0+i.tint.x*8.0,y)
+        if study < 1.0:
+            wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)*(1.0-study)
+            out += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow*rise)
+        if far_meadow > 0.0:
+            # the gust's laid-over grass, near and far, and the dabs (a few metres across: out to 150-600 m)
+            s = if known.x >= 0.0: known else: meadow_study(i.world.xz,u,1.0-smoothstep(u.meadow_c.y*0.25,u.meadow_c.y,reach),smoothstep(u.meadow_c.y*0.5,u.meadow_c.y,reach),lite)
+            out += vec3(0.055,0.048,0.026)*u.sun*(s.y*2.2+s.x*2.6)*far_meadow*rise
+    out
+
+ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1,cliff_edge:f32=0.0,study_known:vec2=vec2(-1,0),wind_study:int=0)->vec4:
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
     if i.world.y < -40.0: return vec4(u.haze*0.2,1)
@@ -199,23 +297,36 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     stone = vec3(0.84,0.79,0.69)
     # Flat ground is fully vegetated, sand or scree below; do not shade hidden
     # limestone strata there. Gentle orchard terraces use an even stone wash.
+    # (along the face, horizontally: for streaks that hang down a cliff and ledges that come and go)
+    along = dot(world.xz,normalize(vec2(-n.z,n.x)+vec2(0.0001,0)))
     if slope > 0.28:
-        # Irregular limestone beds, painted as value shelves rather than smooth
-        # evenly spaced stripes. Oblique fractures stagger the bed boundaries.
+        # Limestone in stacked beds, as the film paints a cliff: each bed its own cream or warm
+        # grey, its foot a lit lip, and under the lip of the bed above a cool grey-violet shadow;
+        # the ledges come and go along the face, some beds run together (no even stripes). The
+        # oblique fractures (the strata's wave) stagger the bed boundaries.
         fracture=strata.y
-        phase=strata.x
-        edge=max(0.08,bed_width)
-        band = smoothstep(-edge,edge,sin(phase))
-        # One bed phase gives both the broad wash and its narrow dark seam.
-        # Extra high-frequency sinusoids made limestone look striped and cost
-        # four derivative filters per pixel without adding a readable shape.
-        groove = (1.0-smoothstep(0.08,0.26,abs(sin(phase))))*smoothstep(0.4,0.7,strata.z)
-        visible = 1.0-smoothstep(PI,TAU,bed_width)
-        band = mix(0.5,band,visible)
-        groove = mix(0.055,groove,visible)
-        stone = mix(vec3(0.94,0.90,0.81),vec3(0.76,0.68,0.53),band*0.24+(fracture+0.2)*0.5)
-        stone = mix(stone,vec3(0.50,0.53,0.56),groove*0.18)
+        beds = strata.x*0.62
+        bed = floor(beds); f = beds-bed
+        bw = bed_width*0.62
+        tone = fract(sin(bed*12.9898+0.7)*43758.547)
+        visible = 1.0-smoothstep(0.35,0.9,bw)
+        under: f32 = 0.0; lip: f32 = 0.0; held: f32 = 0.0; ledge: f32 = 0.5
+        # (the ledges' and tufts' lookups only where the beds are resolved)
+        if visible > 0.0 and canopy_detail > 0:
+            ledge = sample(u.pigment,vec2(along/64.0,bed*0.37)).w
+            held = smoothstep(0.3,0.55,fract(sin((bed+1.0)*7.233)*9341.37))*smoothstep(0.35,0.6,ledge)
+            under = smoothstep(0.70,0.95,f)*(1.0-smoothstep(0.97,1.0,f))*held
+            lip = (1.0-smoothstep(0.0,0.09,f))*held
+        stone = mix(vec3(0.93,0.89,0.79),vec3(0.79,0.72,0.59),mix(0.45,tone*0.8+(fracture+0.2)*0.4,visible))
+        stone = mix(stone,vec3(0.50,0.50,0.62),under*0.72*visible+0.07*(1.0-visible))
+        stone = mix(stone,vec3(1.0,0.97,0.90),lip*0.45*visible)
         stone = mix(stone,vec3(0.86,0.70,0.46),i.tint.y*0.3)
+        # (green tufts rooted on the ledges, more of them up toward the top)
+        # (tufts from the ledge's own wash and a wave along it: no further lookup)
+        if held*visible > 0.0 and canopy_detail > 0:
+            clump = fract(ledge*7.3+sin(along*0.7+bed*2.1)*0.5)
+            tuft = smoothstep(0.72,0.86,clump)*(1.0-smoothstep(0.02,0.24,f))*held*visible
+            stone = mix(stone,vec3(0.22,0.34,0.19),tuft*smoothstep(0.2,0.75,1.0-slope+0.3)*0.85)
     if large_terrain:
         # (the strata are cliffs' and steep slopes': on gentler bare ground they would draw the
         # height's contours like wood grain; there the stone is a mottled scree, greyer up high)
@@ -276,11 +387,43 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         # is reserved for continuous cliff faces and irregular exposed patches.
         outcrop = smoothstep(0.62,0.79,i.tint.y)*smoothstep(0.15,0.4,slope)
         exposure = max(smoothstep(0.26,0.72,slope+(patch-0.5)*0.26),outcrop*0.78)
-        cliff = max(smoothstep(0.48,0.78,slope),outcrop*0.7)
+        # (medium slopes on a cliff's lip and foot are its stone, not ochre scree: each terrain
+        # triangle between a flat and a sheer vertex otherwise painted a tan sawtooth along it)
+        cliff = max(smoothstep(mix(0.48,0.30,cliff_edge),mix(0.78,0.50,cliff_edge),slope),outcrop*0.7)
         scree = mix(vec3(0.60,0.54,0.40),stone,0.25+cliff*0.75)
-        stone = mix(scree,stone,cliff)
+        stone = mix(scree,stone,max(cliff,cliff_edge))
         veg = (1.0-exposure)*smoothstep(0.6,1.5,y)
         if large_terrain: veg *= i.tint.w    # high land reuses bare limestone
+        # Where cliff meets the green above it, no hard line along the terrain's triangles: the
+        # scrub hangs over the edge in ragged tongues (a vertically drawn-out wash breaks the
+        # boundary), a band of bare soil shows between it and the rock, and below the lip the
+        # rock is stained by roots and run-off in streaks.
+        # (only a cliff's lip and foot and the face itself: an ordinary hillside skips all of it)
+        if slope > 0.3 or (cliff_edge > 0.0 and slope > 0.08):
+            # (low tier: a cheap wave along the face instead of the wash's lookup)
+            drip = if canopy_detail > 0: sample(u.pigment,vec2(along/13.0,i.world.y/26.0)).w else: 0.5+0.25*sin(along*0.31+i.world.y*0.11)+0.15*sin(along*0.83-i.world.y*0.05)
+            # (scrub only on gentle ground, decided per pixel with a drawn-out wash: across a terrain
+            # triangle from the plateau's edge down to the face, the green stops close to the
+            # plateau's line instead of half way down, so the 14 m triangles draw no sawteeth)
+            gentle = 1.0-smoothstep(0.19,0.31,slope+(drip-0.5)*0.24)
+            ragged = clamp((mix(veg,min(veg,gentle),cliff_edge)-0.5)*2.4+0.5+(drip-0.5)*0.9,0.0,1.0)
+            soil = smoothstep(0.1,0.32,ragged)*(1.0-smoothstep(0.35,0.6,ragged))*cliff_edge
+            veg = smoothstep(0.35,0.6,ragged)
+            stone = mix(stone,mix(vec3(0.50,0.38,0.24),vec3(0.42,0.36,0.24),drip),soil*0.85)
+            # (a cliff's foot is rock down to the water: below a line a few metres up, wavering along
+            # the shore, any ground that is not a flat beach is bare stone, darker and wet at the
+            # waterline; no scrub or scree in sawteeth between the beach's vertices and the face's)
+            if y < 10.0:
+                footline = 4.0+(drip-0.5)*6.0
+                foot = (1.0-smoothstep(footline-1.5,footline+1.5,y))*smoothstep(0.1,0.22,slope)
+                veg *= 1.0-foot
+                awash = 1.0-smoothstep(0.4,1.8,y)
+                stone = mix(stone,mix(vec3(0.70,0.66,0.58),vec3(0.42,0.42,0.40),awash),foot*0.85)
+            lipzone = (1.0-veg)*(1.0-smoothstep(0.45,0.85,slope))*smoothstep(6.0,14.0,y)
+            # (streaks hanging from the lip: a wave along the face, stretched down it)
+            streak: f32 = 0.5
+            if canopy_detail > 0: streak = smoothstep(0.35,0.8,0.5+0.3*sin(along*3.1+drip*5.0)+0.2*sin(along*1.37-i.world.y*0.05))
+            stone = mix(stone,stone*vec3(0.66,0.64,0.70),lipzone*(0.3+streak*0.45))
         c = mix(stone, green, veg)
         # The farmed land (src/fields.jo): straight-edged fields of flat crop colour over the gentle
         # country, the same on every tier. The terrain's working channel holds each sample's field
@@ -334,15 +477,28 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
             # rather than rebuilding five value-noise fields per seabed pixel.
             bed = if coastal: sample(u.coast_pattern,world.xz/448.0)*2.0-vec4(0.5,0.5,0.5,0) else: vec4(0,0,0,0)
             bed_fine = if coastal: sample(u.coast_pattern,world.xz/112.0)*3.0-vec4(1,1,1,0) else: vec4(0,0,0,0)
-            patch = if coastal: bed.x+bed.y*0.25 else: vnoise(world.xz*0.045)+vnoise(world.xz*0.23)*0.25
-            grass_bed = smoothstep(0.57,0.76,patch)*smoothstep(0.5,2.5,-y)*(1.0-smoothstep(22.0,38.0,-y))
+            # (a second, rotated and incommensurate lookup breaks the 448 m tile: weed beds and
+            # stones scatter instead of repeating one camouflage of blotches)
+            turned = vec2(world.x*0.8-world.z*0.6,world.x*0.6+world.z*0.8)
+            bed2 = if coastal and canopy_detail > 0: sample(u.coast_pattern,turned/173.0)*2.0-vec4(0.5,0.5,0.5,0) else: if coastal: vec4(bed.z,bed.x,bed.y,0) else: vec4(0,0,0,0)
+            patch = if coastal: bed.x*0.55+bed2.y*0.5+bed.y*0.15 else: vnoise(world.xz*0.045)+vnoise(world.xz*0.23)*0.25
+            # (weed beds only in some stretches, each bed broken by holes: long runs of clean sand)
+            meadow_here = if coastal: smoothstep(0.62,0.8,bed2.z+bed.z*0.4) else: 1.0
+            holes = if coastal: smoothstep(0.25,0.55,bed_fine.y) else: 1.0
+            grass_bed = smoothstep(0.74,0.88,patch)*meadow_here*holes*smoothstep(0.5,2.5,-y)*(1.0-smoothstep(22.0,38.0,-y))
             blades: f32 = 0.96
             if resolved > 0.0:
                 fine = if coastal: bed_fine.x else: vnoise(world.xz*1.7+vec2(u.time*0.02,0))
                 blades += (fine-0.5)*0.08*resolved
-            c = mix(c,vec3(0.12,0.23,0.12)*blades,grass_bed*0.8)
-            rocks = smoothstep(0.76,0.86,if coastal: bed_fine.z else: vnoise(world.xz*0.18+vec2(17,9)))
-            c = mix(c,stone*0.65,rocks*(if coastal: 0.18 else: 0.7))
+            c = mix(c,vec3(0.22,0.40,0.32)*blades,grass_bed*0.5)
+            rocks = smoothstep(0.80,0.9,if coastal: bed_fine.z*0.6+bed2.x*0.5 else: vnoise(world.xz*0.18+vec2(17,9)))
+            c = mix(c,vec3(0.36,0.42,0.40),rocks*(if coastal: 0.5 else: 0.7))
+            # (the sand under the water is warm gold, paling to the shore)
+            # (the sand under the water is pale, nearly white: the water's colour carries it)
+            c = mix(c,vec3(0.92,0.89,0.79),(1.0-grass_bed*0.6)*(1.0-rocks*0.55)*0.5)
+        # (seen through the water the seabed takes the water's colour, bluer and greener with depth:
+        # the film's cove is turquoise over its sand, gold only at the very edge)
+        if y < -0.2: c = c*mix(vec3(1,1,1),mix(vec3(0.74,0.96,0.97),vec3(0.36,0.80,0.90),smoothstep(2.0,8.0,-y)),smoothstep(0.2,2.0,-y))
     # close up: patches of lighter and darker growth, bare earth, small stones
     near = 1.0 - smoothstep(60.0, 260.0, length(i.world - u.cam))
     if near > 0.0:
@@ -393,6 +549,13 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     # Reclassifying every tiny tilted facet produced hard, flat rubble decals
     # and ran the cliff material over otherwise gentle beach ground.
     light_normal = if coastal: normalize(i.relief_normal) else: n
+    # (bare rock on a steep face lit as one bold plane by the way it faces, not by normals blended
+    # across a 14 m triangle from its plateau and beach vertices, which smeared soft dark wedges
+    # over the cliff)
+    facing2 = vec2(n.x,n.z); reach = length(facing2)
+    if canopy_detail > 0 and slope > 0.3 and reach > 0.2:
+        plane = normalize(vec3(facing2.x/reach,0.6,facing2.y/reach))
+        light_normal = normalize(mix(light_normal,plane,smoothstep(0.3,0.55,slope)*(1.0-veg)))
     rn = render_normal(light_normal, i.world, u.cam)
     # (the land's held-low modelling light, taken per vertex: per pixel it cost low more than
     # half a millisecond on redfox's terrain-filled views; slopes are broad enough for vertices)
@@ -401,6 +564,12 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     # where this with the fields' colour cost half a millisecond; each alone cost nothing)
     if canopy_detail > 0: ndl = mix(ndl,i.land,u.land_light.w)
     lit = paint_ramp(ndl,max(light_width,if coastal: 0.08 else: 0.015))
+    # (bare rock on a cliff in bold planes, as the film paints it: a crisp terminator, nudged by the
+    # beds so a shadow's edge steps along the ledges, instead of light fading softly across each
+    # 14 m column of the face, which read as dark smears)
+    if canopy_detail > 0 and slope > 0.3:
+        bold = smoothstep(-0.1,0.1,ndl+strata.y*0.18)
+        lit = mix(lit,bold,smoothstep(0.35,0.6,slope)*(1.0-veg)*0.6)
     # The canopy's crowns: each lit by its own rounded normal on the slope, through a wrapped
     # painted ramp (the terminator shifted a little crown to crown, as a brush would place it).
     if canopy_detail > 0 and canopy_lit > 0.0:
@@ -416,9 +585,17 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     light = mix(shade*vec3(0.94,1.08,1.1)+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
     col = c * light
     # seabed: caustic shimmer in the shallows
-    if y < 0.0:
-        cx = sin(world.x * 0.35 + u.time * 1.3 + sin(world.z * 0.27 + u.time)) + sin(world.z * 0.41 - u.time * 1.1 + sin(world.x * 0.3))
-        col = col * (0.9 + 0.25 * smoothstep(1.1, 1.9, cx) * clamp(1.0 + y * 0.15, 0.0, 1.0))
+    # (a drifting network of thin bright lines where two incommensurate fields cross, the light
+    # focused by the surface, metre-sized; faded where a pixel spans more than a fraction of a cell
+    # and with depth, never a regular weave)
+    if y < 0.0 and coastal and canopy_detail > 0 and footprint < 0.4:
+        drift = vec2(u.time*0.07,u.time*0.05)
+        q = world.xz
+        a1 = sample(u.coast_pattern,q/5.3+drift).x
+        a2 = sample(u.coast_pattern,vec2(q.x*0.8-q.y*0.6,q.x*0.6+q.y*0.8)/3.7-drift*1.3).y
+        net = 1.0-smoothstep(0.0,0.07,abs(a1-a2))
+        fade = (1.0-smoothstep(0.08,0.4,footprint))*clamp(1.0+y*0.18,0.0,1.0)*smoothstep(0.0,0.4,-y)
+        col = col*(1.0+net*0.4*fade)
     # Contrast affects diffuse colour only; sheen is common to both surfaces.
     col*=blade_response
     # the wind over the grass: gusts sweep across the meadows as waves of paler, bent blades
@@ -426,23 +603,29 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     # The wind wash and blade-mean tint share the near-detail envelope on
     # mainland and islands: unchanged to 60 m, absent by 260 m. Neither may
     # repeat over whole hills from altitude.
-    meadow *= near
-    # Coastal maquis replaces the old bare shelf, not a new grass meadow.
-    # Retain the original height envelope for the animated grass wash.
-    meadow*=1.0-riparian
-    if meadow > 0.0 and y > 3.0:
-        meadow *= smoothstep(3.0,9.0+i.tint.x*8.0,y)
-        # Advect the broad pigment wash with the same wind drift. Two layers
-        # of per-fragment hash noise read as digital mottling at aerial scale.
-        wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)
-        col += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow)
-        # This is also the blade-root colour. No separate grass palette or
-        # distant tint: the root-tip response is normalized in the blade shader.
+    if wind_study > 0:
+        col = meadow_study_sheen(i,u,col,meadow,near,riparian,y,study_known,if wind_study == 2: 1 else: 0)
+    else:
+        meadow *= near
+        # Coastal maquis replaces the old bare shelf, not a new grass meadow.
+        # Retain the original height envelope for the animated grass wash.
+        meadow*=1.0-riparian
+        if meadow > 0.0 and y > 3.0:
+            meadow *= smoothstep(3.0,9.0+i.tint.x*8.0,y)
+            # Advect the broad pigment wash with the same wind drift. Two layers
+            # of per-fragment hash noise read as digital mottling at aerial scale.
+            wave = meadow_wave(i.world.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)
+            col += vec3(0.055,0.048,0.026)*u.sun*(wave*meadow)
+            # This is also the blade-root colour. No separate grass palette or
+            # distant tint: the root-tip response is normalized in the blade shader.
     vec4(land_aerial(col, i.world, u.cam, u.haze, u.fog), 1)
 
 # Both terrain paths share the same coastal and vegetation material rules.
 ground_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false)
 ground_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,0)
+ground_fs_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,1,1)
+ground_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,false,0,2)
+ground_sh_ws: Shader
 
 ground_sh: Shader
 
@@ -502,17 +685,15 @@ draw_ground = (L: Light, t: f64):
         params.canopy_light = canopy_light(L.sun_dir)
         params.land_light = land_light(L.sun_dir)
         params.land_palette = field_palette
-        params.grass_gust = meadow_gust(origin)
-        params.grass_spring = meadow_spring()
-        params.grass_lag = meadow_lag()
         params.coast_pattern = coast_pattern_texture
+        params = meadow_fill(params, origin)
         params.river_map = unread_map(); params.lake_map = unread_map()
         params.working_map = tile.working
         terrain_prepare += time() - prepare_start
         draw_coast_batches(coastal,params)
         loop i in 0..96:
             if batches[i].len() == 0: continue
-            draw_instanced(ground_sh, terrain_grids[i], batches[i], params)
+            draw_instanced(if params.meadow_c.w > 0.0: ground_sh_ws else: ground_sh, terrain_grids[i], batches[i], params)
             terrain_draws += 1
             terrain_triangles += terrain_grids[i].index_count / 3 * batches[i].len()
             terrain_upload += batches[i].len() * 40
