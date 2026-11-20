@@ -64,6 +64,29 @@ PIECES = [
  ('locus-iste', 'Locus iste', 'Anton Bruckner', 'The Chapel Bell'),
  ('va-pensiero', 'Nabucco: Va, pensiero', 'Giuseppe Verdi', 'The Chapel Bell'),
  ('melita', 'Melita (Eternal Father, Strong to Save)', 'John Bacchus Dykes', 'The Chapel Bell'),
+ ('pictures-promenade', 'Pictures at an Exhibition: Promenade', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-old-castle', 'Pictures at an Exhibition: The Old Castle', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-bydlo', 'Pictures at an Exhibition: Bydlo', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-chicks', 'Pictures at an Exhibition: Ballet of the Unhatched Chicks', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-baba-yaga', "Pictures at an Exhibition: The Hut on Hen's Legs", 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-great-gate', 'Pictures at an Exhibition: The Great Gate of Kiev', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('beethoven-fifth', 'Symphony No. 5: Allegro con brio', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('beethoven-fifth-finale', 'Symphony No. 5: Finale', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('pathetique-finale', 'Symphony No. 6 "Pathetique": Finale', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('swan-lake-waltz', 'Swan Lake: Waltz (piano)', 'Pyotr Ilyich Tchaikovsky', 'Orenthia Light Programme'),
+ ('rachmaninoff-third', 'Piano Concerto No. 3: Allegro ma non tanto (two pianos)', 'Sergei Rachmaninoff', 'Kalyra Concert Hall'),
+ ('meistersinger-prelude', 'Die Meistersinger: Prelude (piano, after Bulow)', 'Richard Wagner; arr. Hans von Bulow', 'Kalyra Concert Hall'),
+ ('liebestod', 'Tristan und Isolde: Liebestod (piano)', 'Richard Wagner', 'Kalyra Concert Hall'),
+ ('valkyries', 'Die Walkure: Ride of the Valkyries (piano and voices)', 'Richard Wagner', 'Kalyra Concert Hall'),
+ ('aida-march', 'Aida: Triumphal March', 'Giuseppe Verdi', 'Orenthia Light Programme'),
+ ('traumerei', 'Traumerei', 'Robert Schumann', 'Kalyra Concert Hall'),
+ ('slavonic-dance', 'Slavonic Dance Op. 72 No. 1, for wind band', 'Antonin Dvorak', 'Kalyra Concert Hall'),
+ ('brandenburg-two', 'Brandenburg Concerto No. 2', 'Johann Sebastian Bach', 'Kalyra Concert Hall'),
+ ('pange-lingua', 'Pange lingua', 'Anton Bruckner', 'The Chapel Bell'),
+ ('brahms-first-finale', 'Symphony No. 1: Finale', 'Johannes Brahms', 'Kalyra Concert Hall'),
+ ('hebrides', "The Hebrides (Fingal's Cave), for wind band", 'Felix Mendelssohn', 'Kalyra Concert Hall'),
+ ('humoresque', 'Humoresque', 'Antonin Dvorak', 'Radio Mandolinata'),
+ ('donna-mobile', 'Rigoletto: La donna e mobile', 'Giuseppe Verdi', 'Radio Mandolinata'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -90,7 +113,10 @@ LEVEL.update(json.loads((ROOT/'data/music/levels.json').read_text()) if (ROOT/'d
 HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo', 'seventh-allegretto',
         'kleine-nachtmusik', 'clarinet-adagio', 'pathetique-adagio', 'mozart-forty', 'bach-air', 'moldau', 'liebestraum',
         'standchen', 'fifth-valse', 'lohengrin-chorus', 'hungarian-one', 'daphnis-daybreak', 'bolero', 'barber-overture',
-        'carmen-overture', 'locus-iste', 'va-pensiero', 'melita'}
+        'carmen-overture', 'locus-iste', 'va-pensiero', 'melita', 'pictures-promenade', 'pictures-old-castle',
+        'pictures-bydlo', 'pictures-chicks', 'pictures-baba-yaga', 'pictures-great-gate', 'beethoven-fifth',
+        'beethoven-fifth-finale', 'pathetique-finale', 'rachmaninoff-third', 'meistersinger-prelude', 'liebestod', 'valkyries',
+        'traumerei', 'brandenburg-two', 'pange-lingua', 'brahms-first-finale'}
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
@@ -159,6 +185,29 @@ MOOD = {
  'locus-iste': ('tender', 'a motet: hushed, devout, sustained'),
  'va-pensiero': ('stately', "the exiles' chorus: broad, in unison, yearning"),
  'melita': ('stately', "a sailors' hymn: steady, solemn"),
+ 'pictures-promenade': ('stately', 'a walk through the gallery: steady, broad'),
+ 'pictures-old-castle': ('mournful', 'a troubadour by a ruin: slow, lilting, melancholy'),
+ 'pictures-bydlo': ('stately', 'an ox-cart: heavy, plodding, a long crescendo and away'),
+ 'pictures-chicks': ('jaunty', 'chicks in their shells: quick, light, chirping'),
+ 'pictures-baba-yaga': ('dance-like', "the witch's hut: wild, driving"),
+ 'pictures-great-gate': ('stately', 'the great gate: ceremonial, bells, broad'),
+ 'beethoven-fifth': ('stately', 'fate knocking: urgent, the pulse held'),
+ 'beethoven-fifth-finale': ('stately', 'C major triumph: bright, driving'),
+ 'pathetique-finale': ('mournful', 'the last lament: very slow, grieving'),
+ 'swan-lake-waltz': ('dance-like', 'a ballroom waltz: lilting'),
+ 'rachmaninoff-third': ('dreamy', "the concerto's opening: a long plain tune, then storms"),
+ 'meistersinger-prelude': ('stately', 'a festive prelude: broad, ceremonial'),
+ 'liebestod': ('dreamy', 'the love-death: rising, swelling, unresolved'),
+ 'valkyries': ('stately', 'the ride: galloping, heroic'),
+ 'aida-march': ('stately', 'a triumphal march: trumpets, ceremony'),
+ 'traumerei': ('tender', 'a dream: slow, intimate'),
+ 'slavonic-dance': ('dance-like', 'a furiant: fast, cross-rhythms'),
+ 'brandenburg-two': ('jaunty', 'a concerto grosso: bright, the trumpet on top'),
+ 'pange-lingua': ('tender', 'a plainchant hymn harmonised: hushed'),
+ 'brahms-first-finale': ('stately', 'from darkness to the great tune: broad'),
+ 'hebrides': ('dreamy', 'the sea and the cave: rolling, swelling'),
+ 'humoresque': ('tender', 'a little lilting piece: wistful'),
+ 'donna-mobile': ('jaunty', "the duke's song: a swinging tune"),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
