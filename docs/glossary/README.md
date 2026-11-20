@@ -15,7 +15,7 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf (trial)](#surf-trial) · [Rain rings](#rain-rings)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
@@ -217,11 +217,12 @@ blue discs that stay in every frame are **speed flecks**.
 
 ![The shallows band and shore foam around a beach island, from 300 m](img/shallows.png)
 
-### Surf (trial)
+### Surf
 
 - **Aliases:** the Surf tweak, breaking waves, run-up, swash, lace foam, ships' white water.
-- **Definition:** a trial on the Tweaks page ("Surf", off by default; `AEGEAN_SURF=1` or
-  `AEGEAN_TWEAKS=surf` at start), replacing [shore foam](#shore-foam) while on.
+- **Definition:** waves breaking on the shore and ships' white water, on by default since
+  2026-11-20 (the Tweaks page's "Surf" box; `AEGEAN_SURF=0` at start turns it off), replacing
+  [shore foam](#shore-foam).
   - **Waves:** waves peel in along the shore, each stretch a little out of step. A wave breaks as
     a crisp white **lip** at the break line (1.6–2.7 m deep, deeper in a fresh sea) and runs in as
     a **bore** with **lace foam** behind it: pale foam broken by dark rounded holes, thinning as it
@@ -234,9 +235,12 @@ blue discs that stay in every frame are **speed flecks**.
     bow cheeks aft and churns out astern.
 - **Code:** `src/surf.jo` (`surf_phase`, `surf_lace`, `surf_sea_foam`, `surf_swash`,
   `surf_ship_foam`). Used by `src/sea.jo` `sea_material(..., surf=true)` and `src/terrain.jo`
-  `ground_material(..., surf=true)`; these are their own shader variants, made the first time the
-  trial is on. Ships: `src/vessel_spray.jo`.
-- **Rules:** with the trial off, the sea and coast are drawn by exactly the plain shaders (the
+  `ground_material(..., surf=true)`; these are their own shader variants, made the first time Surf is
+  needed. With the wind study grass on (also a default) the coast ground is drawn by the wind
+  study's program instead: Surf keeps its sea, run-up and ships' white water, without the wet
+  sand and rock bursts (on Sloppy 0.41 the Surf ground program under the wind study's
+  parameters drew the land white). Ships: `src/vessel_spray.jo`.
+- **Rules:** with Surf off, the sea and coast are drawn by exactly the plain shaders (the
   sea-detail guard's output is identical). The open sea, its [speed flecks](#speed-flecks) and its
   fine detail are untouched either way: the surf is zero beyond the surf zone's depth and
   1.5 km. The lace's edges stay about a pixel wide near or far.
