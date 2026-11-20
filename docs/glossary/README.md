@@ -1879,9 +1879,21 @@ On the rivers branch until it lands.
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
   the flight leader's words follow: form on me, circle here and wait, attack my target, break off
   and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
-  nearest of the flight answers in a few plain words.
+  nearest of the flight answers in a few plain words, by [signal](#signals-between-aircraft) when
+  in sight.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
+
+### Signals between aircraft
+
+- **Aliases:** hand signals, the Aldis lamp, by hand, by lamp.
+- **Definition:** a word from one of the player's flight in sight of the player comes by signal,
+  not the R/T: within 260 m the pilot's arm goes up out of the cockpit and waves; out to 2.2 km
+  an Aldis lamp over the cockpit flashes the line's first word in Morse, over and over. The
+  caption names the way ("Kalyra 1, by lamp: Close up."), and no Morse cue sounds. Farther off,
+  the line comes by the R/T as before.
+- **Code:** `src/flight_signals.jo`; `update_homeward` and `draw_homeward_signal` in
+  `src/homeward_view.jo`.
 
 ### The Ierax (seaplane tender)
 
@@ -1893,7 +1905,13 @@ On the rivers branch until it lands.
   past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
   strait's Kalyran flight comes home to her: round the island's low north end (its ridge of 1,200 m
   lies between her and the strait; the leader takes the flight round it, a point at a time, at a pace
-  the player's own aircraft cruises at), lands to seaward and moors in turn along the booms and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  the player's own aircraft cruises at), puts down on a line off her side (across a light wind when
+  the high ground lies under the way in from downwind), its run ending by her moorings, and moors
+  in turn along the booms and astern, each made fast within a minute or so of alighting while the
+  rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
+  end, alongside her or on her deck can be helped aboard her: up the boom's spar and her side, or
+  across a brow put out from her rail, and below; her boat takes them in to Ardevanti, a foe of
+  Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
   to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
