@@ -291,6 +291,11 @@ def model_numbers(fit, superposition, prior=None):
             m['energy_ref_' + g] = [float(r)]
     if _num(fit.get('output_gain')) is not None:
         m['output_gain'] = [float(fit['output_gain'])]
+    if _num(fit.get('postfilter')) is not None:
+        m['postfilter'] = [float(fit['postfilter'])]
+    bb = fit.get('breath_band')
+    if isinstance(bb, (list, tuple)) and len(bb) == len(wa.BANDS) and all(_num(x) is not None for x in bb):
+        m['breath_band'] = [float(x) for x in bb]
     if _num(fit.get('sustain')) is not None:
         m['sustain'] = [float(fit['sustain'])]
     for g, v in sorted((fit.get('tilts') or {}).items()):

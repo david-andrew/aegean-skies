@@ -29,12 +29,17 @@ WEIGHTS = ROOT / "tools" / "ci_test_weights.json"
 RELEASE = {"tests/sky_test.jo", "tests/nature_test.jo"}
 # never run in CI: they need a real GPU (the depth prepass differs under software rendering: the
 # test passes on the desktop, and gives 0 hidden-bed pixels under SLOPPY_SOFTWARE=1)
-GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)"}
+GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)",
+            "tests/playtest_situations_test.py": "needs a real GPU (the strait's battle runs some 300 frames in 14 min under software rendering; the tow over 30 min)"}
 # run only when CI_SLOW=1 (workflow_dispatch with slow: true): the whole game, software-rendered
 SLOW = {
     "tests/title_reel_detail_test.py": "slow under software rendering (about 16 min)",
+    "tests/playtest_loops_test.py": "the whole game played through a pleasure flight (about 5 min)",
+    "tests/playtest_town_test.py": "the whole game played through the town's loops (about 20 min)",
 }
 TIMEOUT = int(os.environ.get("CI_TEST_TIMEOUT", "1500"))
+# items that run longer than that by design (slow ones only)
+TIMEOUTS = {"tests/playtest_loops_test.py": 2700, "tests/playtest_town_test.py": 2700}
 
 
 def skipped():
@@ -74,11 +79,11 @@ def run_item(item, env, savedir):
     os.makedirs(e["SLOPPY_SAVE_DIR"], exist_ok=True)
     t0 = time.time()
     try:
-        r = subprocess.run(cmd, cwd=ROOT, env=e, capture_output=True, text=True, timeout=TIMEOUT)
+        r = subprocess.run(cmd, cwd=ROOT, env=e, capture_output=True, text=True, timeout=TIMEOUTS.get(item, TIMEOUT))
         out, code = r.stdout + r.stderr, r.returncode
     except subprocess.TimeoutExpired as ex:
         out = (ex.stdout or b"").decode(errors="replace") if isinstance(ex.stdout, bytes) else (ex.stdout or "")
-        out += "\nTIMEOUT after %d s" % TIMEOUT
+        out += "\nTIMEOUT after %d s" % TIMEOUTS.get(item, TIMEOUT)
         code = 124
     dt = time.time() - t0
     print("%s %-45s %6.1f s" % ("ok  " if code == 0 else "FAIL", item, dt), flush=True)
