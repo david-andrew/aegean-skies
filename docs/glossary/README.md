@@ -2397,6 +2397,8 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   speaker is still with him. An errand, a purposeful walk or an open panel keeps him quiet.
 - **Timing:** a place rests for 36 game minutes and a speaker for 100. Across places the chance
   of a remark recovers over 12–90 minutes after a chat. A conversation the player starts counts too.
+  A nearby speaker can warn the pilot during either rest if a thunderstorm is coming their way.
+  The pilot hears that warning once per storm, even if he changes town or reloads a save.
 - **Code:** `src/town_chat.jo` chooses and remembers an exchange. `src/pilot_talk.jo` keeps the
   pilot’s day. `chat_at` and `pilot_reply_frame` connect the scene to the existing speech bubbles.
   The cooldowns and opening history are saved with the presentation. Older saves start empty.
