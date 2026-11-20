@@ -23,7 +23,10 @@ A `true` request means **accepted**, not durable success. Disable other slot act
 Wait for a later `sequence` with `busy == false`, then inspect `error` (empty means success).
 Browser completion is acknowledged only after the IndexedDB transaction commits. An early request
 returns false while storage is opening/busy, another request is pending, or the slot is invalid.
-A load keeps the existing pause state; the UI may unpause after successful completion.
+These requests never change the pause: a load keeps the pause state as it was. The game's own load
+handler (`process_game_saves` in `aegean.jo`) does unpause, once a load has succeeded and the game is
+in place: Load was chosen to play on, so the pause menu closes and the loaded game carries on at once
+(see "The pause menu's Game page" below). A failed load leaves the game paused, with its note.
 
 `GameSlotView` has `slot`, `exists`, `compatible`, `generation`, `summary`, `error`. The summary has
 `minute` (world minutes, the usual calendar/clock contract), stable `place`, `place_name`,

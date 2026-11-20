@@ -905,7 +905,7 @@ On the rivers branch until it lands.
   deep navy on the sea, deep green on grass. It slides over the swell and the terrain as drawn.
 - **Code:** `src/craft_shadow.jo`. Each frame the nearby aircraft's own meshes are flattened along
   the sunlight into a small top-down mask under the player's shadow (`craft_shadow_mask_pass`, 80 m
-  square, 16 cm texels; 31 cm on the low tier); in the cloud pass's depth-detached window one
+  square, 16 cm texels; 31 cm on the low tier); in the cloud composite framebuffer one
   full-resolution pass over the mask's rectangle on screen rebuilds each pixel's world point from
   the scene depth, carries it along the sunlight into the mask and multiplies the scene by a cool
   tint (`craft_shadow_multiply`). The mask keeps each caster's lowest point, so an aircraft never
@@ -1807,12 +1807,13 @@ On the rivers branch until it lands.
 
 - **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
   the broadcast set).
-- **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
-  plate; a controller's D-pad left). Down on the sea in trouble its first line is the
+- **Definition:** a small pad of set words by the cockpit radio, opened with Y (a tap on the R/T
+  plate; a controller's D-pad left). It stays open, however long one reads it, until a word is
+  sent or it is put away (Escape, or its Close line). Down on the sea in trouble its first line is the
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
   the flight leader's words follow: form on me, circle here and wait, attack my target, break off
-  and go home, lead me home. A number, a click or tap sends one, or C steps and F sends; Escape or
-  a few idle seconds close it. The nearest of the flight answers in a few plain words.
+  and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
+  nearest of the flight answers in a few plain words.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
 
@@ -1824,8 +1825,9 @@ On the rivers branch until it lands.
   southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
   Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
   past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
-  strait's Kalyran flight comes home to her: it lands to seaward and moors in turn along the booms
-  and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  strait's Kalyran flight comes home to her: round the island's low north end (its ridge of 1,200 m
+  lies between her and the strait; the leader takes the flight round it, a point at a time, at a pace
+  the player's own aircraft cruises at), lands to seaward and moors in turn along the booms and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
   to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
@@ -3039,7 +3041,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   reading (a desk and books), or the house (a sewing table).
 - **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
   needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
-  The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
+  The rooms are drawn last over a cleared depth (`clear_depth`), so the town's walls never
   show through them; a game saved during a stay loads with the pilot outside, where he went in.
 - **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
   `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`), `src/room_walk.jo`
@@ -3300,23 +3302,15 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Reversed depth
 
 - **Aliases:** reversed Z, reversed float depth.
-- **Definition:** on native Vulkan the depth buffer is a float with near at 1 and far at 0, which
-  spreads precision evenly over huge distances.
-- **Code:** `src/depth_space.jo` (`enable_world_depth`, `world_reverse_depth_active`,
-  `world_depth_compare`).
-- **Rules:** clear value, compare and decode must change together. Software and Metal fall back to
-  conventional depth. `AEGEAN_LOG_DEPTH` turns it off.
+- **Definition:** the depth buffer holds the camera near distance divided by view distance. The near plane is 1 and clear sky is 0. Sloppy selects an infinite reversed perspective and the corresponding comparisons and clears.
+- **Code:** `src/depth_space.jo` (`enable_world_depth`, `world_depth_params`).
 
 ### Log depth
 
-- **Aliases:** logarithmic depth, full-log.
-- **Definition:** on WebGL2 (which has no reversed Z) depth is written per fragment as
-  `log2(1 + distance)`. **Split depth** is the default there: ordinary depth below 128 m and log
-  depth beyond, so near geometry keeps early depth testing.
-- **Code:** `src/depth_space.jo` (`world_log_depth`, `world_depth_encode`,
-  `world_split_depth_active`, `world_bounded_shader`).
-- **Rules:** vertex-only log depth is not allowed: it breaks large shoreline triangles.
-  `AEGEAN_FULL_LOG_DEPTH=1` and `AEGEAN_LINEAR_DEPTH` are diagnostic controls.
+- **Aliases:** logarithmic depth.
+- **Definition:** when reversed depth is unavailable, each world fragment writes `log2(1 + view_distance) / 20`. Reciprocal clip w gives the distance across coarse triangles.
+- **Code:** `src/depth_space.jo` (`world_depth_encode`, `world_depth_decode`).
+- **Diagnostics:** `AEGEAN_LOG_DEPTH=1` forces this path. `AEGEAN_LINEAR_DEPTH=1` selects conventional perspective depth.
 
 ### Z-fighting
 
@@ -3328,9 +3322,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Near clipping
 
 - **Aliases:** near plane, the web-near bug, cut-away quay.
-- **Definition:** geometry cut away because it is closer than the near plane (3.5 cm here). In
+- **Definition:** geometry cut away because it is closer than the active camera’s near plane. In
   browsers a bug once clipped whole quay triangles that crossed behind the eye; it was fixed by
-  giving every vertex the same affine clip depth.
+  keeping the camera projection for clipping and writing logarithmic depth in the fragment stage.
 - **Code:** `src/depth_space.jo`; regression check `tools/test_web_near.mjs`.
 
 ### Crisp-text split

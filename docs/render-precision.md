@@ -27,12 +27,19 @@ remainder. Sea band calls use constant indices to avoid dynamic uniform reads on
 Main's original circular mark sizes and ripple bands are preserved. Legacy puff-cloud wrapping,
 rain displacement, foliage pigment and vegetation sway also retain phase through chart changes.
 
-The renderer still uses conventional perspective depth, including its cloud depth decoder.
-This change does not implement reversed Z or fragment-correct logarithmic depth. Sloppy's current
-public portable shader/render-state API does not expose the complete facilities needed for those
-changes. Vertex-only log depth is not a valid replacement for coarse shoreline triangles. A
-future depth change must cover terrain, sea, all effects, clear/test state, cloud endpoints and
-all native/WebGL/software backends together.
+The renderer asks Sloppy for reversed floating-point depth after opening the window.
+The active camera's near plane divided by view distance gives the stored depth. Zero
+represents clear sky. On renderers without clip control the world fragment functions
+write `log2(1 + view_distance) / 20`, recovering view distance from reciprocal clip w.
+On the V60, Adreno misreads this component when the GLSL compiler passes it through
+the fragment input struct. The WebGL compatibility pass reads the same `gl_FragCoord.w`
+directly for the generated log write. The ordinary material entry points preserve
+hardware early depth on reversed renderers.
+`AEGEAN_LOG_DEPTH=1` forces the fallback for comparisons. Cloud and shadow passes read
+the float scene-depth attachment and decode it with the active camera projection.
+On the logarithmic path, water reads a snapshot of opaque depth for early rejection.
+Apple OpenGL 4.1 packs that snapshot into a nearest-filtered RGBA8 target because its
+depth blit fails in Sloppy 0.40.0. Metal and the other backends use a float depth copy.
 
 World `vec3`/`mat4` values are f32. Existing CPU state and baked absolute geometry retain their
 original quantization (1.5625 cm at 250 km); this render chart preserves model detail but cannot
