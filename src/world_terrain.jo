@@ -56,6 +56,7 @@ struct WorldTile:
     inland_water: bool = false
     canal_city: bool = false       # over Neravessa's canal cut (world_tile_canal)
     stand: f32[] = []              # the woods' stand cover per sample (level 0: wood_stand)
+    wooded: f32 = 0.0              # its samples' most stand cover (any level)
 
 struct WorldInstance:
     origin: vec2
@@ -167,6 +168,7 @@ struct WorldTileJob:
     values: f32[]
     material_bytes: u8[]
     stand: f32[] = []
+    wooded: f32 = 0.0
 
 world_tile_job_start = (x: int,z: int,level: int) -> WorldTileJob:
     WorldTileJob(world_tile_key(x,z,level),x,z,level,h=image(17,17),m=image(17,17),working=image(17,17))
@@ -205,8 +207,10 @@ world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
             work = field_colour(work,vec2(f32(wx),f32(wz)),hy,1.0-normal.y,stands,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)),f32(cell),field_warp_cpu(vec2(f32(wx),f32(wz))),field_palette)
             job.working.set(i,j,work)
             # (the woods' stand cover, as the ground paints it: level 0 only, for the woods' crowns)
-            if job.level == 0:
-                job.stand.push(wood_stand(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),vec2(f32(wx),f32(wz)),work.w,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1))))
+            # (every level: its most wooded sample says whether the far canopy's shells cover it)
+            stand = wood_stand(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),vec2(f32(wx),f32(wz)),work.w,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)))
+            job.wooded = max(job.wooded,stand)
+            if job.level == 0: job.stand.push(stand)
             job.material_bytes.push(job.h.pixels[a+3])
             loop c in 0..4:job.material_bytes.push(job.m.pixels[a+c])
         job.row += 1
@@ -219,6 +223,7 @@ world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
     tile=WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
     tile.canal_city=world_tile_canal(job.x,job.z,job.level)
     tile.stand=job.stand
+    tile.wooded=job.wooded
     tile
 
 world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
@@ -509,7 +514,7 @@ wood_stand = (n: vec3,y: f32,ridge: f32,tx: f32,ty: f32,p: vec2,share: f32,orcha
 # of a crown's height each, a layer kept where the crown under it stands higher than its lift.
 # So the far woods have relief, parallax and a rough outline on a ridge, each crown lit by its
 # own rounded normal, and the crowns past the 3D ones are the same crowns.
-const WORLD_SHELLS = 3
+const WORLD_SHELLS = 1
 const WORLD_SHELL_HEIGHT = 7.0
 
 # How much larger the far canopy's bumps are drawn at a distance: crowns near, the clumps and
@@ -524,67 +529,63 @@ world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> G
     curved.y -= world_drop(lifted.xz-u.cam.xz)
     o.pos = u.view_proj*vec4(curved,1)
     o.world = lifted
+    # (the stand cover per vertex, carried in land: the fragments past the woods go at once)
+    absolute = o.world+u.origin
+    n = normalize(o.normal)
+    y = o.world.y-u.shell.x*world_shell_scale(length(o.world-u.cam),u.shell.z)
+    o.land = wood_stand(n,y,o.tint.z*2.0-1.0,o.tint.x,o.tint.y,absolute.xz,o.working.w,o.orchard)*o.tint.w
+    # (the land's aerial perspective per vertex, carried in river)
+    o.river = land_aerial_terms(o.world,u.cam,u.fog)
     o
 
 world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+    if u.shell.w < 0.0: discard()
+    stand = i.land
+    if stand < 0.02: discard()
     d = length(i.world-u.cam)
     if d < u.shell.z: discard()
     absolute = i.world+u.origin
-    if abs(absolute.x) < 20000.0 and abs(absolute.z) < 20000.0: discard()
-    y = i.world.y-u.shell.x
-    if y < 1.5: discard()
-    n = normalize(i.normal)
-    slope = 1.0-n.y
-    # (the stand cover, as ground_surface reckons it)
-    ridge = i.tint.z*2.0-1.0
-    wash = 0.5+(vnoise(absolute.xz*0.006)-0.5)*0.8
-    field = i.tint.x*0.65+wash*0.35+(i.tint.y-0.5)*0.25
-    patch = smoothstep(0.30,0.67,field)
-    cover = summer_cover(n,y,ridge,patch)
-    outcrop = smoothstep(0.62,0.79,i.tint.y)*smoothstep(0.15,0.4,slope)
-    exposure = max(smoothstep(0.26,0.72,slope+(patch-0.5)*0.26),outcrop*0.78)
-    veg = (1.0-exposure)*smoothstep(0.6,1.5,y)*i.tint.w
-    stand = max(cover.y+cover.z,canopy_stand(n,ridge,field))*veg*(1.0-i.orchard*0.7)*(1.0-i.working.w*veg*0.92)
-    if stand < 0.02: discard()
-    # (the crown sheet at the octave the distance asks for, two octaves across the change, so the
-    # pattern never slides: crowns, then the clumps of crowns, then their masses)
+    # (the crown sheet at the octave the distance asks for: crowns, then the clumps of crowns, then
+    # their masses; across a change each pixel takes one or the other by a fixed dither, so the
+    # pattern never slides and one read does)
     span = f32(CANOPY_CELLS)*CANOPY_CELL
     level = clamp(log2(world_shell_scale(d,u.shell.z)),0.0,5.0)
-    l0 = floor(level)
-    f = level-l0
+    # (across a change of octave each coarse crown cell takes one or the other by its own draw:
+    # coherent in the world, so the texture's filtering sees one octave at a time)
+    lf = floor(level)
+    l0 = lf+(if fract(level) > hash21(floor(absolute.xz/(CANOPY_CELL*pow(2.0,lf+1.0)))): 1.0 else: 0.0)
     s = sample(u.canopy,absolute.xz/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61))
-    top = clamp((stand-s.w)/0.12+0.5,0.0,1.0)*s.z
-    if f > 0.0:
-        s1 = sample(u.canopy,absolute.xz/(span*pow(2.0,l0+1.0))+vec2((l0+1.0)*0.37,(l0+1.0)*0.61))
-        top = mix(top,clamp((stand*1.1-s1.w)/0.12+0.5,0.0,1.0)*s1.z,f)
-        if f > 0.5: s = s1
+    top = clamp((stand*(1.0+l0*0.04)-s.w)*8.0+0.5,0.0,1.0)*s.z
     if top <= u.shell.y: discard()
     # (each crown taking over from its 3D crown at its own distance)
     if d < u.shell.z+fract(s.w*13.0)*u.shell.w: discard()
-    closed = clamp((stand-0.6)*2.5,0.0,1.0)
-    col = mix(mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13)),vec3(0.11,0.27,0.17),closed*0.4)*1.08
-    cn = normalize(vec3(s.x*2.0-1.0,1.0,s.y*2.0-1.0))
-    nn = normalize(n*0.35+cn*0.65)
-    sun = normalize(u.sun_dir)
-    ndl = mix(dot(nn,sun),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)
-    lit = paint_ramp(ndl,0.15)
-    # (the lower layers are the shaded depths between the crowns: from afar the gaps read dark)
+    col = mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13))*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
+    nn = normalize(i.normal*0.35+vec3(s.x*2.0-1.0,1.0,s.y*2.0-1.0)*0.65)
+    ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)
+    # (the lower part of a crown is the shaded depth between crowns: from afar the gaps read dark)
     occl = (0.25+0.75*u.shell.y)*(0.55+0.45*s.z)
-    light = mix(u.shade*1.1+vec3(0.04,0.05,0.06)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.08,1.02,0.84),lit*clamp(occl*2.2,0.0,1.0))
-    c = col*light*(0.38+0.62*occl)
-    vec4(land_aerial(c,i.world,u.cam,u.haze,u.fog)*paint_paper(i.pos.xy),1)
+    lit = clamp(ndl*3.0+0.2,0.0,1.0)*clamp(occl*2.2,0.0,1.0)
+    c = col*mix(u.shade*1.1+vec3(0.04,0.05,0.06),u.sun*vec3(1.08,1.02,0.84),lit)*(0.38+0.62*occl)
+    vec4(land_aerial_apply(c,i.river,u.haze),1)
+
+world_shell_fragment_log = (i: GroundOut,u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0/i.pos.w))
+    world_shell_fragment(i,u)
 
 world_shell_sh: Shader
 world_shell_ready = false
 draw_world_shells = (batches: WorldInstance[][],params: GroundParams,start: f32):
     global world_shell_sh,world_shell_ready
     if not world_shell_ready:
-        world_shell_sh = make_world_shader(shader(world_shell_vertex,world_shell_fragment),false)
+        world_shell_sh = make_shader(world_shader(shader(world_shell_vertex,world_shell_fragment),shader(world_shell_vertex,world_shell_fragment_log)),false)
         world_shell_ready = true
     p = params
-    loop k in 0..WORLD_SHELLS:
-        f = (f32(k)+1.0)/f32(WORLD_SHELLS+1)
-        p.shell = vec4(f*WORLD_SHELL_HEIGHT,f,start,120.0)
+    # (timing only: AEGEAN_SHELLS=n layers; AEGEAN_FOLIAGE_OFF=shellfs their fragments discarded at once)
+    count = to_int(env("AEGEAN_SHELLS") ?? "") ?? WORLD_SHELLS
+    if foliage_off("shellfs"): p.shell.w = -1.0
+    loop k in 0..count:
+        f = (f32(k)+1.0)/f32(count+1)
+        p.shell = vec4(f*WORLD_SHELL_HEIGHT,f,start,if p.shell.w < 0.0: -1.0 else: 120.0)
         loop i in 0..16:
             if batches[i].len() == 0: continue
             draw_instanced(world_shell_sh,terrain_grids[16+i],batches[i],p)
@@ -910,7 +911,7 @@ draw_world_terrain = (L: Light,t: f64):
         # (the far canopy's shells: tiles reaching past the crowns, below the treeline)
         size = 14.0*16.0*f64(1<<node.level)
         dx = max(max(ox-f64(cam.x),f64(cam.x)-ox-size),0.0); dz = max(max(oz-f64(cam.z),f64(cam.z)-oz-size),0.0)
-        if node.low < 2200.0 and node.high > 2.0 and sqrt(dx*dx+dz*dz) > shell_start-size*0.0-300.0: shells[mask].push(instance)
+        if node.wooded > 0.05 and node.low < 2200.0 and sqrt(dx*dx+dz*dz) > shell_start-300.0: shells[mask].push(instance)
     params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,air_down(L.haze,f64(scene_camera().y),tweaks.brighter_ocean),f32(L.fog_density),f32(t),meadow_wind(wind_now,origin),meadow_gust_w(origin),origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
     params.pigment = paint_surface()
     params.canopy = canopy_sheet()
