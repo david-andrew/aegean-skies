@@ -84,7 +84,9 @@ struct GroundOut:
     river: vec2 = vec2(0,0)
     working:vec4=vec4(0,0,0,0)
     land: f32 = 0.0                 # the land light on the vertex's normal (src/canopy.jo land_light)
-    cliff_uv: vec2 = vec2(0,0)
+    surface_sun: f32 = 0.0
+    wall_sun: f32 = 0.0
+    cliff: vec4 = vec4(0,0,0,0)
 
 # A map a draw leaves unread (no river or lake in its area: river_area/lake_area are zero) still
 # needs a texture bound in WebGL, or the browser warns on every draw ("no texture bound to the
@@ -105,6 +107,16 @@ ground_riparian = (u: GroundParams,xz: vec2,y: f32) -> vec2:
     weight=mask.w*(1.0-smoothstep(0.3,0.8,mask.y/max(mask.w,0.001)))*(1.0-smoothstep(8.0,18.0,above))
     vec2(weight,above)
 
+cliff_vertex = (u: GroundParams,uv: vec2,y: f32) -> vec4:
+    cliff_vertex_data(sample_lod(u.cliff_map,uv,0.0),y)
+
+# Use the horizontal bearing of the wall and a fixed upward tilt. Compute
+# its diffuse light once at the vertex, including the world's curvature.
+cliff_light = (n: vec3,local: vec3,u: GroundParams) -> f32:
+    reach = length(n.xz)
+    plane = if reach > 0.2: normalize(vec3(n.x,reach*0.6,n.z)) else: n
+    dot(render_normal(plane,local,u.cam),normalize(u.sun_dir))
+
 coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
     p = inst.region.xy+v.cell*inst.region.z
     # Filtering the continuous material channels needs two cached reads,
@@ -124,7 +136,7 @@ coast_vs = (v: TerrainVertex,inst: CoastInstance,u: GroundParams) -> GroundOut:
     bent = render_warped(local,u.cam,u.warp_a,u.warp_b)
     orchard = orchard_cover(world.xz,y,length(base_normal.xz)/max(base_normal.y,0.1))
     working = sample_lod(u.working_map,uv,0.0)
-    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard,0,s.normal,ground_riparian(u,world.xz,y),land=dot(base_normal,u.land_light.xyz),working=working,cliff_uv=uv)
+    GroundOut(u.view_proj*vec4(bent,1),local,base_normal,s.tint,orchard,0,s.normal,ground_riparian(u,world.xz,y),land=dot(base_normal,u.land_light.xyz),working=working,surface_sun=dot(s.normal,u.sun_dir),wall_sun=cliff_light(base_normal,local,u),cliff=cliff_vertex(u,uv,y))
 
 # The analytic detail gradient avoids derivative extensions and extra fragment
 # work on WebGL2. It converges to the same continuous field as the fine mesh.
@@ -254,7 +266,7 @@ ground_vs = (v: TerrainVertex, inst: TerrainInstance, u: GroundParams) -> Ground
     orchard = orchard_cover(world.xz,world.y,length(sample.normal.xz)/max(sample.normal.y,0.1))
     uv = (inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.working_map))
     working = sample_lod(u.working_map,uv,log2(inst.state.x))
-    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard,land=dot(sample.normal,u.land_light.xyz),working=working,cliff_uv=uv)
+    GroundOut(u.view_proj * vec4(bent, 1), local, sample.normal, sample.tint,orchard,land=dot(sample.normal,u.land_light.xyz),working=working,surface_sun=dot(sample.normal,u.sun_dir),wall_sun=cliff_light(sample.normal,local,u),cliff=cliff_vertex(u,uv,local.y))
 
 # Band-limit the original limestone pattern to the pixel footprint. Retain
 # resolved strata nearby; distant slopes use each pattern's mean, not aliasing.
@@ -275,13 +287,11 @@ ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=f
     strata=vec3(0,0,0)
     if 1.0-normalize(i.normal).y>0.28:strata=ground_strata(i,u)
     footprint=max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
-    normal=if coastal:normalize(i.relief_normal) else:normalize(i.normal)
-    ndl=dot(render_normal(normal,i.world,u.cam),normalize(u.sun_dir))
-    # The material field lives on the source grid, independently of the
-    # triangles or their morph. Its moment reconstructs a shelf elevation.
+    ndl=i.surface_sun
+    # All-ordinary triangles skip the shelf and height-band work.
     contact = vec2(0,0)
-    if i.world.y > -3.0 and i.world.y < 260.0:
-        contact = cliff_contact(sample_lod(u.cliff_map,i.cliff_uv,0.0),i.world.y)
+    if i.cliff.w > 0.0 and i.world.y > -3.0 and i.world.y < 260.0:
+        contact = cliff_contact(i.cliff,i.world.y)
     col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail,contact,vec3(-1,0,0),wind_study,surf)
     vec4(col.xyz*paint_paper(i.pos.xy),col.w)
 
@@ -425,7 +435,10 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     field_shadow: f32 = 0.0
     farmed: f32 = 0.0
     # Underwater the wet sand/rock branch replaces every land contribution.
-    if y >= (if coastal: 0.25 else: 0.6):
+    # Between the apron and lip, a fully exposed wall has no soil, trees or
+    # fields. Its original limestone colour in c is already the result.
+    bare = contact.x >= 1.0 and contact.y < -15.0 and y > 6.5 and i.orchard == 0.0 and slope > 0.11
+    if not bare and y >= (if coastal: 0.25 else: 0.6):
         canopy = sample(u.pigment,world.xz/320.0)
         ridge = i.tint.z*2.0-1.0
         crease = smoothstep(0.05,-0.6,ridge)
@@ -472,19 +485,23 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
             # A small world-fixed chip in the edge. The falloff is in metres
             # on the face; large screen pixels resolve the mean of the rim.
             gap = contact.y+3.5*smoothstep(8.0,36.0,y)+(canopy.w-0.5)*1.25
-            width = 0.6+min(footprint*0.35,3.0)
-            shelf = smoothstep(-2.1-width,-1.0,gap)
-            soil = smoothstep(-3.0-width,-2.5,gap)*(1.0-smoothstep(1.0,2.5+width,gap))
-            shadow = (1.0-smoothstep(3.0,4.3+width,-gap))*smoothstep(1.7,2.8,-gap)
-            face *= 1.0-shadow*0.28
-            face = mix(face,mix(vec3(0.53,0.46,0.34),vec3(0.64,0.57,0.43),canopy.w),soil)
-            # Accumulated stone at the toe goes dark where the sea wets it.
-            apron = 1.0-smoothstep(2.4,5.5,y+(canopy.w-0.5)*2.0)
-            gravel = mix(vec3(0.65,0.61,0.52),vec3(0.75,0.71,0.60),canopy.w)
-            face = mix(face,mix(vec3(0.39,0.40,0.37),gravel,smoothstep(0.4,2.0,y)),apron)
+            # Signed metres to the shelf keep the transition sharp across a steep triangle.
+            width = min(footprint*0.35,3.0)
+            shelf = clamp((gap+2.7+width)/(1.7+width),0.0,1.0)
+            # Once a pixel spans several metres the narrow shadow and soil
+            # disappear together. The broad rock and shelf remain at all ranges.
+            rim_detail = clamp((8.0-footprint)*0.25,0.0,1.0)
+            if rim_detail > 0.0 and gap > -9.0 and gap < 6.2:
+                soil = clamp(min((gap+3.6+width)/(1.1+width),(3.1+width-gap)/(2.1+width)),0.0,1.0)
+                shadow = clamp(1.0-abs(gap+3.0)/(1.5+width),0.0,1.0)
+                face = mix(face*(1.0-shadow*0.28*rim_detail),vec3(0.53,0.46,0.34)+vec3(0.11,0.11,0.09)*canopy.w,soil*rim_detail)
+            if y < 6.5:
+                apron = clamp((5.5-y-(canopy.w-0.5)*2.0)/3.1,0.0,1.0)
+                gravel = vec3(0.70,0.66,0.56)+vec3(0.10,0.10,0.08)*((canopy.w-0.5)*rim_detail)
+                face = mix(face,mix(vec3(0.39,0.40,0.37),gravel,clamp((y-0.4)/1.6,0.0,1.0)),apron)
             stone = mix(stone,face,contact.x)
-            above = mix(i.tint.w,veg,smoothstep(2.0,9.0,gap))
-            veg = mix(veg,shelf*above*smoothstep(3.0,9.0,y),contact.x)
+            above = mix(i.tint.w,veg,clamp((gap-2.0)/7.0,0.0,1.0))
+            veg = mix(veg,shelf*above*clamp((y-3.0)/6.0,0.0,1.0),contact.x)
         c = mix(stone, green, veg)
         # The farmed land (src/fields.jo): straight-edged fields of flat crop colour over the gentle
         # country, the same on every tier. The terrain's working channel holds each sample's field
@@ -623,16 +640,10 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
     # (bare rock on a steep face lit as one bold plane by the way it faces, not by normals blended
     # across a 14 m triangle from its plateau and beach vertices, which smeared soft dark wedges
     # over the cliff)
-    facing2 = vec2(n.x,n.z); reach = length(facing2)
     bare_wall = contact.x
     if canopy_detail > 0: bare_wall = max(bare_wall,smoothstep(0.3,0.55,slope))
-    if bare_wall > 0.0 and reach > 0.2:
-        plane = normalize(vec3(facing2.x/reach,0.6,facing2.y/reach))
-        light_normal = normalize(mix(light_normal,plane,bare_wall*(1.0-veg)))
-    rn = render_normal(light_normal, i.world, u.cam)
-    # (the land's held-low modelling light, taken per vertex: per pixel it cost low more than
-    # half a millisecond on redfox's terrain-filled views; slopes are broad enough for vertices)
-    ndl = dot(rn, normalize(u.sun_dir))
+    rn = render_normal(light_normal,i.world,u.cam)
+    ndl = mix(dot(rn,normalize(u.sun_dir)),i.wall_sun,bare_wall*(1.0-veg))
     # (medium and high: low's terrain shader sits at a register-pressure cliff on redfox's GPU,
     # where this with the fields' colour cost half a millisecond; each alone cost nothing)
     if canopy_detail > 0: ndl = mix(ndl,i.land,u.land_light.w)

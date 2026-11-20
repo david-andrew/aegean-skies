@@ -164,10 +164,11 @@ blue discs that stay in every frame are **speed flecks**.
   darkens where the sea wets it.
 - **Code:** `cliff_station`, `cliff_map_image` and `cliff_contact` in `src/terrain_lod.jo`
   describe the shelf. `ground_material` and `ground_surface` in `src/terrain.jo` paint it.
-- **Rules:** Sample the shelf in terrain-map coordinates. Gentle ground contributes its elevation
+- **Rules:** Sample the shelf in terrain-map coordinates at the vertices. Gentle ground contributes its elevation
   weighted by how much soil it can hold. Compare the reconstructed shelf elevation with each
   fragment's height so a single steep triangle can cross the whole face without stretching the
-  grass or the soil band down it. All terrain detail levels and the phone use the same rim and toe.
+  grass or the soil band down it. Ordinary triangles skip this work. Subpixel soil, shadow and gravel detail
+  fade with pixel size. All terrain detail levels and the phone use the same rim and toe.
 - **Capture:** `AEGEAN_VIEW="4793 25 -5162 -2.129 -0.024 12.5"` (cliff from the sea, island),
   `"139848 25 79652 -0.783 -0.073 12.5"` (mainland).
 
