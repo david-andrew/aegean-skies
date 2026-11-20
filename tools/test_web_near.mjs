@@ -47,11 +47,31 @@ try {
   await send('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
   await send('Page.addScriptToEvaluateOnNewDocument',{source:`
     window.quayFrames=0;window.quayLinks=[];window.nearLimit=30;window.nearPending=null;
+    // Town construction uses wall-clock deadlines. Advance the game clock by
+    // the same amount per frame and per clock read in both captures, so both
+    // runs publish the same districts even when one GPU path takes longer.
+    let frameMs=0, clockReads=0, memoryView;
+    const instantiate=WebAssembly.instantiate.bind(WebAssembly);
+    WebAssembly.instantiate=(module,imports)=>{
+      if(imports?.env?.__wasm_now_at) imports.env.__wasm_now_at=p=>{
+        const buffer=sloppy.memory().buffer;
+        if(memoryView?.buffer!==buffer) memoryView=new DataView(buffer);
+        memoryView.setFloat64(p,frameMs+Math.min(++clockReads*0.01,16),true);
+      };
+      return instantiate(module,imports);
+    };
     const raf=requestAnimationFrame;
-    const schedule=cb=>raf(t=>{if(quayFrames>=nearLimit){nearPending=()=>schedule(cb);return;}cb(t);quayFrames++;});
+    const schedule=cb=>raf(t=>{if(quayFrames>=nearLimit){nearPending=()=>schedule(cb);return;}frameMs+=1000/60;clockReads=0;cb(t);quayFrames++;});
     window.requestAnimationFrame=schedule;
     window.nearAdvance=n=>{nearLimit=n;const next=nearPending;nearPending=null;if(next)next();};
-    const proto=WebGL2RenderingContext.prototype,link=proto.linkProgram;
+    const proto=WebGL2RenderingContext.prototype,link=proto.linkProgram,getExtension=proto.getExtension;
+    window.quayClipControl=null;
+    proto.getExtension=function(name){
+      if(name!=='EXT_clip_control') return getExtension.call(this,name);
+      const ext=new URLSearchParams(location.search).has('without_clip_control')?null:getExtension.call(this,name);
+      window.quayClipControl=!!ext;
+      return ext;
+    };
     proto.linkProgram=function(p){link.call(this,p);quayLinks.push(this.getProgramParameter(p,this.LINK_STATUS));};
   `});
   const extraScenes=[
@@ -66,11 +86,11 @@ try {
   const selected=process.env.WEB_NEAR_CASES?.split(',');
   const results=[];
   for(const {quality,full,id,env:sceneEnv} of cases.filter(c=>(!selected||selected.includes(c.id))&&(!process.env.WEB_NEAR_LINEAR||!c.full))) {
-    const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'full-log':'split'}`;
+    const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'log':'default'}`;
     const query=new URLSearchParams({AEGEAN_TITLE:'0',SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
       AEGEAN_CAPTURE_READY:'1',AEGEAN_HOUR:'9.75',AEGEAN_QUALITY:quality,AEGEAN_STRESS_FRAME_DT:String(1/60),SLOPPY_FRAMES:'241',...sceneEnv});
     if(process.env.WEB_NEAR_LINEAR)query.set('AEGEAN_LINEAR_DEPTH','1');
-    if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
+    if(full)query.set('without_clip_control','1');
     errors.length=0;loaded=false;
     await send('Page.navigate',{url:served.url+'?'+query});
     await until(()=>loaded);
@@ -102,7 +122,9 @@ for name,box in boxes.items():
  result[name]=sum((r>b*1.2 and g>b*1.15) if name!='sea' else (b>r*1.2 and g>r*1.15) for r,g,b in pixels)/len(pixels)
 print(json.dumps(result))
 `,file],{encoding:'utf8'}));
-      const result={name,id,quality,full,frame,file,linkedPrograms:links.length,...metrics};results.push(result);
+      const clipControl=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayClipControl'})).result.value;
+      if(!process.env.WEB_NEAR_LINEAR)assert.equal(clipControl,!full,`${name}: expected ${full?'masked':'available'} EXT_clip_control`);
+      const result={name,id,quality,full,frame,file,clipControl,linkedPrograms:links.length,...metrics};results.push(result);
       writeFileSync(join(out,'results.json'),JSON.stringify(results,null,2)+'\n');
       console.log(JSON.stringify(result));
       if(['quay','street','pheryalara'].includes(id))
@@ -113,20 +135,20 @@ print(json.dumps(result))
       if(id==='cloud')assert(metrics.mist>.9,`${name}: cloud volume missing`);
     }
   }
-  // Optimized bounded-near + far-log rendering must agree with all-fragment log depth.
+  // Compare the default renderer with the forced logarithmic fallback.
   const comparisons=[];
   for(const full of results.filter(r=>r.full)) {
-    const split=results.find(r=>r.id===full.id && r.quality===full.quality && r.frame===full.frame && !r.full);
-    assert(split,`missing split reference for ${full.name}`);
+    const regular=results.find(r=>r.id===full.id && r.quality===full.quality && r.frame===full.frame && !r.full);
+    assert(regular,`missing default reference for ${full.name}`);
     const diff=JSON.parse(execFileSync('python3',['-c',`
 import json,sys
 from PIL import Image,ImageChops,ImageStat
 im=ImageChops.difference(Image.open(sys.argv[1]).convert('RGB'),Image.open(sys.argv[2]).convert('RGB'))
 pixels=list(im.getdata())
 print(json.dumps({'mean_rgb_error':sum(ImageStat.Stat(im).mean)/3,'changed_over_16':sum(max(p)>16 for p in pixels)/len(pixels)}))
-`,split.file,full.file],{encoding:'utf8'}));
+`,regular.file,full.file],{encoding:'utf8'}));
     comparisons.push({id:full.id,frame:full.frame,...diff});
-    assert(diff.mean_rgb_error<1.0 && diff.changed_over_16<0.01,`${full.name}: split/full depth disagreement ${JSON.stringify(diff)}`);
+    assert(diff.mean_rgb_error<1.0 && diff.changed_over_16<0.01,`${full.name}: default/log depth disagreement ${JSON.stringify(diff)}`);
   }
   writeFileSync(join(out,'comparisons.json'),JSON.stringify(comparisons,null,2)+'\n');
   const stability=[];
@@ -143,7 +165,7 @@ print(json.dumps({name:sum(ImageStat.Stat(ImageChops.difference(a.crop(box),b.cr
     assert(drift.roof<3 && drift.panel<3,`${first.name}: cockpit moved away from its camera ${JSON.stringify(drift)}`);
   }
   writeFileSync(join(out,'stability.json'),JSON.stringify(stability,null,2)+'\n');
-  console.log('PASS: close-camera coverage and split/full WebGL depth comparisons');
+  console.log('PASS: close-camera coverage and default/log WebGL depth comparisons');
 } finally {
   await served.close();
   ws?.close();
