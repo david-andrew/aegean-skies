@@ -36,7 +36,7 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Lohengrin: Bridal Chorus (choir and piano) | Richard Wagner (1813–1883), 1850 | [Nicolas, score 43724](https://musescore.com/nicolas/scores/43724); the voices sung by our choir | CC0 1.0 |
 | Hungarian Dance No. 1 (piano) | Johannes Brahms (1833–1897), 1869 | [ÐÑÐ·ÑÐºÐ°Ð½Ñ, score 1386646](https://musescore.com/user/1580161/scores/1386646) | CC0 1.0 |
 | Daphnis et Chloé: Lever du jour | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
-| Boléro | Ravel, 1928 | [darkblue865, score 5173477](https://musescore.com/user/15856401/scores/5173477) | CC0 1.0 |
+| Boléro | Ravel, 1929 | [darkblue865, score 5173477](https://musescore.com/user/15856401/scores/5173477) | CC0 1.0 |
 | The Barber of Seville: Overture | Gioachino Rossini (1792–1868), 1816 | [mike320, score 2540876](https://musescore.com/user/6105546/scores/2540876) | CC0 1.0 |
 | Carmen: Prelude (piano four hands) | Georges Bizet (1838–1875), 1875 | [Noah Godard, score 255426](https://musescore.com/user/125838/scores/255426) | CC0 1.0 |
 | An der schönen blauen Donau (piano) | Johann Strauss II (1825–1899), 1867 | [hmscomp, score 114435](https://musescore.com/hmscomp/scores/114435) | CC0 1.0 |
@@ -58,17 +58,18 @@ CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
 
 **The rule** (the user's, from 20 November 2026). A piece ships when both hold:
 
-1. **The composition is in the public domain**: published before 1929, so public domain in the
-   United States, and public domain in the European Union (its composer, and anyone whose part of
-   it is used: a co-composer, arranger, orchestrator or completer, died more than 70 years ago).
+1. **The composition is in the public domain**, in the United States (published 95 or more years
+   ago: in 2026, in 1930 or earlier) and in the European Union (its composer, and anyone whose part
+   of it is used: a co-composer, arranger, orchestrator or completer, died 70 or more years ago: in
+   2026, in 1955 or earlier).
    Anything not in the public domain needs the user's explicit approval, piece by piece.
 2. **The note sequence is free to use**: a MuseScore score in PDMX marked CC0 with
    `license_conflict=False`; a Mutopia edition marked Public Domain; or our own transcription
    from a public-domain score scan, dedicated to CC0.
 
-There is no further margin. Ravel (died 1937) qualifies: *Daphnis et Chloé* (1912) and *Boléro*
-(1928) were published before 1929 and have been public domain in the EU since 2008 (France's
-wartime extensions have also run out). 'O sole mio does not: a Turin court recognised Alfredo
+There is no further margin. Ravel (died 1937) qualifies: *Daphnis et Chloé* (published 1912) and
+*Boléro* (composed 1928, published 1929) are public domain in the US, and have been in the EU since
+2008 (France's wartime extensions have also run out). 'O sole mio does not: a Turin court recognised Alfredo
 Mazzucchi (died 1972) as its co-composer. Traditional music is no licence for a modern
 arrangement: the sequence still needs (2), as the Ikariotikos sequence's CC0 does.
 
