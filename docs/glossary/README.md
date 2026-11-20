@@ -2128,7 +2128,8 @@ On the rivers branch until it lands.
     costume (`build_figure(bathing = true)`). His scarf stays with his clothes.
   - **What is worn:** as at the island baths of the twenties and thirties, a one-piece suit of
     knitted wool, dark (navy, black, maroon, bottle green), to the mid-thigh. It is sleeveless for
-    a man, some of them striped, and has short sleeves for a woman. Arms, shins and feet are bare
+    a man, held up by a narrow strap over each bare shoulder, some of them striped, and has short
+    sleeves for a woman. Arms, shins and feet are bare
     (`BATH_SUITS`). The open pool is mixed and in costume. Separate men's and women's baths,
     where bathing was in the nude, were indoors, and none is shown.
   - **Getting in:** tap the hot pool. He walks to its steps by the terraces' stairs and round the
@@ -3129,9 +3130,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Things to tap
 
-- **Aliases:** clicking the thing itself, walking over to it, the gleam.
+- **Aliases:** clicking the thing itself, walking over to it, the look highlight, the gleam.
 - **Definition:** the game's standing preference is the thing in the world over a button or a card.
-  On foot, these are tapped or clicked (with the mouse free) instead of their cards:
+  On foot, these are tapped, or looked at and clicked, instead of their cards:
   - one's own aircraft at her mooring: the cockpit ("Climb aboard"), and the engine ("Work on her");
   - the pilot's table and the bar's stool ("Sit", "Sit at the bar");
   - the hotel's desk ("Ask for a room") and the barber's chair ("A shave");
@@ -3149,20 +3150,24 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Seated:** at a table or the bar, the band's stand and the jar are tapped or clicked the same
   way, and so are the board and the paper at the coffee house (`seat_things`). They are no longer
   buttons on the table's bar, but their keys T, P, S and B still work.
-- **Pointed at:** with the mouse free, a small label over the thing says what it does
+- **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
+  round it and a faint band of light passing slowly down over it, with a few flecks in it like a
+  bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). It goes
+  by where the camera looks, not where he faces: a ray from the camera through the middle of the
+  screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
+  then the nearest one. His own body never counts. A click uses it, whether the mouse is locked to
+  the view or not; a click on nothing takes the mouse for the view. There is no pointer on foot.
+  On a touch screen the same thing is lit, showing what a tap there would do, and a tap on any
+  thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
+  at with the mouse free, and a small label over the thing says what it does
   (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
-- **The mouse locked to the view:** what the middle of the screen is on is lit and labelled, with a
-  small dot at the middle while it is on something, and a click there goes to it, so the mouse
-  needn't be freed first (`foot_aim`).
-- **The pointer on foot (a trial, Tweaks, off by default; `AEGEAN_POINTER_ON_FOOT=1`):** the mouse
-  stays a pointer on foot. A thing hovered is labelled, and a click uses it. A click on open ground
-  walks there. A drag turns the view, as in the rooms and at a table. `AEGEAN_SHOW_POINTER=1` draws
-  the pointer for captures.
 - **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
   index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
+  `AEGEAN_LOOK_TRACE=1` prints a `LOOK <frame> <label>` line each time the view comes to look at
+  another thing (`-` for nothing).
 
 ### Pleasure flight
 
@@ -3232,9 +3237,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     the thing, and sits or lies down by degrees (`RoomPilot`, `room_step`, `room_body`; the
     figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
     one of its places to the next.
-  - **Into bed in two halves:** he turns about and sits down on the bed's edge, then swings round
-    onto it and lies back (`room_bed_edge`; the figure's posture 7, lying back from sitting).
-    Getting up is the same the other way.
+  - **Into bed in three steps, one at a time:** he turns about where he stands until his back is
+    to the bed, then sits down on its edge, then swings round onto it and lies back
+    (`room_bed_edge`; the figure's posture 7, lying back from sitting; `ROOM_LIE_SECONDS` for the
+    three). Getting up is the same the other way.
   - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
     evening (`room_sleep_until`). A tap or click on a thing wakes him, and once he's up he goes
     there. A key wakes him only (Back or Escape among them, never also the way out). He stays

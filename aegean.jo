@@ -1092,6 +1092,146 @@ _on_screen = (p: vec3) -> bool:
 # the top of a thing's box, in the world (for its label and its gleam)
 thing_top = (th: FootThing) -> vec3: th.origin + quat_rotate(th.rot, vec3((th.lo.x + th.hi.x) * 0.5, th.hi.y, (th.lo.z + th.hi.z) * 0.5))
 
+# ---------------- the look ----------------
+# On foot, the thing the view looks at is lit: what a ray from the camera through the screen's
+# middle meets, or else a thing within a few degrees of it (the one nearest that ray, then the
+# nearest the eye). It goes by where the camera looks, not where he faces, so it is the same with
+# the mouse locked to the view or not, and on a touch screen, where it shows what a tap there would
+# do. A click uses it. His own body is never one of the things (foot_things).
+LOOK_CONE = 0.06                    # (radians: about three and a half degrees round the middle)
+LOOK_SWEEP = 3.2                    # (seconds for the band of light to cross the thing, and again)
+
+foot_look = (things: FootThing[]) -> int:
+    o, d = screen_ray(vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5)))
+    best = -1; ba = LOOK_CONE; bt = 60.0
+    loop k in 0..things.len():
+        th = things[k]
+        inv = quat_inverse(th.rot)
+        lo = quat_rotate(inv, o - th.origin); ld = quat_rotate(inv, d)
+        # (the eye inside its box, as wading in the springs' pool: not looked at)
+        if clamp(lo, th.lo, th.hi) == lo: continue
+        a = 0.0
+        tt = ray_box(lo, ld, th.lo, th.hi)
+        if tt < 0.0:
+            # (missed: the box's point nearest the ray, stepping between the two a few times)
+            s = max(f64(dot((th.lo + th.hi) * 0.5 - lo, ld)), 0.1)
+            q = lo
+            loop _ in 0..5:
+                q = clamp(lo + ld * f32(s), th.lo, th.hi)
+                s = max(f64(dot(q - lo, ld)), 0.1)
+            tt = f64(length(q - lo))
+            if tt < 0.05: continue
+            a = acos(clamp(f64(dot(q - lo, ld)) / tt, -1.0, 1.0))
+        if tt > 60.0 or a > LOOK_CONE: continue
+        if a < ba - 0.002 or (a < ba + 0.002 and tt < bt): best = k; ba = min(a, ba); bt = tt
+    best
+
+# a thing's box on the screen: the outline round its eight corners, a few points out (empty when
+# a corner is behind the eye)
+thing_outline = (th: FootThing) -> vec2[]:
+    ps: vec2[]
+    loop k in 0..8:
+        c = vec3(if k % 2 == 1: th.hi.x else: th.lo.x, if (k / 2) % 2 == 1: th.hi.y else: th.lo.y, if k / 4 == 1: th.hi.z else: th.lo.z)
+        if let sp = world_to_screen(th.origin + quat_rotate(th.rot, c)): ps.push(sp)
+        else: return []
+    h = _hull(ps)
+    if h.len() < 3: return h
+    mid = _outline_mid(h)
+    [loop p in h: (if length(p - mid) > 0.5: p + normalize(p - mid) * 3.0 else: p)]
+
+_outline_mid = (h: vec2[]) -> vec2:
+    mid = vec2(0, 0)
+    loop p in h: mid = mid + p
+    mid / f32(max(h.len(), 1))
+
+# the convex outline round some points (gift wrapping: a box's eight corners)
+_hull = (ps: vec2[]) -> vec2[]:
+    out: vec2[]
+    n = ps.len()
+    if n < 3: return out
+    start = 0
+    loop k in 1..n:
+        if ps[k].x < ps[start].x or (ps[k].x == ps[start].x and ps[k].y < ps[start].y): start = k
+    cur = start
+    loop _ in 0..n + 1:
+        out.push(ps[cur])
+        nxt = (cur + 1) % n
+        loop k in 0..n:
+            c = f64(cross(ps[nxt] - ps[cur], ps[k] - ps[cur]))
+            if c < -1e-6 or (abs(c) <= 1e-6 and length(ps[k] - ps[cur]) > length(ps[nxt] - ps[cur])): nxt = k
+        cur = nxt
+        if cur == start: break
+    out
+
+# the part of a convex outline on one side of a line (dot(p, n) below c, or above it)
+_clip_side = (ps: vec2[], n: vec2, c: f64, below: bool) -> vec2[]:
+    out: vec2[]
+    m = ps.len()
+    loop k in 0..m:
+        a = ps[k]; b = ps[(k + 1) % m]
+        da = f64(dot(a, n)) - c; db = f64(dot(b, n)) - c
+        if not below: da = -da; db = -db
+        if da <= 0.0: out.push(a)
+        if (da < 0.0 and db > 0.0) or (da > 0.0 and db < 0.0): out.push(a + (b - a) * f32(da / (da - db)))
+    out
+
+# whether a point is inside a convex outline (either way round)
+_in_outline = (ps: vec2[], p: vec2) -> bool:
+    pos = false; neg = false
+    loop k in 0..ps.len():
+        c = cross(ps[(k + 1) % ps.len()] - ps[k], p - ps[k])
+        if c > 0.0: pos = true
+        if c < 0.0: neg = true
+    not (pos and neg)
+
+_look_hash = (x: f64) -> f64: fract(sin(x * 12.9898 + 78.233) * 43758.5453)
+
+# The lit thing: a thin white line round it, and a soft band of light passing slowly down over it,
+# slanted a little, with a few flecks in it like a bar of static over a paused screen; then from
+# the top again. Faint, with a dark edge under the line for a pale wall or a sunlit dock.
+draw_look = (th: FootThing, age: f64):
+    h = thing_outline(th)
+    if h.len() < 3: return
+    s = min(readable(1.0), 1.5)
+    fade = clamp(age / 0.18, 0.0, 1.0)
+    # (the band: across the slant, from just above the outline to just below it)
+    n = normalize(vec2(0.32, 1.0))
+    m0 = 1e9; m1 = -1e9
+    loop p in h:
+        u = f64(dot(p, n))
+        m0 = min(m0, u); m1 = max(m1, u)
+    w = clamp((m1 - m0) * 0.2, 8.0 * s, 56.0 * s)
+    c = m0 - w + (m1 - m0 + w * 2.0) * fract(age / LOOK_SWEEP)
+    peak = 0.24 * fade
+    loop half in 0..2:
+        a = if half == 0: c - w else: c
+        b = if half == 0: c else: c + w
+        part = _clip_side(_clip_side(h, n, a, false), n, b, true)
+        if part.len() < 3: continue
+        al = [loop p in part: f32(peak * max(0.0, 1.0 - abs(f64(dot(p, n)) - c) / w))]
+        loop k in 1..part.len() - 1:
+            triangle_gradient(part[0], part[k], part[k + 1], rgba(1, 1, 1, al[0]), rgba(1, 1, 1, al[k]), rgba(1, 1, 1, al[k + 1]))
+    # (the flecks: short dashes along the band, new ones twelve times a second)
+    along = vec2(n.y, -n.x)
+    tick = floor(age * 12.0)
+    v0 = 1e9; v1 = -1e9
+    loop p in h:
+        v = f64(dot(p, along))
+        v0 = min(v0, v); v1 = max(v1, v)
+    loop k in 0..14:
+        r1 = _look_hash(tick * 7.31 + f64(k) * 1.7); r2 = _look_hash(tick * 3.17 + f64(k) * 5.3); r3 = _look_hash(tick + f64(k) * 9.1)
+        # (across the band, crowded to its middle; along it, anywhere over the outline)
+        u = c + (r1 - 0.5) * w * 1.2
+        v = v0 + (v1 - v0) * r2
+        p = n * f32(u) + along * f32(v)
+        l = (2.0 + 6.0 * r3) * s
+        e0 = p - along * f32(l * 0.5); e1 = p + along * f32(l * 0.5)
+        if _in_outline(h, e0) and _in_outline(h, e1):
+            line(e0, e1, 1.0 * s, rgba(1, 1, 1, f32(fade * (0.08 + 0.22 * r3) * max(0.0, 1.0 - abs(u - c) / w))))
+    # (the line round it)
+    polyline(h, 3.2 * s, rgba(0, 0, 0, f32(0.16 * fade)), closed = true)
+    polyline(h, 1.3 * s, rgba(1, 1, 1, f32(0.72 * fade)), closed = true)
+
 foot_goal = -1                      # (a thing he's walking over to: going while >= 0)
 foot_goal_act = ""
 foot_goal_sub = ""
@@ -1103,10 +1243,9 @@ foot_route: vec3[] = []             # (the points after foot_goal_at: the bath's
 foot_goal_best = 1e9                # (the nearest he's got, and when)
 foot_goal_best_t = -1.0
 foot_then = ""                      # (to do once the card's act has been done: sat down, then the board)
-foot_hover = -1
-foot_press = vec2(-1, -1)           # (the trial pointer: where the left button went down, and whether it then dragged)
-foot_dragged = false
-show_pointer = env("AEGEAN_SHOW_POINTER") == "1"   # (captures: the pointer drawn, which a screenshot leaves out)
+foot_hover = -1                     # (the thing the view looks at, lit: foot_look; a click uses it)
+foot_hover_since = 0.0              # (since when it has been that thing: the sweep starts from its top)
+look_trace = env("AEGEAN_LOOK_TRACE") == "1"   # (captures: a LOOK line each time the view comes to look at another thing)
 seat_hover = -1
 seat_press = vec2(-1, -1)
 talk_pick = -1                      # (the person a click or tap chose to talk to, over the nearest)
@@ -1218,8 +1357,9 @@ draw_gleams = ():
                 # (each its own moment, a little apart)
                 _glint(sp, max(0.0, a - f64(k) * 0.08), f64(k) * 0.7)
 
-# where the mouse points: the pointer, or with the mouse locked to the view, the screen's middle
-foot_aim = () -> vec2: if is_mouse_locked(): vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5)) else: mouse_pos()
+# where a click aims on foot: the screen's middle, where the view looks (the mouse locked to the
+# view or not: no pointer on foot)
+foot_aim = () -> vec2: vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5))
 
 # the mouse on the sand of a picnic spot, the basket along
 picnic_ground_hover = () -> bool:
@@ -1229,23 +1369,14 @@ picnic_ground_hover = () -> bool:
     false
 
 draw_foot_label = ():
+    # (the thing the view looks at, lit, no words: on a touch screen too, what a tap there does)
+    if ui == .none and foot_hover >= 0 and me.mode == .walking:
+        things = foot_things()
+        if foot_hover < things.len(): draw_look(things[foot_hover], t - foot_hover_since)
     if pad.on: return
-    # (the mouse locked to the view, the screen's middle on a thing: a small dot there, so the aim is
-    # seen; nothing when it is on nothing)
-    if is_mouse_locked() and ui == .none and foot_hover >= 0:
-        c = vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5))
-        circle(c, 4.0, rgba(0, 0, 0, 0.35))
-        circle(c, 2.6, rgba(1, 0.97, 0.88, 0.9))
-    if show_pointer and not is_mouse_locked():
-        m = mouse_pos()
-        triangle(m, m + vec2(0, 18), m + vec2(12, 13), rgba(0.05, 0.05, 0.05, 0.9))
-        triangle(m + vec2(1.5, 3.5), m + vec2(1.5, 14), m + vec2(9, 11.5), rgba(1, 1, 1, 0.95))
     if ui == .none and foot_hover < 0 and picnic_ground_hover():
         if let g = ground_under(foot_aim()):
             draw_thing_label(FootThing("", "", "", "Spread the blanket", g, g, g))
-    if ui == .none and foot_hover >= 0:
-        things = foot_things()
-        if foot_hover < things.len(): draw_thing_label(things[foot_hover])
     if seat_hover >= 0:
         things = seat_things()
         if seat_hover < things.len(): draw_thing_label(things[seat_hover])
@@ -11425,34 +11556,19 @@ update_frame = (dt: f64, saves: bool = true):
     if vdown(.n2) and hour_keys: hour = (hour + dt * 2.0) % 24.0
     if vpressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
-    # (the mouse free on foot: what it is over, of the leisure places' things; a click there walks him over)
-    global foot_hover
-    # (the mouse locked to the view: what the middle of the screen is on, over his shoulder)
-    foot_hover = if me.mode == .walking and ui == .none and not pad.on and not notebook.open and not show_chart: foot_pick(foot_things(), foot_aim()) else: -1
-    # (the trial: on foot the mouse stays a pointer; a click (pressed and let go in one place) uses
-    # what it is on, or walks to the ground there; a drag turns the view)
-    pointer_trial = tweaks.pointer_on_foot and me.mode == .walking and not pad.on
-    if pointer_trial:
-        global foot_press, foot_dragged
-        if is_mouse_locked() and ui == .none: mouse_lock(false)
-        if mouse_pressed(.left): foot_press = mouse_pos(); foot_dragged = false
-        if mouse_down(.left) and foot_press.x >= 0.0:
-            if f64(length(mouse_pos() - foot_press)) > 8.0: foot_dragged = true
-            if foot_dragged and ui == .none:
-                md = mouse_delta()
-                global follow
-                follow.yaw -= f64(md.x) * 0.005
-                follow.pitch = clamp(follow.pitch + f64(md.y) * 0.004, follow.min_pitch, follow.max_pitch)
-        if mouse_released(.left) and foot_press.x >= 0.0 and not foot_dragged and ui == .none and not notebook.open and not show_chart:
-            if foot_hover >= 0: foot_go(foot_things(), foot_hover)
-            else if picnic_ground_hover():
-                if let g = ground_under(foot_aim()): bath_walk_to(g, "picnic")
-            else if let g = ground_under(mouse_pos()):
-                if f64(length(g - me.pos)) < 60.0: bath_walk_to(g, "")
-        if not mouse_down(.left): foot_press = vec2(-1, -1)
-    else if mouse_pressed(.left) and foot_hover >= 0:
+    # (on foot: the thing the view looks at (foot_look), lit; a click uses it, the mouse locked to
+    # the view or not, and walks him over)
+    global foot_hover, foot_hover_since
+    looked = if me.mode == .walking and ui == .none and not notebook.open and not show_chart: foot_look(foot_things()) else: -1
+    if looked != foot_hover:
+        foot_hover_since = t
+        # (captures: what the view comes to look at, frame by frame)
+        if look_trace: eprint("LOOK {frame_number()} {if looked >= 0: foot_things()[looked].label else: "-"}")
+    foot_hover = looked
+    clickable = not pad.on and not dbg.open and not rt.open and radio_knob.turning != 1
+    if mouse_pressed(.left) and foot_hover >= 0 and clickable:
         foot_go(foot_things(), foot_hover)
-    else if mouse_pressed(.left) and picnic_ground_hover():
+    else if mouse_pressed(.left) and picnic_ground_hover() and clickable:
         if let g = ground_under(foot_aim()): bath_walk_to(g, "picnic")
     else if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1 and not rt.open:
         mouse_lock(true)
