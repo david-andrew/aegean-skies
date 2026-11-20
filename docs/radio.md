@@ -35,8 +35,22 @@ stay in Morse. The full English copy remains available to the UI. Choir is wordl
 | Blue Lantern Dance Band | 1100 | Foxtrot, tango, waltz in rotation | All day |
 | Aegean Maritime Service | 1260 | Spoken weather, Morse shipping notices | All day |
 | The Night Gull | 1460 | Tango | 19:00–03:00 |
+| Radio Dawn | 560 | Island dances; the weather on the half hour | 04:30–08:30 |
+| Radio Porto Vecchio | 730 | Café music, light music by day, dance requests of an evening; the town's news on the hour | 06:30–23:00 |
+| Kalyra Concert Hall | 860 | Concerts, no talk | 10:00–13:00, 17:00–24:00 |
+| Orenthia Light Programme | 1020 | A morning march, waltzes, the dance hour; news on the hour | 07:00–22:00 |
+| Radio Mandolinata | 1180 | Songs and mandolins | 08:00–14:00, 18:00–23:00 |
+| Café Aman | 1360 | Plucked strings; tangos round midnight | 21:00–05:00 |
+| The Chapel Bell | 1540 | The choir: morning and evening prayer | 06:00–07:30, 17:00–19:00 |
 
-At each half hour, the first five game minutes carry news, the next five carry a state editorial,
+The later seven keep their own hours (`radio_blocks` in src/radio.jo): blocks of local time, each with
+its music, whether it turns between foxtrot, tango and waltz every half hour, and how much is
+spoken (none, the news for the first five minutes of the hour, or the weather for the first five of
+the half hour). They are spread so that at the home port at least four stations are heard well at
+every hour (tests/radio.jo), and no two are closer than 40 kHz on the dial. Until more music is
+approved (data/music/SOURCES.md), they play the existing pieces by style.
+
+For the first six stations, at each half hour the first five game minutes carry news, the next five carry a state editorial,
 advert or pirate quiz, and the remainder carry music. Maritime alternates weather observations
 and shipping notices every fifteen game minutes. The clock is the **saved living-world clock**:
 minute zero is 09:30, with two real seconds per game minute. Cosmetic debug sky-hour changes do

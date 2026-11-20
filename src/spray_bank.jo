@@ -57,6 +57,7 @@ struct SprayBank:
     # Per chain (a float's side, or a burst's ring): the last puff thrown on it. Each new puff
     # is joined to it, so a float's spray is one continuous bank rather than separate puffs.
     last:SprayPath[16]
+    storm=0.0              # the sea's storm (sea_state): a gale tears the spray away
 spray_bank=SprayBank()
 # The chain of a float's side.
 spray_chain=(part:int,side:f64)->int:part*2+(if side>0.0:1 else:0)
@@ -82,6 +83,10 @@ spray_part_length=(kind:Craft,model:CraftModel,part:int)->f64:
     if hi>lo:hi-lo else:2.0
 
 spray_throw=(bank:mut SprayBank,at:WorldPoint,out:vec3,along:vec3,drift:vec3,t:f64,life:f64,reach:f64,rise:f64,carry:f64,size:vec3,chain:int= -1):
+    # (in a gale the spray is torn off downwind at once: smaller, lower lobes, gone sooner, so a
+    # storm's spray streams away rather than heaping on the water)
+    gale=bank.storm
+    torn_life=life*(1.0-0.55*gale);torn_size=size*f32(1.0-0.35*gale);torn_rise=rise*(1.0-0.3*gale)
     if bank.puffs.len()>=spray_bank_cap():
         # (full: the oldest goes first, as it would have shrunk away soonest)
         oldest=0
@@ -89,7 +94,7 @@ spray_throw=(bank:mut SprayBank,at:WorldPoint,out:vec3,along:vec3,drift:vec3,t:f
             if bank.puffs[i].born<bank.puffs[oldest].born:oldest=i
         bank.puffs[oldest]=bank.puffs[bank.puffs.len()-1];bank.puffs.pop()
     bank.serial+=1
-    puff=SprayPuff(at,out,along,drift,t,life,reach,rise,carry,size,spray_hash(bank.serial)*TAU*3.0,SprayPath(at,out,along,drift))
+    puff=SprayPuff(at,out,along,drift,t,torn_life,reach,torn_rise,carry,torn_size,spray_hash(bank.serial)*TAU*3.0,SprayPath(at,out,along,drift))
     if chain>=0:
         # (joined to the last one on its chain if that was thrown a moment ago: a float that
         # left the water and came back starts a new bank)
@@ -131,7 +136,8 @@ step_spray_bank=(bank:mut SprayBank,f:Flyer,model:CraftModel,sheets:SplashSheet[
         else:i+=1
     s=f.state
     sea=spray_sea(w)
-    drift=vec3(w.dir.x,0,w.dir.y)*f32(w.speed*0.55)
+    bank.storm=sea_state_of_now().storm
+    drift=vec3(w.dir.x,0,w.dir.y)*f32(w.speed*(0.55+0.5*bank.storm))
     v=f64(length(s.velocity.xz))
     big=boat_spray_scale(f.kind)
     loop part in 0..7:
@@ -150,8 +156,7 @@ step_spray_bank=(bank:mut SprayBank,f:Flyer,model:CraftModel,sheets:SplashSheet[
         tip=is_boat(f.kind) and (part==int(PartId.left_float) or part==int(PartId.right_float))
         run=sheet.run
         strength=sheet.amount*smoothstep(0.05,0.85,run)*(1.0+0.6*sea)*(1.0+sheet.heave)*(if tip:1.4 else:1.0)
-        # (a sheet raised by the downwash, the aircraft off the water: a wall only within a few
-        # metres of it; higher, the air roughens the sea (air_wake.jo) but throws no wall)
+        # A spray wall from downwash fades out within a few metres of the water.
         if not s.on_water:strength*=1.0-smoothstep(2.0,5.0,f64(s.position.y)-f.spec.float_height-now.root.y)
         if strength<0.05:continue
         # (one puff each time the float has run on by a little less than a puff's length, so the
@@ -286,7 +291,9 @@ spray_lobe=(p:SprayPath,origin:vec3,eye:vec3,t:f64)->SprayLobe:
 # low bridging lobe seated on the water, sized from both ends, so the bank reads as one wall the
 # lobes rise from, without gaps, while every lobe still grows and shrinks on its own. Painted as
 # the curtains' billows (two tones, lit tops, shaded undersides).
-spray_bank_instances=(bank:SprayBank,origin:vec3,eye:vec3,t:f64,out:mut SplashInstance[]):
+# source: where the thrower is now (the aircraft): the lobes nearest it are still heaped sea water
+# at their feet (fresh, back.w), turning to spray a few metres aft; none without a source.
+spray_bank_instances=(bank:SprayBank,origin:vec3,eye:vec3,t:f64,out:mut SplashInstance[],source:WorldPoint=WorldPoint(1e12,0,1e12)):
     loop p in bank.puffs:
         lobe=spray_lobe(spray_path(p),origin,eye,t)
         if not lobe.shown:continue
@@ -294,10 +301,14 @@ spray_bank_instances=(bank:SprayBank,origin:vec3,eye:vec3,t:f64,out:mut SplashIn
         age=t-p.born
         roll=f32(p.phase+age*0.9)
         kind=SPRAY_BIG
+        # (how fresh: a lobe by the float is still heaped sea water at its foot, turning to spray
+        # as the float runs on from it; back.w carries it to the paint)
+        behind=length(world_delta(p.at,source).xz)
+        fresh=f32(1.0-smoothstep(4.0,11.0,f64(behind)))
         # (each lobe turned a little off the run, its own way)
         yaw=f32(0.35*sin(p.phase*1.3))
         axis=normalize(p.along*cos(yaw)+p.out*sin(yaw))
-        out.push(SplashInstance(vec4(local,kind),vec4(size,roll),vec4(axis,0)))
+        out.push(SplashInstance(vec4(local,kind),vec4(size,roll),vec4(axis,fresh)))
         if p.linked:
             prev=spray_lobe(p.prev,origin,eye,t)
             if prev.shown:
@@ -318,7 +329,7 @@ spray_bank_instances=(bank:SprayBank,origin:vec3,eye:vec3,t:f64,out:mut SplashIn
                         tall=min(grown.y,small.y*f32(1.4))*f32(0.5+0.2*hk)
                         c.y=sea+tall*f32(0.35)
                         bridge=vec3(min(grown.x,small.x*f32(1.3))*f32(0.85),tall,span*f32(0.5)/f32(pieces)+small.z*f32(0.35))
-                        out.push(SplashInstance(vec4(c,kind),vec4(bridge,roll+f32(3.1)+f32(k)),vec4(d/f32(span),0)))
+                        out.push(SplashInstance(vec4(c,kind),vec4(bridge,roll+f32(3.1)+f32(k)),vec4(d/f32(span),fresh)))
         crowns=if render_quality.tier==0:0 else:if size.y>1.4:3 else:if size.y>0.5:2 else:0
         loop k in 0..crowns:
             # (the crown: lobes bulging out of the top, scalloping the bank's upper edge; the inner
