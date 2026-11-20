@@ -13,7 +13,9 @@ when the load is actually stowed. Likewise, aircraft custody persists during col
 the receiver signs. This keeps capacity, reservations, ledger totals and title separate from
 physical position without counting the same goods twice. A consignee can sign at the aircraft
 and continue walking home with the same crate. A hired collector completes the walk to the
-agreed destination first.
+agreed destination first. The conversation, notebook, dockside handover and delivery event
+all use the same consignee. A named drop holder takes precedence over the default beneficiary
+or market owner. Returned loads go to their original sender.
 
 The board and sender conversation offer sender-arranged carrying, a sender-paid licensed
 porter, or player fetching. Local errands explicitly need no aircraft. Porters are named
@@ -49,7 +51,10 @@ or second movement owner. A blocked scene route cannot finish abstractly by leav
 Aircraft absence and full holds wait and retry; cancellation drops the actual load, refunds
 unused porter escrow and preserves its owner. Terminal loaded cargo requires a real return
 handover. Theft and ditching affect cargo actually aboard; a crate in dockside hands stays
-there. Salvage preserves each client's title and source, with the loss retained historically.
+there. A player wreck records the actual cargo left aboard, including stowed loads still
+in origin custody, before the scene's rescue or tow. Salvage preserves each client's title
+and source, with the loss retained historically. A job with no surviving load closes and
+refunds its unpaid reward. A partial delivery pays only for the surviving share.
 
 Decisions, worker selection, economic rules and world ticks run per game minute (2 seconds).
 The existing 60 Hz scene clock advances walking and aircraft physics. The notebook's live
