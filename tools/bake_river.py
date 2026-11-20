@@ -82,16 +82,29 @@ if existing.exists() and '--reroute' not in sys.argv:
  breaks=[int(x) for x in re.search(r'RIVER_BREAKS: int\[\] = \[(.*?)\]',old)[1].split(',') if int(x)<count-1]
 # Neravessa's mill canal bypasses a bend in the lower river.
 canal_begin=len(pts);breaks.append(canal_begin-1)
-a=pts[220];b=pts[232];dx,dz=b[0]-a[0],b[1]-a[1];length=math.hypot(dx,dz);dx/=length;dz/=length
-sx,sz=-dz,dx
-controls=[(0,0),(90,240),(240,370),(480,350),(690,520),(930,450),(1150,250),(length,0)]
-canal=[]
-for k in range(len(controls)-1):
- p0=controls[max(0,k-1)];p1=controls[k];p2=controls[k+1];p3=controls[min(k+2,len(controls)-1)]
- for j in range(10):
-  t=j/10
-  canal.append(tuple(.5*((2*p1[d])+(-p0[d]+p2[d])*t+(2*p0[d]-5*p1[d]+4*p2[d]-p3[d])*t*t+(-p0[d]+3*p1[d]-3*p2[d]+p3[d])*t*t*t) for d in range(2)))
-canal.append((length,0))
+origin = pts[220]
+inlet, outlet = pts[214], pts[240]
+# Relative east/south metres. The two workshop stations retain the slipway's world
+# position. The fish market, dyers' reach and mill bend lead to an east-facing lagoon.
+knots = [(0, inlet[0]-origin[0], inlet[1]-origin[1]), (6,-680,320),
+         (12,-450,545), (17,-140,440), (20,125,428),
+         (22,172.849,434.574), (23,196.541,437.493), (28,430,485),
+         (34,665,700), (39,940,855), (44,1230,840), (48,1450,715),
+         (53,1720,795), (57,1940,925), (60,2110,955),
+         (61,2210,953), (66,2800,940), (70,outlet[0]-origin[0],outlet[1]-origin[1])]
+canal = []
+for k, (first, *pa) in enumerate(knots[:-1]):
+    last, *pb = knots[k+1]
+    prev, following = knots[max(0,k-1)], knots[min(k+2,len(knots)-1)]
+    for station in range(first, last):
+        t = (station-first)/(last-first)
+        def coordinate(d):
+            left = (pb[d]-prev[d+1])*(last-first)/(last-prev[0])
+            right = (following[d+1]-pa[d])*(last-first)/(following[0]-first)
+            return ((2*t+1)*(t-1)**2*pa[d] + t*(t-1)**2*left
+                    + (3-2*t)*t*t*pb[d] + (t-1)*t*t*right)
+        canal.append((coordinate(0), coordinate(1)))
+canal.append(knots[-1][1:])
 # Partway along, where the mill-water arm joins it, the canal opens into a basin some 120 m across
 # (stations 44-53): room to turn on the water between the narrow cuts.
 def canal_width(j):
@@ -99,15 +112,20 @@ def canal_width(j):
  if 44<j<53:base+=42.0*math.sin(math.pi*(j-44)/9)**2
  return base
 for j,(x,z) in enumerate(canal):
- u=j/(len(canal)-1);pts.append([a[0]+dx*x+sx*z,a[1]+dz*x+sz*z,a[2]*(1-u)+b[2]*u,0]);widths.append(canal_width(j))
+ # Water falls from trunk to trunk, through the original workshop waterline.
+ if j <= 22: level = inlet[2]+(3.829-inlet[2])*j/22
+ elif j == 23: level = 3.8207
+ else: level = 3.8207+(outlet[2]-3.8207)*(j-23)/47
+ pts.append([origin[0]+x,origin[1]+z,level,0]);widths.append(canal_width(j))
 canal_finish=len(pts)-1
-# Two short commercial arms: a timber basin and a mill-water junction.
-for station,sign in [(32,-1),(48,1)]:
+# Timber, mill, fish-market and dyers’ arms.
+for station,sign,reach,bend in [(32,-1,305,48),(48,1,385,-80),(12,1,315,65),(39,1,645,95)]:
  breaks.append(len(pts)-1)
  start=pts[canal_begin+station];nxt=pts[canal_begin+station+1]
  fx,fz=nxt[0]-start[0],nxt[1]-start[1];fl=math.hypot(fx,fz);fx/=fl;fz/=fl
- for j in range(13):
-  u=j/12;cross=sign*210*u;along=45*math.sin(u*math.pi)
+ segments=max(12,math.ceil(reach/32))
+ for j in range(segments+1):
+  u=j/segments;cross=sign*reach*u;along=bend*math.sin(u*math.pi)
   pts.append([start[0]-fz*cross+fx*along,start[1]+fx*cross+fz*along,start[2],0]);widths.append(14+8*math.sin(u*math.pi*.5))
 # The lagoon: beside the last straight (stations 61-66), away from the river, a stadium of open
 # water 280 m across whose river-side edge lies just inside the cut's river-side wall, so with the

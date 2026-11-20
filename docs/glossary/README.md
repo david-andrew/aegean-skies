@@ -344,7 +344,8 @@ On the rivers branch until it lands.
   the water (`CANAL_STREET`), with a wet band at the waterline, coursed joints, iron mooring plates,
   and a stone parapet on top. Behind the wall the street is paved: an 8 m promenade with plane trees,
   poplars, cast-iron lamps (lit after dark), benches and a few people before the front row of
-  houses, or warehouses and works standing straight on the wall. Stairs down to the water sit in the
+  houses, or warehouses and works standing straight on the wall. Four arms serve the timber yards,
+  mill, fish market and dyers. At the market bridges traders unpack under striped canvas. Stairs down to the water sit in the
   wall's thickness with a landing at the foot. The workshop's yard and slipway keep a low quay 2 m
   over the water, with stairs up to the street at either end. The street behind an arm's wall runs
   20 m back (the carve's bank falls below the sea's level within that, and the sea's surface would
@@ -360,7 +361,7 @@ On the rivers branch until it lands.
 
 - **Aliases:** the basin, where the arm joins.
 - **Definition:** partway along the escape (stations 44-53), where the mill-water arm joins it, the
-  canal opens into a basin some 120 m across and 200 m long: room to turn, evade and line up on the
+  canal opens into a basin some 120 m across and 540 m long: room to turn, evade and line up on the
   water between the narrow cuts. Its walls flare out along the wall line (the solids follow it too),
   with promenades, trees and lamps all round, a stone arch at its entry (44) and exit (53), barges
   and a launch moored 5 m off its walls and one barge at a buoy out on its water, and riflemen and a
@@ -374,7 +375,8 @@ On the rivers branch until it lands.
 
 - **Aliases:** the lagoon, the open water, the wide reach.
 - **Definition:** beside the canal's last straight (stations 58-67, past the footbridge at 57) the
-  water opens into a lagoon some 280 m across and 900 m long, where the escape gets into the air:
+  water opens into a lagoon some 280 m across and 875 m long. The escape reaches it after a 2.26 km
+  water run from the workshop and takes off toward the sunrise:
   room to line up, dodge boats and climb out. It opens away from the river: a stadium of water of its
   own (a straight arm 140 m in half width, closed by round walls at both ends) laid beside the cut,
   its river-side edge just inside the cut's river-side wall, so the cut's far wall gives way to it
