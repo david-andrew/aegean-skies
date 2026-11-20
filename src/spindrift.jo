@@ -1,0 +1,127 @@
+# Spindrift: in a storm the wind tears spray off the wave tops and streams it downwind in white
+# smoky wisps. Each wisp is torn from a crest near the eye, rises a few metres and runs out
+# downwind at about the wind's speed, widening and thinning, then is gone in a few seconds.
+#
+# Presentation only: crests are found with the sea's own swell (swell_at); no forces, no shared
+# particles, no draws on the game's random numbers. The wisps are drawn as the battle trails'
+# soft ribbons (combat_trails.jo: the same shader, scalloped edges), several per wisp so each
+# curves up off the crest and droops as it runs out. Nothing at all while the sea isn't stormy.
+use 'combat_trails.jo'
+use 'cloud_transparency.jo'
+use 'sea.jo'
+use 'look.jo'
+use 'world_point.jo'
+use 'render_space.jo'
+use 'quality.jo'
+
+struct SpindriftWisp:
+    at: WorldPoint      # where it was torn off (the crest's top)
+    born: f64
+    life: f64           # how long it streams
+    tear: f64           # how long the crest goes on feeding it (s)
+    rise: f64           # how high it climbs (m)
+    width: f64          # its half width where it leaves the crest (m)
+    strength: f64       # its opacity at best
+
+struct Spindrift:
+    wisps: SpindriftWisp[]
+    serial = 0
+    owed = 0.0          # candidate crests owed by the clock (a fraction carried over)
+    time = -1.0
+    trails: BattleTrails
+    ready = false
+spindrift = Spindrift()
+
+# How far from the eye wisps are torn off, and how many at most (the low tier fewer).
+spindrift_reach = 380.0
+spindrift_cap = (tier: int) -> int: if tier == 0: 90 else: 160
+
+spindrift_hash = (n: int) -> f64:
+    x = sin(f64(n)*78.233+12.9898)*43758.5453
+    x-floor(x)
+
+# Where a spray parcel released `tau` seconds ago now is, relative to where it was torn off:
+# downwind at most of the wind's speed (quickly picked up), up to its climb, then settling.
+spindrift_offset = (w: SpindriftWisp, tau: f64, dir: vec2, speed: f64) -> vec3:
+    run = speed*0.8*(tau-0.25*(1.0-exp(-tau/0.25)))
+    up = w.rise*(1.0-exp(-tau*2.2))-0.6*tau*tau
+    vec3(f32(dir.x*run), f32(up), f32(dir.y*run))
+
+# One frame: tear new wisps off the crests near the eye, let the old ones go.
+step_spindrift = (sd: mut Spindrift, eye: vec3, t: f64, w: Wind):
+    dt = if sd.time < 0.0 or t < sd.time: 0.0 else: min(0.1, t-sd.time)
+    sd.time = t
+    live = 0
+    loop k in 0..sd.wisps.len():
+        if t-sd.wisps[k].born < sd.wisps[k].life:
+            sd.wisps[live] = sd.wisps[k]; live += 1
+    loop sd.wisps.len() > live: sd.wisps.pop()
+    st = sea_state_now
+    if st.storm <= 0.02 or dt <= 0.0: return
+    cap = spindrift_cap(render_quality.tier)
+    # candidate crests a second, more the wilder the storm (most are rejected: not a top)
+    sd.owed += dt*900.0*st.storm
+    tries = int(sd.owed); sd.owed -= f64(tries)
+    half = st.height*0.5
+    loop k in 0..tries:
+        if sd.wisps.len() >= cap: break
+        sd.serial += 1
+        h0 = spindrift_hash(sd.serial*3+1); h1 = spindrift_hash(sd.serial*5+2); h2 = spindrift_hash(sd.serial*7+3)
+        # (even over the area round the eye, a little nearer than even)
+        r = spindrift_reach*pow(h0, 0.6); a = h1*TAU
+        x = f64(eye.x)+r*cos(a); z = f64(eye.z)+r*sin(a)
+        s = swell_at(x, z, t)
+        hn = f64(s.x)/max(half, 0.01)
+        # only off the tops, and more readily the wilder it blows
+        if hn < 0.62-0.12*st.storm+0.2*h2: continue
+        top = clamp((hn-0.5)/0.5, 0.0, 1.0)
+        sd.wisps.push(SpindriftWisp(WorldPoint(x, f64(s.x)+0.3, z), t, 2.2+1.8*h2,
+            0.5+0.6*h1*top, (1.2+2.8*top*h0)*(0.5+0.5*st.storm), (0.7+1.1*h2)*(0.6+0.4*st.storm),
+            (0.35+0.3*top)*smoothstep(0.0, 0.5, st.storm)))
+
+# Draw them (in a transparent pass), stepping first.
+draw_spindrift = (sd: mut Spindrift, L: Light, t: f64):
+    eye_world = scene_camera()
+    step_spindrift(sd, eye_world, t, wind_now)
+    if sd.wisps.len() == 0: return
+    if not sd.ready:
+        sd.trails = make_battle_trails(); sd.ready = true
+    dir = wind_now.dir; speed = wind_now.speed
+    # (lit spray: the sun's and the sky's light, a cool off-white; never paper white)
+    lum = L.sun*0.55+L.sky_top*0.35+L.shade*0.15
+    colour = clamp(vec3(0.86,0.90,0.92)*lum, vec3(0,0,0), vec3(0.92,0.94,0.95))
+    tr = sd.trails
+    draw_custom(():
+        origin = render_origin(scene_camera()); eye = render_eye(origin)
+        vs: BattleTrailVertex[]
+        loop w in sd.wisps:
+            age = t-w.born
+            base = world_local(w.at, origin)
+            if length(base-eye) > spindrift_reach*1.3: continue
+            fade = (1.0-smoothstep(w.life*0.5, w.life, age))*smoothstep(0.0, 0.25, age)
+            if fade <= 0.01: continue
+            # (parcels from the newest, still at the crest, to the oldest, furthest downwind)
+            fed = min(age, w.tear)
+            loop j in 0..3:
+                ta = age-fed*f64(j)/3.0; tb = age-fed*f64(j+1)/3.0
+                pa = base+spindrift_offset(w, max(ta, 0.0), dir, speed)
+                pb = base+spindrift_offset(w, max(tb, 0.0), dir, speed)
+                mid = (pa+pb)*0.5
+                side = normalize(cross(pb-pa, mid-eye)+vec3(0.0001,0,0))
+                d = f64(length(mid-eye))
+                wa = f32(max(w.width*(1.0+ta*0.9), d*0.0015)); wb = f32(max(w.width*(1.0+tb*0.9), d*0.0015))
+                # (the oldest end thins away; the crest end is densest)
+                oa = f32(w.strength*fade*(1.0-0.55*f64(j)/3.0)); ob = f32(w.strength*fade*(1.0-0.55*f64(j+1)/3.0))
+                ph = f32(spindrift_hash(int(w.born*97.0)+j)*TAU)
+                va = vec4(-1, ph, f32(age), 0); vb = vec4(1, ph, f32(age), 0)
+                vc = vec4(-1, ph+1.3, f32(age), 0); vd = vec4(1, ph+1.3, f32(age), 0)
+                a = BattleTrailVertex(pa-side*wa, va, vec4(colour, oa))
+                b = BattleTrailVertex(pa+side*wa, vb, vec4(colour, oa))
+                c = BattleTrailVertex(pb-side*wb, vc, vec4(colour, ob))
+                e = BattleTrailVertex(pb+side*wb, vd, vec4(colour, ob))
+                vs.extend([a,c,b,b,c,e])
+        if vs.len() == 0: return
+        m = tr.mesh
+        update_mesh(m, vs)
+        draw(tr.shader, m, BattleTrailParams(cloud_veil, render_view_proj(origin), eye, scene_fog_color(), scene_fog().x, render_anchor(scene_warp_a, origin), scene_warp_b))
+    , transparent = true)

@@ -15,8 +15,8 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
-- **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Rain rings](#rain-rings)
+- **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
@@ -124,6 +124,29 @@ blue discs that stay in every frame are **speed flecks**.
   `src/sea.jo:763 swell_at(x, z, t)`.
 - **Rules:** the decorative layers (flecks, crest strokes, glints) never drive physics. Physical
   swell, bathymetry, shore opacity, wakes and shadows must be preserved by any sea restyling.
+- **Spectrum:** each band's share follows the wind (`SeaState.gains`, a Pierson–Moskowitz-like
+  shape peaking near 0.83·U² m): in an ordinary breeze the long, fast bands are low and the sea
+  is carried by its short waves; the long bands grow in with the wind. Phase speeds follow deep
+  water (c = √(gλ/2π)).
+
+### Storm sea
+
+- **Aliases:** the storm regime, heavy seas, `sea_storm`.
+- **Definition:** not the ordinary sea turned up but a sea of its own. It sets in from a near
+  gale (about 13 m/s, full by 22) or under a thunderstorm. The swell's bands stretch to 2.4
+  times their length and grow half again in steepness, so long, high seas several metres high
+  run with the wind. Their crests peak and their troughs flatten. The water goes a dark,
+  heavy grey-green. The crests break white on their downwind faces, and a marbled net of foam
+  streaks lies along the wind. Spindrift blows off the tops. Floats feel the storm's swell
+  rising and falling under them and most of its slope, so alighting or ditching in it can break
+  a hull or capsize.
+- **Code:** `src/sea.jo` `sea_state` / `SeaState` (CPU, shared by the drawn sea and `swell_at`),
+  `sea_storm_of`, `sea_wave_profile`, `sea_storm_foam`; uniforms `swell_gain`, `sea_storm`.
+  Floats: `FlightEnv.swell_rate`, `swell_slope_share` (`src/flight.jo`, set in `src/pilot.jo`).
+- **Rules:** the CPU swell and the drawn swell stay identical (tests/precision_test.jo). Speed
+  flecks and the sea's fine detail are untouched.
+- **Capture:** `AEGEAN_WEATHER=meltemi AEGEAN_WIND_BIAS=10` (about 23 m/s), e.g. with
+  `AEGEAN_FLYING="35 50"` or `AEGEAN_CAPTURE_TAKEOFF=1`.
 
 ### Shallows band
 
@@ -282,6 +305,17 @@ blue discs that stay in every frame are **speed flecks**.
 - **Capture:** `AEGEAN_CAPTURE_TAKEOFF=1` (take-off), `=land` (a landing with a bounce),
   `AEGEAN_WATCH="ahead side up [look]"` (a fixed camera to watch a bank hang),
   `AEGEAN_WEATHER=meltemi` (rough water), `AEGEAN_CRAFT=5` (a flying boat).
+
+### Spindrift
+
+- **Definition:** in a storm sea, spray torn off the wave tops by the wind and streamed downwind in
+  smoky white wisps. Each wisp is torn from a crest near the eye, climbs a few metres, runs out
+  at about the wind's speed, widening and thinning, and is gone in two to four seconds.
+- **Code:** `src/spindrift.jo` (`step_spindrift`, `draw_spindrift`), drawn after the splashes in
+  `aegean.jo`, as the battle trails' soft ribbons (`src/combat_trails.jo`'s shader).
+- **Rules:** presentation only (crests found with `swell_at`; no forces, no shared particles, no
+  draws on the game's random numbers); nothing unless the sea is stormy. Cap: 90 wisps on the
+  low tier, 160 otherwise, within 380 m of the eye.
 
 ### Splash streaks
 
