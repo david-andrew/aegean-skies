@@ -73,7 +73,7 @@ struct SeaParams:
     coast_roll: vec4 = vec4(0,0,0,0)
     swell_phase: vec4[6]
     swell_gain: vec4[2]             # each swell band's share for the wind (sea_state), bands 0-3 and 4-5
-    sea_storm: vec4 = vec4(0,1,2440,0) # storm 0..1, crest sharpness, the swell's reach (m), its whole height (m)
+    sea_storm: vec4 = vec4(0,0,2440,0) # storm 0..1, crest peaking (0..0.35), the swell's reach (m), its whole height (m)
     ripple_phase: vec4[5]
     glint_phase: vec4
     glint_pixel: f32 = 0.0016       # metres across a pixel per metre of distance (1 / the focal length in pixels)
@@ -137,6 +137,20 @@ _swell = (p: vec2, t: f32, amp: f32, dist: f32, wd: vec2) -> vec3:
         dz += c * d.y
     vec3(h, dx, dz)
 
+# A storm's seas break and lose their height over shallow water: none stands higher than about
+# 0.6 of the depth (a harbour's lagoon or a shoal stays low while the gale's seas run outside).
+# In proportion to the storm, so an ordinary sea is exactly as it was; swell_at does the same.
+sea_shoal = (depth: f32, storm: f32, height: f32) -> f32:
+    mix(1.0, smoothstep(0.0, 1.0, 0.6*depth/max(height, 0.1)), storm)
+
+# (in the vertex shader: the depth map's coarse depth at p, m; open sea past its edges)
+sea_depth_coarse = (p: vec2, u: SeaParams) -> f32:
+    uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
+    depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: sample(u.depth, uv).x * 60.0 else: 60.0
+    if u.expanded > 0.5 and (abs(p.x) >= 12000.0 or abs(p.y) >= 12000.0):
+        depth = if abs(p.x) < 250000.0 and abs(p.y) < 200000.0: sample(u.world_depth, p / vec2(500000,400000) + vec2(0.5,0.5)).x * 60.0 else: 60.0
+    depth
+
 sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
     # The chart origin snaps, but its residual moves continuously. A snap
     # must not resample the displaced near rings or move any procedural phase.
@@ -144,6 +158,7 @@ sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
     r = length(p - u.cam.xz)
     near = 1.0 - smoothstep(80.0, 260.0, r)
     s = sea_swell(p,u,r)
+    if u.sea_storm.x > 0.0: s = s*sea_shoal(sea_depth_coarse(p+u.origin.xz,u),u.sea_storm.x,u.sea_storm.w)
     w = vec3(p.x, s.x * near, p.y)
     clip=u.view_proj * vec4(render_warped(w,u.cam,u.warp_a,u.warp_b),1)
     # (the colour's shadow is the screen pass's, cloud_shadow.jo; only the sun's
@@ -157,17 +172,14 @@ sea_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
 
 # Wave directions/frequencies and the anchor/time phase are reduced on the CPU.
 # Small local dot products retain sub-centimetre wave motion at every world corner.
-sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32,sharp: f32 = 1.0) -> vec3:
+sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32,peak: f32 = 0.0) -> vec3:
     fade=1.0-smoothstep(band.w*9.0,band.w*40.0,dist)
     phase=dot(band.xy,p)+band.z
     height=band.w*amp*fade
     sn=sin(phase);cs=cos(phase)
-    # (a storm's swells: peaked crests and long flat troughs, sea_wave_profile; sharp 1 is sin)
-    f=vec2(sn,cs)
-    if sharp>1.001:
-        q=max(0.5+0.5*sn,0.000001)
-        pw=pow(q,sharp-1.0)
-        f=vec2(2.0*pw*q-1.0,sharp*pw*cs)
+    # (a storm's swells: peaked crests and flatter troughs, a second harmonic as in a Stokes
+    # wave, sea_wave_profile; peak 0 is the plain sine)
+    f=vec2(sn+peak*(2.0*sn*sn-1.0),cs*(1.0+4.0*peak*sn))
     slope=height*f.y
     vec3(height*f.x,slope*band.x,slope*band.y)
 
@@ -175,13 +187,13 @@ sea_swell = (p: vec2,u: SeaParams,dist: f32) -> vec3:
     if dist>=u.sea_storm.z:return vec3(0,0,0)
     # Constant uniform indices avoid a per-pixel dynamic array loop on Intel.
     result=vec3(0,0,0)
-    a=u.wind.w;sharp=u.sea_storm.y
-    result += sea_swell_band(p,u.swell_phase[0],a*u.swell_gain[0].x,dist,sharp)
-    result += sea_swell_band(p,u.swell_phase[1],a*u.swell_gain[0].y,dist,sharp)
-    result += sea_swell_band(p,u.swell_phase[2],a*u.swell_gain[0].z,dist,sharp)
-    result += sea_swell_band(p,u.swell_phase[3],a*u.swell_gain[0].w,dist,sharp)
-    result += sea_swell_band(p,u.swell_phase[4],a*u.swell_gain[1].x,dist,sharp)
-    result += sea_swell_band(p,u.swell_phase[5],a*u.swell_gain[1].y,dist,sharp)
+    a=u.wind.w;peak=u.sea_storm.y
+    result += sea_swell_band(p,u.swell_phase[0],a*u.swell_gain[0].x,dist,peak)
+    result += sea_swell_band(p,u.swell_phase[1],a*u.swell_gain[0].y,dist,peak)
+    result += sea_swell_band(p,u.swell_phase[2],a*u.swell_gain[0].z,dist,peak)
+    result += sea_swell_band(p,u.swell_phase[3],a*u.swell_gain[0].w,dist,peak)
+    result += sea_swell_band(p,u.swell_phase[4],a*u.swell_gain[1].x,dist,peak)
+    result += sea_swell_band(p,u.swell_phase[5],a*u.swell_gain[1].y,dist,peak)
     result
 
 sea_ripple_band = (p: vec2,band: vec4,dist: f32) -> vec2:
@@ -403,18 +415,18 @@ sea_storm_foam = (p: vec2, s: vec3, wd: vec2, t: f32, height: f32, dist: f32, st
     # (breaking comes and goes along each crest: patches short downwind, long across it)
     patch = vnoise(vec2(a*0.035, b*0.012) + vec2(0.0, t*0.04))
     crest = smoothstep(0.2, 0.6, hn + patch*0.5 - 0.25) * smoothstep(-0.04, 0.08, down + 0.08)
-    crest = crest * smoothstep(0.38, 0.62, patch + 0.2*storm)
-    # marbled streaks
+    crest = crest * smoothstep(0.46, 0.7, patch + 0.12*storm)
+    # marbled streaks (nothing but their average beyond 900 m: no noise evaluated there)
     q = vec2(a*0.011, b*0.085)
-    n = vnoise(q) * 0.65 + vnoise(q*2.6 + vec2(7.1, 3.3)) * 0.35
-    n2 = vnoise(q*1.7 + vec2(1.3, 9.2))
+    w = max((fwidth(q.x)+fwidth(q.y))*1.0, 0.016)       # (a line about a pixel wide)
     near = 1.0 - smoothstep(250.0, 900.0, dist)
-    w = max(fwidth(n) * 1.4, 0.016)
-    vein = (1.0 - smoothstep(w*0.3, w, abs(n - 0.5))) * smoothstep(0.3, 0.55, n2)
-    vein2 = (1.0 - smoothstep(w*0.3, w, abs(n2 - 0.5))) * smoothstep(0.5, 0.7, n) * 0.7
-    sheet = smoothstep(0.58, 0.7, n) * 0.6
-    streak = max(max(vein, vein2), sheet) * (0.45 + 0.55*smoothstep(-0.5, 0.4, hn))
-    streak = mix(0.24 + 0.1*storm, streak, near)        # (far: the streaks' average, no shimmer)
+    streak: f32 = 0.24 + 0.1*storm
+    if near > 0.0:
+        n = vnoise(q) * 0.65 + vnoise(q*2.6 + vec2(7.1, 3.3)) * 0.35
+        vein = (1.0 - smoothstep(w*0.3, w, abs(n - 0.5))) * smoothstep(0.25, 0.5, patch + 0.1)
+        sheet = smoothstep(0.58, 0.7, n) * 0.6
+        near_streak = max(vein, sheet) * (0.45 + 0.55*smoothstep(-0.5, 0.4, hn))
+        streak = mix(streak, near_streak, near)         # (far: the streaks' average, no shimmer)
     clamp(max(crest, streak*0.9) * storm, 0.0, 1.0)
 
 # the sun's glints: a sparse field of tiny facets, each tipped at random and re-tipped several
@@ -610,6 +622,9 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         sa = sea_swell(local+offa,u,dist)
         sb = sea_swell(local+offb,u,dist)
         s = vec3(s.x, (sa.y * wa + sb.y * wb) * keep, (sa.z * wa + sb.z * wb) * keep)
+    if not inland and u.sea_storm.x > 0.0:
+        shoal = sea_shoal(depth,u.sea_storm.x,u.sea_storm.w)
+        s = s*shoal; sa = sa*shoal; sb = sb*shoal
     rp = if fine_detail:sea_ripples(local+offa,u,dist)*rough else:vec2(0,0)
     if fine_detail and u.rain > 0.01 and dist < 90.0:
         q = p*1.4
@@ -663,13 +678,15 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     st: f32 = 0.0
     crest_first = if whole: 1 else: 0
     crest_end = if whole: 3 else: if inland and u.inland_chop<=0.0: 0 else: 1
+    # (a full storm's own breaking crests and foam take the strokes' place)
+    if storm >= 0.99: crest_end = crest_first
     loop k in crest_first..crest_end:
         cp = if k == 0: p else: if k == 1: p + offa else: p + offb
         cs = if k == 0: s else: if k == 1: sa else: sb
         camp = if k == 0: crest_amp*(if inland:u.inland_chop else:1.0) else: u.sea_storm.w/145.0
         one = _crest_strokes(cp, cs, u.time, wd, ws, camp, dist, if k == 0: wet_crests else: 0.0)
         st += if k == 0: one else: one * (if k == 1: wa else: wb)
-    st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)
+    st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)*(1.0-storm)
     c = mix(c, mix(skyc, vec3(1, 1, 1), 0.55) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.85)
     if storm > 0.0:
         # A storm's sea: breaking crests, and the foam they leave drawn out downwind into a
@@ -1008,7 +1025,7 @@ SEA_TURNS = [0.0,0.45,-0.5,0.9,-0.25,0.2]
 struct SeaState:
     storm: f64 = 0.0
     stretch: f64 = 1.0
-    sharp: f64 = 1.0
+    peak: f64 = 0.0          # the crests' peaking: a second harmonic's share (sea_wave_profile)
     amp: f64 = 0.0
     lengths: f64[6]
     gains: f64[6]
@@ -1021,7 +1038,7 @@ sea_state = (w: Wind) -> SeaState:
     st = SeaState()
     st.storm = sea_storm_of(w)
     st.stretch = 1.0+1.4*st.storm
-    st.sharp = 1.0+0.9*st.storm
+    st.peak = 0.35*st.storm
     st.amp = _swell_amp(w)*(1.0+0.5*st.storm)
     u = max(w.speed*sea_rough,0.5)
     peak = max(14.0,0.83*u*u)
@@ -1052,13 +1069,11 @@ sea_state_of_now = () -> SeaState:
 sea_set_state = (p: mut SeaParams, st: SeaState):
     p.swell_gain[0] = vec4(f32(st.gains[0]),f32(st.gains[1]),f32(st.gains[2]),f32(st.gains[3]))
     p.swell_gain[1] = vec4(f32(st.gains[4]),f32(st.gains[5]),0,0)
-    p.sea_storm = vec4(f32(st.storm),f32(st.sharp),f32(st.reach),f32(st.height))
+    p.sea_storm = vec4(f32(st.storm),f32(st.peak),f32(st.reach),f32(st.height))
 # The crests' profile, as the shader draws it: sin for an ordinary sea; for a storm's, peaked.
-sea_wave_profile = (phase: f64,sharp: f64) -> vec2:
-    if sharp <= 1.001: return vec2(f32(sin(phase)),f32(cos(phase)))
-    q = max(0.5+0.5*sin(phase),0.000001)
-    pw = pow(q,sharp-1.0)
-    vec2(f32(2.0*pw*q-1.0),f32(sharp*pw*cos(phase)))
+sea_wave_profile = (phase: f64,peak: f64) -> vec2:
+    sn = sin(phase); cs = cos(phase)
+    vec2(f32(sn+peak*(2.0*sn*sn-1.0)),f32(cs*(1.0+4.0*peak*sn)))
 
 sea_params = (depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3, shadows: SeaShadows) -> SeaParams:
     global sea_state_now
@@ -1205,13 +1220,15 @@ swell_at = (x: f64, z: f64, t: f64) -> vec3:
         wave = vec2(f32(dx*frequency),f32(dz*frequency))
         phase = f64(wave.x)*x+f64(wave.y)*z-t*sqrt(9.8*frequency)
         h = len*st.amp*st.gains[k]
-        f = sea_wave_profile(phase,st.sharp)
+        f = sea_wave_profile(phase,st.peak)
         result += vec3(f32(h*f64(f.x)),f32(h*f64(f.y)*f64(wave.x)),f32(h*f64(f.y)*f64(wave.y)))
+    # (a storm's seas lose their height over shallow water, as the drawn sea's: sea_shoal)
+    if st.storm > 0.0: result = result*sea_shoal(f32(max(-surface_height(x,z),0.0)),f32(st.storm),f32(st.height))
     result
 
 # The six wavelengths sum to 145.4; every sine and fade is bounded by one.
 # Pad the f32 amplitude/sum so this is conservative even at a crest.
-swell_height_bound = () -> f64: sea_state_of_now().height*1.001+0.001
+swell_height_bound = () -> f64: sea_state_of_now().height*(1.0+sea_state_of_now().peak)*1.001+0.001
 
 # a thing afloat at p riding the swell: lifted, and tilted with the water's slope
 afloat = (p: vec3, t: f64) -> mat4:
