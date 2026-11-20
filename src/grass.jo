@@ -74,51 +74,78 @@ grass_keep = (d: f32) -> f32: 1.0 - smoothstep(0.30, 1.0, d)
 # Past this normalized distance a cell is drawn with the cheaper far tuft (fewer, wider blades).
 const GRASS_FAR_START = 0.5
 
-grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
-    # Every cell turns its tuft by its own angle, so the blades never fall on a one-metre lattice (rows, combs).
+grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut: grass_vs_at(v,inst,u,0)
+# (the wind study's (Tweaks): its field compiled in; made the first time its box is on)
+grass_vs_ws = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut: grass_vs_at(v,inst,u,1)
+grass_vs_ws_low = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut: grass_vs_at(v,inst,u,2)
+grass_vs_at = (v: Vertex3D, inst: GrassCell, u: GroundParams, wind_study: int) -> GrassOut:
+    # The cell is the terrain sample, not a fence. Scatter each blade independently, then
+    # add the tuft's small rotated offset. Adjacent samples overlap through a soft shoulder.
     cell = inst.model[3].xz
-    cell = cell-floor(cell/4096.0)*4096.0
-    angle = hash21(cell*0.37+vec2(11,5))*6.2832
-    cs = cos(angle)
-    sn = sin(angle)
-    uv = vec2(v.uv.x*cs-v.uv.y*sn,v.uv.x*sn+v.uv.y*cs)
-    pos = vec3(v.pos.x*cs-v.pos.z*sn,v.pos.y,v.pos.x*sn+v.pos.z*cs)
-    root = (render_model(inst.model,u.origin) * vec4(uv.x,0,uv.y,1)).xyz
+    seed = cell+v.color.yz
+    bits = hash21(seed)*4096.0
+    scatter = vec2(floor(bits)/4096.0,fract(bits))-vec2(0.5,0.5)
+    cs = inst.model[1].x
+    sn = inst.model[1].z
+    uv = scatter+vec2(v.uv.x*cs-v.uv.y*sn,v.uv.x*sn+v.uv.y*cs)
+    slope_xz = vec2(inst.model[0].y,inst.model[2].y)
+    root = (inst.model[3].xyz-u.origin)+vec3(uv.x,dot(uv,slope_xz),uv.y)
     tip = v.color.x
-    # Clumps: blades gather toward the centres of a jittered ~0.9 m world lattice, and each clump has its
-    # own height, lean and tint. The lattice is not the cell grid, so no row of clumps lines up either.
-    clump_cell = floor((root.xz+u.origin.xz)*1.1)
-    clump_id = clump_cell-floor(clump_cell/4096.0)*4096.0
-    clump_at = (clump_cell+vec2(hash21(clump_id+vec2(1,2)),hash21(clump_id+vec2(5,9))))/1.1-u.origin.xz
-    clump = hash21(clump_id*1.3+vec2(17,3))
-    gather = (clump_at-root.xz)*0.2
-    root = vec3(root.x+gather.x,root.y,root.z+gather.y)
-    # Thinning by distance along the egg: each blade has its own threshold and shrinks away when the
-    # field's density falls below it, so the field thins out like a scatter, never as a ring.
-    d = grass_shape(root.xz-u.cam.xz,u.grass_view,u.grass_actor.w)+(vnoise((root.xz+u.origin.xz)*0.23)-0.5)*0.12
-    keep = grass_keep(d)
-    pick = hash21(cell*1.7+v.uv*41.0+vec2(5,9))
-    pick2 = fract(pick*7.31+clump)
-    fade = smoothstep(0.0,0.25,keep*1.25-pick)
-    size = fade*(0.5+0.5*keep)
+    # One continuous world field sets density, height and tint across metre cells and 8 m draw tiles.
+    world_root = cell+uv
+    patch = vnoise(vec2(0.20*world_root.x+0.11*world_root.y,0.20*world_root.y-0.11*world_root.x))
+    d = grass_shape(root.xz-u.cam.xz,u.grass_view,u.grass_actor.w)
+    # A dense pocket reaches farther along the rim. Fade its last blades in size and contrast
+    # as well as in number. From overhead the ground material takes over across the whole field.
+    edge = d*(1.45-0.55*patch)
+    eye = u.cam-root
+    clearance = abs(eye.y-dot(eye.xz,slope_xz))
+    relief = 1.0-smoothstep(4.0,27.0,clearance)
+    keep = grass_keep(edge)*relief
+    pick = hash21(seed+vec2(83,173))
+    pick2 = fract(pick*7.31+patch)
+    fade = smoothstep(0.0,0.25,keep*(0.76+0.49*patch)-pick)
+    size = fade*keep
     # A fully shrunk blade has zero area. Skip its wind/contact work as a unit;
     # every vertex shares the root and therefore takes the same branch.
     if size<=0.0:return GrassOut(vec4(2,2,2,1),vec4(0,0,0,0))
-    w=render_model(inst.model,u.origin)*vec4(pos,1)
-    w=vec4(w.x+gather.x,w.y,w.z+gather.y,1)
-    # per-blade and per-clump height
-    w.y = root.y+(w.y-root.y)*(0.8+0.4*clump)*(0.85+0.3*pick2)
+    blade = v.pos.xz-v.uv
+    rel = vec2(blade.x*cs-blade.y*sn,blade.x*sn+blade.y*cs)
+    height = v.pos.y*inst.model[1].y*(0.8+0.4*patch)*(0.85+0.3*pick2)
     curve=tip
-    wave = meadow_wave(root.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)
     lean = meadow_lean(u.wind.z)
-    # A small flutter per blade (a few percent of the steady lean) so neighbours never move in lockstep.
     flutter = 0.08*sin(u.time*(4.0+3.0*pick)+pick*40.0)
-    # lean: each blade and clump leans a little more or less, and a little off the wind's line
-    sway = (0.6+0.8*pick2)*(0.85+0.3*clump)
-    # The blade is a damped spring driven by the wave field (the gains and phase lags are in the field itself)
-    bend = curve*sway*(lean.x*(1.0+flutter)+lean.y*wave)
+    sway = (0.6+0.8*pick2)*(0.85+0.3*patch)
+    known = vec3(-1,0,0)
+    underside: f32 = 0.0
+    bend: f32 = 0.0
+    drop: f32 = 0.0
     yaw = (pick-0.5)*0.9
-    along = vec2(u.wind.x*cos(yaw)-u.wind.y*sin(yaw),u.wind.x*sin(yaw)+u.wind.y*cos(yaw))
+    if wind_study > 0:
+        # Use the existing gust front and its delayed, shorter ripples. Convert their pressure
+        # to a tilt of this blade's own height, so a strong gust lays it down without stretching it.
+        late = (0.1+0.4*patch*pick2)*u.meadow_c.z
+        f = meadow_study(root.xz+u.wind.xy*late,u,1.0,0.0,if wind_study == 2: 1 else: 0)
+        known = f
+        study = meadow_study_share(u)
+        load = lean.x*(0.95+3.2*f.y)+lean.y*(0.55+6.5*f.x)
+        tilt = normalize(vec2(1.0,sway*(load+1.65*f.z)*(1.0+flutter*(0.6+1.6*f.y))))
+        # At the crest the tips turn nearly horizontal. The reverse face catches sunlight
+        # according to the blade's own azimuth, with no change of pigment at its root.
+        underside = f.z*tilt.y*tip*(0.62-1.7*dot(rel,u.sun_dir.xz))
+        bend = study*height*tilt.y
+        drop = study*height*(1.0-tilt.x)
+        yaw += study*flutter*(0.4+1.5*f.x+0.9*f.y)
+        if study < 1.0:
+            wave = meadow_wave(root.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)
+            light_bend = (1.0-study)*tip*sway*(lean.x*(1.0+flutter)+lean.y*wave)
+            bend += light_bend
+            drop += light_bend*0.18
+    else:
+        wave = meadow_wave(root.xz,u.grass_gust,u.drift,u.wind.z,u.grass_spring,u.grass_lag)
+        bend = tip*sway*(lean.x*(1.0+flutter)+lean.y*wave)
+        drop = bend*0.18
+    along = normalize(u.wind.xy+vec2(-u.wind.y,u.wind.x)*yaw)
     delta = root.xz-u.grass_actor.xz
     distance = length(delta)
     # The walker only brushes the blades its legs touch: a small radius, a few degrees of lean away and a slight
@@ -140,8 +167,8 @@ grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
         contact = clamp((cone+wing)*clearance*u.grass_airflow.z*ripple,0.0,1.0)
         squash = 0.8
         offset = along*bend+(-u.grass_airflow.xy*cone+away*wing)*clearance*u.grass_airflow.z*curve*0.55
-    rel = w.xz-root.xz
-    w = vec4(root.x+(rel.x+offset.x)*size,root.y+((w.y-root.y)*(1.0-contact*squash)-bend*0.18)*size,root.z+(rel.y+offset.y)*size,1)
+    rise = (height+dot(rel,slope_xz)-drop)*(1.0-contact*squash)
+    w = vec4(root+vec3(rel.x+offset.x,rise,rel.y+offset.y)*size,1)
     drawn = render_warped(w.xyz,u.cam,u.warp_a,u.warp_b)
     normal = inst.material.xyz
     clip=u.view_proj*vec4(drawn,1)
@@ -150,7 +177,7 @@ grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
     ground_normal=vec3(-inst.model[0].y,1,-inst.model[2].y)
     grazing=1.0-smoothstep(0.20,0.55,abs(dot(ground_normal,root-u.cam))/max(length(root.xz-u.cam.xz),0.1))
     visible_mean=mix(u.flow.w,0.95,grazing*0.8)
-    response=meadow_blade_response(tip,fade*smoothstep(0.0,0.5,keep),visible_mean)
+    response=meadow_blade_response(tip,fade*keep,visible_mean)+underside*keep*0.48
     # Project only the pigment wash; lighting still uses the root terrain normal.
     ray=w.xyz-u.cam
     projection=clamp(dot(ground_normal,root-u.cam)/min(dot(ground_normal,ray),-0.001),1.0,4.0)
@@ -164,10 +191,11 @@ grass_vs = (v: Vertex3D, inst: GrassCell, u: GroundParams) -> GrassOut:
     gi=GroundOut(clip,shade_point,normal,inst.color,inst.material.w,0.0,relief_normal,land=dot(normal,u.land_light.xyz),working=inst.working)
     strata=vec3(0,0,0)
     if 1.0-normal.y>0.28:strata=ground_strata(gi,u)
-    col=ground_surface(gi,u,abs(root.x+u.origin.x)>20000.0 or abs(root.z+u.origin.z)>20000.0,true,0.01,strata,0.08,0.015,response)
+    large=abs(root.x+u.origin.x)>20000.0 or abs(root.z+u.origin.z)>20000.0
+    col=if wind_study > 0: ground_surface(gi,u,large,true,0.01,strata,0.08,0.015,response,1,0.0,known,wind_study) else: ground_surface(gi,u,large,true,0.01,strata,0.08,0.015,response)
     # clump-to-clump tint, fading out with the field so the rim keeps the ground's own colour
-    tint = mix(vec3(0.95,0.975,0.93),vec3(1.05,1.03,0.985),clump)
-    GrassOut(clip,vec4(col.xyz*mix(vec3(1,1,1),tint,smoothstep(0.0,0.5,keep)),col.w))
+    tint = mix(vec3(0.95,0.975,0.93),vec3(1.05,1.03,0.985),patch)
+    GrassOut(clip,vec4(col.xyz*mix(vec3(1,1,1),tint,keep),col.w))
 
 # The blades use the terrain's material and lighting, including its colour bands.
 # This also carries the distant wind wash after the geometry has faded away.
@@ -230,21 +258,19 @@ grass_columns=(n:int)->int:
 build_tuft = (far:bool=false) -> Mesh:
     vs:Vertex3D[]
     blades=if far:grass_far_blade_count() else:grass_blade_count()
-    columns=grass_columns(blades)
-    rows=blades/columns
     # twice the old height and half-width; the far tuft's blades are half again as wide
     half=f32(if render_quality.tier==0:0.084 else:if render_quality.tier==1:0.045 else:0.018)*(if far:1.5 else:1.0)
     loop k in 0..blades:
         angle=f64(k)*2.39996
         direction=vec3(f32(cos(angle)),0,f32(sin(angle)))
         side=vec3(-direction.z,0,direction.x)*half
-        base=vec3((f32(k%columns)+hash21(vec2(f32(k),if far:5 else:3)))/f32(columns)-0.5,0,(f32(k/columns)+hash21(vec2(f32(k),if far:11 else:9)))/f32(rows)-0.5)
+        base=vec3(hash21(vec2(f32(k),3))-0.5,0,hash21(vec2(f32(k),9))-0.5)*0.36
         height=f32(0.60+0.50*f64(hash21(vec2(f32(k),7))))
         tip=base+vec3(0,height,0)+direction*0.22
         loop q in 0..3:
             t=if q==2:1.0 else:0.0
             point=if q==0:base-side else:if q==1:base+side else:tip
-            vs.push(Vertex3D(point,vec3(0,1,0),base.xz,vec4(f32(t),0,0,f32(t))))
+            vs.push(Vertex3D(point,vec3(0,1,0),base.xz,vec4(f32(t),f32(k*103),f32(k*37),1)))
     town_mesh(vs)
 
 # where grass grows: gentle ground above the beach, green rather than bare (as the ground's
@@ -461,7 +487,8 @@ grass_build_step = (towns: Town[], b: mut GrassBuild, until: f64) -> bool:
         cell=if grass_cached_land(x,z):grass_terrain(x,z) else:GrassTerrain(ground=surface_height(x,z),dx=surface_height(x+0.5,z)-surface_height(x-0.5,z),dz=surface_height(x,z+0.5)-surface_height(x,z-0.5))
         h=cell.ground;hx=cell.dx;hz=cell.dz
         m = translation(vec3(f32(x),f32(h-0.025),f32(z)))
-        m[1]=vec4(0,f32(k),0,0)
+        angle=f64(hash21(vec2(f32(x),f32(z))))*TAU
+        m[1]=vec4(f32(cos(angle)),f32(k),f32(sin(angle)),0)
         detail=grass_detail_slope(x,z,hx,hz)
         m[0]=vec4(1,f32(hx),0,f32(detail.x));m[2]=vec4(0,f32(hz),1,f32(detail.y))
         material=grass_ground_material(x,z,f32(h))
@@ -521,16 +548,16 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     gp.grass_actor = vec4(grass_actor-p.origin,reach)
     gp.grass_airflow = vec4(grass_airflow,grass_contact_radius)
     gp.wind=meadow_wind(wind_now,p.origin)
-    gp.grass_gust=meadow_gust(p.origin)
-    gp.grass_spring=meadow_spring()
-    gp.grass_lag=meadow_lag()
+    gp=meadow_fill(gp,p.origin)
     # Under the speed trial's warp the frustum no longer bounds the blades; the egg still does.
     planes:vec4[]=if gp.warp_b.x>0.0:[] else:land_planes(gp.view_proj)
     # Bound the actual root footprint, tip lean, widest blade and maximum wind
     # displacement. Airflow adds its own larger bound; terrain tilt is per cell.
     contact_reach=if gp.grass_airflow.w>2.0:(length(gp.grass_airflow.xy)+0.6)*abs(gp.grass_airflow.z)*0.55 else:0.3
     lean_reach=meadow_lean(gp.wind.z)
-    horizontal=1.0+(lean_reach.x+lean_reach.y*1.2)*1.1+contact_reach
+    # Root: at most 0.5 + sqrt(2)*0.18 m on either axis. A study tip can bend its full height.
+    tip_reach=1.62*(lean_reach.x*1.08+lean_reach.y*1.2)
+    horizontal=1.0+max(1.52,tip_reach)+contact_reach
     # The egg's normalized distance changes by at most one over the shortest of its half-axes per metre.
     slope=1.0/min(gp.grass_view.z,gp.grass_view.w)
     # Reject coarse tiles first, then upload only visible one-metre cells.
@@ -551,16 +578,15 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
         inside=true
         loop plane in planes:
             side=dot(plane.xyz,center)+plane.w
-            if side < -chunk.radius:visible=false
+            if side < -(chunk.radius+cell_reach):visible=false
             if side < chunk.radius+cell_reach:inside=false
         if not visible:continue
         loop k in chunk.first..chunk.first+chunk.count:
             cell=f.cells[k]
             at=cell.model[3].xyz-gp.origin
-            # The blade roots occupy a square of half-width 0.5 m. Thinning
-            # depends on root distance, not the displaced tip's position.
+            # Root distance is at most sqrt(0.5) + 0.18*sqrt(2) from the sample.
             shape=grass_shape(at.xz-gp.cam.xz,gp.grass_view,reach)
-            if shape-0.71*slope>1.1:continue
+            if shape-0.97*slope>1.1:continue
             if not inside:
                 extent=vec3(horizontal,1.35*(abs(cell.model[0].y)+abs(cell.model[2].y))+1.35,horizontal)
                 keep=true
@@ -568,7 +594,7 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
                     if dot(plane.xyz,at)+plane.w < -dot(abs(plane.xyz),extent):keep=false
                 if not keep:continue
             bin=clamp(int(shape*15.0),0,15)
-            if shape-0.71*slope>=GRASS_FAR_START:
+            if shape-0.97*slope>=GRASS_FAR_START:
                 far_bins[bin].push(cell);far_count+=1
             else:
                 near_bins[bin].push(cell);near_count+=1
@@ -581,10 +607,10 @@ draw_grass = (tuft: Mesh, f: GrassField, L: Light, t: f64):
     global grass_visible_buf,grass_far_buf
     if visible_cells.len()>0:
         set_instances(grass_visible_buf,visible_cells)
-        draw_instanced(grass_sh,tuft,grass_visible_buf,gp)
+        draw_instanced(if gp.meadow_c.w > 0.0: grass_study_shader() else: grass_sh,tuft,grass_visible_buf,gp)
     if far_cells.len()>0:
         set_instances(grass_far_buf,far_cells)
-        draw_instanced(grass_sh,grass_far_mesh,grass_far_buf,gp)
+        draw_instanced(if gp.meadow_c.w > 0.0: grass_study_shader() else: grass_sh,grass_far_mesh,grass_far_buf,gp)
 
 
 grass_visible_buf:InstanceBuffer[GrassCell]
@@ -599,6 +625,14 @@ init_grass = ():
     grass_far_mesh=build_tuft(true)
     grass_sh = make_world_shader(shader(grass_vs, grass_fs))
 
+grass_sh_ws: Shader
+grass_study_ready = false
+grass_study_shader = () -> Shader:
+    global grass_sh_ws, grass_study_ready
+    if not grass_study_ready:
+        grass_sh_ws = make_world_shader(if render_quality.tier == 0: shader(grass_vs_ws_low, grass_fs) else: shader(grass_vs_ws, grass_fs),false)
+        grass_study_ready = true
+    grass_sh_ws
 # Test the whole patch footprint, including the sideways reach of a bent blade.
 grass_lane_clear=(p:vec2,lanes:TownLane[])->bool:
     loop lane in lanes:

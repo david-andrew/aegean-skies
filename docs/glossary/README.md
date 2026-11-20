@@ -20,12 +20,12 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
-- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [Period engines](#period-engines) · [The sea about her](#the-sea-about-her) · [On foot](#on-foot) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
+- **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
 - **Combat:** [Lead marker](#lead-marker) · [Player toughness, generous hits, aim assist](#player-toughness-generous-hits-aim-assist) · [Ground fire](#ground-fire) · [Water strikes](#water-strikes) · [Screen aim](#screen-aim) · [Target view righting](#target-view-righting) · [Slipway launch](#slipway-launch) · [Dogfight brain](#dogfight-brain) · [Side colours](#side-colours) · [Going home](#going-home) · [Pilots in the water](#pilots-in-the-water) · [Deeds](#deeds)
 - **Input:** [Panels own the wheel](#panels-own-the-wheel) · [Gamepads and flight sticks](#gamepads-and-flight-sticks) · [Pad focus](#pad-focus) · [Pad hints](#pad-hints)
@@ -358,7 +358,7 @@ On the rivers branch until it lands.
 
 ### Canal basin
 
-- **Aliases:** the basin, the lagoon, where the arm joins.
+- **Aliases:** the basin, where the arm joins.
 - **Definition:** partway along the escape (stations 44-53), where the mill-water arm joins it, the
   canal opens into a basin some 120 m across and 200 m long: room to turn, evade and line up on the
   water between the narrow cuts. Its walls flare out along the wall line (the solids follow it too),
@@ -370,13 +370,31 @@ On the rivers branch until it lands.
   a wide basin's wall); `src/canal_geometry.jo` (`canal_line_slab`); `src/canal_traffic.jo`;
   `src/canal_ground_fire.jo`.
 
+### Canal lagoon
+
+- **Aliases:** the lagoon, the open water, the wide reach.
+- **Definition:** beside the canal's last straight (stations 58-67, past the footbridge at 57) the
+  water opens into a lagoon some 280 m across and 900 m long, where the escape gets into the air:
+  room to line up, dodge boats and climb out. It opens away from the river: a stadium of water of its
+  own (a straight arm 140 m in half width, closed by round walls at both ends) laid beside the cut,
+  its river-side edge just inside the cut's river-side wall, so the cut's far wall gives way to it
+  and the round ends meet that wall at about 40 degrees. Houses stand round its walls; barges lie
+  moored along both sides, a barge and a rowing boat at buoys out on the water, and two patrol
+  launches circle across the run. In the escape each launch carries a rifleman, and riflemen and
+  machine guns hold both walls.
+- **Code:** `tools/bake_river.py` (`LAGOON_RADIUS`, `LAGOON_OUT`, baked into `src/river_data.jo`;
+  `assets/living-routes.bin` follows it); `src/canal_geometry.jo` (`canal_frontage` 3 along it, the
+  arms' round ends); `src/river_render.jo` and `src/river_field.jo` (`river_arm_open_start`: water
+  over its first end too); `src/canal_traffic.jo` (`CANAL_PATROLS`, `canal_patrol_loop`);
+  `src/canal_ground_fire.jo` (`canal_launch_guns`, `canal_ride_launches`).
+
 ### Canal crossings
 
 - **Aliases:** the canal bridges.
 - **Definition:** a crossing every 100-300 m of the canal run (`CANAL_BRIDGES`): single-span stone
   arches (a flat ellipse from wall to wall, springing ~3.6-4 m and crowned ~8-9 m over the water,
-  with a humped road, balustrades, lamps and someone leaning on the parapet), a high steel truss,
-  a low iron footbridge (5 m clear) and a pipe bridge. A planing Gull's top wing is ~3.9 m over the
+  with a humped road, balustrades, lamps and someone leaning on the parapet), a high steel truss
+  and a low iron footbridge (5 m clear) at the lagoon's mouth. A planing Gull's top wing is ~3.9 m over the
   water: held within ~8 m of the centre line it passes under every crossing with a metre or more
   to spare; a pilot who lifts off early must stay under the arches or hop the decks.
 - **Code:** `src/canal_geometry.jo` (`CANAL_BRIDGES`, `canal_bridge_under`, `canal_bridge_top`);
@@ -1519,6 +1537,26 @@ On the rivers branch until it lands.
   wind about the viewer) so a turning wind never swirls the pattern; it is passed to the shaders as
   `wind.w`. Like all ground detail it is full strength to 60 m and gone by 260 m (the near-detail
   envelope); it must never repeat over whole hills seen from altitude (see terrain stripes).
+
+### Wind study grass (trial)
+
+- **Aliases:** gust patches, dabs, cat's paws on grass, the wind study.
+- **Definition:** a Tweaks trial (off by default, "Wind study grass"; `AEGEAN_TWEAKS=windstudy`) that
+  replaces the wind sheen's wave trains from 5 m/s up (below 2.5 m/s the trains are untouched). Built
+  from a study of videos of wind over grass: **gust patches** (100-250 m, about a third of the field or
+  less, drifting downwind and changing shape as they go) and
+  **dabs** (3-8 m spots of laid-over grass that form, run and fade within a second or two, at about half
+  strength between gusts, full strength inside them). Blades lean further and flutter more in a gust and
+  read the field a moment late by clump (0.1-0.5 s), so they lay over and stand again unevenly. The
+  ground's sheen uses the same field: dabs out to 150-600 m, the gust patches over far fields to
+  1.4-2.6 km (the trains stop at 260 m).
+- **Code:** `src/look.jo` (`meadow_noise_texture`, `build_meadow_noise`, the `sa`/`sb`/`r1`/`r2`
+  offsets in `meadow_step`), `src/terrain.jo` (`meadow_study`, `meadow_study_share`, `meadow_fill`,
+  the sheen in `ground_surface`), `src/grass.jo grass_vs`.
+- **Rules:** the noise tile is procedural (a 128-square tileable fBm made by the game when the trial is
+  first switched on); every layer's period divides `GUST_PERIOD`, so wrapped offsets are seamless.
+  The gust layers are large enough not to repeat over a hill, which is why they may go further than the
+  near-detail envelope (see terrain stripes).
 
 ### Terrain stripes (historical bug)
 
@@ -3500,43 +3538,6 @@ No image: the tiers differ in budgets more than in any single view.
   notes of 10-60 ms at 3-8 kHz sweeping fast, each tree its own singer at uneven moments.
 - **Code:** `src/ambience_synth.jo` (`ambience_bird_note`), `src/ambience_scene.jo`.
 
-### Period engines
-
-- **Aliases:** each aircraft's own engine (a trial on the Tweaks page, off by default).
-- **Definition:** an aircraft's engine heard as its real engine sounded: its exhaust pulsing at
-  its firing rate (cylinders/2 a turn: a nine-cylinder radial near 140 Hz at cruise, a Rolls-Royce
-  R near 320 Hz), each firing a crack rung through its stacks, hard on load and ragged on the
-  overrun; a rotary's open ports raspy and its blip switch cutting in and out at low power; the
-  propeller's blade-pass "whup" and, at speed, its tips' buzz-saw growing with their speed through
-  the air; pops and crackle when the throttle comes back and on a gliding approach. Several
-  engines are heard as banks drifting against each other.
-- **Code:** `src/engine_sound.jo` (`engine_spec`: cylinders, layout, rpm, reduction gear, blades
-  per type; `engine_sound_update`); `src/sound.jo` `update_audio`; `tests/engine_sound_test.jo`.
-- **Rules:** procedural only; loops baked once for the aircraft chosen, at the same overall level
-  as the shared engine loops they replace (the title's music still leads by about 20 dB).
-
-### The sea about her
-
-- **Aliases:** sea sounds (a trial on the Tweaks page, off by default).
-- **Definition:** the sea heard about the aircraft: the open water's wash by the sea state (many
-  small wavelets breaking over a low heave), fading with height; lapping at the floats and hull
-  while she lies still or slow; the breeze while moored; the hull planing through the chop on a run
-  (thuds at the waves, the bow wave, the spray); slaps as it meets a crest, the spray thrown up a
-  moment after. Before it, away from a shore the open sea was silent.
-- **Code:** `src/sea_sound.jo`; `src/flight_feedback.jo` (`afloat`, `height`, `over_sea`,
-  `sea_wind`); `tests/sea_sound_test.jo`.
-
-### On foot
-
-- **Aliases:** footsteps (a trial on the Tweaks page, off by default).
-- **Definition:** walking heard: a footfall each half stride by the ground underfoot (the jetty's
-  planks over the water, stone quays, stairs, cobbles, earth, sand, the bar room's boards with the
-  room's echoes), climbing into and out of the aircraft, a chair or a stool as one sits and stands,
-  a glass or a plate set down at the table; and the bar room's talk and the terrace's crossing over
-  through its doorways by how far in one is. Before it, nothing of walking was heard.
-- **Code:** `src/foot_sound.jo`; `aegean.jo` (`foot_ground`, `foot_sounds_frame`,
-  `hotel_indoor_amount`); `src/ambience_scene.jo` (`indoor_amount`); `tests/foot_sound_test.jo`.
-
 ### Uneven events
 
 - **Definition:** single ambient sounds (hammering, creaks, halyard slaps, waves, animals, birds)
@@ -3854,6 +3855,21 @@ No image: the tiers differ in budgets more than in any single view.
   `home_runway`, `BattleHome`; `src/scenarios.jo` `strait_homes`; `src/homeward_view.jo`; tests
   `tests/homeward_test.jo`.
 - **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_STRAIT_AFTER=home|arrive`.
+- **The canal escape** goes home the same way: its sides' harbours nearest Neravessa (never the
+  occupied city itself), once the pursuers are beaten or lost, the courier leading in.
+
+### A situation's end
+
+- **Aliases:** the hand-back, coming in safe.
+- **Definition:** a fight's situation (the strait, the canal escape) ends where the pilot comes safe
+  into harbour: moored, or ashore in a town, with no enemy of that fight flying within 8 km; whether
+  it was won, lost and towed home, or run from. The game simply goes on from there, in the same
+  world with its war and towns, and can be saved; a note and one line say so. Saving a game with a
+  battle in it hands the battle's aircraft back to the world at the checkpoint, and the battle takes
+  those still in the fight again after a load.
+- **Code:** `aegean.jo` `situation_arrival`; `src/scenarios.jo` `battle_homes`;
+  `src/game_session.jo` `release_battle_owners`, `restore_battle_owners`; played through by
+  `tools/playtest_probe.jo` (`tests/playtest_loops_test.py`).
 
 ### Pilots in the water
 
@@ -3911,6 +3927,15 @@ No image: the tiers differ in budgets more than in any single view.
 
 ---
 ## Input
+
+### Passing on foot
+
+Near the pilot, a walker looks ahead for people in the way and steps to one side. A tight pass
+shortens the stride and turns the shoulders. At a blocked opening the walker waits, steps back
+to give room and checks for a way past. The pilot's shoulders also turn slightly while walking
+close to someone. Walls, stairs and quay edges constrain the paths through the walking collision
+queries. The detour is drawn from transient state in `src/walk_avoidance.jo`. The living world
+advances the person's route on its fixed clock.
 
 ### Panels own the wheel
 
@@ -4059,6 +4084,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_CAPTURE_TAKEOFF=pad` | placed as `AEGEAN_CAPTURE_TAKEOFF`, serviced, but flown by the player's controls: script a gamepad with `SLOPPY_INPUT` (`40:rt=1 150:rt=0 930:lstick=0x0.8 1010:lstick=0x0.35`) |
 | `AEGEAN_NO_GROUND_FIRE=1` | remove a scenario's ground posts (A/B timing in one binary) |
 | `AEGEAN_CAPTURE_CANAL_RUN=1` | after the slipway hand-over, the tests' canal steering flies the run |
+| `AEGEAN_CAPTURE_CANAL_EYE="x y z"` | with the run: past the footbridge (57), a camera fixed there follows her across the lagoon and up |
 | `AEGEAN_CAPTURE_POST=k` (`AEGEAN_CAPTURE_POST_LOOK=1`) | watch the run from behind ground post k (or look at the post itself from beside it) |
 | `AEGEAN_CAPTURE_WAR=card|chart|board|contract` | stage war news |
 | `AEGEAN_LEISURE=sit|order|menu|search|rest|coffee|tinker|spare|terrace|bar|exterior|harbour|sleep|band|work:<job>|listen-turn|listen-walk|listen-run` | stage a leisure activity at the start (`AEGEAN_LEISURE_QUERY`, `AEGEAN_LEISURE_SECTION`) |
