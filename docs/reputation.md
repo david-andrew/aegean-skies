@@ -69,7 +69,7 @@ against the listener's own country; nothing about it is stored per person.
 | Company (`aegean.jo`): accepted / turned away / asked over and came / declined | warmth ±, to that person; small to the town |
 | Conversation: stopping to talk (a greeting from the pilot); replies (reassure, tease, ask back +; decline, leave −) | warmth, personal |
 | Tips to the band and the house | warmth, honour (small) |
-| Living events with the pilot as actor: delivery (on time / late), defaulted | reliability, honour (job deeds) |
+| Living events with the pilot as actor: delivery, lateness, and failed cargo jobs | reliability, honour (job deeds). A partial delivery after a cargo loss earns a failure deed. |
 | Obligations the pilot owes: fulfilled / defaulted | honour, reliability |
 | War rescue receipts (`w.war.rescue_receipts`), weather at the place | rescued foe/friend, daring by the storm |
 | `src/deeds.jo` `deed_record(kind, actor, subject_side, place, witnesses)`: rescued_foe, rescued_friend, shot_down, flew_home_in_formation, left_the_fight | the combat deeds |

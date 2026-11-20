@@ -1784,6 +1784,9 @@ On the rivers branch until it lands.
   skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
   the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
   reads "Fire a flare": a red star goes up and the nearest ship or harbour within 8 km comes.
+  A pilot who parachuted into the sea can signal with the same flare. A boat searches even
+  without a signal, boards the pilot from the water, and carries them to a safe harbour or the
+  tender. Pickup preserves the pilot's side and engagement when a situation hands back to play.
   When the flight turns for home its leader says where ("then back to Ardevanti").
 - **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
   `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /

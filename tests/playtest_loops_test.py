@@ -8,7 +8,7 @@ Slow (a minute or so a case here, several in CI). This file plays the flying loo
 tests/playtest_town_test.py the town's, both in CI only with slow: true; tests/playtest_situations_test.py
 plays a wreck towed in by the call for help, the strait and the canal escape, on a real GPU only
 (under CI's software rendering the strait ran some 300 frames in 14 minutes, and the tow over 30). Two cases at a time: python3 tests/playtest_loops_test.py
-[town|flying|situations|all].
+[town|flying|situations|pickups|all].
 """
 import concurrent.futures as cf
 import os
@@ -28,6 +28,11 @@ GROUPS = {
     ],
     "flying": [
         ("ride", 4000, dict(AEGEAN_LEISURE="ride-air", AEGEAN_FLYING="120")),
+    ],
+    "pickups": [
+        ("bail", 8000, dict(AEGEAN_SCENARIO="strait")),
+        ("bail-canal", 10000, dict(AEGEAN_SCENARIO="canal", AEGEAN_CAPTURE_CANAL_RUN="1")),
+        ("bail-sea", 8000, dict(AEGEAN_FLYING="150 60")),
     ],
     "situations": [
         ("tow", 6000, dict(AEGEAN_FLYING="60")),

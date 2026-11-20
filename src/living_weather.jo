@@ -9,6 +9,7 @@ use 'living_events.jo'
 use 'living_travel.jo'
 use 'living_seed.jo'
 use 'living_services.jo'
+use 'living_delivery.jo'
 
 schedule_weather = (w: mut World):
     day = day_index(w.minute)
@@ -79,6 +80,85 @@ nearest_harbor = (w: World, pos: vec3, open_only: bool = false) -> int:
         if d < distance: best = p; distance = d
     best
 
+# Move the physical loads, preserving owners and source IDs. Aircraft custody
+# also covers some dockside loads, so only lots physically aboard are lost.
+_wreck_cargo_salvage = (w: mut World, craft: int, id: int, place: int) -> bool:
+    losses: {int: int}
+    quantities = fill(0, GOOD_COUNT + 1)
+    reserved = fill(0, GOOD_COUNT)
+    pending: {int: int}
+    loop _, lot in w.cargo:
+        if cargo_craft(w,lot) != craft: continue
+        if lot.job >= 0: losses[lot.job] = losses.get(lot.job,0)+lot.quantity
+        if lot.store == .market:
+            pending[lot.job] = pending.get(lot.job,0)+lot.quantity
+            continue
+        quantities[lot.good + 1] += lot.quantity
+        if lot.job >= 0 and lot.good >= 0: reserved[lot.good] += lot.quantity
+    pending_jobs = pending.keys()
+    pending_jobs.sort()
+    loop job in pending_jobs:
+        j = w.jobs[job]; good = if j.cargo_mode == .sealed: -1 else: j.good
+        qty = pending[job]
+        if not cargo_move(w,.market,j.origin,.aftermath,id,good,qty,-1,place,job,true):
+            living_fault("living_weather.wreck_cargo.loading",guard_context(w)+" craft={craft} job={job}")
+            return false
+        if good >= 0:
+            w.places[j.origin].market.inventory.qty[good] -= qty
+            w.places[j.origin].market.inventory.reserved[good] -= qty
+            w.aftermath[id].inventory.qty[good] += qty
+    loop g in 0..GOOD_COUNT:
+        qty = quantities[g + 1]
+        if not cargo_move(w,.aircraft,craft,.aftermath,id,g,qty,-1,place,-2,true):
+            living_fault("living_weather.wreck_cargo.stock",guard_context(w)+" craft={craft}")
+            return false
+        w.aircraft[craft].cargo.qty[g] -= qty
+        w.aircraft[craft].cargo.reserved[g] -= reserved[g]
+        w.aftermath[id].inventory.qty[g] += qty
+    if not cargo_move(w,.aircraft,craft,.aftermath,id,-1,quantities[0],-1,place,-2,true):
+        living_fault("living_weather.wreck_cargo.sealed",guard_context(w)+" craft={craft}")
+        return false
+    jobs = losses.keys()
+    jobs.sort()
+    loop job in jobs:
+        if not (job in w.jobs): continue
+        w.jobs[job].lost_quantity += losses[job]
+        j = w.jobs[job]
+        if j.state == .claimed and j.quantity == j.delivered_quantity + j.returned_quantity + j.lost_quantity:
+            finish_delivery(w, job, j.carrier)
+    true
+
+# A player crash has a scene rescue or tow. Record the cargo without moving
+# the player, replacing the scene aircraft, or scheduling an abstract rescue.
+player_wreck_cargo = (w: mut World, at: vec3) -> int:
+    if guard_blocked(): return -1
+    p = w.player
+    craft = w.people[p].craft
+    if craft < 0: return -1
+    aboard = false
+    loop bin in 0..GOOD_COUNT+1:
+        loop lot in cargo_ids(w,.aircraft,craft,bin-1):
+            if w.cargo[lot].where == .aircraft: aboard = true; break
+        if aboard: break
+    if not aboard:
+        loop job in w.aircraft[craft].job_manifests:
+            if not (job in w.jobs) or w.jobs[job].loaded: continue
+            loop id in w.jobs[job].cargo_ids:
+                if id in w.cargo and cargo_craft(w,w.cargo[id]) == craft: aboard = true; break
+            if aboard: break
+    if not aboard: return -1
+    scope = guard_begin(w)
+    place = nearest_harbor(w,at)
+    anchor = w.harbors[place].safe_water
+    reason = Reason(purpose=.rescue,actor=p)
+    event = emit_event(w,.ditch,-1,p,-1,reason,0,false,at)
+    id = w.next_aftermath; w.next_aftermath += 1
+    w.aftermath[id] = Aftermath(id=id,kind=.crate,event=event,owner=w.aircraft[craft].owner,craft=craft,place=place,pos=anchor,inventory=Inventory(),reason=reason,created_minute=w.minute,expires_minute=-1)
+    ok = _wreck_cargo_salvage(w,craft,id,place)
+    failed = guard_failed(scope)
+    guard_finish(w,scope)
+    if ok and not failed: id else: -1
+
 # One ditch identity and one salvage location, irrespective of later materialization.
 _guarded_ditch = (w: mut World, craft: int, reason: Reason) -> int:
     if craft < 0 or craft >= w.aircraft.len(): return -1
@@ -91,27 +171,11 @@ _guarded_ditch = (w: mut World, craft: int, reason: Reason) -> int:
     event = emit_event(w,.ditch,-1,p,-1,reason,0,false,anchor)
     id = w.next_aftermath; w.next_aftermath += 1
     w.aftermath[id] = Aftermath(id=id,kind=.beach_wreck,event=event,owner=w.aircraft[craft].owner,craft=craft,place=place,pos=anchor,inventory=Inventory(),reason=reason,created_minute=w.minute,expires_minute=-1)
-    losses: {int: int}
-    loop _, lot in w.cargo:
-        if cargo_craft(w,lot) == craft and lot.job >= 0: losses[lot.job] = losses.get(lot.job,0)+lot.quantity
-    loop g in 0..GOOD_COUNT:
-        qty = cargo_aboard_quantity(w,craft,g)
-        reserved = 0
-        loop _, lot in w.cargo:
-            if cargo_craft(w,lot) == craft and lot.good == g and lot.job >= 0: reserved += lot.quantity
-        if not (cargo_move(w,.aircraft,craft,.aftermath,id,g,qty,-1,place,-2,true)):
-            living_fault("living_weather.ditch.0",guard_context(w)+" craft={craft}")
-            return -1
-        w.aircraft[craft].cargo.qty[g] -= qty
-        w.aircraft[craft].cargo.reserved[g] -= reserved
-        w.aftermath[id].inventory.qty[g] += qty
-    sealed = cargo_aboard_quantity(w,craft,-1)
-    if not (cargo_move(w,.aircraft,craft,.aftermath,id,-1,sealed,-1,place,-2,true)):
-        living_fault("living_weather.ditch.1",guard_context(w)+" craft={craft}")
-        return -1
+    if not _wreck_cargo_salvage(w,craft,id,place): return -1
+    # An abstract passenger trip fails as a trip, separately from cargo salvage.
     loop job in w.aircraft[craft].job_manifests:
-        if w.jobs[job].state == .claimed:
-            w.jobs[job].lost_quantity += if w.jobs[job].cargo_mode == .none: w.jobs[job].loaded_quantity-w.jobs[job].delivered_quantity-w.jobs[job].lost_quantity else: losses.get(job,0)
+        if w.jobs[job].state == .claimed and w.jobs[job].cargo_mode == .none:
+            w.jobs[job].lost_quantity = w.jobs[job].loaded_quantity-w.jobs[job].delivered_quantity
     t = w.aircraft[craft].trip
     if t >= 0: w.trips[t].state = .failed; w.trips[t].terminal_minute = w.minute
     w.aircraft[craft].operator = -1

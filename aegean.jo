@@ -57,6 +57,7 @@ use 'src/cloud_depth.jo'
 use 'src/cloud_transparency.jo'
 use 'src/cloud_shadow.jo'
 use 'src/weather_scene.jo'
+from 'src/living_weather.jo' import player_wreck_cargo
 use 'src/rain.jo'
 use 'src/storm_render.jo'
 use 'src/storm_sound.jo'
@@ -5401,14 +5402,6 @@ click_took_mouse = false            # (the left button's press that took the mou
 # Cargo is saved living-world stock; the notebook only projects its current handling status.
 notebook = load_notebook()
 
-# who at a job's destination is waiting for it: whoever it is for, if they live there, else the
-# harbor's merchant
-recipient_of = (id: int) -> int:
-    j = living_world.jobs[id]
-    b = j.cause.beneficiary
-    if b >= 0 and b < living_world.people.len() and living_world.people[b].home == j.destination: return b
-    living_world.places[j.destination].market_owner
-
 # what a job carries, in a few words
 job_cargo = (id: int) -> str:
     j = living_world.jobs[id]
@@ -5522,7 +5515,7 @@ agree_cargo_job = (id: int, choice: lt.CarriageChoice) -> str:
         living_world.jobs[id].due_minute = living_world.minute + 720
         living_world.jobs[id].expire_minute = max(living_world.jobs[id].expire_minute, living_world.minute + 720 + 120)
         say_toast("{split(living_world.people[j.poster].name, " ")[0]}: Your first, is it? Take the day over it.")
-    rcv = living_world.people[recipient_of(id)].name
+    rcv = living_world.people[portage.cargo_receiver(living_world,id)].name
     status = portage.cargo_status(living_world,id)
     pin_notice(notebook,id,j.poster,"{job_cargo(id)} to {rcv}","By {clock_text(living_world,j.due_minute)}; {phoenix_text(living_world.jobs[id].reward_cents)}. From {living_world.people[j.poster].name}.",clock_text(living_world,living_world.minute))
     log_note(notebook,"Agreed to {if j.delivery_mode == .foot: "carry" else: "fly"} {job_cargo(id)} for {rcv}. {status}",clock_text(living_world,living_world.minute))
@@ -7887,7 +7880,7 @@ if capture_delivery >= 0 and capture_delivery < towns.len():
             living.advance_minutes(living_world, 1); waited += 1
         print("DELIVERY loaded {living_world.jobs[capture_delivery_job].loaded} after {waited} minutes")
         sync_folk(folks, living_world, towns)
-        print("DELIVERY took {took} job {capture_delivery_job} {job_cargo(capture_delivery_job)} for {living_world.people[recipient_of(capture_delivery_job)].name}; {portage.cargo_status(living_world, capture_delivery_job)}")
+        print("DELIVERY took {took} job {capture_delivery_job} {job_cargo(capture_delivery_job)} for {living_world.people[portage.cargo_receiver(living_world,capture_delivery_job)].name}; {portage.cargo_status(living_world, capture_delivery_job)}")
         # (cast off as a pilot does, so the world has the trip the mooring will end)
         _ = living_scene.scene_player_departure(living_world)
         # (boarding, taking off and the flight over: an hour of the world's while she is away)
@@ -9536,7 +9529,9 @@ help_drop = ():
     global sos
     if sos.vessel >= 0:
         retire_vessel(vessels, sos.vessel)
-        if sos.lane >= 0: retire_sea_lane(vessels, sos.lane)
+        if sos.lane >= 0:
+            if sos.need == .pickup and vessels.search.lane == sos.lane: vessels.search = SeaSearch()
+            retire_sea_lane(vessels, sos.lane)
     if sos.hidden >= 0 and sos.hidden < living_world.far.vehicles.len():
         j = living_world.far.vehicles[sos.hidden].journey
         if j >= 0 and j in living_world.far.journeys: living_world.far.journeys[j].hold_until_tick = living_world.tick
@@ -9548,7 +9543,15 @@ help_drop = ():
     if sos.stage == .towing: rope.tied = false
     # (taken off and the help gone wrong: back in one's own cockpit, not left as a camera)
     if sos.aboard and me.mode == .free:
-        me.mode = .aboard; pc.placed = false
+        if sos.need == .pickup:
+            me.mode = .descent
+            loop n in 0..battle.descents.len():
+                i = battle.descents.len() - 1 - n
+                if battle.descents[i].person == living_world.player and battle.descents[i].phase == .swimming:
+                    battle.descents[i].released = false
+                    break
+        else:
+            me.mode = .aboard; pc.placed = false
     sos = HelpCall()
 
 # The call: the flight first (fuel only), then a passing ship, then a harbour's launch.
@@ -9649,7 +9652,93 @@ help_call = (flare: bool):
     else if ship >= 0: help_say(station, "{capital(name)} is nearest you; she's turning your way. {capital(help_eta_words(eta))}.")
     else: help_say(station, "We'll send the launch out to you. {capital(help_eta_words(eta))}.")
 
+# The pilot and the aircraft can be kilometres apart after a bailout. A launch
+# answers the swimmer, and only carries the pilot.
+pickup_harbour = (at: vec3) -> int:
+    c = combat_index(battle, living_world.people[living_world.player].craft)
+    if c >= 0 and active_scenario != "":
+        if let h = help_base(battle.actors[c].side):
+            if active_scenario == "strait" and not pc.spec.landplane and h.place < 0 and h.name == TENDER_NAME: return TENDER_PLACE
+            if h.place >= 0 and vessel_berth(h.place, .canal_launch) != none: return h.place
+    help_harbour(at, 1e9)
+
+pickup_launch = (at: vec3, search: bool) -> bool:
+    global sos, sos_serial
+    dest = pickup_harbour(at)
+    if dest < 0 and dest != TENDER_PLACE: return false
+    kind = VesselKind.canal_launch
+    spec = vessel_spec(kind)
+    tender = dest == TENDER_PLACE
+    berth = if tender: (tender_launch_at().xz, true) else: vessel_berth(dest, kind)
+    if berth == none: return false
+    start = berth!.0
+    name = if tender: "{TENDER_NAME}'s launch" else: "the launch from {help_harbour_name(dest)}"
+    way = normalize(start - at.xz + vec2(0.0001, 0))
+    end = at.xz + way * 24
+    if search or length(start - at.xz) > 2500.0 or not pickup_channel(end + way * 12, end, spec):
+        if let approach = pickup_search_approach(at.xz, spec):
+            start = approach.0; end = approach.1
+            name = "a fishing boat"
+        else: return false
+    id = HELP_VESSEL + sos_serial + 1
+    lane = request_sea_lane(vessels, -1, -1, start, end, spec.draft, spec.beam * 0.5 + 2.0, anchorage = true)
+    if lane < 0: return false
+    yaw = atan2(f64(end.x - start.x), f64(end.y - start.y))
+    if not spawn_vessel(vessels, Vessel(id = id, kind = kind, owner = 0, lane = lane, position = vec3(start.x, 0, start.y), yaw = yaw, status = .waiting_route)):
+        retire_sea_lane(vessels, lane)
+        return false
+    sos_serial += 1
+    sos = HelpCall(stage = .routing, by = .launch, need = .pickup, name = name, kind = kind, vessel = id, lane = lane,
+        harbour = dest, harbour_name = if tender: TENDER_NAME else: help_harbour_name(dest), alongside = vec3(end.x, at.y, end.y))
+    say_toast("{capital(name)} is coming for you.")
+    true
+
 capital = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper() + s[1..]
+
+pickup_step = ():
+    if sos.stage == .done or skip.active: return
+    k = vessel_index(vessels, sos.vessel)
+    if k < 0:
+        help_drop()
+        return
+    v = vessels.ships[k]
+    li = sea_lane_index(vessels, sos.lane)
+    if sos.stage == .routing:
+        if li >= 0 and vessels.lanes[li].status == .ready:
+            sos.stage = .coming; sos.since = 0.0
+        else if li < 0 or vessels.lanes[li].status == .blocked or sos.since > 12.0:
+            help_drop()
+            _ = pickup_launch(me.pos, true)
+    else if sos.stage == .coming:
+        if v.status == .docked or v.status == .anchored:
+            if length(v.position.xz - me.pos.xz) > 90.0:
+                help_drop()
+                _ = pickup_launch(me.pos, true)
+            else:
+                sos.stage = .alongside; sos.since = 0.0
+        else if v.status == .stopped:
+            help_drop()
+            _ = pickup_launch(me.pos, true)
+        else if sos.since > 20.0 and lane_left(vessels, v) >= SEEN_COMING + 20.0:
+            help_wait()
+        else if sos.since > 45.0:
+            help_drop()
+            _ = pickup_launch(me.pos, true)
+    else if sos.stage == .alongside:
+        if not sos.aboard:
+            help_board(boat_deck_seat(v).0)
+        else if help_aboard_done():
+            sos.stage = .carrying; sos.since = 0.0
+            to = if sos.harbour == TENDER_PLACE: (tender_tow_end(others_at()), true) else: vessel_berth(sos.harbour, sos.kind)
+            if let berth = to:
+                spec = vessel_spec(sos.kind)
+                lane = request_sea_lane(vessels, -1, sos.harbour, v.position.xz, berth.0, spec.draft, spec.beam * 0.5 + 2.0, berth.1)
+                if lane >= 0 and set_vessel_route(vessels, sos.vessel, lane):
+                    retire_sea_lane(vessels, sos.lane)
+                    sos.lane = lane
+    else if sos.stage == .carrying:
+        if sos.since > 8.0 or vpressed(.f):
+            help_wait()
 
 # Each frame aboard: the wingman down and alongside, the cans; the boat routed, coming, alongside,
 # the tow under way, in at the harbour.
@@ -9657,6 +9746,10 @@ help_step = (dt: f64):
     global sos, sos_wreck_tilt, sos_tried, help_tow_at, help_tow_h
     if sos.stage == .none: return
     sos.since += dt
+    if sos.need == .pickup:
+        if me.mode != .descent and not sos.aboard: help_drop()
+        else: pickup_step()
+        return
     if me.mode != .aboard and not sos.aboard:
         help_drop()
         return
@@ -9799,10 +9892,17 @@ help_swim_s = 0.0
 help_board = (to: vec3):
     global help_from, help_in_water, help_swim_to, help_swim_s
     sos.aboard = true; sos.climbed = t
-    help_from = pc.state.position + quat_rotate(pc.state.orientation, ride_seat(player_model()) - vec3(0, 1.2, 0))
-    across = vec3(to.x - pc.state.position.x, 0, to.z - pc.state.position.z)
+    at = if sos.need == .pickup: me.pos else: pc.state.position
+    across = vec3(to.x - at.x, 0, to.z - at.z)
     way = normalize(across + vec3(0.0001, 0, 0))
-    help_in_water = vec3(pc.state.position.x, 0, pc.state.position.z) + way * f32(pc.spec.span * 0.12 + 1.0)
+    help_in_water = vec3(at.x, 0, at.z)
+    if sos.need == .pickup:
+        help_from = vec3(at.x, f32(swim_level(f64(at.x), f64(at.z)) - 0.5), at.z)
+        loop mut d in battle.descents:
+            if d.person == living_world.player and not d.released and d.phase == .swimming: d.released = true
+    else:
+        help_from = at + quat_rotate(pc.state.orientation, ride_seat(player_model()) - vec3(0, 1.2, 0))
+        help_in_water += way * f32(pc.spec.span * 0.12 + 1.0)
     help_swim_to = vec3(to.x, 0, to.z) - way * f32(if sos.by == .wingman: 1.2 else: vessel_spec(sos.kind).beam * 0.5 + 0.4)
     help_swim_s = f64(length(help_swim_to - help_in_water)) / SWIM_PACE
     me.mode = .free
@@ -9900,8 +10000,7 @@ help_carried_home = ():
     at = dock ?? (h.dock + h.step * 6.0, h.heading)
     pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, at.0, at.1)
     pc.spec.player = true
-    ci = combat_index(battle, living_world.people[living_world.player].craft)
-    if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, 0, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model)
+    rebind_player_combatant()
     pc.placed = false
     rope.tied = false
     if at_tender:
@@ -10002,10 +10101,10 @@ help_pilot_home = ():
 help_card = () -> str:
     match sos.stage:
         .routing: "{capital(sos.name)} is putting out."
-        .coming: "{capital(sos.name)} is coming.   C  R/T"
+        .coming: if sos.need == .pickup: "{capital(sos.name)} is coming." else: "{capital(sos.name)} is coming.   C  R/T"
         .alongside: "{capital(sos.name)} is alongside."
         .towing: if sos.aboard: "Aboard {sos.name}, the aircraft in tow, for {sos.harbour_name}.   F  skip ahead" else: "Under tow to {sos.harbour_name}.   C  R/T"
-        .carrying: if help_carrier_up(): "In {sos.name}'s second seat, for {sos.harbour_name}.   F  skip ahead" else: "In {sos.name}'s second seat."
+        .carrying: if sos.need == .pickup: "Aboard {sos.name}, bound for {sos.harbour_name}.   F  skip ahead" else: if help_carrier_up(): "In {sos.name}'s second seat, for {sos.harbour_name}.   F  skip ahead" else: "In {sos.name}'s second seat."
         _: ""
 
 # Stopped a while (seconds of it counted while near and slow).
@@ -10025,6 +10124,15 @@ help_boat_speed = (id: int) -> f64:
 # found nearly there (coming: the last of the way seen) or in at the harbour (under tow).
 help_wait = ():
     global sos_skip
+    if sos.need == .pickup and sos.stage == .carrying:
+        k = vessel_index(vessels, sos.vessel)
+        if k < 0: return
+        v = vessels.ships[k]
+        to = if sos.harbour == TENDER_PLACE: TENDER_AT else: help_harbour_at(sos.harbour)
+        distance = max(lane_left(vessels, v), f64(length(v.position.xz - to.xz)))
+        sos.stage = .done
+        leisure_skip(help_minutes(distance, help_boat_speed(sos.vessel)), "taken to {sos.harbour_name}", after = 6)
+        return
     if sos.by == .pilot and sos.stage == .carrying:
         k = help_traffic_index()
         if k < 0: return
@@ -10079,15 +10187,34 @@ help_arrive = ():
     if dock == none:
         help_drop()
         return
+    if sos.need == .pickup:
+        # The harbour recovers the abandoned aircraft separately, as in the
+        # existing carried-home help. The pilot is never put back in the wreck.
+        if pc.spec.landplane:
+            pc = landplane_at_airfield(pc.kind, pc.model, dock!.0)
+        else:
+            pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock!.0, dock!.1)
+        pc.spec.player = true; pc.placed = false
+        rebind_player_combatant()
+        rope.tied = false
+        me.mode = .aboard
+        if not at_tender:
+            tie_up()
+            step_ashore(dock!.0)
+            sync_walker_point()
+        if at_tender: me.pos = pc.state.position
+        follow.placed = false
+        mouse_lock(false)
+        say_toast("Picked up and brought safely to {sos.harbour_name}.")
+        log_note(notebook, "Picked up after bailing out and brought to {sos.harbour_name}.", clock_text(living_world, living_world.minute))
+        help_drop()
+        return
     if pc.state.moored: unmoor(pc.state)
     if pc.state.crashed or pc.state.capsized:
         # (a wreck: patched up at the harbour, as the old tow home had it)
         pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock!.0, dock!.1)
         pc.spec.player = true
-        ci = combat_index(battle, living_world.people[living_world.player].craft)
-        # (the same side and engagement as before: towed in, still one of them, so a fight lost
-        # hands back on arrival like one won)
-        if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, battle.actors[ci].side, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model, engagement = battle.actors[ci].engagement)
+        rebind_player_combatant()
         pc.placed = false
     else:
         moor(pc.state, vec3(dock!.0.x, f32(pc.spec.float_height), dock!.0.z), dock!.1)
@@ -10605,19 +10732,34 @@ aboard_offers = () -> Offer[]:
     if race >= 0: offer_add(o, "race", offer_words(race_offer_text(air_events, living_world, race)))
     o
 
-offers_now = () -> Offer[]: if me.mode == .aboard: aboard_offers() else: walk_offers()
+descent_offers = () -> Offer[]:
+    out: Offer[]
+    loop d in battle.descents:
+        if d.person != living_world.player or d.released or d.phase != .swimming: continue
+        if sos.stage == .none: offer_add(out, "pickup-flare", "fire a flare", .t)
+        else if sos.stage == .coming: offer_add(out, "pickup-wait", "wait for the boat", .f)
+        break
+    out
+
+offers_now = () -> Offer[]:
+    if me.mode == .aboard: aboard_offers() else: if me.mode == .descent: descent_offers() else: walk_offers()
 
 # Brought home from wherever she is: towed to a free dock, or a landplane carried to its aerodrome,
 # and patched up (the bill comes later)
+rebind_player_combatant = ():
+    ci = combat_index(battle, living_world.people[living_world.player].craft)
+    if ci < 0: return
+    previous = battle.actors[ci]
+    battle.actors[ci] = Combatant(previous.craft, living_world.player, previous.side, pc.spec, pc.state,
+        external = true, human = true, previous = pc.state.position, model = pc.model, engagement = previous.engagement)
+
 fetch_home = ():
     global pc
     dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
     # (a landplane is towed to its airfield, not to a dock)
     pc = if pc.spec.landplane: landplane_at_airfield(pc.kind, pc.model, pc.state.position) else: make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
     pc.spec.player = true
-    ci=combat_index(battle,living_world.people[living_world.player].craft)
-    # (the same side and engagement as before: towed home, still one of them)
-    if ci>=0:battle.actors[ci]=Combatant(battle.actors[ci].craft,living_world.player,battle.actors[ci].side,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=pc.model,engagement=battle.actors[ci].engagement)
+    rebind_player_combatant()
     pc.placed = false
     tie_up()
 
@@ -10891,7 +11033,7 @@ update_frame = (dt: f64, saves: bool = true):
     if not mouse_down(.left):
         global click_took_mouse
         click_took_mouse = false
-    if vpressed(.f2) and not typing and not presentation.thermal.active and not launch.active and not sos.aboard: me.mode = if me.mode == .free: Mode.walking else: Mode.free
+    if vpressed(.f2) and not typing and not presentation.thermal.active and not launch.active and not sos.aboard and me.mode != .descent: me.mode = if me.mode == .free: Mode.walking else: Mode.free
     # (only while the card can be seen: a battle met behind a panel keeps its card for later)
     if (me.mode == .aboard or me.mode == .walking) and frame_number() % 20 == 0 and not paused and not show_chart and ui == .none:
         global battle_card, presentation
@@ -11082,7 +11224,7 @@ update_frame = (dt: f64, saves: bool = true):
                       # (someone whose cargo one has brought sees it)
                       loop id in living_world.active_jobs:
                           j = living_world.jobs[id]
-                          if j.state == .claimed and j.carrier == living_world.player and j.loaded and j.destination == folks[k].place and recipient_of(id) == folks[k].person:
+                          if j.state == .claimed and j.carrier == living_world.player and j.loaded and j.destination == folks[k].place and portage.cargo_receiver(living_world,id) == folks[k].person:
                               ui_line = "Is that {job_cargo(id)} from {living_world.people[j.poster].name}?"
                       ui_news = 0
                       mouse_lock(false)
@@ -11130,6 +11272,12 @@ update_frame = (dt: f64, saves: bool = true):
                 d.steering=flat_forward(descent_camera.look)*-move.y+flat_right(descent_camera.look)*move.x
                 d.open_requested=vpressed(.t)
                 me.pos=d.position
+                if d.phase == .swimming:
+                    act = if typing: "" else: offer_pressed(descent_offers())
+                    if act == "pickup-flare": help_flare(d.position)
+                    if act == "pickup-wait": help_wait()
+                    if sos.stage == .none and (act == "pickup-flare" or (d.age - max(0.0, d.wet) >= 4.0 and frame_number() % 30 == 0)):
+                        _ = pickup_launch(d.position, false)
                 if d.phase==.landed:
                     me.mode=.walking;d.released=true;follow.placed=false
         .aboard:
@@ -11401,7 +11549,7 @@ update_frame = (dt: f64, saves: bool = true):
         j = living_world.jobs[id]
         if j.state == was: continue
         my_jobs[id] = j.state
-        rcv = living_world.people[recipient_of(id)].name
+        rcv = living_world.people[portage.cargo_receiver(living_world,id)].name
         dest = SETTLEMENTS[j.destination].name
         now = clock_text(living_world, living_world.minute)
         match j.state:
@@ -11505,6 +11653,8 @@ update_frame = (dt: f64, saves: bool = true):
     # Combat parts already supplied this tick's world condition; do not heal them through the
     # older nonlinear wear projection. Outside combat retain the existing service adapter.
     if ci<0 or (battle.actors[ci].last_attacker<0 and not battle.actors[ci].bailed):sync_living_player(pc,living_world)
+    if not world_held() and (pc.state.crashed or pc.state.capsized or (ci >= 0 and battle.actors[ci].bailed)):
+        _ = player_wreck_cargo(living_world, pc.state.position)
     if me.mode==.aboard:pc.jolt=max(pc.jolt,combat_visual.hit)
     update_combat_view(combat_visual,battle,wind_now_vec(),dt,scene_camera())
     if startup_aegean_runtime_trace!=none and floor(t)!=floor(t-dt):
@@ -12366,7 +12516,10 @@ draw = ():
             else if pc.state.beached: prompt_card(fonts, if pc.spec.landplane: "Run aground.  R  to be towed to the aerodrome" else: "Run aground.  R  call for help", 180.0)
             else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
             else: draw_offers(aboard_offers(), 196.0)
-        .descent: pass
+        .descent:
+            if not skip.active:
+                if sos.stage != .none: prompt_card(fonts, help_card(), 150.0)
+                draw_offers(descent_offers(), 90.0)
         .free:
             if launch.active:
                 if not skip.active: prompt_card(fonts, if launch.outward: "F  skip the ride out" else: "F  skip the ride ashore", 90.0)
@@ -12805,7 +12958,7 @@ draw_ui = ():
                         answers.push("To {SETTLEMENTS[j.destination].name}: I'll fetch and load {job_cargo(id)}.")
             loop id in living_world.active_jobs:
                 j = living_world.jobs[id]
-                if j.state == .claimed and j.carrier == living_world.player and (j.loaded or j.delivery_mode == .foot) and j.destination == f.place and recipient_of(id) == f.person:
+                if j.state == .claimed and j.carrier == living_world.player and (j.loaded or j.delivery_mode == .foot) and j.destination == f.place and portage.cargo_receiver(living_world,id) == f.person:
                     handovers.push(id); handover_choices.push(.automatic)
                     answers.push("I've brought {job_cargo(id)} from {living_world.people[j.poster].name}.")
                     if j.delivery_mode == .aircraft and j.cargo_mode != .none:
