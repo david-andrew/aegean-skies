@@ -86,9 +86,14 @@
   const OLD_MOBILE_GPU = /Adreno \(TM\) [1-5]\d\d\b|Mali-[T4]|Mali-G(31|51|52|57|71|72)\b|PowerVR|SwiftShader|llvmpipe/i;
   function prepareShader(source) {
     // On the V60's Adreno 650, reading gl_FragCoord.w through the generated
-    // fragment input struct can yield the wrong depth. Read the same builtin
-    // directly for the Sloppy 0.40.0 log-depth call. Its formula and the
-    // set_depth output stay compiler generated.
+    // fragment input struct can yield the wrong depth. Sloppy 0.41.0 compiles
+    // reads of the input's position straight to gl_FragCoord in most log-depth
+    // calls (58 of 60 shaders), so this matches nothing there. It still matters for
+    // wild_fs_log and vessel_smoke_fragment_log, which pass the input struct on to
+    // the material function and keep `l_i_0.pos_.w`: a gull then draws in front of a
+    // nearer lamp post on the V60's forced log-depth fallback. Read the same
+    // builtin directly in that call. Its formula and the set_depth output stay
+    // compiler generated. Drop this when Sloppy rewrites those two as well.
     const glsl = specializeUniforms(source);
     return glsl.replace(/(gl_FragDepth = f_world_depth_encode_\d+\(\(1\.0 \/ )l_\w+\.pos_\.w(?=\)\))/g,
       "$1gl_FragCoord.w");
