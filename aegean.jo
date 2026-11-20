@@ -195,6 +195,7 @@ use 'src/reputation.jo'
 use 'src/reputation_talk.jo'
 use 'src/pilot_day_types.jo'
 use 'src/pilot_talk.jo'
+use 'src/town_chat.jo'
 use 'src/leads.jo'
 use 'src/adrift_types.jo'
 use 'src/living_adrift.jo'
@@ -601,46 +602,62 @@ company_line = ""                # (what they said last, and until when it shows
 company_line_until = -1.0
 # The pilot's small talk (src/pilot_talk.jo; the option "Your pilot makes small talk"): what he did
 # today, his answer waiting to be said (a moment after the remark), and the line he is saying.
-pilot_reply = ""
-pilot_reply_due = -1.0
-pilot_line = ""
-pilot_line_until = -1.0
-pilot_talk_seq = 0
+town_speech = TownSpeech()
+pilot_chat_trace = env("AEGEAN_SMALL_TALK")
 flight_on = false                # (a flight under way: the worst of the air met on it, and where from)
 flight_storm = 0.0
 flight_rain = 0.0
 flight_wind = 0.0
 flight_from = ""
 
-# Someone passed him a remark: he may answer it, a moment later.
-pilot_respond = (topic: SmallTopic, deed: int, sat_with: bool):
-    global pilot_reply, pilot_reply_due, pilot_talk_seq
-    if not options.small_talk or pilot_reply_due >= 0.0: return
-    roll = if env("AEGEAN_SMALL_TALK") == "always": 0.0 else: random(0.0, 1.0)
-    if not pilot_answers(topic, sat_with, roll): return
-    pilot_talk_seq += 1
-    said = pilot_answer(living_world, living_world.pilot_day, topic, deed, weather_here.rain > 0.3, f64(length(weather_here.wind)), pilot_talk_seq)
-    if said == "": return
-    pilot_reply = said; pilot_reply_due = t + 2.2
+# A deliberate walk to an action, carrying a load, or a panel needs the pilot's attention.
+chat_busy = () -> bool:
+    if me.mode != .walking or menus_open() or job.active or foot_goal >= 0 or me.stride > 0.85: return true
+    if swim.active or gaze.active or stay.active or cat_busy(cat_scene) or fish_hands_busy() or holding_cargo() >= 0: return true
+    if me.stride > 0.2:
+        here = lt.person_place(living_world,living_world.player)
+        loop id in living_world.active_jobs:
+            j = living_world.jobs[id]
+            if j.state == .claimed and j.carrier == living_world.player and (j.origin == here or j.destination == here): return true
+    false
 
-# What was just said to him by `speaker`, read off their last line: a deed of his, or his name.
-pilot_heard_topic = (speaker: int, otherwise: SmallTopic) -> (SmallTopic, int):
-    if let l = last_spoken(living_world, speaker):
-        if l.key.starts_with("rep-deed:"):
-            parts = split(l.key, ":")
-            if parts.len() >= 2:
-                if let id = to_int(parts[1]): return (.deed, id)
-        if l.key.starts_with("rep-heard"): return (.heard, -1)
-    (otherwise, -1)
+chat_at = (speaker: int, place: int, seated: bool) -> str:
+    global town_speech
+    if world_held(): return ""
+    c = ChatContact(speaker,place,seated=seated,busy=chat_busy(),rain=weather_here.rain > 0.3,
+        wind=f64(length(weather_here.wind)),answers=options.small_talk,first_at_table=seated and not company_greeted,
+        forced=pilot_chat_trace == "always" or env("AEGEAN_LEADS") == "always")
+    turn = town_chat(living_world,presentation.town_chat,c,() -> MeetNote[]?:
+        if _lead_now(if seated: 0.33 else: 0.14): _lead_meets() else: none)
+    if turn.opening != "":
+        town_speech = TownSpeech(speaker,seated,turn,t)
+        if pilot_chat_trace != none: print("TOWN {living_world.people[speaker].name}: {turn.opening}")
+    turn.opening
 
-# Each frame: his answer said when due; the flight's air noted while aboard and in the air, and the
-# flight kept among the day's doings when it ends.
+# Run after input, including frames that opened a menu or paused the world.
+pilot_reply_frame = ():
+    global town_speech
+    if ui == .talk and ui_folk >= 0 and ui_folk < folks.len():
+        f = folks[ui_folk]
+        n = presentation.town_chat.len()
+        if n == 0 or presentation.town_chat[n-1] != ChatVisit(living_world.minute,f.person,f.place,"conversation"):
+            chat_remember(presentation.town_chat,living_world.minute,f.person,f.place,"conversation")
+    if town_speech.speaker < 0: return
+    seated = seat_view()
+    listener = -1
+    if seated and company.stage == .sitting: listener = company.person
+    else if not seated and me.mode == .walking:
+        k = nearest_folk(folks,me.pos,7.0)
+        if k >= 0: listener = folks[k].person
+    was = town_speech
+    chat_step(town_speech,t,listener,seated,chat_busy(),options.small_talk)
+    if was.seated and town_speech.speaker < 0 and company_line == was.turn.opening:
+        global company_line_until
+        company_line_until = -1.0
+    if pilot_chat_trace != none and not was.answered and town_speech.answered: print("PILOT says: {town_speech.turn.reply}")
+
 pilot_talk_frame = ():
-    global pilot_reply_due, pilot_line, pilot_line_until, flight_on, flight_storm, flight_rain, flight_wind, flight_from
-    if pilot_reply_due >= 0.0 and t >= pilot_reply_due:
-        pilot_reply_due = -1.0
-        if options.small_talk: pilot_line = pilot_reply; pilot_line_until = t + 4.5
-        if env("AEGEAN_SMALL_TALK") != none: print("PILOT says: {pilot_reply}")
+    global flight_on, flight_storm, flight_rain, flight_wind, flight_from
     st = pc.state
     up = me.mode == .aboard and not st.on_water and not st.moored and not st.on_ground and not st.crashed
     if up and not flight_on:
@@ -659,18 +676,11 @@ _lead_meets = () -> MeetNote[]: [loop m in air_events.meets: MeetNote(id = m.id,
 # What `person` mentions now, if anything they haven't said today: their words ("" if nothing).
 # (who has told him which lead is the world's, saved with it: World.rep.told_leads)
 tell_lead = (person: int) -> str:
-    day = lt.day_index(living_world.minute)
-    if let l = lead_to_tell(living_world, person, _lead_meets(), living_world.rep.told_leads):
-        lead_told_now(living_world, person, l)
-        line = lead_line(living_world, l, person, person + day)
-        if env("AEGEAN_LEADS") != none: print("LEAD {living_world.people[person].name}: {line} ({l.key})")
-        return line
-    ""
+    chat_lead(living_world,person,_lead_meets())
 # (how often a lead comes up: asked what they've heard, half the time; a third of the table's
 # remarks; one passing remark in seven. AEGEAN_LEADS=always: whenever there is one)
 _lead_now = (chance: f64) -> bool: env("AEGEAN_LEADS") == "always" or random(0.0, 1.0) < chance
 
-company_remarks = 0              # (remarks made at the table so far: the weather and their work, turn about)
 company_greeted = false          # (their first word said: one who has heard of him says so first)
 waiter = Waiter()                # (whoever brings what is ordered: the hotel's waiter, the barkeep, the coffee house's boy)
 taking = Taking()                # (the pilot and what is in front of him)
@@ -2430,7 +2440,7 @@ rep_ask_k = -1
 rep_talk_due = -1.0               # (capture: the talk begun a moment after the scene is seen)
 
 company_tick = (dt: f64):
-    global company, company_line, company_line_until, leisure_ui, company_remarks, rep_ask_due, rep_talk_due
+    global company, company_line, company_line_until, leisure_ui, rep_ask_due, rep_talk_due
     if rep_talk_due >= 0.0 and t >= rep_talk_due:
         rep_talk_due = -1.0
         _leisure_talk(rep_ask_k)
@@ -2458,20 +2468,9 @@ company_tick = (dt: f64):
     st = company_step(company, t, dt, leisure.sitting != "", (x: f64, z: f64) -> f64: walk_height(towns, x, z))
     if st.asks and leisure.sitting != "" and ui == .leisure and leisure_ui == 0: leisure_ui = 14
     if st.speak:
-        # (the first word, from one who has heard of him: what they heard; src/reputation_talk.jo)
         global company_greeted
-        greeting = not company_greeted and rep_view(living_world, company.person).known
-        line = if greeting: living.talk(living_world, company.person, .greeting, living_world.player).text else: ""
-        company_greeted = true
-        # (the pilot may answer: what they heard of him, their day or the weather; src/pilot_talk.jo)
-        if line != "":
-            heard = pilot_heard_topic(company.person, .day)
-            if heard.0 != .day: pilot_respond(heard.0, heard.1, true)
-        if line == "" and _lead_now(0.33): line = tell_lead(company.person)
-        if line == "":
-            company_remarks += 1
-            line = table_remark(living_world, company.person, company_remarks)
-            if line != "": pilot_respond(if company_remarks % 2 == 1: SmallTopic.day else: SmallTopic.weather, -1, true)
+        line = chat_at(company.person,lt.person_place(living_world,company.person),true)
+        if line != "": company_greeted = true
         if env("AEGEAN_COMPANY") != none: print("COMPANY says {living_world.people[company.person].name}: {line}")
         if line != "":
             company_line = line; company_line_until = t + 7.0
@@ -2546,9 +2545,9 @@ draw_tip_thanks = ():
 
 draw_company_talk = ():
     # (the pilot's own word, over his head)
-    if pilot_line != "" and t < pilot_line_until:
+    if town_speech.answered:
         ph = me.pos + vec3(0, if leisure.sitting != "": 1.25 else: 1.75, 0)
-        speech_bubble(fonts, ph, "", pilot_line, f64(length(ph - scene_camera())))
+        speech_bubble(fonts, ph, "", town_speech.turn.reply, f64(length(ph - scene_camera())))
     if company.stage == .none or company.person < 0: return
     head = company.pos + vec3(0, if company.stage == .sitting: 1.25 else: 1.7, 0)
     name = split(living_world.people[company.person].name, " ")[0]
@@ -5826,6 +5825,8 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     radio.radio_silence(cockpit_radio);cockpit_radio=radio.Radio()
     broadcast.radio_place_transmitters(cockpit_radio,height)
     radio_bulletin=broadcast.RadioBulletinCache();radio_card_until=-1
+    global town_speech
+    town_speech = TownSpeech()
     living_world=next.world;pc=next.flyer;battle=next.battle
     hush_homeward(homeward);homeward=HomewardView()
     band_publish(living_world, band_numbers(hotel), BAR_START, BAR_END, int(BAR_GAP * 60.0))
@@ -6035,6 +6036,8 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     life_audio.hush_life_audio(life_sound);ambience_hush(world_ambience.sound);radio.radio_silence(cockpit_radio)
     set_speed_scale(session.speed);lt.scale_airframes(session.speed);set_lift_scale(session.lift);set_bullet_scale(session.bullets)
     dbg.tweaks=session.feel;set_tweaks(session.feel)
+    global town_speech
+    town_speech = TownSpeech()
     living_world=game.world;presentation=game.presentation;pc=session.flyer;air_events=session.air
     band_publish(living_world, band_numbers(hotel), BAR_START, BAR_END, int(BAR_GAP * 60.0))
     traffic_scene=living_scene.SceneAdapter(accumulator=session.accumulator)
@@ -10572,6 +10575,7 @@ update = (dt: f64):
     living_scene.set_scene_minute_budget(if calm: MINUTE_FRAME_MS else: -1.0)
     if not calm: finish_held_minute(traffic,living_world,traffic_scene,battle)
     update_frame(dt)
+    pilot_reply_frame()
     # (in a browser: whether a panel is open, so the phone's Back closes it rather than the page)
     when TARGET == "wasm": __aegean_panel_open(i32(if menus_open(): 1 else: 0))
     step_game_save()
@@ -11427,21 +11431,17 @@ update_frame = (dt: f64, saves: bool = true):
     if me.mode == .walking and ui == .none and not world_held():
         k = nearest_folk(folks,me.pos,7.0)
         if k >= 0 and t-folks[k].line_t > 20.0 and not (welcome_active(living_world) and folks[k].person == living_world.welcome.greeter):
-            about = passing_topic(living_world, folks[k].person)
-            folks[k].line = passing_line(living_world,folks[k].person)
-            plain = folks[k].line != ""
-            if plain and _lead_now(0.14):
-                said = tell_lead(folks[k].person)
-                if said != "": folks[k].line = said; plain = false
-            # (one waiting for the pilot's cargo asks after it)
-            awaited = portage.cargo_awaited(living_world, folks[k].person)
-            if awaited >= 0: folks[k].line = if let e = errand_of(living_world, awaited): errand_waiting(living_world, e) else: "Is that {job_cargo(awaited)} from {split(living_world.people[living_world.jobs[awaited].poster].name, " ")[0]}?"
-            # (one who waited in the second seat and gave up says so, in passing)
-            if folks[k].person in ride_owed: folks[k].line = ride_gave_up_line(living_world.people[folks[k].person].traits.boldness < 450)
+            speaker = folks[k].person
+            awaited = portage.cargo_awaited(living_world,speaker)
+            if speaker in ride_owed:
+                folks[k].line = ride_gave_up_line(living_world.people[speaker].traits.boldness < 450)
+                ride_owed.remove(speaker)
+            else if awaited >= 0:
+                folks[k].line = if let e = errand_of(living_world,awaited): errand_waiting(living_world,e) else: "Is that {job_cargo(awaited)} from {split(living_world.people[living_world.jobs[awaited].poster].name, " ")[0]}?"
+            else:
+                folks[k].line = ""
+                _ = chat_at(speaker,folks[k].place,false)
             folks[k].line_t = t
-            # (and the pilot, now and then, answers in passing: src/pilot_talk.jo)
-            if plain and not (folks[k].person in ride_owed) and portage.cargo_awaited(living_world, folks[k].person) < 0: pilot_respond(if about == .home: SmallTopic.day else: SmallTopic.weather, -1, false)
-            if folks[k].person in ride_owed: ride_owed.remove(folks[k].person)
     if not world_held(): update_air_events(air_events,living_world,craft_models,pc.state.position,me.mode==.aboard,other_air=[loop tr in traffic:if tr.visible:AirContact(tr.craft,tr.state.position,tr.state.velocity,tr.town,tr.state.on_water,tr.state.moored)])
     else:
         # (while a world minute is in progress the club and the air arm fly on, as the scene's traffic does)
@@ -12194,7 +12194,8 @@ draw = ():
         loop e in near: name_tag(fonts, folks[e.1].pos + vec3(0, 1.7, 0), living_world.people[folks[e.1].person].name, e.0, tags)
         if k >= 0 and not (welcome_active(living_world) and folks[k].person == living_world.welcome.greeter):
             d = f64(length(folks[k].pos - me.pos))
-            speech_bubble(fonts, folks[k].pos + vec3(0, 1.7, 0), living_world.people[folks[k].person].name, folks[k].line, d, 8.0)
+            words = if not town_speech.seated and town_speech.speaker == folks[k].person: town_speech.turn.opening else: folks[k].line
+            speech_bubble(fonts, folks[k].pos + vec3(0, 1.7, 0), living_world.people[folks[k].person].name, words, d, 8.0)
     # Deterministic typography capture, using the real projected speech widget.
     if startup_aegean_capture_panel == "speech":
         speech_bubble(fonts, me.pos + vec3(0,1.7,0), "Nikos", "The fishing boats are back in the harbour.", 2.0, 8.0)
