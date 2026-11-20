@@ -153,22 +153,29 @@ sea_depth_coarse = (p: vec2, u: SeaParams) -> f32:
         depth = if abs(p.x) < 250000.0 and abs(p.y) < 200000.0: sample(u.world_depth, p / vec2(500000,400000) + vec2(0.5,0.5)).x * 60.0 else: 60.0
     depth
 
-sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut:
+# (storm_water, a constant: the storm sea's own variant, sea_storm_shaders: its seas peaked and
+# brought low over the shallows; off, exactly the ordinary sea's program)
+sea_vs_of = (v: SeaVertex, u: SeaParams, storm_water: bool) -> SeaOut:
     # The chart origin snaps, but its residual moves continuously. A snap
     # must not resample the displaced near rings or move any procedural phase.
     p = v.pos.xz + u.residual
     r = length(p - u.cam.xz)
     near = 1.0 - smoothstep(80.0, 260.0, r)
-    s = sea_swell(p,u,r)
-    if u.sea_storm.x > 0.0: s = s*sea_shoal(sea_depth_coarse(p+u.origin.xz,u),u.sea_storm.x,u.sea_storm.w)
+    s = sea_swell(p,u,r,storm_water)
+    if storm_water: s = s*sea_shoal(sea_depth_coarse(p+u.origin.xz,u),u.sea_storm.x,u.sea_storm.w)
     w = vec3(p.x, s.x * near, p.y)
     clip=u.view_proj * vec4(render_warped(w,u.cam,u.warp_a,u.warp_b),1)
     # (the colour's shadow is the screen pass's, cloud_shadow.jo; only the sun's
     # reflections need the water's own knowledge, and coarsely)
     SeaOut(clip,w,sun_lost=cloud_shadow_vertex(u.cloud_shadow,u.cloud_area,u.cloud_slope,vec3(w.x,0,w.z)))
 
+sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut: sea_vs_of(v,u,false)
+sea_storm_vs = (v: SeaVertex, u: SeaParams) -> SeaOut: sea_vs_of(v,u,true)
 sea_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
     i=sea_vs(v,u)
+    SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost)
+sea_storm_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
+    i=sea_storm_vs(v,u)
     SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost)
 
 
@@ -181,15 +188,16 @@ sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32,peak: f32 = 0.0) -> vec3
     sn=sin(phase);cs=cos(phase)
     # (a storm's swells: peaked crests and flatter troughs, a second harmonic as in a Stokes
     # wave, sea_wave_profile; peak 0 is the plain sine)
-    f=vec2(sn+peak*(2.0*sn*sn-1.0),cs*(1.0+4.0*peak*sn))
+    f=vec2(sn,cs)
+    if peak>0.0: f=vec2(sn+peak*(2.0*sn*sn-1.0),cs*(1.0+4.0*peak*sn))
     slope=height*f.y
     vec3(height*f.x,slope*band.x,slope*band.y)
 
-sea_swell = (p: vec2,u: SeaParams,dist: f32) -> vec3:
+sea_swell = (p: vec2,u: SeaParams,dist: f32,storm_water: bool = false) -> vec3:
     if dist>=u.sea_storm.z:return vec3(0,0,0)
     # Constant uniform indices avoid a per-pixel dynamic array loop on Intel.
     result=vec3(0,0,0)
-    a=u.wind.w;peak=u.sea_storm.y
+    a=u.wind.w;peak=if storm_water: u.sea_storm.y else: 0.0
     result += sea_swell_band(p,u.swell_phase[0],a*u.swell_gain[0].x,dist,peak)
     result += sea_swell_band(p,u.swell_phase[1],a*u.swell_gain[0].y,dist,peak)
     result += sea_swell_band(p,u.swell_phase[2],a*u.swell_gain[0].z,dist,peak)
@@ -404,13 +412,14 @@ _crest_strokes = (p: vec2, s: vec3, t: f32, wd: vec2, ws: f32, amp: f32, dist: f
 
 # A storm's foam on the sea (0..1) at p, with the swell s there (height, slopes) and the swells'
 # whole height. Breaking crests: the top of each big swell white where it steepens downwind, in
-# ragged patches. Streaks: the foam left behind, drawn out along the wind into long marbled veins
-# (the noise stretched about eight times along the wind, its mid-level contour drawn as lines),
-# drifting downwind, densest on the crests and thinning in the troughs. Lines about a pixel wide
-# near; far off, their average.
+# ragged patches. Behind them a dense marbled web: fine veins of foam (contours of two noises,
+# a little longer along the wind than across it), bent by a slow warp and by the waves' own
+# slopes so no line runs straight, with small patches where the veins gather; thick in the lee
+# of the breaking crests and thinning between them. Veins about a pixel wide near; far off,
+# their average.
 sea_storm_foam = (p: vec2, s: vec3, wd: vec2, t: f32, height: f32, dist: f32, storm: f32) -> f32:
     side = vec2(-wd.y, wd.x)
-    a = dot(p, wd) - t*3.0
+    a = dot(p, wd) - t*2.5
     b = dot(p, side)
     hn = s.x/max(height*0.5, 0.01)                     # (about -1 in a trough .. 1 on a crest)
     down = -(s.y*wd.x + s.z*wd.y)                      # (the downwind face falls away)
@@ -418,18 +427,25 @@ sea_storm_foam = (p: vec2, s: vec3, wd: vec2, t: f32, height: f32, dist: f32, st
     patch = vnoise(vec2(a*0.035, b*0.012) + vec2(0.0, t*0.04))
     crest = smoothstep(0.2, 0.6, hn + patch*0.5 - 0.25) * smoothstep(-0.04, 0.08, down + 0.08)
     crest = crest * smoothstep(0.46, 0.7, patch + 0.12*storm)
-    # marbled streaks (nothing but their average beyond 900 m: no noise evaluated there)
-    q = vec2(a*0.011, b*0.085)
-    w = max((fwidth(q.x)+fwidth(q.y))*1.0, 0.016)       # (a line about a pixel wide)
-    near = 1.0 - smoothstep(250.0, 900.0, dist)
-    streak: f32 = 0.24 + 0.1*storm
+    # (how much foam lies here: most in the lee of the crests, least in the troughs between)
+    lee = smoothstep(-0.7, 0.4, hn) * (0.55 + 0.45*smoothstep(-0.05, 0.1, down))
+    cover = clamp(0.2 + 0.6*lee + 0.5*(patch - 0.5), 0.0, 1.0)
+    q0 = vec2(a*0.05, b*0.125)
+    w = max((fwidth(q0.x) + fwidth(q0.y))*0.45, 0.018)  # (a vein about a pixel wide)
+    near = 1.0 - smoothstep(200.0, 700.0, dist)
+    web: f32 = 0.12 + 0.3*cover                          # (far: the web's average, no shimmer)
     if near > 0.0:
-        n = vnoise(q) * 0.65 + vnoise(q*2.6 + vec2(7.1, 3.3)) * 0.35
-        vein = (1.0 - smoothstep(w*0.3, w, abs(n - 0.5))) * smoothstep(0.25, 0.5, patch + 0.1)
-        sheet = smoothstep(0.58, 0.7, n) * 0.6
-        near_streak = max(vein, sheet) * (0.45 + 0.55*smoothstep(-0.5, 0.4, hn))
-        streak = mix(streak, near_streak, near)         # (far: the streaks' average, no shimmer)
-    clamp(max(crest, streak*0.9) * storm, 0.0, 1.0)
+        warp = vnoise(q0*0.31 + vec2(3.7, 1.9))
+        q = q0 + vec2(warp*2.4, (warp - 0.5)*1.8) + vec2(dot(s.yz, wd), dot(s.yz, side))*2.5
+        n1 = vnoise(q)
+        n2 = vnoise(q*2.2 + vec2(5.2, 8.1))
+        v1 = 1.0 - smoothstep(w*0.4, w, abs(n1 - 0.5))
+        v2 = (1.0 - smoothstep(w*0.9, w*2.0, abs(n2 - 0.5)))*0.7
+        gathered = smoothstep(0.64, 0.7, n1*0.55 + n2*0.45)
+        veins = max(v1, v2)*smoothstep(0.1, 0.55, cover + (n2 - 0.5)*0.5)
+        near_web = max(veins, gathered*smoothstep(0.35, 0.8, cover))
+        web = mix(web, near_web, near)
+    clamp(max(crest, web*0.9) * storm, 0.0, 1.0)
 
 # Conservative reflection bound for every possible random facet tilt. A unit
 # normal perturbed by a vector of length <=r turns by at most asin(r). The
@@ -583,7 +599,7 @@ canal_mirror = (i: SeaOut, u: SeaParams, rd: vec3, skyc: vec3) -> vec3:
     over = mix(over,tree,(smoothstep(1.0,2.0,at_tree)-smoothstep(7.0,9.0,at_tree))*0.75)
     mix(stone,over,smoothstep(u.inland_walls.y-soft,u.inland_walls.y+soft,at_wall))
 
-sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_detail:bool=true) -> vec4:
+sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_detail:bool=true,storm_water:bool=false) -> vec4:
     local = i.world.xz
     p = local+u.origin.xz
     dist = length(i.world - u.cam)
@@ -640,7 +656,7 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     if fine_detail and inland and detail_blend and sea_detail_strength(dist,u.rush.w,0.0)>0.01:
         pair=sea_marks_pair(detail_a,detail_b,(u.rush.xz+u.flow.xy*near)*(0.6/60.0),dist,u)
         inland_marks=if abs(pair.x)*detail_wa>abs(pair.y)*detail_wb:pair.x*min(detail_wa*detail_keep,1.0) else:pair.y*min(detail_wb*detail_keep,1.0)
-    s = if inland:vec3(0,0,0) else:sea_swell(local,u,dist)
+    s = if inland:vec3(0,0,0) else:sea_swell(local,u,dist,storm_water)
     # Open lake water carries a short wind chop: only its slopes (light, sky and
     # sun), never a height; a river's moving surface keeps its own marks.
     if inland and u.inland_chop>0.0:
@@ -652,10 +668,10 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     if whole:
         # (the whole look slides: the swells' slopes, so their light and shade, and their crests;
         # their height, under the aircraft's floats, stays true)
-        sa = sea_swell(local+offa,u,dist)
-        sb = sea_swell(local+offb,u,dist)
+        sa = sea_swell(local+offa,u,dist,storm_water)
+        sb = sea_swell(local+offb,u,dist,storm_water)
         s = vec3(s.x, (sa.y * wa + sb.y * wb) * keep, (sa.z * wa + sb.z * wb) * keep)
-    if not inland and u.sea_storm.x > 0.0:
+    if storm_water and not inland:
         shoal = sea_shoal(depth,u.sea_storm.x,u.sea_storm.w)
         s = s*shoal; sa = sa*shoal; sb = sb*shoal
     rp = if fine_detail:sea_ripples(local+offa,u,dist)*rough else:vec2(0,0)
@@ -683,7 +699,7 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     body = mix(u.deep, shallow, sea_shallow_mix(depth,shelter))
     # the gusts darken the water they pass over
     body = body * (1.0 - 0.3 * g * clamp(ws / 8.0, 0.0, 1.0))
-    storm = if inland: 0.0 else: u.sea_storm.x
+    storm = if inland or not storm_water: 0.0 else: u.sea_storm.x
     if storm > 0.0:
         # (a storm's water is dark and heavy: a deep cold teal, the blue drained from it)
         body = mix(body, vec3(0.055, 0.16, 0.18), storm*0.8)
@@ -712,14 +728,14 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     crest_first = if whole: 1 else: 0
     crest_end = if whole: 3 else: if inland and u.inland_chop<=0.0: 0 else: 1
     # (a full storm's own breaking crests and foam take the strokes' place)
-    if storm >= 0.99: crest_end = crest_first
+    if storm_water and storm >= 0.99: crest_end = crest_first
     loop k in crest_first..crest_end:
         cp = if k == 0: p else: if k == 1: p + offa else: p + offb
         cs = if k == 0: s else: if k == 1: sa else: sb
         camp = if k == 0: crest_amp*(if inland:u.inland_chop else:1.0) else: u.sea_storm.w/145.0
         one = _crest_strokes(cp, cs, u.time, wd, ws, camp, dist, if k == 0: wet_crests else: 0.0)
         st += if k == 0: one else: one * (if k == 1: wa else: wb)
-    st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)*(1.0-storm)
+    st = st * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0)*smoothstep(0.1,2.0,ws)*(if storm_water: 1.0-storm else: 1.0)
     c = mix(c, mix(skyc, vec3(1, 1, 1), 0.55) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.85)
     if storm > 0.0:
         # A storm's sea: breaking crests, and the foam they leave drawn out downwind into a
@@ -826,6 +842,26 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
 
 sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false)
 coast_sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true)
+sea_storm_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false,storm_water=true)
+coast_sea_storm_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true,storm_water=true)
+sea_storm_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
+    if sea_depth_hidden(i.clip,u):discard()
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    sea_storm_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
+coast_sea_storm_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
+    if sea_depth_hidden(i.clip,u):discard()
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    coast_sea_storm_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost),u)
+# (the storm sea's programs, made the first time a storm is up)
+sea_storm_sh: Shader
+coast_sea_storm_sh: Shader
+sea_storm_ready = false
+sea_storm_shaders = ():
+    global sea_storm_sh, coast_sea_storm_sh, sea_storm_ready
+    if sea_storm_ready: return
+    sea_storm_sh = make_shader(if world_logarithmic:shader(sea_storm_depth_vs,sea_storm_depth_fs) else:shader(sea_storm_vs,sea_storm_fs))
+    coast_sea_storm_sh = make_shader(if world_logarithmic:shader(sea_storm_depth_vs,coast_sea_storm_depth_fs) else:shader(sea_storm_vs,coast_sea_storm_fs))
+    sea_storm_ready = true
 
 sea_near_mesh: Mesh
 coast_sea_sh: Shader
@@ -1097,6 +1133,30 @@ sea_state_of_now = () -> SeaState:
         _state_key = key
         _state_kept = sea_state(wind_now)
     _state_kept
+# A storm sea's sky (after weather_light): heavy overcast and low grey light whenever the sea is
+# stormy, whatever the weather's own cover, and air thick with spray and rain, so the sea greys
+# out past a few hundred metres but stays readable near; a thunderstorm's own cell fog is held to
+# the same, so its sea is not lost. Above the weather (the deck, about 1.5 km) the light clears.
+sea_storm_light = (L: Light, eye_y: f64) -> Light:
+    k = sea_state_of_now().storm*(1.0-smoothstep(1200.0,2400.0,eye_y))
+    if k <= 0.0: return L
+    c = f32(smoothstep(0.0,1.0,k))
+    out = L
+    day = smoothstep(-0.12,0.35,L.sun_dir.y)
+    glow = (1.0-smoothstep(0.05,0.55,L.sun_dir.y))*smoothstep(-0.2,0.0,L.sun_dir.y)
+    day = max(day,glow*0.6)
+    grey_sun = mix(vec3(0.08,0.10,0.15),vec3(0.44,0.48,0.52),day)
+    grey_shade = mix(vec3(0.025,0.035,0.06),vec3(0.22,0.27,0.31),day)
+    grey_air = mix(vec3(0.03,0.045,0.07),vec3(0.33,0.39,0.43),day)
+    out.sun = mix(L.sun,grey_sun,c*0.9)
+    out.shade = mix(L.shade,grey_shade,c*0.9)
+    out.sky_top = mix(L.sky_top,grey_air*0.72,c*0.92)
+    out.sky_horizon = mix(L.sky_horizon,grey_air,c*0.92)
+    out.haze = mix(L.haze,grey_air*0.9,c*0.85)
+    out.fog_density = mix(L.fog_density,clamp(L.fog_density,0.0016,0.0022),f64(c))
+    out.afterglow.x *= 1.0-c*0.8
+    out
+
 # (the drawn sea's uniforms for a sea state)
 sea_set_state = (p: mut SeaParams, st: SeaState):
     p.swell_gain[0] = vec4(f32(st.gains[0]),f32(st.gains[1]),f32(st.gains[2]),f32(st.gains[3]))
@@ -1218,8 +1278,12 @@ draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = 
             if not __vk and not __soft: p.reject_depth = 2
     depth_write(true)
     cull(.back)
-    draw(sea_sh, m, p)
-    draw(if coast_height_valid: coast_sea_sh else: sea_sh,sea_near_mesh,p)
+    plain = sea_sh; coast = coast_sea_sh
+    if p.sea_storm.x > 0.0:
+        sea_storm_shaders()
+        plain = sea_storm_sh; coast = coast_sea_storm_sh
+    draw(plain, m, p)
+    draw(if coast_height_valid: coast else: plain,sea_near_mesh,p)
     cull(.none)
     depth_write(false)
     zone_end()
