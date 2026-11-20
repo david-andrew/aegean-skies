@@ -1,0 +1,270 @@
+# Local presentation for pedestrians. World poses, routes and ownership never enter this state.
+use 'objects.jo'
+use 'world_point.jo'
+use 'water_field.jo'
+
+const WALK_LOOK_AHEAD = 1.55
+const WALK_CONTACT = 0.47
+const WALK_NARROW_PASS = 0.50
+const WALK_OPEN_PASS = 0.74
+const WALK_LOCAL_REACH = 11.0
+const WALK_LOCAL_LIMIT = 24
+const WALK_PLANS_PER_FRAME = 2
+const WALK_PILOT = -1
+const WALK_NO_PERSON = -2
+const WALK_OTHER = -10       # each list uses every third negative ID
+const WALK_CHILD = -11
+const WALK_AMBIENT = -12
+const WALK_COMPANY = -3
+const WALK_RIDE = -4
+const WALK_RESCUED = -5
+const WALK_SERVER = -6
+const WALK_CLEAR_SERVER = -7
+
+struct WalkSubject:
+    id: int
+    point: WorldPoint
+    yaw: f64
+    speed: f64
+    phase = 0.0
+
+struct WalkDetour:
+    via: WorldPoint
+    out: WorldPoint
+    turn: f64
+
+struct WalkPresentation:
+    point: WorldPoint
+    previous_route: WorldPoint
+    yaw: f64
+    phase = 0.0
+    active = false
+    shoulder = 0.0
+    pace = 1.0
+    velocity: vec2 = vec2(0,0)
+    heading: vec2 = vec2(0,0)
+    obstacle = WALK_NO_PERSON
+    detour: WalkDetour? = none
+    past_via = false
+    retry = 0.0
+    waited = 0.0
+    stalled = 0.0
+    retreat: WorldPoint? = none
+
+walk_presentations: {int:WalkPresentation}
+pilot_shoulder = 0.0
+
+walk_xz = (a: WorldPoint,b: WorldPoint) -> vec2: vec2(f32(a.x-b.x),f32(a.z-b.z))
+_walk_offset = (p: WorldPoint,d: vec2) -> WorldPoint: WorldPoint(p.x+f64(d.x),p.y,p.z+f64(d.y))
+_walk_forward = (yaw:f64) -> vec2: vec2(f32(sin(yaw)),f32(cos(yaw)))
+_walk_right = (fwd:vec2) -> vec2: vec2(fwd.y,-fwd.x)
+
+walk_presentation = (s:WalkSubject) -> WalkPresentation:
+    walk_presentations.get(s.id,WalkPresentation(s.point,s.point,s.yaw,phase=s.phase))
+
+clear_walk_presentations = ():
+    global walk_presentations,pilot_shoulder
+    walk_presentations.clear()
+    pilot_shoulder=0.0
+
+# The stock walker can wade. A sidestep should stay on its current floor or ground.
+_walk_dry_step = (towns:Town[],p:WorldPoint,move:vec2) -> WorldPoint:
+    step=walk_step_precise(towns,p,move)
+    if step.y < p.y-0.38:return p
+    wet=water_at(step.x,step.z)
+    level=if wet.wet:wet.level else:0.0
+    if step.y < level-0.02:return p
+    step
+
+_walk_segment = (towns:Town[],from:WorldPoint,to:WorldPoint) -> WorldPoint?:
+    move=walk_xz(to,from)
+    n=max(1,int(ceil(f64(length(move))/0.18)))
+    step=move/f32(n)
+    p=from
+    loop k in 0..n:
+        q=_walk_dry_step(towns,p,step)
+        if length(walk_xz(q,p)-step)>0.018:return none
+        p=q
+    p
+
+_walk_plan = (towns:Town[],p:WorldPoint,other:WorldPoint,heading:vec2,wide:bool) -> WalkDetour?:
+    right=_walk_right(heading)
+    # Prefer passing on one's right. Try shoulder-first only when neither wide lane fits.
+    loop gap in (if wide:[WALK_OPEN_PASS,WALK_NARROW_PASS,1.12] else:[WALK_OPEN_PASS,WALK_NARROW_PASS]):
+        loop side in [1.0,-1.0]:
+            lane=_walk_offset(other,right*f32(gap*side))
+            before=_walk_offset(lane,-heading*0.32)
+            after=_walk_offset(lane,heading*0.58)
+            if let via=_walk_segment(towns,p,before):
+                if let out=_walk_segment(towns,via,after):
+                    return WalkDetour(via,out,side*(if gap==WALK_NARROW_PASS:1.38 else:0.32))
+    none
+
+# Only people near the on-foot observer are gathered. Keep the closest if the street is crowded.
+walk_offer = (subjects:mut WalkSubject[],s:WalkSubject,observer:WorldPoint):
+    old=walk_presentations.get(s.id)
+    point=if let previous=old:previous.point else:s.point
+    distance=length(walk_xz(point,observer))
+    if distance>WALK_LOCAL_REACH or abs(point.y-observer.y)>2.3:return
+    if subjects.len()<WALK_LOCAL_LIMIT:
+        subjects.push(s)
+        return
+    worst=1;far=0.0
+    loop k in 1..subjects.len():
+        other=subjects[k]
+        at=if let previous=walk_presentations.get(other.id):previous.point else:other.point
+        d=length(walk_xz(at,observer))
+        if d>far:worst=k;far=d
+    if distance<far:subjects[worst]=s
+
+_walk_threat = (id:int,point:WorldPoint,heading:vec2,people:WalkSubject[]) -> WalkSubject?:
+    best:WalkSubject?=none
+    nearest=WALK_LOOK_AHEAD
+    loop person in people:
+        if person.id==id or abs(person.point.y-point.y)>0.85:continue
+        delta=walk_xz(person.point,point)
+        ahead=f64(dot(delta,heading))
+        if ahead < -0.12 or ahead>nearest or abs(dot(delta,_walk_right(heading)))>0.61:continue
+        best=person;nearest=ahead
+    best
+
+_walk_hits_person = (id:int,p:WorldPoint,q:WorldPoint,people:WalkSubject[]) -> bool:
+    loop other in people:
+        if other.id==id or abs(q.y-other.point.y)>0.85:continue
+        old=walk_xz(p,other.point); next=walk_xz(q,other.point)
+        d2=dot(next,next)
+        if d2<WALK_CONTACT*WALK_CONTACT and d2+0.000001<dot(old,old):return true
+    false
+
+_walk_advance = (towns:Town[],s:WalkSubject,state:mut WalkPresentation,goal:WorldPoint,speed:f64,turn:f64,people:WalkSubject[],dt:f64):
+    to=walk_xz(goal,state.point)
+    distance=f64(length(to))
+    want=if distance>0.0001:to*f32(min(speed,distance*12.0)/distance) else:vec2(0,0)
+    blend=f32(1.0-exp(-9.0*dt))
+    state.velocity=lerp(state.velocity,want,blend)
+    move=state.velocity*f32(dt)
+    if length(move)>f32(distance):move=to
+    # Projecting to the dry floor is cheap here: at most one ordinary walking step.
+    actual=if length(move)>0.00001:_walk_dry_step(towns,state.point,move) else:state.point
+    delta=walk_xz(actual,state.point)
+    if length(delta)>length(move)+0.025 or _walk_hits_person(s.id,state.point,actual,people):
+        actual=state.point
+        state.velocity=vec2(0,0)
+    distance_walked=f64(length(walk_xz(actual,state.point)))
+    actual_speed=distance_walked/max(dt,0.001)
+    state.phase+=distance_walked*5.0
+    state.pace=lerp(state.pace,clamp(actual_speed/max(0.8,s.speed),0.0,1.0),f64(blend))
+    if distance>0.05:
+        face=atan2(f64(to.x),f64(to.y))
+        state.yaw=approach_angle(state.yaw,face,10.0,dt)
+    state.shoulder=lerp(state.shoulder,turn,f64(blend))
+    state.point=actual
+
+_walk_actor = (towns:Town[],s:WalkSubject,state:mut WalkPresentation,people:WalkSubject[],dt:f64,plans:mut int):
+    heading=if state.obstacle==WALK_NO_PERSON:_walk_forward(s.yaw) else:state.heading
+    toward=walk_xz(s.point,state.point)
+    # On the way back to a route, aim the look-ahead at that route too.
+    if state.obstacle==WALK_NO_PERSON and length(toward)>0.6:heading=normalize(toward)
+    obstacle=_walk_threat(s.id,state.point,heading,people)
+    if state.obstacle!=WALK_NO_PERSON:
+        # Stick to the selected pass, even as the perpendicular clearance grows.
+        loop other in people:
+            if other.id==state.obstacle and abs(other.point.y-state.point.y)<0.85:
+                if state.detour!=none or dot(walk_xz(other.point,state.point),heading)>-0.12:
+                    obstacle=other
+                break
+    if let other=obstacle:
+        if state.obstacle!=other.id:
+            state.obstacle=other.id;state.detour=none;state.past_via=false
+            state.heading=heading;state.waited=0;state.retry=0;state.retreat=none
+        if state.detour==none and state.retry<=0 and plans>0:
+            rel=walk_xz(other.point,state.point)
+            close=length(rel)<2.1
+            if abs(dot(rel,_walk_right(heading)))>0.61 or dot(rel,heading)<-0.12:
+                state.obstacle=WALK_NO_PERSON
+                state.retreat=none
+                state.waited=0
+            else:
+                if close:
+                    plans-=1
+                    state.detour=_walk_plan(towns,state.point,other.point,heading,state.waited>=0.65)
+                state.retry=if state.retreat==none:0.35 else:0.7
+                if state.detour!=none:state.retreat=none
+    else:
+        state.obstacle=WALK_NO_PERSON
+        state.detour=none
+        state.past_via=false
+        state.retreat=none
+        state.waited=0
+    state.retry=max(0.0,state.retry-dt)
+
+    goal=s.point
+    turn=0.0
+    speed=max(1.35,s.speed+0.45)
+    if let lane=state.detour:
+        if length(walk_xz(lane.via,state.point))<0.12:state.past_via=true
+        goal=if state.past_via:lane.out else:lane.via
+        turn=lane.turn
+        speed=max(0.78,s.speed)*(if abs(turn)>0.8:0.66 else:1.02)
+        if state.past_via and length(walk_xz(goal,state.point))<0.11:
+            state.detour=none
+            state.obstacle=WALK_NO_PERSON
+            state.past_via=false
+    else if state.obstacle!=WALK_NO_PERSON and obstacle!=none:
+        # Wait out an oncoming walker. If a person stays in the opening,
+        # yield back into the approach and keep checking for room to pass.
+        ahead=f64(dot(walk_xz(obstacle!.point,state.point),heading))
+        if state.retreat==none:
+            if ahead<=0.81:state.waited+=dt
+            if state.waited>=0.65 and plans>0:
+                plans-=1
+                back=_walk_offset(state.point,-heading*1.1)
+                state.retreat=_walk_segment(towns,state.point,back) ?? state.point
+        goal=state.retreat ?? _walk_offset(state.point,heading*f32(max(0.0,ahead-0.76)))
+        speed=0.86
+    last=state.point
+    _walk_advance(towns,s,state,goal,speed,turn,people,dt)
+    if state.detour!=none and length(walk_xz(state.point,last))<f32(dt*0.05):
+        state.stalled+=dt
+        if state.stalled>0.4:
+            state.detour=none;state.past_via=false;state.waited=0.65
+    else:state.stalled=0.0
+    if state.obstacle==WALK_NO_PERSON and length(walk_xz(s.point,state.point))<0.35:
+        state.phase=approach_angle(state.phase,s.phase,8.0,dt)
+    state.previous_route=s.point
+
+walk_update_presentations = (towns:Town[],subjects:WalkSubject[],pilot:WalkSubject?,dt:f64):
+    global walk_presentations,pilot_shoulder
+    old=walk_presentations
+    next:{int:WalkPresentation}
+    plans=WALK_PLANS_PER_FRAME
+    neighbours: WalkSubject[]
+    loop s in subjects:
+        at=s.point
+        if let state=old.get(s.id):
+            if length(walk_xz(s.point,state.previous_route))<3.0:at=state.point
+        neighbours.push(WalkSubject(s.id,at,s.yaw,s.speed))
+    loop s in subjects:
+        if s.id==WALK_PILOT:continue
+        state=old.get(s.id,WalkPresentation(s.point,s.point,s.yaw,phase=s.phase,active=true,velocity=_walk_forward(s.yaw)*f32(s.speed)))
+        if length(walk_xz(s.point,state.previous_route))>=3.0:continue
+        if not (s.id in old):
+            if s.speed<0.14 or _walk_threat(s.id,s.point,_walk_forward(s.yaw),neighbours)==none:continue
+        _walk_actor(towns,s,state,neighbours,dt,plans)
+        if state.obstacle!=WALK_NO_PERSON or state.detour!=none or length(walk_xz(s.point,state.point))>0.035 or abs(state.shoulder)>0.03:
+            next[s.id]=state
+    walk_presentations=next
+    turn=0.0
+    if let you=pilot:
+        if you.speed>0.12:
+            heading=_walk_forward(you.yaw)
+            closest=1.15
+            loop other in neighbours:
+                if other.id==you.id or abs(other.point.y-you.point.y)>0.85:continue
+                delta=walk_xz(other.point,you.point)
+                d=f64(length(delta));ahead=dot(delta,heading)
+                if d>=closest or ahead< -0.55:continue
+                closest=d
+                side=if dot(delta,_walk_right(heading))>=0: -1.0 else:1.0
+                turn=side*0.38*(1.0-smoothstep(0.43,1.15,d))
+    pilot_shoulder=lerp(pilot_shoulder,turn,1.0-exp(-10.0*dt))
