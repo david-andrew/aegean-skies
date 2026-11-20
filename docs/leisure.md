@@ -119,7 +119,7 @@ funny or useful (time passes, people are met, the plane is looked after).
 
 18. **Sitting down at the bar too**: ordering at the bar seats the pilot on a stool, and what is
    ordered is brought there. Seated anywhere, the view turns about him (a drag with either mouse
-   button off the table's bar, the right stick, a finger) and the wheel or a pinch brings it
+   button off the table's bar, a finger; never a controller's stick) and the wheel or a pinch brings it
    nearer or farther, kept out of the walls; Get up stands apart at the end of the bar.
 19. **Each thing's button is a bar** of how much of it is left, draining as one eats or drinks,
    as the plate and the glass on the table do.
