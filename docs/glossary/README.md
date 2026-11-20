@@ -354,8 +354,8 @@ blue discs that stay in every frame are **speed flecks**.
   `aegean.jo`, with the battle trails' soft-edged shader (`src/combat_trails.jo`): each puff a
   fan of triangles from a centre to a rim, so the shader's edge falloff rounds it.
 - **Rules:** presentation only (crests found with `swell_at`; no forces, no shared particles, no
-  draws on the game's random numbers); nothing unless the sea is stormy. Cap: 90 wisps on the
-  low tier, 160 otherwise, within 380 m of the eye.
+  draws on the game's random numbers); nothing unless the sea is stormy. Cap: 60 wisps on the
+  low tier, 100 otherwise, within 380 m of the eye; four puffs each, none within 12 m of the eye.
 
 ### Splash streaks
 
