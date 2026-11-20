@@ -21,6 +21,7 @@ use 'road_material.jo'
 use 'canopy.jo'
 use 'fields.jo'
 use 'field_map.jo'
+use 'surf.jo'
 
 struct GroundParams:
     view_proj: mat4
@@ -67,6 +68,7 @@ struct GroundParams:
     canopy_light: vec4 = vec4(0,1,0,0)  # the canopy's modelling light (src/canopy.jo canopy_light)
     land_light: vec4 = vec4(0,1,0,0)    # the land's modelling light (src/canopy.jo land_light)
     land_palette: f32 = 1.0             # the fields' palette: 1 green valleys, 0 dry straw (src/fields.jo)
+    surf: vec4 = vec4(0,0,0,0)      # the Surf trial (surf.jo): x on, y the sea's energy 0..1
 
 struct GroundOut:
     pos: vec4
@@ -172,6 +174,34 @@ coast_world_fs_low_ws_log = (i: GroundOut, u: GroundParams) -> vec4:
 
 coast_world_fs_low_ws = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0,2)
 
+# (the Surf trial's coastal ground: the run-up's wet sand and the rock bursts, surf.jo; made only
+# when it is first switched on, so with it off the coast is drawn by exactly the plain shaders)
+coast_surf_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,1,surf=true)
+coast_world_surf_fs = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,1,surf=true)
+coast_surf_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,false,true,0,surf=true)
+coast_world_surf_fs_low = (i: GroundOut,u: GroundParams) -> vec4: ground_material(i,u,true,true,0,surf=true)
+coast_surf_fs_log = (i: GroundOut, u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    coast_surf_fs(i, u)
+coast_world_surf_fs_log = (i: GroundOut, u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    coast_world_surf_fs(i, u)
+coast_surf_fs_low_log = (i: GroundOut, u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    coast_surf_fs_low(i, u)
+coast_world_surf_fs_low_log = (i: GroundOut, u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    coast_world_surf_fs_low(i, u)
+coast_surf_sh: Shader
+coast_world_surf_sh: Shader
+coast_surf_ready = false
+coast_surf_shaders = ():
+    global coast_surf_sh,coast_world_surf_sh,coast_surf_ready
+    if coast_surf_ready: return
+    low = render_quality.tier == 0
+    coast_surf_sh = make_shader(if low: world_shader(shader(coast_vs,coast_surf_fs_low), shader(coast_vs,coast_surf_fs_low_log)) else: world_shader(shader(coast_vs,coast_surf_fs), shader(coast_vs,coast_surf_fs_log)))
+    coast_world_surf_sh = make_shader(if low: world_shader(shader(coast_vs,coast_world_surf_fs_low), shader(coast_vs,coast_world_surf_fs_low_log)) else: world_shader(shader(coast_vs,coast_world_surf_fs), shader(coast_vs,coast_world_surf_fs_log)))
+    coast_surf_ready = true
 coast_sh: Shader
 coast_world_sh: Shader
 coast_sh_ws: Shader
@@ -188,13 +218,18 @@ terrain_study_shaders = ():
     coast_world_sh_ws = make_shader(if low: world_shader(shader(coast_vs, coast_world_fs_low_ws), shader(coast_vs, coast_world_fs_low_ws_log)) else: world_shader(shader(coast_vs, coast_world_fs_ws), shader(coast_vs, coast_world_fs_ws_log)),false)
     terrain_study_ready = true
 
-draw_coast_batches = (batches: CoastInstance[][],params: GroundParams,large: bool = false):
+draw_coast_batches = (batches: CoastInstance[][],given: GroundParams,large: bool = false):
     global coast_triangles,coast_instances,coast_draws
     collect_coast_height(batches,true)
+    params = given
+    params.surf = surf_uniform()
     loop level in 0..COAST_LEVELS:
         if batches[level].len() == 0: continue
         sh=if large:coast_world_sh else:coast_sh
-        if params.meadow_c.w > 0.0:
+        if tweaks.surf:
+            coast_surf_shaders()
+            sh=if large:coast_world_surf_sh else:coast_surf_sh
+        else if params.meadow_c.w > 0.0:
             terrain_study_shaders()
             sh=if large:coast_world_sh_ws else:coast_sh_ws
         draw_instanced(sh,coast_grids[level],batches[level],params)
@@ -231,7 +266,7 @@ ground_strata=(i:GroundOut,u:GroundParams)->vec3:
     wav=sin(world.x*0.013+world.z*0.009)*2.5+i.tint.y*6.0+fracture*34.0
     vec3((i.world.y+wav)*0.55,fracture,pigment.x)
 
-ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1,wind_study:int=0)->vec4:
+ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=false,detail:int=1,wind_study:int=0,surf:bool=false)->vec4:
     if behind_sea(i.world,u.cam):discard()
     if i.world.y < -40.0:return vec4(u.haze*0.2,1)
     strata=vec3(0,0,0)
@@ -242,7 +277,7 @@ ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=f
     # (a cliff's lip or foot: the terrain triangle there runs from a flat vertex to a sheer one, so
     # the interpolated slope changes fast per metre; on an even hillside it hardly changes)
     cliff_edge=smoothstep(0.025,0.05,fwidth(1.0-normalize(i.normal).y)/footprint)
-    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail,cliff_edge,vec3(-1,0,0),wind_study)
+    col=ground_surface(i,u,large_terrain,coastal,footprint,strata,fwidth(strata.x),fwidth(ndl)*0.65,1.0,detail,cliff_edge,vec3(-1,0,0),wind_study,surf)
     vec4(col.xyz*paint_paper(i.pos.xy),col.w)
 
 # canopy_detail: the canopy's (0 the low tier's, from its own shaders, so the full path is not compiled in)
@@ -321,7 +356,7 @@ meadow_study_sheen = (i:GroundOut,u:GroundParams,col:vec3,meadow_in:f32,near:f32
             out += vec3(0.055,0.048,0.026)*u.sun*(s.y*2.2+s.x*2.6+s.z*1.8)*far_meadow*rise
     out
 
-ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1,cliff_edge:f32=0.0,study_known:vec3=vec3(-1,0,0),wind_study:int=0)->vec4:
+ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footprint:f32,strata:vec3,bed_width:f32,light_width:f32,blade_response:f32=1.0,canopy_detail:int=1,cliff_edge:f32=0.0,study_known:vec3=vec3(-1,0,0),wind_study:int=0,surf:bool=false)->vec4:
     # The sea is fully opaque above this depth, including clear coves. Keep
     # its occluding geometry/depth, but do not shade hidden offshore seabed.
     if i.world.y < -40.0: return vec4(u.haze*0.2,1)
@@ -505,6 +540,15 @@ ground_surface=(i:GroundOut,u:GroundParams,large_terrain:bool,coastal:bool,footp
         shore_color = mix(wet, sand * 0.9, clamp(y + 0.4, 0.0, 1.0))
         shore_color = mix(shore_color, stone * 0.8, smoothstep(0.35, 0.6, slope))
         c = if coastal: mix(c,shore_color,1.0-smoothstep(0.25,0.9,y)) else: shore_color
+        # The Surf trial: the run-up's thin sheet, its foam and the wet sand it leaves (surf.jo).
+        if surf and coastal and y > -0.3 and y < 1.4:
+            near_eye = length(i.world-u.cam)
+            if near_eye < 1200.0:
+                sw = surf_swash(world.xz,u.time,y,slope,u.surf.y,u.surf.z,near_eye,footprint,canopy_detail==0)
+                fade = 1.0-smoothstep(800.0,1200.0,near_eye)
+                wet_sand = c*vec3(0.58,0.60,0.64)+u.sky*0.05
+                c = mix(c,wet_sand,sw.z*fade)
+                c = mix(c,vec3(0.92,0.95,0.97),sw.y*fade)
         # Offshore opaque water hides this material. Restrict its extra work
         # to the shallow seabed and filter fine blades out in the distance.
         if y < -0.5 and y > -38.0 and length(i.world-u.cam) < 650.0:
