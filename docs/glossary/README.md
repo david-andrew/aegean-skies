@@ -283,7 +283,10 @@ blue discs that stay in every frame are **speed flecks**.
   churns: billows are born small near the chine, swell as they roll aft along the sheet, rock
   outward and back, and lift off the crest as shrinking blobs while new ones form behind; the sheet
   lobes' scallops roll over the top and aft, each lobe swells on its own beat, and the whole curtain
-  breathes with chop and float bounce (the sheet's **heave**).
+  breathes with chop and float bounce (the sheet's **heave**). Where the spray is still thin sea
+  water (the rising sheet, the undersides of the billows, the foot of the [spray bank](#spray-banks)
+  by the floats) it is painted light aqua with white streaks running up it, as the film paints a
+  thrown sheet, turning to the spray's cream where it breaks and as the wall runs aft.
 - **Code:** `src/splash.jo` `splash_fan` (sheet lobes, kind 3; billows, kind 2, `CURTAIN_ROWS`),
   `curtain_widths` (inner/outer half-widths), `splash_vs` (roll, spin, outer bulge), `splash_fs`
   (curtain tones), `splash_targets` / `step_splash_motion` (heave).
