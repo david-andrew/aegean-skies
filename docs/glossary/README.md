@@ -1813,9 +1813,21 @@ On the rivers branch until it lands.
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
   the flight leader's words follow: form on me, circle here and wait, attack my target, break off
   and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
-  nearest of the flight answers in a few plain words.
+  nearest of the flight answers in a few plain words, by [signal](#signals-between-aircraft) when
+  in sight.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
+
+### Signals between aircraft
+
+- **Aliases:** hand signals, the Aldis lamp, by hand, by lamp.
+- **Definition:** a word from one of the player's flight in sight of the player comes by signal,
+  not the R/T: within 260 m the pilot's arm goes up out of the cockpit and waves; out to 2.2 km
+  an Aldis lamp over the cockpit flashes the line's first word in Morse, over and over. The
+  caption names the way ("Kalyra 1, by lamp: Close up."), and no Morse cue sounds. Farther off,
+  the line comes by the R/T as before.
+- **Code:** `src/flight_signals.jo`; `update_homeward` and `draw_homeward_signal` in
+  `src/homeward_view.jo`.
 
 ### The Ierax (seaplane tender)
 
