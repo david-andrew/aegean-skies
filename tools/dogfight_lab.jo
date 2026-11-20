@@ -1,11 +1,15 @@
-# Automated dogfights over the strait: no window, no sound. Usage:
+# Automated strait and canal dogfights: no window, no sound. Usage:
 #   sloppy --release tools/dogfight_lab.jo OUTPUT_DIR
 # DOGFIGHT_N battles (default 6) of DOGFIGHT_SECONDS (default 240) each, under DOGFIGHT_MODEL
-# (default | skybarons | v2 | sb). Each battle is the strait scenario's own 8-a-side fight, its
+# (default | v2player | old | skybarons | v2 | sb). By default each battle is the strait scenario's own 8-a-side fight, its
 # start varied by seed; the player's seat is flown by a plain lead-pursuit pilot (no tactics) on
 # the player's guns. Reports engagement time, shots and hits by side, downs, how often each
 # behaviour is chosen, and stuck or broken states: a pilot engaged without firing for 90 s
-# (circling forever), stalled, flying into the sea undamaged, or very low. Writes dogfights.md.
+# (circling forever), stalls and unintended contacts. DOGFIGHT_SCENARIO=canal uses the actual
+# slipway, water run, aircraft, vessels and ground guns with DOGFIGHT_PLAYER=average.
+# DOGFIGHT_FIRST skips a number of seeds. DOGFIGHT_STOCK=1 runs the scenario opening exactly
+# once without the seeded slot offsets. DOGFIGHT_DUEL=1 isolates a typical strait opponent.
+# DOGFIGHT_CLEARANCE=1 gives the average seat an earlier warning of water or rising ground.
 use '../src/world.jo'
 use '../src/world_point.jo'
 use '../src/world_towns.jo'
@@ -19,6 +23,13 @@ use '../src/tweaks.jo'
 use '../src/combat.jo'
 use '../src/damage.jo'
 use '../src/scenarios.jo'
+use '../src/slipway.jo'
+use '../src/canal_geometry.jo'
+use '../src/canal_ground_fire.jo'
+use '../src/vessels.jo'
+use '../src/weather_scene.jo'
+use '../src/look.jo'
+use '../src/vessel_scene.jo'
 use '../src/pilot.jo'
 import '../src/living_types.jo' as data
 
@@ -27,37 +38,39 @@ dir=args()[1]
 battles=to_int(env("DOGFIGHT_N") ?? "6") ?? 6
 seconds=to_float(env("DOGFIGHT_SECONDS") ?? "240") ?? 240.0
 model=env("DOGFIGHT_MODEL") ?? "default"
+stock=env("DOGFIGHT_STOCK")=="1"
+duel=env("DOGFIGHT_DUEL")=="1"
+if stock:battles=1
 # DOGFIGHT_PLAYER=average: the player's seat flown as an average human might: the nearest enemy
 # ahead chased by plain lead pursuit, seen a reaction time late (0.25 s), the aim wandering a few
-# metres, fired when it looks lined up within 450 m; no tactics, no aim assist (the player's guns,
+# metres, fired when it looks lined up within 450 m; no tactics (the player's guns, aim assist and
 # generous hits as the Tweaks default). Otherwise the seat is a plain lead-pursuit pilot.
 average_player=(env("DOGFIGHT_PLAYER") ?? "")=="average"
 seat_gunner=(env("DOGFIGHT_SEAT") ?? "")=="gunner"
+look_ahead=env("DOGFIGHT_CLEARANCE")=="1"
 t=Tweaks()
 if model=="skybarons": t.skybarons_response=true
 if model=="v2": t.flight_model=1; t.fdm2_npcs=true; t.fdm2_fighters=true
 # (v2player: the player's seat on v2, the other aircraft on the earlier model; old: everyone on it)
-if model=="v2player": t.flight_model=1; t.fdm2_npcs=false
+if model=="v2player": t.flight_model=1; t.fdm2_fighters=false
 if model=="old": t.flight_model=0; t.fdm2_npcs=false
 if model=="sb": t.flight_model=2
-# (DOGFIGHT_AIM=1: the aim assist on for the player's seat; DOGFIGHT_PLAIN_HITS=1: generous hits off)
-if env("DOGFIGHT_AIM")!=none: t.aim_assist=true
+# (DOGFIGHT_AIM=1: the aim assist on for the player's seat (0 disables it); DOGFIGHT_PLAIN_HITS=1: generous hits off)
+if let assist=env("DOGFIGHT_AIM"): t.aim_assist=assist=="1"
 if env("DOGFIGHT_PLAIN_HITS")!=none: t.generous_hits=false
-helps=(if t.aim_assist: "-aim" else: "")+(if not t.generous_hits: "-plain" else: "")
+helps=(if t.aim_assist: "-aim" else: "")+(if not t.generous_hits: "-plain" else: "")+(if look_ahead: "-clearance" else: "")
 set_tweaks(t)
 
 # A round followed from the muzzle: whose, at whom, from how far, and how near it came.
 struct Tracked:
-    shooter:int
     target:int
     range:f64
     crossing:f64
     rel:vec3
     miss=1e9
     slit=false
-    alive=true
-    age=0.0
-    seen=0
+    hit=false
+    seen=-1
 
 const REACT = 15                    # ticks of reaction time
 const HISTORY = 32
@@ -75,7 +88,8 @@ hand_steer = (h: mut SeatHand, k: CraftSpec, s: CraftState, want: vec3) -> Contr
     if length(h.seen) > 0.5: h.rate += ((aim - h.seen) * 60.0 - h.rate) * f32(1.0 - exp(-10.0 / 60.0))
     h.seen = aim
     # (DOGFIGHT_SEAT=gunner: the seat steered with the battle pilots' crisp law, to compare)
-    c = if seat_gunner: steer(k, s, aim, h.rate, false, false, true) else: steer(k, s, aim, h.rate)
+    # The seat has unlocked guns, as in the scenario. Use its combat mouse response.
+    c = steer(k,s,aim,h.rate,gunner=seat_gunner,fighting=true)
     ease = 1.0 - exp(-30.0 / 60.0)
     c.pitch = h.last.pitch + (c.pitch - h.last.pitch) * ease
     c.roll = h.last.roll + (c.roll - h.last.roll) * ease
@@ -88,7 +102,11 @@ average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3
     a = b.actors[me]; s = a.state
     fwd = quat_rotate(s.orientation,vec3(0,0,-1))
     g = max(0.0,e.ground(f64(s.position.x),f64(s.position.z)))
-    if f64(s.position.y)-g < 140.0 or (f64(fwd.y) < -0.35 and f64(s.position.y)-g < 300.0):
+    low = f64(s.position.y)-g < 140.0 or (f64(fwd.y) < -0.35 and f64(s.position.y)-g < 300.0)
+    if look_ahead:
+        ahead = s.position+s.velocity*5.0
+        low = low or f64(ahead.y) < max(g,e.ground(f64(ahead.x),f64(ahead.z)))+140.0
+    if low:
         c = hand_steer(h,a.spec,s,vec3(fwd.x,0.8,fwd.z)); c.throttle = 1.0
         return (c,false)
     if target < 0:
@@ -139,10 +157,43 @@ towns=[loop st in SETTLEMENTS:build_town(st)]
 init_world_towns(towns)
 set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
 models=build_craft_models()
-base=build_scenario("strait",towns,models)!
+scenario=env("DOGFIGHT_SCENARIO") ?? "strait"
+assert(scenario=="strait" or scenario=="canal")
+canal=scenario=="canal"
+base=build_scenario(scenario,towns,models)!
+if canal:assert(average_player,"use DOGFIGHT_PLAYER=average for the canal departure")
+if duel:
+    assert(not canal and average_player,"the duel uses the strait average-player seat")
+    seat=combat_index(base.battle,base.world.people[base.world.player].craft)
+    foe= -1; best=1.0
+    loop i in 0..base.battle.actors.len():
+        a=base.battle.actors[i]
+        if a.side==base.battle.actors[seat].side or a.pilot.role!=.fighter:continue
+        if abs(a.pilot.skill-0.7)<best:foe=i;best=abs(a.pilot.skill-0.7)
+    assert(foe>=0)
+    base.battle.actors=[base.battle.actors[seat],base.battle.actors[foe]]
+    base.battle.homes=[]
+    loop mut a in base.battle.actors:a.pilot.formation=false;a.pilot.leader= -1
+
+# Sweep the same local contact points as flight across the last tick. This also catches a
+# glancing wall or bridge contact that left too little damage to down the aircraft.
+wall_top=0.0
+loop box in canal_solids:wall_top=max(wall_top,f64(box.center.y+box.half.y))
+canal_contact=(a:Combatant)->bool:
+    if not canal_near(a.state.position):return false
+    if min(a.previous.y,a.state.position.y)>wall_top+a.spec.span:return false
+    loop i in 0..a.spec.parts.len():
+        part=a.spec.parts[i]
+        if not a.state.damage.parts[i].attached and not a.state.crashed:continue
+        loop group in [part.contacts,part.wing_contacts,part.strikes]:
+            loop pt in group:
+                start=a.previous+quat_rotate(a.previous_rotation,pt)
+                end=a.state.position+quat_rotate(a.state.orientation,pt)
+                if canal_sweep(start,end).w>0:return true
+    false
 
 report:str[]
-report.push("# Dogfights over the strait ({model} flight model, {battles} battles of {seconds:.0} s{if t.aim_assist: ", aim assist on" else: ""}{if not t.generous_hits: ", generous hits off" else: ""})\n")
+report.push("# Dogfights over the {scenario} ({model} flight model, {battles} battles of {seconds:.0} s{if t.aim_assist: ", aim assist on" else: ""}{if not t.generous_hits: ", generous hits off" else: ""})\n")
 report.push("| battle | first shot s | end s | finished | Kalyra shots/hits | Orenthia shots/hits | down K/O | stand-in hit/down | stuck | stalls | into sea | lowest m |")
 report.push("|---|---|---|---|---|---|---|---|---|---|---|---|")
 entries=fill(0,MODE_NAMES.len());occupancy=fill(0,MODE_NAMES.len());stalled_in=fill(0,MODE_NAMES.len())
@@ -151,9 +202,24 @@ ratio_sum=0.0;ratio_n=0;alt_sum=0.0;highest=0.0;highest_mode=CombatMode.regroup;
 totals=fill(0,8)
 range_shots=fill(0,4);range_hits=fill(0,4);cross_shots=fill(0,3);cross_hits=fill(0,3);miss_hist=fill(0,7);slits=0;tracked_all=0;tracked_hits=0
 fled_count=0;first_kills:f64[];kill_minutes=0.0;kill_count=0;stand_shots=0;stand_hits=0;stand_kills=0;close_time=0;cone_time=0;engaged_time=0;seat_time=0;seat_close=0;seat_cone=0;seat_lead=0.0;seat_lead_n=0
+results:str[]
+results.push("| seed | allied NPC kills | enemy NPC kills | seat kills | enemy kills of seat | first allied NPC kill s | first enemy NPC kill s | NPC water contacts (unhit) | NPC wall contacts | seat wall / unintended water | takeoff s | ground kills | purposeful NPC samples / active samples |")
+results.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+first_seed=to_int(env("DOGFIGHT_FIRST") ?? "0") ?? 0
 loop n in 0..battles:
     b=base.battle
-    b.seed=1934+n*7919
+    if not stock:b.seed=base.battle.seed+(n+first_seed)*7919
+    weather_world=base.world
+    wind_now=Wind()
+    flyer=base.flyer
+    fleet=base.vessels
+    launch=SlipLaunch()
+    plan=FlightPlan()
+    departing=canal
+    airborne=-1
+    if canal:
+        launch=start_slip_launch(flyer)
+        plan=canal_run_plan()
     # (DOGFIGHT_OLD=1: as before the deck was flown through: the ceiling under the base, nobody
     # climbing over it; DOGFIGHT_CEILING=<m>: just that ceiling)
     if env("DOGFIGHT_OLD")!=none:
@@ -166,27 +232,51 @@ loop n in 0..battles:
         # (a varied start: each a little off its slot and heading)
         nudge=vec3(f32(combat_noise(b.seed,a.craft,0,0)*60.0),f32(combat_noise(b.seed,a.craft,0,1)*25.0),f32(combat_noise(b.seed,a.craft,0,2)*60.0))
         turn=quat_euler(0,combat_noise(b.seed,a.craft,0,3)*0.12,0)
+        if stock or (canal and a.human):nudge=vec3(0,0,0);turn=quat_euler(0,0,0)
         a.state.position+=nudge;a.state.orientation=normalize(quat_mul(turn,a.state.orientation));a.state.velocity=quat_rotate(turn,a.state.velocity)
         a.state.precise_ready=false
         a.previous=a.state.position;a.previous_point=world_point(a.state.position)
         if a.human:
             # (the player's seat: a plain pursuit pilot on the player's guns)
-            a.external=false;a.gun.locked=false
+            a.external=canal;a.gun.locked=false
             a.pilot=CombatPilot(skill=0.7,simple=true,formation=true,leader=a.pilot.leader,formation_heading=a.pilot.formation_heading,formation_speed=a.pilot.formation_speed,formation_offset=a.pilot.formation_offset,scripted=average_player)
             stand=i
         b.actors[i]=a
     b.tactics=fill(0,MODE_NAMES.len())
     shots=fill(0,3);hits=fill(0,3);downs=fill(0,3)
     first=-1;ended=-1;first_kill=-1;kills=0;live:{int:Tracked};fled=0
-    first=-1;ended=-1;intosea=0;stuck=0;stalls=0;lowest=1e9;lowest_mode=CombatMode.regroup
+    first=-1;ended=-1;stuck=0;stalls=0;lowest=1e9;lowest_mode=CombatMode.regroup
     idle=fill(0,b.actors.len());slow=fill(0,b.actors.len());fired=fill(0,b.actors.len())
     past=[loop _ in 0..HISTORY: [loop a in b.actors: a.state.position]]
     pastv=[loop _ in 0..HISTORY: [loop a in b.actors: a.state.velocity]]
+    npc_kills=fill(0,3); first_npc=fill(-1,3); seat_kills=0; seat_lost=0
+    contested=fill(0,3)  # player seat, allied NPCs, enemy NPCs, through the deciding tick
+    active_samples=0; purposeful=0; sea=0; unhit_sea=0
+    wall=fill(false,b.actors.len()); walls=0; seat_wall=false; seat_wet=false; ground_kills=0
+    wet=fill(false,b.actors.len())
+    was_flying=fill(false,b.actors.len())
+    landing=fill(false,b.actors.len())
     chasing=-1;engaged_at=-1;targeted=0;cleared=-1;hand=SeatHand()
     loop tick in 0..int(seconds*60.0):
         observer=b.actors[stand].state.position
+        weather_world.tick=base.world.tick+tick
+        weather_scene_step(weather_world,observer,base.hour+f64(tick)/f64(data.TICKS_PER_MINUTE*60),COMBAT_DT)
         loop i in 0..b.actors.len(): past[tick%HISTORY][i]=b.actors[i].state.position;pastv[tick%HISTORY][i]=b.actors[i].state.velocity
-        if average_player and b.actors[stand].status==.flying:
+        if canal:
+            step_vessels(fleet,wind_now.dir*f32(wind_now.speed),COMBAT_DT,observer,b.actors[stand].state.velocity)
+            canal_ride_launches(b,fleet)
+        if departing and b.actors[stand].status==.flying:
+            a=b.actors[stand];flyer.state=a.state
+            a.previous=flyer.state.position;a.previous_point=craft_point(flyer.state);a.previous_rotation=flyer.state.orientation
+            if launch.active:_=step_slip_launch(launch,flyer,COMBAT_DT,f64(tick)/60.0)
+            else:
+                e=flight_env(f64(tick)/60.0,observer)
+                step(flyer.spec,flyer.state,canal_run_controls(flyer,plan,e),e,COMBAT_DT)
+                collide_vessels(fleet,a.spec,flyer.state,a.previous,a.craft)
+            a.state=flyer.state;b.actors[stand]=a
+            if f64(a.state.position.y)>f64(canal_launch.y)+45.0:
+                airborne=tick+1
+        else if average_player and b.actors[stand].status==.flying:
             env0=flight_env(f64(tick)/60.0,observer)
             chasing=average_target(b,stand,chasing)
             if chasing>=0 and engaged_at<0:engaged_at=tick
@@ -196,6 +286,11 @@ loop n in 0..battles:
             loop o in b.actors:
                 if o.side!=b.actors[stand].side and o.status==.flying and o.pilot.target==stand:targeted+=1
         if cleared<0 and b.finished:cleared=tick
+        loop i in 0..b.actors.len():
+            a=b.actors[i]
+            was_flying[i]=a.present and a.status==.flying and not a.bailed
+            phase=a.pilot.plan.phase
+            landing[i]=a.pilot.mode==.ditching or (a.pilot.mode==.homeward and (phase==.land or phase==.taxi or a.pilot.home_done))
         step_battle(b,flight_env(f64(tick)/60.0,observer),observer)
         loop ev in b.events:
             k=combat_index(b,ev.craft)
@@ -204,40 +299,75 @@ loop n in 0..battles:
             if ev.kind==.shot:
                 shots[side]+=1
                 if first<0:first=tick
-            if ev.kind==.hit:hits[side]+=1
+                tg=b.actors[k].pilot.target
+                if k!=stand and tg>=0 and tg<b.actors.len():
+                    o=b.actors[tg];los=o.state.position-ev.position;dist=f64(length(los))
+                    speed=f64(length(o.state.velocity))
+                    crossing=if speed>1:acos(clamp(abs(f64(dot(o.state.velocity,los)))/(speed*max(dist,0.01)),0.0,1.0)) else:0.0
+                    live[ev.serial]=Tracked(tg,dist,crossing,-los)
+            attacker=combat_index(b,ev.other)
+            if ev.kind==.hit and attacker>=0:
+                hits[b.actors[attacker].side]+=1
+                # The collision solver clips the round sweep to this exact hit point.
+                loop sweep in b.sweeps:
+                    if sweep.owner==ev.other and sweep.end==ev.position and live.contains(sweep.serial) and live[sweep.serial].target==k:
+                        live[sweep.serial].hit=true
+                        break
             if ev.kind==.fled:fled+=1
             if ev.kind==.shot and k==stand:stand_shots+=1
             if ev.kind==.hit and ev.other==b.actors[stand].craft:stand_hits+=1
             if ev.kind==.downed:
-                downs[side]+=1;kills+=1
-                if first_kill<0:first_kill=tick
-                if ev.other==b.actors[stand].craft:stand_kills+=1
+                downs[side]+=1
+                if attacker>=0 or ev.other < -1:
+                    kills+=1
+                    if first_kill<0:first_kill=tick
+                if attacker>=0 and b.actors[attacker].side!=side:
+                    team=b.actors[attacker].side
+                    if attacker==stand:
+                        stand_kills+=1;seat_kills+=1
+                    else:
+                        npc_kills[team]+=1
+                        if first_npc[team]<0:first_npc[team]=tick+1
+                        if k==stand:seat_lost+=1
+                    if cleared<0:contested[if attacker==stand:0 else:team]+=1
+                else if ev.other < -1:ground_kills+=1
                 d=b.actors[k]
                 if env("DOGFIGHT_DOWNS")!=none:
                     u=quat_rotate(d.state.orientation,vec3(0,1,0));f=quat_rotate(d.state.orientation,vec3(0,0,-1))
                     print("DOWN t {tick/60} actor {k} {d.pilot.mode} y {d.state.position.y:.0} v {length(d.state.velocity):.0} vy {d.state.velocity.y:.0} up.y {u.y:.2} fwd.y {f.y:.2} hull {d.state.hull_damage:.2} engine {d.state.engine_damage:.2} crashed {d.state.crashed} fire {d.fire:.2} attacker {d.last_attacker} pitch {d.pilot.controls.pitch:.2} roll {d.pilot.controls.roll:.2}")
-                if d.state.crashed and d.state.hull_damage<0.25 and d.fire==0 and d.last_attacker<0:intosea+=1
                 # (lost on the way home or landing: a fault of the homeward flow, not the fight)
                 if d.pilot.mode==.homeward:
                     print("HOMEWARD LOSS battle {n} t {tick/60} actor {k} side {d.side} y {d.state.position.y:.0} v {length(d.state.velocity):.0} vy {d.state.velocity.y:.0} hull {d.state.hull_damage:.2} engine {d.state.engine_damage:.2} crashed {d.state.crashed} capsized {d.state.capsized} phase {d.pilot.plan.phase} descend {d.pilot.descend_tick} attacker {d.last_attacker} fire {d.fire:.2} to tender {length(vec3(d.state.position.x-112300.0,0,d.state.position.z+71000.0)):.0} floats {part_health(d.state.damage,.left_float):.2}/{part_health(d.state.damage,.right_float):.2} wings {part_health(d.state.damage,.left_wing):.2}/{part_health(d.state.damage,.right_wing):.2} tail {part_health(d.state.damage,.tail):.2}")
+        if was_flying[stand] and not departing and b.actors[stand].state.on_water:seat_wet=true
+        if canal:
+            loop i in 0..b.actors.len():
+                a=b.actors[i]
+                if not was_flying[i]:continue
+                if i!=stand or not departing:
+                    collide_vessels(fleet,a.spec,a.state,a.previous,a.craft)
+                    b.actors[i]=a
+                if not wall[i] and canal_contact(a):
+                    wall[i]=true
+                    if i==stand:seat_wall=true
+                    else:walls+=1
+            if departing and airborne>=0:
+                departing=false
+                b.actors[stand].external=false
+        # First unintended contact per pilot, including impacts after a hit, but excluding
+        # wrecks falling into the sea, intentional ditching and arrivals at home.
+        loop i in 0..b.actors.len():
+            a=b.actors[i]
+            if i==stand or wet[i] or not was_flying[i] or not a.state.on_water:continue
+            if landing[i] and not a.state.crashed:continue
+            wet[i]=true;sea+=1
+            if env("DOGFIGHT_DOWNS")!=none:print("WATER seed {b.seed} tick {tick} actor {i} mode {a.pilot.mode} phase {a.pilot.plan.phase} sink {a.state.velocity.y:.1} hull {a.state.hull_damage:.2} attacker {a.last_attacker}")
+            if a.last_attacker== -1:unhit_sea+=1
         if b.finished and ended<0:ended=tick
-        # (each round from the muzzle: its range and crossing angle at firing, its nearest pass to
-        # the shooter's target, swept in the target's moving frame; vanished early near it, a hit)
-        loop r in b.rounds:
-            if live.contains(r.serial):continue
-            k=combat_index(b,r.owner)
-            if k<0:continue
-            tg=b.actors[k].pilot.target
-            if tg<0 or tg>=b.actors.len():continue
-            o=b.actors[tg];los=o.state.position-r.position;d=f64(length(los))
-            sp=f64(length(o.state.velocity))
-            cr=if sp>1.0: acos(clamp(abs(f64(dot(o.state.velocity,los)))/(sp*max(d,0.01)),0.0,1.0)) else: 0.0
-            live[r.serial]=Tracked(k,tg,d,cr,r.position-o.state.position)
-        loop r in b.rounds:
-            if let tr=live.get(r.serial):
-                if not tr.alive:continue
+        # Include the terminal sweep, even for a round that hit on its first tick.
+        loop sweep in b.sweeps:
+            if let tr=live.get(sweep.serial):
                 o=b.actors[tr.target]
-                rel=r.position-o.state.position
+                rel=sweep.end-o.state.position
                 d=rel-tr.rel
                 u=clamp(-f64(dot(tr.rel,d))/max(f64(dot(d,d)),1e-9),0.0,1.0)
                 near=tr.rel+d*f32(u)
@@ -246,12 +376,14 @@ loop n in 0..battles:
                     q=quat_rotate(quat_inverse(o.state.orientation),near)
                     pr=aircraft_profile(o.spec.kind)
                     tr.slit=abs(f64(q.x))<pr.span*0.5 and abs(f64(q.z))<pr.length*0.5 and abs(f64(q.y))<1.5
-                tr.rel=rel;tr.age=f64(r.age);tr.seen=tick
-                live[r.serial]=tr
+                tr.rel=rel
+                live[sweep.serial]=tr
+        loop r in b.rounds:
+            if live.contains(r.serial):live[r.serial].seen=tick
         gone:int[]
         loop serial,tr in live:
-            if tr.alive and tr.seen<tick:
-                hit=tr.age<2.4 and tr.miss<12.0 and f64(length(tr.rel))<60.0
+            if tr.seen<tick:
+                hit=tr.hit
                 ri=0
                 loop ri<3 and tr.range>=RANGES[ri]:ri+=1
                 ci=if tr.crossing<0.35: 0 else: (if tr.crossing<1.0: 1 else: 2)
@@ -274,7 +406,7 @@ loop n in 0..battles:
                 st=a.spec.stall_speed*pure_k(a.spec)
                 fwd=quat_rotate(a.state.orientation,vec3(0,0,-1));up=quat_rotate(a.state.orientation,vec3(0,1,0))
                 info=if tg>=0 and tg<b.actors.len(): "tgt {tg} d {length(b.actors[tg].state.position-a.state.position):.0} ang {acos(clamp(f64(dot(fwd,normalize(b.actors[tg].state.position-a.state.position))),-1.0,1.0)):.2} clos {dot(a.state.velocity-b.actors[tg].state.velocity,normalize(b.actors[tg].state.position-a.state.position)):.0}" else: "no target"
-                print("TRACE t {f64(tick)/60.0:.2} {a.pilot.mode} v/st {f64(length(a.state.velocity))/st:.2} alt {a.state.position.y:.0} climb {asin(clamp(f64(fwd.y),-1.0,1.0)):.2} up.y {up.y:.2} pitch {a.pilot.controls.pitch:.2} roll {a.pilot.controls.roll:.2} thr {a.state.throttle:.2} aoa {a.state.aoa:.2} stalled {a.state.stalled} shots {a.gun.shots} {info}")
+                print("TRACE t {f64(tick)/60.0:.2} {a.pilot.mode} v/st {f64(length(a.state.velocity))/st:.2} alt {a.state.position.y:.0} vy {a.state.velocity.y:.1} phase {a.pilot.plan.phase} wet {a.state.on_water} hull {a.state.hull_damage:.2} climb {asin(clamp(f64(fwd.y),-1.0,1.0)):.2} up.y {up.y:.2} pitch {a.pilot.controls.pitch:.2} roll {a.pilot.controls.roll:.2} thr {a.state.throttle:.2} aoa {a.state.aoa:.2} stalled {a.state.stalled} shots {a.gun.shots} {info}")
         if tick%30==0:
             loop i in 0..b.actors.len():
                 a=b.actors[i]
@@ -283,6 +415,11 @@ loop n in 0..battles:
                 if f64(a.state.position.y)-g<lowest:lowest=f64(a.state.position.y)-g;lowest_mode=a.pilot.mode
                 if i!=stand:occupancy[int(a.pilot.mode)]+=1
                 tg=a.pilot.target
+                if i!=stand and first>=0 and ended<0 and a.pilot.mode!=.homeward and a.pilot.mode!=.withdrawing:
+                    active_samples+=1
+                    maneuver=a.pilot.mode==.break_turn or a.pilot.mode==.scissors or a.pilot.mode==.extend or a.pilot.mode==.unload or a.pilot.mode==.evade or a.pilot.mode==.breakaway
+                    quarry=tg>=0 and tg<b.actors.len() and b.actors[tg].status==.flying and b.actors[tg].present
+                    if (maneuver or (quarry and a.pilot.mode!=.regroup)) and not a.state.stalled and f64(length(a.state.velocity))>1.1*a.spec.stall_speed*pure_k(a.spec) and f64(a.state.position.y)-g>40:purposeful+=1
                 if i!=stand and tg>=0 and tg<b.actors.len() and b.actors[tg].status==.flying:
                     engaged_time+=1
                     gap=b.actors[tg].state.position-a.state.position
@@ -327,11 +464,15 @@ loop n in 0..battles:
                     y=f64(a.state.position.y)
                     if y>b.deck_top:deck_time[0]+=1 else: if y>b.deck_base:deck_time[1]+=1;deck_modes[int(a.pilot.mode)]+=1 else:deck_time[2]+=1
                     heights.push(y)
+    first_time=(tick:int)->str: if tick<0: "none" else: "{f64(tick)/60.0:.1}"
+    walls_text=if canal:to_text(walls) else:"—"
+    seat_contacts=if canal:"{seat_wall}/{seat_wet}" else:"—/{seat_wet}"
+    results.push("| {b.seed} | {npc_kills[1]} | {npc_kills[2]} | {seat_kills} | {seat_lost} | {first_time(first_npc[1])} | {first_time(first_npc[2])} | {sea} ({unhit_sea}) | {walls_text} | {seat_contacts} | {first_time(airborne)} | {ground_kills} | {purposeful}/{active_samples} |")
     loop m in 0..MODE_NAMES.len():entries[m]+=b.tactics[m]
     s=b.actors[stand]
     sh="{s.state.hull_damage:.2}/{if s.status==.flying: "flying" else: "down"}"
-    totals[0]+=shots[1];totals[1]+=hits[1];totals[2]+=shots[2];totals[3]+=hits[2];totals[4]+=downs[1];totals[5]+=downs[2];totals[6]+=stuck;totals[7]+=intosea
-    line="| {n} | {f64(first)/60.0:.0} | {f64(if ended<0: int(seconds*60.0) else: ended)/60.0:.0} | {ended>=0} | {shots[1]}/{hits[1]} | {shots[2]}/{hits[2]} | {downs[1]}/{downs[2]} | {sh} | {stuck} | {stalls} | {intosea} | {lowest:.0} ({lowest_mode}) |"
+    totals[0]+=shots[1];totals[1]+=hits[1];totals[2]+=shots[2];totals[3]+=hits[2];totals[4]+=downs[1];totals[5]+=downs[2];totals[6]+=stuck;totals[7]+=unhit_sea
+    line="| {n} | {f64(first)/60.0:.0} | {f64(if ended<0: int(seconds*60.0) else: ended)/60.0:.0} | {ended>=0} | {shots[1]}/{hits[1]} | {shots[2]}/{hits[2]} | {downs[1]}/{downs[2]} | {sh} | {stuck} | {stalls} | {unhit_sea} | {lowest:.0} ({lowest_mode}) |"
     report.push(line);print(line)
     # (what is left at the end: why the fight has not ended, or who went home and got there)
     rest:str[]
@@ -346,6 +487,8 @@ loop n in 0..battles:
             rest.push("{o.pilot.mode} {length(o.state.position-b.actors[stand].state.position):.0}m hull {o.state.hull_damage:.2}")
     note="battle {n}: player seat engaged at {f64(engaged_at)/60.0:.0} s, enemies on its tail {targeted} enemy-seconds, fight over at {if cleared<0: "never" else: "{f64(cleared)/60.0:.0} s"} (Kalyra home from {f64(b.home_since[1])/60.0:.0} s, Orenthia from {f64(b.home_since[2])/60.0:.0} s); still flying K {flying[1]} (going home {home[1]}, moored {landed[1]}), O {flying[2]} (going home {home[2]}, moored {landed[2]}); ditched {ditched}; enemies still fighting: {join(rest,", ")}"
     report.push(note);print(note)
+    score="Kills through battle end, seed {b.seed}: allied NPCs {contested[1]}, enemy NPCs {contested[2]}, player seat {contested[0]}."
+    report.push(score);print(score)
     if heights.len()>0:
         heights.sort()
         spreads.push((heights[heights.len()/10],heights[heights.len()/2],heights[heights.len()*9/10],heights[heights.len()-1]))
@@ -353,18 +496,18 @@ loop n in 0..battles:
     start=if first<0: 0 else: first
     first_kills.push(if first_kill<0: -1.0 else: f64(first_kill-start)/60.0)
     kill_minutes+=(seconds*60.0-f64(start))/3600.0;kill_count+=kills;fled_count+=fled
-report.push("\nTotals: Kalyra {totals[0]} shots {totals[1]} hits ({100.0*f64(totals[1])/max(1.0,f64(totals[0])):.1}%), Orenthia {totals[2]} shots {totals[3]} hits ({100.0*f64(totals[3])/max(1.0,f64(totals[2])):.1}%); downed Kalyra {totals[4]}, Orenthia {totals[5]}; stuck {totals[6]}, into the sea undamaged {totals[7]}.\n")
+report.push("\nTotals: Kalyra {totals[0]} shots {totals[1]} hits ({100.0*f64(totals[1])/max(1.0,f64(totals[0])):.1}%), Orenthia {totals[2]} shots {totals[3]} hits ({100.0*f64(totals[3])/max(1.0,f64(totals[2])):.1}%); downed Kalyra {totals[4]}, Orenthia {totals[5]}; stuck {totals[6]}, unhit NPC water contacts {totals[7]}.\n")
 known:f64[]
 loop f in first_kills:
     if f>=0:known.push(f)
 known.sort()
-med=if known.len()>0: known[known.len()/2] else: -1.0
+med=if known.len()>0:(known[(known.len()-1)/2]+known[known.len()/2])*0.5 else:-1.0
 report.push("Time to first kill after the first shot (s): {join([loop f in first_kills: (if f<0: "none" else: "{f:.0}")],", ")}; median {med:.0}. Kills per minute after the first shot: {f64(kill_count)/max(0.01,kill_minutes):.2}.\n")
 report.push("Withdrew hurt and left the battle: {fled_count}.\n")
 report.push("Player seat (a scripted pursuit pilot on the player's guns): {stand_shots} shots, {stand_hits} hits, {stand_kills} kills.\n")
 if average_player:report.push("Player seat with a quarry: within 500 m of it {100.0*f64(seat_close)/max(1.0,f64(seat_time)):.1}% of the time; within 500 m and the nose within 5 degrees of the lead {100.0*f64(seat_cone)/max(1.0,f64(seat_time)):.1}%; the nose off the lead by {seat_lead/max(1.0,f64(seat_lead_n))*57.3:.1} degrees on average when within 500 m.\n")
 report.push("NPCs with a target: within 500 m of it {100.0*f64(close_time)/max(1.0,f64(engaged_time)):.1}% of the time; within 500 m and the nose within 5 degrees of it {100.0*f64(cone_time)/max(1.0,f64(engaged_time)):.1}%.\n")
-report.push("Rounds followed to the shooter's target: {tracked_all}, hits {tracked_hits} ({100.0*f64(tracked_hits)/max(1.0,f64(tracked_all)):.1}%).\n")
+report.push("Completed NPC rounds followed to the intended target: {tracked_all}, hits {tracked_hits} ({100.0*f64(tracked_hits)/max(1.0,f64(tracked_all)):.1}%).\n")
 report.push("| range at firing | rounds | hits | rate |")
 report.push("|---|---|---|---|")
 RN=["under 250 m","250-450 m","450-650 m","over 650 m"]
@@ -374,11 +517,12 @@ report.push("|---|---|---|---|")
 CN=["under 20 deg (tail or head-on)","20-57 deg","over 57 deg (beam)"]
 loop i in 0..3:report.push("| {CN[i]} | {cross_shots[i]} | {cross_hits[i]} | {100.0*f64(cross_hits[i])/max(1.0,f64(cross_shots[i])):.1}% |")
 report.push("\nMisses by nearest pass to the target's centre: {join([loop i in 0..7: "<{MISSES[i]:.0} m {miss_hist[i]}"],", ")}. Misses that passed through the target's outline seen from above (within its span and length, under 1.5 m from its wing plane): {slits}.\n")
-dt_all=max(1,deck_time[0]+deck_time[1]+deck_time[2])
-report.push("Fighting time by height: above the deck {100.0*f64(deck_time[0])/f64(dt_all):.1}%, in it {100.0*f64(deck_time[1])/f64(dt_all):.1}%, below it {100.0*f64(deck_time[2])/f64(dt_all):.1}% (deck {base.battle.deck_base:.0}-{base.battle.deck_top:.0} m).\n")
-report.push("In the deck, by behaviour (aircraft-seconds): {join([loop m in 0..MODE_NAMES.len(): (if deck_modes[m]>0: "{MODE_NAMES[m]} {deck_modes[m]/2}" else: "")].filter((x:str): x!=""),", ")}.\n")
+if base.battle.deck_base<1e8:
+    dt_all=max(1,deck_time[0]+deck_time[1]+deck_time[2])
+    report.push("Fighting time by height: above the deck {100.0*f64(deck_time[0])/f64(dt_all):.1}%, in it {100.0*f64(deck_time[1])/f64(dt_all):.1}%, below it {100.0*f64(deck_time[2])/f64(dt_all):.1}% (deck {base.battle.deck_base:.0}-{base.battle.deck_top:.0} m).\n")
+    report.push("In the deck, by behaviour (aircraft-seconds): {join([loop m in 0..MODE_NAMES.len(): (if deck_modes[m]>0: "{MODE_NAMES[m]} {deck_modes[m]/2}" else: "")].filter((x:str): x!=""),", ")}.\n")
 report.push("Heights of the fighters, by battle (10th, 50th, 90th percentile, highest): {join([loop sp in spreads: "{sp.0:.0}/{sp.1:.0}/{sp.2:.0}/{sp.3:.0}"],", ")} m.\n")
-report.push("Mean speed {ratio_sum/max(1.0,f64(ratio_n)):.2} x stall speed; mean height {alt_sum/max(1.0,f64(ratio_n)):.0} m, highest {highest:.0} m ({highest_mode}; cloud base 650 m). Aircraft-seconds above the cloud base, by behaviour: {join([loop m in 0..MODE_NAMES.len(): (if above[m]>0: "{MODE_NAMES[m]} {above[m]/2}" else: "")].filter((x:str): x!=""),", ")}.\n")
+report.push("Mean speed {ratio_sum/max(1.0,f64(ratio_n)):.2} x stall speed; mean height {alt_sum/max(1.0,f64(ratio_n)):.0} m, highest {highest:.0} m ({highest_mode}; 650 m reference height). Aircraft-seconds above 650 m, by behaviour: {join([loop m in 0..MODE_NAMES.len(): (if above[m]>0: "{MODE_NAMES[m]} {above[m]/2}" else: "")].filter((x:str): x!=""),", ")}.\n")
 report.push("| behaviour | times chosen | share of flying time | stalls begun in it |")
 report.push("|---|---|---|---|")
 all=0
@@ -386,6 +530,9 @@ loop o in occupancy:all+=o
 loop m in 0..MODE_NAMES.len():
     if entries[m]==0 and occupancy[m]==0:continue
     report.push("| {MODE_NAMES[m]} | {entries[m]} | {100.0*f64(occupancy[m])/max(1.0,f64(all)):.1}% | {stalled_in[m]} |")
-text=join(report,"\n")+"\n"
+report.push("\nNPC first kills are timed from scenario start. Kills require an opposing last attacker. Each NPC sea collision is the first water contact while flying, including homeward flight and excluding successful intended touchdowns.")
+report.push("Purposeful samples are taken every half second between first shot and battle end, excluding homeward and withdrawal. They require an active maneuver or a live target outside regroup, no stall, speed above 1.1 times stall and over 40 m clearance.\n")
+text=join(report,"\n")+"\n"+join(results,"\n")+"\n"
 print(text)
-assert(write_file(dir+"/dogfights-{model}{helps}.md",text))
+prefix=(if duel:"duel-" else:if canal:"canal-" else:"")+(if stock:"stock-" else:"")
+assert(write_file(dir+"/dogfights-{prefix}{model}{helps}.md",text))
