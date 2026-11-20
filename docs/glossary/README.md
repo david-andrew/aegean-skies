@@ -3891,6 +3891,15 @@ No image: the tiers differ in budgets more than in any single view.
 ---
 ## Input
 
+### Passing on foot
+
+Near the pilot, a walker looks ahead for people in the way and steps to one side. A tight pass
+shortens the stride and turns the shoulders. At a blocked opening the walker waits, steps back
+to give room and checks for a way past. The pilot's shoulders also turn slightly while walking
+close to someone. Walls, stairs and quay edges constrain the paths through the walking collision
+queries. The detour is drawn from transient state in `src/walk_avoidance.jo`. The living world
+advances the person's route on its fixed clock.
+
 ### Panels own the wheel
 
 - **Aliases:** the wheel leak, the menu zooming the camera.
