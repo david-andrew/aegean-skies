@@ -513,13 +513,21 @@ _choose_target = (b: Battle, a: Combatant) -> int:
         if in_deck(b,e.state.position) and f64(length(e.state.position-a.state.position)) > 400.0: continue
         delta = e.state.position-a.state.position
         distance = f64(length(delta))
-        cost = distance*(2.0-f64(dot(f,delta/f32(max(distance,0.01)))))
+        los = delta/f32(max(distance,0.01))
+        nose = f64(dot(f,los))
+        # A close contact behind can take longer to reach than the next one in front.
+        turn_room = min(f64(length(a.state.velocity))*1.5,350.0)
+        cost = distance*(1.7-0.7*nose)+turn_room*(1.0-nose)
         # Two aircraft can work a target together. Additional wing pairs look elsewhere.
         cost *= 1.0+0.55*f64(max(0,assigned[j]-1))
-        if j == a.pilot.target: cost *= 0.78
+        if j == a.pilot.target:
+            cost *= if distance<800 and nose>0.95: 0.5 else: 0.78
         # (one on this aircraft's tail first, then one on a friend's)
         if e.pilot.target >= 0 and e.pilot.target < b.actors.len() and b.actors[e.pilot.target].side == a.side:
-            cost *= if b.actors[e.pilot.target].craft == a.craft: 0.6 else: 0.85
+            friend = b.actors[e.pilot.target]
+            tail = friend.state.position-e.state.position
+            if length(tail)<900 and dot(quat_rotate(e.state.orientation,vec3(0,0,-1)),normalize(tail+vec3(0.0001,0,0)))>0.85:
+                cost *= if friend.craft == a.craft: 0.60 else: 0.74
         if a.pilot.role == .escort:
             loop boat in b.boats:
                 if boat.side == a.side and length(e.state.position-boat.position) < 1500: cost *= 0.45
@@ -599,10 +607,15 @@ _fighter_stick = (k: CraftSpec, s: CraftState, p: CombatPilot, tick: int) -> Con
 _retrack = (b: Battle, index: int) -> CombatPilot:
     a = b.actors[index]; p = a.pilot; s = a.state; k = a.spec
     t = p.target
-    if not p.close or t < 0 or t >= b.actors.len() or b.actors[t].status != .flying or not (p.mode == .pursuit or p.mode == .head_on or p.mode == .cover): return p
+    if not p.close or not (p.mode == .pursuit or p.mode == .head_on or p.mode == .cover): return p
+    if t < 0 or t >= b.actors.len() or b.actors[t].status != .flying or not b.actors[t].present:
+        p.trigger = false; p.close = false; p.held_sight = false
+        return p
     # (in the cloud the gun run is off, the brain taking it out of the deck, unless the target is
     # near enough to be seen in it)
-    if in_deck(b,s.position) and f64(length(b.actors[t].state.position-s.position)) > 400.0: return p
+    if (in_deck(b,s.position) or in_deck(b,b.actors[t].state.position)) and length(b.actors[t].state.position-s.position) > 400:
+        p.trigger = false; p.close = false; p.held_sight = false
+        return p
     g = _gun_aim(b,a,p,t)
     fwd = quat_rotate(s.orientation,vec3(0,0,-1))
     dist = f64(length(b.actors[t].state.position-s.position))
@@ -646,6 +659,7 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
     covering = false
     if not alarmed and leader >= 0 and leader != index and b.actors[leader].status == .flying and b.actors[leader].present:
         l = b.actors[leader].state
+        nearest_to_leader = 700.0
         loop j in 0..b.actors.len():
             o = b.actors[j]
             if o.side == a.side or o.status != .flying or not o.present or o.bailed: continue
@@ -653,8 +667,8 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
             if o.pilot.mode==.homeward:continue
             d = l.position-o.state.position; dist = f64(length(d))
             if in_deck(b,o.state.position) and length(o.state.position-pos)>400.0:continue
-            if dist < 700.0 and dist > 1.0 and f64(dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),d/f32(dist))) > 0.9:
-                p.target = j; covering = true; break
+            if dist < nearest_to_leader and dist > 1.0 and f64(dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),d/f32(dist))) > 0.9:
+                nearest_to_leader = dist; p.target = j; covering = true
     t = p.target
     has = t >= 0 and t < b.actors.len() and b.actors[t].status == .flying and b.actors[t].present
     # Held manoeuvres run their course; a fresh threat can still interrupt an extension.
@@ -680,8 +694,7 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
         # (on a good shot, the bold press it unless the attacker is very close; and an aggressive,
         # less skilled pilot may fix on it whatever comes)
         pressing = good and nearest > 250.0 and p.caution < 0.6
-        meeting=good and threat==t and dot(quat_rotate(o.state.orientation,vec3(0,0,-1)),fwd)< -0.8
-        fixed = meeting or pressing or (good and noise(p.noticed,7)*0.5+0.5 < p.aggression*(1.0-p.skill)*1.4)
+        fixed = pressing or (good and noise(p.noticed,7)*0.5+0.5 < p.aggression*(1.0-p.skill)*1.4)
         if not fixed and not p.simple:
             side = if dot(o.state.position-pos,right) >= 0: 1.0 else: -1.0
             # (a defensive spiral is not held for ever: after some seconds of breaking it reverses,
@@ -769,8 +782,7 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
         # engines fade)
         if b.deck_top < 1e8: over = min(over,f32(b.deck_top+350.0-f64(o.state.position.y)))
         p.mode = if f64(delta.y+over) > 150 and speed > stall*2.2: .zoom else: (if covering: .cover else: .approach)
-        lead=o.state.velocity*f32(clamp(dist/max(speed,1.0)*0.35,0.5,2.5))
-        return (delta+lead+across*spread+vec3(0,over,0),1.0)
+        return (delta+across*spread+vec3(0,over,0),1.0)
     # A stalemate (a turning fight with no angle gained) is broken by extending and coming back.
     # (and a stern chase that does not close: let it go, for whoever is nearer)
     # (progress is a firing position, or a better angle than any yet; a nose swept past a target
@@ -787,10 +799,9 @@ _dogfight = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot, ground: f6
         return (p.away,1.0)
     # Overshoot coming: lag pursuit, aiming behind it and easing off, until the angle is right.
     turning = f64(length(o.state.angular_velocity)) > 0.35
-    if closure > 25.0+(1.0-p.aggression)*20.0 and dist < 350.0 and (angle > 0.25 or turning) and p.aggression < 0.8:
+    if closure > 25.0+(1.0-p.aggression)*20.0 and dist < 350.0 and (angle > 0.25 or turning) and not fire(aim) and p.aggression < 0.8:
         p.mode = .lag
         behind = delta-o.state.velocity*0.45
-        p.trigger = angle < 0.1 and fire(aim)
         return (behind,if speed > stall*1.6: 0.55 else: 1.0)
     p.mode = if covering: .cover else: .pursuit
     # (no hanging on the propeller after a zooming target: climbing steeply and slowing, level off
@@ -834,8 +845,8 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         phase=p.plan.phase
         # A recall can come in mid-dive. The rally/orbit controller assumes a serviceable
         # aircraft. Keep the pull-out available until the actual landing approach.
-        if fdm2_active(k) and not p.home_done and phase!=.land and phase!=.taxi and phase!=.descend and s.velocity.y < -3:
-            ahead=s.position+s.velocity*f32(4.0+3.0*s.hull_damage)
+        if fdm2_active(k) and not p.home_done and phase!=.land and phase!=.taxi and phase!=.descend and s.velocity.y < 5:
+            ahead=s.position+s.velocity*f32(4.5+4.0*s.hull_damage)
             floor=max(0.0,e.ground(f64(ahead.x),f64(ahead.z)))
             if f64(ahead.y)<floor+100.0: p.controls=_pull_out(k,s)
         return p
@@ -957,9 +968,7 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
             want = vec3(w.x,f32(max(-0.33,min(f64(w.y),0.35*(1.0-over))-0.35*clamp((f64(pos.y)-b.ceiling)/200.0,0.0,1.0))),w.z)
         # (near the sea, no steeper dive than leaves room to pull out)
         w = normalize(want+vec3(0.0001,0,0)); room = f64(pos.y)-ground
-        # Leave clearance for a recovery at this speed. A slow aircraft can follow a
-        # shallow descent onto a quarry while the fast aircraft needs a wider pull-out.
-        deepest = -clamp((room-120.0)/max(speed*3.2,350.0),0.0,0.85)
+        deepest = -clamp((room-200.0)/1400.0,0.0,0.9)
         if f64(w.y) < deepest: want = vec3(w.x,f32(deepest),w.z)
     # Local separation sampled only on brain ticks; no all-pairs scan per physics substep.
     avoid = vec3(0,0,0)
