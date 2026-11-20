@@ -208,6 +208,12 @@ funny or useful (time passes, people are met, the plane is looked after).
    Back gets him up in the room, not out of it. The night paid for, the desk offers his room. The
    hotel's terrace no longer offers to fish.
 
+## Built (round fifteen)
+
+35. **A picnic.** A basket from the hotel or the coffee house goes along on his arm, and in the
+   aircraft. On a quiet shore, tap the sand: the blanket is spread, he sits facing the sea, and the
+   afternoon goes by, a bite now and then. Tap the basket to pack up.
+
 ## Controls
 
 - On foot near the hotel: **F** at the player's table by the rail sits down; **F** at the bar
