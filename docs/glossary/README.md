@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -1914,6 +1914,32 @@ On the rivers branch until it lands.
   sheds open to the water with slipways, and a dressed stone edge along the shore at the jetty root.
 - **Code:** `lake_waterfront` (`src/lake_ports.jo`), `lake_waterfront_mesh` (`src/lake_port_mesh.jo`).
 
+### A picnic
+
+- **Aliases:** the picnic basket, a blanket on the shore.
+- **Definition:** an opt-in leisure (`src/picnic.jo`):
+  - **The basket:** "A picnic basket" is on the bill of fare at the hotel (bread, cheese, olives,
+    tomatoes and a bottle of the house's white, with a blanket, ¤2.40) and the coffee house
+    (¤1.80). It isn't brought to the table: it's made up and handed over, and he carries it on his
+    arm, aboard and wherever he flies.
+  - **A spot:** low land above the water and under four metres high, with the sea within twenty
+    metres. Not a quay or a pier (the land itself must be above the sea, with nothing built up
+    over it), and not a town (no house within a dozen metres) (`picnic_spot_at`).
+  - **Spreading the blanket:** with the basket along, tap or click the sand there. With the mouse,
+    a small label says "Spread the blanket", or F where he stands. He walks over, the striped
+    blanket unrolls, he sits down by degrees facing the sea, and the basket, bread, olives and
+    bottle are set out.
+  - **Sitting:** the afternoon goes by unhurried, about a minute of the world's clock a second. A
+    bite now and then, his hand to his mouth. The view sits behind him and to one side.
+  - **Packing up:** tap the basket, or Escape, or walk off. He gets up by degrees, and the notebook
+    has a line ("A picnic on the shore near Porto Vecchio: bread, cheese and the sea.").
+- **Code:** `src/picnic.jo` (`Picnic`, `picnic_sea_angle`, `picnic_spot_ok`, `picnic_note`);
+  `picnic_spot_at`, `picnic_begin`, `picnic_step`, `picnic_pack`, `draw_picnic` and the basket's
+  ordering in `_leisure_order` in `aegean.jo`; `PICNIC_ITEM` in `src/leisure_menu.jo`;
+  `tests/picnic_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=picnic AEGEAN_FOOT_GO=60:picnic;1300:pack` takes the basket to a
+  quiet shore across the bay from the hotel.
+
 ### Taking the waters
 
 - **Aliases:** the hot springs, the baths, a soak, the bathhouse keeper.
@@ -1922,7 +1948,12 @@ On the rivers branch until it lands.
   - **The keeper:** tap him at the bathhouse door. He asks thirty lepta for the waters (paid to the
     town's innkeeper if it has one, else the town's account), good all that day at that spring.
   - **Changing:** he goes into the cabin, is out of sight a moment, and comes out in a bathing
-    costume (`build_figure(bathing = true)`).
+    costume (`build_figure(bathing = true)`). His scarf stays with his clothes.
+  - **What is worn:** as at the island baths of the twenties and thirties, a one-piece suit of
+    knitted wool, dark (navy, black, maroon, bottle green), to the mid-thigh. It is sleeveless for
+    a man, some of them striped, and has short sleeves for a woman. Arms, shins and feet are bare
+    (`BATH_SUITS`). The open pool is mixed and in costume. Separate men's and women's baths,
+    where bathing was in the nude, were indoors, and none is shown.
   - **Getting in:** tap the hot pool. He walks to its steps by the terraces' stairs and round the
     pool's coping (`bath_route_to`, `_round_pool`), steps over and settles into the water by
     degrees (`bath_path`).
@@ -1937,14 +1968,20 @@ On the rivers branch until it lands.
 - **Lifts:** now and then the one who asks at the aircraft for a flight wants a lift instead: to the
   harbour below the nearest springs within 120 km ("Would you be going anywhere near the
   Saryerenos baths? I'd pay for a lift as far as Delyavouna."). Set down there, they pay ¤1.50 if
-  they have it and thank the pilot. Set down anywhere else, they say "Not here, I'm afraid" and
+  they have it and thank the pilot ("there" is moored within 1.5 km of the harbour on the map:
+  the living world's own places are the old harbours only). Set down anywhere else, they say "Not here, I'm afraid" and
   stay in the seat (`ride_lift_choice`, `Joyride.dest`).
+- **The sign** reads "THERMAL BATHS", by the game's convention for signs: Latin capitals and plain
+  English trade words ("BARBER", "INN", the notice boards, the airfields' names), with only the
+  hotel's own Italian name, "HOTEL ANCORA". There is no Greek lettering anywhere. Both springs
+  are in the invented mainland countries, Kalyra and Orenthia, not the Greek archipelago.
 - **History:** springs like Loutraki, Aidipsos, Ikaria and Methana were in use in the islands then,
   with plain bathhouses and a keeper taking a few lepta.
 - **Code:** `src/bath.jo` (`Bath`, `bath_pick_line`, `bath_pay`, `lift_fare_pay`); `bath_step`,
   `bath_go_in`, `bath_walk_to`, `bath_get_out`, `draw_bath_people`, `draw_bath_talk` and leisure
   stage 21 (the keeper) in `aegean.jo`; `ride_lift_*` in `src/joyride.jo`; `tests/bath_test.jo`.
-- **Capture:** `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters` walks up
+- **Capture:** `AEGEAN_LEISURE=ride-lift-land AEGEAN_RIDE_TRACE=1` sets a lift down at Delyavouna's
+  dock and shows the fare paid. `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters;3000:bath-out` walks up
   from the path, pays, changes and gets in. `AEGEAN_LEISURE=ride-ask AEGEAN_RIDE_LIFT=1` shows a lift
   being asked for.
 
@@ -2940,8 +2977,13 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
-- **The mouse locked to the view:** what the middle of the screen is on is lit and labelled, and a
-  click there goes to it, so the mouse needn't be freed first (`foot_aim`).
+- **The mouse locked to the view:** what the middle of the screen is on is lit and labelled, with a
+  small dot at the middle while it is on something, and a click there goes to it, so the mouse
+  needn't be freed first (`foot_aim`).
+- **The pointer on foot (a trial, Tweaks, off by default; `AEGEAN_POINTER_ON_FOOT=1`):** the mouse
+  stays a pointer on foot. A thing hovered is labelled, and a click uses it. A click on open ground
+  walks there. A drag turns the view, as in the rooms and at a table. `AEGEAN_SHOW_POINTER=1` draws
+  the pointer for captures.
 - **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
   index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
 
@@ -3013,6 +3055,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     the thing, and sits or lies down by degrees (`RoomPilot`, `room_step`, `room_body`; the
     figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
     one of its places to the next.
+  - **Into bed in two halves:** he turns about and sits down on the bed's edge, then swings round
+    onto it and lies back (`room_bed_edge`; the figure's posture 7, lying back from sitting).
+    Getting up is the same the other way.
   - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
     evening (`room_sleep_until`). A tap or click on a thing wakes him, and once he's up he goes
     there. A key wakes him only (Back or Escape among them, never also the way out). He stays
