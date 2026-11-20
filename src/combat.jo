@@ -2,6 +2,7 @@ use 'world_point.jo'
 # Deterministic physical engagements. IDs refer to living-world people/aircraft; no economy,
 # rescue, spawning of inhabitants, device reads or random() calls occur here.
 use 'flight.jo'
+use 'flight_v2.jo'
 use 'tweaks.jo'
 from 'air_pilot.jo' import air_waypoint_controls, air_runway, AirRunway
 use 'damage.jo'
@@ -267,6 +268,7 @@ struct Battle:
     rally: vec3[] = [vec3(0,0,0),vec3(0,0,0),vec3(0,0,0)]   # where each side regroups after the fight
     formed: int[] = [-1,-1,-1]     # the tick each side, regrouped, formed up for home (-1: not yet)
     orders: FlightOrder[] = [FlightOrder(),FlightOrder(),FlightOrder()]   # each side's last word on the radio
+    assist: Assist = Assist()      # the one sent down to the player on the sea (radio_help.jo)
     strength: int[] = [0,0,0]      # how many each side began with
     apart_since: int[] = [-1,-1,-1] # the tick each side lost touch with the enemy (-1: in touch)
 
@@ -281,6 +283,80 @@ struct FlightOrder:
     at: vec3 = vec3(0,0,0)         # where (circle here)
     target = -1                    # the aircraft to attack (ID)
 
+# One of the flight sent down to the player on the sea: it lands off to one side, taxis to lie
+# alongside and waits there (stage 2) while the cans are handed over, then takes off and goes on
+# (stage 3) until the caller lets it go.
+struct Assist:
+    craft = -1
+    stage = 0                      # 0 none, 1 coming, 2 alongside, 3 off again
+    alongside: vec3 = vec3(0,0,0)  # where it comes to rest, beside the player's aircraft
+
+# Sends `craft` down to lie at `alongside`: it touches down into the wind (`wind`), well short and
+# off to the side, so its run out ends clear of the aircraft it comes to.
+send_assist = (b: mut Battle, craft: int, alongside: vec3, wind: vec3):
+    i = combat_index(b,craft)
+    if i < 0: return
+    w = vec3(wind.x,0,wind.z)
+    h = if length(w) > 1.0: atan2(-f64(w.x),f64(w.z)) else: heading(b.actors[i].state)
+    into = heading_vector(h); side = vec3(-into.z,0,into.x)
+    touchdown = alongside-into*700.0+side*90.0
+    b.assist = Assist(craft = craft, stage = 1, alongside = alongside)
+    p = b.actors[i].pilot
+    p.plan = FlightPlan(target = touchdown, taxi_target = alongside, altitude = max(250.0,f64(alongside.y)+250.0), landing_heading = h, phase = .cruise, speed = b.actors[i].spec.cruise_speed*0.8)
+    p.target = -1; p.trigger = false
+    b.actors[i].pilot = p
+
+# Off again from alongside: a take-off into the wind and a climb away ahead.
+release_assist = (b: mut Battle, wind: vec3):
+    i = combat_index(b,b.assist.craft)
+    if i < 0 or b.assist.stage == 0: b.assist = Assist(); return
+    a = b.actors[i]
+    w = vec3(wind.x,0,wind.z)
+    h = if length(w) > 1.0: atan2(-f64(w.x),f64(w.z)) else: heading(a.state)
+    if a.state.moored: unmoor(a.state)
+    a.pilot.plan = FlightPlan(target = a.state.position+heading_vector(h)*20000.0, altitude = 300.0, takeoff_heading = h, phase = .takeoff)
+    # (the anchor let go now, not at its next look round: else it would lie moored on)
+    a.pilot.controls = Controls(throttle = 0.3); a.pilot.brain_tick = -1
+    b.actors[i] = a
+    b.assist.stage = 3
+
+# Flown home with the player aboard (the flight skipped behind the dark card): moored at its own
+# side's base, at its place along the quay, done; the assist over. False with no base.
+assist_home = (b: mut Battle) -> bool:
+    i = combat_index(b,b.assist.craft)
+    if i < 0 or not _has_home(b,b.actors[i].side): return false
+    a = b.actors[i]
+    h = _home_of(b,a.side)
+    slot = h.dock+h.step*f32(max(0,a.pilot.home_turn))
+    a.state = water_start(a.spec,vec3(slot.x,0,slot.z),h.heading)
+    moor(a.state,a.state.position,h.heading)
+    a.previous = a.state.position; a.previous_point = world_point(a.state.position); a.previous_rotation = a.state.orientation
+    a.pilot.mode = .homeward; a.pilot.home_done = true; a.pilot.plan = FlightPlan()
+    a.pilot.controls = Controls(throttle = 0.0, water_brake = 1.0, anchor = true)
+    b.actors[i] = a
+    b.assist = Assist()
+    true
+
+# Done with: back to the flight (a fresh plan, so going home plans again from where it is).
+end_assist = (b: mut Battle):
+    i = combat_index(b,b.assist.craft)
+    if i >= 0: b.actors[i].pilot.plan = FlightPlan()
+    b.assist = Assist()
+
+_assist = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatPilot:
+    a = b.actors[index]; s = a.state; k = a.spec
+    p.mode = .regroup; p.trigger = false; p.target = -1
+    if b.assist.stage == 2 or p.plan.phase == .done:
+        p.controls = Controls(throttle = 0.0, water_brake = 1.0, anchor = b.assist.stage != 3)
+        if b.assist.stage != 3: return p
+    c = autopilot(k,s,p.plan,e)
+    # (waved off: round again; off the water again, on with the climb)
+    if p.plan.phase == .failed:
+        p.plan.phase = if s.on_water: FlightPhase.takeoff else: FlightPhase.cruise
+        p.plan.go_arounds = 0
+    p.controls = c
+    p
+
 # A side's base: where its aircraft touch down (on `heading`), the first mooring and the step
 # between moorings along the quay, and the height they come home at.
 struct BattleHome:
@@ -293,6 +369,7 @@ struct BattleHome:
     place = -1                      # the world's place ID (for the deeds and the dock)
     centre: vec3 = vec3(0,0,0)      # the harbour's waterfront and its way out to sea (for the runway)
     out: vec3 = vec3(0,0,1)
+    name = ""                       # what it is called when it is no town (a tender)
 
 # Where to land at home in this wind: the traffic's own choice of water (air_runway), clear of the
 # shore ahead; else the base's own touchdown.
@@ -476,8 +553,9 @@ _retrack = (b: Battle, index: int) -> CombatPilot:
     a = b.actors[index]; p = a.pilot; s = a.state; k = a.spec
     t = p.target
     if not p.close or t < 0 or t >= b.actors.len() or b.actors[t].status != .flying or not (p.mode == .pursuit or p.mode == .head_on): return p
-    # (in the cloud the gun run is off: the brain is taking it out of the deck)
-    if in_deck(b,s.position): return p
+    # (in the cloud the gun run is off, the brain taking it out of the deck, unless the target is
+    # near enough to be seen in it)
+    if in_deck(b,s.position) and f64(length(b.actors[t].state.position-s.position)) > 400.0: return p
     g = _gun_aim(b,a,p,t)
     fwd = quat_rotate(s.orientation,vec3(0,0,-1))
     dist = f64(length(b.actors[t].state.position-s.position))
@@ -664,6 +742,7 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     elapsed = if p.brain_tick < 0: 6 else: b.tick-p.brain_tick
     was = p.mode
     p.brain_tick = b.tick; p.trigger = false; p.close = false
+    if b.assist.craft == a.craft and b.assist.stage > 0: return _assist(b,index,e,p)
     if p.mode == .homeward: return _homeward(b,index,e,p)
     order = _order_for(b,index)
     if order.kind == .form_on_me or order.kind == .circle:
@@ -673,7 +752,9 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
             l = b.actors[by].state
             slot = l.position+quat_rotate(quat_euler(0,-heading(l),0),p.formation_offset-b.actors[by].pilot.formation_offset)
             direction = heading_vector(heading(l)); lv = max(f64(length(l.velocity)),k.stall_speed*pure_k(k)*1.4)
-            pace = clamp(lv+f64(dot(slot-s.position,direction))*0.12,lv*0.75,lv*1.25)
+            # (well out of position, a straggler opens right up to catch the formation)
+            gap = f64(length(slot-s.position))
+            pace = clamp(lv+f64(dot(slot-s.position,direction))*0.12,lv*0.75,lv*1.25+max(f64(k.max_speed)-lv*1.25,0.0)*smoothstep(300.0,900.0,gap))
             p.controls = air_waypoint_controls(k,s,e,slot+direction*1000.0,f64(slot.y),pace)
             p.mode = .regroup; p.target = -1
             return p
@@ -721,7 +802,9 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
                 slot=l.position+quat_rotate(quat_euler(0,-p.formation_heading,0),p.formation_offset)
                 aim=slot+direction*1000.0
                 altitude=f64(slot.y)
-                pace=clamp(f64(length(l.velocity))+f64(dot(slot-pos,direction))*0.12,p.formation_speed*0.75,p.formation_speed*1.15)
+                # (well out of position, a straggler opens right up to catch the formation)
+                gap=f64(length(slot-pos))
+                pace=clamp(f64(length(l.velocity))+f64(dot(slot-pos,direction))*0.12,p.formation_speed*0.75,p.formation_speed*1.15+max(f64(k.max_speed)-p.formation_speed*1.15,0.0)*smoothstep(300.0,900.0,gap))
             p.controls=air_waypoint_controls(k,s,e,aim,altitude,pace)
             p.mode=.regroup
             return p
@@ -812,7 +895,9 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         p.controls.yaw = 0.0
     # (in the cloud nobody sees anything: never level in it, but on through it, up if fast and
     # nearer the top, else down)
-    if in_deck(b,pos) and p.mode != .evade:
+    # (but one on a gun run at a target in sight, a few hundred metres off, follows it on through)
+    gunning = (p.mode == .pursuit or p.mode == .lag or p.mode == .cover or p.mode == .head_on) and p.target >= 0 and p.target < b.actors.len() and f64(length(b.actors[p.target].state.position-pos)) < 400.0
+    if in_deck(b,pos) and p.mode != .evade and not gunning:
         middle = (b.deck_base+b.deck_top)*0.5
         # (crossing it already, fast and the right way, it is left to go on; else out by the nearer
         # side it can reach: the top if fast and above the middle, else the base)
@@ -994,8 +1079,10 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
             return p
         out = s.position-r; out.y = 0
         if length(out) < 1: out = vec3(1,0,0)
-        around = f64(atan2(f64(out.z),f64(out.x)))+0.4
-        aim = r+vec3(f32(cos(around)*1100.0),0,f32(sin(around)*1100.0))
+        # (round it close, so the flight is together when it forms up: within a turn's reach of each
+        # other, not strung round a wide circle)
+        around = f64(atan2(f64(out.z),f64(out.x)))+0.6
+        aim = r+vec3(f32(cos(around)*650.0),0,f32(sin(around)*650.0))
         p.controls = air_waypoint_controls(k,s,e,aim,f64(r.y)+20.0*f64(p.home_turn%3),k.cruise_speed*0.65)
         return p
     rank = 0
@@ -1009,8 +1096,19 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
             # (leading the player home: a pace they can follow)
             leading = b.orders[a.side].kind == .lead_home
             p.plan = FlightPlan(target = touchdown, taxi_target = h.dock+h.step*f32(p.home_turn), altitude = h.altitude, landing_heading = landing, phase = .cruise, speed = if lead == index: k.cruise_speed*(if leading: 0.7 else: 0.82) else: 0.0)
+        if lead == index and p.plan.phase == .cruise and b.orders[a.side].kind != .lead_home:
+            # (leading the flight home: throttled back while a follower is still well out of its slot)
+            spread = 0.0
+            loop o in b.actors:
+                if o.side == a.side and o.status == .flying and o.pilot.mode == .homeward and not o.human and o.craft != a.craft:
+                    spread = max(spread,f64(length(home_slot(b,index,o.pilot.formation_offset)-o.state.position)))
+            p.plan.speed = k.cruise_speed*0.82*(1.0-0.35*smoothstep(500.0,1500.0,spread))
         c = autopilot(k,s,p.plan,e)
         if (p.plan.phase == .descend or p.plan.phase == .land) and p.descend_tick < 0: p.descend_tick = b.tick
+        if p.plan.phase == .failed and s.beached and not s.crashed and f64(length((p.plan.taxi_target-s.position).xz)) < 25.0 and f64(length(s.velocity)) < 4.0*pure_k(k):
+            # (run gently aground at her own mooring by the shore: home, made fast where she lies,
+            # not opened up and driven up the beach to go round again)
+            p.plan.phase = .done; c = Controls(throttle = 0.0, water_brake = 1.0, anchor = true)
         if p.plan.phase == .failed:
             # (waved off for good: round again from the start of the approach)
             p.plan.phase = .cruise; p.plan.go_arounds = 0
@@ -1023,7 +1121,10 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
         slot = home_slot(b,lead,p.formation_offset)
         direction = heading_vector(heading(l))
         lv = f64(length(l.velocity))
-        pace = clamp(lv+f64(dot(slot-s.position,direction))*0.12,lv*0.75,lv*1.25)
+        # (well out of position, a straggler opens right up to catch the formation)
+        gap = f64(length(slot-s.position))
+        fastest = lv*1.25+max(f64(k.max_speed)-lv*1.25,0.0)*smoothstep(300.0,900.0,gap)
+        pace = clamp(lv+f64(dot(slot-s.position,direction))*0.12,lv*0.75,fastest)
         p.controls = air_waypoint_controls(k,s,e,slot+direction*1000.0,f64(slot.y),pace)
         return p
     # (its turn not yet come: round the bay on the approach side, stacked by turn)
@@ -1429,6 +1530,10 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
         # (coming in to land at home the autopilot flies the flare and the taxi: every tick, however
         # far, or a held stick porpoises it into the water)
         if a.pilot.mode==.homeward and not a.pilot.home_done and (a.pilot.plan.phase==.descend or a.pilot.plan.phase==.land or a.pilot.plan.phase==.taxi): period = 1
+        # (on flight model v2 the stick asks for a rate of roll and of turn: held half a second it
+        # swings her far past the bank wanted. Flying in formation, regrouping or the way home is
+        # steered by the autopilot, no dogfight brain, so every other tick)
+        if (a.pilot.mode==.homeward or a.pilot.mode==.regroup or a.pilot.formation) and fdm2_active(a.spec): period = min(period,2)
         b.actors[i]=a
         if not a.external and not a.pilot.scripted and a.status == .flying and (a.pilot.brain_tick<0 or (b.tick+a.craft)%period==0):
             was=a.pilot.mode

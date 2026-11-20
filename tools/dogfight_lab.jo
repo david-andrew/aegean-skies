@@ -31,9 +31,13 @@ model=env("DOGFIGHT_MODEL") ?? "default"
 # metres, fired when it looks lined up within 450 m; no tactics, no aim assist (the player's guns,
 # generous hits as the Tweaks default). Otherwise the seat is a plain lead-pursuit pilot.
 average_player=(env("DOGFIGHT_PLAYER") ?? "")=="average"
+seat_gunner=(env("DOGFIGHT_SEAT") ?? "")=="gunner"
 t=Tweaks()
 if model=="skybarons": t.skybarons_response=true
-if model=="v2": t.flight_model=1; t.fdm2_npcs=true
+if model=="v2": t.flight_model=1; t.fdm2_npcs=true; t.fdm2_fighters=true
+# (v2player: the player's seat on v2, the other aircraft on the earlier model; old: everyone on it)
+if model=="v2player": t.flight_model=1; t.fdm2_npcs=false
+if model=="old": t.flight_model=0; t.fdm2_npcs=false
 if model=="sb": t.flight_model=2
 # (DOGFIGHT_AIM=1: the aim assist on for the player's seat; DOGFIGHT_PLAIN_HITS=1: generous hits off)
 if env("DOGFIGHT_AIM")!=none: t.aim_assist=true
@@ -57,17 +61,38 @@ struct Tracked:
 const REACT = 15                    # ticks of reaction time
 const HISTORY = 32
 
+# The player's hand as the game takes it (src/pilot.jo, the mouse or a finger): the aim's motion
+# measured and smoothed into the steering (the rudder's lead), the controls eased toward what is
+# asked at the game's rate.
+struct SeatHand:
+    seen: vec3 = vec3(0, 0, 0)
+    rate: vec3 = vec3(0, 0, 0)
+    last: Controls = Controls()
+
+hand_steer = (h: mut SeatHand, k: CraftSpec, s: CraftState, want: vec3) -> Controls:
+    aim = normalize(want)
+    if length(h.seen) > 0.5: h.rate += ((aim - h.seen) * 60.0 - h.rate) * f32(1.0 - exp(-10.0 / 60.0))
+    h.seen = aim
+    # (DOGFIGHT_SEAT=gunner: the seat steered with the battle pilots' crisp law, to compare)
+    c = if seat_gunner: steer(k, s, aim, h.rate, false, false, true) else: steer(k, s, aim, h.rate)
+    ease = 1.0 - exp(-30.0 / 60.0)
+    c.pitch = h.last.pitch + (c.pitch - h.last.pitch) * ease
+    c.roll = h.last.roll + (c.roll - h.last.roll) * ease
+    c.yaw = h.last.yaw + (c.yaw - h.last.yaw) * ease
+    h.last = c
+    c
+
 # The average player's controls this tick, from what it saw REACT ticks ago.
-average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3[][], tick: int, e: FlightEnv) -> (Controls,bool):
+average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3[][], tick: int, e: FlightEnv, h: mut SeatHand) -> (Controls,bool):
     a = b.actors[me]; s = a.state
     fwd = quat_rotate(s.orientation,vec3(0,0,-1))
     g = max(0.0,e.ground(f64(s.position.x),f64(s.position.z)))
     if f64(s.position.y)-g < 140.0 or (f64(fwd.y) < -0.35 and f64(s.position.y)-g < 300.0):
-        c = steer(a.spec,s,vec3(fwd.x,0.8,fwd.z)); c.throttle = 1.0
+        c = hand_steer(h,a.spec,s,vec3(fwd.x,0.8,fwd.z)); c.throttle = 1.0
         return (c,false)
     if target < 0:
         # (no enemy near: hold the formation's heading, level)
-        c = steer(a.spec,s,heading_vector(a.pilot.formation_heading)+vec3(0,f32(clamp((420.0-f64(s.position.y))/400.0,-0.3,0.3)),0)); c.throttle = 1.0
+        c = hand_steer(h,a.spec,s,heading_vector(a.pilot.formation_heading)+vec3(0,f32(clamp((420.0-f64(s.position.y))/400.0,-0.3,0.3)),0)); c.throttle = 1.0
         return (c,false)
     then = (tick-REACT+HISTORY*1000)%HISTORY
     seen = past[then][target]; seenv = pastv[then][target]
@@ -78,7 +103,7 @@ average_controls = (b: Battle, me: int, target: int, past: vec3[][], pastv: vec3
     aim = intercept(delta,seenv-s.velocity,420.0*b.bullet_scale)
     wander = f32(min(dist*0.02,9.0))
     aim += vec3(f32(sin(f64(tick)*0.023))*wander,f32(cos(f64(tick)*0.019))*wander,f32(sin(f64(tick)*0.011))*wander)
-    c = steer(a.spec,s,normalize(aim))
+    c = hand_steer(h,a.spec,s,aim)
     st = a.spec.stall_speed*pure_k(a.spec)
     c.pitch = min(c.pitch,0.15+0.85*smoothstep(st*1.1,st*1.45,f64(length(s.velocity))))
     true_delta = b.actors[target].state.position-s.position
@@ -124,7 +149,7 @@ deck_time=fill(0,3);deck_modes=fill(0,MODE_NAMES.len());heights:f64[];spreads:(f
 ratio_sum=0.0;ratio_n=0;alt_sum=0.0;highest=0.0;highest_mode=CombatMode.regroup;above=fill(0,MODE_NAMES.len())
 totals=fill(0,8)
 range_shots=fill(0,4);range_hits=fill(0,4);cross_shots=fill(0,3);cross_hits=fill(0,3);miss_hist=fill(0,7);slits=0;tracked_all=0;tracked_hits=0
-fled_count=0;first_kills:f64[];kill_minutes=0.0;kill_count=0;stand_shots=0;stand_hits=0;stand_kills=0;close_time=0;cone_time=0;engaged_time=0
+fled_count=0;first_kills:f64[];kill_minutes=0.0;kill_count=0;stand_shots=0;stand_hits=0;stand_kills=0;close_time=0;cone_time=0;engaged_time=0;seat_time=0;seat_close=0;seat_cone=0;seat_lead=0.0;seat_lead_n=0
 loop n in 0..battles:
     b=base.battle
     b.seed=1934+n*7919
@@ -156,7 +181,7 @@ loop n in 0..battles:
     idle=fill(0,b.actors.len());slow=fill(0,b.actors.len());fired=fill(0,b.actors.len())
     past=[loop _ in 0..HISTORY: [loop a in b.actors: a.state.position]]
     pastv=[loop _ in 0..HISTORY: [loop a in b.actors: a.state.velocity]]
-    chasing=-1;engaged_at=-1;targeted=0;cleared=-1
+    chasing=-1;engaged_at=-1;targeted=0;cleared=-1;hand=SeatHand()
     loop tick in 0..int(seconds*60.0):
         observer=b.actors[stand].state.position
         loop i in 0..b.actors.len(): past[tick%HISTORY][i]=b.actors[i].state.position;pastv[tick%HISTORY][i]=b.actors[i].state.velocity
@@ -164,7 +189,7 @@ loop n in 0..battles:
             env0=flight_env(f64(tick)/60.0,observer)
             chasing=average_target(b,stand,chasing)
             if chasing>=0 and engaged_at<0:engaged_at=tick
-            c,f=average_controls(b,stand,chasing,past,pastv,tick,env0)
+            c,f=average_controls(b,stand,chasing,past,pastv,tick,env0,hand)
             b.actors[stand].pilot.controls=c;b.actors[stand].pilot.trigger=f
         if tick%60==0:
             loop o in b.actors:
@@ -261,6 +286,23 @@ loop n in 0..battles:
                         close_time+=1
                         fwd=quat_rotate(a.state.orientation,vec3(0,0,-1))
                         if f64(dot(fwd,normalize(gap)))>0.996:cone_time+=1
+                # (the player's seat: how often near its quarry, and lined up on the lead (its rounds'
+                # meeting point), and how far off the lead its nose is when near)
+                if i==stand and average_player and chasing>=0 and chasing<b.actors.len() and b.actors[chasing].status==.flying:
+                    seat_time+=1
+                    if env("DOGFIGHT_SEAT_TRACE")!=none and n==0:
+                        q=b.actors[chasing];gp=q.state.position-a.state.position;fw=quat_rotate(a.state.orientation,vec3(0,0,-1))
+                        ld=intercept(gp,q.state.velocity-a.state.velocity,420.0*b.bullet_scale)
+                        sts=a.spec.stall_speed*pure_k(a.spec);stq=q.spec.stall_speed*pure_k(q.spec)
+                        print("SEAT t {f64(tick)/60.0:.1} d {length(gp):.0} off_lead {acos(clamp(f64(dot(fw,normalize(ld))),-1.0,1.0))*57.3:.0} v/st {f64(length(a.state.velocity))/sts:.2} quarry v/st {f64(length(q.state.velocity))/stq:.2} quarry mode {q.pilot.mode} alt {a.state.position.y:.0}/{q.state.position.y:.0} bank {atan2(-f64(quat_rotate(a.state.orientation,vec3(1,0,0)).y),f64(quat_rotate(a.state.orientation,vec3(0,1,0)).y))*57.3:.0} pitch {a.pilot.controls.pitch:.2} roll {a.pilot.controls.roll:.2}")
+                    gap=b.actors[chasing].state.position-a.state.position
+                    if f64(length(gap))<500.0:
+                        seat_close+=1
+                        fwd=quat_rotate(a.state.orientation,vec3(0,0,-1))
+                        lead=intercept(gap,b.actors[chasing].state.velocity-a.state.velocity,420.0*b.bullet_scale)
+                        off=acos(clamp(f64(dot(fwd,normalize(lead))),-1.0,1.0))
+                        seat_lead+=off;seat_lead_n+=1
+                        if off<0.0873:seat_cone+=1
                 # (engaged and turning with a target, yet not a shot fired in 90 s: circling forever)
                 engaged=a.pilot.mode==.pursuit or a.pilot.mode==.lag or a.pilot.mode==.cover
                 if a.gun.shots!=fired[i] or not engaged:fired[i]=a.gun.shots;idle[i]=0
@@ -316,6 +358,7 @@ med=if known.len()>0: known[known.len()/2] else: -1.0
 report.push("Time to first kill after the first shot (s): {join([loop f in first_kills: (if f<0: "none" else: "{f:.0}")],", ")}; median {med:.0}. Kills per minute after the first shot: {f64(kill_count)/max(0.01,kill_minutes):.2}.\n")
 report.push("Withdrew hurt and left the battle: {fled_count}.\n")
 report.push("Player seat (a scripted pursuit pilot on the player's guns): {stand_shots} shots, {stand_hits} hits, {stand_kills} kills.\n")
+if average_player:report.push("Player seat with a quarry: within 500 m of it {100.0*f64(seat_close)/max(1.0,f64(seat_time)):.1}% of the time; within 500 m and the nose within 5 degrees of the lead {100.0*f64(seat_cone)/max(1.0,f64(seat_time)):.1}%; the nose off the lead by {seat_lead/max(1.0,f64(seat_lead_n))*57.3:.1} degrees on average when within 500 m.\n")
 report.push("NPCs with a target: within 500 m of it {100.0*f64(close_time)/max(1.0,f64(engaged_time)):.1}% of the time; within 500 m and the nose within 5 degrees of it {100.0*f64(cone_time)/max(1.0,f64(engaged_time)):.1}%.\n")
 report.push("Rounds followed to the shooter's target: {tracked_all}, hits {tracked_hits} ({100.0*f64(tracked_hits)/max(1.0,f64(tracked_all)):.1}%).\n")
 report.push("| range at firing | rounds | hits | rate |")

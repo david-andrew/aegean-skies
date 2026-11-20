@@ -81,9 +81,13 @@
     if (/\bu\b/.test(result)) throw Error("Unsupported whole uniform struct use");
     return result;
   }
+  // (phones: medium, the look a 2020 phone (an LG V60, Adreno 650) keeps at 30 fps, unless the GPU
+  // is an older family's or an earlier visit's frames ran long on medium (remembered: stepDown))
+  const OLD_MOBILE_GPU = /Adreno \(TM\) [1-5]\d\d\b|Mali-[T4]|Mali-G(31|51|52|57|71|72)\b|PowerVR|SwiftShader|llvmpipe/i;
   function chooseTier(device) {
     if (["low", "medium", "high"].includes(device.override)) return ["low", "medium", "high"].indexOf(device.override);
-    if (device.mobile || device.textureLimit <= 4096 || device.fragmentLimit <= 224) return 0;
+    if (device.mobile) return device.stepDown || OLD_MOBILE_GPU.test(device.renderer || "") || device.fragmentLimit <= 224 ? 0 : 1;
+    if (device.textureLimit <= 4096 || device.fragmentLimit <= 224) return 0;
     if (/Intel|Iris|UHD|SwiftShader|llvmpipe/i.test(device.renderer)) return 1;
     return 2;
   }
@@ -172,6 +176,8 @@
     return getContext.call(this, kind, options);
   };
   let sceneScale = 1;
+  // (the automatic step down for phones on medium, above)
+  const STEP_DOWN_KEY = "aegean-quality-step-down", FRAMES_SETTLE_MS = 3000, FRAMES_WATCHED = 150, FRAMES_LONG_MS = 45;
   // The phone's Back gesture closes the panel on top, as Escape does, instead of leaving the game:
   // while the game has a panel open (it says so every frame) the page keeps a history entry of its
   // own, and Back, which takes it, becomes an Escape and puts it back. With nothing open, Back
@@ -191,10 +197,13 @@
   sloppy.env.__aegean_quality = () => {
     const canvas = document.querySelector("canvas"), gl = canvas.getContext("webgl2");
     const debug = gl.getExtension("WEBGL_debug_renderer_info");
-    const device = {override, mobile, textureLimit:gl.getParameter(gl.MAX_TEXTURE_SIZE),
+    let stepDown = false;
+    try { stepDown = localStorage.getItem(STEP_DOWN_KEY) === "1"; } catch (e) {}
+    const device = {override, mobile, stepDown, textureLimit:gl.getParameter(gl.MAX_TEXTURE_SIZE),
       fragmentLimit:gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS),
       renderer:debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)};
-    const tier = chooseTier(device), maxPixels = [230400, 518400, 2600000][tier];
+    const tier = chooseTier(device);
+    let maxPixels = [230400, 518400, 2600000][tier];
     const originalFit = sloppy.res.fit;
     const fit = () => {
       originalFit();
@@ -212,6 +221,31 @@
     fit();
     root.AegeanWeb.quality = {tier,maxPixels,...device};
     console.info("Aegean render quality", JSON.stringify(root.AegeanWeb.quality));
+    // A phone given medium by itself watches its first seconds once the title shows: frames running
+    // long (median over FRAMES_LONG_MS) take the scene to low's pixel budget at once, and if they
+    // still run long, the next visit starts on low. An explicit AEGEAN_QUALITY is left alone.
+    if (mobile && tier === 1 && !override) {
+      let since = -1, gaps = [], last = 0, stage = 0;
+      const median = (a) => { const b = [...a].sort((x, y) => x - y); return b[b.length >> 1]; };
+      const watch = (now) => {
+        if (last > 0 && since >= 0 && now - since > FRAMES_SETTLE_MS) gaps.push(now - last);
+        last = now;
+        if (since < 0 && !document.getElementById("aegean-loading")) since = now;
+        if (gaps.length >= FRAMES_WATCHED) {
+          const m = median(gaps); gaps = []; since = now;
+          if (m > FRAMES_LONG_MS && stage === 0) {
+            stage = 1; maxPixels = 230400; fit(); root.AegeanWeb.quality.maxPixels = maxPixels;
+            console.info(`Aegean render quality: frames ran long (median ${m.toFixed(0)} ms): scene pixels lowered`);
+          } else if (m > FRAMES_LONG_MS && stage === 1) {
+            stage = 2;
+            try { localStorage.setItem(STEP_DOWN_KEY, "1"); } catch (e) {}
+            console.info(`Aegean render quality: frames still long (median ${m.toFixed(0)} ms): low from the next visit`);
+          } else stage = 3;
+        }
+        if (stage < 2) requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    }
     return tier;
   };
   // The phone's gyroscope, for fine aiming by tilting it (as Breath of the Wild's bow did): its
