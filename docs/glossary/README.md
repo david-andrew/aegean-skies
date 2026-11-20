@@ -135,16 +135,24 @@ blue discs that stay in every frame are **speed flecks**.
 - **Definition:** not the ordinary sea turned up but a sea of its own. It sets in from a near
   gale (about 13 m/s, full by 22) or under a thunderstorm. The swell's bands stretch to 2.4
   times their length and grow half again in steepness, so long, high seas several metres high
-  run with the wind. Their crests peak and their troughs flatten. The water goes a dark,
-  heavy grey-green. The crests break white on their downwind faces, and a marbled net of foam
-  streaks lies along the wind. Spindrift blows off the tops. Floats feel the storm's swell
-  rising and falling under them and most of its slope, so alighting or ditching in it can break
-  a hull or capsize.
+  run with the wind. Their crests peak and their troughs flatten (a second harmonic, as in a
+  Stokes wave). Over shallow water they lose their height (none higher than about 0.6 of the
+  depth). The water goes a dark, heavy grey-teal, lit through the thin tops of the big seas. The
+  crests break white on their downwind faces in ragged patches, and behind them lies a dense
+  marbled web of foam: fine veins bent by the waves, crossing into a net, thick in the lee of the
+  crests, torn into lace close by. The sky closes in: heavy overcast, low grey light, haze that
+  keeps the sea readable to a few hundred metres. Spindrift blows off the tops; a gale tears
+  the aircraft's spray banks away downwind. Floats feel the storm's swell rising and falling
+  under them and most of its slope, so alighting or ditching in it can break a hull or capsize.
 - **Code:** `src/sea.jo` `sea_state` / `SeaState` (CPU, shared by the drawn sea and `swell_at`),
-  `sea_storm_of`, `sea_wave_profile`, `sea_storm_foam`; uniforms `swell_gain`, `sea_storm`.
-  Floats: `FlightEnv.swell_rate`, `swell_slope_share` (`src/flight.jo`, set in `src/pilot.jo`).
-- **Rules:** the CPU swell and the drawn swell stay identical (tests/precision_test.jo). Speed
-  flecks and the sea's fine detail are untouched.
+  `sea_storm_of`, `sea_wave_profile`, `sea_shoal`, `sea_storm_foam` (its noise from the tile
+  `sea_storm_noise_image`), `sea_storm_light`; uniforms `swell_gain`, `sea_storm`, `storm_noise`.
+  The storm water is its own shader variant (`storm_water`, `sea_storm_shaders`), made the
+  first time a storm is up; an ordinary sea draws the ordinary program. Floats:
+  `FlightEnv.swell_rate`, `swell_slope_share` (`src/flight.jo`, set in `src/pilot.jo`); the
+  chase camera lifts over crests between it and the aircraft (`Flyer.storm_lift`).
+- **Rules:** the CPU swell and the drawn swell stay identical, ordinary and storm
+  (tests/precision_test.jo). Speed flecks and the sea's fine detail are untouched.
 - **Capture:** `AEGEAN_WEATHER=meltemi AEGEAN_WIND_BIAS=10` (about 23 m/s), e.g. with
   `AEGEAN_FLYING="35 50"` or `AEGEAN_CAPTURE_TAKEOFF=1`.
 
