@@ -140,7 +140,8 @@ blue discs that stay in every frame are **speed flecks**.
   depth). The water goes a dark, heavy grey-teal, lit through the thin tops of the big seas. The
   crests break white on their downwind faces in ragged patches, and behind them lies a dense
   marbled web of foam: fine veins bent by the waves, crossing into a net, thick in the lee of the
-  crests, torn into lace close by. The sky closes in: heavy overcast, low grey light, haze that
+  crests; close by, torn into small patches, holes and bubbles and a fine net of breaking lines; a
+  ragged white line of foam along the very top of each sea. The sky closes in: heavy overcast, low grey light, haze that
   keeps the sea readable to a few hundred metres. Spindrift blows off the tops; a gale tears
   the aircraft's spray banks away downwind. Floats feel the storm's swell rising and falling
   under them and most of its slope, so alighting or ditching in it can break a hull or capsize.
@@ -344,11 +345,14 @@ blue discs that stay in every frame are **speed flecks**.
 
 ### Spindrift
 
-- **Definition:** in a storm sea, spray torn off the wave tops by the wind and streamed downwind in
-  smoky white wisps. Each wisp is torn from a crest near the eye, climbs a few metres, runs out
-  at about the wind's speed, widening and thinning, and is gone in two to four seconds.
+- **Definition:** in a storm sea, spray torn off the wave tops by the wind and streamed downwind
+  as soft smoke. Each wisp is torn from a crest near the eye and drawn as a stream of soft round
+  puffs, one for each parcel of spray, facing the eye: faint as it leaves the crest, densest a
+  little way off, growing and thinning away downwind over two to three seconds. Never thin
+  bright rays.
 - **Code:** `src/spindrift.jo` (`step_spindrift`, `draw_spindrift`), drawn after the splashes in
-  `aegean.jo`, as the battle trails' soft ribbons (`src/combat_trails.jo`'s shader).
+  `aegean.jo`, with the battle trails' soft-edged shader (`src/combat_trails.jo`): each puff a
+  fan of triangles from a centre to a rim, so the shader's edge falloff rounds it.
 - **Rules:** presentation only (crests found with `swell_at`; no forces, no shared particles, no
   draws on the game's random numbers); nothing unless the sea is stormy. Cap: 90 wisps on the
   low tier, 160 otherwise, within 380 m of the eye.
