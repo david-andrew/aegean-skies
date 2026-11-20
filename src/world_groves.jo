@@ -17,6 +17,9 @@ use 'plants.jo'
 use 'world_terrain.jo'
 use 'world_source.jo'
 use 'canopy.jo'
+use 'crowns.jo'
+use 'fields.jo'
+use 'settlement_purpose.jo'
 
 struct WorldGrove:
     key: int = -1
@@ -24,6 +27,14 @@ struct WorldGrove:
     roads: int
     places: int
     grove: Grove
+    crowns: InstanceBuffer[CrownClump]
+    wood: InstanceBuffer[Instance3D]
+    # (the woods' crowns, made a few rows of the canopy's cells a frame after the trees: wood_step)
+    trees: CrownClump[] = []
+    woods: CrownClump[] = []
+    woods_next: int = -1           # the next row of cells to make (-1: done)
+    stand: f32[] = []
+    ground: f32[] = []
 
 world_groves: WorldGrove[]
 world_grove_count = 0
@@ -83,7 +94,8 @@ _world_grove_fill = (node: WorldTile) -> int:
     if found >= 0: pass
     else if world_groves.len() < WORLD_GROVE_SLOTS:
         empty: Instance3D[]
-        world_groves.push(WorldGrove(grove=Grove(vec2(0,0),160.0,[loop k in 0..PLANT_KINDS: instance_buffer(empty)])))
+        no_crowns: CrownClump[]
+        world_groves.push(WorldGrove(grove=Grove(vec2(0,0),160.0,[loop k in 0..PLANT_KINDS: instance_buffer(empty)]),crowns=instance_buffer(no_crowns),wood=instance_buffer(empty)))
         found = world_groves.len()-1
     else:
         oldest = world_frame
@@ -99,7 +111,14 @@ _world_grove_fill = (node: WorldTile) -> int:
             solids.push(TownSite(at,0,0.6*scale,0.6*scale,5*scale,0))
     walk_publish("worldgrove:{found}",solids)
     g = world_groves[found]
+    clumps,wood = crowns_of_lists(lists)
     loop k in 0..PLANT_KINDS: set_instances(g.grove.kinds[k],lists[k])
+    set_instances(g.crowns,clumps); set_instances(g.wood,wood)
+    g.trees = clumps; g.woods = []
+    g.stand,g.ground = wood_grid(node,ox,oz)
+    g.woods_next = -1
+    loop v in g.stand:
+        if v > 0.05: g.woods_next = int(floor(oz/CANOPY_CELL)); break
     g.key = node.key; g.roads = _world_grove_roads(ox,oz); g.places = _world_grove_places(ox,oz); g.grove.center = vec2(f32(ox+112.0),f32(oz+112.0))
     world_groves[found] = g
     found
@@ -189,7 +208,8 @@ world_groves_warm = ():
 world_groves_settled = () -> bool: world_warm_views.len() == 0 or (world_grove_warm_frame >= world_frame-1 and world_grove_warm_missing == 0)
 
 draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
-    global world_groves,world_grove_count,world_grove_generated,world_grove_visible
+    global world_groves,world_grove_count,world_grove_generated,world_grove_visible,wood_seeds
+    if wood_seeds.len() == 0: wood_seeds = canopy_seeds()
     world_grove_count = 0; world_grove_generated = 0
     if not geography_enabled: return
     cam = scene_camera()
@@ -198,6 +218,9 @@ draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
         return
     zone("world groves")
     visible: Grove[]
+    visible_crowns: InstanceBuffer[CrownClump][]
+    visible_slots: int[]
+    visible_wood: InstanceBuffer[Instance3D][]
     wanted: WorldTile[]
     loop tile_slot in world_selected:
         # Published domains already pass the terrain frustum test.
@@ -212,8 +235,132 @@ draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
         g = world_groves[found]; g.used = world_frame; world_groves[found] = g
         loop kind in g.grove.kinds: world_grove_count += kind.count
         visible.push(g.grove)
+        visible_crowns.push(g.crowns); visible_wood.push(g.wood)
+        visible_slots.push(found)
     world_grove_visible = visible.len()
     # (then the coming view's, with what is left of the frame's one)
     if world_warm_views.len() > 0: world_groves_warm()
-    draw_groves(meshes,visible,L,t)
+    # (the woods' crowns, a millisecond's worth of rows a frame)
+    zone("woods")
+    wood_step(visible_slots,time()+0.001)
     zone_end()
+    draw_groves(meshes,visible,L,t)
+    zone("crowns")
+    draw_crowns(visible_crowns,crown_params(L,t,render_quality.grove_distance))
+    limb = crown_limb()
+    p = obj_params(L,t)
+    loop w in visible_wood:
+        if w.count > 0: draw_instanced(crown_limb_sh,limb,w,p)
+    zone_end()
+    zone_end()
+
+# The grove lists' trees as crowns (src/crowns.jo): pines, cypresses, bushes and olives become
+# clumps on limbs (and a share of the lowland pines plane trees), their lists emptied so no mesh
+# is drawn for them; oleanders and prickly pears keep their meshes.
+crowns_of_lists = (lists: mut Instance3D[][]) -> (CrownClump[],Instance3D[]):
+    clumps: CrownClump[]
+    wood: Instance3D[]
+    loop kind in 0..min(lists.len(),4):
+        loop tree in lists[kind]:
+            m = tree.model
+            root = m[3].xyz
+            scale = length(m[0].xyz)
+            yaw = atan2(m[0].z,m[0].x)
+            seed = hash21(floor(root.xz*4.0)+vec2(17.0,3.0))
+            species = if kind == int(Tree.pine): CROWN_PINE else: if kind == int(Tree.cypress): CROWN_CYPRESS else: if kind == int(Tree.bush): CROWN_BUSH else: CROWN_OLIVE
+            if species == CROWN_PINE and root.y < 120.0 and seed < 0.3: species = CROWN_PLANE
+            crown_place(clumps,wood,species,root,yaw,scale,tree.color.x,seed)
+        lists[kind] = []
+    (clumps,wood)
+
+crown_limb_cache: Mesh[] = []
+crown_limb = () -> Mesh:
+    global crown_limb_cache
+    if crown_limb_cache.len() == 0: crown_limb_cache.push(crown_limb_mesh())
+    crown_limb_cache[0]
+
+# ---------------- the woods as crowns ----------------
+
+# The stand cover at a point, computed whole (for a tile the terrain has not streamed: the title's
+# anchored groves): wood_stand from the sources the terrain's tiles bake.
+wood_stand_at = (x: f64,z: f64) -> f32:
+    sy,ridge = world_source_sample(x,z)
+    y = f32(sy)
+    if y < 0.6: return 0.0
+    nx = world_source_sample(x-5.0,z).0-world_source_sample(x+5.0,z).0
+    nz = world_source_sample(x,z-5.0).0-world_source_sample(x,z+5.0).0
+    n = normalize(vec3(f32(nx),10,f32(nz)))
+    tx = f32(fbm(x*0.004+3.3,z*0.004,3))
+    p = vec2(f32(x),f32(z))
+    sr = length(n.xz)/max(n.y,0.1)
+    orchard = orchard_cover(p,y,sr)
+    stands = clamp(grove_pine_cover(tx,sr,y)*7.0,0.0,1.0)
+    work = field_colour(working_landuse(p,sy,f64(sr)),p,y,1.0-n.y,stands,orchard,14.0,field_warp_cpu(p),field_palette)
+    wood_stand(n,y,f32(ridge),tx,f32(noise(x*0.0011-3.3,z*0.0011)),p,work.w,orchard)
+
+wood_seeds: CanopySeed[] = []
+
+# A tile's woods: every crown of the painted canopy's sheet (src/canopy.jo, 9 m cells, two crowns
+# to a cell) that the paint draws there (the stand cover above the crown's own draw), stood up as
+# a few clumps of its own size: the same crowns the ground paints beyond the groves' reach.
+# A tile's stand cover and ground on its 14 m grid, as the terrain's tile job made them; a tile
+# not streamed yet (the title's anchored groves) works them out here.
+wood_grid = (node: WorldTile,ox: f64,oz: f64) -> (f32[],f32[]):
+    if world_cache.get(node.key,-1) >= 0 and world_tiles[world_cache[node.key]].stand.len() == 289:
+        t = world_tiles[world_cache[node.key]]
+        return (t.stand,t.cpu_heights)
+    stand: f32[] = []
+    ground: f32[] = []
+    if foliage_off("woods"): return (stand,ground)
+    loop j in 0..17:
+        loop i in 0..17:
+            x = ox+f64(i)*14.0; z = oz+f64(j)*14.0
+            stand.push(wood_stand_at(x,z))
+            ground.push(f32(world_source_surface(x,z)))
+    (stand,ground)
+
+# One row of the canopy's cells (9 m) of a tile's woods: every crown of the painted canopy's sheet
+# (src/canopy.jo, two crowns to a cell) that the paint draws there (the stand cover above the
+# crown's own draw), stood up as a few clumps of its own size: the same crowns the ground paints
+# beyond the groves' reach.
+wood_row = (out: mut CrownClump[],stand: f32[],ground: f32[],ox: f64,oz: f64,cz: int):
+    global wood_seeds
+    if wood_seeds.len() == 0: wood_seeds = canopy_seeds()
+    if stand.len() != 289: return
+    at = (g: f32[],x: f64,z: f64) -> f32:
+        fx = clamp((x-ox)/14.0,0.0,15.999); fz = clamp((z-oz)/14.0,0.0,15.999)
+        i = int(fx); j = int(fz); u = f32(fx-f64(i)); v = f32(fz-f64(j))
+        a = g[j*17+i]; b = g[j*17+i+1]; c = g[(j+1)*17+i]; d = g[(j+1)*17+i+1]
+        mix(mix(a,b,u),mix(c,d,u),v)
+    loop cx in int(floor(ox/CANOPY_CELL))..int(ceil((ox+224.0)/CANOPY_CELL)):
+        wx = ((cx%CANOPY_CELLS)+CANOPY_CELLS)%CANOPY_CELLS; wz = ((cz%CANOPY_CELLS)+CANOPY_CELLS)%CANOPY_CELLS
+        loop k in 0..2:
+            sd = wood_seeds[(wz*CANOPY_CELLS+wx)*2+k]
+            x = (f64(cx)+f64(sd.shape.x))*CANOPY_CELL; z = (f64(cz)+f64(sd.shape.y))*CANOPY_CELL
+            if x < ox or x >= ox+224.0 or z < oz or z >= oz+224.0: continue
+            cover = at(stand,x,z)
+            if cover <= sd.id: continue
+            q = vec2(f32(x),f32(z))
+            if settlement_urban(q) or settlement_on_road(q) or water_at(x,z).wet: continue
+            closed = clamp((cover-0.6)*2.5,0.0,1.0)
+            crown_wood(out,vec3(f32(x),at(ground,x,z),f32(z)),sd.shape.z*f32(CANOPY_CELL),sd.phase.w,fract(sd.id*7.13),closed,sd.id)
+
+# The woods' crowns made a few rows a frame, the visible groves' first, until `until` (a time()):
+# a tile's woods never cost one frame its whole making.
+wood_step = (visible: int[],until: f64):
+    global world_groves
+    loop k in visible:
+        g = world_groves[k]
+        if g.woods_next < 0: continue
+        ox = f64(g.grove.center.x)-112.0; oz = f64(g.grove.center.y)-112.0
+        last = int(ceil((oz+224.0)/CANOPY_CELL))
+        loop g.woods_next >= 0 and time() < until:
+            wood_row(g.woods,g.stand,g.ground,ox,oz,g.woods_next)
+            g.woods_next += 1
+            if g.woods_next >= last:
+                g.woods_next = -1
+                all = g.trees
+                loop c in g.woods: all.push(c)
+                set_instances(g.crowns,all)
+        world_groves[k] = g
+        if time() >= until: return
