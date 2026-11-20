@@ -50,9 +50,9 @@ try {
   `});
   const results=[];
   for(const full of (process.env.WEB_CLOUD_SKY_ONLY?[]:[false,true])) for(const mode of ['front','behind']) {
-    const name=`${full?'log':'split'}-${mode}`;
+    const name=`${full?'log':'default'}-${mode}`;
     const query=new URLSearchParams({AEGEAN_TITLE:'0',SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',CLOUD_TEST_MODE:mode,AEGEAN_QUALITY:'low'});
-    if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
+    if(full)query.set('AEGEAN_LOG_DEPTH','1');
     errors.length=0;loaded=false;
     await send('Page.navigate',{url:'file://'+page+'?'+query});
     await until(()=>loaded);
@@ -70,9 +70,9 @@ try {
   if(sky) {
     const probes=[];
     for(const full of [false,true]) for(const target of ['moon','venus']) for(const cloud of [false,true,'empty']) {
-      const name=`sky-${full?'log':'split'}-${target}-${cloud==='empty'?'cloud-empty':cloud?'cloud':'clear'}`;
+      const name=`sky-${full?'log':'default'}-${target}-${cloud==='empty'?'cloud-empty':cloud?'cloud':'clear'}`;
       const q=new URLSearchParams({SLOPPY_NO_AUDIO:'1',SKY_TARGET:target,SKY_HOUR:target==='moon'?'0':'5.8',SKY_DAY:target==='moon'?String(29.53059/2-10):'0'});
-      if(full)q.set('AEGEAN_FULL_LOG_DEPTH','1');if(cloud)q.set('SKY_CLOUD','1');if(cloud==='empty')q.set('SKY_HIDE_BODY','1');
+      if(full)q.set('AEGEAN_LOG_DEPTH','1');if(cloud)q.set('SKY_CLOUD','1');if(cloud==='empty')q.set('SKY_HIDE_BODY','1');
       errors.length=0;loaded=false;await send('Page.navigate',{url:'file://'+resolve(sky)+'?'+q});
       await until(()=>loaded);await until(async()=>{const r=await send('Runtime.evaluate',{returnByValue:true,expression:'globalThis.quayFrames||0'});return r.result?.value>=4;});
       const links=(await send('Runtime.evaluate',{returnByValue:true,expression:'quayLinks'})).result.value;
@@ -105,7 +105,7 @@ print(json.dumps({'max_error':max(v[1] for v in im.getextrema()),'mean_error':su
     console.log('PASS: moon and Venus visibility and cloud occlusion on both WebGL2 depth paths');
   }
   writeFileSync(join(out,'results.json'),JSON.stringify(results,null,2)+'\n');
-  console.log('PASS: every foreground material visible; background materials cloud-occluded on split and full log WebGL2 depth');
+  console.log('PASS: every foreground material visible; background materials cloud-occluded on default and forced log WebGL2 depth');
 } finally {
   ws?.close();
   const exited=new Promise(r=>browser.once('exit',r));

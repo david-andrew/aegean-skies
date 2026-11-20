@@ -66,11 +66,11 @@ try {
   const selected=process.env.WEB_NEAR_CASES?.split(',');
   const results=[];
   for(const {quality,full,id,env:sceneEnv} of cases.filter(c=>(!selected||selected.includes(c.id))&&(!process.env.WEB_NEAR_LINEAR||!c.full))) {
-    const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'full-log':'split'}`;
+    const name=`${id}-${quality}-${process.env.WEB_NEAR_LINEAR?'linear':full?'log':'default'}`;
     const query=new URLSearchParams({AEGEAN_TITLE:'0',SLOPPY_NO_AUDIO:'1',SLOPPY_THREADS:'1',SLOPPY_SEED:'12345',
       AEGEAN_CAPTURE_READY:'1',AEGEAN_HOUR:'9.75',AEGEAN_QUALITY:quality,AEGEAN_STRESS_FRAME_DT:String(1/60),SLOPPY_FRAMES:'241',...sceneEnv});
     if(process.env.WEB_NEAR_LINEAR)query.set('AEGEAN_LINEAR_DEPTH','1');
-    if(full)query.set('AEGEAN_FULL_LOG_DEPTH','1');
+    if(full)query.set('AEGEAN_LOG_DEPTH','1');
     errors.length=0;loaded=false;
     await send('Page.navigate',{url:served.url+'?'+query});
     await until(()=>loaded);
@@ -113,20 +113,20 @@ print(json.dumps(result))
       if(id==='cloud')assert(metrics.mist>.9,`${name}: cloud volume missing`);
     }
   }
-  // Optimized bounded-near + far-log rendering must agree with all-fragment log depth.
+  // Compare the default renderer with the forced logarithmic fallback.
   const comparisons=[];
   for(const full of results.filter(r=>r.full)) {
-    const split=results.find(r=>r.id===full.id && r.quality===full.quality && r.frame===full.frame && !r.full);
-    assert(split,`missing split reference for ${full.name}`);
+    const regular=results.find(r=>r.id===full.id && r.quality===full.quality && r.frame===full.frame && !r.full);
+    assert(regular,`missing default reference for ${full.name}`);
     const diff=JSON.parse(execFileSync('python3',['-c',`
 import json,sys
 from PIL import Image,ImageChops,ImageStat
 im=ImageChops.difference(Image.open(sys.argv[1]).convert('RGB'),Image.open(sys.argv[2]).convert('RGB'))
 pixels=list(im.getdata())
 print(json.dumps({'mean_rgb_error':sum(ImageStat.Stat(im).mean)/3,'changed_over_16':sum(max(p)>16 for p in pixels)/len(pixels)}))
-`,split.file,full.file],{encoding:'utf8'}));
+`,regular.file,full.file],{encoding:'utf8'}));
     comparisons.push({id:full.id,frame:full.frame,...diff});
-    assert(diff.mean_rgb_error<1.0 && diff.changed_over_16<0.01,`${full.name}: split/full depth disagreement ${JSON.stringify(diff)}`);
+    assert(diff.mean_rgb_error<1.0 && diff.changed_over_16<0.01,`${full.name}: default/log depth disagreement ${JSON.stringify(diff)}`);
   }
   writeFileSync(join(out,'comparisons.json'),JSON.stringify(comparisons,null,2)+'\n');
   const stability=[];
@@ -143,7 +143,7 @@ print(json.dumps({name:sum(ImageStat.Stat(ImageChops.difference(a.crop(box),b.cr
     assert(drift.roof<3 && drift.panel<3,`${first.name}: cockpit moved away from its camera ${JSON.stringify(drift)}`);
   }
   writeFileSync(join(out,'stability.json'),JSON.stringify(stability,null,2)+'\n');
-  console.log('PASS: close-camera coverage and split/full WebGL depth comparisons');
+  console.log('PASS: close-camera coverage and default/log WebGL depth comparisons');
 } finally {
   await served.close();
   ws?.close();
