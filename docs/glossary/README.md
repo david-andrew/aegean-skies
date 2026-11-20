@@ -237,10 +237,7 @@ blue discs that stay in every frame are **speed flecks**.
 - **Code:** `src/surf.jo` (`surf_phase`, `surf_lace`, `surf_sea_foam`, `surf_swash`,
   `surf_ship_foam`). Used by `src/sea.jo` `sea_material(..., surf=true)` and `src/terrain.jo`
   `ground_material(..., surf=true)`; these are their own shader variants, made the first time Surf is
-  needed. With the wind study grass on (also a default) the coast ground is drawn by the wind
-  study's program instead: Surf keeps its sea, run-up and ships' white water, without the wet
-  sand and rock bursts (on Sloppy 0.41 the Surf ground program under the wind study's
-  parameters drew the land white). Ships: `src/vessel_spray.jo`.
+  needed. Ships: `src/vessel_spray.jo`.
 - **Rules:** with Surf off, the sea and coast are drawn by exactly the plain shaders (the
   sea-detail guard's output is identical). The open sea, its [speed flecks](#speed-flecks) and its
   fine detail are untouched either way: the surf is zero beyond the surf zone's depth and
