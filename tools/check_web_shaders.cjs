@@ -4,10 +4,10 @@
 // complete dynamically indexed arrays, samplers, attributes and varying rows.
 const fs = require('node:fs');
 const path = require('node:path');
-const {specializeUniforms} = require('../src/web_compat.js');
+const {prepareShader} = require('../src/web_compat.js');
 
 function audit(source, raw = false) {
-  const s = raw ? source : specializeUniforms(source);
+  const s = raw ? source : prepareShader(source);
   const vertex = /gl_Position\s*=/.test(s);
   const structs = new Map([...s.matchAll(/struct (\w+)\s*\{([^}]+)\};/g)].map(m => [m[1], m[2]]));
   function fields(body) {

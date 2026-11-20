@@ -905,7 +905,7 @@ On the rivers branch until it lands.
   deep navy on the sea, deep green on grass. It slides over the swell and the terrain as drawn.
 - **Code:** `src/craft_shadow.jo`. Each frame the nearby aircraft's own meshes are flattened along
   the sunlight into a small top-down mask under the player's shadow (`craft_shadow_mask_pass`, 80 m
-  square, 16 cm texels; 31 cm on the low tier); in the cloud pass's depth-detached window one
+  square, 16 cm texels; 31 cm on the low tier); in the cloud composite framebuffer one
   full-resolution pass over the mask's rectangle on screen rebuilds each pixel's world point from
   the scene depth, carries it along the sunlight into the mask and multiplies the scene by a cool
   tint (`craft_shadow_multiply`). The mask keeps each caster's lowest point, so an aircraft never
@@ -3041,7 +3041,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   reading (a desk and books), or the house (a sewing table).
 - **Rules:** the hotel's room is one `rent` transfer at the desk; the family takes nothing. No
   needs, no penalty. One leaves by the hotel's door, or into the street outside the family's door.
-  The rooms are drawn last over a cleared depth (`clear_world_depth`), so the town's walls never
+  The rooms are drawn last over a cleared depth (`clear_depth`), so the town's walls never
   show through them; a game saved during a stay loads with the pilot outside, where he went in.
 - **Code:** `src/stay.jo` (`Stay`, `stay_household`, `stay_next_speaker`, `stay_line`,
   `stay_note`), `src/stay_scene.jo` (`build_hotel_room`, `build_family_house`), `src/room_walk.jo`
@@ -3302,23 +3302,15 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Reversed depth
 
 - **Aliases:** reversed Z, reversed float depth.
-- **Definition:** on native Vulkan the depth buffer is a float with near at 1 and far at 0, which
-  spreads precision evenly over huge distances.
-- **Code:** `src/depth_space.jo` (`enable_world_depth`, `world_reverse_depth_active`,
-  `world_depth_compare`).
-- **Rules:** clear value, compare and decode must change together. Software and Metal fall back to
-  conventional depth. `AEGEAN_LOG_DEPTH` turns it off.
+- **Definition:** the depth buffer holds the camera near distance divided by view distance. The near plane is 1 and clear sky is 0. Sloppy selects an infinite reversed perspective and the corresponding comparisons and clears.
+- **Code:** `src/depth_space.jo` (`enable_world_depth`, `world_depth_params`).
 
 ### Log depth
 
-- **Aliases:** logarithmic depth, full-log.
-- **Definition:** on WebGL2 (which has no reversed Z) depth is written per fragment as
-  `log2(1 + distance)`. **Split depth** is the default there: ordinary depth below 128 m and log
-  depth beyond, so near geometry keeps early depth testing.
-- **Code:** `src/depth_space.jo` (`world_log_depth`, `world_depth_encode`,
-  `world_split_depth_active`, `world_bounded_shader`).
-- **Rules:** vertex-only log depth is not allowed: it breaks large shoreline triangles.
-  `AEGEAN_FULL_LOG_DEPTH=1` and `AEGEAN_LINEAR_DEPTH` are diagnostic controls.
+- **Aliases:** logarithmic depth.
+- **Definition:** when reversed depth is unavailable, each world fragment writes `log2(1 + view_distance) / 20`. Reciprocal clip w gives the distance across coarse triangles.
+- **Code:** `src/depth_space.jo` (`world_depth_encode`, `world_depth_decode`).
+- **Diagnostics:** `AEGEAN_LOG_DEPTH=1` forces this path. `AEGEAN_LINEAR_DEPTH=1` selects conventional perspective depth.
 
 ### Z-fighting
 
@@ -3330,9 +3322,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Near clipping
 
 - **Aliases:** near plane, the web-near bug, cut-away quay.
-- **Definition:** geometry cut away because it is closer than the near plane (3.5 cm here). In
+- **Definition:** geometry cut away because it is closer than the active camera’s near plane. In
   browsers a bug once clipped whole quay triangles that crossed behind the eye; it was fixed by
-  giving every vertex the same affine clip depth.
+  keeping the camera projection for clipping and writing logarithmic depth in the fragment stage.
 - **Code:** `src/depth_space.jo`; regression check `tools/test_web_near.mjs`.
 
 ### Crisp-text split
