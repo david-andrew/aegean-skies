@@ -1,4 +1,5 @@
 # Licensed scores and procedural instruments; see data/music/SOURCES.md.
+use 'music_data.jo'
 use 'music_synth.jo'
 use 'radio_chain.jo'
 use 'radio_station.jo'
@@ -40,6 +41,7 @@ struct RadioSynth:
     music_ready = false
     style: RadioStyle = .foxtrot
     seed = 0
+    channel = -1                     # the station (src/radio.jo RadioStation.id), for its playlist
     cursor = 0
     rng: u64 = 1729
     hp: RadioFilter = radio_filter(300, true)
@@ -102,27 +104,69 @@ radio_synth_prepare = (s: mut RadioSynth):
     s.strength = 0
     radio_synth_program(s,.morse,0,0)
 
-# The legacy choir slot now carries quiet instrumental island music, never fake speech.
-radio_piece = (style: RadioStyle, seed: int) -> int:
+# Each style's pieces (MUSIC_PIECES): a station plays its style's pieces one after another on the
+# world clock, each heard whole from its start (radio_cue). The island stations (Archipelago Radio,
+# Radio Dawn) keep their island dance; the cafe stations add the songs and the accordion.
+radio_pool = (style: RadioStyle, station: int = -1) -> int[]:
     match style:
-        .classical: [0,1,12][(max(0,seed)/336)%3]
-        .foxtrot: 2
-        .tango: 3
-        .march: 4
-        .bouzouki, .choir: 5
-        .waltz: 6
-        else: 0
+        .classical: [0,13,14,15,16,17,1,18,19,20,21,22,23,24,25,26,27,12,28,29]
+        .foxtrot: [2]
+        .tango: [3,38]
+        .march: [4,32,33]
+        .bouzouki: if station >= 7: [34,5,35,36,37,39,40] else: [5]
+        .choir: [41,42,43,24]
+        .waltz: [6,30,31,23]
+        else: [0]
+
+struct RadioCue:
+    piece = 0
+    at = 0.0                         # seconds into it
+
+_piece_seconds = (piece: int) -> f64: f64(MUSIC_PIECES[piece].frames)/f64(MUSIC_RATE)
+
+# Where the station's round of its style's pieces is at this moment of the world clock (each
+# station starts its round at its own place).
+radio_cue = (style: RadioStyle, station: int, seconds: f64) -> RadioCue:
+    pool = radio_pool(style,station)
+    total = 0.0
+    loop k in pool: total += _piece_seconds(k)
+    t = seconds+f64(max(0,station))*1913.0
+    t = t-floor(t/total)*total
+    loop k in pool:
+        span = _piece_seconds(k)
+        if t < span: return RadioCue(k,t)
+        t -= span
+    RadioCue(pool[0],0.0)
+
+# The piece after this one in the station's round.
+radio_next_piece = (style: RadioStyle, station: int, piece: int) -> int:
+    pool = radio_pool(style,station)
+    loop k in 0..pool.len():
+        if pool[k] == piece: return pool[(k+1)%pool.len()]
+    pool[0]
+
+# (The piece on now, for the programme's title.)
+radio_piece = (style: RadioStyle, station: int, seconds: f64) -> int: radio_cue(style,station,seconds).piece
 
 # The programme decides the piano: the classical (concert) programme the grand, the popular and
 # dance programmes the honky-tonk upright.
+# The station's round at this moment (radio_cue).
+radio_music_on_air = (s: mut RadioSynth, seconds: f64):
+    cue = radio_cue(s.style,s.channel,seconds)
+    radio_music_load(s,cue.piece,cue.at)
+
+# One piece, this far into it (wrapping round): auditions and the tools.
 radio_music_program = (s: mut RadioSynth, piece: int, seconds: f64):
+    radio_music_load(s,piece,seconds%_piece_seconds(piece))
+
+radio_music_load = (s: mut RadioSynth, piece: int, at: f64):
     if not s.music_ready:
         s.music = make_music_synth(); s.music_ready = true
     music_set_piano(s.music, s.style != .classical)
     music_load(s.music,piece)
     record_levels = [0.35,0.15,0.80,0.70,0.50,0.10,0.60]
-    s.record_mix = if piece == 12: 0.35 else: record_levels[clamp(piece,0,record_levels.len()-1)]
-    music_seek(s.music,seconds%(f64(s.music.frames)/f64(MUSIC_RATE)))
+    s.record_mix = if piece < record_levels.len(): record_levels[max(0,piece)] else: 0.35
+    music_seek(s.music,at)
 
 # A spoken bulletin: plan the words once, then find where in its period the world clock is.
 radio_speech_program = (s: mut RadioSynth, text: str, voice: VoiceStyle, span: f64, seconds: f64):
@@ -167,8 +211,8 @@ radio_speech_block = (s: mut RadioSynth, count: int) -> f64[]:
         i += n
     out
 
-radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds: f64, morse: bool[] = [], text: str = "", voice: VoiceStyle = VoiceStyle(), span: f64 = 10.0):
-    s.style = style; s.seed = max(0,seed)
+radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds: f64, morse: bool[] = [], text: str = "", voice: VoiceStyle = VoiceStyle(), span: f64 = 10.0, station: int = -1):
+    s.style = style; s.seed = max(0,seed); s.channel = station
     s.cursor = max(0,int(seconds*f64(RADIO_RATE)))
     s.morse = morse
     s.hp = radio_filter(300,true); s.lp = radio_filter(3000,false)
@@ -179,7 +223,7 @@ radio_synth_program = (s: mut RadioSynth, style: RadioStyle, seed: int, seconds:
     s.chain.strength = clamp(s.strength,0.0,1.0)
     s.record_mix = 0
     if style == .speech: radio_speech_program(s,text,voice,span,seconds)
-    else if style != .morse: radio_music_program(s,radio_piece(style,seed),seconds)
+    else if style != .morse: radio_music_on_air(s,seconds)
 
 radio_noise = (s: mut RadioSynth) -> f64:
     s.rng = (s.rng*u64(1664525)+u64(1013904223)) & u64(0xffffffff)
@@ -201,14 +245,14 @@ radio_render = (s: mut RadioSynth, count: int, strength: f64 = 1.0, detuning: f6
         programme = radio_speech_block(s,out.len())
         if not dry: studio_block(s.studio,programme,s.speech_colour)
     else if s.style != .morse:
-        if not s.music_ready: radio_music_program(s,radio_piece(s.style,s.seed),f64(s.cursor)/f64(RADIO_RATE))
-        if s.music.cursor >= s.music.frames: music_seek(s.music,0)
-        first = min(out.len(),s.music.frames-s.music.cursor)
-        programme = music_render(s.music,first)
-        if first < out.len():
-            music_seek(s.music,0)
-            tail = music_render(s.music,out.len()-first)
-            loop v in tail: programme.push(v)
+        if not s.music_ready: radio_music_on_air(s,f64(s.cursor)/f64(RADIO_RATE))
+        # (at a piece's end, the next in the station's round, from its start)
+        loop programme.len() < out.len():
+            if s.music.cursor >= s.music.frames: radio_music_load(s,radio_next_piece(s.style,s.channel,s.music.piece),0.0)
+            part = music_render(s.music,min(out.len()-programme.len(),s.music.frames-s.music.cursor))
+            if part.len() == 0: break
+            loop v in part: programme.push(v)
+        loop programme.len() < out.len(): programme.push(0.0)
     if not dry and levelling and s.style != .morse:station_level_block(s.station,programme)
     loop i in 0..out.len():
         value = 0.0
