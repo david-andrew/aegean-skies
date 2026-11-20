@@ -11,6 +11,7 @@
 import {execFileSync} from 'node:child_process';
 import {writeFileSync, readFileSync} from 'node:fs';
 import {openPage, pageModule} from './web_page.mjs';
+import {claimBrowser, checkBrowser} from './phone_browser.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; };
@@ -56,9 +57,11 @@ const record = async () => {
   adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP');
   adb('shell', 'wm', 'dismiss-keyguard');
   adb('shell', 'svc', 'power', 'stayon', 'usb');
+  const claimed = claimBrowser('chrome', 9222);
   adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'about:blank', '-p', 'com.android.chrome');
   adb('forward', 'tcp:9222', 'localabstract:chrome_devtools_remote');
   await sleep(1500);
+  console.error(`phone_profile: ${await checkBrowser(9222, 'chrome')} (${claimed.package} ${claimed.version})`);
   const served = /^https?:/.test(page) ? null : await openPage(page);
   const port = served ? new URL(served.url).port : 0;
   if (served) adb('reverse', `tcp:${port}`, `tcp:${port}`);

@@ -55,6 +55,11 @@ Decisions, worker selection, economic rules and world ticks run per game minute 
 The existing 60 Hz scene clock advances walking and aircraft physics. The notebook's live
 entries name the worker, cargo location or blockage; it is a projection, not another scheduler.
 
+Some jobs are errands of the islands (`src/errands.jo`, glossary "Errands of the islands"): the
+mail bag, the morning papers, ice, sponges and the nurse, posted by the one whose work it is at
+its hour as ordinary sealed or passenger jobs, with `cause.beneficiary` naming who meets the
+aircraft, so the dock handover above applies unchanged. `World.errands` keeps what each is.
+
 ## Accessors and save contract
 
 - `living_portage.cargo_status(world, job)` gives the current named handling/waiting line.

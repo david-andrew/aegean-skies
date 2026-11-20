@@ -158,6 +158,22 @@ class ModelGaps(unittest.TestCase):
         self.assertEqual(len(v['model']['level']), 5)
         self.assertTrue(all(np.isfinite(x) for x in v['model']['level']))
 
+    def test_breath_band_is_packed_only_when_fitted(self):
+        import pack
+        fit, sp = self.fit()
+        self.assertNotIn('breath_band', pack.model_numbers(fit, sp))
+        fit['breath_band'] = [0.3, 0.4, 0.7, 0.6, 1.0]
+        self.assertEqual(pack.model_numbers(fit, sp)['breath_band'], [0.3, 0.4, 0.7, 0.6, 1.0])
+        fit['breath_band'] = [0.3, float('nan'), 0.7, 0.6, 1.0]
+        self.assertNotIn('breath_band', pack.model_numbers(fit, sp))
+
+    def test_band_aperiodicity_of_voiced_frames(self):
+        import tune_round as tr
+        f0 = np.r_[np.zeros(100), np.full(300, 120.0)]
+        ap = np.c_[np.full(400, 0.9), np.r_[np.full(100, 0.9), np.full(300, 0.2)]]
+        self.assertEqual(tr.band_ap([dict(f0=f0, ap=ap)]), [0.9, 0.2])
+        self.assertIsNone(tr.band_ap([dict(f0=f0[:150], ap=ap[:150])]))     # too few voiced frames
+
 
 class Intonation(unittest.TestCase):
     def test_fitted_shapes_add_no_level(self):
