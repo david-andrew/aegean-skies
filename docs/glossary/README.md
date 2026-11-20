@@ -2393,23 +2393,20 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 ### Small talk
 
 - **Aliases:** the pilot's small talk, the pilot answering on his own.
-- **Definition:** when someone passes the pilot a remark (one sat with him, someone in the street),
-  he sometimes answers on his own, a moment later, in a bubble over his head: a word about what
-  he did today (a load brought in, a flight and its air, tavli, a swim), the weather as he met it
-  in the air, or a modest word about a deed of his they mention ("Wasn't much choice."). Never
-  about plans or what comes next; one detail at most. Most often to a deed or his name, often to
-  one sat with him, now and then in the street. It changes nobody's opinion of him, and neither
-  does a remark he lets pass: only what he answers in a conversation counts.
-- **Code:** `src/pilot_talk.jo` (`pilot_answer`, `pilot_on_day`, `pilot_on_weather`,
-  `pilot_on_deed`, `pilot_did`); `pilot_respond`, `pilot_talk_frame`, the day's doings noted where
-  the notebook logs them, and the bubble in `draw_company_talk` (`aegean.jo`); `passing_topic` in
-  `src/speech.jo`; `tests/pilot_talk_test.jo`.
-- **Rules:** on by default; Options, Character: "Your pilot makes small talk". The day's doings
-  are kept in the World (`World.pilot_day`, `src/pilot_day_types.jo`), saved with the game; an
-  older save loads with an empty day.
+- **Definition:** someone in the street or at the table occasionally passes the pilot a remark.
+  The speaker’s opening carries its own possible answers. Wind, fishing, prices, a flight,
+  a delivery or a deed take their detail from the day. The pilot answers after a moment if the
+  speaker is still with him. An errand, a purposeful walk or an open panel keeps him quiet.
+- **Timing:** a place rests for 36 game minutes and a speaker for 100. Across places the chance
+  of a remark recovers over 12–90 minutes after a chat. A conversation the player starts counts too.
+  A nearby speaker can warn the pilot during either rest if a thunderstorm is coming their way.
+  The pilot hears that warning once per storm, even if he changes town or reloads a save.
+- **Code:** `src/town_chat.jo` chooses and remembers an exchange. `src/pilot_talk.jo` keeps the
+  pilot’s day. `chat_at` and `pilot_reply_frame` connect the scene to the existing speech bubbles.
+  The cooldowns and opening history are saved with the presentation. Older saves start empty.
+- **Option:** Settings, Character, “Your pilot makes small talk” controls the automatic reply.
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=0.5 AEGEAN_SMALL_TALK=always
-  AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` (he answers every remark; a bumpy flight over from
-  Kalamos and a load brought in are on his day).
+  AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` admits an eligible opening at the first opportunity.
 
 ### Leads
 
