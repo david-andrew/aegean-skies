@@ -47,8 +47,21 @@ try {
   await send('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
   await send('Page.addScriptToEvaluateOnNewDocument',{source:`
     window.quayFrames=0;window.quayLinks=[];window.nearLimit=30;window.nearPending=null;
+    // Town construction uses wall-clock deadlines. Advance the game clock by
+    // the same amount per frame and per clock read in both captures, so both
+    // runs publish the same districts even when one GPU path takes longer.
+    let frameMs=0, clockReads=0, memoryView;
+    const instantiate=WebAssembly.instantiate.bind(WebAssembly);
+    WebAssembly.instantiate=(module,imports)=>{
+      if(imports?.env?.__wasm_now_at) imports.env.__wasm_now_at=p=>{
+        const buffer=sloppy.memory().buffer;
+        if(memoryView?.buffer!==buffer) memoryView=new DataView(buffer);
+        memoryView.setFloat64(p,frameMs+Math.min(++clockReads*0.01,16),true);
+      };
+      return instantiate(module,imports);
+    };
     const raf=requestAnimationFrame;
-    const schedule=cb=>raf(t=>{if(quayFrames>=nearLimit){nearPending=()=>schedule(cb);return;}cb(t);quayFrames++;});
+    const schedule=cb=>raf(t=>{if(quayFrames>=nearLimit){nearPending=()=>schedule(cb);return;}frameMs+=1000/60;clockReads=0;cb(t);quayFrames++;});
     window.requestAnimationFrame=schedule;
     window.nearAdvance=n=>{nearLimit=n;const next=nearPending;nearPending=null;if(next)next();};
     const proto=WebGL2RenderingContext.prototype,link=proto.linkProgram,getExtension=proto.getExtension;
