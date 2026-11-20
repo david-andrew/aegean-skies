@@ -560,10 +560,25 @@ steer_v2 = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0
     turning_lat = f64(dot(a_net, side)) / v_air
     turning_up = f64(dot(a_net, vup)) / v_air
     e_lat -= 0.4 * turning_lat
-    # (not for an autopilot: the estimate reads a fast aircraft's lift low, a sink that is not
-    # there, and the pull asked for to stop it takes the bank out of its turn; its own pitch limit
-    # holds the climb)
-    if not firm: e_up -= 0.25 * turning_up
+    # Keep the gentler response while rotating off the surface. At height a
+    # slow aircraft can still push; the air step limits the available lift.
+    clearance = 1.2 * s.gap / kk / max(k.span * 0.5, 1.0)
+    airborne = max(smoothstep(1.05, 1.4, v_air / k.stall_speed), smoothstep(1.0, 2.0, clearance))
+    nose_hold = if own: (1.0 - slow) * airborne else: 0.0
+    nose_response = nose_hold
+    aim_speed = f64(length(want_rate))
+    if own and not fighting:
+        # A storm carries a held aim with the airframe (pilot.aim_gust).
+        # Ease the extra gain when that imposed turn dominates hand motion.
+        # gust_turn is the displacement over a physics step (about 120 Hz).
+        hand_rate = 0.005 + aim_speed
+        nose_response *= hand_rate / (hand_rate + 120.0 * f64(length(s.gust_turn)))
+    # Brake against the rate of the thing being aimed. The nose can settle
+    # while the path still turns as the angle of attack changes. An autopilot
+    # uses its own climb limit.
+    if not firm:
+        nose_rate = up_b * s.angular_velocity.x - right_b * s.angular_velocity.y
+        e_up -= mix(0.25 * turning_up, 0.10 * f64(dot(nose_rate, vup)), nose_response)
     # the path's rate of turn asked for: gentle for a small error, as fast as she turns for a big one
     most = max(min(k.pitch_rate, fdm2.g_limit * FLIGHT_G / v_true), 0.1)
     # (sideways the path turns gently for a small error, the feet doing the fine work; firmly from
@@ -580,14 +595,15 @@ steer_v2 = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0
     # eased in from thirty degrees as a small correction is)
     # (brisker still for an aim on the move, a target's lead swinging in a dogfight: from ten
     # degrees off; a still aim, the aircraft knocked off it in a storm, only from about twenty)
-    on_move = smoothstep(0.15, 0.4, f64(length(want_rate)))
+    on_move = smoothstep(0.15, 0.4, aim_speed)
     if not firm: gain_lat += 0.85 * max(smoothstep(0.3, 0.7, abs(e_lat)), on_move * smoothstep(0.18, 0.5, abs(e_lat)))
     # (the path is not asked to follow the aim's quick motions, only where it is: small fast moves are
     # the feet's (the skid below leads the aim's motion), so they never become a bank)
     w_lat = most * tanh(e_lat * gain_lat / most)
     # (an autopilot's climbs and descents are gentle ones: brought on over a second or so, so a few
     # meters' height to make up in a fast turn does not take the bank out of it; a flare's is crisp)
-    w_up = most * tanh(e_up * (if firm and not flare: 1.0 else: 3.2) / most)
+    pitch_gain = if firm and not flare: 1.0 else: mix(3.2, 8.0, nose_response)
+    w_up = most * tanh(e_up * pitch_gain / most)
     # (a pilot's hand asks the path for no more than the wing can give at this speed: slow, as just
     # off the water or in a flare, an aim above the path is a gentle climb, not a pull into the stall)
     if k.player and not firm and w_up > 0.0:
@@ -616,10 +632,11 @@ steer_v2 = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0
     else: if not firm and f_up < 0.0 and abs(e_lat) > 0.3 and e_up < -0.3: steep = max(steep, 1.48 + 1.1 * smoothstep(0.3, 0.8, abs(e_lat)) * smoothstep(0.3, 0.5, -e_up))
     # (the player's, just off the ground or the water: no steeper than her wing tip clears it by,
     # so a crosswind's drift is not banked away into the grass as she lifts off)
-    if own: steep = min(steep, asin(clamp(1.2 * s.gap / kk / max(k.span * 0.5, 1.0), 0.12, 1.0)))
+    if own:
+        # Past a vertical wing's clearance, ease out the tip limit as she climbs.
+        steep = min(steep, asin(clamp(clearance, 0.12, 1.0)) + max(clearance - 1.0, 0.0))
     bank_want = clamp(bank_want, -steep, steep)
-    right = quat_rotate(s.orientation, vec3(1, 0, 0))
-    bank = atan2(-f64(right.y), f64(up_b.y))
+    bank = atan2(-f64(right_b.y), f64(up_b.y))
     rr = max(k.roll_rate * fdm2.roll, 0.1)
     c = Controls(assist = 0.0)
     # (with the roll's own rate damping it, so a jolt is not chased stick to stick)
@@ -627,9 +644,9 @@ steer_v2 = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0
     c.roll = clamp((angle_delta(bank_want, bank) * 4.0 - p_roll * 0.35) / rr, -1.0, 1.0)
     # the pull, along the lift as it stands (the v2 stick asks for a rate of the path)
     lift_now = up_now
-    # (and never a push past weightless: an aim below is reached by easing off, or by rolling and
-    # pulling for one far below, not by hanging her in her straps; the keys can still push)
-    n_now = max(f64(dot(force, lift_now)) / FLIGHT_G, 0.0)
+    # Looking down the nose, allow a push of up to two negative g. The air
+    # step also limits load and angle of attack to what the wing can give.
+    n_now = max(f64(dot(force, lift_now)) / FLIGHT_G, -2.0 * nose_hold)
     c.pitch = clamp((n_now - f64(lift_now.y)) * FLIGHT_G / (max(k.pitch_rate, 0.1) * v_true), -1.0, 1.0)
     # the feet: a skid that puts the nose on a near aim (fading out for a far one, left to the bank)
     l = quat_rotate(quat_inverse(s.orientation), w)
@@ -640,6 +657,11 @@ steer_v2 = (k: CraftSpec, s: CraftState, want: vec3, want_rate: vec3 = vec3(0, 0
     # (damped by the nose's own turning, less the path's in the bank: the skid settles, not swings)
     r_nose = -f64(s.angular_velocity.y)
     r_path = FLIGHT_G * tan(clamp(bank, -1.3, 1.3)) / v_true
-    r_aim = f64(dot(want_rate, quat_rotate(s.orientation, vec3(1, 0, 0))))
-    c.yaw = clamp((skid + 1.0 * e_nose - 0.3 * (r_nose - r_path - r_aim)) / max(fdm2.rudder_skid, 0.02), -1.0, 1.0) * near
+    r_aim = f64(dot(want_rate, right_b))
+    skid_path = e_nose - 0.3 * (r_nose - r_path - r_aim)
+    # On the nose the feet close the error quickly, damping the nose rate.
+    # Lead the change in skid: as the bank brings the path round, ease off
+    # the rudder even when the nose is already pointing at a stationary aim.
+    skid_nose = 3.0 * e_nose - 0.5 * r_nose + 0.25 * (r_aim - r_path)
+    c.yaw = clamp((skid + mix(skid_path, skid_nose, nose_response)) / max(fdm2.rudder_skid, 0.02), -1.0, 1.0) * near
     c
