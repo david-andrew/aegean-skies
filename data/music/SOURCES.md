@@ -53,6 +53,29 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Locus iste (SATB) | Anton Bruckner (1824–1896), 1869 | [sangerforum, score 1972546](https://musescore.com/user/3099636/scores/1972546) | CC0 1.0 |
 | Nabucco: Va, pensiero (SATB) | Verdi, 1842 | [sangerforum, score 1140631](https://musescore.com/user/3099636/scores/1140631); the voices sung by our choir | CC0 1.0 |
 | Melita, "Eternal Father, Strong to Save" (SATB) | John Bacchus Dykes (1823–1876), 1861 | [Mutopia 1260](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1260), Steve Dunlop, www.cyberhymnal.org; sung by our choir | Mutopia explicitly marks the transcription **Public Domain** |
+| Pictures at an Exhibition: Promenade | Modest Mussorgsky (1839–1881), 1886; orchestration Maurice Ravel (1875–1937), 1929 | [mike320, score 5273125](https://musescore.com/user/6105546/scores/5273125) | CC0 1.0 |
+| Pictures at an Exhibition: The Old Castle | the same | [mike320, score 5273127](https://musescore.com/user/6105546/scores/5273127) | CC0 1.0 |
+| Pictures at an Exhibition: Bydło | the same | [mike320, score 5273132](https://musescore.com/user/6105546/scores/5273132) | CC0 1.0 |
+| Pictures at an Exhibition: Ballet of the Unhatched Chicks | the same | [mike320, score 5273138](https://musescore.com/user/6105546/scores/5273138) | CC0 1.0 |
+| Pictures at an Exhibition: The Hut on Hen's Legs | the same | [mike320, score 5273146](https://musescore.com/user/6105546/scores/5273146) | CC0 1.0 |
+| Pictures at an Exhibition: The Great Gate of Kiev | the same | [mike320, score 5273150](https://musescore.com/user/6105546/scores/5273150) | CC0 1.0 |
+| Symphony No. 5, I: Allegro con brio | Beethoven, 1809 | [Nicolas, score 29654](https://musescore.com/nicolas/scores/29654) | CC0 1.0 |
+| Symphony No. 5, IV: Allegro | Beethoven, 1809 | [ScorePad, score 6128657](https://musescore.com/user/34878656/scores/6128657) | CC0 1.0 |
+| Symphony No. 6 "Pathétique", IV: Adagio lamentoso | Tchaikovsky, 1894 | [Jac wang, score 1578536](https://musescore.com/user/339571/scores/1578536) | CC0 1.0 |
+| Swan Lake: Entrance of the Guests and Waltz (piano) | Tchaikovsky, 1877 | [Hinci, score 6337136](https://musescore.com/user/29637645/scores/6337136) | CC0 1.0 |
+| Piano Concerto No. 3, I (two pianos) | Sergei Rachmaninoff (1873–1943), 1910 | [hmscomp, score 1844011](https://musescore.com/user/24069/scores/1844011) | CC0 1.0 |
+| Die Meistersinger von Nürnberg: Prelude (piano, after Hans von Bülow, 1830–1894) | Wagner, 1868 | [Y.Murakami@TYO, score 4801061](https://musescore.com/user/3797871/scores/4801061) | CC0 1.0 |
+| Tristan und Isolde: Liebestod (piano) | Wagner, 1860 | [hmscomp, score 846481](https://musescore.com/hmscomp/scores/846481) | CC0 1.0 |
+| Die Walküre: Ride of the Valkyries (piano and voices) | Wagner, 1876 | [hmscomp, score 951686](https://musescore.com/hmscomp/scores/951686) | CC0 1.0 |
+| Aida: Triumphal March (orchestra and chorus) | Verdi, 1872 | [chiefyblues, score 6031714](https://musescore.com/user/1680641/scores/6031714) | CC0 1.0 |
+| Kinderszenen: Träumerei (string quintet) | Robert Schumann (1810–1856), 1839 | [assdlkde, score 5916073](https://musescore.com/user/33861153/scores/5916073) | CC0 1.0 |
+| Slavonic Dance Op. 72 No. 1 (an arrangement for wind band) | Dvořák, 1887 | [JasperGoh, score 6353246](https://musescore.com/user/190843/scores/6353246) | CC0 1.0 |
+| Brandenburg Concerto No. 2 | Bach, 1850 (Bach-Gesellschaft) | [patzly, score 1634641](https://musescore.com/user/1836451/scores/1634641) | CC0 1.0 |
+| Pange lingua (SATB) | Bruckner, 1868 | [Nicolas Rojas, score 1807361](https://musescore.com/user/2317016/scores/1807361) | CC0 1.0 |
+| Symphony No. 1, IV | Brahms, 1877 | [jayW, score 91079](https://musescore.com/user/43726/scores/91079) | CC0 1.0 |
+| The Hebrides (Fingal's Cave) (an arrangement for wind band) | Felix Mendelssohn (1809–1847), 1833 | [Bob Bolton, score 5937390](https://musescore.com/user/29446660/scores/5937390) | CC0 1.0 |
+| Humoresque Op. 101 No. 7 (violin and cello) | Dvořák, 1894 | [AllmusicLab, score 5936751](https://musescore.com/user/33963911/scores/5936751) | CC0 1.0 |
+| Rigoletto: La donna è mobile (orchestra) | Verdi, 1851 | [chiefyblues, score 5664313](https://musescore.com/user/1680641/scores/5664313) | CC0 1.0 |
 
 CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
 
