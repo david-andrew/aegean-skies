@@ -1989,8 +1989,11 @@ On the rivers branch until it lands.
   the high ground lies under the way in from downwind), its run ending by her moorings, and moors
   in turn along the booms and astern, each made fast within a minute or so of alighting while the
   rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
-  end, alongside her or on her deck can be helped aboard her: up the boom's spar and her side, or
-  across a brow put out from her rail, and below; her boat takes them in to Ardevanti, a foe of
+  end or alongside her is taken off by her boat: it comes round to lie off the bow of the
+  aircraft's float, they climb down onto the float, go forward along it and step aboard; it takes
+  them back to her Jacob's ladder, hung over her side between the booms, and they climb it, her hand
+  at the rail helping them over, and go below. Hoisted in, they climb down off the float onto her
+  deck; her boat takes them in to Ardevanti, a foe of
   Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
