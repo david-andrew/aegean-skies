@@ -1807,12 +1807,13 @@ On the rivers branch until it lands.
 
 - **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),
   the broadcast set).
-- **Definition:** a small pad of set words by the cockpit radio, opened with C (a tap on the R/T
-  plate; a controller's D-pad left). Down on the sea in trouble its first line is the
+- **Definition:** a small pad of set words by the cockpit radio, opened with Y (a tap on the R/T
+  plate; a controller's D-pad left). It stays open, however long one reads it, until a word is
+  sent or it is put away (Escape, or its Close line). Down on the sea in trouble its first line is the
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
   the flight leader's words follow: form on me, circle here and wait, attack my target, break off
-  and go home, lead me home. A number, a click or tap sends one, or C steps and F sends; Escape or
-  a few idle seconds close it. The nearest of the flight answers in a few plain words.
+  and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
+  nearest of the flight answers in a few plain words.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
 
@@ -1824,8 +1825,9 @@ On the rivers branch until it lands.
   southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
   Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
   past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
-  strait's Kalyran flight comes home to her: it lands to seaward and moors in turn along the booms
-  and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  strait's Kalyran flight comes home to her: round the island's low north end (its ridge of 1,200 m
+  lies between her and the strait; the leader takes the flight round it, a point at a time, at a pace
+  the player's own aircraft cruises at), lands to seaward and moors in turn along the booms and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
   to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone

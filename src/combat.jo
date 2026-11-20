@@ -270,6 +270,7 @@ struct Battle:
     orders: FlightOrder[] = [FlightOrder(),FlightOrder(),FlightOrder()]   # each side's last word on the radio
     assist: Assist = Assist()      # the one sent down to the player on the sea (radio_help.jo)
     strength: int[] = [0,0,0]      # how many each side began with
+    home_leg: int[] = [-2,-2,-2]   # each side's leg of its home's way round (via index, outer first; -1 straight in, -2 not yet chosen)
     apart_since: int[] = [-1,-1,-1] # the tick each side lost touch with the enemy (-1: in touch)
 
 # A word on the radio to one's own flight (the player's R/T): form on me, circle here and wait,
@@ -370,6 +371,7 @@ struct BattleHome:
     centre: vec3 = vec3(0,0,0)      # the harbour's waterfront and its way out to sea (for the runway)
     out: vec3 = vec3(0,0,1)
     name = ""                       # what it is called when it is no town (a tender)
+    via: vec3[]                     # a way round to it by low ground, home end first (the tender's round the island)
 
 # Where to land at home in this wind: the traffic's own choice of water (air_runway), clear of the
 # shore ahead; else the base's own touchdown.
@@ -1005,7 +1007,7 @@ _turn_for_home = (b: mut Battle):
 # turns for home, regrouping first unless `at_once` (led straight home: "lead me home").
 send_home = (b: mut Battle, side: int, beaten: bool, at_once: bool):
         if side < 0 or side > 2 or b.home_since[side] >= 0 or not _has_home(b,side): return
-        b.home_since[side] = b.tick
+        b.home_since[side] = b.tick; b.home_leg[side] = -2
         if at_once: b.formed[side] = b.tick
         # (scattered by the fight, they regroup first: over the fight for the winners, a few
         # kilometres toward home for the beaten, under the cloud)
@@ -1014,7 +1016,9 @@ send_home = (b: mut Battle, side: int, beaten: bool, at_once: bool):
             if a.side == side and a.status == .flying and a.present and not a.human: centre += a.state.position; n += 1
         centre = if n > 0: centre/f32(n) else: b.center
         if beaten:
-            toward = _home_of(b,side).touchdown-centre; toward.y = 0
+            # (toward home, or for a home past high ground, toward its way round)
+            hm = _home_of(b,side)
+            toward = (if hm.via.len() > 0: hm.via[hm.via.len()-1] else: hm.touchdown)-centre; toward.y = 0
             if length(toward) > 1: centre += normalize(toward)*5000.0
         b.rally[side] = vec3(centre.x,f32(min(RALLY_HEIGHT,b.ceiling-80.0)),centre.z)
         order = 0
@@ -1052,6 +1056,66 @@ _order_for = (b: Battle, index: int) -> FlightOrder:
     loop e in b.actors:
         if e.side != a.side and e.status == .flying and e.present and e.pilot.target == index and f64(length(e.state.position-a.state.position)) < 700.0: return FlightOrder()
     o
+
+# The pace a flight is led home at: one the player's own aircraft cruises at comfortably (they were
+# held back flying with a leader at its own slow cruise); with the player in company, near the
+# leader, their own speed, within reason, so the leader keeps with them rather than they with it.
+_home_pace = (b: Battle, index: int) -> f64:
+    a = b.actors[index]; k = a.spec
+    pace = k.cruise_speed*0.82
+    loop o in b.actors:
+        if not o.human or o.side != a.side or o.status != .flying or o.state.on_water: continue
+        pace = max(pace,o.spec.cruise_speed*0.88)
+        if f64(length(o.state.position-a.state.position)) < 1500.0:
+            pace = clamp(f64(length(o.state.velocity)),pace*0.85,pace*1.2)
+    min(pace,k.max_speed*0.92)
+
+# Whether the ground under the straight way from `from` to `to` stays below `altitude` with room
+# to spare (sampled every 150 m).
+_clear_way = (e: FlightEnv, from: vec3, to: vec3, altitude: f64) -> bool:
+    d = vec3(to.x-from.x,0,to.z-from.z); n = max(2,int(f64(length(d))/150.0))
+    loop i in 0..n+1:
+        q = from+d*f32(f64(i)/f64(n))
+        if e.ground(f64(q.x),f64(q.z)) > altitude-90.0: return false
+    true
+
+# The height to fly the way to `to` at: the home's, or over what lies between with room.
+_way_height = (e: FlightEnv, from: vec3, to: vec3, altitude: f64) -> f64:
+    d = vec3(to.x-from.x,0,to.z-from.z); n = max(2,int(f64(length(d))/150.0)); top = 0.0
+    loop i in 0..n+1:
+        q = from+d*f32(f64(i)/f64(n)); top = max(top,e.ground(f64(q.x),f64(q.z)))
+    max(altitude,top+180.0)
+
+# Each side going home past high ground: its leg of the way round, chosen once it has formed up
+# (straight in if the touchdown is clear; else the nearest-home point of the way reachable clear;
+# else the outer one), then one point nearer home each time the leader comes within 1.8 km of it,
+# and straight in once the touchdown is clear. Kept, not chosen afresh: a leader at the edge of
+# a clear line would turn back and forth between two.
+_home_legs = (b: mut Battle, e: FlightEnv):
+    loop side in 0..3:
+        if b.home_since[side] < 0 or b.formed[side] < 0 or not _has_home(b,side): continue
+        h = _home_of(b,side)
+        if h.via.len() == 0 or b.home_leg[side] == -1: continue
+        lead = home_leader(b,side)
+        if lead < 0: continue
+        at = b.actors[lead].state.position
+        touchdown = if b.actors[lead].pilot.plan.initialized: b.actors[lead].pilot.plan.target else: h.touchdown
+        # (straight in only with room: the ground under the way 150 m below the height flown)
+        if _clear_way(e,at,touchdown,h.altitude-60.0): b.home_leg[side] = -1; continue
+        if b.home_leg[side] == -2:
+            b.home_leg[side] = h.via.len()-1
+            loop k in 0..h.via.len():
+                if b.home_leg[side] == h.via.len()-1 and _clear_way(e,at,h.via[k],h.altitude): b.home_leg[side] = k
+            continue
+        leg = b.home_leg[side]
+        if f64(length(vec3(h.via[leg].x-at.x,0,h.via[leg].z-at.z))) < 1800.0: b.home_leg[side] = leg-1
+
+# The player flying in company with this one (on its side, up, within 1.5 km).
+_player_near = (b: Battle, index: int) -> bool:
+    a = b.actors[index]
+    loop o in b.actors:
+        if o.human and o.side == a.side and o.status == .flying and not o.state.on_water and f64(length(o.state.position-a.state.position)) < 1500.0: return true
+    false
 
 # Home: the leader flies its own approach (the autopilot: cruise, descent, landing, taxi to the
 # first mooring); the others keep their slots on it until it starts down, then circle the bay,
@@ -1095,14 +1159,23 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
             touchdown,landing = home_runway(h,e)
             # (leading the player home: a pace they can follow)
             leading = b.orders[a.side].kind == .lead_home
-            p.plan = FlightPlan(target = touchdown, taxi_target = h.dock+h.step*f32(p.home_turn), altitude = h.altitude, landing_heading = landing, phase = .cruise, speed = if lead == index: k.cruise_speed*(if leading: 0.7 else: 0.82) else: 0.0)
-        if lead == index and p.plan.phase == .cruise and b.orders[a.side].kind != .lead_home:
-            # (leading the flight home: throttled back while a follower is still well out of its slot)
+            p.plan = FlightPlan(target = touchdown, taxi_target = h.dock+h.step*f32(p.home_turn), altitude = h.altitude, landing_heading = landing, phase = .cruise, speed = if lead == index: _home_pace(b,index) else: 0.0)
+        # (high ground between: by the way round instead, the leader to the first point of it it
+        # can reach clear, the flight in its slots behind)
+        leg = b.home_leg[a.side]
+        if lead == index and p.plan.phase == .cruise and leg >= 0 and leg < h.via.len():
+            w = h.via[leg]
+            p.controls = air_waypoint_controls(k,s,e,vec3(w.x,0,w.z),_way_height(e,s.position,w,h.altitude),_home_pace(b,index))
+            return p
+        if lead == index and p.plan.phase == .cruise:
+            # (leading the flight home at the player's pace; throttled back while a follower (not the
+            # player, who sets the pace) is still well out of its slot)
             spread = 0.0
             loop o in b.actors:
                 if o.side == a.side and o.status == .flying and o.pilot.mode == .homeward and not o.human and o.craft != a.craft:
                     spread = max(spread,f64(length(home_slot(b,index,o.pilot.formation_offset)-o.state.position)))
-            p.plan.speed = k.cruise_speed*0.82*(1.0-0.35*smoothstep(500.0,1500.0,spread))
+            # (the player in company sets the pace: the stragglers open up to catch it, as they do)
+            p.plan.speed = _home_pace(b,index)*(if _player_near(b,index): 1.0 else: 1.0-0.25*smoothstep(500.0,1500.0,spread))
         c = autopilot(k,s,p.plan,e)
         if (p.plan.phase == .descend or p.plan.phase == .land) and p.descend_tick < 0: p.descend_tick = b.tick
         if p.plan.phase == .failed and s.beached and not s.crashed and f64(length((p.plan.taxi_target-s.position).xz)) < 25.0 and f64(length(s.velocity)) < 4.0*pure_k(k):
@@ -1606,7 +1679,9 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
                 _event(b,.landed,b.actors[a],d.position,b.actors[a].last_attacker,outcome=true)
                 last=b.outcomes.len()-1
                 b.outcomes[last].injury=d.injury; b.outcomes[last].at_sea=d.phase==.swimming
-    if b.tick%30 == 0: _turn_for_home(b)
+    if b.tick%30 == 0:
+        _turn_for_home(b)
+        _home_legs(b,e)
     side=-1; contested=false
     loop a in b.actors:
         # (one gone home, or withdrawing hurt, no longer contests the fight)
