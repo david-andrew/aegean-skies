@@ -1652,7 +1652,7 @@ On the rivers branch until it lands.
   the horizon, so far ridges read as blue silhouettes a value step under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
   `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
-  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_aerial`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_air_weights`, `apply_land_air`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
   tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
   in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
   baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
