@@ -118,6 +118,9 @@ a small subset of metadata retained. This is not an endorsement by any source au
   Each piece is played at one level, measured to sit at the hand-set pieces' loudness
   (`tools/music_level.py`, `levels.json`). On the radio, a station plays its style's pieces one
   after another, each from its start (`src/radio_synth.jo` radio_pool).
+* Every other evening the Hotel Ancora's trio (accordion, upright piano, bass) plays *Summer*,
+  *El Choclo* and *Santa Lucia* live (`src/bar_band.jo` bar_trio): the tune on the accordion, the
+  low line on the bass, the other parts on the piano. No notes are added or changed.
 * Per-note start/end gain follows velocity and CC7/11. Controller curves within a note
   are approximated by a straight ramp, not reproduced exactly.
 
