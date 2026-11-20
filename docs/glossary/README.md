@@ -1491,12 +1491,14 @@ On the rivers branch until it lands.
   One kind a day, the same for everyone, from the day's number, nudged by the weather where the
   eye is (rain or a deck overhead: humid; a clearing wind: clear or washed). **Clear** is the
   baseline sunset. **Hazy**: the disc orange from about 15 degrees up, the glow band broader.
-  **Dusty** (Saharan dust): the disc orange to red from about 20 degrees, a little dimmer and
-  softer-edged, the low sky paled toward a buff veil, the band broad and red, the light warm.
+  **Dusty** (Saharan dust): the whole sky milky all day, a pale buff-grey veil from the horizon
+  well up past the sun with the blue weak and only overhead, no bright glare round the sun, a
+  flatter, warmer light; the disc orange to red from about 20 degrees, a little dimmer and
+  softer-edged, the band broad and red. **Hazy** days the same, less.
   **Humid**: a softer, pinker glow, the disc orange from about 12 degrees. **Washed** (after
   rain, a clean wind): crisp air, the disc yellow almost to the water, the band narrower.
 - **Code:** `src/day_air.jo` (`day_air_kind`, `day_air_light`, worked out on the CPU into the
-  frame's Light; `Light.turbidity` for the disc, `sun_disc_look` in `src/sky.jo`).
+  frame's Light; `Light.turbidity` for the disc, `Light.glare` scales the sky's glare, `sun_disc_look` in `src/sky.jo`).
   `AEGEAN_SKY_AIR=clear|hazy|dusty|humid|washed` fixes the kind for captures.
 
 ### Afterglow
