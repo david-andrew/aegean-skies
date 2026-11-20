@@ -31,7 +31,10 @@ The renderer asks Sloppy for reversed floating-point depth after opening the win
 The active camera's near plane divided by view distance gives the stored depth. Zero
 represents clear sky. On renderers without clip control the world fragment functions
 write `log2(1 + view_distance) / 20`, recovering view distance from reciprocal clip w.
-The ordinary material entry points preserve hardware early depth on reversed renderers.
+On the V60, Adreno misreads this component when the GLSL compiler passes it through
+the fragment input struct. The WebGL compatibility pass reads the same `gl_FragCoord.w`
+directly for the generated log write. The ordinary material entry points preserve
+hardware early depth on reversed renderers.
 `AEGEAN_LOG_DEPTH=1` forces the fallback for comparisons. Cloud and shadow passes read
 the float scene-depth attachment and decode it with the active camera projection.
 On the logarithmic path, water reads a snapshot of opaque depth for early rejection.
