@@ -1827,7 +1827,13 @@ On the rivers branch until it lands.
   past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
   strait's Kalyran flight comes home to her: round the island's low north end (its ridge of 1,200 m
   lies between her and the strait; the leader takes the flight round it, a point at a time, at a pace
-  the player's own aircraft cruises at), lands to seaward and moors in turn along the booms and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  the player's own aircraft cruises at), puts down on a line off her side (across a light wind when
+  the high ground lies under the way in from downwind), its run ending by her moorings, and moors
+  in turn along the booms and astern, each made fast within a minute or so of alighting while the
+  rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
+  end, alongside her or on her deck can be helped aboard her: up the boom's spar and her side, or
+  across a brow put out from her rail, and below; her boat takes them in to Ardevanti, a foe of
+  Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
   to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
