@@ -4431,8 +4431,8 @@ No image: the tiers differ in budgets more than in any single view.
   red against green); Blue-yellow (tritanopia: enemy orange against friend bright teal); No colour
   (enemy white, friend dark, others grey, and a shape on every mark). Each is its own set of
   colours for the player, never a filter. In the three presets one side is a dark mark in a pale
-  halo (others in the colour presets, friends with no colour) and the marks are firm: full
-  strength, a pixel heavier, a whole halo, names on a wide outline. "A shape for each side on
+  halo (others in the colour presets, friends with no colour). In all four the marks are firm:
+  full strength, a pixel heavier, a whole halo, names on a wide outline. "A shape for each side on
   every mark" adds the signs in any preset. The war chart's country inks change with the preset
   (Okabe and Ito's orange, blue and black in the colour presets), and with No colour each
   country's held ground is hatched its own way.
