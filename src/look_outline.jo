@@ -3,9 +3,12 @@
 # draws it, its meshes are taken (look_take, while look_capturing) and then drawn flat into a
 # render target that covers only its rectangle on the screen. One pass over that rectangle then
 # draws a thin white line just outside the mask's edge (a faint dark one under it), and the slow
-# band of light with its flecks inside it. Nothing is drawn or rendered when nothing is looked at;
+# band of light with its flecks inside it. The mask keeps each pixel's nearest point of the thing
+# (its own depth test), and the highlight is left out wherever the scene is nearer there (the pilot
+# in front of it, a nearer thing): no lines across him. Nothing is drawn or rendered when nothing is looked at;
 # a thing with no mesh of its own (a table in the hotel's one room mesh) keeps its box's outline.
 use 'render_space.jo'
+use 'depth_space.jo'
 
 # What the scene draws into the mask this frame (set by the look before the frame is drawn).
 look_capturing = false              # (while true, look_take keeps each mesh drawn)
@@ -42,15 +45,20 @@ struct LookMaskParams:
     vp: mat4
     model: mat4
     rect: vec4                      # (the mask's rectangle on the screen, ndc: centre x, y, half x, y)
+    range: vec2                     # (the thing's nearest and farthest view depth, metres)
 
 struct LookMaskOut:
     pos: vec4
+    depth: f32                      # (view depth along the view, metres: the clip's w)
 
 look_mask_vs = (v: Vertex3D, u: LookMaskParams) -> LookMaskOut:
     c = u.vp * (u.model * vec4(v.pos, 1))
-    LookMaskOut(vec4((c.x - u.rect.x * c.w) / u.rect.z, (c.y - u.rect.y * c.w) / u.rect.w, 0, c.w))
+    LookMaskOut(vec4((c.x - u.rect.x * c.w) / u.rect.z, (c.y - u.rect.y * c.w) / u.rect.w, c.z, c.w), c.w)
 
-look_mask_fs = (i: LookMaskOut, u: LookMaskParams) -> vec4: vec4(1, 1, 1, 1)
+# Coverage in red; in green, where the thing is in its own depth range (0 nearest .. 1 farthest),
+# so a filtered sample at the edge, divided by its coverage, is still a depth.
+look_mask_fs = (i: LookMaskOut, u: LookMaskParams) -> vec4:
+    vec4(1, clamp((i.depth - u.range.x) / max(u.range.y - u.range.x, 0.01), 0.0, 1.0), 0, 1)
 
 # ---------------- the highlight ----------------
 struct LookFxVertex:
@@ -63,6 +71,9 @@ struct LookFxParams:
     band: vec4                      # (across the band, in screen pixels: its direction x, y; its middle; its half width)
     alpha: vec4                     # (the line, the under-edge, the band, the flecks)
     tick: f32
+    scene: Texture                  # (the scene's depth, to leave out what is hidden)
+    hide: vec4                      # (world_depth_params' two; 1 when the scene's depth is there; unused)
+    range: vec2                     # (as the mask's)
 
 struct LookFxOut:
     pos: vec4
@@ -76,16 +87,31 @@ look_fx_fs = (i: LookFxOut, u: LookFxParams) -> vec4:
     uv = (i.ndc - u.rect.xy) / u.rect.zw * 0.5 + vec2(0.5, 0.5)
     # (a screen pixel, in the mask's uv)
     d = vec2(1, 1) / (u.rect.zw * u.px.xy)
-    inside = smoothstep(0.3, 0.7, sample(u.mask, uv).x)
+    own = sample(u.mask, uv)
+    inside = smoothstep(0.3, 0.7, own.x)
     near: f32 = 0.0
     far: f32 = 0.0
+    # (the thing's depth here, as a fraction of its range: its own, or out past its edge, the
+    # nearest of it the ring finds)
+    at: f32 = if own.x > 0.3: own.y / own.x else: 2.0
     # (well inside, no line: the ring's sixteen looks only near the edge and outside)
     if inside < 0.99:
         loop k in [0..8):
             a = f32(k) * 0.7853982
             o = vec2(cos(a), sin(a)) * d
-            near = max(near, sample(u.mask, uv + o * u.px.z).x)
-            far = max(far, sample(u.mask, uv + o * u.px.w).x)
+            m1 = sample(u.mask, uv + o * u.px.z)
+            m2 = sample(u.mask, uv + o * u.px.w)
+            near = max(near, m1.x)
+            far = max(far, m2.x)
+            if m1.x > 0.3: at = min(at, m1.y / m1.x)
+            if m2.x > 0.3: at = min(at, m2.y / m2.x)
+    # (hidden: the scene here is nearer than the thing, by more than a little)
+    seen: f32 = 1.0
+    if u.hide.z > 0.5 and at < 1.5:
+        raw = sample(u.scene, i.ndc * 0.5 + vec2(0.5, 0.5)).x
+        if world_has_depth(raw, u.hide.xy):
+            thing = u.range.x + at * (u.range.y - u.range.x)
+            if world_depth_decode(raw, u.hide.xy) < thing * 0.97 - 0.12: seen = 0.0
     out = 1.0 - inside
     line = smoothstep(0.2, 0.55, near) * out
     under = smoothstep(0.2, 0.55, far) * out
@@ -98,8 +124,8 @@ look_fx_fs = (i: LookFxOut, u: LookFxParams) -> vec4:
     cell = vec2(floor(along / (6.0 * u.px.z)), floor(across / (1.6 * u.px.z)))
     h = hash21(cell + vec2(u.tick * 37.0, u.tick * 11.0))
     fleck = step(0.955, h) * tent * (0.35 + 0.65 * hash21(cell * 3.0 + vec2(u.tick * 5.0, 17.0)))
-    white = clamp(u.alpha.x * line + (u.alpha.z * tent + u.alpha.w * fleck) * inside, 0.0, 1.0)
-    dark = u.alpha.y * under
+    white = clamp(u.alpha.x * line + (u.alpha.z * tent + u.alpha.w * fleck) * inside, 0.0, 1.0) * seen
+    dark = u.alpha.y * under * seen
     a = white + dark * (1.0 - white)
     if a < 0.002: discard()
     vec4(vec3(1, 1, 1) * (white / a), a)
@@ -119,6 +145,8 @@ init_look_outline = ():
 # AEGEAN_LOOK_SHAPE=0: the box's outline always (for measuring what the shape costs).
 look_shape_on = env("AEGEAN_LOOK_SHAPE") != "0"
 look_outline_available = () -> bool: look_shape_on and not __soft
+# AEGEAN_LOOK_DEPTH=0: the highlight drawn over whatever is in front of the thing (as before)
+look_depth_on = env("AEGEAN_LOOK_DEPTH") != "0"
 
 # The rectangle (ndc: centre, half size) covering what was taken, a few pixels out for the line;
 # none when nothing was taken or a mesh's size isn't known. Behind the eye: all of the screen.
@@ -141,6 +169,16 @@ look_rect = (vp: mat4, margin: vec2) -> vec4?:
     if hi.x <= lo.x or hi.y <= lo.y: return none
     vec4((lo + hi) * 0.5, (hi - lo) * 0.5)
 
+# The thing's nearest and farthest view depth (metres), from its meshes' bounding spheres.
+look_range = (vp: mat4) -> vec2:
+    lo = 1e9; hi = 0.0
+    loop k in 0..look_meshes.len():
+        m = look_meshes[k]; mm = look_models[k]
+        r = f64(m.radius) * f64(max(length(mm[0].xyz), max(length(mm[1].xyz), length(mm[2].xyz))))
+        w = f64((vp * (mm * vec4(m.center, 1))).w)
+        lo = min(lo, w - r); hi = max(hi, w + r)
+    vec2(f32(max(lo, 0.05)), f32(max(hi, lo + 0.1)))
+
 # Draw the highlight of what was taken this frame (call in the 2D drawing, after the scene).
 # `age` is how long it has been looked at (the band's place and the fade in), `unit` a 2D unit
 # in screen pixels (the line's width goes by it). False when there was nothing to draw it by.
@@ -158,20 +196,18 @@ draw_look_outline = (age: f64, unit: f64) -> bool:
     init_look_outline()
     if look_fx_quad.count == 0 and look_fx_quad.index_count == 0:
         look_fx_quad = mesh([LookFxVertex(vec2(0, 0)), LookFxVertex(vec2(1, 0)), LookFxVertex(vec2(0, 1)), LookFxVertex(vec2(1, 1))], [u32(0), u32(1), u32(2), u32(2), u32(1), u32(3)])
-    if look_mask_target.texture.width != LOOK_MASK_RES:
-        tex = texture(image(LOOK_MASK_RES, LOOK_MASK_RES), true)
-        set_mipmaps(tex, false)
-        fbo = gl_create_framebuffer()
-        glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(tex.id), 0)
-        look_mask_target = RenderTarget(tex, fbo, 0)
+    # (with a depth buffer of its own: each pixel keeps the thing's nearest point)
+    if look_mask_target.texture.width != LOOK_MASK_RES: look_mask_target = render_target(LOOK_MASK_RES, LOOK_MASK_RES)
+    range = look_range(vp)
     flush()
     st = __draw_state()
-    depth_test(.off); depth_write(false); cull(.none); blend(.none)
+    cull(.none); blend(.none)
     glBindFramebuffer(GL_FRAMEBUFFER, u32(look_mask_target.fbo))
     glViewport(0, 0, i32(LOOK_MASK_RES), i32(LOOK_MASK_RES))
-    clear(vec4(0, 0, 0, 0))
-    loop k in 0..look_meshes.len(): draw(look_mask_sh, look_meshes[k], LookMaskParams(vp, look_models[k], rect))
+    depth_write(true); depth_test(.nearer)
+    clear(vec4(0, 0, 0, 0)); clear_depth()
+    loop k in 0..look_meshes.len(): draw(look_mask_sh, look_meshes[k], LookMaskParams(vp, look_models[k], rect, range))
+    depth_test(.off); depth_write(false)
     __bind_current()
     blend(.alpha)
     # (the band: down the screen, slanted a little, across the rectangle and round again)
@@ -185,7 +221,10 @@ draw_look_outline = (age: f64, unit: f64) -> bool:
     w = clamp((m1 - m0) * 0.18, 8.0 * unit, 60.0 * unit)
     mid = m0 - w + (m1 - m0 + w * 2.0) * fract(age / 3.2)
     fade = clamp(age / 0.18, 0.0, 1.0)
-    p = LookFxParams(look_mask_target.texture, rect, vec4(f32(pw), f32(ph), f32(lw), f32(uw)), vec4(n.x, n.y, f32(mid), f32(w)), vec4(f32(0.75 * fade), f32(0.2 * fade), f32(0.22 * fade), f32(0.3 * fade)), f32(floor(age * 12.0)))
+    depth = scene_depth()
+    hidden = look_depth_on and depth.id != 0
+    ab = world_depth_params()
+    p = LookFxParams(look_mask_target.texture, rect, vec4(f32(pw), f32(ph), f32(lw), f32(uw)), vec4(n.x, n.y, f32(mid), f32(w)), vec4(f32(0.75 * fade), f32(0.2 * fade), f32(0.22 * fade), f32(0.3 * fade)), f32(floor(age * 12.0)), if hidden: depth else: look_mask_target.texture, vec4(ab.x, ab.y, if hidden: 1.0 else: 0.0, 0.0), range)
     draw(look_fx_sh, look_fx_quad, p)
     __set_draw_state(st)
     zone_end()
