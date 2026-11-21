@@ -548,7 +548,7 @@ world_shell_scale = (d: f32,start: f32) -> f32: pow(max(d/max(start,1.0),1.0),1.
 # own paint; approaching, it grows up into its height over a kilometre and a half, so there is no
 # distance where trees arrive. Its edge is scalloped by the crowns along it; past the edge, the
 # scattered crowns of the stand's thin margin are single crowns (src/crowns.jo crown_wood).
-const CANOPY_TOP = 11.0             # (m, the canopy's mean height over the ground inside a wood)
+const CANOPY_TOP = 10.0             # (m, the canopy's mean height over the ground inside a wood)
 const CANOPY_EDGE = 0.5             # (the stand cover where the canopy's edge runs)
 const CANOPY_GROW_FAR = 3400.0      # (beyond, the canopy flat: the ground's paint alone)
 const CANOPY_GROW_NEAR = 1500.0     # (nearer, its full height)
@@ -556,8 +556,9 @@ const CANOPY_GROW_NEAR = 1500.0     # (nearer, its full height)
 # The canopy's height over the ground at a point (absolute xz) for a stand cover: zero at the
 # edge, rising over the stand's last tenths to the canopy's height, its top in broad lumps.
 canopy_height = (p: vec2,stand: f32) -> f32:
-    inside = clamp((stand-CANOPY_EDGE+0.02)*3.5,0.0,1.0)
-    inside = inside*inside*(3.0-2.0*inside)
+    # (rising over the stand's last half, gently: the wood's edge low, never a wall)
+    inside = clamp((stand-CANOPY_EDGE+0.02)*2.2,0.0,1.0)
+    inside = inside*inside
     # (broad masses only: the vertices are 14 m apart, so anything finer would facet; the crowns on
     # them are painted)
     lumps = 0.7+0.6*vnoise(p/60.0+vec2(17.3,5.1))
@@ -586,6 +587,20 @@ world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> G
     o.river = land_aerial_terms(o.world,u.cam,u.fog,u.land_steps)
     o
 
+# The canopy's crowns near: how high the leaf at a point stands in the canopy's top relief (0 the
+# hollows, 1 a crown's top), as a cloud's body billows: the crowns of the crown sheet (9 m cells)
+# on the clumps they gather in (the sheet at twice the size). lod: the sheet's mip level.
+canopy_relief = (sheet: Texture,q: vec2,stand: f32,lod: f32) -> f32:
+    span = f32(CANOPY_CELLS)*CANOPY_CELL
+    a = sample_lod(sheet,q/span,lod)
+    b = sample_lod(sheet,q/(span*2.0)+vec2(0.71,0.13),max(lod-1.0,0.0))
+    ca = clamp((stand*1.15-a.w)*8.0+0.5,0.0,1.0)*a.z
+    cb = clamp((stand*1.15-b.w)*8.0+0.5,0.0,1.0)*b.z
+    0.62*ca+0.38*cb
+
+const CANOPY_RELIEF = 6.0           # (m, how deep the hollows between crowns go near)
+const CANOPY_RELIEF_END = 280.0     # (beyond, the canopy's top painted only)
+
 world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     if u.shell.w < 0.0: discard()
     stand = i.land
@@ -594,17 +609,55 @@ world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     absolute = i.world+u.origin
     # (far off, the canopy hands over to the ground's paint of the same crowns, by a dither)
     if crown_dither(i.pos.xy) >= clamp((CANOPY_GROW_FAR+600.0-d)/600.0,0.0,1.0): discard()
+    span = f32(CANOPY_CELLS)*CANOPY_CELL
+    inside = clamp((stand-CANOPY_EDGE+0.02)*2.2,0.0,1.0)
+    # near, the canopy's top carved into crowns: the view ray marched down from the mesh's surface
+    # (the crowns' tops) into the relief until it meets a crown, so the crowns stand up with real
+    # parallax, the hollows between them deep, and at the wood's edge, where the relief runs out,
+    # the ray finds no canopy and the ground shows through: a broken edge, not a wall
+    relief = clamp((CANOPY_RELIEF_END-d)/90.0,0.0,1.0)
+    q = absolute.xz
+    hb: f32 = 1.0
+    deep: f32 = 0.0
+    if relief > 0.0:
+        foot = max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
+        lod = clamp(log2(foot/1.125),0.0,6.0)
+        v = normalize(i.world-u.cam)
+        down = max(-v.y,0.1)
+        depth_max = CANOPY_RELIEF*relief*(0.3+0.7*inside)
+        hit = false
+        reach = min(depth_max/down,22.0)
+        prev_m = -1.0
+        prev_f: f32 = 0.0
+        loop k in 0..8:
+            if not hit:
+                fk = (f32(k)+1.0)/8.0
+                qk = absolute.xz+v.xz*(reach*fk)
+                hk = canopy_relief(u.canopy,qk,stand,lod)
+                # (how far the ray is below the leaf there: positive, it has met the canopy)
+                mk = fk-(1.0-hk)
+                if mk >= 0.0:
+                    hit = true
+                    # (between the last step above and this one below, where it crossed)
+                    w = prev_m/min(prev_m-mk,-0.0001)
+                    fr = mix(prev_f,fk,clamp(w,0.0,1.0))
+                    q = absolute.xz+v.xz*(reach*fr)
+                    hb = 1.0-fr; deep = fr
+                prev_m = mk; prev_f = fk
+        if not hit:
+            q = absolute.xz+v.xz*reach; hb = 0.0; deep = 1.0
+        # (the edge: where the relief runs out over thin stand, no canopy)
+        if stand+(hb-0.45)*0.4 < CANOPY_EDGE+0.04: discard()
     # the crowns: the painted canopy's crown sheet at the octave the distance asks for (crowns,
     # then the clumps they gather in, then their masses), each coarse cell taking one octave or the
     # other by its own draw across a change
-    span = f32(CANOPY_CELLS)*CANOPY_CELL
     level = clamp(log2(max(d/250.0,1.0)),0.0,5.0)
     lf = floor(level)
-    l0 = lf+(if fract(level) > hash21(floor(absolute.xz/(CANOPY_CELL*pow(2.0,lf+1.0)))): 1.0 else: 0.0)
-    s = sample(u.canopy,absolute.xz/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61))
+    l0 = lf+(if fract(level) > hash21(floor(q/(CANOPY_CELL*pow(2.0,lf+1.0)))): 1.0 else: 0.0)
+    s = sample(u.canopy,q/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61))
     # (near, the crowns' own leaf masses on them: the sheet again at a third of the size)
     near = clamp((220.0-d)/120.0,0.0,1.0)
-    fine = if near > 0.0: sample(u.canopy,absolute.xz/(span/3.0)+vec2(0.19,0.83)) else: vec4(0.5,0.5,0.5,0.5)
+    fine = if near > 0.0: sample(u.canopy,q/(span/3.0)+vec2(0.19,0.83)) else: vec4(0.5,0.5,0.5,0.5)
     # its edge scalloped by the crowns along it
     if stand+(s.z-0.55)*0.22 < CANOPY_EDGE: discard()
     # light: the broad masses' own slope (the height's gradient), each crown's rounded normal on
@@ -613,13 +666,16 @@ world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     hx = canopy_height(absolute.xz+vec2(e,0),stand)-canopy_height(absolute.xz-vec2(e,0),stand)
     hz = canopy_height(absolute.xz+vec2(0,e),stand)-canopy_height(absolute.xz-vec2(0,e),stand)
     g = canopy_grow(d)
+    # (the canopy's rise at its edge is left to the edge crowns: no steep face of mesh, near)
+    if length(vec2(hx,hz))*g/(2.0*e) > 0.32 and inside < 0.95 and crown_dither(i.pos.xy) < clamp((900.0-d)/400.0,0.0,1.0): discard()
     broad = normalize(vec3(-hx*g/(2.0*e),1.0,-hz*g/(2.0*e)))
     crown = vec3((s.x*2.0-1.0)*1.6,0.45+0.55*s.z,(s.y*2.0-1.0)*1.6)
     leaf = vec3((fine.x*2.0-1.0)*1.3,0.6,(fine.y*2.0-1.0)*1.3)
     nn = normalize(broad*0.3+crown+leaf*0.8*near+i.normal*0.1)
     ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)
-    # (each crown's top lit, the hollows between crowns deep; near, the leaf masses' creases)
-    occl = (0.18+0.66*s.z)*mix(1.0,0.7+0.4*fine.z,near)+0.1*clamp((stand-CANOPY_EDGE)*4.0,0.0,1.0)
+    # (each crown's top lit, the hollows between crowns deep; near, the leaf masses' creases and
+    # the carved depths)
+    occl = (0.18+0.66*s.z)*mix(1.0,0.7+0.4*fine.z,near)*(1.0-0.5*deep*relief)+0.1*clamp((stand-CANOPY_EDGE)*4.0,0.0,1.0)
     col = mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13))*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
     c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.45,1.0,clamp((300.0-d)/250.0,0.0,1.0)))
     vec4(land_aerial_apply(c,i.river,u.haze),1)
