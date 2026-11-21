@@ -14,10 +14,13 @@ use 'wake.jo'
 use 'vessel_spray.jo'
 use 'tweaks.jo'
 
+const VESSEL_VIEW_CUT = 400.0      # (metres the observer moves in a frame: a cut, not flight)
+const VESSEL_VIEW_THIN = 800.0     # (metres short of the view's range over which a hull thins out)
+
 struct VesselInstance:
     model: mat4
     color: vec4 = vec4(1,1,1,1)
-    rig: vec4 = vec4(0,0,0,0)       # sail spread, wind strength, unused, unused
+    rig: vec4 = vec4(0,0,1,0)       # sail spread, wind strength, how far faded in (1: all there), unused
 
 struct VesselParams:
     clouds:CloudVeil
@@ -39,20 +42,30 @@ vessel_vertex = (v: Vertex3D,i: VesselInstance,u: VesselParams) -> ObjOut:
         p = vessel_rig_point(v,i.rig,dot(right,u.light.wind.xy),u.light.time)
     w = (render_model(i.model,u.origin)*vec4(p,1)).xyz
     curved = render_warped(w,u.light.cam,u.light.warp_a,u.light.warp_b)
-    ObjOut(u.light.view_proj*vec4(curved,1),w,render_normal((i.model*vec4(v.normal,0)).xyz,w,u.light.cam),v.color*i.color)
+    # (surface.x: how far the hull has still to fade in, 0 all there; the hull's material class is 0)
+    ObjOut(u.light.view_proj*vec4(curved,1),w,render_normal((i.model*vec4(v.normal,0)).xyz,w,u.light.cam),v.color*i.color,vec3(1.0-i.rig.z,0,0))
 
 vessel_fragment_log = (v: ObjOut, u: VesselParams) -> vec4:
     set_depth(world_depth_encode(1.0 / v.pos.w))
     vessel_fragment(v, u)
 
+# A hull fading in or out: each pixel there or not by a fixed fine pattern on the screen
+# (interleaved gradient noise, as the tree crowns' bands cross: src/crowns.jo), more of them as
+# it comes, and its paint drawn out of the haze's colour. No blending, so no sorting.
+vessel_dither = (pixel: vec2) -> f32: fract(52.9829189*fract(dot(floor(pixel),vec2(0.06711056,0.00583715))))
+
 vessel_fragment = (v: ObjOut,u: VesselParams) -> vec4:
     if behind_sea(v.world,u.light.cam): discard()
+    gone = v.surface.x
+    if gone > 0.004 and vessel_dither(v.pos.xy) < gone: discard()
+    solid = ObjOut(v.pos,v.world,v.normal,v.color)
     if v.color.w < 0.6:
         night = 1.0-smoothstep(0.58,1.1,length(u.light.sun))
-        lit = obj_light(v,u.light).xyz
+        lit = obj_light(solid,u.light).xyz
         emission = if v.color.w > 0.53: vec3(1.6,1.0,0.38) else: v.color.xyz*2.0
-        return vec4(mix(lit,aerial(emission,v.world,u.light.cam,u.light.haze,u.light.fog),night),1)
-    obj_light(v,u.light)
+        return vec4(mix(mix(lit,aerial(emission,v.world,u.light.cam,u.light.haze,u.light.fog),night),u.light.haze,gone*0.5),1)
+    c = obj_light(solid,u.light)
+    vec4(mix(c.xyz,u.light.haze,gone*0.5),c.w)
 
 vessel_smoke_fragment_log = (v: ObjOut, u: VesselParams) -> vec4:
     set_depth(world_depth_encode(1.0 / v.pos.w))
@@ -97,6 +110,10 @@ struct VesselView:
     motion = VesselMotion()         # (where each hull is drawn between simulation steps)
     drawn: Vessel[]                 # (the fleet's ships at their drawn poses this frame)
     poses: {int: mat4}               # (the models used this frame, relative to origin)
+    eye = vec3(0,0,0)               # (the observer last frame: a jump is a cut, vessel_motion_cut)
+    eye_known = false
+    lamps: Vessel[]                 # (every hull drawn this frame, those fading out too, and how far each is shown: for their lamps)
+    lamps_shown: f64[]
 
 # The view for a new start (New game, a situation): what was drawn, the wakes and the counts let
 # go; the shaders, the hull models made in the title's dusk and their buffers kept.
@@ -170,16 +187,26 @@ prepare_vessel_view = (v: mut VesselView,f: VesselFleet,observer: vec3,t: f64,wi
     v.origin=render_origin(observer)
     v.poses.clear()
     v.frame += 1; v.near_count = 0; v.far_count = 0; v.triangles = 0
+    # (the view gone somewhere else at once, a cut: what is there shows at once)
+    if v.eye_known and f64(length(observer-v.eye)) > VESSEL_VIEW_CUT: vessel_motion_cut(v.motion,t)
+    v.eye = observer; v.eye_known = true
     # Every hull at its drawn pose (between steps, eased), not where its last step left it.
     v.drawn = vessel_render_ships(v.motion,f,t)
-    ships = v.drawn
+    # (and those gone from the fleet, drawn on while they fade out)
+    ships = v.drawn; shown = [loop s in v.drawn: vessel_shown(v.motion,s.id)]
+    loop g in v.motion.leaving: ships.push(g.ship); shown.push(g.shown)
     visible: int[]
     range = if render_quality.tier == 0: 10000.0 else: 24000.0
     loop k in 0..ships.len():
         s = ships[k]
         # Canal and river craft (on raised inland water) are small boats among
         # buildings and banks; past 5 km they are a pixel or two.
-        if s.status != .sunk and length(s.position-observer) < (if s.position.y>0.1:min(range,5000.0) else:range): visible.push(k)
+        reach = if s.position.y>0.1:min(range,5000.0) else:range
+        d = f64(length(s.position-observer))
+        # (thinning out over the last of the view's range, not cut off at it)
+        shown[k] *= 1.0-smoothstep(reach-VESSEL_VIEW_THIN,reach,d)
+        if s.status != .sunk and d < reach: visible.push(k)
+    v.lamps = ships; v.lamps_shown = shown
     if visible.len() == 0 and f.survivors.len() == 0:
         if v.ready:
             empty: VesselInstance[]
@@ -219,9 +246,11 @@ prepare_vessel_view = (v: mut VesselView,f: VesselFleet,observer: vec3,t: f64,wi
             if not near and s.status == .sinking: pose = translation(world_local(vessel_point(s),v.origin)-vec3(0,f32(vessel_sink_depth(s)),0))*rotation_y(s.yaw)
             v.poses[s.id] = pose
             spread = if s.status == .underway: clamp(s.speed/max(spec.speed,0.01),0.35,1.0) else: 0.03
-            inst = VesselInstance(pose,rig=vec4(f32(spread),length(wind),0,0))
+            inst = VesselInstance(pose,rig=vec4(f32(spread),length(wind),f32(shown[index]),0))
             if near: close.push(inst); v.near_count += 1
             else: distant.push(inst); v.far_count += 1
+            # (a hull part faded has no smoke, bow wave, spray or wake of its own yet)
+            if shown[index] < 0.98: continue
             if (spec.steam and s.status == .underway) or s.fire > 0.01:
                 count = if near: (if render_quality.tier == 0: 8 else: 14) else: 5
                 funnels = if spec.steam: vessel_funnels(s.kind) else: 1

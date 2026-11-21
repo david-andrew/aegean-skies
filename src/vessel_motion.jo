@@ -9,12 +9,18 @@
 #   living world last put it carried on by that velocity for the time since (fishing boats' poses
 #   come once a world minute, two seconds of play: they sat still, then jumped 15 m), and put
 #   straight there on a large jump (a spawn, a capture, a teleport after a load).
+# A hull also comes and goes by degrees, never at once (`shown`, 0 to 1 over VESSEL_FADE seconds):
+# one new to the fleet (a far coaster given a hull as the pilot comes within reach, a launch put
+# out) fades in, and one gone from it (the lease given up, a trip ended at its quay) is drawn on
+# as it was, carried by its velocity, while it fades out (`leaving`). The first frames of a view
+# (a new game, a load) show what is there at once, and a hull that sank is simply gone.
 # Only the drawing reads these: the hulls' saved state, collisions and targets keep their poses.
 use 'world_point.jo'
 use 'vessel_types.jo'
 
 const VESSEL_EASE = 0.25           # (seconds: how quickly a drawn external hull settles on its pose)
 const VESSEL_SNAP = 25.0           # (metres off: put it there at once)
+const VESSEL_FADE = 2.0            # (seconds a hull takes to fade in, or out)
 
 struct VesselTrack:
     id: int
@@ -23,11 +29,31 @@ struct VesselTrack:
     seen = 0                        # (the frame it was last drawn)
     target = WorldPoint()           # (where the world last put it, and how long ago)
     age = 0.0
+    shown = 1.0                     # (how far it has faded in)
+    ship: Vessel? = none            # (as last drawn, to draw on while it fades out)
+
+# A hull gone from the fleet, drawn on while it fades out.
+struct VesselLeaving:
+    ship: Vessel
+    shown: f64
 
 struct VesselMotion:
     clock = -1.0                    # (the render clock of the last frame)
     frame = 0
     tracks: {int: VesselTrack}
+    leaving: VesselLeaving[]
+    cut = -1.0                      # (the render clock of the view's start or last cut)
+
+const VESSEL_CUT = 1.0             # (seconds after a view's start or a cut that hulls show at once)
+
+# The view has cut to another place (a new start, a title shot, the pilot fetched home): what is
+# there shows at once for a moment, and nothing left behind fades on.
+vessel_motion_cut = (m: mut VesselMotion,t: f64):
+    m.cut = t; m.leaving.clear()
+
+# How far hull `id` is faded in, 0 to 1 (1: all there, or not one the fleet has).
+vessel_shown = (m: VesselMotion,id: int) -> f64:
+    if let track = m.tracks.get(id): track.shown else: 1.0
 
 # The fixed-step hull between its last two steps: alpha 0 the step's start, 1 its end.
 vessel_stepped_pose = (v: Vessel,alpha: f64) -> (WorldPoint,f64):
@@ -42,12 +68,40 @@ vessel_stepped_pose = (v: Vessel,alpha: f64) -> (WorldPoint,f64):
 vessel_render_ships = (m: mut VesselMotion,f: VesselFleet,t: f64) -> Vessel[]:
     dt = if m.clock < 0.0: 0.0 else: clamp(t-m.clock,0.0,0.25)
     m.clock = t; m.frame += 1
+    if m.cut < 0.0: m.cut = t
     alpha = f.accumulator/VESSEL_DT
     out: Vessel[]
+    # (the hulls drawn last frame that the fleet no longer has: fading out from how they were)
+    present: {int: bool}
+    loop v in f.ships: present[v.id] = true
+    loop id, track in m.tracks:
+        if track.seen != m.frame-1 or id in present or track.shown <= 0.0 or t-m.cut < VESSEL_CUT: continue
+        if let ship = track.ship:
+            if ship.status != .sunk and ship.status != .sinking: m.leaving.push(VesselLeaving(ship,track.shown))
+    gone: {int: bool}
+    loop id, track in m.tracks:
+        if track.seen == m.frame-1 and not (id in present): gone[id] = true
+    loop id in gone.keys(): m.tracks.remove(id)
+    still: VesselLeaving[]
+    loop mut g in m.leaving:
+        # (taken again while it faded: the hull itself comes back from where the fading had got to)
+        if g.ship.id in present:
+            if not (g.ship.id in m.tracks): m.tracks[g.ship.id] = VesselTrack(g.ship.id,vessel_point(g.ship),g.ship.yaw,m.frame-1,vessel_point(g.ship),0.0,g.shown)
+            continue
+        g.shown -= dt/VESSEL_FADE
+        if g.shown <= 0.0: continue
+        g.ship.precise = world_advance(vessel_point(g.ship),g.ship.velocity,dt)
+        g.ship.position = world_vec(g.ship.precise); g.ship.published = g.ship.position; g.ship.precise_ready = true
+        still.push(g)
+    m.leaving = still
     loop v in f.ships:
         target,yaw = vessel_stepped_pose(v,alpha)
         point = target; drawn_yaw = yaw
         target_now = target; age = 0.0
+        # (new to the fleet, other than at the view's start or a cut: fading in)
+        shown = if t-m.cut < VESSEL_CUT: 1.0 else: min(1.0,dt/VESSEL_FADE)
+        if let track = m.tracks.get(v.id):
+            if track.seen >= m.frame-2: shown = min(1.0,track.shown+dt/VESSEL_FADE)
         if v.external and v.status != .sunk and v.status != .sinking:
             if let track = m.tracks.get(v.id):
                 if track.seen >= m.frame-2:
@@ -61,10 +115,10 @@ vessel_render_ships = (m: mut VesselMotion,f: VesselFleet,t: f64) -> Vessel[]:
                         k = 1.0-exp(-dt/VESSEL_EASE)
                         point = world_offset(ahead,error*f32(k))
                         drawn_yaw = track.yaw+atan2(sin(yaw-track.yaw),cos(yaw-track.yaw))*k
-        m.tracks[v.id] = VesselTrack(v.id,point,drawn_yaw,m.frame,target_now,age)
         s = v
         s.precise = point; s.position = world_vec(point); s.published = s.position; s.precise_ready = true
         s.yaw = drawn_yaw
+        m.tracks[v.id] = VesselTrack(v.id,point,drawn_yaw,m.frame,target_now,age,shown,s)
         out.push(s)
     # (hulls gone from the fleet: their tracks go too)
     if m.frame % 120 == 0:
