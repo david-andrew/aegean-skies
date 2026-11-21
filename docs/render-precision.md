@@ -31,17 +31,14 @@ The renderer asks Sloppy for reversed floating-point depth after opening the win
 The active camera's near plane divided by view distance gives the stored depth. Zero
 represents clear sky. On renderers without clip control the world fragment functions
 write `log2(1 + view_distance) / 20`, recovering view distance from reciprocal clip w.
-On the V60, Adreno misreads this component when the GLSL compiler passes it through
-the fragment input struct. Sloppy 0.41.0 compiles most of those reads (58 of 60 log
-shaders) straight to `gl_FragCoord`; the WebGL compatibility pass still reads the same
-`gl_FragCoord.w` directly for the generated log write in the other two (`wild_fs_log`,
-`vessel_smoke_fragment_log`). The ordinary material entry points preserve
-hardware early depth on reversed renderers.
+(Sloppy 0.42 reads fragment inputs, `gl_FragCoord` included, directly in every function, which
+the V60's Adreno 650 needs for this; the project's earlier WebGL rewrite is gone.)
+The ordinary material entry points preserve hardware early depth on reversed renderers.
 `AEGEAN_LOG_DEPTH=1` forces the fallback for comparisons. Cloud and shadow passes read
 the float scene-depth attachment and decode it with the active camera projection.
 On the logarithmic path, water reads a snapshot of opaque depth for early rejection.
-Apple OpenGL 4.1 packs that snapshot into a nearest-filtered RGBA8 target because its
-depth blit fails in Sloppy 0.40.0. Metal and the other backends use a float depth copy.
+Every backend, Apple OpenGL and Metal included, uses Sloppy's float `copy_depth` (it failed
+on Apple OpenGL in 0.40.0; fixed in 0.42).
 
 World `vec3`/`mat4` values are f32. Existing CPU state and baked absolute geometry retain their
 original quantization (1.5625 cm at 250 km); this render chart preserves model detail but cannot

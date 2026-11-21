@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const {prepareShader,specializeUniforms,chooseTier,cappedSize}=require('../src/web_compat.js');
+const {specializeUniforms,chooseTier,cappedSize}=require('../src/web_compat.js');
 const {audit}=require('./check_web_shaders.cjs');
 const source=`#version 300 es
 precision highp float;
@@ -19,12 +19,6 @@ assert.match(s,/f_tint_1\(vec4\(1.0\)\)/);
 assert.match(s,/f_main_2\(\)/);
 assert.doesNotMatch(s,/uniform.*bones/);
 assert.equal(specializeUniforms(s),s);
-// The V60 needs the rasterizer's reciprocal clip w directly in the depth call.
-const inputW = 'l_i_0.pos_.w';
-const writeLog = '(gl_FragDepth = f_world_depth_encode_12((1.0 / ' + inputW + ')));';
-assert.equal(prepareShader(writeLog),writeLog.replace(inputW,'gl_FragCoord.w'));
-assert.equal(prepareShader('material(' + inputW + ')'),'material(' + inputW + ')');
-assert.equal(prepareShader(source),s);
 const two=source.replace('f_main_2(S_Params l_u_2)', 'f_main_2(S_Params l_u_2, S_Params l_u_3)').replace('f_main_2(u);', 'f_main_2(u, u);');
 assert.match(specializeUniforms(two),/frag_color=f_main_2\(\)/);
 assert.throws(()=>specializeUniforms(source.replace('return p*l_u_1.tint_;','l_u_1.tint_ = p; return p;')),/Mutable/);
