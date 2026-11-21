@@ -257,7 +257,8 @@ Every part of every piece gets one gain, so the tune sits forward and what is be
    buried top line is as often not the tune).
 6. **Apply and verify.** The gains are shifted together so the mix's gated loudness is unchanged;
    the balanced piece is rendered whole and trimmed until its BS.1770 loudness equals the
-   unbalanced piece's, so its level in `data/music/levels.json` stays valid. Percussion is measured
+   unbalanced piece's on `tools/music_level.py`'s own meter (the 48 kHz file), so its level in
+   `data/music/levels.json` stays valid. Percussion is measured
    and left where the score put it. No part moves more than 20 dB; a move past 8 dB is flagged
    `suspicious` for a listen.
 

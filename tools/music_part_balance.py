@@ -39,7 +39,8 @@ For each piece in the catalogue (tools/music_pack.py PIECES):
    Percussion is measured and left where the score put it.
 5. Apply and verify. The gains are made loudness-neutral (the mix's gated loudness is unchanged),
    the balanced piece is rendered whole and trimmed so its BS.1770 loudness equals the unbalanced
-   piece's (the piece's level in levels.json stays valid), and the melody's masked partial
+   piece's on the catalogue's own meter (tools/music_level.py's: the piece's level in levels.json
+   stays valid), and the melody's masked partial
    loudness over the rest (tools/music_balance.py's measure) is reported before and after.
 
 Writes data/music/part-balance.json (read by tools/music_pack.py, which applies the gains as mix
@@ -390,6 +391,21 @@ def render(stems, index, blob, out, seconds):
     return k_weighted(x.astype(np.float64) / 32768.0)
 
 
+def render_whole(stems, index, blob, out, seconds):
+    """A packed score played whole as the piece `index`: its BS.1770 integrated loudness on the
+    catalogue's own meter (tools/music_level.py: the 48 kHz file, the standard's filter), so a
+    piece trimmed here sits where levels.json put it."""
+    from music_balance import lufs
+    packed = Path(str(out) + '.z'); packed.write_bytes(blob)
+    env = dict(os.environ, MUSIC_PIECE=str(index), MUSIC_EVENTS=str(packed), MUSIC_SECONDS=f'{seconds:.2f}', MUSIC_OUT=str(out),
+               SLOPPY_NO_AUDIO='1', SLOPPY_THREADS='1')
+    for k in ('DISPLAY', 'WAYLAND_DISPLAY', 'MUSIC_KEEP', 'MUSIC_GAINS', 'MUSIC_SHELF', 'MUSIC_FROM', 'MUSIC_MONO'): env.pop(k, None)
+    subprocess.run([str(stems)], env=env, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+    rate, x = wavfile.read(out)
+    packed.unlink(); Path(out).unlink()
+    return lufs(x[:, 0].astype(np.float64) / 32768.0, rate)
+
+
 def measure(name, index, stems, work):
     """A piece's parts rendered alone and measured (kept in `work`, keyed by the notes' hash)."""
     import music_pack as mp
@@ -406,7 +422,7 @@ def measure(name, index, stems, work):
     for k, p in enumerate(parts):
         y = render(stems, index, mp.pack(parts[p], mix_levels=mix, sections=sections)[0], work / f'{name}.{k}.wav', seconds)
         powers.append(block_powers(y)); bands.append(band_powers(y))
-    whole = gated_lufs(block_powers(render(stems, index, mp.pack(notes, mix_levels=mix, sections=sections)[0], work / f'{name}.all.wav', seconds)))
+    whole = render_whole(stems, index, mp.pack(notes, mix_levels=mix, sections=sections)[0], work / f'{name}.all.wav', seconds)
     np.savez(cache, whole=whole, **{f'p{k}': v for k, v in enumerate(powers)}, **{f'b{k}': v for k, v in enumerate(bands)})
     return notes, parts, key, powers, bands, whole
 
@@ -460,7 +476,7 @@ def balance(name, index, stems, work, verify=True):
             tag = json.dumps(table, sort_keys=True)
             if tag not in heard:
                 blob = mp.pack(balanced_notes(notes, table), mix_levels=True)[0]
-                heard[tag] = gated_lufs(block_powers(render(stems, index, blob, work / f'{name}.balanced.wav', seconds)))
+                heard[tag] = render_whole(stems, index, blob, work / f'{name}.balanced.wav', seconds)
                 heard_path.write_text(json.dumps(heard))
             after = heard[tag]
             if abs(after - whole) <= 0.03: break
