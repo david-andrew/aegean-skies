@@ -108,6 +108,17 @@ CONFIG = {
  'fantaisie-impromptu': (4,.5,4,{0},0.06,0.15,0.24,0),
  'nocturne-fsharp': (4,.5,4,{0},0.06,0.15,0.24,0),
  'polonaise-csharp': (3,.5,4,{0},0.04,0.12,0.18,0),
+ 'bassoon-andante': (4,.5,4,{3},0.06,0.15,0.24,0),
+ 'flute-andante': (4,.5,4,{3},0.06,0.15,0.24,0),
+ 'horn-concerto-two': (4,.5,4,{3},0.02,0.1,0.12,0),
+ 'fantasia-d-minor': (4,.5,4,{1},0.06,0.15,0.24,0),
+ 'mozart-twentyfive': (4,.5,4,{4},0.04,0.12,0.18,0),
+ 'mozart-twentyfive-andante': (4,.5,4,{4},0.06,0.15,0.24,0),
+ 'nachtmusik-rondo': (4,.5,4,{1},0.02,0.1,0.12,0),
+ 'clarinet-quintet-larghetto': (4,.5,4,{1},0.06,0.15,0.24,0),
+ 'beethoven-fifth-andante': (4,.5,4,{8},0.04,0.12,0.18,0),
+ 'brahms-intermezzo': (4,.5,4,{1},0.06,0.15,0.24,0),
+ 'midsummer-intermezzo': (4,.5,4,{6},0.06,0.15,0.24,0),
 }
 
 class BeatMap:
