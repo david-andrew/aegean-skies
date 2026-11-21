@@ -1559,9 +1559,15 @@ On the rivers branch until it lands.
 - **Definition:** a sphere lit by the actual sun direction, never a painted phase mask. On
   `t3/splash-2` its disc is the same apparent size as the sun's. By day it is seen through the
   sky in front of it: its lit side a pale, faintly blue wash low in contrast against the blue,
-  its dark side only sky; through dusk it becomes the night Moon.
+  its dark side only sky. From sunset it begins to shine (`moon_glow`, full once the sun is some
+  15 degrees down), and by night it is a light: its lit side blown out to near white with the
+  maria only just showing, its phase kept, its dark side a faint earthshine never darker than
+  the sky; round it a halo in the air, tight and bright by the disc and broad and faint beyond,
+  as strong as the Moon is full (a thin crescent glows little) and wider in haze and damp air.
+  Its track on the sea is brightened to match.
 - **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count).
-- **Code:** `src/celestial.jo sky_moon`, `moon_illumination`; the disc in `src/sky.jo`.
+- **Code:** `src/celestial.jo sky_moon`, `moon_illumination`; `draw_moon_disc` in `src/sky.jo`
+  (its own small billboard: the sky's shader carries none of it).
 
 ### Planet lights
 
