@@ -1,0 +1,482 @@
+# Morse subtitles (src/morse_subtitles.jo): the plain reading of what is keyed, the letters shown
+# in step with the keyed sound and never ahead of it, letters lost where reception drops, and the
+# Accessibility setting kept (on in a new player's options and in a file from before it).
+use '../src/morse_subtitles.jo'
+use '../src/radio.jo'
+use '../src/radio_synth.jo'
+use '../src/radio_chain.jo'
+use '../src/battle_radio.jo'
+use '../src/flight_signals.jo'
+use '../src/options.jo'
+use '../src/morse_strip.jo'
+
+flat = (x: f64,z: f64) -> f64: 0.0
+
+_stations = () -> MorseStation[]: [loop s in radio_stations(): MorseStation(s.callsign,s.name)]
+
+# ---------------------------------------------------------------- the reading
+test "prosigns, Q codes and abbreviations read in plain English":
+    assert(morse_plain("CQ CQ DE SXA") == "Calling all stations, this is SXA", morse_plain("CQ CQ DE SXA"))
+    assert(morse_plain("CQ CQ CQ DE SXA K") == "Calling all stations, this is SXA, go ahead")
+    assert(morse_plain("SOS") == "Distress call")
+    assert(morse_plain("SOS SOS SOS DE SXA") == "Distress call, this is SXA")
+    assert(morse_plain("QTH KEA") == "My position is KEA")
+    assert(morse_plain("QRU") == "Nothing to report")
+    assert(morse_plain("SXA DE SVB QRU AR") == "SXA, this is SVB, nothing to report, end of message")
+    assert(morse_plain("QRM QRN QSB") == "There is interference, there is static, your signals are fading")
+    assert(morse_plain("QTR 0930") == "The time is 0930")
+    assert(morse_plain("R") == "Received" and morse_plain("K") == "Go ahead" and morse_plain("VV") == "Testing")
+    assert(morse_plain("vv") == "Testing" and morse_plain("  sos  ") == "Distress call")
+    assert(morse_plain("") == "" and morse_plain("...") == "")
+    # (what is no code word stays as keyed)
+    assert(morse_plain("FORM") == "FORM" and morse_plain("KAL 1") == "KAL, 1")
+
+test "a station's call sign first reads as its name":
+    st = _stations()
+    assert(morse_plain("SEA PORT OPEN",st) == "Aegean Maritime Service: harbours open", morse_plain("SEA PORT OPEN",st))
+    assert(morse_plain("SEA PORT SHUT",st) == "Aegean Maritime Service: harbour closures in effect")
+    assert(morse_plain("SEA PORT",st) == "Aegean Maritime Service: harbours")
+    assert(morse_plain("SEA FAIR",st) == "Aegean Maritime Service: fair weather")
+    assert(morse_plain("SEA STORM",st) == "Aegean Maritime Service: storm conditions")
+    assert(morse_plain("ARC QRU",st) == "Archipelago Radio: nothing to report")
+    assert(morse_plain("ARC SHUT",st) == "Archipelago Radio: a harbour closed by weather")
+    assert(morse_plain("CQ DE ARC",st) == "Calling all stations, this is Archipelago Radio")
+    # (a call sign's letters later in a message are not the station: "SEA" after a word is the sea)
+    assert(morse_plain("WX SEA",st) == "Weather, SEA")
+
+test "every word the stations and the flight key has a plain reading":
+    st = _stations()
+    codes = ["QRU","AIR","RES","ATK","DITCH","SHUT","LOW","DLV","FIX","ARR","DEP","FINE","NEWS","PORT SHUT","PORT OPEN","STORM","SQUALL","FAIR","CIV","AD","QUIZ"]
+    loop s in radio_stations():
+        loop code in codes:
+            read = morse_plain("{s.callsign} {code}",st)
+            assert(read.starts_with("{s.name}: "), read)
+            said = read[s.name.len()+2..read.len()]
+            # (in words: lower case, no code left as keyed)
+            assert(said == said.lower() and said.len() > code.len(), read)
+    loop cue in ["VV","R","SOS","K"]:
+        read = morse_plain(cue)
+        assert(read != cue and read.len() > 3, read)
+
+# ---------------------------------------------------------------- the layout
+test "the marks are where the key sounds them":
+    loop text in ["SEA PORT OPEN","E","SOS","KAL 1 QRU","ARC, ATK","a b  c","73 DE SXA","VV"," LEAD"]:
+        key = radio_morse(text)
+        marks = morse_marks(text)
+        assert(marks.len() > 0 and marks[marks.len()-1].char == " ")
+        at = 0
+        loop m in marks:
+            assert(m.from >= at and m.to > m.from and m.to <= key.len(), "{text} {m.char} {m.from} {m.to} {key.len()}")
+            if m.char == " ":
+                # (silence from the letter before, through the break)
+                loop u in at..m.to: assert(not key[u])
+                at = m.to
+                continue
+            # (silent since the mark before, then the character's own dots and dashes, each
+            # followed by a unit's silence but the last)
+            loop u in at..m.from: assert(not key[u], "{text} {m.char} {u}")
+            u = m.from
+            loop j in 0..m.code.len():
+                n = if m.code[j] == '-': 3 else: 1
+                loop k in 0..n: assert(key[u+k], "{text} {m.char} {u+k}")
+                u += n
+                if j+1 < m.code.len():
+                    assert(not key[u]); u += 1
+            assert(u == m.to and not key[u])
+            at = m.to
+        loop u in at..key.len(): assert(not key[u])
+        assert(morse_units(text) == key.len())
+    assert(morse_marks("").len() == 0)
+    # (the same cap as the key's: a long name can not run the subtitle past the sound)
+    long = join([loop k in 0..40: "ABC"]," ")
+    assert(morse_marks(long)[morse_marks(long).len()-1].to <= radio_morse(long).len())
+
+test "a character's dots and dashes show each as it ends":
+    m = morse_marks("L")[0]          # .-..
+    assert(m.code == ".-.." and m.to-m.from == 9)
+    assert(morse_keyed(m,0) == "" and morse_keyed(m,1) == "." and morse_keyed(m,2) == "." and morse_keyed(m,4) == ".")
+    assert(morse_keyed(m,5) == ".-" and morse_keyed(m,7) == ".-." and morse_keyed(m,9) == ".-..")
+
+# ---------------------------------------------------------------- in step with the sound
+# The tone's bursts in keyed sound, each with the sample it ended at: "." or "-" by its length.
+struct Burst:
+    mark: str
+    end = 0
+
+_bursts = (samples: f32[], unit: int) -> Burst[]:
+    out: Burst[]
+    began = -1
+    chunks = samples.len()/40
+    loop c in 0..chunks:
+        peak = 0.0
+        loop k in 0..40: peak = max(peak,abs(f64(samples[c*40+k])))
+        on = peak > 0.004
+        if on and began < 0: began = c*40
+        if not on and began >= 0:
+            out.push(Burst(if c*40-began > unit*2: "-" else: ".",c*40))
+            began = -1
+    out
+
+# The dots and dashes of everything the line shows.
+_shown = (line: MorseLine) -> str:
+    out = ""
+    loop i in 0..line.raw.len():
+        c = line.raw[i]
+        if c >= 'A' and c <= 'Z': out += RADIO_MORSE[int(c)-int('A')]
+        else if c >= '0' and c <= '9': out += RADIO_MORSE[26+int(c)-int('0')]
+    out+line.keying
+
+test "the subtitle's letters never run ahead of the keyed sound, and keep up with it":
+    loop text in ["SEA PORT OPEN","SOS","ARC QRU","KAL 73"]:
+        s = make_radio_synth()
+        radio_synth_program(s,.morse,0,0,radio_morse(text))
+        unit = s.morse_unit
+        period = morse_units(text)
+        heard: f32[]
+        sub = MorseSubtitle()
+        steps = (period*unit)/160
+        checked = 0
+        loop step in 0..steps:
+            loop v in radio_render(s,160,1.0,0.0,true): heard.push(v)
+            # (the ear a hundredth of a second behind what has been made, as a queue keeps it)
+            ear = s.cursor-160
+            morse_follow(sub,"t","Wireless",text,f64(ear-s.morse_origin)/f64(unit),period,1.0,f64(ear)/16000.0)
+            # (the bursts that have ended at the ear by now, and by a hundredth of a second ago)
+            now = ""; before = ""
+            loop b in _bursts(heard,unit):
+                if b.end <= ear: now += b.mark
+                if b.end <= ear-160: before += b.mark
+            shown = _shown(sub.line)
+            assert(now.starts_with(shown), "{text} at {ear}: shows {shown}, sounded {now}")
+            assert(shown.starts_with(before), "{text} at {ear}: shows {shown}, sounded {before} a moment ago")
+            checked += 1
+        assert(checked > 100)
+        # (and by the end the whole of it, in plain words)
+        assert(sub.line.raw.trim() == text and sub.line.plain == morse_plain(text), "{sub.line.raw}|{sub.line.plain}")
+
+# Key `text` once from `from` units to `to`, a quarter unit at a time, clearly received.
+_key = (sub: mut MorseSubtitle, text: str, from: f64, to: f64):
+    u = from
+    loop u < to:
+        morse_follow(sub,"k","R/T",text,u,0,1.0,u*0.08); u += 0.25
+    morse_follow(sub,"k","R/T",text,to,0,1.0,to*0.08)
+
+test "a word reads in plain English only once the gap after it has passed":
+    sub = MorseSubtitle()
+    text = "CQ DE SXA"
+    marks = morse_marks(text)
+    # (the last letter of CQ just keyed: the letters show, the word not yet)
+    q = marks[1]
+    _key(sub,text,0.0,f64(q.to)-0.25)
+    assert(sub.line.raw == "C" and sub.line.keying == "--.", "{sub.line.raw}|{sub.line.keying}")
+    _key(sub,text,f64(q.to)-0.25,f64(q.to))
+    assert(sub.line.raw == "CQ" and sub.line.plain == "" and sub.line.keying == "", "{sub.line.raw}|{sub.line.plain}")
+    _key(sub,text,f64(q.to),f64(q.to)+2.75)
+    assert(sub.line.plain == "")
+    _key(sub,text,f64(q.to)+2.75,f64(marks[2].to))
+    assert(sub.line.raw == "CQ " and sub.line.plain == "Calling all stations")
+    # (part way through D: its dash and first dot)
+    d = marks[3]
+    _key(sub,text,f64(marks[2].to),f64(d.from)+5.0)
+    assert(sub.line.raw == "CQ " and sub.line.keying == "-.", sub.line.keying)
+    _key(sub,text,f64(d.from)+5.0,f64(morse_units(text)))
+    assert(sub.line.raw.trim() == "CQ DE SXA", sub.line.raw)
+    assert(sub.line.plain == "Calling all stations, this is SXA" and sub.line.keying == "")
+
+test "keyed over and over: the last sending stays up until the next has a letter":
+    sub = MorseSubtitle()
+    text = "SEA FAIR"
+    period = morse_units(text)
+    st = _stations()
+    u = 0.0
+    loop u < f64(period):
+        morse_follow(sub,"k","Wireless",text,u,period,1.0,u*0.08,st); u += 0.5
+    assert(sub.line.plain == "Aegean Maritime Service: fair weather" and not sub.line.held)
+    # (the next sending's first dot: the whole of the last still shown)
+    morse_follow(sub,"k","Wireless",text,f64(period)+1.0,period,1.0,100.0,st)
+    assert(sub.line.held and sub.line.plain == "Aegean Maritime Service: fair weather" and sub.line.keying == "")
+    # (S keyed: the new sending takes over)
+    morse_follow(sub,"k","Wireless",text,f64(period)+5.0,period,1.0,101.0,st)
+    assert(not sub.line.held and sub.line.raw == "S" and sub.line.plain == "")
+
+test "coming to a message part way through, what was keyed before is missed":
+    sub = MorseSubtitle()
+    text = "SEA PORT OPEN"
+    marks = morse_marks(text)
+    period = morse_units(text)
+    # (tuned in while the R of PORT is keyed)
+    r = marks[6]
+    assert(r.char == "R")
+    morse_follow(sub,"k","Wireless",text,f64(r.from)+2.0,period,1.0,0.0,_stations())
+    assert(sub.line.raw == "" and sub.line.plain == "")
+    u = f64(r.from)+2.0
+    loop u < f64(period):
+        morse_follow(sub,"k","Wireless",text,u,period,1.0,u*0.08,_stations()); u += 0.25
+    assert(sub.line.raw.trim() == "T OPEN", sub.line.raw)
+    # (the broken word is no word; the whole one reads)
+    assert(sub.line.plain == "{MORSE_GARBLED}, open", sub.line.plain)
+    # (a new message is a new subtitle)
+    morse_follow(sub,"other","Wireless","SOS",0.0,0,1.0,50.0)
+    assert(sub.line.raw == "" and sub.line.plain == "")
+
+# ---------------------------------------------------------------- reception
+test "letters keyed while the signal is down are lost, the rest kept":
+    sub = MorseSubtitle()
+    text = "SEA PORT OPEN"
+    marks = morse_marks(text)
+    period = morse_units(text)
+    u = 0.0
+    loop u <= f64(period):
+        # (static over the E and A of SEA and the whole of PORT)
+        down = (u >= f64(marks[1].from) and u < f64(marks[2].to)) or (u >= f64(marks[4].from) and u < f64(marks[7].to))
+        morse_follow(sub,"k","Wireless",text,u,0,if down: 0.05 else: 0.9,u*0.08,_stations())
+        if down and u > f64(marks[1].from)+0.5 and u < f64(marks[2].to): assert(sub.line.keying == "")
+        u += 0.25
+    assert(sub.line.raw.trim() == "S{MORSE_GAP}{MORSE_GAP} {MORSE_GAP}{MORSE_GAP}{MORSE_GAP}{MORSE_GAP} OPEN", sub.line.raw)
+    assert(sub.line.plain == "{MORSE_GARBLED}, open", sub.line.plain)
+
+test "a dip in the middle of one letter loses that letter alone":
+    sub = MorseSubtitle()
+    marks = morse_marks("SOS")
+    u = 0.0
+    loop u <= f64(morse_units("SOS")):
+        o = marks[1]
+        morse_follow(sub,"k","R/T","SOS",u,0,if u > f64(o.from)+4.0 and u < f64(o.from)+5.0: 0.1 else: 1.0,u*0.08)
+        u += 0.25
+    assert(sub.line.raw.trim() == "S{MORSE_GAP}S" and sub.line.plain == MORSE_GARBLED, "{sub.line.raw}|{sub.line.plain}")
+
+test "the signal's gain follows the receiver's own fading":
+    # (the two slow phases the receiver keeps, after a stretch of its stream)
+    c = make_radio_chain(3,40.0)
+    loop k in 0..24000: _ = radio_chain_sample(c,0.0,0.5,0.0,0.0)
+    seconds = 40.0+24000.0/16000.0
+    fade = 0.55+0.30*sin(TAU*c.fade_phase)+0.15*sin(TAU*c.slow_phase)
+    assert(abs(fade-radio_fade(seconds)) < 0.001, "{fade} {radio_fade(seconds)}")
+    # (clear when strong whatever the fade; gone when faint; in between, by the fade)
+    clear = 0; total = 0
+    t = 0.0
+    loop t < 60.0:
+        assert(radio_signal_gain(0.5,t) >= MORSE_READABLE and radio_signal_gain(0.13,t) < MORSE_READABLE)
+        if radio_signal_gain(0.19,t) >= MORSE_READABLE: clear += 1
+        total += 1; t += 0.25
+    assert(clear > total/10 and clear < total*9/10, "{clear} of {total}")
+
+# The set tuned to the maritime service's shipping notices (minute 15: Morse whether or not there
+# is an announcer), at `khz`, with the notice "SEA PORT OPEN".
+_tuned = (khz: f64) -> Radio:
+    r = Radio(); radio_mute(r,false)
+    radio_tune(r,khz); radio_receive(r,0,15,vec3(5980,500,-4420),flat)
+    r.content = RadioContent("Shipping notices","No harbour closure orders are in effect.","SEA PORT OPEN")
+    r
+
+test "the wireless's subtitle drops letters under poor reception and stops off the station":
+    st = _stations()
+    # (on the station: every letter)
+    r = _tuned(1260)
+    assert(r.station == 4 and r.programme == .shipping and r.strength > 0.9)
+    sub = MorseSubtitle()
+    radio_play(r,900.0,true,false,0,false)
+    k = radio_keying(r,900.0)
+    assert(k.text == "SEA PORT OPEN" and k.period == morse_units(k.text) and k.unit_seconds == 0.08)
+    t = 900.0
+    loop t < 900.0+f64(k.period)*0.08*2.0:
+        k = radio_keying(r,t)
+        morse_follow(sub,k.key,"Wireless",k.text,k.units,k.period,k.signal,t,st)
+        assert(not sub.line.raw.contains(MORSE_GAP))
+        t += 1.0/60.0
+    assert(sub.line.plain == "Aegean Maritime Service: harbours open" and sub.line.raw.trim() == "SEA PORT OPEN", "{sub.line.plain}|{sub.line.raw}")
+    # (two steps of the dial off it: the same message with letters lost to static, some still read)
+    weak = _tuned(1270)
+    assert(weak.station == 4 and weak.strength > 0.12 and weak.strength < 0.25, "{weak.strength}")
+    radio_play(weak,900.0,true,false,0,false)
+    lost = 0; read = 0
+    sub = MorseSubtitle()
+    t = 900.0
+    seen = ""
+    loop t < 960.0:
+        k = radio_keying(weak,t)
+        assert(k.text == "SEA PORT OPEN")
+        morse_follow(sub,k.key,"Wireless",k.text,k.units,k.period,k.signal,t,st)
+        if sub.line.raw != seen and not sub.line.held:
+            seen = sub.line.raw
+            if seen.trim().ends_with(MORSE_GAP): lost += 1
+            else if not seen.ends_with(" ") and seen != "": read += 1
+        t += 1.0/60.0
+    assert(lost > 5 and read > 5, "lost {lost} read {read}")
+    # (the dial moved off the station, the set switched off, the pilot ashore: no keying to follow)
+    off = _tuned(1260)
+    radio_play(off,900.0,true,false,0,false)
+    assert(radio_keying(off,900.0).text != "")
+    radio_tune(off,1300); radio_receive(off,0,15,vec3(5980,500,-4420),flat)
+    radio_play(off,900.0,true,false,0,false)
+    assert(radio_keying(off,900.0).text == "")
+    assert(radio_keying(_tuned(1260),900.0).text == "")      # (not yet playing)
+    quiet = _tuned(1260); radio_play(quiet,900.0,true,false,0,false); radio_mute(quiet,true)
+    assert(radio_keying(quiet,900.0).text == "")
+    ashore = _tuned(1260); radio_play(ashore,900.0,false,false,0,false)
+    assert(radio_keying(ashore,900.0).text == "")
+    # (too faint to read at all: nothing, as the set's own card shows nothing)
+    faint = _tuned(1260); radio_play(faint,900.0,true,false,0,false); faint.strength = 0.1
+    assert(radio_keying(faint,900.0).text == "")
+    # (music is not Morse)
+    music = _tuned(1260); radio_play(music,900.0,true,false,0,false); music.programme = .music
+    assert(radio_keying(music,900.0).text == "")
+
+test "the strip fades once the keying stops":
+    sub = MorseSubtitle()
+    assert(morse_shown(sub,0.0) == 0.0)
+    morse_follow(sub,"k","Wireless","SOS",0.0,0,1.0,9.0)
+    assert(morse_shown(sub,9.0) == 0.0)        # (nothing keyed yet: nothing to show)
+    morse_follow(sub,"k","Wireless","SOS",12.0,0,1.0,10.0)
+    assert(morse_shown(sub,10.0) == 1.0 and morse_shown(sub,10.05) == 1.0)
+    assert(morse_shown(sub,10.4) < 1.0 and morse_shown(sub,10.4) > 0.0)
+    assert(morse_shown(sub,10.0+MORSE_FADE+0.2) == 0.0)
+    morse_clear(sub)
+    assert(morse_shown(sub,10.0) == 0.0 and sub.line.raw == "")
+
+test "with a stream playing, the subtitle's place is what has left the queue":
+    r = _tuned(1260)
+    radio_play(r,907.0,true,false,0,true)      # (SLOPPY_NO_AUDIO: the silent mixer, never a device)
+    assert(r.voice >= 0 and r.synth.style == .morse)
+    k = radio_keying(r,907.0)
+    ear = r.synth.cursor-queued_samples(r.voice)
+    assert(ear <= r.synth.cursor and abs(k.units*1280.0-f64(ear-r.synth.morse_origin)) < 0.001)
+    # (the message joined where the world clock has it: 7 s into the half minute)
+    assert(r.synth.morse_origin == 900*RADIO_RATE and k.units >= 0.0 and k.units <= 7.0/0.08+0.001)
+    radio_mute(r,true)
+
+# ---------------------------------------------------------------- the flight's cues and the lamp
+test "the flight's cues are timed as their sound is keyed":
+    loop text in ["VV","R","SOS","K"]:
+        wave = battle_radio_wave(text,7)
+        seconds = f64(wave.samples.len()/2)/f64(MIX_RATE)
+        # (the sound's own length: its lead, the keyed units, its tail)
+        assert(abs(seconds-(BATTLE_RADIO_LEAD*2.0+f64(morse_units(text))*BATTLE_RADIO_UNIT)) < 0.01)
+        sub = MorseSubtitle()
+        frame = 0
+        loop f64(frame)/60.0 < seconds:
+            now = f64(frame)/60.0
+            morse_follow(sub,text,"R/T",text,battle_cue_units(now),0,1.0,now)
+            # (each letter shown has all its dots and dashes behind it in the sound: the key is up)
+            shown = _shown(sub.line)
+            keyed = 0
+            loop m in morse_marks(text):
+                if m.char != " " and BATTLE_RADIO_LEAD+f64(m.to)*BATTLE_RADIO_UNIT <= now+0.0001: keyed += m.code.len()
+            assert(shown.len() >= keyed and shown.len() <= keyed+4, "{text} {now}: {shown} {keyed}")
+            if sub.line.raw != "":
+                last = morse_marks(text)[sub.line.raw.trim().len()-1]
+                assert(BATTLE_RADIO_LEAD+f64(last.to)*BATTLE_RADIO_UNIT <= now+0.0001)
+            frame += 1
+        assert(sub.line.raw.trim() == text and sub.line.plain == morse_plain(text))
+
+test "the lamp's word reads as its flashes are made":
+    sig = signal_start(.lamp,3,"Form on me; we're going home.",10.0,6.0)
+    word = signal_word("Form on me; we're going home.")
+    assert(word == "FORM" and signal_period(sig) == sig.code.len()+4)
+    sub = MorseSubtitle()
+    frame = 0; spelt = 0; whole = false
+    loop frame < 360:
+        now = 10.0+f64(frame)/60.0
+        morse_follow(sub,"lamp","Lamp",word,signal_units(sig,now),signal_period(sig),1.0,now)
+        # (each letter shown has its last flash behind it: the lamp has gone dark on it)
+        if not sub.line.held and sub.line.raw.trim() != "":
+            spelt += 1
+            units = signal_units(sig,now)
+            at = units-floor(units/f64(signal_period(sig)))*f64(signal_period(sig))
+            last = morse_marks(word)[sub.line.raw.trim().len()-1]
+            assert(f64(last.to) <= at+0.0001, "{sub.line.raw} at {at}")
+            if sub.line.raw.trim().len() < word.len() and sub.line.keying == "": assert(not signal_lit(sig,now-10.0) or at >= f64(morse_marks(word)[sub.line.raw.trim().len()].from))
+            if sub.line.raw.trim() == word: whole = true
+        frame += 1
+    assert(spelt > 60 and whole)
+
+# ---------------------------------------------------------------- the strip's place
+_over = (a: Rect, b: Rect) -> bool: a.x < b.x+b.w and b.x < a.x+a.w and a.y < b.y+b.h and b.y < a.y+a.h
+_inside = (a: Rect, sw: f64, sh: f64) -> bool: f64(a.x) >= 0.0 and f64(a.y) >= 0.0 and f64(a.x+a.w) <= sw and f64(a.y+a.h) <= sh
+
+test "the strip sits beside the wireless in the cockpit, clear of the panel and the gunsight":
+    # (1280 x 720, looking ahead: the wireless at the panel's lower right, the panel left of it)
+    set = Rect(755,635,85,65)
+    panel = Rect(435,490,405,230)
+    sight = Rect(540,265,200,200)
+    loop w in [180.0,300.0,420.0,640.0]:
+        at = morse_strip_place(1280,720,w,62,set,60)
+        assert(_inside(at,1280,720) and f64(at.x) >= f64(set.x+set.w) and f64(at.w) <= w, "{at}")
+        assert(not _over(at,panel) and not _over(at,sight) and not _over(at,set))
+        # (level with the set)
+        assert(abs(f64(at.y)+31.0-(635.0+32.5)) < 0.01 or f64(at.y+at.h) >= 711.9)
+    # (the set low on the screen: the strip stays on it)
+    low = morse_strip_place(1280,720,300,62,Rect(755,670,85,50),60)
+    assert(_inside(low,1280,720))
+
+test "with no room beside the wireless, or none to be seen, the strip is under the compass":
+    compass = Rect(424,10,432,40)
+    instruments = Rect(0,555,530,165)
+    sight = Rect(540,260,200,200)
+    # (flying in the outside view)
+    out = morse_strip_place(1280,720,420,62,none,60)
+    assert(_inside(out,1280,720) and abs(f64(out.x)+f64(out.w)*0.5-640.0) < 0.01 and f64(out.y) == 60.0)
+    assert(not _over(out,compass) and not _over(out,instruments) and not _over(out,sight))
+    # (a phone upright, 600 across: the wireless against the right edge)
+    tall = morse_strip_place(600,1067,420,62,Rect(470,960,110,84),170)
+    assert(_inside(tall,600,1067) and f64(tall.y) == 170.0 and f64(tall.w) == 420.0)
+    # (a message wider than the screen: the strip narrows to it, its reading wraps)
+    wide = morse_strip_place(600,1067,900,80,none,170)
+    assert(_inside(wide,600,1067) and f64(wide.w) == 576.0 and f64(wide.x) == 12.0)
+    # (looking round: the set half off the screen's foot, or off its side)
+    assert(f64(morse_strip_place(1280,720,300,62,Rect(755,690,85,65),60).y) == 60.0)
+    assert(f64(morse_strip_place(1280,720,300,62,Rect(1150,635,85,65),60).y) == 60.0)
+    # (a thumb's button where the strip would be)
+    assert(f64(morse_strip_place(1280,720,300,62,Rect(755,635,85,65),60,[Rect(1040,560,160,160)]).y) == 60.0)
+    assert(f64(morse_strip_place(1280,720,300,62,Rect(755,635,85,65),60,[Rect(40,560,160,160)]).y) != 60.0)
+
+test "the flight's cue takes the strip while it is up, then the wireless has it again":
+    m = MorseCaptions(stations = _stations())
+    text = "SEA FAIR"
+    period = morse_units(text)
+    now = 0.0
+    loop now < 3.0:
+        morse_hear_wireless(m,"w",text,now/0.08,period,1.0,now); morse_cue_step(m,now); now += 1.0/60.0
+    assert(morse_showing(m,now).line.raw.starts_with("SEA"))
+    morse_cue_start(m,"R/T","R",now,BATTLE_RADIO_UNIT,BATTLE_RADIO_LEAD)
+    began = now
+    loop now < began+1.0:
+        morse_hear_wireless(m,"w",text,now/0.08,period,1.0,now); morse_cue_step(m,now); now += 1.0/60.0
+    cue = morse_showing(m,now)
+    assert(cue.line.label == "R/T" and cue.line.raw.trim() == "R" and cue.line.plain == "Received", "{cue.line.raw}|{cue.line.plain}")
+    # (the wireless was followed all the while: nothing of it missed)
+    loop now < began+5.0:
+        morse_hear_wireless(m,"w",text,now/0.08,period,1.0,now); morse_cue_step(m,now); now += 1.0/60.0
+    back = morse_showing(m,now)
+    assert(back.line.label == "" and not back.line.raw.contains(MORSE_GAP) and not back.line.plain.contains(MORSE_GARBLED), back.line.plain)
+    # (no wireless keying: nothing is fed, and the strip fades)
+    morse_hear_wireless(m,"","",0.0,0,0.0,now)
+    assert(morse_shown(m.wireless,now+1.0) == 0.0)
+
+# ---------------------------------------------------------------- the setting
+# (a field written as `, name=...` in a struct's text, with whatever it holds, taken out)
+_drop_field = (text: str, name: str) -> str:
+    parts = split(text, ", {name}=")
+    if parts.len() < 2: return text
+    rest = join(parts[1..parts.len()], ", {name}=")
+    k = 0
+    loop k < rest.len():
+        c = rest[k..k + 1]
+        if c == "," or c == ")": break
+        k += 1
+    parts[0] + rest[k..rest.len()]
+
+test "Morse subtitles are on for a new player, and the options keep the switch":
+    assert(Options().morse_subtitles)
+    loop on in [true,false]:
+        back = from_text[Options](to_text(Options(morse_subtitles = on)))
+        assert(back is Options)
+        if back is Options: assert(back.morse_subtitles == on and back == Options(morse_subtitles = on))
+
+test "options saved before the switch load with Morse subtitles on":
+    text = to_text(Options(morse_subtitles = false, invert_y = true))
+    old = _drop_field(text,"morse_subtitles")
+    assert(not old.contains("morse_subtitles") and old.contains("invert_y"), old)
+    back = from_text[Options](old)
+    assert(not (back is TextError), if back is TextError: back.message else: "")
+    if back is Options: assert(back.morse_subtitles and back.invert_y)
