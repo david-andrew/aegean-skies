@@ -18,6 +18,8 @@ use 'aircraft_boats.jo'
 use 'aircraft_early.jo'
 use 'markings.jo'
 use 'aircraft_greek.jo'
+use 'paint_parts.jo'
+use 'decals.jo'
 
 enum Craft:
     gull, heron, corsair, falco
@@ -231,8 +233,11 @@ _part_range = (bins: mut Vertex3D[][], vs: Vertex3D[], start: int, owner: int, k
             if kind == .falco and max(vs[i].pos.z, max(vs[i + 1].pos.z, vs[i + 2].pos.z)) <= -2.0: id = 1
         bins[id].extend(vs[i..i + 3])
 
-_finish_craft = (model: CraftModel, bins: Vertex3D[][], kind: Craft) -> CraftModel:
+_finish_craft = (model: CraftModel, built: Vertex3D[][], kind: Craft) -> CraftModel:
+    if kit_paint_keying(built): return model
     m = model
+    bins = built
+    if kit_repaint(bins): m.body = custom_mesh(kit_join(bins))
     m.prop_hand = if aircraft_profile(kind).prop_hand < 0.0: -1.0 else: 1.0
     if m.prop_hubs.len() == 0: m.prop_hubs = [m.prop_at]
     if m.cockpits.len() == 0: m.cockpits = [m.cockpit]
@@ -262,6 +267,72 @@ _finish_craft = (model: CraftModel, bins: Vertex3D[][], kind: Craft) -> CraftMod
     specs = craft_parts(kind, m.contacts)
     loop i in 0..7: m.parts.push(CraftPart(specs[i], custom_mesh(bins[i])))
     m
+
+# ---------------- paint by part, and decals ----------------
+# A part's own paint and the decals (src/paint_parts.jo, src/decals.jo) are worked into the part
+# bins as a model is finished, whichever builder made it: build_painted_craft builds the aircraft
+# in the key colours first (which triangles are paint), then in its livery, repainted. Built
+# plainly (build_craft), nothing here runs and the model is as it always was.
+
+_pass = 0                           # 0 a plain build, 1 the key build, 2 the repaint
+_pass_key: Vertex3D[][] = []        # (the bins of the key build)
+_pass_parts: PartPaint[] = []
+_pass_decals: Decal[] = []
+_pass_lookup: DecalSpace? = none    # (the finished bins, kept when asked: where a pointer meets the aircraft)
+
+# (a builder's own rudder, tagged as the kit's: what it has just pushed, vs[from..])
+kit_tag_rudder = (vs: mut Vertex3D[], from: int): tag_paint(vs, from, PAINT_RUDDER_TAG)
+
+kit_join = (bins: Vertex3D[][]) -> Vertex3D[]:
+    vs: Vertex3D[]
+    loop bin in bins: vs.extend(bin)
+    vs
+
+# A builder finishing a model asks first: in the key build its bins are taken and it stops there.
+kit_paint_keying = (bins: Vertex3D[][]) -> bool:
+    global _pass_key
+    if _pass != 1: return false
+    _pass_key = bins
+    true
+
+# The bins repainted (in the repaint pass): true when they changed, and the body must be made again.
+kit_repaint = (bins: mut Vertex3D[][]) -> bool:
+    global _pass_lookup
+    if _pass != 2: return false
+    paint_parts_apply(bins, _pass_key, _pass_parts)
+    space = decal_space(bins)
+    decals_apply(bins, space, _pass_decals)
+    _pass_lookup = space
+    true
+
+# The aircraft in a livery with parts in their own paint and decals on it. With neither, build_craft.
+build_painted_craft = (kind: Craft, lv: Livery, parts: PartPaint[], decals: Decal[]) -> CraftModel:
+    global _pass, _pass_key, _pass_parts, _pass_decals
+    if parts.len() == 0 and decals.len() == 0: return build_craft(kind, lv)
+    key = lv
+    key.body = PAINT_KEYS[0]; key.trim = PAINT_KEYS[1]; key.wing = PAINT_KEYS[2]; key.accent = PAINT_KEYS[3]
+    _pass = 1
+    build_craft(kind, key)
+    _pass = 2; _pass_parts = parts; _pass_decals = decals
+    m = build_craft(kind, lv)
+    _pass = 0; _pass_key = []; _pass_parts = []; _pass_decals = []
+    m
+
+# The triangles of the last aircraft built painted, for finding where a pointer meets it (none
+# after a plain build).
+last_painted_space = () -> DecalSpace?: _pass_lookup
+
+# The parts of a type that take paint (PAINT_PARTS order).
+craft_paint_parts = (kind: Craft, lv: Livery) -> bool[]:
+    global _pass, _pass_key
+    key = lv
+    key.body = PAINT_KEYS[0]; key.trim = PAINT_KEYS[1]; key.wing = PAINT_KEYS[2]; key.accent = PAINT_KEYS[3]
+    _pass = 1
+    build_craft(kind, key)
+    _pass = 0
+    out = paint_parts_present(_pass_key)
+    _pass_key = []
+    out
 
 # ---------------- flat-shaded parts ----------------
 
@@ -341,7 +412,10 @@ _float = (vs: mut Vertex3D[], c: vec3, len: f64, w: f64, col: vec4, under: vec4)
 
 _engine = (vs: mut Vertex3D[], c: vec3, r: f64, len: f64, cowl: vec4):
     m = translation(c) * rotation_x(PI / 2)
+    from = vs.len()
     add_cylinder(vs, vec3(0, f32(-len * 0.5), 0), r, len, cowl, 12, r * 0.92, m)
+    # (a cowling takes the cowling's own paint even where the type leaves it bare metal)
+    tag_paint(vs, from, PAINT_OPEN_TAG)
     # cylinder heads round the cowling's front
     dark = rgb(0.22, 0.2, 0.2)
     add_cylinder(vs, vec3(0, f32(-len * 0.5 - 0.05), 0), r * 0.82, 0.08, dark, 12, -1.0, m)
@@ -443,7 +517,9 @@ _wing_mark = (vs: mut Vertex3D[], c: vec3, lv: Livery, radius: f64):
     if livery_bars(lv):
         # (with an insignia too, the bars go inboard of it)
         bc = if ins == INSIGNIA_NONE: c else: c - vec3(f32(sign(f64(c.x)) * radius * 2.3), 0, 0)
+        from = vs.len()
         loop dz in [-0.12,0.12]: _box(vs,bc+vec3(0,0,f32(dz)),vec3(f32(radius),0.008,0.045),lv.accent)
+        tag_paint(vs, from, PAINT_MARK_TAG)
     if ins != INSIGNIA_NONE: _insignia(vs, c, INSIGNIA[ins], radius)
 
 # Wing marks on a type built without them (the first four): only when repainted with them, so as
@@ -458,12 +534,14 @@ _wing_marks_opt = (vs: mut Vertex3D[], c: vec3, span: f64, chord: f64, thick: f6
 # livery asks for, and the tail number on both sides of the fin. `c` is the rudder's middle, `h`
 # its half sizes (x its thickness, y its height, z its chord).
 _rudder = (vs: mut Vertex3D[], c: vec3, h: vec3, lv: Livery, own: vec4[] = []):
+    from = vs.len()
     cols = if lv.rudder < 0 or lv.rudder >= RUDDERS.len(): own else: RUDDERS[lv.rudder].colours
     if cols.len() == 0: _box(vs, c, h, lv.accent)
     else:
         loop i in 0..cols.len():
             z = f64(c.z) + f64(h.z) * 2.0 * (f64(i) + 0.5) / f64(cols.len()) - f64(h.z)
             _box(vs, vec3(c.x, c.y, f32(z)), vec3(h.x, h.y, f32(f64(h.z) / f64(cols.len()) - 0.002)), cols[i])
+    tag_paint(vs, from, PAINT_RUDDER_TAG)
     if lv.number != "": _tail_number(vs, c, h, lv.number, lv.body)
 
 # A number in block capitals on both faces of the fin, just ahead of the rudder (`c`, `h` the
@@ -477,6 +555,7 @@ _tail_number = (vs: mut Vertex3D[], c: vec3, h: vec3, text: str, fin: vec4):
     light = f64(fin.x) * 0.3 + f64(fin.y) * 0.59 + f64(fin.z) * 0.11 > 0.5
     ink = if light: rgb(0.08, 0.08, 0.09) else: rgb(0.95, 0.93, 0.86)
     mid = f64(c.z) - f64(h.z) - span * 0.5
+    from = vs.len()
     loop side in [-1.0, 1.0]:
         x = f64(c.x) + side * (f64(h.x) + 0.004)
         # (read from either side, the nose to the reader's left on the left side (-x) and to the
@@ -491,6 +570,7 @@ _tail_number = (vs: mut Vertex3D[], c: vec3, h: vec3, text: str, fin: vec4):
                     if ((bits >> (4 - col)) & 1) == 0: continue
                     z = start - side * cell * (f64(k * 6 + col) + 0.5)
                     _box(vs, vec3(f32(x), f32(y), f32(z)), vec3(0.002, f32(cell * 0.5), f32(cell * 0.5)), ink)
+    tag_paint(vs, from, PAINT_MARK_TAG)
 
 # The kit, public for aircraft built in their own files (aircraft_early.jo).
 kit_box = (vs: mut Vertex3D[], c: vec3, h: vec3, col: vec4, m: mat4 = mat4()): _box(vs, c, h, col, m)
@@ -915,6 +995,7 @@ build_craft = (kind: Craft, lv: Livery) -> CraftModel:
             _part_range(bins, vs, mark, 6, kind)
             mark = vs.len()
             _box(vs, vec3(0, 0.8, 4.46), vec3(0.06, 0.55, 0.13), lv.trim)
+            tag_paint(vs, mark, PAINT_RUDDER_TAG)
             _part_range(bins, vs, mark, 6, kind)
             mark = vs.len()
             _spinner(vs, vec3(0, 0, -4.55), 0.18, lv.trim)

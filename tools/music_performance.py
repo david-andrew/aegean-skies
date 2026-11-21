@@ -119,6 +119,16 @@ CONFIG = {
  'beethoven-fifth-andante': (4,.5,4,{8},0.04,0.12,0.18,0),
  'brahms-intermezzo': (4,.5,4,{1},0.06,0.15,0.24,0),
  'midsummer-intermezzo': (4,.5,4,{6},0.06,0.15,0.24,0),
+ 'greek-sta-giannina': (3,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-ta-matakia-sou-ta-mavra': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-san-pethano-sto-karavi': (3,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-karavi-apo-ti-hio': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-an-pethano-roum-ba': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-aftos-o-kosmos': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-ta-matakia-aman': (3,.5,4,{0},0.05,0.14,0.22,0),
+ 'greek-nystaxan-ta-matakia-mou': (2,.5,4,{0},0.05,0.14,0.22,0),
+ 'greek-ena-poulaki': (2,.5,4,{0},0.05,0.14,0.22,0),
+ 'greek-astrapsen-i-anatoli': (2,.5,4,{0},0.05,0.14,0.22,0),
 }
 
 class BeatMap:

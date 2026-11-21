@@ -1,0 +1,114 @@
+# The paint shop: what a repaint costs and how long it takes, and the job while the aircraft is in
+# the shop. A mechanic's workshop does the painting: the player asks the mechanic, chooses the
+# paint on the Paint page (src/aircraft_paint_view.jo) and pays; the aircraft stays in the shop
+# until the paint is dry, then wears it.
+#
+# Pure: the game holds a PaintJob (saved with the session), moves the money and the clock, and
+# decides whether painting is free anywhere (the pause menu's page, a sandbox setting to come) or
+# done here for a price.
+
+use 'markings.jo'
+use 'paint_parts.jo'
+use 'decals.jo'
+use 'aircraft_paint.jo'
+
+# Prices in lepta (100 to the phoenix) and work in minutes.
+const PAINT_SETUP_MINUTES = 30      # masking and mixing, whatever the job
+const PAINT_LIVERY_CENTS = 1200
+const PAINT_LIVERY_MINUTES = 90
+const PAINT_COLOUR_CENTS = 300
+const PAINT_COLOUR_MINUTES = 20
+const PAINT_PART_CENTS = 200
+const PAINT_PART_MINUTES = 15
+const PAINT_PATTERN_CENTS = 350     # a part in a gradient or stripes
+const PAINT_PATTERN_MINUTES = 25
+const PAINT_DECAL_CENTS = 150
+const PAINT_DECAL_MINUTES = 10
+const PAINT_MARK_CENTS = 150        # insignia, rudder stripes
+const PAINT_MARK_MINUTES = 10
+const PAINT_SMALL_CENTS = 60        # bars, a tail number, a decal painted out
+const PAINT_SMALL_MINUTES = 5
+const PAINT_LONGEST_MINUTES = 480
+
+struct PaintQuote:
+    cents = 0
+    minutes = 0
+    items: str[] = []               # what is to be done, in words (none: nothing to paint)
+
+_quote_add = (q: mut PaintQuote, what: str, cents: int, minutes: int):
+    q.items.push(what); q.cents += cents; q.minutes += minutes
+
+# What it costs to take an aircraft of `kind` from the paint `old` to the paint `new`: only what
+# differs is charged.
+paint_quote = (old: Paint, new: Paint, kind: int) -> PaintQuote:
+    q = PaintQuote()
+    a = if old.kind == kind: old else: paint_reset(kind)
+    b = if new.kind == kind: new else: paint_reset(kind)
+    base_a = if a.livery >= 0: a.livery else: paint_default_livery(kind)
+    base_b = if b.livery >= 0: b.livery else: paint_default_livery(kind)
+    if base_a != base_b: _quote_add(q, "a new livery", PAINT_LIVERY_CENTS, PAINT_LIVERY_MINUTES)
+    loop k in 0..4:
+        # (with a new livery, its own colours come with it: only those changed over it are extra)
+        was = if base_a != base_b: paint_colour(Paint(kind = kind, livery = b.livery), kind, k) else: paint_colour(a, kind, k)
+        if paint_colour(b, kind, k) != was: _quote_add(q, "the {PAINT_SLOTS[k].lower()} colour", PAINT_COLOUR_CENTS, PAINT_COLOUR_MINUTES)
+    loop part in 0..PART_COUNT:
+        pa = paint_part(a, part); pb = paint_part(b, part)
+        if pa == pb: continue
+        fancy = if let own = pb: own.pattern != PATTERN_PLAIN else: false
+        _quote_add(q, "the {PAINT_PARTS[part].lower()}", if fancy: PAINT_PATTERN_CENTS else: PAINT_PART_CENTS, if fancy: PAINT_PATTERN_MINUTES else: PAINT_PART_MINUTES)
+    added = 0; gone = 0
+    loop d in b.decals:
+        if not (d in a.decals): added += 1
+    loop d in a.decals:
+        if not (d in b.decals): gone += 1
+    if added > 0: _quote_add(q, if added == 1: "a decal" else: "{added} decals", PAINT_DECAL_CENTS * added, PAINT_DECAL_MINUTES * added)
+    # (one changed in place is one painted out and one put on: the putting on is the work charged)
+    if gone > added: _quote_add(q, if gone - added == 1: "a decal painted out" else: "{gone - added} decals painted out", PAINT_SMALL_CENTS * (gone - added), PAINT_SMALL_MINUTES * (gone - added))
+    # (a new livery's own marks come with it, as its colours do)
+    fresh = Paint(kind = kind, livery = b.livery)
+    if paint_insignia(b, kind) != (if base_a != base_b: paint_insignia(fresh, kind) else: paint_insignia(a, kind)): _quote_add(q, "the insignia", PAINT_MARK_CENTS, PAINT_MARK_MINUTES)
+    if paint_bars(b, kind) != (if base_a != base_b: paint_bars(fresh, kind) else: paint_bars(a, kind)): _quote_add(q, "the operator bars", PAINT_SMALL_CENTS, PAINT_SMALL_MINUTES)
+    if a.rudder != b.rudder: _quote_add(q, "the rudder stripes", PAINT_MARK_CENTS, PAINT_MARK_MINUTES)
+    if clean_number(a.number) != clean_number(b.number): _quote_add(q, "the tail number", PAINT_SMALL_CENTS, PAINT_SMALL_MINUTES)
+    if q.items.len() == 0: return q
+    q.minutes = min(q.minutes + PAINT_SETUP_MINUTES, PAINT_LONGEST_MINUTES)
+    q
+
+# "40 minutes", "1 hour 5 minutes"
+paint_minutes_text = (m: int) -> str:
+    if m < 60: return if m == 1: "1 minute" else: "{m} minutes"
+    h = m / 60; r = m % 60
+    hours = if h == 1: "1 hour" else: "{h} hours"
+    if r == 0: hours else: "{hours} {paint_minutes_text(r)}"
+
+paint_job_begin = (new: Paint, kind: int, quote: PaintQuote, minute: int, place: int, painter: int) -> PaintJob:
+    PaintJob(true, kind, new, minute, minute + quote.minutes, place, painter, quote.cents)
+
+paint_job_done = (job: PaintJob, minute: int) -> bool: job.active and minute >= job.ready_minute
+paint_job_left = (job: PaintJob, minute: int) -> int: if job.active: max(0, job.ready_minute - minute) else: 0
+# how far along it is, 0..1
+paint_job_progress = (job: PaintJob, minute: int) -> f64:
+    if not job.active: return 1.0
+    clamp(f64(minute - job.started_minute) / f64(max(job.ready_minute - job.started_minute, 1)), 0.0, 1.0)
+
+# What the aircraft wears while she is in the shop: masked and in primer until the top coats go on
+# (the last third of the time), then the new paint without its decals, which go on last.
+paint_job_look = (job: PaintJob, old: Paint, minute: int) -> Paint:
+    if not job.active: return old
+    done = paint_job_progress(job, minute)
+    if done >= 1.0: return job.paint
+    if done < 0.34: return old
+    primer = rgb(0.62, 0.6, 0.55)
+    if done < 0.67:
+        # (rubbed down and primed: every part she has in one flat undercoat, her marks masked off)
+        p = Paint(kind = job.kind, livery = old.livery, body = primer, trim = primer, wing = primer, accent = primer, insignia = INSIGNIA_NONE, bars = 0, rudder = 0)
+        return p
+    top = job.paint
+    top.decals = []
+    top
+
+# Why the shop can't start, or "": nothing to do, or not enough money.
+paint_order_refusal = (quote: PaintQuote, cash_cents: int) -> str:
+    if quote.items.len() == 0: return "Nothing is changed: there is nothing to paint."
+    if cash_cents < quote.cents: return "It comes to more than you have."
+    ""
