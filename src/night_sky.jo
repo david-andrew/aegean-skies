@@ -1,0 +1,639 @@
+# The night sky's lights: the Moon, the stars, the planets and the Milky Way, each drawn as its own
+# small piece of geometry over the sky's gradient (sky.jo draws them, after its own triangle), the
+# way the sun's disc is. Every one is an over-bright emitter as the eye and a photograph see it: a
+# small near-white core with only a touch of its colour, and the colour in a halo about it.
+#   the Moon      a billboard: its phase lit by the real Sun's direction, a hint of the maria, a tight
+#                 glow hugging the lit limb, and a wide aureole (a fan of painted geometry, like
+#                 twilight's glow band) that is wider in haze and weaker for a thin crescent. It comes
+#                 out as a light from a little before sunset (celestial.jo moon_glow).
+#   the stars     one mesh of small squares standing on the celestial sphere (the brighter real stars
+#                 at their places, stargazing.jo's among them, and a few thousand fainter ones strewn
+#                 by a fixed rule, thicker along the Milky Way), turned with the hour. Brightness,
+#                 size, twinkle and what is seen at all are worked out at each star's corners; the
+#                 pixels only draw the core, the halo and, for the brightest, a four-point glint.
+#   the planets   four more squares through the stars' program, steady (no twinkle).
+#   the Milky Way a band of painted geometry along the galactic equator, its light at each vertex.
+# What is seen follows the faintest magnitude the sky lets through (night_air): twilight, moonlight,
+# haze and cloud each take the faint stars first, and the Milky Way shows only on a dark, clear,
+# moonless night. Nothing here adds to the sky's own program: that costs Intel GPUs half a
+# millisecond a term, and these cost next to nothing.
+
+use 'look.jo'
+use 'celestial.jo'
+use 'stargazing.jo'
+use 'quality.jo'
+use 'render_space.jo'
+
+# ---------------- the night's air ----------------
+
+struct NightAir:
+    dark: f32 = 0.0                 # 0 by day .. 1 in full night (the sun's depth)
+    limit: f32 = -9.0               # the faintest magnitude seen overhead
+    extinction: f32 = 0.02          # how fast the low air dims a star (per air mass)
+    moon: vec3 = vec3(0, -1, 0)
+    lit: f32 = 0.0                  # the Moon's lit share (0 new .. 1 full)
+    glow: f32 = 0.0                 # how far the Moon is out as a light (0 the day's pale wash .. 1)
+    moonlight: f32 = 0.0            # how much the Moon washes the night sky (lit, up and dark)
+    thick: f32 = 0.0                # the day's air (0 clear .. 1.4 heavy dust)
+    cover: f32 = 0.0                # cloud overhead (0 none .. 1)
+
+# The faintest magnitude seen by the sun's height (el, the sine of it): Venus before sunset, the
+# first stars about 20 minutes after it, the faint ones only in full night.
+NIGHT_EL = [-0.6, -0.45, -0.3, -0.2, -0.1, 0.0, 0.12]
+NIGHT_LIMIT = [6.4, 5.3, 3.5, 1.8, -0.3, -2.8, -5.8]
+night_limit = (el: f64) -> f64:
+    if el <= NIGHT_EL[0]: return NIGHT_LIMIT[0]
+    loop k in 0..NIGHT_EL.len()-1:
+        if el < NIGHT_EL[k+1]:
+            return mix(NIGHT_LIMIT[k], NIGHT_LIMIT[k+1], (el - NIGHT_EL[k]) / (NIGHT_EL[k+1] - NIGHT_EL[k]))
+    -9.0
+
+# How high a light stands over the visible horizon (the sine of it), from an eye `altitude` metres up.
+night_horizon_dip = (altitude: f64) -> f64:
+    h = max(altitude, 0.0)
+    sqrt(h * (2.0 * EARTH_RADIUS + h)) / (EARTH_RADIUS + h)
+
+# The night's air from the frame's light: cover is the cloud overhead (0..1, the weather's).
+night_air = (L: Light, cover: f64 = 0.0, altitude: f64 = 0.0) -> NightAir:
+    sun = normalize(L.sun_dir); moon = normalize(L.moon_dir)
+    el = f64(sun.y)
+    dark = 1.0 - smoothstep(-0.55, 0.0, el)
+    lit = moon_illumination(sun, moon)
+    up = smoothstep(-0.03, 0.12, f64(moon.y) + night_horizon_dip(altitude))
+    thick = max(f64(L.turbidity), 0.0)
+    # (a full Moon high up takes about two and a half magnitudes; haze one and a half and more;
+    # washed air gives a little back)
+    moonlight = lit * sqrt(lit) * up * dark
+    limit = night_limit(el) - 2.5 * moonlight - 1.3 * thick + 0.5 * max(-f64(L.turbidity), 0.0) - 9.0 * cover
+    NightAir(f32(dark), f32(limit), f32(0.035 + 0.04 * thick), moon, f32(lit), f32(moon_glow(el)), f32(moonlight), f32(thick), f32(cover))
+
+# (in shaders, and on the CPU for the planets and the tests) How much of a point of light of
+# magnitude `mag` is seen in the direction dir, y its height over the visible horizon: x what is
+# seen of it (0..1), y what the low air leaves of its light (1 overhead .. 0 at the horizon).
+#   air: x the faintest magnitude seen overhead, y the low air's dimming per air mass
+#   moon: the Moon's direction, w how hard its glare takes the stars about it
+#   glow: Light.afterglow (twilight's band low on the sun's side takes the stars in it)
+night_seen = (dir: vec3, y: f32, mag: f32, air: vec4, moon: vec4, glow: vec4) -> vec2:
+    mass = 1.0 / (max(y, 0.0) + 0.04) - 0.96
+    left = exp(-air.y * mass)
+    flat = dir.xz / max(length(dir.xz), 0.001)
+    facing = dot(flat, glow.zw) * 0.5 + 0.5
+    band = glow.x * exp(-max(y, 0.0) * glow.y * 0.9) * mix(0.22, 0.97, facing * facing * facing)
+    away = 1.0 - dot(dir, moon.xyz)
+    glare = moon.w * (exp(-away * 60.0) + exp(-away * 9.0) * 0.35)
+    local = air.x - 3.5 * band - 4.0 * glare - air.y * mass * 3.0
+    # (nothing shows through the Moon's own disc, lit or dark)
+    behind = smoothstep(0.00042, 0.0009, away)
+    vec2(smoothstep(0.0, 1.7, local - mag) * smoothstep(0.0, 0.05, y) * behind, left)
+
+# ---------------- the celestial sphere ----------------
+
+# The sphere's turn at this moment, from the sun's own direction (so it needs no clock): a star at
+# the celestial place q = (cos dec cos ra, cos dec sin ra, sin dec) stands at ax q.x + ay q.y + az q.z,
+# which is stargazing.jo's sky_star.
+struct SkyTurn:
+    ax: vec3
+    ay: vec3
+    az: vec3
+
+const SKY_E1 = vec3(1, 0, 0)
+const SKY_E2 = vec3(0, 0.93969262, -0.34202014)
+const SKY_POLE = vec3(0, 0.34202014, 0.93969262)
+
+sky_turn = (sun_dir: vec3) -> SkyTurn:
+    s = normalize(sun_dir)
+    a = atan2(f64(dot(s, SKY_E2)), f64(dot(s, SKY_E1)))
+    c = f32(cos(a)); n = f32(sin(a))
+    SkyTurn(SKY_E2 * c - SKY_E1 * n, SKY_E1 * c + SKY_E2 * n, SKY_POLE)
+
+celestial_place = (ra_hours: f64, dec_degrees: f64) -> vec3:
+    a = ra_hours / 12.0 * PI; d = dec_degrees * PI / 180.0
+    vec3(f32(cos(d) * cos(a)), f32(cos(d) * sin(a)), f32(sin(d)))
+
+sky_turned = (k: SkyTurn, q: vec3) -> vec3: k.ax * q.x + k.ay * q.y + k.az * q.z
+sky_unturned = (k: SkyTurn, d: vec3) -> vec3: vec3(dot(d, k.ax), dot(d, k.ay), dot(d, k.az))
+
+# The galaxy's frame among the stars (J2000): x toward its centre in Sagittarius, z its north pole.
+GALAXY_X = celestial_place(17.7611, -28.936)
+GALAXY_Z = celestial_place(12.8573, 27.128)
+GALAXY_Y = normalize(cross(GALAXY_Z, GALAXY_X))
+galactic_place = (l: f64, b: f64) -> vec3:
+    GALAXY_X * f32(cos(b) * cos(l)) + GALAXY_Y * f32(cos(b) * sin(l)) + GALAXY_Z * f32(sin(b))
+
+# ---------------- the stars ----------------
+
+# The colour of a star by its spectral class: 0 B blue-white, 1 A white, 2 F yellow-white,
+# 3 G yellow, 4 K orange, 5 M orange-red.
+STAR_TINTS = [vec3(0.62, 0.76, 1.0), vec3(0.8, 0.88, 1.0), vec3(1.0, 0.96, 0.86), vec3(1.0, 0.9, 0.66), vec3(1.0, 0.73, 0.44), vec3(1.0, 0.52, 0.36)]
+
+# The brighter real stars that draw the summer sky's figures (right ascension in hours, declination
+# in degrees, magnitude, spectral class as above). stargazing.jo names some of them; the same places.
+BRIGHT_STARS = [
+    14.261, 19.18, -0.05, 4,  18.616, 38.78, 0.03, 1,  5.278, 46.0, 0.08, 3,  6.752, -16.72, -1.46, 1,
+    7.655, 5.22, 0.34, 2,  19.846, 8.87, 0.77, 1,  4.599, 16.51, 0.85, 4,  16.49, -26.43, 1.06, 5,
+    13.42, -11.16, 0.97, 0,  7.755, 28.03, 1.14, 4,  20.69, 45.28, 1.25, 1,  10.14, 11.97, 1.35, 0,
+    2.53, 89.26, 1.98, 2,  11.062, 61.75, 1.8, 4,  13.792, 49.31, 1.85, 0,  17.582, 12.56, 2.07, 1,
+    15.578, 26.71, 2.2, 1,  18.921, -26.3, 2.05, 0,
+    # the Great Bear's plough, the Little Bear's guards
+    11.031, 56.38, 2.37, 1,  11.897, 53.69, 2.44, 1,  12.257, 57.03, 3.31, 1,  12.9, 55.96, 1.77, 1,
+    13.399, 54.93, 2.27, 1,  14.845, 74.16, 2.08, 4,  15.345, 71.83, 3.05, 1,
+    # Cassiopeia
+    0.153, 59.15, 2.27, 2,  0.675, 56.54, 2.23, 4,  0.945, 60.72, 2.47, 0,  1.43, 60.24, 2.68, 1,  1.907, 63.67, 3.38, 0,
+    # the Swan, the Lyre, the Eagle, the Dolphin
+    20.37, 40.26, 2.2, 2,  20.77, 33.97, 2.46, 4,  19.75, 45.13, 2.87, 0,  19.512, 27.96, 3.08, 4,
+    18.835, 33.36, 3.45, 0,  18.982, 32.69, 3.24, 0,  19.771, 10.61, 2.72, 4,  19.922, 6.41, 3.71, 3,
+    20.626, 14.6, 3.6, 2,  20.661, 15.91, 3.8, 0,  20.778, 16.12, 3.9, 4,  20.724, 15.07, 4.4, 1,
+    # the Scorpion
+    16.006, -22.62, 2.32, 0,  16.091, -19.81, 2.62, 0,  15.981, -26.11, 2.89, 0,  16.353, -25.59, 2.89, 0,
+    16.598, -28.22, 2.82, 0,  16.836, -34.29, 2.29, 4,  16.864, -38.05, 3.04, 0,  16.91, -42.36, 3.62, 4,
+    17.203, -43.24, 3.33, 2,  17.622, -43.0, 1.87, 2,  17.793, -40.13, 3.03, 2,  17.708, -39.03, 2.41, 0,
+    17.56, -37.1, 1.63, 0,  17.513, -37.3, 2.69, 0,
+    # the Archer's teapot
+    18.403, -34.38, 1.85, 0,  18.35, -29.83, 2.7, 4,  18.466, -25.42, 2.81, 4,  18.097, -30.42, 2.99, 4,
+    19.043, -29.88, 2.6, 1,  18.761, -26.99, 3.17, 0,  19.116, -27.67, 3.32, 4,
+    # the Herdsman, Hercules, the Serpent-bearer, the Crown, the Dragon
+    14.75, 27.07, 2.37, 4,  13.911, 18.4, 2.68, 3,  14.535, 38.31, 3.03, 1,  15.032, 40.39, 3.5, 3,  15.258, 33.31, 3.47, 3,
+    16.504, 21.49, 2.77, 3,  16.688, 31.6, 2.81, 2,  16.715, 38.92, 3.53, 3,  17.251, 36.81, 3.16, 4,
+    17.005, 30.93, 3.92, 1,  17.244, 14.39, 3.1, 5,
+    17.173, -15.72, 2.43, 1,  16.619, -10.57, 2.56, 0,  17.725, 4.57, 2.77, 4,  16.239, -3.69, 2.74, 5,
+    15.464, 29.11, 3.68, 2,  15.712, 26.3, 3.84, 1,
+    17.943, 51.49, 2.23, 4,  17.507, 52.3, 2.79, 3,  16.4, 61.51, 2.74, 3,  14.073, 64.38, 3.65, 1,
+    # the Lion, the Virgin, the Scales, the Serpent, the Centaur
+    11.818, 14.57, 2.14, 1,  10.333, 19.84, 2.08, 4,  11.235, 20.52, 2.56, 1,  12.694, -1.45, 2.74, 2,  13.036, 10.96, 2.83, 3,
+    14.848, -16.04, 2.75, 1,  15.283, -9.38, 2.61, 0,  15.738, 6.43, 2.65, 4,  14.111, -36.37, 2.06, 4,
+    # the autumn stars that rise late: the Winged Horse, Andromeda, Cepheus, the Southern Fish
+    0.14, 29.09, 2.06, 0,  23.063, 28.08, 2.42, 5,  23.079, 15.21, 2.49, 0,  0.221, 15.18, 2.83, 0,
+    21.736, 9.88, 2.39, 4,  1.162, 35.62, 2.05, 5,  2.065, 42.33, 2.26, 4,  21.31, 62.59, 2.45, 1,
+    22.961, -29.62, 1.16, 1,  22.137, -46.96, 1.74, 0,  20.427, -56.74, 1.94, 0,
+    # the winter stars before dawn: Orion, the Bull and the Seven Sisters, the Twins, the Dogs
+    5.919, 7.41, 0.5, 5,  5.242, -8.2, 0.13, 0,  5.419, 6.35, 1.64, 0,  5.604, -1.2, 1.69, 0,
+    5.679, -1.94, 1.77, 0,  5.533, -0.3, 2.23, 0,  5.796, -9.67, 2.09, 0,  5.438, 28.61, 1.65, 0,
+    6.629, 16.4, 1.93, 1,  7.577, 31.89, 1.58, 1,  5.992, 44.95, 1.9, 1,  3.405, 49.86, 1.79, 2,
+    3.136, 40.96, 2.12, 0,  2.12, 23.46, 2.0, 4,  0.727, -17.99, 2.02, 4,  9.46, -8.66, 1.98, 4,
+    6.399, -52.7, -0.74, 2,  1.629, -57.24, 0.46, 0,  6.977, -28.97, 1.5, 0,  7.14, -26.39, 1.84, 2,  6.378, -17.96, 1.98, 0,
+    3.791, 24.11, 2.87, 0,  3.819, 24.05, 3.6, 0,  3.748, 24.11, 3.7, 0,  3.763, 24.37, 3.9, 0,  3.772, 23.95, 4.1, 0,  3.753, 24.47, 4.3, 0]
+
+const FAINT_STARS = 3400           # the strewn ones, magnitude 2.7 to 6.1
+const STAR_GLINT_MAG = 1.7          # stars brighter than this carry a glint
+
+struct StarSpec:
+    q: vec3                         # its place on the celestial sphere
+    mag: f32
+    tint: vec3
+    phase: f32                      # its twinkle's own phase and pace (0..1)
+
+# (a fixed scatter of its own: the game's random numbers are not touched)
+_star_roll = (k: int) -> f64: f64(int(hash(k * 7919 + 104729) % u64(16777216))) / 16777216.0
+
+# how thick the faint stars lie at a galactic latitude b (radians) and longitude l: about three
+# times as many in the Milky Way as at its poles, more toward its centre
+star_density = (l: f64, b: f64) -> f64:
+    deg = b * 180.0 / PI
+    0.3 + 0.7 * exp(-(deg / 15.0) * (deg / 15.0)) * (0.7 + 0.3 * cos(l))
+
+night_star_specs = () -> StarSpec[]:
+    out: StarSpec[]
+    loop k in 0..BRIGHT_STARS.len()/4:
+        out.push(StarSpec(celestial_place(BRIGHT_STARS[k*4], BRIGHT_STARS[k*4+1]), f32(BRIGHT_STARS[k*4+2]), STAR_TINTS[int(BRIGHT_STARS[k*4+3])], f32(_star_roll(k * 13 + 5))))
+    # (many faint, few bright: the count grows about three times a magnitude, as the real sky's)
+    low = 2.7; high = 6.1
+    floor_share = pow(10.0, 0.5 * (low - high))
+    made = 0
+    loop k in 0..FAINT_STARS*4:
+        if made >= FAINT_STARS: break
+        z = _star_roll(k * 6) * 2.0 - 1.0
+        l = _star_roll(k * 6 + 1) * TAU
+        if _star_roll(k * 6 + 2) > star_density(l, asin(z)): continue
+        made += 1
+        r = sqrt(max(1.0 - z * z, 0.0))
+        q = GALAXY_X * f32(r * cos(l)) + GALAXY_Y * f32(r * sin(l)) + GALAXY_Z * f32(z)
+        mag = high + 2.0 * log10(floor_share + (1.0 - floor_share) * _star_roll(k * 6 + 3))
+        c = _star_roll(k * 6 + 4)
+        class = if c < 0.2: 0 else: if c < 0.44: 1 else: if c < 0.58: 2 else: if c < 0.71: 3 else: if c < 0.95: 4 else: 5
+        out.push(StarSpec(q, f32(mag), STAR_TINTS[class], f32(_star_roll(k * 6 + 5))))
+    out
+
+struct StarVertex:
+    q: vec3                         # the star's place on the celestial sphere
+    corner: vec2                    # which corner of its square (-1..1)
+    tint: vec3                      # its colour
+    data: vec4                      # x its magnitude, y its twinkle's phase (0..1), z 1 if it carries a glint, w 1 if it twinkles
+
+struct StarParams:
+    view_proj: mat4
+    ax: vec3                        # the celestial sphere's turn (sky_turn)
+    ay: vec3
+    az: vec3
+    air: vec4                       # x the faintest magnitude seen, y the low air's dimming, z the horizon's dip, w the time (s)
+    moon: vec4                      # the Moon's direction, w its glare on the stars about it
+    glow: vec4                      # Light.afterglow
+    screen: vec4                    # xy a reference pixel (of a 720-line picture) in clip units, z the smallest core (those pixels), w the stars' gain
+    far_z: f32
+
+struct StarOut:
+    pos: vec4
+    at: vec2                        # in core radii
+    core: vec3                      # the core's light: near white
+    halo: vec4                      # the halo's light, in the star's colour; w its fall-off
+    shape: vec3                     # x the glint's strength, y 1 / the square's half size squared, z the glint's fall-off along its arms
+
+# 10^(-0.2 mag): the eye's compressed sense of a star's brightness (magnitude 0: 1, 5: 0.1)
+star_brightness = (mag: f32) -> f32: exp(-0.4605 * mag)
+
+night_star_vs = (v: StarVertex, u: StarParams) -> StarOut:
+    dir = normalize(u.ax * v.q.x + u.ay * v.q.y + u.az * v.q.z)
+    y = dir.y + u.air.z
+    seen = night_seen(dir, y, v.data.x, vec4(u.air.x, u.air.y, 0, 0), u.moon, u.glow)
+    f = star_brightness(v.data.x)
+    big = smoothstep(0.25, 1.0, f)
+    # (twinkle: the low air's shimmer, slight overhead and strong near the horizon, each star at
+    # its own pace; the planets, discs to the air, hold steady)
+    low = 1.0 - smoothstep(0.08, 0.75, y)
+    amp = (0.1 + 0.42 * low) * v.data.w
+    ph = v.data.y * 6.2832
+    t = u.air.w
+    wave = sin(t * (5.3 + ph * 0.31) + ph * 7.0) * 0.6 + sin(t * (11.7 + ph * 0.17) + ph * 3.0) * 0.4
+    light = (0.13 + 0.95 * pow(f, 0.8)) * seen.x * mix(0.45, 1.0, seen.y) * (1.0 + amp * wave) * u.screen.w
+    # (the low air reddens what it dims, and near the horizon a bright star flashes colours)
+    tint = v.tint * mix(vec3(1.0, 0.74, 0.5), vec3(1, 1, 1), seen.y)
+    flash = amp * low * 0.6
+    tint = max(tint + vec3(sin(t * 7.1 + ph * 5.0), sin(t * 6.3 + ph * 9.0) * 0.5, -sin(t * 7.1 + ph * 5.0)) * flash, vec3(0.05, 0.05, 0.05))
+    grey = dot(tint, vec3(0.3, 0.5, 0.2))
+    vivid = max(mix(vec3(grey, grey, grey), tint, 1.7), vec3(0, 0, 0))
+    core = mix(vec3(1, 1, 1), tint, 0.28) * min(light * 1.9, 1.6)
+    halo_reach = 2.3 + 1.7 * big
+    halo = vivid * (light * (0.22 + 0.5 * big))
+    # (a bright star's and a planet's square is wide enough for its halo and its glint's arms)
+    wide = smoothstep(1.2, 6.0, f)
+    half = 2.8 + 6.2 * big + 5.0 * wide
+    radius = max(0.95 + 1.05 * sqrt(min(f, 2.6)), u.screen.z)
+    glint = v.data.z * (0.5 + 0.3 * wide)
+    shown = step(0.004, light)
+    clip = u.view_proj * vec4(dir, 0)
+    offset = v.corner * (half * radius * shown) * u.screen.xy * clip.w
+    StarOut(vec4(clip.xy + offset, clip.w * u.far_z, clip.w), v.corner * half, core, vec4(halo, 1.0 / (halo_reach * halo_reach)), vec3(glint, 1.0 / (half * half), 2.6 / half))
+
+night_star_fs = (i: StarOut, u: StarParams) -> vec4:
+    p = i.at
+    r2 = dot(p, p)
+    # (to nothing at the square's edge, whatever is in it)
+    edge = clamp(1.0 - r2 * i.shape.y, 0.0, 1.0)
+    a = abs(p)
+    arms = i.shape.x * exp(-min(a.x, a.y) * 2.4 - max(a.x, a.y) * i.shape.z)
+    c = i.core * exp(-r2 * 1.15) + i.halo.xyz * (exp(-r2 * i.halo.w) + arms)
+    vec4(c * (edge * edge), 0)
+
+night_star_sh = Shader()
+night_star_mesh = Mesh()
+night_planet_mesh = Mesh()
+
+_star_quad = (vs: mut StarVertex[], idx: mut u32[], q: vec3, tint: vec3, data: vec4):
+    base = u32(vs.len())
+    loop c in [vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, 1)]: vs.push(StarVertex(q, c, tint, data))
+    idx.extend([base, base + 1, base + 2, base, base + 2, base + 3])
+
+build_night_stars = () -> Mesh:
+    vs: StarVertex[]
+    idx: u32[]
+    loop s in night_star_specs():
+        _star_quad(vs, idx, s.q, s.tint, vec4(s.mag, s.phase, if f64(s.mag) < STAR_GLINT_MAG: 1.0 else: 0.0, 1.0))
+    mesh(vs, idx)
+
+# The planets as the eye ranks them: Venus brilliant white, Jupiter cream, Mars red, Saturn pale gold.
+PLANET_TINTS = [vec3(1.0, 0.97, 0.88), vec3(1.0, 0.9, 0.7), vec3(1.0, 0.45, 0.28), vec3(1.0, 0.84, 0.52)]
+PLANET_MAGS = [-4.3, -2.5, 0.3, 0.7]
+PLANET_NOMINAL = [1.8, 1.25, 0.85, 0.65]
+# a planet's magnitude now, from celestial.jo's strength (its distance and phase)
+planet_magnitude = (k: int, strength: f64) -> f64: PLANET_MAGS[k] - 2.2 * (strength / PLANET_NOMINAL[k] - 1.0)
+
+night_planet_vertices = (planets: vec4[4], turn: SkyTurn) -> StarVertex[]:
+    vs: StarVertex[]
+    idx: u32[]
+    loop k in 0..4:
+        p = planets[k]
+        # (a planet switched off, w 0: put under the world)
+        q = if p.w > 0.0: sky_unturned(turn, normalize(p.xyz)) else: sky_unturned(turn, vec3(0, -1, 0))
+        _star_quad(vs, idx, q, PLANET_TINTS[k], vec4(f32(planet_magnitude(k, f64(p.w))), 0.0, 1.0, 0.0))
+    vs
+
+# ---------------- the Milky Way ----------------
+# Its light at a place in the galaxy's own frame (l along it from the centre, b across it, radians):
+# a band a few degrees wide, widest and warm at the central bulge in Sagittarius, a bright cloud in
+# the Swan, mottled, and split from the centre up to the Swan by the dark lane of the Great Rift.
+# Cool blue-white away from the centre. Nothing at 28 degrees from its equator.
+const MILKY_REACH = 28.0            # degrees either side of the galactic equator
+const MILKY_COLUMNS = 360
+const MILKY_ROWS = 28               # (even: a row lies on the equator)
+
+milky_way_light = (l: f64, b: f64) -> vec3:
+    ld = l * 180.0 / PI
+    if ld > 180.0: ld -= 360.0
+    bd = b * 180.0 / PI
+    q = galactic_place(l, b)
+    n1 = noise(f64(q.x) * 4.0 + 7.0, f64(q.y) * 4.0 + 3.0, f64(q.z) * 4.0 + 11.0)
+    n2 = noise(f64(q.x) * 9.0 + 31.0, f64(q.y) * 9.0 + 17.0, f64(q.z) * 9.0 + 5.0)
+    n3 = noise(f64(q.x) * 16.0 + 2.0, f64(q.y) * 16.0 + 41.0, f64(q.z) * 16.0 + 23.0)
+    bulge = exp(-(ld / 30.0) * (ld / 30.0))
+    swan = exp(-((ld - 76.0) / 22.0) * ((ld - 76.0) / 22.0))
+    along = 0.3 + 0.7 * bulge + 0.32 * swan + 0.12 * exp(-((ld + 75.0) / 30.0) * ((ld + 75.0) / 30.0))
+    width = 5.5 + 7.5 * bulge + 1.5 * swan
+    off = bd - 0.5 + (n1 - 0.5) * 3.0
+    band = exp(-(off / width) * (off / width))
+    clouds = clamp(0.78 + (n2 - 0.5) * 0.85 + (n3 - 0.5) * 0.55, 0.3, 1.35)
+    rift_on = smoothstep(-18.0, 4.0, ld) * (1.0 - smoothstep(62.0, 96.0, ld))
+    rift_at = 1.2 + 0.045 * ld + (n1 - 0.5) * 4.0
+    rift_wide = 1.8 + 1.6 * n2
+    rift = rift_on * exp(-((bd - rift_at) / rift_wide) * ((bd - rift_at) / rift_wide)) * (0.6 + 0.4 * n3)
+    light = along * band * clouds * (1.0 - 0.82 * rift) * (1.0 - smoothstep(MILKY_REACH - 8.0, MILKY_REACH, abs(bd)))
+    warm = clamp(bulge * band * 1.2, 0.0, 1.0)
+    colour = mix(vec3(0.5, 0.63, 1.0), vec3(1.0, 0.82, 0.6), f32(warm))
+    # (a touch of rose where the clouds are thick, as long exposures show)
+    colour = mix(colour, vec3(0.95, 0.6, 0.75), f32(0.18 * smoothstep(0.55, 0.9, n2) * band))
+    colour * f32(light)
+
+struct MilkyVertex:
+    q: vec3                         # its place on the celestial sphere
+    light: vec3
+
+struct MilkyParams:
+    view_proj: mat4
+    ax: vec3
+    ay: vec3
+    az: vec3
+    air: vec4                       # x its gain, y the low air's dimming, z the horizon's dip
+    far_z: f32
+
+struct MilkyOut:
+    pos: vec4
+    colour: vec4
+
+# (in shaders and tests) what the low air leaves of the band at a height y over the visible horizon
+milky_way_fade = (y: f32, extinction: f32) -> f32:
+    mass = 1.0 / (max(y, 0.0) + 0.04) - 0.96
+    exp(-extinction * mass * 4.0) * smoothstep(0.0, 0.12, y)
+
+milky_way_vs = (v: MilkyVertex, u: MilkyParams) -> MilkyOut:
+    dir = normalize(u.ax * v.q.x + u.ay * v.q.y + u.az * v.q.z)
+    clip = u.view_proj * vec4(dir, 0)
+    MilkyOut(vec4(clip.xy, clip.w * u.far_z, clip.w), vec4(v.light * (u.air.x * milky_way_fade(dir.y + u.air.z, u.air.y)), 0))
+
+milky_way_fs = (i: MilkyOut, u: MilkyParams) -> vec4: i.colour
+
+milky_way_sh = Shader()
+milky_way_mesh = Mesh()
+
+# (the grid the band is painted on: MILKY_COLUMNS + 1 by MILKY_ROWS + 1 vertices, the first and
+# last columns the same places, the outer rows dark)
+milky_way_grid = () -> MilkyVertex[]:
+    vs: MilkyVertex[]
+    loop i in 0..MILKY_COLUMNS+1:
+        l = f64(i % MILKY_COLUMNS) / f64(MILKY_COLUMNS) * TAU
+        loop j in 0..MILKY_ROWS+1:
+            b = (f64(j) / f64(MILKY_ROWS) * 2.0 - 1.0) * MILKY_REACH * PI / 180.0
+            vs.push(MilkyVertex(galactic_place(l, b), milky_way_light(l, b)))
+    vs
+
+build_milky_way = () -> Mesh:
+    idx: u32[]
+    rows = MILKY_ROWS + 1
+    loop i in 0..MILKY_COLUMNS:
+        loop j in 0..MILKY_ROWS:
+            p = u32(i * rows + j); q = p + u32(rows)
+            idx.extend([p, q, p + 1, p + 1, q, q + 1])
+    mesh(milky_way_grid(), idx)
+
+# how brightly the Milky Way shows: only when the faint stars do (a dark, clear, moonless night)
+milky_way_gain = (air: NightAir) -> f64: 0.5 * smoothstep(5.2, 6.3, f64(air.limit))
+
+# ---------------- the Moon ----------------
+
+# The Moon's look for the frame, all worked out here: by its height (amber low down, cool white
+# high up), its phase, how far it is out as a light, and the air.
+struct MoonLook:
+    face: vec3                      # the lit face as a light: over-bright, so it burns out near white
+    out: f32                        # how far it is out as a light (0 the day's pale wash .. 1)
+    glow: vec4                      # the tight glow about it: its colour and (w) strength
+    ring: vec4                      # the corona in thick or damp air: its colour and (w) strength
+    toward: vec2                    # where the glow centres, toward the lit limb (disc radii)
+    aureole: vec4                   # the wide aureole: its colour and (w) strength
+    reach: f32                      # ... and how far it reaches (radians)
+    earthshine: f32
+
+const MOON_QUAD: f32 = 4.2          # the square's half size, in disc radii (the disc and its tight glow)
+
+moon_look = (air: NightAir, sun_dir: vec3, height: f64) -> MoonLook:
+    moon = normalize(air.moon)
+    lit = f64(air.lit)
+    out = f64(air.glow)
+    # (how low: 1 on the horizon, 0 from about 25 degrees up)
+    low = 1.0 - smoothstep(0.03, 0.42, height)
+    thick = min(f64(air.thick), 1.4)
+    warm = clamp(low * (0.75 + 0.5 * thick) + 0.12 * thick, 0.0, 1.0)
+    face = mix(vec3(0.97, 0.99, 1.06), vec3(1.08, 0.9, 0.62), f32(warm)) * 1.32
+    # (a thin crescent gives little light: its glow and aureole weak; the whole thing dimmer under
+    # cloud, and at dusk until the sky darkens behind it)
+    power = lit * sqrt(lit) * out * (1.0 - 0.85 * f64(air.cover))
+    sky_dark = 0.6 + 0.4 * f64(air.dark)
+    glow_colour = mix(vec3(0.5, 0.68, 1.0), vec3(1.0, 0.66, 0.34), f32(warm))
+    glow = vec4(glow_colour, f32(power * sky_dark * (0.85 - 0.25 * min(thick, 1.0))))
+    ring = vec4(mix(vec3(0.95, 0.66, 0.42), vec3(0.9, 0.5, 0.3), f32(warm)), f32(power * sky_dark * 0.3 * smoothstep(0.2, 0.8, thick)))
+    # (the glow hugs the lit side: at the disc's middle when full, toward the lit limb for a crescent)
+    right = normalize(cross(vec3(0, 1, 0), moon) + vec3(0.00001, 0, 0))
+    up = cross(moon, right)
+    s = normalize(sun_dir)
+    side = vec2(dot(s, right), dot(s, up))
+    toward = side / max(length(side), 0.0001) * f32(0.75 * (1.0 - lit))
+    aureole_colour = mix(vec3(0.34, 0.5, 0.92), vec3(0.85, 0.6, 0.42), f32(clamp(warm * 0.8 + 0.25 * thick, 0.0, 1.0)))
+    # (through haze the aureole is wider and milkier, and takes more of the light)
+    aureole = vec4(aureole_colour, f32(power * sky_dark * (0.62 + 0.2 * min(thick, 1.0))))
+    reach = f64(SKY_DISC_RADIUS) * (10.0 + 6.0 * min(thick, 1.0))
+    MoonLook(face, f32(out), glow, ring, toward, aureole, f32(reach), f32(0.05 * out * (1.0 - lit) * f64(air.dark)))
+
+struct MoonVertex:
+    at: vec2                        # the corner, in units of the square's half size
+
+struct MoonParams:
+    view_proj: mat4
+    moon: vec3
+    sun: vec3                       # the sun's direction in the disc's own frame (right, up, toward the eye)
+    face: vec4                      # the lit face's light (xyz); w how far it is out as a light
+    glow: vec4
+    ring: vec4
+    shape: vec4                     # xy where the glow centres (radii), z the disc's centre over the horizon (radii), w the earthshine
+    far_z: f32
+
+struct MoonOut:
+    pos: vec4
+    at: vec2                        # in disc radii
+
+moon_disc_vs = (v: MoonVertex, u: MoonParams) -> MoonOut:
+    m = normalize(u.moon)
+    right = normalize(cross(vec3(0, 1, 0), m) + vec3(0.00001, 0, 0))
+    up = cross(m, right)
+    dir = m + (right * v.at.x + up * v.at.y) * (MOON_QUAD * SKY_DISC_RADIUS)
+    clip = u.view_proj * vec4(dir, 0)
+    MoonOut(vec4(clip.xy, clip.w * u.far_z, clip.w), v.at * MOON_QUAD)
+
+moon_disc_fs = (i: MoonOut, u: MoonParams) -> vec4:
+    p = i.at
+    r2 = dot(p, p)
+    r = sqrt(r2)
+    above = smoothstep(-0.35, 1.1, p.y + u.shape.z)
+    disc = (1.0 - smoothstep(0.93, 1.05, r)) * above
+    # (the lit side of a sphere, by the real Sun: the crescent turns as the Sun does)
+    normal = vec3(p.x, p.y, sqrt(max(1.0 - r2, 0.0)))
+    lit = smoothstep(-0.03, 0.12, dot(normal, u.sun)) * disc
+    # (the maria: broad grey seas, only a hint once the face burns out)
+    seas = smoothstep(0.42, 0.7, vnoise(p * 1.7 + vec2(11, 3))) * 0.75 + vnoise(p * 5.0 + vec2(4, 9)) * 0.25
+    out = u.face.w
+    # (by day the sky lies in front of it: a pale wash over the blue, its dark side only sky)
+    pale = lit * (0.88 + 0.12 * (1.0 - seas)) * 0.42
+    day = vec4(vec3(0.84, 0.88, 0.93) * pale, pale)
+    night = vec4(u.face.xyz * (1.0 - 0.3 * seas) * lit + vec3(0.6, 0.72, 1.0) * (u.shape.w * disc * (1.0 - lit)), lit)
+    body = mix(day, night, out)
+    # (the light about it: a saturated ring hugging the lit limb, then a soft glow, covering the sky
+    # with its own colour as the sun's bloom does; the corona further out in thick air; all of it
+    # to nothing at the square's edge)
+    d = length(p - u.shape.xy)
+    past = max(d - 0.85, 0.0)
+    edge = 1.0 - smoothstep(MOON_QUAD - 1.6, MOON_QUAD - 0.05, r)
+    open = (1.0 - body.w) * above * edge
+    bloom = clamp(u.glow.w * ((1.0 - smoothstep(0.0, 1.5, past)) * 0.55 + exp(-past * 0.95) * 0.5), 0.0, 0.9) * open
+    corona = u.ring.w * exp(-(r - 2.5) * (r - 2.5) * 2.6) * open
+    vec4(body.xyz + u.glow.xyz * bloom + u.ring.xyz * corona, body.w + bloom * 0.55 + corona * 0.5)
+
+moon_disc_sh = Shader()
+moon_disc_mesh = Mesh()
+
+# what the disc's program is given: the look, the Sun in the disc's own frame, the Moon's height
+# over the visible horizon (the sine of it)
+moon_disc_params = (k: MoonLook, moon: vec3, sun_dir: vec3, height: f64, vp: mat4, far: f32) -> MoonParams:
+    right = normalize(cross(vec3(0, 1, 0), moon) + vec3(0.00001, 0, 0))
+    up = cross(moon, right)
+    s = normalize(sun_dir)
+    local = vec3(dot(s, right), dot(s, up), -dot(s, moon))
+    MoonParams(vp, moon, local, vec4(k.face, k.out), k.glow, k.ring, vec4(k.toward, f32(asin(clamp(height, -1.0, 1.0)) / f64(SKY_DISC_RADIUS)), k.earthshine), far)
+
+# The aureole: the Moon's light in the air about it, a fan of painted geometry centred on the Moon
+# (AUREOLE_SPOKES bearings by AUREOLE_RINGS distances), its light worked out at each vertex and
+# nothing at its rim.
+const AUREOLE_SPOKES = 48
+const AUREOLE_RINGS = 22
+
+struct AureoleVertex:
+    at: vec2                        # x the bearing round the Moon (rad), y how far out (0 the Moon .. 1 the rim)
+
+struct AureoleParams:
+    view_proj: mat4
+    moon: vec3
+    colour: vec4                    # its colour and (w) strength
+    reach: f32                      # radians, the Moon to the rim
+    far_z: f32
+
+struct AureoleOut:
+    pos: vec4
+    colour: vec4                    # premultiplied
+
+# (in shaders and tests) the aureole's strength at a distance x from the Moon (0..1 of its reach)
+aureole_falloff = (x: f32) -> f32:
+    k = 1.0 - x * x
+    (0.62 * exp(-x * x * 24.0) + 0.38 * exp(-x * x * 5.0)) * k * k
+
+moon_aureole_vs = (v: AureoleVertex, u: AureoleParams) -> AureoleOut:
+    m = normalize(u.moon)
+    right = normalize(cross(vec3(0, 1, 0), m) + vec3(0.00001, 0, 0))
+    up = cross(m, right)
+    ang = v.at.y * u.reach
+    dir = m * cos(ang) + (right * cos(v.at.x) + up * sin(v.at.x)) * sin(ang)
+    clip = u.view_proj * vec4(dir, 0)
+    a = u.colour.w * aureole_falloff(v.at.y)
+    AureoleOut(vec4(clip.xy, clip.w * u.far_z, clip.w), vec4(u.colour.xyz * a, a * 0.5))
+
+moon_aureole_fs = (i: AureoleOut, u: AureoleParams) -> vec4: i.colour
+
+moon_aureole_sh = Shader()
+moon_aureole_mesh = Mesh()
+
+# (the rings closer together near the Moon, where the light falls off fastest)
+aureole_ring = (j: int) -> f64: pow(f64(j) / f64(AUREOLE_RINGS), 1.6)
+
+build_moon_aureole = () -> Mesh:
+    vs: AureoleVertex[]
+    idx: u32[]
+    rows = AUREOLE_RINGS + 1
+    loop i in 0..AUREOLE_SPOKES+1:
+        a = f64(i % AUREOLE_SPOKES) / f64(AUREOLE_SPOKES) * TAU
+        loop j in 0..rows: vs.push(AureoleVertex(vec2(f32(a), f32(aureole_ring(j)))))
+    loop i in 0..AUREOLE_SPOKES:
+        loop j in 0..AUREOLE_RINGS:
+            p = u32(i * rows + j); q = p + u32(rows)
+            idx.extend([p, q, p + 1, p + 1, q, q + 1])
+    mesh(vs, idx)
+
+# ---------------- drawing ----------------
+
+# The sky's own gradient under a Moon: its light in the air lifts the high sky a little toward blue
+# (the horizon and the haze stay as they are, so the sea's far edge still meets the sky).
+night_sky_top = (top: vec3, air: NightAir) -> vec3: top + vec3(0.012, 0.024, 0.05) * air.moonlight * (1.0 - air.cover)
+
+# (the picture's height in real pixels: the scene is drawn smaller than the window on phones)
+night_picture_height = () -> f64:
+    scale = 1.0
+    when TARGET == "wasm": scale = __aegean_scene_scale()
+    max(f64(pixel_size().y) * scale, 90.0)
+
+# The stars, the planets and the Milky Way, over the sky's gradient and under twilight's glow band.
+draw_night_stars = (L: Light, air: NightAir, t: f64):
+    if air.limit < -5.5: return
+    global night_planet_mesh
+    vp = scene_view_proj()
+    turn = sky_turn(L.sun_dir)
+    dip = f32(night_horizon_dip(f64(scene_camera().y)))
+    cull(.none)
+    blend(.premultiplied)
+    gain = milky_way_gain(air)
+    if gain > 0.002: draw(milky_way_sh, milky_way_mesh, MilkyParams(vp, turn.ax, turn.ay, turn.az, vec4(f32(gain), air.extinction, dip, 0), far_depth()))
+    # (sizes are in the pixels of a 720-line picture, so a star covers the same share of any
+    # screen; a core never smaller than about a real pixel, or it would flicker as the view turns)
+    lines = night_picture_height()
+    unit = vec2(f32(2.0 / 720.0 / aspect_ratio()), f32(2.0 / 720.0))
+    p = StarParams(vp, turn.ax, turn.ay, turn.az, vec4(air.limit, air.extinction, dip, f32(t % 1000.0)), vec4(air.moon, air.moonlight * 0.6 + air.glow * air.lit * 0.25), L.afterglow, vec4(unit, f32(0.95 * 720.0 / lines), 1.0), far_depth())
+    draw(night_star_sh, night_star_mesh, p)
+    update_mesh(night_planet_mesh, night_planet_vertices(L.planets, turn))
+    draw(night_star_sh, night_planet_mesh, p)
+    blend(.alpha)
+
+# The Moon: its aureole, then its disc and tight glow, over twilight's glow band.
+draw_night_moon = (L: Light, air: NightAir):
+    moon = normalize(air.moon)
+    height = f64(moon.y) + night_horizon_dip(f64(scene_camera().y))
+    k = moon_look(air, L.sun_dir, height)
+    if height < -f64(k.reach): return
+    vp = scene_view_proj()
+    cull(.none)
+    blend(.premultiplied)
+    # (the aureole rises before the Moon does, and stays a while after it sets)
+    rise = f32(smoothstep(-0.1, 0.06, height))
+    if k.aureole.w * rise > 0.003: draw(moon_aureole_sh, moon_aureole_mesh, AureoleParams(vp, moon, vec4(k.aureole.xyz, k.aureole.w * rise), k.reach, far_depth()))
+    if height > -f64(SKY_DISC_RADIUS) * 1.5: draw(moon_disc_sh, moon_disc_mesh, moon_disc_params(k, moon, L.sun_dir, height, vp, far_depth()))
+    blend(.alpha)
+
+# (the GPU programs and meshes: made once the window is open)
+init_night_sky = ():
+    global night_star_sh, night_star_mesh, night_planet_mesh
+    night_star_sh = make_shader(shader(night_star_vs, night_star_fs))
+    night_star_mesh = build_night_stars()
+    quad: u32[] = []
+    loop k in 0..4:
+        base = u32(k * 4)
+        quad.extend([base, base + 1, base + 2, base, base + 2, base + 3])
+    night_planet_mesh = mesh(night_planet_vertices([vec4(0, -1, 0, 0), vec4(0, -1, 0, 0), vec4(0, -1, 0, 0), vec4(0, -1, 0, 0)], sky_turn(vec3(1, 0, 0))), quad)
+    global milky_way_sh, milky_way_mesh
+    milky_way_sh = make_shader(shader(milky_way_vs, milky_way_fs))
+    milky_way_mesh = build_milky_way()
+    global moon_disc_sh, moon_disc_mesh
+    moon_disc_sh = make_shader(shader(moon_disc_vs, moon_disc_fs))
+    moon_disc_mesh = mesh([MoonVertex(vec2(-1, -1)), MoonVertex(vec2(1, -1)), MoonVertex(vec2(1, 1)), MoonVertex(vec2(-1, 1))], [u32(0), u32(1), u32(2), u32(0), u32(2), u32(3)])
+    global moon_aureole_sh, moon_aureole_mesh
+    moon_aureole_sh = make_shader(shader(moon_aureole_vs, moon_aureole_fs))
+    moon_aureole_mesh = build_moon_aureole()
