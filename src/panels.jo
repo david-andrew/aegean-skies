@@ -395,34 +395,39 @@ _rects_cross = (r: Rect, o: Rect, gap: f64) -> bool:
 # head, on the side away from `other_x` (the person spoken with; -1 none), level with it; the
 # other side, or lower or higher, to keep clear of `keep_off` (the speech bubbles, a touch
 # screen's buttons); under the head where neither side has the room (a phone held upright).
-# Returns its left edge, its top and whether it is to the right of the head (its bubbles fan
-# out from that side).
-reply_place = (p: vec2, wide: f64, tall: f64, sw: f64, sh: f64, reach: f64, other_x: f64, keep_off: Rect[]) -> (f64, f64, bool):
+# Returns its left edge, its top, whether it is to the right of the head (its bubbles fan out
+# from that side), and whether it is clear of everything there (false: nowhere was, and it is
+# under the head regardless; narrower, it may yet fit).
+reply_place = (p: vec2, wide: f64, tall: f64, sw: f64, sh: f64, reach: f64, other_x: f64, keep_off: Rect[]) -> (f64, f64, bool, bool):
     prefer_right = other_x < 0.0 or other_x <= f64(p.x)
     level = clamp(f64(p.y) - tall * 0.5 - 10.0, 8.0, max(8.0, sh - tall - 8.0))
-    best = (clamp(f64(p.x) - wide * 0.5, 8.0, max(8.0, sw - wide - 8.0)), clamp(f64(p.y) + reach, 8.0, max(8.0, sh - tall - 8.0)), true)
+    best = (clamp(f64(p.x) - wide * 0.5, 8.0, max(8.0, sw - wide - 8.0)), clamp(f64(p.y) + reach, 8.0, max(8.0, sh - tall - 8.0)), true, false)
     least = 1.0e12
     loop side in 0..3:
         # (0 the side preferred, 1 the other, 2 under the head)
         to_right = if side == 0: prefer_right else: not prefer_right
-        x = if side == 2: clamp(f64(p.x) - wide * 0.5, 8.0, max(8.0, sw - wide - 8.0)) else: if to_right: f64(p.x) + reach else: f64(p.x) - reach - wide
-        if x < 8.0 or x + wide > sw - 8.0: continue
+        home = if side == 2: clamp(f64(p.x) - wide * 0.5, 8.0, max(8.0, sw - wide - 8.0)) else: if to_right: f64(p.x) + reach else: f64(p.x) - reach - wide
         base = if side == 2: f64(p.y) + reach else: level
-        tops = [base]
+        # (where it stands by itself; else under or over what is in its way, or out past it)
+        tries = [(home, base)]
         loop o in keep_off:
-            tops.push(f64(o.y + o.h) + 8.0)
-            tops.push(f64(o.y) - tall - 8.0)
-        loop top in tops:
-            if top < 8.0 or top + tall > sh - 8.0: continue
+            tries.push((home, f64(o.y + o.h) + 8.0))
+            tries.push((home, f64(o.y) - tall - 8.0))
+            if side < 2: tries.push((if to_right: f64(o.x + o.w) + 8.0 else: f64(o.x) - wide - 8.0, base))
+        loop spot in tries:
+            x = spot.0; top = spot.1
+            if x < 8.0 or x + wide > sw - 8.0 or top < 8.0 or top + tall > sh - 8.0: continue
+            # (never back across his head to the side it was kept from)
+            if side < 2 and (if to_right: x < home - 1.0 else: x > home + 1.0): continue
             r = Rect(x, top, wide, tall)
             clear = true
             loop o in keep_off:
                 if _rects_cross(r, o, 6.0): clear = false
             if not clear: continue
-            cost = abs(top - base) + (if side == 1: 40.0 else: if side == 2: 90.0 else: 0.0)
+            cost = abs(top - base) + abs(x - home) + (if side == 1: 40.0 else: if side == 2: 90.0 else: 0.0)
             if cost < least:
                 least = cost
-                best = (x, top, if side == 2: true else: to_right)
+                best = (x, top, if side == 2: true else: to_right, true)
     best
 
 # `head`: the pilot's head in the world; `options`: what he can say; `leave`: the way out's
@@ -449,24 +454,32 @@ reply_bubbles = (fonts: Fonts, head: vec3, options: str[], leave: str, fade: f64
     size = 16.0 * u; num = 13.0 * u; pitch = size * 1.28
     pill = tap_size(30.0 * u); gap = (if pad.on: 8.0 else: 6.0) * u; badge = 22.0 * u
     most = min(330.0 * u, sw - 28.0)
-    # (each reply's lines and box)
-    texts: str[][]
-    widths: f64[]; heights: f64[]
-    loop k in 0..shown:
-        lines = wrap_text(options[first + k], most - badge - 26.0 * u, size)
-        w = 0.0
-        loop l in lines: w = max(w, ptext_width(l, size))
-        texts.push(lines); widths.push(w + badge + 26.0 * u); heights.push(max(pill, f64(lines.len()) * pitch + 12.0 * u))
-    leave_w = ptext_width(leave, size) + badge + 26.0 * u
     arrows = sets > 1
-    total = pill
-    loop h in heights: total += h + gap
-    if arrows: total += pill + gap
-    widest = leave_w
-    loop w in widths: widest = max(widest, w)
     lean = 18.0 * u                     # (how far the fan's ends stand out from its middle)
     reach = 40.0 * u
-    at = reply_place(p, widest + lean, total, sw, sh, reach, other_x, keep_off)
+    leave_w = ptext_width(leave, size) + badge + 26.0 * u
+    texts: str[][]
+    widths: f64[]; heights: f64[]
+    total = 0.0; widest = 0.0
+    at = (0.0, 0.0, true, false)
+    # (laid out at its full width; where that is clear of nothing, a cramped screen, narrower: its
+    # lines broken shorter until it fits or is as narrow as reads)
+    loop narrower in 0..3:
+        texts = []; widths = []; heights = []
+        # (each reply's lines and box)
+        loop k in 0..shown:
+            lines = wrap_text(options[first + k], most - badge - 26.0 * u, size)
+            w = 0.0
+            loop l in lines: w = max(w, ptext_width(l, size))
+            texts.push(lines); widths.push(w + badge + 26.0 * u); heights.push(max(pill, f64(lines.len()) * pitch + 12.0 * u))
+        total = pill
+        loop h in heights: total += h + gap
+        if arrows: total += pill + gap
+        widest = leave_w
+        loop w in widths: widest = max(widest, w)
+        at = reply_place(p, widest + lean, total, sw, sh, reach, other_x, keep_off)
+        if at.3 or most <= 190.0 * u: break
+        most = max(190.0 * u, most * 0.72)
     left = at.0; top = at.1; right = at.2
     a = f32(clamp(fade, 0.0, 1.0))
     # (a fan: the ones level with its middle nearest him, those above and below a little farther out)
