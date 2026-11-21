@@ -123,6 +123,18 @@ PIECES = [
  ('beethoven-fifth-andante', 'Symphony No. 5: Andante con moto', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
  ('brahms-intermezzo', 'Intermezzo in A major, Op. 118 No. 2', 'Johannes Brahms', 'Kalyra Concert Hall'),
  ('midsummer-intermezzo', "A Midsummer Night's Dream: Intermezzo", 'Felix Mendelssohn', 'Kalyra Concert Hall'),
+ # Greek songs from Bourgault-Ducoudray's 1877 collection, in our own transcription (voice and
+ # the piano's bass): the dances on the bouzouki, the lyrical songs on the violin, over a guitar.
+ ('greek-sta-giannina', 'Sta Giannina (In Yannina), a kalamatianos', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Archipelago Radio'),
+ ('greek-ta-matakia-sou-ta-mavra', 'Ta matakia sou ta mavra (Your black eyes)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Archipelago Radio'),
+ ('greek-san-pethano-sto-karavi', 'San pethano sto karavi (If I die on the ship)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Archipelago Radio'),
+ ('greek-karavi-apo-ti-hio', "Karavin en' apo ti Hio (A brigantine from Chios)", 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Archipelago Radio'),
+ ('greek-an-pethano-roum-ba', 'An pethano, rixete me (Roum ba, roum balia)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Archipelago Radio'),
+ ('greek-aftos-o-kosmos', 'Aftos o kosmos (Ah! Eleni mou)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Archipelago Radio'),
+ ('greek-ta-matakia-aman', 'Ta matakia sou (Aman, aman)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Cafe Aman'),
+ ('greek-nystaxan-ta-matakia-mou', 'Nystaxan ta matakia mou (My eyes grew sleepy)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Cafe Aman'),
+ ('greek-ena-poulaki', 'Ena poulaki (A little bird)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Hotel Ancora'),
+ ('greek-astrapsen-i-anatoli', 'Astrapsen i anatoli (A cradle song)', 'Traditional Greek; coll. L.-A. Bourgault-Ducoudray', 'Hotel Ancora'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -282,6 +294,16 @@ MOOD = {
  'beethoven-fifth-andante': ('stately', 'the wider repertoire, batch 4'),
  'brahms-intermezzo': ('tender', 'the wider repertoire, batch 4'),
  'midsummer-intermezzo': ('dreamy', 'the wider repertoire, batch 4'),
+ 'greek-sta-giannina': ('dance-like', 'a Greek song from the 1877 collection'),
+ 'greek-ta-matakia-sou-ta-mavra': ('dance-like', 'a Greek song from the 1877 collection'),
+ 'greek-san-pethano-sto-karavi': ('dance-like', 'a Greek song from the 1877 collection'),
+ 'greek-karavi-apo-ti-hio': ('dance-like', 'a Greek song from the 1877 collection'),
+ 'greek-an-pethano-roum-ba': ('dance-like', 'a Greek song from the 1877 collection'),
+ 'greek-aftos-o-kosmos': ('dance-like', 'a Greek song from the 1877 collection'),
+ 'greek-ta-matakia-aman': ('tender', 'a Greek song from the 1877 collection'),
+ 'greek-nystaxan-ta-matakia-mou': ('tender', 'a Greek song from the 1877 collection'),
+ 'greek-ena-poulaki': ('tender', 'a Greek song from the 1877 collection'),
+ 'greek-astrapsen-i-anatoli': ('tender', 'a Greek song from the 1877 collection'),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
@@ -431,8 +453,47 @@ def gymnopedie_orchestra(notes):
   out.append([start,dur,pitch,BASS,g0*.61,g1*.61,4])
  return sorted(out)
 
+# The Greek songs (our transcription: the voice, and the piano's lowest note per beat). The piano's
+# introductions and interludes were not transcribed beyond that bass line, so a stretch with no
+# voice longer than GREEK_GAP is cut to GREEK_KEEP seconds of the bass, before and after; the
+# dances take the tune on the bouzouki with a quiet accordion an octave below (as Ikariotikos), the
+# lyrical songs on the violin; the bass on the guitar.
+GREEK_LYRICAL = {'greek-ta-matakia-aman', 'greek-nystaxan-ta-matakia-mou', 'greek-ena-poulaki', 'greek-astrapsen-i-anatoli'}
+GREEK_GAP, GREEK_KEEP = 4.0, 1.6
+
+def greek_song(name, notes):
+ voice = sorted((n[0], n[0] + n[1]) for n in notes if n[6] == 0)
+ # (the stretches with the voice, and what is kept around them)
+ spans = []
+ for a, b in voice:
+  if spans and a - spans[-1][1] <= GREEK_GAP: spans[-1][1] = max(spans[-1][1], b)
+  else: spans.append([a, b])
+ keep = []
+ for a, b in spans:
+  a = max(0.0, a - GREEK_KEEP); b = b + GREEK_KEEP
+  if keep and a <= keep[-1][1]: keep[-1][1] = b
+  else: keep.append([a, b])
+ out = []
+ lyrical = name in GREEK_LYRICAL
+ for start, dur, pitch, ins, g0, g1, track in notes:
+  shift = None; t = 0.0
+  for a, b in keep:
+   if a <= start < b: shift = t - a; break
+   t += b - a
+  if shift is None: continue
+  start += shift
+  if track == 0:
+   if lyrical: out.append([start, dur, pitch, STRINGS, g0, g1, track])
+   else:
+    out.append([start, dur, pitch, BOUZOUKI, g0, g1, track])
+    out.append([start, dur, pitch - 12, ACCORDION, g0 * .28, g1 * .28, track])
+  else:
+   out.append([start, dur, pitch, HARP, g0 * .8, g1 * .8, track])
+ return sorted(out)
+
 def arrange(name,notes):
  if name=='gymnopedie-orchestra':return gymnopedie_orchestra(notes)
+ if name.startswith('greek-'):return greek_song(name,notes)
  out=[]
  top={}
  for start,dur,pitch,ins,g0,g1,track in notes:
