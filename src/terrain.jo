@@ -53,6 +53,7 @@ struct GroundParams:
     meadow_b: vec4 = vec4(0,0,0,0)      # its two dab layers' offsets (meadow_study_dabs)
     meadow_c: vec4 = vec4(0,0,0,0)      # the gusts' reach (x, m), the dabs' (y), the dabs' travel (z, m/s), on (w: 1)
     meadow_noise: Texture = Texture()   # its noise tile (look.jo meadow_noise_texture)
+    meadow_dabs: Texture = Texture()    # its dab tile: the dabs' value and their slope across the tile (look.jo meadow_dab_texture)
     grass_view: vec4 = vec4(0,1,1,1)  # the grass egg: look x, z, side reach, behind reach (src/grass.jo grass_shape)
     roads: Texture = Texture()
     road_rect: vec4 = vec4(0,0,0,0)
@@ -304,6 +305,18 @@ ground_material = (i: GroundOut,u:GroundParams,large_terrain:bool,coastal:bool=f
 # lone: 1 reads the first gust layer alone (spread to the pair's deviation), for the far ground: one texture read;
 # lite: 1 (the low tier's shaders) reads one gust layer and one dab layer everywhere, blades and ground alike.
 meadow_study = (local: vec2, u: GroundParams, dabs: f32, lone: f32 = 0.0, lite: int = 0) -> vec3:
+    g = meadow_study_gusts(local, u, lone, lite)
+    dab: f32 = 0.0
+    front: f32 = 0.0
+    if dabs > 0.0:
+        d = meadow_study_dabs_at(local, u, lite)
+        dab = smoothstep(0.49, 0.71, d.x) * dabs
+        front = smoothstep(0.08, 0.82, meadow_study_crest(local, u, d.x, g.x).x) * meadow_study_front_gain(u, g.y) * dabs
+    # dabs everywhere (the field is never still), stronger inside the gusts
+    vec3(dab * meadow_study_dab_gain(g.y), g.y, front)
+
+# (x the gust layers' mixed noise, y the gust's strength 0..1)
+meadow_study_gusts = (local: vec2, u: GroundParams, lone: f32, lite: int) -> vec2:
     qa = local + u.meadow_a.xy
     # gust layers turned by whole-number matrices (periods 2016/sqrt 5 and 1344/sqrt 5 m)
     a = sample_lod(u.meadow_noise, vec2(2.0 * qa.x + qa.y, 2.0 * qa.y - qa.x) / 2016.0, 0.0).x
@@ -312,25 +325,59 @@ meadow_study = (local: vec2, u: GroundParams, dabs: f32, lone: f32 = 0.0, lite: 
         qb = local + u.meadow_a.zw
         b = sample_lod(u.meadow_noise, vec2(qb.x - 2.0 * qb.y, 2.0 * qb.x + qb.y) / 1344.0, 0.0).y
         n = mix(0.62 * a + 0.38 * b, n, lone)
-    gust = smoothstep(0.5, 0.72, n) * smoothstep(2.5, 10.0, u.wind.z)
-    dab: f32 = 0.0
-    front: f32 = 0.0
-    if dabs > 0.0:
-        q1 = local + u.meadow_b.xy
-        q2 = local + u.meadow_b.zw
-        r1 = sample_lod(u.meadow_noise, vec2(q1.x + 2.0 * q1.y, q1.y - 2.0 * q1.x) / 144.0, 0.0).z
-        m = 0.5 + 0.72 * (r1 - 0.5)
-        if lite == 0:
-            r2 = sample_lod(u.meadow_noise, q2 / 224.0, 0.0).w
-            m = 0.6 * r1 + 0.4 * r2
-        dab = smoothstep(0.49, 0.71, m) * dabs
-        # Broken crests move with the first dab layer. Weight the two ridges by wind heading
-        # so their long side lies across the prevailing wind. Both periods divide GUST_PERIOD.
-        ridge = sin(q1*vec2(0.34906585,0.39269908)+vec2(m*5.0+n*7.0,n*8.0-m*4.0))
-        crest = dot(ridge,u.wind.xy*u.wind.xy)
-        front = smoothstep(0.08,0.82,crest)*(0.38+0.62*gust)*dabs*smoothstep(4.0,14.0,u.wind.z)
-    # dabs everywhere (the field is never still), stronger inside the gusts
-    vec3(dab * (0.42 + 0.58 * gust), gust, front)
+    vec2(n, smoothstep(0.5, 0.72, n) * smoothstep(2.5, 10.0, u.wind.z))
+
+# The dab layers at a point: x their mixed noise (a dab where it passes 0.49 to 0.71), y how fast that noise is
+# changing there (per second) as the layers are carried over it. The dab tile holds the noise and its slope
+# across the tile (look.jo build_meadow_dabs), so the rate costs no further read: the blades' spring uses it to
+# know what the wind was a moment ago (meadow_past).
+meadow_study_dabs_at = (local: vec2, u: GroundParams, lite: int) -> vec2:
+    q1 = local + u.meadow_b.xy
+    d1 = sample_lod(u.meadow_dabs, vec2(q1.x + 2.0 * q1.y, q1.y - 2.0 * q1.x) / 144.0, 0.0)
+    # (the first layer is carried straight downwind at the dabs' travel)
+    v = u.wind.xy * u.meadow_c.z
+    rate = -dot((d1.yz - vec2(0.5, 0.5)) * MEADOW_DAB_SLOPE, vec2(v.x + 2.0 * v.y, v.y - 2.0 * v.x) / 144.0)
+    if lite > 0: return vec2(0.5 + 0.72 * (d1.x - 0.5), 0.72 * rate)
+    q2 = local + u.meadow_b.zw
+    d2 = sample_lod(u.meadow_dabs, q2 / 112.0, 0.0)
+    # (the second 30 degrees off the wind's line, half as fast again: look.jo meadow_step)
+    v2 = vec2(v.x * 0.866 - v.y * 0.5, v.x * 0.5 + v.y * 0.866) * 1.5
+    rate2 = -dot((d2.yz - vec2(0.5, 0.5)) * MEADOW_DAB_SLOPE, v2 / 112.0)
+    vec2(0.6 * d1.x + 0.4 * d2.x, 0.6 * rate + 0.4 * rate2)
+
+# Broken crests move with the first dab layer. Weight the two ridges by wind heading so their long side lies
+# across the prevailing wind. Both periods divide GUST_PERIOD. x the crest (a front where it passes 0.08 to
+# 0.82), y its rate of change (per second) given the dabs' rate.
+meadow_study_crest = (local: vec2, u: GroundParams, m: f32, n: f32, rate: f32 = 0.0) -> vec2:
+    q1 = local + u.meadow_b.xy
+    k = vec2(0.34906585, 0.39269908)
+    phase = q1 * k + vec2(m * 5.0 + n * 7.0, n * 8.0 - m * 4.0)
+    heading = u.wind.xy * u.wind.xy
+    turning = vec2(5.0, -4.0) * rate - u.wind.xy * u.meadow_c.z * k
+    vec2(dot(sin(phase), heading), dot(cos(phase) * turning, heading))
+
+meadow_study_dab_gain = (gust: f32) -> f32: 0.42 + 0.58 * gust
+meadow_study_front_gain = (u: GroundParams, gust: f32) -> f32: (0.38 + 0.62 * gust) * smoothstep(4.0, 14.0, u.wind.z)
+
+# What a blade reads of the study: `now` as meadow_study gives it (its colour and the ground's sheen share
+# it), and the dabs and fronts as its spring feels them (look.jo meadow_sprung): `pace` stretches the blade's
+# own timing (a taller blade swings slower), so neighbours do not swing as one.
+struct MeadowBlade:
+    now: vec3
+    dab: f32
+    front: f32
+
+meadow_study_blade = (local: vec2, u: GroundParams, lite: int, pace: f32) -> MeadowBlade:
+    g = meadow_study_gusts(local, u, 0.0, lite)
+    d = meadow_study_dabs_at(local, u, lite)
+    c = meadow_study_crest(local, u, d.x, g.x, d.y)
+    early = MEADOW_TAP_EARLY * pace
+    late = MEADOW_TAP_LATE * pace
+    dab_gain = meadow_study_dab_gain(g.y)
+    front_gain = meadow_study_front_gain(u, g.y)
+    dab = meadow_sprung(smoothstep(0.49, 0.71, meadow_past(d.x, d.y, early, 1.0)), smoothstep(0.49, 0.71, meadow_past(d.x, d.y, late, 1.0)))
+    front = meadow_sprung(smoothstep(0.08, 0.82, meadow_past(c.x, c.y, early, 3.0)), smoothstep(0.08, 0.82, meadow_past(c.x, c.y, late, 3.0)))
+    MeadowBlade(vec3(smoothstep(0.49, 0.71, d.x) * dab_gain, g.y, smoothstep(0.08, 0.82, c.x) * front_gain), dab * dab_gain, front * front_gain)
 
 # how much of the study replaces main's waves: none in a calm or light air (those keep main's look), all of it
 # from 5 m/s
@@ -348,9 +395,11 @@ meadow_fill = (p: GroundParams, origin: vec3) -> GroundParams:
         low = render_quality.tier == 0
         q.meadow_c = vec4(if low: 1600 else: 2600, if low: 300 else: 600, f32(meadow_travel(meadow_state.speed)), 1)
         q.meadow_noise = meadow_noise_texture()
+        q.meadow_dabs = meadow_dab_texture()
     else:
         q.meadow_c = vec4(0,0,0,0)
         q.meadow_noise = coast_pattern_texture
+        q.meadow_dabs = coast_pattern_texture
     q
 
 # (in shaders, the wind study's ground shaders only) the sheen over the meadows: main's waves in a calm or light

@@ -20,7 +20,7 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Blade facing](#blade-facing) · [Blade spring](#blade-spring) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
@@ -1703,6 +1703,12 @@ On the rivers branch until it lands.
   ground beneath them: the cell carries the terrain's surface-detail slope (`grass_detail_slope`), so
   hill shading and the soft sun shadows of the relief carry through the field; the cloud-shadow pass is a
   screen-space multiply and covers blades like any other pixel.
+- **Colour:** a blade takes the ground's colour where it stands, from the same sources the terrain
+  shader reads: the terrain's own field samples blended across the cell (`grass_working`), the painted
+  crowns of the scrub (the canopy sheet, the ground's own grove uniform) and the river's green margin.
+  On top of that its own variation (`grass_blade_tone`): lighter at the tip and darker at the root, a
+  tint by clump, a little value and warmth of its own, and the light on its pocket of grass as a mound.
+  All of the variation fades out with the field, so a blade coming in at the rim is the ground's colour.
 - **Clumps and turning:** each cell turns its tuft by its own angle (no one-metre lattice of rows), and
   blades gather toward the centres of a jittered ~0.9 m world lattice. A clump has its own height, lean
   and a slight tint; each blade also has its own height, lean and yaw off the wind's line.
@@ -1714,6 +1720,36 @@ On the rivers branch until it lands.
 - **Capture:** `tools/grass_sample.jo`; `AEGEAN_GRASS_DENSITY`, `AEGEAN_GRASS_RADIUS`.
 
 ![Grass blades, the grass frontier, and the ground tint beyond it](img/grass.png)
+
+### Blade facing
+
+- **Aliases:** facing the viewer, turning about the long axis.
+- **Definition:** the base of a blade's triangle turns about the blade's upright axis to face the
+  camera, while its root and its tip stay where they are, so a blade shows its width from most sides
+  and the field has body instead of reading as flat cards. Most blades face (`GRASS_FACING_SHARE`),
+  each hanging back toward its own heading by its own amount (up to about 40 degrees, none when it
+  would be edge-on), so each turns less than the camera does; the rest keep their own heading and
+  are now and then caught on edge.
+- **Code:** `src/grass.jo grass_facing`, in `grass_vs_at`.
+- **Rules:** rooted in place: only the two base vertices move, by half the blade's width at most.
+  The turn is continuous as the view passes edge-on (the two base vertices trade places on one line).
+
+### Blade spring
+
+- **Aliases:** the spring, momentum, overshoot, swing-through.
+- **Definition:** under the wind study a blade answers the dabs and fronts passing over it as an
+  under-damped spring (about 2.2 Hz, damping 0.2): thrown over further than it will lie as a dab
+  arrives, and swinging back past its rest and returning when the dab lets go. Nothing is simulated
+  per blade. The dab layers are frozen patterns carried over the field, so the wind a moment ago is
+  the pattern a little way downwind; the **dab tile** holds the dabs' noise and its slope, which
+  gives that without a second texture read. The spring is then two taps of the drive: the first lobe
+  of its impulse response, and half a swing later with the opposite sign. A taller blade swings slower.
+- **Code:** `src/look.jo` (`meadow_sprung`, `meadow_past`, `build_meadow_dabs`, `MEADOW_BLADE_HZ`,
+  `MEADOW_BLADE_DAMPING`), `src/terrain.jo meadow_study_blade`.
+- **Rules:** in a steady wind the spring's answer is the drive itself, so the field's mean lean and
+  the ground's sheen are unchanged. The gust patches are too slow to swing a blade and are not sprung.
+- **Not to be confused with:** the wave trains' spring (`meadow_spring`, `meadow_lag`: a gain and a
+  phase lag per train, used in calm and light air).
 
 ### Grass egg
 
@@ -1756,8 +1792,8 @@ On the rivers branch until it lands.
 - **Definition:** the ground colour under the grass, which is also the blade-root colour, so the
   field fades into the terrain with no visible edge. (In the terrain shader, `tint` is also the
   per-vertex dryness, maquis, ridge and high-land values that drive the ground material.)
-- **Code:** `src/terrain.jo ground_material`; `src/look.jo meadow_blade_response` and the
-  projected pigment wash in `src/grass.jo grass_vs`.
+- **Code:** `src/terrain.jo ground_material`; `src/look.jo meadow_blade_response` and the ground's
+  material read at the blade's root in `src/grass.jo grass_vs_at` (see Grass blades, Colour).
 - **Rules:** the grass-2 gate was a mean colour difference under ΔE 3 between the grass field and
   the bare ground, seen edge-on.
 
@@ -1792,8 +1828,8 @@ On the rivers branch until it lands.
 - **Code:** `src/look.jo` (`meadow_noise_texture`, `build_meadow_noise`, the `sa`/`sb`/`r1`/`r2`
   offsets in `meadow_step`), `src/terrain.jo` (`meadow_study`, `meadow_study_share`, `meadow_fill`,
   the sheen in `ground_surface`), `src/grass.jo grass_vs`.
-- **Rules:** the noise tile is procedural (a 128-square tileable fBm made by the game when the trial is
-  first switched on); every layer's period divides `GUST_PERIOD`, so wrapped offsets are seamless.
+- **Rules:** the noise tile and the dab tile (the dabs' own: their noise and its slope, see Blade
+  spring) are procedural (128-square tileable fBm made by the game when the study is first drawn); every layer's period divides `GUST_PERIOD`, so wrapped offsets are seamless.
   The gust layers are large enough not to repeat over a hill, which is why they may go further than the
   near-detail envelope (see terrain stripes).
 

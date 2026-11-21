@@ -272,9 +272,17 @@ meadow_gust_w = (origin: vec3) -> vec2: meadow_shift(meadow_state.aw, origin)
 # within a second or two, so no spot sees a regular rhythm. Main's three wave trains run everywhere at once with
 # an even strength, which reads as a pattern. Here the gusts are two fBm layers (a procedural 128-square noise
 # tile, meadow_noise) at 900 m and 600 m periods, turned, carried at different speeds and thresholded; the dabs
-# are two fine layers of the same tile (64 m and 224 m periods, 4-14 m lattices, so neither lattice's beat shows)
+# are two fine layers (64 m and 112 m periods, 2-14 m lattices, so neither lattice's beat shows)
 # carried at different speeds and directions. Every period divides GUST_PERIOD, so the wrapped offsets stay
 # seamless. Four texture reads a blade (once, for its lean and its colour), two a far ground pixel.
+#
+# The dabs have a tile of their own (meadow_dabs: the same fBm as the noise tile's third channel, read at 64 m
+# and 112 m periods), which also holds the noise's slope across the tile. A blade is a damped spring driven by
+# the dabs and fronts passing over it (about 2.2 Hz, damping 0.2: under-damped). The layers are frozen patterns
+# carried over the blade, so what the wind was a moment ago is the pattern a little way downwind, and the slope
+# gives that without a second read (meadow_past). The spring's answer is then two taps of the drive
+# (meadow_sprung): where the first lobe of its impulse response sits, and half a swing later with the opposite
+# sign. When a dab lets go the blade comes up, swings on past where it rests, and comes back.
 meadow_noise: Texture = Texture()
 meadow_noise_ready = false
 
@@ -336,6 +344,71 @@ meadow_noise_texture = () -> Texture:
         set_mipmaps(meadow_noise, false)
         meadow_noise_ready = true
     meadow_noise
+
+meadow_dabs: Texture = Texture()
+meadow_dabs_ready = false
+
+# the slope channels' span: a channel value g means (g - 0.5) * MEADOW_DAB_SLOPE noise per tile width
+const MEADOW_DAB_SLOPE: f32 = 24.0
+
+# the dab tile: r the dabs' noise (8 cells, 3 octaves, spread to mean 0.5 and deviation 0.16, as the noise
+# tile's third channel), g and b the slope across the tile (x, y) of its two coarser octaves (the finest would
+# only add jitter to the spring's reading; it passes a blade too fast to swing it)
+build_meadow_dabs = () -> Image:
+    n = MEADOW_NOISE_N
+    seed: f32 = 17.0 + 2.0 * 389.0
+    raw: f32[] = []
+    coarse: f32[] = []
+    loop j in 0..n:
+        loop i in 0..n:
+            x = (f32(i) + 0.5) / f32(n); y = (f32(j) + 0.5) / f32(n)
+            raw.push(meadow_tile_fbm(x, y, 8.0, 3, seed))
+            # (the first two octaves' share of the three: 1.5 of 1.75)
+            coarse.push(meadow_tile_fbm(x, y, 8.0, 2, seed) * 1.5 / 1.75)
+    mean: f32 = 0.0
+    loop v in raw: mean += v
+    mean /= f32(n * n)
+    var: f32 = 0.0
+    loop v in raw: var += (v - mean) * (v - mean)
+    sd = sqrt(var / f32(n * n))
+    gain = 0.16 / max(sd, 0.0001)
+    img = image(n, n)
+    loop j in 0..n:
+        loop i in 0..n:
+            east = coarse[j * n + (i + 1) % n]; west = coarse[j * n + (i + n - 1) % n]
+            south = coarse[((j + 1) % n) * n + i]; north = coarse[((j + n - 1) % n) * n + i]
+            gx = (east - west) * 0.5 * f32(n) * gain
+            gy = (south - north) * 0.5 * f32(n) * gain
+            img.set(i, j, vec4(meadow_spread(raw[j * n + i], mean, sd), clamp(0.5 + gx / MEADOW_DAB_SLOPE, 0.0, 1.0), clamp(0.5 + gy / MEADOW_DAB_SLOPE, 0.0, 1.0), 1))
+    img
+
+meadow_dab_texture = () -> Texture:
+    global meadow_dabs, meadow_dabs_ready
+    if not meadow_dabs_ready:
+        meadow_dabs = texture(build_meadow_dabs(), true)
+        set_repeat(meadow_dabs, true)
+        set_mipmaps(meadow_dabs, false)
+        meadow_dabs_ready = true
+    meadow_dabs
+
+# The blades' spring (the wind study's): its natural frequency and damping, and what follows from them: how far
+# it swings past its rest on the way back (the ratio of one half-swing to the one before, exp(-pi z / sqrt(1 -
+# z z)) = 0.527), and where the two taps sit: the first lobe of the impulse response, and half a damped period
+# (1 / (2 f sqrt(1 - z z)) = 0.232 s) after it.
+const MEADOW_BLADE_HZ = 2.2
+const MEADOW_BLADE_DAMPING = 0.2
+const MEADOW_REBOUND: f32 = 0.527
+const MEADOW_TAP_EARLY: f32 = 0.09
+const MEADOW_TAP_LATE: f32 = 0.322
+
+# (in shaders and tests) a drive as it was `delay` seconds ago, from its value and rate of change now; the
+# rate is held within `limit` (per second), so a steep slope in the noise cannot invent a gust that never was
+meadow_past = (now: f32, rate: f32, delay: f32, limit: f32) -> f32: now - clamp(rate, -limit, limit) * delay
+
+# (in shaders and tests) the spring's answer to a drive that was `early` a moment ago and `late` half a swing
+# before that: in a steady wind the drive itself; as a dab arrives, past it (the blade is thrown over further
+# than it will lie); as the dab lets go, below zero: the blade swings back past its rest and returns.
+meadow_sprung = (early: f32, late: f32) -> f32: (1.0 + MEADOW_REBOUND) * early - MEADOW_REBOUND * late
 
 # the study's uniforms for a render origin: (gust a, gust b) offsets and (dab 1, dab 2) offsets
 meadow_study_gust = (origin: vec3) -> vec4:
