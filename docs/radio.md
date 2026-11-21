@@ -191,19 +191,24 @@ How it is made: `tools/voice_world/README.md`.
 Its cost (`tools/voice_budget.jo`, a 7-8 s bulletin through the studio, leveller and receiver at the
 heavier setting; redfox, 2026-11-21): loading 6 ms native and 21 ms in headless Chromium, once; a
 bulletin's planning 0.4-0.6 ms native (0.7-1.1 ms Chromium; first block 1-1.1 ms native, 1.5-4.3 ms
-Chromium); rendering 0.63 ms per 50 ms block native (p99 0.7) and 0.76 ms in Chromium (p99 0.9), so
-a whole bulletin costs 78-100 ms native and 95-123 ms in Chromium spread over its 7-8 s. The
+Chromium); rendering 0.63 ms per 50 ms block native (p99 0.7) and 0.77 ms in Chromium (p99 0.9), so
+a whole bulletin costs 79-102 ms native and 97-124 ms in Chromium spread over its 7-8 s. The
 embedded file adds 303 KB to the program.
 
 **Broadcast colour, heavier for a bulletin.** The announcer's studio and receiver run at
 `RADIO_SPEECH_WEAR` (0.5; `make_studio(wear)`, `make_radio_chain(seed, seconds, wear)`; 0 is the
-original settings exactly): the microphone's band narrows (290–3400 Hz toward 350–2900 Hz), the
-receiver's treble filters close (4300 Hz toward 3650, speaker 4500 toward 3850), the carbon
-granule is driven harder, hiss, receiver noise and crackle are heavier at any reception, there is a
-little more saturation, and the slow fade dips the level and treble. Nothing new is added; each
+original settings exactly): the microphone's band narrows (290-3400 Hz toward 530-2400 Hz) and
+the receiver's high-pass rises (150 toward 350 Hz) while its treble filters close (4300 Hz toward
+3650, speaker 4500 toward 3850); the carbon granule is driven harder and the transmitter's
+compression bites sooner and harder (threshold 0.06 toward 0.035, ratio from 4:1 toward 40:1, more
+make-up gain), the receiver's gain control reaches further, and the cabinet and mid-band
+resonances are stronger (more mid-band emphasis), so the voice itself sounds as if heard through
+a set; hiss, receiver noise and crackle are heavier at any reception, there is a little more
+saturation, and the slow fade dips the level and treble. Nothing new is added; each
 term scales one that exists. A speech recognizer's word accuracy on eight lines through the radio
-(strength 0.8): wear 0 60%, 0.25 50%, 0.35 49%, 0.5 43%, 0.7 38%, 1.0 41% (a harsh, noisy proxy;
-the ear is the judge, and the constant is one number).
+(strength 0.8), for the noise-only version of this chain: wear 0 60%, 0.25 50%, 0.35 49%, 0.5 43%,
+0.7 38%, 1.0 41%; with the spectrum squeeze above at 0.5, 41% (a harsh, noisy proxy; one line of
+eight went to nothing, the others held; the ear is the judge, and the constant is one number).
 
 ## Backlog: finding the stations (a design note, not built)
 
