@@ -1,0 +1,192 @@
+# The look's highlight by the thing's own shape (glossary: Things to tap). The thing the view looks
+# at on foot (aegean.jo foot_look) is drawn a second time, alone, into a small mask: as the scene
+# draws it, its meshes are taken (look_take, while look_capturing) and then drawn flat into a
+# render target that covers only its rectangle on the screen. One pass over that rectangle then
+# draws a thin white line just outside the mask's edge (a faint dark one under it), and the slow
+# band of light with its flecks inside it. Nothing is drawn or rendered when nothing is looked at;
+# a thing with no mesh of its own (a table in the hotel's one room mesh) keeps its box's outline.
+use 'render_space.jo'
+
+# What the scene draws into the mask this frame (set by the look before the frame is drawn).
+look_capturing = false              # (while true, look_take keeps each mesh drawn)
+look_folk = -1                      # (the scene's folk looked at: draw_folk takes their figure)
+look_craft = false                  # (one's own aircraft looked at)
+look_keeper = false                 # (the springs' keeper)
+look_coffee = ""                    # ("tavli", "paper": the coffee house's board or paper)
+
+look_meshes: Mesh[] = []
+look_models: mat4[] = []            # (render space: about render_origin(scene_camera()))
+look_taken_frame = -1
+
+# One mesh as the scene draws it, placed by its model (render space), kept while capturing.
+look_take = (m: Mesh, model: mat4):
+    global look_meshes, look_models, look_taken_frame
+    if not look_capturing: return
+    if look_taken_frame != frame_number():
+        look_meshes = []; look_models = []
+        look_taken_frame = frame_number()
+    look_meshes.push(m); look_models.push(model)
+
+# (the scene, around the draw of the thing looked at: take it, then no more)
+look_capture = (on: bool):
+    global look_capturing
+    look_capturing = on
+
+# what was taken this frame
+look_taken = () -> int: if look_taken_frame == frame_number(): look_meshes.len() else: 0
+
+# ---------------- the mask ----------------
+LOOK_MASK_RES = 384
+
+struct LookMaskParams:
+    vp: mat4
+    model: mat4
+    rect: vec4                      # (the mask's rectangle on the screen, ndc: centre x, y, half x, y)
+
+struct LookMaskOut:
+    pos: vec4
+
+look_mask_vs = (v: Vertex3D, u: LookMaskParams) -> LookMaskOut:
+    c = u.vp * (u.model * vec4(v.pos, 1))
+    LookMaskOut(vec4((c.x - u.rect.x * c.w) / u.rect.z, (c.y - u.rect.y * c.w) / u.rect.w, 0, c.w))
+
+look_mask_fs = (i: LookMaskOut, u: LookMaskParams) -> vec4: vec4(1, 1, 1, 1)
+
+# ---------------- the highlight ----------------
+struct LookFxVertex:
+    corner: vec2
+
+struct LookFxParams:
+    mask: Texture
+    rect: vec4                      # (as the mask's)
+    px: vec4                        # (the screen's pixels w, h; the line's half width and the under-edge's, px)
+    band: vec4                      # (across the band, in screen pixels: its direction x, y; its middle; its half width)
+    alpha: vec4                     # (the line, the under-edge, the band, the flecks)
+    tick: f32
+
+struct LookFxOut:
+    pos: vec4
+    ndc: vec2
+
+look_fx_vs = (v: LookFxVertex, u: LookFxParams) -> LookFxOut:
+    ndc = u.rect.xy + (v.corner * 2.0 - vec2(1, 1)) * u.rect.zw
+    LookFxOut(vec4(ndc, 0, 1), ndc)
+
+look_fx_fs = (i: LookFxOut, u: LookFxParams) -> vec4:
+    uv = (i.ndc - u.rect.xy) / u.rect.zw * 0.5 + vec2(0.5, 0.5)
+    # (a screen pixel, in the mask's uv)
+    d = vec2(1, 1) / (u.rect.zw * u.px.xy)
+    inside = smoothstep(0.3, 0.7, sample(u.mask, uv).x)
+    near: f32 = 0.0
+    far: f32 = 0.0
+    # (well inside, no line: the ring's sixteen looks only near the edge and outside)
+    if inside < 0.99:
+        loop k in [0..8):
+            a = f32(k) * 0.7853982
+            o = vec2(cos(a), sin(a)) * d
+            near = max(near, sample(u.mask, uv + o * u.px.z).x)
+            far = max(far, sample(u.mask, uv + o * u.px.w).x)
+    out = 1.0 - inside
+    line = smoothstep(0.2, 0.55, near) * out
+    under = smoothstep(0.2, 0.55, far) * out
+    # (the band: a soft bar across the slant, down the screen; the flecks in it)
+    sp = vec2((i.ndc.x * 0.5 + 0.5) * u.px.x, (0.5 - i.ndc.y * 0.5) * u.px.y)
+    n = u.band.xy
+    across = dot(sp, n)
+    tent = max(0.0, 1.0 - abs(across - u.band.z) / u.band.w)
+    along = dot(sp, vec2(n.y, -n.x))
+    cell = vec2(floor(along / (6.0 * u.px.z)), floor(across / (1.6 * u.px.z)))
+    h = hash21(cell + vec2(u.tick * 37.0, u.tick * 11.0))
+    fleck = step(0.955, h) * tent * (0.35 + 0.65 * hash21(cell * 3.0 + vec2(u.tick * 5.0, 17.0)))
+    white = clamp(u.alpha.x * line + (u.alpha.z * tent + u.alpha.w * fleck) * inside, 0.0, 1.0)
+    dark = u.alpha.y * under
+    a = white + dark * (1.0 - white)
+    if a < 0.002: discard()
+    vec4(vec3(1, 1, 1) * (white / a), a)
+
+look_mask_sh = Shader()
+look_fx_sh = Shader()
+look_fx_quad = Mesh()
+look_mask_target = RenderTarget()
+
+# made with the rest at the start, so the first look doesn't wait on them
+init_look_outline = ():
+    global look_mask_sh, look_fx_sh
+    if look_mask_sh.prog == 0: look_mask_sh = make_shader(shader(look_mask_vs, look_mask_fs))
+    if look_fx_sh.prog == 0: look_fx_sh = make_shader(shader(look_fx_vs, look_fx_fs))
+
+# Whether the mask can be drawn here (not the software renderer, which keeps the box's outline).
+# AEGEAN_LOOK_SHAPE=0: the box's outline always (for measuring what the shape costs).
+look_shape_on = env("AEGEAN_LOOK_SHAPE") != "0"
+look_outline_available = () -> bool: look_shape_on and not __soft
+
+# The rectangle (ndc: centre, half size) covering what was taken, a few pixels out for the line;
+# none when nothing was taken or a mesh's size isn't known. Behind the eye: all of the screen.
+look_rect = (vp: mat4, margin: vec2) -> vec4?:
+    if look_taken() == 0: return none
+    lo = vec2(1e9, 1e9); hi = vec2(-1e9, -1e9)
+    loop k in 0..look_meshes.len():
+        m = look_meshes[k]
+        if m.radius < 0.0: return vec4(0, 0, 1, 1)
+        mm = vp * look_models[k]
+        loop c in 0..8:
+            r = m.radius
+            p = m.center + vec3(if c % 2 == 1: r else: -r, if (c / 2) % 2 == 1: r else: -r, if c / 4 == 1: r else: -r)
+            q = mm * vec4(p, 1)
+            if q.w <= 0.05: return vec4(0, 0, 1, 1)
+            s = q.xy / q.w
+            lo = vec2(min(lo.x, s.x), min(lo.y, s.y)); hi = vec2(max(hi.x, s.x), max(hi.y, s.y))
+    lo = vec2(max(lo.x - margin.x, -1.0), max(lo.y - margin.y, -1.0))
+    hi = vec2(min(hi.x + margin.x, 1.0), min(hi.y + margin.y, 1.0))
+    if hi.x <= lo.x or hi.y <= lo.y: return none
+    vec4((lo + hi) * 0.5, (hi - lo) * 0.5)
+
+# Draw the highlight of what was taken this frame (call in the 2D drawing, after the scene).
+# `age` is how long it has been looked at (the band's place and the fade in), `unit` a 2D unit
+# in screen pixels (the line's width goes by it). False when there was nothing to draw it by.
+draw_look_outline = (age: f64, unit: f64) -> bool:
+    global look_mask_sh, look_fx_sh, look_fx_quad, look_mask_target
+    if not look_outline_available() or look_taken() == 0: return false
+    pw = f64(__screen_px_w()); ph = f64(__screen_px_h())
+    origin = render_origin(scene_camera())
+    vp = render_view_proj(origin)
+    lw = 1.5 * unit; uw = 3.2 * unit
+    rr = look_rect(vp, vec2(f32((uw + 2.0) * 2.0 / pw), f32((uw + 2.0) * 2.0 / ph)))
+    if rr == none: return false
+    rect = rr!
+    zone("look outline")
+    init_look_outline()
+    if look_fx_quad.count == 0 and look_fx_quad.index_count == 0:
+        look_fx_quad = mesh([LookFxVertex(vec2(0, 0)), LookFxVertex(vec2(1, 0)), LookFxVertex(vec2(0, 1)), LookFxVertex(vec2(1, 1))], [u32(0), u32(1), u32(2), u32(2), u32(1), u32(3)])
+    if look_mask_target.texture.width != LOOK_MASK_RES:
+        tex = texture(image(LOOK_MASK_RES, LOOK_MASK_RES), true)
+        set_mipmaps(tex, false)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER, u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, u32(tex.id), 0)
+        look_mask_target = RenderTarget(tex, fbo, 0)
+    flush()
+    st = __draw_state()
+    depth_test(.off); depth_write(false); cull(.none); blend(.none)
+    glBindFramebuffer(GL_FRAMEBUFFER, u32(look_mask_target.fbo))
+    glViewport(0, 0, i32(LOOK_MASK_RES), i32(LOOK_MASK_RES))
+    clear(vec4(0, 0, 0, 0))
+    loop k in 0..look_meshes.len(): draw(look_mask_sh, look_meshes[k], LookMaskParams(vp, look_models[k], rect))
+    __bind_current()
+    blend(.alpha)
+    # (the band: down the screen, slanted a little, across the rectangle and round again)
+    n = normalize(vec2(0.32, 1.0))
+    x0 = (f64(rect.x - rect.z) * 0.5 + 0.5) * pw; x1 = (f64(rect.x + rect.z) * 0.5 + 0.5) * pw
+    y0 = (0.5 - f64(rect.y + rect.w) * 0.5) * ph; y1 = (0.5 - f64(rect.y - rect.w) * 0.5) * ph
+    m0 = 1e9; m1 = -1e9
+    loop c in [vec2(f32(x0), f32(y0)), vec2(f32(x1), f32(y0)), vec2(f32(x0), f32(y1)), vec2(f32(x1), f32(y1))]:
+        u = f64(dot(c, n))
+        m0 = min(m0, u); m1 = max(m1, u)
+    w = clamp((m1 - m0) * 0.18, 8.0 * unit, 60.0 * unit)
+    mid = m0 - w + (m1 - m0 + w * 2.0) * fract(age / 3.2)
+    fade = clamp(age / 0.18, 0.0, 1.0)
+    p = LookFxParams(look_mask_target.texture, rect, vec4(f32(pw), f32(ph), f32(lw), f32(uw)), vec4(n.x, n.y, f32(mid), f32(w)), vec4(f32(0.75 * fade), f32(0.2 * fade), f32(0.22 * fade), f32(0.3 * fade)), f32(floor(age * 12.0)))
+    draw(look_fx_sh, look_fx_quad, p)
+    __set_draw_state(st)
+    zone_end()
+    true

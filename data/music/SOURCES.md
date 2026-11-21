@@ -22,22 +22,115 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Suite bergamasque: Clair de lune | Claude Debussy (1862–1918), 1905 | [Mutopia, DebussyC/L75](https://www.mutopiaproject.org/ftp/DebussyC/L75/debussy_Ste_Bergamesq_Clair/), Keith OHara, Fromont 1905 | Mutopia explicitly marks the transcription **Public Domain** |
 | Adelita | Francisco Tárrega (1852–1909) | [Mutopia, TarregaF/adelita-duo](https://www.mutopiaproject.org/ftp/TarregaF/adelita-duo/), Jeffrey Olson's two-guitar arrangement, Antich y Tena | Mutopia explicitly marks the arrangement **Public Domain** |
 | Berceuse (Dolly, Op. 56) | Gabriel Fauré (1845–1924), 1894 | [Mutopia, FaureG/O56](https://www.mutopiaproject.org/ftp/FaureG/O56/faure_dolly_berceuse/), Mike Blackstock's flute-and-guitar adaptation, Hamelle | Mutopia explicitly marks the adaptation **Public Domain** |
+| Symphony No. 9 "From the New World", II: Largo | Antonín Dvořák (1841–1904), 1894 | [julian9284, score 4285886](https://musescore.com/julian9284/scores/4285886) | CC0 1.0 |
+| Symphony No. 7, II: Allegretto | Ludwig van Beethoven (1770–1827), 1816 | [alexander, score 949716](https://musescore.com/user/15685/scores/949716) | CC0 1.0 |
+| Eine kleine Nachtmusik, I: Allegro | Wolfgang Amadeus Mozart (1756–1791), 1827 | [madmax82, score 2225101](https://musescore.com/user/1817676/scores/2225101) | CC0 1.0 |
+| Clarinet Concerto K. 622, II: Adagio | Mozart, 1801 | [NekMib_, score 5486316](https://musescore.com/user/16850931/scores/5486316) | CC0 1.0 |
+| Piano Sonata No. 8 "Pathétique", II: Adagio cantabile | Beethoven, 1799 | [Mutopia 295](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=295), Chris Sawer, Berners, 1908 (edited by A. Winterberger); Peters, 1910 | Mutopia explicitly marks the transcription **Public Domain** |
+| Symphony No. 40, I: Molto allegro | Mozart, 1798 | [Nicolas, score 106251](https://musescore.com/nicolas/scores/106251) | CC0 1.0 |
+| Orchestral Suite No. 3: Air (an arrangement for violin and piano) | Johann Sebastian Bach (1685–1750) | [Aan Aditya Banuwarsa, score 4818780](https://musescore.com/user/5402316/scores/4818780) | CC0 1.0 |
+| Má vlast: Vltava (The Moldau), piano | Bedřich Smetana (1824–1884), 1879 | [martinmosch12, score 5911315](https://musescore.com/user/32746368/scores/5911315) | CC0 1.0 |
+| Liebestraum No. 3 | Franz Liszt (1811–1886), 1850 | [mooing, score 1578986](https://musescore.com/mooing/scores/1578986) | CC0 1.0 |
+| Ständchen (Schwanengesang), piano transcription | Franz Schubert (1797–1828), 1829; Liszt, 1840 | [tonic64, score 4907304](https://musescore.com/user/22249306/scores/4907304) | CC0 1.0 |
+| Symphony No. 5, III: Valse (piano) | Pyotr Ilyich Tchaikovsky (1840–1893), 1888 | [hmscomp, score 5623928](https://musescore.com/user/24069/scores/5623928) | CC0 1.0 |
+| Lohengrin: Bridal Chorus (choir and piano) | Richard Wagner (1813–1883), 1850 | [Nicolas, score 43724](https://musescore.com/nicolas/scores/43724); the voices sung by our choir | CC0 1.0 |
+| Hungarian Dance No. 1 (piano) | Johannes Brahms (1833–1897), 1869 | [ÐÑÐ·ÑÐºÐ°Ð½Ñ, score 1386646](https://musescore.com/user/1580161/scores/1386646) | CC0 1.0 |
+| Daphnis et Chloé: Lever du jour | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
+| Boléro | Ravel, 1929 | [darkblue865, score 5173477](https://musescore.com/user/15856401/scores/5173477) | CC0 1.0 |
+| The Barber of Seville: Overture | Gioachino Rossini (1792–1868), 1816 | [mike320, score 2540876](https://musescore.com/user/6105546/scores/2540876) | CC0 1.0 |
+| Carmen: Prelude (piano four hands) | Georges Bizet (1838–1875), 1875 | [Noah Godard, score 255426](https://musescore.com/user/125838/scores/255426) | CC0 1.0 |
+| An der schönen blauen Donau (piano) | Johann Strauss II (1825–1899), 1867 | [hmscomp, score 114435](https://musescore.com/hmscomp/scores/114435) | CC0 1.0 |
+| Unter Donner und Blitz (piano) | Strauss II, 1868 | [Mutopia 610](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=610), Stan Sanderson, C. M. Cady, Pub. 1878 | Mutopia explicitly marks the transcription **Public Domain** |
+| Radetzky March (small band) | Johann Strauss I (1804–1849), 1848 | [solar, score 153800](https://musescore.com/user/47480/scores/153800) | CC0 1.0 |
+| Florentiner March (an arrangement for double reeds) | Julius Fučík (1872–1916), 1907 | [Ian Compton, score 5911596](https://musescore.com/user/9488281/scores/5911596) | CC0 1.0 |
+| The Four Seasons, Summer: III Presto | Antonio Vivaldi (1678–1741), 1725 | [bach2practice, score 5573287](https://musescore.com/bach2practice/scores/5573287); the solo violin on our accordion, a bass under the cello | CC0 1.0 |
+| Csárdás (orchestra) | Vittorio Monti (1868–1922), 1904 | [TheNightreader, score 1783226](https://musescore.com/thenightreader/scores/1783226) | CC0 1.0 |
+| Gianni Schicchi: O mio babbino caro (piano) | Giacomo Puccini (1858–1924), 1918 | [jeronjoseph, score 4416311](https://musescore.com/user/20208436/scores/4416311) | CC0 1.0 |
+| La traviata: Brindisi (piano) | Giuseppe Verdi (1813–1901), 1853 | [Mutopia 1215](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1215), Alberto Corella, Calcografía de la 'Nueva Biblioteca Musical Económica', 1857-1869 | Mutopia explicitly marks the transcription **Public Domain** |
+| La Paloma (string quartet) | Sebastián Yradier (1809–1865), c. 1863 | [szyhub, score 4816894](https://musescore.com/user/816231/scores/4816894) | CC0 1.0 |
+| Santa Lucia (voice and piano) | Teodoro Cottrau (1827–1879), 1849 | [wizarcat, score 5956250](https://musescore.com/user/27649166/scores/5956250); the voice on the mandolin | CC0 1.0 |
+| Funiculì, funiculà (two violins) | Luigi Denza (1846–1922), 1880 | [Alexander Evstyugov-Babaev, score 5677874](https://musescore.com/the_alex/scores/5677874); mandolin and guitar | CC0 1.0 |
+| Locus iste (SATB) | Anton Bruckner (1824–1896), 1869 | [sangerforum, score 1972546](https://musescore.com/user/3099636/scores/1972546) | CC0 1.0 |
+| Nabucco: Va, pensiero (SATB) | Verdi, 1842 | [sangerforum, score 1140631](https://musescore.com/user/3099636/scores/1140631); the voices sung by our choir | CC0 1.0 |
+| Melita, "Eternal Father, Strong to Save" (SATB) | John Bacchus Dykes (1823–1876), 1861 | [Mutopia 1260](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1260), Steve Dunlop, www.cyberhymnal.org; sung by our choir | Mutopia explicitly marks the transcription **Public Domain** |
+| Pictures at an Exhibition: Promenade | Modest Mussorgsky (1839–1881), 1886; orchestration Maurice Ravel (1875–1937), 1929 | [mike320, score 5273125](https://musescore.com/user/6105546/scores/5273125) | CC0 1.0 |
+| Pictures at an Exhibition: The Old Castle | the same | [mike320, score 5273127](https://musescore.com/user/6105546/scores/5273127) | CC0 1.0 |
+| Pictures at an Exhibition: Bydło | the same | [mike320, score 5273132](https://musescore.com/user/6105546/scores/5273132) | CC0 1.0 |
+| Pictures at an Exhibition: Ballet of the Unhatched Chicks | the same | [mike320, score 5273138](https://musescore.com/user/6105546/scores/5273138) | CC0 1.0 |
+| Pictures at an Exhibition: The Hut on Hen's Legs | the same | [mike320, score 5273146](https://musescore.com/user/6105546/scores/5273146) | CC0 1.0 |
+| Pictures at an Exhibition: The Great Gate of Kiev | the same | [mike320, score 5273150](https://musescore.com/user/6105546/scores/5273150) | CC0 1.0 |
+| Symphony No. 5, I: Allegro con brio | Beethoven, 1809 | [Nicolas, score 29654](https://musescore.com/nicolas/scores/29654) | CC0 1.0 |
+| Symphony No. 5, IV: Allegro | Beethoven, 1809 | [ScorePad, score 6128657](https://musescore.com/user/34878656/scores/6128657) | CC0 1.0 |
+| Symphony No. 6 "Pathétique", IV: Adagio lamentoso | Tchaikovsky, 1894 | [Jac wang, score 1578536](https://musescore.com/user/339571/scores/1578536) | CC0 1.0 |
+| Swan Lake: Entrance of the Guests and Waltz (piano) | Tchaikovsky, 1877 | [Hinci, score 6337136](https://musescore.com/user/29637645/scores/6337136) | CC0 1.0 |
+| Piano Concerto No. 3, I (two pianos) | Sergei Rachmaninoff (1873–1943), 1910 | [hmscomp, score 1844011](https://musescore.com/user/24069/scores/1844011) | CC0 1.0 |
+| Die Meistersinger von Nürnberg: Prelude (piano, after Hans von Bülow, 1830–1894) | Wagner, 1868 | [Y.Murakami@TYO, score 4801061](https://musescore.com/user/3797871/scores/4801061) | CC0 1.0 |
+| Tristan und Isolde: Liebestod (piano) | Wagner, 1860 | [hmscomp, score 846481](https://musescore.com/hmscomp/scores/846481) | CC0 1.0 |
+| Die Walküre: Ride of the Valkyries (piano and voices) | Wagner, 1876 | [hmscomp, score 951686](https://musescore.com/hmscomp/scores/951686) | CC0 1.0 |
+| Aida: Triumphal March (orchestra and chorus) | Verdi, 1872 | [chiefyblues, score 6031714](https://musescore.com/user/1680641/scores/6031714) | CC0 1.0 |
+| Kinderszenen: Träumerei (string quintet) | Robert Schumann (1810–1856), 1839 | [assdlkde, score 5916073](https://musescore.com/user/33861153/scores/5916073) | CC0 1.0 |
+| Slavonic Dance Op. 72 No. 1 (an arrangement for wind band) | Dvořák, 1887 | [JasperGoh, score 6353246](https://musescore.com/user/190843/scores/6353246) | CC0 1.0 |
+| Brandenburg Concerto No. 2 | Bach, 1850 (Bach-Gesellschaft) | [patzly, score 1634641](https://musescore.com/user/1836451/scores/1634641) | CC0 1.0 |
+| Pange lingua (SATB) | Bruckner, 1868 | [Nicolas Rojas, score 1807361](https://musescore.com/user/2317016/scores/1807361) | CC0 1.0 |
+| Symphony No. 1, IV | Brahms, 1877 | [jayW, score 91079](https://musescore.com/user/43726/scores/91079) | CC0 1.0 |
+| The Hebrides (Fingal's Cave) (an arrangement for wind band) | Felix Mendelssohn (1809–1847), 1833 | [Bob Bolton, score 5937390](https://musescore.com/user/29446660/scores/5937390) | CC0 1.0 |
+| Humoresque Op. 101 No. 7 (violin and cello) | Dvořák, 1894 | [AllmusicLab, score 5936751](https://musescore.com/user/33963911/scores/5936751) | CC0 1.0 |
+| Rigoletto: La donna è mobile (orchestra) | Verdi, 1851 | [chiefyblues, score 5664313](https://musescore.com/user/1680641/scores/5664313) | CC0 1.0 |
+| Coriolan Overture | Beethoven, 1808 | [janjawohl, score 5925510](https://musescore.com/user/26915832/scores/5925510) | CC0 1.0 |
+| Egmont Overture | Beethoven, 1810 | [janjawohl, score 5925491](https://musescore.com/user/26915832/scores/5925491) | CC0 1.0 |
+| Piano Concerto No. 5 "Emperor", I | Beethoven, 1811 | [leol91417, score 5742868](https://musescore.com/user/29120318/scores/5742868) | CC0 1.0 |
+| Piano Concerto No. 5 "Emperor", II | Beethoven, 1811 | [tonic64, score 4205196](https://musescore.com/user/22249306/scores/4205196) | CC0 1.0 |
+| Symphony No. 9, I | Beethoven, 1826 | [violin-altair, score 4499721](https://musescore.com/user/337881/scores/4499721) | CC0 1.0 |
+| Symphony No. 9, IV (orchestra and chorus) | Beethoven, 1826 | [shilaher67, score 5942325](https://musescore.com/user/34003467/scores/5942325) | CC0 1.0 |
+| Water Music (an arrangement for wind band) | Handel (1685–1759), 1733 | [lpwevers, score 5844795](https://musescore.com/user/21735231/scores/5844795) | CC0 1.0 |
+| Music for the Royal Fireworks: La Réjouissance | Handel, 1749 | [C_Richardson, score 5769837](https://musescore.com/crichardson/scores/5769837) | CC0 1.0 |
+| Oboe Concerto No. 3 in G minor | Handel, 1863 (Händel-Gesellschaft) | [matthewClarkson, score 5848348](https://musescore.com/user/30345247/scores/5848348) | CC0 1.0 |
+| Symphony No. 5, II: Stürmisch bewegt | Mahler, 1904 | [mooing, score 4889732](https://musescore.com/user/1397281/scores/4889732) | CC0 1.0 |
+| Symphony No. 9, III: Rondo-Burleske (two pianos, four hands) | Mahler, 1912 | [Clarin Pardo, score 193041](https://musescore.com/user/84251/scores/193041) | CC0 1.0 |
+| Clarinet Concerto K. 622, I | Mozart, 1801 | [NekMib_, score 5294134](https://musescore.com/user/16850931/scores/5294134) | CC0 1.0 |
+| Symphony No. 40, IV | Mozart, 1798 | [eduardomezencio, score 1916356](https://musescore.com/eduardomezencio/scores/1916356) | CC0 1.0 |
+| Symphony No. 41 "Jupiter" | Mozart, 1793 | [Vigo KovaÄiÄ, score 4676996](https://musescore.com/user/6755401/scores/4676996) | CC0 1.0 |
+| La Gioconda: Dance of the Hours | Amilcare Ponchielli (1834–1886), 1876 | [MikeStokesberry, score 5903108](https://musescore.com/user/15377981/scores/5903108) | CC0 1.0 |
+| Swan Lake, Act II: Scene (an arrangement for wind band) | Tchaikovsky, 1877 | [Pringle Abilla, score 5969235](https://musescore.com/user/28335048/scores/5969235) | CC0 1.0 |
+| Symphony No. 4, IV | Tchaikovsky, 1878 | [Deyziel, score 5975276](https://musescore.com/user/26806535/scores/5975276) | CC0 1.0 |
+| The Nutcracker: Waltz of the Snowflakes | Tchaikovsky, 1892 | [Eva House, score 4982042](https://musescore.com/user/13976176/scores/4982042) | CC0 1.0 |
+| The Nutcracker: Dance of the Sugar Plum Fairy (an arrangement for wind band) | Tchaikovsky, 1892 | [Austin Volkmer, score 5892725](https://musescore.com/user/24130321/scores/5892725) | CC0 1.0 |
+| Messa da Requiem: Sanctus | Verdi, 1874 | [chiefyblues, score 6302023](https://musescore.com/user/1680641/scores/6302023) | CC0 1.0 |
+| Ballade No. 2 | Frédéric Chopin (1810–1849), 1840 | [hmscomp, score 1115241](https://musescore.com/user/24069/scores/1115241) | CC0 1.0 |
+| Berceuse, Op. 57 | Chopin, 1845 | [hmscomp, score 932306](https://musescore.com/user/24069/scores/932306) | CC0 1.0 |
+| Fantaisie-Impromptu, Op. 66 | Chopin, 1855 | [venson72150, score 6219891](https://musescore.com/user/33306646/scores/6219891) | CC0 1.0 |
+| Nocturne Op. 15 No. 2 | Chopin, 1833 | [venson72150, score 6047021](https://musescore.com/user/33306646/scores/6047021) | CC0 1.0 |
+| Polonaise Op. 26 No. 1 | Chopin, 1836 | [Y.Murakami@TYO, score 3783671](https://musescore.com/user/3797871/scores/3783671) | CC0 1.0 |
 
 CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
-The named historical composers died more than 100 years ago and these compositions
-were published before 1929. This deliberately avoids relying only on a US publication
-cutoff or assuming every country uses a 70-year term. Traditional music is not a licence
-for a modern arrangement: the selected Ikariotikos sequence separately carries CC0.
 
-The four MuseScore sequences were obtained from the MIDI and metadata archives of
+**The rule** (the user's, from 20 November 2026). A piece ships when both hold:
+
+1. **The composition is in the public domain**, in the United States (published 95 or more years
+   ago: in 2026, in 1930 or earlier) and in the European Union (its composer, and anyone whose part
+   of it is used: a co-composer, arranger, orchestrator or completer, died 70 or more years ago: in
+   2026, in 1955 or earlier).
+   Anything not in the public domain needs the user's explicit approval, piece by piece.
+2. **The note sequence is free to use**: a MuseScore score in PDMX marked CC0 with
+   `license_conflict=False`; a Mutopia edition marked Public Domain; or our own transcription
+   from a public-domain score scan, dedicated to CC0.
+
+There is no further margin. Ravel (died 1937) qualifies: *Daphnis et Chloé* (published 1912) and
+*Boléro* (composed 1928, published 1929) are public domain in the US, and have been in the EU since
+2008 (France's wartime extensions have also run out). 'O sole mio does not: a Turin court recognised Alfredo
+Mazzucchi (died 1972) as its co-composer. Traditional music is no licence for a modern
+arrangement: the sequence still needs (2), as the Ikariotikos sequence's CC0 does.
+
+The MuseScore sequences were obtained from the MIDI and metadata archives of
 [PDMX v9, June 2025](https://zenodo.org/records/15571083), by Phillip Long, Zachary Novack,
 Julian McAuley and Taylor Berg-Kirkpatrick. Dataset metadata is
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the individual scores have the separate permissions above. Each selected
 CSV row has `license_conflict=False`; the stored score metadata agrees with its public
 CC0 designation and lists no copyright claims. `source/licences.json` preserves the
 source URLs, named uploaders, licence URLs and SHA-256 hashes of the exact shipped MIDI.
-The original Mutopia RDF permission records (two for the radio pieces, five for the Hotel
-Ancora's evening set, fetched 13 November 2026) are included beside their MIDI files.
+The original Mutopia RDF permission records (two for the first radio pieces and five for the Hotel
+Ancora's evening set, fetched 13 November 2026; four for the wider repertoire, fetched 19 November
+2026) are included beside their MIDI files.
 Dataset MIDI was converted, instrument assignments changed as described below, and only
 a small subset of metadata retained. This is not an endorsement by any source author.
 
@@ -65,6 +158,17 @@ a small subset of metadata retained. This is not an endorsement by any source au
   accordion doubling; no new chord progression is substituted for the melody.
 * Bethena retains the source piano notes and tempo. MIDI sustain/pitch-bend effects are
   not interpreted; note release and hall decay supply a modest sustain tail.
+* The wider repertoire (from *Symphony No. 9: Largo* in the table on) keeps each source's notes
+  and instruments, except: Vivaldi's *Summer* gives the solo violin to the accordion and doubles
+  the cello's low notes an octave down on the bass; the voices of *Va, pensiero*, *Melita* and the
+  *Lohengrin* chorus (exported as piano or clarinet parts) are sung by the choir; *Santa Lucia*'s
+  voice is played on the mandolin; *Funiculì, funiculà*'s two violins become mandolin and guitar.
+  Each piece is played at one level, measured to sit at the hand-set pieces' loudness
+  (`tools/music_level.py`, `levels.json`). On the radio, a station plays its style's pieces one
+  after another, each from its start (`src/radio_synth.jo` radio_pool).
+* Every other evening the Hotel Ancora's trio (accordion, upright piano, bass) plays *Summer*,
+  *El Choclo* and *Santa Lucia* live (`src/bar_band.jo` bar_trio): the tune on the accordion, the
+  low line on the bass, the other parts on the piano. No notes are added or changed.
 * Per-note start/end gain follows velocity and CC7/11. Controller curves within a note
   are approximated by a straight ramp, not reproduced exactly.
 
@@ -83,8 +187,8 @@ a small subset of metadata retained. This is not an endorsement by any source au
   kept; the interpretation pass adds gentle phrase timing and a final ritard. The Mutopia MIDI
   files play each piece once, without the printed repeats.
 
-Rebuild: `python tools/music_pack.py`. Additional repertoire should meet the same
-composition **and** sequence permission checks. Do not substitute an unlicensed MIDI
+Rebuild: `python tools/music_pack.py`. Additional repertoire must meet the rule above: the
+composition **and** the sequence. Do not substitute an unlicensed MIDI
 just because its underlying composition is old.
 
 Dataset publications: Long et al., *PDMX: A Large-Scale Public Domain MusicXML Dataset for Symbolic Music Processing*, ICASSP 2025, [doi:10.1109/ICASSP49660.2025.10890217](https://doi.org/10.1109/ICASSP49660.2025.10890217); Xu et al., *Generating Symbolic Music from Natural Language Prompts using an LLM-Enhanced Dataset*, 2024, [arXiv:2410.02084](https://arxiv.org/abs/2410.02084). Only the source score MIDI is used here, not generated examples or model output.

@@ -24,6 +24,65 @@ struct TerrainTile:
     cpu_heights: f32[] = []
     cpu_materials: u8[] = [] # ridge, normal.xz, pigment.xy: exact uploaded bytes
     working: Texture = Texture()    # each sample's field colour and share (island_working), mipmapped
+    cliff_map: Texture = Texture()
+
+# Height moment and weight of gentle land that could support soil, and the
+# amount of wall. Steep samples contribute no elevation to the shelf.
+cliff_station = (y: f32, ny: f32) -> vec3:
+    gentle = smoothstep(0.57,0.91,ny)
+    weight = gentle*gentle*smoothstep(3.0,13.0,y)
+    vec3(clamp(y,0.0,1023.0)*weight,weight,1.0-smoothstep(0.40,0.72,ny))
+
+# Decode the weighted height before it crosses a triangle. Dividing at a
+# vertex would let unsupported seabed and wall vertices pull the shelf down.
+# The last component marks triangles that may need the contact calculation.
+cliff_vertex_data = (station: vec4,y: f32) -> vec4:
+    height_sum = dot(station.xy,vec2(255.0/64.0,65280.0/64.0))
+    possible = station.w > 0.0 or height_sum > (y+2.0)*station.z
+    vec4(height_sum,station.z,station.w,if possible: 1.0 else: 0.0)
+
+# Wall coverage and signed vertical distance to the supported shelf.
+cliff_contact = (moment: vec4,y: f32) -> vec2:
+    shelf = moment.x/max(moment.y,0.001)
+    supported = smoothstep(0.005,0.06,moment.y)
+    gap = mix(-48.0,y-shelf,supported)
+    wall = max(smoothstep(0.015,0.22,moment.z),supported*smoothstep(8.0,20.0,shelf-y))
+    vec2(wall*smoothstep(-3.0,-1.0,y)*(1.0-smoothstep(220.0,260.0,y)),gap)
+
+# A gentle station at the toe can have a sheer 14 m neighbour. Its own
+# short-baseline normal misses that wall, particularly on a tile boundary.
+cliff_check_foot = (station: vec3,y: f32) -> bool:
+    y > -10.0 and y < 28.0 and station.z < 0.99
+
+cliff_foot_station = (station: vec3,y: f32,high: f32) -> vec3:
+    toe = smoothstep(10.0,23.0,high-y)*(1.0-smoothstep(9.0,28.0,y))*smoothstep(-10.0,-5.0,y)
+    vec3(station.x*(1.0-toe),station.y*(1.0-toe),max(station.z,toe))
+
+# Spread shelf evidence one canonical cell onto its face. Filter the moments
+# before packing so the two height bytes share their carry. Streamed tiles
+# keep their shared boundary stations exact. Scaling the neighbour weight by
+# inverse squared spacing holds the filter's world-space variance constant.
+cliff_map_image = (stations: vec3[],nx: int,nz: int,step: int=1,heights: f32[]=[]) -> Image:
+    result = image(nx,nz)
+    spread = 1.0/f32(step*step)
+    loop j in 0..nz:
+        loop i in 0..nx:
+            k = j*nx+i
+            s = stations[k]
+            if i>0 and i<nx-1 and j>0 and j<nz-1:
+                sides = stations[k-1]+stations[k+1]+stations[k-nx]+stations[k+nx]
+                corners = stations[k-nx-1]+stations[k-nx+1]+stations[k+nx-1]+stations[k+nx+1]
+                s = mix(s,(4.0*s+2.0*sides+corners)/16.0,spread)
+                if step==1 and heights.len()>0 and cliff_check_foot(s,heights[k]):
+                    high = max(max(heights[k-1],heights[k+1]),max(heights[k-nx],heights[k+nx]))
+                    s = cliff_foot_station(s,heights[k],high)
+            w = round(s.y*255.0)
+            h = int(round(s.x/max(s.y,0.00001)*w*(64.0/255.0)))
+            result.pixels[k*4] = u8(h & 255)
+            result.pixels[k*4+1] = u8(h >> 8)
+            result.pixels[k*4+2] = u8(w)
+            result.pixels[k*4+3] = u8(round(s.z*255.0))
+    result
 
 struct TerrainVertex:
     cell: vec2
@@ -157,11 +216,17 @@ upload_terrain_tile = (k: int,t: LandRenderData):
     global terrain_tiles
     hi = image(t.nx, t.nz)
     ma = image(t.nx, t.nz)
+    stations: vec3[]
+    heights: f32[]
     loop j in 0..t.nz:
         loop i in 0..t.nx:
             a = (j * t.nx + i) * 8
             hi.set(i, j, vec4(f32(t.pixels[a]), f32(t.pixels[a + 1]), f32(t.pixels[a + 2]), f32(t.pixels[a + 3])) / 255.0)
             ma.set(i, j, vec4(f32(t.pixels[a + 4]), f32(t.pixels[a + 5]), f32(t.pixels[a + 6]), f32(t.pixels[a + 7])) / 255.0)
+            nxz = vec2(f32(t.pixels[a+4]),f32(t.pixels[a+5]))*(2.0/255.0)-vec2(1,1)
+            y = f32(render_height(t,i,j))
+            heights.push(y)
+            stations.push(cliff_station(y,sqrt(max(0.0,1.0-dot(nxz,nxz)))))
     ps: TerrainPatch[]
     # Dense lookup only during loading; stable neighbor IDs thereafter.
     nx = (t.nx - 1) / 32
@@ -179,7 +244,9 @@ upload_terrain_tile = (k: int,t: LandRenderData):
     isl = ISLANDS[k]
     x0 = f64(isl.center.x) - mesh_extent(isl) + f64(t.ix) * MESH_STEP
     z0 = f64(isl.center.y) - mesh_extent(isl) + f64(t.iz) * MESH_STEP
-    tile = TerrainTile(x0, z0, texture(hi), texture(ma), ps, [loop j in 0..t.nz: loop i in 0..t.nx: f32(render_height(t,i,j))], [loop j in 0..t.nz: loop i in 0..t.nx: loop c in 3..8: t.pixels[(j*t.nx+i)*8+c]])
+    tile = TerrainTile(x0, z0, texture(hi), texture(ma), ps, heights, [loop j in 0..t.nz: loop i in 0..t.nx: loop c in 3..8: t.pixels[(j*t.nx+i)*8+c]])
+    tile.cliff_map = texture(cliff_map_image(stations,t.nx,t.nz,heights=heights),true)
+    set_mipmaps(tile.cliff_map,false)
     tile.working = island_working(t,x0,z0)
     terrain_tiles.push(tile)
 
@@ -212,8 +279,8 @@ finish_terrain_upload = ():
     count = 0; bytes = 0
     loop tile in terrain_tiles:
         count += tile.patches.len()
-        bytes += tile.heights.width*tile.heights.height*8
-    print("terrain: {count} resident patches, {bytes} atlas bytes (no mips), 14 m canonical surface")
+        bytes += tile.heights.width*tile.heights.height*12
+    print("terrain: {count} resident patches, {bytes} height/material/shelf atlas bytes (no mips), 14 m canonical surface")
 
 load_terrain = (b: u8[]):
     ts = decode_render_land(b)

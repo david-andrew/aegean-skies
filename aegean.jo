@@ -19,6 +19,7 @@ use 'src/working_land_render.jo'
 import 'src/living_thermal.jo' as thermal_life
 use 'src/settlement_ports.jo'
 use 'src/water_field.jo'
+use 'src/spindrift.jo'
 use 'src/phoenix.jo'
 use 'src/depth_space.jo'
 use 'src/world_particles.jo'
@@ -58,10 +59,12 @@ use 'src/cloud_depth.jo'
 use 'src/cloud_transparency.jo'
 use 'src/cloud_shadow.jo'
 use 'src/weather_scene.jo'
+from 'src/living_weather.jo' import player_wreck_cargo
 use 'src/rain.jo'
 use 'src/storm_render.jo'
 use 'src/storm_sound.jo'
 use 'src/sky.jo'
+use 'src/day_air.jo'
 use 'src/objects.jo'
 use 'src/touch.jo'
 use 'src/controller.jo'
@@ -130,6 +133,7 @@ use 'src/wing_vapour.jo'
 use 'src/damage.jo'
 use 'src/prop_disc.jo'
 use 'src/craft_shadow.jo'
+use 'src/look_outline.jo'
 use 'src/hydrofoil.jo'
 use 'src/townsfolk.jo'
 use 'src/far_scene.jo'
@@ -167,6 +171,7 @@ use 'src/combat_sound.jo'
 use 'src/battle_radio.jo'
 use 'src/homeward_view.jo'
 use 'src/rt_pad.jo'
+use 'src/flight_signals.jo'
 use 'src/tender.jo'
 use 'src/radio_help.jo'
 use 'src/cockpit.jo'
@@ -280,7 +285,7 @@ init_wake()
 init_boat_scene()
 init_shadow()
 init_trails()
-init_flight_effects();init_splashes();init_storm_render();init_craft_shadow()
+init_flight_effects();init_splashes();init_storm_render();init_craft_shadow();init_look_outline()
 init_birds()
 init_curved_world(legacy_clouds)
 # These effects first appear when a nearby aircraft starts, potentially long
@@ -756,14 +761,24 @@ draw_coffee_things = (L: Light):
     if not coffee.ok or f64(length(coffee.table - scene_camera())) > 60.0: return
     yaw = coffee.seat_yaw
     # (closed: half the board's width, twice as deep, the halves folded together)
-    if not (ui == .leisure and leisure_ui == 7): draw(obj_sh, tavli_board(), obj_params(L, t, translation(coffee_board_at()) * rotation_y(yaw + 0.12) * scaling(vec3(0.52, 1.6, 1.0))))
+    if not (ui == .leisure and leisure_ui == 7):
+        bp = obj_params(L, t, translation(coffee_board_at()) * rotation_y(yaw + 0.12) * scaling(vec3(0.52, 1.6, 1.0)))
+        draw(obj_sh, tavli_board(), bp)
+        look_capture(look_coffee == "tavli")
+        look_take(tavli_board(), bp.model)
+        look_capture(false)
     if coffee_paper_mesh == none:
         vs: Vertex3D[]
         add_box(vs, vec3(0, 0.008, 0), vec3(0.3, 0.016, 0.21), rgb(0.88, 0.85, 0.76))
         loop k in 0..5: add_box(vs, vec3(-0.05, 0.0165, f32(-0.07 + f64(k) * 0.03)), vec3(0.16, 0.002, 0.012), rgb(0.42, 0.4, 0.37))
         add_box(vs, vec3(0.0, 0.0165, -0.09), vec3(0.26, 0.002, 0.02), rgb(0.2, 0.19, 0.18))
         coffee_paper_mesh = custom_mesh(vs)
-    if let m = coffee_paper_mesh: draw(obj_sh, m, obj_params(L, t, translation(coffee_paper_at()) * rotation_y(yaw - 0.35)))
+    if let m = coffee_paper_mesh:
+        pp = obj_params(L, t, translation(coffee_paper_at()) * rotation_y(yaw - 0.35))
+        draw(obj_sh, m, pp)
+        look_capture(look_coffee == "paper")
+        look_take(m, pp.model)
+        look_capture(false)
 
 # the camera from the pilot's chair, turned so the opponent's face sits in the panel's window
 tavli_camera = () -> bool:
@@ -1088,6 +1103,149 @@ _on_screen = (p: vec3) -> bool:
 # the top of a thing's box, in the world (for its label and its gleam)
 thing_top = (th: FootThing) -> vec3: th.origin + quat_rotate(th.rot, vec3((th.lo.x + th.hi.x) * 0.5, th.hi.y, (th.lo.z + th.hi.z) * 0.5))
 
+# ---------------- the look ----------------
+# On foot, the thing the view looks at is lit: what a ray from the camera through the screen's
+# middle meets, or else a thing within a few degrees of it (the one nearest that ray, then the
+# nearest the eye). It goes by where the camera looks, not where he faces, so it is the same with
+# the mouse locked to the view or not, and on a touch screen, where it shows what a tap there would
+# do. A click uses it. His own body is never one of the things (foot_things).
+LOOK_CONE = 0.06                    # (radians: about three and a half degrees round the middle)
+LOOK_SWEEP = 3.2                    # (seconds for the band of light to cross the thing, and again)
+
+foot_look = (things: FootThing[]) -> int:
+    o, d = screen_ray(vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5)))
+    best = -1; ba = LOOK_CONE; bt = 60.0
+    loop k in 0..things.len():
+        th = things[k]
+        inv = quat_inverse(th.rot)
+        lo = quat_rotate(inv, o - th.origin); ld = quat_rotate(inv, d)
+        # (the eye inside its box, as wading in the springs' pool: not looked at)
+        if clamp(lo, th.lo, th.hi) == lo: continue
+        a = 0.0
+        tt = ray_box(lo, ld, th.lo, th.hi)
+        if tt < 0.0:
+            # (missed: the box's point nearest the ray, stepping between the two a few times)
+            s = max(f64(dot((th.lo + th.hi) * 0.5 - lo, ld)), 0.1)
+            q = lo
+            loop _ in 0..5:
+                q = clamp(lo + ld * f32(s), th.lo, th.hi)
+                s = max(f64(dot(q - lo, ld)), 0.1)
+            tt = f64(length(q - lo))
+            if tt < 0.05: continue
+            a = acos(clamp(f64(dot(q - lo, ld)) / tt, -1.0, 1.0))
+        if tt > 60.0 or a > LOOK_CONE: continue
+        if a < ba - 0.002 or (a < ba + 0.002 and tt < bt): best = k; ba = min(a, ba); bt = tt
+    best
+
+# a thing's box on the screen: the outline round its eight corners, a few points out (empty when
+# a corner is behind the eye)
+thing_outline = (th: FootThing) -> vec2[]:
+    ps: vec2[]
+    loop k in 0..8:
+        c = vec3(if k % 2 == 1: th.hi.x else: th.lo.x, if (k / 2) % 2 == 1: th.hi.y else: th.lo.y, if k / 4 == 1: th.hi.z else: th.lo.z)
+        if let sp = world_to_screen(th.origin + quat_rotate(th.rot, c)): ps.push(sp)
+        else: return []
+    h = _hull(ps)
+    if h.len() < 3: return h
+    mid = _outline_mid(h)
+    [loop p in h: (if length(p - mid) > 0.5: p + normalize(p - mid) * 3.0 else: p)]
+
+_outline_mid = (h: vec2[]) -> vec2:
+    mid = vec2(0, 0)
+    loop p in h: mid = mid + p
+    mid / f32(max(h.len(), 1))
+
+# the convex outline round some points (gift wrapping: a box's eight corners)
+_hull = (ps: vec2[]) -> vec2[]:
+    out: vec2[]
+    n = ps.len()
+    if n < 3: return out
+    start = 0
+    loop k in 1..n:
+        if ps[k].x < ps[start].x or (ps[k].x == ps[start].x and ps[k].y < ps[start].y): start = k
+    cur = start
+    loop _ in 0..n + 1:
+        out.push(ps[cur])
+        nxt = (cur + 1) % n
+        loop k in 0..n:
+            c = f64(cross(ps[nxt] - ps[cur], ps[k] - ps[cur]))
+            if c < -1e-6 or (abs(c) <= 1e-6 and length(ps[k] - ps[cur]) > length(ps[nxt] - ps[cur])): nxt = k
+        cur = nxt
+        if cur == start: break
+    out
+
+# the part of a convex outline on one side of a line (dot(p, n) below c, or above it)
+_clip_side = (ps: vec2[], n: vec2, c: f64, below: bool) -> vec2[]:
+    out: vec2[]
+    m = ps.len()
+    loop k in 0..m:
+        a = ps[k]; b = ps[(k + 1) % m]
+        da = f64(dot(a, n)) - c; db = f64(dot(b, n)) - c
+        if not below: da = -da; db = -db
+        if da <= 0.0: out.push(a)
+        if (da < 0.0 and db > 0.0) or (da > 0.0 and db < 0.0): out.push(a + (b - a) * f32(da / (da - db)))
+    out
+
+# whether a point is inside a convex outline (either way round)
+_in_outline = (ps: vec2[], p: vec2) -> bool:
+    pos = false; neg = false
+    loop k in 0..ps.len():
+        c = cross(ps[(k + 1) % ps.len()] - ps[k], p - ps[k])
+        if c > 0.0: pos = true
+        if c < 0.0: neg = true
+    not (pos and neg)
+
+_look_hash = (x: f64) -> f64: fract(sin(x * 12.9898 + 78.233) * 43758.5453)
+
+# The lit thing: a thin white line round it, and a soft band of light passing slowly down over it,
+# slanted a little, with a few flecks in it like a bar of static over a paused screen; then from
+# the top again. Faint, with a dark edge under the line for a pale wall or a sunlit dock.
+# the look's line width unit, in the screen's own pixels (a 2D unit, larger on a phone, as the box's)
+look_unit = () -> f64: f64(__screen_px_h()) / f64(max(screen_height(), 1)) * min(readable(1.0), 1.5)
+
+draw_look = (th: FootThing, age: f64):
+    h = thing_outline(th)
+    if h.len() < 3: return
+    s = min(readable(1.0), 1.5)
+    fade = clamp(age / 0.18, 0.0, 1.0)
+    # (the band: across the slant, from just above the outline to just below it)
+    n = normalize(vec2(0.32, 1.0))
+    m0 = 1e9; m1 = -1e9
+    loop p in h:
+        u = f64(dot(p, n))
+        m0 = min(m0, u); m1 = max(m1, u)
+    w = clamp((m1 - m0) * 0.2, 8.0 * s, 56.0 * s)
+    c = m0 - w + (m1 - m0 + w * 2.0) * fract(age / LOOK_SWEEP)
+    peak = 0.24 * fade
+    loop half in 0..2:
+        a = if half == 0: c - w else: c
+        b = if half == 0: c else: c + w
+        part = _clip_side(_clip_side(h, n, a, false), n, b, true)
+        if part.len() < 3: continue
+        al = [loop p in part: f32(peak * max(0.0, 1.0 - abs(f64(dot(p, n)) - c) / w))]
+        loop k in 1..part.len() - 1:
+            triangle_gradient(part[0], part[k], part[k + 1], rgba(1, 1, 1, al[0]), rgba(1, 1, 1, al[k]), rgba(1, 1, 1, al[k + 1]))
+    # (the flecks: short dashes along the band, new ones twelve times a second)
+    along = vec2(n.y, -n.x)
+    tick = floor(age * 12.0)
+    v0 = 1e9; v1 = -1e9
+    loop p in h:
+        v = f64(dot(p, along))
+        v0 = min(v0, v); v1 = max(v1, v)
+    loop k in 0..14:
+        r1 = _look_hash(tick * 7.31 + f64(k) * 1.7); r2 = _look_hash(tick * 3.17 + f64(k) * 5.3); r3 = _look_hash(tick + f64(k) * 9.1)
+        # (across the band, crowded to its middle; along it, anywhere over the outline)
+        u = c + (r1 - 0.5) * w * 1.2
+        v = v0 + (v1 - v0) * r2
+        p = n * f32(u) + along * f32(v)
+        l = (2.0 + 6.0 * r3) * s
+        e0 = p - along * f32(l * 0.5); e1 = p + along * f32(l * 0.5)
+        if _in_outline(h, e0) and _in_outline(h, e1):
+            line(e0, e1, 1.0 * s, rgba(1, 1, 1, f32(fade * (0.08 + 0.22 * r3) * max(0.0, 1.0 - abs(u - c) / w))))
+    # (the line round it)
+    polyline(h, 3.2 * s, rgba(0, 0, 0, f32(0.16 * fade)), closed = true)
+    polyline(h, 1.3 * s, rgba(1, 1, 1, f32(0.72 * fade)), closed = true)
+
 foot_goal = -1                      # (a thing he's walking over to: going while >= 0)
 foot_goal_act = ""
 foot_goal_sub = ""
@@ -1099,10 +1257,9 @@ foot_route: vec3[] = []             # (the points after foot_goal_at: the bath's
 foot_goal_best = 1e9                # (the nearest he's got, and when)
 foot_goal_best_t = -1.0
 foot_then = ""                      # (to do once the card's act has been done: sat down, then the board)
-foot_hover = -1
-foot_press = vec2(-1, -1)           # (the trial pointer: where the left button went down, and whether it then dragged)
-foot_dragged = false
-show_pointer = env("AEGEAN_SHOW_POINTER") == "1"   # (captures: the pointer drawn, which a screenshot leaves out)
+foot_hover = -1                     # (the thing the view looks at, lit: foot_look; a click uses it)
+foot_hover_since = 0.0              # (since when it has been that thing: the sweep starts from its top)
+look_trace = env("AEGEAN_LOOK_TRACE") == "1"   # (captures: a LOOK line each time the view comes to look at another thing)
 seat_hover = -1
 seat_press = vec2(-1, -1)
 talk_pick = -1                      # (the person a click or tap chose to talk to, over the nearest)
@@ -1214,8 +1371,9 @@ draw_gleams = ():
                 # (each its own moment, a little apart)
                 _glint(sp, max(0.0, a - f64(k) * 0.08), f64(k) * 0.7)
 
-# where the mouse points: the pointer, or with the mouse locked to the view, the screen's middle
-foot_aim = () -> vec2: if is_mouse_locked(): vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5)) else: mouse_pos()
+# where a click aims on foot: the screen's middle, where the view looks (the mouse locked to the
+# view or not: no pointer on foot)
+foot_aim = () -> vec2: vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5))
 
 # the mouse on the sand of a picnic spot, the basket along
 picnic_ground_hover = () -> bool:
@@ -1225,23 +1383,15 @@ picnic_ground_hover = () -> bool:
     false
 
 draw_foot_label = ():
+    # (the thing the view looks at, lit, no words: on a touch screen too, what a tap there does)
+    if ui == .none and foot_hover >= 0 and me.mode == .walking:
+        things = foot_things()
+        # (by its own shape, where it has a mesh of its own; else its box's outline)
+        if foot_hover < things.len() and not draw_look_outline(t - foot_hover_since, look_unit()): draw_look(things[foot_hover], t - foot_hover_since)
     if pad.on: return
-    # (the mouse locked to the view, the screen's middle on a thing: a small dot there, so the aim is
-    # seen; nothing when it is on nothing)
-    if is_mouse_locked() and ui == .none and foot_hover >= 0:
-        c = vec2(f32(f64(screen_width()) * 0.5), f32(f64(screen_height()) * 0.5))
-        circle(c, 4.0, rgba(0, 0, 0, 0.35))
-        circle(c, 2.6, rgba(1, 0.97, 0.88, 0.9))
-    if show_pointer and not is_mouse_locked():
-        m = mouse_pos()
-        triangle(m, m + vec2(0, 18), m + vec2(12, 13), rgba(0.05, 0.05, 0.05, 0.9))
-        triangle(m + vec2(1.5, 3.5), m + vec2(1.5, 14), m + vec2(9, 11.5), rgba(1, 1, 1, 0.95))
     if ui == .none and foot_hover < 0 and picnic_ground_hover():
         if let g = ground_under(foot_aim()):
             draw_thing_label(FootThing("", "", "", "Spread the blanket", g, g, g))
-    if ui == .none and foot_hover >= 0:
-        things = foot_things()
-        if foot_hover < things.len(): draw_thing_label(things[foot_hover])
     if seat_hover >= 0:
         things = seat_things()
         if seat_hover < things.len(): draw_thing_label(things[seat_hover])
@@ -1996,7 +2146,7 @@ rider_takes = (person: int, in_water: vec3):
     rider_fig = build_figure(.pilot, p.appearance_seed, age = p.age, woman = person_woman(p.name))
 
 rider_tick = (dt: f64):
-    global rider, rider_fig
+    global rider, rider_fig, tender_way_on
     # (after a load, whoever the world has aboard is back in the seat)
     if rider.stage == .none:
         aboard = rescue_aboard(living_world)
@@ -2021,8 +2171,15 @@ rider_tick = (dt: f64):
             rider_fig = build_figure(dress_of(p.occupation), p.appearance_seed, age = p.age, woman = person_woman(p.name))
     # (gone into the town only out of sight: off the screen, or far off)
     unseen = rider.stage == .walking and (hud_point(rider.pos + vec3(0, 1, 0)) == none or f64(length(rider.pos - scene_camera())) > 120.0)
-    rider_step(rider, t, dt, (x: f64, z: f64) -> f64?: (if walk_height(towns, x, z) > (if geography_enabled: water_at(x, z).level else: 0.0) + 0.3: walk_height(towns, x, z) else: none), unseen)
-    if rider.stage == .none: rider_fig = none
+    if tender_way_on and rider.stage == .walking:
+        # (on her deck: in toward her midships house, and below at its door)
+        if tender_on_deck(rider.pos):
+            rider.away = normalize(vec3(TENDER_AT.x - rider.pos.x, 0, TENDER_AT.z - rider.pos.z) + vec3(0.0001, 0, 0))
+            rider.yaw = atan2(f64(rider.away.x), f64(rider.away.z))
+        if tender_below(rider.pos): rider = RescuedRider()
+    if tender_way_on and rider.stage != .none: rider_step(rider, t, dt, (x: f64, z: f64) -> f64?: tender_walk_height(x, z, tender_way), false)
+    else: rider_step(rider, t, dt, (x: f64, z: f64) -> f64?: (if walk_height(towns, x, z) > (if geography_enabled: water_at(x, z).level else: 0.0) + 0.3: walk_height(towns, x, z) else: none), unseen)
+    if rider.stage == .none: rider_fig = none; tender_way_on = false
 
 draw_rider_seated = (m: CraftModel, at: mat4, L: Light):
     if rider.stage != .aboard: return
@@ -5579,14 +5736,6 @@ click_took_mouse = false            # (the left button's press that took the mou
 # Cargo is saved living-world stock; the notebook only projects its current handling status.
 notebook = load_notebook()
 
-# who at a job's destination is waiting for it: whoever it is for, if they live there, else the
-# harbor's merchant
-recipient_of = (id: int) -> int:
-    j = living_world.jobs[id]
-    b = j.cause.beneficiary
-    if b >= 0 and b < living_world.people.len() and living_world.people[b].home == j.destination: return b
-    living_world.places[j.destination].market_owner
-
 # what a job carries, in a few words
 job_cargo = (id: int) -> str:
     j = living_world.jobs[id]
@@ -5700,7 +5849,7 @@ agree_cargo_job = (id: int, choice: lt.CarriageChoice) -> str:
         living_world.jobs[id].due_minute = living_world.minute + 720
         living_world.jobs[id].expire_minute = max(living_world.jobs[id].expire_minute, living_world.minute + 720 + 120)
         say_toast("{split(living_world.people[j.poster].name, " ")[0]}: Your first, is it? Take the day over it.")
-    rcv = living_world.people[recipient_of(id)].name
+    rcv = living_world.people[portage.cargo_receiver(living_world,id)].name
     status = portage.cargo_status(living_world,id)
     pin_notice(notebook,id,j.poster,"{job_cargo(id)} to {rcv}","By {clock_text(living_world,j.due_minute)}; {phoenix_text(living_world.jobs[id].reward_cents)}. From {living_world.people[j.poster].name}.",clock_text(living_world,living_world.minute))
     log_note(notebook,"Agreed to {if j.delivery_mode == .foot: "carry" else: "fly"} {job_cargo(id)} for {rcv}. {status}",clock_text(living_world,living_world.minute))
@@ -7949,7 +8098,9 @@ draw_bath_people = (L: Light):
     site = THERMAL_SITES[k]
     keeper = bath_keeper_person(site)
     kf = if keeper >= 0: bath_fig(keeper, false) else: _generic_keeper(site)
+    look_capture(look_keeper)
     draw_figure(kf, bath_keeper_at(site), site.yaw, 0.0, 0.0, L, t)
+    look_capture(false)
     loop i in 0..bath.bathers.len():
         f = bath_fig(bath.bathers[i], true)
         rise = 0.012 * sin(t * 1.3 + f64(i) * 2.1)
@@ -8206,7 +8357,7 @@ if capture_delivery >= 0 and capture_delivery < towns.len():
             living.advance_minutes(living_world, 1); waited += 1
         print("DELIVERY loaded {living_world.jobs[capture_delivery_job].loaded} after {waited} minutes")
         sync_folk(folks, living_world, towns)
-        print("DELIVERY took {took} job {capture_delivery_job} {job_cargo(capture_delivery_job)} for {living_world.people[recipient_of(capture_delivery_job)].name}; {portage.cargo_status(living_world, capture_delivery_job)}")
+        print("DELIVERY took {took} job {capture_delivery_job} {job_cargo(capture_delivery_job)} for {living_world.people[portage.cargo_receiver(living_world,capture_delivery_job)].name}; {portage.cargo_status(living_world, capture_delivery_job)}")
         # (cast off as a pilot does, so the world has the trip the mooring will end)
         _ = living_scene.scene_player_departure(living_world)
         # (boarding, taking off and the flight over: an hour of the world's while she is away)
@@ -8314,8 +8465,11 @@ if capture_after!="" and active_scenario=="strait":
 # the Ierax seen from her bridge: the camera turns, eased, after the lowest of them (the one landing
 # or taxiing in), the moorings in view once all are in. TENDER lines say how it goes.
 tender_cam_look = vec3(0, 0, 0)
+tender_cam_turn = 0.0                       # (0 behind the leader coming in, 1 off her quarter: eased between)
+tender_cam_in = false                       # (the leader down: off her quarter from then on, not back)
+tender_cam_lead = (vec3(0, 0, 0), vec3(0, 0, 0))
 tender_cam_step = ():
-    global judge_camera, judge_origin, tender_cam_look
+    global judge_camera, judge_origin, tender_cam_look, tender_cam_turn, tender_cam_in, tender_cam_lead
     spec = vessel_spec(.seaplane_tender)
     eye = tender_local(vec3(2, f32(spec.deck + 16.0), 4))
     target = tender_slot(3)
@@ -8333,22 +8487,68 @@ tender_cam_step = ():
     # (the judge camera rides with the player's aircraft from judge_origin: set to where it is now)
     judge_origin = pc.state.position
     lead = home_leader(battle, 1)
-    if lead >= 0 and not battle.actors[lead].state.on_water and not battle.actors[lead].pilot.home_done:
+    if lead >= 0 and (battle.actors[lead].state.on_water or battle.actors[lead].pilot.home_done): tender_cam_in = true
+    if not tender_cam_in and lead >= 0:
         # (coming in: behind and above the leader, the flight and the Ierax ahead)
         l = battle.actors[lead].state
         f = vec3(l.velocity.x, 0, l.velocity.z)
         f = if length(f) > 1.0: normalize(f) else: normalize(vec3(TENDER_AT.x - l.position.x, 0, TENDER_AT.z - l.position.z) + vec3(0.001, 0, 0))
         side = vec3(-f.z, 0, f.x)
-        judge_camera = JudgeView(l.position - f * 90.0 + side * 25.0 + vec3(0, 22, 0), l.position + f * 400.0 - vec3(0, 60, 0), "behind the flight, coming home")
+        tender_cam_lead = (l.position - f * 90.0 + side * 25.0 + vec3(0, 22, 0), l.position + f * 400.0 - vec3(0, 60, 0))
         tender_cam_look = target
-    else:
-        # (in: off her seaward quarter, looking back at her side and booms, the flight taxiing in)
-        off = TENDER_AT + tender_port() * 140.0 - tender_forward() * 40.0 + vec3(0, 30, 0)
-        judge_camera = JudgeView(off, TENDER_AT + tender_port() * 30.0 + vec3(0, 2, 0), "off the Ierax's quarter")
+    # (in: off her seaward quarter, looking back at her side and booms, the flight taxiing in; turned
+    # to over four seconds from behind the leader as it alights, never cut, and not back)
+    if lead < 0: tender_cam_in = true
+    tender_cam_turn = if tender_cam_in: min(1.0, tender_cam_turn + 1.0 / 240.0) else: 0.0
+    # (never seen coming in: straight to her quarter)
+    if length(tender_cam_lead.0) < 1.0: tender_cam_turn = 1.0
+    k = f32(smoothstep(0.0, 1.0, tender_cam_turn))
+    off = TENDER_AT + tender_port() * 140.0 - tender_forward() * 40.0 + vec3(0, 30, 0)
+    quarter = TENDER_AT + tender_port() * 30.0 + vec3(0, 2, 0)
+    judge_camera = JudgeView(mix(tender_cam_lead.0, off, k), mix(tender_cam_lead.1, quarter, k), if tender_cam_in: "off the Ierax's quarter" else: "behind the flight, coming home")
     if frame_number() % 300 == 0:
         print("TENDER frame {frame_number()}: {moored} moored, {flying} still flying, {down} down, the lowest at {low:.0} m, {length(target - TENDER_AT):.0} m off; wind {length(wind_now_vec()):.1} m/s")
         loop a in battle.actors:
             if a.side == 1 and a.present and not a.human and (a.status != .flying or a.state.crashed or a.state.capsized): print("TENDER down: {a.craft} status {a.status} crashed {a.state.crashed} capsized {a.state.capsized} at {a.state.position.x:.0},{a.state.position.y:.1},{a.state.position.z:.0} phase {a.pilot.plan.phase} hull {a.state.hull_damage:.2}")
+
+# AEGEAN_CAPTURE_SIGNAL (with AEGEAN_CAPTURE_STRAIT_AFTER=arrive and AEGEAN_ARRIVE_FORMED): the
+# flight's leader signals the player in its slot (by hand), then, the player put 900 m out on the
+# flight's beam, again (by lamp); the camera from over the player's cockpit on the one signalling.
+# SIGNAL lines say each.
+signal_capture_step = ():
+    global judge_camera, judge_origin, pc
+    f = frame_number()
+    ci = combat_index(battle, living_world.people[living_world.player].craft)
+    if ci < 0: return
+    side = battle.actors[ci].side
+    lead = home_leader(battle, side)
+    if lead < 0: return
+    # (the player put abreast of the leader, 90 m off, then 900 m out on the flight's beam, flying on
+    # as it was; the flight's own lines held back meanwhile)
+    if f == 400 or f == 900:
+        l = battle.actors[lead].state
+        across = normalize(vec3(-l.velocity.z, 0, l.velocity.x) + vec3(0.0001, 0, 0))
+        pc.state.position = l.position + across * f32(if f == 400: 90.0 else: 900.0)
+        pc.state.velocity = l.velocity; pc.state.orientation = l.orientation; pc.state.precise_ready = false
+        a = battle.actors[ci]; a.state = pc.state; a.previous = pc.state.position; a.previous_point = craft_point(pc.state); battle.actors[ci] = a
+        homeward.queue = []; homeward.until = t
+    if f == 402: radio_say(homeward, "sig-hand", call_sign(living_world, side, 1), "Follow me down. We'll land in turn.", battle.actors[lead].craft)
+    if f == 902: radio_say(homeward, "sig-lamp", call_sign(living_world, side, 1), "Close up. We're turning for home.", battle.actors[lead].craft)
+    sig = homeward.signal
+    if f % 30 == 0 and sig.way != .none and t < sig.until:
+        i = combat_index(battle, sig.craft)
+        d = if i >= 0: f64(length(battle.actors[i].state.position - pc.state.position)) else: -1.0
+        print("SIGNAL frame {f}: {sig.way} from craft {sig.craft} at {d:.0} m, lit {signal_lit(sig, t - sig.since)}; '{homeward.showing.who}: {homeward.showing.words}'")
+    judge_origin = pc.state.position
+    i = combat_index(battle, if sig.way != .none and t < sig.until: sig.craft else: battle.actors[lead].craft)
+    if i >= 0:
+        # (a hand: close by the one signalling, on the player's side of it; a lamp: from the player's
+        # own aircraft, the flight far off)
+        o = battle.actors[i].state.position
+        toward = normalize(pc.state.position - o + vec3(0.0001, 0, 0))
+        fwd = forward(battle.actors[i].state)
+        eye = if f64(length(pc.state.position - o)) < SIGNAL_HAND: o + toward * 13.0 + fwd * 4.0 + vec3(0, 2.0, 0) else: pc.state.position + vec3(0, 4.0, 0) + vec3(-toward.z, 0, toward.x) * 18.0 + toward * 6.0
+        judge_camera = JudgeView(eye, o + vec3(0, 1.0, 0), "the flight's signal")
 
 # Flies the player's aircraft for AEGEAN_CAPTURE_STRAIT_AFTER: the autopilot down beside the
 # survivor; in the formation's slot on the leader; round the bay till the rest are down; then in.
@@ -9568,7 +9768,8 @@ rt_send = (k: int):
         if d < near: near = d; best = a.craft; number = count
     words = rt_answer(kind, target >= 0)
     if rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
-    if active_scenario == "strait": radio_say(homeward, "rt{battle.tick}", call_sign(living_world, side, max(1, number)), words)
+    # (the one answering in sight of the player answers by hand or lamp: src/flight_signals.jo)
+    if active_scenario == "strait": radio_say(homeward, "rt{battle.tick}", call_sign(living_world, side, max(1, number)), words, best)
     else: say_toast(words)
 
 # ---- the Ierax, the Kalyran seaplane tender (src/tender.jo) ----
@@ -9676,6 +9877,123 @@ tender_step = (dt: f64):
             moor(pc.state, vec3(under.x, f32(pc.spec.float_height), under.z), tender_heading)
             say_toast("Afloat alongside. Cast off when you're ready.")
 
+# ---- the rescued let out onto her (src/tender.jo's ways aboard) ----
+tender_way_on = false
+tender_way = (vec3(0, 0, 0), vec3(0, 0, 0), vec3(0, 0, 0))   # (the walk up to her rail: a boom's top, a brow, her deck)
+tender_brow = false                           # (a brow put across from her rail to the aircraft alongside)
+
+# The town she sends people in to with her boat, her depot (-1 none).
+tender_depot = () -> int: rep_town_named(living_world, "Ardevanti")
+
+# The way aboard her from where the aircraft lies: along a boom from its end, across a brow from
+# alongside, or on her deck already (hoisted in); none away from her.
+tender_way_here = () -> (vec3, vec3, vec3)?:
+    st = pc.state
+    if me.mode != .aboard: return none
+    if tender_hoist == 2:
+        s = vessel_spec(.seaplane_tender)
+        a = tender_deck_spot() + tender_port() * 2.6
+        a = vec3(a.x, f32(s.deck), a.z)
+        return (a, a + tender_forward() * 2.0, a + tender_forward() * 4.0)
+    if tender_hoist != 0 or not st.moored: return none
+    k = tender_boom_at(st.position)
+    if k >= 0: return tender_boom_way(k)
+    if vessel_mooring.vessel == TENDER_ID:
+        rail = tender_rail_by(st.position)
+        toward = normalize(vec3(rail.x - st.position.x, 0, rail.z - st.position.z) + vec3(0.0001, 0, 0))
+        from = vec3(st.position.x, st.position.y - 0.2, st.position.z) + toward * 1.4
+        return (from, (from + rail) * 0.5, rail)
+    none
+
+# Who of the rescued aboard could be let out onto her here: a survivor (kind 1, their id) or a
+# skipper taken off a boat adrift (kind 2, its index), and their name.
+tender_rescued_here = () -> (int, int, str)?:
+    if tender_way_here() == none or tender_depot() < 0: return none
+    aboard = rescue_aboard(living_world)
+    if aboard.len() > 0: return (1, aboard[0], rescue_aboard_name(living_world, aboard[0]))
+    loop i in 0..living_world.adrift.len():
+        if living_world.adrift[i].state == .aboard: return (2, i, _first_name(living_world.adrift[i].person))
+    none
+
+# Up onto her: her people take them in (a foe of Kalyra's held below), her boat to take them on
+# in to her depot; seen climbing out and walking in along the boom or across the brow, and below.
+tender_let_out = ():
+    global tender_way_on, tender_way, tender_brow
+    h = tender_rescued_here() ?? return
+    way = tender_way_here() ?? return
+    place = tender_depot()
+    now = clock_text(living_world, living_world.minute)
+    person = -1
+    if h.0 == 1:
+        s = living_world.war.survivors[h.1]
+        held = countries_at_war(living_world, s.country, 1)
+        country = if s.country >= 0 and s.country < living_world.countries.len(): living_world.countries[s.country].name else: "abroad"
+        before = living.national_regard(living_world, s.country, living_world.player)
+        n = living.land_survivors(living_world, h.1, place, living_world.player, afloat = true)
+        if n <= 0:
+            say_toast("They can't go aboard her now.")
+            return
+        after = living.national_regard(living_world, s.country, living_world.player)
+        if s.person >= 0:
+            words = rescue_words_aboard(living_world, h.2, s.country, 1, TENDER_NAME, harbour_name(living_world, place), held, s.person)
+            rescue_card(rescue, words.title, words.lines + ["Standing with {country}: {before} to {after}"], t)
+            rescue.card_until = t + 11.0
+            rescue_deeds(living_world, s.person, s.country, place, held, [])
+            log_note(notebook, "{words.title}. {join(words.lines, " ")} Standing with {country} {before} to {after}.", now)
+            person = s.person
+        else:
+            rescue_card(rescue, "Aboard {TENDER_NAME}", [if n == 1: "{h.2}, rescued" else: "{n} survivors, rescued", "Standing with {country}: {before} to {after}"], t)
+            log_note(notebook, "Put {h.2} aboard {TENDER_NAME}. Standing with {country} {before} to {after}.", now)
+        pilot_did(living_world.pilot_day, Doing(.set_ashore, living_world.minute))
+    else:
+        person = living_world.adrift[h.1].person
+        if not adrift_set_ashore(living_world, h.1, place): return
+        log_note(notebook, "Put {h.2} aboard {TENDER_NAME}; her boat takes them in to {harbour_name(living_world, place)}.", now)
+        say_toast("{h.2}: A warship's ladder. I'll have something to tell them at home. Thank you.")
+    if person >= 0 and rider.person == person and (rider.stage == .aboard or rider.stage == .boarding):
+        seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span))
+        rider_alight(rider, seat, way.0, way.2 - way.0, t)
+        tender_way = way; tender_way_on = true
+        tender_brow = tender_hoist == 0 and tender_boom_at(pc.state.position) < 0
+
+# AEGEAN_CAPTURE_TENDER=passenger (passenger-brow): a downed pilot taken aboard (staged), the
+# aircraft at her first boom (or alongside her, moored to her side), and let out onto her: the
+# camera after them up the boom (the brow) and in to her house. TENDER lines say how it goes.
+tender_capture_staged = -1
+tender_capture_passenger = (f: int, say: (str) -> void):
+    global tender_capture_staged, judge_camera, judge_origin, pc, vessel_mooring
+    c = living_world.people[living_world.player].craft
+    if f == 32 and tender_capture == "passenger-brow":
+        # (moored to her side abreast of her foremast, as a pilot moors to her himself)
+        s = vessel_spec(.seaplane_tender)
+        hd = atan2(f64(tender_forward().x), -f64(tender_forward().z))
+        at = tender_local(vec3(f32(s.beam * 0.5 + pc.spec.span * 0.55 + 3.0), 0, 18))
+        pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, at, hd)
+        pc.spec.player = true; pc.placed = false
+        vessel_mooring = VesselMooring(TENDER_ID, 1.0, 18.0)
+    if f >= 70 and tender_capture_staged < 0:
+        id = stage_rescue_survivor(living_world, living_world.aircraft[c].pose.pos + vec3(2, 0, 0))
+        if id >= 0 and living.board_survivors(living_world, id, living_world.player) > 0:
+            tender_capture_staged = f
+            say("a downed pilot aboard, {rescue_aboard_name(living_world, id)}")
+        else if f % 60 == 0: say("staging the downed pilot: survivor {id}, craft at {living_world.aircraft[c].pose.pos.x:.0},{living_world.aircraft[c].pose.pos.z:.0} state {living_world.aircraft[c].state}")
+    if tender_capture_staged < 0: return
+    wait = f - tender_capture_staged
+    if wait == 90:
+        say("seated, rider {rider.stage}")
+        tender_let_out()
+        say("let out: card '{rescue.card_title}' {join(rescue.card_lines, " / ")}; aboard still {rescue_aboard(living_world).len()}")
+    l = tender_local_of(rider.pos)
+    if wait > 90 and wait % 60 == 0: say("rider {rider.stage} at her {l.x:.1} out, {l.y:.2} up, {l.z:.1} along; way on {tender_way_on}, brow {tender_brow}")
+    # (the camera after them: off the aircraft's side, then behind them along the boom, the brow, her deck)
+    judge_origin = pc.state.position
+    if rider.stage == .walking or rider.stage == .alighting:
+        away = rider.away
+        judge_camera = JudgeView(rider.pos - away * 8.0 + vec3(-away.z, 0, away.x) * 4.0 + vec3(0, 3.0, 0), rider.pos + away * 3.0 + vec3(0, 1.0, 0), "after the rescued pilot, aboard the Ierax")
+    else:
+        seat = pc.state.position + quat_rotate(pc.state.orientation, rider_seat(ride_seat(player_model()), rider.on_wing, pc.spec.span))
+        judge_camera = JudgeView(seat + tender_port() * 12.0 - tender_forward() * 6.0 + vec3(0, 4.0, 0), seat + vec3(0, 0.5, 0) - tender_port() * 4.0, "the rescued pilot at the Ierax")
+
 # AEGEAN_CAPTURE_TENDER=hoist (captures and checks): at frame 30 the aircraft moored at the
 # Ierax's first boom; her bunkers opened and shut; the aircraft knocked about (hull and engine at
 # half); hoisted aboard, her mechanics at work, lowered over the side. TENDER lines say each state.
@@ -9691,6 +10009,9 @@ tender_capture_step = ():
         pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, tender_slot(0), hd)
         pc.spec.player = true; pc.placed = false; me.mode = .aboard; rope.tied = false
         say("moored at her first boom")
+    if tender_capture == "passenger" or tender_capture == "passenger-brow":
+        tender_capture_passenger(f, say)
+        return
     if f == 60:
         tender_fuel()
         say("her bunkers: ui {ui}, pier {fuel_panel_pier.name}")
@@ -9749,7 +10070,9 @@ help_drop = ():
     global sos
     if sos.vessel >= 0:
         retire_vessel(vessels, sos.vessel)
-        if sos.lane >= 0: retire_sea_lane(vessels, sos.lane)
+        if sos.lane >= 0:
+            if sos.need == .pickup and vessels.search.lane == sos.lane: vessels.search = SeaSearch()
+            retire_sea_lane(vessels, sos.lane)
     if sos.hidden >= 0 and sos.hidden < living_world.far.vehicles.len():
         j = living_world.far.vehicles[sos.hidden].journey
         if j >= 0 and j in living_world.far.journeys: living_world.far.journeys[j].hold_until_tick = living_world.tick
@@ -9761,7 +10084,15 @@ help_drop = ():
     if sos.stage == .towing: rope.tied = false
     # (taken off and the help gone wrong: back in one's own cockpit, not left as a camera)
     if sos.aboard and me.mode == .free:
-        me.mode = .aboard; pc.placed = false
+        if sos.need == .pickup:
+            me.mode = .descent
+            loop n in 0..battle.descents.len():
+                i = battle.descents.len() - 1 - n
+                if battle.descents[i].person == living_world.player and battle.descents[i].phase == .swimming:
+                    battle.descents[i].released = false
+                    break
+        else:
+            me.mode = .aboard; pc.placed = false
     sos = HelpCall()
 
 # The call: the flight first (fuel only), then a passing ship, then a harbour's launch.
@@ -9862,7 +10193,93 @@ help_call = (flare: bool):
     else if ship >= 0: help_say(station, "{capital(name)} is nearest you; she's turning your way. {capital(help_eta_words(eta))}.")
     else: help_say(station, "We'll send the launch out to you. {capital(help_eta_words(eta))}.")
 
+# The pilot and the aircraft can be kilometres apart after a bailout. A launch
+# answers the swimmer, and only carries the pilot.
+pickup_harbour = (at: vec3) -> int:
+    c = combat_index(battle, living_world.people[living_world.player].craft)
+    if c >= 0 and active_scenario != "":
+        if let h = help_base(battle.actors[c].side):
+            if active_scenario == "strait" and not pc.spec.landplane and h.place < 0 and h.name == TENDER_NAME: return TENDER_PLACE
+            if h.place >= 0 and vessel_berth(h.place, .canal_launch) != none: return h.place
+    help_harbour(at, 1e9)
+
+pickup_launch = (at: vec3, search: bool) -> bool:
+    global sos, sos_serial
+    dest = pickup_harbour(at)
+    if dest < 0 and dest != TENDER_PLACE: return false
+    kind = VesselKind.canal_launch
+    spec = vessel_spec(kind)
+    tender = dest == TENDER_PLACE
+    berth = if tender: (tender_launch_at().xz, true) else: vessel_berth(dest, kind)
+    if berth == none: return false
+    start = berth!.0
+    name = if tender: "{TENDER_NAME}'s launch" else: "the launch from {help_harbour_name(dest)}"
+    way = normalize(start - at.xz + vec2(0.0001, 0))
+    end = at.xz + way * 16
+    if search or length(start - at.xz) > 2500.0 or not pickup_channel(end + way * 12, end, spec):
+        if let approach = pickup_search_approach(at.xz, spec):
+            start = approach.0; end = approach.1
+            name = "a fishing boat"
+        else: return false
+    id = HELP_VESSEL + sos_serial + 1
+    lane = request_sea_lane(vessels, -1, -1, start, end, spec.draft, spec.beam * 0.5 + 2.0, anchorage = true)
+    if lane < 0: return false
+    yaw = atan2(f64(end.x - start.x), f64(end.y - start.y))
+    if not spawn_vessel(vessels, Vessel(id = id, kind = kind, owner = 0, lane = lane, position = vec3(start.x, f32(water_level_at(f64(start.x), f64(start.y))), start.y), yaw = yaw, status = .waiting_route)):
+        retire_sea_lane(vessels, lane)
+        return false
+    sos_serial += 1
+    sos = HelpCall(stage = .routing, by = .launch, need = .pickup, name = name, kind = kind, vessel = id, lane = lane,
+        harbour = dest, harbour_name = if tender: TENDER_NAME else: help_harbour_name(dest), alongside = vec3(end.x, at.y, end.y))
+    say_toast("{capital(name)} is coming for you.")
+    true
+
 capital = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper() + s[1..]
+
+pickup_step = ():
+    if sos.stage == .done or skip.active: return
+    k = vessel_index(vessels, sos.vessel)
+    if k < 0:
+        help_drop()
+        return
+    v = vessels.ships[k]
+    li = sea_lane_index(vessels, sos.lane)
+    if sos.stage == .routing:
+        if li >= 0 and vessels.lanes[li].status == .ready:
+            sos.stage = .coming; sos.since = 0.0
+        else if li < 0 or vessels.lanes[li].status == .blocked or sos.since > 12.0:
+            help_drop()
+            _ = pickup_launch(me.pos, true)
+    else if sos.stage == .coming:
+        if v.status == .docked or v.status == .anchored:
+            if length(v.position.xz - me.pos.xz) > 90.0:
+                help_drop()
+                _ = pickup_launch(me.pos, true)
+            else:
+                sos.stage = .alongside; sos.since = 0.0
+        else if v.status == .stopped:
+            help_drop()
+            _ = pickup_launch(me.pos, true)
+        else if sos.since > 20.0 and lane_left(vessels, v) >= SEEN_COMING + 20.0:
+            help_wait()
+        else if sos.since > 45.0:
+            help_drop()
+            _ = pickup_launch(me.pos, true)
+    else if sos.stage == .alongside:
+        if not sos.aboard:
+            help_board(boat_deck_seat(v).0)
+        else if help_aboard_done():
+            sos.stage = .carrying; sos.since = 0.0
+            to = if sos.harbour == TENDER_PLACE: (tender_tow_end(others_at()), true) else: vessel_berth(sos.harbour, sos.kind)
+            if let berth = to:
+                spec = vessel_spec(sos.kind)
+                lane = request_sea_lane(vessels, -1, sos.harbour, v.position.xz, berth.0, spec.draft, spec.beam * 0.5 + 2.0, berth.1)
+                if lane >= 0 and set_vessel_route(vessels, sos.vessel, lane):
+                    retire_sea_lane(vessels, sos.lane)
+                    sos.lane = lane
+    else if sos.stage == .carrying:
+        if sos.since > 4.0 or vpressed(.f):
+            help_wait()
 
 # Each frame aboard: the wingman down and alongside, the cans; the boat routed, coming, alongside,
 # the tow under way, in at the harbour.
@@ -9870,6 +10287,10 @@ help_step = (dt: f64):
     global sos, sos_wreck_tilt, sos_tried, help_tow_at, help_tow_h
     if sos.stage == .none: return
     sos.since += dt
+    if sos.need == .pickup:
+        if me.mode != .descent and not sos.aboard: help_drop()
+        else: pickup_step()
+        return
     if me.mode != .aboard and not sos.aboard:
         help_drop()
         return
@@ -10012,11 +10433,19 @@ help_swim_s = 0.0
 help_board = (to: vec3):
     global help_from, help_in_water, help_swim_to, help_swim_s
     sos.aboard = true; sos.climbed = t
-    help_from = pc.state.position + quat_rotate(pc.state.orientation, ride_seat(player_model()) - vec3(0, 1.2, 0))
-    across = vec3(to.x - pc.state.position.x, 0, to.z - pc.state.position.z)
+    at = if sos.need == .pickup: me.pos else: pc.state.position
+    across = vec3(to.x - at.x, 0, to.z - at.z)
     way = normalize(across + vec3(0.0001, 0, 0))
-    help_in_water = vec3(pc.state.position.x, 0, pc.state.position.z) + way * f32(pc.spec.span * 0.12 + 1.0)
-    help_swim_to = vec3(to.x, 0, to.z) - way * f32(if sos.by == .wingman: 1.2 else: vessel_spec(sos.kind).beam * 0.5 + 0.4)
+    help_in_water = vec3(at.x, 0, at.z)
+    if sos.need == .pickup:
+        help_in_water.y = f32(swim_level(f64(at.x), f64(at.z)))
+        help_from = help_in_water - vec3(0, 0.5, 0)
+        loop mut d in battle.descents:
+            if d.person == living_world.player and not d.released and d.phase == .swimming: d.released = true
+    else:
+        help_from = at + quat_rotate(pc.state.orientation, ride_seat(player_model()) - vec3(0, 1.2, 0))
+        help_in_water += way * f32(pc.spec.span * 0.12 + 1.0)
+    help_swim_to = vec3(to.x, help_in_water.y, to.z) - way * f32(if sos.by == .wingman: 1.2 else: vessel_spec(sos.kind).beam * 0.5 + 0.4)
     help_swim_s = f64(length(help_swim_to - help_in_water)) / SWIM_PACE
     me.mode = .free
     mouse_lock(false)
@@ -10113,8 +10542,7 @@ help_carried_home = ():
     at = dock ?? (h.dock + h.step * 6.0, h.heading)
     pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, at.0, at.1)
     pc.spec.player = true
-    ci = combat_index(battle, living_world.people[living_world.player].craft)
-    if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, battle.actors[ci].side, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model, engagement = battle.actors[ci].engagement)
+    rebind_player_combatant()
     pc.placed = false
     rope.tied = false
     if at_tender:
@@ -10215,10 +10643,10 @@ help_pilot_home = ():
 help_card = () -> str:
     match sos.stage:
         .routing: "{capital(sos.name)} is putting out."
-        .coming: "{capital(sos.name)} is coming.   Y  R/T"
+        .coming: if sos.need == .pickup: "{capital(sos.name)} is coming." else: "{capital(sos.name)} is coming.   Y  R/T"
         .alongside: "{capital(sos.name)} is alongside."
         .towing: if sos.aboard: "Aboard {sos.name}, the aircraft in tow, for {sos.harbour_name}.   F  skip ahead" else: "Under tow to {sos.harbour_name}.   Y  R/T"
-        .carrying: if help_carrier_up(): "In {sos.name}'s second seat, for {sos.harbour_name}.   F  skip ahead" else: "In {sos.name}'s second seat."
+        .carrying: if sos.need == .pickup: "Aboard {sos.name}, bound for {sos.harbour_name}.   F  skip ahead" else: if help_carrier_up(): "In {sos.name}'s second seat, for {sos.harbour_name}.   F  skip ahead" else: "In {sos.name}'s second seat."
         _: ""
 
 # Stopped a while (seconds of it counted while near and slow).
@@ -10238,6 +10666,15 @@ help_boat_speed = (id: int) -> f64:
 # found nearly there (coming: the last of the way seen) or in at the harbour (under tow).
 help_wait = ():
     global sos_skip
+    if sos.need == .pickup and sos.stage == .carrying:
+        k = vessel_index(vessels, sos.vessel)
+        if k < 0: return
+        v = vessels.ships[k]
+        to = if sos.harbour == TENDER_PLACE: TENDER_AT else: help_harbour_at(sos.harbour)
+        distance = max(lane_left(vessels, v), f64(length(v.position.xz - to.xz)))
+        sos.stage = .done
+        leisure_skip(help_minutes(distance, help_boat_speed(sos.vessel)), "taken to {sos.harbour_name}", after = 6)
+        return
     if sos.by == .pilot and sos.stage == .carrying:
         k = help_traffic_index()
         if k < 0: return
@@ -10292,15 +10729,34 @@ help_arrive = ():
     if dock == none:
         help_drop()
         return
+    if sos.need == .pickup:
+        # The harbour recovers the abandoned aircraft separately, as in the
+        # existing carried-home help. The pilot is never put back in the wreck.
+        if pc.spec.landplane:
+            pc = landplane_at_airfield(pc.kind, pc.model, dock!.0)
+        else:
+            pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock!.0, dock!.1)
+        pc.spec.player = true; pc.placed = false
+        rebind_player_combatant()
+        rope.tied = false
+        me.mode = .aboard
+        if not at_tender:
+            tie_up()
+            step_ashore(dock!.0)
+            sync_walker_point()
+        if at_tender: me.pos = pc.state.position
+        follow.placed = false
+        mouse_lock(false)
+        say_toast("Picked up and brought safely to {sos.harbour_name}.")
+        log_note(notebook, "Picked up after bailing out and brought to {sos.harbour_name}.", clock_text(living_world, living_world.minute))
+        help_drop()
+        return
     if pc.state.moored: unmoor(pc.state)
     if pc.state.crashed or pc.state.capsized:
         # (a wreck: patched up at the harbour, as the old tow home had it)
         pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock!.0, dock!.1)
         pc.spec.player = true
-        ci = combat_index(battle, living_world.people[living_world.player].craft)
-        # (the same side and engagement as before: towed in, still one of them, so a fight lost
-        # hands back on arrival like one won)
-        if ci >= 0: battle.actors[ci] = Combatant(battle.actors[ci].craft, living_world.player, battle.actors[ci].side, pc.spec, pc.state, external = true, human = true, previous = pc.state.position, model = pc.model, engagement = battle.actors[ci].engagement)
+        rebind_player_combatant()
         pc.placed = false
     else:
         moor(pc.state, vec3(dock!.0.x, f32(pc.spec.float_height), dock!.0.z), dock!.1)
@@ -10796,6 +11252,9 @@ aboard_offers = () -> Offer[]:
     st = pc.state
     if me.mode != .aboard or ui != .none or paused or show_chart or notebook.open or st.crashed or st.capsized or st.beached: return o
     if rescue_act == 1: offer_add(o, "rescue", offer_words(rescue_prompt()))
+    # (anyone rescued aboard, let out onto the Ierax: up from a boom's end, across a brow, or off
+    # her deck; before her other offers, which only two keys carry)
+    if let h = tender_rescued_here(): offer_add(o, "tender-out", "help {h.2} aboard {TENDER_NAME}")
     if adrift_k >= 0:
         who = _first_name(living_world.adrift[adrift_k].person)
         offer_add(o, "adrift-take", "take {who} aboard")
@@ -10823,19 +11282,34 @@ aboard_offers = () -> Offer[]:
     if race >= 0: offer_add(o, "race", offer_words(race_offer_text(air_events, living_world, race)))
     o
 
-offers_now = () -> Offer[]: if me.mode == .aboard: aboard_offers() else: walk_offers()
+descent_offers = () -> Offer[]:
+    out: Offer[]
+    loop d in battle.descents:
+        if d.person != living_world.player or d.released or d.phase != .swimming: continue
+        if sos.stage == .none: offer_add(out, "pickup-flare", "fire a flare", .t)
+        else if sos.stage == .coming: offer_add(out, "pickup-wait", "wait for the boat", .f)
+        break
+    out
+
+offers_now = () -> Offer[]:
+    if me.mode == .aboard: aboard_offers() else: if me.mode == .descent: descent_offers() else: walk_offers()
 
 # Brought home from wherever she is: towed to a free dock, or a landplane carried to its aerodrome,
 # and patched up (the bill comes later)
+rebind_player_combatant = ():
+    ci = combat_index(battle, living_world.people[living_world.player].craft)
+    if ci < 0: return
+    previous = battle.actors[ci]
+    battle.actors[ci] = Combatant(previous.craft, living_world.player, previous.side, pc.spec, pc.state,
+        external = true, human = true, previous = pc.state.position, model = pc.model, engagement = previous.engagement)
+
 fetch_home = ():
     global pc
     dock = free_dock(home, others_at(), home.docks[0]) ?? home.docks[0]
     # (a landplane is towed to its airfield, not to a dock)
     pc = if pc.spec.landplane: landplane_at_airfield(pc.kind, pc.model, pc.state.position) else: make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, dock, along_quay)
     pc.spec.player = true
-    ci=combat_index(battle,living_world.people[living_world.player].craft)
-    # (the same side and engagement as before: towed home, still one of them)
-    if ci>=0:battle.actors[ci]=Combatant(battle.actors[ci].craft,living_world.player,battle.actors[ci].side,pc.spec,pc.state,external=true,human=true,previous=pc.state.position,model=pc.model,engagement=battle.actors[ci].engagement)
+    rebind_player_combatant()
     pc.placed = false
     tie_up()
 
@@ -11054,6 +11528,8 @@ update_frame = (dt: f64, saves: bool = true):
     tip_thanks_step()
     music_cues_step()
     weather_scene_step(living_world,if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos,hour,dt)
+    # (the wind setting's bias, before anything steps: the floats ride the same sea that is drawn)
+    wind_now.speed = max(0.0, wind_now.speed + wind_bias)
     weather_shaders_near(if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
     hour = (hour + dt * hour_rate + 24.0) % 24.0      # an hour of the day: two minutes
     typing = ui_typing() or debug_typing() or leisure_typing()
@@ -11097,34 +11573,27 @@ update_frame = (dt: f64, saves: bool = true):
     if vdown(.n2) and hour_keys: hour = (hour + dt * 2.0) % 24.0
     if vpressed(.escape): mouse_lock(false)
     # (a click takes the mouse for the camera only when no panel is open to be clicked)
-    # (the mouse free on foot: what it is over, of the leisure places' things; a click there walks him over)
-    global foot_hover
-    # (the mouse locked to the view: what the middle of the screen is on, over his shoulder)
-    foot_hover = if me.mode == .walking and ui == .none and not pad.on and not notebook.open and not show_chart: foot_pick(foot_things(), foot_aim()) else: -1
-    # (the trial: on foot the mouse stays a pointer; a click (pressed and let go in one place) uses
-    # what it is on, or walks to the ground there; a drag turns the view)
-    pointer_trial = tweaks.pointer_on_foot and me.mode == .walking and not pad.on
-    if pointer_trial:
-        global foot_press, foot_dragged
-        if is_mouse_locked() and ui == .none: mouse_lock(false)
-        if mouse_pressed(.left): foot_press = mouse_pos(); foot_dragged = false
-        if mouse_down(.left) and foot_press.x >= 0.0:
-            if f64(length(mouse_pos() - foot_press)) > 8.0: foot_dragged = true
-            if foot_dragged and ui == .none:
-                md = mouse_delta()
-                global follow
-                follow.yaw -= f64(md.x) * 0.005
-                follow.pitch = clamp(follow.pitch + f64(md.y) * 0.004, follow.min_pitch, follow.max_pitch)
-        if mouse_released(.left) and foot_press.x >= 0.0 and not foot_dragged and ui == .none and not notebook.open and not show_chart:
-            if foot_hover >= 0: foot_go(foot_things(), foot_hover)
-            else if picnic_ground_hover():
-                if let g = ground_under(foot_aim()): bath_walk_to(g, "picnic")
-            else if let g = ground_under(mouse_pos()):
-                if f64(length(g - me.pos)) < 60.0: bath_walk_to(g, "")
-        if not mouse_down(.left): foot_press = vec2(-1, -1)
-    else if mouse_pressed(.left) and foot_hover >= 0:
+    # (on foot: the thing the view looks at (foot_look), lit; a click uses it, the mouse locked to
+    # the view or not, and walks him over)
+    global foot_hover, foot_hover_since
+    looked = if me.mode == .walking and ui == .none and not notebook.open and not show_chart: foot_look(foot_things()) else: -1
+    global look_folk, look_craft, look_keeper, look_coffee
+    look_folk = -1; look_craft = false; look_keeper = false; look_coffee = ""
+    if looked >= 0:
+        lt_ = foot_things()[looked]
+        look_folk = lt_.folk
+        look_craft = lt_.act == "aboard" or lt_.act == "tinker"
+        look_keeper = lt_.then == "bath-keeper"
+        if lt_.sub == "coffee" and (lt_.then == "tavli" or lt_.then == "paper"): look_coffee = lt_.then
+    if looked != foot_hover:
+        foot_hover_since = t
+        # (captures: what the view comes to look at, frame by frame)
+        if look_trace: eprint("LOOK {frame_number()} {if looked >= 0: foot_things()[looked].label else: "-"}")
+    foot_hover = looked
+    clickable = not pad.on and not dbg.open and not rt.open and radio_knob.turning != 1
+    if mouse_pressed(.left) and foot_hover >= 0 and clickable:
         foot_go(foot_things(), foot_hover)
-    else if mouse_pressed(.left) and picnic_ground_hover():
+    else if mouse_pressed(.left) and picnic_ground_hover() and clickable:
         if let g = ground_under(foot_aim()): bath_walk_to(g, "picnic")
     else if mouse_pressed(.left) and me.mode != .free and ui == .none and not notebook.open and not dbg.open and not show_chart and not is_mouse_locked() and radio_knob.turning != 1 and not rt.open:
         mouse_lock(true)
@@ -11133,7 +11602,7 @@ update_frame = (dt: f64, saves: bool = true):
     if not mouse_down(.left):
         global click_took_mouse
         click_took_mouse = false
-    if vpressed(.f2) and not typing and not presentation.thermal.active and not launch.active and not sos.aboard: me.mode = if me.mode == .free: Mode.walking else: Mode.free
+    if vpressed(.f2) and not typing and not presentation.thermal.active and not launch.active and not sos.aboard and me.mode != .descent: me.mode = if me.mode == .free: Mode.walking else: Mode.free
     # (only while the card can be seen: a battle met behind a panel keeps its card for later)
     if (me.mode == .aboard or me.mode == .walking) and frame_number() % 20 == 0 and not paused and not show_chart and ui == .none:
         global battle_card, presentation
@@ -11161,6 +11630,7 @@ update_frame = (dt: f64, saves: bool = true):
     if capture_errand != "": stage_capture_errand(capture_errand)
     # (the rescue capture: F taken for the player once alongside)
     if capture_after=="arrive" and env("AEGEAN_CAPTURE_TENDER_CAM")!=none: tender_cam_step()
+    if capture_after=="arrive" and env("AEGEAN_CAPTURE_SIGNAL")!=none: signal_capture_step()
     if capture_after=="rescue" and rescue_act==1 and not capture_after_took:
         global capture_after_took
         capture_after_took=true;do_rescue()
@@ -11335,7 +11805,7 @@ update_frame = (dt: f64, saves: bool = true):
                       # (someone whose cargo one has brought sees it)
                       loop id in living_world.active_jobs:
                           j = living_world.jobs[id]
-                          if j.state == .claimed and j.carrier == living_world.player and j.loaded and j.destination == folks[k].place and recipient_of(id) == folks[k].person:
+                          if j.state == .claimed and j.carrier == living_world.player and j.loaded and j.destination == folks[k].place and portage.cargo_receiver(living_world,id) == folks[k].person:
                               ui_line = "Is that {job_cargo(id)} from {living_world.people[j.poster].name}?"
                       ui_news = 0
                       mouse_lock(false)
@@ -11384,6 +11854,12 @@ update_frame = (dt: f64, saves: bool = true):
                 d.steering=flat_forward(descent_camera.look)*-move.y+flat_right(descent_camera.look)*move.x
                 d.open_requested=vpressed(.t)
                 me.pos=d.position
+                if d.phase == .swimming:
+                    act = if typing: "" else: offer_pressed(descent_offers())
+                    if act == "pickup-flare": help_flare(d.position)
+                    if act == "pickup-wait": help_wait()
+                    if sos.stage == .none and (act == "pickup-flare" or (d.age - max(0.0, d.wet) >= 4.0 and frame_number() % 30 == 0)):
+                        _ = pickup_launch(d.position, false)
                 if d.phase==.landed:
                     me.mode=.walking;d.released=true;follow.placed=false
         .aboard:
@@ -11590,6 +12066,7 @@ update_frame = (dt: f64, saves: bool = true):
             else if act == "tender-hoist": tender_hoist_start(false)
             else if act == "tender-lower": tender_hoist_start(true)
             else if act == "tender-repair": tender_repair()
+            else if act == "tender-out": tender_let_out()
             else if act == "ashore" and landplane_parked():
                 step_ashore(pc.state.position + quat_rotate(pc.state.orientation, craft_models[pc.model].exit))
             else if act == "ashore" or act == "moor":
@@ -11635,7 +12112,6 @@ update_frame = (dt: f64, saves: bool = true):
     if dbg.no_damage and not pc.state.crashed:
         loop k in 0..pc.state.damage.parts.len():
             if pc.state.damage.parts[k].attached: pc.state.damage.parts[k].health = 1.0
-    wind_now.speed = max(0.0, wind_now.speed + wind_bias)
     meadow_step(wind_now, f64(scene_camera().x), f64(scene_camera().z), dt)
     update_walkers(dt)
     if geography_enabled and (frame_number() % 20 == 0 or (ambient_town.settlement >= 0 and not ambient_town.done)): ambient_update(if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
@@ -11645,7 +12121,7 @@ update_frame = (dt: f64, saves: bool = true):
         j = living_world.jobs[id]
         if j.state == was: continue
         my_jobs[id] = j.state
-        rcv = living_world.people[recipient_of(id)].name
+        rcv = living_world.people[portage.cargo_receiver(living_world,id)].name
         dest = SETTLEMENTS[j.destination].name
         now = clock_text(living_world, living_world.minute)
         match j.state:
@@ -11749,6 +12225,8 @@ update_frame = (dt: f64, saves: bool = true):
     # Combat parts already supplied this tick's world condition; do not heal them through the
     # older nonlinear wear projection. Outside combat retain the existing service adapter.
     if ci<0 or (battle.actors[ci].last_attacker<0 and not battle.actors[ci].bailed):sync_living_player(pc,living_world)
+    if not world_held() and (pc.state.crashed or pc.state.capsized or (ci >= 0 and battle.actors[ci].bailed)):
+        _ = player_wreck_cargo(living_world, pc.state.position)
     if me.mode==.aboard:pc.jolt=max(pc.jolt,combat_visual.hit)
     update_combat_view(combat_visual,battle,wind_now_vec(),dt,scene_camera())
     if startup_aegean_runtime_trace!=none and floor(t)!=floor(t-dt):
@@ -12110,6 +12588,8 @@ draw_world = (L: Light):
         draw_rope(rope, pc.state.moored, bow, L, t)
         launches.draw_launch(launch_view, launch, L, t)
         launches.draw_lighter(launch_view, lighter, L, t)
+        # (the Ierax's brow across to the aircraft alongside, while the rescued go up it)
+        if tender_way_on and tender_brow: draw_line3d(tender_way.0 - vec3(0, 0.08, 0), tender_way.2 - vec3(0, 0.08, 0), rgba(0.55, 0.45, 0.32, 1), 0.55)
         loop m in buoys_near: launches.draw_buoy(launch_view, m.at, L, t)
         # (the Ierax's trot of mooring buoys astern of her, past the booms)
         if f64(length(scene_camera() - TENDER_AT)) < 4000.0:
@@ -12240,7 +12720,9 @@ draw_world = (L: Light):
         ci=combat_index(battle,living_world.people[living_world.player].craft)
         left=ci>=0 and battle.actors[ci].bailed
         draw_combat_aircraft(combat_visual,battle,craft_models,L,t,if left:-1 else:living_world.people[living_world.player].craft)
-        if active_scenario=="strait" and ci>=0:draw_homeward_pilots(homeward,battle,battle.actors[ci].side,surface_height,L,t)
+        if active_scenario=="strait" and ci>=0:
+            draw_homeward_pilots(homeward,battle,battle.actors[ci].side,surface_height,L,t)
+            draw_homeward_signal(homeward,battle,t,L.fog_density,pc.state.position)
         draw_ground_fire(battle,L,t)
         pm = player_model()
         at = pc_at()
@@ -12252,7 +12734,9 @@ draw_world = (L: Light):
                 if pc.state.moored:
                     anchor=world_offset(anchor,at[3].xyz-pc.state.position)
                     local_at[3]=vec4(0,0,0,1)
+                look_capture(look_craft)
                 draw_craft_parts(pm,pc.state.damage,local_at,L,t,pc.prop_angle,airframe(pc),pc.state.gear,anchor,prop_speed=prop_disc_speed(pc.state,pc.feedback.speed),prop_key=living_world.people[living_world.player].craft)
+                look_capture(false)
             draw_debris(pm,pc.state.damage,L,t)
             # (tuning: a cowling panel swung open on the side he works)
             if job.active and job.task == .tune and job.leg < job.legs.len() and job.legs[job.leg].kind == .work:
@@ -12308,6 +12792,7 @@ draw_world = (L: Light):
             draw_curved_shadow(cm.body, translation(st.position) * quat_to_mat4(st.orientation), g + 0.4, f64(st.position.y) - g, L)
     , transparent = true)
     draw_splashes(pc,craft_models[pc.model],pc_at(),spray_ps,L,t,me.mode==.aboard)
+    draw_spindrift(spindrift,L,t)
     if not legacy_clouds:
         draw_cloud_layer(frame_clouds,L)
     else:draw_custom((): prepare_cloud_transparency(),transparent=true)
@@ -12391,7 +12876,9 @@ frame_kept = () -> bool:
         words = split(spec, " ")
         if words.len() == 4:
             frame = frame_number(); from = to_int(words[1]) ?? 0; until = to_int(words[2]) ?? 0; every = max(1, to_int(words[3]) ?? 1)
-            return frame >= from and frame <= until and (frame - from) % every == 0
+            # (and every frame of the four seconds before the first: the land and the towns about
+            # loaded and drawn by then, as they are only when frames are drawn)
+            return (frame >= from and frame <= until and (frame - from) % every == 0) or (frame >= from - 240 and frame < from)
     true
 
 draw = ():
@@ -12407,6 +12894,9 @@ draw = ():
     world_hour=hour
     if title.open: hour=title_now.hour
     L = weather_light(light_at(hour,sky_days_override ?? f64(living_world.minute)/1440.0),if title.open: title_now.eye else: if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos)
+    # (the day's air: clear, hazy, dusty, humid or washed, src/day_air.jo)
+    L = day_air_light(L,day_air_kind(int(floor(sky_days_override ?? f64(living_world.minute)/1440.0)),weather_here.rain,weather_here.deck,weather_here.clarity))
+    L = sea_storm_light(L,f64(scene_camera().y))
     if startup_aegean_clear_air != none: L.fog_density = 0.0
     clear(BLACK)
     sun(L.sun_dir, L.sun, 0.0)
@@ -12614,7 +13104,10 @@ draw = ():
             else if pc.state.beached: prompt_card(fonts, if pc.spec.landplane: "Run aground.  R  to be towed to the aerodrome" else: "Run aground.  R  call for help", 180.0)
             else if t < meet_fuel_until: prompt_card(fonts, meet_fuel_card, 180.0)
             else: draw_offers(aboard_offers(), 196.0)
-        .descent: pass
+        .descent:
+            if not skip.active:
+                if sos.stage != .none: prompt_card(fonts, help_card(), 150.0)
+                draw_offers(descent_offers(), 90.0)
         .free:
             if launch.active:
                 if not skip.active: prompt_card(fonts, if launch.outward: "F  skip the ride out" else: "F  skip the ride ashore", 90.0)
@@ -13060,7 +13553,7 @@ draw_ui = ():
                         answers.push("To {SETTLEMENTS[j.destination].name}: I'll fetch and load {job_cargo(id)}.")
             loop id in living_world.active_jobs:
                 j = living_world.jobs[id]
-                if j.state == .claimed and j.carrier == living_world.player and (j.loaded or j.delivery_mode == .foot) and j.destination == f.place and recipient_of(id) == f.person:
+                if j.state == .claimed and j.carrier == living_world.player and (j.loaded or j.delivery_mode == .foot) and j.destination == f.place and portage.cargo_receiver(living_world,id) == f.person:
                     handovers.push(id); handover_choices.push(.automatic)
                     answers.push("I've brought {job_cargo(id)} from {living_world.people[j.poster].name}.")
                     if j.delivery_mode == .aircraft and j.cargo_mode != .none:

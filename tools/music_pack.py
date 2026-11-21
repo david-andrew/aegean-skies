@@ -11,8 +11,9 @@ from music_performance import score_clock, interpret, apply_performance_map
 from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
+RAW_OVER = 200000                 # bytes: a score larger than this is stored uncompressed
 # Must agree with MusicInstrument in music_synth.jo.
-STRINGS, BRASS, FLUTE, OBOE, CLARINET, BASSOON, PIANO, HARP, BOUZOUKI, ACCORDION, BANJO, TIMPANI, DRUMS, BASS = range(14)
+STRINGS, BRASS, FLUTE, OBOE, CLARINET, BASSOON, PIANO, HARP, BOUZOUKI, ACCORDION, BANJO, TIMPANI, DRUMS, BASS, CHOIR, TRUMPET = range(16)
 PIECES = [
  ('adagietto', 'Symphony No. 5: Adagietto', 'Gustav Mahler', 'Voice of Kalyra'),
  ('mahler-opening', 'Symphony No. 5: opening call (excerpt)', 'Gustav Mahler', 'Voice of Kalyra'),
@@ -30,6 +31,88 @@ PIECES = [
  # The radio's Gymnopedie: the same score as the bar's, in the manner of Debussy's orchestration
  # (1897): harp and low strings under it, the tune on the oboe and then the flute, muted strings.
  ('gymnopedie-orchestra', 'Gymnopedie No. 1 (orchestrated)', 'Erik Satie; orch. after Claude Debussy', 'Voice of Kalyra'),
+ # The wider repertoire (data/music/SOURCES.md): the concert hall's symphonies, concertos, piano
+ # pieces and choruses; the light programme's waltzes, marches and overtures; the cafe stations'
+ # songs; the chapel's choir. Each played by our own synthesizer from a public-domain or CC0 score.
+ ('new-world-largo', 'Symphony No. 9 "From the New World": Largo', 'Antonin Dvorak', 'Kalyra Concert Hall'),
+ ('seventh-allegretto', 'Symphony No. 7: Allegretto', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('kleine-nachtmusik', 'Eine kleine Nachtmusik: Allegro', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('clarinet-adagio', 'Clarinet Concerto K. 622: Adagio', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('pathetique-adagio', 'Sonata "Pathetique": Adagio cantabile', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('mozart-forty', 'Symphony No. 40', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('bach-air', 'Air (Orchestral Suite No. 3)', 'Johann Sebastian Bach', 'Kalyra Concert Hall'),
+ ('moldau', 'Ma vlast: The Moldau', 'Bedrich Smetana', 'Kalyra Concert Hall'),
+ ('liebestraum', 'Liebestraum No. 3', 'Franz Liszt', 'Kalyra Concert Hall'),
+ ('standchen', 'Standchen (Schubert, arr. Liszt)', 'Franz Schubert; arr. Franz Liszt', 'Kalyra Concert Hall'),
+ ('fifth-valse', 'Symphony No. 5: Valse', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('lohengrin-chorus', 'Lohengrin: Bridal Chorus', 'Richard Wagner', 'Kalyra Concert Hall'),
+ ('hungarian-one', 'Hungarian Dance No. 1', 'Johannes Brahms', 'Kalyra Concert Hall'),
+ ('daphnis-daybreak', 'Daphnis et Chloe: Lever du jour', 'Maurice Ravel', 'Kalyra Concert Hall'),
+ ('bolero', 'Bolero', 'Maurice Ravel', 'Kalyra Concert Hall'),
+ ('barber-overture', 'The Barber of Seville: Overture', 'Gioachino Rossini', 'Orenthia Light Programme'),
+ ('carmen-overture', 'Carmen: Prelude', 'Georges Bizet', 'Orenthia Light Programme'),
+ ('blue-danube', 'On the Beautiful Blue Danube', 'Johann Strauss II', 'Orenthia Light Programme'),
+ ('thunder-lightning', 'Unter Donner und Blitz', 'Johann Strauss II', 'Orenthia Light Programme'),
+ ('radetzky', 'Radetzky March', 'Johann Strauss I', 'Orenthia Light Programme'),
+ ('florentiner', 'Florentiner March', 'Julius Fucik', 'Orenthia Light Programme'),
+ ('summer-accordion', 'Summer (The Four Seasons): Presto, on the accordion', 'Antonio Vivaldi', 'Radio Mandolinata'),
+ ('csardas', 'Csardas', 'Vittorio Monti', 'Radio Mandolinata'),
+ ('babbino-caro', 'O mio babbino caro', 'Giacomo Puccini', 'Radio Mandolinata'),
+ ('brindisi', 'La traviata: Brindisi', 'Giuseppe Verdi', 'Radio Mandolinata'),
+ ('la-paloma', 'La Paloma', 'Sebastian Yradier', 'Cafe Aman'),
+ ('santa-lucia', 'Santa Lucia', 'Teodoro Cottrau', 'Radio Mandolinata'),
+ ('funiculi', 'Funiculi, funicula', 'Luigi Denza', 'Radio Mandolinata'),
+ ('locus-iste', 'Locus iste', 'Anton Bruckner', 'The Chapel Bell'),
+ ('va-pensiero', 'Nabucco: Va, pensiero', 'Giuseppe Verdi', 'The Chapel Bell'),
+ ('melita', 'Melita (Eternal Father, Strong to Save)', 'John Bacchus Dykes', 'The Chapel Bell'),
+ ('pictures-promenade', 'Pictures at an Exhibition: Promenade', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-old-castle', 'Pictures at an Exhibition: The Old Castle', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-bydlo', 'Pictures at an Exhibition: Bydlo', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-chicks', 'Pictures at an Exhibition: Ballet of the Unhatched Chicks', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-baba-yaga', "Pictures at an Exhibition: The Hut on Hen's Legs", 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('pictures-great-gate', 'Pictures at an Exhibition: The Great Gate of Kiev', 'Modest Mussorgsky; orch. Maurice Ravel', 'Kalyra Concert Hall'),
+ ('beethoven-fifth', 'Symphony No. 5: Allegro con brio', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('beethoven-fifth-finale', 'Symphony No. 5: Finale', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('pathetique-finale', 'Symphony No. 6 "Pathetique": Finale', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('swan-lake-waltz', 'Swan Lake: Waltz (piano)', 'Pyotr Ilyich Tchaikovsky', 'Orenthia Light Programme'),
+ ('rachmaninoff-third', 'Piano Concerto No. 3: Allegro ma non tanto (two pianos)', 'Sergei Rachmaninoff', 'Kalyra Concert Hall'),
+ ('meistersinger-prelude', 'Die Meistersinger: Prelude (piano, after Bulow)', 'Richard Wagner; arr. Hans von Bulow', 'Kalyra Concert Hall'),
+ ('liebestod', 'Tristan und Isolde: Liebestod (piano)', 'Richard Wagner', 'Kalyra Concert Hall'),
+ ('valkyries', 'Die Walkure: Ride of the Valkyries (piano and voices)', 'Richard Wagner', 'Kalyra Concert Hall'),
+ ('aida-march', 'Aida: Triumphal March', 'Giuseppe Verdi', 'Orenthia Light Programme'),
+ ('traumerei', 'Traumerei', 'Robert Schumann', 'Kalyra Concert Hall'),
+ ('slavonic-dance', 'Slavonic Dance Op. 72 No. 1, for wind band', 'Antonin Dvorak', 'Kalyra Concert Hall'),
+ ('brandenburg-two', 'Brandenburg Concerto No. 2', 'Johann Sebastian Bach', 'Kalyra Concert Hall'),
+ ('pange-lingua', 'Pange lingua', 'Anton Bruckner', 'The Chapel Bell'),
+ ('brahms-first-finale', 'Symphony No. 1: Finale', 'Johannes Brahms', 'Kalyra Concert Hall'),
+ ('hebrides', "The Hebrides (Fingal's Cave), for wind band", 'Felix Mendelssohn', 'Kalyra Concert Hall'),
+ ('humoresque', 'Humoresque', 'Antonin Dvorak', 'Radio Mandolinata'),
+ ('donna-mobile', 'Rigoletto: La donna e mobile', 'Giuseppe Verdi', 'Radio Mandolinata'),
+ ('coriolan', 'Coriolan Overture', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('egmont', 'Egmont Overture', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('emperor-allegro', 'Piano Concerto No. 5 "Emperor": Allegro', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('emperor-adagio', 'Piano Concerto No. 5 "Emperor": Adagio un poco mosso', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('ninth-first', 'Symphony No. 9: Allegro ma non troppo', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('ninth-finale', 'Symphony No. 9: Finale (Ode to Joy)', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('water-music', 'Water Music, for wind band', 'George Frideric Handel', 'Kalyra Concert Hall'),
+ ('rejouissance', 'Music for the Royal Fireworks: La Rejouissance', 'George Frideric Handel', 'Kalyra Concert Hall'),
+ ('handel-oboe', 'Oboe Concerto No. 3', 'George Frideric Handel', 'Kalyra Concert Hall'),
+ ('mahler-fifth-storm', 'Symphony No. 5: Sturmisch bewegt', 'Gustav Mahler', 'Kalyra Concert Hall'),
+ ('mahler-ninth-rondo', 'Symphony No. 9: Rondo-Burleske (two pianos)', 'Gustav Mahler', 'Kalyra Concert Hall'),
+ ('clarinet-allegro', 'Clarinet Concerto K. 622: Allegro', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('mozart-forty-finale', 'Symphony No. 40: Allegro assai', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('jupiter', 'Symphony No. 41 "Jupiter"', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('dance-of-the-hours', 'La Gioconda: Dance of the Hours', 'Amilcare Ponchielli', 'Orenthia Light Programme'),
+ ('swan-lake-scene', 'Swan Lake: Scene (Act II), for wind band', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('tchaikovsky-fourth-finale', 'Symphony No. 4: Finale', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('snowflakes', 'The Nutcracker: Waltz of the Snowflakes', 'Pyotr Ilyich Tchaikovsky', 'Orenthia Light Programme'),
+ ('sugar-plum', 'The Nutcracker: Dance of the Sugar Plum Fairy, for wind band', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('verdi-sanctus', 'Requiem: Sanctus', 'Giuseppe Verdi', 'The Chapel Bell'),
+ ('ballade-two', 'Ballade No. 2', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('chopin-berceuse', 'Berceuse', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('fantaisie-impromptu', 'Fantaisie-Impromptu', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('nocturne-fsharp', 'Nocturne in F sharp major, Op. 15 No. 2', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('polonaise-csharp', 'Polonaise in C sharp minor, Op. 26 No. 1', 'Frederic Chopin', 'Kalyra Concert Hall'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -43,7 +126,24 @@ ARRANGED_SHELF = {'gymnopedie-orchestra': dict(hz=1500.0, db={'0': -7.0})}
 # balance: the Hotel Ancora's numbers and the radio's popular stations the upright, the classical
 # station (Voice of Kalyra) the grand.
 def usual_piano(station):
- return 'grand' if station=='Voice of Kalyra' else 'upright'
+ return 'grand' if station in ('Voice of Kalyra','Kalyra Concert Hall','The Chapel Bell') else 'upright'
+
+# Each piece's level in the mix (src/music_synth.jo applies it to the whole piece, keeping the
+# score's own dynamics): the first thirteen were set by ear; the rest measured to sit at the same
+# loudness (tools/music_level.py, BS.1770 over the whole piece). Missing: 1.0.
+LEVEL = {'adagietto': .70, 'mahler-opening': .90, 'magnetic': .40, 'el-choclo': .70, 'gladiators': .22,
+         'ikariotikos': 1.2, 'bethena': .55, 'gymnopedie': 1.40, 'ave-maria': .60, 'clair-de-lune': .38,
+         'adelita': .85, 'berceuse': .30, 'gymnopedie-orchestra': .70}
+LEVEL.update(json.loads((ROOT/'data/music/levels.json').read_text()) if (ROOT/'data/music/levels.json').exists() else {})
+# Pieces heard in the concert hall's long reverberation (orchestra, choir, the concert grand).
+HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo', 'seventh-allegretto',
+        'kleine-nachtmusik', 'clarinet-adagio', 'pathetique-adagio', 'mozart-forty', 'bach-air', 'moldau', 'liebestraum',
+        'standchen', 'fifth-valse', 'lohengrin-chorus', 'hungarian-one', 'daphnis-daybreak', 'bolero', 'barber-overture',
+        'carmen-overture', 'locus-iste', 'va-pensiero', 'melita', 'pictures-promenade', 'pictures-old-castle',
+        'pictures-bydlo', 'pictures-chicks', 'pictures-baba-yaga', 'pictures-great-gate', 'beethoven-fifth',
+        'beethoven-fifth-finale', 'pathetique-finale', 'rachmaninoff-third', 'meistersinger-prelude', 'liebestod', 'valkyries',
+        'traumerei', 'brandenburg-two', 'pange-lingua', 'brahms-first-finale',
+        'coriolan', 'egmont', 'emperor-allegro', 'emperor-adagio', 'ninth-first', 'ninth-finale', 'rejouissance', 'handel-oboe', 'mahler-fifth-storm', 'mahler-ninth-rondo', 'clarinet-allegro', 'mozart-forty-finale', 'jupiter', 'tchaikovsky-fourth-finale', 'verdi-sanctus', 'ballade-two', 'chopin-berceuse', 'fantaisie-impromptu', 'nocturne-fsharp', 'polonaise-csharp'}
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
@@ -81,6 +181,85 @@ MOOD = {
  'clair-de-lune': ('dreamy', "moonlight: floating, pedalled, flowing in its middle section"),
  'adelita': ('tender', "a small sentimental mazurka for guitar, wistful rather than danced"),
  'berceuse': ('tender', "a lullaby (Dolly): rocking, gentle, steady"),
+ 'new-world-largo': ('mournful', "the cor anglais's homesick song over hushed strings: very slow, sustained"),
+ 'seventh-allegretto': ('stately', 'a processional on a long-short-short tread: measured, the pulse never slackening'),
+ 'kleine-nachtmusik': ('jaunty', 'a bright serenade: crisp, buoyant, strictly in time'),
+ 'clarinet-adagio': ('tender', 'the clarinet singing over muted strings: warm, unhurried'),
+ 'pathetique-adagio': ('tender', 'a cantabile song for the piano: calm, legato'),
+ 'mozart-forty': ('stately', 'restless G minor: urgent, but the pulse held'),
+ 'bach-air': ('tender', 'the long line over a walking bass: serene, sustained'),
+ 'moldau': ('dreamy', 'the river flowing: rippling, rising and falling'),
+ 'liebestraum': ('dreamy', 'a love dream: flowing arpeggios under a singing tune'),
+ 'standchen': ('tender', 'a serenade: a quiet song over a plucked accompaniment'),
+ 'fifth-valse': ('dance-like', 'a symphonic waltz: graceful, the waltz kept'),
+ 'lohengrin-chorus': ('stately', 'a bridal procession: steady, warm'),
+ 'hungarian-one': ('dance-like', 'a csardas: slow-fast contrasts, sharp rhythm'),
+ 'daphnis-daybreak': ('dreamy', 'daybreak: murmuring strings, birdsong, a slow rising tune'),
+ 'bolero': ('stately', 'one tune over an unvarying snare rhythm, growing: strictly in time'),
+ 'barber-overture': ('jaunty', 'a comic overture: sparkling, a long crescendo'),
+ 'carmen-overture': ('dance-like', "the bullring's march: bright, driving"),
+ 'blue-danube': ('dance-like', 'the waltz: a lilting one-two-three, its upbeats lingered on'),
+ 'thunder-lightning': ('jaunty', 'a quick polka: brisk, festive'),
+ 'radetzky': ('jaunty', 'a quick march: bright, steady'),
+ 'florentiner': ('jaunty', 'a band march: brisk, festive'),
+ 'summer-accordion': ('dance-like', 'the storm in summer: fast, fierce, driven'),
+ 'csardas': ('dance-like', 'a gypsy csardas: a slow lament, then a whirling dance'),
+ 'babbino-caro': ('tender', "a daughter's plea: sweet, sustained"),
+ 'brindisi': ('dance-like', 'a drinking song: a lilting waltz'),
+ 'la-paloma': ('dance-like', 'a habanera: languid, swaying'),
+ 'santa-lucia': ('tender', "a boatman's barcarolle: gently rocking"),
+ 'funiculi': ('jaunty', 'a funicular song: brisk and merry'),
+ 'locus-iste': ('tender', 'a motet: hushed, devout, sustained'),
+ 'va-pensiero': ('stately', "the exiles' chorus: broad, in unison, yearning"),
+ 'melita': ('stately', "a sailors' hymn: steady, solemn"),
+ 'pictures-promenade': ('stately', 'a walk through the gallery: steady, broad'),
+ 'pictures-old-castle': ('mournful', 'a troubadour by a ruin: slow, lilting, melancholy'),
+ 'pictures-bydlo': ('stately', 'an ox-cart: heavy, plodding, a long crescendo and away'),
+ 'pictures-chicks': ('jaunty', 'chicks in their shells: quick, light, chirping'),
+ 'pictures-baba-yaga': ('dance-like', "the witch's hut: wild, driving"),
+ 'pictures-great-gate': ('stately', 'the great gate: ceremonial, bells, broad'),
+ 'beethoven-fifth': ('stately', 'fate knocking: urgent, the pulse held'),
+ 'beethoven-fifth-finale': ('stately', 'C major triumph: bright, driving'),
+ 'pathetique-finale': ('mournful', 'the last lament: very slow, grieving'),
+ 'swan-lake-waltz': ('dance-like', 'a ballroom waltz: lilting'),
+ 'rachmaninoff-third': ('dreamy', "the concerto's opening: a long plain tune, then storms"),
+ 'meistersinger-prelude': ('stately', 'a festive prelude: broad, ceremonial'),
+ 'liebestod': ('dreamy', 'the love-death: rising, swelling, unresolved'),
+ 'valkyries': ('stately', 'the ride: galloping, heroic'),
+ 'aida-march': ('stately', 'a triumphal march: trumpets, ceremony'),
+ 'traumerei': ('tender', 'a dream: slow, intimate'),
+ 'slavonic-dance': ('dance-like', 'a furiant: fast, cross-rhythms'),
+ 'brandenburg-two': ('jaunty', 'a concerto grosso: bright, the trumpet on top'),
+ 'pange-lingua': ('tender', 'a plainchant hymn harmonised: hushed'),
+ 'brahms-first-finale': ('stately', 'from darkness to the great tune: broad'),
+ 'hebrides': ('dreamy', 'the sea and the cave: rolling, swelling'),
+ 'humoresque': ('tender', 'a little lilting piece: wistful'),
+ 'donna-mobile': ('jaunty', "the duke's song: a swinging tune"),
+ 'coriolan': ('stately', 'the wider repertoire, batch 3'),
+ 'egmont': ('stately', 'the wider repertoire, batch 3'),
+ 'emperor-allegro': ('stately', 'the wider repertoire, batch 3'),
+ 'emperor-adagio': ('tender', 'the wider repertoire, batch 3'),
+ 'ninth-first': ('stately', 'the wider repertoire, batch 3'),
+ 'ninth-finale': ('stately', 'the wider repertoire, batch 3'),
+ 'water-music': ('jaunty', 'the wider repertoire, batch 3'),
+ 'rejouissance': ('jaunty', 'the wider repertoire, batch 3'),
+ 'handel-oboe': ('tender', 'the wider repertoire, batch 3'),
+ 'mahler-fifth-storm': ('stately', 'the wider repertoire, batch 3'),
+ 'mahler-ninth-rondo': ('jaunty', 'the wider repertoire, batch 3'),
+ 'clarinet-allegro': ('jaunty', 'the wider repertoire, batch 3'),
+ 'mozart-forty-finale': ('stately', 'the wider repertoire, batch 3'),
+ 'jupiter': ('stately', 'the wider repertoire, batch 3'),
+ 'dance-of-the-hours': ('dance-like', 'the wider repertoire, batch 3'),
+ 'swan-lake-scene': ('mournful', 'the wider repertoire, batch 3'),
+ 'tchaikovsky-fourth-finale': ('stately', 'the wider repertoire, batch 3'),
+ 'snowflakes': ('dance-like', 'the wider repertoire, batch 3'),
+ 'sugar-plum': ('jaunty', 'the wider repertoire, batch 3'),
+ 'verdi-sanctus': ('stately', 'the wider repertoire, batch 3'),
+ 'ballade-two': ('dreamy', 'the wider repertoire, batch 3'),
+ 'chopin-berceuse': ('tender', 'the wider repertoire, batch 3'),
+ 'fantaisie-impromptu': ('dreamy', 'the wider repertoire, batch 3'),
+ 'nocturne-fsharp': ('dreamy', 'the wider repertoire, batch 3'),
+ 'polonaise-csharp': ('stately', 'the wider repertoire, batch 3'),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
@@ -109,6 +288,7 @@ def gm(program, drum=False):
  if program < 8: return PIANO
  if program == 46: return HARP
  if program in (21,22,23): return ACCORDION
+ if program in (52,53,54): return CHOIR
  if 24 <= program < 32 or program == 105: return BANJO
  if 32 <= program < 40: return BASS
  if program == 47: return TIMPANI
@@ -236,6 +416,19 @@ def arrange(name,notes):
  for start,dur,pitch,ins,g0,g1,track in notes:
   key=(track,round(start,3));top[key]=max(top.get(key,-1),pitch)
  for start,dur,pitch,ins,g0,g1,track in notes:
+  if name=='summer-accordion':
+   # The solo violin on the accordion; the ripieno strings as they are, a bass under the cello.
+   if track==0: ins=ACCORDION
+   elif track==4 and pitch<48: out.append([start,dur,pitch-12,BASS,g0*.5,g1*.5,track])
+  elif name in ('va-pensiero','melita') or (name=='lohengrin-chorus' and track<4):
+   # The voices (exported as piano or clarinet) sung by the choir.
+   ins=CHOIR
+  elif name=='santa-lucia' and track==0:
+   # The boatman's song on the mandolin, over the piano.
+   ins=BOUZOUKI
+  elif name=='funiculi':
+   # The two violins become mandolin and guitar.
+   ins=BOUZOUKI if track==0 else HARP
   if name=='magnetic':
    start*=60/116;dur*=60/116
    ins=CLARINET if track==1 and pitch>=60 else PIANO if pitch>=48 else BASS
@@ -313,12 +506,17 @@ def main():
   notes,balanced=balance_notes(name,notes)
   if balanced:performance.update(balance_db=BALANCE[name]['gains_db'])
   blob,end,events=pack(notes,mix_levels=name in ANNOTATED or balanced,sections=sections)
+  # A large score is stored as it is (marked RAW!): the game's inflate costs ~170 instructions a
+  # byte, a hitch of a frame or more on a phone when the radio moves on to a long symphony.
+  raw=zlib.decompress(blob,-15)
+  assert not blob.startswith(b'RAW!')
+  if len(raw)>RAW_OVER:blob=b'RAW!'+raw
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
   meta.append(dict(id=name,title=title,composer=composer,station=station,piano=usual_piano(station),frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
  (ROOT/'data/music/performance.json').write_text(json.dumps(performances,indent=2)+'\n')
  (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
- lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '    shelf_hz = 0.0                  # the automatic balance\'s high shelf (tools/music_balance.py)', '    shelf_db: f64[] = []            # (dB per instrument above shelf_hz)', '    piano = 0                       # the piano it is played on: 0 the concert grand, 1 the 1920s upright', '', 'MUSIC_PIECES: MusicPiece[] = [']
+ lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '    shelf_hz = 0.0                  # the automatic balance\'s high shelf (tools/music_balance.py)', '    shelf_db: f64[] = []            # (dB per instrument above shelf_hz)', '    piano = 0                       # the piano it is played on: 0 the concert grand, 1 the 1920s upright', '    level = 1.0                     # its level in the mix (tools/music_pack.py LEVEL)', '    hall = false                    # heard in the concert hall\'s reverberation', '', 'MUSIC_PIECES: MusicPiece[] = [']
  for r in meta:
   shelf=BALANCE.get(r['id'],{}).get('shelf')
   if r['id'] in ARRANGED_SHELF:
@@ -327,6 +525,8 @@ def main():
    shelf=dict(hz=own['hz'],db=merged)
   extra=f",{float(shelf['hz'])},["+','.join(f"{float(shelf['db'].get(str(k),0.0))}" for k in range(16))+"]" if shelf else ''
   piano=', piano = 1' if usual_piano(r['station'])=='upright' else ''
+  level=LEVEL.get(r['id'],1.0);piano+=f', level = {level}' if level!=1.0 else ''
+  piano+=', hall = true' if r['id'] in HALL else ''
   lines.append('    MusicPiece('+','.join(json.dumps(r[k]) for k in ['title','composer','station'])+f",{r['frames']}{extra}{piano}),")
  lines+= [']','','music_bytes = (piece: int) -> u8[]:', '    match piece:']
  for i,r in enumerate(meta):lines.append(f'        {i}: embed(\'../data/music/{r["id"]}.z\')')

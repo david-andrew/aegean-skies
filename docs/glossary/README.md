@@ -15,12 +15,12 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf (trial)](#surf-trial) · [Rain rings](#rain-rings)
-- **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Wake](#wake)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
+- **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Farmland](#farmland) · [Grass egg](#grass-egg)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
@@ -124,6 +124,38 @@ blue discs that stay in every frame are **speed flecks**.
   `src/sea.jo:763 swell_at(x, z, t)`.
 - **Rules:** the decorative layers (flecks, crest strokes, glints) never drive physics. Physical
   swell, bathymetry, shore opacity, wakes and shadows must be preserved by any sea restyling.
+- **Spectrum:** each band's share follows the wind (`SeaState.gains`, a Pierson–Moskowitz-like
+  shape peaking near 0.83·U² m): in an ordinary breeze the long, fast bands are low and the sea
+  is carried by its short waves; the long bands grow in with the wind. Phase speeds follow deep
+  water (c = √(gλ/2π)).
+
+### Storm sea
+
+- **Aliases:** the storm regime, heavy seas, `sea_storm`.
+- **Definition:** not the ordinary sea turned up but a sea of its own. It sets in from a near
+  gale (about 13 m/s, full by 22) or under a thunderstorm. The swell's bands stretch to 2.4
+  times their length and grow half again in steepness, so long, high seas several metres high
+  run with the wind. Their crests peak and their troughs flatten (a second harmonic, as in a
+  Stokes wave). Over shallow water they lose their height (none higher than about 0.6 of the
+  depth). The water goes a dark, heavy grey-teal, lit through the thin tops of the big seas. The
+  crests break white on their downwind faces in ragged patches, and behind them lies a dense
+  marbled web of foam: fine veins bent by the waves, crossing into a net, thick in the lee of the
+  crests; close by, torn into small patches, holes and bubbles and a fine net of breaking lines; a
+  ragged white line of foam along the very top of each sea. The sky closes in: heavy overcast, low grey light, haze that
+  keeps the sea readable to a few hundred metres. Spindrift blows off the tops; a gale tears
+  the aircraft's spray banks away downwind. Floats feel the storm's swell rising and falling
+  under them and most of its slope, so alighting or ditching in it can break a hull or capsize.
+- **Code:** `src/sea.jo` `sea_state` / `SeaState` (CPU, shared by the drawn sea and `swell_at`),
+  `sea_storm_of`, `sea_wave_profile`, `sea_shoal`, `sea_storm_foam` (its noise from the tile
+  `sea_storm_noise_image`), `sea_storm_light`; uniforms `swell_gain`, `sea_storm`, `storm_noise`.
+  The storm water is its own shader variant (`storm_water`, `sea_storm_shaders`), made the
+  first time a storm is up; an ordinary sea draws the ordinary program. Floats:
+  `FlightEnv.swell_rate`, `swell_slope_share` (`src/flight.jo`, set in `src/pilot.jo`); the
+  chase camera lifts over crests between it and the aircraft (`Flyer.storm_lift`).
+- **Rules:** the CPU swell and the drawn swell stay identical, ordinary and storm
+  (tests/precision_test.jo). Speed flecks and the sea's fine detail are untouched.
+- **Capture:** `AEGEAN_WEATHER=meltemi AEGEAN_WIND_BIAS=10` (about 23 m/s), e.g. with
+  `AEGEAN_FLYING="35 50"` or `AEGEAN_CAPTURE_TAKEOFF=1`.
 
 ### Shallows band
 
@@ -159,18 +191,16 @@ blue discs that stay in every frame are **speed flecks**.
 ### Cliff beds and lip
 
 - **Aliases:** strata, ledges, the cliff top, the fringe, the cliff's foot.
-- **Definition:** limestone cliffs painted as the film paints them: stacked beds about 3 m thick,
-  each its own tone, with a lit lip and a cool violet shadow under the bed above, ledges coming and
-  going along the face, tufts on them. At the top the scrub hangs over the edge in ragged tongues
-  with a soil band and root-stained rock below; at the foot, rock down to the water, wet at the
-  waterline. The rock is lit as bold planes by the way it faces.
-- **Code:** `src/terrain.jo ground_surface` (the strata block, the fringe block under "Where cliff
-  meets the green", the plane lighting under `light_normal`); `cliff_edge` from `ground_material`.
-- **Rules:** decide classification per pixel, never from values interpolated across a 14 m
-  terrain triangle (they draw sawteeth and dark wedges). `cliff_edge` (the slope changing fast
-  across a triangle) marks a cliff's lip and foot; ordinary hillsides skip all cliff work. The low
-  tier keeps only the per-pixel foot and edge rules: its ground shader on the laptop's GPU cannot
-  afford the ledges, tufts, streaks or plane lighting.
+- **Definition:** Coastal limestone has stacked beds about 3 m thick. Grass gives way to
+  crumbling soil at the lip, with a soft shadow just beneath it. At the foot, loose pale stone
+  darkens where the sea wets it.
+- **Code:** `cliff_station`, `cliff_map_image` and `cliff_contact` in `src/terrain_lod.jo`
+  describe the shelf. `ground_material` and `ground_surface` in `src/terrain.jo` paint it.
+- **Rules:** Sample the shelf in terrain-map coordinates at the vertices. Gentle ground contributes its elevation
+  weighted by how much soil it can hold. Compare the reconstructed shelf elevation with each
+  fragment's height so a single steep triangle can cross the whole face without stretching the
+  grass or the soil band down it. Ordinary triangles skip this work. Subpixel soil, shadow and gravel detail
+  fade with pixel size. All terrain detail levels and the phone use the same rim and toe.
 - **Capture:** `AEGEAN_VIEW="4793 25 -5162 -2.129 -0.024 12.5"` (cliff from the sea, island),
   `"139848 25 79652 -0.783 -0.073 12.5"` (mainland).
 
@@ -186,11 +216,12 @@ blue discs that stay in every frame are **speed flecks**.
 
 ![The shallows band and shore foam around a beach island, from 300 m](img/shallows.png)
 
-### Surf (trial)
+### Surf
 
 - **Aliases:** the Surf tweak, breaking waves, run-up, swash, lace foam, ships' white water.
-- **Definition:** a trial on the Tweaks page ("Surf", off by default; `AEGEAN_SURF=1` or
-  `AEGEAN_TWEAKS=surf` at start), replacing [shore foam](#shore-foam) while on.
+- **Definition:** waves breaking on the shore and ships' white water, on by default since
+  2026-11-20 (the Tweaks page's "Surf" box; `AEGEAN_SURF=0` at start turns it off), replacing
+  [shore foam](#shore-foam).
   - **Waves:** waves peel in along the shore, each stretch a little out of step. A wave breaks as
     a crisp white **lip** at the break line (1.6–2.7 m deep, deeper in a fresh sea) and runs in as
     a **bore** with **lace foam** behind it: pale foam broken by dark rounded holes, thinning as it
@@ -203,9 +234,9 @@ blue discs that stay in every frame are **speed flecks**.
     bow cheeks aft and churns out astern.
 - **Code:** `src/surf.jo` (`surf_phase`, `surf_lace`, `surf_sea_foam`, `surf_swash`,
   `surf_ship_foam`). Used by `src/sea.jo` `sea_material(..., surf=true)` and `src/terrain.jo`
-  `ground_material(..., surf=true)`; these are their own shader variants, made the first time the
-  trial is on. Ships: `src/vessel_spray.jo`.
-- **Rules:** with the trial off, the sea and coast are drawn by exactly the plain shaders (the
+  `ground_material(..., surf=true)`; these are their own shader variants, made the first time Surf is
+  needed. Ships: `src/vessel_spray.jo`.
+- **Rules:** with Surf off, the sea and coast are drawn by exactly the plain shaders (the
   sea-detail guard's output is identical). The open sea, its [speed flecks](#speed-flecks) and its
   fine detail are untouched either way: the surf is zero beyond the surf zone's depth and
   1.5 km. The lace's edges stay about a pixel wide near or far.
@@ -252,7 +283,10 @@ blue discs that stay in every frame are **speed flecks**.
   churns: billows are born small near the chine, swell as they roll aft along the sheet, rock
   outward and back, and lift off the crest as shrinking blobs while new ones form behind; the sheet
   lobes' scallops roll over the top and aft, each lobe swells on its own beat, and the whole curtain
-  breathes with chop and float bounce (the sheet's **heave**).
+  breathes with chop and float bounce (the sheet's **heave**). Where the spray is still thin sea
+  water (the rising sheet, the undersides of the billows, the foot of the [spray bank](#spray-banks)
+  by the floats) it is painted light aqua with white streaks running up it, as the film paints a
+  thrown sheet, turning to the spray's cream where it breaks and as the wall runs aft.
 - **Code:** `src/splash.jo` `splash_fan` (sheet lobes, kind 3; billows, kind 2, `CURTAIN_ROWS`),
   `curtain_widths` (inner/outer half-widths), `splash_vs` (roll, spin, outer bulge), `splash_fs`
   (curtain tones), `splash_targets` / `step_splash_motion` (heave).
@@ -310,6 +344,20 @@ blue discs that stay in every frame are **speed flecks**.
 - **Capture:** `AEGEAN_CAPTURE_TAKEOFF=1` (take-off), `=land` (a landing with a bounce),
   `AEGEAN_WATCH="ahead side up [look]"` (a fixed camera to watch a bank hang),
   `AEGEAN_WEATHER=meltemi` (rough water), `AEGEAN_CRAFT=5` (a flying boat).
+
+### Spindrift
+
+- **Definition:** in a storm sea, spray torn off the wave tops by the wind and streamed downwind
+  as soft smoke. Each wisp is torn from a crest near the eye and drawn as a stream of soft round
+  puffs, one for each parcel of spray, facing the eye: faint as it leaves the crest, densest a
+  little way off, growing and thinning away downwind over two to three seconds. Never thin
+  bright rays.
+- **Code:** `src/spindrift.jo` (`step_spindrift`, `draw_spindrift`), drawn after the splashes in
+  `aegean.jo`, with the battle trails' soft-edged shader (`src/combat_trails.jo`): each puff a
+  fan of triangles from a centre to a rim, so the shader's edge falloff rounds it.
+- **Rules:** presentation only (crests found with `swell_at`; no forces, no shared particles, no
+  draws on the game's random numbers); nothing unless the sea is stormy. Cap: 60 wisps on the
+  low tier, 100 otherwise, within 380 m of the eye; four puffs each, none within 12 m of the eye.
 
 ### Splash streaks
 
@@ -1410,6 +1458,47 @@ On the rivers branch until it lands.
   fog, meltemi (the clear summer gale) and calm.
 - **Code:** `weather_fixture` (via `AEGEAN_WEATHER=<name>`), `src/weather_scene.jo`.
 
+### Sunset
+
+- **Definition:** the light while the sun is low or touching the water: a dusky violet-blue sky
+  overhead, rose lower down and round the whole horizon, and a deep orange band low on the sun's
+  side (hottest at the horizon toward the sun, the rest of the horizon a pink belt). The sea goes a
+  deep blue-violet under it, the orange carried by its glitter. Clouds take the light from below:
+  their bases go gold, edges toward the sun lit through, shaded sides rose-violet, and the sides
+  away from the sun orange. Hands over to the afterglow by about 18:30.
+- **Code:** the sunset keys (sun height 0 and 0.15) of `TWILIGHT_*` in `src/look.jo`, with
+  `Light.sunset` (how much the sun on the water reddens the glow band, `draw_glow_band` in
+  `src/sky.jo`); the clouds' sunset shade (`VOLUME_SUNSET_SHADE`) and low-sun light in
+  `src/cloud_volume.jo` (`cloud_paint`).
+- **Capture:** `AEGEAN_VIEW="-30000 50 36000 1.5708 0.06 17.85"` (at sea, looking west).
+
+### Sun disc
+
+- **Definition:** the sun's disc, white high up. Low down it is graded, pale gold at its top to
+  amber at its foot, and reddens as it sinks (deep orange to red touching the water); it is
+  flattened by the air and drawn up to 1.8 times larger near the horizon. Where it meets the water
+  the warm air over the sea bends its foot into wavering slices and joins it to a short
+  upside-down image of itself.
+- **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
+  sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
+  shape worked out on the CPU from the sun's height over the visible horizon).
+
+### Day's air
+
+- **Definition:** how clear or thick the low air is on a given day, which colours the sunset.
+  One kind a day, the same for everyone, from the day's number, nudged by the weather where the
+  eye is (rain or a deck overhead: humid; a clearing wind: clear or washed). **Clear** is the
+  baseline sunset. **Hazy**: the disc orange from about 15 degrees up, the glow band broader.
+  **Dusty** (Saharan dust): the whole sky milky all day, a pale buff-grey veil from the horizon
+  well up past the sun with the blue weak and only overhead, no bright glare round the sun, a
+  flatter, warmer light; the disc orange to red from about 20 degrees, a little dimmer and
+  softer-edged, the band broad and red. **Hazy** days the same, less.
+  **Humid**: a softer, pinker glow, the disc orange from about 12 degrees. **Washed** (after
+  rain, a clean wind): crisp air, the disc yellow almost to the water, the band narrower.
+- **Code:** `src/day_air.jo` (`day_air_kind`, `day_air_light`, worked out on the CPU into the
+  frame's Light; `Light.turbidity` for the disc, `Light.glare` scales the sky's glare, `sun_disc_look` in `src/sky.jo`).
+  `AEGEAN_SKY_AIR=clear|hazy|dusty|humid|washed` fixes the kind for captures.
+
 ### Afterglow
 
 - **Aliases:** twilight, golden hour, blue hour.
@@ -1661,6 +1750,20 @@ On the rivers branch until it lands.
 - **Code:** `src/world_terrain.jo` (`world_shell_vertex`, `world_shell_fragment`,
   `draw_world_shells`, `world_shell_scale`).
 
+### Far land layers
+
+- **Definition:** the far land's aerial perspective, painted in layers: the land keeps its own
+  colour a long way (about two thirds at 5 km, half at 10, a quarter at 20), each farther ridge a
+  step paler and bluer, turning to the haze only far off. Valleys hold extra air, so a far ridge's
+  foot is paler than its crest. **Painted layers** (on by default; Tweaks › Look to compare, `AEGEAN_PAINTED_LAYERS=0` turns
+  them off) reckons the air at bands twice as far apart each time (1, 2, 4 ... 32 km) in air two
+  and a half times as thick, with a crisp edge between them, so the land parts into painted layers
+  by distance even on rounded hills; the trees' crowns and canopy shells step with the ground.
+- **Code:** `land_aerial` in `src/canopy.jo` (`LAND_FADE`, `LAND_MIST`; `land_step_scale` and
+  `GroundParams.land_steps` for the layers; `land_aerial_terms` per vertex for the crowns and
+  canopy shells). Other objects use look.jo `aerial`; foliage that should layer with the ground
+  calls `land_aerial` or `land_aerial_terms`.
+
 ### Far canopy
 
 - **Aliases:** the canopy, the crown mass, grove crowns, painted trees, the far tree texture.
@@ -1687,7 +1790,7 @@ On the rivers branch until it lands.
   the horizon, so far ridges read as blue silhouettes a value step under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
   `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
-  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_aerial`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_air_weights`, `apply_land_air`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
   tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
   in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
   baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
@@ -1847,6 +1950,9 @@ On the rivers branch until it lands.
   skipper or the harbour (the launch's call-out on top); short of money, it is owed (a debt, which
   the reputation keeps). Out of the R/T's reach (40 km to a town harbour or the flight), the line
   reads "Fire a flare": a red star goes up and the nearest ship or harbour within 8 km comes.
+  A pilot who parachuted into the sea can signal with the same flare. A boat searches even
+  without a signal, boards the pilot from the water, and carries them to a safe harbour or the
+  tender. Pickup preserves the pilot's side and engagement when a situation hands back to play.
   When the flight turns for home its leader says where ("then back to Ardevanti").
 - **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
   `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /
@@ -1876,9 +1982,21 @@ On the rivers branch until it lands.
   [call for help](#call-for-help) ("Wait for them" while help comes); with a flight in the air,
   the flight leader's words follow: form on me, circle here and wait, attack my target, break off
   and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
-  nearest of the flight answers in a few plain words.
+  nearest of the flight answers in a few plain words, by [signal](#signals-between-aircraft) when
+  in sight.
 - **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
   in `aegean.jo`.
+
+### Signals between aircraft
+
+- **Aliases:** hand signals, the Aldis lamp, by hand, by lamp.
+- **Definition:** a word from one of the player's flight in sight of the player comes by signal,
+  not the R/T: within 260 m the pilot's arm goes up out of the cockpit and waves; out to 2.2 km
+  an Aldis lamp over the cockpit flashes the line's first word in Morse, over and over. The
+  caption names the way ("Kalyra 1, by lamp: Close up."), and no Morse cue sounds. Farther off,
+  the line comes by the R/T as before.
+- **Code:** `src/flight_signals.jo`; `update_homeward` and `draw_homeward_signal` in
+  `src/homeward_view.jo`.
 
 ### The Ierax (seaplane tender)
 
@@ -1890,7 +2008,13 @@ On the rivers branch until it lands.
   past her side, and four booms swung out from her seaward side with a trot of buoys astern. The
   strait's Kalyran flight comes home to her: round the island's low north end (its ridge of 1,200 m
   lies between her and the strait; the leader takes the flight round it, a point at a time, at a pace
-  the player's own aircraft cruises at), lands to seaward and moors in turn along the booms and astern. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
+  the player's own aircraft cruises at), puts down on a line off her side (across a light wind when
+  the high ground lies under the way in from downwind), its run ending by her moorings, and moors
+  in turn along the booms and astern, each made fast within a minute or so of alighting while the
+  rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
+  end, alongside her or on her deck can be helped aboard her: up the boom's spar and her side, or
+  across a brow put out from her rail, and below; her boat takes them in to Ardevanti, a foe of
+  Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
   to 80% in hull and engine on her deck (free to a Kalyran pilot, at a workshop's rate to anyone
@@ -2012,7 +2136,8 @@ On the rivers branch until it lands.
     costume (`build_figure(bathing = true)`). His scarf stays with his clothes.
   - **What is worn:** as at the island baths of the twenties and thirties, a one-piece suit of
     knitted wool, dark (navy, black, maroon, bottle green), to the mid-thigh. It is sleeveless for
-    a man, some of them striped, and has short sleeves for a woman. Arms, shins and feet are bare
+    a man, held up by a narrow strap over each bare shoulder, some of them striped, and has short
+    sleeves for a woman. Arms, shins and feet are bare
     (`BATH_SUITS`). The open pool is mixed and in costume. Separate men's and women's baths,
     where bathing was in the nude, were indoors, and none is shown.
   - **Getting in:** tap the hot pool. He walks to its steps by the terraces' stairs and round the
@@ -3013,9 +3138,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Things to tap
 
-- **Aliases:** clicking the thing itself, walking over to it, the gleam.
+- **Aliases:** clicking the thing itself, walking over to it, the look highlight, the gleam.
 - **Definition:** the game's standing preference is the thing in the world over a button or a card.
-  On foot, these are tapped or clicked (with the mouse free) instead of their cards:
+  On foot, these are tapped, or looked at and clicked, instead of their cards:
   - one's own aircraft at her mooring: the cockpit ("Climb aboard"), and the engine ("Work on her");
   - the pilot's table and the bar's stool ("Sit", "Sit at the bar");
   - the hotel's desk ("Ask for a room") and the barber's chair ("A shave");
@@ -3033,20 +3158,35 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 - **Seated:** at a table or the bar, the band's stand and the jar are tapped or clicked the same
   way, and so are the board and the paper at the coffee house (`seat_things`). They are no longer
   buttons on the table's bar, but their keys T, P, S and B still work.
-- **Pointed at:** with the mouse free, a small label over the thing says what it does
+- **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
+  round it and a faint band of light passing slowly down over it, with a few flecks in it like a
+  bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). The line
+  follows the thing's own shape where it has meshes of its own: one's own aircraft (all of her,
+  wings, floats and tail, whether her cockpit or her engine is looked at), the townspeople, the
+  springs' keeper, and the coffee house's board and paper. As the scene draws that thing, its
+  meshes are taken (`look_take`), then drawn alone into a small mask covering only its rectangle
+  on the screen, and one pass over that rectangle draws the line just outside the mask's edge and
+  the band inside it (`src/look_outline.jo`). The pilot is never in the mask, and the line is
+  drawn over him where he stands in front. Nothing is rendered while nothing is looked at. The
+  things that are part of a larger mesh (the hotel's tables, the bar's stool, the desk at the
+  room door, the barber's chair, the band's stand and jar, the coffee house's table, the hot
+  pool) keep their box's outline, and so does the software renderer. `AEGEAN_LOOK_SHAPE=0` keeps
+  the box's outline for everything (for measuring what the shape costs). It goes
+  by where the camera looks, not where he faces: a ray from the camera through the middle of the
+  screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
+  then the nearest one. His own body never counts. A click uses it, whether the mouse is locked to
+  the view or not; a click on nothing takes the mouse for the view. There is no pointer on foot.
+  On a touch screen the same thing is lit, showing what a tap there would do, and a tap on any
+  thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
+  at with the mouse free, and a small label over the thing says what it does
   (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
-- **The mouse locked to the view:** what the middle of the screen is on is lit and labelled, with a
-  small dot at the middle while it is on something, and a click there goes to it, so the mouse
-  needn't be freed first (`foot_aim`).
-- **The pointer on foot (a trial, Tweaks, off by default; `AEGEAN_POINTER_ON_FOOT=1`):** the mouse
-  stays a pointer on foot. A thing hovered is labelled, and a click uses it. A click on open ground
-  walks there. A drag turns the view, as in the rooms and at a table. `AEGEAN_SHOW_POINTER=1` draws
-  the pointer for captures.
 - **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
   index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
+  `AEGEAN_LOOK_TRACE=1` prints a `LOOK <frame> <label>` line each time the view comes to look at
+  another thing (`-` for nothing).
 
 ### Pleasure flight
 
@@ -3116,9 +3256,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     the thing, and sits or lies down by degrees (`RoomPilot`, `room_step`, `room_body`; the
     figure's `settle` amount in `src/folk.jo`). He never jumps to a new spot. The view eases from
     one of its places to the next.
-  - **Into bed in two halves:** he turns about and sits down on the bed's edge, then swings round
-    onto it and lies back (`room_bed_edge`; the figure's posture 7, lying back from sitting).
-    Getting up is the same the other way.
+  - **Into bed in three steps, one at a time:** he turns about where he stands until his back is
+    to the bed, then sits down on its edge, then swings round onto it and lies back
+    (`room_bed_edge`; the figure's posture 7, lying back from sitting; `ROOM_LIE_SECONDS` for the
+    three). Getting up is the same the other way.
   - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
     evening (`room_sleep_until`). A tap or click on a thing wakes him, and once he's up he goes
     there. A key wakes him only (Back or Escape among them, never also the way out). He stays
