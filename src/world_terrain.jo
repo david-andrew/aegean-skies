@@ -59,6 +59,8 @@ struct WorldTile:
     stand: f32[] = []              # the woods' stand cover per sample (to level 3: src/canopy.jo wood_cover)
     rise: f32[] = []               # and the canopy's rise there
     wooded: f32 = 0.0              # its samples' most stand cover (any level)
+    entered: f64 = -1e9            # when it last came into the selection (world_clock)
+    start: f64 = 0.0               # the detail drawn where it is when it came in (a lod), which it morphs from
 
 struct WorldInstance:
     origin: vec2
@@ -260,7 +262,7 @@ world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
     world_billows[slot] = []; world_billow_has[slot] = []
     if job.wooded > 0.05 and job.level <= 3:
         ox,oz = world_tile_origin(job.x,job.z,job.level)
-        world_billows[slot] = billow_build(ox,oz,job.level,job.values,job.stand,job.rise)
+        world_billows[slot] = billow_build(job.x,job.z,job.level,job.values,job.stand,job.rise)
         world_billow_has[slot] = billow_held(world_billows[slot])
     tile
 
@@ -505,7 +507,9 @@ world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundO
     if p.x == 16.0: level = max(level,inst.edges.y)
     if p.y == 0.0: level = max(level,inst.edges.z)
     if p.y == 16.0: level = max(level,inst.edges.w)
-    level = clamp(level,0.0,3.0)
+    # (up to four levels coarser: the last blends toward one quad a tile, the grid of the tile
+    # four levels up)
+    level = clamp(level,0.0,3.999)
     s = pow(2.0,floor(level))
     fine = world_coarse(u,inst.texel,p,s)
     sample = fine
@@ -663,6 +667,7 @@ struct Billow:
     seed: vec4                      # its three draws (0..1), the canopy's rise at its centre
     lie: vec4                       # the ground's slope under it (x, z, per metre), the rise's slope (x, z, per metre)
     seat: vec4                      # what it stands on, fully grown: the masses (m), the clumps (m); the stand cover; the sheet under it (1; 0: none, it stands on the ground)
+    born: vec4                      # when it was made (world_clock, s), where it begins to rise (its distance, m)
 
 const BILLOW_TIERS = 3
 const BILLOW_LOBES = 7
@@ -671,6 +676,11 @@ const BILLOW_SHEET = 0.5           # (the sheet's height under grown masses, of 
 
 billow_span = (tier: f32) -> f32: if tier < 0.5: 56.0 else: if tier < 1.5: 28.0 else: 14.0
 billow_reach = (tier: f32) -> f32: if tier < 0.5: 2600.0 else: if tier < 1.5: 1300.0 else: 560.0
+# Where the crowns begin to rise, at most: within the finest terrain tiles, which are where they
+# are made (billow_build), so a tile's split never brings crowns already risen (the finest tiles
+# reach to 448 m times the quality's terrain detail; a crown begins up to 18% farther out by its
+# draw).
+billow_crown_reach = () -> f32: f32(min(560.0,380.0*render_quality.terrain_detail))
 
 # A cell's dome: its three draws (0..1).
 billow_seed = (cell: vec2,tier: f32) -> vec3:
@@ -693,8 +703,9 @@ billow_shape = (tier: f32,sd: vec3) -> vec3:
 
 # How far a dome has risen at a distance over the ground (0 still under the sheet, 1 its full
 # height); a crown a little sooner or later than its neighbours by its own draw.
-billow_emerge = (tier: f32,d: f32,draw: f32) -> f32:
-    far = billow_reach(tier)*(0.82+0.36*draw)
+billow_emerge = (tier: f32,d: f32,draw: f32) -> f32: billow_risen(billow_reach(tier)*(0.82+0.36*draw),d)
+# The same for a dome that begins to rise at `far` (its born.y).
+billow_risen = (far: f32,d: f32) -> f32:
     g = clamp((far-d)/(far*0.32),0.0,1.0)
     g*g*(3.0-2.0*g)
 
@@ -716,10 +727,24 @@ canopy_floor = (p: vec2,rise: f32,d: f32) -> f32:
 # (size*16+block), so a frame gathers only the blocks in view and in reach. A dome belongs to the
 # tile and the block its centre is in.
 const BILLOW_BLOCKS = 4
-billow_build = (ox: f64,oz: f64,level: int,ground: f32[],stand: f32[],rise: f32[]) -> Billow[][]:
-    if level > 3 or ground.len() != 289 or stand.len() != 289: return [loop i in 0..BILLOW_TIERS*BILLOW_BLOCKS*BILLOW_BLOCKS: []]
+# Each size is made in tiles of one level only, whatever level the terrain draws there, so a
+# tile's split or merge never changes a dome: the masses in level-3 tiles, the clumps in level-2
+# tiles, the crowns in level-0 tiles (each within the reach of tiles of that level). A clump
+# stands on its level-3 ancestor's masses, a crown on its level-2 and level-3 ancestors' domes
+# (made first: a tile's ancestors are made before it is asked for); each dome's ground is the
+# canonical surface under its centre, not the tile's coarser grid.
+billow_build = (x: int,z: int,level: int,ground: f32[],stand: f32[],rise: f32[]) -> Billow[][]:
+    tier = if level == 3: 0 else: if level == 2: 1 else: if level == 0: 2 else: -1
+    if tier < 0 or ground.len() != 289 or stand.len() != 289: return [loop i in 0..BILLOW_TIERS*BILLOW_BLOCKS*BILLOW_BLOCKS: []]
+    ox,oz = world_tile_origin(x,z,level)
     step = 14.0*f64(1<<level)
-    billow_make(ox,oz,step,17,17,ox,oz,step*16.0,if level == 0: 3 else: if level <= 2: 2 else: 1,1.0,ground,stand,rise)
+    given: Billow[][] = [[],[]]
+    loop t in 0..tier:
+        up = 3-t-level
+        if let slot = world_cache.get(world_tile_key(x >> up,z >> up,level+up)):
+            if slot < world_billows.len():
+                loop list in world_billows[slot]: given[t] += list
+    billow_make(ox,oz,step,17,17,ox,oz,step*16.0,tier,tier,1.0,true,ground,stand,rise,given)
 
 # How high a size's domes stand at a point (m over what they stand on, fully grown): the highest
 # of the domes about it, each as its vertices have it (the canopy's rise there by its slope from
@@ -742,28 +767,40 @@ billow_top = (cells: Billow[],cx0: int,cz0: int,wide: int,tier: f32,q: vec2) -> 
     best
 
 # The domes of a square of land (ox, oz, size) from a grid of samples over it (from gx, gz,
-# step m apart, nx by nz): the first `sizes` sizes (the masses, then the clumps, then the crowns).
+# step m apart, nx by nz): the sizes from `first` to `last` (0 the masses, 1 the clumps, 2 the
+# crowns). given: the masses and the clumps already made about it (by their own tiles), to stand
+# the smaller on; where none are given they are worked out here from this grid. surface: each
+# dome's ground the canonical surface (the new world) rather than the grid's.
 # A mass or a clump stands only where the wood covers its middle (a small wood has none: its
 # crowns stand on the sheet); a clump stands on the masses under its centre, a crown on whatever
 # dome is highest under its own. sheet: 1 where the canopy's sheet lies under them; 0 where
 # there is none (the old islands) and they stand on the ground.
-billow_make = (gx: f64,gz: f64,step: f64,nx: int,nz: int,ox: f64,oz: f64,size: f64,sizes: int,sheet: f32,ground: f32[],stand: f32[],rise: f32[]) -> Billow[][]:
+billow_make = (gx: f64,gz: f64,step: f64,nx: int,nz: int,ox: f64,oz: f64,size: f64,first: int,last: int,sheet: f32,surface: bool,ground: f32[],stand: f32[],rise: f32[],given: Billow[][]) -> Billow[][]:
     out: Billow[][] = [loop i in 0..BILLOW_TIERS*BILLOW_BLOCKS*BILLOW_BLOCKS: []]
     at = (g: f32[],x: f64,z: f64) -> f32:
         fx = clamp((x-gx)/step,0.0,f64(nx)-1.001); fz = clamp((z-gz)/step,0.0,f64(nz)-1.001)
         i = int(fx); j = int(fz); a = f32(fx-f64(i)); b = f32(fz-f64(j))
         mix(mix(g[j*nx+i],g[j*nx+i+1],a),mix(g[(j+1)*nx+i],g[(j+1)*nx+i+1],a),b)
-    absent = Billow(vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0))
+    absent = Billow(vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0))
+    crowns = billow_crown_reach()
     # (the larger sizes' domes by cell, a margin of two cells about the square: what the smaller stand on)
     under: Billow[][] = [[],[]]
     from: int[] = [0,0,0,0]
     wide: int[] = [1,1]
-    loop t in 0..min(sizes,BILLOW_TIERS):
+    loop t in 0..last+1:
         tier = f32(t)
         span = f64(billow_span(tier))
         cx0 = int(floor(ox/span))-2; cz0 = int(floor(oz/span))-2
         cx1 = int(floor((ox+size)/span))+3; cz1 = int(floor((oz+size)/span))+3
         if t < 2: from[t*2] = cx0; from[t*2+1] = cz0; wide[t] = cx1-cx0
+        if t < first and given[t].len() > 0:
+            # (the domes made by their own tiles, by cell)
+            cells: Billow[] = [loop k in 0..(cx1-cx0)*(cz1-cz0): absent]
+            loop b in given[t]:
+                bx = int(floor(b.at.x/f32(span)))-cx0; bz = int(floor(b.at.z/f32(span)))-cz0
+                if bx >= 0 and bz >= 0 and bx < cx1-cx0 and bz < cz1-cz0: cells[bz*(cx1-cx0)+bx] = b
+            under[t] = cells
+            continue
         loop cz in cz0..cz1:
             loop cx in cx0..cx1:
                 cell = vec2(f32(cx),f32(cz))
@@ -800,9 +837,14 @@ billow_make = (gx: f64,gz: f64,step: f64,nx: int,nz: int,ox: f64,oz: f64,size: f
                     least = min(up,min(min(at(rise,x+w,z),at(rise,x-w,z)),min(at(rise,x,z+w),at(rise,x,z-w))))
                     made = billow_k(tier,least) > 0.0
                     if made and t == 1: seat = vec2(billow_top(under[0],from[0],from[1],wide[0],0.0,c).y,0)
-                b = if made: Billow(vec4(c.x,at(ground,x,z),c.y,radius),vec4(tall,shape.z,tier,0.84+0.32*vnoise(c/130.0+vec2(17.3,5.1))),vec4(sd,up),vec4(slope,rising),vec4(seat,cover,sheet)) else: absent
+                if not made:
+                    if t < 2: under[t].push(absent)
+                    continue
+                h = if surface: f32(world_source_surface(x,z)) else: at(ground,x,z)
+                far = if t == 2: crowns*(0.82+0.36*sd.y) else: billow_reach(tier)
+                b = Billow(vec4(c.x,h,c.y,radius),vec4(tall,shape.z,tier,0.84+0.32*vnoise(c/130.0+vec2(17.3,5.1))),vec4(sd,up),vec4(slope,rising),vec4(seat,cover,sheet),vec4(f32(world_clock),far,0,0))
                 if t < 2: under[t].push(b)
-                if made and inside:
+                if inside and t >= first:
                     which = (t*BILLOW_BLOCKS+min(int((z-oz)/size*f64(BILLOW_BLOCKS)),BILLOW_BLOCKS-1))*BILLOW_BLOCKS+min(int((x-ox)/size*f64(BILLOW_BLOCKS)),BILLOW_BLOCKS-1)
                     out[which].push(b)
     out
@@ -815,7 +857,8 @@ billow_vertex = (v: BillowVertex,b: Billow,u: GroundParams) -> GroundOut:
     local = b.at.xz-u.origin.xz
     # (a dome rises by its distance over the ground: the same measure the tiles' detail goes by)
     reach = length(local-u.cam.xz)
-    e = billow_emerge(tier,reach,mix(0.5,sd.y,crown))
+    # (and a dome of a tile made late, after the eye was already near, grows in over half a second)
+    e = billow_risen(b.born.y,reach)*clamp((u.time-b.born.x)*2.0,0.0,1.0)
     if e <= 0.0: return gone
     # (a near crown's lobes grow out of it as the eye nears, each to its own size)
     lobed = if v.size > 0.0: 1.0 else: 0.0
@@ -1101,6 +1144,38 @@ billow_gather_start = ():
 # Which of a square's lists hold any domes.
 billow_held = (lists: Billow[][]) -> int[]: [loop k in 0..lists.len(): if lists[k].len() > 0: k]
 
+# The domes over the view: each size from the tiles it is made in (billow_build), wherever they
+# are made, whatever level the terrain draws there: the ancestors of the tiles drawn, or the
+# tiles themselves, or (where a coarser tile is drawn while its children are still being made)
+# their descendants up to two levels down; each once. So a dome never waits for the ground's
+# selection to reach its tile's level, and never appears when it does.
+billow_gather_view = (cam: vec3,planes: vec4[]):
+    seen: {int:bool} = {}
+    loop slot in world_selected:
+        node = world_tiles[slot]
+        if node.level > 5: continue
+        loop source in [3,2,0]:
+            keys: int[] = []
+            if source >= node.level:
+                # (the dome tile is the drawn tile or its ancestor)
+                up = source-node.level
+                keys.push(world_tile_key(node.x >> up,node.z >> up,source))
+            else:
+                # (the dome tiles are the drawn tile's descendants, if not too far down)
+                down = node.level-source
+                if down > 2: continue
+                n = 1 << down
+                loop j in 0..n:
+                    loop i in 0..n: keys.push(world_tile_key((node.x << down)+i,(node.z << down)+j,source))
+            loop key in keys:
+                if key in seen: continue
+                seen[key] = true
+                if let from = world_cache.get(key):
+                    if from < world_billow_has.len() and world_billow_has[from].len() > 0:
+                        t = world_tiles[from]
+                        ox,oz = world_tile_origin(t.x,t.z,t.level)
+                        billow_gather(from,key,world_billow_has[from],ox,oz,world_tile_size(t.level),t.low,t.high,cam,planes)
+
 # The domes over a square of land (a tile, or an old island's patch: ox, oz, size, its ground
 # between low and high; has: which of its lists hold any) into the frame's gathering: each size
 # within its reach, block by block, the blocks in view.
@@ -1111,7 +1186,7 @@ billow_gather = (source: int,key: int,has: int[],ox: f64,oz: f64,size: f64,low: 
     part = size/f64(BILLOW_BLOCKS)
     loop list in has:
         tier = list/(BILLOW_BLOCKS*BILLOW_BLOCKS); block = list%(BILLOW_BLOCKS*BILLOW_BLOCKS)
-        reach = f64(billow_reach(f32(tier)))*(if tier == 2: 1.18 else: 1.0)+50.0
+        reach = (if tier == 2: f64(billow_crown_reach())*1.18 else: f64(billow_reach(f32(tier))))+50.0
         if near_edge >= reach: continue
         bx = ox+f64(block%BILLOW_BLOCKS)*part; bz = oz+f64(block/BILLOW_BLOCKS)*part
         away = world_distance(bx,bz,part,cam)
@@ -1148,7 +1223,7 @@ island_billow_gather = (cam: vec3,planes: vec4[]):
             if index < 0:
                 if made: continue
                 made = true
-                lists = billow_make(tile.x,tile.z,14.0,nx,nz,px,pz,448.0,3,0.0,tile.cpu_heights,tile.stand,tile.rise)
+                lists = billow_make(tile.x,tile.z,14.0,nx,nz,px,pz,448.0,0,2,0.0,false,tile.cpu_heights,tile.stand,tile.rise,[[],[]])
                 island_billow_has.push(billow_held(lists))
                 island_billows.push(lists)
                 index = island_billows.len()-1
@@ -1445,20 +1520,55 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
         world_arriving = hidden > 0
         world_arriving_bare = hidden > shown
     if world_warm_views.len() > 0: world_warm_pass()
+    # A tile coming into the selection (a split, a merge, a tile made late, balancing) starts
+    # from the detail drawn where it is the frame before, and morphs from it to its own over
+    # WORLD_ENTER_SECONDS: the ground never steps. Where nothing was drawn (an arrival), it
+    # starts a level coarser, as the ground grows in.
+    global world_last_lods,world_last_eye
+    lods: {int:f64} = {}
+    # (a cut or a jump: what was drawn before is elsewhere; the land arrives as it always has)
+    if length(cam-world_last_eye) > 400.0: world_last_lods = {}
+    world_last_eye = cam
     loop slot in world_selected:
         node = world_tiles[slot]
         ox,oz = world_tile_origin(node.x,node.z,node.level); size = world_tile_size(node.level)
         distance = world_distance(ox,oz,size,cam)
         transition = clamp(distance/(size*world_tile_detail(node))-1.0,0.0,1.0)
-        # Generation may precede visibility by many frames. Start the arrival
-        # morph when first published, not when the cache slot was filled.
         if not node.published: node.born = t; node.published = true
-        birth = clamp((t-node.born)*2.0,0.0,1.0)
+        if not (node.key in world_last_lods):
+            node.entered = t
+            node.start = world_drawn_lod(node)
+        entering = clamp((t-node.entered)/WORLD_ENTER_SECONDS,0.0,1.0)
+        entering = entering*entering*(3.0-2.0*entering)
+        from = clamp(node.start-f64(node.level),0.0,3.999)*(1.0-entering)
         # Physical contact is always the canonical 14 m surface, even during
         # an arrival transition after teleporting to a fresh tile.
-        if node.level == 0 and distance < size*1.5: birth = 1.0
-        node.lod = if slot in world_contact_slots: 0.0 else:f64(node.level)+max(transition,1.0-birth)
+        if node.level == 0 and distance < size*1.5 and node.start >= f64(node.level)+1.0: from = 0.0
+        node.lod = if slot in world_contact_slots: 0.0 else: f64(node.level)+max(transition,from)
+        lods[node.key] = node.lod
         world_tiles[slot] = node
+    world_last_lods = lods
+
+const WORLD_ENTER_SECONDS = 1.0
+world_last_lods: {int:f64} = {}
+world_last_eye = vec3(1e9,0,0)
+
+# The detail drawn the frame before where a tile is (a lod): its own if it was drawn, else an
+# ancestor's that covered it, else the finest of its descendants that did (no finer than the
+# tile itself can draw), else a level coarser than its own (it arrives).
+world_drawn_lod = (node: WorldTile) -> f64:
+    if let lod = world_last_lods.get(node.key): return lod
+    loop up in 1..WORLD_ROOT_LEVEL-node.level+1:
+        if let lod = world_last_lods.get(world_tile_key(node.x >> up,node.z >> up,node.level+up)): return min(lod,f64(node.level)+3.999)
+    finest = 1e9
+    loop down in 1..4:
+        if down > node.level: break
+        n = 1 << down
+        loop j in 0..n:
+            loop i in 0..n:
+                if let lod = world_last_lods.get(world_tile_key((node.x << down)+i,(node.z << down)+j,node.level-down)): finest = min(finest,lod)
+        if finest < 1e8: return max(finest,f64(node.level))
+    f64(node.level)+1.0
 
 world_warm_pass = ():
     global world_selected,world_warming,world_want_main,world_warm_missing,world_warm_ready,world_want_cam,world_generate_until,world_warm_selected,world_warm_eyes
@@ -1521,7 +1631,6 @@ draw_world_terrain = (L: Light,t: f64):
         fx = max(abs(ox-f64(cam.x)),abs(ox+size-f64(cam.x))); fz = max(abs(oz-f64(cam.z)),abs(oz+size-f64(cam.z)))
         far_edge = sqrt(fx*fx+fz*fz)
         if node.wooded > 0.05 and node.low < 2200.0 and near_edge < CANOPY_GROW_FAR+600.0: shells[mask].push(instance)
-        if slot < world_billow_has.len() and world_billow_has[slot].len() > 0: billow_gather(slot,node.key,world_billow_has[slot],ox,oz,size,node.low,node.high,cam,planes)
         if coast_enabled and node.level == 0 and node.lod == 0.0 and node.low < 192.0 and node.high > -10.0 and coast_patch_near(ox,oz,224.0,cam,focal):
             limits = vec4(if edges.x > 0.0: 0.0 else: 6.0,if edges.y > 0.0: 0.0 else: 6.0,if edges.z > 0.0: 0.0 else: 6.0,if edges.w > 0.0: 0.0 else: 6.0)
             coast_add_patch(coastal,node.cpu_heights,17,17,ox,oz,0,0,16,vec2(f32(slot%32*17),f32(slot/32*17)),cam,origin,focal,planes,limits,source_id=node.key)
@@ -1568,6 +1677,7 @@ draw_world_terrain = (L: Light,t: f64):
             zone("canopy")
             if not foliage_off("shells"):
                 if not foliage_off("billows"):
+                    billow_gather_view(cam,planes)
                     island_billow_gather(cam,planes)
                     draw_world_billows(params)
                 draw_world_shells(shells,params)

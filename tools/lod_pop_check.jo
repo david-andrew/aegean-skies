@@ -1,0 +1,206 @@
+# Level-of-detail pops along the woods glide (the fly-in clip's path: from 600 m over the woods,
+# descending toward them at 54 m/s). Tile selection runs frame by frame as the game runs it, and
+# what the GPU would draw is worked out on the CPU from the same data:
+# - the ground: its drawn height at a lattice of points (every 28 m, in view), as world_vertex
+#   morphs each tile's vertices and the mesh interpolates between them;
+# - the woods' domes: each dome's drawn top (as billow_vertex places its top vertex), and whether
+#   it is drawn at all.
+# A pop is a drawn height that steps from one frame to the next by more than STEP_PX on the
+# screen (1280 x 720, 62 degrees: a metre is 720/(2 tan 31 d) pixels at d metres; smooth morphs
+# and the domes' growth move a point a fraction of a pixel a frame), or a dome well inside the
+# frame that appears or goes while it stands more than STEP_PX out of what it stands on (a dome
+# coming in or going out at the frame's edge is not a pop).
+# AEGEAN_POP_SLICE=n: tiles made a frame (default 1, the game's 5 ms slice; 0: all at once, as
+# the captures' AEGEAN_SETTLE makes them). AEGEAN_POP_PATH: another path (below);
+# AEGEAN_POP_DEBUG=1: each pop's tiles. Prints the worst frames and fails on any pop.
+# On main 7bd4ad2 (before round 4 of the canopy): the woods glide 41 dome pops; a low fast
+# flight over hills (the second path in .github/workflows/pages.yml) 1510 ground and 97 dome
+# pops, up to 3.6 px; a mountain approach (the third) 35 dome pops. Since: none.
+# SLOPPY_SOFTWARE=1, no window.
+use '../src/geography.jo'
+use '../src/world.jo'
+use '../src/world_terrain.jo'
+use '../src/terrain_lod.jo'
+use '../src/render_space.jo'
+assert(load_land(embed('../assets/terrain.bin')))
+load_terrain(embed('../assets/terrain_lod.bin'))
+assert(load_geography(embed('../assets/world.bin')))
+geography_enabled = true
+init_world_terrain()
+const STEP_PX = 1.0
+px = (metres: f32,d: f32) -> f32: metres*720.0/(2.0*0.6009*max(d,1.0))
+slice = to_int(env("AEGEAN_POP_SLICE") ?? "") ?? 1
+if slice > 0: world_generate_tiles = slice else: world_generate_seconds = 2.0
+frames = to_int(env("AEGEAN_POP_FRAMES") ?? "") ?? 2220
+first = to_int(env("AEGEAN_POP_FIRST") ?? "") ?? 720
+start = vec3(-126400,600,-128700)
+glide = vec3(-45,-7.2,-29.8)
+yaw: f32 = 0.985; pitch: f32 = -0.16
+# AEGEAN_POP_PATH="x y z vx vy vz yaw pitch": another path (a free camera at a fixed velocity)
+if let path = env("AEGEAN_POP_PATH"):
+    w = split(path," ")
+    start = vec3(f32(to_float(w[0]) ?? 0.0),f32(to_float(w[1]) ?? 0.0),f32(to_float(w[2]) ?? 0.0))
+    glide = vec3(f32(to_float(w[3]) ?? 0.0),f32(to_float(w[4]) ?? 0.0),f32(to_float(w[5]) ?? 0.0))
+    yaw = f32(to_float(w[6]) ?? 0.0); pitch = f32(to_float(w[7]) ?? 0.0)
+forward = vec3(-sin(yaw)*cos(pitch),sin(pitch),-cos(yaw)*cos(pitch))
+
+# The drawn ground height at a world point in a selected tile (slot), as the GPU draws it: the
+# tile's vertices morphed (world_vertex: toward the coarser grid by the tile's lod fraction), the
+# point between them on the mesh's triangles (land_grid_data: the b-c diagonal).
+sample_at = (t: WorldTile,i: int,j: int) -> f32: t.cpu_heights[min(max(j,0),16)*17+min(max(i,0),16)]
+coarse_at = (t: WorldTile,p: vec2,step: f32) -> f32:
+    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return sample_at(t,int(p.x),int(p.y))
+    a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
+    f = (p-a)/step
+    aa = sample_at(t,int(a.x),int(a.y)); bb = sample_at(t,int(a.x+step),int(a.y))
+    cc = sample_at(t,int(a.x),int(a.y+step)); dd = sample_at(t,int(a.x+step),int(a.y+step))
+    if f.x+f.y <= 1.0: return aa+f.x*(bb-aa)+f.y*(cc-aa)
+    dd+(1.0-f.x)*(cc-dd)+(1.0-f.y)*(bb-dd)
+vertex_at = (t: WorldTile,p: vec2) -> f32:
+    level = clamp(f32(t.lod-f64(t.level)),0.0,3.999)
+    s = pow(2.0,floor(level))
+    h = coarse_at(t,p,s)
+    if fract(level) > 0.0: h = mix(h,coarse_at(t,p,min(s*2.0,16.0)),fract(level))
+    h
+drawn_at = (t: WorldTile,x: f64,z: f64) -> f32:
+    ox,oz = world_tile_origin(t.x,t.z,t.level)
+    cell = 14.0*f64(1<<t.level)
+    q = vec2(f32((x-ox)/cell),f32((z-oz)/cell))
+    a = vec2(min(floor(q.x),15.0),min(floor(q.y),15.0)); f = q-a
+    aa = vertex_at(t,a); bb = vertex_at(t,a+vec2(1,0)); cc = vertex_at(t,a+vec2(0,1)); dd = vertex_at(t,a+vec2(1,1))
+    if f.x+f.y <= 1.0: return aa+f.x*(bb-aa)+f.y*(cc-aa)
+    dd+(1.0-f.x)*(cc-dd)+(1.0-f.y)*(bb-dd)
+
+# A dome's drawn top (world y) and how far it stands out of what it stands on (m), as
+# billow_vertex places its top vertex; none when it is not drawn.
+dome_top = (b: Billow,cam: vec3,clock: f32) -> (f32,f32)?:
+    tier = b.form.z
+    crown = if tier > 1.5: 1.0 else: 0.0
+    sd = b.seed.xyz
+    reach = length(b.at.xz-cam.xz)
+    e = billow_risen(b.born.y,reach)*clamp((clock-b.born.x)*2.0,0.0,1.0)
+    if e <= 0.0: return none
+    lean = (vec2(fract(sd.x*97.0),fract(sd.y*61.0))-vec2(0.5,0.5))*0.5*crown
+    off = lean*b.at.w
+    rise = clamp(b.seed.w+dot(b.lie.zw,off)*(1.0-crown),0.0,1.0)
+    k = mix(billow_k(tier,rise),1.0,crown)
+    if crown < 0.5 and k < 0.04: return none
+    ground = b.at.y+dot(b.lie.xy,off)
+    d = length(vec3(b.at.x+off.x,ground,b.at.z+off.y)-cam)
+    base = ground+CANOPY_TOP*rise*b.form.w*canopy_grow(d)*mix(1.0,BILLOW_SHEET,billow_emerge(0.0,d,0.5))*b.seat.w+0.6
+    far = billow_far(reach)
+    if tier > 0.5: base += b.seat.x*billow_emerge(0.0,reach,0.5)*far
+    if tier > 1.5: base += b.seat.y*billow_emerge(1.0,reach,0.5)*far
+    out = mix((b.form.x+b.form.y-b.form.y)*k*e*far-0.3,(b.form.x+b.form.y)*e-b.form.y,crown)
+    (base+out,out)
+
+on_screen = (vp: mat4,p: vec3,edge: f32 = 0.98) -> bool:
+    c = vp*vec4(p,1)
+    if c.w <= 0.0: return false
+    abs(c.x/c.w) < edge and abs(c.y/c.w) < edge
+
+last_ground: {int:f32} = {}
+last_vp = mat4()
+last_info: {int:vec4} = {}
+last_from: {int:vec3} = {}
+debug = env("AEGEAN_POP_DEBUG") != none
+last_domes: {int:vec4} = {}
+pops: (int,int,int,f32)[] = []    # (frame, ground pops, dome pops, the largest step)
+total_ground = 0; total_domes = 0; worst: f32 = 0.0
+# (how fast the ground's morphs move a point: the largest step, and the points stepping over half a pixel a frame)
+ground_fastest: f32 = 0.0; ground_fast = 0
+seen_ground = 0; seen_domes = 0
+loop frame in 0..frames:
+    eye = start+glide*(f32(frame)/60.0)
+    vp = perspective(62.0*PI/180.0,1280.0/720.0,0.3,world_far(f64(eye.y)))*look_at(eye,eye+forward,vec3(0,1,0))
+    prepare_world_terrain(eye,vp,f64(frame)/60.0)
+    if frame < first-1: continue
+    # (the selected tiles by key, to find the one under a point)
+    by_key: {int:int} = {}
+    loop slot in world_selected: by_key[world_tiles[slot].key] = slot
+    ground: {int:f32} = {}
+    from: {int:vec3} = {}
+    from_eye: {int:f32} = {}
+    span = 2600
+    loop j in -span/28..span/28:
+        loop i in -span/28..span/28:
+            x = f64(int(floor(eye.x/28.0))*28+i*28); z = f64(int(floor(eye.z/28.0))*28+j*28)
+            cx = int(floor((x-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN)); cz = int(floor((z-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+            loop level in 0..WORLD_ROOT_LEVEL+1:
+                if let slot = by_key.get(world_tile_key(cx >> level,cz >> level,level)):
+                    t = world_tiles[slot]
+                    if t.high <= 0.0: break
+                    h = drawn_at(t,x,z)
+                    if h > 0.5 and on_screen(vp,vec3(f32(x),h,f32(z))):
+                        ground[int(x)*1000003+int(z)] = h
+                        from_eye[int(x)*1000003+int(z)] = length(vec3(f32(x),h,f32(z))-eye)
+                        if debug: from[int(x)*1000003+int(z)] = vec3(f32(t.level),f32(t.lod),f32(length(vec2(f32(x),f32(z))-eye.xz)))
+                    break
+    # (the domes the frame gathers, as draw_world_terrain gathers them)
+    billow_gather_start()
+    planes = land_planes(vp)
+    billow_gather_view(eye,planes)
+    domes: {int:vec4} = {}
+    dome_info: {int:vec4} = {}
+    loop list in billow_from:
+        loop f in list:
+            loop b in world_billows[f.source][f.list]:
+                if let top = dome_top(b,eye,f32(frame)/60.0):
+                    if on_screen(vp,vec3(b.at.x,top.0,b.at.z)):
+                        # (unique within the view: the centre in quarter metres, and the size)
+                        k = (int(round(b.at.x*4.0))*4000037+int(round(b.at.z*4.0)))*4+int(b.form.z)
+                        domes[k] = vec4(top.0,top.1,b.at.x,b.at.z)
+                        dome_info[k] = vec4(b.form.z,b.born.x,f32(world_tiles[f.source].level),f32(f.list))
+    if frame >= first:
+        g = 0; dn = 0; big: f32 = 0.0; dbg_n = 0
+        loop key in ground.keys():
+            if let was = last_ground.get(key):
+                step = px(abs(ground[key]-was),from_eye[key])
+                ground_fastest = max(ground_fastest,step)
+                if debug and step > STEP_PX and dbg_n < 4:
+                    dbg_n += 1
+                    a = last_from[key]; b = from[key]
+                    print("    frame {frame}: point {key} stepped {step:.2} px; tile level {a.x:.0} lod {a.y:.3} -> level {b.x:.0} lod {b.y:.3}, {b.z:.0} m away")
+                if step > 0.5: ground_fast += 1
+                if step > STEP_PX: g += 1; big = max(big,step)
+        loop key in domes.keys():
+            now = domes[key]
+            far_d = length(vec3(now.z,now.x,now.w)-eye)
+            if let was = last_domes.get(key):
+                step = px(abs(now.x-was.x),far_d)
+                if step > STEP_PX:
+                    dn += 1; big = max(big,step)
+                    if debug and dbg_n < 8:
+                        dbg_n += 1
+                        print("    frame {frame}: dome {key} moved {step:.2} px ({now.x-was.x:.2} m) {far_d:.0} m away")
+            else:
+                # (come into view at the frame's edge: not a pop)
+                if px(now.y,far_d) > STEP_PX and on_screen(last_vp,vec3(now.z,now.x,now.w),0.9):
+                    dn += 1; big = max(big,px(now.y,far_d))
+                    if debug and dbg_n < 8:
+                        dbg_n += 1
+                        info = dome_info[key]
+                        print("    frame {frame}: dome {key} appeared {px(now.y,far_d):.2} px ({now.y:.2} m out) {far_d:.0} m away; size {info.x:.0} made at {info.y:.2} s (now {f32(frame)/60.0:.2}), from a level {info.z:.0} tile, list {info.w:.0}")
+        loop key in last_domes.keys():
+            was = last_domes[key]
+            # (gone while it would still be in view)
+            gone = px(was.y,length(vec3(was.z,was.x,was.w)-eye))
+            # (gone well inside the frame, not leaving it at the edge)
+            if not (key in domes) and gone > STEP_PX and on_screen(vp,vec3(was.z,was.x,was.w),0.9):
+                dn += 1; big = max(big,gone)
+                if debug:
+                    info = last_info[key]
+                    print("    frame {frame}: dome {key} gone {gone:.2} px ({was.y:.2} m out); size {info.x:.0} made at {info.y:.2} s, from a level {info.z:.0} tile, list {info.w:.0}; {length(vec2(was.z,was.w)-eye.xz):.0} m away")
+        if g+dn > 0: pops.push((frame,g,dn,big))
+        total_ground += g; total_domes += dn; worst = max(worst,big)
+        seen_ground += ground.len(); seen_domes += domes.len()
+    last_ground = ground; last_domes = domes; last_from = from; last_vp = vp; last_info = dome_info
+pops.sort((p: (int,int,int,f32)) -> f32: -(f32(p.1+p.2)))
+print("LOD POP seen a frame: {seen_ground/max(frames-first,1)} ground points, {seen_domes/max(frames-first,1)} domes")
+print("LOD POP ground morphs: fastest {ground_fastest:.2} px a frame, {ground_fast} point-frames over half a pixel")
+print("LOD POP frames={frames-first} ground_pops={total_ground} dome_pops={total_domes} frames_with_pops={pops.len()} largest_step={worst:.2}px slice={slice}")
+loop k in 0..min(pops.len(),12):
+    p = pops[k]
+    print("  frame {p.0}: ground {p.1} dome {p.2} largest {p.3:.2} px")
+assert(total_ground == 0 and total_domes == 0,"level-of-detail pops along the glide")
+print("LOD POP PASS")
