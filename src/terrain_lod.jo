@@ -8,6 +8,7 @@ use 'render_space.jo'
 use 'plants.jo'
 use 'canopy.jo'
 use 'fields.jo'
+use 'paint.jo'
 
 struct TerrainPatch:
     data: LandPatchData
@@ -25,6 +26,9 @@ struct TerrainTile:
     cpu_materials: u8[] = [] # ridge, normal.xz, pigment.xy: exact uploaded bytes
     working: Texture = Texture()    # each sample's field colour and share (island_working), mipmapped
     cliff_map: Texture = Texture()
+    stand: f32[] = []               # the woods' stand cover per sample (src/canopy.jo wood_cover), as the ground paints it
+    rise: f32[] = []                # and the canopy's rise there
+    wooded: bool[] = []             # for each patch, whether any of it stands in a wood
 
 # Height moment and weight of gentle land that could support soil, and the
 # amount of wall. Steep samples contribute no elevation to the shelf.
@@ -249,30 +253,61 @@ upload_terrain_tile = (k: int,t: LandRenderData):
     tile = TerrainTile(x0, z0, texture(hi), texture(ma), ps, heights, [loop j in 0..t.nz: loop i in 0..t.nx: loop c in 3..8: t.pixels[(j*t.nx+i)*8+c]])
     tile.cliff_map = texture(cliff_map_image(stations,t.nx,t.nz,heights=heights),true)
     set_mipmaps(tile.cliff_map,false)
-    tile.working = island_working(t,x0,z0)
+    working,stand,rise = island_working(t,x0,z0)
+    tile.working = working
+    tile.stand = stand; tile.rise = rise
+    loop patch in ps:
+        any = false
+        loop j in patch.data.z..min(patch.data.z + 33, t.nz):
+            loop i in patch.data.x..min(patch.data.x + 33, t.nx):
+                if rise[j * t.nx + i] > 0.0: any = true; break
+            if any: break
+        tile.wooded.push(any)
     terrain_tiles.push(tile)
 
 # The old islands' fields, baked per sample as the new world's tiles bake theirs (src/fields.jo
 # field_colour): the ground's vertices read them (mipmapped, so a coarse grid reads the fields'
 # mean rather than one field per vertex).
-island_working = (t: LandRenderData,x0: f64,z0: f64) -> Texture:
+# With them, each sample's stand cover and the canopy's rise there (src/canopy.jo wood_cover,
+# as the ground paints the woods: the pigment sheet's wash, the fields' share), for the woods'
+# canopy (src/world_terrain.jo).
+island_working = (t: LandRenderData,x0: f64,z0: f64) -> (Texture,f32[],f32[]):
     wo = image(t.nx, t.nz)
+    stand: f32[] = []
+    rise: f32[] = []
     loop j in 0..t.nz:
         loop i in 0..t.nx:
             a = (j * t.nx + i) * 8
+            y = f32(render_height(t, i, j))
+            # (most samples are sea: nothing to work out)
+            if y < 0.6: stand.push(0.0); rise.push(0.0); continue
             nxz = vec2(f32(t.pixels[a + 4]), f32(t.pixels[a + 5])) / 255.0 * 2.0 - vec2(1, 1)
             n = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.001)), nxz.y)
-            y = f32(render_height(t, i, j))
             p = vec2(f32(x0 + f64(i) * MESH_STEP), f32(z0 + f64(j) * MESH_STEP))
             slope = length(n.xz) / max(n.y, 0.1)
             stands = clamp(grove_pine_cover(f32(t.pixels[a + 6]) / 255.0, slope, y) * 7.0, 0.0, 1.0)
-            # (most samples are sea, steep or high: no field, and nothing more to work out)
-            if field_share(1.0 - n.y, y, stands) <= 0.01: continue
-            w = field_colour(vec4(0,0,0,0), p, y, 1.0 - n.y, stands, orchard_cover(p, y, slope), f32(MESH_STEP), field_warp_cpu(p), field_palette)
-            wo.set(i, j, w)
+            orchard = orchard_cover(p, y, slope)
+            share: f32 = 0.0
+            # (steep or high: no field)
+            if field_share(1.0 - n.y, y, stands) > 0.01:
+                w = field_colour(vec4(0,0,0,0), p, y, 1.0 - n.y, stands, orchard, f32(MESH_STEP), field_warp_cpu(p), field_palette)
+                wo.set(i, j, w)
+                share = w.w
+            cover = wood_cover(n, y, f32(t.pixels[a + 3]) / 255.0 * 2.0 - 1.0, f32(t.pixels[a + 6]) / 255.0, f32(t.pixels[a + 7]) / 255.0, paint_sheet_wash(fract(p / 320.0) * 16.0), share, orchard, false)
+            stand.push(cover.x); rise.push(cover.y)
     tex = texture(wo)
     set_mipmaps(tex, true)
-    tex
+    (tex,stand,rise)
+
+# The canopy's rise at a point of the old islands (0 outside their woods and off them).
+island_rise_at = (x: f64,z: f64) -> f32:
+    loop tile in terrain_tiles:
+        nx = tile.heights.width; nz = tile.heights.height
+        fx = (x - tile.x) / MESH_STEP; fz = (z - tile.z) / MESH_STEP
+        if fx < 0.0 or fz < 0.0 or fx >= f64(nx - 1) or fz >= f64(nz - 1) or tile.rise.len() != nx * nz: continue
+        i = int(fx); j = int(fz); u = f32(fx - f64(i)); v = f32(fz - f64(j))
+        return mix(mix(tile.rise[j * nx + i], tile.rise[j * nx + i + 1], u), mix(tile.rise[(j + 1) * nx + i], tile.rise[(j + 1) * nx + i + 1], u), v)
+    0.0
 
 finish_terrain_upload = ():
     global terrain_grids
