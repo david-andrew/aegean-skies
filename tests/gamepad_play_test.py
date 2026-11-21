@@ -79,10 +79,11 @@ def main():
         s = run(work, "title-stick", 360, script, AEGEAN_TITLE="1")
         assert at(s, 220)["tfocus"] == "1" and at(s, 260)["tpage"] == "2" and at(s, 350)["tpage"] == "0", (at(s, 220), at(s, 260), at(s, 350))
         print("title by stick: hat to Situations, trigger opened it, back came back")
-        # (the pause menu: right twice from the Game tab is Gamepad; down three to Invert Y, the
-        # trigger ticks it, back carries on)
+        # (the pause menu: right twice from the Game tab is Gamepad; down two to Invert Y (the
+        # player's three tabs are one row: the Paint tab shows only with the sandbox's paint
+        # anywhere), the trigger ticks it, back carries on)
         parts = [name, btn(70, 7), hat(90, 4, 1), hat(100, 4, 1), btn(135, 0)]
-        parts += [hat(160, 5, 1), hat(170, 5, 1), hat(180, 5, 1), btn(200, 0), btn(230, 2)]
+        parts += [hat(160, 5, 1), hat(170, 5, 1), btn(200, 0), btn(230, 2)]
         s = run(work, "pause-stick", 260, " ".join(parts))
         assert at(s, 80)["paused"] == "true" and at(s, 150)["page"] == "11", (at(s, 80), at(s, 150))
         assert at(s, 190)["sinvert"] == "false" and at(s, 220)["sinvert"] == "true", (at(s, 190), at(s, 220))
