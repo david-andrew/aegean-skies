@@ -37,7 +37,7 @@ GROUPS = {
     "situations": [
         ("tow", 6000, dict(AEGEAN_FLYING="60")),
         ("strait-home", 9000, dict(AEGEAN_SCENARIO="strait", AEGEAN_CAPTURE_STRAIT_AFTER="arrive", PLAYTEST_COME_IN="3000")),
-        ("strait-lose", 8000, dict(AEGEAN_SCENARIO="strait")),
+        ("strait-lose", 28000, dict(AEGEAN_SCENARIO="strait")),
         ("canal", 9000, dict(AEGEAN_SCENARIO="canal", AEGEAN_CAPTURE_CANAL_RUN="1", PLAYTEST_COME_IN="3600")),
     ],
 }

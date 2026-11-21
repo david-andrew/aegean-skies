@@ -10652,6 +10652,7 @@ help_wingman = (at: vec3) -> int:
     loop i in 0..battle.actors.len():
         a = battle.actors[i]
         if a.side != battle.actors[me_i].side or a.human or a.status != .flying or not a.present or a.external: continue
+        if a.bailed or a.state.crashed or a.state.on_water or a.state.moored or a.state.beached: continue
         if a.craft < 0 or a.craft >= living_world.aircraft.len() or living_world.aircraft[a.craft].fuel_ml < CANS_ML + 40000: continue
         d = f64(length(a.state.position - at))
         if d < near: near = d; best = i
@@ -10695,8 +10696,9 @@ help_drop = ():
             me.mode = .aboard; pc.placed = false
     sos = HelpCall()
 
-# The call: the flight first (fuel only), then a passing ship, then a harbour's launch.
-help_call = (flare: bool):
+# The flight first, then a passing ship or the harbour's launch. A relayed
+# call goes straight to the surface services if the airborne responder is lost.
+help_call = (flare: bool, surface_only: bool = false):
     global sos, sos_serial, sos_tried
     need = help_need_now()
     if need == .none or sos.stage != .none: return
@@ -10706,23 +10708,21 @@ help_call = (flare: bool):
         help_search(at,need)
         return
     # (the flight: cans for a dry tank; for a wreck, to take the pilot off and fly them back to base)
-    if not flare and (need == .fuel or (help_wreck() and battle.homes.len() > 0)):
+    if not flare and not surface_only and (need == .fuel or (help_wreck() and battle.homes.len() > 0)):
         wi = help_wingman(at)
         if wi >= 0:
             a = battle.actors[wi]
-            along = help_alongside(at, a.state.position, pc.spec.span)
-            send_assist(battle, a.craft, vec3(along.x, at.y, along.z), wind_now_vec())
             eta = max(2, int(ceil(f64(length(a.state.position - at)) / max(a.spec.cruise_speed * 0.8, 20.0) / 60.0)) + 2)
             number = 0
             loop j in 0..wi + 1:
                 if battle.actors[j].side == a.side: number += 1
             who = call_sign(living_world, a.side, max(1, number))
-            sos = HelpCall(stage = .coming, by = .wingman, need = need, who = a.craft, name = who, eta = eta, alongside = along)
+            sos = HelpCall(stage = .coming, by = .wingman, need = need, who = a.craft, name = who, eta = eta)
             help_say(who, if need == .fuel: "I see you. Coming down alongside with a couple of cans; {help_eta_words(eta)}." else: "I see you. Coming down to take you off; {help_eta_words(eta)}.")
             return
     # (another pilot of the world flying near, outside a fight: cans for a dry tank, or for a wreck
     # the pilot taken along to wherever they are bound)
-    if not flare and (need == .fuel or help_wreck()):
+    if not flare and not surface_only and (need == .fuel or help_wreck()):
         k = help_traffic_pick(at, need == .fuel)
         if k >= 0:
             tr = traffic[k]
@@ -10916,11 +10916,39 @@ help_step = (dt: f64):
         help_pilot_step()
         return
     if sos.by == .wingman:
+        waiting = sos.stage == .coming and battle.assist.craft != sos.who
+        if waiting and sos.need == .tow:
+            # A call can come in mid-glide. Wait for a pickup on the surface
+            # that the wingman can actually reach at its open-water taxi speed.
+            if not (pc.state.on_water or pc.state.beached or pc.state.moored): return
+            if length(pc.state.velocity.xz) > 5.0 * pure_k(pc.spec): return
         i = combat_index(battle, sos.who)
         if i < 0 or battle.actors[i].status != .flying or not battle.actors[i].present:
-            help_route_failed()
+            pending = sos.need == .tow and not sos.aboard and (sos.stage == .coming or sos.stage == .alongside)
+            who = sos.name
+            if pending:
+                help_drop()
+                # The first responder can be shot down. Relay the existing
+                # call to the surface service while its flight is still fighting.
+                help_say("", "Lost contact with {who}. Relaying your position.")
+                help_call(false, surface_only = true)
+            else: help_route_failed()
             return
         a = battle.actors[i]
+        if waiting:
+            sos.alongside = help_alongside(pc.state.position, a.state.position, pc.spec.span)
+            send_assist(battle, a.craft, sos.alongside, wind_now_vec())
+            sos.since = 0.0
+            return
+        if sos.stage == .coming:
+            # The wreck can still drift during the approach and water run.
+            wreck = pc.state.position
+            offset = length((sos.alongside - wreck).xz)
+            if offset > pc.spec.span + ALONGSIDE_GAP:
+                along = help_alongside(vec3(wreck.x, 0, wreck.z), a.state.position, pc.spec.span)
+                if move_assist(battle, along, wind_now_vec()):
+                    sos.alongside = along
+                    return
         if sos.stage==.coming and sos.since>max(180.0,f64(sos.eta)*60.0):
             help_route_failed()
         else if sos.stage == .coming and a.pilot.plan.phase == .done:
@@ -11154,7 +11182,7 @@ help_camera = ():
 # Flown back to the base in the wingman's second seat (the flight skipped): ashore by its mooring;
 # the aircraft left on the sea brought in by the harbour's boat, patched up at a berth there.
 help_carried_home = ():
-    global pc, sos
+    global sos
     i = combat_index(battle, sos.who)
     side = if i >= 0: battle.actors[i].side else: -1
     home = help_base(side)
@@ -11170,11 +11198,7 @@ help_carried_home = ():
     place = if at_tender: -1 else: help_harbour(h.dock, 6000.0)
     dock = if at_tender: (tender_slot(max(0, tender_free_slot(others_at()))), h.heading) else: if place >= 0: help_dock(place, others_at()) else: none
     at = dock ?? (h.dock + h.step * 6.0, h.heading)
-    pc = make_flyer(pc.kind, pc.model, craft_models[pc.model].contacts, at.0, at.1)
-    pc.spec.player = true
-    rebind_player_combatant()
-    pc.placed = false
-    rope.tied = false
+    fetch_aircraft(at.0, at.1)
     if at_tender:
         # (no quay there: back in one's own aircraft, the mechanics' work done)
         me.mode = .aboard

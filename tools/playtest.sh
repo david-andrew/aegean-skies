@@ -4,6 +4,11 @@
 # PLAYTEST_BIN: a probe already built (sloppy build tools/playtest_probe.jo --release -o ...), run
 # instead of compiling the game again for each case.
 case=$1; shift
+if [ "$case" = strait-lose ]; then
+    # The rescue includes a full water landing, pickup and departure.
+    : "${AEGEAN_SCENARIO:=strait}" "${PLAYTEST_FRAMES:=28000}"
+    export AEGEAN_SCENARIO PLAYTEST_FRAMES
+fi
 dir=${PLAYTEST_DIR:-$HOME/dev/tmp/aegean-skies/playtest}/$case
 rm -rf "$dir"; mkdir -p "$dir"
 cd "$(dirname "$0")/.."
