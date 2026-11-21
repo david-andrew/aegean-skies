@@ -35,7 +35,8 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Symphony No. 5, III: Valse (piano) | Pyotr Ilyich Tchaikovsky (1840–1893), 1888 | [hmscomp, score 5623928](https://musescore.com/user/24069/scores/5623928) | CC0 1.0 |
 | Lohengrin: Bridal Chorus (choir and piano) | Richard Wagner (1813–1883), 1850 | [Nicolas, score 43724](https://musescore.com/nicolas/scores/43724); the voices sung by our choir | CC0 1.0 |
 | Hungarian Dance No. 1 (piano) | Johannes Brahms (1833–1897), 1869 | [ÐÑÐ·ÑÐºÐ°Ð½Ñ, score 1386646](https://musescore.com/user/1580161/scores/1386646) | CC0 1.0 |
-| Daphnis et Chloé: Lever du jour | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
+| Daphnis et Chloé: Introduction (Part I, a reduction) | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
+| Daphnis et Chloé, Part III: Lever du jour, rehearsal 155 to the bar before 158 (19 bars), the title's music | Ravel, 1912; full score, Durand, 1913 | Our concert-pitch transcription of every part from printed pp. 184–193 of the [Durand 1913 full score](https://archive.org/details/imslp-et-chlo-ravel-maurice) (archive.org's mirror of IMSLP): `source/daphnis-155-24.musicxml` and `.mid` | Public-domain 1913 score; new transcription dedicated to CC0 1.0 |
 | Boléro | Ravel, 1929 | [darkblue865, score 5173477](https://musescore.com/user/15856401/scores/5173477) | CC0 1.0 |
 | The Barber of Seville: Overture | Gioachino Rossini (1792–1868), 1816 | [mike320, score 2540876](https://musescore.com/user/6105546/scores/2540876) | CC0 1.0 |
 | Carmen: Prelude (piano four hands) | Georges Bizet (1838–1875), 1875 | [Noah Godard, score 255426](https://musescore.com/user/125838/scores/255426) | CC0 1.0 |
@@ -168,6 +169,31 @@ a small subset of metadata retained. This is not an endorsement by any source au
   C-sharp5 is one continuous note. Earlier versions used overly broad pickups and
   incorrectly retriggered that tie. Coarse timing and three-point effort contours in
   `opening-performance.json` now annotate this solo excerpt explicitly.
+* The title's music is the opening of Part III of *Daphnis et Chloé* (Lever du jour), rehearsal
+  155 to the bar before 158: 19 bars, 73.2 s at the score's crotchet = 50, ending where the
+  theme's first statement has sunk away (158 begins the next phrase). Every part of the full
+  score is transcribed at sounding pitch (clarinets in A and E-flat, bass clarinet, horns in F,
+  alto flute, cor anglais, contrabassoon, contrabasses and celesta are written as they sound).
+  The earlier catalogue piece under this name was the ballet's *Introduction* in a reduction; it
+  keeps its place on the radio under its own title.
+  - Transcribed, not printed: the harp glissandi are written out string by string on the pedal
+    setting the printed accidentals show; the three solo violins' harmonics are at their sounding
+    pitches; grace notes are short notes; trills are marked on the written note. Slurs, hairpins
+    and dynamics are not in the MusicXML: the arrangement (`daphnis_lever` in
+    `tools/music_pack.py`) carries the printed dynamics bar by bar.
+  - Least certain (quiet colour or inner doubling): the piccolo's bird calls in bars 14–16,
+    flute 1's solo calls in bars 13 and 16, and the upper note of trombones 1–2 at 157.
+  - Our synthesizer lacks some of the score's instruments. Each plays on the nearest timbre:
+
+    | Score | Synthesizer |
+    |---|---|
+    | Alto flute, piccolo | flute |
+    | Cor anglais | oboe |
+    | Clarinet in E-flat, bass clarinet | clarinet |
+    | Trombones, tuba | brass (the horn timbre) |
+    | Celesta | piano, very softly |
+    | Three solo violins, in harmonics | strings |
+    | Bass drum (one held stroke left from before 155) | not played |
 * Magnetic Rag is explicitly a **foxtrot arrangement of a rag**, not labelled an
   original foxtrot. All source piano pitches/rhythms are retained, at quarter=116;
   upper notes use clarinet, lower piano/bass, with light banjo doubling and a drum beat.

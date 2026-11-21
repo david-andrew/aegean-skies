@@ -191,8 +191,7 @@ Owning an aircraft includes making it one's own, more freely than Sky Barons all
   a pilot can be recognized by their colors at a distance.
 
 Built so far (docs/glossary: Paint page, Paint by part, Decals, Paint shop, Pilots' liveries): all
-of the above, with a town's mechanic as the painter. Still to come: a paint shop of its own to
-walk into, and placing a decal by pointing at the aircraft.
+of the above, with a paint shop at the water's edge in each town that has a mechanic.
 
 ## Sandbox settings
 
