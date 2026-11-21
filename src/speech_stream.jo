@@ -1,0 +1,197 @@
+# Words said aloud arrive as they are spoken: a few dozen characters a second, a breath at each
+# comma and a longer one at each full stop, quicker from a brisk speaker and slower from an old
+# one. Plain data and arithmetic: the panels (src/panels.jo, src/leisure_view.jo) draw the part
+# that has arrived, and hold their answers back until the line is whole.
+use 'life_types.jo'
+
+# The player's "Text speed" (src/options.jo). Instant: every line whole at once, as it used to be.
+enum TextSpeed: slow, normal, fast, instant
+TEXT_SPEEDS: TextSpeed[] = [.slow, .normal, .fast, .instant]
+TEXT_SPEED_LABELS = ["Slow", "Normal", "Fast", "Instant"]
+
+const SPOKEN_RATE = 42.0            # characters a second, from someone the game knows nothing of
+const SPOKEN_RATE_MIN = 35.0
+const SPOKEN_RATE_MAX = 50.0
+const SPOKEN_COMMA = 0.13           # seconds of pause, at SPOKEN_RATE
+const SPOKEN_CLAUSE = 0.18          # (a semicolon, a colon, a dash)
+const SPOKEN_STOP = 0.30            # (a full stop, a question, an exclamation, an ellipsis)
+const SPOKEN_SKIP_AFTER = 0.12      # seconds before a press can finish the line (the press that
+                                    # asked the question is not the one that hurries the answer)
+
+# how much faster than spoken the text arrives at each setting (instant: not timed at all)
+text_speed_factor = (speed: TextSpeed) -> f64:
+    match speed:
+        .slow: 0.65
+        .normal: 1.0
+        .fast: 1.8
+        .instant: 1.0e9
+
+# Characters a second for a voice of this kind and age (src/living_talk_context.jo's voices): a
+# nurse or a telegraphist near the top, an old fisherman near the bottom.
+spoken_rate = (voice: VoiceKind, age: int = 40) -> f64:
+    base = match voice:
+        .brisk: 50.0
+        .eager: 49.0
+        .chatty: 48.0
+        .anxious: 47.0
+        .formal: 46.0
+        .shop: 45.0
+        .wry: 43.0
+        .warm: 42.0
+        .plain: 42.0
+        .measured: 40.0
+        .guarded: 40.0
+        .devout: 38.0
+        .salt: 37.0
+        .elder: 36.0
+    # (the years tell a little past sixty, and youth a little under twenty-five)
+    aged = base - max(0.0, f64(age - 60)) * 0.12 + max(0.0, f64(25 - age)) * 0.15
+    clamp(aged, SPOKEN_RATE_MIN, SPOKEN_RATE_MAX)
+
+_digit = (c: int) -> bool: c >= 48 and c <= 57
+
+# The pause after the character at `k` of a line's code points, in seconds at SPOKEN_RATE. None at
+# the line's end, inside a figure ("12.50", "1,200") or an abbreviation's stop before a small
+# letter, and one only, the last, for a run of marks ("..." or "?!").
+spoken_pause = (cs: int[], k: int) -> f64:
+    if k < 0 or k >= cs.len() - 1: return 0.0
+    c = cs[k]; next = cs[k + 1]
+    stop = c == 46 or c == 33 or c == 63 or c == 8230           # . ! ? …
+    clause = c == 59 or c == 58 or c == 8212 or c == 8211       # ; : — –
+    comma = c == 44
+    if not (stop or clause or comma): return 0.0
+    if next == 46 or next == 33 or next == 63 or next == 44 or next == 59 or next == 58: return 0.0
+    # (a closing quote or bracket after the mark: the pause follows that instead)
+    if next == 34 or next == 39 or next == 41 or next == 8221 or next == 8217: return 0.0
+    if next != 32 and next != 10 and (comma or c == 46 or c == 58) and (_digit(next) or (next >= 97 and next <= 122)): return 0.0
+    if stop: SPOKEN_STOP else: if clause: SPOKEN_CLAUSE else: SPOKEN_COMMA
+
+# a closing quote or bracket straight after a mark carries the mark's pause
+_spoken_pause_at = (cs: int[], k: int) -> f64:
+    if k <= 0 or k >= cs.len() - 1: return spoken_pause(cs, k)
+    c = cs[k]
+    if (c == 34 or c == 39 or c == 41 or c == 8221 or c == 8217) and cs[k + 1] == 32:
+        p = cs[k - 1]
+        if p == 46 or p == 33 or p == 63 or p == 8230: return SPOKEN_STOP
+        if p == 44: return SPOKEN_COMMA
+    spoken_pause(cs, k)
+
+# One line being said: how much of it has arrived.
+struct SpokenLine:
+    text = ""
+    cs: int[]                       # its code points
+    shown = 0                       # characters arrived
+    credit = 0.0                    # the fraction of the next character earned
+    wait = 0.0                      # seconds of pause still to run
+    age = 0.0                       # seconds since it began
+    done = true
+
+spoken_begin = (text: str, lead: f64 = 0.0) -> SpokenLine:
+    cs = chars(text)
+    SpokenLine(text, cs, 0, 0.0, max(lead, 0.0), 0.0, cs.len() == 0)
+
+spoken_finish = (s: mut SpokenLine):
+    s.shown = s.cs.len(); s.wait = 0.0; s.credit = 0.0; s.done = true
+
+# `dt` seconds on, at `rate` characters a second and the player's text speed.
+spoken_step = (s: mut SpokenLine, dt: f64, rate: f64 = SPOKEN_RATE, speed: TextSpeed = .normal):
+    if s.done: return
+    if speed == .instant:
+        spoken_finish(s)
+        return
+    s.age += dt
+    k = text_speed_factor(speed)
+    left = dt
+    # (the pauses keep the speaker's pace: longer from a slow voice, and with the text speed)
+    stretch = SPOKEN_RATE / (rate * k)
+    loop left > 0.0 and not s.done:
+        if s.wait > 0.0:
+            used = min(s.wait, left)
+            s.wait -= used; left -= used
+            continue
+        s.credit += left * rate * k
+        left = 0.0
+        loop s.credit >= 1.0 and s.shown < s.cs.len():
+            s.credit -= 1.0
+            s.shown += 1
+            pause = _spoken_pause_at(s.cs, s.shown - 1) * stretch
+            if pause > 0.0:
+                # (what was left of this step runs against the pause)
+                left = s.credit / (rate * k)
+                s.credit = 0.0
+                s.wait = pause
+                break
+        if s.shown >= s.cs.len(): spoken_finish(s)
+
+# Whether a press may finish it now (not in its first moment: SPOKEN_SKIP_AFTER).
+spoken_can_skip = (s: SpokenLine) -> bool: not s.done and s.age >= SPOKEN_SKIP_AFTER
+
+# How long the whole line takes to arrive, in seconds (for a bubble's stay, and the tests).
+spoken_seconds = (text: str, rate: f64 = SPOKEN_RATE, speed: TextSpeed = .normal) -> f64:
+    if speed == .instant: return 0.0
+    cs = chars(text)
+    k = text_speed_factor(speed)
+    total = f64(cs.len()) / (rate * k)
+    loop i in 0..cs.len(): total += _spoken_pause_at(cs, i) * SPOKEN_RATE / (rate * k)
+    total
+
+# Wrapped lines and the characters arrived: how many of each line show (the space a line broke at
+# counts as said). -1 for every line when `shown` is -1 (all of it).
+spoken_line_counts = (lines: str[], shown: int) -> int[]:
+    out: int[]
+    left = shown
+    loop l in lines:
+        if shown < 0:
+            out.push(-1)
+            continue
+        n = char_count(l)
+        out.push(clamp(left, 0, n))
+        left -= n + 1
+    out
+
+# ---------------- a line in a panel, frame by frame ----------------
+# What a panel is told about its line each frame.
+struct Said:
+    shown = -1                      # characters of the text to draw (-1: all of it)
+    done = true                     # the whole line has arrived
+    ready = true                    # ...and had by the frame before: the answers can be taken
+                                    # (the press that finished a line is not also an answer)
+    since = 1.0e6                   # seconds it has been whole (0 while arriving): the answers fade in
+
+# how far in the answers have faded, 0..1
+said_fade = (s: Said) -> f64: if not s.done: 0.0 else: clamp(s.since / 0.18, 0.0, 1.0)
+
+# A panel's line as it is kept between frames.
+struct SpokenEntry:
+    line: SpokenLine
+    frame = -10                     # the frame it was last stepped
+    done_frame = -10                # the frame it became whole
+    since = 0.0                     # seconds since
+
+# (a panel that was not drawn for longer than this comes back saying its line again)
+const SPOKEN_FORGET_FRAMES = 2
+
+spoken_said = (e: SpokenEntry, frame: int) -> Said:
+    Said(if e.line.done: -1 else: e.line.shown, e.line.done, e.line.done and frame > e.done_frame, if e.line.done: e.since else: 0.0)
+
+# One frame of a panel's line: `text` what it says now (a new text starts afresh, `lead` seconds
+# before its first character), `frame` and `dt` the frame's number and length, `rate` characters a
+# second (0: words that are read, not said, whole at once), `press` a press that finishes the line
+# (Space, Enter, a controller's A, a click or tap on the panel). Stepped once a frame however
+# often it is asked.
+spoken_entry_step = (e: mut SpokenEntry, text: str, frame: int, dt: f64, rate: f64, lead: f64, speed: TextSpeed, press: bool) -> Said:
+    fresh = e.line.text != text or frame > e.frame + SPOKEN_FORGET_FRAMES
+    if fresh:
+        e = SpokenEntry(spoken_begin(text, lead))
+        # (nothing to say, words that are read, or the text speed Instant: whole from the first,
+        # as panels were)
+        if speed == .instant or rate <= 0.0: spoken_finish(e.line)
+        if e.line.done:
+            e.done_frame = frame - 2; e.since = 1.0e6
+    if frame != e.frame and not e.line.done:
+        if not fresh and press and spoken_can_skip(e.line): spoken_finish(e.line)
+        else: spoken_step(e.line, dt, rate, speed)
+        if e.line.done: e.done_frame = frame
+    else if frame != e.frame and e.line.done: e.since += dt
+    e.frame = frame
+    spoken_said(e, frame)

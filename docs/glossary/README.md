@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -2728,6 +2728,52 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Option:** Settings, Character, “Your pilot makes small talk” controls the automatic reply.
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=0.5 AEGEAN_SMALL_TALK=always
   AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` admits an eligible opening at the first opportunity.
+
+### Spoken lines
+
+- **Aliases:** streamed text, the typewriter, words arriving.
+- **Definition:** what someone says in a panel arrives as it is spoken instead of all at once:
+  35 to 50 characters a second by the speaker's voice and age (an old fisherman near the bottom,
+  a nurse or a telegraphist near the top), with a breath at a comma and a longer one at a full
+  stop, and none inside a figure. The line is wrapped whole first, so no word jumps to the next
+  row as it grows.
+- **The answers wait:** in a conversation the panel holds the line alone while it arrives, then
+  opens upward and the answers fade in. Space, Enter, a controller's A, or a click or tap on the
+  panel finishes the line at once. That press does nothing else: it is not also an answer, and
+  Space is held from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+- **Where:** conversations, an office's contract, the hotel desk, a host's spare room, the bath
+  keeper and a ride asked for (the choices wait for them); the keeper's word under the bill of
+  fare and in the book, the workshop's answer, a line on the wireless, and a spoken card such as
+  a tow's answer or a parting word (these only arrive: nothing waits and no press hurries them).
+  A notice on the board, the newspaper and the notebook are read, not said, and are there at once.
+- **Option:** Settings, Display, "Text speed": Slow, Normal, Fast or Instant (Instant: as panels
+  were). Kept with the options; an older file reads as Normal.
+- **Code:** `src/speech_stream.jo` (the pace, the pauses and one frame's step: plain arithmetic),
+  `src/spoken_view.jo` (`spoken_line` for a panel's line by key, `spoken_heard` for one that only
+  arrives, `spoken_peek` for the same words drawn elsewhere). `ptext(..., chars = n)` draws the
+  first n characters where the whole text puts them, the phoenix sign included.
+- **Tests:** `tests/talk_bubbles_test.jo` (timing, the skip, the answers waiting, the option) and
+  `tests/talk_bubbles_test.py` (the game played through a conversation by `tools/panel_probe.jo`).
+
+### Talk bubbles
+
+- **Aliases:** conversation bubbles, the exchange over their heads.
+- **Definition:** a conversation in the panel is heard in the world too. The person's line is in
+  a speech bubble over their head, arriving in step with the panel, and what the pilot says (the
+  answer chosen, a subject put as a short question, an errand in a few words) is in one over his.
+  The pilot speaks first: the answer begins a moment after.
+- **Timing:** as the bubbles of [small talk](#small-talk): a line stays seven seconds once it is
+  whole and the pilot's words four and a half. Both go when the conversation ends.
+- **Placement:** both bubbles keep above the panel's top edge at its full height, however low the
+  speaker stands behind it. Two that would cover each other slide apart sideways, each toward
+  its own speaker; on a screen too narrow for that (a phone upright) the pilot's goes over the
+  answer, without a tail. A bubble with no name keeps no empty row for one.
+- **Code:** `src/talk_bubbles.jo` (who says what and for how long, `pilot_asks`, `pilot_says`),
+  `bubble_box`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles` in
+  `aegean.jo`.
+- **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start; with
+  `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n5+ 303:n5-` picks the fifth choice) it plays
+  the same every time.
 
 ### Leads
 
