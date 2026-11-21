@@ -59,7 +59,10 @@ def main():
         level = LEVEL.get(r['id'], 1.0)
         off = loud[i] - target
         line = f"{i:3d} {r['id']:22s} {loud[i]:6.1f} LUFS  {off:+5.1f} LU  level {level:.3f}"
-        if i >= HAND_SET:
+        if r['station'] == 'Title':
+            # (the title's music is not on the radio: its level is the title's own, left alone)
+            line += '  (the title\'s music: not levelled)'
+        elif i >= HAND_SET:
             worst = max(worst, abs(off))
             # (the level scales the signal; the synth's gentle saturation makes it nearly linear)
             levels[r['id']] = round(level * 10 ** (-off / 20), 3) if abs(off) > a.keep_within else level
