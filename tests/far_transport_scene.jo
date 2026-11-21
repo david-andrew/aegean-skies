@@ -12,6 +12,7 @@ use '../src/far_transport_scene.jo'
 use '../src/far_scene.jo'
 use '../src/vessel_types.jo'
 use '../src/vessels.jo'
+use '../src/vessel_motion.jo'
 use 'living_commissions.jo'
 
 sea_freight_fixture = () -> World:
@@ -152,3 +153,104 @@ test "an active national combat pair takes the bounded leases ahead of closer id
     assert(fleet.ships.len()==2)
     assert(vessel_index(fleet,FAR_VESSEL_BASE)>=0 and vessel_index(fleet,FAR_VESSEL_BASE+1)>=0)
     assert(not w.far.vehicles[2].scene_owned and stock_totals(w)==stocks)
+
+# Coasters sailing in company, as the far economy sends them: put out a world minute apart from
+# one port, 13 m apart on the same water (a 26 m hull overlaps the next). `gaps` are the metres
+# astern of the first, vehicle 1 on its real voyage; the others' voyages are copies of its own
+# further back along the same route, enough for the scene, which only reads where they are.
+_company_fixture = (gaps: f64[]) -> World:
+    w=sea_freight_fixture()
+    lead=w.far.vehicles[1].journey; link=w.far.journeys[lead].link
+    start=w.far.vehicles[1].pos; far=start+vec3(8000,0,0)
+    w.far.links[link].points=if w.far.journeys[lead].forward: [start,far] else: [far,start]
+    w.far.links[link].length_mm=8000000
+    w.tick+=1200; w.minute=w.tick/120
+    far_advance_transport(w,w.tick)
+    assert(w.far.journeys[lead].segment==0 and w.far.journeys[lead].progress_mm>=100000)
+    loop gap in gaps:
+        id=w.far.vehicles.len(); voyage=w.far.next_journey; w.far.next_journey+=1
+        j=w.far.journeys[lead]; j.id=voyage; j.vehicle=id; j.progress_mm-=int(gap*1000.0)
+        v=FarVehicle(id,.ship,200,-1,2,w.far.vehicles[1].account,-1,crew=[0,0,3],route=link,pos=w.far.vehicles[1].pos-vec3(f32(gap),0,0),velocity=w.far.vehicles[1].velocity,capacity_grams=30000000,speed_mm_sec=6500,journey=voyage)
+        w.far.vehicles.push(v); w.far.journeys[voyage]=j
+    w
+
+struct CompanyRun:
+    frames = 0
+    most = 0                        # (the most hulls drawn in a frame)
+    fewest = 1000                   # (the fewest, once the first are out)
+    changes = 0                     # (times a hull was given up or taken after the first were out)
+    twice = 0                       # (frames an id was drawn twice)
+    fouled = 0                      # (frames two hulls were drawn inside one another)
+    worst_step = 0.0                # (the largest a drawn hull moved in a frame, over what its speed allows)
+
+# The scene's frames for `seconds` at 60 a second: the world's tick each frame and its minute's
+# movement of the ships the scene has not leased, the leases, the fleet's step, and what is drawn;
+# `observer` is the pilot at a time, about the first ship.
+_company_run = (w: mut World, seconds: f64, observer: (f64,vec3) -> vec3, quality: int = 16) -> CompanyRun:
+    fleet=VesselFleet(); motion=VesselMotion(); run=CompanyRun()
+    t=0.0; dt=1.0/60.0
+    before: {int: vec3}; out: int[]
+    loop frame in 0..int(seconds*60.0):
+        t+=dt; w.tick+=1
+        if w.tick%120==0:
+            w.minute=w.tick/120; far_advance_transport(w,w.tick)
+        sync_far_vessels(fleet,w,observer(t,w.far.vehicles[1].pos),quality,refresh=int(t*4)!=int((t-dt)*4))
+        step_vessels(fleet,vec2(4,0),dt)
+        drawn=vessel_render_ships(motion,fleet,t)
+        ids=[loop s in drawn: s.id]; ids.sort()
+        loop k in 1..ids.len():
+            if ids[k]==ids[k-1]: run.twice+=1
+        loop a in 0..drawn.len():
+            loop b in a+1..drawn.len():
+                if f64(length(drawn[a].position-drawn[b].position))<vessel_spec(drawn[a].kind).length: run.fouled+=1
+        loop s in drawn:
+            if let p=before.get(s.id): run.worst_step=max(run.worst_step,f64(length(s.position-p))-max(s.speed,f64(length(s.velocity)))*dt)
+        before.clear()
+        loop s in drawn: before[s.id]=s.position
+        if out.len()>0:
+            if ids!=out: run.changes+=1
+            run.fewest=min(run.fewest,ids.len())
+        if ids.len()>0 or out.len()>0: out=ids
+        run.most=max(run.most,ids.len()); run.frames+=1
+    run
+
+# The pilot circling the ships at 45 m/s, `radius` metres off and 30 m up.
+_circling = (radius: f64) -> (f64,vec3) -> vec3: (t: f64,centre: vec3) -> vec3: centre+vec3(f32(cos(t*45.0/radius)*radius),30,f32(sin(t*45.0/radius)*radius))
+
+test "coasters in company keep the hulls they have while the pilot circles them":
+    # (four a world minute apart: the first and the last have room for a hull, the two between
+    # them have not; chosen afresh from the nearest each quarter second, the two hulls became the
+    # one ship between them and two again as the pilot came round and with each world minute)
+    w=_company_fixture([13.0,26.0,39.0])
+    run=_company_run(w,90.0,_circling(300.0))
+    assert(run.frames==5400 and run.most==2 and run.fewest==2,"hulls drawn: {run.fewest} to {run.most}")
+    assert(run.changes==0,"hulls given up or taken {run.changes} times")
+    assert(run.twice==0 and run.fouled==0,"an id twice in {run.twice} frames, hulls fouling in {run.fouled}")
+    assert(run.worst_step<0.05,"a drawn hull moved {run.worst_step:.2} m more in a frame than its speed allows")
+    assert(length(w.far.vehicles[1].pos-w.far.vehicles[4].pos)>38 and length(w.far.vehicles[1].pos-w.far.vehicles[4].pos)<40)
+
+test "a coaster a hull's length astern of a leased one does not come and go":
+    # (26 m astern in fact, and up to 39 m where the world's minute last put it: it was given a
+    # hull when it seemed to have dropped clear and lost it a quarter second later, every minute)
+    w=_company_fixture([26.0])
+    run=_company_run(w,60.0,_circling(250.0))
+    assert(run.most==1 and run.fewest==1 and run.changes==0,"hulls drawn: {run.fewest} to {run.most}, changed {run.changes} times")
+    assert(run.twice==0 and run.fouled==0 and run.worst_step<0.05)
+
+test "coasters with room between them each have a hull, drawn once and moving at their speed":
+    w=_company_fixture([60.0,150.0])
+    run=_company_run(w,60.0,_circling(400.0))
+    assert(run.most==3 and run.fewest==3 and run.changes==0,"hulls drawn: {run.fewest} to {run.most}, changed {run.changes} times")
+    assert(run.twice==0 and run.fouled==0)
+    assert(run.worst_step<0.05,"a drawn hull moved {run.worst_step:.2} m more in a frame than its speed allows")
+
+test "a coaster at the edge of the scene's reach is not taken and given up by turns":
+    w=_company_fixture([])
+    # (the pilot holding 12 km off, wandering 150 m in and out of it every few seconds)
+    edge=(t: f64,centre: vec3) -> vec3: centre+vec3(0,30,f32(12000.0+150.0*sin(t*1.3)))
+    run=_company_run(w,60.0,edge)
+    assert(run.most==1 and run.changes==0,"hulls drawn: up to {run.most}, changed {run.changes} times")
+    # (and it is given up beyond the reach, and taken again on the way back, drawn once)
+    away=(t: f64,centre: vec3) -> vec3: centre+vec3(0,30,f32(11000.0+2500.0*sin(t*0.2)))
+    run=_company_run(w,60.0,away)
+    assert(run.most==1 and run.changes>=1 and run.changes<=4 and run.twice==0)

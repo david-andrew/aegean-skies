@@ -127,6 +127,22 @@ and night windows/navigation lamps emit light. There are no shadow-map or
 screen-space reflection passes. The chart reads nearby ships and verified lanes;
 only lanes actually requested by the world appear.
 
+## Far coasters in the scene
+
+`far_transport_scene.jo` leases a far economy coaster a hull while it is within 12 km of the pilot
+(given up past 12.5 km). The far economy keeps no distance between its ships: coasters put out a
+world minute apart and sail the same water 13 m apart, three or four from one port, so the scene
+gives hulls only to ships whose footprints are distinct. Which of them have the hulls does not
+change while they sail in company: a hull once taken is kept until its ship leaves the reach or
+its footprint actually overlaps another hull's, and a ship without one takes one only with 4 m of
+water clear of every hull kept, judged where it is at this tick (`far_scene_ship_now`), not where
+the world's minute last put it. A nearby contact's two sides still come first, and past the
+scene's bound the nearest keep the hulls. `tests/far_transport_scene.jo` steps coasters in
+company with the pilot circling and asserts that no hull is given up or taken, none is drawn
+twice or inside another, and none moves more in a frame than its speed allows.
+`AEGEAN_ABOARD=1 AEGEAN_CAPTURE_COMPANY="1200 725"` puts the aircraft down beside such a group in
+the game and prints a COMPANY line whenever the coasters with hulls change.
+
 `tools/vessellab.jo` contains explicit synthetic acceptance scenes, never loaded
 by normal startup. `VESSEL_SCENE` selects morning, steamer, schooner, convoy,
 night, catalog, or sinking; `VESSEL_QUALITY=0` selects phone bounds;
