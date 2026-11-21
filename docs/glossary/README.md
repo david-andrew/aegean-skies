@@ -129,6 +129,27 @@ blue discs that stay in every frame are **speed flecks**.
   is carried by its short waves; the long bands grow in with the wind. Phase speeds follow deep
   water (c = √(gλ/2π)).
 
+### Harbour shelter and the shallows' limit
+
+- **Aliases:** harbour calm, the basin, sheltered water, `sea_harbour`, `sea_band_keep`.
+- **Definition:** where each band of the swell is allowed to be. A wave runs at its deep-water
+  speed only where the water is deep enough for it (c² = g/k·tanh(kd)): in water a quarter of
+  its length deep it has slowed 4%, in a ninth 30%. So each band is whole from a quarter of its
+  length of water and gone by a ninth: the 61 m swell fades between 15 and 7 m of water, the
+  4 m chop between 1 m and 0.45 m, and no long, fast swell runs through shallows or up a beach.
+  And a harbour has no fetch for a sea to grow in: inside its basin (calm out past the docks,
+  the buoy and the mole's end, fading to the open sea's full state 450 m further out) the three
+  long bands are gone, the 13 m one all but, and the short ones lap low (0.22 and 0.6 of their
+  open-sea height). The ripples, glints and marks are as everywhere.
+- **Code:** `src/sea.jo` `sea_band_keep` (shader and CPU alike), `sea_calm` / `sea_calm_at`,
+  `SeaHarbour`, `SEA_HARBOUR_GAINS`, uniform `harbour`; `src/harbour_shelter.jo`
+  `harbour_basin`, `harbour_shelter_at`, `harbour_shelter_step` (the harbour nearest the player,
+  each frame).
+- **Rules:** the drawn sea and `swell_at` keep each band by the same rule, so the floats ride
+  what is seen. No wave may pass faster than 1.3 times a real one of its length in that depth:
+  tests/sea_speed_test.jo (a wave gauge array on `swell_at`) and
+  tests/sea_speed_render_test.py (the drawn frames, `tools/sea_speed_view.jo`).
+
 ### Storm sea
 
 - **Aliases:** the storm regime, heavy seas, `sea_storm`.
