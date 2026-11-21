@@ -28,7 +28,7 @@ const CROWN_PLANE = 4
 # the detail bands: 0 near (every clump), 1 middle (a few merged clumps), 2 far (one crown)
 const CROWN_NEAR_END = 230.0        # the near set's last metres, faded over CROWN_FADE
 const CROWN_MID_END = 640.0
-const CROWN_FADE = 50.0
+const CROWN_FADE = 30.0     # (half the dithered crossing's width)
 
 struct CrownVertex:
     corner: vec2
@@ -58,6 +58,7 @@ struct CrownOut:
     pos: vec4
     world: vec3                     # the card's point (render space)
     centre: vec3
+    range: vec2                     # the band's dither range (crown_band_range)
     clump: vec4                     # radius, height over width, seed, light reaching
     tree: vec4                      # crown centre (render space), crown radius
     color: vec4                     # leaf colour, the band's visibility (0..1)
@@ -74,20 +75,29 @@ crown_noise = (p: vec3) -> f32:
     b = mix(mix(_crown_hash3(c+vec3(0,0,1)),_crown_hash3(c+vec3(1,0,1)),w.x),mix(_crown_hash3(c+vec3(0,1,1)),_crown_hash3(c+vec3(1,1,1)),w.x),w.y)
     mix(a,b,w.z)
 
-# Whether a band is drawn at a distance: near to its end, the middle to its own, far beyond. Each
-# tree crosses at its own distance (jitter: the tree's draw, 0..1) within the fade, so the trees
-# of a wood change one by one, never as a line.
-crown_band_share = (band: f32,d: f32,jitter: f32,u: CrownParams) -> f32:
-    j = (jitter-0.5)*u.bands.z*2.0
-    e1 = u.bands.x+j
-    e2 = u.bands.y+j
-    # (the woods' crowns, bands 3 and 4, hand their near clumps over at half the trees' distance)
-    if band > 2.5:
-        e0 = u.bands.x*0.35+j*0.35
-        return if band < 3.5: (if d < e0: 1.0 else: 0.0) else: (if d >= e0 and d < e2: 1.0 else: 0.0)
-    if band < 0.5: return if d < e1: 1.0 else: 0.0
-    if band < 1.5: return if d >= e1 and d < e2: 1.0 else: 0.0
-    if d >= e2 and d < u.bands.w+j: 1.0 else: 0.0
+# The bands cross by a dither over a stretch of distance, each pixel the one band's or the other's
+# (crown_dither: the same pattern for every band and the shells), so at any distance the bands'
+# shares add up to the whole: no gap, no doubled crown, no line where one set gives way. A band
+# keeps the pixels whose dither lies in its range (x <= dither < y).
+# near 0 (trees) and 3 (the woods' crowns, handed over at about 80 m), the middle 1 and 4, far 2;
+# past the far band the canopy's shells take the rest (world_shell_fragment).
+crown_band_range = (band: f32,d: f32,u: CrownParams) -> vec2:
+    f = u.bands.z
+    near = clamp((u.bands.x-d)/(2.0*f)+0.5,0.0,1.0)
+    woods = clamp((u.bands.x*0.35-d)/f+0.5,0.0,1.0)
+    mid = clamp((u.bands.y-d)/(2.0*f)+0.5,0.0,1.0)
+    far = crown_far_share(d,u.bands.w,f)
+    if band < 0.5: return vec2(0.0,near)
+    if band < 1.5: return vec2(near,mid)
+    if band < 2.5: return vec2(mid,far)
+    if band < 3.5: return vec2(0.0,woods)
+    vec2(woods,mid)
+
+# The crowns' share at the end of their reach, where the shells take over (the same on both sides).
+crown_far_share = (d: f32,end: f32,fade: f32) -> f32: clamp((end-d)/(4.0*fade)+0.5,0.0,1.0)
+
+# The bands' dither: interleaved gradient noise on the pixel, even and fine.
+crown_dither = (pixel: vec2) -> f32: fract(52.9829189*fract(dot(floor(pixel),vec2(0.06711056,0.00583715))))
 
 # The leaf tufts' sheet (made at start, procedural): a wrapping 128 x 128 texture of 8 x 8 cells,
 # one tuft's centre jittered in each; a texel holds the offset to the nearest centre (rg, in
@@ -135,7 +145,8 @@ crown_vs = (v: CrownVertex,c: CrownClump,u: CrownParams) -> CrownOut:
     r = c.at.w
     to = centre-u.cam
     d = max(length(to),0.01)
-    share = crown_band_share(c.color.w,d,hash21(floor(c.tree.xz*2.0)+vec2(5.0,11.0)),u)
+    range = crown_band_range(c.color.w,d,u)
+    share = range.y-range.x
     # (a little sway near: the clump's centre in the wind, more at the top of the tree)
     if d < 260.0 and share > 0.0:
         ph = u.wind.w+c.shape.z*6.28
@@ -157,9 +168,12 @@ crown_vs = (v: CrownVertex,c: CrownClump,u: CrownParams) -> CrownOut:
     tall = sqrt(up.x*up.x+up.z*up.z+squash*squash*up.y*up.y)
     p = centre-f*pull+right*(v.corner.x*k*r*1.18)+up*(v.corner.y*k*r*tall*1.18)
     if share <= 0.0: p = centre      # (a band out of its range: no fragments)
-    CrownOut(u.view_proj*vec4(p,1),p,centre,vec4(r,c.shape.x,c.shape.z,c.shape.w),vec4(c.tree.xyz-u.origin,c.tree.w),vec4(c.color.xyz,share))
+    CrownOut(u.view_proj*vec4(p,1),p,centre,range,vec4(r,c.shape.x,c.shape.z,c.shape.w),vec4(c.tree.xyz-u.origin,c.tree.w),vec4(c.color.xyz,share))
 
 crown_fs = (i: CrownOut,u: CrownParams) -> vec4:
+    # (the band's share of the pixels, and a grove's arrival: faded in over its first moments)
+    dith = crown_dither(i.pos.xy)
+    if dith < i.range.x or dith >= i.range.y or fract(dith*7.31+0.37) >= u.opts.y: discard()
     r = i.clump.x
     squash = i.clump.y
     seed = i.clump.z
@@ -266,16 +280,20 @@ crown_params = (L: Light,t: f64,far_end: f64) -> CrownParams:
     origin = render_origin(scene_camera())
     phase = t*(1.1+0.15*f64(wind_now.speed))+f64(origin.x)*0.05+f64(origin.z)*0.04
     CrownParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.shade,air_down(L.haze,f64(scene_camera().y),tweaks.brighter_ocean),f32(L.fog_density),origin,canopy_light(L.sun_dir),
-        vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),render_phase(phase,TAU)),vec4(f32(CROWN_NEAR_END),f32(CROWN_MID_END),f32(CROWN_FADE),f32(far_end)),vec4(if foliage_off("tufts"): 0.0 else: 1.0,0,0,0),crown_tuft_tex)
+        vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),render_phase(phase,TAU)),vec4(f32(CROWN_NEAR_END),f32(CROWN_MID_END),f32(CROWN_FADE),f32(far_end)),vec4(if foliage_off("tufts"): 0.0 else: 1.0,1,0,0),crown_tuft_tex)
 
 # (timing only: AEGEAN_FOLIAGE_OFF="shells,woods,tufts" leaves those parts out)
 foliage_off_list = env("AEGEAN_FOLIAGE_OFF") ?? ""
 foliage_off = (part: str) -> bool: part in foliage_off_list
 
-draw_crowns = (lists: InstanceBuffer[CrownClump][],p: CrownParams):
+# fades: each list's arrival (0 just made, 1 settled)
+draw_crowns = (lists: InstanceBuffer[CrownClump][],fades: f32[],p: CrownParams):
     crown_init()
-    loop b in lists:
-        if b.count > 0: draw_instanced(crown_sh,crown_card,b,p)
+    q = p
+    loop k in 0..lists.len():
+        if lists[k].count == 0 or fades[k] <= 0.0: continue
+        q.opts.y = fades[k]
+        draw_instanced(crown_sh,crown_card,lists[k],q)
 
 # ---------------- the trees ----------------
 
