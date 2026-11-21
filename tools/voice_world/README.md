@@ -11,13 +11,15 @@ No WORLD code is used (WORLD is BSD-3; its equations were read, the code here is
 nothing from verr-voice (no licence; its approach was studied for ideas only), and no audio or
 audio snippet enters the repository.
 
-## The data file is not in the repository
+## The data file is in the repository, and no recording is
 
-Until the final voice is chosen, the packed announcer data is kept out of git entirely (it is
-derived from reference recordings, and `/data/voice/` is ignored). `pack.py --out` refuses a path
-inside the repository. The game and tools read it from the path in **`AEGEAN_VOICE_DATA`**; without
-it the announcer is off and the radio keeps its Morse bulletins (`tests/voice_test.jo` checks
-both cases). Development listening is from WAV samples rendered in scratch.
+The approved voice (clean voice 4, fitted to the developer's own recordings) ships as
+`data/announcer/announcer-v4.z`, embedded in the game, with its provenance in
+`data/announcer/SOURCES.md`. It holds only derived numbers (averaged spectral envelopes, a lexicon,
+the fitted prosody); the recordings, takes and any audio stay in scratch and never enter git.
+`pack.py --out` still refuses a path inside the repository: a new voice is packed in scratch, tried
+through **`AEGEAN_VOICE_DATA`** (which overrides the embedded file; `tests/voice_test.jo` runs on
+either), and copied in only when the developer approves it.
 
 ## What the data file holds and where it came from
 

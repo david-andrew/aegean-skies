@@ -182,16 +182,28 @@ a neural model:
 
 A bulletin repeats on the world clock: its period is the programme span (10 s, or 30 s for
 maritime) rounded up to fit the words plus a pause, so tuning in mid-bulletin joins it where it is.
-The voice data file (340 KB: spectra, lexicon, rules and the fitted prosody model) is **not in
-the repository**: the approved voice is fitted to a reference narrator, and nothing derived from
-that recording goes into git until its rights are settled. The game reads it from the path in
-`AEGEAN_VOICE_DATA`, during world loading with the music. Without it, speech is off and spoken
-programmes stay in Morse; `src/voice_model.jo` holds only neutral placeholder numbers. How it is
-made: `tools/voice_world/README.md`. Its cost, measured on redfox with the approved voice
-(`tools/voice_budget.jo` with the file embedded): loading takes 45 ms native and 80 ms in
-Chromium, once; a bulletin's first programme 2–2.4 ms native (20 ms for the first in Chromium,
-3–4 ms after), and rendering 1.1 ms native, 1.35 ms in Chromium per 50 ms block. Embedded in a
-web build it would add 454 KB to the page (343 KB gzipped: the file is compressed already).
+The voice data file (`data/announcer/announcer-v4.z`, 303 KB: spectra, lexicon, rules and the
+fitted prosody model) is **embedded**, so native and web builds both speak, and holds no recording:
+it was fitted to the developer's own studio recordings and carries only derived numbers
+(`data/announcer/SOURCES.md`). `AEGEAN_VOICE_DATA` overrides it with another voice's file for
+tuning; `src/voice_model.jo` holds only neutral defaults. Only the two spoken services use it.
+How it is made: `tools/voice_world/README.md`.
+Its cost (`tools/voice_budget.jo`, a 7-8 s bulletin through the studio, leveller and receiver at the
+heavier setting; redfox, 2026-11-21): loading 6 ms native and 21 ms in headless Chromium, once; a
+bulletin's planning 0.4-0.6 ms native (0.7-1.1 ms Chromium; first block 1-1.1 ms native, 1.5-4.3 ms
+Chromium); rendering 0.63 ms per 50 ms block native (p99 0.7) and 0.76 ms in Chromium (p99 0.9), so
+a whole bulletin costs 78-100 ms native and 95-123 ms in Chromium spread over its 7-8 s. The
+embedded file adds 303 KB to the program.
+
+**Broadcast colour, heavier for a bulletin.** The announcer's studio and receiver run at
+`RADIO_SPEECH_WEAR` (0.5; `make_studio(wear)`, `make_radio_chain(seed, seconds, wear)`; 0 is the
+original settings exactly): the microphone's band narrows (290–3400 Hz toward 350–2900 Hz), the
+receiver's treble filters close (4300 Hz toward 3650, speaker 4500 toward 3850), the carbon
+granule is driven harder, hiss, receiver noise and crackle are heavier at any reception, there is a
+little more saturation, and the slow fade dips the level and treble. Nothing new is added; each
+term scales one that exists. A speech recognizer's word accuracy on eight lines through the radio
+(strength 0.8): wear 0 60%, 0.25 50%, 0.35 49%, 0.5 43%, 0.7 38%, 1.0 41% (a harsh, noisy proxy;
+the ear is the judge, and the constant is one number).
 
 ## Backlog: finding the stations (a design note, not built)
 

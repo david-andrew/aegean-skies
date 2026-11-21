@@ -4094,7 +4094,7 @@ No image: the tiers differ in budgets more than in any single view.
   narrator's tokens of that pair. Consecutive trajectories meet at phone centres, where the step
   is smoothed; a missing pair borrows each half from its nearest observed neighbour.
 - **Code:** `tools/voice_world/build_units.py` (made), the announcer data file named by
-  `AEGEAN_VOICE_DATA` (outside the repository until a final voice is chosen),
+  `data/announcer/announcer-v4.z` (embedded; `AEGEAN_VOICE_DATA` overrides it),
   `src/voice_text.jo voice_half`, `voice_frames` (used).
 
 ### Broadcast colour
