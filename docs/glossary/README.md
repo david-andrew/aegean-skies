@@ -2347,6 +2347,28 @@ On the rivers branch until it lands.
   terrain triangles, with shoulders blending them into the ground.
 - **Code:** `src/town_paving.jo` (`town_paving_shoulder`, `town_street`), `src/coast_paving.jo`.
 
+### Worn ground
+
+- **Aliases:** the town's ground, lanes and alleys from the air, the town ground field.
+- **Definition:** a town's own ground painted on the terrain at every distance, so that from the
+  air it stands on trodden earth and a web of lanes, not on a lawn: the street plan of a mainland
+  town, its square, an alley from each house to the nearest street; on the original islands the
+  lanes between the house fronts, joined to each other and to the foot of the quay; and the worn
+  earth about every house. The lanes are stone in the ports, the capitals and the larger towns
+  (`town_ground_stone`), bare earth in the villages, the hamlets and on the small islands (whose
+  close stone strips are no longer drawn). The close [Paving](#paving) is drawn over it as before.
+- **Code:** `src/town_ground.jo` (`town_ground_plan`, `_registry_plan`, `_legacy_plan`,
+  `town_ground_prepare`, `town_ground_image`, `town_ground_on_lane`), `src/town_ground_cover.jo`
+  (`town_ground_cover`, the shader's reading), `ground_surface` in `src/terrain.jo`;
+  `tests/town_ground_test.jo`.
+- **Rules:** no geometry: one 512² field about the camera (2 m a texel, 1024 m across, moved in
+  128 m steps), each texel the distance to the nearest lane's edge (so a lane's edge is smooth
+  at any range), how worn the ground is, and whether the lane is stone; one texture read in the
+  terrain's shader. The field is made a slice a frame (1.2 ms) and swapped in whole; a town's
+  houses join it when its far town is ready. `AEGEAN_TOWN_GROUND=0` turns it off.
+- **Capture:** `AEGEAN_CAPTURE=legacy:<n>:low|street|square` (an island town),
+  `AEGEAN_CAPTURE=place:<kind>:low|street` (the first mainland town of a kind).
+
 ### Townsfolk
 
 - **Aliases:** folk, the people.
@@ -2464,7 +2486,12 @@ On the rivers branch until it lands.
 - **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
   and pose through the town shader, within 150 m; laid out once per town as it comes within
   450 m, a loop a frame (no arrival hitch); spots and loops that touch a building are refused;
-  those who stand or sit are walking solids, strollers are not.
+  those who stand or sit are walking solids, strollers are not. A few of the crowd ride
+  bicycles (two on the waterfront or a clear street in a port, four in a capital: a riding pose
+  over the town's own bicycle), and in a capital, the busiest of places, one motorcar goes
+  slowly round a block of the new town's wide streets (the first of a few rounds that is clear
+  of buildings; by day and the early evening). Neither is solid. A seat one of the crowd is in
+  can't be taken by the pilot (`ambient_seated_at`).
 - **Capture:** `AEGEAN_AT='-117963.77 -84900.62 0' AEGEAN_HOUR=17 AEGEAN_CAPTURE_LIFE=1`
   (Kalyrassa's square); `SHOT` lines report `crowd N`, the number drawn.
 
@@ -3243,6 +3270,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   - the band's jar ("Tip the band") and its stand ("Ask for a song");
   - the coffee house's table, its closed tavli board ("A game of tavli") and the folded paper
     ("The paper");
+  - a town's own seats ("Sit"): a place on a bench, a chair at an open-air café (`town_seats_near`
+    in `src/world_towns.jo`; `Perch`, `perch_begin`, `perch_step`, `perch_end` in `aegean.jo`). He
+    walks round to it, turns his back to it and sits, with no panel and no words; he gets up
+    when he next walks. A seat someone is in is not offered;
   - the people about: walk over and talk.
 - **How it works:** he walks over until what the thing's card would offer is in reach, then does it,
   exactly as the card's key does (`foot_things`, `foot_go`, `foot_pick`; the act is matched in the
@@ -3898,6 +3929,13 @@ No image: the tiers differ in budgets more than in any single view.
   `play_street`); the stand's places in `src/bar_scene.jo` (`band_spots`, `draw_band`); the street
   musicians in `src/townsfolk.jo` (`draw_folk`); `tests/musicians_test.jo`; every player side by
   side in `tools/musician_view.jo`.
+- **The street musicians' tunes:** what they play is the catalogue's own: the melody alone of one
+  of the Greek songs of the 1877 collection or of Ikariotikos (`STREET_TUNE_PIECES`,
+  `street_tune`, `street_events` in `src/street_phrase.jo`), a different tune by the player and
+  the day, played round with a few seconds' rest between. It is heard as before
+  (`src/life_audio.jo`: the nearest musician only, each note the plucked note nearest its pitch,
+  tuned to it), and the notes that rise from the player are the tune's. The plucked phrase they
+  played before (`street_step`) is kept for a world with no tunes.
 - **Rules:** every number of the set and its players' motions are made when the game starts
   (about 16 ms on the desktop, the violin's bow plan most of it), so a number starting costs
   nothing; a piece forced for a capture is made when it starts. The piano's keys (white, the

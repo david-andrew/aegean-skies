@@ -268,9 +268,12 @@ Things agreed to build, roughly in the order they'll come:
 - Many more aircraft, especially the WWI-era seaplanes of the references.
 - A moon with phases, rising with the right phase for the sun; water green and clear as crystal in
   chosen coves.
-- Prettier clouds, foliage and towns: stone paths and alleys between houses (bare earth on the small
-  islands), open-air cafes, shops, fountains, statues, benches, people on bicycles, a very few cars
-  in the busiest places only, musicians: a world lived in.
+- Prettier clouds, foliage and towns. A world lived in is begun (glossary: Worn ground, Ambient
+  crowd, Things to tap, Musicians at play): lanes and alleys painted on the ground at every
+  distance (stone in the ports and larger towns, bare earth on the small islands), benches and
+  cafe chairs to sit on, street musicians playing the catalogue's tunes, a few cyclists and one
+  motorcar in a capital. Still to do: residents seated at the cafe's own chairs, the islands'
+  cafe where its tables are, more benches (waterfronts, under the plane trees), shop fronts.
 - War: battles that play out whether or not one joins them, leaning on Sky Barons (its AI pilots,
   smoke and fire when hit, parachutes); a larger overhaul of errands and the world's liveness.
 - Colour-blind settings (built: the Settings page's "Colours of the sides", the glossary's
