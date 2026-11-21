@@ -1,0 +1,310 @@
+# The worn ground of a town, painted on the terrain itself at every distance: its lanes and alleys
+# (stone in the ports, the capitals and the larger towns; bare earth in the villages and on the
+# small islands), the trodden earth about its houses, its square. From the air a town then stands
+# on its own ground, not on a lawn. No geometry: one small field about the camera, each texel
+# the distance to the nearest lane's edge, how worn the ground is, and whether the lane is stone;
+# the terrain's shader reads it (town_ground_cover). The close paving (src/town_details.jo) is
+# drawn over it as before.
+#
+# The field is made a slice a frame (town_ground_prepare), and again when the camera has moved a
+# good way or a town near it has its houses ready; the one drawn until then stays.
+use 'town_ground_cover.jo'
+use 'settlements.jo'
+use 'town_sites.jo'
+use 'world_towns.jo'
+use 'objects.jo'
+use 'world.jo'
+use 'geography.jo'
+
+const TOWN_GROUND_N = 512
+const TOWN_GROUND_CELL = 2.0        # metres a texel: a field 1024 m across
+const TOWN_GROUND_SNAP = 128.0      # the field moves with the camera in steps of this
+const TOWN_GROUND_BUDGET = 0.0012   # seconds a frame on a field being made
+
+struct GroundLane:
+    a: vec2
+    b: vec2
+    half: f32
+    stone: bool
+
+struct GroundSpot:
+    at: vec2
+    radius: f32
+
+# A town's lanes and worn spots, in the world (made once, and again when its houses are ready).
+struct TownGroundPlan:
+    lanes: GroundLane[]
+    spots: GroundSpot[]
+    housed = false                  # (made with the town's houses)
+
+town_ground_plans: {int: TownGroundPlan} = {}
+town_ground_enabled = env("AEGEAN_TOWN_GROUND") != "0"
+
+_seg_point = (p: vec2, a: vec2, b: vec2) -> vec2:
+    d = b - a
+    l = dot(d, d)
+    if l < 0.0001: return a
+    a + d * clamp(dot(p - a, d) / l, 0.0, 1.0)
+
+# A mainland town: its street plan, its square, and (once its houses are known) the worn ground
+# about each house and a short alley from it to the nearest street.
+_registry_plan = (index: int) -> TownGroundPlan:
+    s = world_settlements[index]
+    plan = TownGroundPlan()
+    stone = town_ground_stone(s)
+    tangent = vec2(-s.out.y, s.out.x)
+    streets: GroundLane[]
+    loop street in place_street_plan(s):
+        mid = (street.a + street.b) * 0.5
+        if not place_inside(s, mid): continue
+        if s.harbor.len() > 0 and not s.remote_harbor and mid.y < -35.0: continue
+        streets.push(GroundLane(place_to_world(s, street.a), place_to_world(s, street.b), f32(street.width * 0.5), stone))
+    plan.lanes = streets
+    if s.kind != .farm and s.kind != .lighthouse and s.kind != .chapel:
+        sq = place_square(s)
+        plan.lanes.push(GroundLane(s.center.xz - tangent * f32(sq.half_width), s.center.xz + tangent * f32(sq.half_width), f32(sq.depth * 0.5), sq.paved and stone))
+        plan.spots.push(GroundSpot(s.center.xz, f32(sq.half_width + sq.depth * 0.5 + 6.0)))
+    if index >= world_town_far.len() or not world_town_far[index].ready: return plan
+    plan.housed = true
+    # (the streets by 48 m cell, so each house looks only at those near it)
+    cells: {int: int[]} = {}
+    cell_of = (p: vec2) -> int: (int(floor(f64(p.x - s.center.x) / 48.0)) + 512) * 1024 + int(floor(f64(p.y - s.center.z) / 48.0)) + 512
+    loop k in 0..streets.len():
+        n = max(1, int(ceil(f64(length(streets[k].b - streets[k].a)) / 24.0)))
+        loop j in 0..n + 1:
+            key = cell_of(mix(streets[k].a, streets[k].b, f32(j) / f32(n)))
+            if not (key in cells): cells[key] = []
+            if not (k in cells[key]): cells[key].push(k)
+    loop house in world_town_far[index].houses:
+        p = house.model[3].xz
+        plan.spots.push(GroundSpot(p, 11.0))
+        best = p; bd = 40.0
+        loop dz in -1..2:
+            loop dx in -1..2:
+                loop k in cells.get(cell_of(p + vec2(f32(dx) * 48.0, f32(dz) * 48.0)), []):
+                    q = _seg_point(p, streets[k].a, streets[k].b)
+                    d = f64(length(q - p))
+                    if d < bd: bd = d; best = q
+        if bd < 40.0 and bd > 3.0: plan.lanes.push(GroundLane(p, best, 0.85, stone))
+    plan
+
+# An original island town: the lanes between its house fronts (the same as its close paving's),
+# joined to each other, to its chapels and to the foot of its quay, and the worn ground about
+# each house.
+_legacy_plan = (index: int, towns: Town[]) -> TownGroundPlan:
+    s = world_settlements[index]
+    plan = TownGroundPlan(housed = true)
+    if s.legacy >= towns.len(): return plan
+    tw = towns[s.legacy]
+    stone = town_ground_stone(s)
+    half: f32 = if stone: 1.2 else: 1.0
+    nodes: vec2[]
+    group: int[]
+    add_node = (p: vec2) -> int:
+        loop k in 0..nodes.len():
+            if length(nodes[k] - p) < 0.5: return k
+        nodes.push(p); group.push(nodes.len() - 1)
+        nodes.len() - 1
+    join = (i: int, j: int):
+        old = group[j]; fresh = group[i]
+        loop k in 0..group.len():
+            if group[k] == old: group[k] = fresh
+    loop lane in site_lanes(tw.sites):
+        i = add_node(lane.a); j = add_node(lane.b)
+        plan.lanes.push(GroundLane(lane.a, lane.b, half, stone))
+        join(i, j)
+    loop site in tw.sites:
+        front = site_point(site, 0.0, site.depth * 0.5 + 2.4)
+        plan.spots.push(GroundSpot(site.at.xz, f32(max(site.width, site.depth) * 0.5 + 5.0)))
+        if place_ground(front) < 0.6: continue
+        k = add_node(front)
+        plan.lanes.push(GroundLane(site.at.xz, front, 0.8, stone))
+        # (to the nearest node of its row)
+        best = -1; bd = 14.0
+        loop j in 0..nodes.len():
+            d = f64(length(nodes[j] - front))
+            if j != k and d < bd and lane_clear(tw.sites, front, nodes[j], 1.6): bd = d; best = j
+        if best >= 0:
+            plan.lanes.push(GroundLane(front, nodes[best], half, stone))
+            join(k, best)
+    root = tw.center.xz - tw.out * 16.0
+    _ = add_node(root)
+    plan.spots.push(GroundSpot(root, 15.0))
+    # (every part joined to the rest: the shortest clear way between two parts, else the shortest)
+    loop round in 0..nodes.len():
+        bi = -1; bj = -1; best = 1e9
+        loop i in 0..nodes.len():
+            loop j in i + 1..nodes.len():
+                if group[i] == group[j]: continue
+                d = f64(length(nodes[j] - nodes[i]))
+                if d > 90.0 or d >= best: continue
+                cost = if lane_clear(tw.sites, nodes[i], nodes[j], 1.6): d else: d * 4.0 + 30.0
+                if cost < best: best = cost; bi = i; bj = j
+        if bi < 0: break
+        plan.lanes.push(GroundLane(nodes[bi], nodes[bj], half, stone))
+        join(bi, bj)
+    plan
+
+town_ground_plan = (index: int, towns: Town[]) -> TownGroundPlan:
+    global town_ground_plans
+    s = world_settlements[index]
+    housed = s.legacy >= 0 or (index < world_town_far.len() and world_town_far[index].ready)
+    if let plan = town_ground_plans.get(index):
+        if plan.housed == housed: return plan
+    plan = if s.legacy >= 0: _legacy_plan(index, towns) else: _registry_plan(index)
+    town_ground_plans[index] = plan
+    plan
+
+# ---------------- the field ----------------
+struct TownGroundJob:
+    active = false
+    origin: vec2 = vec2(0, 0)
+    stamp = 0
+    img: Image = Image()
+    towns: int[]                    # (settlement indices still to plan)
+    lanes: GroundLane[]
+    spots: GroundSpot[]
+    lane = 0
+    spot = 0
+
+town_ground_stamp = -1
+town_ground_job = TownGroundJob()
+town_ground_generation = -1
+
+# The settlements whose ground reaches the field at `origin`.
+_ground_towns = (origin: vec2) -> int[]:
+    span = f32(f64(TOWN_GROUND_N) * TOWN_GROUND_CELL)
+    out: int[]
+    loop corner in [vec2(0, 0), vec2(span, 0), vec2(0, span), vec2(span, span), vec2(span * 0.5, span * 0.5)]:
+        p = origin + corner
+        loop index in settlement_bins.get(geography_bin(f64(p.x), f64(p.y)), []):
+            if index in out: continue
+            s = world_settlements[index]
+            c = s.center.xz - origin
+            r = f32(s.radius + 60.0)
+            if c.x < -r or c.y < -r or c.x > span + r or c.y > span + r: continue
+            out.push(index)
+    out.sort()
+    out
+
+# (which of those towns have their houses: the field is made again when one more has)
+_ground_stamp = (towns: int[]) -> int:
+    stamp = towns.len() * 7919
+    loop index in towns:
+        s = world_settlements[index]
+        housed = s.legacy >= 0 or (index < world_town_far.len() and world_town_far[index].ready)
+        stamp = (stamp * 31 + index * 2 + (if housed: 1 else: 0)) % 1000000007
+    stamp
+
+_ground_encode = (edge: f64) -> int: int(clamp((edge + TOWN_GROUND_NEAR) / (TOWN_GROUND_NEAR + TOWN_GROUND_FAR), 0.0, 1.0) * 255.0)
+
+_raster_lane = (img: mut Image, origin: vec2, lane: GroundLane):
+    n = TOWN_GROUND_N
+    reach = f32(TOWN_GROUND_FAR) + lane.half
+    lo = min(lane.a, lane.b) - origin - vec2(reach, reach)
+    hi = max(lane.a, lane.b) - origin + vec2(reach, reach)
+    x0 = max(0, int(floor(f64(lo.x) / TOWN_GROUND_CELL))); x1 = min(n, int(ceil(f64(hi.x) / TOWN_GROUND_CELL)) + 1)
+    z0 = max(0, int(floor(f64(lo.y) / TOWN_GROUND_CELL))); z1 = min(n, int(ceil(f64(hi.y) / TOWN_GROUND_CELL)) + 1)
+    a = lane.a - origin; b = lane.b - origin
+    loop z in z0..z1:
+        loop x in x0..x1:
+            p = vec2(f32((f64(x) + 0.5) * TOWN_GROUND_CELL), f32((f64(z) + 0.5) * TOWN_GROUND_CELL))
+            edge = f64(length(p - _seg_point(p, a, b))) - f64(lane.half)
+            if edge >= TOWN_GROUND_FAR: continue
+            at = (z * n + x) * 4
+            e = _ground_encode(edge)
+            if e < int(img.pixels[at]):
+                img.pixels[at] = u8(e)
+                img.pixels[at + 2] = u8(if lane.stone: 255 else: 0)
+            # (a worn verge beside the lane)
+            w = int(clamp(1.0 - edge / 4.5, 0.0, 1.0) * 190.0)
+            if w > int(img.pixels[at + 1]): img.pixels[at + 1] = u8(w)
+
+_raster_spot = (img: mut Image, origin: vec2, spot: GroundSpot):
+    n = TOWN_GROUND_N
+    c = spot.at - origin
+    r = f64(spot.radius)
+    x0 = max(0, int(floor((f64(c.x) - r) / TOWN_GROUND_CELL))); x1 = min(n, int(ceil((f64(c.x) + r) / TOWN_GROUND_CELL)) + 1)
+    z0 = max(0, int(floor((f64(c.y) - r) / TOWN_GROUND_CELL))); z1 = min(n, int(ceil((f64(c.y) + r) / TOWN_GROUND_CELL)) + 1)
+    loop z in z0..z1:
+        loop x in x0..x1:
+            dx = (f64(x) + 0.5) * TOWN_GROUND_CELL - f64(c.x); dz = (f64(z) + 0.5) * TOWN_GROUND_CELL - f64(c.y)
+            d = sqrt(dx * dx + dz * dz)
+            if d >= r: continue
+            k = clamp((r - d) / (r * 0.5), 0.0, 1.0)
+            w = int(k * k * (3.0 - 2.0 * k) * 255.0)
+            at = (z * n + x) * 4 + 1
+            if w > int(img.pixels[at]): img.pixels[at] = u8(w)
+
+# The whole field about `origin` at once (tools and tests).
+town_ground_image = (origin: vec2, towns: Town[]) -> Image:
+    job = _ground_begin(origin, _ground_towns(origin))
+    _ = _ground_advance(job, towns, 1e30)
+    job.img
+
+_ground_begin = (origin: vec2, near: int[]) -> TownGroundJob:
+    img = image(TOWN_GROUND_N, TOWN_GROUND_N)
+    loop i in 0..TOWN_GROUND_N * TOWN_GROUND_N:
+        img.pixels[i * 4] = u8(255); img.pixels[i * 4 + 1] = u8(0); img.pixels[i * 4 + 2] = u8(0); img.pixels[i * 4 + 3] = u8(255)
+    TownGroundJob(true, origin, _ground_stamp(near), img, near)
+
+# true once the field is whole
+_ground_advance = (job: mut TownGroundJob, towns: Town[], until: f64) -> bool:
+    loop job.towns.len() > 0:
+        plan = town_ground_plan(job.towns[job.towns.len() - 1], towns)
+        _ = job.towns.pop()
+        job.lanes.extend(plan.lanes); job.spots.extend(plan.spots)
+        if time() > until: return false
+    loop job.lane < job.lanes.len():
+        loop k in 0..24:
+            if job.lane >= job.lanes.len(): break
+            _raster_lane(job.img, job.origin, job.lanes[job.lane])
+            job.lane += 1
+        if time() > until: return false
+    loop job.spot < job.spots.len():
+        loop k in 0..48:
+            if job.spot >= job.spots.len(): break
+            _raster_spot(job.img, job.origin, job.spots[job.spot])
+            job.spot += 1
+        if time() > until: return false
+    true
+
+# Each frame: keep the field about the camera, a slice of work at a time.
+town_ground_prepare = (cam: vec3, towns: Town[]):
+    global town_ground_field, town_ground_rect, town_ground_stamp, town_ground_job, town_ground_generation, town_ground_plans
+    if town_ground_field.id == 0:
+        town_ground_field = texture(image(2, 2), true)
+        set_mipmaps(town_ground_field, false)
+    if not town_ground_enabled or not settlement_registry_ready: return
+    if town_ground_generation != settlement_generation:
+        town_ground_plans = {}; town_ground_generation = settlement_generation
+        town_ground_rect = vec4(0, 0, 0, 0); town_ground_job = TownGroundJob()
+    span = f64(TOWN_GROUND_N) * TOWN_GROUND_CELL
+    origin = vec2(f32(floor(f64(cam.x) / TOWN_GROUND_SNAP) * TOWN_GROUND_SNAP - span * 0.5), f32(floor(f64(cam.z) / TOWN_GROUND_SNAP) * TOWN_GROUND_SNAP - span * 0.5))
+    if not town_ground_job.active:
+        near = _ground_towns(origin)
+        stamp = _ground_stamp(near)
+        if town_ground_rect.z > 0.0 and town_ground_rect.xy == origin and stamp == town_ground_stamp: return
+        # (no town near, and none drawn: nothing to make)
+        if near.len() == 0 and town_ground_rect.z <= 0.0: return
+        town_ground_job = _ground_begin(origin, near)
+    if not _ground_advance(town_ground_job, towns, time() + TOWN_GROUND_BUDGET): return
+    if town_ground_field.width != TOWN_GROUND_N:
+        free_texture(town_ground_field)
+        town_ground_field = texture(town_ground_job.img, true)
+        set_mipmaps(town_ground_field, false)
+    else: update_texture(town_ground_field, town_ground_job.img)
+    town_ground_rect = vec4(town_ground_job.origin.x, town_ground_job.origin.y, f32(span), 0)
+    town_ground_stamp = town_ground_job.stamp
+    town_ground_job = TownGroundJob()
+
+# On the CPU (the grass keeps off the lanes): whether a point is on a lane of a town near it.
+town_ground_on_lane = (p: vec2, towns: Town[]) -> bool:
+    if not town_ground_enabled: return false
+    loop index in settlement_bins.get(geography_bin(f64(p.x), f64(p.y)), []):
+        s = world_settlements[index]
+        if length(p - s.center.xz) > f32(s.radius + 60.0): continue
+        if let plan = town_ground_plans.get(index):
+            loop lane in plan.lanes:
+                if length(p - _seg_point(p, lane.a, lane.b)) < lane.half + 0.3: return true
+    false
