@@ -56,7 +56,8 @@ struct WorldTile:
     cpu_materials: u8[] = []
     inland_water: bool = false
     canal_city: bool = false       # over Neravessa's canal cut (world_tile_canal)
-    stand: f32[] = []              # the woods' stand cover per sample (level 0: wood_stand)
+    stand: f32[] = []              # the woods' stand cover per sample (level 0: wood_cover)
+    rise: f32[] = []               # and the canopy's rise there
     wooded: f32 = 0.0              # its samples' most stand cover (any level)
 
 struct WorldInstance:
@@ -173,6 +174,7 @@ struct WorldTileJob:
     values: f32[]
     material_bytes: u8[]
     stand: f32[] = []
+    rise: f32[] = []
     wooded: f32 = 0.0
 
 world_tile_job_start = (x: int,z: int,level: int) -> WorldTileJob:
@@ -221,9 +223,9 @@ world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
             job.working.set(i,j,work)
             # (the woods' stand cover, as the ground paints it: level 0 only, for the woods' crowns)
             # (every level: its most wooded sample says whether the far canopy's shells cover it)
-            stand = wood_stand(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),vec2(f32(wx),f32(wz)),work.w,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)))
-            job.wooded = max(job.wooded,stand)
-            if job.level == 0: job.stand.push(stand)
+            covered = wood_cover(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),0.5+(vnoise(vec2(f32(wx),f32(wz))*0.006)-0.5)*0.8,work.w,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)),true)
+            job.wooded = max(job.wooded,covered.x)
+            if job.level == 0: job.stand.push(covered.x); job.rise.push(covered.y)
             job.material_bytes.push(job.h.pixels[a+3])
             loop c in 0..4:job.material_bytes.push(job.m.pixels[a+c])
         job.row += 1
@@ -236,7 +238,7 @@ world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
     world_upload_tile(world_working,job.working,slot)
     tile=WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
     tile.canal_city=world_tile_canal(job.x,job.z,job.level)
-    tile.stand=job.stand
+    tile.stand=job.stand; tile.rise=job.rise
     tile.wooded=job.wooded
     tile
 
@@ -512,18 +514,33 @@ world_fragment = (i: GroundOut,u: GroundParams) -> vec4: world_fragment_at(i,u,1
 # farmed fields): the woods' crowns (src/crowns.jo) stand where the paint draws crowns.
 # n: the sample's normal; tx, ty: its materials' tint x and y; share: its field share.
 wood_stand = (n: vec3,y: f32,ridge: f32,tx: f32,ty: f32,p: vec2,share: f32,orchard: f32) -> f32:
-    if y < 0.6: return 0.0
+    wood_cover(n,y,ridge,tx,ty,0.5+(vnoise(p*0.006)-0.5)*0.8,share,orchard,true).x
+
+# The same, and how far the canopy has risen there (y: 0 at a wood's edge, 1 in its heart). The
+# stand cover closes within a few metres at a wood's edge; a canopy as steep would stand like a
+# wall. So its height follows the smooth field the stand is drawn from, over the field's next
+# fifth: tens of metres of scrub and low crowns stepping up to the wood, and woods taller in
+# their hearts. Where farmland or rock cuts the stand, the canopy ends with it.
+# wash: the broad wash of the field (the new world's noise; the old islands' pigment sheet).
+# treeline: the new world's (its high land is bare).
+wood_cover = (n: vec3,y: f32,ridge: f32,tx: f32,ty: f32,wash: f32,share: f32,orchard: f32,treeline: bool) -> vec2:
+    if y < 0.6: return vec2(0,0)
     slope = 1.0-n.y
-    wash = 0.5+(vnoise(p*0.006)-0.5)*0.8
     field = tx*0.65+wash*0.35+(ty-0.5)*0.25
     patch = smoothstep(0.30,0.67,field)
     rg = clamp(ridge,-1.0,1.0)
     cover = summer_cover(n,y,rg,patch)
     outcrop = smoothstep(0.62,0.79,ty)*smoothstep(0.15,0.4,slope)
     exposure = max(smoothstep(0.26,0.72,slope+(patch-0.5)*0.26),outcrop*0.78)
-    veg = (1.0-exposure)*smoothstep(0.6,1.5,y)*(1.0-smoothstep(1700.0,2300.0,y))
-    if veg <= 0.0: return 0.0
-    max(cover.y+cover.z,canopy_stand(n,rg,field))*veg*(1.0-orchard*0.7)*(1.0-share*veg*0.92)
+    veg = (1.0-exposure)*smoothstep(0.6,1.5,y)*(if treeline: 1.0-smoothstep(1700.0,2300.0,y) else: 1.0)
+    if veg <= 0.0: return vec2(0,0)
+    stand = max(cover.y+cover.z,canopy_stand(n,rg,field))*veg*(1.0-orchard*0.7)*(1.0-share*veg*0.92)
+    closed = clamp((stand-CANOPY_EDGE+0.02)*2.2,0.0,1.0)
+    # (among fields the farmland ends where the pines' density takes over, src/fields.jo
+    # field_share: there the canopy rises with that density, from the fields' last edge)
+    farmable = clamp((0.26-slope)*8.0,0.0,1.0)*clamp((850.0-y)/250.0,0.0,1.0)*clamp((y-4.0)*0.5,0.0,1.0)
+    natural = min(clamp((field-0.44-n.z*0.06-rg*0.05)*5.0,0.0,1.0),mix(1.0,clamp((tx-0.56)*8.0,0.0,1.0),farmable))
+    vec2(stand,min(closed*closed,natural))
 
 # ---------------- the far canopy's shells ----------------
 # Past the crowns' reach (src/crowns.jo) the woods are the painted canopy's crowns (the same
@@ -548,21 +565,19 @@ world_shell_scale = (d: f32,start: f32) -> f32: pow(max(d/max(start,1.0),1.0),1.
 # own paint; approaching, it grows up into its height over a kilometre and a half, so there is no
 # distance where trees arrive. Its edge is scalloped by the crowns along it; past the edge, the
 # scattered crowns of the stand's thin margin are single crowns (src/crowns.jo crown_wood).
-const CANOPY_TOP = 10.0             # (m, the canopy's mean height over the ground inside a wood)
+const CANOPY_TOP = 12.0             # (m, the canopy's mean height over the ground inside a wood)
 const CANOPY_EDGE = 0.5             # (the stand cover where the canopy's edge runs)
 const CANOPY_GROW_FAR = 3400.0      # (beyond, the canopy flat: the ground's paint alone)
 const CANOPY_GROW_NEAR = 1500.0     # (nearer, its full height)
 
 # The canopy's height over the ground at a point (absolute xz) for a stand cover: zero at the
 # edge, rising over the stand's last tenths to the canopy's height, its top in broad lumps.
-canopy_height = (p: vec2,stand: f32) -> f32:
-    # (rising over the stand's last half, gently: the wood's edge low, never a wall)
-    inside = clamp((stand-CANOPY_EDGE+0.02)*2.2,0.0,1.0)
-    inside = inside*inside
+# rise: how far the canopy has risen there (wood_cover's y).
+canopy_height = (p: vec2,rise: f32) -> f32:
     # (broad masses only: the vertices are 14 m apart, so anything finer would facet; the crowns on
     # them are painted)
-    lumps = 0.7+0.6*vnoise(p/60.0+vec2(17.3,5.1))
-    CANOPY_TOP*inside*lumps
+    lumps = 0.62+0.5*vnoise(p/60.0+vec2(17.3,5.1))+0.36*vnoise(p/34.0+vec2(3.7,41.0))
+    CANOPY_TOP*rise*lumps
 
 # How far the canopy has grown at a distance (0 flat, 1 its full height).
 canopy_grow = (d: f32) -> f32:
@@ -574,10 +589,13 @@ world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> G
     absolute = o.world+u.origin
     n = normalize(o.normal)
     # (the stand cover per vertex, carried in land)
-    o.land = wood_stand(n,o.world.y,o.tint.z*2.0-1.0,o.tint.x,o.tint.y,absolute.xz,o.working.w,o.orchard)*o.tint.w
+    covered = wood_cover(n,o.world.y,o.tint.z*2.0-1.0,o.tint.x,o.tint.y,0.5+(vnoise(absolute.xz*0.006)-0.5)*0.8,o.working.w,o.orchard,true)*o.tint.w
+    o.land = covered.x
+    # (the canopy's rise, carried in orchard)
+    o.orchard = covered.y
     d = length(o.world-u.cam)
     # (lifted a little even far off, so the flat canopy never fights the ground it paints over)
-    lift = canopy_height(absolute.xz,o.land)*canopy_grow(d)+0.6
+    lift = canopy_height(absolute.xz,covered.y)*canopy_grow(d)+0.6
     lifted = o.world+vec3(0,lift,0)
     curved = lifted
     curved.y -= world_drop(lifted.xz-u.cam.xz)
@@ -600,6 +618,7 @@ canopy_relief = (sheet: Texture,q: vec2,stand: f32,lod: f32) -> f32:
 
 const CANOPY_RELIEF = 6.0           # (m, how deep the hollows between crowns go near)
 const CANOPY_RELIEF_END = 280.0     # (beyond, the canopy's top painted only)
+const CANOPY_RELIEF_STEPS = 8.0     # (the relief march's steps, 8 at most)
 
 world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     if u.shell.w < 0.0: discard()
@@ -610,28 +629,32 @@ world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     # (far off, the canopy hands over to the ground's paint of the same crowns, by a dither)
     if crown_dither(i.pos.xy) >= clamp((CANOPY_GROW_FAR+600.0-d)/600.0,0.0,1.0): discard()
     span = f32(CANOPY_CELLS)*CANOPY_CELL
-    inside = clamp((stand-CANOPY_EDGE+0.02)*2.2,0.0,1.0)
+    rise = i.orchard
     # near, the canopy's top carved into crowns: the view ray marched down from the mesh's surface
     # (the crowns' tops) into the relief until it meets a crown, so the crowns stand up with real
     # parallax, the hollows between them deep, and at the wood's edge, where the relief runs out,
     # the ray finds no canopy and the ground shows through: a broken edge, not a wall
-    relief = clamp((CANOPY_RELIEF_END-d)/90.0,0.0,1.0)
+    v = normalize(i.world-u.cam)
+    relief = clamp((u.shell.z-d)/90.0,0.0,1.0)
     q = absolute.xz
     hb: f32 = 1.0
     deep: f32 = 0.0
     if relief > 0.0:
         foot = max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.01)
         lod = clamp(log2(foot/1.125),0.0,6.0)
-        v = normalize(i.world-u.cam)
         down = max(-v.y,0.1)
-        depth_max = CANOPY_RELIEF*relief*(0.3+0.7*inside)
+        depth_max = CANOPY_RELIEF*relief*(0.25+0.75*rise)
         hit = false
         reach = min(depth_max/down,22.0)
-        prev_m = -1.0
+        # (the march's steps start at a different depth pixel by pixel: no rings where a crown's
+        # side is stepped over)
+        steps = u.shell.y
+        jit = crown_dither(i.pos.xy+vec2(17.0,5.0))-0.5
+        prev_m = canopy_relief(u.canopy,absolute.xz,stand,lod)-1.0
         prev_f: f32 = 0.0
         loop k in 0..8:
-            if not hit:
-                fk = (f32(k)+1.0)/8.0
+            if not hit and f32(k) < steps:
+                fk = (f32(k)+0.75+jit*0.5)/steps
                 qk = absolute.xz+v.xz*(reach*fk)
                 hk = canopy_relief(u.canopy,qk,stand,lod)
                 # (how far the ray is below the leaf there: positive, it has met the canopy)
@@ -663,19 +686,21 @@ world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     # light: the broad masses' own slope (the height's gradient), each crown's rounded normal on
     # it, the crowns' tops lit and the hollows between them in shade
     e = 6.0
-    hx = canopy_height(absolute.xz+vec2(e,0),stand)-canopy_height(absolute.xz-vec2(e,0),stand)
-    hz = canopy_height(absolute.xz+vec2(0,e),stand)-canopy_height(absolute.xz-vec2(0,e),stand)
+    hx = canopy_height(absolute.xz+vec2(e,0),rise)-canopy_height(absolute.xz-vec2(e,0),rise)
+    hz = canopy_height(absolute.xz+vec2(0,e),rise)-canopy_height(absolute.xz-vec2(0,e),rise)
     g = canopy_grow(d)
-    # (the canopy's rise at its edge is left to the edge crowns: no steep face of mesh, near)
-    if length(vec2(hx,hz))*g/(2.0*e) > 0.32 and inside < 0.95 and crown_dither(i.pos.xy) < clamp((900.0-d)/400.0,0.0,1.0): discard()
     broad = normalize(vec3(-hx*g/(2.0*e),1.0,-hz*g/(2.0*e)))
+    # (seen edge-on, near, the canopy's surface is the depth between the crowns standing on it
+    # and along its edge: dark, no paint smeared along the view)
+    face = normalize(vec3(i.normal.x/max(i.normal.y,0.2)-hx*g/(2.0*e),1.0,i.normal.z/max(i.normal.y,0.2)-hz*g/(2.0*e)))
+    graze = clamp((0.2+dot(v,face))*7.0,0.0,1.0)*clamp((300.0-d)/90.0,0.0,1.0)
     crown = vec3((s.x*2.0-1.0)*1.6,0.45+0.55*s.z,(s.y*2.0-1.0)*1.6)
     leaf = vec3((fine.x*2.0-1.0)*1.3,0.6,(fine.y*2.0-1.0)*1.3)
     nn = normalize(broad*0.3+crown+leaf*0.8*near+i.normal*0.1)
-    ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)
+    ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)-graze*0.6
     # (each crown's top lit, the hollows between crowns deep; near, the leaf masses' creases and
     # the carved depths)
-    occl = (0.18+0.66*s.z)*mix(1.0,0.7+0.4*fine.z,near)*(1.0-0.5*deep*relief)+0.1*clamp((stand-CANOPY_EDGE)*4.0,0.0,1.0)
+    occl = ((0.18+0.66*s.z)*mix(1.0,0.7+0.4*fine.z,near)*(1.0-0.5*deep*relief)+0.1*clamp((stand-CANOPY_EDGE)*4.0,0.0,1.0))*(1.0-0.5*graze)
     col = mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13))*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
     c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.45,1.0,clamp((300.0-d)/250.0,0.0,1.0)))
     vec4(land_aerial_apply(c,i.river,u.haze),1)
@@ -697,7 +722,9 @@ draw_world_shells = (batches: WorldInstance[][],params: GroundParams,start: f32)
     if foliage_off("shellfs"): p.shell.w = -1.0
     loop k in 0..count:
         f = (f32(k)+1.0)/f32(count+1)
-        p.shell = vec4(f*WORLD_SHELL_HEIGHT,f,start,if p.shell.w < 0.0: -1.0 else: f32(CROWN_FADE))
+        # (y: the relief march's steps; z: where the relief ends. AEGEAN_RELIEF="steps end" for timing)
+        relief_env = split(env("AEGEAN_RELIEF") ?? ""," ")
+        p.shell = vec4(0,f32(to_float(relief_env[0]) ?? CANOPY_RELIEF_STEPS),f32(if relief_env.len() > 1: to_float(relief_env[1]) ?? CANOPY_RELIEF_END else: CANOPY_RELIEF_END),if p.shell.w < 0.0: -1.0 else: f32(CROWN_FADE))
         loop i in 0..16:
             if batches[i].len() == 0: continue
             draw_instanced(world_shell_sh,terrain_grids[16+i],batches[i],p)
