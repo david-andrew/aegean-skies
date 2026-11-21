@@ -11,7 +11,6 @@ from music_performance import score_clock, interpret, apply_performance_map
 from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
-RAW_OVER = 200000                 # bytes: a score larger than this is stored uncompressed
 # Must agree with MusicInstrument in music_synth.jo.
 STRINGS, BRASS, FLUTE, OBOE, CLARINET, BASSOON, PIANO, HARP, BOUZOUKI, ACCORDION, BANJO, TIMPANI, DRUMS, BASS, CHOIR, TRUMPET = range(16)
 PIECES = [
@@ -529,11 +528,6 @@ def main():
   notes,balanced=balance_notes(name,notes)
   if balanced:performance.update(balance_db=BALANCE[name]['gains_db'])
   blob,end,events=pack(notes,mix_levels=name in ANNOTATED or balanced,sections=sections)
-  # A large score is stored as it is (marked RAW!): the game's inflate costs ~170 instructions a
-  # byte, a hitch of a frame or more on a phone when the radio moves on to a long symphony.
-  raw=zlib.decompress(blob,-15)
-  assert not blob.startswith(b'RAW!')
-  if len(raw)>RAW_OVER:blob=b'RAW!'+raw
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
   meta.append(dict(id=name,title=title,composer=composer,station=station,piano=usual_piano(station),frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
