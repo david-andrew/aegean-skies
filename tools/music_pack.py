@@ -175,22 +175,73 @@ HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo'
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie', 'daphnis-lever-du-jour': 'daphnis-155-24'}
 source_of = lambda name: SOURCE.get(name, name)
 
-# The automatic balance (tools/music_balance.py writes it): per piece, a gain per instrument (dB)
-# so the melody sits a few loudness units over the accompaniment, and a high shelf where a part is
-# harsh. MUSIC_BALANCE=0 packs without it (for measuring).
-import os
+# The automatic balance. tools/music_balance.py writes balance.json: a high shelf per instrument
+# where a part is harsh (and, for four early pieces, its melody and accompaniment gains: kept).
+# tools/music_part_balance.py writes part-balance.json: a gain per part (dB) from each part's
+# measured loudness and its role (the tune, a doubling, a counter-melody, the harmony, the bass,
+# percussion), so the tune sits forward and what is behind it is heard. The gains are applied
+# here, at pack time, as mix gains (a plain level: the touch and its tone are untouched), and what
+# was applied is recorded in performance.json. MUSIC_BALANCE=0 packs without them (for measuring).
+import os, hashlib
 BALANCE = json.loads((ROOT/'data/music/balance.json').read_text()) if (ROOT/'data/music/balance.json').exists() and os.environ.get('MUSIC_BALANCE','1')!='0' else {}
+PART_BALANCE = json.loads((ROOT/'data/music/part-balance.json').read_text()) if (ROOT/'data/music/part-balance.json').exists() and os.environ.get('MUSIC_BALANCE','1')!='0' else {}
+NAMES = ['strings','brass','flute','oboe','clarinet','bassoon','piano','harp','bouzouki','accordion','banjo','timpani','drums','bass','choir','trumpet']
+# Pieces whose balance was set by hand and approved by ear: measured and reported by the part
+# balance, never changed by it.
+HAND_SET_BALANCE = {
+ 'adagietto': "the annotated performance's section levels (adagietto-performance.json), approved by ear",
+ 'mahler-opening': 'the solo call: effort targets per note (opening-performance.json), approved by ear',
+ 'clair-de-lune': "the annotated performance's voicing (clair-de-lune-performance.json), approved by ear",
+ 'gymnopedie': 'the gentle touch: a soft mean velocity per voice (GENTLE), set by ear',
+ 'gymnopedie-orchestra': "the arranger's own levels (gymnopedie_orchestra), the tune set over the rest by ear",
+ # The title's music is balanced with the title's own work, not here.
+ 'daphnis-lever-du-jour': "the title's music: the arranger's own level per part (DAPHNIS_PARTS)",
+}
+
+def kept_balance(name):
+ """A balance a piece already had in performance.json before the part balance (balance_db, per
+ instrument, from tools/music_balance.py): kept as it is. Its gains, or None."""
+ return BALANCE.get(name,{}).get('gains_db') or None
+
+def part_of(note):
+ """The part a note belongs to: its instrument on its staff ("strings@3": the strings of track
+ 3). A keyboard's or a harp's staves are one player's two hands, and the percussion one section:
+ one part each, whatever the track."""
+ ins=note[3]
+ return NAMES[ins] if ins in (PIANO,HARP,TIMPANI,DRUMS) else f'{NAMES[ins]}@{note[6]}'
+
+def score_hash(notes):
+ """What a part balance was measured on: the arranged, interpreted notes before any balance."""
+ h=hashlib.sha1()
+ for n in sorted(notes):h.update(('%.4f %.4f %d %d %.3f %.3f %d|'%tuple(n[:7])).encode())
+ return h.hexdigest()[:16]
 
 def balance_notes(name, notes):
- """The piece's part gains as mix gains (notes gain the two mix fields if they had none)."""
- gains=BALANCE.get(name,{}).get('gains_db')
- if not gains:return notes,False
+ """The piece's part gains as mix gains (notes gain the two mix fields if they had none), and
+ what is recorded of it in performance.json."""
+ if name in HAND_SET_BALANCE:return notes,False,dict(status='hand-set',reason=HAND_SET_BALANCE[name])
+ kept=kept_balance(name)
+ if kept:
+  out=[]
+  for n in notes:
+   k=10**(kept.get(str(n[3]),0.0)/20)
+   m=list(n) if len(n)>7 else list(n)+[1.0,1.0]
+   m[7]*=k;m[8]*=k;out.append(m)
+  return out,True,dict(status='kept',reason='the balance it already had (balance_db, per instrument: tools/music_balance.py)')
+ entry=PART_BALANCE.get(name)
+ if not entry:return notes,False,dict(status='missing')
+ if entry['score']!=score_hash(notes):return notes,False,dict(status='stale')
+ record=dict(status=entry['status'])
+ if entry.get('reason'):record['reason']=entry['reason']
+ gains=entry.get('gains_db')
+ if not gains:return notes,False,record
  out=[]
  for n in notes:
-  k=10**(gains.get(str(n[3]),0.0)/20)
+  k=10**(gains.get(part_of(n),0.0)/20)
   m=list(n) if len(n)>7 else list(n)+[1.0,1.0]
   m[7]*=k;m[8]*=k;out.append(m)
- return out,True
+ record['parts']={p:dict(role=v['role'],gain_db=gains.get(p,0.0)) for p,v in entry['parts'].items()}
+ return out,True,record
 
 # Each piece's mood (tools/expressive_timing.py MOODS), classified by hand, with the reason.
 MOOD = {
@@ -638,43 +689,52 @@ def pack(notes, mix_levels=False, sections=None):
  raw=(b'MUS4' if sections is not None else b'MUS3' if mix_levels else b'MUS2' if extended else b'MUS1')+struct.pack('<III',len(events),end,longest)+b''.join(struct.pack('<IIBBBBHH' if mix_levels else '<IIBBBBBB' if extended else '<IIBBBB',*n) for n in events)
  return zlib.compress(raw,9,wbits=-15),end,events
 
+def build(name):
+ """A piece's notes as arranged and interpreted, before the part balance: (notes, what is
+ recorded of the performance, the score desks of a sectioned piece or None)."""
+ notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{source_of(name)}.mid')
+ if name=='mahler-opening':
+  performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
+ elif name in AS_ARRANGED:
+  written=max(n[0]+n[1] for n in notes)
+  notes=arrange(name,notes)
+  performance=dict(source='arranged from our transcription, played as arranged',duration_before=written,duration_after=written)
+ else:
+  clock=score_clock(ROOT/'data/music/source'/f'{source_of(name)}.mid',name)
+  notes,performance=interpret(arrange(name,notes),name,clock)
+  if name in APPLY_MOOD:
+   mood=MOOD[name][0];touch=MOODS[mood][1]
+   notes=mood_touch(notes,clock,touch)
+   if name in GENTLE:notes=gentle_touch(notes,GENTLE[name])
+   time_map,curves=timing_map(notes,clock,mood_timing(mood,**APPLY_MOOD[name]))
+   notes=warp(notes,time_map)
+   performance.update(mood=mood,expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
+  if name in EXPRESSIVE:
+   time_map,curves=timing_map(notes,clock,EXPRESSIVE[name])
+   notes=warp(notes,time_map)
+   performance.update(expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
+ if name in ANNOTATED:
+  annotation=json.loads((ROOT/'data/music'/ANNOTATED[name]).read_text())
+  notes=apply_performance_map(notes,annotation)
+  performance.update(annotated_clock=True,time_points=len(annotation['time_map']),duration_after=max(n[0]+n[1] for n in notes),section_mix='independent start/end gains')
+  if 'pedal' in annotation:performance.update(pedal_spans=len(annotation['pedal']),voicing=annotation['voicing'],spread_seconds=annotation['spread_seconds'],dynamic_range_db=[min(v for _,v in annotation['dynamics']),max(v for _,v in annotation['dynamics'])])
+ sections={track:i for i,key in enumerate(['harp','violin_1','violin_2','viola','cello','bass']) for track in annotation['section_tracks'][key]} if name=='adagietto' else None
+ return notes,performance,sections
+
 def main():
- meta=[]; performances={}
+ meta=[]; performances={}; unbalanced=[]
  for name,title,composer,station in PIECES:
-  notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{source_of(name)}.mid')
-  if name=='mahler-opening':
-   performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
-  elif name in AS_ARRANGED:
-   written=max(n[0]+n[1] for n in notes)
-   notes=arrange(name,notes)
-   performance=dict(source='arranged from our transcription, played as arranged',duration_before=written,duration_after=written)
-  else:
-   clock=score_clock(ROOT/'data/music/source'/f'{source_of(name)}.mid',name)
-   notes,performance=interpret(arrange(name,notes),name,clock)
-   if name in APPLY_MOOD:
-    mood=MOOD[name][0];touch=MOODS[mood][1]
-    notes=mood_touch(notes,clock,touch)
-    if name in GENTLE:notes=gentle_touch(notes,GENTLE[name])
-    time_map,curves=timing_map(notes,clock,mood_timing(mood,**APPLY_MOOD[name]))
-    notes=warp(notes,time_map)
-    performance.update(mood=mood,expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
-   if name in EXPRESSIVE:
-    time_map,curves=timing_map(notes,clock,EXPRESSIVE[name])
-    notes=warp(notes,time_map)
-    performance.update(expressive_timing=True,rate_range=[round(min(curves['rate']),3),round(max(curves['rate']),3)],duration_after=max(n[0]+n[1] for n in notes))
-  if name in ANNOTATED:
-   annotation=json.loads((ROOT/'data/music'/ANNOTATED[name]).read_text())
-   notes=apply_performance_map(notes,annotation)
-   performance.update(annotated_clock=True,time_points=len(annotation['time_map']),duration_after=max(n[0]+n[1] for n in notes),section_mix='independent start/end gains')
-   if 'pedal' in annotation:performance.update(pedal_spans=len(annotation['pedal']),voicing=annotation['voicing'],spread_seconds=annotation['spread_seconds'],dynamic_range_db=[min(v for _,v in annotation['dynamics']),max(v for _,v in annotation['dynamics'])])
+  notes,performance,sections=build(name)
   performances[name]=performance
-  sections={track:i for i,key in enumerate(['harp','violin_1','violin_2','viola','cello','bass']) for track in annotation['section_tracks'][key]} if name=='adagietto' else None
-  notes,balanced=balance_notes(name,notes)
-  if balanced:performance.update(balance_db=BALANCE[name]['gains_db'])
+  notes,balanced,record=balance_notes(name,notes)
+  if record['status']=='kept':performance.update(balance_db=BALANCE[name]['gains_db'])
+  performance.update(part_balance=record)
+  if record['status'] in ('missing','stale'):unbalanced.append(f"{name} ({record['status']})")
   blob,end,events=pack(notes,mix_levels=name in ANNOTATED or balanced,sections=sections)
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
-  meta.append(dict(id=name,title=title,composer=composer,station=station,piano=usual_piano(station),frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
+  meta.append(dict(id=name,title=title,composer=composer,station=station,piano=usual_piano(station),frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=record['status']))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
+ if unbalanced and PART_BALANCE:print('NO PART BALANCE (run tools/music_part_balance.py, then pack again): '+', '.join(unbalanced))
  (ROOT/'data/music/performance.json').write_text(json.dumps(performances,indent=2)+'\n')
  (ROOT/'data/music/catalogue.json').write_text(json.dumps(meta,indent=2)+'\n')
  lines=['# Generated by tools/music_pack.py; edit source MIDI or converter, then rebuild.', 'struct MusicPiece:', '    title: str', '    composer: str', '    station: str', '    frames: int', '    shelf_hz = 0.0                  # the automatic balance\'s high shelf (tools/music_balance.py)', '    shelf_db: f64[] = []            # (dB per instrument above shelf_hz)', '    piano = 0                       # the piano it is played on: 0 the concert grand, 1 the 1920s upright', '    level = 1.0                     # its level in the mix (tools/music_pack.py LEVEL)', '    hall = false                    # heard in the concert hall\'s reverberation', '', 'MUSIC_PIECES: MusicPiece[] = [']

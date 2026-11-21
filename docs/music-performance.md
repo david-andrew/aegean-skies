@@ -217,19 +217,76 @@ the right hand's chords, the bass, the left hand's chords), keeping a third of t
 it. The Gymnopédie is played this way. Its orchestral version (`gymnopedie-orchestra`) sets the
 tune about +1 LU over the accompaniment by its arrangement levels.
 
-## Automatic balance (tools/music_balance.py)
+## Automatic balance
 
-A build-time pass that balances the band and orchestra without a listener. The synthesizer renders
-stems (`tools/music_stems.jo`); the melody is the part with the top line most of the time;
-loudness is measured as ITU-R BS.1770 integrated loudness and as the melody's partial loudness
-over the accompaniment (Bark-band excitation, N = (Em + Ea)^0.23 − Ea^0.23); gains set the melody
-3 LU over the accompaniment (left alone within 1 LU). Harshness per part: the presence band
+Two build-time passes balance the band and orchestra without a listener. Both render stems with the
+game's own synthesizer (`tools/music_stems.jo`).
+
+### Part balance (tools/music_part_balance.py)
+
+Every part of every piece gets one gain, so the tune sits forward and what is behind it is heard.
+
+1. **Parts.** The arranged, interpreted notes (`music_pack.build`) are split into parts: an
+   instrument on its staff (`strings@3`; a keyboard's or a harp's staves are one part, the
+   percussion one). A piece with one pitched part has nothing to balance.
+2. **Measure.** Each part is rendered alone, whole, in the piece's hall and at its level
+   (`MUSIC_EVENTS`, a scratch-packed score), and its loudness taken by ITU-R BS.1770: K-weighted,
+   400 ms blocks, gated, so only the span where the part plays counts.
+3. **Roles**, read from the notes in 4-second windows, since a part's role changes: the melody (the
+   staff marked as the melody in `music_performance.CONFIG` wherever it plays moving notes: a
+   soloist under the orchestra's top line, a singer's part; otherwise the part holding the top line
+   among the notes that are new, so a held pedal over the tune does not hide it), a doubling (the
+   melody's notes at the unison or the octave), the bass (the lowest line, low), a counter-melody
+   (one line, moving by step, in its own rhythm), the harmony (the rest), percussion.
+4. **Everything that plays is heard.** In each window an accompanying part is compared with the
+   median of the parts accompanying with it (the other one, of two), after its role's place (bass and counter-melody level, the
+   inner harmony 2 LU under them, a part in the melody's own register up to 1.5 LU further under,
+   where it masks the tune). A part more than 8 LU under, on the median of its windows, is raised
+   to that; a doubling more than 6 LU under the part it doubles is raised to that. Nothing is
+   lowered here.
+5. **The tune over the rest.** The melody's partial loudness (with its doublings) over everything
+   pitched behind it: loudness summed over critical bands, each counted only above what the other
+   masks there (N = (Em + Ea)^0.23 − Ea^0.23). This is the measure the pieces balanced by ear agree
+   on: the Adagietto −2.2 and the orchestral Gymnopédie −0.6, where the plain loudness difference
+   puts them 10 LU apart (−2.8 and +7.0). A piece between −2.5 and +4 is left. One above is
+   brought to +3 by moving the tune's parts and the rest together; one below is brought to −1.5
+   by moving them apart. A part that does both is moved by its share. Two limits: the parts behind the tune,
+   together, are never raised nearer than 2 LU under the tune's own plain loudness (a dull bass
+   carries more energy than it sounds, but only so far; the pieces the partial loudness does
+   settle come out at +2 to +5), and a tune under its accompaniment is raised by at most 4 dB (a
+   buried top line is as often not the tune).
+6. **Apply and verify.** The gains are shifted together so the mix's gated loudness is unchanged;
+   the balanced piece is rendered whole and trimmed until its BS.1770 loudness equals the
+   unbalanced piece's on `tools/music_level.py`'s own meter (the 48 kHz file), so its level in
+   `data/music/levels.json` stays valid. Percussion is measured
+   and left where the score put it. No part moves more than 20 dB; a move past 8 dB is flagged
+   `suspicious` for a listen.
+
+`data/music/part-balance.json` holds each piece's status, gains, each part's role and loudness
+before and after, the melody over the rest before and after (plain and partial), and the hash of
+the notes it was measured on. `tools/music_pack.py` applies the gains as mix gains (a plain level:
+the touch and its tone are untouched) and records them in `data/music/performance.json`
+(`part_balance`). A piece whose notes have changed since is recorded there as `stale` and packed
+without gains; `tests/music_part_balance_test.py` fails until it is balanced again.
+
+Pieces balanced by hand (`music_pack.HAND_SET_BALANCE`: the Adagietto, the trumpet call, Clair de
+lune, both Gymnopédies, and the title's music) are measured and reported, never changed; nor are
+the four pieces that already had a balance in `performance.json` (`balance_db`, per instrument,
+from `tools/music_balance.py`: the Magnetic Rag, El Choclo, Ave Maria, Adelita). `--calibrate` prints what they
+measure and what the balance would have asked of them (under 2.5 dB for each part).
+
+Rebuild: `python tools/music_part_balance.py [piece ...] --report table.md && python
+tools/music_pack.py` (the whole catalogue: about an hour of CPU, cached by the notes' hash, so a
+changed piece costs seconds). It needs numpy, scipy, mido and `sloppy`.
+
+### Harshness shelves (tools/music_balance.py)
+
+The earlier pass, on the first thirteen pieces. Harshness per instrument: the presence band
 (2–5 kHz) against the body (0.3–2 kHz), Zwicker-weighted sharpness and presence-band flux; a part
 past its instrument's allowance (set from the parts already approved by ear) gets a high shelf
-above 2.2 kHz in the synth (`MusicPiece.shelf_db`, applied to its partials). Pieces whose melody
-guess is doubtful, whose accompaniment only doubles the tune, or that are a single instrument are
-left alone; Clair de lune, the Adagietto and the trumpet call are locked as approved. Gains and
-shelves are written to `data/music/balance.json` and the catalogue.
+above 2.2 kHz in the synth (`MusicPiece.shelf_db`, applied to its partials). It also set the melody
+3 LU of partial loudness over the accompaniment, one gain per instrument, for four pieces: those
+gains are kept (`balance_db`). Shelves and gains are in `data/music/balance.json`.
 
 Rebuild: `MUSIC_BALANCE=0 python tools/music_pack.py && python tools/music_balance.py &&
 python tools/music_pack.py` (about a minute and a half; `--measure` re-measures the packed result).
