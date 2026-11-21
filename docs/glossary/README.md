@@ -4058,10 +4058,59 @@ No image: the tiers differ in budgets more than in any single view.
 - **Aliases:** friend and foe colours, the side palette.
 - **Definition:** one colour scheme for sides wherever the game marks them: enemies red-orange,
   friends blue, everyone else cream. Lead rings, the target brackets and names, people in the
-  water, the formation's place and the radio's speakers all take it from one place, for a later
-  colour-blind setting (docs/DESIGN.md backlog).
-- **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `battle_standing`,
-  `country_standing`).
+  water, the formation's place and the radio's speakers all take it from one place, so the
+  colour-vision preset swaps the whole set at once. A side's lines lie over a dark halo and its
+  names over a dark outline, so they read on sea, cloud and sky alike.
+- **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `side_line`,
+  `side_ring`, `side_text`, `side_sign`, `battle_standing`, `country_standing`).
+
+### Colour-vision preset
+
+- **Aliases:** colour-blind setting, colours of the sides, the Accessibility palettes.
+- **Definition:** the Settings page's "Colours of the sides" (Accessibility), kept with the
+  options: Standard; Red-green (protanopia, deuteranopia: enemy orange against friend blue, never
+  red against green); Blue-yellow (tritanopia: enemy red against friend teal); No colour (the
+  sides by shape on every mark and by lightness: a chevron an enemy's, a ring a friend's, a dot
+  anyone else's, over a darker halo). The war chart's country inks change with it (nations, not
+  sides), and with No colour each country's held ground is hatched its own way.
+- **Rules:** a preset is checked under a simulation of the eye it is for (Machado et al. 2009 at
+  full severity; luminance alone for no colour): the three sides apart, every mark apart from
+  sea, cloud and sky by its colour or its halo, the inks apart on the chart's paper. The standard
+  preset's marks keep their shapes; only No colour adds a sign to the lead ring, the flight's
+  marks and the pointer.
+- **Code:** `src/side_colours.jo` (`ColourVision`, `side_palette_for`, `set_colour_vision`,
+  `country_ink_for`, `country_hatch`, `side_shapes`), `src/colour_vision.jo` (`simulate_colour`,
+  `seen_distance`), `Options.colour_vision`; `tests/colour_vision_test.jo`.
+- **Capture:** `AEGEAN_COLOUR_VISION=standard|red_green|blue_yellow|monochrome`;
+  `AEGEAN_CAPTURE_SIDES=4` lays every side's mark in rows over the view (`src/side_samples.jo`);
+  `AEGEAN_CAPTURE_PANEL=settings-accessibility`; `sloppy --release tools/colour_vision_view.jo
+  in.png out.png protan|deutan|tritan|achromat|sheet` shows a capture as that eye sees it.
+
+### Sandbox switches
+
+- **Aliases:** sandbox settings, playing freely, cheats.
+- **Definition:** the Settings page's Sandbox section, each a separate switch, each off, kept with
+  the options: paint the aircraft anywhere at any time; any aircraft at any time (the Aircraft
+  page among the player's tabs); unlimited money; no damage; no fuel use; endless ammunition. The
+  simulation runs as usual: a switch lifts only the player's own constraint.
+- **Rules:** nobody else's money, cargo or wear is changed by a switch, and the world's books
+  balance with one on. Unlimited money holds the purse at a level (the purse hold): what is spent
+  is made good from outside the world, entered in the ledger as the outside's, so everyone is
+  really paid; switched off, what was lent goes back and the purse is what the player had and
+  earned. No fuel use undoes the burning of the player's own step, so nothing is consumed from
+  the tank or the goods ledger. No damage raises the damage shield round the player's own step
+  (contacts shake and sound, and break nothing) and mends what guns did. A game saved with a
+  switch on is a valid save: the session keeps the purse hold, and loads to the right purse with
+  the switch on or off.
+- **Code:** `src/sandbox.jo` (`Sandbox`, `sandbox`, `sandbox_purse`, `PurseHold`, `sandbox_fuel`),
+  `src/sandbox_world.jo` (`sandbox_money_step`), `src/damage.jo` `set_damage_shield`,
+  `Options.sandbox`, `GameSession.purse`, `shown_pages` in `src/debugmenu.jo`; hooks in
+  `aegean.jo` (`no_damage_now`, `purse_hold`); `tests/sandbox_test.jo`,
+  `tests/sandbox_settings_test.jo`. A paint shop asks `sandbox.paint_anywhere` before it charges
+  money or time.
+- **Capture:** `AEGEAN_SANDBOX="money,damage,fuel,aircraft,paint,ammunition"` (or `all`);
+  `AEGEAN_CAPTURE_PANEL=settings-sandbox`; `AEGEAN_SANDBOX_TRACE=1` prints the purse, the tank
+  and the airframe each second.
 
 ### Going home
 
