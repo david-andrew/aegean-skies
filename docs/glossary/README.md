@@ -22,7 +22,8 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -1673,19 +1674,74 @@ On the rivers branch until it lands.
 
 ### Moon
 
-- **Definition:** a sphere lit by the actual sun direction, never a painted phase mask. On
-  `t3/splash-2` its disc is the same apparent size as the sun's. By day it is seen through the
-  sky in front of it: its lit side a pale, faintly blue wash low in contrast against the blue,
-  its dark side only sky; through dusk it becomes the night Moon.
-- **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count).
-- **Code:** `src/celestial.jo sky_moon`, `moon_illumination`; the disc in `src/sky.jo`.
+- **Definition:** a sphere lit by the actual sun direction, never a painted phase mask, its disc
+  the same apparent size as the sun's. By day it is seen through the sky in front of it: its lit
+  side a pale, faintly blue wash low in contrast against the blue, its dark side only sky. From a
+  little before sunset it comes out as a light (fully by about 18:35): an over-bright emitter as
+  the eye and a photograph see it, the lit face burnt out near white (amber when it is low, cool
+  white high up) with only a hint of the maria, the dark side faint with earthshine.
+- **Moon glow:** the tight saturated glow hugging the lit limb (at the disc's middle when full,
+  toward the lit side for a crescent), covering the sky with its own colour as the sun's bloom
+  does. Weak for a thin crescent.
+- **Aureole:** the wide soft light in the air about the Moon, a fan of painted geometry centred
+  on it (like twilight's glow band: its light worked out at each vertex, nothing at its rim).
+  About 16 degrees across in clear air and half as wide again, and milkier, in haze. It rises
+  before the Moon does.
+- **Corona:** a rust ring about two and a half disc radii out, in hazy or damp air only.
+- **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count); `tools/night_view.jo`
+  (`NIGHT_AIM=moon`, `NIGHT_HOUR`, `NIGHT_DAY`, `NIGHT_AIR`).
+- **Code:** `src/celestial.jo sky_moon`, `moon_illumination`, `moon_glow`; `moon_look`,
+  `draw_night_moon` and the disc's and the aureole's programs in `src/night_sky.jo`. The
+  [moonglade](#sun-glints-and-the-glitter-path) follows `moon_glow` too (`src/sea.jo`).
+
+### Night's air
+
+- **Definition:** what the night sky lets through, as one number: the faintest magnitude seen
+  overhead (`NightAir.limit`). Twilight, moonlight, haze (the [day's air](#days-air)) and cloud
+  overhead each lower it, so they take the faint stars first: Venus shows before sunset, the
+  first stars about half an hour after it, the faint ones and the Milky Way only on a dark,
+  clear, moonless night. Low down the air dims and reddens a star further, twilight's band takes
+  the stars in it, and the Moon's glare the stars about it.
+- **Code:** `night_air`, `night_limit`, `night_seen` in `src/night_sky.jo`.
+
+### Stars
+
+- **Definition:** points of light standing on the celestial sphere, which turns with the hour:
+  about 150 of the brighter real stars at their places (the summer figures: the Scorpion, the
+  Swan, the Lyre, the Plough, Cassiopeia; [stargazing](#stargazing)'s named stars among them) and
+  3,400 fainter ones strewn by a fixed rule, three times as many for each magnitude fainter and
+  thicker along the Milky Way. Each is an over-bright emitter: a small near-white **core** with a
+  touch of its colour (blue-white, white, yellow, orange, orange-red by spectral class) and a
+  **halo** in that colour. The thirty or so brightest get the sun's treatment in full: a larger
+  burnt-out core, a wide halo plainly in the star's own colour (blue about Vega, Deneb and
+  Altair, orange about Arcturus, red about Antares) and a soft four-point **glint**. The faint
+  ones stay fine points with a plain tint.
+- **Twinkle:** the low air's shimmer: slight overhead, strong near the horizon, each star at its
+  own pace, with flashes of colour low down. Planets do not twinkle.
+- **Code:** `BRIGHT_STARS`, `night_star_specs`, `night_star_vs` / `night_star_fs`,
+  `draw_night_stars` in `src/night_sky.jo`: one mesh of small squares, brightness, size, twinkle
+  and what is seen worked out at each star's corners; the pixels draw only the core, the halo and
+  the glint. `sky_turn` gives the sphere's turn from the sun's direction.
+
+### Milky Way
+
+- **Definition:** a soft band along the galactic equator, on dark, clear, moonless nights only:
+  widest and warm at the central bulge in Sagittarius, a bright cloud in the Swan, cool
+  blue-white elsewhere, mottled, and split from the centre up to the Swan by the dark lane of
+  the Great Rift.
+- **Code:** `milky_way_light`, `milky_way_grid`, `milky_way_gain` in `src/night_sky.jo`: a band of
+  painted geometry (a grid 1 degree by 2), its light at each vertex.
 
 ### Planet lights
 
-- **Definition:** Venus, Jupiter, Mars and Saturn as calendar-driven points of light, hidden by
-  clouds in front of them.
-- **Code:** on `t3/splash-2` (`src/celestial.jo`, `src/sky.jo`, `tools/sky_frames.jo` with
-  `SKY_TARGET=moon|venus|jupiter|mars|saturn`, `SKY_DAY`, `SKY_HOUR`). Not on main yet.
+- **Definition:** Venus, Jupiter, Mars and Saturn as calendar-driven points of light (a simple
+  ephemeris from the game's start date, 7 June 1926: Venus is a morning star that summer), hidden
+  by clouds in front of them. Drawn as the brightest stars are, steady: Venus brilliant white and
+  Jupiter cream-gold, the brightest things in the sky after the Moon, each with a wide halo and a
+  long glint; Mars red, Saturn pale gold.
+- **Code:** `sky_planets` in `src/celestial.jo`; `PLANET_TINTS`, `planet_magnitude`,
+  `night_planet_vertices` in `src/night_sky.jo`; `tools/sky_frames.jo` with
+  `SKY_TARGET=moon|venus|jupiter|mars|saturn`, `SKY_DAY`, `SKY_HOUR`.
 
 ![The moon on day 7, and Saturn as a planet light (t3/splash-2, tools/sky_frames.jo)](img/moon-planets.png)
 
@@ -2172,8 +2228,32 @@ On the rivers branch until it lands.
   and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
   nearest of the flight answers in a few plain words, by [signal](#signals-between-aircraft) when
   in sight.
-- **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
-  in `aegean.jo`.
+  The words are heard by every one of the flight still up, however far off, and **stand over the
+  flight's way home**: a flight that has turned for home after the fight comes back to form on the
+  player or to circle where told (over the player while they are down on the sea), and goes on
+  home, formed on the first of those still up, when told to ("break off, go home", "lead me
+  home") or when the player is down for good or tied up. One far off says how far and which way
+  ("On our way. Twelve kilometres north-west of you."). **Lead me home** is led by one in sight:
+  a leader farther off than 1.2 km comes to the player first, the flight behind it ("Coming to
+  you. ... Then follow me home."), says "Follow me. Home this way." only once in sight, and
+  comes back for a player it has lost by 4 km ("Lost sight of you. Coming back."). Those already
+  down and tied up at the base are out of it; with all of them down, the first answers from the
+  base ("We're down at the Ierax, twenty-six kilometres west of you.").
+- **Code:** `src/rt_pad.jo` (`rt_reply`, `rt_later`); `give_order`, `flight_held`, `_orders_step`
+  and `_rehome` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`, `rt_later_step` in `aegean.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_STRAIT_AFTER=orders` plays a pickup, "circle
+  here and wait", 10 km apart, "form on me" and "lead me home"; `ORDERS` lines say how it goes.
+
+### Flight marks
+
+- **Aliases:** the ally marks, the flight's chevrons, the pointer to the flight.
+- **Definition:** a small chevron over each of the player's own flight in the friends' colour
+  (a ring with the shape signs on), the leader's doubled; none of them on screen, a pointer at
+  the screen's edge toward the leader (else the nearest). The chevrons fade with range to a half
+  at 10 km and stay at that beyond it: one of the flight alive and in the battle is marked or
+  pointed to at any distance (under orders, gone on ahead, or down at the base). Nearer than
+  400 m (a formation) they are found by eye alone.
+- **Code:** `src/lead_marker.jo` `ally_marks`, `draw_ally_marks`, `ally_alpha`.
 
 ### Signals between aircraft
 
@@ -2834,10 +2914,11 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   a nurse or a telegraphist near the top), with a breath at a comma and a longer one at a full
   stop, and none inside a figure. The line is wrapped whole first, so no word jumps to the next
   row as it grows.
-- **The answers wait:** in a conversation the panel holds the line alone while it arrives, then
-  opens upward and the answers fade in. Space, Enter, a controller's A, or a click or tap on the
-  panel finishes the line at once. That press does nothing else: it is not also an answer, and
-  Space is held from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+- **The answers wait:** what can be said back comes once the line is whole, and fades in. Space,
+  Enter, a controller's A, or a click or tap on the line (their bubble, or a panel's line)
+  finishes it at once. That press does nothing else: it is not also an answer, and Space is held
+  from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+  The keys card (H) lists it: "Space  finish a line".
 - **Where:** conversations, an office's contract, the hotel desk, a host's spare room, the bath
   keeper and a ride asked for (the choices wait for them); the keeper's word under the bill of
   fare and in the book, the workshop's answer, a line on the wireless, and a spoken card such as
@@ -2854,23 +2935,70 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ### Talk bubbles
 
-- **Aliases:** conversation bubbles, the exchange over their heads.
-- **Definition:** a conversation in the panel is heard in the world too. The person's line is in
-  a speech bubble over their head, arriving in step with the panel, and what the pilot says (the
-  answer chosen, a subject put as a short question, an errand in a few words) is in one over his.
-  The pilot speaks first: the answer begins a moment after.
-- **Timing:** as the bubbles of [small talk](#small-talk): a line stays seven seconds once it is
-  whole and the pilot's words four and a half. Both go when the conversation ends.
-- **Placement:** both bubbles keep above the panel's top edge at its full height, however low the
-  speaker stands behind it. Two that would cover each other slide apart sideways, each toward
-  its own speaker; on a screen too narrow for that (a phone upright) the pilot's goes over the
-  answer, without a tail. A bubble with no name keeps no empty row for one.
-- **Code:** `src/talk_bubbles.jo` (who says what and for how long, `pilot_asks`, `pilot_says`),
-  `bubble_box`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles` in
-  `aegean.jo`.
-- **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start; with
-  `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n5+ 303:n5-` picks the fifth choice) it plays
-  the same every time.
+- **Aliases:** menu-free dialogue, conversation bubbles, the reply fan.
+- **Definition:** a conversation has no panel. The person's line is in a speech bubble over their
+  head, arriving as it is spoken, with their trade after their name; it stays until they say the
+  next thing. What the pilot can say is a short fan of small numbered bubbles beside his head,
+  each worded as he would say it (the subject "the weather" reads "How's the weather looking?").
+  The one chosen becomes his own speech bubble; their answer begins a moment after.
+- **The fan:** four at a time, with Goodbye under every set. More than four: two small arrows
+  and "2 / 3" turn the sets. It comes once their line is whole. It stands on the side of his head
+  away from the other speaker, clear of both speech bubbles, the clock and a touch screen's
+  buttons; on a cramped screen its lines break shorter until it fits; on a phone held upright
+  it goes under his head.
+- **Keys:** 1 to 4 say the set's reply, 0 or Escape is goodbye, Tab the next set (Shift+Tab the
+  one before); a click or tap on a bubble says it. A controller's d-pad steps through the set and
+  A says the one reached, the bumpers turn the sets, B is goodbye; its stick is still his feet.
+  Space, Enter, A, or a click on their bubble finishes a line still arriving.
+- **A question passing:** the answers to a direct question of theirs fade from nine seconds and
+  are gone at twelve; the subjects and Goodbye stay.
+- **Out of view:** someone behind the camera or off to a side has their bubble at the screen's
+  edge on their side, with a small point toward them.
+- **Out of earshot:** to 15 m their words come whole; from there to 25 m the bubble fades and
+  loses words (the same words each time, a run of them one "…"); past 25 m the talk is over, and
+  a word is called after as a spoken card ("Mind how you go!").
+- **Code:** `src/talk_bubbles.jo` (who says what, `pilot_asks`, `pilot_says`, `ReplyFan` and its
+  sets and keys, `talk_clarity`, `talk_heard`), `reply_bubbles`, `reply_place`, `bubble_box`,
+  `bubble_box_edge`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles`
+  and the talk case of `draw_ui` in `aegean.jo`. `ctl_talk` in `src/controller.jo` is the
+  controller's press in a talk on foot.
+- **Still panels:** the office's contract and a notice's terms (`conversation`), and every form:
+  the ledger, the notice board, the repair desk, the fuel pier, the map counter, the bills of
+  fare, tavli, the band's jar and requests.
+- **Tests:** `tests/talk_bubbles_test.jo` and `tests/talk_bubbles_test.py` (the line arriving,
+  the fan's bubbles on the screen, the keys, the mouse, a controller, a question passing).
+- **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start,
+  `AEGEAN_TALK=idle` with the nearest who has nowhere to be (the pilot stood beside them), and
+  `AEGEAN_TALK_FOLLOW=1` walks the pilot beside whoever he is talking with. With
+  `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n1+ 303:n1-` says the first reply) it plays the
+  same every time.
+
+### Talk hold
+
+- **Aliases:** standing and walking talks, the scene's hold, come along.
+- **Definition:** the pilot keeps his feet through a conversation. Someone with nowhere to be
+  stands where they are and turns to him, and he to them while he stands; someone seated, at a
+  fixture or playing keeps the way that faces them. Someone with somewhere to be (a load in hand,
+  a job, work to get to, the church bell, bed, someone waiting) keeps walking, at 0.8 of their
+  pace, and he can walk along.
+- **Come along:** when a stander's day gives them somewhere to be, they say so ("This won't
+  carry itself. Come along.") and set off, the talk still open. Their boat takes them alone,
+  with a parting word. The same part of the day given a new spot to stand on is no call, nor the
+  first plan of a world just begun; someone at work at their post stands.
+- **The lease:** the scene's walkers (the daily walkers, the far people, porters under a load)
+  keep their movement lease on a held person and do not step them, and walk a paced one slower.
+  The saved plan, its route and the place along it are untouched; a save in the middle of a talk
+  folds the lease as ever. Nothing of the hold is saved.
+- **Code:** `src/scene_hold.jo` (`scene_hold`, `scene_release`, `scene_walk_with`, `scene_pace`,
+  read by `step_life_scene`, `step_far_people_scene` and `step_cargo_scene`), `src/talk_hold.jo`
+  (`talk_hold_begin`, `talk_on_the_way`, `talk_hold_step`, `talk_walk_line`, `talk_far_line`),
+  `talk_hold_frame` in `aegean.jo`.
+- **The camera:** an aircraft's loose box never brings the follow camera closer than 2.6 m during
+  a talk, and not at all while the pilot himself stands inside it (under a wing).
+- **Tests:** `tests/talk_hold_test.jo` (the lease and the plan under a hold, the talking pace,
+  who walks and who stands, each call, the lines) and `tests/talk_hold_test.py` (the game: stood
+  for a word, walked off out of earshot, come along, walked along; `tools/panel_probe.jo`'s
+  `WHO` line).
 
 ### Leads
 
@@ -4303,8 +4431,8 @@ No image: the tiers differ in budgets more than in any single view.
   red against green); Blue-yellow (tritanopia: enemy orange against friend bright teal); No colour
   (enemy white, friend dark, others grey, and a shape on every mark). Each is its own set of
   colours for the player, never a filter. In the three presets one side is a dark mark in a pale
-  halo (others in the colour presets, friends with no colour) and the marks are firm: full
-  strength, a pixel heavier, a whole halo, names on a wide outline. "A shape for each side on
+  halo (others in the colour presets, friends with no colour). In all four the marks are firm:
+  full strength, a pixel heavier, a whole halo, names on a wide outline. "A shape for each side on
   every mark" adds the signs in any preset. The war chart's country inks change with the preset
   (Okabe and Ito's orange, blue and black in the colour presets), and with No colour each
   country's held ground is hatched its own way.

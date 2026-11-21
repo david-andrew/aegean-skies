@@ -33,9 +33,9 @@ Color"; the Game Accessibility Guidelines say the same):
   others are light marks in a dark halo. No eye loses that difference, and it is what puts each
   preset's weakest pair far past the threshold.
 
-In the three presets the marks are also drawn at full strength, a pixel heavier, with a whole
-halo, and names sit on an outline wide enough to count as their background. The standard look
-keeps its lighter halo and thinner lines.
+In every preset, the standard look included, the marks are drawn at full strength, a pixel
+heavier than a hairline, with a whole halo, and names sit on an outline wide enough to count as
+their background.
 
 The war chart's country inks change with the preset too (nations, not sides). The two colour
 presets use Okabe and Ito's orange and blue, and black. With No colour the three inks are dark
@@ -99,14 +99,14 @@ The standard look under every eye: what a player who never opens the setting get
 
 | Preset | Seen by | Sides: least ΔE2000 | Sides: least CAM02-UCS | Sides: least lightness ΔJ' | Colour alone on a ground: least ΔE2000 | Mark with halo on a ground: least ΔE2000 | Mark contrast (WCAG 1.4.11) | Name contrast (WCAG 1.4.3) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Standard | normal | 34.4 (enemy/other) | 33.9 | 3.0 | 5.7 (other on lit cloud) | 28.2 | 2.38:1 (enemy on sky over cloud) | 2.5:1 |
-| Standard | protanopia (Machado) | 23.5 (enemy/other) | 30.4 | 14.1 | 4.3 (other on lit cloud) | 22.2 | 2.20:1 (enemy on far sea) | 2.6:1 |
-| Standard | protanopia (Brettel) | 23.6 (enemy/other) | 30.8 | 13.2 | 4.4 (other on lit cloud) | 22.3 | 2.14:1 (enemy on far sea) | 2.5:1 |
-| Standard | deuteranopia (Machado) | 17.7 (enemy/other) | 22.6 | 0.0 | 3.9 (other on lit cloud) | 27.4 | 2.40:1 (enemy on sky over cloud) | 2.8:1 |
-| Standard | deuteranopia (Brettel) | 18.2 (enemy/other) | 23.3 | 2.4 | 3.9 (other on lit cloud) | 27.8 | 2.36:1 (enemy on sky over cloud) | 2.7:1 |
-| Standard | tritanopia (Machado) | 29.5 (enemy/other) | 37.0 | 6.4 | 4.4 (other on lit cloud) | 27.4 | 2.36:1 (enemy on far sea) | 2.5:1 |
-| Standard | tritanopia (Brettel) | 26.8 (enemy/other) | 33.0 | 3.4 | 4.1 (other on lit cloud) | 27.0 | 2.38:1 (enemy on sky over cloud) | 2.5:1 |
-| Standard | achromatopsia | 5.5 (enemy/friend) | 6.9 | 6.9 | 1.4 (friend on cloud shade) | 20.3 | 2.38:1 (enemy on sky over cloud) | 2.5:1 |
+| Standard | normal | 34.4 (enemy/other) | 33.9 | 3.0 | 6.2 (other on lit cloud) | 32.1 | 2.95:1 (enemy on far sea) | 8.1:1 |
+| Standard | protanopia (Machado) | 23.5 (enemy/other) | 30.4 | 14.1 | 4.8 (other on lit cloud) | 32.0 | 3.16:1 (enemy on far sea) | 6.4:1 |
+| Standard | protanopia (Brettel) | 23.6 (enemy/other) | 30.8 | 13.2 | 4.9 (other on lit cloud) | 31.7 | 3.03:1 (enemy on far sea) | 6.5:1 |
+| Standard | deuteranopia (Machado) | 17.7 (enemy/other) | 22.6 | 0.0 | 4.3 (other on lit cloud) | 30.8 | 3.25:1 (enemy on far sea) | 9.1:1 |
+| Standard | deuteranopia (Brettel) | 18.2 (enemy/other) | 23.3 | 2.4 | 4.3 (other on lit cloud) | 31.0 | 3.04:1 (enemy on far sea) | 8.8:1 |
+| Standard | tritanopia (Machado) | 29.5 (enemy/other) | 37.0 | 6.4 | 4.9 (other on lit cloud) | 33.9 | 3.01:1 (enemy on far sea) | 7.0:1 |
+| Standard | tritanopia (Brettel) | 26.8 (enemy/other) | 33.0 | 3.4 | 4.5 (other on lit cloud) | 32.1 | 2.96:1 (enemy on far sea) | 7.9:1 |
+| Standard | achromatopsia | 5.5 (enemy/friend) | 6.9 | 6.9 | 1.3 (friend on cloud shade) | 28.3 | 2.95:1 (enemy on far sea) | 8.1:1 |
 
 What that says about the standard look:
 
@@ -115,10 +115,11 @@ What that says about the standard look:
   (about 18), where the red-orange enemy and the cream neutral are closest.
 - With no colour, enemy and friend are the same lightness (about 6 apart). There the standard
   look rests on the signs that targets and people in the water carry; No colour is the remedy.
-- Its marks and names fall short of WCAG's 3:1 and 4.5:1 on the grounds between light and dark
-  (the far sea, the sky over cloud): the lighter halo is not enough there. Giving the standard
-  look the presets' whole halo and wide outline, with no colour changed, would take its marks to
-  about 3:1 and its names to 6:1 or better (`tools/colour_vision_report.jo firm`).
+- Its names pass WCAG's 4.5:1 under every eye (6.4:1 or better). Its marks reach 2.95:1 or
+  better on every ground, a hair under 3:1 where the red-orange enemy lies on the far sea: that
+  colour is 8.2:1 from its halo, not the 9:1 that would guarantee it. With the lighter halo and
+  narrow outline the standard look had at first, marks were at about 2.4:1 and names at 2.5:1
+  (`tools/colour_vision_report.jo faint`).
 
 The war chart's inks (`tools/colour_vision_report.jo inks`):
 
@@ -176,7 +177,7 @@ enemy, friend and neutral triple with the checks above.
 ## Running it
 
 - The test: `sloppy test tests/colour_vision_test.jo` (CI runs it on every push).
-- The tables: `sloppy --release tools/colour_vision_report.jo [before|inks|firm]`.
+- The tables: `sloppy --release tools/colour_vision_report.jo [before|inks|faint]`.
 - A capture as an eye sees it: `sloppy --release tools/colour_vision_view.jo in.png out.png
   protan|deutan|tritan|achromat|sheet`.
 - Captures of every mark over the view: `AEGEAN_CAPTURE_SIDES=4` with
