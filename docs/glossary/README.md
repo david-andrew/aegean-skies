@@ -2070,7 +2070,8 @@ On the rivers branch until it lands.
   in plain English ("Aegean Maritime Service: harbours open"), the letters as received smaller
   beneath ("SEA PORT OPEN"), and the dots and dashes of the character being sent inked after
   them. A letter shows only once its last dot or dash has sounded, and a word's plain reading
-  once the gap after it has passed, so the slip is never ahead of the key. Prosigns, Q codes and
+  once the gap after it has passed, so the slip is never ahead of the key (it is held a
+  twentieth of a second behind the game's mix, for the sound device's own delay). Prosigns, Q codes and
   the operators' abbreviations are read out (CQ, DE, K, R, SOS, QTH, QRU ...), a call sign first
   as the station's name. It follows reception: a letter keyed while the signal is down in the
   static is a gap ("S__ PORT"), a word with gaps reads "…", and the slip fades when the dial
