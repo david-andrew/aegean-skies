@@ -1949,7 +1949,7 @@ On the rivers branch until it lands.
   lobes, smaller domes again. Nothing arrives: far off the wood is the ground's paint; nearer
   the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
-  110 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
+  100 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
   so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
   mass or a clump stands only where the wood covers its middle, so a small wood is crowns on
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
@@ -1959,11 +1959,15 @@ On the rivers branch until it lands.
   `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
   `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
   `src/terrain_lod.jo` for their stand cover).
-- **Rules:** the domes are worked out once, as a terrain tile is made (an old island's patch:
-  the first time it is in reach, one a frame), never per frame and never in the vertex shader
+- **Rules:** each size of dome is made in tiles of one level only (masses in level 2, clumps in
+  level 1, crowns in level 0), on the canonical surface, and gathered from those tiles whatever
+  level the ground is drawn at, so a tile's split or merge never changes a dome; a tile made
+  late grows its domes in. The domes are worked out once, as a terrain tile is made (an old
+  island's patch: the first time it is in reach, one a frame), never per frame and never in the vertex shader
   (the laptop's GPU pays by the vertex: a far dome is a cone of six or eight sides). A frame
-  gathers only the blocks of domes in view and in reach and draws each list in one call. The
-  canopy is drawn before the ground, so the ground a wood hides is never shaded. The stand
+  gathers only the blocks of domes in view and in reach and draws each list in one call, the
+  mostly hidden ones (masses, clumps, far crowns) with no discard so the GPU tests their depth
+  before shading them. The canopy is drawn before the ground, so the ground a wood hides is never shaded. The stand
   cover, the canopy's rise and the land's aerial perspective are worked out per vertex.
 
 ### Far land layers
@@ -3982,11 +3986,16 @@ No image: the tiers differ in budgets more than in any single view.
 ### Terrain LOD and contact tiles
 
 - **Definition:** distant terrain is drawn from nested patch grids chosen by screen error, with
-  balanced neighbours and continuous morphing so it never pops. **Contact tiles** are the nine
-  finest tiles around the player; collision always uses them, never a camera-dependent level of
-  detail.
+  balanced neighbours and continuous morphing so it never pops. In the new world a tile coming
+  into the selection (a split, a merge, a tile made late, balancing) starts from the detail
+  drawn where it is the frame before and morphs to its own over a second (up to four levels
+  coarser); after a cut or a jump it grows in from a level coarser. **Contact tiles** are the
+  nine finest tiles around the player; collision always uses them, never a camera-dependent
+  level of detail.
 - **Code:** `src/terrain_lod.jo select_terrain`, `src/world_terrain.jo` (`prepare_world_terrain`,
-  `world_prepare_contact`); `docs/world-renderer-design.md`.
+  `world_drawn_lod`, `world_prepare_contact`); `docs/world-renderer-design.md`.
+- **Rules:** `tools/lod_pop_check.jo` measures the drawn ground and the woods' domes frame by
+  frame on three paths, in screen pixels, and fails on any step; it runs on the pages workflow.
 
 ### Canonical surface
 
