@@ -2116,6 +2116,31 @@ On the rivers branch until it lands.
   with the [R/T](#rt), which sends orders to one's own flight.
 - **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
 
+### Morse subtitles
+
+- **Aliases:** the Morse strip, the slip, the paper slip by the wireless.
+- **Definition:** what Morse says, shown as it is keyed: a slip of cream paper with the message
+  in plain English ("Aegean Maritime Service: harbours open"), the letters as received smaller
+  beneath ("SEA PORT OPEN"), and the dots and dashes of the character being sent inked after
+  them. A letter shows only once its last dot or dash has sounded, and a word's plain reading
+  once the gap after it has passed, so the slip is never ahead of the key (it is held a
+  twentieth of a second behind the game's mix, for the sound device's own delay). Prosigns, Q codes and
+  the operators' abbreviations are read out (CQ, DE, K, R, SOS, QTH, QRU ...), a call sign first
+  as the station's name. It follows reception: a letter keyed while the signal is down in the
+  static is a gap ("S__ PORT"), a word with gaps reads "…", and the slip fades when the dial
+  leaves the station, the signal goes or the set is switched off. It shows for the
+  [wireless](#wireless)'s Morse bulletins, the short cues under the flight's words on the
+  [R/T](#rt) (marked "R/T") and a [lamp](#signals-between-aircraft)'s word as it is flashed
+  (marked "Lamp"; a plain word, so shown as spelt and not read as code). Beside the wireless in the cockpit; under the compass in the outside view and
+  wherever there is no room beside the set. Settings → Accessibility → Morse subtitles, on
+  unless switched off.
+- **Code:** `src/morse_subtitles.jo` (the reading and the following), `src/morse_strip.jo` (the
+  slip and what feeds it), `radio_keying` in `src/radio.jo`; `tests/morse_subtitles_test.jo`.
+- **Capture:** `AEGEAN_FLYING="300 60 cockpit" AEGEAN_RADIO=1260` (the maritime service; without
+  the announcer's data every bulletin is in Morse; `AEGEAN_RADIO=1270` for poor reception).
+  `AEGEAN_MORSE_TRACE=1` prints each change of the slip with its frame (MORSE lines), to set
+  against a capture's own sound (`AEGEAN_AUDIO_CAPTURE`).
+
 ### R/T
 
 - **Aliases:** the radio-telephone, the pad, orders to the flight (not the [wireless](#wireless),

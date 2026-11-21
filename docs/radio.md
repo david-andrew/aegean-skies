@@ -92,6 +92,14 @@ re-export each other's symbols. `src/radio_synth.jo` owns synthesis constants an
   remains available for drawing the dial. `speech_available` is true while the programme is
   read aloud (`radio_spoken`): the transcript is then what the announcer says; otherwise the
   short keyed `morse_text` is what is heard. `Radio.speech = false` keeps every bulletin in Morse.
+* `radio.radio_keying(receiver, world.tick/60.0)`: the Morse being keyed at the ear now, for the
+  Morse subtitles (`src/morse_subtitles.jo`, `src/morse_strip.jo`): the keyed `text` ("" when no
+  Morse is on: music, the announcer, between stations, strength <0.12, muted, ashore), `units`
+  (Morse units since the message's keying began, where the stream has got to at the ear: its
+  cursor less what is still queued; the world clock's place when there is no stream), `period`
+  (the message's length: it is keyed over and over), `signal` (the wanted signal's gain there,
+  `radio_signal_gain`: the receiver's own slow fading at that strength) and `unit_seconds`.
+  A letter keyed while `signal` is under `MORSE_READABLE` is lost to the subtitle.
 * `radio.radio_stations()`: catalogue, including ID, callsign, frequency, transmitter, reach,
   country, news home and style. Useful for dial ticks or a station list.
 
