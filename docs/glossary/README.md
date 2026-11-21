@@ -1475,10 +1475,11 @@ On the rivers branch until it lands.
 ### Sun disc
 
 - **Definition:** the sun's disc, white high up. Low down it is graded, pale gold at its top to
-  amber at its foot, and reddens as it sinks (deep orange to red touching the water); it is
-  flattened by the air and drawn up to 1.8 times larger near the horizon. Where it meets the water
-  the warm air over the sea bends its foot into wavering slices and joins it to a short
-  upside-down image of itself.
+  amber at its foot, and reddens as it sinks; flattened by the air and drawn up to 1.8 times larger
+  near the horizon, its foot wavering in slices into a short mirage where it meets the water. In
+  thick air (the day's air) the change starts about 20 degrees up and comes on gradually, deep red
+  only near the horizon on a heavy-dust day; a reddened sun keeps a hot yellow-orange core grading
+  to a red limb and a warm glow about it in the air, so it reads as light, never a painted dot.
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
   sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
   shape worked out on the CPU from the sun's height over the visible horizon).
