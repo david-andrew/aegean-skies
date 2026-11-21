@@ -23,7 +23,7 @@ on that unmerged branch so far.
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -2914,10 +2914,11 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   a nurse or a telegraphist near the top), with a breath at a comma and a longer one at a full
   stop, and none inside a figure. The line is wrapped whole first, so no word jumps to the next
   row as it grows.
-- **The answers wait:** in a conversation the panel holds the line alone while it arrives, then
-  opens upward and the answers fade in. Space, Enter, a controller's A, or a click or tap on the
-  panel finishes the line at once. That press does nothing else: it is not also an answer, and
-  Space is held from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+- **The answers wait:** what can be said back comes once the line is whole, and fades in. Space,
+  Enter, a controller's A, or a click or tap on the line (their bubble, or a panel's line)
+  finishes it at once. That press does nothing else: it is not also an answer, and Space is held
+  from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+  The keys card (H) lists it: "Space  finish a line".
 - **Where:** conversations, an office's contract, the hotel desk, a host's spare room, the bath
   keeper and a ride asked for (the choices wait for them); the keeper's word under the bill of
   fare and in the book, the workshop's answer, a line on the wireless, and a spoken card such as
@@ -2934,23 +2935,70 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 
 ### Talk bubbles
 
-- **Aliases:** conversation bubbles, the exchange over their heads.
-- **Definition:** a conversation in the panel is heard in the world too. The person's line is in
-  a speech bubble over their head, arriving in step with the panel, and what the pilot says (the
-  answer chosen, a subject put as a short question, an errand in a few words) is in one over his.
-  The pilot speaks first: the answer begins a moment after.
-- **Timing:** as the bubbles of [small talk](#small-talk): a line stays seven seconds once it is
-  whole and the pilot's words four and a half. Both go when the conversation ends.
-- **Placement:** both bubbles keep above the panel's top edge at its full height, however low the
-  speaker stands behind it. Two that would cover each other slide apart sideways, each toward
-  its own speaker; on a screen too narrow for that (a phone upright) the pilot's goes over the
-  answer, without a tail. A bubble with no name keeps no empty row for one.
-- **Code:** `src/talk_bubbles.jo` (who says what and for how long, `pilot_asks`, `pilot_says`),
-  `bubble_box`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles` in
-  `aegean.jo`.
-- **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start; with
-  `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n5+ 303:n5-` picks the fifth choice) it plays
-  the same every time.
+- **Aliases:** menu-free dialogue, conversation bubbles, the reply fan.
+- **Definition:** a conversation has no panel. The person's line is in a speech bubble over their
+  head, arriving as it is spoken, with their trade after their name; it stays until they say the
+  next thing. What the pilot can say is a short fan of small numbered bubbles beside his head,
+  each worded as he would say it (the subject "the weather" reads "How's the weather looking?").
+  The one chosen becomes his own speech bubble; their answer begins a moment after.
+- **The fan:** four at a time, with Goodbye under every set. More than four: two small arrows
+  and "2 / 3" turn the sets. It comes once their line is whole. It stands on the side of his head
+  away from the other speaker, clear of both speech bubbles, the clock and a touch screen's
+  buttons; on a cramped screen its lines break shorter until it fits; on a phone held upright
+  it goes under his head.
+- **Keys:** 1 to 4 say the set's reply, 0 or Escape is goodbye, Tab the next set (Shift+Tab the
+  one before); a click or tap on a bubble says it. A controller's d-pad steps through the set and
+  A says the one reached, the bumpers turn the sets, B is goodbye; its stick is still his feet.
+  Space, Enter, A, or a click on their bubble finishes a line still arriving.
+- **A question passing:** the answers to a direct question of theirs fade from nine seconds and
+  are gone at twelve; the subjects and Goodbye stay.
+- **Out of view:** someone behind the camera or off to a side has their bubble at the screen's
+  edge on their side, with a small point toward them.
+- **Out of earshot:** to 15 m their words come whole; from there to 25 m the bubble fades and
+  loses words (the same words each time, a run of them one "…"); past 25 m the talk is over, and
+  a word is called after as a spoken card ("Mind how you go!").
+- **Code:** `src/talk_bubbles.jo` (who says what, `pilot_asks`, `pilot_says`, `ReplyFan` and its
+  sets and keys, `talk_clarity`, `talk_heard`), `reply_bubbles`, `reply_place`, `bubble_box`,
+  `bubble_box_edge`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles`
+  and the talk case of `draw_ui` in `aegean.jo`. `ctl_talk` in `src/controller.jo` is the
+  controller's press in a talk on foot.
+- **Still panels:** the office's contract and a notice's terms (`conversation`), and every form:
+  the ledger, the notice board, the repair desk, the fuel pier, the map counter, the bills of
+  fare, tavli, the band's jar and requests.
+- **Tests:** `tests/talk_bubbles_test.jo` and `tests/talk_bubbles_test.py` (the line arriving,
+  the fan's bubbles on the screen, the keys, the mouse, a controller, a question passing).
+- **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start,
+  `AEGEAN_TALK=idle` with the nearest who has nowhere to be (the pilot stood beside them), and
+  `AEGEAN_TALK_FOLLOW=1` walks the pilot beside whoever he is talking with. With
+  `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n1+ 303:n1-` says the first reply) it plays the
+  same every time.
+
+### Talk hold
+
+- **Aliases:** standing and walking talks, the scene's hold, come along.
+- **Definition:** the pilot keeps his feet through a conversation. Someone with nowhere to be
+  stands where they are and turns to him, and he to them while he stands; someone seated, at a
+  fixture or playing keeps the way that faces them. Someone with somewhere to be (a load in hand,
+  a job, work to get to, the church bell, bed, someone waiting) keeps walking, at 0.8 of their
+  pace, and he can walk along.
+- **Come along:** when a stander's day gives them somewhere to be, they say so ("This won't
+  carry itself. Come along.") and set off, the talk still open. Their boat takes them alone,
+  with a parting word. The same part of the day given a new spot to stand on is no call, nor the
+  first plan of a world just begun; someone at work at their post stands.
+- **The lease:** the scene's walkers (the daily walkers, the far people, porters under a load)
+  keep their movement lease on a held person and do not step them, and walk a paced one slower.
+  The saved plan, its route and the place along it are untouched; a save in the middle of a talk
+  folds the lease as ever. Nothing of the hold is saved.
+- **Code:** `src/scene_hold.jo` (`scene_hold`, `scene_release`, `scene_walk_with`, `scene_pace`,
+  read by `step_life_scene`, `step_far_people_scene` and `step_cargo_scene`), `src/talk_hold.jo`
+  (`talk_hold_begin`, `talk_on_the_way`, `talk_hold_step`, `talk_walk_line`, `talk_far_line`),
+  `talk_hold_frame` in `aegean.jo`.
+- **The camera:** an aircraft's loose box never brings the follow camera closer than 2.6 m during
+  a talk, and not at all while the pilot himself stands inside it (under a wing).
+- **Tests:** `tests/talk_hold_test.jo` (the lease and the plan under a hold, the talking pace,
+  who walks and who stands, each call, the lines) and `tests/talk_hold_test.py` (the game: stood
+  for a word, walked off out of earshot, come along, walked along; `tools/panel_probe.jo`'s
+  `WHO` line).
 
 ### Leads
 
