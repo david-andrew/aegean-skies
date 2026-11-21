@@ -22,6 +22,15 @@ use '../src/settlements.jo'
 from '../src/canal_traffic.jo' import canal_route_point
 from '../src/river_data.jo' import CANAL_BEGIN
 from '../src/water_field.jo' import water_at
+use '../src/touch.jo'
+use '../src/rt_pad.jo'
+use '../src/vessel_scene.jo'
+use '../src/vessel_types.jo'
+use '../src/weather_scene.jo'
+use '../src/air_events.jo'
+use '../src/air_race.jo'
+use '../src/debugmenu.jo'
+import '../src/living_jobs.jo' as jobs
 
 finish_settlement_registry()
 base_update:(f64)->void=game.update
@@ -72,6 +81,7 @@ walk_to=(p:vec3,back:f64=2.0):
 
 update = (dt: f64):
     global frames,waited,pressing,key_down
+    audit_finger()
     base_update(dt)
     if pressing:
         ctl.choice=-1;pressing=false
@@ -104,6 +114,7 @@ update = (dt: f64):
     if case=="strait-lose":strait_lose_case()
     if case=="dry":dry_case()
     if case=="bail" or case=="bail-canal" or case=="bail-sea":bail_case()
+    if case.starts_with("audit-"):audit_case()
 
 # A room for the night, saved in the room and loaded again in the same session: the pilot must be
 # back on foot by the desk with the room gone, not held in a room he can no longer leave.
@@ -558,4 +569,377 @@ bail_case = ():
         print("PLAYTEST PASS {case}")
         exit(0)
 
-draw = (): base_draw()
+audit_draw_recovery=env("PLAYTEST_DRAW_RECOVERY")=="1"
+audit_last_draw: (str,bool,str)=("",false,"")
+draw = ():
+    global audit_last_draw
+    key=(str(game.sos.stage),game.sos.aboard,str(game.me.mode))
+    if audit_draw_recovery and key!=audit_last_draw:
+        audit_last_draw=key
+        hidden=game.world_hidden
+        game.world_hidden=false
+        note("drawing recovery state {key}")
+        base_draw()
+        game.world_hidden=hidden
+    else:base_draw()
+
+# The touch run uses the same finger and first-finger mouse events as the web input.
+# Recovery passes only if the corresponding card or menu row takes the tap.
+audit_touch=env("AEGEAN_TOUCH")=="1"
+audit_tap: vec2?=none
+audit_down=false
+audit_finger=():
+    global audit_tap,audit_down
+    if audit_down:
+        __touch_event(91,2,0,0)
+        __mouse_event(0,false)
+        audit_down=false
+    else if let p=audit_tap:
+        __script_move_mouse(p)
+        __touch_event(91,1,f32(__mouse_x),f32(__mouse_y))
+        __mouse_event(0,true)
+        __press_track()
+        audit_tap=none
+        audit_down=true
+
+audit_tap_at=(r:Rect) -> bool:
+    global audit_tap
+    if audit_tap != none or audit_down:return false
+    audit_tap=vec2(r.x+r.w*0.5,r.y+r.h*0.5)
+    true
+
+audit_slot_button=(button:int) -> bool:
+    # First slot on the pause menu's Game page. Use its visible button, as for an R/T row.
+    kz=readable_k(16.0)
+    sw=f64(screen_width())/kz; sh=f64(screen_height())/kz
+    k=if sh>sw:1.45 else:1.15
+    pw=if sh>sw:sw-32.0 else:400.0*k
+    x=sw-pw-16.0
+    top=max(16.0,pad_top_clear(x*kz,(x+pw)*kz)/kz)
+    tab_h=if env("PLAYTEST_RT_KEY")=="c":ROW*k else:max(ROW*k,44.0/(kz*ui_points()))
+    set_font(game.fonts.ui)
+    cols=tabs_per_row(pw-24.0,16.0*tab_h/ROW)
+    set_font()
+    rows=(shown_pages(game.dbg).len()+cols-1)/cols
+    y=top+36.0+f64(rows)*(tab_h+GAP)+3.0*GAP+90.0*k
+    bw=(pw-44.0-2.0*GAP)/3.0
+    audit_tap_at(Rect((x+22.0+f64(button)*(bw+GAP))*kz,y*kz,bw*kz,42.0*k*kz))
+
+audit_key=(k:Key) -> bool:
+    if not audit_touch:
+        press_key(k);return true
+    loop i in 0..pad.cards.len():
+        if pad.card_keys[i]==k:return audit_tap_at(pad.cards[i])
+    loop b in pad.buttons:
+        if b.key==k:return audit_tap_at(Rect(b.at.x-1,b.at.y-1,2,2))
+    false
+
+audit_offer=(a:str) -> bool:
+    loop o in game.offers_now():
+        if o.act==a:return audit_key(o.key)
+    false
+
+audit_radio=(line:int) -> bool:
+    if not game.rt.open:
+        rt_key=if env("PLAYTEST_RT_KEY")=="c" or (audit_touch and .c in pad.card_keys and not (.y in pad.card_keys)):Key.c else:Key.y
+        _=audit_key(rt_key)
+        return false
+    i=game.rt.lines.index_of(line) ?? -1
+    if i<0:return false
+    if not audit_touch:
+        press_key([Key.n1,Key.n2,Key.n3,Key.n4,Key.n5,Key.n6,Key.n7][i])
+        return true
+    sw=f64(screen_width())
+    tr=throttle_track()
+    x=f64(tr.x+tr.w)+24.0
+    y=max(f64(tr.y+tr.h)-56.0-38.0*f64(game.rt.lines.len()),60.0)
+    audit_tap_at(Rect(x,y+30.0+38.0*f64(i),min(sw*0.4,320.0,sw-x-20.0),34))
+
+audit_at=vec3(0,0,0)
+audit_minute=0
+audit_start=0.0
+audit_frame=0
+audit_saved_stage=HelpStage.none
+audit_job=-1
+audit_passenger=-1
+audit_canopy=false
+audit_swimming=false
+audit_pickup_side=-1
+audit_pickup_engagement=-1
+audit_boarded=false
+audit_search=false
+audit_terminal_minute=-1
+audit_pass=():
+    note("recovered in {f64(frame_number()-audit_frame)/60.0:.2f} real-time seconds at 60 fps ({game.t-audit_start:.2f} active), {game.living_world.minute-audit_minute} world minutes; {state_text()} at {game.pc.state.position}; offers {offers_text()}")
+    print("PLAYTEST PASS {case}")
+    exit(0)
+
+audit_start_clock=():
+    global audit_minute,audit_start,audit_frame
+    audit_minute=game.living_world.minute
+    audit_start=game.t
+    audit_frame=frame_number()
+
+audit_status=()->str:
+    s=game.sos
+    w=game.living_world; c=w.people[w.player].craft
+    "help {s.stage}/{s.by}, aboard {s.aboard}, eta {s.eta}, {state_text()} at {game.pc.state.position}; hull {w.aircraft[c].hull} engine {w.aircraft[c].engine}; cards {pad.card_keys}; R/T {game.rt_lines()}; offers {offers_text()}; {game.toast}"
+
+audit_wait=():
+    if game.skip.active or audit_down or waited%18!=0:return
+    s=game.sos
+    if s.by==.search:
+        _=audit_key(.f)
+    else if game.me.mode==.descent and s.need==.pickup:
+        if s.since>4.0:_=audit_offer("pickup-wait")
+    else if s.aboard:
+        if game.help_aboard_done() and (s.stage==.towing or (s.stage==.carrying and (s.need==.pickup or game.help_carrier_up()))):_=audit_key(.f)
+    else if game.RT_WAIT in game.rt_lines() and s.since>4.0:
+        _=audit_radio(game.RT_WAIT)
+
+audit_job_case=():
+    global audit_job,audit_passenger,audit_terminal_minute
+    w=game.living_world
+    c=w.people[w.player].craft
+    if stage==0:
+        if not w.far.populated or waited<60:return
+        if case=="audit-cargo":
+            audit_job=game.capture_delivery_job
+            assert(audit_job>=0 and w.jobs[audit_job].loaded,"delivery capture did not load")
+            audit_passenger=portage.cargo_receiver(w,audit_job)
+        else:
+            # Claim while the passenger is still at Porto Vecchio. Make them leave before boarding.
+            loop p in w.places[0].residents:
+                if p!=w.player and w.people[p].place==0 and w.people[p].trip<0 and w.accounts[w.people[p].account].cents>=1200:
+                    audit_passenger=p
+                    break
+            assert(audit_passenger>=0,"no passenger to stage")
+            audit_job=jobs.post_job(game.living_world,audit_passenger,1,.none,-1,1,1000,w.minute+300,passenger=audit_passenger)
+            assert(audit_job>=0 and life.take_job(game.living_world,audit_job,w.player,.automatic),"passenger claim refused")
+            game.me.mode=.aboard
+        assert(audit_passenger>=0)
+        game.living_world.people[audit_passenger].place=2
+        game.living_world.people[audit_passenger].state=.departed
+        game.living_world.people[audit_passenger].pose.pos=w.harbors[2].center
+        j=game.living_world.jobs[audit_job]
+        audit_terminal_minute=j.expire_minute
+        audit_start_clock()
+        note("job {audit_job} {j.state} loaded {j.loaded}; person {audit_passenger} gone, expires in {audit_terminal_minute-w.minute} minutes")
+        next(1)
+    else if stage==1:
+        if audit_offer("ashore"):next(2)
+    else if stage==2:
+        if game.me.mode!=.walking:return
+        assert(w.jobs[audit_job].state==.claimed and not (audit_passenger in w.aircraft[c].passengers),"the missing person was treated as present")
+        note("still free to step ashore; {state_text()}, {portage.cargo_status(w,audit_job)}; offers {offers_text()}")
+        life.advance_minutes(game.living_world,max(1,audit_terminal_minute-w.minute+1))
+        next(3)
+    else if stage==3 and waited>20:
+        assert(w.jobs[audit_job].state==.failed and w.accounts[w.jobs[audit_job].escrow_account].cents==0,"the expired job or its escrow is stuck")
+        if case=="audit-passenger":assert(not (audit_job in w.aircraft[c].job_manifests),"expired passenger still blocks the hold")
+        note("deadline passed; job {w.jobs[audit_job].state}, escrow {w.accounts[w.jobs[audit_job].escrow_account].cents}, return port {w.jobs[audit_job].return_place}")
+        audit_pass()
+
+audit_case=():
+    global audit_at,audit_saved_stage,audit_canopy,audit_swimming,audit_pickup_side,audit_pickup_engagement,audit_boarded,audit_search
+    if case=="audit-cargo" or case=="audit-passenger":audit_job_case();return
+    w=game.living_world
+    if stage==0:
+        if not w.far.populated or game.game_slot_views.len()!=3 or waited<60:return
+        c=w.people[w.player].craft
+        game.me.mode=.aboard
+        game.pc.cockpit_view=false
+        if env("PLAYTEST_RACE")=="1":
+            game.stage_capture_race("racing")
+            meet=air_meet_index(game.air_events,-7)
+            assert(meet>=0 and game.air_events.meets[meet].phase==.racing)
+            # A capture made in the opening minute backdates its start before tick zero.
+            loop mut entry in game.air_events.meets[meet].entries:
+                if entry.human:entry.started_tick=w.tick
+        at=game.home.docks[0]+vec3(game.home.out.x,0,game.home.out.y)*3000
+        if game.active_scenario=="strait":at=game.pc.state.position
+        if game.active_scenario=="canal":
+            game.slip.active=false
+            # The canal scenario's player and hostile flight stay intact. Land seaward of Porto
+            # Vecchio so water depth is independent of how far the launch rolled down the ways.
+            assert(combat_index(game.battle,c)>=0)
+        if case=="audit-remote":
+            at=if env("PLAYTEST_OFF_CHART")=="1":vec3(180000,0,365000) else:vec3(-238000,0,190000)
+            assert(help_harbour(at,40000.0)<0,"fixture is within harbour radio reach")
+            loop i in 0..8:
+                p=at+vec3(f32(cos(f64(i)*TAU/8.0)),0,f32(sin(f64(i)*TAU/8.0)))*20000.0
+                assert(surface_height(f64(p.x),f64(p.z)) < -2.0,"island within the fixture's 20 km sample ring")
+            assert(surface_height(f64(at.x),f64(at.z)) < -2.0)
+            if let name=env("AEGEAN_WEATHER"):weather_fixture(game.living_world,name,at)
+        if case=="audit-island":
+            p=ISLANDS[2].center
+            assert([loop s in world_settlements: if s.region==-3 and s.harbor.len()>0:s.id].len()==0)
+            game.me.mode=.walking
+            game.place_walker(vec3(p.x,f32(surface_height(f64(p.x),f64(p.y))),p.y))
+            audit_start_clock();note("alone on {ISLANDS[2].name} at {game.me.pos}, plane {game.pc.state.position}");next(1);return
+        if case=="audit-hotel":
+            m=local_minute(w.minute)
+            life.advance_minutes(game.living_world,(120-m+1440)%1440)
+            game.me.mode=.walking
+            walk_to(game.hotel.desk,0.8)
+            assert(not leisure_open(game.living_world,game.hotel_place))
+            audit_start_clock();note("hotel shut at {local_minute(game.living_world.minute)}; {state_text()}");next(1);return
+        if case=="audit-broke":at=game.home.docks[0]+vec3(game.home.out.x,0,game.home.out.y)*18.0
+        h=game.heading(game.pc.state)
+        if case=="audit-rough":
+            p=ISLANDS[0].center+vec2(410,190)
+            at=vec3(p.x,f32(surface_height(f64(p.x),f64(p.y))),p.y)
+            assert(game.pc.spec.landplane and at.y>20.0 and game.airfield_at(at.xz)<0)
+            game.pc.state=ground_start(game.pc.spec,at,h)
+        else:
+            game.pc.state=water_start(game.pc.spec,vec3(at.x,0,at.z),h)
+            if case=="audit-remote":
+                game.pc.state.position.y=35.0
+                game.pc.state.on_water=false
+                game.pc.state.velocity=game.forward(game.pc.state)*f32(game.pc.spec.stall_speed*game.pc.spec.handling_scale*1.2)
+            if case=="audit-bail-canal":
+                lagoon=canal_route_point(CANAL_BEGIN+63,125.0)
+                water=water_at(f64(lagoon.x),f64(lagoon.z))
+                assert(water.wet and water.level-surface_height(f64(lagoon.x),f64(lagoon.z))>2.0)
+                game.pc.state.position=vec3(lagoon.x,f32(water.level+60.0),lagoon.z)
+                game.pc.state.precise_ready=false
+                game.pc.state.on_water=false
+                ci=combat_index(game.battle,c)
+                assert(game.active_scenario=="canal" and ci>=0)
+                side=game.battle.actors[ci].side
+                audit_pickup_side=side
+                audit_pickup_engagement=game.battle.actors[ci].engagement
+                game.battle.actors[ci].state=game.pc.state
+                loop mut a in game.battle.actors:
+                    if a.side!=side and a.engagement==game.battle.actors[ci].engagement:
+                        a.status=.escaped;a.present=false
+            if case=="audit-ditch" or case=="audit-save-rescue" or case=="audit-land-water":
+                game.pc.state.crashed=true
+                game.pc.state.capsized=true
+                game.pc.state.hull_damage=0.97
+            if case=="audit-broke":
+                game.debug_cents(0)
+                game.pc.state.crashed=true
+                game.living_world.aircraft[c].hull=70;game.living_world.aircraft[c].engine=70
+        if env("PLAYTEST_SUNK")=="1":
+            ci=combat_index(game.battle,c)
+            if ci>=0:
+                game.battle.actors[ci].status=.wreck
+                game.battle.actors[ci].wreck_age=91.0
+            game.pc.state.position.y= -2.0
+        game.pc.throttle=0
+        if case!="audit-bail-canal":
+            game.debug_fuel_ml(c,0)
+            game.pc.state.fuel=0
+        audit_at=game.pc.state.position
+        audit_start_clock()
+        note("staged at {audit_at}; hour {game.hour:.1f}; weather rain {game.weather_here.rain:.2f}; {audit_status()}")
+        next(1)
+    else if stage==1:
+        if waited==30:note("{audit_status()}; hour {game.hour:.1f} rain {game.weather_here.rain:.2f}")
+        if case=="audit-bail-canal":
+            if game.me.mode==.aboard and waited>3:
+                _=audit_key(.t)
+                return
+            assert(game.active_scenario=="canal","scenario ended while the pilot was still coming down")
+            loop d in game.battle.descents:
+                if d.person!=w.player or d.released:continue
+                if d.phase==.canopy and not audit_canopy:
+                    audit_canopy=true;note("enemy gone; under canopy, situation {game.active_scenario}")
+                if d.phase==.swimming:
+                    if not audit_swimming:audit_swimming=true;note("enemy gone; pilot swimming, situation {game.active_scenario}")
+                    if audit_offer("pickup-flare"):next(2);return
+            return
+        if waited<30:return
+        if case=="audit-save-tow" or case=="audit-save-rescue":
+            # Stage a boat with the existing flare. Keep all subsequent actions on the player UI.
+            game.help_call(true)
+            assert(game.sos.vessel>=0,"no boat dispatched for the saved-recovery fixture")
+            note("staged a boat out to the aircraft; {audit_status()}")
+            next(2)
+            return
+        if case=="audit-island" or case=="audit-hotel" or case=="audit-rough":
+            a=if case=="audit-island":"shore-help" else:if case=="audit-hotel":"wait-desk" else:"fetch"
+            if audit_offer(a):next(2)
+            else if waited==180:assert(false,"no reachable {a}: {audit_status()}")
+            return
+        need=game.help_need_now()
+        if game.sos.stage!=.none:next(2);return
+        if game.pc.spec.landplane or game.help_wreck():
+            if audit_key(.r):next(2)
+        else if need!=.none and game.pc.state.on_water:
+            if audit_radio(if game.help_in_reach():game.RT_HELP else:game.RT_FLARE):next(2)
+        if waited%180==0:note("looking for recovery: {audit_status()}")
+    else if stage==2:
+        s=game.sos
+        if waited%180==1:note(audit_status())
+        if case=="audit-bail-canal":
+            if game.sos.aboard and not audit_boarded:
+                audit_boarded=true
+                note("aboard {s.name}, bound for {s.harbour_name}")
+            if s.by==.search and not audit_search:
+                audit_search=true
+                note("the live pickup fell back to the search wait")
+            if env("PLAYTEST_PICKUP_FALLBACK")=="1" and s.need==.pickup and s.vessel>=0:
+                k=vessel_index(game.vessels,s.vessel)
+                if k>=0:game.vessels.ships[k].status=.sunk
+            if game.active_scenario=="" and s.stage==.none and not game.skip.active:
+                assert(audit_canopy and audit_swimming and game.help_flare_t>=0.0)
+                if env("PLAYTEST_PICKUP_FALLBACK")=="1":assert(audit_search and not audit_boarded)
+                else:assert(audit_boarded and not audit_search)
+                ci=combat_index(game.battle,w.people[w.player].craft)
+                assert(ci>=0 and game.battle.actors[ci].side==audit_pickup_side and game.battle.actors[ci].engagement==audit_pickup_engagement)
+                assert(game.me.mode==.walking and not game.help_wreck())
+                audit_pass()
+        if case=="audit-save-tow" or case=="audit-save-rescue":
+            phase=if env("PLAYTEST_SAVE_PHASE")=="boarding":HelpStage.alongside else:HelpStage.towing
+            if s.stage==phase and (phase!=.alongside or s.aboard):
+                assert(s.aboard==(case=="audit-save-rescue"))
+                audit_saved_stage=s.stage
+                note("save in progress: {audit_status()}")
+                if audit_touch:
+                    if audit_key(.p):next(6)
+                else:
+                    assert(game.request_game_save(0));next(3)
+                return
+        audit_wait()
+        if waited<20 or game.skip.active:return
+        if case=="audit-hotel" and leisure_open(w,game.hotel_place):audit_pass()
+        if case=="audit-island" and game.me.mode==.walking and length(game.me.pos.xz-game.home.center.xz)<1000.0:audit_pass()
+        if case=="audit-broke" and s.stage==.none and not game.help_wreck():
+            if game.me.mode==.aboard:_=audit_offer("ashore")
+            else if game.me.mode==.walking:
+                c=w.people[w.player].craft
+                assert(w.aircraft[c].engine>350 and w.aircraft[c].hull>350 and game.player_cents()==0,"still grounded by the broken aircraft or charged more than the purse")
+                audit_pass()
+        if game.active_scenario=="" and s.stage==.none and length(game.pc.state.position.xz-audit_at.xz)>25.0:
+            if env("PLAYTEST_RACE")=="1":
+                meet=air_meet_index(game.air_events,-7)
+                assert(meet>=0,"staged race no longer tracked")
+                entry=player_air_entry(game.air_events.meets[meet],w.player)
+                assert(entry!=none and entry!.disqualified,"ditched pilot remains in the race")
+            if game.pc.spec.landplane:
+                if game.airfield_at(game.pc.state.position.xz)>=0 and not game.pc.state.crashed:audit_pass()
+            else if (game.pc.state.moored or (game.pc.state.fuel>5.0 and not game.help_wreck())) and not game.help_wreck():audit_pass()
+        if waited==420 and game.active_scenario=="" and s.stage==.none and not game.skip.active:
+            assert(false,"no recovery went ahead: {audit_status()}")
+    else if stage==3 and saved(0):
+        if audit_touch:
+            if audit_slot_button(1):next(7)
+        else:
+            assert(game.request_game_load(0));next(4)
+    else if stage==4 and loaded():
+        note("loaded mid-{audit_saved_stage}: {audit_status()}")
+        assert(game.sos.stage==audit_saved_stage,"tow or rescue lost on load")
+        next(5)
+    else if stage==5:
+        audit_wait()
+        if waited>20 and not game.skip.active and game.sos.stage==.none and game.pc.state.moored and not game.help_wreck():audit_pass()
+    else if stage==6 and game.paused and waited>2:
+        if audit_slot_button(0):next(3)
+    else if stage==7 and game.dbg.confirm=="load":
+        if audit_slot_button(0):next(8)
+    else if stage==8 and not game.paused and loaded():
+        note("loaded mid-{audit_saved_stage} via Game page: {audit_status()}")
+        assert(game.sos.stage==audit_saved_stage,"tow or rescue lost on load")
+        next(5)

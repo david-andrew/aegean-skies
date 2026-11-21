@@ -1953,11 +1953,14 @@ On the rivers branch until it lands.
   A pilot who parachuted into the sea can signal with the same flare. A boat searches even
   without a signal, boards the pilot from the water, and carries them to a safe harbour or the
   tender. Pickup preserves the pilot's side and engagement when a situation hands back to play.
+  If a live rescue route fails, "Wait for a search boat" advances the clock through the search
+  and the return to harbour. A pilot ashore on an island without a harbour can signal for passage
+  back to Porto Vecchio. A saved tow or rescue resumes with the boat and the line in place.
   When the flight turns for home its leader says where ("then back to Ardevanti").
 - **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
   `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /
   `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
-  `aegean.jo`.
+  `aegean.jo`. Recovery state is kept in `src/game_session.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
   `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`,
   `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=passing|passwreck` (ahead of the first world aircraft seen
