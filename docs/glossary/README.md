@@ -3274,6 +3274,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     in `src/world_towns.jo`; `Perch`, `perch_begin`, `perch_step`, `perch_end` in `aegean.jo`). He
     walks round to it, turns his back to it and sits, with no panel and no words; he gets up
     when he next walks. A seat someone is in is not offered;
+  The townspeople use the same chairs: one sent to an open-air café (`cafe_has_chairs`,
+  `cafe_chair` in `src/life_types.jo`; `set_life_destination` in `src/living_life.jo`) walks to
+  one of its four chairs, the one he has while he stays or the first no one else there has, and
+  sits facing his table; with all four taken he stands by the tables. On the islands the café
+  the people go to is where its tables are drawn (`legacy_cafe_fixture`), on a paved terrace of
+  its own in a stone-laned town;
   - the people about: walk over and talk.
 - **How it works:** he walks over until what the thing's card would offer is in reach, then does it,
   exactly as the card's key does (`foot_things`, `foot_go`, `foot_pick`; the act is matched in the

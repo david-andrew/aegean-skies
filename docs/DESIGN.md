@@ -272,8 +272,8 @@ Things agreed to build, roughly in the order they'll come:
   crowd, Things to tap, Musicians at play): lanes and alleys painted on the ground at every
   distance (stone in the ports and larger towns, bare earth on the small islands), benches and
   cafe chairs to sit on, street musicians playing the catalogue's tunes, a few cyclists and one
-  motorcar in a capital. Still to do: residents seated at the cafe's own chairs, the islands'
-  cafe where its tables are, more benches (waterfronts, under the plane trees), shop fronts.
+  motorcar in a capital; the townspeople sit in the cafe's own chairs. Still to do: more
+  benches (waterfronts, under the plane trees), shop fronts, cafes on the mainland's streets.
 - War: battles that play out whether or not one joins them, leaning on Sky Barons (its AI pilots,
   smoke and fire when hit, parachutes); a larger overhaul of errands and the world's liveness.
 - Colour-blind settings (built: the Settings page's "Colours of the sides", the glossary's
