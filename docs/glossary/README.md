@@ -1475,10 +1475,11 @@ On the rivers branch until it lands.
 ### Sun disc
 
 - **Definition:** the sun's disc, white high up. Low down it is graded, pale gold at its top to
-  amber at its foot, and reddens as it sinks (deep orange to red touching the water); it is
-  flattened by the air and drawn up to 1.8 times larger near the horizon. Where it meets the water
-  the warm air over the sea bends its foot into wavering slices and joins it to a short
-  upside-down image of itself.
+  amber at its foot, and reddens as it sinks; flattened by the air and drawn up to 1.8 times larger
+  near the horizon, its foot wavering in slices into a short mirage where it meets the water. In
+  thick air (the day's air) the change starts about 20 degrees up and comes on gradually, deep red
+  only near the horizon on a heavy-dust day; a reddened sun keeps a hot yellow-orange core grading
+  to a red limb and a warm glow about it in the air, so it reads as light, never a painted dot.
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
   sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
   shape worked out on the CPU from the sun's height over the visible horizon).
@@ -1953,11 +1954,14 @@ On the rivers branch until it lands.
   A pilot who parachuted into the sea can signal with the same flare. A boat searches even
   without a signal, boards the pilot from the water, and carries them to a safe harbour or the
   tender. Pickup preserves the pilot's side and engagement when a situation hands back to play.
+  If a live rescue route fails, "Wait for a search boat" advances the clock through the search
+  and the return to harbour. A pilot ashore on an island without a harbour can signal for passage
+  back to Porto Vecchio. A saved tow or rescue resumes with the boat and the line in place.
   When the flight turns for home its leader says where ("then back to Ardevanti").
 - **Code:** `src/radio_help.jo` (`help_need`, `help_eta_words`, `tow_fee`, `help_alongside`,
   `tow_place`, `lane_advance`, `help_pay`, `help_cans`); `send_assist` / `release_assist` /
   `end_assist` in `src/combat.jo`; `help_call`, `help_step`, `help_wait`, `help_arrive` in
-  `aegean.jo`.
+  `aegean.jo`. Recovery state is kept in `src/game_session.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=tow|wreck|flare` (3 km off the home harbour),
   `AEGEAN_SCENARIO=strait AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=cans|wingwreck`,
   `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_HELP=passing|passwreck` (ahead of the first world aircraft seen
@@ -2012,12 +2016,12 @@ On the rivers branch until it lands.
   the player's own aircraft cruises at), puts down on a line off her side (across a light wind when
   the high ground lies under the way in from downwind), its run ending by her moorings, and moors
   in turn along the booms and astern, each made fast within a minute or so of alighting while the
-  rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
-  end or alongside her is taken off by her boat: it comes round to lie off the bow of the
-  aircraft's float, they climb down onto the float, go forward along it and step aboard; it takes
-  them back to her Jacob's ladder, hung over her side between the booms, and they climb it, her hand
-  at the rail helping them over, and go below. Hoisted in, they climb down off the float onto her
-  deck; her boat takes them in to Ardevanti, a foe of
+  rest still land; moored, they ride the swell. Alongside, the crew warp the aircraft in by a line
+  until its float reaches her Jacob's ladder, clear of the wing and booms. At a boom's end her
+  pulling boat rows round to the float's bow, takes the rescued person aboard and brings them
+  to the ladder. A hand helps them over the rail and they walk her side deck to the midships
+  house. The ladder, the hand and the walker follow the hull's heave, pitch and roll.
+  Hoisted in, they step off the float straight onto her after deck. The tender sends survivors to Ardevanti, a foe of
   Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
@@ -2028,7 +2032,8 @@ On the rivers branch until it lands.
   and derrick in `src/vessel_models.jo`; `strait_homes` in `src/scenarios.jo`; `tender_fuel`,
   `tender_hoist_start`, `tender_step`, `tender_repair` and the help call's `by_tender` in `aegean.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_TENDER=hoist`; `AEGEAN_ABOARD=1
-  AEGEAN_CAPTURE_HELP=tender`; the flight home: `AEGEAN_SCENARIO=strait
+  AEGEAN_CAPTURE_HELP=tender`; `AEGEAN_CAPTURE_TENDER=passenger-direct` at the ladder
+  or `AEGEAN_CAPTURE_TENDER=passenger` at a boom. The flight home: `AEGEAN_SCENARIO=strait
   AEGEAN_CAPTURE_STRAIT_AFTER=arrive AEGEAN_ARRIVE_KM=3 AEGEAN_ARRIVE_FORMED=1
   AEGEAN_CAPTURE_TENDER_CAM=1` (with `AEGEAN_FRAMES` and `AEGEAN_FRAMES_ONLY=1` for a time-lapse).
 
