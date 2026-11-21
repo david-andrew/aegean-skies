@@ -4225,8 +4225,9 @@ No image: the tiers differ in budgets more than in any single view.
 - **Definition:** one colour scheme for sides wherever the game marks them: enemies red-orange,
   friends blue, everyone else cream. Lead rings, the target brackets and names, people in the
   water, the formation's place and the radio's speakers all take it from one place, so the
-  colour-vision preset swaps the whole set at once. A side's lines lie over a dark halo and its
-  names over a dark outline, so they read on sea, cloud and sky alike.
+  colour-vision preset swaps the whole set at once. A side's lines lie over a halo and its
+  names over an outline (dark under a light colour, pale under a dark one), so they read on sea,
+  cloud and sky alike.
 - **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `side_line`,
   `side_ring`, `side_text`, `side_sign`, `battle_standing`, `country_standing`).
 
@@ -4235,29 +4236,38 @@ No image: the tiers differ in budgets more than in any single view.
 - **Aliases:** colour-blind setting, colours of the sides, the Accessibility palettes.
 - **Definition:** the Settings page's "Colours of the sides" (Accessibility), kept with the
   options: Standard; Red-green (protanopia, deuteranopia: enemy orange against friend blue, never
-  red against green); Blue-yellow (tritanopia: enemy red against friend teal); No colour (the
-  sides by shape on every mark and by lightness: a chevron an enemy's, a ring a friend's, a dot
-  anyone else's, over a darker halo). The war chart's country inks change with it (nations, not
-  sides), and with No colour each country's held ground is hatched its own way.
-- **Rules:** a preset is checked under a simulation of the eye it is for (Machado et al. 2009 at
-  full severity; luminance alone for no colour): the three sides apart, every mark apart from
-  sea, cloud and sky by its colour or its halo, the inks apart on the chart's paper. The standard
-  preset's marks keep their shapes; only No colour adds a sign to the lead ring, the flight's
-  marks and the pointer.
+  red against green); Blue-yellow (tritanopia: enemy orange against friend bright teal); No colour
+  (enemy white, friend dark, others grey, and a shape on every mark). Each is its own set of
+  colours for the player, never a filter. In the three presets one side is a dark mark in a pale
+  halo (others in the colour presets, friends with no colour) and the marks are firm: full
+  strength, a pixel heavier, a whole halo, names on a wide outline. "A shape for each side on
+  every mark" adds the signs in any preset. The war chart's country inks change with the preset
+  (Okabe and Ito's orange, blue and black in the colour presets), and with No colour each
+  country's held ground is hatched its own way.
+- **Rules:** a preset is checked under a simulation of the eye it is for (Machado 2009 and
+  Brettel 1997 at full severity; luminance alone for no colour): sides 20 or more apart in
+  CIEDE2000 and CAM02-UCS (Petroff 2021), every mark 15 or more from sea, sky and cloud and at
+  3:1 against them (WCAG 1.4.11), names at 4.5:1 (WCAG 1.4.3), shape as a second cue (WCAG
+  1.4.1). The standard look is scored the same way and its figures pinned. docs/accessibility.md
+  has the thresholds, the scores and the sources.
 - **Code:** `src/side_colours.jo` (`ColourVision`, `side_palette_for`, `set_colour_vision`,
-  `country_ink_for`, `country_hatch`, `side_shapes`), `src/colour_vision.jo` (`simulate_colour`,
-  `seen_distance`), `Options.colour_vision`; `tests/colour_vision_test.jo`.
-- **Capture:** `AEGEAN_COLOUR_VISION=standard|red_green|blue_yellow|monochrome`;
-  `AEGEAN_CAPTURE_SIDES=4` lays every side's mark in rows over the view (`src/side_samples.jo`);
-  `AEGEAN_CAPTURE_PANEL=settings-accessibility`; `sloppy --release tools/colour_vision_view.jo
-  in.png out.png protan|deutan|tritan|achromat|sheet` shows a capture as that eye sees it.
+  `palette_halo`, `side_is_dark`, `country_ink_for`, `country_hatch`, `side_shapes`),
+  `src/colour_vision.jo` (`simulate_colour`, `delta_e_2000`, `ucs_of`, `contrast_ratio`),
+  `src/colour_vision_scores.jo` (the scores and thresholds), `Options.colour_vision`,
+  `Options.side_shapes`; `tests/colour_vision_test.jo`.
+- **Capture:** `AEGEAN_COLOUR_VISION=standard|red_green|blue_yellow|monochrome` (`+shapes` for
+  the shapes option); `AEGEAN_CAPTURE_SIDES=4` lays every side's mark in rows over the view
+  (`src/side_samples.jo`); `AEGEAN_CAPTURE_PANEL=settings-accessibility`; `sloppy --release
+  tools/colour_vision_view.jo in.png out.png protan|deutan|tritan|achromat|sheet` shows a capture
+  as that eye sees it; `tools/colour_vision_report.jo` prints the score tables.
 
 ### Sandbox switches
 
 - **Aliases:** sandbox settings, playing freely, cheats.
 - **Definition:** the Settings page's Sandbox section, each a separate switch, each off, kept with
   the options: paint the aircraft anywhere at any time; any aircraft at any time (the Aircraft
-  page among the player's tabs); unlimited money; no damage; no fuel use; endless ammunition. The
+  page among the player's tabs); unlimited money (the purse then reads ¤∞, on the view and at
+  the foot of every counter's panel); no damage; no fuel use; endless ammunition. The
   simulation runs as usual: a switch lifts only the player's own constraint.
 - **Rules:** nobody else's money, cargo or wear is changed by a switch, and the world's books
   balance with one on. Unlimited money holds the purse at a level (the purse hold): what is spent
