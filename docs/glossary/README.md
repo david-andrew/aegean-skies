@@ -2049,6 +2049,19 @@ On the rivers branch until it lands.
 
 ## Towns and people
 
+### Kerb and unstick
+
+- **Definition:** on foot, a step down is limited the same as a step up (`WALK_STEP_HEIGHT`, 0.8 m
+  between probes), so every step can be taken back: a dock's edge is a kerb, not a drop into the
+  sliver of shallows under its wall (Saryanyra's waterfront had one beside every side quay).
+  A walker who holds a direction and gets nowhere for three seconds, and who is shut into a pocket
+  (`walk_pocket`: no way to 30 m out), is stepped up onto the nearest open ground (`walk_escape`),
+  never merely moved for pushing against a wall.
+- **Code:** `walk_step_precise` in `src/objects.jo`; `src/walk_unstick.jo`; `walk_unstick_check` in
+  `aegean.jo`; `tests/walk_gap_test.jo`.
+- **Capture:** `AEGEAN_AT="190714.1 -21802.8 3.1416" AEGEAN_WALK_TRACE=1` with `SLOPPY_INPUT="40:w+ 520:w-"`
+  walks off the end of a Saryanyra side quay.
+
 ### Quay (code) and dock (player)
 
 - **Aliases:** dock, pier, wharf, harbour, waterfront (in what the player reads or hears).
@@ -2442,7 +2455,12 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_LEISURE=ride-lift-land AEGEAN_RIDE_TRACE=1` sets a lift down at Delyavouna's
   dock and shows the fare paid. `AEGEAN_BATH_ARRIVE=<place> AEGEAN_BATH_PAY=1 AEGEAN_FOOT_GO=60:The waters;3000:bath-out` walks up
   from the path, pays, changes and gets in. `AEGEAN_LEISURE=ride-ask AEGEAN_RIDE_LIFT=1` shows a lift
-  being asked for.
+  being asked for; with `AEGEAN_RIDE_AGREE=1` the pilot says yes at once and the notebook line is
+  printed (`RIDE agreed, notebook: ...`).
+- **Notebook:** agreeing to a lift writes the baths' name and the harbour to land at into the notebook
+  (`ride_lift_agreed_note`), keeps a line under "Current errands" while the lift is to be flown
+  (`ride_live_line`) and marks the baths on the chart (`ride_chart_marks`). Deliveries, signed
+  contracts and rescues say their destination in the same way.
 
 ### Thermal terraces
 
