@@ -28,7 +28,7 @@ const CROWN_PLANE = 4
 # the detail bands: 0 near (every clump), 1 middle (a few merged clumps), 2 far (one crown)
 const CROWN_NEAR_END = 230.0        # the near set's last metres, faded over CROWN_FADE
 const CROWN_MID_END = 640.0
-const CROWN_FADE = 50.0
+const CROWN_FADE = 30.0     # (half the dithered crossing's width)
 
 struct CrownVertex:
     corner: vec2
@@ -58,6 +58,7 @@ struct CrownOut:
     pos: vec4
     world: vec3                     # the card's point (render space)
     centre: vec3
+    range: vec2                     # the band's dither range (crown_band_range)
     clump: vec4                     # radius, height over width, seed, light reaching
     tree: vec4                      # crown centre (render space), crown radius
     color: vec4                     # leaf colour, the band's visibility (0..1)
@@ -74,20 +75,29 @@ crown_noise = (p: vec3) -> f32:
     b = mix(mix(_crown_hash3(c+vec3(0,0,1)),_crown_hash3(c+vec3(1,0,1)),w.x),mix(_crown_hash3(c+vec3(0,1,1)),_crown_hash3(c+vec3(1,1,1)),w.x),w.y)
     mix(a,b,w.z)
 
-# Whether a band is drawn at a distance: near to its end, the middle to its own, far beyond. Each
-# tree crosses at its own distance (jitter: the tree's draw, 0..1) within the fade, so the trees
-# of a wood change one by one, never as a line.
-crown_band_share = (band: f32,d: f32,jitter: f32,u: CrownParams) -> f32:
-    j = (jitter-0.5)*u.bands.z*2.0
-    e1 = u.bands.x+j
-    e2 = u.bands.y+j
-    # (the woods' crowns, bands 3 and 4, hand their near clumps over at half the trees' distance)
-    if band > 2.5:
-        e0 = u.bands.x*0.35+j*0.35
-        return if band < 3.5: (if d < e0: 1.0 else: 0.0) else: (if d >= e0 and d < e2: 1.0 else: 0.0)
-    if band < 0.5: return if d < e1: 1.0 else: 0.0
-    if band < 1.5: return if d >= e1 and d < e2: 1.0 else: 0.0
-    if d >= e2 and d < u.bands.w+j: 1.0 else: 0.0
+# The bands cross by a dither over a stretch of distance, each pixel the one band's or the other's
+# (crown_dither: the same pattern for every band and the shells), so at any distance the bands'
+# shares add up to the whole: no gap, no doubled crown, no line where one set gives way. A band
+# keeps the pixels whose dither lies in its range (x <= dither < y).
+# near 0 (trees) and 3 (the woods' crowns, handed over at about 80 m), the middle 1 and 4, far 2;
+# past the far band the canopy's shells take the rest (world_shell_fragment).
+crown_band_range = (band: f32,d: f32,u: CrownParams) -> vec2:
+    f = u.bands.z
+    near = clamp((u.bands.x-d)/(2.0*f)+0.5,0.0,1.0)
+    woods = clamp((u.bands.x*0.35-d)/f+0.5,0.0,1.0)
+    mid = clamp((u.bands.y-d)/(2.0*f)+0.5,0.0,1.0)
+    far = crown_far_share(d,u.bands.w,f)
+    if band < 0.5: return vec2(0.0,near)
+    if band < 1.5: return vec2(near,mid)
+    if band < 2.5: return vec2(mid,far)
+    if band < 3.5: return vec2(0.0,woods)
+    vec2(woods,mid)
+
+# The crowns' share at the end of their reach, where the shells take over (the same on both sides).
+crown_far_share = (d: f32,end: f32,fade: f32) -> f32: clamp((end-d)/(4.0*fade)+0.5,0.0,1.0)
+
+# The bands' dither: interleaved gradient noise on the pixel, even and fine.
+crown_dither = (pixel: vec2) -> f32: fract(52.9829189*fract(dot(floor(pixel),vec2(0.06711056,0.00583715))))
 
 # The leaf tufts' sheet (made at start, procedural): a wrapping 128 x 128 texture of 8 x 8 cells,
 # one tuft's centre jittered in each; a texel holds the offset to the nearest centre (rg, in
@@ -135,7 +145,8 @@ crown_vs = (v: CrownVertex,c: CrownClump,u: CrownParams) -> CrownOut:
     r = c.at.w
     to = centre-u.cam
     d = max(length(to),0.01)
-    share = crown_band_share(c.color.w,d,hash21(floor(c.tree.xz*2.0)+vec2(5.0,11.0)),u)
+    range = crown_band_range(c.color.w,d,u)
+    share = range.y-range.x
     # (a little sway near: the clump's centre in the wind, more at the top of the tree)
     if d < 260.0 and share > 0.0:
         ph = u.wind.w+c.shape.z*6.28
@@ -157,9 +168,12 @@ crown_vs = (v: CrownVertex,c: CrownClump,u: CrownParams) -> CrownOut:
     tall = sqrt(up.x*up.x+up.z*up.z+squash*squash*up.y*up.y)
     p = centre-f*pull+right*(v.corner.x*k*r*1.18)+up*(v.corner.y*k*r*tall*1.18)
     if share <= 0.0: p = centre      # (a band out of its range: no fragments)
-    CrownOut(u.view_proj*vec4(p,1),p,centre,vec4(r,c.shape.x,c.shape.z,c.shape.w),vec4(c.tree.xyz-u.origin,c.tree.w),vec4(c.color.xyz,share))
+    CrownOut(u.view_proj*vec4(p,1),p,centre,range,vec4(r,c.shape.x,c.shape.z,c.shape.w),vec4(c.tree.xyz-u.origin,c.tree.w),vec4(c.color.xyz,share))
 
 crown_fs = (i: CrownOut,u: CrownParams) -> vec4:
+    # (the band's share of the pixels, and a grove's arrival: faded in over its first moments)
+    dith = crown_dither(i.pos.xy)
+    if dith < i.range.x or dith >= i.range.y or fract(dith*7.31+0.37) >= u.opts.y: discard()
     r = i.clump.x
     squash = i.clump.y
     seed = i.clump.z
@@ -175,17 +189,12 @@ crown_fs = (i: CrownOut,u: CrownParams) -> vec4:
     foot = max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.0001)
     px = r/foot
     detail = clamp((px-6.0)/18.0,0.0,1.0)*u.opts.x
-    # its outline: lumps of a fifth of its radius, fixed to the clump
+    # its outline: a few big scallops (the leaf masses' own), fixed to the clump, crisp: dithered
+    # over one pixel
     rim_dir = q/sqrt(max(b2,0.000001))
-    lump = sample(u.tufts,crown_face(rim_dir).xy*0.28+vec2(seed*0.73,seed*0.37)).w
-    rl = 0.84+0.30*lump*(0.45+0.55*clamp(px/10.0,0.0,1.0))
-    # (the outline dithered over a pixel and a half, not cut at one: a soft edge without blending
-    # or multisampling, as the phone draws it)
-    q4 = floor(i.pos.xy)
-    m4 = q4-floor(q4/4.0)*4.0
-    dither = fract(m4.x*0.25+m4.y*0.5+fract(m4.y*0.25)*0.0625*4.0+m4.x*m4.y*0.0625)
-    edge_px = (rl-sqrt(b2))*px
-    if edge_px < 1.5*dither-0.25: discard()
+    lump = sample(u.tufts,crown_face(rim_dir).xy*0.18+vec2(seed*0.73,seed*0.37)).w
+    rl = 0.82+0.34*lump*(0.45+0.55*clamp(px/10.0,0.0,1.0))
+    if (rl-sqrt(b2))*px < dith-0.5: discard()
     t = tc-sqrt(max(rl*rl-b2,0.0)/dd)
     h = o+dv*t
     hn = h/rl
@@ -195,37 +204,57 @@ crown_fs = (i: CrownOut,u: CrownParams) -> vec4:
     crown = world-i.tree.xyz
     cn = if dot(crown,crown) > 0.0001: normalize(crown) else: vec3(0,1,0)
     n = normalize(n*0.62+cn*0.38+vec3(0,0.1,0))
-    # leaf tufts (two-thirds of a metre): each a little rounded mass of its own, darker in the
-    # gaps between, the outline scalloped by them and the sky through the gaps at the rim
-    tuft: f32 = 0.6
+    # leaf masses, as a painter lays a crown in: a few big rounded masses (a metre or two), each
+    # bulging into its own lit side and shadow side, a dark crease between them, the outline
+    # scalloped by them; and small dabs of light on the lit masses (a finer read of the same sheet)
+    mass: f32 = 0.6
+    leaf: f32 = 0.5
+    dab: f32 = 0.0
     if detail > 0.0:
-        # (one read of the tufts' sheet on the clump's facing cube side: the tuft's centre, its
-        # draw, and the sprays of tufts a metre or two across)
         face = crown_face(hn)
-        size = 0.45+0.45*fract(seed*3.7)
-        tc4 = sample(u.tufts,face.xy*(r*0.15/size)+vec2(seed*0.31,seed*0.57))
+        # (two or three big masses to a clump: they decide the light and the shadow)
+        k = 0.08+0.03*fract(seed*3.7)
+        tc4 = sample(u.tufts,face.xy*k+vec2(seed*0.31,seed*0.57))
         dvec = tc4.xy*2.0-vec2(1,1)
         dist = length(dvec)
-        spray = sample(u.tufts,face.xy*(r*0.05)+vec2(seed*0.17,seed*0.83)).w
-        tuft = (1.0-clamp((dist-0.18)/0.4,0.0,1.0))*(0.55+0.45*spray)*(0.8+0.4*tc4.z)
+        mass = 1.0-clamp((dist-0.4)/0.3,0.0,1.0)*0.6
+        tn = normalize(n*0.5+(crown_face_axis(face.z,0)*dvec.x+crown_face_axis(face.z,1)*dvec.y)*1.0)
+        n = normalize(mix(n,tn,0.58*detail))
+        # (the leaf tufts within them, three times smaller: the outline's scallops, the creases, and
+        # the broken edge where light gives way to shadow)
+        t2 = sample(u.tufts,face.xy*(k*3.2)+vec2(seed*0.83,seed*0.19))
+        d2 = length(t2.xy*2.0-vec2(1,1))
+        leaf = mix(0.5,1.0-clamp((d2-0.3)/0.4,0.0,1.0),detail)
         edge = b2/(rl*rl)
-        if edge > 0.55 and tuft < (edge-0.55)*2.4*detail-0.15*dither: discard()
-        tn = normalize(n*0.3+(crown_face_axis(face.z,0)*dvec.x+crown_face_axis(face.z,1)*dvec.y)*1.5)
-        n = normalize(mix(n,tn,0.55*detail))
-        tuft = mix(0.6,tuft,detail)
+        if edge > 0.6 and leaf < (edge-0.6)*2.2*detail-0.1*dith: discard()
+        # (few, small and irregular: the brightest tuft cores of some tufts only, broken by the
+        # sheet's smooth noise)
+        dab = step(0.82,t2.z)*clamp((leaf-0.65)*5.0,0.0,1.0)*step(0.45,t2.w)*detail
+        mass = mix(0.6,mass,detail)
     sun = normalize(u.sun_dir)
-    ndl = mix(dot(n,sun),dot(n,u.light.xyz),u.light.w*0.6)
-    lit = paint_ramp(ndl,0.12)
-    # (the light that reaches it: the clump's place in the crown, its underside, the tuft's gaps)
+    ndl = mix(dot(n,sun),dot(n,u.light.xyz),u.light.w*0.6)+(leaf-0.5)*0.4
+    # (the light that reaches it: the clump's place in the crown, its underside, the creases)
     up = clamp(hn.y*0.5+0.5,0.0,1.0)
-    occl = i.clump.w*(0.62+0.38*up)*(0.5+0.5*tuft)
-    light = mix(u.shade*1.1+vec3(0.04,0.05,0.06)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.08,1.02,0.84),lit*clamp(occl*2.2,0.0,1.0))
-    c = i.color.xyz*light*(0.5+0.5*occl)
-    # (the lit tufts' crowns catch a warmer light; leaves against the sun glow at the rim)
-    c += i.color.xyz*u.sun*vec3(0.30,0.26,0.06)*lit*tuft*tuft*occl
+    occl = i.clump.w*(0.55+0.45*up)*(0.6+0.4*mass)*(0.85+0.15*leaf)
+    # three painted values with crisp steps: a cool blue-green shadow, the leaf's middle tone, a
+    # warm yellow-green light
+    # (the leaf colour a little greyed, so the three values keep a narrow saturation range: the
+    # light a warm olive-yellow, the shadow a cool, deep blue-green)
+    base = i.color.xyz
+    leafc = mix(base,vec3(dot(base,vec3(0.3,0.59,0.11))),0.14)
+    shadow_c = leafc*vec3(0.56,0.80,1.0)*(u.shade*1.22+vec3(0.03,0.04,0.06))
+    mid_c = leafc*mix(u.shade*1.1,u.sun,0.55)*vec3(1.02,1.0,0.94)
+    light_c = leafc*vec3(1.22,1.16,0.70)*u.sun*1.04
+    s1 = clamp((ndl+(occl-0.6)*0.6)*10.0+0.5,0.0,1.0)
+    s2 = clamp((ndl+(occl-0.6)*0.5-0.46)*12.0+0.5,0.0,1.0)*clamp(occl*1.6,0.0,1.0)
+    c = mix(mix(shadow_c,mid_c,s1),light_c,s2)*(0.72+0.28*occl)
+    # (dabs of pale light on the lit masses; leaves against the sun glow at the rim)
+    # (dabs: the lit tufts just past the light's edge, where the leaves turn to the sun)
+    rim = clamp(1.0-abs(ndl-0.64)*6.0,0.0,1.0)*clamp((occl-0.55)*5.0,0.0,1.0)
+    c = mix(c,vec3(0.80,0.76,0.52)*u.sun,dab*s2*rim*0.75)
     view = normalize(u.cam-world)
     back = clamp(-dot(view,sun),0.0,1.0)
-    c += i.color.xyz*u.sun*(0.35*back*back*clamp(1.0-abs(dot(n,view)),0.0,1.0)*detail)
+    c += base*u.sun*(0.25*back*back*clamp(1.0-abs(dot(n,view)),0.0,1.0)*detail)
     vec4(land_aerial(c,world,u.cam,u.haze,u.fog)*paint_paper(i.pos.xy),1)
 
 # The limbs: the objects' far light, then the land's aerial perspective (as the crowns have it).
@@ -233,8 +262,10 @@ crown_limb_fs = (i: ObjOut,u: ObjParams) -> vec4:
     n = normalize(i.normal)
     lit = paint_ramp(dot(n,normalize(u.sun_dir)),0.05)
     # (bark in shade takes a warm neutral light: the sky's blue on a brown went purple)
-    shade = vec3(dot(u.shade,vec3(0.3,0.5,0.2)))*vec3(1.08,1.0,0.9)*1.15
-    c = i.color.xyz*mix(shade,u.sun*vec3(1.02,1.0,0.94),lit)
+    shade = vec3(dot(u.shade,vec3(0.3,0.5,0.2)))*vec3(1.04,1.0,0.94)*1.15
+    # (the sun's warmth half greyed on bark: a warm brown in full sun went pink)
+    sunc = mix(u.sun,vec3(dot(u.sun,vec3(0.3,0.59,0.11))),0.5)
+    c = i.color.xyz*mix(shade,sunc,lit)
     vec4(land_aerial(c,i.world,u.cam,u.haze,u.fog)*paint_paper(i.pos.xy),1.0)
 crown_limb_fs_log = (i: ObjOut,u: ObjParams) -> vec4:
     set_depth(world_depth_encode(1.0/i.pos.w))
@@ -266,16 +297,20 @@ crown_params = (L: Light,t: f64,far_end: f64) -> CrownParams:
     origin = render_origin(scene_camera())
     phase = t*(1.1+0.15*f64(wind_now.speed))+f64(origin.x)*0.05+f64(origin.z)*0.04
     CrownParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.shade,air_down(L.haze,f64(scene_camera().y),tweaks.brighter_ocean),f32(L.fog_density),origin,canopy_light(L.sun_dir),
-        vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),render_phase(phase,TAU)),vec4(f32(CROWN_NEAR_END),f32(CROWN_MID_END),f32(CROWN_FADE),f32(far_end)),vec4(if foliage_off("tufts"): 0.0 else: 1.0,0,0,0),crown_tuft_tex)
+        vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),render_phase(phase,TAU)),vec4(f32(CROWN_NEAR_END),f32(CROWN_MID_END),f32(CROWN_FADE),f32(far_end)),vec4(if foliage_off("tufts"): 0.0 else: 1.0,1,0,0),crown_tuft_tex)
 
 # (timing only: AEGEAN_FOLIAGE_OFF="shells,woods,tufts" leaves those parts out)
 foliage_off_list = env("AEGEAN_FOLIAGE_OFF") ?? ""
 foliage_off = (part: str) -> bool: part in foliage_off_list
 
-draw_crowns = (lists: InstanceBuffer[CrownClump][],p: CrownParams):
+# fades: each list's arrival (0 just made, 1 settled)
+draw_crowns = (lists: InstanceBuffer[CrownClump][],fades: f32[],p: CrownParams):
     crown_init()
-    loop b in lists:
-        if b.count > 0: draw_instanced(crown_sh,crown_card,b,p)
+    q = p
+    loop k in 0..lists.len():
+        if lists[k].count == 0 or fades[k] <= 0.0: continue
+        q.opts.y = fades[k]
+        draw_instanced(crown_sh,crown_card,lists[k],q)
 
 # ---------------- the trees ----------------
 
@@ -368,7 +403,7 @@ crown_pine = (seed: f32) -> CrownTree:
         rr = spread*sqrt((f32(k)+0.5)/f32(n))
         p = top+vec3(cos(a)*rr,0.25*(1.0-rr/spread)*2.0+(_cr(seed,30.0+f32(k))-0.5)*0.5,sin(a)*rr)
         rad = 1.7+_cr(seed,50.0+f32(k))*0.9
-        t.parts.push(CrownPart(vec4(p,rad),vec4(0.5+_cr(seed,70.0+f32(k))*0.12,_cr(seed,90.0+f32(k)),_cr(seed,110.0+f32(k)),1),0.0))
+        t.parts.push(CrownPart(vec4(p,rad),vec4(0.74+_cr(seed,70.0+f32(k))*0.14,_cr(seed,90.0+f32(k)),_cr(seed,110.0+f32(k)),1),0.0))
         if k%2 == 0: t.wood.push(CrownWood(fork,p-vec3(0,0.6,0),0.17))
     _crown_reach(t.parts,t.centre)
     _crown_merge(t,4)
@@ -400,7 +435,7 @@ crown_bush = (seed: f32) -> CrownTree:
         a = f32(k)*2.4+_cr(seed,2.0)*6.0
         rr = if k == 0: 0.0 else: 0.9+_cr(seed,10.0+f32(k))*0.6
         rad = 1.0+_cr(seed,20.0+f32(k))*0.5-rr*0.25
-        t.parts.push(CrownPart(vec4(cos(a)*rr,rad*0.6,sin(a)*rr,rad),vec4(0.72,_cr(seed,30.0+f32(k)),_cr(seed,40.0+f32(k)),1),0.0))
+        t.parts.push(CrownPart(vec4(cos(a)*rr,rad*0.6,sin(a)*rr,rad),vec4(0.86,_cr(seed,30.0+f32(k)),_cr(seed,40.0+f32(k)),1),0.0))
     _crown_reach(t.parts,t.centre)
     _crown_merge(t,2)
     t
@@ -478,7 +513,7 @@ crown_place = (clumps: mut CrownClump[],wood: mut Instance3D[],kind: int,root: v
         col = tint*(0.9+0.2*tone)
         clumps.push(CrownClump(vec4(turn(p.at.xyz),p.at.w*scale),vec4(p.shape.x,tone,fract(p.shape.z+seed*7.13),p.shape.w),vec4(centre,t.centre.w*scale),vec4(col,p.band)))
     # (warm grey-browns: a red-brown bark went pink in the sun and purple in the sky's light)
-    bark = if kind == CROWN_PLANE: vec4(0.60,0.58,0.52,1) else: if kind == CROWN_OLIVE: vec4(0.40,0.39,0.34,1) else: vec4(0.33,0.30,0.25,1)
+    bark = if kind == CROWN_PLANE: vec4(0.60,0.58,0.52,1) else: if kind == CROWN_OLIVE: vec4(0.40,0.39,0.34,1) else: vec4(0.31,0.28,0.24,1)
     loop w in t.wood:
         a = turn(w.a); b = turn(w.b)
         wood.push(Instance3D(crown_limb_matrix(a,b,w.r*scale),bark*vec4(shade,shade,shade,1)))
@@ -506,7 +541,7 @@ crown_wood = (clumps: mut CrownClump[],root: vec3,radius: f32,tall: f32,tone: f3
     # (the crowns of the maquis in their kinds: round domes, low flat spreads, and loose irregular
     # bunches of uneven clumps, by the crown's own draw)
     shape = fract(seed*17.31)
-    flat = if shape < 0.35: 0.55 else: 1.0
+    flat = if shape < 0.35: 0.72 else: 1.0
     loose = shape > 0.7
     hgt = radius*0.7*tall*flat
     centre = root+vec3(0,hgt*0.55,0)
@@ -518,7 +553,7 @@ crown_wood = (clumps: mut CrownClump[],root: vec3,radius: f32,tall: f32,tone: f3
         rr = if k == 0: 0.0 else: radius*spread*(0.75+0.5*fract(seed*29.0+f32(k)*0.61))
         size = (if k == 0: 0.62 else: 0.5)*(if loose: 0.7+0.5*fract(seed*53.0+f32(k)*0.43) else: 1.0)
         cr = radius*size
-        squash = 0.72*flat*(0.85+0.3*fract(seed*7.0+f32(k)*0.53))
+        squash = 0.86*flat*(0.85+0.3*fract(seed*7.0+f32(k)*0.53))
         c = root+vec3(cos(a)*rr,cr*squash*0.86*tall+(if k == 0: hgt*0.25 else: 0.0),sin(a)*rr)
         clumps.push(CrownClump(vec4(c,cr),vec4(squash,fract(tone+f32(k)*0.37),fract(seed*13.7+f32(k)*0.29),if k == 0: 0.85 else: 0.6),tree,vec4(col,3)))
     # (the middle and far: one clump, the crown's outline and its mean light)

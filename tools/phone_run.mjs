@@ -83,6 +83,9 @@ const dev = `http://localhost:${devport}`;
 let targets = await (await fetch(`${dev}/json`)).json();
 let target = targets.find((t) => t.type === 'page');
 if (!target) target = await (await fetch(`${dev}/json/new?about:blank`, {method: 'PUT'})).json();
+// (one tab only: each run's launch opens another, and a --keep run's game stays running in its
+// own; dozens left open crashed or hung the phone's pages)
+for (const t of targets) if (t.type === 'page' && t.id !== target.id) { try { await fetch(`${dev}/json/close/${t.id}`); } catch {} }
 const ws = new WebSocket(`ws://localhost:${devport}/devtools/page/${target.id}`);
 await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
 let n = 0;
