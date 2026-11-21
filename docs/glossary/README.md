@@ -583,8 +583,9 @@ On the rivers branch until it lands.
 ### Paint page
 
 - **Aliases:** repainting, liveries, colour schemes.
-- **Definition:** the pause menu's Paint tab (beside Aircraft and Plane): the player's aircraft
-  repainted, in four tabs. **Livery:** a livery valid for the type (its own first, its period
+- **Definition:** the pause menu's Paint tab, shown only with the sandbox's "Paint the aircraft
+  anywhere, at any time" on (otherwise painting is done at a [paint shop](#paint-shop)): the
+  player's aircraft repainted, in four tabs. **Livery:** a livery valid for the type (its own first, its period
   paints, the civil ones and its family's) and its four colours (main, trim, wings, stripe).
   **Parts:** [paint by part](#paint-by-part). **Decals:** [decals](#decals). **Marks:** national
   insignia, operator bars, rudder stripes and a tail number where the type wears them. Colours
