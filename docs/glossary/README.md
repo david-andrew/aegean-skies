@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -596,14 +596,16 @@ On the rivers branch until it lands.
   (the aircraft's record mirrors its livery and keeps the paint written out); a game saved before
   it loads as built, or in the period paint its record wore. The page has three standings
   (`PaintPageMode`): free, a [paint shop](#paint-shop)'s (a draft, priced), or closed (painting is
-  done at a workshop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
-  price-and-time, for the sandbox settings to answer.
+  done at a paint shop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
+  price-and-time: the sandbox's "Paint the aircraft anywhere, at any time" (`sandbox.paint_anywhere`,
+  off unless the player turns it on).
 - **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`, `paint_build`,
   `paint_support`, `paint_changes`, `paint_from_spec`), `src/aircraft_paint_view.jo`
   (`paint_page`); `set_player_paint`, `paint_step`, `player_model` in `aegean.jo`;
   `tests/aircraft_paint_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`, `paint-marks` for the
-  other tabs); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
+- **Capture:** `AEGEAN_SANDBOX=paint AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`,
+  `paint-marks` for the other tabs; without the sandbox switch the page is closed and says where
+  the paint shops are); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
   part.lwing=stripes:0.8,0.1,0.1:0.9,0.9,0.8:0:6 decal=roundel:wing-top'` or a paint's name
   (`AEGEAN_PAINT='Greek Naval Air Service'`); `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
 
@@ -656,37 +658,67 @@ On the rivers branch until it lands.
 
 ### Paint shop
 
-- **Definition:** where painting costs money and takes a little time. The painter is a town's
-  mechanic: walked up to and spoken to, "I'd like her painted" opens the Paint page as the
-  shop's. The paint chosen there is a draft, shown on the aircraft and priced as it changes (only
-  what differs from her paint is charged; `paint_quote`). Ordered, the mechanic is paid and the
-  aircraft is **in the shop** until the paint is dry: she cannot be boarded, and is seen masked,
-  then in primer, then in the new paint with its decals going on last (`paint_job_look`). The
-  mechanic says how the work stands and one can wait for it. People remark on a new paint for a
-  day.
+- **Aliases:** the workshop, the paint shed, the painter.
+- **Definition:** where painting costs money and takes a little time: an open-fronted workshop
+  on its own plank deck at the water's edge, in each harbour town a mechanic lives in (Porto
+  Vecchio and Kryfo Cove). A lean-to against two plank walls with a bench of paint pots, tins on a
+  shelf, the colours on a board, trestles, drums, a ladder and a painted sign; an apron in front;
+  and a **berth** on the water where the aircraft lies nose-in to the deck. The town's mechanic
+  works there mornings (7:00 to 12:30) and from three till six.
+- **The visit:** tapping the workshop's bench or the painter walks the pilot over; the talk
+  offers "I'd like her painted". The painter brings the aircraft round to the berth (a few
+  minutes pass), and the shop's **panel** opens: the painter's card (name, price and time for
+  what is changed) over the paint's four tabs, at the side of the screen (along the bottom of
+  one held upright), the view turning round the aircraft with a drag beside it. The paint chosen
+  is a draft, shown on the aircraft and priced as it changes (only what differs is charged;
+  `paint_quote`). Ordered, the mechanic is paid and the aircraft is **in the shop** until the
+  paint is dry: she cannot be boarded and is seen masked, then in primer, then in the new paint
+  with its decals going on last (`paint_job_look`). The mechanic says how the work stands and
+  one can wait. People remark on a new paint for a day.
 - **Rules:** the `PaintJob` is saved with the session; the money moves through the living
-  world's `transfer` (a repair payment). The aircraft must be moored at the mechanic's harbour.
-- **Code:** `src/paint_shop.jo` (`paint_quote`, `paint_job_begin`, `paint_job_look`);
-  `open_paint_shop`, `paint_shop_order`, `paint_job_step` in `aegean.jo`;
-  `tests/paint_shop_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=paint-shop` (the shop's page, `AEGEAN_PAINT_DRAFT` chosen);
-  `AEGEAN_CAPTURE_LAUNCH=paintshop` goes through asking, ordering, a save and load, waiting and
-  the dry paint, with `PAINTSHOP` lines; `AEGEAN_PAINT_AT_SHOPS=1` closes the free page.
+  world's `transfer` (a repair payment). The shop is sited by `paint_shed_site`: the first spot
+  along the shore from the main quay where the berth floats and deck and berth are clear of
+  docks, moored boats, other quays and the hotel; a harbour with no waterfront gets a gangway
+  from its quay. A big boat is painted on her buoy and a landplane where she stands (the berth
+  takes what fits a harbour's docks). Asked away from the workshop, the mechanic says to come by
+  it. The panel is a `Ui` state (`.paint`), not the pause menu.
+- **Code:** `src/paint_shed.jo` (the place: `build_paint_shed`, `paint_shed_site`,
+  `paint_shed_berth`, `paint_shed_venue`), `src/paint_shop.jo` (the price and the job),
+  `src/paint_shop_view.jo` (`paint_shop_panel`); `build_paint_sheds`, `open_paint_shop`,
+  `paint_berth_moor`, `paint_shop_panel_step`, `paint_shop_camera`, `paint_job_step` in
+  `aegean.jo`; the mechanic's venue in `choose_life_venue` (`src/living_life_seed.jo`) and hours
+  in `src/living_life.jo`; `tests/paint_shop_test.jo`, `tests/paint_shed_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_SHED="place [yaw pitch distance]"` (the free camera on a town's
+  shop); `AEGEAN_CAPTURE_PANEL=paint-shop` (the panel, staged at the workshop with
+  `AEGEAN_PAINT_DRAFT` chosen; `AEGEAN_PAINT_TAB=0..3`); `AEGEAN_CAPTURE_LAUNCH=paintshop` goes
+  through asking, ordering, a save and load, waiting and the dry paint, with `PAINTSHOP` lines
+  (`AEGEAN_PAINT_STAGE=primer|top` stops the wait mid-paint); `AEGEAN_TALK=mechanic`;
+  `AEGEAN_PAINT_AT_SHOPS=1` closes the free page.
 
 ### Pilots' liveries
 
 - **Definition:** every other pilot's aircraft in its own paint, so a pilot can be told by their
   colours at a distance. Made once from the pilot's number with the shop's own tools (a base
   livery, two palette colours over the parts, a motif or their initials), then kept with the
-  aircraft's record. The harbour patrol keep the service's livery and carry a number; a pirate's
-  is dark with one bold mark.
+  aircraft's record. The named pilots, the far pilots of the flying clubs and anyone else flying
+  get their own. The harbour patrol keep the service's livery and carry a number; a pirate's is
+  dark with one bold mark.
+- **Unit livery:** the air arm at a field and a scenario's squadrons share one: the service's
+  paint kept whole, so the side it flies for still reads, the cowling (and for some units the
+  struts) in the unit's colour, and each aircraft's own number on fuselage and upper wing
+  (`unit_paint`).
 - **Rules:** `AircraftRecord.paint` holds the paint written out (`to_text` of a `Paint`), so it
-  survives saves and a later change to the generator. Models are built a few frames apart after
-  a start or a load and shared by paint.
-- **Code:** `src/pilot_liveries.jo` (`pilot_paint`); `assign_pilot_liveries`, `pilot_livery_step`
-  in `aegean.jo`.
+  survives saves and a later change to the generator. Models are built one every four frames,
+  shared by paint, and looked up by aircraft each frame once the air traffic is gathered
+  (`pilot_livery_remap`); the saved model numbers of far pilots and battle actors are left as
+  they were.
+- **Code:** `src/pilot_liveries.jo` (`pilot_paint`, `unit_paint`); `assign_pilot_liveries`,
+  `pilot_livery_give`, `pilot_livery_model`, `pilot_livery_remap`, `pilot_livery_step` in
+  `aegean.jo`.
 - **Capture:** `AEGEAN_CAPTURE_LIVERY="k [yaw pitch distance]"`: the camera on the k-th pilot's
-  aircraft, and a `PILOT LIVERY` line for each.
+  aircraft, and a `PILOT LIVERY` line for every aircraft; `AEGEAN_CAPTURE_FORMATION=1` with
+  `AEGEAN_FLYING`: the named pilots' aircraft placed in a vee ahead of the chase view (staged
+  for the still).
 
 ### Markings
 
@@ -2754,6 +2786,52 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Capture:** `AEGEAN_LEISURE=rep-remark AEGEAN_COMPANY=0.5 AEGEAN_SMALL_TALK=always
   AEGEAN_CAPTURE_MINUTES=630 AEGEAN_HOUR=20` admits an eligible opening at the first opportunity.
 
+### Spoken lines
+
+- **Aliases:** streamed text, the typewriter, words arriving.
+- **Definition:** what someone says in a panel arrives as it is spoken instead of all at once:
+  35 to 50 characters a second by the speaker's voice and age (an old fisherman near the bottom,
+  a nurse or a telegraphist near the top), with a breath at a comma and a longer one at a full
+  stop, and none inside a figure. The line is wrapped whole first, so no word jumps to the next
+  row as it grows.
+- **The answers wait:** in a conversation the panel holds the line alone while it arrives, then
+  opens upward and the answers fade in. Space, Enter, a controller's A, or a click or tap on the
+  panel finishes the line at once. That press does nothing else: it is not also an answer, and
+  Space is held from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+- **Where:** conversations, an office's contract, the hotel desk, a host's spare room, the bath
+  keeper and a ride asked for (the choices wait for them); the keeper's word under the bill of
+  fare and in the book, the workshop's answer, a line on the wireless, and a spoken card such as
+  a tow's answer or a parting word (these only arrive: nothing waits and no press hurries them).
+  A notice on the board, the newspaper and the notebook are read, not said, and are there at once.
+- **Option:** Settings, Display, "Text speed": Slow, Normal, Fast or Instant (Instant: as panels
+  were). Kept with the options; an older file reads as Normal.
+- **Code:** `src/speech_stream.jo` (the pace, the pauses and one frame's step: plain arithmetic),
+  `src/spoken_view.jo` (`spoken_line` for a panel's line by key, `spoken_heard` for one that only
+  arrives, `spoken_peek` for the same words drawn elsewhere). `ptext(..., chars = n)` draws the
+  first n characters where the whole text puts them, the phoenix sign included.
+- **Tests:** `tests/talk_bubbles_test.jo` (timing, the skip, the answers waiting, the option) and
+  `tests/talk_bubbles_test.py` (the game played through a conversation by `tools/panel_probe.jo`).
+
+### Talk bubbles
+
+- **Aliases:** conversation bubbles, the exchange over their heads.
+- **Definition:** a conversation in the panel is heard in the world too. The person's line is in
+  a speech bubble over their head, arriving in step with the panel, and what the pilot says (the
+  answer chosen, a subject put as a short question, an errand in a few words) is in one over his.
+  The pilot speaks first: the answer begins a moment after.
+- **Timing:** as the bubbles of [small talk](#small-talk): a line stays seven seconds once it is
+  whole and the pilot's words four and a half. Both go when the conversation ends.
+- **Placement:** both bubbles keep above the panel's top edge at its full height, however low the
+  speaker stands behind it. Two that would cover each other slide apart sideways, each toward
+  its own speaker; on a screen too narrow for that (a phone upright) the pilot's goes over the
+  answer, without a tail. A bubble with no name keeps no empty row for one.
+- **Code:** `src/talk_bubbles.jo` (who says what and for how long, `pilot_asks`, `pilot_says`),
+  `bubble_box`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles` in
+  `aegean.jo`.
+- **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start; with
+  `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n5+ 303:n5-` picks the fifth choice) it plays
+  the same every time.
+
 ### Leads
 
 - **Aliases:** what's going on, things to look into, something he could go and do.
@@ -4171,8 +4249,9 @@ No image: the tiers differ in budgets more than in any single view.
 - **Definition:** one colour scheme for sides wherever the game marks them: enemies red-orange,
   friends blue, everyone else cream. Lead rings, the target brackets and names, people in the
   water, the formation's place and the radio's speakers all take it from one place, so the
-  colour-vision preset swaps the whole set at once. A side's lines lie over a dark halo and its
-  names over a dark outline, so they read on sea, cloud and sky alike.
+  colour-vision preset swaps the whole set at once. A side's lines lie over a halo and its
+  names over an outline (dark under a light colour, pale under a dark one), so they read on sea,
+  cloud and sky alike.
 - **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `side_line`,
   `side_ring`, `side_text`, `side_sign`, `battle_standing`, `country_standing`).
 
@@ -4181,29 +4260,38 @@ No image: the tiers differ in budgets more than in any single view.
 - **Aliases:** colour-blind setting, colours of the sides, the Accessibility palettes.
 - **Definition:** the Settings page's "Colours of the sides" (Accessibility), kept with the
   options: Standard; Red-green (protanopia, deuteranopia: enemy orange against friend blue, never
-  red against green); Blue-yellow (tritanopia: enemy red against friend teal); No colour (the
-  sides by shape on every mark and by lightness: a chevron an enemy's, a ring a friend's, a dot
-  anyone else's, over a darker halo). The war chart's country inks change with it (nations, not
-  sides), and with No colour each country's held ground is hatched its own way.
-- **Rules:** a preset is checked under a simulation of the eye it is for (Machado et al. 2009 at
-  full severity; luminance alone for no colour): the three sides apart, every mark apart from
-  sea, cloud and sky by its colour or its halo, the inks apart on the chart's paper. The standard
-  preset's marks keep their shapes; only No colour adds a sign to the lead ring, the flight's
-  marks and the pointer.
+  red against green); Blue-yellow (tritanopia: enemy orange against friend bright teal); No colour
+  (enemy white, friend dark, others grey, and a shape on every mark). Each is its own set of
+  colours for the player, never a filter. In the three presets one side is a dark mark in a pale
+  halo (others in the colour presets, friends with no colour) and the marks are firm: full
+  strength, a pixel heavier, a whole halo, names on a wide outline. "A shape for each side on
+  every mark" adds the signs in any preset. The war chart's country inks change with the preset
+  (Okabe and Ito's orange, blue and black in the colour presets), and with No colour each
+  country's held ground is hatched its own way.
+- **Rules:** a preset is checked under a simulation of the eye it is for (Machado 2009 and
+  Brettel 1997 at full severity; luminance alone for no colour): sides 20 or more apart in
+  CIEDE2000 and CAM02-UCS (Petroff 2021), every mark 15 or more from sea, sky and cloud and at
+  3:1 against them (WCAG 1.4.11), names at 4.5:1 (WCAG 1.4.3), shape as a second cue (WCAG
+  1.4.1). The standard look is scored the same way and its figures pinned. docs/accessibility.md
+  has the thresholds, the scores and the sources.
 - **Code:** `src/side_colours.jo` (`ColourVision`, `side_palette_for`, `set_colour_vision`,
-  `country_ink_for`, `country_hatch`, `side_shapes`), `src/colour_vision.jo` (`simulate_colour`,
-  `seen_distance`), `Options.colour_vision`; `tests/colour_vision_test.jo`.
-- **Capture:** `AEGEAN_COLOUR_VISION=standard|red_green|blue_yellow|monochrome`;
-  `AEGEAN_CAPTURE_SIDES=4` lays every side's mark in rows over the view (`src/side_samples.jo`);
-  `AEGEAN_CAPTURE_PANEL=settings-accessibility`; `sloppy --release tools/colour_vision_view.jo
-  in.png out.png protan|deutan|tritan|achromat|sheet` shows a capture as that eye sees it.
+  `palette_halo`, `side_is_dark`, `country_ink_for`, `country_hatch`, `side_shapes`),
+  `src/colour_vision.jo` (`simulate_colour`, `delta_e_2000`, `ucs_of`, `contrast_ratio`),
+  `src/colour_vision_scores.jo` (the scores and thresholds), `Options.colour_vision`,
+  `Options.side_shapes`; `tests/colour_vision_test.jo`.
+- **Capture:** `AEGEAN_COLOUR_VISION=standard|red_green|blue_yellow|monochrome` (`+shapes` for
+  the shapes option); `AEGEAN_CAPTURE_SIDES=4` lays every side's mark in rows over the view
+  (`src/side_samples.jo`); `AEGEAN_CAPTURE_PANEL=settings-accessibility`; `sloppy --release
+  tools/colour_vision_view.jo in.png out.png protan|deutan|tritan|achromat|sheet` shows a capture
+  as that eye sees it; `tools/colour_vision_report.jo` prints the score tables.
 
 ### Sandbox switches
 
 - **Aliases:** sandbox settings, playing freely, cheats.
 - **Definition:** the Settings page's Sandbox section, each a separate switch, each off, kept with
   the options: paint the aircraft anywhere at any time; any aircraft at any time (the Aircraft
-  page among the player's tabs); unlimited money; no damage; no fuel use; endless ammunition. The
+  page among the player's tabs); unlimited money (the purse then reads ¤∞, on the view and at
+  the foot of every counter's panel); no damage; no fuel use; endless ammunition. The
   simulation runs as usual: a switch lifts only the player's own constraint.
 - **Rules:** nobody else's money, cargo or wear is changed by a switch, and the world's books
   balance with one on. Unlimited money holds the purse at a level (the purse hold): what is spent

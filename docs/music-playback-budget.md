@@ -41,7 +41,7 @@ Headless/no-audio startup skips preparation entirely.
 The renderer batches at most 128 samples between note events and cache boundaries.
 It copies voice state once per batch and skips inactive slots once, while retaining
 sample order within each recurrence and slot order within each mixed sample. Note-end
-handling preserves the old slot reuse and oldest-voice stealing behavior exactly.
+handling preserves the old slot reuse exactly.
 
 Modal loops run one partial over a short contiguous output span. Each sample's partial
 addition order is unchanged. The span is checked before a local pointer is taken;
@@ -61,6 +61,25 @@ No reassociation, fused arithmetic, precision change or raised cutoff is used.
 A larger 16 MiB body cache saved only about 4% of the hardest measured passage's
 instructions compared with 4 MiB. The smaller cache remains the default. Proposed
 velocity quantization was rejected because it would change the auditioned output.
+
+## Which voice gives way (21 November 2026)
+
+The ceiling stays at 64 voices. Until this date a note arriving with all 64 in use took the
+oldest voice, which in a busy texture is the held bass: under the tutti of the title's Ravel
+the D pedal lost 4–10 dB below 150 Hz. `music_steal` now takes the voice whose loss is heard
+least: the quietest of those already dying away (a note in its release, or a plucked or struck
+note ringing down, ranked by level), and a bowed or blown note still held only when all 64 are
+held, the one nearest its end first. It reads voice state only, so the cached and uncached
+renderers still choose alike (`tests/music_cache.jo`).
+
+- A piece that never fills 64 voices never reaches this code, and its output is bit-identical
+  to before. Of the 103 pieces then in the catalogue, the ones that do fill them, and so sound
+  different (their held notes now last), are listed with the measurements in the change's report.
+- The title's Ravel, with every part sounding, would use up to 142 voices if there were no
+  ceiling. At 64 with this rule its third-octave band levels are within 0.13 dB on average
+  (0.75 dB at the 95th percentile) of the unlimited render, and its bass below 150 Hz within
+  0.1 dB of the sustained parts rendered alone. More voices would cost processor time in exactly
+  the passages that fill them, for a change that small, so the ceiling was left where it is.
 
 ## Reproduce validation and runtime checks
 
