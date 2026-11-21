@@ -22,7 +22,7 @@ on that unmerged branch so far.
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
+- **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
@@ -2741,6 +2741,7 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   opens upward and the answers fade in. Space, Enter, a controller's A, or a click or tap on the
   panel finishes the line at once. That press does nothing else: it is not also an answer, and
   Space is held from whatever else it does (`hold_space` in `src/touch.jo`) until the line is whole.
+  The keys card (H) lists it: "Space  finish a line".
 - **Where:** conversations, an office's contract, the hotel desk, a host's spare room, the bath
   keeper and a ride asked for (the choices wait for them); the keeper's word under the bill of
   fare and in the book, the workshop's answer, a line on the wireless, and a spoken card such as
@@ -2774,6 +2775,37 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
 - **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start; with
   `SLOPPY_FIXED_STEP=1` and `SLOPPY_INPUT` (`300:n5+ 303:n5-` picks the fifth choice) it plays
   the same every time.
+
+### Talk hold
+
+- **Aliases:** held for the conversation, the scene's hold, called away.
+- **Definition:** whoever the pilot talks with stops where they are and stays until goodbye. A
+  person on their feet turns to the pilot, and he to them; someone seated, at a fixture or
+  playing keeps the way that faces them. Let go, they walk on along the same route.
+- **The lease:** the scene's walkers (the daily walkers, the far people, porters under a load)
+  keep their movement lease on a held person and do not step them. The saved plan, its route and
+  the place along it are untouched, and a save in the middle of a talk folds the lease as ever,
+  at the pose they stand in. Nothing of the hold is saved.
+- **Called away:** something real ends it politely. Their boat or aircraft (always); a load, a
+  job or work taken up since the talk began; a new part of their day that will not wait (work
+  beginning somewhere else, the church bell, bed, someone met by arrangement). Someone stopped
+  already under a load, or on the way to a meeting or the service, spares fifteen game minutes
+  first. A stroll, a seat in the square, their ordinary work at their post or on the way to it
+  all wait for the conversation. The same part of the day given a new spot to stand on is not
+  a new call, and a world just begun gives its first plan without calling anyone.
+- **How it reads:** their parting line replaces the panel's line ("I'm wanted at work. Another
+  time."), with only Goodbye under it. They stand through the line and 0.8 s after it, then go;
+  the panel shuts by itself 5 s after the line if the pilot says nothing. Someone already gone
+  from under the panel (aboard their boat) leaves the line as a spoken card.
+- **Code:** `src/scene_hold.jo` (`scene_hold`, `scene_release`, `scene_holds`, read by
+  `step_life_scene`, `step_far_people_scene` and `step_cargo_scene`), `src/talk_hold.jo`
+  (`talk_hold_begin`, `talk_hold_step`, `talk_call_line`, `talk_holds`), `talk_hold_frame` in
+  `aegean.jo`.
+- **Tests:** `tests/talk_hold_test.jo` (the lease and the plan under a hold, each call, the
+  lines) and `tests/talk_hold_test.py` (the game: stopped for a word forty minutes into the day,
+  and called away by a load in the world's first minute; `tools/panel_probe.jo`'s `WHO` line).
+- **Capture:** `AEGEAN_TALK=1 AEGEAN_CAPTURE_MINUTES=40` for someone who stays; `AEGEAN_TALK=1`
+  alone at the start for Marta called away to a load a minute in.
 
 ### Leads
 
