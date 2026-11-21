@@ -1696,7 +1696,15 @@ On the rivers branch until it lands.
   Altair, orange about Arcturus, red about Antares) and a soft four-point **glint**. The faint
   ones stay fine points with a plain tint.
 - **Twinkle:** the low air's shimmer: slight overhead, strong near the horizon, each star at its
-  own pace, with flashes of colour low down. Planets do not twinkle.
+  own pace, with flashes of colour in a bright star's core low down (its halo keeps its own
+  colour). Planets do not twinkle.
+- **The reflected sphere:** by the game's compass the noon sun stands in the north and the
+  celestial pole in the south, the other way round from the real Aegean. Laid on that sky
+  directly, the real star catalogue shows every figure as its mirror image, so it is laid on
+  reflected in right ascension (about 6h and 18h: the summer stars still stand high at
+  midnight). The figures are then the real ones as the eye sees them (the Summer Triangle
+  counter-clockwise, the Scorpion's tail toward the Milky Way's centre); a star further east in
+  the real sky rises earlier here, not later.
 - **Code:** `BRIGHT_STARS`, `night_star_specs`, `night_star_vs` / `night_star_fs`,
   `draw_night_stars` in `src/night_sky.jo`: one mesh of small squares, brightness, size, twinkle
   and what is seen worked out at each star's corners; the pixels draw only the core, the halo and
@@ -3679,14 +3687,15 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Stargazing
 
 - **Definition:** lying back at night on a hilltop or the end of the hotel's pier, the view drifting
-  slowly round the sky. The brighter stars stand at their places on the game's own celestial
-  sphere (its pole 20 degrees up toward the north, the summer sun at 6h on the equator, as
-  `src/celestial.jo` turns the sun and moon), and the names of stars, constellations, the
-  planets and the moon show faintly, in transliterated period Greek and in English, as one looks
-  at them. T lets an hour pass. The pilot's scarf is not drawn while he lies back (tied at a
+  slowly round the sky. The stars are the sky's own ([Stars](#stars)), on the game's celestial
+  sphere (its pole 20 degrees up, the summer sun at 6h on the equator, as `src/celestial.jo`
+  turns the sun and moon), and the names of stars, constellations, the planets and the moon show
+  faintly, in transliterated period Greek and in English, as one looks at them: a star's name
+  only as far as the sky shows the star itself (twilight, moonlight, haze and cloud overhead
+  hide both), a figure's as far as its third-magnitude stars show. T lets an hour pass. The pilot's scarf is not drawn while he lies back (tied at a
   standing neck, it hung over the view).
-- **Code:** `src/stargazing.jo` (`SKY_NAMES`, `sky_star`, `Gaze`, `name_alpha`); `gaze_*` and
-  `draw_gaze_sky` in `aegean.jo`; `tests/stargazing_test.jo`.
+- **Code:** `src/stargazing.jo` (`SKY_NAMES`, `sky_star`, `Gaze`, `name_alpha`); `night_shown` in
+  `src/night_sky.jo`; `gaze_*` and `draw_gaze_sky` in `aegean.jo`; `tests/stargazing_test.jo`.
 - **Capture:** `AEGEAN_LEISURE=stars|stars-hill` (`AEGEAN_GAZE_TURN` turns the view).
 
 ### Rising notes
