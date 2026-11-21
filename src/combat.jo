@@ -143,6 +143,7 @@ struct CombatPilot:
     plan: FlightPlan = FlightPlan()
     descend_tick = -1
     home_done = false
+    recalled = false               # called off its way home by a word on the R/T; back to it when the word no longer holds
     # A v2 stick commands rates. Steer the last requested direction between decisions.
     hold_want = vec3(0,0,0)
     hold_cap = true
@@ -280,10 +281,15 @@ struct Battle:
     home_leg: int[] = [-2,-2,-2]   # each side's leg of its home's way round (via index, outer first; -1 straight in, -2 not yet chosen)
     managed: bool[] = [false,false,false]   # sides a sortie sends home itself (sortie.jo), not the fight's own judging
     apart_since: int[] = [-1,-1,-1] # the tick each side lost touch with the enemy (-1: in touch)
+    home_from: int[] = [0,0,0]     # the turn that leads each side home: 0, or, the flight called back by the R/T and sent on again, the first of those still up
 
 # A word on the radio to one's own flight (the player's R/T): form on me, circle here and wait,
 # attack my target, break off and go home, lead me home. Held until another; an attack until its
 # target is down. A pilot with an enemy on its tail and close looks after itself first.
+# The word is heard by every one of the flight still up, however far off, and stands over whatever
+# the flight was about: one that has turned for home comes back to form up, to circle or to attack,
+# and goes on home, together, when told to, or when the one who gave the word is down or tied up.
+# Those already down at the base stay there: they are out of it.
 enum OrderKind: none, form_on_me, circle, attack, go_home, lead_home
 struct FlightOrder:
     kind: OrderKind = .none
@@ -291,6 +297,11 @@ struct FlightOrder:
     by = -1                        # who gave it (aircraft ID)
     at: vec3 = vec3(0,0,0)         # where (circle here)
     target = -1                    # the aircraft to attack (ID)
+    met = -1                       # lead me home: the tick the leader came in sight of the one led (-1: still coming to them)
+
+const LEAD_SIGHT = 1200.0           # the leader this near the one it leads home: in sight, to be followed
+const LEAD_LOST = 4000.0            # the one led fallen this far from the leader: it comes back for them
+const CIRCLE_HEIGHT = 250.0         # the least height a flight circles a spot at, or over one down on the sea
 
 # One of the flight sent down to the player on the sea: it lands off to one side, taxis to lie
 # alongside and waits there (stage 2) while the cans are handed over, then takes off and goes on
@@ -939,6 +950,10 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
     p.held_sight = false; p.hold_want = vec3(0,0,0)
     if b.assist.craft == a.craft and b.assist.stage > 0: return _assist(b,index,e,p)
     if p.launching: return _launch(b,index,e,p)
+    # (a word on the R/T stands over the way home, for those still up, wherever they have got to:
+    # back from it to form up, to circle or to attack; the last of an approach is finished first)
+    if p.mode == .homeward and not p.home_done and not s.on_water and not (p.plan.initialized and (p.plan.phase == .land or p.plan.phase == .taxi)) and flight_held(b,a.side):
+        p.recalled = true; p.mode = .regroup; p.plan = FlightPlan(); p.descend_tick = -1
     if p.mode == .homeward:
         p=_homeward(b,index,e,p)
         phase=p.plan.phase
@@ -970,6 +985,11 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
         if order.kind == .form_on_me and by >= 0 and b.actors[by].status == .flying:
             # (in its own slot on the player, as on the way out)
             l = b.actors[by].state
+            if l.on_water:
+                # (the player down on the sea: round over them till they are up again)
+                p.controls = _circle_controls(k,s,e,l.position,CIRCLE_HEIGHT)
+                p.mode = .regroup; p.target = -1
+                return p
             slot = l.position+quat_rotate(quat_euler(0,-heading(l),0),p.formation_offset-b.actors[by].pilot.formation_offset)
             direction = heading_vector(heading(l)); lv = max(f64(length(l.velocity)),k.stall_speed*pure_k(k)*1.4)
             # (well out of position, a straggler opens right up to catch the formation)
@@ -979,11 +999,7 @@ combat_controls = (b: Battle, index: int, e: FlightEnv) -> CombatPilot:
             p.mode = .regroup; p.target = -1
             return p
         if order.kind == .circle:
-            out = s.position-order.at; out.y = 0
-            if length(out) < 1: out = vec3(1,0,0)
-            around = f64(atan2(f64(out.z),f64(out.x)))+0.4
-            aim = order.at+vec3(f32(cos(around)*1000.0),0,f32(sin(around)*1000.0))
-            p.controls = air_waypoint_controls(k,s,e,aim,max(f64(order.at.y),250.0),k.cruise_speed*0.65)
+            p.controls = _circle_controls(k,s,e,order.at,max(f64(order.at.y),CIRCLE_HEIGHT))
             p.mode = .regroup; p.target = -1
             return p
     if order.kind == .attack:
@@ -1181,12 +1197,14 @@ _home_of = (b: Battle, side: int) -> BattleHome:
         if h.side == side: return h
     BattleHome(side,vec3(0,0,0),0.0,vec3(0,0,0),vec3(0,0,0))
 
-# The side's homeward leader: the first in the landing order still flying (-1: none).
+# The side's homeward leader: the first in the landing order still flying (-1: none); of a flight
+# called back by the R/T and sent on home again, the first of those that were still up.
 home_leader = (b: Battle, side: int) -> int:
     best = -1
+    first = if side >= 0 and side < b.home_from.len(): b.home_from[side] else: 0
     loop i in 0..b.actors.len():
         a = b.actors[i]
-        if a.side != side or a.status != .flying or a.pilot.mode != .homeward or a.human: continue
+        if a.side != side or a.status != .flying or a.pilot.mode != .homeward or a.human or a.pilot.home_turn < first: continue
         if best < 0 or a.pilot.home_turn < b.actors[best].pilot.home_turn: best = i
     best
 
@@ -1256,7 +1274,7 @@ _turn_for_home = (b: mut Battle):
 # turns for home, regrouping first unless `at_once` (led straight home: "lead me home").
 send_home = (b: mut Battle, side: int, beaten: bool, at_once: bool):
         if side < 0 or side > 2 or b.home_since[side] >= 0 or not _has_home(b,side): return
-        b.home_since[side] = b.tick; b.home_leg[side] = -2
+        b.home_since[side] = b.tick; b.home_leg[side] = -2; b.home_from[side] = 0
         if at_once: b.formed[side] = b.tick
         # (scattered by the fight, they regroup first: over the fight for the winners, a few
         # kilometres toward home for the beaten, under the cloud)
@@ -1287,21 +1305,97 @@ send_home = (b: mut Battle, side: int, beaten: bool, at_once: bool):
             b.actors[i] = a
 
 # The player's word on the radio to their flight: returns how many are there to hear it (their
-# side's pilots still flying in this battle). Going home starts at once.
+# side's pilots still up in this battle, however far off; those down and tied up at the base are
+# out of it: flight_down). Going home starts at once; a flight already on its way home, or called
+# back from it, forms up on the first of those still up.
 give_order = (b: mut Battle, by: int, kind: OrderKind, target: int = -1) -> int:
     me = combat_index(b,by)
     if me < 0 or b.actors[me].side < 0 or b.actors[me].side > 2: return 0
     side = b.actors[me].side
-    hear = 0
-    loop a in b.actors:
-        if a.side == side and a.craft != by and a.status == .flying and a.present and not a.human: hear += 1
+    hear = flight_up(b,side)
     if hear == 0: return 0
     b.orders[side] = FlightOrder(kind,b.tick,by,b.actors[me].state.position,target)
     if kind == .go_home: send_home(b,side,true,false)
     if kind == .lead_home:
         if b.home_since[side] < 0: send_home(b,side,false,true)
-        else: b.formed[side] = min(if b.formed[side] < 0: b.tick else: b.formed[side],b.tick)
+        else: _rehome(b,side)
     hear
+
+# How many of a side's own pilots (not the player) are up to hear the R/T, and how many are down
+# and tied up at the base.
+flight_up = (b: Battle, side: int) -> int:
+    n = 0
+    loop a in b.actors:
+        if a.side == side and not a.human and a.status == .flying and a.present and not a.pilot.home_done: n += 1
+    n
+flight_down = (b: Battle, side: int) -> int:
+    n = 0
+    loop a in b.actors:
+        if a.side == side and not a.human and a.status == .flying and a.present and a.pilot.home_done: n += 1
+    n
+
+# The one who gave an order, while they are there to be formed on, circled for or led: up or down
+# on the sea, in the fight, not wrecked, not tied up (their index; -1 gone).
+_giver_up = (b: Battle, o: FlightOrder) -> int:
+    i = combat_index(b,o.by)
+    if i < 0: return -1
+    g = b.actors[i]
+    if g.status != .flying or not g.present or g.bailed or g.state.moored or g.state.crashed or g.state.capsized: return -1
+    i
+
+# Whether a side's flight is held by a word on the R/T that stands over its way home: formed on
+# the one who gave it or circling for them, while they are there; attacking, while the target flies.
+flight_held = (b: Battle, side: int) -> bool:
+    if side < 0 or side > 2: return false
+    o = b.orders[side]
+    if o.kind == .form_on_me or o.kind == .circle: return _giver_up(b,o) >= 0
+    if o.kind == .attack:
+        t = combat_index(b,o.target)
+        return t >= 0 and b.actors[t].status == .flying and b.actors[t].present and b.actors[t].side != side
+    false
+
+# A side's flight, already turned for home, formed up for it again from where it is: those still
+# up (not the ones down, or on the water or the last of the approach) in their slots on the first
+# of them, which leads; the way round chosen afresh.
+_rehome = (b: mut Battle, side: int):
+    if side < 0 or side > 2 or b.home_since[side] < 0: return
+    first = -1
+    loop i in 0..b.actors.len():
+        a = b.actors[i]
+        if a.side != side or a.human or a.status != .flying or not a.present or a.external or a.pilot.scripted or a.pilot.launching: continue
+        if b.assist.stage > 0 and b.assist.craft == a.craft: continue
+        if a.pilot.home_done or a.state.on_water or (a.pilot.mode == .homeward and a.pilot.plan.initialized and (a.pilot.plan.phase == .land or a.pilot.plan.phase == .taxi)): continue
+        a.pilot.mode = .homeward; a.pilot.recalled = false; a.pilot.rallied = true
+        a.pilot.trigger = false; a.pilot.target = -1; a.pilot.formation = false
+        a.pilot.hold_want=vec3(0,0,0);a.pilot.close=false
+        a.pilot.plan = FlightPlan(); a.pilot.descend_tick = -1
+        if first < 0 or a.pilot.home_turn < first: first = a.pilot.home_turn
+        b.actors[i] = a
+    if first < 0: return
+    b.home_from[side] = first; b.formed[side] = b.tick; b.home_leg[side] = -2
+
+# Each side's word on the R/T, kept true each tick: let go when the one who gave it is down or
+# tied up, or its target is; a flight it had called back from its way home sent on again, formed;
+# and leading the player home, whether the leader is in their sight yet (met), or has lost them.
+_orders_step = (b: mut Battle):
+    loop side in 0..3:
+        o = b.orders[side]
+        if o.kind == .none: continue
+        if o.kind == .lead_home:
+            g = _giver_up(b,o); lead = home_leader(b,side)
+            if g < 0 or lead < 0: b.orders[side] = FlightOrder()
+            else:
+                l = b.actors[lead]; to = b.actors[g].state
+                d = f64(length(l.state.position-to.position))
+                cruising = not l.pilot.home_done and not l.state.on_water and (not l.pilot.plan.initialized or l.pilot.plan.phase == .cruise)
+                if o.met < 0 and d < LEAD_SIGHT and not to.on_water: b.orders[side].met = b.tick; b.home_leg[side] = -2
+                else if o.met >= 0 and d > LEAD_LOST and cruising: b.orders[side].met = -1
+        else if o.kind != .go_home and not flight_held(b,side): b.orders[side] = FlightOrder()
+        if b.home_since[side] >= 0 and not flight_held(b,side):
+            back = false
+            loop a in b.actors:
+                if a.side == side and a.pilot.recalled and a.status == .flying: back = true
+            if back: _rehome(b,side)
 
 # A pilot's order this moment, if it has one to follow (none with an enemy close on its tail).
 _order_for = (b: Battle, index: int) -> FlightOrder:
@@ -1312,6 +1406,17 @@ _order_for = (b: Battle, index: int) -> FlightOrder:
     loop e in b.actors:
         if e.side != a.side and e.status == .flying and e.present and e.pilot.target == index and f64(length(e.state.position-a.state.position)) < 700.0: return FlightOrder()
     o
+
+# Round over a spot, a kilometre out, at `height`: opened up on the way to it from far off, eased
+# back to a waiting pace round it.
+_circle_controls = (k: CraftSpec, s: CraftState, e: FlightEnv, at: vec3, height: f64) -> Controls:
+    out = s.position-at; out.y = 0
+    far = f64(length(out))
+    if far < 1: out = vec3(1,0,0)
+    around = f64(atan2(f64(out.z),f64(out.x)))+0.4
+    aim = at+vec3(f32(cos(around)*1000.0),0,f32(sin(around)*1000.0))
+    pace = lerp(k.cruise_speed*0.65,max(k.cruise_speed,k.max_speed*0.92),smoothstep(2500.0,5000.0,far))
+    air_waypoint_controls(k,s,e,aim,height,pace)
 
 # The pace a flight is led home at: one the player's own aircraft cruises at comfortably (they were
 # held back flying with a leader at its own slow cruise); with the player in company, near the
@@ -1405,11 +1510,29 @@ _homeward = (b: Battle, index: int, e: FlightEnv, p: mut CombatPilot) -> CombatP
         aim = r+vec3(f32(cos(around)*650.0),0,f32(sin(around)*650.0))
         p.controls = air_waypoint_controls(k,s,e,aim,f64(r.y)+20.0*f64(p.home_turn%3),k.cruise_speed*0.65)
         return p
+    # (asked to lead the player home, and not in their sight: to them first, the flight in its slots
+    # behind; round over them while they are down on the sea. Never "follow me" from out of sight)
+    word = b.orders[a.side]
+    if word.kind == .lead_home and word.met < 0 and lead == index and not s.on_water and (not p.plan.initialized or p.plan.phase == .cruise):
+        g = _giver_up(b,word)
+        if g >= 0:
+            to = b.actors[g].state
+            p.plan = FlightPlan(); p.descend_tick = -1
+            if to.on_water: p.controls = _circle_controls(k,s,e,to.position,CIRCLE_HEIGHT)
+            else:
+                # (to a place a little ahead of them, at their height, opened right up from far off)
+                ahead = to.position+to.velocity*3.0
+                far = f64(length(ahead-s.position))
+                pace = lerp(max(f64(length(to.velocity)),k.cruise_speed*0.8),max(k.cruise_speed,k.max_speed*0.92),smoothstep(1500.0,4000.0,far))
+                p.controls = air_waypoint_controls(k,s,e,ahead,max(f64(to.position.y),150.0),pace)
+            return p
     rank = 0
+    first = b.home_from[a.side]
     loop o in b.actors:
-        if o.side == a.side and o.status == .flying and o.pilot.mode == .homeward and not o.human and o.pilot.home_turn < p.home_turn: rank += 1
+        if o.side == a.side and o.status == .flying and o.pilot.mode == .homeward and not o.human and o.pilot.home_turn < p.home_turn and o.pilot.home_turn >= first: rank += 1
     descending = if lead >= 0 and lead != index: b.actors[lead].pilot.descend_tick else: p.descend_tick
-    mine = lead == index or (descending >= 0 and b.tick >= descending+rank*LAND_GAP)
+    # (one down before the flight was called back, or already on the last of its own approach: its own way in)
+    mine = lead == index or p.home_turn < first or (p.plan.initialized and (p.plan.phase == .land or p.plan.phase == .taxi)) or (descending >= 0 and b.tick >= descending+rank*LAND_GAP)
     if mine:
         if not p.plan.initialized:
             touchdown,landing = home_runway(h,e)
@@ -1939,6 +2062,7 @@ step_battle = (b: mut Battle, e: FlightEnv, observer: vec3):
                 _event(b,.landed,b.actors[a],d.position,b.actors[a].last_attacker,outcome=true)
                 last=b.outcomes.len()-1
                 b.outcomes[last].injury=d.injury; b.outcomes[last].at_sea=d.phase==.swimming
+    _orders_step(b)
     if b.tick%30 == 0:
         _turn_for_home(b)
         _home_legs(b,e)

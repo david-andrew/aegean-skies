@@ -1,0 +1,277 @@
+# The R/T's words to the flight, from any distance, after the fight is won and the flight has
+# turned for home (a player's report: down on the sea picking up one of the flight, the rest told
+# to circle and wait went home; "form on me" and "lead me home" were answered and not obeyed; the
+# flight's marks were gone): the flight circles where told and is still there after the pickup;
+# "form on me" brings it back from 10 km; its marks never go; "lead me home" is led by one in
+# sight, who comes to the player first; and those already down at the base say so.
+use '../src/world.jo'
+use '../src/world_point.jo'
+use '../src/world_towns.jo'
+use '../src/settlements.jo'
+use '../src/geography.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/tweaks.jo'
+use '../src/combat.jo'
+use '../src/scenarios.jo'
+use '../src/pilot.jo'
+use '../src/flight_ground.jo'
+use '../src/rt_pad.jo'
+use '../src/lead_marker.jo'
+import '../src/living_types.jo' as data
+
+# The strait won: the enemy gone, the player's flight (seven and the player) about to turn for home.
+staged_ready = false
+staged_battle = Battle()
+staged_me = -1
+staged = () -> (Battle,int):
+    global geography_enabled,staged_ready,staged_battle,staged_me
+    if not staged_ready:
+        assert(load_land(embed('../assets/terrain.bin')))
+        assert(load_geography(embed('../assets/world.bin')))
+        geography_enabled=true
+        towns=[loop st in SETTLEMENTS:build_town(st)]
+        init_world_towns(towns)
+        set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+        sc=build_scenario("strait",towns,build_craft_models())!
+        b=sc.battle;w=sc.world
+        me=combat_index(b,w.people[w.player].craft)
+        loop i in 0..b.actors.len():
+            a=b.actors[i]
+            if a.side!=b.actors[me].side:a.present=false;a.status=.escaped
+            else if i!=me:a.pilot.formation=false
+            b.actors[i]=a
+        b.tick=700
+        staged_battle=b;staged_me=me;staged_ready=true
+    (staged_battle,staged_me)
+
+# The player put somewhere: flying on velocity `v` (pointing the way they go), or down on the sea.
+put = (b: mut Battle, me: int, at: vec3, v: vec3, wet: bool):
+    p=b.actors[me]
+    p.state.position=at;p.state.velocity=v;p.state.on_water=wet;p.state.precise_ready=false
+    if length(v)>1:p.state.orientation=quat_euler(0,-atan2(f64(v.x),-f64(v.z)),0)
+    p.previous=at;p.previous_point=world_point(at);b.actors[me]=p
+
+allies = (b: Battle, me: int) -> int[]:
+    [loop i in 0..b.actors.len(): if i!=me and b.actors[i].side==b.actors[me].side and not b.actors[i].human and b.actors[i].status==.flying and b.actors[i].present: i]
+
+nearest = (b: Battle, me: int) -> f64:
+    d=1e18
+    loop i in allies(b,me):d=min(d,f64(length(b.actors[i].state.position-b.actors[me].state.position)))
+    d
+farthest = (b: Battle, me: int, from: vec3) -> f64:
+    d=0.0
+    loop i in allies(b,me):d=max(d,f64(length(vec3(b.actors[i].state.position.x-from.x,0,b.actors[i].state.position.z-from.z))))
+    d
+
+# Every one of the flight beyond a formation's distance is marked, and no mark fainter than a
+# half, however far.
+marked = (b: Battle, me: int) -> bool:
+    at=b.actors[me].state.position
+    want=0
+    loop i in allies(b,me):
+        if f64(length(b.actors[i].state.position-at))>=ALLY_NEAR+1.0 and not b.actors[i].bailed:want+=1
+    marks=ally_marks(b,b.actors[me].craft,at)
+    loop m in marks:
+        if ally_alpha(m.range)<0.45:return false
+    marks.len()>=want
+
+# The player flown on (the game integrates them; here they are moved), the flight's marks checked
+# each second. `chase`: an aircraft to steer for at `pace` (-1: straight on).
+fly = (b: mut Battle, me: int, seconds: f64, chase: int = -1, pace: f64 = 0.0):
+    loop n in 0..int(seconds*60.0):
+        p=b.actors[me]
+        if chase>=0:
+            to=b.actors[chase].state.position-p.state.position
+            if length(to)>200:
+                p.state.velocity=normalize(to)*f32(pace)
+                p.state.orientation=quat_euler(0,-atan2(f64(to.x),-f64(to.z)),0)
+        p.previous=p.state.position;p.previous_point=world_point(p.state.position)
+        p.state.position+=p.state.velocity*f32(COMBAT_DT);p.state.precise_ready=false
+        b.actors[me]=p
+        step_battle(b,flight_env(f64(b.tick)/60.0,p.state.position),p.state.position)
+        if n%60==0:assert(marked(b,me),"one of the flight lost its mark at tick {b.tick}, the nearest {nearest(b,me):.0} m off")
+
+slot_error = (b: Battle, me: int) -> f64:
+    sum=0.0;n=0
+    l=b.actors[me]
+    loop i in allies(b,me):
+        a=b.actors[i]
+        slot=l.state.position+quat_rotate(quat_euler(0,-heading(l.state),0),a.pilot.formation_offset-l.pilot.formation_offset)
+        sum+=f64(length(slot-a.state.position));n+=1
+    sum/max(1.0,f64(n))
+
+test "the fight won and the flight turned for home: it circles where told through a pickup, forms on the player from 10 km, its marks kept, and leads home from in sight":
+    b,me=staged()
+    by=b.actors[me].craft;side=b.actors[me].side;k=b.actors[me].spec
+    watch=RtWatch()
+    # (down on the sea beside one of the flight in the water, three kilometres off the fight)
+    start=b.actors[me].state.position
+    spot=vec3(start.x+2000,f32(k.float_height),start.z+2000)
+    assert(flight_env(0.0,spot).ground(f64(spot.x),f64(spot.z))<0.0)
+    put(b,me,spot,vec3(0,0,0),true)
+    fly(b,me,5.0)
+    assert(b.home_since[side]>=0,"the flight had not turned for home")
+    heard=give_order(b,by,.circle)
+    said=rt_reply(b,by,.circle,false,heard,"the Ierax",watch)
+    print("circle: heard by {heard}; '{said.words}'")
+    assert(heard==7 and said.words!="" and said.craft>=0)
+    # (two and a half minutes on the water taking them aboard: the flight still there, round the spot)
+    fly(b,me,150.0)
+    print("after the pickup: the flight {nearest(b,me):.0} to {farthest(b,me,spot):.0} m from the spot")
+    assert(farthest(b,me,spot)<2200.0 and flight_held(b,side))
+    loop i in allies(b,me):assert(b.actors[i].pilot.mode!=.homeward and not b.actors[i].pilot.home_done)
+    # (off again and away south-east, the flight left circling: 10 km apart)
+    away=normalize(vec3(1,0,1))*f32(k.cruise_speed*0.8)
+    put(b,me,spot+vec3(0,400,0),away,false)
+    fly(b,me,70.0)
+    apart=nearest(b,me)
+    assert(apart>10000.0,"only {apart:.0} m apart")
+    assert(farthest(b,me,spot)<2200.0,"the flight did not keep circling the spot")
+    heard=give_order(b,by,.form_on_me)
+    said=rt_reply(b,by,.form_on_me,false,heard,"the Ierax",watch)
+    print("form on me at {apart:.0} m: heard by {heard}; '{said.words}'")
+    assert(heard==7 and said.words.starts_with("On our way. ") and said.words.ends_with("kilometres north-west of you."))
+    took=0.0
+    loop nearest(b,me)>300.0 and took<240.0:
+        fly(b,me,1.0);took+=1.0
+    print("the first of the flight within 300 m after {took:.0} s")
+    assert(took<200.0,"nobody within 300 m of the player after {took:.0} s (the nearest {nearest(b,me):.0} m off)")
+    fly(b,me,75.0)
+    print("formed: slot error {slot_error(b,me):.0} m, the farthest {farthest(b,me,b.actors[me].state.position):.0} m off")
+    assert(slot_error(b,me)<300.0)
+    # (lead me home, the flight on the player's wing: the leader in sight, "follow me" at once)
+    heard=give_order(b,by,.lead_home)
+    said=rt_reply(b,by,.lead_home,false,heard,"the Ierax",watch)
+    lead=home_leader(b,side)
+    print("lead me home: heard by {heard}; '{said.words}' from craft {said.craft}")
+    assert(heard==7 and lead>=0 and said.craft==b.actors[lead].craft and said.words=="Follow me. Home this way.")
+    assert(f64(length(b.actors[lead].state.position-b.actors[me].state.position))<LEAD_SIGHT)
+    fly(b,me,1.0)
+    assert(b.orders[side].met>=0 and rt_later(b,by,watch).words=="")
+
+test "lead me home with the flight gone on out of sight: the leader comes to the player first, says follow me only in sight, leads at a pace to follow and comes back for one it has lost":
+    b,me=staged()
+    by=b.actors[me].craft;side=b.actors[me].side;k=b.actors[me].spec
+    watch=RtWatch()
+    start=b.actors[me].state.position
+    # (the player off east on their own while the flight regroups and goes home west)
+    put(b,me,start+vec3(3000,0,0),vec3(f32(k.cruise_speed*0.8),0,0),false)
+    fly(b,me,150.0)
+    lead=home_leader(b,side)
+    apart=f64(length(b.actors[lead].state.position-b.actors[me].state.position))
+    assert(b.formed[side]>=0 and apart>20000.0,"the flight only {apart:.0} m off")
+    home=vec3(0,0,0)
+    loop h in b.homes:
+        if h.side==side:home=h.touchdown
+    heard=give_order(b,by,.lead_home)
+    said=rt_reply(b,by,.lead_home,false,heard,"the Ierax",watch)
+    lead=home_leader(b,side)
+    print("lead me home at {apart:.0} m: heard by {heard}; '{said.words}'")
+    assert(heard==7 and said.craft==b.actors[lead].craft and said.words.starts_with("Coming to you. ") and said.words.ends_with(" of you. Then follow me home."))
+    # (the player turns back toward them; the leader comes, the flight behind it: never "follow
+    # me" from out of sight)
+    put(b,me,b.actors[me].state.position,vec3(-f32(k.cruise_speed*0.8),0,0),false)
+    took=0.0
+    loop b.orders[side].met<0 and took<420.0:
+        fly(b,me,1.0);took+=1.0
+        if b.orders[side].met<0:assert(rt_later(b,by,watch).words=="")
+    lead=home_leader(b,side)
+    seen=f64(length(b.actors[lead].state.position-b.actors[me].state.position))
+    later=rt_later(b,by,watch)
+    print("the leader in sight after {took:.0} s, {seen:.0} m off: '{later.words}'")
+    assert(b.orders[side].met>=0 and seen<LEAD_SIGHT+300.0 and later.words=="Follow me. Home this way." and later.craft==b.actors[lead].craft)
+    # (followed: led toward home at a pace the player keeps)
+    from=f64(length(vec3(b.actors[lead].state.position.x-home.x,0,b.actors[lead].state.position.z-home.z)))
+    fly(b,me,90.0,lead,k.cruise_speed*0.9)
+    to=f64(length(vec3(b.actors[lead].state.position.x-home.x,0,b.actors[lead].state.position.z-home.z)))
+    seen=f64(length(b.actors[lead].state.position-b.actors[me].state.position))
+    print("followed for 90 s: {from-to:.0} m nearer home, the leader {seen:.0} m ahead")
+    assert(b.orders[side].met>=0 and from-to>8000.0 and seen<LEAD_LOST*0.5 and rt_later(b,by,watch).words=="")
+    # (the player turns away: lost, the leader says so and comes back, and says follow me again)
+    put(b,me,b.actors[me].state.position,vec3(f32(k.cruise_speed*0.8),0,0),false)
+    took=0.0
+    loop b.orders[side].met>=0 and took<120.0:
+        fly(b,me,1.0);took+=1.0
+    later=rt_later(b,by,watch)
+    print("turned away: lost after {took:.0} s: '{later.words}'")
+    assert(b.orders[side].met<0 and later.words=="Lost sight of you. Coming back.")
+    took=0.0
+    loop b.orders[side].met<0 and took<300.0:
+        fly(b,me,1.0);took+=1.0
+    later=rt_later(b,by,watch)
+    print("the leader back in sight after {took:.0} s: '{later.words}'")
+    assert(b.orders[side].met>=0 and later.words=="Follow me. Home this way.")
+
+test "those down and tied up at the base are out of it and say so; the rest, called back, go on home formed on the first of them still up":
+    b,me=staged()
+    by=b.actors[me].craft;side=b.actors[me].side;k=b.actors[me].spec
+    watch=RtWatch()
+    fly(b,me,2.0)
+    assert(b.home_since[side]>=0)
+    home=BattleHome(side,vec3(0,0,0),0.0,vec3(0,0,0),vec3(0,0,0))
+    loop h in b.homes:
+        if h.side==side:home=h
+    # (three of them in already: moored at the base, done)
+    down: int[]
+    loop i in allies(b,me):
+        a=b.actors[i]
+        if a.pilot.home_turn>2:continue
+        slot=home.dock+home.step*f32(a.pilot.home_turn)
+        a.state=water_start(a.spec,vec3(slot.x,0,slot.z),home.heading)
+        moor(a.state,a.state.position,home.heading)
+        a.previous=a.state.position;a.previous_point=world_point(a.state.position);a.previous_rotation=a.state.orientation
+        a.pilot.home_done=true;a.pilot.plan=FlightPlan()
+        b.actors[i]=a;down.push(i)
+    assert(down.len()==3 and flight_up(b,side)==4 and flight_down(b,side)==3)
+    spot=b.actors[me].state.position
+    heard=give_order(b,by,.circle)
+    assert(heard==4)
+    fly(b,me,90.0)
+    loop i in allies(b,me):
+        a=b.actors[i]
+        if i in down:assert(a.pilot.home_done and a.state.moored,"one down at the base was called off its mooring")
+        else:assert(a.pilot.recalled and a.pilot.mode==.regroup and f64(length(vec3(a.state.position.x-spot.x,0,a.state.position.z-spot.z)))<2500.0)
+    # (break off, go home: on home again at once, formed, led by the first of the four still up)
+    assert(give_order(b,by,.go_home)==4)
+    fly(b,me,1.0)
+    lead=home_leader(b,side)
+    assert(lead>=0 and not (lead in down) and b.home_from[side]==3 and b.actors[lead].pilot.home_turn==3 and b.formed[side]>=0)
+    loop i in allies(b,me):
+        if not (i in down):assert(b.actors[i].pilot.mode==.homeward and not b.actors[i].pilot.recalled)
+    # (its way: straight in, or by the way round the high ground, the point it makes for first)
+    leg=b.home_leg[side]
+    way=if leg>=0 and leg<home.via.len(): home.via[leg] else: home.touchdown
+    from=f64(length(vec3(b.actors[lead].state.position.x-way.x,0,b.actors[lead].state.position.z-way.z)))
+    fly(b,me,60.0)
+    to=f64(length(vec3(b.actors[lead].state.position.x-way.x,0,b.actors[lead].state.position.z-way.z)))
+    spread=0.0
+    loop i in allies(b,me):
+        if not (i in down):spread=max(spread,f64(length(b.actors[i].state.position-b.actors[lead].state.position)))
+    print("sent on home (leg {leg}): {from-to:.0} m on its way in a minute, the four within {spread:.0} m of their leader")
+    assert(from-to>5000.0 and spread<1500.0)
+    # (a word held, and the one who gave it tied up in harbour: let go, the flight on home)
+    assert(give_order(b,by,.form_on_me)==4)
+    fly(b,me,5.0)
+    assert(flight_held(b,side))
+    p=b.actors[me];p.state.moored=true;p.state.on_water=true;p.state.velocity=vec3(0,0,0);b.actors[me]=p
+    fly(b,me,2.0)
+    assert(b.orders[side].kind==.none and not flight_held(b,side))
+    loop i in allies(b,me):
+        if not (i in down):assert(b.actors[i].pilot.mode==.homeward)
+    # (all of them down: no one up to hear; the first of them answers from the base, and says where)
+    loop i in allies(b,me):
+        a=b.actors[i];a.pilot.home_done=true;a.pilot.mode=.homeward
+        if not (i in down):
+            slot=home.dock+home.step*f32(a.pilot.home_turn)
+            a.state=water_start(a.spec,vec3(slot.x,0,slot.z),home.heading);moor(a.state,a.state.position,home.heading)
+            a.previous=a.state.position;a.previous_point=world_point(a.state.position)
+        b.actors[i]=a
+    p=b.actors[me];p.state.moored=false;b.actors[me]=p
+    put(b,me,spot+vec3(0,300,0),vec3(f32(k.cruise_speed*0.8),0,0),false)
+    heard=give_order(b,by,.lead_home)
+    said=rt_reply(b,by,.lead_home,false,heard,"the Ierax",watch)
+    print("the flight all down: heard by {heard}; '{said.words}'")
+    assert(heard==0 and flight_down(b,side)==7 and said.words.starts_with("We're down at the Ierax, ") and said.words.ends_with(" west of you."))
+    assert(marked(b,me) and ally_marks(b,by,b.actors[me].state.position).len()==7)
