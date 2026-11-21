@@ -1690,8 +1690,11 @@ On the rivers branch until it lands.
   Swan, the Lyre, the Plough, Cassiopeia; [stargazing](#stargazing)'s named stars among them) and
   3,400 fainter ones strewn by a fixed rule, three times as many for each magnitude fainter and
   thicker along the Milky Way. Each is an over-bright emitter: a small near-white **core** with a
-  touch of its colour (blue-white, white, yellow, orange, orange-red by spectral class), a
-  **halo** in that colour, and for the thirty or so brightest a faint four-point **glint**.
+  touch of its colour (blue-white, white, yellow, orange, orange-red by spectral class) and a
+  **halo** in that colour. The thirty or so brightest get the sun's treatment in full: a larger
+  burnt-out core, a wide halo plainly in the star's own colour (blue about Vega, Deneb and
+  Altair, orange about Arcturus, red about Antares) and a soft four-point **glint**. The faint
+  ones stay fine points with a plain tint.
 - **Twinkle:** the low air's shimmer: slight overhead, strong near the horizon, each star at its
   own pace, with flashes of colour low down. Planets do not twinkle.
 - **Code:** `BRIGHT_STARS`, `night_star_specs`, `night_star_vs` / `night_star_fs`,
@@ -1712,8 +1715,9 @@ On the rivers branch until it lands.
 
 - **Definition:** Venus, Jupiter, Mars and Saturn as calendar-driven points of light (a simple
   ephemeris from the game's start date, 7 June 1926: Venus is a morning star that summer), hidden
-  by clouds in front of them. Drawn as the stars are, steady: Venus brilliant white and Jupiter
-  cream, each with a glint, Mars red, Saturn pale gold.
+  by clouds in front of them. Drawn as the brightest stars are, steady: Venus brilliant white and
+  Jupiter cream-gold, the brightest things in the sky after the Moon, each with a wide halo and a
+  long glint; Mars red, Saturn pale gold.
 - **Code:** `sky_planets` in `src/celestial.jo`; `PLANET_TINTS`, `planet_magnitude`,
   `night_planet_vertices` in `src/night_sky.jo`; `tools/sky_frames.jo` with
   `SKY_TARGET=moon|venus|jupiter|mars|saturn`, `SKY_DAY`, `SKY_HOUR`.
