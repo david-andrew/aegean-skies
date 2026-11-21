@@ -682,7 +682,13 @@ On the rivers branch until it lands.
   docks, moored boats, other quays and the hotel; a harbour with no waterfront gets a gangway
   from its quay. A big boat is painted on her buoy and a landplane where she stands (the berth
   takes what fits a harbour's docks). Asked away from the workshop, the mechanic says to come by
-  it. The panel is a `Ui` state (`.paint`), not the pause menu.
+  it. The panel is a `Ui` state (`.paint`), not the pause menu. The workshop itself is the thing
+  to tap (its lean-to, with a board of colours on its back wall for whoever comes along the
+  waterfront); the pilot walks round its open end to the apron (`paint_shed_way`). Waiting for
+  the paint passes in sight, a few seconds for the whole of it, the view on the aircraft. On a
+  screen wider than tall but short (a phone held sideways) the panel is two columns, the card,
+  buttons and tabs at the left and the chosen tab at the right a section at a time
+  (`PaintPage.compact`), so nothing scrolls.
 - **Code:** `src/paint_shed.jo` (the place: `build_paint_shed`, `paint_shed_site`,
   `paint_shed_berth`, `paint_shed_venue`), `src/paint_shop.jo` (the price and the job),
   `src/paint_shop_view.jo` (`paint_shop_panel`); `build_paint_sheds`, `open_paint_shop`,
@@ -694,7 +700,10 @@ On the rivers branch until it lands.
   `AEGEAN_PAINT_DRAFT` chosen; `AEGEAN_PAINT_TAB=0..3`); `AEGEAN_CAPTURE_LAUNCH=paintshop` goes
   through asking, ordering, a save and load, waiting and the dry paint, with `PAINTSHOP` lines
   (`AEGEAN_PAINT_STAGE=primer|top` stops the wait mid-paint); `AEGEAN_TALK=mechanic`;
-  `AEGEAN_PAINT_AT_SHOPS=1` closes the free page.
+  `AEGEAN_PAINT_AT_SHOPS=1` closes the free page; `AEGEAN_PAINT_SECTION=0..2` picks a section on a
+  short screen. `tools/paint_shop_probe.jo` runs the game with scripted input and reports a visit
+  frame by frame; `tests/paint_shop_flow_test.py` goes through the whole visit with it (set
+  `PAINT_FLOW_SCRIPT=file` to keep the input for a clip with `AEGEAN_FRAMES`).
 
 ### Pilots' liveries
 
@@ -719,7 +728,7 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_CAPTURE_LIVERY="k [yaw pitch distance]"`: the camera on the k-th pilot's
   aircraft, and a `PILOT LIVERY` line for every aircraft; `AEGEAN_CAPTURE_FORMATION=1` with
   `AEGEAN_FLYING`: the named pilots' aircraft placed in a vee ahead of the chase view (staged
-  for the still).
+  for the still); `=quarter` sees them from ahead, to one side and above, wings showing.
 
 ### Markings
 
