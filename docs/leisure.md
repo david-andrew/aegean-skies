@@ -177,7 +177,8 @@ funny or useful (time passes, people are met, the plane is looked after).
 27. **The rooms by their things.** No buttons in a room. Tap or click the bed to lie down (sleep
    of an evening, rest by day), the chair to sit, the window to look out, the door to leave. The
    pilot gets up, walks round the furniture and sits or lies down by degrees, never jumping. What
-   the pointer, the arrow keys or a pad's d-pad picks out is a shade brighter, with a small label.
+   the pointer, the arrow keys or a pad's d-pad picks out has the look's white outline and band of
+   light, as things have on foot, with a small label.
    A tap wakes him early.
 28. **Over to the table.** On foot, tapping or clicking the pilot's table, the bar's stool or the
    coffee house's table walks him over and sits him down.

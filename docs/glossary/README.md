@@ -3270,10 +3270,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   - the band's jar ("Tip the band") and its stand ("Ask for a song");
   - the coffee house's table, its closed tavli board ("A game of tavli") and the folded paper
     ("The paper");
-  - a town's own seats ("Sit"): a place on a bench, a chair at an open-air café (`town_seats_near`
-    in `src/world_towns.jo`; `Perch`, `perch_begin`, `perch_step`, `perch_end` in `aegean.jo`). He
-    walks round to it, turns his back to it and sits, with no panel and no words; he gets up
-    when he next walks. A seat someone is in is not offered;
+  - a town's own seats ("Sit"): a chair at an open-air café, a bench, the rim of a square's
+    fountain (`town_prop_seats`, `town_seats_near` in `src/world_towns.jo`; `Perch`,
+    `perch_begin`, `perch_step`, `perch_end` in `aegean.jo`). He walks round to it, turns his back
+    to it and sits, with no panel and no words; he gets up when he next walks. Each café chair is
+    its own thing; a bench (two places) and a fountain (six round its rim, facing out) are one
+    thing each, and he takes its free place nearest him. A seat someone is in is not offered;
   The townspeople use the same chairs: one sent to an open-air café (`cafe_has_chairs`,
   `cafe_chair` in `src/life_types.jo`; `set_life_destination` in `src/living_life.jo`) walks to
   one of its four chairs, the one he has while he stays or the first no one else there has, and
@@ -3293,36 +3295,65 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   buttons on the table's bar, but their keys T, P, S and B still work.
 - **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
   round it and a faint band of light passing slowly down over it, with a few flecks in it like a
-  bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). The line
-  follows the thing's own shape where it has meshes of its own: one's own aircraft (all of her,
-  wings, floats and tail, whether her cockpit or her engine is looked at), the townspeople, the
-  springs' keeper, and the coffee house's board and paper. As the scene draws that thing, its
-  meshes are taken (`look_take`), then drawn alone into a small mask covering only its rectangle
-  on the screen, and one pass over that rectangle draws the line just outside the mask's edge and
-  the band inside it (`src/look_outline.jo`). The pilot is never in the mask. The mask keeps the
-  thing's nearest point at each pixel (a depth buffer of its own), and the line, band and flecks
-  are left out wherever the scene's depth there is nearer (the pilot in front of it, a nearer
-  thing), all but a faint line (a fifth as bright) where the edge is hidden, so a thing wholly
-  behind him still shows where it is (`AEGEAN_LOOK_DEPTH=0`: drawn over everything, as before). Nothing is rendered while nothing is looked at. The
-  things that are part of a larger mesh (the hotel's tables, the bar's stool, the desk at the
-  room door, the barber's chair, the band's stand and jar, the coffee house's table, the hot
-  pool) keep their box's outline, and so does the software renderer. `AEGEAN_LOOK_SHAPE=0` keeps
-  the box's outline for everything (for measuring what the shape costs). It goes
+  bar of static over a paused screen, then from the top again (`foot_look`). The line follows the
+  thing's own shape, for every kind of thing; nothing is outlined by a box. Its meshes are drawn
+  alone into a small mask covering only its rectangle on the screen, and one pass over that
+  rectangle draws the line just outside the mask's edge and the band inside it
+  (`src/look_outline.jo`). The pilot is never in the mask. The mask keeps the thing's nearest
+  point at each pixel (a depth buffer of its own), and the line, band and flecks are left out
+  wherever the scene's depth there is nearer (the pilot in front of it, a nearer thing), all but a
+  faint line (a fifth as bright) where the edge is hidden, so a thing wholly behind him still
+  shows where it is (`AEGEAN_LOOK_DEPTH=0`: drawn over everything). Nothing is rendered while
+  nothing is looked at. It goes
   by where the camera looks, not where he faces: a ray from the camera through the middle of the
   screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
-  then the nearest one. His own body never counts. A click uses it, whether the mouse is locked to
+  then the nearest one. A thing is found by a box: for a part of a larger mesh, the box of its own
+  vertices, turned as that mesh is (`_part_thing`, `look_bounds`), so what can be looked at is
+  what lights up; where the ray passes through two boxes at once, the smaller thing is the one
+  meant (the jar on the stand's corner, the board on the table: `_spans_meet`). His own body never counts. A click uses it, whether the mouse is locked to
   the view or not; a click on nothing takes the mouse for the view. There is no pointer on foot.
   On a touch screen the same thing is lit, showing what a tap there would do, and a tap on any
   thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
-  at with the mouse free, and a small label over the thing says what it does
-  (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
+  at with the mouse free: the thing has the same highlight, and a small label over it says what
+  it does (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
-- **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
+- **Kinds and shapes:** every lookable thing says its kind first (`LookKind`, the first field of
+  `FootThing`; a room's things by `room_look_kind`), and each kind has one of three shapes
+  (`look_shape_of`, a `match` with no default, so a new kind without one does not compile):
+  - **drawn:** its own meshes, taken as the scene draws them (`look_take`, between
+    `look_capture(look_on(kind))` and `look_capture(false)`): the people about, one's own
+    aircraft (all of her, whether her cockpit or her engine is looked at), the springs' keeper,
+    the coffee house's board and paper, the band's jar;
+  - **part:** a small mesh of the vertices it has in the larger mesh it is part of, made by the
+    same code that builds that mesh and given with `look_add(mesh, model)`: the hotel's tables,
+    the bar's stool, the hotel's door (its desk), the barber's chair, the bandstand (its platform
+    with the piano and the microphone on it), the coffee house's table, and in a room the bed, the
+    chair, the window and the door. In the bar room the same shapes stand shifted with their
+    places. A town's furniture is this kind too, each instance placed by its own model in the
+    towns' prop kit: a café's chair (the one chair of the four in its prop, `cafe_chair_vertices`
+    in `src/town_details.jo`), a bench and a fountain (the whole of the prop);
+  - **proxy:** a small mesh built to match what is seen, where the thing has no vertices of that
+    kind: the hot pool (its coping, and a disc where the water lies).
+  The small meshes are made when first looked at and kept (`look_mesh` in `src/look_things.jo`).
+  A new thing: add its kind to `LookKind` and `look_shape_of`, say the kind where its `FootThing`
+  is made, and either take its meshes where it is drawn, or give its vertices in `look_vertices`
+  with the frame it stands in (`part`, `frame`); an instanced prop gives its shared mesh's
+  vertices and its own instance's model. `tests/look_shape_test.jo` fails for a kind with no
+  shape, a drawn kind nothing takes, a part with no vertices, a thing made without a kind, or a
+  use of the box where the mask can be drawn. Only the software renderer, which cannot draw the
+  mask, keeps the box's outline (`draw_look`) and, in a room, the brighter redraw
+  (`AEGEAN_LOOK_SHAPE=0`: the same, for measuring what the shape costs).
+- **Capture:** `AEGEAN_LEISURE=foot-hotel|foot-craft|foot-coffee|sit-coffee AEGEAN_FOOT_GO=<frame>:<label or
   index>` sends him to a thing (or, seated, uses one) and prints a `FOOT` trace with the cards shown.
-  `AEGEAN_LOOK_TRACE=1` prints a `LOOK <frame> <label>` line each time the view comes to look at
-  another thing (`-` for nothing).
+  `AEGEAN_FOOT_AT="x z"` starts `foot-hotel` at that place in the hotel's frame, and
+  `AEGEAN_LOOK_AT="<label>"` holds the view on the nearest thing so labelled, or of that kind
+  (`town_bench`, `fountain`); `AEGEAN_LOOK_SIDE=<metres>` aims that far to its right, so he
+  stands beside its middle. `AEGEAN_LOOK_TRACE=1` prints a `LOOK <frame> <label>` line each time
+  the view comes to look at another thing (`-` for nothing), and a `LOOKSHAPE` line with its
+  kind, its shape, how many meshes its mask had, whether the highlight was drawn, and where the
+  thing and its standing place are.
 
 ### Pleasure flight
 
@@ -3406,8 +3437,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     Escape, brings him back to the chair.
   - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
   - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Enter or A
-    to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
-    vertices, cut from the baked room). A small label over it says what it does now (`room_label`:
+    to use it) has the look's highlight, as on foot: the white line round its own shape and the
+    band of light down it (`draw_room_look`; its shape is `hotel_things`, `family_things`: each
+    thing's own vertices, cut from the baked room; see [Things to tap](#things-to-tap)). A small
+    label over it says what it does now (`room_label`:
     "Sleep", "Lie down", "Get up", "Sit", "Look out", "Back inside", "Leave").
   - **The view:** it turns all the way round by a drag, a finger or the right stick, so the door
     can be behind. On a phone held upright it is wider. The pilot isn't drawn while he passes
