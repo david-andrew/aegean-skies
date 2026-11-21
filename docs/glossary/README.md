@@ -1464,8 +1464,10 @@ On the rivers branch until it lands.
   overhead, rose lower down and round the whole horizon, and a deep orange band low on the sun's
   side (hottest at the horizon toward the sun, the rest of the horizon a pink belt). The sea goes a
   deep blue-violet under it, the orange carried by its glitter. Clouds take the light from below:
-  their bases go gold, edges toward the sun lit through, shaded sides rose-violet, and the sides
-  away from the sun orange. Hands over to the afterglow by about 18:30.
+  their bases and edges burn and the whole field takes the light, flame orange and peach toward the
+  sun, salmon and magenta-pink away from it, high cloud still lit some 8 degrees after the sun has
+  set and drifting to pink and magenta; the colour by the day's air (`Light.flame`: clear
+  orange-peach, haze red-orange, dust deep red-orange, damp air pink-magenta, washed salmon-pink). Hands over to the afterglow by about 18:30.
 - **Code:** the sunset keys (sun height 0 and 0.15) of `TWILIGHT_*` in `src/look.jo`, with
   `Light.sunset` (how much the sun on the water reddens the glow band, `draw_glow_band` in
   `src/sky.jo`); the clouds' sunset shade (`VOLUME_SUNSET_SHADE`) and low-sun light in
@@ -1477,9 +1479,11 @@ On the rivers branch until it lands.
 - **Definition:** the sun's disc, white high up. Low down it is graded, pale gold at its top to
   amber at its foot, and reddens as it sinks; flattened by the air and drawn up to 1.8 times larger
   near the horizon, its foot wavering in slices into a short mirage where it meets the water. In
-  thick air (the day's air) the change starts about 20 degrees up and comes on gradually, deep red
-  only near the horizon on a heavy-dust day; a reddened sun keeps a hot yellow-orange core grading
-  to a red limb and a warm glow about it in the air, so it reads as light, never a painted dot.
+  thick air (the day's air) the change starts about 20 degrees up and comes on gradually; a
+  reddened sun is an over-bright emitter, as the eye and a photograph see it: a small flat
+  near-white disc with all its colour in a tight saturated red bloom about it (deepest in heavy
+  dust), and at most a faint streak of it along the level. Once any sun has set, a red glow stays
+  on the horizon where it went down, fading over some 8 degrees.
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
   sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
   shape worked out on the CPU from the sun's height over the visible horizon).
