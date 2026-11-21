@@ -2083,7 +2083,9 @@ On the rivers branch until it lands.
 - **Code:** `src/morse_subtitles.jo` (the reading and the following), `src/morse_strip.jo` (the
   slip and what feeds it), `radio_keying` in `src/radio.jo`; `tests/morse_subtitles_test.jo`.
 - **Capture:** `AEGEAN_FLYING="300 60 cockpit" AEGEAN_RADIO=1260` (the maritime service; without
-  the announcer's data every bulletin is in Morse).
+  the announcer's data every bulletin is in Morse; `AEGEAN_RADIO=1270` for poor reception).
+  `AEGEAN_MORSE_TRACE=1` prints each change of the slip with its frame (MORSE lines), to set
+  against a capture's own sound (`AEGEAN_AUDIO_CAPTURE`).
 
 ### R/T
 
