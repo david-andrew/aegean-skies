@@ -1,0 +1,216 @@
+# The sandbox switches (docs/DESIGN.md, "Sandbox settings"; src/sandbox.jo): each lifts only the
+# player's own constraint. The world's books balance with a switch on or off, nobody else's money,
+# cargo or wear is changed by one, and a game saved with one on loads like any other.
+import '../src/living_world.jo' as living
+import '../src/living_types.jo' as data
+import '../src/living_money.jo' as money
+import '../src/living_checks.jo' as checks
+import '../src/living_scene.jo' as scene
+import '../src/living_save.jo' as saves
+import '../src/living_save_codec.jo' as codec
+import '../src/traffic.jo' as air
+import '../src/planes.jo' as planes
+import '../src/flight.jo' as flight
+import '../src/damage.jo' as dmg
+import '../src/pilot.jo' as pilot
+import '../src/combat.jo' as combat
+import '../src/vessel_types.jo' as vessels
+import '../src/world_point.jo' as wp
+import '../src/game_session.jo' as gs
+import '../src/tweaks.jo' as tw
+use '../src/sandbox.jo'
+use '../src/sandbox_world.jo'
+
+_purse = (w: data.World) -> int: w.accounts[w.people[w.player].account].cents
+
+# Everyone else's money, and everything that is anyone's cargo or wear: as text, to compare.
+_others = (w: data.World) -> str:
+    mine = w.people[w.player].account
+    craft = w.people[w.player].craft
+    out = ""
+    loop a in w.accounts:
+        if a.id != mine: out += "{a.id}:{a.cents} "
+    loop c in w.aircraft:
+        if c.id != craft: out += "| {c.id} {c.hull} {c.engine} {c.fuel_ml} {to_text(c.cargo)} "
+    loop p in w.places: out += "| {to_text(p.market)}"
+    out
+
+_fixture = () -> (data.World, pilot.Flyer, scene.SceneAdapter):
+    w = living.build_world()
+    c = w.people[w.player].craft
+    model = planes.build_craft(.gull, planes.LIVERIES[0])
+    flyer = pilot.make_flyer(.gull, 0, model.contacts, w.aircraft[c].pose.pos, 0.0)
+    adapter = scene.SceneAdapter()
+    air.bind_living_player(flyer, w, adapter)
+    (w, flyer, adapter)
+
+test "every sandbox switch is off until it is turned on, and each is its own":
+    s = Sandbox()
+    assert(not s.paint_anywhere and not s.any_aircraft and not s.unlimited_money and not s.no_damage and not s.no_fuel_use and not s.endless_ammunition)
+    assert(not sandbox_active(s))
+    assert(not sandbox.paint_anywhere and not sandbox.any_aircraft and not sandbox.unlimited_money and not sandbox.no_damage and not sandbox.no_fuel_use and not sandbox.endless_ammunition)
+    loop one in [Sandbox(paint_anywhere = true), Sandbox(any_aircraft = true), Sandbox(unlimited_money = true), Sandbox(no_damage = true), Sandbox(no_fuel_use = true), Sandbox(endless_ammunition = true)]:
+        assert(sandbox_active(one))
+        on = 0
+        loop b in [one.paint_anywhere, one.any_aircraft, one.unlimited_money, one.no_damage, one.no_fuel_use, one.endless_ammunition]:
+            if b: on += 1
+        assert(on == 1)
+
+test "paint anywhere: the one switch a paint shop asks":
+    set_sandbox(Sandbox(paint_anywhere = true))
+    assert(sandbox.paint_anywhere and not sandbox.unlimited_money and not sandbox.any_aircraft)
+    set_sandbox(Sandbox())
+    assert(not sandbox.paint_anywhere)
+
+test "unlimited money: the purse never runs out, everyone is really paid, and the books balance":
+    f = _fixture(); w = f.0
+    assert(money.money_balances(w) and checks.invariant_errors(w).len() == 0)
+    own = _purse(w)
+    others = _others(w)
+    assert(own < SANDBOX_PURSE_CENTS)
+    # (off: nothing at all)
+    hold = sandbox_money_step(w, PurseHold(), false)
+    assert(hold == PurseHold() and _purse(w) == own and _others(w) == others and w.ledger.external_in_cents == 0)
+    # (on: held, from outside the world; nobody else's money moved)
+    hold = sandbox_money_step(w, hold, true)
+    assert(_purse(w) == SANDBOX_PURSE_CENTS and hold.held == SANDBOX_PURSE_CENTS and hold.lent == SANDBOX_PURSE_CENTS - own)
+    assert(sandbox_own_cents(_purse(w), hold) == own)
+    assert(_others(w) == others and money.money_balances(w) and checks.invariant_errors(w).len() == 0)
+    # (a purchase far past what he owns: the seller is paid in full, the purse made good)
+    seller = -1
+    loop a in w.accounts:
+        if a.id != w.people[w.player].account and seller < 0: seller = a.id
+    had = w.accounts[seller].cents
+    assert(money.transfer(w, w.people[w.player].account, seller, own + 500000, .trade))
+    assert(w.accounts[seller].cents == had + own + 500000)
+    hold = sandbox_money_step(w, hold, true)
+    assert(_purse(w) == SANDBOX_PURSE_CENTS and w.accounts[seller].cents == had + own + 500000)
+    assert(sandbox_own_cents(_purse(w), hold) == own and money.money_balances(w))
+    # (a fee earned: his own, and it stays his)
+    assert(money.transfer(w, seller, w.people[w.player].account, 7300, .reward))
+    hold = sandbox_money_step(w, hold, true)
+    assert(_purse(w) == SANDBOX_PURSE_CENTS + 7300 and sandbox_own_cents(_purse(w), hold) == own + 7300)
+    # (many frames on: nothing drifts)
+    loop _ in 0..600: hold = sandbox_money_step(w, hold, true)
+    assert(_purse(w) == SANDBOX_PURSE_CENTS + 7300 and money.money_balances(w))
+    # (off again: what was lent goes back out; he has what he had and what he earned)
+    hold = sandbox_money_step(w, hold, false)
+    assert(hold == PurseHold() and _purse(w) == own + 7300)
+    assert(money.money_balances(w) and checks.invariant_errors(w).len() == 0)
+
+test "unlimited money: a richer purse than the level is held where it is":
+    a = sandbox_purse(SANDBOX_PURSE_CENTS + 400, PurseHold(), true)
+    assert(a.0 == SANDBOX_PURSE_CENTS + 400 and a.1.lent == 0)
+    b = sandbox_purse(a.0 - 9000, a.1, true)
+    assert(b.0 == SANDBOX_PURSE_CENTS + 400)
+    c = sandbox_purse(b.0, b.1, false)
+    assert(c.0 == SANDBOX_PURSE_CENTS + 400 and c.1.held < 0)
+
+test "unlimited money: a game saved with the switch on is a valid save, and loads to the right purse either way":
+    f = _fixture(); w = f.0; flyer = f.1; adapter = f.2
+    own = _purse(w)
+    hold = sandbox_money_step(w, PurseHold(), true)
+    session = gs.GameSession(flyer = flyer, player_position = w.people[w.player].pose.pos, player_point = wp.world_point(w.people[w.player].pose.pos), purse = hold)
+    game = gs.capture_game(w, data.PresentationState(), session, [], adapter, vessels.VesselFleet(), combat.Battle(), 123, data.SaveSummary(minute = w.minute, cents = sandbox_own_cents(_purse(w), hold)))
+    assert(game is data.SaveGame, if game is saves.LivingSaveError: game.message else: "")
+    packed = codec.pack_binary_living_save(game)
+    restored = codec.unpack_binary_living_save(packed.0, packed.1)
+    assert(restored != none)
+    back = restored!
+    assert(checks.invariant_errors(back.world).len() == 0 and money.money_balances(back.world))
+    assert(back.summary.cents == own)
+    runtime = gs.read_game_session(back)
+    assert(runtime is gs.GameSession)
+    if runtime is gs.GameSession:
+        assert(runtime.purse == hold)
+        # (loaded with the switch off: his own purse again)
+        off = back.world
+        h = sandbox_money_step(off, runtime.purse, false)
+        assert(_purse(off) == own and h == PurseHold() and money.money_balances(off))
+        # (loaded with it on: held as it was, nothing lent twice)
+        on = back.world
+        h = sandbox_money_step(on, runtime.purse, true)
+        assert(_purse(on) == SANDBOX_PURSE_CENTS and h == hold and on.ledger.external_in_cents == back.world.ledger.external_in_cents)
+
+test "a session saved before the sandbox loads with no purse held":
+    text = to_text(gs.GameSession())
+    assert(text.contains(", purse=PurseHold(held=-1, lent=0)"), text)
+    old = from_text[gs.GameSession](text.replace(", purse=PurseHold(held=-1, lent=0)", ""))
+    assert(old is gs.GameSession)
+    if old is gs.GameSession: assert(old.purse == PurseHold())
+    kept = from_text[gs.GameSession](to_text(gs.GameSession(purse = PurseHold(500, 20))))
+    assert(kept is gs.GameSession)
+    if kept is gs.GameSession: assert(kept.purse == PurseHold(500, 20))
+
+test "no fuel use: a flight burns nothing from the tank or the world's stock, and without it burns as ever":
+    tw.set_tweaks(tw.Tweaks())
+    loop on in [true, false]:
+        f = _fixture(); w = f.0; flyer = f.1
+        c = w.people[w.player].craft
+        others = _others(w)
+        tank = w.aircraft[c].fuel_ml
+        assert(tank > 1000)
+        flight.unmoor(flyer.state)
+        e = flight.FlightEnv()
+        loop k in 0..600:
+            scene.scene_clock_begin(w)
+            before = w.aircraft[c]
+            # (as the game does round the player's own step)
+            fuel = flyer.state.fuel
+            flight.step(flyer.spec, flyer.state, flight.Controls(throttle = 1.0), e, 1.0 / 60.0)
+            flyer.state.fuel = sandbox_fuel(fuel, flyer.state.fuel, on)
+            air.commit_player_motion(w, flyer.state, before.pose, before.fuel_ml, 1.0)
+        if on:
+            assert(w.aircraft[c].fuel_ml == tank and flyer.state.fuel * 1000.0 >= f64(tank) - 1.0)
+            assert(w.goods_ledger.consumed[int(data.GoodKind.fuel)] == 0)
+        else:
+            assert(w.aircraft[c].fuel_ml < tank - 100 and w.goods_ledger.consumed[int(data.GoodKind.fuel)] == tank - w.aircraft[c].fuel_ml)
+        assert(money.goods_balance(w) and _others(w) == others)
+    # (fuel taken aboard meanwhile stands; only burning is undone)
+    assert(sandbox_fuel(40.0, 55.0, true) == 55.0 and sandbox_fuel(40.0, 39.5, true) == 40.0 and sandbox_fuel(40.0, 39.5, false) == 39.5)
+
+# A hard arrival on the water: nose down at speed, from a few metres up.
+_hard_arrival = (shield: bool) -> flight.CraftState:
+    model = planes.build_craft(.gull, planes.LIVERIES[0])
+    k = flight.craft_spec(.gull, model.contacts)
+    s = flight.CraftState(position = vec3(0, 6, 0), velocity = vec3(0, -30, -45), fuel = k.fuel_capacity, water_age = 1.0)
+    e = flight.FlightEnv()
+    loop i in 0..240:
+        dmg.set_damage_shield(shield)
+        flight.step(k, s, flight.Controls(), e, 1.0 / 60.0)
+        dmg.set_damage_shield(false)
+    s
+
+test "no damage: the player's aircraft comes through a hard arrival whole; without it she breaks":
+    tw.set_tweaks(tw.Tweaks())
+    broken = _hard_arrival(false)
+    assert(broken.hull_damage > 0.05, "hull damage {broken.hull_damage}")
+    whole = _hard_arrival(true)
+    assert(whole.hull_damage == 0.0 and whole.damage.debris.len() == 0, "hull damage {whole.hull_damage}")
+    loop part in whole.damage.parts: assert(part.attached and part.health == 1.0)
+    # (the shield is down again: the next aircraft stepped takes its knocks)
+    assert(not dmg.damage_shield)
+    again = _hard_arrival(false)
+    assert(again.hull_damage == broken.hull_damage)
+
+test "no damage: a knock that would tear a float off leaves it on, and only while the shield is up":
+    model = planes.build_craft(.gull, planes.LIVERIES[0])
+    k = flight.craft_spec(.gull, model.contacts)
+    loop shield in [true, false]:
+        d = dmg.DamageState()
+        dmg.set_damage_shield(shield)
+        dmg.contact_damage(d, k.parts, .left_float, vec3(0, 0, 0), vec3(0, 1, 0), vec3(0, -40, 0), vec3(0, 60000, 0), 1.0, .crunch, k.mass, vec3(0, 0, 0), vec4(0, 0, 0, 1), vec3(0, -40, 0), vec3(0, 0, 0))
+        dmg.set_damage_shield(false)
+        part = d.parts[int(planes.PartId.left_float)]
+        if shield: assert(part.attached and part.health == 1.0)
+        else: assert(part.health < 1.0)
+
+test "endless ammunition: the player's guns alone":
+    mine = combat.Combatant(human = true)
+    combat.configure_player_gun(mine, 0, true)
+    assert(mine.gun.endless)
+    combat.configure_player_gun(mine, 0, false)
+    assert(not mine.gun.endless)
+    other = combat.Combatant()
+    combat.configure_player_gun(other, 0, true)
+    assert(not other.gun.endless)
