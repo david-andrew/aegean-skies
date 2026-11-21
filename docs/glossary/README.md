@@ -19,7 +19,7 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
@@ -1620,19 +1620,70 @@ On the rivers branch until it lands.
 
 ### Moon
 
-- **Definition:** a sphere lit by the actual sun direction, never a painted phase mask. On
-  `t3/splash-2` its disc is the same apparent size as the sun's. By day it is seen through the
-  sky in front of it: its lit side a pale, faintly blue wash low in contrast against the blue,
-  its dark side only sky; through dusk it becomes the night Moon.
-- **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count).
-- **Code:** `src/celestial.jo sky_moon`, `moon_illumination`; the disc in `src/sky.jo`.
+- **Definition:** a sphere lit by the actual sun direction, never a painted phase mask, its disc
+  the same apparent size as the sun's. By day it is seen through the sky in front of it: its lit
+  side a pale, faintly blue wash low in contrast against the blue, its dark side only sky. From a
+  little before sunset it comes out as a light (fully by about 18:35): an over-bright emitter as
+  the eye and a photograph see it, the lit face burnt out near white (amber when it is low, cool
+  white high up) with only a hint of the maria, the dark side faint with earthshine.
+- **Moon glow:** the tight saturated glow hugging the lit limb (at the disc's middle when full,
+  toward the lit side for a crescent), covering the sky with its own colour as the sun's bloom
+  does. Weak for a thin crescent.
+- **Aureole:** the wide soft light in the air about the Moon, a fan of painted geometry centred
+  on it (like twilight's glow band: its light worked out at each vertex, nothing at its rim).
+  About 16 degrees across in clear air and half as wide again, and milkier, in haze. It rises
+  before the Moon does.
+- **Corona:** a rust ring about two and a half disc radii out, in hazy or damp air only.
+- **Capture:** `AEGEAN_SKY_DAYS=d` fixes its age (the sky's day count); `tools/night_view.jo`
+  (`NIGHT_AIM=moon`, `NIGHT_HOUR`, `NIGHT_DAY`, `NIGHT_AIR`).
+- **Code:** `src/celestial.jo sky_moon`, `moon_illumination`, `moon_glow`; `moon_look`,
+  `draw_night_moon` and the disc's and the aureole's programs in `src/night_sky.jo`. The
+  [moonglade](#sun-glints-and-the-glitter-path) follows `moon_glow` too (`src/sea.jo`).
+
+### Night's air
+
+- **Definition:** what the night sky lets through, as one number: the faintest magnitude seen
+  overhead (`NightAir.limit`). Twilight, moonlight, haze (the [day's air](#days-air)) and cloud
+  overhead each lower it, so they take the faint stars first: Venus shows before sunset, the
+  first stars about half an hour after it, the faint ones and the Milky Way only on a dark,
+  clear, moonless night. Low down the air dims and reddens a star further, twilight's band takes
+  the stars in it, and the Moon's glare the stars about it.
+- **Code:** `night_air`, `night_limit`, `night_seen` in `src/night_sky.jo`.
+
+### Stars
+
+- **Definition:** points of light standing on the celestial sphere, which turns with the hour:
+  about 150 of the brighter real stars at their places (the summer figures: the Scorpion, the
+  Swan, the Lyre, the Plough, Cassiopeia; [stargazing](#stargazing)'s named stars among them) and
+  3,400 fainter ones strewn by a fixed rule, three times as many for each magnitude fainter and
+  thicker along the Milky Way. Each is an over-bright emitter: a small near-white **core** with a
+  touch of its colour (blue-white, white, yellow, orange, orange-red by spectral class), a
+  **halo** in that colour, and for the thirty or so brightest a faint four-point **glint**.
+- **Twinkle:** the low air's shimmer: slight overhead, strong near the horizon, each star at its
+  own pace, with flashes of colour low down. Planets do not twinkle.
+- **Code:** `BRIGHT_STARS`, `night_star_specs`, `night_star_vs` / `night_star_fs`,
+  `draw_night_stars` in `src/night_sky.jo`: one mesh of small squares, brightness, size, twinkle
+  and what is seen worked out at each star's corners; the pixels draw only the core, the halo and
+  the glint. `sky_turn` gives the sphere's turn from the sun's direction.
+
+### Milky Way
+
+- **Definition:** a soft band along the galactic equator, on dark, clear, moonless nights only:
+  widest and warm at the central bulge in Sagittarius, a bright cloud in the Swan, cool
+  blue-white elsewhere, mottled, and split from the centre up to the Swan by the dark lane of
+  the Great Rift.
+- **Code:** `milky_way_light`, `milky_way_grid`, `milky_way_gain` in `src/night_sky.jo`: a band of
+  painted geometry (a grid 1 degree by 2), its light at each vertex.
 
 ### Planet lights
 
-- **Definition:** Venus, Jupiter, Mars and Saturn as calendar-driven points of light, hidden by
-  clouds in front of them.
-- **Code:** on `t3/splash-2` (`src/celestial.jo`, `src/sky.jo`, `tools/sky_frames.jo` with
-  `SKY_TARGET=moon|venus|jupiter|mars|saturn`, `SKY_DAY`, `SKY_HOUR`). Not on main yet.
+- **Definition:** Venus, Jupiter, Mars and Saturn as calendar-driven points of light (a simple
+  ephemeris from the game's start date, 7 June 1926: Venus is a morning star that summer), hidden
+  by clouds in front of them. Drawn as the stars are, steady: Venus brilliant white and Jupiter
+  cream, each with a glint, Mars red, Saturn pale gold.
+- **Code:** `sky_planets` in `src/celestial.jo`; `PLANET_TINTS`, `planet_magnitude`,
+  `night_planet_vertices` in `src/night_sky.jo`; `tools/sky_frames.jo` with
+  `SKY_TARGET=moon|venus|jupiter|mars|saturn`, `SKY_DAY`, `SKY_HOUR`.
 
 ![The moon on day 7, and Saturn as a planet light (t3/splash-2, tools/sky_frames.jo)](img/moon-planets.png)
 
