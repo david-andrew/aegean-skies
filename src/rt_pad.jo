@@ -83,3 +83,105 @@ rt_answer = (kind: OrderKind, has_target: bool) -> str:
         .go_home: "Breaking off. Home."
         .lead_home: "Follow me. Home this way."
         _: ""
+
+# The one who answers, and what they say: true to where they are. One of the flight far off says
+# how far and which way ("On our way. Eight kilometres north of you."); "follow me" only from a
+# leader in the player's sight (one farther off comes first, and says so); the flight all down at
+# its base says that, and where the base lies.
+struct RtReply:
+    craft = -1                      # who answers (aircraft ID; -1: no one)
+    number = 0                      # their number in the flight (1 the first)
+    words = ""
+
+# A lead-me-home being answered: whether its "follow me" has been said, for the word that comes
+# later, the leader come in sight (or lost again).
+struct RtWatch:
+    tick = -1
+    met = false
+
+const RT_NEAR = 1500.0              # one of the flight this near: with the player, no need to say where
+
+_RT_ONES: str[] = ["no","one","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
+_RT_TENS: str[] = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"]
+rt_number = (n: int) -> str:
+    if n < 0 or n > 99: return "{n}"
+    if n < 20: return _RT_ONES[n]
+    if n%10 == 0: return _RT_TENS[n/10]
+    "{_RT_TENS[n/10]}-{_RT_ONES[n%10]}"
+
+# Where `there` lies from `here`, as said on the R/T: "eight kilometres north of you".
+rt_where = (here: vec3, there: vec3) -> str:
+    d = vec3(there.x-here.x,0,there.z-here.z)
+    km = max(1,int(round(f64(length(d))/1000.0)))
+    points = ["north","north-east","east","south-east","south","south-west","west","north-west"]
+    k = int(round(atan2(f64(d.x),-f64(d.z))/(PI/4.0)))
+    "{if km == 1: "a kilometre" else: "{rt_number(km)} kilometres"} {points[((k%8)+8)%8]} of you"
+
+_rt_cap = (s: str) -> str: if s.len() == 0: s else: s[0..1].upper()+s[1..s.len()]
+
+# One of a side's flight by its place in it: its number (1 the first; the player counted).
+_rt_numbered = (b: Battle, side: int, index: int) -> int:
+    n = 0
+    loop i in 0..b.actors.len():
+        if b.actors[i].side != side: continue
+        n += 1
+        if i == index: return n
+    max(1,n)
+
+# The answer to a word just sent (`heard`: how many give_order found to hear it; `base`: the
+# name of the flight's base). No words: no one on the R/T.
+rt_reply = (b: Battle, by: int, kind: OrderKind, has_target: bool, heard: int, base: str, watch: mut RtWatch) -> RtReply:
+    me = combat_index(b,by)
+    if me < 0: return RtReply()
+    side = b.actors[me].side; at = b.actors[me].state.position
+    if heard == 0:
+        # (the flight all down and tied up: the first of them says so, and where)
+        first = -1
+        loop i in 0..b.actors.len():
+            a = b.actors[i]
+            if a.side != side or a.human or a.status != .flying or not a.present or not a.pilot.home_done: continue
+            if first < 0 or a.pilot.home_turn < b.actors[first].pilot.home_turn: first = i
+        if first < 0: return RtReply()
+        there = b.actors[first].state.position
+        far = f64(length(vec3(there.x-at.x,0,there.z-at.z)))
+        return RtReply(b.actors[first].craft,_rt_numbered(b,side,first),if far < RT_NEAR: "We're down at {base}. Come in." else: "We're down at {base}, {rt_where(at,there)}.")
+    # (the nearest of those up answers; leading home, the one who will lead)
+    best = -1; near = 1e18
+    loop i in 0..b.actors.len():
+        a = b.actors[i]
+        if a.side != side or a.human or a.status != .flying or not a.present or a.pilot.home_done: continue
+        d = f64(length(a.state.position-at))
+        if d < near: near = d; best = i
+    if kind == .lead_home:
+        lead = home_leader(b,side)
+        if lead >= 0 and not b.actors[lead].pilot.home_done: best = lead; near = f64(length(b.actors[lead].state.position-at))
+    if best < 0: return RtReply()
+    there = b.actors[best].state.position
+    wet = b.actors[me].state.on_water
+    words = rt_answer(kind,has_target)
+    if kind == .form_on_me:
+        if near >= RT_NEAR: words = "On our way. {_rt_cap(rt_where(at,there))}."
+        else if wet: words = "Circling over you till you're up."
+    if kind == .circle and near >= RT_NEAR*2.0: words = "Coming to circle over you. {_rt_cap(rt_where(at,there))}."
+    if kind == .lead_home:
+        watch.tick = b.orders[side].tick
+        watch.met = near < LEAD_SIGHT and not wet
+        if wet: words = if near < RT_NEAR*2.0: "Circling over you. Follow me home when you're up." else: "Coming to you. {_rt_cap(rt_where(at,there))}. Follow me home when you're up."
+        else if not watch.met: words = "Coming to you. {_rt_cap(rt_where(at,there))}. Then follow me home."
+    RtReply(b.actors[best].craft,_rt_numbered(b,side,best),words)
+
+# The leader's later word on a lead-me-home: "follow me" as it comes in sight of the player; that
+# it has lost them, turning back. No words: nothing new.
+rt_later = (b: Battle, by: int, watch: mut RtWatch) -> RtReply:
+    me = combat_index(b,by)
+    if me < 0: return RtReply()
+    side = b.actors[me].side
+    if side < 0 or side > 2: return RtReply()
+    o = b.orders[side]
+    if o.kind != .lead_home or o.by != by or o.tick != watch.tick: return RtReply()
+    met = o.met >= 0
+    if met == watch.met: return RtReply()
+    watch.met = met
+    lead = home_leader(b,side)
+    if lead < 0: return RtReply()
+    RtReply(b.actors[lead].craft,_rt_numbered(b,side,lead),if met: "Follow me. Home this way." else: "Lost sight of you. Coming back.")
