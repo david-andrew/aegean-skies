@@ -46,7 +46,7 @@ PIECES = [
  ('fifth-valse', 'Symphony No. 5: Valse', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
  ('lohengrin-chorus', 'Lohengrin: Bridal Chorus', 'Richard Wagner', 'Kalyra Concert Hall'),
  ('hungarian-one', 'Hungarian Dance No. 1', 'Johannes Brahms', 'Kalyra Concert Hall'),
- ('daphnis-daybreak', 'Daphnis et Chloe: Lever du jour', 'Maurice Ravel', 'Kalyra Concert Hall'),
+ ('daphnis-introduction', 'Daphnis et Chloe: Introduction', 'Maurice Ravel', 'Kalyra Concert Hall'),
  ('bolero', 'Bolero', 'Maurice Ravel', 'Kalyra Concert Hall'),
  ('barber-overture', 'The Barber of Seville: Overture', 'Gioachino Rossini', 'Orenthia Light Programme'),
  ('carmen-overture', 'Carmen: Prelude', 'Georges Bizet', 'Orenthia Light Programme'),
@@ -123,6 +123,9 @@ PIECES = [
  ('beethoven-fifth-andante', 'Symphony No. 5: Andante con moto', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
  ('brahms-intermezzo', 'Intermezzo in A major, Op. 118 No. 2', 'Johannes Brahms', 'Kalyra Concert Hall'),
  ('midsummer-intermezzo', "A Midsummer Night's Dream: Intermezzo", 'Felix Mendelssohn', 'Kalyra Concert Hall'),
+ # The title's music (src/title_music.jo), not on the radio: the opening of Part III, from rehearsal
+ # 155 to the bar before 158, in our own transcription of every part (daphnis_lever below).
+ ('daphnis-lever-du-jour', 'Daphnis et Chloe: Lever du jour', 'Maurice Ravel', 'Title'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -136,7 +139,7 @@ ARRANGED_SHELF = {'gymnopedie-orchestra': dict(hz=1500.0, db={'0': -7.0})}
 # balance: the Hotel Ancora's numbers and the radio's popular stations the upright, the classical
 # station (Voice of Kalyra) the grand.
 def usual_piano(station):
- return 'grand' if station in ('Voice of Kalyra','Kalyra Concert Hall','The Chapel Bell') else 'upright'
+ return 'grand' if station in ('Voice of Kalyra','Kalyra Concert Hall','The Chapel Bell','Title') else 'upright'
 
 # Each piece's level in the mix (src/music_synth.jo applies it to the whole piece, keeping the
 # score's own dynamics): the first thirteen were set by ear; the rest measured to sit at the same
@@ -148,7 +151,7 @@ LEVEL.update(json.loads((ROOT/'data/music/levels.json').read_text()) if (ROOT/'d
 # Pieces heard in the concert hall's long reverberation (orchestra, choir, the concert grand).
 HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo', 'seventh-allegretto',
         'kleine-nachtmusik', 'clarinet-adagio', 'pathetique-adagio', 'mozart-forty', 'bach-air', 'moldau', 'liebestraum',
-        'standchen', 'fifth-valse', 'lohengrin-chorus', 'hungarian-one', 'daphnis-daybreak', 'bolero', 'barber-overture',
+        'standchen', 'fifth-valse', 'lohengrin-chorus', 'hungarian-one', 'daphnis-introduction', 'daphnis-lever-du-jour', 'bolero', 'barber-overture',
         'carmen-overture', 'locus-iste', 'va-pensiero', 'melita', 'pictures-promenade', 'pictures-old-castle',
         'pictures-bydlo', 'pictures-chicks', 'pictures-baba-yaga', 'pictures-great-gate', 'beethoven-fifth',
         'beethoven-fifth-finale', 'pathetique-finale', 'rachmaninoff-third', 'meistersinger-prelude', 'liebestod', 'valkyries',
@@ -157,7 +160,7 @@ HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo'
         'bassoon-andante', 'flute-andante', 'horn-concerto-two', 'fantasia-d-minor', 'mozart-twentyfive', 'mozart-twentyfive-andante', 'nachtmusik-rondo', 'clarinet-quintet-larghetto', 'beethoven-fifth-andante', 'brahms-intermezzo', 'midsummer-intermezzo'}
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
-SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
+SOURCE = {'gymnopedie-orchestra': 'gymnopedie', 'daphnis-lever-du-jour': 'daphnis-155-24'}
 source_of = lambda name: SOURCE.get(name, name)
 
 # The automatic balance (tools/music_balance.py writes it): per piece, a gain per instrument (dB)
@@ -205,7 +208,7 @@ MOOD = {
  'fifth-valse': ('dance-like', 'a symphonic waltz: graceful, the waltz kept'),
  'lohengrin-chorus': ('stately', 'a bridal procession: steady, warm'),
  'hungarian-one': ('dance-like', 'a csardas: slow-fast contrasts, sharp rhythm'),
- 'daphnis-daybreak': ('dreamy', 'daybreak: murmuring strings, birdsong, a slow rising tune'),
+ 'daphnis-introduction': ('dreamy', "the ballet's introduction: a hushed chord built from the depths, distant calls, a slow rising tune"),
  'bolero': ('stately', 'one tune over an unvarying snare rhythm, growing: strictly in time'),
  'barber-overture': ('jaunty', 'a comic overture: sparkling, a long crescendo'),
  'carmen-overture': ('dance-like', "the bullring's march: bright, driving"),
@@ -282,6 +285,7 @@ MOOD = {
  'beethoven-fifth-andante': ('stately', 'the wider repertoire, batch 4'),
  'brahms-intermezzo': ('tender', 'the wider repertoire, batch 4'),
  'midsummer-intermezzo': ('dreamy', 'the wider repertoire, batch 4'),
+ 'daphnis-lever-du-jour': ('dreamy', 'daybreak: brooks murmuring in flutes, clarinets and harps, birdsong, the theme rising to full light'),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
@@ -431,8 +435,83 @@ def gymnopedie_orchestra(notes):
   out.append([start,dur,pitch,BASS,g0*.61,g1*.61,4])
  return sorted(out)
 
+# Ravel, Daphnis et Chloe, Part III: Lever du jour, from rehearsal 155 to the bar before 158
+# (19 bars). The source is our own transcription of every part of the Durand full score at
+# concert pitch (data/music/source/daphnis-155-24.mid and .musicxml; data/music/SOURCES.md), its
+# MIDI tracks in score order, as named here. The synthesizer has no alto flute, piccolo, cor
+# anglais, small or bass clarinet, trombone, tuba or celesta: each plays on the nearest timbre it
+# has (below). The bass drum's one held stroke, left from before 155, is not played.
+# Each part: (instrument, its level at the opening's pp).
+DAPHNIS_PARTS = [
+ ('Piccolo', FLUTE, .26), ('Flute 1 (solo calls)', FLUTE, .34), ('Flutes 1-2', FLUTE, .50), ('Alto flute', FLUTE, .44),
+ ('Oboes 1-2', OBOE, .36), ('Cor anglais', OBOE, .38), ('Clarinet in E-flat', CLARINET, .36),
+ ('Clarinets 1-2 in A', CLARINET, .48), ('Bass clarinet', CLARINET, .50), ('Bassoon 1', BASSOON, .46),
+ ('Bassoon 2', BASSOON, .40), ('Bassoon 3, Contrabassoon', BASSOON, .32), ('Horns 1-2', BRASS, .26),
+ ('Horn 2', BRASS, .24), ('Horns 3-4', BRASS, .26), ('Trombones 1-2', BRASS, .20), ('Trombone 3', BRASS, .20),
+ ('Tuba', BRASS, .22), ('Bass drum', None, 0), ('Celesta', PIANO, .30), ('Harp 1', HARP, .44), ('Harp 2', HARP, .46),
+ ('Solo violins 1-3', STRINGS, .26), ('Violins I a', STRINGS, .30), ('Violins I b', STRINGS, .30),
+ ('Violins II a', STRINGS, .36), ('Violins II b', STRINGS, .36), ('Violas a', STRINGS, .32), ('Violas b', STRINGS, .32),
+ ('Cellos a', STRINGS, .38), ('Cellos b', STRINGS, .44), ('Contrabasses a', STRINGS, .42), ('Contrabasses b', STRINGS, .36)]
+DAPHNIS_BARS = [4,4,4,4]+[3]*15      # beats; Lent, a crotchet 1.2 s
+# Each bar's level against the opening pp, after the printed dynamics: pp to 156 (bar 8), then
+# the long crescendo (p at bar 12, mp 13, mf 14) to the forte at 157 (bar 15), and away.
+DAPHNIS_LEVEL = [1,1,1,1,1,1,1,1,1.04,1.1,1.18,1.28,1.42,1.6,2.0,1.95,1.6,1.25,1.0]
+
+def daphnis_lever(notes):
+ beat=60/50
+ starts=[0]
+ for b in DAPHNIS_BARS:starts.append(starts[-1]+b)
+ end=starts[-1]
+ def bar_of(b):return max(i for i in range(len(DAPHNIS_BARS)) if starts[i]<=b+1e-6)
+ def level(b):
+  # the bar's level; the crescendo leans into the next bar over each bar's last quarter
+  i=bar_of(b);x=(b-starts[i])/DAPHNIS_BARS[i];nxt=DAPHNIS_LEVEL[min(i+1,len(DAPHNIS_LEVEL)-1)]
+  return DAPHNIS_LEVEL[i]+(nxt-DAPHNIS_LEVEL[i])*(x-.75)/.25*.5 if x>.75 and i+1<14 else DAPHNIS_LEVEL[i]
+ def upper(p):
+  # a trill's upper note, in D major
+  return next((p+k for k in (1,2) if (p+k)%12 in (2,4,6,7,9,11,1)),p+2)
+ out=[]
+ def add(b,d,p,ins,g0,g1,track):out.append([b*beat,d*beat,p,ins,min(1.25,g0),min(1.25,g1),track])
+ for t,d,p,_,_,_,track in notes:
+  name,ins,g=DAPHNIS_PARTS[track-1]
+  if ins is None:continue
+  b=round(t/beat,6);d=round(d/beat,6);i=bar_of(b);fast=d<.3
+  lv=level(b)
+  # the rising figure and the theme (crotchets and quavers from bar 9) sing over the murmuring
+  if i>=8 and not fast and d<=1.5 and ins!=HARP:lv*=1.25
+  # horns, trombones and tuba follow the crescendo a little less
+  if ins==BRASS:lv=1+(lv-1)*.8
+  g*=lv
+  if fast:
+   # each bar of the arabesques and glissandi swells and falls under its slur; the divided
+   # violins' arabesques at 157 sit under the winds'
+   g*=.82+.18*math.sin(math.pi*(b-starts[i])/DAPHNIS_BARS[i])
+   if ins==STRINGS:g*=.9
+  if d<=.25:g*=.8
+  g0=g1=g
+  if ins in (STRINGS,BRASS,BASSOON) and d>=2:
+   # held notes: a soft start, and on to the level of the bar they end in, tapering
+   g0=g*.9;g1=g*level(min(end-.01,b+d))/lv*.8
+  if b+d>=end-1e-6 and d>=1.5:
+   # the last chord rings on for two beats and dies away
+   d+=2;g1=0.0
+  if name in ('Piccolo','Solo violins 1-3') and d>=1:
+   # their long notes are trills (the MIDI holds the written note)
+   k=0;at=b
+   while at<b+d-1e-9:
+    add(at,min(.125,b+d-at),p if k%2==0 else upper(p),ins,g*.8,g*.8,track)
+    at+=.125;k+=1
+   continue
+  add(b,d,p,ins,g0,g1,track)
+ return sorted(out)
+
+# Pieces whose arrangement is already the performance: no further interpretation (phrase rubato,
+# voicing, articulation) is laid over it.
+AS_ARRANGED = {'daphnis-lever-du-jour'}
+
 def arrange(name,notes):
  if name=='gymnopedie-orchestra':return gymnopedie_orchestra(notes)
+ if name=='daphnis-lever-du-jour':return daphnis_lever(notes)
  out=[]
  top={}
  for start,dur,pitch,ins,g0,g1,track in notes:
@@ -504,6 +583,10 @@ def main():
   notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{source_of(name)}.mid')
   if name=='mahler-opening':
    performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
+  elif name in AS_ARRANGED:
+   written=max(n[0]+n[1] for n in notes)
+   notes=arrange(name,notes)
+   performance=dict(source='arranged from our transcription, played as arranged',duration_before=written,duration_after=written)
   else:
    clock=score_clock(ROOT/'data/music/source'/f'{source_of(name)}.mid',name)
    notes,performance=interpret(arrange(name,notes),name,clock)
