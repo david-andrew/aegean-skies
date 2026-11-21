@@ -129,6 +129,27 @@ blue discs that stay in every frame are **speed flecks**.
   is carried by its short waves; the long bands grow in with the wind. Phase speeds follow deep
   water (c = √(gλ/2π)).
 
+### Harbour shelter and the shallows' limit
+
+- **Aliases:** harbour calm, the basin, sheltered water, `sea_harbour`, `sea_band_keep`.
+- **Definition:** where each band of the swell is allowed to be. A wave runs at its deep-water
+  speed only where the water is deep enough for it (c² = g/k·tanh(kd)): in water a quarter of
+  its length deep it has slowed 4%, in a ninth 30%. So each band is whole from a quarter of its
+  length of water and gone by a ninth: the 61 m swell fades between 15 and 7 m of water, the
+  4 m chop between 1 m and 0.45 m, and no long, fast swell runs through shallows or up a beach.
+  And a harbour has no fetch for a sea to grow in: inside its basin (calm out past the docks,
+  the buoy and the mole's end, fading to the open sea's full state 450 m further out) the three
+  long bands are gone, the 13 m one all but, and the short ones lap low (0.22 and 0.6 of their
+  open-sea height). The ripples, glints and marks are as everywhere.
+- **Code:** `src/sea.jo` `sea_band_keep` (shader and CPU alike), `sea_calm` / `sea_calm_at`,
+  `SeaHarbour`, `SEA_HARBOUR_GAINS`, uniform `harbour`; `src/harbour_shelter.jo`
+  `harbour_basin`, `harbour_shelter_at`, `harbour_shelter_step` (the harbour nearest the player,
+  each frame).
+- **Rules:** the drawn sea and `swell_at` keep each band by the same rule, so the floats ride
+  what is seen. No wave may pass faster than 1.3 times a real one of its length in that depth:
+  tests/sea_speed_test.jo (a wave gauge array on `swell_at`) and
+  tests/sea_speed_render_test.py (the drawn frames, `tools/sea_speed_view.jo`).
+
 ### Storm sea
 
 - **Aliases:** the storm regime, heavy seas, `sea_storm`.
@@ -2113,6 +2134,31 @@ On the rivers branch until it lands.
   Wireless button, Settings → Sound → Wireless volume, "Wireless off"), so it is never confused
   with the [R/T](#rt), which sends orders to one's own flight.
 - **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
+
+### Morse subtitles
+
+- **Aliases:** the Morse strip, the slip, the paper slip by the wireless.
+- **Definition:** what Morse says, shown as it is keyed: a slip of cream paper with the message
+  in plain English ("Aegean Maritime Service: harbours open"), the letters as received smaller
+  beneath ("SEA PORT OPEN"), and the dots and dashes of the character being sent inked after
+  them. A letter shows only once its last dot or dash has sounded, and a word's plain reading
+  once the gap after it has passed, so the slip is never ahead of the key (it is held a
+  twentieth of a second behind the game's mix, for the sound device's own delay). Prosigns, Q codes and
+  the operators' abbreviations are read out (CQ, DE, K, R, SOS, QTH, QRU ...), a call sign first
+  as the station's name. It follows reception: a letter keyed while the signal is down in the
+  static is a gap ("S__ PORT"), a word with gaps reads "…", and the slip fades when the dial
+  leaves the station, the signal goes or the set is switched off. It shows for the
+  [wireless](#wireless)'s Morse bulletins, the short cues under the flight's words on the
+  [R/T](#rt) (marked "R/T") and a [lamp](#signals-between-aircraft)'s word as it is flashed
+  (marked "Lamp"; a plain word, so shown as spelt and not read as code). Beside the wireless in the cockpit; under the compass in the outside view and
+  wherever there is no room beside the set. Settings → Accessibility → Morse subtitles, on
+  unless switched off.
+- **Code:** `src/morse_subtitles.jo` (the reading and the following), `src/morse_strip.jo` (the
+  slip and what feeds it), `radio_keying` in `src/radio.jo`; `tests/morse_subtitles_test.jo`.
+- **Capture:** `AEGEAN_FLYING="300 60 cockpit" AEGEAN_RADIO=1260` (the maritime service; without
+  the announcer's data every bulletin is in Morse; `AEGEAN_RADIO=1270` for poor reception).
+  `AEGEAN_MORSE_TRACE=1` prints each change of the slip with its frame (MORSE lines), to set
+  against a capture's own sound (`AEGEAN_AUDIO_CAPTURE`).
 
 ### R/T
 
