@@ -143,6 +143,14 @@ twice or inside another, and none moves more in a frame than its speed allows.
 `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_COMPANY="1200 725"` puts the aircraft down beside such a group in
 the game and prints a COMPANY line whenever the coasters with hulls change.
 
+Since the sailing order (`far_sailing_wait`, src/living_far_transport.jo: coasters put out of a
+port one at a time, 500 to 800 m apart, and those already at sea too close open out) ships in
+company each have room for a hull; the footprint rule remains for shared anchorages, where idle
+coasters lie at one point, and for ships meeting or crossing on one track. A hull taken or given
+up fades over two seconds, and hulls thin out over the last 800 m of the view's range
+(`VesselMotion.leaving`, `vessel_shown`; the glossary's "Hull fade").
+`AEGEAN_CAPTURE_COMPANY="60 725 port"` watches a port's sailings from a fixed camera.
+
 `tools/vessellab.jo` contains explicit synthetic acceptance scenes, never loaded
 by normal startup. `VESSEL_SCENE` selects morning, steamer, schooner, convoy,
 night, catalog, or sinking; `VESSEL_QUALITY=0` selects phone bounds;

@@ -41,7 +41,10 @@ warehouses hold an arriving load rather than discard its identity. Journeys carr
 accounts; only actual arrival copies these to the destination's local news list.
 
 Per-minute work is staggered: approximately14 districts each minute, one hourly work/purchase step
-each. Transport advances active journeys once per minute and checks departures every30minutes.
+each. Transport advances active journeys once per minute and checks departures every30minutes. Coasters
+put out of a port one at a time: none sails while another that left it in the last hour and a half
+has run less than 500 m, and each master waits up to 24 minutes of his own after
+(`far_sailing_wait`); nothing is bought or loaded while a coaster waits its turn.
 `living_world.far_transport_views(w,observer,radius=6000)` exposes saved service ID, kind, actual
 origin/destination/position/velocity, commodity/quantity and a factual reason. Existing merchant
 ships are materialized through the vessel scene adapter; carts retain abstract journeys. Persistent
