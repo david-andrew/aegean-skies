@@ -3268,12 +3268,15 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   nothing is looked at. It goes
   by where the camera looks, not where he faces: a ray from the camera through the middle of the
   screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
-  then the nearest one. His own body never counts. A click uses it, whether the mouse is locked to
+  then the nearest one. A thing is found by a box: for a part of a larger mesh, the box of its own
+  vertices, turned as that mesh is (`_part_thing`, `look_bounds`), so what can be looked at is
+  what lights up; where the ray passes through two boxes at once, the smaller thing is the one
+  meant (the jar on the stand's corner, the board on the table: `_spans_meet`). His own body never counts. A click uses it, whether the mouse is locked to
   the view or not; a click on nothing takes the mouse for the view. There is no pointer on foot.
   On a touch screen the same thing is lit, showing what a tap there would do, and a tap on any
   thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
-  at with the mouse free, and a small label over the thing says what it does
-  (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
+  at with the mouse free: the thing has the same highlight, and a small label over it says what
+  it does (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
