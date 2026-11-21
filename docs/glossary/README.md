@@ -596,14 +596,16 @@ On the rivers branch until it lands.
   (the aircraft's record mirrors its livery and keeps the paint written out); a game saved before
   it loads as built, or in the period paint its record wore. The page has three standings
   (`PaintPageMode`): free, a [paint shop](#paint-shop)'s (a draft, priced), or closed (painting is
-  done at a workshop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
-  price-and-time, for the sandbox settings to answer.
+  done at a paint shop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
+  price-and-time: the sandbox's "Paint the aircraft anywhere, at any time" (`sandbox.paint_anywhere`,
+  off unless the player turns it on).
 - **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`, `paint_build`,
   `paint_support`, `paint_changes`, `paint_from_spec`), `src/aircraft_paint_view.jo`
   (`paint_page`); `set_player_paint`, `paint_step`, `player_model` in `aegean.jo`;
   `tests/aircraft_paint_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`, `paint-marks` for the
-  other tabs); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
+- **Capture:** `AEGEAN_SANDBOX=paint AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`,
+  `paint-marks` for the other tabs; without the sandbox switch the page is closed and says where
+  the paint shops are); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
   part.lwing=stripes:0.8,0.1,0.1:0.9,0.9,0.8:0:6 decal=roundel:wing-top'` or a paint's name
   (`AEGEAN_PAINT='Greek Naval Air Service'`); `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
 
