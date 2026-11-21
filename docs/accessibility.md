@@ -93,7 +93,7 @@ Each preset under the eye it is for. Regenerate with `sloppy --release tools/col
 | Red-green | deuteranopia (Brettel) | 54.8 (enemy/friend) | 56.7 | 0.4 | 13.6 (friend on low sky) | 31.0 | 3.32:1 (enemy on far sea) | 9.6:1 |
 | Blue-yellow | tritanopia (Machado) | 61.0 (enemy/other) | 56.4 | 14.9 | 17.4 (enemy on lit cloud) | 34.1 | 3.05:1 (enemy on far sea) | 9.2:1 |
 | Blue-yellow | tritanopia (Brettel) | 60.6 (enemy/other) | 49.8 | 13.7 | 16.5 (enemy on lit cloud) | 34.1 | 3.14:1 (enemy on far sea) | 9.3:1 |
-| No colour | achromatopsia | 20.5 (enemy/other) | 28.3 | 28.2 | 2.4 (friend on deep sea) | 29.7 | 3.01:1 (other on far sea) | 8.9:1 |
+| No colour | achromatopsia | 20.5 (enemy/other) | 28.3 | 28.2 | 4.4 (other on cloud shade) | 29.7 | 3.01:1 (other on far sea) | 8.9:1 |
 
 The standard look under every eye: what a player who never opens the setting gets.
 
