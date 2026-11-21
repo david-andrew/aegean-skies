@@ -941,14 +941,18 @@ billow_vertex = (v: BillowVertex,b: Billow,u: GroundParams) -> GroundOut:
     o.river = land_aerial_terms(world,u.cam,u.fog,u.land_steps)
     o
 
-billow_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+# cutting: 1 the outline cut (crowns near enough for their scallops and leaves); 0 none, a shader
+# with no discard, so the GPU tests depth before shading and a dome hidden by nearer ones costs
+# nothing (the masses, the clumps and the far crowns, which are mostly hidden).
+billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int) -> vec4:
     d = length(i.world-u.cam)
     q = i.world.xz+u.origin.xz
     span = f32(CANOPY_CELLS)*CANOPY_CELL
-    if u.shell.w < 0.0: discard()
+    if cutting == 1 and u.shell.w < 0.0: discard()
     tier = i.tint.w
     stand = i.land
-    if i.tile_level < 0.04: discard()
+    # (a mass lying flat lies under the sheet: with no cut, hidden there)
+    if cutting == 1 and i.tile_level < 0.04: discard()
     # (the crowns painted on a mass: the sheet's, at the octave the distance asks for, as on the sheet)
     # (a crown-sized dome is the crown: no painted crowns on it)
     own = if tier > 1.5: 1.0 else: 0.0
@@ -1007,7 +1011,7 @@ billow_fragment = (i: GroundOut,u: GroundParams) -> vec4:
         ray = (i.world-u.cam)*inv
         closest = from-ray*(dot(from,ray)/dot(ray,ray))
         edge = dot(closest,closest)/(i.air.x*i.air.x)
-        if outline > 0.0 and edge > 0.3:
+        if cutting == 1 and outline > 0.0 and edge > 0.3:
             px = i.cliff.w/foot
             dith = crown_dither(i.pos.xy)
             rim = crown_face(closest/sqrt(max(dot(closest,closest),0.000001)))
@@ -1045,7 +1049,7 @@ billow_fragment = (i: GroundOut,u: GroundParams) -> vec4:
         v = normalize(i.world-u.cam)
         ndv = dot(body,v)
         turn = 1.0-ndv*ndv
-        if outline > 0.0 and turn > 0.5:
+        if cutting == 1 and outline > 0.0 and turn > 0.5:
             lump = sample(u.pigment,face.xy*(kk*0.45)+vec2(seed*0.73,seed*0.37)).w
             if turn > mix(1.0,0.62+0.44*lump,outline): discard()
     # (the pockets between the masses are in shade whatever the sun: they are depth; so is a dome
@@ -1078,6 +1082,12 @@ billow_fragment = (i: GroundOut,u: GroundParams) -> vec4:
         paint = mix(mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),tone),vec3(0.11,0.27,0.17),clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
         c = mix(crown_palette(paint,ndl,occl,u.shade,u.sun,1.0),crown_palette(paint,0.2,0.75,u.shade,u.sun,1.0),0.55)*vec3(0.94,0.92,1.12)
     vec4(land_aerial_apply(c,i.river,u.haze)*paint_paper(i.pos.xy),1)
+
+billow_fragment = (i: GroundOut,u: GroundParams) -> vec4: billow_fragment_at(i,u,1)
+billow_fragment_solid = (i: GroundOut,u: GroundParams) -> vec4: billow_fragment_at(i,u,0)
+billow_fragment_solid_log = (i: GroundOut,u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0/i.pos.w))
+    billow_fragment_at(i,u,0)
 
 billow_fragment_log = (i: GroundOut,u: GroundParams) -> vec4:
     set_depth(world_depth_encode(1.0/i.pos.w))
@@ -1138,6 +1148,7 @@ const BILLOW_LISTS = 6              # (the masses, the far clumps, the clumps, t
 const BILLOW_MID_END = 320.0        # (beyond, a crown a cone of eight sides)
 const BILLOW_CLUMP_END = 700.0      # (beyond, a clump a cone of six sides)
 billow_sh: Shader
+billow_solid_sh: Shader
 billow_ready = false
 billow_meshes: Mesh[] = []
 # (the gathered domes on the GPU, a buffer a list; each given again only when the tiles it is
@@ -1253,11 +1264,12 @@ island_billow_gather = (cam: vec3,planes: vec4[]):
             billow_gather(-1-index,900000000+key,island_billow_has[index],px,pz,448.0,p.low,p.high,cam,planes)
 
 draw_world_billows = (params: GroundParams):
-    global billow_sh,billow_ready,billow_meshes,billow_buffers,billow_marks,billow_count
+    global billow_sh,billow_solid_sh,billow_ready,billow_meshes,billow_buffers,billow_marks,billow_count
     from = billow_from; marks = billow_sums
     if not billow_ready:
         lists: Billow[][] = [loop i in 0..BILLOW_LISTS: []]
         billow_sh = make_shader(world_shader(shader(billow_vertex,billow_fragment),shader(billow_vertex,billow_fragment_log)),false)
+        billow_solid_sh = make_shader(world_shader(shader(billow_vertex,billow_fragment_solid),shader(billow_vertex,billow_fragment_solid_log)),false)
         # (far off a dome is a few pixels: a cone of six or eight sides, its normals a dome's; a
         # clump or a crown nearer eight-sided with a ring under its top; a near crown the same
         # with its own lobes. The laptop's GPU pays by the vertex)
@@ -1289,7 +1301,8 @@ draw_world_billows = (params: GroundParams):
         billow_count += billow_buffers[which].count
         # (x: the near crowns, whose own lobes are their outline: no scallops cut from the dome under them)
         p.shell.x = if which == BILLOW_LISTS-1: 1.0 else: 0.0
-        draw_instanced(billow_sh,billow_meshes[which],billow_buffers[which],p)
+        # (the crowns near enough to be cut drawn cut; the rest, mostly hidden, solid. AEGEAN_FOLIAGE_OFF=solid: all cut, for timing)
+        draw_instanced(if which >= 4 or foliage_off("solid"): billow_sh else: billow_solid_sh,billow_meshes[which],billow_buffers[which],p)
 
 # (the low tier's: its own canopy, compiled without the full one)
 world_fragment_low_log = (i: GroundOut, u: GroundParams) -> vec4:
