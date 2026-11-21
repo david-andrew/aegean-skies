@@ -3146,8 +3146,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the band inside it (`src/look_outline.jo`). The pilot is never in the mask. The mask keeps the
   thing's nearest point at each pixel (a depth buffer of its own), and the line, band and flecks
   are left out wherever the scene's depth there is nearer (the pilot in front of it, a nearer
-  thing): so a thing wholly behind him shows nothing (`AEGEAN_LOOK_DEPTH=0`: drawn over everything,
-  as before). Nothing is rendered while nothing is looked at. The
+  thing), all but a faint line (a fifth as bright) where the edge is hidden, so a thing wholly
+  behind him still shows where it is (`AEGEAN_LOOK_DEPTH=0`: drawn over everything, as before). Nothing is rendered while nothing is looked at. The
   things that are part of a larger mesh (the hotel's tables, the bar's stool, the desk at the
   room door, the barber's chair, the band's stand and jar, the coffee house's table, the hot
   pool) keep their box's outline, and so does the software renderer. `AEGEAN_LOOK_SHAPE=0` keeps
