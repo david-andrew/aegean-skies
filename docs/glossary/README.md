@@ -1709,7 +1709,7 @@ On the rivers branch until it lands.
   blue-white elsewhere, mottled, and split from the centre up to the Swan by the dark lane of
   the Great Rift.
 - **Code:** `milky_way_light`, `milky_way_grid`, `milky_way_gain` in `src/night_sky.jo`: a band of
-  painted geometry (a grid 1 degree by 2), its light at each vertex.
+  painted geometry (a grid 1 degree along it, its rows closest near the equator), its light at each vertex.
 
 ### Planet lights
 
