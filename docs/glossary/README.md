@@ -1464,9 +1464,10 @@ On the rivers branch until it lands.
   overhead, rose lower down and round the whole horizon, and a deep orange band low on the sun's
   side (hottest at the horizon toward the sun, the rest of the horizon a pink belt). The sea goes a
   deep blue-violet under it, the orange carried by its glitter. Clouds take the light from below:
-  their bases and edges burn and the whole field takes the light, flame orange and peach toward the
-  sun, salmon and magenta-pink away from it, high cloud still lit some 8 degrees after the sun has
-  set and drifting to pink and magenta; the colour by the day's air (`Light.flame`: clear
+  their bodies keep their own cool grey-violet values and the fire sits where the low light reaches:
+  the lumps turned to the sun, the edges lit through, the undersides, and thin cloud all through;
+  strongest toward the sun's bearing, salmon and magenta-pink away from it, high cloud still lit
+  some 8 degrees after the sun has set; the colour by the day's air (`Light.flame`: clear
   orange-peach, haze red-orange, dust deep red-orange, damp air pink-magenta, washed salmon-pink). Hands over to the afterglow by about 18:30.
 - **Code:** the sunset keys (sun height 0 and 0.15) of `TWILIGHT_*` in `src/look.jo`, with
   `Light.sunset` (how much the sun on the water reddens the glow band, `draw_glow_band` in
@@ -1481,8 +1482,9 @@ On the rivers branch until it lands.
   near the horizon, its foot wavering in slices into a short mirage where it meets the water. In
   thick air (the day's air) the change starts about 20 degrees up and comes on gradually; a
   reddened sun is an over-bright emitter, as the eye and a photograph see it: a small flat
-  near-white disc with all its colour in a tight saturated red bloom about it (deepest in heavy
-  dust), and at most a faint streak of it along the level. Once any sun has set, a red glow stays
+  near-white disc with all its colour in a saturated red ring about it, some one and a half
+  radii wide, and a soft glow beyond (plain to see at the game's normal view under about 5
+  degrees on any day of thick air; deepest in heavy dust), with a faint streak along the level. Once any sun has set, a red glow stays
   on the horizon where it went down, fading over some 8 degrees.
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
   sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
