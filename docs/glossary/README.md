@@ -596,14 +596,16 @@ On the rivers branch until it lands.
   (the aircraft's record mirrors its livery and keeps the paint written out); a game saved before
   it loads as built, or in the period paint its record wore. The page has three standings
   (`PaintPageMode`): free, a [paint shop](#paint-shop)'s (a draft, priced), or closed (painting is
-  done at a workshop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
-  price-and-time, for the sandbox settings to answer.
+  done at a paint shop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
+  price-and-time: the sandbox's "Paint the aircraft anywhere, at any time" (`sandbox.paint_anywhere`,
+  off unless the player turns it on).
 - **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`, `paint_build`,
   `paint_support`, `paint_changes`, `paint_from_spec`), `src/aircraft_paint_view.jo`
   (`paint_page`); `set_player_paint`, `paint_step`, `player_model` in `aegean.jo`;
   `tests/aircraft_paint_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`, `paint-marks` for the
-  other tabs); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
+- **Capture:** `AEGEAN_SANDBOX=paint AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`,
+  `paint-marks` for the other tabs; without the sandbox switch the page is closed and says where
+  the paint shops are); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
   part.lwing=stripes:0.8,0.1,0.1:0.9,0.9,0.8:0:6 decal=roundel:wing-top'` or a paint's name
   (`AEGEAN_PAINT='Greek Naval Air Service'`); `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
 
@@ -656,37 +658,67 @@ On the rivers branch until it lands.
 
 ### Paint shop
 
-- **Definition:** where painting costs money and takes a little time. The painter is a town's
-  mechanic: walked up to and spoken to, "I'd like her painted" opens the Paint page as the
-  shop's. The paint chosen there is a draft, shown on the aircraft and priced as it changes (only
-  what differs from her paint is charged; `paint_quote`). Ordered, the mechanic is paid and the
-  aircraft is **in the shop** until the paint is dry: she cannot be boarded, and is seen masked,
-  then in primer, then in the new paint with its decals going on last (`paint_job_look`). The
-  mechanic says how the work stands and one can wait for it. People remark on a new paint for a
-  day.
+- **Aliases:** the workshop, the paint shed, the painter.
+- **Definition:** where painting costs money and takes a little time: an open-fronted workshop
+  on its own plank deck at the water's edge, in each harbour town a mechanic lives in (Porto
+  Vecchio and Kryfo Cove). A lean-to against two plank walls with a bench of paint pots, tins on a
+  shelf, the colours on a board, trestles, drums, a ladder and a painted sign; an apron in front;
+  and a **berth** on the water where the aircraft lies nose-in to the deck. The town's mechanic
+  works there mornings (7:00 to 12:30) and from three till six.
+- **The visit:** tapping the workshop's bench or the painter walks the pilot over; the talk
+  offers "I'd like her painted". The painter brings the aircraft round to the berth (a few
+  minutes pass), and the shop's **panel** opens: the painter's card (name, price and time for
+  what is changed) over the paint's four tabs, at the side of the screen (along the bottom of
+  one held upright), the view turning round the aircraft with a drag beside it. The paint chosen
+  is a draft, shown on the aircraft and priced as it changes (only what differs is charged;
+  `paint_quote`). Ordered, the mechanic is paid and the aircraft is **in the shop** until the
+  paint is dry: she cannot be boarded and is seen masked, then in primer, then in the new paint
+  with its decals going on last (`paint_job_look`). The mechanic says how the work stands and
+  one can wait. People remark on a new paint for a day.
 - **Rules:** the `PaintJob` is saved with the session; the money moves through the living
-  world's `transfer` (a repair payment). The aircraft must be moored at the mechanic's harbour.
-- **Code:** `src/paint_shop.jo` (`paint_quote`, `paint_job_begin`, `paint_job_look`);
-  `open_paint_shop`, `paint_shop_order`, `paint_job_step` in `aegean.jo`;
-  `tests/paint_shop_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=paint-shop` (the shop's page, `AEGEAN_PAINT_DRAFT` chosen);
-  `AEGEAN_CAPTURE_LAUNCH=paintshop` goes through asking, ordering, a save and load, waiting and
-  the dry paint, with `PAINTSHOP` lines; `AEGEAN_PAINT_AT_SHOPS=1` closes the free page.
+  world's `transfer` (a repair payment). The shop is sited by `paint_shed_site`: the first spot
+  along the shore from the main quay where the berth floats and deck and berth are clear of
+  docks, moored boats, other quays and the hotel; a harbour with no waterfront gets a gangway
+  from its quay. A big boat is painted on her buoy and a landplane where she stands (the berth
+  takes what fits a harbour's docks). Asked away from the workshop, the mechanic says to come by
+  it. The panel is a `Ui` state (`.paint`), not the pause menu.
+- **Code:** `src/paint_shed.jo` (the place: `build_paint_shed`, `paint_shed_site`,
+  `paint_shed_berth`, `paint_shed_venue`), `src/paint_shop.jo` (the price and the job),
+  `src/paint_shop_view.jo` (`paint_shop_panel`); `build_paint_sheds`, `open_paint_shop`,
+  `paint_berth_moor`, `paint_shop_panel_step`, `paint_shop_camera`, `paint_job_step` in
+  `aegean.jo`; the mechanic's venue in `choose_life_venue` (`src/living_life_seed.jo`) and hours
+  in `src/living_life.jo`; `tests/paint_shop_test.jo`, `tests/paint_shed_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_SHED="place [yaw pitch distance]"` (the free camera on a town's
+  shop); `AEGEAN_CAPTURE_PANEL=paint-shop` (the panel, staged at the workshop with
+  `AEGEAN_PAINT_DRAFT` chosen; `AEGEAN_PAINT_TAB=0..3`); `AEGEAN_CAPTURE_LAUNCH=paintshop` goes
+  through asking, ordering, a save and load, waiting and the dry paint, with `PAINTSHOP` lines
+  (`AEGEAN_PAINT_STAGE=primer|top` stops the wait mid-paint); `AEGEAN_TALK=mechanic`;
+  `AEGEAN_PAINT_AT_SHOPS=1` closes the free page.
 
 ### Pilots' liveries
 
 - **Definition:** every other pilot's aircraft in its own paint, so a pilot can be told by their
   colours at a distance. Made once from the pilot's number with the shop's own tools (a base
   livery, two palette colours over the parts, a motif or their initials), then kept with the
-  aircraft's record. The harbour patrol keep the service's livery and carry a number; a pirate's
-  is dark with one bold mark.
+  aircraft's record. The named pilots, the far pilots of the flying clubs and anyone else flying
+  get their own. The harbour patrol keep the service's livery and carry a number; a pirate's is
+  dark with one bold mark.
+- **Unit livery:** the air arm at a field and a scenario's squadrons share one: the service's
+  paint kept whole, so the side it flies for still reads, the cowling (and for some units the
+  struts) in the unit's colour, and each aircraft's own number on fuselage and upper wing
+  (`unit_paint`).
 - **Rules:** `AircraftRecord.paint` holds the paint written out (`to_text` of a `Paint`), so it
-  survives saves and a later change to the generator. Models are built a few frames apart after
-  a start or a load and shared by paint.
-- **Code:** `src/pilot_liveries.jo` (`pilot_paint`); `assign_pilot_liveries`, `pilot_livery_step`
-  in `aegean.jo`.
+  survives saves and a later change to the generator. Models are built one every four frames,
+  shared by paint, and looked up by aircraft each frame once the air traffic is gathered
+  (`pilot_livery_remap`); the saved model numbers of far pilots and battle actors are left as
+  they were.
+- **Code:** `src/pilot_liveries.jo` (`pilot_paint`, `unit_paint`); `assign_pilot_liveries`,
+  `pilot_livery_give`, `pilot_livery_model`, `pilot_livery_remap`, `pilot_livery_step` in
+  `aegean.jo`.
 - **Capture:** `AEGEAN_CAPTURE_LIVERY="k [yaw pitch distance]"`: the camera on the k-th pilot's
-  aircraft, and a `PILOT LIVERY` line for each.
+  aircraft, and a `PILOT LIVERY` line for every aircraft; `AEGEAN_CAPTURE_FORMATION=1` with
+  `AEGEAN_FLYING`: the named pilots' aircraft placed in a vee ahead of the chase view (staged
+  for the still).
 
 ### Markings
 
