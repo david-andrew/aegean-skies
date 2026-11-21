@@ -56,7 +56,8 @@ struct WorldTile:
     cpu_materials: u8[] = []
     inland_water: bool = false
     canal_city: bool = false       # over Neravessa's canal cut (world_tile_canal)
-    stand: f32[] = []              # the woods' stand cover per sample (level 0: wood_stand)
+    stand: f32[] = []              # the woods' stand cover per sample (to level 3: src/canopy.jo wood_cover)
+    rise: f32[] = []               # and the canopy's rise there
     wooded: f32 = 0.0              # its samples' most stand cover (any level)
 
 struct WorldInstance:
@@ -146,6 +147,16 @@ world_tile_visible = (x: f64,z: f64,size: f64,cam: vec3,planes: vec4[]) -> bool:
         if f64(dot(p.xyz,c)+p.w) < -radius: return false
     true
 
+# Whether a block of a tile's canopy (x, z, size; the tile's ground between low and high) may be in view.
+billow_block_visible = (x: f64,z: f64,size: f64,low: f64,high: f64,cam: vec3,planes: vec4[]) -> bool:
+    tall = (high-low)*0.5+25.0
+    center = vec3(f32(x+size*0.5),f32((low+high)*0.5+12.0),f32(z+size*0.5))
+    radius = sqrt(size*size*0.5+tall*tall)+30.0
+    c = render_world(center,cam)
+    loop p in planes:
+        if f64(dot(p.xyz,c)+p.w) < -radius: return false
+    true
+
 world_upload_tile = (t: Texture,img: Image,slot: int):
     global world_uploaded
     world_uploaded += img.pixels.len()
@@ -173,6 +184,7 @@ struct WorldTileJob:
     values: f32[]
     material_bytes: u8[]
     stand: f32[] = []
+    rise: f32[] = []
     wooded: f32 = 0.0
 
 world_tile_job_start = (x: int,z: int,level: int) -> WorldTileJob:
@@ -219,25 +231,37 @@ world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
             stands = clamp(grove_pine_cover(f32(grove_field(wx,wz)),length(normal.xz)/max(normal.y,0.1),hy)*7.0,0.0,1.0)
             work = field_colour(work,vec2(f32(wx),f32(wz)),hy,1.0-normal.y,stands,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)),f32(cell),field_warp_cpu(vec2(f32(wx),f32(wz))),field_palette)
             job.working.set(i,j,work)
-            # (the woods' stand cover, as the ground paints it: level 0 only, for the woods' crowns)
-            # (every level: its most wooded sample says whether the far canopy's shells cover it)
-            stand = wood_stand(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),vec2(f32(wx),f32(wz)),work.w,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)))
-            job.wooded = max(job.wooded,stand)
-            if job.level == 0: job.stand.push(stand)
+            # (the woods' stand cover, as the ground paints it, and the canopy's rise: for the
+            # canopy's domes over the tile, and whether the canopy covers it at all)
+            covered = wood_cover(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),0.5+(vnoise(vec2(f32(wx),f32(wz))*0.006)-0.5)*0.8,work.w,orchard_cover(vec2(f32(wx),f32(wz)),hy,length(normal.xz)/max(normal.y,0.1)),true)
+            job.wooded = max(job.wooded,covered.x)
+            if job.level <= 3: job.stand.push(covered.x); job.rise.push(covered.y)
             job.material_bytes.push(job.h.pixels[a+3])
             loop c in 0..4:job.material_bytes.push(job.m.pixels[a+c])
         job.row += 1
     true
 
+# The canopy's domes over each tile, by its slot (billow_build), and which of a tile's lists
+# hold any (so a frame never reads the empty ones).
+world_billows: Billow[][][] = []
+world_billow_has: int[][] = []
 world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
+    global world_billows,world_billow_has
     world_upload_tile(world_heights,job.h,slot)
     world_upload_tile(world_materials,job.m,slot)
     world_upload_tile(world_cliff_map,cliff_map_image(job.cliff_stations,17,17,1<<job.level,job.values),slot)
     world_upload_tile(world_working,job.working,slot)
     tile=WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
     tile.canal_city=world_tile_canal(job.x,job.z,job.level)
-    tile.stand=job.stand
+    tile.stand=job.stand; tile.rise=job.rise
     tile.wooded=job.wooded
+    # (the canopy's domes over it: kept by slot beside the tiles, which are copied about each frame)
+    loop world_billows.len() <= slot: world_billows.push([]); world_billow_has.push([])
+    world_billows[slot] = []; world_billow_has[slot] = []
+    if job.wooded > 0.05 and job.level <= 3:
+        ox,oz = world_tile_origin(job.x,job.z,job.level)
+        world_billows[slot] = billow_build(ox,oz,job.level,job.values,job.stand,job.rise)
+        world_billow_has[slot] = billow_held(world_billows[slot])
     tile
 
 world_make_tile = (x: int,z: int,level: int,slot: int) -> WorldTile:
@@ -512,46 +536,51 @@ world_fragment = (i: GroundOut,u: GroundParams) -> vec4: world_fragment_at(i,u,1
 # farmed fields): the woods' crowns (src/crowns.jo) stand where the paint draws crowns.
 # n: the sample's normal; tx, ty: its materials' tint x and y; share: its field share.
 wood_stand = (n: vec3,y: f32,ridge: f32,tx: f32,ty: f32,p: vec2,share: f32,orchard: f32) -> f32:
-    if y < 0.6: return 0.0
-    slope = 1.0-n.y
-    wash = 0.5+(vnoise(p*0.006)-0.5)*0.8
-    field = tx*0.65+wash*0.35+(ty-0.5)*0.25
-    patch = smoothstep(0.30,0.67,field)
-    rg = clamp(ridge,-1.0,1.0)
-    cover = summer_cover(n,y,rg,patch)
-    outcrop = smoothstep(0.62,0.79,ty)*smoothstep(0.15,0.4,slope)
-    exposure = max(smoothstep(0.26,0.72,slope+(patch-0.5)*0.26),outcrop*0.78)
-    veg = (1.0-exposure)*smoothstep(0.6,1.5,y)*(1.0-smoothstep(1700.0,2300.0,y))
-    if veg <= 0.0: return 0.0
-    max(cover.y+cover.z,canopy_stand(n,rg,field))*veg*(1.0-orchard*0.7)*(1.0-share*veg*0.92)
+    wood_cover(n,y,ridge,tx,ty,0.5+(vnoise(p*0.006)-0.5)*0.8,share,orchard,true).x
 
-# ---------------- the far canopy's shells ----------------
-# Past the crowns' reach (src/crowns.jo) the woods are the painted canopy's crowns (the same
-# sheet, the same stand cover) given their height: a few layers of the terrain lifted a fraction
-# of a crown's height each, a layer kept where the crown under it stands higher than its lift.
-# So the far woods have relief, parallax and a rough outline on a ridge, each crown lit by its
-# own rounded normal, and the crowns past the 3D ones are the same crowns.
-const WORLD_SHELLS = 1
-const WORLD_SHELL_HEIGHT = 7.0
-const WORLD_SHELL_END = 4200.0     # (beyond, the painted canopy alone: the bumps thin out over the last 1200 m)
+# ---------------- the woods' canopy ----------------
+# A wood is one canopy, not a field of trees. Over the woods' stand cover (the same green the
+# ground paints) lies the sheet: the terrain lifted to the floor of the canopy's hollows and
+# painted with the crowns' palette, its crowns the painted canopy's crown sheet; on it stand the
+# canopy's billows (below), the domes that are its volume. Far off the sheet is flat, the
+# ground's own paint; approaching, it grows up into its height over a kilometre and a half, so
+# there is no distance where trees arrive. Past the wood's edge the scattered crowns of the
+# stand's thin margin are single crowns (src/crowns.jo crown_wood).
+const CANOPY_TOP = 12.0             # (m, the canopy's mean height over the ground inside a wood)
+const CANOPY_GROW_FAR = 3400.0      # (beyond, the canopy flat: the ground's paint alone)
+const CANOPY_GROW_NEAR = 1500.0     # (nearer, its full height)
 
-# How much larger the far canopy's bumps are drawn at a distance: crowns near, the clumps and
-# masses they gather in farther, so the relief and the rough outline of a wooded ridge still
-# read at a few kilometres (about a constant few pixels).
-world_shell_scale = (d: f32,start: f32) -> f32: pow(max(d/max(start,1.0),1.0),1.1)
+# The canopy's height over the ground at a point (absolute xz) for a stand cover: zero at the
+# edge, rising over the stand's last tenths to the canopy's height, its top in broad lumps.
+# rise: how far the canopy has risen there (wood_cover's y).
+canopy_height = (p: vec2,rise: f32) -> f32:
+    # (a gentle swell only: the vertices are 14 m apart and more, so anything finer would facet;
+    # the canopy's masses are the billows standing on it)
+    lumps = 0.84+0.32*vnoise(p/130.0+vec2(17.3,5.1))
+    CANOPY_TOP*rise*lumps
+
+# How far the canopy has grown at a distance (0 flat, 1 its full height).
+canopy_grow = (d: f32) -> f32:
+    g = clamp((CANOPY_GROW_FAR-d)/(CANOPY_GROW_FAR-CANOPY_GROW_NEAR),0.0,1.0)
+    g*g*(3.0-2.0*g)
 
 world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundOut:
     o = world_vertex(v,inst,u)
-    lifted = o.world+vec3(0,u.shell.x*world_shell_scale(length(o.world-u.cam),u.shell.z),0)
+    absolute = o.world+u.origin
+    n = normalize(o.normal)
+    # (the stand cover per vertex, carried in land)
+    covered = wood_cover(n,o.world.y,o.tint.z*2.0-1.0,o.tint.x,o.tint.y,0.5+(vnoise(absolute.xz*0.006)-0.5)*0.8,o.working.w,o.orchard,true)*o.tint.w
+    o.land = covered.x
+    # (the canopy's rise, carried in orchard)
+    o.orchard = covered.y
+    d = length(o.world-u.cam)
+    # (lifted a little even far off, so the flat canopy never fights the ground it paints over)
+    lift = canopy_floor(absolute.xz,covered.y,d)
+    lifted = o.world+vec3(0,lift,0)
     curved = lifted
     curved.y -= world_drop(lifted.xz-u.cam.xz)
     o.pos = u.view_proj*vec4(curved,1)
     o.world = lifted
-    # (the stand cover per vertex, carried in land: the fragments past the woods go at once)
-    absolute = o.world+u.origin
-    n = normalize(o.normal)
-    y = o.world.y-u.shell.x*world_shell_scale(length(o.world-u.cam),u.shell.z)
-    o.land = wood_stand(n,y,o.tint.z*2.0-1.0,o.tint.x,o.tint.y,absolute.xz,o.working.w,o.orchard)*o.tint.w
     # (the land's aerial perspective per vertex, carried in river)
     o.river = land_aerial_terms(o.world,u.cam,u.fog,u.land_steps)
     o
@@ -559,32 +588,36 @@ world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> G
 world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     if u.shell.w < 0.0: discard()
     stand = i.land
-    if stand < 0.02: discard()
+    if stand < CANOPY_EDGE-0.15: discard()
     d = length(i.world-u.cam)
-    if d < u.shell.z-4.0*u.shell.w: discard()
-    absolute = i.world+u.origin
-    # (the crown sheet at the octave the distance asks for: crowns, then the clumps of crowns, then
-    # their masses; across a change each pixel takes one or the other by a fixed dither, so the
-    # pattern never slides and one read does)
+    q = i.world.xz+u.origin.xz
+    # (far off, the canopy hands over to the ground's paint of the same crowns, by a dither)
+    if crown_dither(i.pos.xy) >= clamp((CANOPY_GROW_FAR+600.0-d)/600.0,0.0,1.0): discard()
     span = f32(CANOPY_CELLS)*CANOPY_CELL
-    level = clamp(log2(world_shell_scale(d,u.shell.z)),0.0,5.0)
-    # (across a change of octave each coarse crown cell takes one or the other by its own draw:
-    # coherent in the world, so the texture's filtering sees one octave at a time)
+    rise = i.orchard
+    # (the sheet is the floor under the canopy's domes: none where no crown stands, past the
+    # wood's edge, where the ground's own paint of the crowns is the canopy)
+    if rise < 0.07: discard()
+    # the crowns: the painted canopy's crown sheet at the octave the distance asks for (crowns,
+    # then the clumps they gather in, then their masses), each coarse cell taking one octave or the
+    # other by its own draw across a change
+    level = clamp(log2(max(d/250.0,1.0)),0.0,5.0)
     lf = floor(level)
-    l0 = lf+(if fract(level) > hash21(floor(absolute.xz/(CANOPY_CELL*pow(2.0,lf+1.0)))): 1.0 else: 0.0)
-    s = sample(u.canopy,absolute.xz/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61))
-    top = clamp((stand*(1.0+l0*0.04)-s.w)*8.0+0.5,0.0,1.0)*s.z*clamp((WORLD_SHELL_END-d)/1200.0,0.0,1.0)
-    if top <= u.shell.y: discard()
-    # (the shells take the pixels the crowns' far band leaves at the end of its reach: the same
-    # dither and share, src/crowns.jo)
-    if crown_dither(i.pos.xy) < crown_far_share(d,u.shell.z,u.shell.w): discard()
+    l0 = lf+(if fract(level) > hash21(floor(q/(CANOPY_CELL*pow(2.0,lf+1.0)))): 1.0 else: 0.0)
+    s = sample(u.canopy,q/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61))
+    # its edge scalloped by the crowns along it
+    if stand+(s.z-0.55)*0.22 < CANOPY_EDGE: discard()
+    # light: each crown's rounded normal on the land's, the crowns' tops lit and the hollows
+    # between them in shade
+    crown = vec3((s.x*2.0-1.0)*1.6,0.45+0.55*s.z,(s.y*2.0-1.0)*1.6)
+    nn = normalize(crown+normalize(i.normal)*0.3)
+    # (under the domes that have risen there it is the floor of their hollows, deep in shade:
+    # under the masses where the canopy has risen, under the crowns from the wood's edge)
+    floor = max(billow_emerge(0.0,d,0.5)*clamp((rise-0.3)*4.0,0.0,1.0),billow_emerge(2.0,d,0.5)*clamp((rise-0.06)*10.0,0.0,1.0))
+    ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)-floor*0.3
+    occl = (0.18+0.66*s.z+0.1*clamp((stand-CANOPY_EDGE)*4.0,0.0,1.0))*mix(1.0,0.5,floor)
     col = mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13))*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
-    nn = normalize(i.normal*0.35+vec3(s.x*2.0-1.0,1.0,s.y*2.0-1.0)*0.65)
-    ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)
-    # (the lower part of a crown is the shaded depth between crowns: from afar the gaps read dark)
-    occl = (0.25+0.75*u.shell.y)*(0.55+0.45*s.z)
-    lit = clamp(ndl*3.0+0.2,0.0,1.0)*clamp(occl*2.2,0.0,1.0)
-    c = col*mix(u.shade*1.1+vec3(0.04,0.05,0.06),u.sun*vec3(1.08,1.02,0.84),lit)*(0.38+0.62*occl)
+    c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.45,1.0,clamp((300.0-d)/250.0,0.0,1.0)))
     vec4(land_aerial_apply(c,i.river,u.haze),1)
 
 world_shell_fragment_log = (i: GroundOut,u: GroundParams) -> vec4:
@@ -593,21 +626,506 @@ world_shell_fragment_log = (i: GroundOut,u: GroundParams) -> vec4:
 
 world_shell_sh: Shader
 world_shell_ready = false
-draw_world_shells = (batches: WorldInstance[][],params: GroundParams,start: f32):
+draw_world_shells = (batches: WorldInstance[][],params: GroundParams):
     global world_shell_sh,world_shell_ready
     if not world_shell_ready:
         world_shell_sh = make_shader(world_shader(shader(world_shell_vertex,world_shell_fragment),shader(world_shell_vertex,world_shell_fragment_log)),false)
         world_shell_ready = true
     p = params
-    # (timing only: AEGEAN_SHELLS=n layers; AEGEAN_FOLIAGE_OFF=shellfs their fragments discarded at once)
-    count = to_int(env("AEGEAN_SHELLS") ?? "") ?? WORLD_SHELLS
-    if foliage_off("shellfs"): p.shell.w = -1.0
-    loop k in 0..count:
-        f = (f32(k)+1.0)/f32(count+1)
-        p.shell = vec4(f*WORLD_SHELL_HEIGHT,f,start,if p.shell.w < 0.0: -1.0 else: f32(CROWN_FADE))
-        loop i in 0..16:
-            if batches[i].len() == 0: continue
-            draw_instanced(world_shell_sh,terrain_grids[16+i],batches[i],p)
+    # (timing only: AEGEAN_FOLIAGE_OFF=shellfs its fragments discarded at once)
+    p.shell = vec4(0,0,0,if foliage_off("shellfs"): -1.0 else: 0.0)
+    loop i in 0..16:
+        if batches[i].len() == 0: continue
+        draw_instanced(world_shell_sh,terrain_grids[16+i],batches[i],p)
+
+# ---------------- the canopy's billows ----------------
+# The canopy's volume, built the way a cumulus is: rounded masses standing on one another. Three
+# sizes of low dome over the canopy's sheet, each riding the one under it: the wood's broad masses
+# (56 m apart), the clumps on them (28 m), and the crowns on those (14 m), every dome its own size
+# and height, lit as its own rounded body (its top lit, its foot in the hollow dark); and near the
+# eye a crown's own lobes, smaller domes again, growing out of it. They are real geometry: they
+# overlap one another from any angle, stand against the sky on a ridge and break the wood's
+# outline against the ground. No dome arrives: each rises out of the sheet as the eye nears (the
+# masses from 2.6 km, the clumps from 1.3 km, the crowns from 560 m, a crown's lobes from 200 m),
+# its top first, so the canopy swells up continuously out of the paint.
+# The domes are worked out once, as a terrain tile is made (billow_build, from the tile's own
+# samples of the ground and the stand cover: no tree lists); a frame gathers the domes of the
+# tiles in view and draws each size in one call.
+struct BillowVertex:
+    dome: vec3                      # the vertex on the unit dome (y its height, 1 the top); a lobe's: where it sits
+    lobe: vec3                      # a lobe's vertex from where it sits, in the dome's unit space (zero: the dome's own)
+    turn: f32                       # the angle about the dome's axis of the vertex (a lobe's: of where it sits)
+
+struct Billow:
+    at: vec4                        # its centre (world x, the ground there, world z), its radius (m)
+    form: vec4                      # its height (m), how deep its foot is sunk (m), its size (0 a mass, 1 a clump, 2 a crown), the canopy's swell there
+    seed: vec4                      # its three draws (0..1), the canopy's rise at its centre
+    lie: vec4                       # the ground's slope under it (x, z, per metre), the rise's slope (x, z, per metre)
+    seat: vec4                      # what it stands on, fully grown: the masses (m), the clumps (m); the stand cover; the sheet under it (1; 0: none, it stands on the ground)
+
+const BILLOW_TIERS = 3
+const BILLOW_LOBES = 7
+const BILLOW_LOBE_END = 110.0      # (beyond, a crown one dome: its lobes grow out of it over the last 50 m to here)
+const BILLOW_SHEET = 0.5           # (the sheet's height under grown masses, of the canopy's: their hollows' floor)
+
+billow_span = (tier: f32) -> f32: if tier < 0.5: 56.0 else: if tier < 1.5: 28.0 else: 14.0
+billow_reach = (tier: f32) -> f32: if tier < 0.5: 2600.0 else: if tier < 1.5: 1300.0 else: 560.0
+
+# A cell's dome: its three draws (0..1).
+billow_seed = (cell: vec2,tier: f32) -> vec3:
+    # (one hash, its 24 bits read three ways)
+    h = hash21(cell+vec2(tier*17.0+3.0,tier*29.0+11.0))
+    vec3(h,fract(h*256.0),fract(h*65536.0))
+
+# A dome's centre (absolute xz) from its cell and draws.
+billow_centre = (cell: vec2,sd: vec3,span: f32) -> vec2: (cell+vec2(0.5,0.5)+(sd.xy-vec2(0.5,0.5))*0.9)*span
+
+# A dome's radius (m), its height over what it stands on (m) and how deep its foot is sunk (m).
+billow_shape = (tier: f32,sd: vec3) -> vec3:
+    v = fract(sd.z*7.31+sd.x)
+    # (no wider than a cell and a half: billow_top looks in the cells about a point)
+    if tier < 0.5: return vec3(27.0+15.0*sd.z,3.0+3.0*v,3.0)
+    if tier < 1.5: return vec3(12.0+9.0*sd.z,2.5+2.5*v,2.2)
+    # (the crowns: rounded, about as high as they are wide across the half that shows)
+    r = 4.6+3.8*sd.z
+    vec3(r,r*(0.7+0.35*v),1.2)
+
+# How far a dome has risen at a distance over the ground (0 still under the sheet, 1 its full
+# height); a crown a little sooner or later than its neighbours by its own draw.
+billow_emerge = (tier: f32,d: f32,draw: f32) -> f32:
+    far = billow_reach(tier)*(0.82+0.36*draw)
+    g = clamp((far-d)/(far*0.32),0.0,1.0)
+    g*g*(3.0-2.0*g)
+
+# How much taller the masses and clumps stand at a distance over the ground.
+billow_far = (d: f32) -> f32: 1.0+clamp((d-500.0)/1300.0,0.0,1.0)
+
+# How far a size's domes have swelled for the canopy's rise at a point: the crowns from the
+# wood's edge, the clumps and the masses under them only farther in, where the canopy has risen.
+billow_k = (tier: f32,rise: f32) -> f32: clamp((rise-(if tier < 0.5: 0.4 else: if tier < 1.5: 0.22 else: 0.08))*2.6,0.0,1.0)
+
+# The canopy sheet's lift over the ground at a point (m): the canopy's height as grown at that
+# distance, lower where the masses have risen off it (it is then the floor of their hollows).
+canopy_floor = (p: vec2,rise: f32,d: f32) -> f32:
+    canopy_height(p,rise)*canopy_grow(d)*mix(1.0,BILLOW_SHEET,billow_emerge(0.0,d,0.5))+0.6
+
+# A tile's domes, from its 17 x 17 samples (the ground, the stand cover, the canopy's rise; step
+# m apart, from ox, oz): for each size (the masses, the clumps, the crowns: a tile of the finest
+# level only; the clumps to level 2, the masses to level 3) a list for each of its 4 x 4 blocks
+# (size*16+block), so a frame gathers only the blocks in view and in reach. A dome belongs to the
+# tile and the block its centre is in.
+const BILLOW_BLOCKS = 4
+billow_build = (ox: f64,oz: f64,level: int,ground: f32[],stand: f32[],rise: f32[]) -> Billow[][]:
+    if level > 3 or ground.len() != 289 or stand.len() != 289: return [loop i in 0..BILLOW_TIERS*BILLOW_BLOCKS*BILLOW_BLOCKS: []]
+    step = 14.0*f64(1<<level)
+    billow_make(ox,oz,step,17,17,ox,oz,step*16.0,if level == 0: 3 else: if level <= 2: 2 else: 1,1.0,ground,stand,rise)
+
+# How high a size's domes stand at a point (m over what they stand on, fully grown): the highest
+# of the domes about it, each as its vertices have it (the canopy's rise there by its slope from
+# the dome's centre). cells: the domes by cell (from cx0, cz0, wide across; a zero radius: none);
+# also what that dome stands on itself.
+billow_top = (cells: Billow[],cx0: int,cz0: int,wide: int,tier: f32,q: vec2) -> vec2:
+    span = billow_span(tier)
+    cx = int(floor(q.x/span))-cx0; cz = int(floor(q.y/span))-cz0
+    best = vec2(0,0)
+    loop j in max(cz-1,0)..min(cz+2,cells.len()/wide):
+        loop i in max(cx-1,0)..min(cx+2,wide):
+            b = cells[j*wide+i]
+            if b.at.w <= 0.0: continue
+            to = q-b.at.xz
+            r = length(to)/b.at.w
+            if r >= 1.0: continue
+            k = billow_k(tier,clamp(b.seed.w+dot(b.lie.zw,to),0.0,1.0))
+            h = (sqrt(1.0-r*r)*(b.form.x+b.form.y)-b.form.y)*k
+            if h+b.seat.x > best.x+best.y: best = vec2(b.seat.x,h)
+    best
+
+# The domes of a square of land (ox, oz, size) from a grid of samples over it (from gx, gz,
+# step m apart, nx by nz): the first `sizes` sizes (the masses, then the clumps, then the crowns).
+# A mass or a clump stands only where the wood covers its middle (a small wood has none: its
+# crowns stand on the sheet); a clump stands on the masses under its centre, a crown on whatever
+# dome is highest under its own. sheet: 1 where the canopy's sheet lies under them; 0 where
+# there is none (the old islands) and they stand on the ground.
+billow_make = (gx: f64,gz: f64,step: f64,nx: int,nz: int,ox: f64,oz: f64,size: f64,sizes: int,sheet: f32,ground: f32[],stand: f32[],rise: f32[]) -> Billow[][]:
+    out: Billow[][] = [loop i in 0..BILLOW_TIERS*BILLOW_BLOCKS*BILLOW_BLOCKS: []]
+    at = (g: f32[],x: f64,z: f64) -> f32:
+        fx = clamp((x-gx)/step,0.0,f64(nx)-1.001); fz = clamp((z-gz)/step,0.0,f64(nz)-1.001)
+        i = int(fx); j = int(fz); a = f32(fx-f64(i)); b = f32(fz-f64(j))
+        mix(mix(g[j*nx+i],g[j*nx+i+1],a),mix(g[(j+1)*nx+i],g[(j+1)*nx+i+1],a),b)
+    absent = Billow(vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0),vec4(0,0,0,0))
+    # (the larger sizes' domes by cell, a margin of two cells about the square: what the smaller stand on)
+    under: Billow[][] = [[],[]]
+    from: int[] = [0,0,0,0]
+    wide: int[] = [1,1]
+    loop t in 0..min(sizes,BILLOW_TIERS):
+        tier = f32(t)
+        span = f64(billow_span(tier))
+        cx0 = int(floor(ox/span))-2; cz0 = int(floor(oz/span))-2
+        cx1 = int(floor((ox+size)/span))+3; cz1 = int(floor((oz+size)/span))+3
+        if t < 2: from[t*2] = cx0; from[t*2+1] = cz0; wide[t] = cx1-cx0
+        loop cz in cz0..cz1:
+            loop cx in cx0..cx1:
+                cell = vec2(f32(cx),f32(cz))
+                sd = billow_seed(cell,tier)
+                c = billow_centre(cell,sd,f32(span))
+                x = f64(c.x); z = f64(c.y)
+                inside = x >= ox and x < ox+size and z >= oz and z < oz+size
+                # (a crown is no one's footing: only the square's own)
+                if t == 2 and not inside: continue
+                shape = billow_shape(tier,sd)
+                up = at(rise,x,z)
+                cover = at(stand,x,z)
+                # (the slopes over the dome's width: of the ground, and of the canopy's rise)
+                w = f64(max(shape.x*0.6,f32(step)*0.5))
+                slope = vec2(at(ground,x+w,z)-at(ground,x-w,z),at(ground,x,z+w)-at(ground,x,z-w))/f32(2.0*w)
+                rising = vec2(at(rise,x+w,z)-at(rise,x-w,z),at(rise,x,z+w)-at(rise,x,z-w))/f32(2.0*w)
+                radius = shape.x; tall = shape.y
+                seat = vec2(0,0)
+                made = true
+                if t == 2:
+                    k = billow_k(tier,up)
+                    # (a crown in seven missing: a gap in the canopy, the hollow under it showing)
+                    if cover < CANOPY_EDGE or k <= 0.0 or fract(sd.z*13.7+sd.y) < 0.14: continue
+                    # (a crown is a crown down to the wood's edge, only smaller there: the canopy
+                    # under it is what steps down)
+                    radius *= 0.68+0.32*k
+                    tall *= 0.5+0.5*k
+                    # (on the highest dome under it: a clump and what the clump stands on, or a mass)
+                    on = billow_top(under[1],from[2],from[3],wide[1],1.0,c)
+                    low = billow_top(under[0],from[0],from[1],wide[0],0.0,c)
+                    seat = if on.x+on.y >= low.y: on else: vec2(low.y,0)
+                else:
+                    # (where the canopy has risen all about its middle)
+                    least = min(up,min(min(at(rise,x+w,z),at(rise,x-w,z)),min(at(rise,x,z+w),at(rise,x,z-w))))
+                    made = billow_k(tier,least) > 0.0
+                    if made and t == 1: seat = vec2(billow_top(under[0],from[0],from[1],wide[0],0.0,c).y,0)
+                b = if made: Billow(vec4(c.x,at(ground,x,z),c.y,radius),vec4(tall,shape.z,tier,0.84+0.32*vnoise(c/130.0+vec2(17.3,5.1))),vec4(sd,up),vec4(slope,rising),vec4(seat,cover,sheet)) else: absent
+                if t < 2: under[t].push(b)
+                if made and inside:
+                    which = (t*BILLOW_BLOCKS+min(int((z-oz)/size*f64(BILLOW_BLOCKS)),BILLOW_BLOCKS-1))*BILLOW_BLOCKS+min(int((x-ox)/size*f64(BILLOW_BLOCKS)),BILLOW_BLOCKS-1)
+                    out[which].push(b)
+    out
+
+billow_vertex = (v: BillowVertex,b: Billow,u: GroundParams) -> GroundOut:
+    gone = GroundOut(vec4(0,0,-2,1),vec3(0,0,0),vec3(0,1,0),vec4(0,0,0,0))
+    tier = b.form.z
+    crown = if tier > 1.5: 1.0 else: 0.0
+    sd = b.seed.xyz
+    local = b.at.xz-u.origin.xz
+    # (a dome rises by its distance over the ground: the same measure the tiles' detail goes by)
+    reach = length(local-u.cam.xz)
+    e = billow_emerge(tier,reach,mix(0.5,sd.y,crown))
+    if e <= 0.0: return gone
+    # (a near crown's lobes grow out of it as the eye nears, each to its own size)
+    lobed = if dot(v.lobe,v.lobe) > 0.0: 1.0 else: 0.0
+    grown = lobed*clamp((BILLOW_LOBE_END-reach)/50.0,0.0,1.0)*(0.72+0.5*fract(sd.z*31.0+v.turn*3.3+v.dome.y*5.1))
+    unit = v.dome+v.lobe*grown
+    # (no two alike: turned about its axis by its draw, its outline in three and five lobes, as a
+    # crown's or a clump's is: lobes and the creases between them, not corners; a crown longer one
+    # way than the other, its top leaning off its centre. The masses stay as billow_top has
+    # them, so what stands on them stands on them)
+    a = sd.x*TAU
+    long = 1.0+0.5*(sd.y-0.5)*crown
+    drawn = vec2(unit.x*long,unit.z/long)
+    turned = vec2(drawn.x*cos(a)-drawn.y*sin(a),drawn.x*sin(a)+drawn.y*cos(a))
+    th = v.turn
+    lobe = 0.5+0.3*sin(3.0*th+sd.x*40.0)+0.2*sin(5.0*th+sd.y*40.0)
+    ring = if v.dome.y < 0.99: 1.0 else: 0.0
+    lean = (vec2(fract(sd.x*97.0),fract(sd.y*61.0))-vec2(0.5,0.5))*0.5*unit.y*crown
+    off = (turned*(1.0+(lobe-0.5)*mix(0.12,0.44,crown)*ring)+lean)*b.at.w
+    # (a crown is one body on the ground's slope; a mass lies over the land as the canopy does,
+    # swelling up out of the sheet where the canopy has risen and lying back into it toward the
+    # wood's edge: the rise under each of its vertices, by its slope from the centre's)
+    rise = clamp(b.seed.w+dot(b.lie.zw,off)*(1.0-crown),0.0,1.0)
+    k = mix(billow_k(tier,rise),1.0,crown)
+    ground = b.at.y+dot(b.lie.xy,off)
+    d = length(vec3(local.x+off.x,ground,local.y+off.y)-u.cam)
+    # (what it stands on: the sheet, and the larger sizes' domes as they stand there)
+    base = ground+CANOPY_TOP*rise*b.form.w*canopy_grow(d)*mix(1.0,BILLOW_SHEET,billow_emerge(0.0,d,0.5))*b.seat.w+0.6
+    # (far off the masses and clumps stand taller, up to twice: a few metres of relief are
+    # nothing at a kilometre and a half, and it is there they must carry the wood's volume;
+    # nearer they settle to their size under the crowns)
+    far = billow_far(reach)
+    if tier > 0.5: base += b.seat.x*billow_emerge(0.0,reach,0.5)*far
+    if tier > 1.5: base += b.seat.y*billow_emerge(1.0,reach,0.5)*far
+    tall = b.form.x*k
+    y = base+mix((v.dome.y*(b.form.x+b.form.y)-b.form.y)*k*e*far-0.3,unit.y*(b.form.x+b.form.y)*e*(1.0+0.16*sin(2.0*th+sd.z*40.0)*ring)-b.form.y,crown)
+    world = vec3(local.x+off.x,y,local.y+off.y)
+    curved = world
+    curved.y -= world_drop(world.xz-u.cam.xz)
+    # (a lobe is lit as its own rounded body: its normal out from where it sits, its foot in the
+    # crease between it and its neighbours)
+    sat = normalize(v.dome)
+    own = normalize(v.lobe*2.2+sat*0.3)
+    form = mix(vec3(unit.x,v.dome.y*0.85+0.25,unit.z),own,lobed)
+    spun = vec2(form.x*cos(a)-form.z*sin(a),form.x*sin(a)+form.z*cos(a))
+    o = GroundOut(u.view_proj*vec4(curved,1),world,normalize(vec3(spun.x,form.y,spun.y)),vec4(sd,tier))
+    # (the vertex on the unit dome, and the dome's own surface normal there)
+    o.relief_normal = vec3(turned.x,unit.y,turned.y)
+    flat = vec3(spun.x/b.at.w,form.y/max((tall+b.form.y)*e,0.5),spun.y/b.at.w)
+    o.cliff = vec4(normalize(mix(flat,vec3(spun.x,form.y,spun.y),lobed)),b.at.w*mix(1.0,0.5,lobed))
+    # (x: the outline's lobe or crease there; y: how far a lobe has grown)
+    o.working = vec4(mix(1.0,lobe,ring),lobed*clamp(grown*2.0,0.0,1.0),0,0)
+    o.land = b.seat.z
+    o.orchard = rise
+    o.wall_sun = mix(v.dome.y,clamp(dot(v.lobe,sat)/0.4,0.0,1.0)*(0.5+0.5*sat.y),o.working.y)
+    # (how far it has swelled there: a mass is not drawn where it lies flat)
+    o.tile_level = k
+    o.river = land_aerial_terms(world,u.cam,u.fog,u.land_steps)
+    o
+
+billow_fragment = (i: GroundOut,u: GroundParams) -> vec4:
+    d = length(i.world-u.cam)
+    q = i.world.xz+u.origin.xz
+    span = f32(CANOPY_CELLS)*CANOPY_CELL
+    if u.shell.w < 0.0: discard()
+    tier = i.tint.w
+    stand = i.land
+    if i.tile_level < 0.04: discard()
+    # (the crowns painted on a mass: the sheet's, at the octave the distance asks for, as on the sheet)
+    # (a crown-sized dome is the crown: no painted crowns on it)
+    own = if tier > 1.5: 1.0 else: 0.0
+    s = vec4(0.5,0.5,0.8,0.5)
+    if own < 0.5:
+        level = clamp(log2(max(d/250.0,1.0)),0.0,5.0)
+        lf = floor(level)
+        l0 = lf+(if fract(level) > hash21(floor(q/(CANOPY_CELL*pow(2.0,lf+1.0)))): 1.0 else: 0.0)
+        s = sample(u.canopy,q/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61))
+    near = clamp((220.0-d)/120.0,0.0,1.0)
+    body = normalize(i.normal)
+    up = i.wall_sun
+    crown = vec3((s.x*2.0-1.0)*1.6,0.45+0.55*s.z,(s.y*2.0-1.0)*1.6)
+    # (what stands on this dome, once risen, hides it: it is then the floor of their hollows, the
+    # crowns painted on it given way to the real ones)
+    above = if tier > 1.5: 0.0 else: billow_emerge(tier+1.0,d,0.5)
+    nn = normalize(body*mix(0.9,1.4,own)+crown*mix(0.8,0.25,max(own,above)))
+    # near, a dome painted as a crown is (src/crowns.jo crown_fs): a few big leaf masses, each with
+    # its lit and its shadow side and a crease between; the leaf tufts in them, which break the
+    # dome's outline into leaves; small dabs of light
+    mass: f32 = 0.6
+    tuft: f32 = 0.5
+    dab: f32 = 0.0
+    # (the masses hold on to the middle distance, so a crown there is still a cluster of lit and
+    # shaded masses, not a smooth dome)
+    massed = clamp((800.0-d)/300.0,0.0,1.0)
+    hn = normalize(i.relief_normal+vec3(0,0.05,0))
+    face = crown_face(hn)
+    seed = i.tint.x
+    # (the masses about a crown's leaf masses in size whatever the dome's)
+    kk = (0.08+0.03*fract(seed*3.7))*max(i.cliff.w/2.6,1.0)
+    if massed > 0.0:
+        tc4 = sample(u.pigment,face.xy*kk+vec2(seed*0.31,seed*0.57))
+        dvec = tc4.xy*2.0-vec2(1,1)
+        # (deep pockets of shade between the masses, not thin creases: a crown is leaf masses
+        # with air between them)
+        mass = mix(0.6,1.0-clamp((length(dvec)-0.36)/0.3,0.0,1.0)*0.7,massed)
+        tn = normalize(nn*0.5+crown_face_axis(face.z,0)*dvec.x+crown_face_axis(face.z,1)*dvec.y)
+        nn = normalize(mix(nn,tn,0.58*massed))
+    v = normalize(i.world-u.cam)
+    # (edge-on by the dome's rounded body, not its low true surface: seen from the side a low
+    # dome is edge-on all over, and would be cut away whole)
+    ndv = dot(body,v)
+    edge = 1.0-ndv*ndv
+    # (the outline: a few big scallops, the leaf masses' own, fixed to the dome: where its side
+    # turns from the eye it ends early or late by a smooth noise, and the hollow behind shows)
+    outline = clamp((600.0-d)/250.0,0.0,1.0)
+    if outline > 0.0 and edge > 0.5 and u.shell.x < 0.5:
+        lump = sample(u.pigment,face.xy*(kk*0.45)+vec2(seed*0.73,seed*0.37)).w
+        if edge > mix(1.0,0.62+0.44*lump,outline): discard()
+    if near > 0.0:
+        t2 = sample(u.pigment,face.xy*(kk*3.2)+vec2(seed*0.83,seed*0.19))
+        d2 = length(t2.xy*2.0-vec2(1,1))
+        tuft = mix(0.5,1.0-clamp((d2-0.3)/0.4,0.0,1.0),near)
+        dab = step(0.82,t2.z)*clamp((tuft-0.65)*5.0,0.0,1.0)*step(0.45,t2.w)*near
+        # (the outline: where the dome's surface turns edge-on to the eye, only the tufts' cores)
+        if edge > 0.6 and tuft < (edge-0.6)*2.2*near-0.1*crown_dither(i.pos.xy): discard()
+    # (the pockets between the masses are in shade whatever the sun: they are depth; so is a dome
+    # under the crowns that have risen on it)
+    ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.6)+(tuft-0.5)*0.4-(1.0-mass)*0.3*massed-above*0.3
+    # (the dome's top open to the sky, its foot down in the hollow between its neighbours)
+    open = clamp(up*1.5-0.1,0.0,1.0)
+    occl = (0.16+0.84*open)*mix(0.45+0.55*s.z,0.8+0.2*s.z,own)*(0.4+0.6*mass)*1.3*mix(1.0,0.85+0.15*tuft,near)*(0.72+0.28*i.working.x)*(1.0-0.5*above)
+    # (a crown its own green: the wood's range from a dark pine green to a lighter olive)
+    tone = mix(fract(s.w*7.13),i.tint.z,own)
+    col = mix(vec3(0.17,0.31,0.18),vec3(0.33,0.43,0.22),tone)*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
+    c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.45,1.0,clamp((300.0-d)/250.0,0.0,1.0)))
+    # (near, dabs of pale light on the lit tufts just past the light's edge, as on a crown)
+    if dab > 0.0:
+        s2 = clamp((ndl+(occl-0.6)*0.5-0.46)*12.0+0.5,0.0,1.0)*clamp(occl*1.6,0.0,1.0)
+        rim = clamp(1.0-abs(ndl-0.64)*6.0,0.0,1.0)*clamp((occl-0.55)*5.0,0.0,1.0)
+        c = mix(c,vec3(0.80,0.76,0.52)*u.sun,dab*s2*rim*0.75)
+    vec4(land_aerial_apply(c,i.river,u.haze)*paint_paper(i.pos.xy),1)
+
+billow_fragment_log = (i: GroundOut,u: GroundParams) -> vec4:
+    set_depth(world_depth_encode(1.0/i.pos.w))
+    billow_fragment(i,u)
+
+# The domes' mesh: a top vertex and its rings (two or three), each ring turned half a step from
+# the last; a near crown's with its lobes.
+billow_mesh = (seg: int,rings: int,lobed: bool = false) -> Mesh:
+    vs: BillowVertex[]
+    ids: u32[]
+    rr: f32[] = if rings == 1: [1.0,1.0,1.0] else: if rings == 2: [0.62,1.0,1.0] else: [0.5,0.87,1.0]
+    yy: f32[] = if rings == 1: [0.0,0.0,0.0] else: if rings == 2: [0.785,0.0,0.0] else: [0.866,0.49,0.0]
+    none3 = vec3(0,0,0)
+    vs.push(BillowVertex(vec3(0,1,0),none3,0.0))
+    loop k in 0..rings:
+        loop m in 0..seg:
+            a = (f32(m)+0.5*f32(k))*f32(TAU)/f32(seg)
+            vs.push(BillowVertex(vec3(cos(a)*rr[k],yy[k],sin(a)*rr[k]),none3,a))
+    loop m in 0..seg:
+        m1 = (m+1)%seg
+        ids.push(u32(0)); ids.push(u32(1+m1)); ids.push(u32(1+m))
+        loop k in 0..rings-1:
+            a0 = 1+k*seg+m; a1 = 1+k*seg+m1; c0 = a0+seg; c1 = a1+seg
+            ids.push(u32(a0)); ids.push(u32(a1)); ids.push(u32(c0))
+            ids.push(u32(a1)); ids.push(u32(c1)); ids.push(u32(c0))
+    if lobed:
+        # (a near crown's lobes: seven smaller domes on it, one near its top and six about its
+        # shoulder, each a top vertex and two rings of five, standing out along the dome's
+        # surface there; unequal in place and size)
+        loop l in 0..BILLOW_LOBES:
+            la = (f32(l)+0.37*f32(l%2))*f32(TAU)/6.0
+            tilt: f32 = if l == 6: 0.16 else: 0.80+0.14*f32(l%3)-0.1
+            at = vec3(sin(tilt)*cos(la),cos(tilt),sin(tilt)*sin(la))
+            t1 = normalize(cross(vec3(0.3,1,0.2),at))
+            t2 = cross(t1,at)
+            size: f32 = if l == 6: 0.56 else: 0.44+0.05*f32((l*5)%3)
+            sit = at*0.84
+            lb = vs.len()
+            vs.push(BillowVertex(sit,at*(size*0.86),la))
+            loop k in 0..2:
+                r = if k == 0: 0.64 else: 1.0
+                h = if k == 0: 0.77 else: 0.0
+                loop m in 0..5:
+                    a = (f32(m)+0.5*f32(k))*f32(TAU)/5.0
+                    vs.push(BillowVertex(sit,(t1*cos(a)+t2*sin(a))*(r*size)+at*(h*size*0.86),la))
+            loop m in 0..5:
+                m1 = (m+1)%5
+                ids.push(u32(lb)); ids.push(u32(lb+1+m1)); ids.push(u32(lb+1+m))
+                a0 = lb+1+m; a1 = lb+1+m1; c0 = a0+5; c1 = a1+5
+                ids.push(u32(a0)); ids.push(u32(a1)); ids.push(u32(c0))
+                ids.push(u32(a1)); ids.push(u32(c1)); ids.push(u32(c0))
+    mesh(vs,ids)
+
+const BILLOW_LISTS = 6              # (the masses, the far clumps, the clumps, the far crowns, the crowns, the near crowns)
+const BILLOW_MID_END = 320.0        # (beyond, a crown a cone of eight sides)
+const BILLOW_CLUMP_END = 700.0      # (beyond, a clump a cone of six sides)
+billow_sh: Shader
+billow_ready = false
+billow_meshes: Mesh[] = []
+# (the gathered domes on the GPU, a buffer a list; each given again only when the tiles it is
+# gathered from change)
+billow_buffers: InstanceBuffer[Billow][] = []
+billow_marks: int[] = []
+billow_count = 0
+# What a frame gathers: for each list the domes it is drawn from (a tile's slot, or an old
+# island's patch as -1 less its place in island_billows; and which of its lists), and a sum over
+# them, to tell a change.
+billow_from: (int,int)[][] = []
+billow_sums: int[] = []
+billow_lobes = true
+
+billow_gather_start = ():
+    global billow_from,billow_sums,billow_lobes
+    billow_from = [loop i in 0..BILLOW_LISTS: []]
+    billow_sums = [loop i in 0..BILLOW_LISTS: 0]
+    # (timing only: AEGEAN_BILLOW_LOBES=0 the near crowns without their lobes)
+    billow_lobes = (env("AEGEAN_BILLOW_LOBES") ?? "") != "0"
+
+# Which of a square's lists hold any domes.
+billow_held = (lists: Billow[][]) -> int[]: [loop k in 0..lists.len(): if lists[k].len() > 0: k]
+
+# The domes over a square of land (a tile, or an old island's patch: ox, oz, size, its ground
+# between low and high; has: which of its lists hold any) into the frame's gathering: each size
+# within its reach, block by block, the blocks in view.
+billow_gather = (source: int,key: int,has: int[],ox: f64,oz: f64,size: f64,low: f64,high: f64,cam: vec3,planes: vec4[]):
+    global billow_from,billow_sums
+    near_edge = world_distance(ox,oz,size,cam)
+    if near_edge >= f64(billow_reach(0.0))+50.0: return
+    part = size/f64(BILLOW_BLOCKS)
+    loop list in has:
+        tier = list/(BILLOW_BLOCKS*BILLOW_BLOCKS); block = list%(BILLOW_BLOCKS*BILLOW_BLOCKS)
+        reach = f64(billow_reach(f32(tier)))*(if tier == 2: 1.18 else: 1.0)+50.0
+        if near_edge >= reach: continue
+        bx = ox+f64(block%BILLOW_BLOCKS)*part; bz = oz+f64(block/BILLOW_BLOCKS)*part
+        away = world_distance(bx,bz,part,cam)
+        if away >= reach or not billow_block_visible(bx,bz,part,low,high,cam,planes): continue
+        which = if tier == 0: 0 else: if tier == 1: (if away < BILLOW_CLUMP_END: 2 else: 1) else: if away < BILLOW_LOBE_END and billow_lobes: 5 else: if away < BILLOW_MID_END: 4 else: 3
+        billow_from[which].push((source,list))
+        billow_sums[which] += key*61+list*3+1
+
+# ---------------- the old islands' canopy ----------------
+# The old islands' woods are the same domes, made patch by patch (448 m) from the islands' own
+# samples (the stand cover as their ground paints it, src/terrain_lod.jo island_working) the
+# first time a patch is in reach, one patch a frame. Their woods are small and their land is
+# drawn patch by patch at its own detail, so no sheet is lifted under them: the domes stand on
+# the ground, whose paint of the same crowns is the floor between them.
+island_billows: Billow[][][] = []
+island_billow_has: int[][] = []
+island_billow_at: {int:int} = {}
+island_billow_gather = (cam: vec3,planes: vec4[]):
+    global island_billows,island_billow_has,island_billow_at
+    made = false
+    reach = f64(billow_reach(0.0))+50.0
+    loop ti in 0..terrain_tiles.len():
+        tile = terrain_tiles[ti]
+        nx = tile.heights.width; nz = tile.heights.height
+        tx = max(max(tile.x-f64(cam.x),f64(cam.x)-tile.x-f64(nx-1)*14.0),0.0); tz = max(max(tile.z-f64(cam.z),f64(cam.z)-tile.z-f64(nz-1)*14.0),0.0)
+        if tx*tx+tz*tz >= reach*reach: continue
+        loop pi in 0..tile.patches.len():
+            if pi >= tile.wooded.len() or not tile.wooded[pi]: continue
+            p = tile.patches[pi].data
+            px = tile.x+f64(p.x)*14.0; pz = tile.z+f64(p.z)*14.0
+            if world_distance(px,pz,448.0,cam) >= reach or not land_visible(tile,p,cam,planes): continue
+            key = ti*4096+pi
+            index = island_billow_at.get(key,-1)
+            if index < 0:
+                if made: continue
+                made = true
+                lists = billow_make(tile.x,tile.z,14.0,nx,nz,px,pz,448.0,3,0.0,tile.cpu_heights,tile.stand,tile.rise)
+                island_billow_has.push(billow_held(lists))
+                island_billows.push(lists)
+                index = island_billows.len()-1
+                island_billow_at[key] = index
+            billow_gather(-1-index,900000000+key,island_billow_has[index],px,pz,448.0,p.low,p.high,cam,planes)
+
+draw_world_billows = (params: GroundParams):
+    global billow_sh,billow_ready,billow_meshes,billow_buffers,billow_marks,billow_count
+    from = billow_from; marks = billow_sums
+    if not billow_ready:
+        lists: Billow[][] = [loop i in 0..BILLOW_LISTS: []]
+        billow_sh = make_shader(world_shader(shader(billow_vertex,billow_fragment),shader(billow_vertex,billow_fragment_log)),false)
+        # (far off a dome is a few pixels: a cone of six or eight sides, its normals a dome's; a
+        # clump or a crown nearer eight-sided with a ring under its top; a near crown
+        # twelve-sided with two, and its own lobes. The laptop's GPU pays by the vertex)
+        billow_meshes = [billow_mesh(6,1),billow_mesh(6,1),billow_mesh(8,2),billow_mesh(8,1),billow_mesh(8,2),billow_mesh(12,3,true)]
+        billow_buffers = [loop i in 0..BILLOW_LISTS: instance_buffer(lists[i])]
+        billow_marks = [loop i in 0..BILLOW_LISTS: 0]
+        billow_ready = true
+    p = params
+    # (the leaf tufts' sheet in the pigment sheet's place: the domes are painted as crowns are)
+    crown_init()
+    p.pigment = crown_tuft_tex
+    # (timing only: AEGEAN_BILLOWS=mask, a bit a list; AEGEAN_FOLIAGE_OFF=billowfs their
+    # fragments discarded at once)
+    shown = to_int(env("AEGEAN_BILLOWS") ?? "") ?? 63
+    p.shell = vec4(0,0,0,if foliage_off("billowfs"): -1.0 else: 0.0)
+    billow_count = 0
+    # (the crowns first, then what they stand on: the nearer, upper domes hide the lower)
+    loop back in 0..BILLOW_LISTS:
+        which = BILLOW_LISTS-1-back
+        if marks[which] != billow_marks[which]:
+            gathered: Billow[] = []
+            loop source in from[which]: gathered += if source.0 >= 0: world_billows[source.0][source.1] else: island_billows[-1-source.0][source.1]
+            set_instances(billow_buffers[which],gathered)
+            billow_marks[which] = marks[which]
+        if ((shown >> which) & 1) == 0 or billow_buffers[which].count == 0: continue
+        billow_count += billow_buffers[which].count
+        # (x: the near crowns, whose own lobes are their outline: no scallops cut from the dome under them)
+        p.shell.x = if which == BILLOW_LISTS-1: 1.0 else: 0.0
+        draw_instanced(billow_sh,billow_meshes[which],billow_buffers[which],p)
+
 # (the low tier's: its own canopy, compiled without the full one)
 world_fragment_low_log = (i: GroundOut, u: GroundParams) -> vec4:
     set_depth(world_depth_encode(1.0 / i.pos.w))
@@ -913,7 +1431,7 @@ draw_world_terrain = (L: Light,t: f64):
     origin = render_origin(cam)
     batches: WorldInstance[][] = [loop i in 0..16: []]
     shells: WorldInstance[][] = [loop i in 0..16: []]
-    shell_start = render_quality.grove_distance
+    billow_gather_start()
     coastal: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
     planes = land_planes(vp)
     focal = f64(length(vec3(vp[0].y,vp[1].y,vp[2].y)))*f64(screen_height())*0.5/render_quality.terrain_error
@@ -925,15 +1443,22 @@ draw_world_terrain = (L: Light,t: f64):
         ox,oz = world_tile_origin(node.x,node.z,node.level)
         if coast_enabled and node.level == 0 and node.lod == 0.0 and node.low < 192.0 and node.high > -10.0 and coast_patch_near(ox,oz,224.0,cam,focal):
             limits = vec4(if edges.x > 0.0: 0.0 else: 6.0,if edges.y > 0.0: 0.0 else: 6.0,if edges.z > 0.0: 0.0 else: 6.0,if edges.w > 0.0: 0.0 else: 6.0)
-            coast_add_patch(coastal,node.cpu_heights,17,17,ox,oz,0,0,16,vec2(f32(slot%32*17),f32(slot/32*17)),cam,origin,focal,planes,limits,source_id=node.key)
-            continue
         instance = WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),0),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level)))
-        batches[mask].push(instance)
-        # (the far canopy's shells: tiles reaching past the crowns, below the treeline)
+        # (the far canopy's shells: tiles reaching past the crowns, below the treeline; over the
+        # coast's refined lowland too, the shells lifted off the plain tile, within a metre of it)
         size = 14.0*16.0*f64(1<<node.level)
         dx = max(max(ox-f64(cam.x),f64(cam.x)-ox-size),0.0); dz = max(max(oz-f64(cam.z),f64(cam.z)-oz-size),0.0)
         near_edge = sqrt(dx*dx+dz*dz)
-        if node.wooded > 0.05 and node.low < 2200.0 and near_edge > shell_start-300.0 and near_edge < WORLD_SHELL_END: shells[mask].push(instance)
+        # (a tile wholly nearer than where the shells begin would only rasterize discarded pixels)
+        fx = max(abs(ox-f64(cam.x)),abs(ox+size-f64(cam.x))); fz = max(abs(oz-f64(cam.z)),abs(oz+size-f64(cam.z)))
+        far_edge = sqrt(fx*fx+fz*fz)
+        if node.wooded > 0.05 and node.low < 2200.0 and near_edge < CANOPY_GROW_FAR+600.0: shells[mask].push(instance)
+        if slot < world_billow_has.len() and world_billow_has[slot].len() > 0: billow_gather(slot,node.key,world_billow_has[slot],ox,oz,size,node.low,node.high,cam,planes)
+        if coast_enabled and node.level == 0 and node.lod == 0.0 and node.low < 192.0 and node.high > -10.0 and coast_patch_near(ox,oz,224.0,cam,focal):
+            limits = vec4(if edges.x > 0.0: 0.0 else: 6.0,if edges.y > 0.0: 0.0 else: 6.0,if edges.z > 0.0: 0.0 else: 6.0,if edges.w > 0.0: 0.0 else: 6.0)
+            coast_add_patch(coastal,node.cpu_heights,17,17,ox,oz,0,0,16,vec2(f32(slot%32*17),f32(slot/32*17)),cam,origin,focal,planes,limits,source_id=node.key)
+            continue
+        batches[mask].push(instance)
     params = GroundParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.sky_top,L.shade,air_down(L.haze,f64(scene_camera().y),tweaks.brighter_ocean),f32(L.fog_density),f32(t),meadow_wind(wind_now,origin),meadow_gust_w(origin),origin,world_heights,world_materials,scene_flow,vec4(0,0,0,0),vec4(0,0,0,0))
     params.pigment = paint_surface()
     params.canopy = canopy_sheet()
@@ -967,14 +1492,24 @@ draw_world_terrain = (L: Light,t: f64):
     zone_end()
     if world_contact_slots.len()==9:params.contact_rect=world_contact_rect-vec4(origin.x,origin.z,origin.x,origin.z)
     world_draws = 0; world_triangles = 0
-    loop i in 0..16:
-        if batches[i].len() == 0: continue
-        grid = terrain_grids[16+i]
-        draw_instanced(if params.meadow_c.w > 0.0: world_study_shader() else: world_ground_sh,grid,batches[i],params)
-        world_draws += 1; world_triangles += grid.index_count/3*batches[i].len()
-    zone("canopy shells")
-    if not foliage_off("shells"): draw_world_shells(shells,params,f32(shell_start))
-    zone_end()
+    # (the woods' canopy before the ground under it: the ground's pixels a wood hides are then
+    # never shaded; AEGEAN_FOLIAGE_OFF=canopyfirst draws it after, for timing)
+    first = not foliage_off("canopyfirst")
+    loop turn in 0..2:
+        if (turn == 0) == first:
+            zone("canopy")
+            if not foliage_off("shells"):
+                if not foliage_off("billows"):
+                    island_billow_gather(cam,planes)
+                    draw_world_billows(params)
+                draw_world_shells(shells,params)
+            zone_end()
+        else:
+            loop i in 0..16:
+                if batches[i].len() == 0: continue
+                grid = terrain_grids[16+i]
+                draw_instanced(if params.meadow_c.w > 0.0: world_study_shader() else: world_ground_sh,grid,batches[i],params)
+                world_draws += 1; world_triangles += grid.index_count/3*batches[i].len()
     if startup_aegean_lod_stats != none and world_frame%60 == 1:
         print("WORLD tiles={world_selected.len()} cache={world_cache.len()}/{WORLD_CACHE_SLOTS} generated={world_generated} upload={world_uploaded} draws={world_draws} triangles={world_triangles}")
     zone_end()
