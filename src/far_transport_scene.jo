@@ -16,34 +16,67 @@ far_scene_hull_radius = (kind: VesselKind) -> f64:
     spec=vessel_spec(kind)
     sqrt(spec.length*spec.length+spec.beam*spec.beam)*0.5
 
-# Several reciprocal services can share an abstract anchorage. Admit distinct physical
-# footprints, rather than drawing/colliding several hulls in the same berth. Waiting
-# services retain their actual goods and abstract ownership; no offset/teleport is made.
+const FAR_SCENE_REACH = 12000.0      # (metres from the observer: a coaster takes a hull inside this)
+const FAR_SCENE_LEAVE = 12500.0      # (and gives it up outside this: no in and out at the edge)
+const FAR_SCENE_CLEAR = 4.0          # (metres of water wanted round a hull newly taken)
+
+# Where a far ship is at this tick. One the scene moves (a lease) is there already. One the
+# world's minute moves was put where it was at its journey's last tick and has sailed on since,
+# up to a world minute (13 m at a coaster's speed): compared where the minute left it, a ship
+# 26 m astern of a leased one seemed to drop back clear of it and close up again every minute.
+far_scene_ship_now = (w: World, v: FarVehicle) -> vec3:
+    if v.scene_owned or v.journey<0 or v.battle>=0 or v.motion_blocked!="" or not (v.journey in w.far.journeys): return v.pos
+    age=w.tick-w.far.journeys[v.journey].last_tick
+    # (a journey nothing has moved for two minutes is held where it is, whatever its velocity says)
+    if age<=0 or age>240: return v.pos
+    v.pos+v.velocity*f32(f64(age)/60.0)
+
+# Coasters put out a world minute apart and sail the same water 13 m apart, three or four from
+# one port, and several reciprocal services can share an abstract anchorage: the far economy
+# keeps no distance between its ships. The scene gives hulls only to ships whose footprints are
+# distinct, rather than drawing and colliding several in the same water; the others keep their
+# actual goods and abstract ownership, and none is offset or teleported.
+# Which of them have the hulls must not change while they sail in company. A hull once taken is
+# kept until its ship leaves the reach or actually fouls another hull; a ship without one takes
+# one only clear of every hull kept. (Chosen afresh each quarter second from the nearest outward,
+# the choice changed with every turn of the observer and every world minute: two hulls 39 m apart
+# became the one ship between them and then two again, and one 26 m off came and went.)
 # (`hidden`: a ship the scene stands another hull in for, radio_help.jo's rescuer: not drawn)
 far_scene_ship_candidates = (fleet: VesselFleet, w: World, observer: vec3, max_ships: int, hidden: int = -1) -> int[]:
     if max_ships<=0: return []
-    candidates: int[]
+    leased: {int: bool}
+    occupied: (vec3,f64)[]
+    loop ship in fleet.ships:
+        if ship.id>=FAR_VESSEL_BASE and ship.id<FAR_VESSEL_BASE+2048: leased[ship.id-FAR_VESSEL_BASE]=true
+        else if ship.status!=.sunk: occupied.push((ship.position,far_scene_hull_radius(ship.kind)))
+    candidates: int[]; now: {int: vec3}; away: {int: f64}
     loop v in w.far.vehicles:
-        if v.kind==.ship and v.hull>0 and v.id!=hidden and length(v.pos-observer)<12000: candidates.push(v.id)
+        # (a minute's sailing at most from where it was put: the far ones need no nearer look)
+        if v.kind!=.ship or v.hull<=0 or v.id==hidden or f64(length(v.pos-observer))>FAR_SCENE_LEAVE+50.0: continue
+        at=far_scene_ship_now(w,v); d=f64(length(at-observer))
+        if d<(if v.id in leased: FAR_SCENE_LEAVE else: FAR_SCENE_REACH): candidates.push(v.id); now[v.id]=at; away[v.id]=d
     positions=w.far.vehicles
     # Keep both sides of an active nearby contact ahead of idle traffic.
     last_contact=w.war.next_contact
-    candidates.sort((id: int): (
-        if positions[id].battle>=0 and length(positions[id].pos-observer)<6000: positions[id].battle else: last_contact,
-        length(positions[id].pos-observer),id))
-    occupied: (vec3,f64)[]
-    loop ship in fleet.ships:
-        if (ship.id<FAR_VESSEL_BASE or ship.id>=FAR_VESSEL_BASE+2048) and ship.status!=.sunk:
-            occupied.push((ship.position,far_scene_hull_radius(ship.kind)))
-    chosen: int[]; radius=far_scene_hull_radius(.trehantiri)
-    loop id in candidates:
+    nearest=(id: int) -> (int,f64,int): (if positions[id].battle>=0 and away[id]<6000: positions[id].battle else: last_contact,away[id],id)
+    candidates.sort(nearest)
+    # The order hulls are given in: a nearby contact's two sides, then the hulls already out,
+    # then the ships without one; each nearest first.
+    order=candidates
+    order.sort((id: int): (if positions[id].battle>=0 and away[id]<6000: 0 else: if id in leased: 1 else: 2,nearest(id)))
+    chosen: {int: bool}; radius=far_scene_hull_radius(.trehantiri)
+    loop id in order:
+        margin=if id in leased: 0.0 else: FAR_SCENE_CLEAR
         clear=true
         loop circle in occupied:
-            if f64(length(positions[id].pos.xz-circle.0.xz))<radius+circle.1+4.0: clear=false; break
+            if f64(length(now[id].xz-circle.0.xz))<radius+circle.1+margin: clear=false; break
         if not clear: continue
-        chosen.push(id); occupied.push((positions[id].pos,radius))
-        if chosen.len()>=min(max_ships,FAR_NEAR_SHIPS): break
-    chosen
+        chosen[id]=true; occupied.push((now[id],radius))
+    # (more of them than the scene's bound: the nearest have the hulls, as before)
+    result: int[]
+    loop id in candidates:
+        if id in chosen and result.len()<min(max_ships,FAR_NEAR_SHIPS): result.push(id)
+    result
 
 sync_far_vessels = (fleet: mut VesselFleet, w: mut World, observer: vec3, max_ships: int = FAR_NEAR_SHIPS, refresh: bool = true, hidden: int = -1):
     if not w.far.populated: return
@@ -55,7 +88,7 @@ sync_far_vessels = (fleet: mut VesselFleet, w: mut World, observer: vec3, max_sh
     else:
         loop ship in fleet.ships:
             id=ship.id-FAR_VESSEL_BASE
-            if candidates.len()<min(max_ships,FAR_NEAR_SHIPS) and id>=0 and id!=hidden and id<w.far.vehicles.len() and w.far.vehicles[id].hull>0 and length(w.far.vehicles[id].pos-observer)<12000: candidates.push(id)
+            if candidates.len()<min(max_ships,FAR_NEAR_SHIPS) and id>=0 and id!=hidden and id<w.far.vehicles.len() and w.far.vehicles[id].hull>0 and length(w.far.vehicles[id].pos-observer)<FAR_SCENE_LEAVE: candidates.push(id)
     old: int[]
     loop ship in fleet.ships:
         if ship.id>=FAR_VESSEL_BASE and ship.id<FAR_VESSEL_BASE+2048 and not ((ship.id-FAR_VESSEL_BASE) in candidates): old.push(ship.id)

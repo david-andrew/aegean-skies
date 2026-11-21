@@ -1,0 +1,343 @@
+# The paint shop as a place: an open-fronted workshop on a plank deck at the water's edge, in each
+# harbour town that has a mechanic. A lean-to against two plank walls, open to the sea: a bench of
+# paint pots, tins on a shelf, the colours on a board, a trestle, drums and a ladder; in front, an
+# apron and a berth on the water where the aircraft being painted lies nose-in. Built from boxes in
+# the shed's own frame (local +z out to sea, +x along the shore, the deck's landward edge at
+# z = 0); the deck is published as a quay, the walls and bench as solids.
+#
+# Pure geometry and places: the game sites one in a town (paint_shed_site), draws it, makes its
+# deck walkable, publishes its venue (where the mechanic works) and moors the aircraft at its
+# berth while she is painted (src/paint_shop.jo has the job).
+
+use 'look.jo'
+use 'objects.jo'
+use 'life_types.jo'
+use 'town_sites.jo'
+use 'markings.jo'
+use 'decals.jo'
+
+const SHED_DECK = 1.2               # the deck's top: the quays' height
+const SHED_HALF = 7.0               # half the deck's width along the shore
+const SHED_DEPTH = 9.5              # the deck, from its landward edge out to the water
+const SHED_WALL_X = -6.5            # the lean-to: its side wall, its open side, its back wall and open front
+const SHED_OPEN_X = 1.5
+const SHED_BACK_Z = 0.5
+const SHED_FRONT_Z = 5.5
+const SHED_BERTH_GAP = 1.2          # clear water between the deck's edge and the aircraft's nose
+PAINT_SHED_VENUE = "paint-shop"     # (a LifeVenue's key begins with this: the town's mechanic works there)
+
+_S_WOOD = rgb(0.55, 0.42, 0.29)
+_S_WOOD2 = rgb(0.6, 0.47, 0.33)
+_S_PILE = rgb(0.28, 0.21, 0.15)
+_S_WALL = rgb(0.52, 0.47, 0.38)
+_S_WALL2 = rgb(0.47, 0.42, 0.34)
+_S_ROOF = rgb(0.45, 0.25, 0.2)
+_S_ROOF2 = rgb(0.5, 0.29, 0.22)
+_S_IRON = rgb(0.2, 0.21, 0.22)
+_S_TIN = rgb(0.62, 0.63, 0.62)
+_S_CLOTH = rgb(0.83, 0.8, 0.7)
+
+struct PaintShed:
+    ok = false
+    place = -1                      # the town it stands in
+    frame: mat4 = mat4()            # local to world
+    origin: vec3 = vec3(0, 0, 0)
+    mesh: Mesh = Mesh()
+    quays: Quay[] = []              # the deck, to walk on
+    painter: vec3 = vec3(0, 0, 0)   # where the painter stands (world, on the deck), and the way they face
+    facing: vec3 = vec3(0, 0, 1)
+    bench: vec3 = vec3(0, 0, 0)     # the bench of pots (world): the workshop's thing to tap
+    stand: vec3 = vec3(0, 0, 0)     # where one stands to ask at the workshop
+    bollard: vec3 = vec3(0, 0, 0)   # the top of the bollard the berth's line goes to
+    out_heading = 0.0               # the heading of local +z (out to sea)
+
+_sl = (s: PaintShed, p: vec3) -> vec3: transform_point(s.frame, p)
+
+# ---------------- where it stands ----------------
+
+# A frame at `along` metres along the shore from the town's waterfront. A port's stands off its
+# long waterfront (whose seaward edge is 3 m out from the coast point); a smaller harbour's stands
+# on the shore itself, its landward edge up the beach.
+paint_shed_frame = (tw: Town, along: f64, port: bool) -> mat4:
+    coast = vec2(tw.center.x, tw.center.z)
+    tangent = vec2(-tw.out.y, tw.out.x)
+    root = coast + tangent * f32(along) + tw.out * (if port: 2.6 else: -4.5)
+    translation(vec3(root.x, 0, root.y)) * rotation_y(atan2(f64(tw.out.x), f64(tw.out.y)))
+
+# how far a point is from a quay's deck (0 on it): the deck is a rectangle, square at its ends
+_quay_distance = (p: vec2, q: Quay) -> f64:
+    d = q.b - q.a
+    len = max(f64(length(d)), 0.001)
+    u = f64(dot(p - q.a, d)) / len
+    v = abs(f64((p.x - q.a.x) * d.y - (p.y - q.a.y) * d.x)) / len
+    du = max(0.0, max(-u, u - len)); dv = max(0.0, v - f64(q.width) * 0.5)
+    sqrt(du * du + dv * dv)
+
+# How bad a spot is (0 good): the berth must be water deep enough to float in, the deck must not
+# be buried in rising ground, and berth and deck must be clear of the docks, the moored boats, the
+# other quays, and anything else named (`keep`: points with a radius in z).
+paint_shed_score = (tw: Town, m: mat4, depth: (f64, f64) -> f64, port: bool, keep: vec3[] = []) -> f64:
+    score = 0.0
+    loop p in [vec3(0, 0, 11), vec3(-4, 0, 13), vec3(4, 0, 13), vec3(0, 0, 17), vec3(-5, 0, 20), vec3(5, 0, 20), vec3(0, 0, 23)]:
+        q = transform_point(m, p)
+        h = depth(f64(q.x), f64(q.z))
+        if h > -0.9: score += 10.0 + h
+    loop p in [vec3(-6, 0, 3), vec3(6, 0, 3), vec3(-6, 0, 9), vec3(6, 0, 9), vec3(0, 0, 6)]:
+        q = transform_point(m, p)
+        h = depth(f64(q.x), f64(q.z))
+        if h > 1.0: score += 20.0 + h * 4.0
+    if not port:
+        # (its landward edge on the beach, not hanging over deep water)
+        q = transform_point(m, vec3(0, 0, 0.5))
+        if depth(f64(q.x), f64(q.z)) < -1.2: score += 15.0
+    berth = transform_point(m, vec3(0, 0, 16)).xz
+    middle = transform_point(m, vec3(0, 0, 5)).xz
+    loop b in tw.boats:
+        if length(berth - b.at.xz) < 11.0 or length(middle - b.at.xz) < 9.5: score += 50.0
+    loop d in tw.docks:
+        if length(berth - d.xz) < 22.0: score += 80.0
+    loop q in tw.quays:
+        # (a port's shop stands off its long waterfront; any other quay near the deck is in the way)
+        if _quay_distance(berth, q) < 9.0: score += 60.0
+        if _quay_distance(middle, q) < (if port: 0.0 else: 7.5) and not (port and f64(length(q.b - q.a)) > 120.0): score += 60.0
+    loop k in keep:
+        if f64(length(berth - k.xz)) < f64(k.y) or f64(length(middle - k.xz)) < f64(k.y): score += 70.0
+    score
+
+# The spot for a town's paint shop: the first good one along the shore, nearest the main quay
+# first; none when the shore has no room.
+# Where the town's main quay's near edge is along a shed's own x (for its gangway).
+paint_shed_gangway = (tw: Town, m: mat4) -> f64:
+    if tw.quays.len() == 0: return 0.0
+    inv = inverse(m)
+    q = tw.quays[0]
+    # (the main quay runs out to sea from the coast point: where it crosses the gangway's depth)
+    a = transform_point(inv, vec3(q.a.x, 0, q.a.y)); b = transform_point(inv, vec3(q.b.x, 0, q.b.y))
+    z = (SHED_GANG_Z0 + SHED_GANG_Z1) * 0.5
+    if abs(f64(b.z - a.z)) < 0.001 or (z - f64(a.z)) * (z - f64(b.z)) > 0.0: return 0.0
+    x = f64(a.x) + (f64(b.x) - f64(a.x)) * (z - f64(a.z)) / f64(b.z - a.z)
+    if x < 0.0: x + f64(q.width) * 0.5 else: x - f64(q.width) * 0.5
+
+paint_shed_site = (tw: Town, depth: (f64, f64) -> f64, port: bool, keep: vec3[] = []) -> mat4?:
+    # (every two metres along the shore, either way from the main quay)
+    tries: f64[]
+    loop k in 0..38:
+        tries.push(12.0 + f64(k) * 2.0); tries.push(-12.0 - f64(k) * 2.0)
+    best: mat4? = none
+    best_score = 25.0
+    loop along in tries:
+        m = paint_shed_frame(tw, along, port)
+        s = paint_shed_score(tw, m, depth, port, keep)
+        if s < best_score - 0.01:
+            best_score = s; best = m
+        if s <= 0.0: break
+    best
+
+# ---------------- the building ----------------
+
+_s_planks = (vs: mut Vertex3D[], x0: f64, x1: f64, z0: f64, z1: f64):
+    z = z0
+    k = 0
+    loop z < z1 - 0.01:
+        w = min(0.5, z1 - z)
+        add_box(vs, vec3(f32((x0 + x1) * 0.5), f32(SHED_DECK - 0.08), f32(z + w * 0.5)), vec3(f32(x1 - x0), 0.16, f32(w - 0.03)), if k % 2 == 0: _S_WOOD else: _S_WOOD2)
+        z += 0.5; k += 1
+    add_box(vs, vec3(f32((x0 + x1) * 0.5), f32(SHED_DECK - 0.3), f32((z0 + z1) * 0.5)), vec3(f32(x1 - x0 - 0.1), 0.28, f32(z1 - z0 - 0.1)), _S_PILE)
+    x = x0 + 0.5
+    loop x < x1 - 0.2:
+        loop zp in [z0 + 0.6, (z0 + z1) * 0.5, z1 - 0.5]:
+            add_box(vs, vec3(f32(x), f32(SHED_DECK * 0.5 - 1.6), f32(zp)), vec3(0.3, f32(SHED_DECK + 2.6), 0.3), _S_PILE)
+        x += 3.25
+
+# an upright plank wall from (x0, z0) to (x1, z1), `high` above the deck, its boards in two shades
+_s_wall = (vs: mut Vertex3D[], x0: f64, z0: f64, x1: f64, z1: f64, high: f64):
+    len = sqrt((x1 - x0) * (x1 - x0) + (z1 - z0) * (z1 - z0))
+    n = max(1, int(len / 0.42))
+    loop k in 0..n:
+        u = (f64(k) + 0.5) / f64(n)
+        along_x = abs(x1 - x0) > abs(z1 - z0)
+        size = if along_x: vec3(f32(len / f64(n) - 0.02), f32(high), 0.07) else: vec3(0.07, f32(high), f32(len / f64(n) - 0.02))
+        add_box(vs, vec3(f32(x0 + (x1 - x0) * u), f32(SHED_DECK + high * 0.5), f32(z0 + (z1 - z0) * u)), size, if k % 2 == 0: _S_WALL else: _S_WALL2)
+
+# a pot of paint: a tin, its paint showing at the top, a drip down its side
+_s_pot = (vs: mut Vertex3D[], at: vec3, r: f64, h: f64, paint: vec4):
+    add_cylinder(vs, at, r, h, _S_TIN, 8, -1.0, mat4())
+    add_cylinder(vs, at + vec3(0, f32(h), 0), r * 0.86, 0.012, paint, 8, -1.0, mat4())
+    add_box(vs, at + vec3(f32(r * 0.75), f32(h * 0.62), f32(r * 0.6)), vec3(f32(r * 0.45), f32(h * 0.7), 0.012), paint)
+
+# a ladder from `foot` to `top`: two rails and its rungs
+_s_ladder = (vs: mut Vertex3D[], foot: vec3, top: vec3, wide: vec3):
+    d = top - foot
+    len = f64(length(d))
+    m = facing(d)
+    loop side in [-0.5, 0.5]:
+        mid = (foot + top) * 0.5 + wide * f32(side)
+        add_box(vs, vec3(0, 0, 0), vec3(0.05, 0.05, f32(len)), _S_WOOD2, translation(mid) * m)
+    rungs = int(len / 0.3)
+    loop k in 1..rungs:
+        at = foot + d * f32(f64(k) / f64(rungs))
+        add_box(vs, at, vec3(f32(abs(f64(wide.x)) + 0.04), 0.035, f32(abs(f64(wide.z)) + 0.04)), _S_WOOD)
+
+# every colour the shop's palettes offer, in their order
+_s_palette = () -> vec4[]:
+    out: vec4[]
+    loop pal in PALETTES:
+        loop sw in pal.1: out.push(sw.colour)
+    out
+
+const SHED_GANG_Z0 = 6.1            # a gangway to the town's quay runs along the shore at this depth of the deck
+const SHED_GANG_Z1 = 7.7
+
+# The bench of pots along the back wall, a jar of brushes on it, a shelf of tins over it (the
+# shed's frame). It is the workshop's thing to tap, and alone the shape the look's highlight goes
+# by (src/look_things.jo).
+_s_bench = (vs: mut Vertex3D[]):
+    d = f32(SHED_DECK)
+    colours = _s_palette()
+    bx0 = -6.0; bx1 = -1.2
+    add_box(vs, vec3(f32((bx0 + bx1) * 0.5), d + 0.86, 1.05), vec3(f32(bx1 - bx0), 0.07, 0.8), _S_WOOD2)
+    loop x in [bx0 + 0.15, (bx0 + bx1) * 0.5, bx1 - 0.15]:
+        loop z in [0.75, 1.35]: add_box(vs, vec3(f32(x), d + 0.42, f32(z)), vec3(0.09, 0.84, 0.09), _S_PILE)
+    loop k in 0..7:
+        _s_pot(vs, vec3(f32(bx0 + 0.45 + f64(k) * 0.62), d + 0.895, f32(1.0 + (if k % 2 == 0: 0.12 else: -0.08))), if k % 3 == 0: 0.15 else: 0.12, if k % 3 == 0: 0.3 else: 0.22, colours[(k * 5 + 6) % colours.len()])
+    # (a jar of brushes)
+    add_cylinder(vs, vec3(f32(bx1 - 0.35), d + 0.895, 1.25), 0.07, 0.16, rgb(0.5, 0.62, 0.66), 8, -1.0, mat4())
+    loop k in 0..3: add_box(vs, vec3(f32(bx1 - 0.37 + f64(k) * 0.03), d + 1.13, f32(1.23 + f64(k) * 0.02)), vec3(0.02, 0.3, 0.02), if k == 1: _S_WOOD2 else: _S_PILE)
+    add_box(vs, vec3(f32((bx0 + bx1) * 0.5), d + 1.75, 0.72), vec3(f32(bx1 - bx0), 0.05, 0.3), _S_WOOD)
+    loop k in 0..9:
+        add_cylinder(vs, vec3(f32(bx0 + 0.3 + f64(k) * 0.5), d + 1.775, 0.74), 0.1, 0.2, colours[(k * 7 + 2) % colours.len()], 8, -1.0, mat4())
+paint_bench_vertices = () -> Vertex3D[]:
+    vs: Vertex3D[]
+    _s_bench(vs)
+    vs
+
+# The workshop in a frame, for town `place`. `gangway`: where the town's quay's near edge is along
+# the shed's x (a harbour with no waterfront: a plank gangway runs from the deck to it); 0 none.
+build_paint_shed = (frame: mat4, place: int, gangway: f64 = 0.0) -> PaintShed:
+    vs: Vertex3D[]
+    s = PaintShed(ok = true, place = place, frame = frame)
+    s.origin = transform_point(frame, vec3(0, 0, 0))
+    out = normalize((frame * vec4(0, 0, 1, 0)).xyz)
+    s.out_heading = atan2(f64(out.x), -f64(out.z))
+    d = f32(SHED_DECK)
+    colours = _s_palette()
+    # the deck on its piles, a coaming along its seaward edge, two bollards
+    _s_planks(vs, -SHED_HALF, SHED_HALF, 0.0, SHED_DEPTH)
+    add_box(vs, vec3(0, d + 0.06, f32(SHED_DEPTH - 0.1)), vec3(f32(SHED_HALF * 2.0), 0.12, 0.2), _S_PILE)
+    loop x in [-5.6, 5.6]:
+        add_cylinder(vs, vec3(f32(x), d, f32(SHED_DEPTH - 0.6)), 0.16, 0.5, _S_IRON, 8, -1.0, mat4())
+        add_cylinder(vs, vec3(f32(x), d + 0.5, f32(SHED_DEPTH - 0.6)), 0.22, 0.08, _S_IRON, 8, -1.0, mat4())
+    # rope fenders down the seaward face
+    loop x in [-3.0, 0.0, 3.0]:
+        add_cylinder(vs, vec3(f32(x), d - 0.75, f32(SHED_DEPTH + 0.12)), 0.14, 0.7, _S_CLOTH, 8, -1.0, mat4())
+    # the lean-to: a back wall to the land and a side wall, posts at the open corners, a pitched roof
+    _s_wall(vs, SHED_WALL_X, SHED_BACK_Z, SHED_OPEN_X, SHED_BACK_Z, 2.9)
+    _s_wall(vs, SHED_WALL_X, SHED_BACK_Z, SHED_WALL_X, SHED_FRONT_Z, 3.2)
+    loop p in [vec3(f32(SHED_OPEN_X), 0, f32(SHED_BACK_Z)), vec3(f32(SHED_OPEN_X), 0, f32(SHED_FRONT_Z)), vec3(-2.5, 0, f32(SHED_FRONT_Z)), vec3(f32(SHED_WALL_X), 0, f32(SHED_FRONT_Z))]:
+        high = if p.z > 3.0: 3.5 else: 2.9
+        add_box(vs, vec3(p.x, d + f32(high * 0.5), p.z), vec3(0.16, f32(high), 0.16), _S_PILE)
+    # (the roof: boards running down the slope, from 3.6 at the open front to 2.95 at the back)
+    slope = atan2(3.6 - 2.95, SHED_FRONT_Z - SHED_BACK_Z + 1.0)
+    run = (SHED_FRONT_Z - SHED_BACK_Z + 1.0) / cos(slope)
+    n = 11
+    loop k in 0..n:
+        x = SHED_WALL_X - 0.4 + (SHED_OPEN_X - SHED_WALL_X + 0.8) * (f64(k) + 0.5) / f64(n)
+        m = translation(vec3(f32(x), d + 3.275, f32((SHED_BACK_Z + SHED_FRONT_Z) * 0.5))) * rotation_x(-slope)
+        add_box(vs, vec3(0, 0, 0), vec3(f32((SHED_OPEN_X - SHED_WALL_X + 0.8) / f64(n) - 0.02), 0.06, f32(run)), if k % 2 == 0: _S_ROOF else: _S_ROOF2, m)
+    add_box(vs, vec3(f32((SHED_WALL_X + SHED_OPEN_X) * 0.5), d + 3.5, f32(SHED_FRONT_Z)), vec3(f32(SHED_OPEN_X - SHED_WALL_X + 0.3), 0.14, 0.14), _S_PILE)
+    # the bench along the back wall, with its pots; a shelf of tins over it
+    _s_bench(vs)
+    # the colours on a board against the side wall: every dope and lacquer the shop mixes
+    add_box(vs, vec3(f32(SHED_WALL_X + 0.09), d + 1.7, 3.3), vec3(0.05, 1.3, 2.6), _S_CLOTH)
+    loop k in 0..colours.len():
+        add_box(vs, vec3(f32(SHED_WALL_X + 0.125), d + 2.1 - f32(k / 6) * 0.4, 2.25 + f32(k % 6) * 0.42), vec3(0.03, 0.32, 0.34), colours[k])
+    # drums by the open side, one with a pot on it
+    loop p in [vec3(0.8, 0, 1.2), vec3(0.75, 0, 2.1)]:
+        add_cylinder(vs, vec3(p.x, d, p.z), 0.3, 0.85, rgb(0.24, 0.3, 0.36), 10, -1.0, mat4())
+        add_cylinder(vs, vec3(p.x, d + 0.85, p.z), 0.31, 0.03, _S_IRON, 10, -1.0, mat4())
+    _s_pot(vs, vec3(0.8, d + 0.88, 1.2), 0.14, 0.26, colours[6])
+    # trestles with a plank and a dust sheet, where a float or a rudder is laid to be done
+    loop x in [-4.6, -2.4]:
+        loop z in [3.0, 3.9]: add_box(vs, vec3(f32(x), d + 0.4, f32(z)), vec3(0.07, 0.8, 0.07), _S_WOOD)
+        add_box(vs, vec3(f32(x), d + 0.8, 3.45), vec3(0.09, 0.07, 1.15), _S_WOOD)
+    add_box(vs, vec3(-3.5, d + 0.87, 3.45), vec3(2.9, 0.05, 0.75), _S_WOOD2)
+    add_box(vs, vec3(-3.9, d + 0.905, 3.45), vec3(1.5, 0.02, 0.85), _S_CLOTH)
+    # the ladder against the front beam, and a painter's steps out on the apron by the berth
+    _s_ladder(vs, vec3(-1.2, d, f32(SHED_FRONT_Z + 1.0)), vec3(-1.2, d + 3.45, f32(SHED_FRONT_Z + 0.1)), vec3(0.42, 0, 0))
+    _s_ladder(vs, vec3(-3.4, d, f32(SHED_DEPTH - 1.5)), vec3(-3.4, d + 1.7, f32(SHED_DEPTH - 0.95)), vec3(0.5, 0, 0))
+    _s_ladder(vs, vec3(-3.4, d, f32(SHED_DEPTH - 0.4)), vec3(-3.4, d + 1.7, f32(SHED_DEPTH - 0.95)), vec3(0.5, 0, 0))
+    _s_pot(vs, vec3(-2.6, d, f32(SHED_DEPTH - 1.0)), 0.14, 0.26, colours[7])
+    _s_pot(vs, vec3(-2.2, d, f32(SHED_DEPTH - 1.3)), 0.12, 0.2, colours[17])
+    # the gangway to the quay: planks on piles along the shore, a rail on its seaward side
+    if abs(gangway) > SHED_HALF + 0.5:
+        g0 = if gangway < 0.0: gangway - 0.4 else: SHED_HALF
+        g1 = if gangway < 0.0: -SHED_HALF else: gangway + 0.4
+        x = g0
+        k = 0
+        loop x < g1 - 0.01:
+            w = min(0.5, g1 - x)
+            add_box(vs, vec3(f32(x + w * 0.5), d - 0.08, f32((SHED_GANG_Z0 + SHED_GANG_Z1) * 0.5)), vec3(f32(w - 0.03), 0.16, f32(SHED_GANG_Z1 - SHED_GANG_Z0)), if k % 2 == 0: _S_WOOD else: _S_WOOD2)
+            if k % 6 == 3:
+                loop z in [SHED_GANG_Z0 + 0.15, SHED_GANG_Z1 - 0.15]: add_box(vs, vec3(f32(x), f32(SHED_DECK * 0.5 - 1.6), f32(z)), vec3(0.22, f32(SHED_DECK + 2.6), 0.22), _S_PILE)
+                add_box(vs, vec3(f32(x), d + 0.5, f32(SHED_GANG_Z1 - 0.06)), vec3(0.07, 1.0, 0.07), _S_PILE)
+            x += 0.5; k += 1
+        add_box(vs, vec3(f32((g0 + g1) * 0.5), d - 0.24, f32((SHED_GANG_Z0 + SHED_GANG_Z1) * 0.5)), vec3(f32(g1 - g0), 0.16, f32(SHED_GANG_Z1 - SHED_GANG_Z0 - 0.2)), _S_PILE)
+        add_box(vs, vec3(f32((g0 + g1) * 0.5), d + 1.0, f32(SHED_GANG_Z1 - 0.06)), vec3(f32(g1 - g0), 0.06, 0.08), _S_WOOD)
+    # the sign over the open front: a board with a sun in the shop's own colours (its own decal)
+    board = vec3(f32((SHED_WALL_X + SHED_OPEN_X) * 0.5), d + 3.95, f32(SHED_FRONT_Z + 0.12))
+    add_box(vs, board, vec3(2.2, 0.75, 0.06), _S_CLOTH)
+    motifs = [("disc", colours[6], -0.75), ("sun", colours[12], 0.0), ("disc", colours[9], 0.75)]
+    loop mt in motifs:
+        loop q in decal_polys(mt.0):
+            pts = [loop pt in q.pts: board + vec3(f32(mt.2) + pt.x * 0.26, pt.y * 0.26, 0.035)]
+            # (wound to face out to sea, whichever way round the motif's piece goes)
+            turned = cross(pts[1] - pts[0], pts[2] - pts[0]).z < 0.0
+            loop j in 1..pts.len() - 1:
+                vs.push(Vertex3D(pts[0], vec3(0, 0, 1), vec2(0, 0), mt.1))
+                vs.push(Vertex3D(pts[if turned: j + 1 else: j], vec3(0, 0, 1), vec2(0, 0), mt.1))
+                vs.push(Vertex3D(pts[if turned: j else: j + 1], vec3(0, 0, 1), vec2(0, 0), mt.1))
+    s.mesh = custom_mesh(vs)
+    # the deck to walk on (its landward edge laps the waterfront or the beach)
+    a = transform_point(frame, vec3(0, 0, -0.6)); b = transform_point(frame, vec3(0, 0, f32(SHED_DEPTH)))
+    s.quays = [Quay(a.xz, b.xz, f32(SHED_HALF * 2.0))]
+    if abs(gangway) > SHED_HALF + 0.5:
+        ga = transform_point(frame, vec3(f32(if gangway < 0.0: gangway - 0.6 else: SHED_HALF - 0.4), 0, f32((SHED_GANG_Z0 + SHED_GANG_Z1) * 0.5)))
+        gb = transform_point(frame, vec3(f32(if gangway < 0.0: -SHED_HALF + 0.4 else: gangway + 0.6), 0, f32((SHED_GANG_Z0 + SHED_GANG_Z1) * 0.5)))
+        s.quays.push(Quay(ga.xz, gb.xz, f32(SHED_GANG_Z1 - SHED_GANG_Z0)))
+    s.painter = _sl(s, vec3(3.4, d, f32(SHED_DEPTH - 2.2)))
+    s.facing = out
+    s.bench = _sl(s, vec3(-3.6, d + 0.9, 1.05))
+    s.stand = _sl(s, vec3(-0.6, d, f32(SHED_FRONT_Z + 1.6)))
+    s.bollard = _sl(s, vec3(5.6, d + 0.55, f32(SHED_DEPTH - 0.6)))
+    s
+
+# What cannot be walked through: the two walls, the bench, the drums, the trestle, the steps.
+paint_shed_solids = (s: PaintShed) -> TownSite[]:
+    yaw = atan2(f64(s.facing.x), f64(s.facing.z))
+    box = (c: vec3, w: f64, depth: f64, height: f64) -> TownSite: TownSite(_sl(s, c + vec3(0, f32(SHED_DECK), 0)), yaw, w, depth, height, 0)
+    [box(vec3(f32((SHED_WALL_X + SHED_OPEN_X) * 0.5), 0, f32(SHED_BACK_Z)), SHED_OPEN_X - SHED_WALL_X + 0.2, 0.3, 2.9),
+     box(vec3(f32(SHED_WALL_X), 0, f32((SHED_BACK_Z + SHED_FRONT_Z) * 0.5)), 0.3, SHED_FRONT_Z - SHED_BACK_Z, 3.2),
+     box(vec3(-3.6, 0, 1.05), 4.9, 0.9, 0.9), box(vec3(0.78, 0, 1.65), 0.7, 1.6, 0.9),
+     box(vec3(-3.5, 0, 3.45), 3.0, 1.2, 0.9), box(vec3(-3.4, 0, f32(SHED_DEPTH - 0.95)), 0.7, 1.2, 1.7)]
+
+# Where an aircraft `length` long lies at the berth, nose in to the deck: its place on the water
+# and its heading (towards the shed).
+paint_shed_berth = (s: PaintShed, length: f64) -> (vec3, f64):
+    at = _sl(s, vec3(0, 0, f32(SHED_DEPTH + SHED_BERTH_GAP + length * 0.5)))
+    (vec3(at.x, 0, at.z), s.out_heading + PI)
+
+# The venue the town's mechanic works at: on the apron by the berth, facing it.
+paint_shed_venue = (s: PaintShed) -> LifeVenue:
+    LifeVenue(s.place, "{PAINT_SHED_VENUE}:{s.place}", .workshop, s.painter, facing = s.facing, capacity = 2)
+
+# A camera for choosing her paint: round the aircraft at the berth, `yaw` from the deck's side of
+# her, `pitch` up, `dist` away. Returns the eye and what it looks at.
+paint_shed_view = (s: PaintShed, craft_at: vec3, yaw: f64, pitch: f64, dist: f64) -> (vec3, vec3):
+    h = s.out_heading + PI + yaw
+    dir = vec3(f32(sin(h) * cos(pitch)), f32(sin(pitch)), f32(-cos(h) * cos(pitch)))
+    look = craft_at + vec3(0, 0.6, 0)
+    (look + dir * f32(dist), look)
+
+draw_paint_shed = (s: PaintShed, L: Light, t: f64):
+    if not s.ok or length(s.origin - scene_camera()) > 3500.0: return
+    draw(obj_sh, s.mesh, obj_params(L, t, s.frame))
