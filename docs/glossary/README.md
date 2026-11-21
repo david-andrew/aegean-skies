@@ -2077,7 +2077,7 @@ On the rivers branch until it lands.
   leaves the station, the signal goes or the set is switched off. It shows for the
   [wireless](#wireless)'s Morse bulletins, the short cues under the flight's words on the
   [R/T](#rt) (marked "R/T") and a [lamp](#signals-between-aircraft)'s word as it is flashed
-  (marked "Lamp"). Beside the wireless in the cockpit; under the compass in the outside view and
+  (marked "Lamp"; a plain word, so shown as spelt and not read as code). Beside the wireless in the cockpit; under the compass in the outside view and
   wherever there is no room beside the set. Settings → Accessibility → Morse subtitles, on
   unless switched off.
 - **Code:** `src/morse_subtitles.jo` (the reading and the following), `src/morse_strip.jo` (the
