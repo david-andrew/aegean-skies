@@ -1,7 +1,8 @@
 """Conversion regressions: tempo, reused MIDI channels, percussion and reproducibility."""
-import tempfile, unittest, struct, zlib, os
+import sys, tempfile, unittest, struct, zlib, os
 from pathlib import Path
 import mido
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from music_pack import read_midi, pack, gm, STRINGS, HARP, TIMPANI, DRUMS, PIANO, opening
 
 class MusicPackTests(unittest.TestCase):
@@ -24,6 +25,10 @@ class MusicPackTests(unittest.TestCase):
   self.assertEqual(gm(0),PIANO)
   ns=opening();self.assertEqual([n[2] for n in ns[:4]],[61]*4)
   self.assertEqual(max(n[2] for n in ns),73)
-  self.assertAlmostEqual(ns[3][0],60/88)
+  # The call's pickups are sixteenth-note triplets (a sixth of a beat each, as performed), not a
+  # triplet filling the beat: the long note they lead to arrives well inside the first beat.
+  beat=60/88
+  for a,b in zip(ns[:3],ns[1:4]):self.assertTrue(.075<b[0]-a[0]<beat/6*1.25,b[0]-a[0])
+  self.assertLess(ns[3][0],beat/2);self.assertGreater(ns[3][1],1.0)
 
 if __name__=='__main__':unittest.main()

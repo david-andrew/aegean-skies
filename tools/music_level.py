@@ -7,7 +7,9 @@ hand-set radio pieces. Writes data/music/levels.json (read by tools/music_pack.p
 and prints the table. With --check it measures every piece at its current level and fails when a
 later piece is more than 1.5 LU from the target.
 
-  python tools/music_level.py [--stems binary] [--jobs 2] [--check]
+  python tools/music_level.py [--stems binary] [--jobs 2] [--check] [--keep-within LU]
+  (--keep-within 0.2: a piece already that near the target keeps its level, so a change to a few
+  pieces, such as the part balance's, re-levels only those)
   (the binary: sloppy build tools/music_stems.jo --release -o stems; without it, sloppy runs it)
 """
 from pathlib import Path
@@ -41,6 +43,7 @@ def main():
     p.add_argument('--stems', default='')
     p.add_argument('--jobs', type=int, default=2)
     p.add_argument('--check', action='store_true')
+    p.add_argument('--keep-within', type=float, default=0.0)
     a = p.parse_args()
     catalogue = json.loads((ROOT / 'data/music/catalogue.json').read_text())
     from music_pack import LEVEL
@@ -56,10 +59,13 @@ def main():
         level = LEVEL.get(r['id'], 1.0)
         off = loud[i] - target
         line = f"{i:3d} {r['id']:22s} {loud[i]:6.1f} LUFS  {off:+5.1f} LU  level {level:.3f}"
-        if i >= HAND_SET:
+        if r['station'] == 'Title':
+            # (the title's music is not on the radio: its level is the title's own, left alone)
+            line += '  (the title\'s music: not levelled)'
+        elif i >= HAND_SET:
             worst = max(worst, abs(off))
             # (the level scales the signal; the synth's gentle saturation makes it nearly linear)
-            levels[r['id']] = round(level * 10 ** (-off / 20), 3)
+            levels[r['id']] = round(level * 10 ** (-off / 20), 3) if abs(off) > a.keep_within else level
             line += f'  -> {levels[r["id"]]:.3f}'
         print(line)
     if a.check:
