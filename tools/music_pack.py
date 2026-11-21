@@ -11,6 +11,7 @@ from music_performance import score_clock, interpret, apply_performance_map
 from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
+RAW_OVER = 200000                 # bytes: a score larger than this is stored uncompressed
 # Must agree with MusicInstrument in music_synth.jo.
 STRINGS, BRASS, FLUTE, OBOE, CLARINET, BASSOON, PIANO, HARP, BOUZOUKI, ACCORDION, BANJO, TIMPANI, DRUMS, BASS, CHOIR, TRUMPET = range(16)
 PIECES = [
@@ -87,6 +88,31 @@ PIECES = [
  ('hebrides', "The Hebrides (Fingal's Cave), for wind band", 'Felix Mendelssohn', 'Kalyra Concert Hall'),
  ('humoresque', 'Humoresque', 'Antonin Dvorak', 'Radio Mandolinata'),
  ('donna-mobile', 'Rigoletto: La donna e mobile', 'Giuseppe Verdi', 'Radio Mandolinata'),
+ ('coriolan', 'Coriolan Overture', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('egmont', 'Egmont Overture', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('emperor-allegro', 'Piano Concerto No. 5 "Emperor": Allegro', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('emperor-adagio', 'Piano Concerto No. 5 "Emperor": Adagio un poco mosso', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('ninth-first', 'Symphony No. 9: Allegro ma non troppo', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('ninth-finale', 'Symphony No. 9: Finale (Ode to Joy)', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('water-music', 'Water Music, for wind band', 'George Frideric Handel', 'Kalyra Concert Hall'),
+ ('rejouissance', 'Music for the Royal Fireworks: La Rejouissance', 'George Frideric Handel', 'Kalyra Concert Hall'),
+ ('handel-oboe', 'Oboe Concerto No. 3', 'George Frideric Handel', 'Kalyra Concert Hall'),
+ ('mahler-fifth-storm', 'Symphony No. 5: Sturmisch bewegt', 'Gustav Mahler', 'Kalyra Concert Hall'),
+ ('mahler-ninth-rondo', 'Symphony No. 9: Rondo-Burleske (two pianos)', 'Gustav Mahler', 'Kalyra Concert Hall'),
+ ('clarinet-allegro', 'Clarinet Concerto K. 622: Allegro', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('mozart-forty-finale', 'Symphony No. 40: Allegro assai', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('jupiter', 'Symphony No. 41 "Jupiter"', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('dance-of-the-hours', 'La Gioconda: Dance of the Hours', 'Amilcare Ponchielli', 'Orenthia Light Programme'),
+ ('swan-lake-scene', 'Swan Lake: Scene (Act II), for wind band', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('tchaikovsky-fourth-finale', 'Symphony No. 4: Finale', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('snowflakes', 'The Nutcracker: Waltz of the Snowflakes', 'Pyotr Ilyich Tchaikovsky', 'Orenthia Light Programme'),
+ ('sugar-plum', 'The Nutcracker: Dance of the Sugar Plum Fairy, for wind band', 'Pyotr Ilyich Tchaikovsky', 'Kalyra Concert Hall'),
+ ('verdi-sanctus', 'Requiem: Sanctus', 'Giuseppe Verdi', 'The Chapel Bell'),
+ ('ballade-two', 'Ballade No. 2', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('chopin-berceuse', 'Berceuse', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('fantaisie-impromptu', 'Fantaisie-Impromptu', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('nocturne-fsharp', 'Nocturne in F sharp major, Op. 15 No. 2', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('polonaise-csharp', 'Polonaise in C sharp minor, Op. 26 No. 1', 'Frederic Chopin', 'Kalyra Concert Hall'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -116,7 +142,8 @@ HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo'
         'carmen-overture', 'locus-iste', 'va-pensiero', 'melita', 'pictures-promenade', 'pictures-old-castle',
         'pictures-bydlo', 'pictures-chicks', 'pictures-baba-yaga', 'pictures-great-gate', 'beethoven-fifth',
         'beethoven-fifth-finale', 'pathetique-finale', 'rachmaninoff-third', 'meistersinger-prelude', 'liebestod', 'valkyries',
-        'traumerei', 'brandenburg-two', 'pange-lingua', 'brahms-first-finale'}
+        'traumerei', 'brandenburg-two', 'pange-lingua', 'brahms-first-finale',
+        'coriolan', 'egmont', 'emperor-allegro', 'emperor-adagio', 'ninth-first', 'ninth-finale', 'rejouissance', 'handel-oboe', 'mahler-fifth-storm', 'mahler-ninth-rondo', 'clarinet-allegro', 'mozart-forty-finale', 'jupiter', 'tchaikovsky-fourth-finale', 'verdi-sanctus', 'ballade-two', 'chopin-berceuse', 'fantaisie-impromptu', 'nocturne-fsharp', 'polonaise-csharp'}
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
@@ -208,6 +235,31 @@ MOOD = {
  'hebrides': ('dreamy', 'the sea and the cave: rolling, swelling'),
  'humoresque': ('tender', 'a little lilting piece: wistful'),
  'donna-mobile': ('jaunty', "the duke's song: a swinging tune"),
+ 'coriolan': ('stately', 'the wider repertoire, batch 3'),
+ 'egmont': ('stately', 'the wider repertoire, batch 3'),
+ 'emperor-allegro': ('stately', 'the wider repertoire, batch 3'),
+ 'emperor-adagio': ('tender', 'the wider repertoire, batch 3'),
+ 'ninth-first': ('stately', 'the wider repertoire, batch 3'),
+ 'ninth-finale': ('stately', 'the wider repertoire, batch 3'),
+ 'water-music': ('jaunty', 'the wider repertoire, batch 3'),
+ 'rejouissance': ('jaunty', 'the wider repertoire, batch 3'),
+ 'handel-oboe': ('tender', 'the wider repertoire, batch 3'),
+ 'mahler-fifth-storm': ('stately', 'the wider repertoire, batch 3'),
+ 'mahler-ninth-rondo': ('jaunty', 'the wider repertoire, batch 3'),
+ 'clarinet-allegro': ('jaunty', 'the wider repertoire, batch 3'),
+ 'mozart-forty-finale': ('stately', 'the wider repertoire, batch 3'),
+ 'jupiter': ('stately', 'the wider repertoire, batch 3'),
+ 'dance-of-the-hours': ('dance-like', 'the wider repertoire, batch 3'),
+ 'swan-lake-scene': ('mournful', 'the wider repertoire, batch 3'),
+ 'tchaikovsky-fourth-finale': ('stately', 'the wider repertoire, batch 3'),
+ 'snowflakes': ('dance-like', 'the wider repertoire, batch 3'),
+ 'sugar-plum': ('jaunty', 'the wider repertoire, batch 3'),
+ 'verdi-sanctus': ('stately', 'the wider repertoire, batch 3'),
+ 'ballade-two': ('dreamy', 'the wider repertoire, batch 3'),
+ 'chopin-berceuse': ('tender', 'the wider repertoire, batch 3'),
+ 'fantaisie-impromptu': ('dreamy', 'the wider repertoire, batch 3'),
+ 'nocturne-fsharp': ('dreamy', 'the wider repertoire, batch 3'),
+ 'polonaise-csharp': ('stately', 'the wider repertoire, batch 3'),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
@@ -454,6 +506,11 @@ def main():
   notes,balanced=balance_notes(name,notes)
   if balanced:performance.update(balance_db=BALANCE[name]['gains_db'])
   blob,end,events=pack(notes,mix_levels=name in ANNOTATED or balanced,sections=sections)
+  # A large score is stored as it is (marked RAW!): the game's inflate costs ~170 instructions a
+  # byte, a hitch of a frame or more on a phone when the radio moves on to a long symphony.
+  raw=zlib.decompress(blob,-15)
+  assert not blob.startswith(b'RAW!')
+  if len(raw)>RAW_OVER:blob=b'RAW!'+raw
   (ROOT/'data/music'/f'{name}.z').write_bytes(blob)
   meta.append(dict(id=name,title=title,composer=composer,station=station,piano=usual_piano(station),frames=end,notes=len(events),bytes=len(blob),mood=MOOD[name][0],mood_reason=MOOD[name][1],mood_applied=name in APPLY_MOOD,balance=BALANCE.get(name,{}).get('summary')))
   print(name,len(events),f'{end/RATE:.2f}s',len(blob),'bytes')
