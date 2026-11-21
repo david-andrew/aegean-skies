@@ -173,6 +173,7 @@ use 'src/homeward_view.jo'
 use 'src/rt_pad.jo'
 use 'src/flight_signals.jo'
 use 'src/tender.jo'
+use 'src/sortie.jo'
 use 'src/radio_help.jo'
 use 'src/cockpit.jo'
 use 'src/bailout.jo'
@@ -9716,6 +9717,8 @@ rt_lines = () -> int[]:
     else if help_need_now() != .none: out.push(if help_in_reach(): RT_HELP else: RT_FLARE)
     if rt_flight() > 0:
         loop k in 0..5: out.push(k)
+    # (the Ierax within the R/T's reach, in the war: what is going)
+    if active_scenario == "" and (patrol_at_war(living_world) or patrol_capture != "") and f64(length(vec3(pc.state.position.x - TENDER_AT.x, 0, pc.state.position.z - TENDER_AT.z))) < RADIO_REACH: out.push(RT_IERAX)
     out
 
 rt_tick = ():
@@ -9745,6 +9748,10 @@ rt_send = (k: int):
     if k == RT_WAIT:
         help_wait()
         return
+    if k == RT_IERAX:
+        help_say("Ierax", patrol_answer())
+        if rt.took_mouse and not pad.on: mouse_lock(true); rt.took_mouse = false
+        return
     me_craft = living_world.people[living_world.player].craft
     me_i = combat_index(battle, me_craft)
     kind = RT_KINDS[k]
@@ -9771,6 +9778,306 @@ rt_send = (k: int):
     # (the one answering in sight of the player answers by hand or lamp: src/flight_signals.jo)
     if active_scenario == "strait": radio_say(homeward, "rt{battle.tick}", call_sign(living_world, side, max(1, number)), words, best)
     else: say_toast(words)
+
+# ---- the Ierax's dawn patrol (src/sortie.jo) ----
+patrol = Sortie()
+# AEGEAN_CAPTURE_PATROL=launch|contact|home (captures): at war; launch: the patrol out from the
+# Ierax now, whatever the hour, the player up over her to go along; contact: both patrols already
+# out, nearing each other over the strait, the player in the Ierax's formation; home: the beat
+# flown, the flight five kilometres out from her and turning in. PATROL lines say how it goes.
+patrol_capture = env("AEGEAN_CAPTURE_PATROL") ?? ""
+
+patrol_actor = (craft: int) -> int: combat_index(battle, craft)
+
+patrol_active = () -> bool: patrol.stage == .launching or patrol.stage == .out or patrol.stage == .fighting or patrol.stage == .home
+
+# The flight's base and Orenthia's, in the free-play battle (the Ierax for the player's side).
+patrol_homes = ():
+    has0 = false; has2 = false
+    loop h in battle.homes:
+        if h.side == IERAX_SIDE: has0 = true
+        if h.side == ORENTHIA_SIDE: has2 = true
+    if not has0: battle.homes.push(tender_home(IERAX_SIDE))
+    if not has2:
+        loop h in strait_homes(living_world):
+            if h.side == ORENTHIA_SIDE: battle.homes.push(h)
+
+patrol_foe_home = () -> BattleHome?:
+    loop h in battle.homes:
+        if h.side == ORENTHIA_SIDE: return h
+    none
+
+# The Ierax's three on her booms, Orenthia's three at their harbour on the strait: registered once,
+# put in the free-play battle (side 0 and 2, the sortie's engagement), moored.
+patrol_spawn = () -> bool:
+    global patrol
+    patrol_homes()
+    flight = patrol_register(living_world, 1, "ierax-patrol", PATROL_SIZE, TENDER_AT)
+    foes = patrol_register(living_world, 2, "orenthia-patrol", PATROL_SIZE, none)
+    if flight.len() == 0: return false
+    deck_h = atan2(f64(tender_forward().x), -f64(tender_forward().z))
+    loop k in 0..flight.len():
+        if patrol_actor(flight[k]) < 0: battle.actors.push(patrol_combatant(living_world, flight[k], IERAX_SIDE, k, flight[0], tender_slot(k), deck_h, IERAX_MODEL, craft_models))
+    if let fh = patrol_foe_home():
+        loop k in 0..foes.len():
+            if patrol_actor(foes[k]) < 0: battle.actors.push(patrol_combatant(living_world, foes[k], ORENTHIA_SIDE, k, foes[0], fh.dock + fh.step * f32(k), fh.heading, ORENTHIA_MODEL, craft_models))
+    patrol.flight = flight; patrol.foes = foes
+    homeward_call_names[IERAX_SIDE] = "Ierax"
+    print("PATROL spawned: the Ierax's {flight.len()}, Orenthia's {foes.len()}")
+    true
+
+patrol_say = (key: str, words: str):
+    if me.mode == .aboard: radio_say(homeward, "patrol-{patrol.day}-{key}", call_sign(living_world, IERAX_SIDE, 1), words)
+
+# Flying, there, in the fight: an actor of the sortie still in it.
+patrol_up = (i: int) -> bool: i >= 0 and battle.actors[i].status == .flying and battle.actors[i].present and not battle.actors[i].state.on_water
+
+# Each frame (free play): spawned near the Ierax at war; out at dawn; the beats flown; contact,
+# the fight, home.
+patrol_step = (dt: f64):
+    global patrol, homeward
+    if active_scenario != "" or world_held(): return
+    war = patrol_at_war(living_world) or patrol_capture != ""
+    near = f64(length(vec3(pc.state.position.x - TENDER_AT.x, 0, pc.state.position.z - TENDER_AT.z))) < 15000.0
+    if patrol.stage == .none:
+        if war and near and patrol_spawn(): patrol.stage = .ready
+        return
+    commit_scenario_aircraft(living_world, battle, SORTIE_ENGAGEMENT)
+    # (the patrol's own leader sends it home: seen off, beaten or its beat flown)
+    battle.managed[IERAX_SIDE] = true; battle.managed[ORENTHIA_SIDE] = true
+    day = lt.day_index(living_world.minute)
+    # (the player flies with them while it is out: the enemy's to fight as theirs)
+    pci = combat_index(battle, living_world.people[living_world.player].craft)
+    if pci >= 0: battle.actors[pci].engagement = if patrol_active(): SORTIE_ENGAGEMENT else: -1
+    homeward.sortie = true
+    # (a soft ceiling under the thrust's fade while it is out, as over the strait; none else)
+    battle.ceiling = if patrol_active(): PATROL_CEILING else: 1e9
+    if patrol.stage == .ready or patrol.stage == .done:
+        forced = patrol_capture == "launch" and patrol.day < 0
+        if forced or patrol_due(war, lt.local_minute(living_world.minute), day, patrol.day):
+            patrol.stage = .launching; patrol.launched = t; patrol.day = day
+            patrol.leg = 0; patrol.foe_leg = 0; patrol.contact = false; patrol.quiet = 0.0; patrol.foe_home = false
+            battle.home_since[IERAX_SIDE] = -1; battle.formed[IERAX_SIDE] = -1
+            battle.home_since[ORENTHIA_SIDE] = -1; battle.formed[ORENTHIA_SIDE] = -1
+            # (the radio from the last time they came home, or from lying moored, not said over again
+            # as they go out: what is said on the way home is said fresh)
+            homeward = HomewardView(); homeward.sortie = true
+            print("PATROL out: day {day}")
+        return
+    if patrol.stage == .launching:
+        wind = wind_now_vec()
+        launch_ground = flight_env(t, TENDER_AT).ground
+        up = 0
+        loop k in 0..patrol.flight.len():
+            i = patrol_actor(patrol.flight[k])
+            if i < 0: continue
+            if battle.actors[i].pilot.home_done and t - patrol.launched >= f64(k) * PATROL_LAUNCH_GAP:
+                a = battle.actors[i]; way = atan2(f64(IERAX_BEAT[0].x - a.state.position.x), -f64(IERAX_BEAT[0].z - a.state.position.z)); patrol_launch(a, patrol_takeoff_heading(a.state.position, wind, way, launch_ground), way); battle.actors[i] = a
+            if not battle.actors[i].pilot.launching and not battle.actors[i].pilot.home_done: up += 1
+        loop k in 0..patrol.foes.len():
+            i = patrol_actor(patrol.foes[k])
+            if i >= 0 and battle.actors[i].pilot.home_done and t - patrol.launched >= f64(k) * PATROL_LAUNCH_GAP:
+                a = battle.actors[i]; way = atan2(f64(ORENTHIA_BEAT[0].x - a.state.position.x), -f64(ORENTHIA_BEAT[0].z - a.state.position.z)); take = patrol_takeoff_heading(a.state.position, wind, way, launch_ground); patrol_launch(a, take, way); battle.actors[i] = a
+                if patrol_capture != "": print("PATROL launch: craft {a.craft} side {a.side} from {a.state.position.x:.0},{a.state.position.z:.0} taking off on {take:.2} (the wind's {atan2(-f64(wind.x), f64(wind.z)):.2}), ground there {launch_ground(f64(a.state.position.x), f64(a.state.position.z)):.1}")
+        if up >= patrol.flight.len():
+            patrol.stage = .out
+            patrol_say("out", "The dawn patrol: up the coast, and down the strait. Form on me.")
+        return
+    # (the leaders on their beats: the formations' heading eased onto the next leg)
+    if patrol.stage == .out:
+        patrol.leg = patrol_beat(patrol.flight, IERAX_BEAT, patrol.leg, dt)
+        if patrol.leg >= IERAX_BEAT.len():
+            patrol_say("beat", "That's the beat. Home to the Ierax.")
+            send_home(battle, IERAX_SIDE, false, false); patrol.stage = .home
+    if not patrol.foe_home and not patrol.contact:
+        patrol.foe_leg = patrol_beat(patrol.foes, ORENTHIA_BEAT, patrol.foe_leg, dt)
+        if patrol.foe_leg >= ORENTHIA_BEAT.len(): patrol_foe_go(false)
+    # (seen: both break and go for each other)
+    if not patrol.contact and patrol.stage == .out:
+        near_d = 1e18; seen_at = vec3(0, 0, 0); from = vec3(0, 0, 0)
+        loop c in patrol.flight:
+            i = patrol_actor(c)
+            if not patrol_up(i) or battle.actors[i].pilot.launching: continue
+            loop f in patrol.foes:
+                j = patrol_actor(f)
+                if not patrol_up(j) or battle.actors[j].pilot.launching: continue
+                d = f64(length(battle.actors[j].state.position - battle.actors[i].state.position))
+                if d < near_d: near_d = d; seen_at = battle.actors[j].state.position; from = battle.actors[i].state.position
+        if near_d < PATROL_SIGHT:
+            patrol.contact = true; patrol.stage = .fighting
+            loop c in patrol.flight + patrol.foes:
+                i = patrol_actor(c)
+                if i >= 0: battle.actors[i].pilot.formation = false
+            patrol_say("contact", "Machines to the {compass_word(seen_at - from)}! Orenthians. Go for them!")
+            print("PATROL contact at {seen_at.x:.0},{seen_at.z:.0}, {near_d:.0} m")
+    if patrol.stage == .fighting:
+        # (the Orenthians seen off: none of them still fighting within eight kilometres for half a minute)
+        touch = false; lost = 0; foes_lost = 0
+        loop c in patrol.flight:
+            i = patrol_actor(c)
+            if i < 0 or battle.actors[i].status != .flying: lost += 1
+        loop f in patrol.foes:
+            j = patrol_actor(f)
+            if j < 0 or battle.actors[j].status != .flying: foes_lost += 1; continue
+            if battle.actors[j].pilot.mode == .homeward or battle.actors[j].pilot.mode == .withdrawing: continue
+            loop c in patrol.flight:
+                i = patrol_actor(c)
+                if patrol_up(i) and f64(length(battle.actors[j].state.position - battle.actors[i].state.position)) < 8000.0: touch = true
+        patrol.quiet = if touch: 0.0 else: patrol.quiet + dt
+        if not patrol.foe_home and foes_lost * 2 >= max(1, patrol.foes.len()): patrol_foe_go(true)
+        if lost * 3 >= patrol.flight.len() * 2:
+            patrol_say("beaten", "Break off! Home to the Ierax, low and together.")
+            send_home(battle, IERAX_SIDE, true, false); patrol.stage = .home
+            patrol_foe_go(false)
+        else if patrol.quiet > 30.0:
+            patrol_say("seen-off", "That's them off. Rally on me, then home to the Ierax.")
+            send_home(battle, IERAX_SIDE, false, false); patrol.stage = .home
+            patrol_foe_go(false)
+    if patrol.stage == .home:
+        flying = 0; moored = 0
+        loop c in patrol.flight:
+            i = patrol_actor(c)
+            if i >= 0 and battle.actors[i].status == .flying:
+                flying += 1
+                if battle.actors[i].pilot.home_done: moored += 1
+        if moored >= flying:
+            patrol.stage = .done
+            print("PATROL done: {moored} moored at the Ierax")
+
+# (captures) at war; the player up in the air; the patrols where the stage wants them.
+patrol_capture_stage = ():
+    global pc, patrol
+    f = frame_number()
+    if f == 20:
+        found = false
+        loop k in 0..living_world.diplomacy.len():
+            r = living_world.diplomacy[k]
+            if (r.a == 1 and r.b == 2) or (r.a == 2 and r.b == 1):
+                living_world.diplomacy[k].stage = .war; found = true
+        if not found: living_world.diplomacy.push(social.DiplomaticRelation(1, 2, tension = 1000, stage = .war, last_incident_minute = 0))
+        # (the player up over the Ierax, turning about her)
+        at = TENDER_AT + tender_port() * 1500.0 + vec3(0, 400, 0)
+        h = atan2(f64(tender_forward().x), -f64(tender_forward().z))
+        pc.state = CraftState(position = at, orientation = quat_euler(0, -h, 0), velocity = heading_vector(h) * f32(pc.spec.cruise_speed * 0.8), fuel = pc.spec.fuel_capacity, water_age = 1.0)
+        pc.state.precise_ready = false; pc.throttle = 0.7; pc.state.throttle = 0.7; pc.placed = false
+        me.mode = .aboard
+        debug_fuel_ml(living_world.people[living_world.player].craft, int(pc.spec.fuel_capacity * 1000.0))
+        print("PATROL capture {patrol_capture}: at war, the player up over the Ierax")
+    if f == 30 and patrol.stage == .ready and (patrol_capture == "contact" or patrol_capture == "home"):
+        # (the flight already out: in formation where the stage wants it, its pilots launched)
+        day = lt.day_index(living_world.minute)
+        patrol.day = day; patrol.stage = .out; patrol.launched = t
+        lead_at = if patrol_capture == "contact": vec3(136000, 450, -84000) else: TENDER_AT + tender_port() * 2000.0 + tender_forward() * 5000.0 + vec3(0, 450, 0)
+        h = if patrol_capture == "contact": PI * 0.97 else: atan2(f64(TENDER_AT.x - lead_at.x), -f64(TENDER_AT.z - lead_at.z))
+        patrol.leg = if patrol_capture == "contact": IERAX_BEAT.len() - 1 else: IERAX_BEAT.len()
+        patrol_place(patrol.flight, lead_at, h)
+        if patrol_capture == "contact":
+            foe_at = vec3(138500, 450, -74000)
+            patrol_place(patrol.foes, foe_at, 0.0); patrol.foe_leg = 1
+        pc.state.position = lead_at + quat_rotate(quat_euler(0, -h, 0), patrol_offset(3)); pc.state.orientation = quat_euler(0, -h, 0)
+        pc.state.velocity = heading_vector(h) * f32(pc.spec.cruise_speed * 0.86); pc.state.precise_ready = false
+    if f % 300 == 0 and patrol.stage != .none:
+        lead = if patrol.flight.len() > 0: patrol_actor(patrol.flight[0]) else: -1
+        where = if lead >= 0: battle.actors[lead].state.position else: vec3(0, 0, 0)
+        up = 0; moored = 0; down = 0
+        loop c in patrol.flight + patrol.foes:
+            i = patrol_actor(c)
+            if i < 0: continue
+            if battle.actors[i].status != .flying:
+                down += 1
+                a = battle.actors[i]
+                print("PATROL down: craft {c} side {a.side} status {a.status} crashed {a.state.crashed} capsized {a.state.capsized} at {a.state.position.x:.0},{a.state.position.y:.1},{a.state.position.z:.0} mode {a.pilot.mode} phase {a.pilot.plan.phase} launching {a.pilot.launching} hull {a.state.hull_damage:.2} attacker {a.last_attacker}")
+            else if battle.actors[i].pilot.home_done: moored += 1
+            else: up += 1
+        print("PATROL frame {f}: {patrol.stage}, leg {patrol.leg}, foe leg {patrol.foe_leg}, contact {patrol.contact}, leader at {where.x:.0},{where.y:.0},{where.z:.0}; up {up}, moored {moored}, down {down}; home since {battle.home_since[IERAX_SIDE]}/{battle.home_since[ORENTHIA_SIDE]}; player at {pc.state.position.x:.0},{pc.state.position.y:.0},{pc.state.position.z:.0}")
+
+# (captures) a patrol put in the air in formation at `at` on heading h, launched.
+patrol_place = (crafts: int[], at: vec3, h: f64):
+    loop k in 0..crafts.len():
+        i = patrol_actor(crafts[k])
+        if i < 0: continue
+        a = battle.actors[i]
+        if a.state.moored: unmoor(a.state)
+        a.state.position = at + quat_rotate(quat_euler(0, -h, 0), patrol_offset(k)); a.state.orientation = quat_euler(0, -h, 0)
+        a.state.velocity = heading_vector(h) * f32(a.spec.cruise_speed * 0.86); a.state.on_water = false; a.state.precise_ready = false
+        a.previous = a.state.position; a.previous_point = craft_point(a.state); a.previous_rotation = a.state.orientation
+        a.pilot.home_done = false; a.pilot.launching = false; a.pilot.formation = true; a.pilot.formation_heading = h
+        a.pilot.mode = .regroup; a.pilot.plan = FlightPlan(); a.rally = vec3(at.x, f32(PATROL_ALTITUDE), at.z)
+        battle.actors[i] = a
+
+# (captures) the player flown with the patrol: round the Ierax till it is up, then in fourth place
+# on the leader; home with them, last in.
+patrol_capture_controls = (e: FlightEnv) -> Controls:
+    lead = if patrol.flight.len() > 0: patrol_actor(patrol.flight[0]) else: -1
+    if lead < 0 or patrol.stage == .launching or patrol.stage == .ready or patrol.stage == .none:
+        out = pc.state.position - TENDER_AT; out.y = 0
+        if length(out) < 1: out = vec3(1, 0, 0)
+        around = f64(atan2(f64(out.z), f64(out.x))) + 0.35
+        return air_waypoint_controls(pc.spec, pc.state, e, TENDER_AT + vec3(f32(cos(around) * 1500.0), 0, f32(sin(around) * 1500.0)), 450.0, pc.spec.cruise_speed * 0.7)
+    if patrol.stage == .fighting:
+        # (the fight: watched from off it and above, turning about its middle)
+        mid = vec3(0, 0, 0); n = 0
+        loop c in patrol.flight + patrol.foes:
+            i = patrol_actor(c)
+            if patrol_up(i): mid += battle.actors[i].state.position; n += 1
+        if n > 0:
+            mid = mid / f32(n)
+            out = pc.state.position - mid; out.y = 0
+            if length(out) < 1: out = vec3(1, 0, 0)
+            around = f64(atan2(f64(out.z), f64(out.x))) + 0.3
+            return air_waypoint_controls(pc.spec, pc.state, e, mid + vec3(f32(cos(around) * 900.0), 0, f32(sin(around) * 900.0)), max(600.0, f64(mid.y) + 150.0), pc.spec.cruise_speed * 0.75)
+    l = battle.actors[lead]
+    if l.pilot.home_done or patrol.stage == .done or (l.pilot.mode == .homeward and l.pilot.descend_tick >= 0):
+        return air_waypoint_controls(pc.spec, pc.state, e, TENDER_AT + tender_port() * 1500.0, 400.0, pc.spec.cruise_speed * 0.7)
+    h = heading(l.state)
+    slot = l.state.position + quat_rotate(quat_euler(0, -h, 0), patrol_offset(3))
+    direction = heading_vector(h); lv = max(f64(length(l.state.velocity)), pc.spec.stall_speed * pure_k(pc.spec) * 1.4)
+    pace = clamp(lv + f64(dot(slot - pc.state.position, direction)) * 0.12, lv * 0.75, lv * 1.3)
+    air_waypoint_controls(pc.spec, pc.state, e, slot + direction * 1000.0, f64(slot.y), pace)
+
+# What the Ierax says of her patrol, asked on the R/T or of her duty officer.
+patrol_answer = () -> str:
+    if not patrol_at_war(living_world) and patrol_capture == "": return "Nothing doing. The peace holds, for now."
+    today = patrol.day == lt.day_index(living_world.minute)
+    match patrol.stage:
+        .launching: "They're taking off now. Keep with Ierax 1 if you're coming."
+        .out:
+            lead = if patrol.flight.len() > 0: patrol_actor(patrol.flight[0]) else: -1
+            if lead >= 0:
+                d = battle.actors[lead].state.position - TENDER_AT
+                "The patrol's up, {int(f64(length(vec3(d.x, 0, d.z))) / 1000.0)} kilometres {compass_word(d)} of us. Join Ierax 1 if you're coming."
+            else: "The patrol's up. Join Ierax 1 if you're coming."
+        .fighting: "They're in a fight, over the strait."
+        .home: "They're on their way in."
+        _: if today: "The patrol's in. Six tomorrow, if you're coming." else: "Dawn patrol at six: three machines, up the coast and down the strait. Come along if you like; keep with Ierax 1."
+
+# Orenthia's patrol turns for its harbour (beaten: its losses).
+patrol_foe_go = (beaten: bool):
+    global patrol
+    if patrol.foe_home: return
+    patrol.foe_home = true
+    send_home(battle, ORENTHIA_SIDE, beaten, false)
+
+# A formation on its beat: its pilots' heading eased toward the leg's end; the leg done within
+# 1500 m of it. Returns the leg now.
+patrol_beat = (crafts: int[], beat: vec3[], leg: int, dt: f64) -> int:
+    if crafts.len() == 0 or leg >= beat.len(): return leg
+    lead = patrol_actor(crafts[0])
+    # (the leader down or gone: the next of them leads)
+    loop c in crafts:
+        if lead < 0 or not patrol_up(lead): lead = patrol_actor(c)
+    if not patrol_up(lead): return leg
+    l = battle.actors[lead]
+    if l.pilot.launching or not l.pilot.formation: return leg
+    at = l.state.position
+    if f64(length(vec3(beat[leg].x - at.x, 0, beat[leg].z - at.z))) < 1500.0: return leg + 1
+    h = patrol_steer(l.pilot.formation_heading, at, beat[leg], dt)
+    loop c in crafts:
+        i = patrol_actor(c)
+        if i >= 0 and battle.actors[i].pilot.formation:
+            battle.actors[i].pilot.formation_heading = h
+            if c != battle.actors[lead].craft: battle.actors[i].pilot.leader = battle.actors[lead].craft
+    leg
 
 # ---- the Ierax, the Kalyran seaplane tender (src/tender.jo) ----
 tender_hoist = 0                     # 0 afloat, 1 being hoisted in, 2 on her deck, 3 being lowered out
@@ -11484,6 +11791,7 @@ aboard_offers = () -> Offer[]:
     # (at the Ierax: her bunkers, her derrick, and on her deck her mechanics)
     if tender_hoist == 0 and st.moored and near_tender(st.position):
         offer_add(o, "tender-fuel", "take on fuel from {TENDER_NAME}")
+        if active_scenario == "": offer_add(o, "tender-duty", "ask the duty officer about the patrol", .t)
         offer_add(o, "tender-hoist", "be hoisted aboard {TENDER_NAME}")
     if tender_hoist == 2:
         cost = tender_repair_cost()
@@ -12127,6 +12435,13 @@ update_frame = (dt: f64, saves: bool = true):
                     global slip
                     _=step_slip_launch(slip,pc,dt,t)
                     if slip.splash:slip_splash(pc,spray_ps)
+                else if patrol_capture!="" and active_scenario=="" and frame_number()>40:
+                    # (captures only: the player flown with the Ierax's patrol)
+                    e=flight_env(t,pc.state.position)
+                    flown=patrol_capture_controls(e)
+                    pc.throttle=flown.throttle
+                    step(pc.spec,pc.state,flown,e,dt)
+                    pc.prop_angle+=dt*prop_rotation_speed(pc.state,pc.feedback.speed);pc.sea_t=t;feel(pc,dt,e.wind)
                 else if capture_after!="" and active_scenario=="strait":
                     # (captures only: the way home or the rescue, flown for the player)
                     e=flight_env(t,pc.state.position)
@@ -12274,6 +12589,7 @@ update_frame = (dt: f64, saves: bool = true):
             else if act == "fuel": open_fuel_pier()
             else if act == "fetch" and stranded_on_land(): fetch_home()
             else if act == "tender-fuel": tender_fuel()
+            else if act == "tender-duty": say_toast("The duty officer: {patrol_answer()}")
             else if act == "tender-hoist": tender_hoist_start(false)
             else if act == "tender-lower": tender_hoist_start(true)
             else if act == "tender-repair": tender_repair()
@@ -12312,6 +12628,8 @@ update_frame = (dt: f64, saves: bool = true):
     if tender_capture != "": tender_capture_step()
     swing_on_buoy(dt)
     lighter_step(dt)
+    if patrol_capture != "" and active_scenario == "": patrol_capture_stage()
+    patrol_step(dt)
     tender_step(dt)
     tender_xfer_step(dt)
     help_step(dt)
@@ -12446,7 +12764,8 @@ update_frame = (dt: f64, saves: bool = true):
     if combat_audio.guns.len()>0:update_combat_audio(combat_audio,battle,scene_camera())
     fight=active_scenario=="strait" or active_scenario=="canal"
     update_battle_radio(battle_radio,battle,living_world.player,audio_enabled and fight and me.mode==.aboard)
-    if fight and not world_held():
+    # (the strait's and the canal's radio, and the Ierax's patrol's)
+    if (fight or (active_scenario=="" and patrol.stage != .none)) and not world_held():
         hci=combat_index(battle,living_world.people[living_world.player].craft)
         update_homeward(homeward,battle,living_world,hci,pc.state.position,pc.state.on_water or pc.state.moored,t,dt,audio_enabled and me.mode==.aboard)
         situation_arrival(hci)
@@ -12530,7 +12849,7 @@ update_frame = (dt: f64, saves: bool = true):
             global war_chart
             war_chart = WarChart()
             print("WAR STAGE at frame {frame_number()}")
-    all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)+(if active_scenario!="":scenario_air_traffic(living_world,battle) else:[])+capture_racers
+    all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)+(if active_scenario!="":scenario_air_traffic(living_world,battle) else:if patrol.stage != .none: scenario_air_traffic(living_world,battle,SORTIE_ENGAGEMENT) else:[])+capture_racers
     # Relevance is refreshed at 2.5 Hz; selected moving bodies are followed every frame.
     if me.mode==.aboard:
         target_scan-=dt
@@ -13326,7 +13645,7 @@ draw = ():
             else if sos.aboard:
                 if not skip.active and help_card() != "": prompt_card(fonts, help_card(), 90.0)
             else: text("{free.pos.x:.0} {free.pos.y:.0} {free.pos.z:.0}", vec2(16, 16), 18, rgba(1, 1, 1, 0.7))
-    if active_scenario=="strait" and (me.mode == .aboard or me.mode == .walking): draw_homeward(homeward,fonts,t)
+    if (active_scenario=="strait" or (active_scenario=="" and patrol.stage != .none)) and (me.mode == .aboard or me.mode == .walking): draw_homeward(homeward,fonts,t)
     if me.mode == .aboard and rt.open:
         chosen = draw_rt_pad(rt, fonts, t, pad.on)
         if chosen >= 0: rt_send(chosen)
