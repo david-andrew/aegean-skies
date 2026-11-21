@@ -197,6 +197,10 @@ use 'src/leisure.jo'
 use 'src/leisure_view.jo'
 use 'src/ui_state.jo'
 use 'src/aircraft_paint.jo'
+use 'src/aircraft_paint_view.jo'
+use 'src/paint_parts.jo'
+use 'src/paint_shop.jo'
+use 'src/pilot_liveries.jo'
 use 'src/markings.jo'
 use 'src/note_cue.jo'
 use 'src/note_value.jo'
@@ -266,7 +270,7 @@ import 'src/living_portage.jo' as portage
 import 'src/living_claims.jo' as claims
 import 'src/living_types.jo' as lt
 import 'src/life_types.jo' as social
-from 'src/living_money.jo' import craft_grams
+from 'src/living_money.jo' import craft_grams, transfer
 
 use 'tools/judge_scene.jo'
 
@@ -371,6 +375,21 @@ painted_model: CraftModel? = none
 paint_dirty = false
 paint_built_at = -100
 paint_support_cache = PaintSupport()
+paint_shown = Paint()               # (the paint the model was last built in: the player's, a shop's draft, or a job's stage)
+# The paint shop (src/paint_shop.jo): a mechanic paints her for a price and a little time. While
+# the Paint page is a shop's, it changes a draft, shown on the aircraft and priced; ordered, the
+# aircraft stays in the shop (paint_job, saved) until the paint is dry.
+paint_job = PaintJob()
+paint_shop_open = false
+paint_shop_draft = Paint()
+paint_shop_who = -1                 # (the painter, a Person, and their town)
+paint_shop_place = -1
+paint_fresh_until = -1              # (a new paint is remarked on until this minute, once by each)
+paint_remarked: int[] = []
+# Other pilots' liveries (src/pilot_liveries.jo): each one's paint is kept with their aircraft's
+# record; their models are built from it a few frames apart and kept by the paint's text.
+pilot_livery_queue: int[] = []      # (the traffic entries still to build)
+pilot_livery_models: {str: int} = {}
 if env("TOWNS_PRINT") != none:
     loop tw in towns: print("{tw.name}: {tw.center.x:.0} {tw.center.z:.0} out {tw.out.x:.2} {tw.out.y:.2} houses {tw.houses.len()}")
 print("world built in {(time() - t0) * 1000.0:.0} ms")
@@ -428,6 +447,7 @@ pc = if aircraft_profile(start_kind).landplane: landplane_at_airfield(start_kind
 pc.spec.player = true
 moored: Moored[]
 traffic = make_living_traffic(living_world, craft_models)
+assign_pilot_liveries()
 bind_living_player(pc, living_world, traffic_scene)
 
 # A landplane is never left on the water: bound to a record that has her at a harbour's berth (a
@@ -1023,7 +1043,7 @@ _foot_things_now = () -> FootThing[]:
         m = player_model()
         q = pc.state.orientation; p = pc.state.position
         c = m.cockpit
-        out.push(FootThing("aboard", "", "", "Climb aboard", c - vec3(0.75, 1.3, 1.1), c + vec3(0.75, 0.45, 1.1), p, origin = p, rot = q))
+        out.push(FootThing("aboard", "", "", if paint_job.active: "In the paint shop" else: "Climb aboard", c - vec3(0.75, 1.3, 1.1), c + vec3(0.75, 0.45, 1.1), p, origin = p, rot = q))
         e = m.prop_at; r = f32(min(m.prop_radius, 1.1))
         out.push(FootThing("tinker", "", "", "Work on her", e - vec3(r, r, 0.7), e + vec3(r, r, 0.7), p, origin = p, rot = q))
     if hotel.ok and f64(length(me.pos - hotel.counter)) < 45.0:
@@ -1915,21 +1935,231 @@ set_player_paint = (p: Paint):
         if living_world.aircraft[rec].livery_index != l:
             living_world.aircraft[rec].livery_index = l
             living_world.aircraft[rec].revision += 1
+        # (and the whole paint, kept with the aircraft as every pilot's is)
+        living_world.aircraft[rec].paint = if paint_active(p, kind): paint_to_record(p) else: ""
 
-# (each frame: the painted model rebuilt when the paint changed, at most every few frames while a
-# slider is dragged)
+# Whether painting is free anywhere, from the pause menu's Paint page. (The sandbox settings'
+# "paint any time anywhere" switch will answer this; off, painting is done at a workshop, for a
+# price and a little time. AEGEAN_PAINT_AT_SHOPS=1 turns it off, for captures and checks.)
+paint_free_anywhere = () -> bool: env("AEGEAN_PAINT_AT_SHOPS") == none
+
+# the paint the aircraft is seen in now: a shop's draft while it is being chosen, a job's stage
+# while she is in the shop, or her own
+paint_seen = () -> Paint:
+    if paint_shop_open: return paint_shop_draft
+    paint_job_look(paint_job, player_paint, living_world.minute)
+
+# (each frame: the shop's job, and the painted model rebuilt when the paint changed, at most every
+# few frames while a slider is dragged)
 paint_step = ():
-    global painted_model, paint_dirty, paint_built_at
+    global painted_model, paint_dirty, paint_built_at, paint_shown
+    paint_job_step()
+    kind = int(pc.kind)
+    if paint_seen() != paint_shown: paint_dirty = true
     if not paint_dirty or frame_number() - paint_built_at < 6: return
     paint_dirty = false; paint_built_at = frame_number()
-    kind = int(pc.kind)
-    painted_model = if paint_active(player_paint, kind): paint_build(player_paint, kind) else: none
+    paint_shown = paint_seen()
+    painted_model = if paint_active(paint_shown, kind): paint_build(paint_shown, kind) else: none
 
 # the model the player's aircraft is drawn with
 player_model = () -> CraftModel:
     if let m = painted_model:
-        if paint_active(player_paint, int(pc.kind)): return m
+        if paint_active(paint_shown, int(pc.kind)): return m
     craft_models[pc.model]
+
+# ---------------- the paint shop ----------------
+
+paint_clock = (minute: int) -> str: clock_text(living_world, minute)
+
+# The painter's answer when asked: the shop's page opened (the pause menu's Paint page, as the
+# shop's), or why not, in their words.
+open_paint_shop = (person: int, place: int) -> str:
+    global paint_shop_open, paint_shop_draft, paint_shop_who, paint_shop_place
+    if paint_job.active: return "She'll be dry at {paint_clock(paint_job.ready_minute)}. Best leave her be till then."
+    rec = living_world.people[living_world.player].craft
+    if rec < 0 or not pc.state.moored: return "Moor her here first and I'll see to her."
+    # (at this harbour: at a dock, or a big boat on her buoy off it)
+    if f64(length(pc.state.position - me.pos)) > 1500.0: return "Bring her round to this harbour and moor her; I can't paint her from here."
+    paint_shop_open = true
+    paint_shop_draft = if player_paint.kind == int(pc.kind): player_paint else: paint_reset(int(pc.kind))
+    paint_shop_who = person; paint_shop_place = place
+    dbg.page = PAINT_PAGE
+    dbg.paint_page.ordered = false; dbg.paint_page.left = false
+    set_paused(true)
+    "Show me what you'd like."
+
+paint_shop_quote = () -> PaintQuote: paint_quote(player_paint, paint_shop_draft, int(pc.kind))
+
+# the Paint page's standing: the shop's price for the draft, free, or closed with where things stand
+paint_shop_view = () -> PaintShopView:
+    if paint_shop_open:
+        q = paint_shop_quote()
+        return PaintShopView(.shop, living_world.people[paint_shop_who].name, q.cents, q.minutes, q.items, paint_order_refusal(q, player_cents()))
+    if paint_job.active:
+        return PaintShopView(mode = .closed, note = "She is in the paint shop at {living.place_name(living_world, max(0, paint_job.place))} until {paint_clock(paint_job.ready_minute)}.")
+    if paint_free_anywhere(): return PaintShopView()
+    PaintShopView(mode = .closed, note = "Painting is done at a workshop. Moor her at a harbour with a mechanic and ask them.")
+
+paint_shop_close = ():
+    global paint_shop_open, paint_dirty
+    if not paint_shop_open: return
+    paint_shop_open = false
+    paint_dirty = true
+    dbg.paint_page.ordered = false; dbg.paint_page.left = false
+
+# The order given: the painter paid, the aircraft in the shop until the paint is dry.
+paint_shop_order = ():
+    global paint_job
+    q = paint_shop_quote()
+    if paint_order_refusal(q, player_cents()) != "": return
+    payer = living_world.people[living_world.player].account
+    to = living_world.people[paint_shop_who].account
+    if not transfer(living_world, payer, to, q.cents, .repair): return
+    paint_job = paint_job_begin(paint_shop_draft, int(pc.kind), q, living_world.minute, paint_shop_place, paint_shop_who)
+    log_note(notebook, "Left her with {living_world.people[paint_shop_who].name} to be painted: {join(q.items, ", ")}. {phoenix_text(q.cents)}; dry at {paint_clock(paint_job.ready_minute)}.", paint_clock(living_world.minute))
+    say_toast("She is in the paint shop until {paint_clock(paint_job.ready_minute)}")
+    paint_shop_close()
+    set_paused(false)
+
+# (each frame: the page's order or leave; the shop's page gone with the pause menu; the job done
+# when the paint is dry)
+paint_job_step = ():
+    global paint_job, paint_fresh_until, paint_remarked
+    if paint_shop_open:
+        if dbg.paint_page.ordered: paint_shop_order()
+        else if dbg.paint_page.left or not dbg.open or dbg.page != PAINT_PAGE:
+            was_open = dbg.open and dbg.paint_page.left
+            paint_shop_close()
+            if was_open: set_paused(false)
+    if not paint_job.active: return
+    # (another aircraft taken meanwhile: the shop's job was for the one she left)
+    if paint_job.kind != int(pc.kind):
+        paint_job = PaintJob()
+        return
+    if paint_job_done(paint_job, living_world.minute):
+        done = paint_job
+        paint_job = PaintJob()
+        set_player_paint(done.paint)
+        paint_fresh_until = living_world.minute + 1440; paint_remarked = []
+        say_toast("The paint is dry: she is ready")
+        log_note(notebook, "Her new paint is dry.", paint_clock(living_world.minute))
+
+# What someone says of a new paint, the first time they are spoken to within a day of it ("": nothing).
+paint_remark = (person: int) -> str:
+    global paint_remarked
+    if living_world.minute >= paint_fresh_until or person in paint_remarked: return ""
+    paint_remarked.push(person)
+    ["That's new paint on her. She looks well in it.", "I saw her come out of the shop. Handsome.", "New colours? I'd know her anywhere now.", "Fresh paint. You can smell the dope from here."][person % 4]
+
+# the mechanic in the player's town, or -1
+paint_mechanic_here = () -> int:
+    here = town_here(me.pos)
+    loop q in living_world.people:
+        if q.occupation == .mechanic and q.place == here and q.far_home < 0: return q.id
+    -1
+
+paint_capture_cash = 0
+paint_capture_done = false
+# (AEGEAN_CAPTURE_LAUNCH=paintshop, and AEGEAN_CAPTURE_PANEL=paint-shop for its page alone)
+paint_shop_capture_step = ():
+    global paint_shop_draft, paint_dirty, paint_capture_cash, paint_capture_done, paint_job
+    n = frame_number()
+    kind = int(pc.kind)
+    who = paint_mechanic_here()
+    if n == 60:
+        said = if who >= 0: open_paint_shop(who, town_here(me.pos)) else: "no mechanic here"
+        print("PAINTSHOP ask: '{said}' open={paint_shop_open} painter={if who >= 0: living_world.people[who].name else: "-"}")
+    if n == 62 and paint_shop_open:
+        paint_shop_draft = paint_from_spec(env("AEGEAN_PAINT_DRAFT") ?? "part.lwing=stripes:0.78,0.18,0.12:0.95,0.94,0.9:0:6 part.rwing=stripes:0.78,0.18,0.12:0.95,0.94,0.9:0:6 part.rudder=plain:0.78,0.18,0.12 decal=star:fuselage", kind)
+        paint_dirty = true
+        q = paint_shop_quote()
+        print("PAINTSHOP quote: {phoenix_text(q.cents)} ({q.cents}), {paint_minutes_text(q.minutes)}, for {join(q.items, ", ")}; cash {player_cents()}; refusal '{paint_order_refusal(q, player_cents())}'")
+    if launch_capture != "paintshop": return
+    if n == 70 and paint_shop_open:
+        paint_capture_cash = player_cents()
+        painter_before = living_world.accounts[living_world.people[who].account].cents
+        dbg.paint_page.ordered = true
+        paint_job_step()
+        print("PAINTSHOP ordered: job={paint_job.active} ready={paint_clock(paint_job.ready_minute)} paid={paint_capture_cash - player_cents()} painter_got={living_world.accounts[living_world.people[who].account].cents - painter_before} paused={paused} page_open={paint_shop_open} still_old_paint={player_paint != paint_job.paint}")
+    if n == 80 and paint_job.active:
+        g = capture_running_game()
+        if g is lt.SaveGame:
+            kept = paint_job
+            paint_job = PaintJob()
+            runtime = read_game_session(g)
+            ok = runtime is GameSession and apply_saved_game(g, runtime as GameSession)
+            print("PAINTSHOP save round trip {ok}: job kept {paint_job == kept}, active {paint_job.active}")
+        else: print("PAINTSHOP save refused: {g.message}")
+    if n == 90 and paint_job.active:
+        print("PAINTSHOP waiting {paint_job_left(paint_job, living_world.minute)} minutes; aboard thing '{[loop th in _foot_things_now(): if th.act == "aboard": th.label]}'")
+        leisure_skip(paint_job_left(paint_job, living_world.minute) + 1, "Waiting for the paint to dry")
+    if n > 90 and not paint_job.active and not paint_capture_done:
+        paint_capture_done = true
+        rec = living_world.people[living_world.player].craft
+        print("PAINTSHOP dry at frame {n}, {paint_clock(living_world.minute)}: parts {player_paint.parts.len()} decals {player_paint.decals.len()} record_paint {living_world.aircraft[rec].paint.len()} chars, same_as_record {paint_from_record(living_world.aircraft[rec].paint) == player_paint}")
+
+# ---------------- other pilots' liveries ----------------
+
+# Each pilot's aircraft given its paint (made once from the pilot's number, then kept with the
+# aircraft's record), and queued to have its model built.
+assign_pilot_liveries = ():
+    global pilot_livery_queue
+    pilot_livery_queue = []
+    loop k in 0..traffic.len():
+        c = traffic[k].craft
+        if c < 0 or c >= living_world.aircraft.len(): continue
+        if living_world.aircraft[c].paint == "":
+            owner = living_world.aircraft[c].owner
+            who = if living_world.aircraft[c].operator >= 0: living_world.aircraft[c].operator else: owner
+            job = living_world.people[who].occupation
+            style = if job == .patrol: LiveryStyle.service else: if job == .pirate: LiveryStyle.pirate else: LiveryStyle.personal
+            base = if living_world.aircraft[c].livery_index >= 0 and living_world.aircraft[c].livery_index < LIVERIES.len(): living_world.aircraft[c].livery_index else: DEFAULT_LIVERIES[int(traffic[k].kind)]
+            living_world.aircraft[c].paint = paint_to_record(pilot_paint(who, int(traffic[k].kind), base, living_world.people[who].name, style))
+        pilot_livery_queue.push(k)
+
+# AEGEAN_CAPTURE_LIVERY="k [yaw pitch distance]": once the liveries are built, the free camera on the
+# k-th other pilot's aircraft, and a PILOT LIVERY line for each (captures)
+pilot_livery_capture = env("AEGEAN_CAPTURE_LIVERY")
+pilot_livery_captured = false
+pilot_livery_capture_step = ():
+    global pilot_livery_captured, free
+    if pilot_livery_queue.len() > 0 or frame_number() < 30: return
+    words = split(pilot_livery_capture ?? "0", " ")
+    loop k in 0..(if pilot_livery_captured: 0 else: traffic.len()):
+        c = living_world.aircraft[traffic[k].craft]
+        p = paint_from_record(c.paint)
+        print("PILOT LIVERY {k} {traffic[k].name} ({living_world.people[traffic[k].person].occupation}) {CRAFT_NAMES[int(traffic[k].kind)]} livery {c.livery_index} parts {[loop q in p.parts: PAINT_PARTS[q.part]]} decals {[loop d in p.decals: d.motif]} model {traffic[k].model} at {traffic[k].state.position} visible {traffic[k].visible}")
+    pilot_livery_captured = true
+    k = clamp(to_int(words[0]) ?? 0, 0, max(traffic.len() - 1, 0))
+    if traffic.len() == 0: return
+    st = traffic[k].state
+    side_a = heading(st) + (if words.len() > 1: to_float(words[1]) ?? 0.9 else: 0.9); side_e = if words.len() > 2: to_float(words[2]) ?? 0.3 else: 0.3
+    out = vec3(f32(sin(side_a) * cos(side_e)), f32(sin(side_e)), f32(-cos(side_a) * cos(side_e)))
+    free.pos = st.position + out * f32(if words.len() > 3: to_float(words[3]) ?? 15.0 else: 15.0)
+    free.pitch = -side_e
+    free.yaw = atan2(f64(out.x), f64(out.z))
+    if dot(forward(free), -out) < 0.9: free.yaw = -free.yaw
+    me.mode = .free
+
+# (each frame: one waiting model built every few frames, so a start or a load does not stall on them)
+pilot_livery_step = ():
+    global pilot_livery_queue, pilot_livery_models
+    if pilot_livery_capture != none: pilot_livery_capture_step()
+    if pilot_livery_queue.len() == 0 or frame_number() % 4 != 0: return
+    k = pilot_livery_queue[0]
+    pilot_livery_queue.remove_at(0)
+    if k >= traffic.len(): return
+    c = traffic[k].craft
+    text = living_world.aircraft[c].paint
+    p = paint_from_record(text)
+    kind = int(traffic[k].kind)
+    if not paint_active(p, kind): return
+    key = "{kind} {text}"
+    if not (key in pilot_livery_models):
+        craft_models.push(paint_build(p, kind))
+        pilot_livery_models[key] = craft_models.len() - 1
+    traffic[k].model = pilot_livery_models[key]
+    living_world.aircraft[c].model_index = traffic[k].model
 
 # what the player's type can wear (worked out once a type, by building it with and without marks)
 paint_support_for = (kind: int) -> PaintSupport:
@@ -6067,7 +6297,8 @@ debug_view = () -> DebugView:
     v.bullet_scale = bullet_scale
     v.sea_rough = sea_rough
     game_page_view(v)
-    v.paint = player_paint
+    v.paint = if paint_shop_open: paint_shop_draft else: player_paint
+    v.paint_shop = paint_shop_view()
     v.paint_name = LIVERY_NAMES[clamp(if paint_active(player_paint, int(pc.kind)) and player_paint.livery >= 0: player_paint.livery else: DEFAULT_LIVERIES[int(pc.kind)], 0, LIVERY_NAMES.len() - 1)]
     v.paint_support = paint_support_for(int(pc.kind))
     v.craft_name = CRAFT_NAMES[clamp(int(pc.kind), 0, CRAFT_NAMES.len() - 1)]
@@ -6185,6 +6416,7 @@ load_scenario = (key: str, given: ScenarioState? = none) -> bool:
     else:slip=SlipLaunch();slip_cradle_z=SLIP_START
     traffic_scene=living_scene.SceneAdapter()
     traffic=make_living_traffic(living_world,craft_models)
+    assign_pilot_liveries()
     bind_living_player(pc,living_world,traffic_scene)
     landplane_ashore()
     me=Player(mode=if next.mode==.aboard:Mode.aboard else:if next.mode==.free:Mode.free else:Mode.walking,pos=next.position,yaw=next.yaw)
@@ -6317,7 +6549,7 @@ capture_running_game = () -> lt.SaveGame | save_types.LivingSaveError:
     session=GameSession(player_mode=int(me.mode),player_position=kept_pos,player_point=kept_point,player_yaw=kept_yaw,player_phase=me.phase,
         flyer=pc,air=air_events,notes=notebook.notes,world_time=t,hour=hour,wind_bias=wind_bias,accumulator=traffic_scene.accumulator,
         rope_anchor=rope.anchor,rope_loose=rope.loose,rope_tied=rope.tied,mooring=vessel_mooring,speed=speed_scale,lift=lift_scale,bullets=bullet_scale,
-        wind=wind_now,feel=dbg.tweaks,follow=follow,free=free,leisure=leisure_kept(),leisure_at=leisure_at,leisure_spent=leisure_spent,leisure_had=leisure_had,served_look_until=served_look_until,mustache=pilot_mustache,fish=fish,paint=player_paint,help=keep_help())
+        wind=wind_now,feel=dbg.tweaks,follow=follow,free=free,leisure=leisure_kept(),leisure_at=leisure_at,leisure_spent=leisure_spent,leisure_had=leisure_had,served_look_until=served_look_until,mustache=pilot_mustache,fish=fish,paint=player_paint,paint_job=paint_job,help=keep_help())
     # (the folded checkpoint only; its whole-World checks run in the save's own steps)
     capture_game_snapshot(living_world,presentation,session,traffic,traffic_scene,vessels,battle,terrain_key(),summary)
 
@@ -6393,7 +6625,7 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
     living_world=game.world;presentation=game.presentation;pc=session.flyer;air_events=session.air
     band_publish(living_world, band_numbers(hotel), BAR_START, BAR_END, int(BAR_GAP * 60.0))
     traffic_scene=living_scene.SceneAdapter(accumulator=session.accumulator)
-    traffic=make_living_traffic(living_world,craft_models);bind_living_player(pc,living_world,traffic_scene);landplane_ashore()
+    traffic=make_living_traffic(living_world,craft_models);assign_pilot_liveries();bind_living_player(pc,living_world,traffic_scene);landplane_ashore()
     restore_air_owners(air_events,living_world)
     vessels=fleet;battle=fight;vessel_bindings=VesselBindings();vessel_mooring=session.mooring
     restore_battle_owners(battle,living_world)
@@ -6443,6 +6675,9 @@ apply_saved_game = (game: lt.SaveGame,session: GameSession) -> bool:
         l = living_world.aircraft[rec].livery_index
         if l >= 0 and l < LIVERIES.len() and l != DEFAULT_LIVERIES[int(pc.kind)] and l in boat_paints(pc.kind): kept = Paint(kind = int(pc.kind), livery = l)
     set_player_paint(kept)
+    global paint_job
+    paint_job = if session.paint_job.active and session.paint_job.kind == int(pc.kind): session.paint_job else: PaintJob()
+    paint_shop_close()
     global swim
     swim=Swim()
     leisure_ui=0;leisure_line="";skip=TimeSkip();served_look_until=session.served_look_until;served_pending=false
@@ -7147,7 +7382,12 @@ game_page_apply = (r: DebugResult):
 
 # what the debugging panel changed or asked for
 debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
-    if v.paint != was.paint: set_player_paint(v.paint)
+    if v.paint != was.paint:
+        # (a shop's page changes its draft; the free page, the paint itself)
+        if paint_shop_open:
+            global paint_shop_draft, paint_dirty
+            paint_shop_draft = v.paint; paint_dirty = true
+        else if v.paint_shop.mode == .free: set_player_paint(v.paint)
     game_page_apply(r)
     if r.scenario!="":load_scenario(r.scenario);return
     weather_anchor = if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos
@@ -7607,6 +7847,11 @@ launch_capture_step = ():
             print("PAINT save round trip {ok}: saved {to_text(saved)}, restored {to_text(player_paint)}, record {LIVERY_NAMES[living_world.aircraft[rec].livery_index]}, same {player_paint == saved}")
         else: print("PAINT save refused: {g.message}")
         return
+    # (paintshop: the paint shop gone through as the player would: the mechanic asked, a paint
+    # chosen (AEGEAN_PAINT_DRAFT), ordered and paid, the game saved and loaded with her in the shop,
+    # the time waited, the paint dry. PAINTSHOP lines say how each step went.)
+    # (run from paint_step, which goes on while the pause menu is open)
+    if launch_capture == "paintshop": return
     # (lighter: at frame 60 the fuel lighter is called; once alongside, a full tank bought and the
     # panel closed; LIGHTER lines say what happened, the fuel and the books)
     if launch_capture == "lighter":
@@ -8621,6 +8866,8 @@ if startup_aegean_capture_panel=="scenarios":dbg.page=6;capture_pause_frame=60
 if startup_aegean_capture_panel=="flight":dbg.page=8;capture_pause_frame=60
 if startup_aegean_capture_panel=="aircraft":dbg.page=1;capture_pause_frame=60
 if startup_aegean_capture_panel=="paint":dbg.page=PAINT_PAGE;capture_pause_frame=60
+# (paint-shop: the Paint page as a paint shop's, the town's mechanic asked, with AEGEAN_PAINT_DRAFT chosen)
+paint_shop_capture = startup_aegean_capture_panel=="paint-shop" or launch_capture == "paintshop"
 # (paint-parts, paint-decals, paint-marks: the Paint page at that tab)
 if startup_aegean_capture_panel=="paint-parts" or startup_aegean_capture_panel=="paint-decals" or startup_aegean_capture_panel=="paint-marks":
     dbg.page=PAINT_PAGE;capture_pause_frame=60
@@ -12193,6 +12440,8 @@ update_frame = (dt: f64, saves: bool = true):
     if frame_number() % 15 == 0 and not paused: notice_new_maps()
     # (a repaint shows at once, paused on the Paint page as in play)
     paint_step()
+    if paint_shop_capture: paint_shop_capture_step()
+    pilot_livery_step()
     # the pause menu's music keeps playing after unpausing, to hear it among the world's sounds
     music_audition_update(dbg.music,dt,startup_sloppy_no_audio == none)
     if paused:
@@ -12515,6 +12764,9 @@ update_frame = (dt: f64, saves: bool = true):
                       global ui_turn
                       ui_turn = living.talk(living_world, folks[k].person, .greeting, living_world.player)
                       ui_line = with_meet_remark(folks[k].person, ui_turn)
+                      # (a new paint is noticed)
+                      noticed = paint_remark(folks[k].person)
+                      if noticed != "": ui_line = said_by(living_world.people[folks[k].person].name, noticed)
                       # (someone whose cargo one has brought sees it)
                       loop id in living_world.active_jobs:
                           j = living_world.jobs[id]
@@ -12555,7 +12807,10 @@ update_frame = (dt: f64, saves: bool = true):
               if act == "ride-offer":
                   k = ride_candidate(10.0)
                   if k >= 0: ride_start(k)
-              if act == "aboard":
+              if act == "aboard" and paint_job.active:
+                  # (she is in the paint shop: not to be flown until the paint is dry)
+                  say_toast("She is in the paint shop until {paint_clock(paint_job.ready_minute)}")
+              else if act == "aboard":
                   me.mode = .aboard
                   mouse_lock(true)
                   pc.placed = false
@@ -14328,6 +14583,13 @@ draw_ui = ():
             if merchant: answers.push("Let's trade.")
             sells_maps = map_shop_of(f.person)
             if sells_maps != "": answers.push("What maps have you?")
+            # (a mechanic paints aircraft: asked, they open the paint shop; with her in the shop,
+            # how the work stands, and waiting for it)
+            paints = p.occupation == .mechanic
+            paint_k = answers.len() - ntop - work_k
+            if paints: answers.push(if paint_job.active: "How is the paint coming on?" else: "I'd like her painted.")
+            paint_wait = paints and paint_job.active
+            if paint_wait: answers.push("I'll wait for the paint.")
             # (a family grateful to the player offers its spare room, at home)
             rest_offer = f.place >= 0 and f.place == p.home and p.occupation != .patrol and p.occupation != .pirate and grateful_to_player(living_world, f.person)
             rest_k = answers.len() - ntop - work_k
@@ -14398,6 +14660,13 @@ draw_ui = ():
                   ui_place = f.place
                   ui = .trade
               else if sells_maps != "" and c == (if merchant: 2 else: 1): open_map_counter(sells_maps)
+              else if paints and c == paint_k:
+                  said = open_paint_shop(f.person, f.place)
+                  ui_line = said_by(p.name, said)
+                  if paint_shop_open: ui = .none
+              else if paint_wait and c == paint_k + 1:
+                  ui = .none
+                  leisure_skip(paint_job_left(paint_job, living_world.minute) + 1, "Waiting for the paint to dry")
               else if (bucket_back or bucket_ask) and c == bucket_k:
                   if bucket_back:
                       said = fish_return_bucket(living_world, fish, carried_k)
