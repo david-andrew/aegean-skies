@@ -37,6 +37,7 @@ const WORLD_ROOT_ORIGIN = -458752.0
 const WORLD_CACHE_SLOTS = 1024
 const WORLD_ATLAS_COLS = 32
 const WORLD_TILE_PIXELS = 17
+const WORLD_TILE_UPLOAD_BYTES = WORLD_TILE_PIXELS*WORLD_TILE_PIXELS*4*4  # four RGBA8 atlas regions
 const WORLD_GENERATE_LIMIT = 4
 const WORLD_CONTACT_GENERATE_LIMIT = 9
 
@@ -101,6 +102,7 @@ world_triangles = 0
 world_clock = 0.0
 world_heights: Texture
 world_materials: Texture
+world_cliff_map: Texture
 world_working:Texture
 world_ground_sh: Shader
 
@@ -145,6 +147,8 @@ world_tile_visible = (x: f64,z: f64,size: f64,cam: vec3,planes: vec4[]) -> bool:
     true
 
 world_upload_tile = (t: Texture,img: Image,slot: int):
+    global world_uploaded
+    world_uploaded += img.pixels.len()
     flush()
     glBindTexture(GL_TEXTURE_2D,u32(t.id))
     glPixelStorei(GL_UNPACK_ALIGNMENT,1)
@@ -162,6 +166,7 @@ struct WorldTileJob:
     advanced: int = -100          # (the frame it last took a row)
     h: Image
     m: Image
+    cliff_stations: vec3[]
     working: Image
     low: f64 = 1e9
     high: f64 = -1e9
@@ -198,6 +203,14 @@ world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
             nx = world_source_sample(wx-5.0,wz).0-world_source_sample(wx+5.0,wz).0
             nz = world_source_sample(wx,wz-5.0).0-world_source_sample(wx,wz+5.0).0
             normal = normalize(vec3(f32(nx),10,f32(nz)))
+            station = cliff_station(f32(y),normal.y)
+            if (job.level>0 or i==0 or i==16 or j==0 or j==16) and cliff_check_foot(station,f32(y)):
+                # Use the same physical stencil on either side of a tile seam
+                # and at coarser levels. Interiors reuse job.values on upload.
+                hx = max(world_source_sample(wx-14.0,wz).0,world_source_sample(wx+14.0,wz).0)
+                hz = max(world_source_sample(wx,wz-14.0).0,world_source_sample(wx,wz+14.0).0)
+                station = cliff_foot_station(station,f32(y),f32(max(hx,hz)))
+            job.cliff_stations.push(station)
             job.m.set(i,j,vec4(normal.x*0.5+0.5,normal.z*0.5+0.5,f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011))))
             work = working_landuse(vec2(f32(wx),f32(wz)),y,f64(length(normal.xz)/max(normal.y,0.1)))
             # (the fields baked here as their colour (rgb) and share (a), working land and fields
@@ -219,6 +232,7 @@ world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
 world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
     world_upload_tile(world_heights,job.h,slot)
     world_upload_tile(world_materials,job.m,slot)
+    world_upload_tile(world_cliff_map,cliff_map_image(job.cliff_stations,17,17,1<<job.level,job.values),slot)
     world_upload_tile(world_working,job.working,slot)
     tile=WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
     tile.canal_city=world_tile_canal(job.x,job.z,job.level)
@@ -282,7 +296,7 @@ world_view_missing = 0
 world_view_settled = () -> bool: world_view_missing == 0
 
 world_request_tile = (x: int,z: int,level: int) -> int:
-    global world_tiles,world_cache,world_generated,world_uploaded,world_tile_job,world_next_level,world_generate_made
+    global world_tiles,world_cache,world_generated,world_tile_job,world_next_level,world_generate_made
     key = world_tile_key(x,z,level)
     if key in world_cache:
         slot = world_cache[key]
@@ -320,7 +334,6 @@ world_request_tile = (x: int,z: int,level: int) -> int:
     world_cache[key] = slot
     if world_warming: world_warm_missing -= 1 else: world_view_missing -= 1
     world_generated += 1
-    world_uploaded += 17*17*8
     slot
 
 # Shore silhouettes expose the cell spacing; spend one extra level there.
@@ -480,7 +493,11 @@ world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundO
     tint = sample.tint
     tint.w = 1.0-smoothstep(1700.0,2300.0,absolute.y)   # (the treeline: wooded below, bare above)
     result=GroundOut(u.view_proj*vec4(curved,1),local,normalize(sample.normal),tint,orchard_cover(absolute.xz,absolute.y,length(sample.normal.xz)/max(sample.normal.y,0.1)),inst.state.z,vec3(0,0,0),ground_riparian(u,absolute.xz,local.y))
-    result.working=sample(u.working_map,(inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.working_map)))
+    uv=(inst.texel+p+vec2(0.5,0.5))/vec2(texture_size(u.materials))
+    result.working=sample(u.working_map,uv)
+    result.air=land_air_weights(local,u.cam,u.fog,u.land_steps)
+    result.wall_sun=cliff_light(sample.normal,local,u)
+    result.cliff=cliff_vertex(u,uv,local.y)
     result.land=dot(normalize(sample.normal),u.land_light.xyz)
     result
 
@@ -634,12 +651,14 @@ world_fragment_at = (i: GroundOut,u: GroundParams,detail: int,wind_study: int = 
 
 init_world_terrain = ():
     reset_coast_selection()
-    global world_tiles,world_heights,world_materials,world_working,world_ground_sh,world_balance_input,world_balance_output,world_balance_registry
+    global world_tiles,world_heights,world_materials,world_working,world_cliff_map,world_ground_sh,world_balance_input,world_balance_output,world_balance_registry
     world_balance_input=[];world_balance_output=[];world_balance_registry={}
     if coast_grids.len() == 0: init_terrain()
     world_tiles = [loop i in 0..WORLD_CACHE_SLOTS: WorldTile()]
     world_heights = texture(image(32*17,32*17),true)
     world_materials = texture(image(32*17,32*17),true)
+    world_cliff_map = texture(image(32*17,32*17),true)
+    set_mipmaps(world_cliff_map,false)
     world_working = texture(image(32*17,32*17),true)
     world_ground_sh = make_shader(if render_quality.tier == 0: world_shader(shader(world_vertex, world_fragment_low), shader(world_vertex, world_fragment_low_log)) else: world_shader(shader(world_vertex, world_fragment), shader(world_vertex, world_fragment_log)))
 
@@ -924,6 +943,7 @@ draw_world_terrain = (L: Light,t: f64):
     params.land_steps = if tweaks.painted_layers: 1.0 else: 0.0
     params.land_palette = field_palette
     params = meadow_fill(params, origin)
+    params.cliff_map=world_cliff_map
     params.working_map=world_working
     params.river_map=river_material_texture()
     params.river_area=vec4(RIVER_BOUNDS.xy,RIVER_BOUNDS.zw-RIVER_BOUNDS.xy)

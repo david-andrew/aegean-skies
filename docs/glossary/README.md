@@ -191,18 +191,16 @@ blue discs that stay in every frame are **speed flecks**.
 ### Cliff beds and lip
 
 - **Aliases:** strata, ledges, the cliff top, the fringe, the cliff's foot.
-- **Definition:** limestone cliffs painted as the film paints them: stacked beds about 3 m thick,
-  each its own tone, with a lit lip and a cool violet shadow under the bed above, ledges coming and
-  going along the face, tufts on them. At the top the scrub hangs over the edge in ragged tongues
-  with a soil band and root-stained rock below; at the foot, rock down to the water, wet at the
-  waterline. The rock is lit as bold planes by the way it faces.
-- **Code:** `src/terrain.jo ground_surface` (the strata block, the fringe block under "Where cliff
-  meets the green", the plane lighting under `light_normal`); `cliff_edge` from `ground_material`.
-- **Rules:** decide classification per pixel, never from values interpolated across a 14 m
-  terrain triangle (they draw sawteeth and dark wedges). `cliff_edge` (the slope changing fast
-  across a triangle) marks a cliff's lip and foot; ordinary hillsides skip all cliff work. The low
-  tier keeps only the per-pixel foot and edge rules: its ground shader on the laptop's GPU cannot
-  afford the ledges, tufts, streaks or plane lighting.
+- **Definition:** Coastal limestone has stacked beds about 3 m thick. Grass gives way to
+  crumbling soil at the lip, with a soft shadow just beneath it. At the foot, loose pale stone
+  darkens where the sea wets it.
+- **Code:** `cliff_station`, `cliff_map_image` and `cliff_contact` in `src/terrain_lod.jo`
+  describe the shelf. `ground_material` and `ground_surface` in `src/terrain.jo` paint it.
+- **Rules:** Sample the shelf in terrain-map coordinates at the vertices. Gentle ground contributes its elevation
+  weighted by how much soil it can hold. Compare the reconstructed shelf elevation with each
+  fragment's height so a single steep triangle can cross the whole face without stretching the
+  grass or the soil band down it. Ordinary triangles skip this work. Subpixel soil, shadow and gravel detail
+  fade with pixel size. All terrain detail levels and the phone use the same rim and toe.
 - **Capture:** `AEGEAN_VIEW="4793 25 -5162 -2.129 -0.024 12.5"` (cliff from the sea, island),
   `"139848 25 79652 -0.783 -0.073 12.5"` (mainland).
 
@@ -1795,7 +1793,7 @@ On the rivers branch until it lands.
   the horizon, so far ridges read as blue silhouettes a value step under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
   `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
-  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_aerial`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
+  `canopy_paint_low`, `canopy_far_value`, `canopy_light`, `land_light`, `land_air_weights`, `apply_land_air`); used by `ground_surface` in `src/terrain.jo` (`canopy_detail`: the low
   tier's terrain shaders are compiled with `canopy_paint_low` only) and by `world_grove_lists`
   in `src/world_groves.jo`. The density field is the terrain materials' `tint.x`. The sheet is
   baked as `assets/baked/canopy-sheet-v1.png` by `tools/bake.jo`.
