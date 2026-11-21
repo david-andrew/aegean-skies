@@ -2075,8 +2075,32 @@ On the rivers branch until it lands.
   and go home, lead me home. A number, a click or tap sends one, or Y steps and F sends. The
   nearest of the flight answers in a few plain words, by [signal](#signals-between-aircraft) when
   in sight.
-- **Code:** `src/rt_pad.jo`; `give_order` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`
-  in `aegean.jo`.
+  The words are heard by every one of the flight still up, however far off, and **stand over the
+  flight's way home**: a flight that has turned for home after the fight comes back to form on the
+  player or to circle where told (over the player while they are down on the sea), and goes on
+  home, formed on the first of those still up, when told to ("break off, go home", "lead me
+  home") or when the player is down for good or tied up. One far off says how far and which way
+  ("On our way. Twelve kilometres north-west of you."). **Lead me home** is led by one in sight:
+  a leader farther off than 1.2 km comes to the player first, the flight behind it ("Coming to
+  you. ... Then follow me home."), says "Follow me. Home this way." only once in sight, and
+  comes back for a player it has lost by 4 km ("Lost sight of you. Coming back."). Those already
+  down and tied up at the base are out of it; with all of them down, the first answers from the
+  base ("We're down at the Ierax, twenty-six kilometres west of you.").
+- **Code:** `src/rt_pad.jo` (`rt_reply`, `rt_later`); `give_order`, `flight_held`, `_orders_step`
+  and `_rehome` in `src/combat.jo`; `rt_lines`, `rt_tick`, `rt_send`, `rt_later_step` in `aegean.jo`.
+- **Capture:** `AEGEAN_SCENARIO=strait AEGEAN_CAPTURE_STRAIT_AFTER=orders` plays a pickup, "circle
+  here and wait", 10 km apart, "form on me" and "lead me home"; `ORDERS` lines say how it goes.
+
+### Flight marks
+
+- **Aliases:** the ally marks, the flight's chevrons, the pointer to the flight.
+- **Definition:** a small chevron over each of the player's own flight in the friends' colour
+  (a ring with the shape signs on), the leader's doubled; none of them on screen, a pointer at
+  the screen's edge toward the leader (else the nearest). The chevrons fade with range to a half
+  at 10 km and stay at that beyond it: one of the flight alive and in the battle is marked or
+  pointed to at any distance (under orders, gone on ahead, or down at the base). Nearer than
+  400 m (a formation) they are found by eye alone.
+- **Code:** `src/lead_marker.jo` `ally_marks`, `draw_ally_marks`, `ally_alpha`.
 
 ### Signals between aircraft
 
