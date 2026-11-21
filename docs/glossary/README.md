@@ -20,7 +20,7 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
@@ -129,6 +129,27 @@ blue discs that stay in every frame are **speed flecks**.
   shape peaking near 0.83·U² m): in an ordinary breeze the long, fast bands are low and the sea
   is carried by its short waves; the long bands grow in with the wind. Phase speeds follow deep
   water (c = √(gλ/2π)).
+
+### Harbour shelter and the shallows' limit
+
+- **Aliases:** harbour calm, the basin, sheltered water, `sea_harbour`, `sea_band_keep`.
+- **Definition:** where each band of the swell is allowed to be. A wave runs at its deep-water
+  speed only where the water is deep enough for it (c² = g/k·tanh(kd)): in water a quarter of
+  its length deep it has slowed 4%, in a ninth 30%. So each band is whole from a quarter of its
+  length of water and gone by a ninth: the 61 m swell fades between 15 and 7 m of water, the
+  4 m chop between 1 m and 0.45 m, and no long, fast swell runs through shallows or up a beach.
+  And a harbour has no fetch for a sea to grow in: inside its basin (calm out past the docks,
+  the buoy and the mole's end, fading to the open sea's full state 450 m further out) the three
+  long bands are gone, the 13 m one all but, and the short ones lap low (0.22 and 0.6 of their
+  open-sea height). The ripples, glints and marks are as everywhere.
+- **Code:** `src/sea.jo` `sea_band_keep` (shader and CPU alike), `sea_calm` / `sea_calm_at`,
+  `SeaHarbour`, `SEA_HARBOUR_GAINS`, uniform `harbour`; `src/harbour_shelter.jo`
+  `harbour_basin`, `harbour_shelter_at`, `harbour_shelter_step` (the harbour nearest the player,
+  each frame).
+- **Rules:** the drawn sea and `swell_at` keep each band by the same rule, so the floats ride
+  what is seen. No wave may pass faster than 1.3 times a real one of its length in that depth:
+  tests/sea_speed_test.jo (a wave gauge array on `swell_at`) and
+  tests/sea_speed_render_test.py (the drawn frames, `tools/sea_speed_view.jo`).
 
 ### Storm sea
 
@@ -1903,36 +1924,55 @@ On the rivers branch until it lands.
 
 ### Crowns
 
-- **Aliases:** clumps, leaf clumps, crown clumps, tree crowns, wood crowns, the woods' crowns.
-- **Definition:** every tree and every crown of the woods drawn as itself, at its real size, at
-  every distance it shows. A clump is one camera-facing card whose shader casts the view ray at a
-  lumpy ellipsoid of leaves: its outline lumps and leaf tufts come from the tufts' sheet (a small
-  procedural texture read on the clump's facing cube side, so they turn with the clump), lit by
-  its own rounded normal leaned toward the whole crown's, darker in its core, underside and the
-  gaps between tufts, the outline dithered over a pixel and a half. A tree (umbrella pine,
-  cypress, olive, plane, maquis bush) is a near set of clumps on a trunk and limbs; farther, the
-  same tree as a few merged clumps with the same outline, colour and light; farther still, one
-  crown. Each tree crosses between sets at its own distance, so a wood changes one tree at a
-  time. The **wood crowns** are the painted canopy's own maquis crowns stood up (the sheet's
-  crowns where the stand cover is above each crown's draw): domes, low spreads and loose bunches,
-  their near clumps to about 80 m.
+- **Aliases:** clumps, leaf clumps, crown clumps, tree crowns, the margin's crowns.
+- **Definition:** every single tree drawn as itself, at its real size, at every distance it
+  shows: the isolated trees, the orchards' and the groves', and the scattered crowns and scrub
+  of a wood's thin margin, outside its canopy. A clump is one camera-facing card whose shader
+  casts the view ray at a lumpy ellipsoid of leaves: its outline lumps and leaf tufts come from
+  the tufts' sheet (a small procedural texture read on the clump's facing cube side, so they turn
+  with the clump), lit by its own rounded normal leaned toward the whole crown's, darker in its
+  core, underside and the gaps between tufts, the outline dithered over a pixel and a half. A
+  tree (umbrella pine, cypress, olive, plane, maquis bush) is a near set of clumps on a trunk and
+  limbs; farther, the same tree as a few merged clumps with the same outline, colour and light;
+  farther still, one crown. Each tree crosses between sets at its own distance. Inside a wood
+  there are none: the wood is its canopy (below), and no trunk stands in it.
 - **Code:** `src/crowns.jo` (`crown_vs`, `crown_fs`, the species' generators, `crown_wood`,
   `crown_tuft_sheet`); placed by `src/world_groves.jo` (`crowns_of_lists`, `wood_row`,
-  `wood_step`); the stand cover from the terrain's tile jobs (`wood_stand`, `src/world_terrain.jo`).
-- **Rules:** the woods' crowns are made a millisecond's rows a frame (never one tile's whole
-  making in a frame). The old islands still draw the grove meshes.
+  `wood_step`).
+- **Rules:** the margin's crowns are made a millisecond's rows a frame (never one tile's whole
+  making in a frame). The old islands' single trees are still the grove meshes; none stands
+  inside a wood there either (`island_rise_at`).
 
-### Canopy shells
+### Woods' canopy
 
-- **Aliases:** shells, the far canopy's relief, fur.
-- **Definition:** past the crowns' reach, the far woods' relief: one layer of the wooded terrain
-  tiles lifted a fraction of a crown's height, kept where the painted canopy's crown under it
-  stands higher than the lift. The bumps grow with distance (crowns, then the clumps and masses
-  they gather in), so a wooded ridge stays rough and lumpy at a few kilometres, the depths between
-  crowns dark; they thin out by 4.2 km. The stand cover and the land's aerial perspective are
-  worked out per vertex.
-- **Code:** `src/world_terrain.jo` (`world_shell_vertex`, `world_shell_fragment`,
-  `draw_world_shells`, `world_shell_scale`).
+- **Aliases:** the canopy, the canopy volume, billows, domes, the sheet, canopy shells (the name
+  of an earlier form), the woods' crowns.
+- **Definition:** a wood is one canopy, built the way a cumulus is: rounded masses standing on
+  one another. Over the woods' stand cover (the same green the ground paints: `wood_cover`) lies
+  the **sheet**, the terrain lifted to the floor of the canopy's hollows; on it stand the
+  **billows**, real low domes in three sizes, each riding the one under it: the wood's broad
+  masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
+  own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
+  dark) and painted with the crowns' palette and leaf masses; near the eye a crown has its own
+  lobes, smaller domes again. Nothing arrives: far off the wood is the ground's paint; nearer
+  the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
+  nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
+  110 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
+  so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
+  mass or a clump stands only where the wood covers its middle, so a small wood is crowns on
+  the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
+  lifted there: their woods are small, and the ground's paint of the crowns is the floor).
+- **Code:** `src/canopy.jo` (`wood_cover`); `src/world_terrain.jo` (the sheet:
+  `world_shell_vertex`, `world_shell_fragment`, `canopy_floor`; the billows: `billow_make`,
+  `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
+  `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
+  `src/terrain_lod.jo` for their stand cover).
+- **Rules:** the domes are worked out once, as a terrain tile is made (an old island's patch:
+  the first time it is in reach, one a frame), never per frame and never in the vertex shader
+  (the laptop's GPU pays by the vertex: a far dome is a cone of six or eight sides). A frame
+  gathers only the blocks of domes in view and in reach and draws each list in one call. The
+  canopy is drawn before the ground, so the ground a wood hides is never shaded. The stand
+  cover, the canopy's rise and the land's aerial perspective are worked out per vertex.
 
 ### Far land layers
 
@@ -1942,10 +1982,10 @@ On the rivers branch until it lands.
   foot is paler than its crest. **Painted layers** (on by default; Tweaks › Look to compare, `AEGEAN_PAINTED_LAYERS=0` turns
   them off) reckons the air at bands twice as far apart each time (1, 2, 4 ... 32 km) in air two
   and a half times as thick, with a crisp edge between them, so the land parts into painted layers
-  by distance even on rounded hills; the trees' crowns and canopy shells step with the ground.
+  by distance even on rounded hills; the trees' crowns and the woods' canopy step with the ground.
 - **Code:** `land_aerial` in `src/canopy.jo` (`LAND_FADE`, `LAND_MIST`; `land_step_scale` and
   `GroundParams.land_steps` for the layers; `land_aerial_terms` per vertex for the crowns and
-  canopy shells). Other objects use look.jo `aerial`; foliage that should layer with the ground
+  the woods' canopy). Other objects use look.jo `aerial`; foliage that should layer with the ground
   calls `land_aerial` or `land_aerial_terms`.
 
 ### Far canopy
@@ -2158,6 +2198,31 @@ On the rivers branch until it lands.
   Wireless button, Settings → Sound → Wireless volume, "Wireless off"), so it is never confused
   with the [R/T](#rt), which sends orders to one's own flight.
 - **Code:** `src/radio.jo`, `src/radio_synth.jo`, `src/radio_content.jo`; `docs/radio.md`.
+
+### Morse subtitles
+
+- **Aliases:** the Morse strip, the slip, the paper slip by the wireless.
+- **Definition:** what Morse says, shown as it is keyed: a slip of cream paper with the message
+  in plain English ("Aegean Maritime Service: harbours open"), the letters as received smaller
+  beneath ("SEA PORT OPEN"), and the dots and dashes of the character being sent inked after
+  them. A letter shows only once its last dot or dash has sounded, and a word's plain reading
+  once the gap after it has passed, so the slip is never ahead of the key (it is held a
+  twentieth of a second behind the game's mix, for the sound device's own delay). Prosigns, Q codes and
+  the operators' abbreviations are read out (CQ, DE, K, R, SOS, QTH, QRU ...), a call sign first
+  as the station's name. It follows reception: a letter keyed while the signal is down in the
+  static is a gap ("S__ PORT"), a word with gaps reads "…", and the slip fades when the dial
+  leaves the station, the signal goes or the set is switched off. It shows for the
+  [wireless](#wireless)'s Morse bulletins, the short cues under the flight's words on the
+  [R/T](#rt) (marked "R/T") and a [lamp](#signals-between-aircraft)'s word as it is flashed
+  (marked "Lamp"; a plain word, so shown as spelt and not read as code). Beside the wireless in the cockpit; under the compass in the outside view and
+  wherever there is no room beside the set. Settings → Accessibility → Morse subtitles, on
+  unless switched off.
+- **Code:** `src/morse_subtitles.jo` (the reading and the following), `src/morse_strip.jo` (the
+  slip and what feeds it), `radio_keying` in `src/radio.jo`; `tests/morse_subtitles_test.jo`.
+- **Capture:** `AEGEAN_FLYING="300 60 cockpit" AEGEAN_RADIO=1260` (the maritime service; without
+  the announcer's data every bulletin is in Morse; `AEGEAN_RADIO=1270` for poor reception).
+  `AEGEAN_MORSE_TRACE=1` prints each change of the slip with its frame (MORSE lines), to set
+  against a capture's own sound (`AEGEAN_AUDIO_CAPTURE`).
 
 ### R/T
 
