@@ -23,7 +23,10 @@ def run(work, name, frames, script, **extra):
         env.pop(k, None)
     env.update(SLOPPY_NO_AUDIO="1", SLOPPY_THREADS=env.get("SLOPPY_THREADS", "1"), SLOPPY_FRAMES=str(frames),
                SLOPPY_INPUT=script, SLOPPY_SAVE_DIR=str(Path(work) / name), SLOPPY_WINDOW="1280x720",
-               SLOPPY_FIXED_STEP="1", AEGEAN_NO_WORLD="1", AEGEAN_TALK="1",
+               SLOPPY_FIXED_STEP="1", AEGEAN_NO_WORLD="1",
+               # (the mechanic, forty minutes into the day: nothing calls him away from the talk,
+               # as a load does the merchant in the world's first minute: tests/talk_hold_test.py)
+               AEGEAN_TALK="mechanic", AEGEAN_CAPTURE_MINUTES="40",
                SLOPPY_SCREENSHOT=str(Path(work) / f"{name}.png"), **extra)
     out = subprocess.run(["sloppy", "--release", "tools/panel_probe.jo"], cwd=ROOT, env=env,
                          capture_output=True, text=True, timeout=1200)
