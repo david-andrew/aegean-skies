@@ -204,6 +204,8 @@ use 'src/aircraft_paint_view.jo'
 use 'src/paint_parts.jo'
 use 'src/decals.jo'
 use 'src/paint_shop.jo'
+use 'src/paint_shed.jo'
+use 'src/paint_shop_view.jo'
 use 'src/pilot_liveries.jo'
 use 'src/markings.jo'
 use 'src/note_cue.jo'
@@ -394,14 +396,19 @@ paint_space: DecalSpace? = none     # (the painted model's triangles, for a deca
 paint_job = PaintJob()
 paint_shop_open = false
 paint_shop_draft = Paint()
+paint_panel = PaintPanel()          # (the shop's own panel: where it is on the screen, what scrolls)
+paint_view_yaw = 0.9                # (the view about the aircraft while her paint is chosen: turned by drags beside the panel)
+paint_view_pitch = 0.28
+paint_view_zoom = 1.0
 paint_shop_who = -1                 # (the painter, a Person, and their town)
 paint_shop_place = -1
 paint_fresh_until = -1              # (a new paint is remarked on until this minute, once by each)
 paint_remarked: int[] = []
 # Other pilots' liveries (src/pilot_liveries.jo): each one's paint is kept with their aircraft's
 # record; their models are built from it a few frames apart and kept by the paint's text.
-pilot_livery_queue: int[] = []      # (the traffic entries still to build)
-pilot_livery_models: {str: int} = {}
+pilot_livery_queue: int[] = []      # (the aircraft whose models are still to build)
+pilot_livery_models: {str: int} = {}    # (a paint's model in craft_models, by its type and text)
+pilot_livery_by_craft: {int: int} = {}  # (and by aircraft, once found: looked up every frame)
 if env("TOWNS_PRINT") != none:
     loop tw in towns: print("{tw.name}: {tw.center.x:.0} {tw.center.z:.0} out {tw.out.x:.2} {tw.out.y:.2} houses {tw.houses.len()}")
 print("world built in {(time() - t0) * 1000.0:.0} ms")
@@ -565,6 +572,35 @@ towns[0].quays = towns[0].quays + hotel.quays
 walk_publish("hotel-ancora", hotel_solids(hotel) + room_solids(hotel))
 walk_publish_floors(room_floor_sites(hotel))
 publish_leisure_venue(living_world, hotel.venue)
+
+# ---------------- the paint shops (src/paint_shed.jo) ----------------
+# An open-fronted workshop on its own deck at the water's edge, in each harbour town a mechanic
+# lives in: found a spot clear of the docks, the boats and the hotel, built, its deck walkable, its
+# walls solid, and its venue published (the mechanic works there in working hours).
+paint_sheds: PaintShed[] = []
+build_paint_sheds = ():
+    global paint_sheds
+    loop q in living_world.people:
+        place = q.home
+        if q.occupation != .mechanic or q.far_home >= 0 or place < 0 or place >= towns.len(): continue
+        if paint_sheds.any((s: PaintShed) -> bool: s.place == place): continue
+        port = SETTLEMENTS[place].kind == .port
+        # (clear of the hotel's pier and terrace, where the town has it)
+        keep: vec3[] = if place == 0 and hotel.ok: [vec3(hotel.origin.x + hotel.table_z.x * 15.0, 26.0, hotel.origin.z + hotel.table_z.z * 15.0)] else: []
+        frame = paint_shed_site(towns[place], (x: f64, z: f64) -> f64: surface_height(x, z), port, keep) ?? continue
+        # (a harbour with no waterfront to stand off: a gangway from its quay)
+        shed = build_paint_shed(frame, place, if port: 0.0 else: paint_shed_gangway(towns[place], frame))
+        paint_sheds.push(shed)
+        towns[place].quays = towns[place].quays + shed.quays
+        walk_publish("paint-shop:{place}", paint_shed_solids(shed))
+        publish_leisure_venue(living_world, paint_shed_venue(shed))
+build_paint_sheds()
+
+# the paint shop of a town, if it has one
+paint_shed_of = (place: int) -> PaintShed?:
+    loop s in paint_sheds:
+        if s.place == place: return s
+    none
 band = make_band()
 # (and drawn as themselves on the stand when the town hasn't their figures to hand: the stand's
 # stock figures had Marta, on the violin, as a young fisherman)
@@ -1097,6 +1133,10 @@ _foot_things_now = () -> FootThing[]:
         out.push(_thing("", "", "bath-keeper", if paid: "The keeper" else: "The waters", kp, vec3(0.35, 0, 0.35), 1.85, kp + _site_dir(site, 0.0) * 1.1))
         pl = thermal_pool(site)
         out.push(_thing("", "", "bath-pool", "Get in", pl - vec3(0, 0.5, 0), vec3(4.6, 0, 4.6), 0.75, me.pos))
+    # (a paint shop: its bench of pots, tapped, walks him to the workshop to ask)
+    loop shed in paint_sheds:
+        if f64(length(shed.stand - me.pos)) < 45.0:
+            out.push(_thing("", "", "paint-shop", "The paint shop", shed.bench - vec3(0, 0.9, 0), vec3(2.5, 0, 0.55), 2.3, shed.stand))
     # (the people about: over to them, and talk)
     loop k in 0..folks.len():
         f = folks[k]
@@ -1331,6 +1371,7 @@ run_then = (what: str):
         ui = .leisure; leisure_ui = 20; leisure_line = ""
         mouse_lock(false)
     else if what == "picnic": picnic_begin()
+    else if what == "paint-shop": paint_shop_ask()
     else if what == "bath-keeper":
         ui = .leisure; leisure_ui = 21; leisure_line = ""
         mouse_lock(false)
@@ -1468,8 +1509,10 @@ leisure_time_step = (dt: f64):
                 # (facing along the waterfront, the camera behind on the quay, not in the hotel)
                 me.yaw = atan2(f64(hotel.table_x.x), f64(hotel.table_x.z))
                 follow.yaw = me.yaw + PI
+            if skip.after == 12: paint_berth_arrived()
             sync_folk(folks, living_world, towns)
             publish_leisure_venue(living_world, hotel.venue)
+            loop shed in paint_sheds: publish_leisure_venue(living_world, paint_shed_venue(shed))
             folk_sync_t = t
         return
     skip.fade = max(0.0, skip.fade - dt * 1.6)
@@ -1953,10 +1996,11 @@ set_player_paint = (p: Paint):
         # (and the whole paint, kept with the aircraft as every pilot's is)
         living_world.aircraft[rec].paint = if paint_active(p, kind): paint_to_record(p) else: ""
 
-# Whether painting is free anywhere, from the pause menu's Paint page. (The sandbox settings'
-# "paint any time anywhere" switch will answer this; off, painting is done at a workshop, for a
-# price and a little time. AEGEAN_PAINT_AT_SHOPS=1 turns it off, for captures and checks.)
-paint_free_anywhere = () -> bool: env("AEGEAN_PAINT_AT_SHOPS") == none
+# Whether painting is free anywhere, from the pause menu's Paint page: the sandbox's "Paint the
+# aircraft anywhere, at any time" (src/sandbox.jo). Off, painting is done at a paint shop, for a
+# price and a little time, and the page says so. (AEGEAN_PAINT_AT_SHOPS=1 holds it off whatever
+# the switch, for captures and checks.)
+paint_free_anywhere = () -> bool: sandbox.paint_anywhere and env("AEGEAN_PAINT_AT_SHOPS") == none
 
 # the paint the aircraft is seen in now: a shop's draft while it is being chosen, a job's stage
 # while she is in the shop, or her own
@@ -1981,9 +2025,10 @@ paint_step = ():
 # The Decals tab's "Point at her": a click or tap on the aircraft, beside the page, puts the
 # chosen decal where it fell (the side the surface faces, and the place there).
 paint_point_step = ():
-    if not dbg.open or dbg.page != PAINT_PAGE or dbg.paint_page.tab != 2 or not dbg.paint_page.pointing or not mouse_pressed(.left): return
+    on_page = dbg.open and dbg.page == PAINT_PAGE
+    if not (on_page or ui == .paint) or dbg.paint_page.tab != 2 or not dbg.paint_page.pointing or not mouse_pressed(.left): return
     m = mouse_pos()
-    r = dbg.panel
+    r = if on_page: dbg.panel else: paint_panel.rect
     if f64(m.x) >= f64(r.x) and f64(m.x) <= f64(r.x) + f64(r.w) and f64(m.y) >= f64(r.y) and f64(m.y) <= f64(r.y) + f64(r.h): return
     space = paint_space ?? return
     o, d = screen_ray(m)
@@ -2012,39 +2057,149 @@ paint_clock = (minute: int) -> str: clock_text(living_world, minute)
 
 # The painter's answer when asked: the shop's page opened (the pause menu's Paint page, as the
 # shop's), or why not, in their words.
-open_paint_shop = (person: int, place: int) -> str:
+open_paint_shop = (person: int, place: int, brought: bool = false) -> str:
     global paint_shop_open, paint_shop_draft, paint_shop_who, paint_shop_place
     if paint_job.active: return "She'll be dry at {paint_clock(paint_job.ready_minute)}. Best leave her be till then."
     rec = living_world.people[living_world.player].craft
     if rec < 0 or not pc.state.moored: return "Moor her here first and I'll see to her."
     # (at this harbour: at a dock, or a big boat on her buoy off it)
     if f64(length(pc.state.position - me.pos)) > 1500.0: return "Bring her round to this harbour and moor her; I can't paint her from here."
+    # (a town with a paint shop: asked there, with its painter at it; and she is brought round to
+    # its berth first, where the paint is chosen with her in front of one)
+    if let shed = paint_shed_of(place):
+        if not brought and (f64(length(living_world.people[person].pose.pos - shed.painter)) > 14.0 or f64(length(me.pos - shed.painter)) > 22.0):
+            # (a new pilot's greeter, asked for paint, has seen the pilot settled: back to work)
+            if person == living_world.welcome.greeter: living_world.welcome.done = true
+            clock = lt.local_minute(living_world.minute)
+            working = (clock >= 420 and clock < 750) or (clock >= 900 and clock < 1080)
+            return if working: "Not here. Come over to the workshop on the water; I'm on my way there." else: "Not here. Come by the workshop on the water: I'm there mornings, and from three till six."
+        if paint_berth_fits() and not paint_at_berth(shed):
+            global paint_berth_from
+            paint_shop_who = person; paint_shop_place = place
+            paint_berth_from = place
+            leisure_skip(6, "{_first_name(person)} brings her round to the workshop", 12)
+            return "I'll bring her round to the berth, and we'll see what you'd like."
     paint_shop_open = true
     paint_shop_draft = if player_paint.kind == int(pc.kind): player_paint else: paint_reset(int(pc.kind))
     paint_shop_who = person; paint_shop_place = place
-    dbg.page = PAINT_PAGE
-    dbg.paint_page.ordered = false; dbg.paint_page.left = false
-    set_paused(true)
+    dbg.paint_page.pointing = false
+    global ui, paint_view_yaw, paint_view_pitch, paint_view_zoom, paint_panel
+    paint_view_yaw = 0.9; paint_view_pitch = 0.28; paint_view_zoom = 1.0
+    paint_panel = PaintPanel()
+    ui = .paint
+    mouse_lock(false)
     "Show me what you'd like."
+
+# Whether the aircraft can lie at a paint shop's berth: a seaplane that fits a harbour's docks (a
+# big boat is painted on her buoy, a landplane where she stands).
+paint_berth_fits = () -> bool: not offshore_only(pc.kind) and not pc.spec.landplane
+
+paint_at_berth = (shed: PaintShed) -> bool:
+    b = paint_shed_berth(shed, aircraft_profile(pc.kind).length)
+    pc.state.moored and f64(length(vec2(pc.state.position.x - b.0.x, pc.state.position.z - b.0.z))) < 2.0
+
+# The aircraft moored at a paint shop's berth, nose in, her line on the deck's bollard.
+paint_berth_moor = (shed: PaintShed):
+    global was_moored, offshore
+    b = paint_shed_berth(shed, aircraft_profile(pc.kind).length)
+    moor(pc.state, vec3(b.0.x, pc.state.position.y, b.0.z), b.1)
+    pc.throttle = 0.0; pc.placed = false; pc.aim_heading = b.1
+    rope.anchor = shed.bollard; rope.tied = true; rope.loose = rope.anchor
+    was_moored = true
+    offshore = none
+
+paint_berth_from = -1               # (the town whose painter is bringing her round)
+# (the few minutes' wait over: she is at the berth, and the painter shows the colours)
+paint_berth_arrived = ():
+    global paint_berth_from
+    place = paint_berth_from
+    paint_berth_from = -1
+    shed = paint_shed_of(place) ?? return
+    if not pc.state.moored or paint_job.active: return
+    paint_berth_moor(shed)
+    said = open_paint_shop(paint_shop_who, place, true)
+    if not paint_shop_open: say_toast("{_first_name(paint_shop_who)}: {said}")
+
+# At the workshop (its bench tapped, the pilot walked over): the painter spoken to, if they are
+# there; else when they will be.
+paint_shop_ask = ():
+    global talk_pick, pad_talk
+    shed = paint_shed_of(town_here(me.pos)) ?? return
+    loop k in 0..folks.len():
+        f = folks[k]
+        if f.person >= 0 and f.shown and living_world.people[f.person].occupation == .mechanic and f64(length(f.pos - shed.painter)) < 14.0:
+            talk_pick = k; pad_talk = true
+            return
+    say_toast("Nobody is at the workshop. The mechanic keeps it mornings, and from three till six.")
 
 paint_shop_quote = () -> PaintQuote: paint_quote(player_paint, paint_shop_draft, int(pc.kind))
 
 # the Paint page's standing: the shop's price for the draft, free, or closed with where things stand
 paint_shop_view = () -> PaintShopView:
-    if paint_shop_open:
-        q = paint_shop_quote()
-        return PaintShopView(.shop, living_world.people[paint_shop_who].name, q.cents, q.minutes, q.items, paint_order_refusal(q, player_cents()))
     if paint_job.active:
         return PaintShopView(mode = .closed, note = "She is in the paint shop at {living.place_name(living_world, max(0, paint_job.place))} until {paint_clock(paint_job.ready_minute)}.")
     if paint_free_anywhere(): return PaintShopView()
-    PaintShopView(mode = .closed, note = "Painting is done at a workshop. Moor her at a harbour with a mechanic and ask them.")
+    # (where the paint shops are)
+    names = [loop shed in paint_sheds: towns[shed.place].name]
+    where = if names.len() == 0: "Ask a mechanic, with her moored at their harbour." else: "There is one at {join(names, ", and one at ")}: ask the mechanic there."
+    PaintShopView(mode = .closed, note = "Painting is done at a paint shop. {where}")
 
 paint_shop_close = ():
-    global paint_shop_open, paint_dirty
+    global paint_shop_open, paint_dirty, ui
     if not paint_shop_open: return
     paint_shop_open = false
     paint_dirty = true
-    dbg.paint_page.ordered = false; dbg.paint_page.left = false
+    dbg.paint_page.pointing = false
+    if ui == .paint: ui = .none
+
+# The shop's own panel (ui == .paint): the painter's card and the paint's tabs, drawn beside the
+# aircraft; what it changes is the draft, what it returns orders the work or leaves it.
+paint_shop_panel_step = ():
+    global paint_shop_draft, paint_dirty
+    if not paint_shop_open or me.mode != .walking:
+        paint_shop_close()
+        return
+    q = paint_shop_quote()
+    shop = PaintShopView(.shop, living_world.people[paint_shop_who].name, q.cents, q.minutes, q.items, paint_order_refusal(q, player_cents()))
+    draft = paint_shop_draft
+    res = paint_shop_panel(fonts, paint_panel, dbg.paint_page, draft, paint_support_for(int(pc.kind)), int(pc.kind), shop, living.place_name(living_world, max(0, paint_shop_place)))
+    if draft != paint_shop_draft:
+        paint_shop_draft = draft; paint_dirty = true
+    if res.order: paint_shop_order()
+    else if res.leave: paint_shop_close()
+
+# The view while her paint is chosen: round the aircraft, turned by a drag beside the panel (the
+# mouse, or a finger) and brought nearer by the wheel, the aircraft held in the part of the screen
+# the panel leaves.
+paint_shop_camera = ():
+    global paint_view_yaw, paint_view_pitch, paint_view_zoom
+    beside = not paint_panel_over(paint_panel, mouse_pos()) and not dbg.paint_page.pointing
+    # (a finger is the mouse too: one drag beside the panel turns the view, on a phone as with a mouse)
+    drag = if beside and mouse_down(.left) and not mouse_pressed(.left): mouse_delta() else: vec2(0, 0)
+    gain = if pad.on: touch_look_gain() else: 0.006
+    paint_view_yaw -= f64(drag.x) * gain
+    paint_view_pitch = clamp(paint_view_pitch + f64(drag.y) * gain * 0.7, 0.04, 1.2)
+    if beside: paint_view_zoom = clamp(paint_view_zoom * (1.0 - f64(mouse_wheel()) * 0.08), 0.55, 1.8)
+    prof = aircraft_profile(pc.kind)
+    aspect = f64(screen_width()) / max(f64(screen_height()), 1.0)
+    fov = 50.0
+    # (far enough that her span fills the part of the screen left to her)
+    shift = paint_panel_shift(paint_panel)
+    room = if paint_panel.upright: aspect else: aspect * (1.0 + 2.0 * f64(shift.x))
+    dist = (max(prof.span, prof.length) * 0.62 / (tan(radians(fov) * 0.5) * max(room, 0.3)) + 2.0) * paint_view_zoom
+    h = heading(pc.state) + paint_view_yaw
+    dir = vec3(f32(sin(h) * cos(paint_view_pitch)), f32(sin(paint_view_pitch)), f32(-cos(h) * cos(paint_view_pitch)))
+    look = pc.state.position + vec3(0, f32(prof.wing_y * 0.3), 0)
+    eye = look + dir * f32(dist)
+    # (kept above the water and the deck)
+    eye.y = max(eye.y, 1.9)
+    fwd = normalize(look - eye)
+    right = normalize(cross(fwd, vec3(0, 1, 0)))
+    up = cross(right, fwd)
+    half_h = dist * tan(radians(fov) * 0.5)
+    # (the look point moved so she sits in the middle of the room beside the panel)
+    aim = look - right * f32(2.0 * f64(shift.x) * half_h * aspect) + up * f32(2.0 * f64(shift.y) * half_h)
+    render_camera(eye, aim - eye, fov, 0.1, world_far(f64(eye.y)))
 
 # The order given: the painter paid, the aircraft in the shop until the paint is dry.
 paint_shop_order = ():
@@ -2057,19 +2212,15 @@ paint_shop_order = ():
     paint_job = paint_job_begin(paint_shop_draft, int(pc.kind), q, living_world.minute, paint_shop_place, paint_shop_who)
     log_note(notebook, "Left her with {living_world.people[paint_shop_who].name} to be painted: {join(q.items, ", ")}. {phoenix_text(q.cents)}; dry at {paint_clock(paint_job.ready_minute)}.", paint_clock(living_world.minute))
     say_toast("She is in the paint shop until {paint_clock(paint_job.ready_minute)}")
+    if paint_shop_capture: print("PAINTSHOP order taken: {phoenix_text(q.cents)} for {join(q.items, ", ")}; dry at {paint_clock(paint_job.ready_minute)}; purse {player_cents()}")
     paint_shop_close()
-    set_paused(false)
 
 # (each frame: the page's order or leave; the shop's page gone with the pause menu; the job done
 # when the paint is dry)
 paint_job_step = ():
     global paint_job, paint_fresh_until, paint_remarked
-    if paint_shop_open:
-        if dbg.paint_page.ordered: paint_shop_order()
-        else if dbg.paint_page.left or not dbg.open or dbg.page != PAINT_PAGE:
-            was_open = dbg.open and dbg.paint_page.left
-            paint_shop_close()
-            if was_open: set_paused(false)
+    # (the shop's panel closed some other way: the draft is dropped)
+    if paint_shop_open and ui != .paint: paint_shop_close()
     if not paint_job.active: return
     # (another aircraft taken meanwhile: the shop's job was for the one she left)
     if paint_job.kind != int(pc.kind):
@@ -2099,6 +2250,25 @@ paint_mechanic_here = () -> int:
 
 paint_capture_cash = 0
 paint_capture_done = false
+
+# AEGEAN_CAPTURE_SHED="place [yaw pitch distance]": the free camera on that town's paint shop, from
+# out on the water (yaw round from straight out to sea), and a PAINT SHED line for each (captures)
+paint_shed_capture_view = ():
+    global free
+    words = split(env("AEGEAN_CAPTURE_SHED") ?? "0", " ")
+    loop shed in paint_sheds: print("PAINT SHED {towns[shed.place].name} at {shed.origin} heading out {shed.out_heading:.3} painter {shed.painter} berth {paint_shed_berth(shed, 8.0).0}")
+    loop shed in paint_sheds:
+        if shed.place != (to_int(words[0]) ?? 0): continue
+        yaw = shed.out_heading + (if words.len() > 1: to_float(words[1]) ?? 0.5 else: 0.5); pitch = if words.len() > 2: to_float(words[2]) ?? 0.25 else: 0.25
+        out_dir = vec3(f32(sin(yaw) * cos(pitch)), f32(sin(pitch)), f32(-cos(yaw) * cos(pitch)))
+        middle = transform_point(shed.frame, vec3(-1.5, 2.2, 8.0))
+        free.pos = middle + out_dir * f32(if words.len() > 3: to_float(words[3]) ?? 24.0 else: 24.0)
+        free.pitch = -pitch
+        free.yaw = atan2(f64(out_dir.x), f64(out_dir.z))
+        if dot(forward(free), -out_dir) < 0.9: free.yaw = -free.yaw
+        me.mode = .free
+        # (the same view for a build without the shop: AEGEAN_VIEW takes these)
+        print("PAINT SHED view AEGEAN_VIEW=\"{free.pos.x:.2} {free.pos.y:.2} {free.pos.z:.2} {free.yaw:.4} {free.pitch:.4} 10.5\"")
 # (AEGEAN_CAPTURE_LAUNCH=paintshop, and AEGEAN_CAPTURE_PANEL=paint-shop for its page alone)
 paint_shop_capture_step = ():
     global paint_shop_draft, paint_dirty, paint_capture_cash, paint_capture_done, paint_job
@@ -2106,9 +2276,16 @@ paint_shop_capture_step = ():
     kind = int(pc.kind)
     who = paint_mechanic_here()
     if n == 60:
-        said = if who >= 0: open_paint_shop(who, town_here(me.pos)) else: "no mechanic here"
-        print("PAINTSHOP ask: '{said}' open={paint_shop_open} painter={if who >= 0: living_world.people[who].name else: "-"}")
-        if who >= 0: print("PAINTSHOP painter at {living_world.people[who].pose.pos}, me at {me.pos}, aircraft at {pc.state.position}; workshops {[loop v in living_world.life_venues: if v.kind == .workshop and v.place == town_here(me.pos): "{v.key} {v.pos} facing {v.facing}"]}")
+        # (staged at the town's paint shop, as if walked there and the painter asked: the pilot on
+        # the apron, the aircraft brought round to the berth)
+        place = town_here(me.pos)
+        if let shed = paint_shed_of(place):
+            me.pos = shed.stand; follow.placed = false
+            me.yaw = atan2(f64(shed.facing.x), f64(shed.facing.z))
+            if paint_berth_fits(): paint_berth_moor(shed)
+        said = if who >= 0: open_paint_shop(who, place, true) else: "no mechanic here"
+        if let tab = env("AEGEAN_PAINT_TAB"): dbg.paint_page.tab = clamp(to_int(tab) ?? 0, 0, 3)
+        print("PAINTSHOP ask: '{said}' open={paint_shop_open} ui={ui} painter={if who >= 0: living_world.people[who].name else: "-"} at_berth={if let shed = paint_shed_of(place): paint_at_berth(shed) else: false}")
     if n == 62 and paint_shop_open:
         paint_shop_draft = paint_from_spec(env("AEGEAN_PAINT_DRAFT") ?? "part.lwing=stripes:0.78,0.18,0.12:0.95,0.94,0.9:0:6 part.rwing=stripes:0.78,0.18,0.12:0.95,0.94,0.9:0:6 part.rudder=plain:0.78,0.18,0.12 decal=star:fuselage", kind)
         paint_dirty = true
@@ -2118,8 +2295,7 @@ paint_shop_capture_step = ():
     if n == 70 and paint_shop_open:
         paint_capture_cash = player_cents()
         painter_before = living_world.accounts[living_world.people[who].account].cents
-        dbg.paint_page.ordered = true
-        paint_job_step()
+        paint_shop_order()
         print("PAINTSHOP ordered: job={paint_job.active} ready={paint_clock(paint_job.ready_minute)} paid={paint_capture_cash - player_cents()} painter_got={living_world.accounts[living_world.people[who].account].cents - painter_before} paused={paused} page_open={paint_shop_open} still_old_paint={player_paint != paint_job.paint}")
     if n == 80 and paint_job.active:
         g = capture_running_game()
@@ -2132,7 +2308,15 @@ paint_shop_capture_step = ():
         else: print("PAINTSHOP save refused: {g.message}")
     if n == 90 and paint_job.active:
         print("PAINTSHOP waiting {paint_job_left(paint_job, living_world.minute)} minutes; aboard thing '{[loop th in _foot_things_now(): if th.act == "aboard": th.label]}'")
-        leisure_skip(paint_job_left(paint_job, living_world.minute) + 1, "Waiting for the paint to dry")
+        # (AEGEAN_PAINT_STAGE=primer|top: the wait stopped while she is in primer, or in her top
+        # coat before the decals, for a picture of her mid-paint)
+        whole = paint_job.ready_minute - paint_job.started_minute
+        part = match env("AEGEAN_PAINT_STAGE") ?? "":
+            "primer": whole / 2
+            "top": whole * 8 / 10
+            else: paint_job_left(paint_job, living_world.minute) + 1
+        leisure_skip(max(1, part - (living_world.minute - paint_job.started_minute)), "Waiting for the paint to dry")
+    if n == 96 and env("AEGEAN_CAPTURE_SHED") != none: paint_shed_capture_view()
     if n > 90 and not paint_job.active and not paint_capture_done:
         paint_capture_done = true
         rec = living_world.people[living_world.player].craft
@@ -2143,8 +2327,9 @@ paint_shop_capture_step = ():
 # Each pilot's aircraft given its paint (made once from the pilot's number, then kept with the
 # aircraft's record), and queued to have its model built.
 assign_pilot_liveries = ():
-    global pilot_livery_queue
+    global pilot_livery_queue, pilot_livery_by_craft
     pilot_livery_queue = []
+    pilot_livery_by_craft = {}
     loop k in 0..traffic.len():
         c = traffic[k].craft
         if c < 0 or c >= living_world.aircraft.len(): continue
@@ -2153,9 +2338,92 @@ assign_pilot_liveries = ():
             who = if living_world.aircraft[c].operator >= 0: living_world.aircraft[c].operator else: owner
             job = living_world.people[who].occupation
             style = if job == .patrol: LiveryStyle.service else: if job == .pirate: LiveryStyle.pirate else: LiveryStyle.personal
-            base = if living_world.aircraft[c].livery_index >= 0 and living_world.aircraft[c].livery_index < LIVERIES.len(): living_world.aircraft[c].livery_index else: DEFAULT_LIVERIES[int(traffic[k].kind)]
-            living_world.aircraft[c].paint = paint_to_record(pilot_paint(who, int(traffic[k].kind), base, living_world.people[who].name, style))
-        pilot_livery_queue.push(k)
+            living_world.aircraft[c].paint = paint_to_record(pilot_paint(who, int(traffic[k].kind), pilot_livery_base(c), living_world.people[who].name, style))
+        _ = pilot_livery_model(c)
+
+# the base livery an aircraft's record wears (its own, or its type's)
+pilot_livery_base = (craft: int) -> int:
+    rec = living_world.aircraft[craft]
+    if rec.livery_index >= 0 and rec.livery_index < LIVERIES.len(): rec.livery_index else: DEFAULT_LIVERIES[clamp(int(rec.kind), 0, DEFAULT_LIVERIES.len() - 1)]
+
+# The model of an aircraft's own paint (an index into craft_models), or -1 while it has none or
+# its model is still to be built (it is queued).
+pilot_livery_model = (craft: int) -> int:
+    global pilot_livery_queue, pilot_livery_by_craft
+    if craft in pilot_livery_by_craft: return pilot_livery_by_craft[craft]
+    if craft < 0 or craft >= living_world.aircraft.len() or living_world.aircraft[craft].paint == "": return -1
+    key = "{int(living_world.aircraft[craft].kind)} {living_world.aircraft[craft].paint}"
+    if key in pilot_livery_models:
+        pilot_livery_by_craft[craft] = pilot_livery_models[key]
+        return pilot_livery_by_craft[craft]
+    if not (craft in pilot_livery_queue): pilot_livery_queue.push(craft)
+    -1
+
+# An aircraft flying now that has no paint of its own yet (a far pilot's, the air arm's, a
+# scenario squadron's) is given one, kept with its record: a far pilot's is their own; the air
+# arm's and a squadron's are the unit's livery (the service's paint kept whole, so its side still
+# reads) with the aircraft's own number.
+pilot_livery_give = (craft: int):
+    if craft < 0 or craft >= living_world.aircraft.len() or living_world.aircraft[craft].paint != "": return
+    if craft == living_world.people[living_world.player].craft: return
+    rec = living_world.aircraft[craft]
+    kind = int(rec.kind)
+    base = pilot_livery_base(craft)
+    lv = LIVERIES[base]
+    ink = if f64(lv.body.x) * 0.3 + f64(lv.body.y) * 0.59 + f64(lv.body.z) * 0.11 > 0.5: vec4(0.09, 0.09, 0.1, 1) else: vec4(0.95, 0.94, 0.9, 1)
+    loop p in air_events.arm:
+        if p.craft == craft:
+            living_world.aircraft[craft].paint = paint_to_record(unit_paint(1000 + p.field, kind, base, p.stand + 1, [lv.accent, lv.trim], ink))
+            return
+    loop k in 0..battle.actors.len():
+        a = battle.actors[k]
+        if a.craft != craft: continue
+        if a.human: return
+        # (its number: its place among its side's aircraft)
+        number = 1
+        loop j in 0..k:
+            if battle.actors[j].side == a.side and not battle.actors[j].human: number += 1
+        living_world.aircraft[craft].paint = paint_to_record(unit_paint(2000 + a.side * 16 + base, kind, base, number, [lv.accent, lv.trim], ink))
+        return
+    who = if rec.operator >= 0: rec.operator else: rec.owner
+    if who < 0 or who >= living_world.people.len(): return
+    living_world.aircraft[craft].paint = paint_to_record(pilot_paint(who, kind, base, living_world.people[who].name, .personal))
+
+# AEGEAN_CAPTURE_FORMATION=1 (with AEGEAN_FLYING): for a picture of the liveries from the chase
+# view, the named pilots' aircraft are drawn placed in a vee ahead of the player's (staged for the
+# still: their own flying goes on untouched underneath)
+pilot_formation_capture = env("AEGEAN_CAPTURE_FORMATION") != none
+pilot_formation_stage = ():
+    # (ahead and a little below, so the chase view looks down on their wings)
+    slots = [vec3(-13, -5.0, 26), vec3(14, -5.5, 28), vec3(-30, -9.0, 44), vec3(31, -9.5, 47), vec3(-50, -13.0, 66), vec3(52, -13.5, 70), vec3(0, -15.0, 78)]
+    f = forward(pc.state)
+    ahead = normalize(vec3(f.x, 0, f.z)); right = vec3(-ahead.z, 0, ahead.x)
+    loop k in 0..min(traffic.len(), min(all_air_traffic.len(), slots.len())):
+        sl = slots[k]
+        st = pc.state
+        st.position = pc.state.position + right * sl.x + vec3(0, sl.y, 0) + ahead * sl.z
+        st.orientation = quat_euler(0, -heading(pc.state), 0)
+        st.moored = false; st.on_water = false
+        all_air_traffic[k].state = st
+        all_air_traffic[k].visible = true
+        all_air_traffic[k].prop_angle = t * 30.0 + f64(k)
+
+# (each frame, once the air traffic is gathered: every aircraft drawn in its own paint's model)
+pilot_livery_remap = ():
+    if pilot_formation_capture and me.mode == .aboard: pilot_formation_stage()
+    loop k in 0..all_air_traffic.len():
+        c = all_air_traffic[k].craft
+        if k >= traffic.len(): pilot_livery_give(c)
+        m = pilot_livery_model(c)
+        if m >= 0: all_air_traffic[k].model = m
+    loop k in 0..traffic.len():
+        m = pilot_livery_model(traffic[k].craft)
+        if m >= 0: traffic[k].model = m
+    loop k in 0..battle.actors.len():
+        if battle.actors[k].human or battle.actors[k].craft < 0: continue
+        pilot_livery_give(battle.actors[k].craft)
+        m = pilot_livery_model(battle.actors[k].craft)
+        if m >= 0: battle.actors[k].model = m
 
 # AEGEAN_CAPTURE_LIVERY="k [yaw pitch distance]": once the liveries are built, the free camera on the
 # k-th other pilot's aircraft, and a PILOT LIVERY line for each (captures)
@@ -2165,6 +2433,17 @@ pilot_livery_capture_step = ():
     global pilot_livery_captured, free
     if pilot_livery_queue.len() > 0 or frame_number() < 30: return
     words = split(pilot_livery_capture ?? "0", " ")
+    if not pilot_livery_captured:
+        loop k in traffic.len()..all_air_traffic.len():
+            tr = all_air_traffic[k]
+            if tr.craft < 0 or tr.craft >= living_world.aircraft.len(): continue
+            p = paint_from_record(living_world.aircraft[tr.craft].paint)
+            print("PILOT LIVERY far {k} {tr.name} {CRAFT_NAMES[int(tr.kind)]} livery {living_world.aircraft[tr.craft].livery_index} parts {[loop q in p.parts: PAINT_PARTS[q.part]]} decals {[loop d in p.decals: (if d.motif == "text": d.text else: d.motif)]} model {tr.model}")
+        loop k in 0..battle.actors.len():
+            a = battle.actors[k]
+            if a.craft < 0 or a.craft >= living_world.aircraft.len(): continue
+            p = paint_from_record(living_world.aircraft[a.craft].paint)
+            print("PILOT LIVERY actor {k} side {a.side} human {a.human} craft {a.craft} livery {living_world.aircraft[a.craft].livery_index} parts {[loop q in p.parts: PAINT_PARTS[q.part]]} decals {[loop d in p.decals: (if d.motif == "text": d.text else: d.motif)]} model {a.model}")
     loop k in 0..(if pilot_livery_captured: 0 else: traffic.len()):
         c = living_world.aircraft[traffic[k].craft]
         p = paint_from_record(c.paint)
@@ -2186,20 +2465,17 @@ pilot_livery_step = ():
     global pilot_livery_queue, pilot_livery_models
     if pilot_livery_capture != none: pilot_livery_capture_step()
     if pilot_livery_queue.len() == 0 or frame_number() % 4 != 0: return
-    k = pilot_livery_queue[0]
+    c = pilot_livery_queue[0]
     pilot_livery_queue.remove_at(0)
-    if k >= traffic.len(): return
-    c = traffic[k].craft
+    if c < 0 or c >= living_world.aircraft.len(): return
     text = living_world.aircraft[c].paint
     p = paint_from_record(text)
-    kind = int(traffic[k].kind)
+    kind = int(living_world.aircraft[c].kind)
     if not paint_active(p, kind): return
     key = "{kind} {text}"
     if not (key in pilot_livery_models):
         craft_models.push(paint_build(p, kind))
         pilot_livery_models[key] = craft_models.len() - 1
-    traffic[k].model = pilot_livery_models[key]
-    living_world.aircraft[c].model_index = traffic[k].model
 
 # what the player's type can wear (worked out once a type, by building it with and without marks)
 paint_support_for = (kind: int) -> PaintSupport:
@@ -6219,6 +6495,9 @@ if let v = env("AEGEAN_RADIO_VOLUME"): dbg.opts.radio_volume = clamp(to_float(v)
 if let v = env("AEGEAN_COLOUR_VISION"):
     loop k in 0..COLOUR_VISIONS.len():
         if str(COLOUR_VISIONS[k]) == v: dbg.opts.colour_vision = COLOUR_VISIONS[k]
+        # ("standard+shapes": the preset with a shape for each side on every mark)
+        if str(COLOUR_VISIONS[k]) + "+shapes" == v:
+            dbg.opts.colour_vision = COLOUR_VISIONS[k]; dbg.opts.side_shapes = true
 # AEGEAN_CAPTURE_SIDES=rows: a sheet of every mark that shows a side, in that many rows over the view
 # (src/side_samples.jo): the colour-vision presets checked against sky, cloud and sea
 capture_sides = if let v = env("AEGEAN_CAPTURE_SIDES"): clamp(to_int(v) ?? 4, 1, 8) else: 0
@@ -6395,7 +6674,7 @@ debug_view = () -> DebugView:
     v.bullet_scale = bullet_scale
     v.sea_rough = sea_rough
     game_page_view(v)
-    v.paint = if paint_shop_open: paint_shop_draft else: player_paint
+    v.paint = player_paint
     v.paint_shop = paint_shop_view()
     v.paint_name = LIVERY_NAMES[clamp(if paint_active(player_paint, int(pc.kind)) and player_paint.livery >= 0: player_paint.livery else: DEFAULT_LIVERIES[int(pc.kind)], 0, LIVERY_NAMES.len() - 1)]
     v.paint_support = paint_support_for(int(pc.kind))
@@ -7485,12 +7764,7 @@ game_page_apply = (r: DebugResult):
 
 # what the debugging panel changed or asked for
 debug_apply = (was: DebugView, v: DebugView, r: DebugResult):
-    if v.paint != was.paint:
-        # (a shop's page changes its draft; the free page, the paint itself)
-        if paint_shop_open:
-            global paint_shop_draft, paint_dirty
-            paint_shop_draft = v.paint; paint_dirty = true
-        else if v.paint_shop.mode == .free: set_player_paint(v.paint)
+    if v.paint != was.paint and v.paint_shop.mode == .free: set_player_paint(v.paint)
     game_page_apply(r)
     if r.scenario!="":load_scenario(r.scenario);return
     weather_anchor = if me.mode == .free: free.pos else: if me.mode == .aboard: pc.state.position else: me.pos
@@ -9021,6 +9295,9 @@ if startup_aegean_capture_panel=="aircraft":dbg.page=1;capture_pause_frame=60
 if startup_aegean_capture_panel=="paint":dbg.page=PAINT_PAGE;capture_pause_frame=60
 # (paint-shop: the Paint page as a paint shop's, the town's mechanic asked, with AEGEAN_PAINT_DRAFT chosen)
 paint_shop_capture = startup_aegean_capture_panel=="paint-shop" or launch_capture == "paintshop"
+# (the shed's free view from the start, unless the shop's scripted flow sets it once the work is ordered)
+if env("AEGEAN_CAPTURE_SHED") != none and launch_capture != "paintshop": paint_shed_capture_view()
+
 # (paint-parts, paint-decals, paint-marks: the Paint page at that tab)
 if startup_aegean_capture_panel=="paint-parts" or startup_aegean_capture_panel=="paint-decals" or startup_aegean_capture_panel=="paint-marks":
     dbg.page=PAINT_PAGE;capture_pause_frame=60
@@ -13486,6 +13763,7 @@ update_frame = (dt: f64, saves: bool = true):
             war_chart = WarChart()
             print("WAR STAGE at frame {frame_number()}")
     all_air_traffic=traffic+air_event_traffic(air_events,living_world,craft_models)+(if active_scenario!="":scenario_air_traffic(living_world,battle) else:if patrol.stage != .none: scenario_air_traffic(living_world,battle,SORTIE_ENGAGEMENT) else:[])+capture_racers
+    pilot_livery_remap()
     # Relevance is refreshed at 2.5 Hz; selected moving bodies are followed every frame.
     if me.mode==.aboard:
         target_scan-=dt
@@ -13594,9 +13872,10 @@ update_frame = (dt: f64, saves: bool = true):
     set_tweaks(dbg.tweaks)
     set_fdm2_tuning(dbg.fdm2)
     set_options(dbg.opts)
-    # (the sandbox's unlimited money: the purse held, through the world's own books; in the game
-    # itself, not a situation's world, and never in the middle of a world minute)
-    if active_scenario == "" and not world_held():
+    # (the sandbox's unlimited money: the purse held, through the world's own books, in the game
+    # and in a situation's world alike, so the purse's ∞ is always true; never in the middle of
+    # a world minute)
+    if not world_held():
         global purse_hold
         purse_hold = sandbox_money_step(living_world, purse_hold, sandbox.unlimited_money)
     # (AEGEAN_SANDBOX_TRACE: a line a second for the probes: the purse, the tank, the airframe)
@@ -13790,6 +14069,7 @@ draw_world = (L: Light):
             zone_end()
         if not (stay.active and stay.kind == .hotel):
             draw_hotel(hotel, leisure_light(L, hotel), t)
+            loop shed in paint_sheds: draw_paint_shed(shed, L, t)
             draw_bar_room(hotel, L, t)
         draw_coffee_house(coffee, leisure_light(L, hotel, coffee.seat), t)
         if me.mode==.walking: trace_walk_precision(walker_point,follow,follow_frame,towns)
@@ -14129,6 +14409,10 @@ draw = ():
                 # (the barber's glass: the pilot's face, seen from the mirror)
                 barber_camera()
                 ear_forward = barber_face() - hotel.barber_mirror
+            else if ui == .paint and not skip.active:
+                # (the paint shop: round the aircraft at the berth, beside the shop's panel)
+                paint_shop_camera()
+                ear_forward = pc.state.position - scene_camera()
             else if leisure.sitting != "" and t < served_look_until and leisure_ui != 1:
                 # (what was ordered arriving: the table seen from across it, the pilot beyond)
                 top = service_spots(leisure.sitting).table
@@ -14140,7 +14424,7 @@ draw = ():
             else if sway > 0.0:
                 view.yaw += sway * 0.05 * sin(t * 0.61)
                 view.pitch += sway * 0.025 * sin(t * 0.47 + 1.3)
-            if not (leisure.sitting != "" and t < served_look_until and leisure_ui != 1) and not (ui == .leisure and leisure_ui == 12 and not skip.active) and not (ui == .leisure and leisure_ui == 7 and tavli_window().w > 0.0 and coffee.ok) and not gaze.active and not stay.active:
+            if not (leisure.sitting != "" and t < served_look_until and leisure_ui != 1) and not (ui == .leisure and leisure_ui == 12 and not skip.active) and not (ui == .leisure and leisure_ui == 7 and tavli_window().w > 0.0 and coffee.ok) and not gaze.active and not stay.active and not (ui == .paint and not skip.active):
                 place_local_follow(view,follow_frame,58.0,0.3,world_far(f64(me.pos.y)))
                 ear_forward = aim(view) - position(view)
     if startup_aegean_target_frames!=none and me.mode==.aboard:
@@ -14227,7 +14511,7 @@ draw = ():
     # (a soft dark plate behind the clock and the purse: cream on a bright sky was about 2:1, on
     # the plate about 4.5:1)
     if not dbg.open:
-        corner_w = max(text_width(clock_words, clock_size), ptext_width(phoenix_text(player_cents()), readable(20.0))) + 20.0
+        corner_w = max(text_width(clock_words, clock_size), ptext_width(purse_text(player_cents()), readable(20.0))) + 20.0
         rect_rounded(f64(screen_width()) - 14.0 - corner_w, 12.0, corner_w, 18.0 + clock_size + readable(20.0), 8, rgba(0.03, 0.05, 0.08, 0.4))
     if not dbg.open: text(clock_words, vec2(f32(f64(screen_width()) - 24.0 - text_width(clock_words, clock_size)), 18), clock_size, rgba(1, 1, 1, 0.85), shadow = rgba(0, 0, 0, 0.4))
     set_font()
@@ -14243,7 +14527,7 @@ draw = ():
     # money
     set_font(fonts.ui)
     # (the purse: the phoenix in gold over its flame, the figure in cream, flush under the clock)
-    purse = phoenix_text(player_cents())
+    purse = purse_text(player_cents())
     purse_size = readable(20.0)
     if not dbg.open: ptext(purse, vec2(f32(f64(screen_width()) - 24.0 - ptext_width(purse, purse_size)), f32(24.0 + clock_size)), purse_size, rgba(1, 0.95, 0.8, 0.85), shadow = rgba(0, 0, 0, 0.4), sign = PHOENIX_GOLD, fire = PHOENIX_FLAME)
     set_font()
@@ -14867,7 +15151,8 @@ draw_ui = ():
               else if paints and c == paint_k:
                   said = open_paint_shop(f.person, f.place)
                   ui_line = said_by(p.name, said)
-                  if paint_shop_open: ui = .none
+                  # (she is being brought round to the berth: the talk gives way to the wait)
+                  if skip.active and ui == .talk: ui = .none
               else if paint_wait and c == paint_k + 1:
                   ui = .none
                   leisure_skip(paint_job_left(paint_job, living_world.minute) + 1, "Waiting for the paint to dry")
@@ -15004,4 +15289,5 @@ draw_ui = ():
         .fuel: fuel_panel()
         .leisure: leisure_panel()
         .workshop: workshop_panel()
+        .paint: paint_shop_panel_step()
         _: pass
