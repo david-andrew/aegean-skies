@@ -1,0 +1,126 @@
+# Whoever the pilot talks with stays for the conversation (the scene holds them: src/scene_hold.jo),
+# unless something real calls them away: their boat, a load in hand, work beginning, the church
+# bell, bed, someone waiting for them. Then they say so and go, rather than walk off mid-sentence.
+# This reads the living world and decides; it changes nothing in it.
+use 'living_types.jo'
+use 'life_types.jo'
+use 'living_life.jo'
+
+# What calls someone away from a conversation.
+enum TalkCall: none, boat, load, work, prayer, bed, meeting, away
+
+const TALK_SPARE_MINUTES = 15       # game minutes someone already pressed (a load in hand, someone waiting) gives the pilot
+const TALK_PART_SECONDS = 0.8       # seconds they stand after their parting line is whole, before they go
+const TALK_LEAVE_SECONDS = 5.0      # seconds after it before the panel shuts, if the pilot says nothing
+const TALK_AWAY_METRES = 4.0        # someone the scene could not hold has walked on this far from where they stood
+
+struct TalkHold:
+    person = -1
+    since_minute = 0
+    errand: TalkCall = .none        # what they had in hand when the talk began (a load, a job)
+    intent_revision = -1            # the part of their day they were in: its route's revision,
+    intent_part = ""                # and what it was (talk_day_part)
+    planned = true                  # (false: the world had not yet given them a day when the talk began)
+    bound: TalkCall = .none         # what pressed them already when stopped: it waits TALK_SPARE_MINUTES
+    call: TalkCall = .none          # what has called them away: they have said so
+    call_at = -1.0                  # when their parting line was whole (seconds; -1: not yet)
+    at: vec3 = vec3(0, 0, 0)        # where they stood when the talk began
+
+# Whether the scene still holds them at `now` seconds: through the conversation, and through
+# their parting line and a moment after it; then they go while the panel still shows the line.
+talk_holds = (h: TalkHold, now: f64) -> bool:
+    h.person >= 0 and (h.call == .none or h.call_at < 0.0 or now - h.call_at < TALK_PART_SECONDS)
+
+# What someone has in hand that is not theirs to put down: a boat or aircraft to be aboard, a load
+# or a claimed job, work the world has them at.
+talk_errand = (w: World, person: int) -> TalkCall:
+    if person < 0 or person >= w.people.len(): return .boat
+    p = w.people[person]
+    if p.state == .departed or p.state == .traveling or p.trip >= 0 or person_vehicle_bound(w, person): return .boat
+    if p.far_home < 0 and p.far_visit < 0 and p.place < 0: return .boat
+    if person_has_load(w, person) or p.carriage >= 0 or p.carrying >= 0: return .load
+    loop id in w.active_jobs:
+        if w.jobs[id].carrier == person and w.jobs[id].state == .claimed: return .load
+    if p.far_home >= 0: return .none
+    if p.local_work_escrow >= 0 or p.action.purpose == .repair or p.action.activity == .raid or p.action.activity == .patrol or p.action.activity == .fulfill: return .work
+    if p.action.activity == .work and (p.action.purpose == .trade or p.action.purpose == .salvage): return .work
+    .none
+
+# The part of a day that will not wait: work, church, bed, someone met by arrangement. A stroll,
+# a seat in the square or a game of cards waits for the conversation. Nothing calls someone who
+# is already where it is.
+talk_intent_call = (w: World, person: int) -> TalkCall:
+    if not (person in w.daily_life): return .none
+    intent = w.daily_life[person]
+    if length(intent.target.xz - w.people[person].pose.pos.xz) < 2.5: return .none
+    if intent.meeting >= 0 and intent.companion >= 0: return .meeting
+    match intent.activity:
+        .work: TalkCall.work
+        .pray: TalkCall.prayer
+        .sleep: TalkCall.bed
+        _: TalkCall.none
+
+# A part of someone's day, to tell the next from the same one given a new spot to stand on.
+talk_day_part = (intent: DailyIntent) -> str: "{intent.activity}/{intent.venue}/{intent.anchor}/{intent.meeting}"
+
+talk_hold_begin = (w: World, person: int) -> TalkHold:
+    h = TalkHold(person, w.minute)
+    h.errand = talk_errand(w, person)
+    h.at = w.people[person].pose.pos
+    # (what pressed them already when stopped: a load in hand, someone waiting, the service. Their
+    # ordinary work, at their post or on the way to it, and their bed wait while they choose to talk)
+    if h.errand == .load: h.bound = .load
+    if person in w.daily_life:
+        intent = w.daily_life[person]
+        h.intent_revision = intent.path_revision; h.intent_part = talk_day_part(intent)
+        # (a world just begun has given nobody their day yet: the first plan is where they start)
+        h.planned = intent.path_revision > 0 or intent.route.len() > 0
+        if h.bound == .none and not intent.arrived:
+            on_the_way = talk_intent_call(w, person)
+            if on_the_way == .meeting or on_the_way == .prayer: h.bound = on_the_way
+    h
+
+# What calls them away now (none: they stay). A boat always; a load, a job or work taken up since
+# the talk began; a new part of their day that will not wait; what pressed them already when
+# stopped, once they have spared TALK_SPARE_MINUTES; and anyone the scene could not hold who has
+# walked on. (It keeps the hold's note of their day up to date.)
+talk_hold_step = (w: World, h: mut TalkHold) -> TalkCall:
+    if h.person < 0: return .none
+    errand = talk_errand(w, h.person)
+    if errand == .boat: return .boat
+    if errand != .none and errand != h.errand: return errand
+    if h.person in w.daily_life:
+        intent = w.daily_life[h.person]
+        if intent.path_revision != h.intent_revision:
+            h.intent_revision = intent.path_revision
+            # (the same part of their day with a new place to stand is not a new call on them)
+            same = talk_day_part(intent) == h.intent_part
+            h.intent_part = talk_day_part(intent)
+            if not h.planned: h.planned = true
+            else if not same:
+                call = talk_intent_call(w, h.person)
+                if call != .none: return call
+    if h.bound != .none and w.minute - h.since_minute >= TALK_SPARE_MINUTES: return h.bound
+    if f64(length(w.people[h.person].pose.pos.xz - h.at.xz)) > TALK_AWAY_METRES: return if h.bound != .none: h.bound else: TalkCall.away
+    .none
+
+# Their parting line: short, and theirs to say in passing. `waiting`: the first name of whoever
+# they are to meet. Two ways of saying each, one per person.
+talk_call_line = (call: TalkCall, person: int, waiting: str = "") -> str:
+    lines = match call:
+        .none: [""]
+        .boat: ["That's my boat. I must go.", "They're casting off. Excuse me."]
+        .load: ["I must get this load on. Excuse me.", "This won't carry itself. Another time."]
+        .work: ["I'm wanted at work. Another time.", "Work's calling. Excuse me."]
+        .prayer: ["That's the bell. I must go in.", "I'm due at church. Excuse me."]
+        .bed: ["It's late. Good night to you.", "I'm for my bed. Good night."]
+        .meeting: [if waiting != "": "{waiting} is waiting for me. Another time." else: "I'm expected. Another time.", "I'm expected. Excuse me."]
+        .away: ["I must get on. Good day to you.", "I can't stop. Another time."]
+    lines[max(person, 0) % lines.len()]
+
+# Whom they are to meet, by first name ("" nobody).
+talk_waiting_name = (w: World, person: int) -> str:
+    if not (person in w.daily_life): return ""
+    c = w.daily_life[person].companion
+    if c < 0 or c >= w.people.len(): return ""
+    split(w.people[c].name, " ")[0]
