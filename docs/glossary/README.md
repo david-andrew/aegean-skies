@@ -3160,7 +3160,18 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   buttons on the table's bar, but their keys T, P, S and B still work.
 - **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
   round it and a faint band of light passing slowly down over it, with a few flecks in it like a
-  bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). It goes
+  bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). The line
+  follows the thing's own shape where it has meshes of its own: one's own aircraft (all of her,
+  wings, floats and tail, whether her cockpit or her engine is looked at), the townspeople, the
+  springs' keeper, and the coffee house's board and paper. As the scene draws that thing, its
+  meshes are taken (`look_take`), then drawn alone into a small mask covering only its rectangle
+  on the screen, and one pass over that rectangle draws the line just outside the mask's edge and
+  the band inside it (`src/look_outline.jo`). The pilot is never in the mask, and the line is
+  drawn over him where he stands in front. Nothing is rendered while nothing is looked at. The
+  things that are part of a larger mesh (the hotel's tables, the bar's stool, the desk at the
+  room door, the barber's chair, the band's stand and jar, the coffee house's table, the hot
+  pool) keep their box's outline, and so does the software renderer. `AEGEAN_LOOK_SHAPE=0` keeps
+  the box's outline for everything (for measuring what the shape costs). It goes
   by where the camera looks, not where he faces: a ray from the camera through the middle of the
   screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
   then the nearest one. His own body never counts. A click uses it, whether the mouse is locked to
