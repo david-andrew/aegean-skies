@@ -2016,12 +2016,12 @@ On the rivers branch until it lands.
   the player's own aircraft cruises at), puts down on a line off her side (across a light wind when
   the high ground lies under the way in from downwind), its run ending by her moorings, and moors
   in turn along the booms and astern, each made fast within a minute or so of alighting while the
-  rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
-  end or alongside her is taken off by her boat: it comes round to lie off the bow of the
-  aircraft's float, they climb down onto the float, go forward along it and step aboard; it takes
-  them back to her Jacob's ladder, hung over her side between the booms, and they climb it, her hand
-  at the rail helping them over, and go below. Hoisted in, they climb down off the float onto her
-  deck; her boat takes them in to Ardevanti, a foe of
+  rest still land; moored, they ride the swell. Alongside, the crew warp the aircraft in by a line
+  until its float reaches her Jacob's ladder, clear of the wing and booms. At a boom's end her
+  pulling boat rows round to the float's bow, takes the rescued person aboard and brings them
+  to the ladder. A hand helps them over the rail and they walk her side deck to the midships
+  house. The ladder, the hand and the walker follow the hull's heave, pitch and roll.
+  Hoisted in, they step off the float straight onto her after deck. The tender sends survivors to Ardevanti, a foe of
   Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
@@ -2032,7 +2032,8 @@ On the rivers branch until it lands.
   and derrick in `src/vessel_models.jo`; `strait_homes` in `src/scenarios.jo`; `tender_fuel`,
   `tender_hoist_start`, `tender_step`, `tender_repair` and the help call's `by_tender` in `aegean.jo`.
 - **Capture:** `AEGEAN_ABOARD=1 AEGEAN_CAPTURE_TENDER=hoist`; `AEGEAN_ABOARD=1
-  AEGEAN_CAPTURE_HELP=tender`; the flight home: `AEGEAN_SCENARIO=strait
+  AEGEAN_CAPTURE_HELP=tender`; `AEGEAN_CAPTURE_TENDER=passenger-direct` at the ladder
+  or `AEGEAN_CAPTURE_TENDER=passenger` at a boom. The flight home: `AEGEAN_SCENARIO=strait
   AEGEAN_CAPTURE_STRAIT_AFTER=arrive AEGEAN_ARRIVE_KM=3 AEGEAN_ARRIVE_FORMED=1
   AEGEAN_CAPTURE_TENDER_CAM=1` (with `AEGEAN_FRAMES` and `AEGEAN_FRAMES_ONLY=1` for a time-lapse).
 
