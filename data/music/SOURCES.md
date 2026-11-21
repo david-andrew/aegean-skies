@@ -35,7 +35,8 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Symphony No. 5, III: Valse (piano) | Pyotr Ilyich Tchaikovsky (1840–1893), 1888 | [hmscomp, score 5623928](https://musescore.com/user/24069/scores/5623928) | CC0 1.0 |
 | Lohengrin: Bridal Chorus (choir and piano) | Richard Wagner (1813–1883), 1850 | [Nicolas, score 43724](https://musescore.com/nicolas/scores/43724); the voices sung by our choir | CC0 1.0 |
 | Hungarian Dance No. 1 (piano) | Johannes Brahms (1833–1897), 1869 | [ÐÑÐ·ÑÐºÐ°Ð½Ñ, score 1386646](https://musescore.com/user/1580161/scores/1386646) | CC0 1.0 |
-| Daphnis et Chloé: Lever du jour | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
+| Daphnis et Chloé: Introduction (Part I, a reduction) | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
+| Daphnis et Chloé, Part III: Lever du jour, rehearsal 155 to the bar before 158 (19 bars), the title's music | Ravel, 1912; full score, Durand, 1913 | Our concert-pitch transcription of every part from printed pp. 184–193 of the [Durand 1913 full score](https://archive.org/details/imslp-et-chlo-ravel-maurice) (archive.org's mirror of IMSLP): `source/daphnis-155-24.musicxml` and `.mid` | Public-domain 1913 score; new transcription dedicated to CC0 1.0 |
 | Boléro | Ravel, 1929 | [darkblue865, score 5173477](https://musescore.com/user/15856401/scores/5173477) | CC0 1.0 |
 | The Barber of Seville: Overture | Gioachino Rossini (1792–1868), 1816 | [mike320, score 2540876](https://musescore.com/user/6105546/scores/2540876) | CC0 1.0 |
 | Carmen: Prelude (piano four hands) | Georges Bizet (1838–1875), 1875 | [Noah Godard, score 255426](https://musescore.com/user/125838/scores/255426) | CC0 1.0 |
@@ -112,6 +113,16 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Symphony No. 5: Andante con moto | Ludwig van Beethoven | [Mutopia 1437](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1437), Stelios Samelis (adapted to v2.16 by Johannes Heinecke), Breitkopf and Härtel (1862-1865) | Mutopia explicitly marks the transcription **Public Domain** |
 | Intermezzo in A major, Op. 118 No. 2 | Johannes Brahms | [Mutopia 535](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=535), Aron Fay, N. Simrock, 1892 | Mutopia explicitly marks the transcription **Public Domain** |
 | A Midsummer Night's Dream: Intermezzo | Felix Mendelssohn | [Mutopia 80](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=80), Felix Braun, Unknown | Mutopia explicitly marks the transcription **Public Domain** |
+| 'Στὰ Γιάννινα [μώρ' Καλαματιανή] (In Yannina, Kalamata girl) | Traditional Greek (collected from Mlle Athina, Athènes); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 24 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 68 (PDF page 92): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Τὰ ματάκια σου τὰ μαῦρα (Your black eyes, black as the olive) | Traditional Greek (collected from Mme Laffon, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 20 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 56-57 (PDF pages 80-81): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Σὰν παιθάνω 'ς τὸ καράβι (If I die on the ship) | Traditional Greek (collected from M. Mikhali, Athènes); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 26 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 76-77 (PDF pages 100-101): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Καράβιν ἔν' ἀπὸ τὴ Χιό ("Un brigantin da Scio partì": a brigantine sailed from Chios) | Traditional Greek (collected from M. Skiadaressi, Athènes); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 25 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 72-75 (PDF pages 96-99): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Ἂν παιθάνω, ῥίψετέ με ("Se morrò, gettato io sia": if I die, throw me in the deep sea; refrain "roum ba, roum balia") | Traditional Greek (collected from Mme Laffon, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 10 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 30-33 (PDF pages 54-57): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Αὐτὸς ὁ κόσμος εἶν' Τουρκιά ("Ah! Eleni mou") | Traditional Greek (collected from M. Gérasimos, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 3 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 8-9 (PDF pages 32-33): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Τὰ ματάκια σου τὰ μαῦρα (Your eyes are black and sweet: "Son sì neri gli occhi tuoi"; refrain "amán, amán") | Traditional Greek (collected from Mme Laffon, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 8 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 22-24 (PDF pages 46-48): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Νύσταξαν τὰ ματάκια μου (My eyes grew sleepy) | Traditional Greek (collected from Mme Laffon, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 18 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 53 (PDF page 77): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Ἕνα πουλάκι ("Un augellin": a little bird wept at dawn) | Traditional Greek (collected from Mme Laffon, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 7 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 19-21 (PDF pages 43-45): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
+| Ἄστραψεν ἡ Ἀνατολή (Lightning in the east: a cradle song, "rock the child, nurse") | Traditional Greek (collected from Mme Laffon, Smyrne); harmonised by L.-A. Bourgault-Ducoudray (1840–1910), no. 13 of *Trente mélodies populaires de Grèce et d'Orient*, 1877 | Our own transcription from the [Sibley Music Library scan](https://hdl.handle.net/1802/23748) of the 4th edition (Lemoine, plate 8024.HL), pages 42-43 (PDF pages 66-67): the voice and the piano's lowest note per beat, checked bar by bar | Public-domain edition; our transcription dedicated to CC0 1.0 |
 
 CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
 
@@ -158,6 +169,31 @@ a small subset of metadata retained. This is not an endorsement by any source au
   C-sharp5 is one continuous note. Earlier versions used overly broad pickups and
   incorrectly retriggered that tie. Coarse timing and three-point effort contours in
   `opening-performance.json` now annotate this solo excerpt explicitly.
+* The title's music is the opening of Part III of *Daphnis et Chloé* (Lever du jour), rehearsal
+  155 to the bar before 158: 19 bars, 73.2 s at the score's crotchet = 50, ending where the
+  theme's first statement has sunk away (158 begins the next phrase). Every part of the full
+  score is transcribed at sounding pitch (clarinets in A and E-flat, bass clarinet, horns in F,
+  alto flute, cor anglais, contrabassoon, contrabasses and celesta are written as they sound).
+  The earlier catalogue piece under this name was the ballet's *Introduction* in a reduction; it
+  keeps its place on the radio under its own title.
+  - Transcribed, not printed: the harp glissandi are written out string by string on the pedal
+    setting the printed accidentals show; the three solo violins' harmonics are at their sounding
+    pitches; grace notes are short notes; trills are marked on the written note. Slurs, hairpins
+    and dynamics are not in the MusicXML: the arrangement (`daphnis_lever` in
+    `tools/music_pack.py`) carries the printed dynamics bar by bar.
+  - Least certain (quiet colour or inner doubling): the piccolo's bird calls in bars 14–16,
+    flute 1's solo calls in bars 13 and 16, and the upper note of trombones 1–2 at 157.
+  - Our synthesizer lacks some of the score's instruments. Each plays on the nearest timbre:
+
+    | Score | Synthesizer |
+    |---|---|
+    | Alto flute, piccolo | flute |
+    | Cor anglais | oboe |
+    | Clarinet in E-flat, bass clarinet | clarinet |
+    | Trombones, tuba | brass (the horn timbre) |
+    | Celesta | piano, very softly |
+    | Three solo violins, in harmonics | strings |
+    | Bass drum (one held stroke left from before 155) | not played |
 * Magnetic Rag is explicitly a **foxtrot arrangement of a rag**, not labelled an
   original foxtrot. All source piano pitches/rhythms are retained, at quarter=116;
   upper notes use clarinet, lower piano/bass, with light banjo doubling and a drum beat.
@@ -180,6 +216,14 @@ a small subset of metadata retained. This is not an endorsement by any source au
 * Every other evening the Hotel Ancora's trio (accordion, upright piano, bass) plays *Summer*,
   *El Choclo* and *Santa Lucia* live (`src/bar_band.jo` bar_trio): the tune on the accordion, the
   low line on the bass, the other parts on the piano. No notes are added or changed.
+* The Greek songs of Bourgault-Ducoudray's 1877 collection are our own transcriptions from the
+  public-domain scan, made from it alone (no other edition, recording or MIDI consulted): the voice
+  line as printed and the piano's lowest note per beat (the right hand is not transcribed). The
+  piano-only introductions and interludes are therefore cut to a bar or so of the bass
+  (`tools/music_pack.py` greek_song); the dances take the tune on the bouzouki with a quiet
+  accordion an octave below, the lyrical songs on the violin, over a guitar. The transcriptions
+  are dedicated to CC0 1.0 (the user's decision of 21 November 2026: our transcriptions of
+  public-domain music may be kept in the repository).
 * Per-note start/end gain follows velocity and CC7/11. Controller curves within a note
   are approximated by a straight ramp, not reproduced exactly.
 

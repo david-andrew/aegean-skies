@@ -42,7 +42,7 @@ CONFIG = {
  'fifth-valse': (3,.4,8,{0},.04,.13,.18,0),
  'lohengrin-chorus': (4,.75,4,{0},.03,.12,.18,0),
  'hungarian-one': (2,.5,4,{0},.05,.15,.18,0),
- 'daphnis-daybreak': (4,1.0,4,{27},.04,.14,.22,0),
+ 'daphnis-introduction': (4,1.0,4,{27},.04,.14,.22,0),
  'bolero': (3,.6,4,{0,1,3},.01,.05,.10,0),
  'barber-overture': (4,.5,4,{10},.025,.11,.14,0),
  'carmen-overture': (2,.5,4,{0},.02,.10,.12,0),
@@ -119,6 +119,16 @@ CONFIG = {
  'beethoven-fifth-andante': (4,.5,4,{8},0.04,0.12,0.18,0),
  'brahms-intermezzo': (4,.5,4,{1},0.06,0.15,0.24,0),
  'midsummer-intermezzo': (4,.5,4,{6},0.06,0.15,0.24,0),
+ 'greek-sta-giannina': (3,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-ta-matakia-sou-ta-mavra': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-san-pethano-sto-karavi': (3,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-karavi-apo-ti-hio': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-an-pethano-roum-ba': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-aftos-o-kosmos': (2,.5,4,{0},0.025,0.12,0.15,0),
+ 'greek-ta-matakia-aman': (3,.5,4,{0},0.05,0.14,0.22,0),
+ 'greek-nystaxan-ta-matakia-mou': (2,.5,4,{0},0.05,0.14,0.22,0),
+ 'greek-ena-poulaki': (2,.5,4,{0},0.05,0.14,0.22,0),
+ 'greek-astrapsen-i-anatoli': (2,.5,4,{0},0.05,0.14,0.22,0),
 }
 
 class BeatMap:
