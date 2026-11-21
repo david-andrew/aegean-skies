@@ -55,8 +55,7 @@ SECONDS = 75.0
 
 def read_packed(name):
     """Events from a packed piece: (start s, duration s, pitch, instrument)."""
-    blob = (ROOT / 'data/music' / f'{name}.z').read_bytes()
-    raw = blob[4:] if blob.startswith(b'RAW!') else zlib.decompress(blob, -15)
+    raw = zlib.decompress((ROOT / 'data/music' / f'{name}.z').read_bytes(), -15)
     version = raw[3]
     count = struct.unpack_from('<I', raw, 4)[0]
     stride = 16 if version >= 51 else 14 if version == 50 else 12
