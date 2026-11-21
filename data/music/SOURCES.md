@@ -101,6 +101,17 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Fantaisie-Impromptu, Op. 66 | Chopin, 1855 | [venson72150, score 6219891](https://musescore.com/user/33306646/scores/6219891) | CC0 1.0 |
 | Nocturne Op. 15 No. 2 | Chopin, 1833 | [venson72150, score 6047021](https://musescore.com/user/33306646/scores/6047021) | CC0 1.0 |
 | Polonaise Op. 26 No. 1 | Chopin, 1836 | [Y.Murakami@TYO, score 3783671](https://musescore.com/user/3797871/scores/3783671) | CC0 1.0 |
+| Bassoon Concerto K. 191: Andante ma adagio | Wolfgang Amadeus Mozart | [Mutopia 686](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=686), Liang Seng, Breitkopf und Härtel, 1880s | Mutopia explicitly marks the transcription **Public Domain** |
+| Andante for flute and orchestra K. 315 | Wolfgang Amadeus Mozart | [Mutopia 344](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=344), Maurizio Tomasi, Breitkopf und Härtel | Mutopia explicitly marks the transcription **Public Domain** |
+| Horn Concerto No. 2 K. 417: Allegro maestoso | Wolfgang Amadeus Mozart | [Mutopia 901](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=901), Jay Anderson, Breitkopf & Härtel, 1877-1883 | Mutopia explicitly marks the transcription **Public Domain** |
+| Fantasia in D minor K. 397 | Wolfgang Amadeus Mozart | [Mutopia 2034](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=2034), Andrés Necochea, 'Mozart Album: Zongorára' Budapest: Zeneműkiadó Vállalat, 1951 | Mutopia explicitly marks the transcription **Public Domain** |
+| Symphony No. 25: Allegro con brio | Wolfgang Amadeus Mozart | [Mutopia 1380](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1380), Stelios Samelis, Breitkopf and Hartel (1880) | Mutopia explicitly marks the transcription **Public Domain** |
+| Symphony No. 25: Andante | Wolfgang Amadeus Mozart | [Mutopia 1381](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1381), Stelios Samelis, Breitkopf and Hartel (1880) | Mutopia explicitly marks the transcription **Public Domain** |
+| Eine kleine Nachtmusik: Rondo | Wolfgang Amadeus Mozart | [Mutopia 2230](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=2230), Mike Blackstock, Breitkopf & Härtel, 1883 | Mutopia explicitly marks the transcription **Public Domain** |
+| Clarinet Quintet K. 581: Larghetto | Wolfgang Amadeus Mozart | [Mutopia 337](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=337), Maurizio Tomasi, Breitkopf und Härtel (1883) | Mutopia explicitly marks the transcription **Public Domain** |
+| Symphony No. 5: Andante con moto | Ludwig van Beethoven | [Mutopia 1437](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=1437), Stelios Samelis (adapted to v2.16 by Johannes Heinecke), Breitkopf and Härtel (1862-1865) | Mutopia explicitly marks the transcription **Public Domain** |
+| Intermezzo in A major, Op. 118 No. 2 | Johannes Brahms | [Mutopia 535](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=535), Aron Fay, N. Simrock, 1892 | Mutopia explicitly marks the transcription **Public Domain** |
+| A Midsummer Night's Dream: Intermezzo | Felix Mendelssohn | [Mutopia 80](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=80), Felix Braun, Unknown | Mutopia explicitly marks the transcription **Public Domain** |
 
 CC0: <https://creativecommons.org/publicdomain/zero/1.0/>.
 

@@ -2001,7 +2001,8 @@ On the rivers branch until it lands.
 ### The Ierax (seaplane tender)
 
 - **Aliases:** the tender, the depot ship, Kalyra's forward base.
-- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s, anchored as a depot
+- **Definition:** a Kalyran seaplane tender, a converted steamer of the 1920s the size of HMS
+  Pegasus (101.5 m by 13.1 m, 4.6 m draught, 3,070 tons), anchored as a depot
   ship in the bight on the west coast of the island 25 km west of the strait, in the lee of its
   southern cape (an Orenthian island: a forward base, Kalyra's own nearest harbour being
   Ardevanti, 89 km off). She carries fuel, ammunition and mechanics, a derrick aft that swings out
@@ -2012,8 +2013,11 @@ On the rivers branch until it lands.
   the high ground lies under the way in from downwind), its run ending by her moorings, and moors
   in turn along the booms and astern, each made fast within a minute or so of alighting while the
   rest still land; moored, they ride the swell. Anyone rescued aboard an aircraft lying at a boom's
-  end, alongside her or on her deck can be helped aboard her: up the boom's spar and her side, or
-  across a brow put out from her rail, and below; her boat takes them in to Ardevanti, a foe of
+  end or alongside her is taken off by her boat: it comes round to lie off the bow of the
+  aircraft's float, they climb down onto the float, go forward along it and step aboard; it takes
+  them back to her Jacob's ladder, hung over her side between the booms, and they climb it, her hand
+  at the rail helping them over, and go below. Hoisted in, they climb down off the float onto her
+  deck; her boat takes them in to Ardevanti, a foe of
   Kalyra's held below until an exchange. Anyone may moor alongside (moor here) and take on fuel from her bunkers (Kalyra's,
   drawn from Ardevanti at its pier's price), be hoisted aboard (warped aft under the derrick,
   lifted, swung in over the after deck and set down), have her mechanics bring the aircraft back
@@ -3166,8 +3170,11 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   springs' keeper, and the coffee house's board and paper. As the scene draws that thing, its
   meshes are taken (`look_take`), then drawn alone into a small mask covering only its rectangle
   on the screen, and one pass over that rectangle draws the line just outside the mask's edge and
-  the band inside it (`src/look_outline.jo`). The pilot is never in the mask, and the line is
-  drawn over him where he stands in front. Nothing is rendered while nothing is looked at. The
+  the band inside it (`src/look_outline.jo`). The pilot is never in the mask. The mask keeps the
+  thing's nearest point at each pixel (a depth buffer of its own), and the line, band and flecks
+  are left out wherever the scene's depth there is nearer (the pilot in front of it, a nearer
+  thing), all but a faint line (a fifth as bright) where the edge is hidden, so a thing wholly
+  behind him still shows where it is (`AEGEAN_LOOK_DEPTH=0`: drawn over everything, as before). Nothing is rendered while nothing is looked at. The
   things that are part of a larger mesh (the hotel's tables, the bar's stool, the desk at the
   room door, the barber's chair, the band's stand and jar, the coffee house's table, the hot
   pool) keep their box's outline, and so does the software renderer. `AEGEAN_LOOK_SHAPE=0` keeps
