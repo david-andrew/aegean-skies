@@ -1,0 +1,212 @@
+# Paint by part: each part of an aircraft (fuselage or hull, each wing, floats, struts, cowling,
+# tail, rudder) in its own colour, a gradient of two, or stripes of two, along the part or across
+# it. The colours ride in the mesh the aircraft already has (a colour a corner): no texture, no
+# material and no extra draw. Stripes cut the part's triangles where the bands meet.
+#
+# How a part's paint finds its triangles, whichever builder made the aircraft (src/planes.jo,
+# build_painted_craft): the aircraft is built twice, once in the livery and once in four key
+# colours. A corner that comes out in a key colour (or a shade of one) is paint; one that comes out
+# the same both times is not (metal, glass, a cockpit, an insignia) and is left alone. The part a
+# triangle belongs to is the damage bin it was built in (planes.jo PartId), its strut tag
+# (src/craft_struts.jo), and for the rudder a tag the kit gives it (below).
+#
+# Pure: triangles in, triangles out. The saved choices are PartPaint (src/markings.jo).
+
+use 'markings.jo'
+use 'craft_struts.jo'
+
+# (saved by index in PartPaint.part: append, never reorder)
+PAINT_PARTS = ["Fuselage", "Left wing", "Right wing", "Floats", "Struts", "Cowling", "Tail", "Rudder"]
+const PART_FUSELAGE = 0
+const PART_LEFT_WING = 1
+const PART_RIGHT_WING = 2
+const PART_FLOATS = 3
+const PART_STRUTS = 4
+const PART_COWLING = 5
+const PART_TAIL = 6
+const PART_RUDDER = 7
+const PART_COUNT = 8
+
+PAINT_PATTERNS = ["One colour", "Gradient", "Stripes"]
+const PATTERN_PLAIN = 0
+const PATTERN_GRADIENT = 1
+const PATTERN_STRIPES = 2
+
+# The key colours an aircraft is built in to find its paint: body, trim, wing, accent. Exact in
+# binary, far from any dope, and each as bright (0.8125) so a shade of one says how dark it is.
+const PAINT_KEY_LEVEL = 0.8125
+PAINT_KEYS = [vec4(0.8125, 0.0625, 0.09375, 1), vec4(0.09375, 0.8125, 0.0625, 1), vec4(0.0625, 0.09375, 0.8125, 1), vec4(0.8125, 0.8125, 0.03125, 1)]
+
+# What the kit tags as it builds (a corner's texture coordinates, which the shaders ignore on an
+# aircraft, as the struts' tags): the rudder, and marks painted in a livery colour (operator bars,
+# a tail number), which a part's paint leaves as they are.
+const PAINT_RUDDER_TAG = 192.0
+const PAINT_MARK_TAG = 193.0
+const PAINT_OPEN_TAG = 194.0        # bare metal that takes a part's paint all the same (a cowling)
+
+# mark what a kit helper has just pushed (vs[from..]) with a tag
+tag_paint = (vs: mut Vertex3D[], from: int, tag: f64):
+    loop i in from..vs.len():
+        v = vs[i]
+        vs[i] = Vertex3D(v.pos, v.normal, vec2(f32(tag), 0), v.color)
+
+is_paint_mark = (v: Vertex3D) -> bool: v.uv.x == f32(PAINT_MARK_TAG)
+# (a rudder takes its own paint whole, over the stripes a type or a nation gives it)
+is_paint_open = (v: Vertex3D) -> bool: v.uv.x == f32(PAINT_OPEN_TAG) or v.uv.x == f32(PAINT_RUDDER_TAG)
+
+# Where the fuselage ends in its own bin and carries on into the tail's (the tail breaks away
+# with the fuselage's last length on it): the cross-section there. What of the tail bin lies
+# within it, behind it, is fuselage to the painter; the tailplane and fin stand out of it.
+struct PaintBody:
+    z: f32 = 1e9
+    lo: vec2 = vec2(0, 0)           # (x and y)
+    hi: vec2 = vec2(0, 0)
+
+paint_body = (bins: Vertex3D[][]) -> PaintBody:
+    if bins.len() < 7: return PaintBody()
+    end: f32 = -1e9
+    loop v in bins[0]:
+        if not is_strut_vertex(v): end = max(end, v.pos.z)
+    lo = vec2(1e9, 1e9); hi = vec2(-1e9, -1e9)
+    loop v in bins[0]:
+        if is_strut_vertex(v) or v.pos.z < end - 0.02: continue
+        lo = min(lo, v.pos.xy); hi = max(hi, v.pos.xy)
+    # (a fuselage that ends in a point has no more of itself in the tail)
+    if hi.x - lo.x < 0.05 or hi.y - lo.y < 0.05: return PaintBody()
+    grow = (hi.y - lo.y) * 0.3 + 0.12
+    PaintBody(end - 0.02, lo - vec2(0.03, grow), hi + vec2(0.03, grow))
+
+_in_body = (p: vec3, body: PaintBody) -> bool: p.z >= body.z and p.x >= body.lo.x and p.x <= body.hi.x and p.y >= body.lo.y and p.y <= body.hi.y
+
+# The part a triangle belongs to: `bin` the damage bin it was built in, its three corners.
+paint_part_of = (bin: int, a: Vertex3D, b: Vertex3D, c: Vertex3D, body: PaintBody) -> int:
+    if is_strut_vertex(a): return PART_STRUTS
+    if a.uv.x == f32(PAINT_RUDDER_TAG): return PART_RUDDER
+    match bin:
+        0: PART_FUSELAGE
+        1: PART_COWLING
+        2: PART_LEFT_WING
+        3: PART_RIGHT_WING
+        4: PART_FLOATS
+        5: PART_FLOATS
+        else: if _in_body(a.pos, body) and _in_body(b.pos, body) and _in_body(c.pos, body): PART_FUSELAGE else: PART_TAIL
+
+# How much of a part's paint a corner takes: 0 none (a colour the livery does not choose), 1 the
+# paint itself, between them a shade of it (a hull's darker bottom). `key` its colour in the key
+# build, `real` in the livery.
+paint_share = (key: vec4, real: vec4) -> f32:
+    loop k in PAINT_KEYS:
+        if key.x == k.x and key.y == k.y and key.z == k.z: return 1.0
+    if key.x == real.x and key.y == real.y and key.z == real.z: return 0.0
+    clamp(max(key.x, max(key.y, key.z)) / f32(PAINT_KEY_LEVEL), 0.25, 1.15)
+
+# The way along a part (nose to tail; a wing: root to tip) and the way across it (bottom to top; a
+# wing: leading edge to trailing).
+paint_axis = (part: int, across: bool) -> vec3:
+    if part == PART_LEFT_WING: return if across: vec3(0, 0, 1) else: vec3(-1, 0, 0)
+    if part == PART_RIGHT_WING: return if across: vec3(0, 0, 1) else: vec3(1, 0, 0)
+    if across: vec3(0, 1, 0) else: vec3(0, 0, 1)
+
+# the part's paint for each part, or -1 (the last given for a part counts)
+_part_index = (parts: PartPaint[]) -> int[]:
+    out = fill(-1, PART_COUNT)
+    loop k in 0..parts.len():
+        p = parts[k]
+        if p.part >= 0 and p.part < PART_COUNT and p.a.w > 0.0: out[p.part] = k
+    out
+
+_shade = (c: vec4, share: f32, alpha: f32) -> vec4: vec4(min(c.x * share, 1.0), min(c.y * share, 1.0), min(c.z * share, 1.0), alpha)
+
+# a convex polygon cut to the side of `at` along `axis` (keep: 1 the side beyond it, -1 the side before)
+_cut = (pts: vec3[], axis: vec3, at: f32, keep: f32) -> vec3[]:
+    out: vec3[]
+    n = pts.len()
+    loop i in 0..n:
+        p = pts[i]; q = pts[(i + 1) % n]
+        dp = (dot(p, axis) - at) * keep; dq = (dot(q, axis) - at) * keep
+        if dp >= 0.0: out.push(p)
+        if (dp > 0.0 and dq < 0.0) or (dp < 0.0 and dq > 0.0): out.push(p + (q - p) * (dp / (dp - dq)))
+    out
+
+# The part bins repainted in place. `key` the same aircraft built in PAINT_KEYS (triangle for
+# triangle); `parts` the paints. Nothing changes where no part has a paint.
+paint_parts_apply = (bins: mut Vertex3D[][], key: Vertex3D[][], parts: PartPaint[]):
+    index = _part_index(parts)
+    if not index.any((k: int) -> bool: k >= 0): return
+    if key.len() != bins.len(): return
+    loop b in 0..bins.len():
+        if key[b].len() != bins[b].len(): return
+    # each painted part's extent along its pattern (over the corners that take its paint)
+    body = paint_body(bins)
+    lo: f32[] = fill(f32(1e9), PART_COUNT)
+    hi: f32[] = fill(f32(-1e9), PART_COUNT)
+    axes: vec3[] = [loop part in 0..PART_COUNT: paint_axis(part, if index[part] >= 0: parts[index[part]].across else: false)]
+    loop b in 0..bins.len():
+        loop t in 0..bins[b].len() / 3:
+            i = t * 3
+            part = paint_part_of(b, bins[b][i], bins[b][i + 1], bins[b][i + 2], body)
+            if index[part] < 0 or is_paint_mark(bins[b][i]) or (paint_share(key[b][i].color, bins[b][i].color) <= 0.0 and not is_paint_open(bins[b][i])): continue
+            loop j in 0..3:
+                x = dot(bins[b][i + j].pos, axes[part])
+                lo[part] = min(lo[part], x); hi[part] = max(hi[part], x)
+    loop b in 0..bins.len():
+        out: Vertex3D[]
+        src = bins[b]
+        changed = false
+        loop t in 0..src.len() / 3:
+            i = t * 3
+            part = paint_part_of(b, src[i], src[i + 1], src[i + 2], body)
+            k = index[part]
+            share = if k >= 0 and not is_paint_mark(src[i]): (if is_paint_open(src[i]): 1.0 else: paint_share(key[b][i].color, src[i].color)) else: 0.0
+            if share <= 0.0:
+                out.push(src[i]); out.push(src[i + 1]); out.push(src[i + 2])
+                continue
+            changed = true
+            p = parts[k]
+            span = max(hi[part] - lo[part], 0.001)
+            other = if p.b.w > 0.0: p.b else: p.a
+            # (struts keep their triangles whole: what is tied to them finds them by their corners)
+            pattern = if part == PART_STRUTS and p.pattern == PATTERN_STRIPES: PATTERN_PLAIN else: p.pattern
+            if pattern == PATTERN_GRADIENT:
+                loop j in 0..3:
+                    v = src[i + j]
+                    u = clamp((dot(v.pos, axes[part]) - lo[part]) / span, 0.0, 1.0)
+                    out.push(Vertex3D(v.pos, v.normal, v.uv, _shade(mix(p.a, other, u), share, v.color.w)))
+            else if pattern == PATTERN_STRIPES:
+                bands = clamp(p.count, 2, 12)
+                tri = [src[i].pos, src[i + 1].pos, src[i + 2].pos]
+                x0 = min(dot(tri[0], axes[part]), min(dot(tri[1], axes[part]), dot(tri[2], axes[part])))
+                x1 = max(dot(tri[0], axes[part]), max(dot(tri[1], axes[part]), dot(tri[2], axes[part])))
+                first = clamp(int(floor((x0 - lo[part]) / span * f32(bands))), 0, bands - 1)
+                last = clamp(int(floor((x1 - lo[part]) / span * f32(bands))), 0, bands - 1)
+                loop band in first..last + 1:
+                    piece = tri
+                    if band > first: piece = _cut(piece, axes[part], lo[part] + span * f32(band) / f32(bands), 1.0)
+                    if band < last: piece = _cut(piece, axes[part], lo[part] + span * f32(band + 1) / f32(bands), -1.0)
+                    col = _shade(if band % 2 == 0: p.a else: other, share, src[i].color.w)
+                    loop j in 1..piece.len() - 1:
+                        out.push(Vertex3D(piece[0], src[i].normal, src[i].uv, col))
+                        out.push(Vertex3D(piece[j], src[i].normal, src[i].uv, col))
+                        out.push(Vertex3D(piece[j + 1], src[i].normal, src[i].uv, col))
+            else:
+                loop j in 0..3:
+                    v = src[i + j]
+                    out.push(Vertex3D(v.pos, v.normal, v.uv, _shade(p.a, share, v.color.w)))
+        if changed: bins[b] = out
+
+# The parts of an aircraft that take paint (built in the key colours: `key` its bins): for each
+# part, whether any of its triangles is paint. A type with no floats, or whose rudder the kit did
+# not lay, offers no paint for them.
+paint_parts_present = (key: Vertex3D[][]) -> bool[]:
+    out = fill(false, PART_COUNT)
+    body = paint_body(key)
+    loop b in 0..key.len():
+        loop t in 0..key[b].len() / 3:
+            i = t * 3
+            part = paint_part_of(b, key[b][i], key[b][i + 1], key[b][i + 2], body)
+            if out[part] or is_paint_mark(key[b][i]): continue
+            if is_paint_open(key[b][i]): out[part] = true
+            c = key[b][i].color
+            loop k in PAINT_KEYS:
+                if c.x == k.x and c.y == k.y and c.z == k.z: out[part] = true
+    out

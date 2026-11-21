@@ -18,7 +18,7 @@ on that unmerged branch so far.
 - **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
-- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
+- **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Canopy shells](#canopy-shells) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
@@ -582,24 +582,111 @@ On the rivers branch until it lands.
 
 ### Paint page
 
-- **Aliases:** repainting, the paint shop (later), liveries, colour schemes.
+- **Aliases:** repainting, liveries, colour schemes.
 - **Definition:** the pause menu's Paint tab (beside Aircraft and Plane): the player's aircraft
-  repainted. A livery valid for the type (its own first, its period paints, the civil ones and its
-  family's), its four colours (main, trim, wings, stripe) from period dopes, lacquers and trims or
-  any colour by hue, saturation and brightness, national insignia, operator bars, rudder stripes
-  and a tail number where the type wears them, and Reset to default. It applies at once (a model
-  of the player's own, built from the paint: other aircraft of the type keep theirs) and is saved
-  with the game. The Flying now card's Paint button opens it.
-- **Rules:** colours and drawn marks only, no textures. The session's `Paint` is the one save
-  field (the aircraft's record mirrors its livery); a game saved before it loads as built, or in
-  the period paint its record wore. A later paint shop prices `paint_changes` and draws the same
-  page; the model needs no change.
-- **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`,
-  `paint_support`, `paint_changes`), `src/aircraft_paint_view.jo` (`paint_page`); `set_player_paint`,
-  `paint_step`, `player_model` in `aegean.jo`; `tests/aircraft_paint_test.jo`.
-- **Capture:** `AEGEAN_CAPTURE_PANEL=paint`; `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1
-  number=K-AB3 body=0.2,0.3,0.6'` or a paint's name (`AEGEAN_PAINT='Greek Naval Air Service'`);
-  `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
+  repainted, in four tabs. **Livery:** a livery valid for the type (its own first, its period
+  paints, the civil ones and its family's) and its four colours (main, trim, wings, stripe).
+  **Parts:** [paint by part](#paint-by-part). **Decals:** [decals](#decals). **Marks:** national
+  insignia, operator bars, rudder stripes and a tail number where the type wears them. Colours
+  are period dopes, lacquers and trims, or any colour by hue, saturation and brightness (Mix any
+  colour). Free, it applies at once (a model of the player's own, built from the paint: other
+  aircraft of the type keep theirs) and is saved with the game. The Flying now card's Paint button
+  opens it.
+- **Rules:** colours and drawn marks only, no textures. The session's `Paint` is the save field
+  (the aircraft's record mirrors its livery and keeps the paint written out); a game saved before
+  it loads as built, or in the period paint its record wore. The page has three standings
+  (`PaintPageMode`): free, a [paint shop](#paint-shop)'s (a draft, priced), or closed (painting is
+  done at a workshop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
+  price-and-time, for the sandbox settings to answer.
+- **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`, `paint_build`,
+  `paint_support`, `paint_changes`, `paint_from_spec`), `src/aircraft_paint_view.jo`
+  (`paint_page`); `set_player_paint`, `paint_step`, `player_model` in `aegean.jo`;
+  `tests/aircraft_paint_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_PANEL=paint` (`paint-parts`, `paint-decals`, `paint-marks` for the
+  other tabs); `AEGEAN_PAINT='livery=2 insignia=1 bars=0 rudder=1 number=K-AB3 body=0.2,0.3,0.6
+  part.lwing=stripes:0.8,0.1,0.1:0.9,0.9,0.8:0:6 decal=roundel:wing-top'` or a paint's name
+  (`AEGEAN_PAINT='Greek Naval Air Service'`); `AEGEAN_CAPTURE_LAUNCH=paintsave` saves and loads it.
+
+### Paint by part
+
+- **Aliases:** part paint, per-part colours.
+- **Definition:** each part of an aircraft in its own paint: fuselage (a boat's hull), left wing,
+  right wing, floats, struts, cowling, tail, rudder. A part takes one colour, a gradient of two,
+  or 2 to 12 stripes of two, along the part (nose to tail; a wing: root to tip) or across it.
+- **Rules:** the colours ride in the aircraft's own mesh, a colour a corner: no texture, no
+  shader change, no extra draw. Stripes cut the part's triangles where the bands meet. Which
+  triangles are paint is found by building the aircraft twice, once in four **key colours**
+  (`PAINT_KEYS`): a corner that comes out in a key colour, or a shade of one, is paint; one that
+  is the same both times (metal, glass, a cockpit, an insignia) is left alone. A part is the
+  damage bin a triangle was built in, its strut tag, and tags the kit lays in a corner's texture
+  coordinates, which the shaders ignore on an aircraft: 192 the rudder, 193 a mark in a livery
+  colour (operator bars, a tail number: left as they are), 194 bare metal that takes paint all
+  the same (a cowling). The fuselage's paint carries on into the tail bin's length of fuselage.
+  An aircraft with no part painted takes the old path untouched. A new builder's rudder needs
+  `kit_tag_rudder` to be paintable (`tests/paint_parts_test.jo` checks every type has one).
+- **Code:** `src/paint_parts.jo` (`paint_parts_apply`, `paint_part_of`, `paint_share`);
+  `build_painted_craft`, `kit_repaint`, `kit_paint_keying` in `src/planes.jo` (the one hook where
+  a model is finished); `PartPaint` in `src/markings.jo`.
+- **Capture:** `AEGEAN_PAINT='part.<fuselage|lwing|rwing|floats|struts|cowling|tail|rudder>=
+  <plain|gradient|stripes>:r,g,b[:r,g,b[:across[:bands]]]'`.
+
+### Decals
+
+- **Aliases:** motifs, nose art.
+- **Definition:** motifs painted on an aircraft: shapes (circle, ring, band, square, triangle,
+  diamond, chevron), marks (roundel, star, cross, flags, chequers, stripes), period motifs
+  (lightning, arrow, anchor, sun, crescent, card suits, compass rose), animals (gull, swallow,
+  stork, dolphin, fish, cat) and letters and numbers. A decal goes at one of the usual **spots**
+  (rudder, fuselage sides, cowling, wing tops, wing bottoms, fin), found on each type as it is
+  built, or anywhere: a side it is seen from and a place there, at any size and angle. Up to
+  twelve on an aircraft, in up to three colours each, on one side or both.
+- **Rules:** every motif is drawn in code as flat convex polygons (`decal_polys`; outlines are
+  cut into triangles): nothing is an image, and nothing is generated by an AI. A decal is
+  projected onto the surface it meets: its polygons are cut against the aircraft's own triangles
+  and laid a centimetre above them, in the damage bin they land on, so they ride in the aircraft's
+  mesh (no texture, no extra draw) and go with a part that breaks away. It wraps a curved body
+  but does not go through to what lies behind. On the other side an animal is mirrored to face
+  the nose; letters still read. At most 5000 triangles of decals an aircraft. Motifs are saved by
+  key: append to `DECAL_MOTIFS`, never change a key's meaning.
+- **Code:** `src/decals.jo` (`decal_polys`, `decal_frame`, `decals_apply`, `decal_pick`); `Decal`
+  in `src/markings.jo`; `tools/decal_sheet.jo` draws every motif on one sheet;
+  `tests/decals_test.jo`.
+- **Capture:** `AEGEAN_PAINT='decal=<motif>:<spot | left|right|above|below/u/v>[:size[:angle
+  [:r,g,b[:r,g,b[:r,g,b[:both[:text]]]]]]]'`.
+
+### Paint shop
+
+- **Definition:** where painting costs money and takes a little time. The painter is a town's
+  mechanic: walked up to and spoken to, "I'd like her painted" opens the Paint page as the
+  shop's. The paint chosen there is a draft, shown on the aircraft and priced as it changes (only
+  what differs from her paint is charged; `paint_quote`). Ordered, the mechanic is paid and the
+  aircraft is **in the shop** until the paint is dry: she cannot be boarded, and is seen masked,
+  then in primer, then in the new paint with its decals going on last (`paint_job_look`). The
+  mechanic says how the work stands and one can wait for it. People remark on a new paint for a
+  day.
+- **Rules:** the `PaintJob` is saved with the session; the money moves through the living
+  world's `transfer` (a repair payment). The aircraft must be moored at the mechanic's harbour.
+- **Code:** `src/paint_shop.jo` (`paint_quote`, `paint_job_begin`, `paint_job_look`);
+  `open_paint_shop`, `paint_shop_order`, `paint_job_step` in `aegean.jo`;
+  `tests/paint_shop_test.jo`.
+- **Capture:** `AEGEAN_CAPTURE_PANEL=paint-shop` (the shop's page, `AEGEAN_PAINT_DRAFT` chosen);
+  `AEGEAN_CAPTURE_LAUNCH=paintshop` goes through asking, ordering, a save and load, waiting and
+  the dry paint, with `PAINTSHOP` lines; `AEGEAN_PAINT_AT_SHOPS=1` closes the free page.
+
+### Pilots' liveries
+
+- **Definition:** every other pilot's aircraft in its own paint, so a pilot can be told by their
+  colours at a distance. Made once from the pilot's number with the shop's own tools (a base
+  livery, two palette colours over the parts, a motif or their initials), then kept with the
+  aircraft's record. The harbour patrol keep the service's livery and carry a number; a pirate's
+  is dark with one bold mark.
+- **Rules:** `AircraftRecord.paint` holds the paint written out (`to_text` of a `Paint`), so it
+  survives saves and a later change to the generator. Models are built a few frames apart after
+  a start or a load and shared by paint.
+- **Code:** `src/pilot_liveries.jo` (`pilot_paint`); `assign_pilot_liveries`, `pilot_livery_step`
+  in `aegean.jo`.
+- **Capture:** `AEGEAN_CAPTURE_LIVERY="k [yaw pitch distance]"`: the camera on the k-th pilot's
+  aircraft, and a `PILOT LIVERY` line for each.
 
 ### Markings
 
@@ -4058,10 +4145,59 @@ No image: the tiers differ in budgets more than in any single view.
 - **Aliases:** friend and foe colours, the side palette.
 - **Definition:** one colour scheme for sides wherever the game marks them: enemies red-orange,
   friends blue, everyone else cream. Lead rings, the target brackets and names, people in the
-  water, the formation's place and the radio's speakers all take it from one place, for a later
-  colour-blind setting (docs/DESIGN.md backlog).
-- **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `battle_standing`,
-  `country_standing`).
+  water, the formation's place and the radio's speakers all take it from one place, so the
+  colour-vision preset swaps the whole set at once. A side's lines lie over a dark halo and its
+  names over a dark outline, so they read on sea, cloud and sky alike.
+- **Code:** `src/side_colours.jo` (`Standing`, `SidePalette`, `side_colour`, `side_line`,
+  `side_ring`, `side_text`, `side_sign`, `battle_standing`, `country_standing`).
+
+### Colour-vision preset
+
+- **Aliases:** colour-blind setting, colours of the sides, the Accessibility palettes.
+- **Definition:** the Settings page's "Colours of the sides" (Accessibility), kept with the
+  options: Standard; Red-green (protanopia, deuteranopia: enemy orange against friend blue, never
+  red against green); Blue-yellow (tritanopia: enemy red against friend teal); No colour (the
+  sides by shape on every mark and by lightness: a chevron an enemy's, a ring a friend's, a dot
+  anyone else's, over a darker halo). The war chart's country inks change with it (nations, not
+  sides), and with No colour each country's held ground is hatched its own way.
+- **Rules:** a preset is checked under a simulation of the eye it is for (Machado et al. 2009 at
+  full severity; luminance alone for no colour): the three sides apart, every mark apart from
+  sea, cloud and sky by its colour or its halo, the inks apart on the chart's paper. The standard
+  preset's marks keep their shapes; only No colour adds a sign to the lead ring, the flight's
+  marks and the pointer.
+- **Code:** `src/side_colours.jo` (`ColourVision`, `side_palette_for`, `set_colour_vision`,
+  `country_ink_for`, `country_hatch`, `side_shapes`), `src/colour_vision.jo` (`simulate_colour`,
+  `seen_distance`), `Options.colour_vision`; `tests/colour_vision_test.jo`.
+- **Capture:** `AEGEAN_COLOUR_VISION=standard|red_green|blue_yellow|monochrome`;
+  `AEGEAN_CAPTURE_SIDES=4` lays every side's mark in rows over the view (`src/side_samples.jo`);
+  `AEGEAN_CAPTURE_PANEL=settings-accessibility`; `sloppy --release tools/colour_vision_view.jo
+  in.png out.png protan|deutan|tritan|achromat|sheet` shows a capture as that eye sees it.
+
+### Sandbox switches
+
+- **Aliases:** sandbox settings, playing freely, cheats.
+- **Definition:** the Settings page's Sandbox section, each a separate switch, each off, kept with
+  the options: paint the aircraft anywhere at any time; any aircraft at any time (the Aircraft
+  page among the player's tabs); unlimited money; no damage; no fuel use; endless ammunition. The
+  simulation runs as usual: a switch lifts only the player's own constraint.
+- **Rules:** nobody else's money, cargo or wear is changed by a switch, and the world's books
+  balance with one on. Unlimited money holds the purse at a level (the purse hold): what is spent
+  is made good from outside the world, entered in the ledger as the outside's, so everyone is
+  really paid; switched off, what was lent goes back and the purse is what the player had and
+  earned. No fuel use undoes the burning of the player's own step, so nothing is consumed from
+  the tank or the goods ledger. No damage raises the damage shield round the player's own step
+  (contacts shake and sound, and break nothing) and mends what guns did. A game saved with a
+  switch on is a valid save: the session keeps the purse hold, and loads to the right purse with
+  the switch on or off.
+- **Code:** `src/sandbox.jo` (`Sandbox`, `sandbox`, `sandbox_purse`, `PurseHold`, `sandbox_fuel`),
+  `src/sandbox_world.jo` (`sandbox_money_step`), `src/damage.jo` `set_damage_shield`,
+  `Options.sandbox`, `GameSession.purse`, `shown_pages` in `src/debugmenu.jo`; hooks in
+  `aegean.jo` (`no_damage_now`, `purse_hold`); `tests/sandbox_test.jo`,
+  `tests/sandbox_settings_test.jo`. A paint shop asks `sandbox.paint_anywhere` before it charges
+  money or time.
+- **Capture:** `AEGEAN_SANDBOX="money,damage,fuel,aircraft,paint,ammunition"` (or `all`);
+  `AEGEAN_CAPTURE_PANEL=settings-sandbox`; `AEGEAN_SANDBOX_TRACE=1` prints the purse, the tank
+  and the airframe each second.
 
 ### Going home
 
