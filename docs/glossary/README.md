@@ -1949,7 +1949,7 @@ On the rivers branch until it lands.
   lobes, smaller domes again. Nothing arrives: far off the wood is the ground's paint; nearer
   the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
-  85 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
+  100 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
   so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
   mass or a clump stands only where the wood covers its middle, so a small wood is crowns on
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
@@ -1959,8 +1959,8 @@ On the rivers branch until it lands.
   `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
   `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
   `src/terrain_lod.jo` for their stand cover).
-- **Rules:** each size of dome is made in tiles of one level only (masses in level 3, clumps in
-  level 2, crowns in level 0), on the canonical surface, and gathered from those tiles whatever
+- **Rules:** each size of dome is made in tiles of one level only (masses in level 2, clumps in
+  level 1, crowns in level 0), on the canonical surface, and gathered from those tiles whatever
   level the ground is drawn at, so a tile's split or merge never changes a dome; a tile made
   late grows its domes in. The domes are worked out once, as a terrain tile is made (an old
   island's patch: the first time it is in reach, one a frame), never per frame and never in the vertex shader
