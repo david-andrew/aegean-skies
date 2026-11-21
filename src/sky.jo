@@ -81,7 +81,36 @@ sky_color = (dir: vec3, u: SkyParams) -> vec3:
             point=(1.0-smoothstep(0.55,1.15,d))+exp(-d*d*1.8)*0.18
             tint=if k==2:vec3(1,0.73,0.57) else:if k==1:vec3(1,0.95,0.82) else:vec3(1,0.98,0.94)
             c+=tint*planet.w*visible*point
-    # (the Moon is its own small billboard over this: draw_moon_disc)
+    # Moon disk: illuminate the near hemisphere with the same solar direction
+    # used by terrain and clouds. Crescent orientation follows the Sun in 3D.
+    moon = normalize(u.moon_dir)
+    # (at night the Moon glows: a soft halo in the air about it, broader and fainter outward,
+    # as bright as it is full)
+    if u.night > 0.0 and y > -0.01 and moon.y > -0.02:
+        ang = acos(clamp(dot(dir,moon),-1.0,1.0))
+        full = clamp((1.0-dot(normalize(u.sun_dir),moon))*0.5,0.0,1.0)
+        halo = exp(-ang*ang/(0.11*0.11))*0.10+exp(-ang*ang/(0.035*0.035))*0.16
+        c += vec3(0.72,0.78,0.9)*halo*full*u.night*smoothstep(-0.02,0.06,moon.y)
+    if dot(dir,moon)>SKY_DISC_OUTER and y > -0.01:
+        right = normalize(cross(if abs(moon.y)>0.98:vec3(0,0,1) else:vec3(0,1,0), moon))
+        up = cross(moon, right)
+        radius: f32 = SKY_DISC_RADIUS
+        xy = vec2(dot(dir, right), dot(dir, up)) / radius
+        rr = dot(xy, xy)
+        disk = smoothstep(SKY_DISC_OUTER,SKY_DISC_INNER,dot(dir,moon))
+        normal = right * xy.x + up * xy.y - moon * sqrt(max(1.0 - rr, 0.0))
+        lit = smoothstep(-0.03, 0.12, dot(normal, l))
+        maria = 0.88 + 0.12 * vnoise(xy * 5.0 + vec2(11, 3))
+        earthshine = 0.025 * u.night
+        lunar = vec3(0.92, 0.94, 1.0) * (lit * 0.8 + earthshine) * maria
+        # The sky lies in front of the Moon: by day its lit side is a pale, faintly
+        # blue wash over the blue, low in contrast, softer toward the horizon where
+        # more air lies in front, and its dark side is only sky. Toward night the
+        # sky in front fades and the Moon takes its full night brightness.
+        pale = mix(vec3(0.84, 0.88, 0.93), c, 0.3)
+        day_moon = mix(c, pale, lit * maria * 0.6 * mix(0.5, 1.0, smoothstep(0.0, 0.25, y)))
+        night_moon = c * (1.0 - u.night * 0.85) + lunar * 1.35
+        c = mix(c, mix(day_moon, night_moon, u.night), disk * smoothstep(-0.01, 0.03, y))
     q = dir.xz/max(dir.y,0.025)*3.0+vec2(u.time*0.0007,0)
     feather_filter = 1.0-smoothstep(0.2,0.6,length(vec2(fwidth(q.x),fwidth(q.y))))
     if dir.y > 0.08 and u.cirrus > 0.0:
@@ -105,7 +134,6 @@ draw_sky = (L: Light, t: f64):
     draw(sky_sh, sky_tri, SkyParams(render_rays(scene_view_proj()), L.sky_top, L.sky_horizon, L.haze, L.sea_deep, L.sun_dir, L.sun*L.glare, f32(night), f32(t), scene_camera().y, L.moon_dir,if weather_active: weather_here.cirrus else: 0.0,L.planets,far_depth()))
     if L.afterglow.x > 0.0: draw_glow_band(L)
     # (the disc over the glow band: the band is the air's glow about the sun, not in front of it)
-    draw_moon_disc(L)
     draw_sun_disc(L, t)
     if L.high_cloud > 0.0: draw_high_cloud(L, t)
     depth_write(true)
@@ -331,82 +359,6 @@ draw_sun_disc = (L: Light, t: f64):
     draw(sun_disc_sh, sun_disc_mesh, SunParams(scene_view_proj(), s, k.top, k.foot, vec4(f32(e / f64(SKY_DISC_RADIUS * k.size)), k.low, f32(t % 1000.0), k.flat), k.size, k.soft, k.bloom, k.halo, far_depth()))
     blend(.alpha)
 
-# ---------------- the Moon ----------------
-# Its own small square of the sky, like the sun's (the sky's shader carries none of it). By day
-# its lit side is a pale, faintly blue wash over the blue, its dark side only sky. From sunset it
-# begins to shine, and by night it is a light: its lit side blown out to near white, the maria
-# only just showing, its phase kept, the dark side a faint earthshine on the sky; and round
-# it a halo in the air, tight and bright by the disc and broad and faint beyond, as strong as the
-# Moon is full (a thin crescent glows little) and wider in haze and damp air.
-struct MoonVertex:
-    at: vec2                        # the corner, in units of the square's half size
-
-struct MoonParams:
-    view_proj: mat4
-    moon_dir: vec3
-    sun_local: vec3                 # the way to the sun in the Moon's own frame (right, up, toward the eye)
-    glow: vec4                      # x how far it shines (0 by day, 1 at night), y the halo's strength, z its width (1 in clear air), w the eye's dip
-    size: f32                       # the square's half size (disc radii)
-    far_z: f32
-
-struct MoonOut:
-    pos: vec4
-    at: vec2
-    dir: vec3
-
-moon_disc_vs = (v: MoonVertex, u: MoonParams) -> MoonOut:
-    m = normalize(u.moon_dir)
-    right = normalize(cross(if abs(m.y) > 0.98: vec3(0,0,1) else: vec3(0,1,0), m))
-    up = cross(m, right)
-    dir = m + (right*v.at.x + up*v.at.y)*(u.size*SKY_DISC_RADIUS)
-    clip = u.view_proj*vec4(dir,0)
-    MoonOut(vec4(clip.xy,clip.w*u.far_z,clip.w),v.at*u.size,dir)
-
-moon_disc_fs = (i: MoonOut, u: MoonParams) -> vec4:
-    xy = i.at
-    rr = dot(xy,xy)
-    d = sqrt(rr)
-    y = normalize(i.dir).y+u.glow.w
-    above = smoothstep(-0.01,0.03,y)
-    disk = (1.0-smoothstep(0.93,1.03,d))*above
-    lit = smoothstep(-0.03,0.12,xy.x*u.sun_local.x+xy.y*u.sun_local.y-sqrt(max(1.0-rr,0.0))*u.sun_local.z)
-    maria = 0.88+0.12*vnoise(xy*5.0+vec2(11,3))
-    g = u.glow.x
-    # (by day the sky lies in front of it: softer toward the horizon, where more air does)
-    day_a = lit*maria*0.42*mix(0.5,1.0,smoothstep(0.0,0.25,y))
-    # (by night blown out: near white, the maria a faint tone in it)
-    # (its dark side is never darker than the sky in front of it: only its lit side covers the
-    # sky, the dark side a faint earthshine added)
-    night = vec3(1.0,0.985,0.95)*(lit*(0.86+0.14*maria))+vec3(0.014,0.018,0.03)
-    rgb = mix(vec3(0.84,0.88,0.93)*day_a,night,g)*disk
-    a = mix(day_a,lit,g)*disk
-    # (the halo: light in the air about it, added)
-    w = u.glow.z
-    halo = (exp(-rr/(2.6*w*w))*0.34+exp(-rr/(26.0*w*w))*0.15)*u.glow.y*(1.0-disk)*smoothstep(-0.02,0.05,y)
-    vec4(rgb+vec3(0.72,0.79,0.93)*halo,a)
-
-moon_disc_sh = Shader()
-moon_disc_mesh = Mesh()
-
-draw_moon_disc = (L: Light):
-    m = normalize(L.moon_dir)
-    if m.y < -0.12: return
-    l = normalize(L.sun_dir)
-    right = normalize(cross(if abs(m.y) > 0.98: vec3(0,0,1) else: vec3(0,1,0), m))
-    up = cross(m, right)
-    h = max(f64(scene_camera().y), 0.0)
-    dip = sqrt(h * (2.0 * EARTH_RADIUS + h)) / (EARTH_RADIUS + h)
-    g = moon_glow(f64(l.y))
-    full = clamp((1.0 - f64(dot(l, m))) * 0.5, 0.0, 1.0)
-    thick = max(f64(L.turbidity), 0.0)
-    width = 1.0 + 0.5 * thick
-    halo = g * pow(full, 0.8) * (1.0 + 0.25 * thick) * smoothstep(-0.02, 0.06, f64(m.y))
-    size = if halo > 0.01: 11.0 * width else: 1.3
-    cull(.none)
-    blend(.premultiplied)
-    draw(moon_disc_sh, moon_disc_mesh, MoonParams(scene_view_proj(), m, vec3(dot(right, l), dot(up, l), dot(m, l)), vec4(f32(g), f32(halo), f32(width), f32(dip)), f32(size), far_depth()))
-    blend(.alpha)
-
 # ---------------- high cloud at sunset: a painted layer ----------------
 # A sheet of altocumulus, a mackerel sky, on some evenings (Tweaks "High cloud at sunset", a trial;
 # day_air.jo day_high_cloud says which and how full): painted on the sky dome, the glow band's own
@@ -486,9 +438,6 @@ init_sky = ():
     global glow_band_sh, glow_band_mesh
     glow_band_sh = make_shader(shader(glow_band_vs, glow_band_fs))
     glow_band_mesh = build_glow_band()
-    global moon_disc_sh, moon_disc_mesh
-    moon_disc_sh = make_shader(shader(moon_disc_vs, moon_disc_fs))
-    moon_disc_mesh = mesh([MoonVertex(vec2(-1,-1)),MoonVertex(vec2(1,-1)),MoonVertex(vec2(1,1)),MoonVertex(vec2(-1,1))], [u32(0),u32(1),u32(2),u32(0),u32(2),u32(3)])
     global sun_disc_sh, sun_disc_mesh
     sun_disc_sh = make_shader(shader(sun_disc_vs, sun_disc_fs))
     sun_disc_mesh = mesh([SunVertex(vec2(-1,-1)),SunVertex(vec2(1,-1)),SunVertex(vec2(1,1)),SunVertex(vec2(-1,1))], [u32(0),u32(1),u32(2),u32(0),u32(2),u32(3)])
