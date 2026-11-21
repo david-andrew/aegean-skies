@@ -191,14 +191,16 @@ Owning an aircraft includes making it one's own, more freely than Sky Barons all
   a pilot can be recognized by their colors at a distance.
 
 Built so far (docs/glossary: Paint page, Paint by part, Decals, Paint shop, Pilots' liveries): all
-of the above, with a town's mechanic as the painter. Still to come: a paint shop of its own to
-walk into, and placing a decal by pointing at the aircraft.
+of the above, with a paint shop at the water's edge in each town that has a mechanic.
 
 ## Sandbox settings
 
 A settings page for playing more freely, each a separate switch: paint any time anywhere, any
 aircraft at any time, unlimited money, no damage, no fuel, and the like. The simulation keeps
 running as usual; the switches only lift the player's own constraints.
+
+Built: the Settings page's Sandbox section (`src/sandbox.jo`; the glossary's "Sandbox switches"
+has the rules that keep the world's books and the saves whole).
 
 ## The first milestone
 
@@ -270,7 +272,8 @@ Things agreed to build, roughly in the order they'll come:
   in the busiest places only, musicians: a world lived in.
 - War: battles that play out whether or not one joins them, leaning on Sky Barons (its AI pilots,
   smoke and fire when hit, parachutes); a larger overhaul of errands and the world's liveness.
-- Colour-blind settings (low priority, noted at the user's wish): a settings section that changes
+- Colour-blind settings (built: the Settings page's "Colours of the sides", the glossary's
+  "Colour-vision preset"; as it was asked for): a settings section that changes
   how sides are told apart. The colours already live in one place, `src/side_colours.jo`
   (`SidePalette`: enemy red-orange, ally blue, neutral cream; `set_side_palette`), and every marker
   that shows a side takes its colour from there, so the setting swaps one palette: presets for
