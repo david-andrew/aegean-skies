@@ -113,6 +113,17 @@ PIECES = [
  ('fantaisie-impromptu', 'Fantaisie-Impromptu', 'Frederic Chopin', 'Kalyra Concert Hall'),
  ('nocturne-fsharp', 'Nocturne in F sharp major, Op. 15 No. 2', 'Frederic Chopin', 'Kalyra Concert Hall'),
  ('polonaise-csharp', 'Polonaise in C sharp minor, Op. 26 No. 1', 'Frederic Chopin', 'Kalyra Concert Hall'),
+ ('bassoon-andante', 'Bassoon Concerto K. 191: Andante ma adagio', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('flute-andante', 'Andante for flute and orchestra K. 315', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('horn-concerto-two', 'Horn Concerto No. 2 K. 417: Allegro maestoso', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('fantasia-d-minor', 'Fantasia in D minor K. 397', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('mozart-twentyfive', 'Symphony No. 25: Allegro con brio', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('mozart-twentyfive-andante', 'Symphony No. 25: Andante', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('nachtmusik-rondo', 'Eine kleine Nachtmusik: Rondo', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('clarinet-quintet-larghetto', 'Clarinet Quintet K. 581: Larghetto', 'Wolfgang Amadeus Mozart', 'Kalyra Concert Hall'),
+ ('beethoven-fifth-andante', 'Symphony No. 5: Andante con moto', 'Ludwig van Beethoven', 'Kalyra Concert Hall'),
+ ('brahms-intermezzo', 'Intermezzo in A major, Op. 118 No. 2', 'Johannes Brahms', 'Kalyra Concert Hall'),
+ ('midsummer-intermezzo', "A Midsummer Night's Dream: Intermezzo", 'Felix Mendelssohn', 'Kalyra Concert Hall'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -143,7 +154,8 @@ HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo'
         'pictures-bydlo', 'pictures-chicks', 'pictures-baba-yaga', 'pictures-great-gate', 'beethoven-fifth',
         'beethoven-fifth-finale', 'pathetique-finale', 'rachmaninoff-third', 'meistersinger-prelude', 'liebestod', 'valkyries',
         'traumerei', 'brandenburg-two', 'pange-lingua', 'brahms-first-finale',
-        'coriolan', 'egmont', 'emperor-allegro', 'emperor-adagio', 'ninth-first', 'ninth-finale', 'rejouissance', 'handel-oboe', 'mahler-fifth-storm', 'mahler-ninth-rondo', 'clarinet-allegro', 'mozart-forty-finale', 'jupiter', 'tchaikovsky-fourth-finale', 'verdi-sanctus', 'ballade-two', 'chopin-berceuse', 'fantaisie-impromptu', 'nocturne-fsharp', 'polonaise-csharp'}
+        'coriolan', 'egmont', 'emperor-allegro', 'emperor-adagio', 'ninth-first', 'ninth-finale', 'rejouissance', 'handel-oboe', 'mahler-fifth-storm', 'mahler-ninth-rondo', 'clarinet-allegro', 'mozart-forty-finale', 'jupiter', 'tchaikovsky-fourth-finale', 'verdi-sanctus', 'ballade-two', 'chopin-berceuse', 'fantaisie-impromptu', 'nocturne-fsharp', 'polonaise-csharp',
+        'bassoon-andante', 'flute-andante', 'horn-concerto-two', 'fantasia-d-minor', 'mozart-twentyfive', 'mozart-twentyfive-andante', 'nachtmusik-rondo', 'clarinet-quintet-larghetto', 'beethoven-fifth-andante', 'brahms-intermezzo', 'midsummer-intermezzo'}
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie'}
@@ -260,6 +272,17 @@ MOOD = {
  'fantaisie-impromptu': ('dreamy', 'the wider repertoire, batch 3'),
  'nocturne-fsharp': ('dreamy', 'the wider repertoire, batch 3'),
  'polonaise-csharp': ('stately', 'the wider repertoire, batch 3'),
+ 'bassoon-andante': ('tender', 'the wider repertoire, batch 4'),
+ 'flute-andante': ('tender', 'the wider repertoire, batch 4'),
+ 'horn-concerto-two': ('jaunty', 'the wider repertoire, batch 4'),
+ 'fantasia-d-minor': ('dreamy', 'the wider repertoire, batch 4'),
+ 'mozart-twentyfive': ('stately', 'the wider repertoire, batch 4'),
+ 'mozart-twentyfive-andante': ('tender', 'the wider repertoire, batch 4'),
+ 'nachtmusik-rondo': ('jaunty', 'the wider repertoire, batch 4'),
+ 'clarinet-quintet-larghetto': ('tender', 'the wider repertoire, batch 4'),
+ 'beethoven-fifth-andante': ('stately', 'the wider repertoire, batch 4'),
+ 'brahms-intermezzo': ('tender', 'the wider repertoire, batch 4'),
+ 'midsummer-intermezzo': ('dreamy', 'the wider repertoire, batch 4'),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
