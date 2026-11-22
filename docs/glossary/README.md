@@ -1979,8 +1979,8 @@ On the rivers branch until it lands.
   stands half as tall again and the masses up to 2.7 times, a far mass is lit as one body, and
   past the crowns' reach the masses cast shadows on the sheet and on one another
   (`billow_shadow`). A far dome is a cone; its ring swells out to the dome's shape as the eye
-  nears. Nothing arrives: beyond 7 km the wood is the ground's paint; from there the
-  sheet rises out of the ground (to its full height by 5.5 km), still painted exactly as the
+  nears. Nothing arrives: beyond 5.5 km the wood is the ground's paint; from there the
+  sheet rises out of the ground (to its full height by 4.5 km), still painted exactly as the
   ground is (the ground's own painter) and cut by a pattern of crowns about six pixels wide, so
   from over it nothing shows, and a wooded ridge's outline against the sky or the land behind
   is crowns' tops and the gaps between them, not a line (the **far sheet**; it stands up to
@@ -1988,7 +1988,8 @@ On the rivers branch until it lands.
   the crowns takes over by a dither; then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
   80 m), its top first. A far clump stands no more than half as tall again and is lit by the
-  mass it stands on: tall little cones, each with its own light, were most of a far wood's
+  mass it stands on, and a far mass's foot is painted as the sheet it stands in: tall little
+  cones, each with its own light, and a hard line round every mass were most of a far wood's
   shimmer. The canopy's height follows the smooth field the stand is drawn from,
   so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
   mass or a clump stands only where the wood covers its middle, so a small wood is crowns on
@@ -2011,8 +2012,9 @@ On the rivers branch until it lands.
   before shading them. The canopy is drawn before the ground, so the ground a wood hides is never shaded. The
   canopy's rise and the land's aerial perspective are carried per vertex. Work only one size of
   dome needs, put behind a short branch in the shader every dome shares, is paid by every
-  dome's pixel (the laptop's GPU runs both sides of a short branch): a trial that painted a far
-  mass's foot as the sheet cost 0.3 ms over a wood that way, and was dropped.
+  dome's pixel (the laptop's GPU runs both sides of a short branch): the paint of a far mass's
+  foot cost 0.3 ms over a wood that way, and 0.03 ms in the masses' own shader
+  (`billow_mass_sh`).
 
 ### Far land layers
 
