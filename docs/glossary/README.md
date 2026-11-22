@@ -4083,6 +4083,12 @@ No image: the tiers differ in budgets more than in any single view.
   octave) and the woods' domes (their tops and their sides) frame by frame on four paths and fails on any step, and on a patch moving or changing its shade
   quickly; it runs on the pages workflow. Anything new a terrain vertex carries must morph
   between levels the same way (never read at the vertex's own sample whatever the level drawn).
+  `tools/terrain_crack_check.jo` (`tests/terrain_crack_test.py`, every push) draws the ground
+  alone, by the game's own shaders, at five frames along each of those paths over a colour
+  nothing paints, and fails on any hole through which the eye's ray meets land: the pop check
+  works on the CPU at the tiles' samples and cannot see a fault in the shader itself, or at
+  the vertices a tile has between samples along an edge beside finer tiles (where a cheaper
+  read of the coarser height once took the wrong samples: cracks, and every other test passed).
 
 ### Canonical surface
 
