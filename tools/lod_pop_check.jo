@@ -10,18 +10,28 @@
 # and the domes' growth move a point a fraction of a pixel a frame), or a dome well inside the
 # frame that appears or goes while it stands more than STEP_PX out of what it stands on (a dome
 # coming in or going out at the frame's edge is not a pop).
+# The ground's patches are checked too (round 6): the light on the normals a tile's vertices
+# carry, its fields' colour and its orchards' cover, each as the vertex shader morphs it between
+# levels and the mesh carries it to the pixel, may not step from one frame to the next; and
+# over half a second a patch may not move more than a pixel and a half or change its shade by
+# more than 0.12. Start a path's check after its cold start (AEGEAN_POP_FIRST): a jump's
+# arrival grows the land in, which is not flight.
 # AEGEAN_POP_SLICE=n: tiles made a frame (default 1, the game's 5 ms slice; 0: all at once, as
 # the captures' AEGEAN_SETTLE makes them). AEGEAN_POP_PATH: another path (below);
 # AEGEAN_POP_DEBUG=1: each pop's tiles. Prints the worst frames and fails on any pop.
 # On main 7bd4ad2 (before round 4 of the canopy): the woods glide 41 dome pops; a low fast
 # flight over hills (the second path in .github/workflows/pages.yml) 1510 ground and 97 dome
 # pops, up to 3.6 px; a mountain approach (the third) 35 dome pops. Since: none.
+# Before round 6 (AEGEAN_POP_UNMORPHED=1 measures it): over the hills the fields' colour stepped
+# up to 0.52 in a frame at a tile's split or merge (5595 point-frames over 0.03) and the
+# orchards' cover up to 0.91 (734 over 0.05). Since: under 0.005.
 # SLOPPY_SOFTWARE=1, no window.
 use '../src/geography.jo'
 use '../src/world.jo'
 use '../src/world_terrain.jo'
 use '../src/terrain_lod.jo'
 use '../src/render_space.jo'
+use '../src/plants.jo'
 assert(load_land(embed('../assets/terrain.bin')))
 load_terrain(embed('../assets/terrain_lod.bin'))
 assert(load_geography(embed('../assets/world.bin')))
@@ -47,27 +57,56 @@ forward = vec3(-sin(yaw)*cos(pitch),sin(pitch),-cos(yaw)*cos(pitch))
 # The drawn ground height at a world point in a selected tile (slot), as the GPU draws it: the
 # tile's vertices morphed (world_vertex: toward the coarser grid by the tile's lod fraction), the
 # point between them on the mesh's triangles (land_grid_data: the b-c diagonal).
-sample_at = (t: WorldTile,i: int,j: int) -> f32: t.cpu_heights[min(max(j,0),16)*17+min(max(i,0),16)]
-coarse_at = (t: WorldTile,p: vec2,step: f32) -> f32:
-    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return sample_at(t,int(p.x),int(p.y))
+# field 0: the height; 1: the light on the sample's normal (a fixed morning sun), as the vertex
+# shader carries the normal to the fragment (mixed between levels as the height is).
+const CHECK_SUN = vec3(0.56,0.62,0.55)
+unmorphed = env("AEGEAN_POP_UNMORPHED") != none
+sample_at = (t: WorldTile,i: int,j: int,field: int) -> f32:
+    k = min(max(j,0),16)*17+min(max(i,0),16)
+    if field == 0: return t.cpu_heights[k]
+    # (5: the orchards' cover there; 15: on the next coarser level's grid)
+    if field == 5: return f32(t.cpu_cover[k*4])/255.0
+    if field == 15: return f32(t.cpu_cover[k*4+1])/255.0
+    # (2: the fields' share there, 3: their colour's weight in the ground's, as a luminance)
+    # (2: the fields' share there, 3: their colour's luminance; 12, 13: the same on the next
+    # coarser level's grid. Each is carried to the pixel on its own, as the shader carries them)
+    if field == 2: return f32(t.cpu_working[k*4+3])/255.0
+    if field == 3: return (f32(t.cpu_working[k*4])*0.3+f32(t.cpu_working[k*4+1])*0.59+f32(t.cpu_working[k*4+2])*0.11)/255.0
+    if field == 12: return f32(t.cpu_working_far[k*4+3])/255.0
+    if field == 13: return (f32(t.cpu_working_far[k*4])*0.3+f32(t.cpu_working_far[k*4+1])*0.59+f32(t.cpu_working_far[k*4+2])*0.11)/255.0
+    nx = f32(t.cpu_materials[k*5+1])/255.0*2.0-1.0; nz = f32(t.cpu_materials[k*5+2])/255.0*2.0-1.0
+    dot(vec3(nx,sqrt(max(1.0-nx*nx-nz*nz,0.001)),nz),CHECK_SUN)
+coarse_at = (t: WorldTile,p: vec2,step: f32,field: int) -> f32:
+    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return sample_at(t,int(p.x),int(p.y),field)
     a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
     f = (p-a)/step
-    aa = sample_at(t,int(a.x),int(a.y)); bb = sample_at(t,int(a.x+step),int(a.y))
-    cc = sample_at(t,int(a.x),int(a.y+step)); dd = sample_at(t,int(a.x+step),int(a.y+step))
+    aa = sample_at(t,int(a.x),int(a.y),field); bb = sample_at(t,int(a.x+step),int(a.y),field)
+    cc = sample_at(t,int(a.x),int(a.y+step),field); dd = sample_at(t,int(a.x+step),int(a.y+step),field)
     if f.x+f.y <= 1.0: return aa+f.x*(bb-aa)+f.y*(cc-aa)
     dd+(1.0-f.x)*(cc-dd)+(1.0-f.y)*(bb-dd)
-vertex_at = (t: WorldTile,p: vec2) -> f32:
+# (the fields' colour morphs as world_working_at has it)
+vertex_at = (t: WorldTile,p: vec2,field: int) -> f32:
+    # (AEGEAN_POP_UNMORPHED=1: as before round 6, the fields and the orchards read at each
+    # vertex's own sample whatever the level drawn)
+    if (field == 2 or field == 3 or field == 5) and unmorphed: return sample_at(t,int(p.x),int(p.y),field)
+    if field == 2 or field == 3 or field == 5:
+        lv = clamp(f32(t.lod-f64(t.level)),0.0,3.999)
+        if lv < 1.0: return mix(sample_at(t,int(p.x),int(p.y),field),sample_at(t,int(p.x),int(p.y),field+10),lv)
+        st = pow(2.0,floor(lv))
+        w = coarse_at(t,p,st,field+10)
+        if fract(lv) > 0.0: w = mix(w,coarse_at(t,p,min(st*2.0,16.0),field+10),fract(lv))
+        return w
     level = clamp(f32(t.lod-f64(t.level)),0.0,3.999)
     s = pow(2.0,floor(level))
-    h = coarse_at(t,p,s)
-    if fract(level) > 0.0: h = mix(h,coarse_at(t,p,min(s*2.0,16.0)),fract(level))
+    h = coarse_at(t,p,s,field)
+    if fract(level) > 0.0: h = mix(h,coarse_at(t,p,min(s*2.0,16.0),field),fract(level))
     h
-drawn_at = (t: WorldTile,x: f64,z: f64) -> f32:
+drawn_at = (t: WorldTile,x: f64,z: f64,field: int = 0) -> f32:
     ox,oz = world_tile_origin(t.x,t.z,t.level)
     cell = 14.0*f64(1<<t.level)
     q = vec2(f32((x-ox)/cell),f32((z-oz)/cell))
     a = vec2(min(floor(q.x),15.0),min(floor(q.y),15.0)); f = q-a
-    aa = vertex_at(t,a); bb = vertex_at(t,a+vec2(1,0)); cc = vertex_at(t,a+vec2(0,1)); dd = vertex_at(t,a+vec2(1,1))
+    aa = vertex_at(t,a,field); bb = vertex_at(t,a+vec2(1,0),field); cc = vertex_at(t,a+vec2(0,1),field); dd = vertex_at(t,a+vec2(1,1),field)
     if f.x+f.y <= 1.0: return aa+f.x*(bb-aa)+f.y*(cc-aa)
     dd+(1.0-f.x)*(cc-dd)+(1.0-f.y)*(bb-dd)
 
@@ -100,6 +139,19 @@ on_screen = (vp: mat4,p: vec3,edge: f32 = 0.98) -> bool:
     abs(c.x/c.w) < edge and abs(c.y/c.w) < edge
 
 last_ground: {int:f32} = {}
+last_shade: {int:f32} = {}
+last_paint: {int:f32} = {}
+last_grove: {int:f32} = {}
+grove_step: f32 = 0.0; grove_step_n = 0
+paint_step: f32 = 0.0; paint_step_n = 0; paint_at = 0
+# (a patch's slower changes: against half a second before)
+then_ground: {int:f32} = {}
+then_shade: {int:f32} = {}
+slow_px: f32 = 0.0; slow_px_n = 0; slow_shade: f32 = 0.0; slow_shade_n = 0
+shade_step: f32 = 0.0; shade_step_n = 0
+windows = 0
+slow_px_at = 0; slow_shade_at = 0; slow_shade_d: f32 = 0.0; win_n = 0
+made_tiles = 0; waiting_frames = 0; waiting_most = 0
 last_vp = mat4()
 last_info: {int:vec4} = {}
 last_from: {int:vec3} = {}
@@ -114,6 +166,8 @@ loop frame in 0..frames:
     eye = start+glide*(f32(frame)/60.0)
     vp = perspective(62.0*PI/180.0,1280.0/720.0,0.3,world_far(f64(eye.y)))*look_at(eye,eye+forward,vec3(0,1,0))
     prepare_world_terrain(eye,vp,f64(frame)/60.0)
+    made_tiles += world_generated
+    if world_view_missing > 0: waiting_frames += 1; waiting_most = max(waiting_most,world_view_missing)
     if frame < first-1: continue
     # (the selected tiles by key, to find the one under a point)
     by_key: {int:int} = {}
@@ -121,6 +175,9 @@ loop frame in 0..frames:
     ground: {int:f32} = {}
     from: {int:vec3} = {}
     from_eye: {int:f32} = {}
+    shade: {int:f32} = {}
+    paint: {int:f32} = {}
+    grove: {int:f32} = {}
     span = 2600
     loop j in -span/28..span/28:
         loop i in -span/28..span/28:
@@ -134,6 +191,9 @@ loop frame in 0..frames:
                     if h > 0.5 and on_screen(vp,vec3(f32(x),h,f32(z))):
                         ground[int(x)*1000003+int(z)] = h
                         from_eye[int(x)*1000003+int(z)] = length(vec3(f32(x),h,f32(z))-eye)
+                        shade[int(x)*1000003+int(z)] = drawn_at(t,x,z,1)
+                        paint[int(x)*1000003+int(z)] = drawn_at(t,x,z,3)*drawn_at(t,x,z,2)
+                        grove[int(x)*1000003+int(z)] = drawn_at(t,x,z,5)
                         if debug: from[int(x)*1000003+int(z)] = vec3(f32(t.level),f32(t.lod),f32(length(vec2(f32(x),f32(z))-eye.xz)))
                     break
     # (the domes the frame gathers, as draw_world_terrain gathers them)
@@ -162,6 +222,20 @@ loop frame in 0..frames:
                     a = last_from[key]; b = from[key]
                     print("    frame {frame}: point {key} stepped {step:.2} px; tile level {a.x:.0} lod {a.y:.3} -> level {b.x:.0} lod {b.y:.3}, {b.z:.0} m away")
                 if step > 0.5: ground_fast += 1
+                lit = abs(shade[key]-last_shade[key])
+                shade_step = max(shade_step,lit)
+                if lit > 0.03: shade_step_n += 1
+                painted = abs(paint[key]-last_paint[key])
+                if painted > paint_step: paint_step = painted; paint_at = frame
+                if painted > 0.03: paint_step_n += 1
+                groved = abs(grove[key]-last_grove[key])
+                grove_step = max(grove_step,groved)
+                if groved > 0.05: grove_step_n += 1
+                if debug and painted > 0.05 and dbg_n < 3:
+                    dbg_n += 1
+                    a = last_from[key]; b = from[key]
+                    print("      was {last_paint[key]:.3} now {paint[key]:.3}; key {key}")
+                    print("    frame {frame}: fields stepped {painted:.3}; tile level {a.x:.0} lod {a.y:.3} -> level {b.x:.0} lod {b.y:.3}, {b.z:.0} m away")
                 if step > STEP_PX: g += 1; big = max(big,step)
         loop key in domes.keys():
             now = domes[key]
@@ -194,13 +268,37 @@ loop frame in 0..frames:
         if g+dn > 0: pops.push((frame,g,dn,big))
         total_ground += g; total_domes += dn; worst = max(worst,big)
         seen_ground += ground.len(); seen_domes += domes.len()
+    if frame >= first and frame%30 == 0:
+        loop key in ground.keys():
+            if let was = then_ground.get(key):
+                moved = px(abs(ground[key]-was),from_eye[key])
+                if moved > slow_px: slow_px = moved; slow_px_at = frame
+                if moved > 1.5: slow_px_n += 1
+                lit = abs(shade[key]-then_shade[key])
+                if lit > slow_shade: slow_shade = lit; slow_shade_at = frame; slow_shade_d = from_eye[key]
+                if lit > 0.08: slow_shade_n += 1; win_n += 1
+        if debug and win_n > 20: print("    window ending frame {frame}: {win_n} points changed shade over 0.08")
+        win_n = 0
+        then_ground = ground; then_shade = shade; windows += 1
+    last_shade = shade; last_paint = paint; last_grove = grove
     last_ground = ground; last_domes = domes; last_from = from; last_vp = vp; last_info = dome_info
 pops.sort((p: (int,int,int,f32)) -> f32: -(f32(p.1+p.2)))
 print("LOD POP seen a frame: {seen_ground/max(frames-first,1)} ground points, {seen_domes/max(frames-first,1)} domes")
 print("LOD POP ground morphs: fastest {ground_fastest:.2} px a frame, {ground_fast} point-frames over half a pixel")
+print("LOD POP patches: in half a second, the ground moved at most {slow_px:.2} px ({slow_px_n} points over 1.5 px), its shade {slow_shade:.3} ({slow_shade_n} over 0.08; the largest at frames {slow_px_at} and {slow_shade_at}, {slow_shade_d:.0} m away); in a frame, its shade {shade_step:.3} ({shade_step_n} over 0.03); {windows} windows")
+print("LOD POP paint: in a frame, the fields' colour stepped at most {paint_step:.3} ({paint_step_n} point-frames over 0.03; the largest at frame {paint_at})")
+print("LOD POP orchards: in a frame, their cover stepped at most {grove_step:.3} ({grove_step_n} point-frames over 0.05)")
+print("LOD POP tiles: {made_tiles} made in {frames} frames; the view waited for tiles in {waiting_frames} frames (at most {waiting_most} missing)")
 print("LOD POP frames={frames-first} ground_pops={total_ground} dome_pops={total_domes} frames_with_pops={pops.len()} largest_step={worst:.2}px slice={slice}")
 loop k in 0..min(pops.len(),12):
     p = pops[k]
     print("  frame {p.0}: ground {p.1} dome {p.2} largest {p.3:.2} px")
 assert(total_ground == 0 and total_domes == 0,"level-of-detail pops along the glide")
+# (the ground's patches: what a tile's vertices carry to its pixels, the light on their normals,
+# the fields' colour and the orchards' cover, may not step when the tile splits, merges or
+# morphs; nor may a patch move or change its shade quickly: in steady flight the fields and
+# orchards step under 0.005 in a frame, the ground moves under 0.4 px and its shade changes
+# under 0.05 in half a second)
+assert(paint_step <= 0.03 and grove_step <= 0.05 and shade_step <= 0.03,"the ground's fields, orchards or shade step at a change of level")
+assert(slow_px <= 1.5 and slow_shade <= 0.12,"a patch of ground moves or changes its shade quickly")
 print("LOD POP PASS")
