@@ -4,9 +4,11 @@
 # a harbour has no fetch to raise long waves at all. Here the sea the floats ride (the same six
 # bands the shader draws, tests/precision_test.jo) is measured as a wave gauge array measures a
 # real one: the height at a point and at two points a quarter metre from it, over four minutes;
-# each frequency found in it has its wave number from the phase between the gauges, so its length
-# and its speed. None may pass faster than 1.3 times the speed of a real wave of its length in
-# that depth. Places: the open sea, the strait, and the quay at Velyavasia where a full open sea
+# each frequency found in it has its direction from the phase between the gauges, and then three
+# gauges in a line along that direction split it into the wave running on and the one reflected
+# back (near a shore part of each band stands: sea_band_travel), so its length and its net drift,
+# the forward energy less the reflected. None may drift faster than 1.3 times the speed of a real
+# wave of its length in that depth. Places: the open sea, the strait, and the quay at Velyavasia where a full open sea
 # once ran through the harbour like a river (2026-11-21). The drawn picture has the same check:
 # tests/sea_speed_render_test.py.
 # SLOPPY_THREADS=1 sloppy test tests/sea_speed_test.jo
@@ -34,9 +36,41 @@ wave_speed = (length: f64, depth: f64) -> f64: sqrt(9.8*length/TAU*tanh(TAU*max(
 
 struct Passing:
     length = 0.0                    # m
-    speed = 0.0                     # m/s
+    speed = 0.0                     # its net drift, m/s: the forward energy less the reflected
     height = 0.0                    # its amplitude, m
     period = 0.0
+    phase_speed = 0.0               # its crests' own speed, m/s
+    reflected = 0.0                 # the reflected wave's height over the forward one's
+
+struct Complex:
+    re = 0.0
+    im = 0.0
+_mul = (a: Complex, b: Complex) -> Complex: Complex(a.re*b.re-a.im*b.im,a.re*b.im+a.im*b.re)
+_div = (a: Complex, b: Complex) -> Complex:
+    d = b.re*b.re+b.im*b.im
+    Complex((a.re*b.re+a.im*b.im)/d,(a.im*b.re-a.re*b.im)/d)
+_sub = (a: Complex, b: Complex) -> Complex: Complex(a.re-b.re,a.im-b.im)
+
+# At frequency w (rad/s) a band is a forward wave and its reflection, Z(s) = A e^(iks) + B e^(-iks)
+# along its direction; three gauges `gap` apart in a line give k (Z0 + Z2 = 2 cos(k gap) Z1), then
+# A and B. Returns (k, |A|, |B|).
+_split = (x: f64, z: f64, dir: vec2, w: f64) -> vec3:
+    n = 2400; dt = 0.1; gap = 0.5
+    zs: Complex[] = [Complex(), Complex(), Complex()]
+    loop i in 0..n:
+        t = 300.0+f64(i)*dt
+        hann = 0.5-0.5*cos(TAU*f64(i)/f64(n-1))
+        a = w*f64(i)*dt
+        loop g in 0..3:
+            h = f64(swell_at(x+f64(dir.x)*gap*f64(g),z+f64(dir.y)*gap*f64(g),t).x)
+            zs[g] = Complex(zs[g].re+h*hann*cos(a),zs[g].im+h*hann*sin(a))
+    ratio = _div(Complex(zs[0].re+zs[2].re,zs[0].im+zs[2].im),zs[1])
+    k = acos(clamp(ratio.re*0.5,-1.0,1.0))/gap
+    e = Complex(cos(k*gap),-sin(k*gap))
+    big_a = _div(_sub(zs[1],_mul(zs[0],e)),Complex(0.0,2.0*sin(k*gap)))
+    big_b = _sub(zs[0],big_a)
+    scale = 4.0/f64(n)
+    vec3(f32(k),f32(sqrt(big_a.re*big_a.re+big_a.im*big_a.im)*scale),f32(sqrt(big_b.re*big_b.re+big_b.im*big_b.im)*scale))
 
 struct Gauge:
     waves: Passing[]
@@ -55,7 +89,9 @@ gauge = (x: f64, z: f64) -> Gauge:
         series[2].push(f64(swell_at(x,z+gap,t).x))
         mean += series[0][i]; square += series[0][i]*series[0][i]
     mean /= f64(n)
-    out = Gauge(significant=4.0*sqrt(max(square/f64(n)-mean*mean,0.0)),depth=max(-surface_height(x,z),0.0))
+    # (the water's depth as the sea knows it, swell_depth: the sea floor on a 16 m lattice; near a
+    # shore it can be a metre off the ground's own, and the waves slow for the depth they are given)
+    out = Gauge(significant=4.0*sqrt(max(square/f64(n)-mean*mean,0.0)),depth=f64(swell_depth(x,z)))
     # (the spectrum at the first gauge, a Hann window; then each peak's wave number from the others)
     steps = 240
     power: f64[]
@@ -79,9 +115,11 @@ gauge = (x: f64, z: f64) -> Gauge:
         a = parts[0][f]
         turn = (b: vec2) -> f64: atan2(f64(b.y*a.x-b.x*a.y),f64(b.x*a.x+b.y*a.y))
         kx = turn(parts[1][f])/gap; kz = turn(parts[2][f])/gap
-        k = sqrt(kx*kx+kz*kz)
+        if sqrt(kx*kx+kz*kz) < 0.001: continue
+        ab = _split(x,z,normalize(vec2(f32(kx),f32(kz))),w)
+        k = f64(ab.x); fa = f64(ab.y)*f64(ab.y); fb = f64(ab.z)*f64(ab.z)
         if k < 0.001: continue
-        out.waves.push(Passing(TAU/k,w/k,power[f],TAU/w))
+        out.waves.push(Passing(TAU/k,w/k*(fa-fb)/max(fa+fb,1e-12),power[f],TAU/w,w/k,f64(ab.z)/max(f64(ab.y),1e-9)))
     out.waves.sort((p: Passing) -> f64: -p.height)
     out
 
@@ -93,7 +131,7 @@ _blow = (speed: f64, dir: vec2):
 # length at the same speed. It is not a free wave, so it is not held to a free wave's speed.)
 _bound = (g: Gauge, p: Passing) -> bool:
     loop q in g.waves:
-        if q.height > p.height and abs(q.length/p.length-2.0) < 0.25 and abs(q.speed/p.speed-1.0) < 0.15: return true
+        if q.height > p.height and abs(q.length/p.length-2.0) < 0.25 and abs(q.phase_speed/p.phase_speed-1.0) < 0.15: return true
     false
 
 _check = (name: str, g: Gauge, storm: bool) -> f64:
@@ -141,6 +179,10 @@ test "no wave passes faster than a real one of its length in that depth: open se
             # (harbour water is calmer than the open sea, and nothing long runs through it)
             assert(harbour.significant <= 0.3*open.significant+0.01, "the quay's sea {harbour.significant:.2} m against the open sea's {open.significant:.2} m")
             assert(longest <= 14.0*sea_state_of_now().stretch, "a {longest:.0} m wave at the quay")
+            # (and what is there laps against the quays more than it runs: most of it thrown back)
+            loop p in harbour.waves:
+                if storm and _bound(harbour,p): continue
+                assert(p.speed <= 0.6*wave_speed(p.length,1000.0), "a {p.length:.1} m wave drifts through the basin at {p.speed:.2} m/s (reflected {p.reflected:.2})")
     set_sea_harbour(SeaHarbour())
 
 test "a harbour's shelter fades out to the full open sea, and shallow water keeps the long swells out":
@@ -187,3 +229,102 @@ test "over a shoal the long swells are gone: nothing passes faster than three me
         loop w in g.waves: longest = max(longest,w.length)
         print("shoal at {p}, {g.depth:.1} m of water, wind {wind:.0} m/s onshore: Hs {g.significant:.2} m, longest {longest:.1} m (worst speed x{worst:.2}; a 61 m swell at its deep-water 9.75 m/s would be x{9.75/wave_speed(61.0,g.depth):.2})")
         assert(longest <= g.depth*9.5)
+
+test "the drawn sea keeps and slows each band exactly as the floats' sea does: every depth, basin and stretch":
+    old = wind_now; old_state = sea_state_now
+    worst = 0.0
+    loop wind in [9.0,17.0,24.0]:
+        wind_now = Wind(vec2(0.8,0.6),wind,vec2(0,0))
+        sea_state_now = sea_state(wind_now)
+        st = sea_state_now
+        loop k in 0..6:
+            p = SeaParams(origin=vec3(0,0,0),wind=vec4(0.8,0.6,f32(wind),f32(st.amp)))
+            sea_phases(p,12.5)
+            sea_set_state(p,st)
+            # (this band alone)
+            p.swell_gain[0] = vec4(if k == 0: 1.0 else: 0.0,if k == 1: 1.0 else: 0.0,if k == 2: 1.0 else: 0.0,if k == 3: 1.0 else: 0.0)
+            p.swell_gain[1] = vec4(if k == 4: 1.0 else: 0.0,if k == 5: 1.0 else: 0.0,p.swell_gain[1].z,0)
+            at = vec2(3.7,-1.9)
+            whole = sea_swell(at,p,0)
+            assert(length(whole) > 0.001)
+            # (the band from first principles, as swell_at has it: its forward wave and its
+            # reflection, sea_band_travel, and its share there, sea_band_keep)
+            len = st.lengths[k]; a = SEA_TURNS[k]; frequency = TAU/len
+            dx = 0.8*cos(a)-0.6*sin(a); dz = 0.8*sin(a)+0.6*cos(a)
+            turn = 12.5*sqrt(9.8*frequency)
+            phase = dx*frequency*f64(at.x)+dz*frequency*f64(at.y)-turn
+            h = len*st.amp
+            loop step in 0..160:
+                depth = f32(st.lengths[0]*0.6*f64(step)/159.0)
+                loop calm in [0.0,0.35,1.0]:
+                    drawn = sea_swell(at,p,0,false,depth,f32(calm))
+                    q = if k >= SEA_TRAVEL_BANDS: f64(sea_band_travel(f32(len),depth,f32(calm))*sea_shore_still(depth)) else: 1.0
+                    keep = f64(sea_band_keep(f32(len),depth,f32(calm),SEA_HARBOUR_GAINS[k]))
+                    fs = sin(phase)*(0.5+0.5*q)+sin(phase+2.0*turn)*(0.5-0.5*q)
+                    fc = cos(phase)*(0.5+0.5*q)+cos(phase+2.0*turn)*(0.5-0.5*q)
+                    ridden = vec3(f32(h*fs*keep),f32(h*fc*keep*dx*frequency),f32(h*fc*keep*dz*frequency))
+                    worst = max(worst,f64(length(drawn-ridden)/length(whole)))
+        # (and the deep open sea is every band whole and running on)
+        q = SeaParams(origin=vec3(0,0,0),wind=vec4(0.8,0.6,f32(wind),f32(st.amp)))
+        sea_phases(q,12.5); sea_set_state(q,st)
+        assert(sea_swell(vec2(3.7,-1.9),q,0,false,f32(st.lengths[0]*0.26),0.0) == sea_swell(vec2(3.7,-1.9),q,0))
+    wind_now = old; sea_state_now = old_state
+    print("drawn against ridden bands: worst difference {worst:.7} of a band")
+    assert(worst < 0.0002)
+
+test "each band's share that runs on: the real wave's speed in that depth, and the shader's ramp the same":
+    # (the net drift of a forward wave (1+q)/2 high and a reflected one (1-q)/2 against a real
+    # wave's speed in that depth, both over the deep water's: the ripples from the waterline to
+    # half a length, the swell bands where they are drawn at all, from a ninth of a length)
+    ratio = (x: f64, reach: f64) -> f64:
+        q = f64(sea_band_travel(1.0,f32(x),0.0,f32(reach)))
+        (2.0*q/(1.0+q*q))/sqrt(tanh(TAU*x))
+    lo = 10.0; hi = 0.0; swell_lo = 10.0; swell_hi = 0.0
+    loop step in 1..200:
+        x = 0.5*f64(step)/199.0
+        lo = min(lo,ratio(x,0.5)); hi = max(hi,ratio(x,0.5))
+        if x >= 0.11: swell_lo = min(swell_lo,ratio(x,0.25)); swell_hi = max(swell_hi,ratio(x,0.25))
+    print("net drift against a real wave's speed: ripples x{lo:.3} to x{hi:.3}; swell bands x{swell_lo:.3} to x{swell_hi:.3}")
+    assert(lo > 0.97 and hi < 1.15 and swell_lo > 0.97 and swell_hi < 1.22)
+    assert(sea_band_travel(4.1,0.0,0.0) == 0.0 and sea_band_travel(4.1,1.03,0.0) == 1.0 and sea_band_travel(4.1,9.0,1.0) < 0.31)
+    assert(sea_band_travel(4.1,2.06,0.0,0.5) == 1.0 and sea_band_travel(4.1,1.0,0.0,0.5) < 0.7)
+    # (and over the shore's last three metres of water the share eases to nothing, whatever the band)
+    assert(sea_shore_still(0.0) == 0.0 and sea_shore_still(0.5) < 0.1 and sea_shore_still(3.0) == 1.0)
+    # (the shader's form, for every swell band and every ripple band)
+    loop len in [61.0,37.0,23.0,13.0,7.3,4.1,3.1,2.3,1.6,1.15,0.8]:
+        reach = if len > 3.5: 0.25 else: 0.5
+        loop step in 0..120:
+            depth = f32(len*0.7*f64(step)/119.0)
+            loop calm in [0.0,0.35,1.0]:
+                assert(abs(sea_band_travel_fast(depth,f32(1.0/(reach*len)),f32(calm))-sea_band_travel(f32(len),depth,f32(calm),f32(reach))) < 0.00001)
+
+# (going in toward the shore from the shoal by Velyavasia: the first water under `depth` metres)
+_toward = (s: WorldSettlement, depth: f64) -> vec2?:
+    along = vec2(-s.out.y,s.out.x)
+    loop side in [1.0,-1.0]:
+        loop k in 0..1000:
+            p = s.harbor[0].at.xz+along*f32(side*600.0)+s.out*f32(500.0-f64(k)*1.0)
+            d = f64(swell_depth(f64(p.x),f64(p.y)))
+            if d < depth and d > depth*0.75: return p
+    none
+
+test "toward the shore the waves slow with the water to a lapping at its edge":
+    _world()
+    s = world_settlements[settlement_by_id[VELYAVASIA]]
+    set_sea_harbour(SeaHarbour())
+    loop wind in [6.0,9.0]:
+        _blow(wind,-normalize(s.out))
+        loop depth in [2.0,1.4,1.0,0.75,0.55]:
+            at = _toward(s,depth)
+            assert(at != none, "no water under {depth} m found by Velyavasia")
+            p = at!
+            g = gauge(f64(p.x),f64(p.y))
+            worst = _check("{g.depth:.2} m of water, {wind} m/s onshore",g,false)
+            line = ""
+            loop w in g.waves: line = line+" {w.length:.1} m: crests {w.phase_speed:.2} m/s, drift {w.speed:.2} m/s, reflected {w.reflected:.2};"
+            print("{g.depth:.2} m of water, wind {wind:.0} m/s onshore: Hs {g.significant:.2} m (worst drift x{worst:.2}){line}")
+            # (under a metre of water, in the shore's last stretch (sea_shore_still), what is left is
+            # held back: part of it stands, so it drifts well under its deep-water speed. The split reads the reflection low here, where each band's height
+            # changes within the gauges' metre; sea_band_travel's own test holds the rule itself.)
+            if g.depth < 1.0:
+                loop w in g.waves: assert(w.reflected > 0.1 and w.speed < 0.8*wave_speed(w.length,1000.0), "a {w.length:.1} m wave in {g.depth:.2} m of water drifts at {w.speed:.2} m/s, reflected {w.reflected:.2}")
