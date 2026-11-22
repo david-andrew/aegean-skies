@@ -86,7 +86,7 @@ MELODY_INSIDE = 1.0
 # than this under the tune's own plain (K-weighted) loudness: a dull bass carries more energy than
 # it sounds, but only so far; the melody stays forward by any measure (and where the pieces the
 # partial loudness does settle come out: +2 to +5).
-MELODY_FLOOR_LU = 2.0
+MELODY_FLOOR_LU = 1.5
 MELODY_RAISE_DB = 4.0               # a tune under its accompaniment is raised by no more than this
 MELODY_LEVERAGE = 0.3               # LU per dB: under this no part carries the tune clearly enough to move it
 MAX_GAIN_DB = 20.0                  # the balance never moves a part by more than this

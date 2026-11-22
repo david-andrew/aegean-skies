@@ -21,9 +21,11 @@ The receiver starts muted. While aboard, with no panel or text field taking inpu
   the top, at cruise, the announcer is about 5 dB under the engine rather than 25; moored, the
   receiver reaches full scale first.
 
-A card names the station, or the volume, for a moment after each change. Bulletins are **read
-aloud by a synthesized announcer** (see "The announcer" below); the maritime shipping notices
-stay in Morse. The full English copy remains available to the UI. Choir is wordless.
+A card names the station, or the volume, for a moment after each change. Every bulletin on the
+older stations is keyed in **Morse**, with its paper slip (Morse subtitles), as it always was. The
+announcer is extra: two spoken services (the Aegean Home Service and the Meltemi Weather Wireless,
+below) read their news and weather aloud, and no Morse is keyed or subtitled while one speaks (the
+slip is blank). The full English copy remains available to the UI. Choir is wordless.
 
 ## Stations and programme clock
 
@@ -33,7 +35,7 @@ stay in Morse. The full English copy remains available to the UI. Choir is wordl
 | Voice of Kalyra | 780 | Waltz | All day |
 | Orenthia National | 940 | Brass march | All day |
 | Blue Lantern Dance Band | 1100 | Foxtrot, tango, waltz in rotation | All day |
-| Aegean Maritime Service | 1260 | Spoken weather, Morse shipping notices | All day |
+| Aegean Maritime Service | 1260 | Weather observations and shipping notices, keyed in Morse | All day |
 | The Night Gull | 1460 | Tango | 19:00–03:00 |
 | Radio Dawn | 560 | Island dances; the weather on the half hour | 04:30–08:30 |
 | Radio Porto Vecchio | 730 | Café music, light music by day, dance requests of an evening; the town's news on the hour | 06:30–23:00 |
@@ -42,11 +44,17 @@ stay in Morse. The full English copy remains available to the UI. Choir is wordl
 | Radio Mandolinata | 1180 | Songs and mandolins | 08:00–14:00, 18:00–23:00 |
 | Café Aman | 1360 | Plucked strings; tangos round midnight | 21:00–05:00 |
 | The Chapel Bell | 1540 | The choir: morning and evening prayer | 06:00–07:30, 17:00–19:00 |
+| Aegean Home Service (spoken) | 680 | Waltzes; the news at the hour and the half hour, the weather a quarter past and a quarter to, read aloud | 06:00–23:00 |
+| Meltemi Weather Wireless (spoken) | 1310 | Island tunes; the weather for the first five minutes of every quarter hour, read aloud | 04:30–21:30 |
 
-The later seven keep their own hours (`radio_blocks` in src/radio.jo): blocks of local time, each with
+The later nine keep their own hours (`radio_blocks` in src/radio.jo): blocks of local time, each with
 its music, whether it turns between foxtrot, tango and waltz every half hour, and how much is
-spoken (none, the news for the first five minutes of the hour, or the weather for the first five of
-the half hour). They are spread so that at the home port at least four stations are heard well at
+spoken (none; the news for the first five minutes of the hour; the weather for the first five of
+the half hour; for the spoken services, a news and weather service or the weather every quarter
+hour). Only the two spoken services are read aloud (`radio_spoken`); the news and weather of the
+other stations stay in Morse. The Home Service (a transmitter 36 km south-east of the home port, 150 km
+reach) reads the home port's news and weather; the Weather Wireless (27 km south-west, 80 km reach) the
+weather at the maritime service's harbour. They are spread so that at the home port at least four stations are heard well at
 every hour (tests/radio.jo), and no two are closer than 40 kHz on the dial. Until more music is
 approved (data/music/SOURCES.md), they play the existing pieces by style.
 
@@ -132,7 +140,7 @@ four"; "Wind calm"), lists with "and", and no game-minute counts, digits or raw 
 
 ## The announcer
 
-One synthesized voice reads every spoken programme, each station with its own delivery
+One synthesized voice reads the spoken services' programmes, each station with its own delivery
 (`radio_voice_style`: tempo, pitch register and range, vocal effort, tilt, pauses, broadcast
 colour). The newsreel default is 1.35 times the measured narrator's syllable rate; the national
 stations read their news (the war) at 1.45, three semitones higher, with a wider range and a
@@ -174,16 +182,33 @@ a neural model:
 
 A bulletin repeats on the world clock: its period is the programme span (10 s, or 30 s for
 maritime) rounded up to fit the words plus a pause, so tuning in mid-bulletin joins it where it is.
-The voice data file (340 KB: spectra, lexicon, rules and the fitted prosody model) is **not in
-the repository**: the approved voice is fitted to a reference narrator, and nothing derived from
-that recording goes into git until its rights are settled. The game reads it from the path in
-`AEGEAN_VOICE_DATA`, during world loading with the music. Without it, speech is off and spoken
-programmes stay in Morse; `src/voice_model.jo` holds only neutral placeholder numbers. How it is
-made: `tools/voice_world/README.md`. Its cost, measured on redfox with the approved voice
-(`tools/voice_budget.jo` with the file embedded): loading takes 45 ms native and 80 ms in
-Chromium, once; a bulletin's first programme 2–2.4 ms native (20 ms for the first in Chromium,
-3–4 ms after), and rendering 1.1 ms native, 1.35 ms in Chromium per 50 ms block. Embedded in a
-web build it would add 454 KB to the page (343 KB gzipped: the file is compressed already).
+The voice data file (`data/announcer/announcer-v4.z`, 303 KB: spectra, lexicon, rules and the
+fitted prosody model) is **embedded**, so native and web builds both speak, and holds no recording:
+it was fitted to the developer's own studio recordings and carries only derived numbers
+(`data/announcer/SOURCES.md`). `AEGEAN_VOICE_DATA` overrides it with another voice's file for
+tuning; `src/voice_model.jo` holds only neutral defaults. Only the two spoken services use it.
+How it is made: `tools/voice_world/README.md`.
+Its cost (`tools/voice_budget.jo`, a 7-8 s bulletin through the studio, leveller and receiver at the
+heavier setting; redfox, 2026-11-21): loading 6 ms native and 21 ms in headless Chromium, once; a
+bulletin's planning 0.4-0.6 ms native (0.7-1.1 ms Chromium; first block 1-1.1 ms native, 1.5-4.3 ms
+Chromium); rendering 0.63 ms per 50 ms block native (p99 0.7) and 0.77 ms in Chromium (p99 0.9), so
+a whole bulletin costs 79-102 ms native and 97-124 ms in Chromium spread over its 7-8 s. The
+embedded file adds 303 KB to the program.
+
+**Broadcast colour, heavier for a bulletin.** The announcer's studio and receiver run at
+`RADIO_SPEECH_WEAR` (0.5; `make_studio(wear)`, `make_radio_chain(seed, seconds, wear)`; 0 is the
+original settings exactly): the microphone's band narrows (290-3400 Hz toward 530-2400 Hz) and
+the receiver's high-pass rises (150 toward 350 Hz) while its treble filters close (4300 Hz toward
+3650, speaker 4500 toward 3850); the carbon granule is driven harder and the transmitter's
+compression bites sooner and harder (threshold 0.06 toward 0.035, ratio from 4:1 toward 40:1, more
+make-up gain), the receiver's gain control reaches further, and the cabinet and mid-band
+resonances are stronger (more mid-band emphasis), so the voice itself sounds as if heard through
+a set; hiss, receiver noise and crackle are heavier at any reception, there is a little more
+saturation, and the slow fade dips the level and treble. Nothing new is added; each
+term scales one that exists. A speech recognizer's word accuracy on eight lines through the radio
+(strength 0.8), for the noise-only version of this chain: wear 0 60%, 0.25 50%, 0.35 49%, 0.5 43%,
+0.7 38%, 1.0 41%; with the spectrum squeeze above at 0.5, 41% (a harsh, noisy proxy; one line of
+eight went to nothing, the others held; the ear is the judge, and the constant is one number).
 
 ## Backlog: finding the stations (a design note, not built)
 
