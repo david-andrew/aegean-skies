@@ -133,9 +133,38 @@ CONFIG = {
  'greek-astrapsen-i-anatoli': (2,.5,4,{0},0.05,0.14,0.22,0),
 }
 
-# Schubert's Ave Maria: Mutopia's MIDI carries a placeholder tempo (the quarter note 2.5 s); the
-# reading played is a quarter of 60/44 s (44 to the minute: "Sehr langsam", a bar of about 5.5 s).
-SCHUBERT_SCALE = (60/44)/2.5
+# Schubert's Ave Maria, "Sehr langsam" (the score gives no number). Mutopia's MIDI carries a placeholder
+# tempo (the quarter note 2.5 s, all through), so the reading played is made here: a quarter of
+# 60/34 s, and a ritardando into the last line of each strophe ("Ave Maria!", beats 49-54, 101-106
+# and 153-158 of the 173) that eases back to the tempo over the piano's interlude, and a broader one
+# through the postlude to the end. The MIDI's seconds are mapped through this clock (beat = seconds
+# / SCHUBERT_MIDI_QUARTER, then the clock's time): music_pack.arrange for the notes, score_clock for
+# the performance rules, music_tempo for the note-value table.
+SCHUBERT_MIDI_QUARTER = 2.5
+SCHUBERT_QUARTER = 60/34
+SCHUBERT_END = 173.0               # the last beat any part sounds to
+SCHUBERT_STROPHE_ENDS = (54.0, 106.0, 158.0)
+SCHUBERT_EASE = 0.20               # how much slower the strophe's last note is than the tempo
+SCHUBERT_POSTLUDE_EASE = 0.9       # ... and the last beat of the postlude
+
+def _smooth(x):
+ x=max(0.0,min(1.0,x));return x*x*(3-2*x)
+
+def schubert_slowing(beat):
+ """How much longer a quarter is than SCHUBERT_QUARTER at this beat (1: the tempo)."""
+ for k,end in enumerate(SCHUBERT_STROPHE_ENDS):
+  if end-5<=beat<end:return 1+SCHUBERT_EASE*_smooth((beat-(end-5))/5)
+  if end<=beat<end+4 and k<len(SCHUBERT_STROPHE_ENDS)-1:return 1+SCHUBERT_EASE*(1-_smooth((beat-end)/4))
+ last=SCHUBERT_STROPHE_ENDS[-1]
+ if beat>=last:return 1+SCHUBERT_EASE+(SCHUBERT_POSTLUDE_EASE-SCHUBERT_EASE)*((beat-last)/(SCHUBERT_END-last))**2
+ return 1.0
+
+def schubert_points(step=.25):
+ """The clock's (second, beat, quarter seconds) points: a point every quarter of a beat."""
+ points=[];t=0.0;b=0.0
+ while b<SCHUBERT_END+8:
+  q=SCHUBERT_QUARTER*schubert_slowing(b+step/2);points.append((t,b,q));t+=q*step;b+=step
+ return points
 
 class BeatMap:
  def __init__(self, points, meter=4, pickup=0):
@@ -157,7 +186,8 @@ def score_clock(path,name):
    tick+=msg.time
    if msg.type=='set_tempo':tempo[tick]=msg.tempo
    if msg.type=='time_signature' and tick==0:meter=msg.numerator*4/msg.denominator
- scale=60/116 if name=='magnetic' else SCHUBERT_SCALE if name=='schubert-ave-maria' else 1
+ if name=='schubert-ave-maria':return BeatMap(schubert_points(),meter)
+ scale=60/116 if name=='magnetic' else 1
  points=[];seconds=0;previous=0;speed=.5
  for tick,val in sorted(tempo.items()):
   seconds+=(tick-previous)/m.ticks_per_beat*speed

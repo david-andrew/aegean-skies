@@ -196,12 +196,16 @@ a small subset of metadata retained. This is not an endorsement by any source au
     | Three solo violins, in harmonics | strings |
     | Bass drum (one held stroke left from before 155) | not played |
 * Schubert's Ave Maria is the whole song as the Mutopia edition prints it: 43 bars, an introduction,
-  the three strophes of the German text (after Walter Scott's *The Lady of the Lake*; 312 voice notes; the piano
-  as printed, 2,023 notes) and the postlude, with no repeat cut and no note added. The edition's MIDI
-  carries a placeholder tempo (the quarter note 2.5 s, 24 to the minute, which makes the song 7 minutes);
-  it is played at 44 to the minute ("Sehr langsam", a bar of about 5.5 s, the song 4 minutes) with
-  the generic phrase rubato. The voice's line (exported as a pan flute) is played on our violin
-  (softened under the hotel's singer, who sings it); the piano is played as written.
+  the three strophes of the German text (after Walter Scott's *The Lady of the Lake*; 312 voice notes;
+  the piano as printed, 2,023 notes) and the postlude, with no repeat cut and no note added. The
+  edition's MIDI carries a placeholder tempo (the quarter note 2.5 s, 24 to the minute, which makes
+  the song 7 minutes); it is played at 34 to the minute ("Sehr langsam"; the score gives no number),
+  with a ritardando into the last line of each strophe and a broader one through the postlude
+  (`schubert_points` in `tools/music_performance.py`), the song 5 min 27 s. The data keeps the voice's
+  line on a violin; wherever the piece is played (the radio's classical round, the hotel's set one
+  evening in three) the hotel singer's procedural voice (`src/singer.jo`) sings that line over the
+  piano, and the violin does not play under her (`SUNG` in `tools/music_pack.py`; remove the entry,
+  repack and rebalance for the violin version).
 * Magnetic Rag is explicitly a **foxtrot arrangement of a rag**, not labelled an
   original foxtrot. All source piano pitches/rhythms are retained, at quarter=116;
   upper notes use clarinet, lower piano/bass, with light banjo doubling and a drum beat.

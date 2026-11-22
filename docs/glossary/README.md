@@ -140,9 +140,20 @@ blue discs that stay in every frame are **speed flecks**.
   4 m chop between 1 m and 0.45 m, and no long, fast swell runs through shallows or up a beach.
   And a harbour has no fetch for a sea to grow in: inside its basin (calm out past the docks,
   the buoy and the mole's end, fading to the open sea's full state 450 m further out) the three
-  long bands are gone, the 13 m one all but, and the short ones lap low (0.22 and 0.6 of their
+  long bands and the 13 m one are gone, and the short ones lap low (0.22 and 0.6 of their
   open-sea height). The ripples, glints and marks are as everywhere.
-- **Code:** `src/sea.jo` `sea_band_keep` (shader and CPU alike), `sea_calm` / `sea_calm_at`,
+  **Lapping at the shore:** nearing a shore a wave slows (c = √(g/k·tanh kd), nothing at the
+  waterline), so part of each band, swells and ripples alike, stands: it is drawn and ridden as a
+  forward wave (1+q)/2 high and its reflection (1−q)/2 running back (the two short swell bands
+  and the two longest ripples; the long bands are faded out there already, the short ripples slow), q = √(2d/λ) for the ripples and
+  √(4d/λ) for the swell bands, whose net drift is close to the real wave's speed in that depth; at the waterline the water only laps in and out. Inside
+  a harbour's basin the quays and the mole throw 70% back as well, so the basin's water laps more
+  than it runs. And over the shore's last stretch, the last three metres of water, the share
+  that runs on eases to nothing for the swell bands and the long ripples, and the short ripples
+  calm (`sea_shore_still`): the short waves spend themselves there, and what is left only laps. The seabed's caustic net stands with them.
+- **Code:** `src/sea.jo` `sea_band_keep` and `sea_band_travel` (shader and CPU alike; `_fast`
+  forms in the shader), uniforms `swell_back`, `ripple_back`, `SEA_HARBOUR_REFLECT`; the caustic
+  net `src/terrain.jo` `caustic_net`; `sea_calm` / `sea_calm_at`,
   `SeaHarbour`, `SEA_HARBOUR_GAINS`, uniform `harbour`; `src/harbour_shelter.jo`
   `harbour_basin`, `harbour_shelter_at`, `harbour_shelter_step` (the harbour nearest the player,
   each frame).
@@ -164,8 +175,8 @@ blue discs that stay in every frame are **speed flecks**.
   marbled web of foam: fine veins bent by the waves, crossing into a net, thick in the lee of the
   crests; close by, torn into small patches, holes and bubbles and a fine net of breaking lines; a
   ragged white line of foam along the very top of each sea. The sky closes in: heavy overcast, low grey light, haze that
-  keeps the sea readable to a few hundred metres. Spindrift blows off the tops; a gale tears
-  the aircraft's spray banks away downwind. Floats feel the storm's swell rising and falling
+  keeps the sea readable to a few hundred metres. Spindrift blows off the tops; a gale carries
+  the aircraft's spray banks away downwind (never smaller: [spray banks](#spray-banks)). Floats feel the storm's swell rising and falling
   under them and most of its slope, so alighting or ditching in it can break a hull or capsize.
 - **Code:** `src/sea.jo` `sea_state` / `SeaState` (CPU, shared by the drawn sea and `swell_at`),
   `sea_storm_of`, `sea_wave_profile`, `sea_shoal`, `sea_storm_foam` (its noise from the tile
@@ -351,6 +362,15 @@ blue discs that stay in every frame are **speed flecks**.
   round the float, bigger the harder it comes down; rough water throws more and taller; a flying
   boat's wingtip float digging in throws hard; a propeller low over rough water whips up mist.
   The spray curtains are the sheet at the float; the bank is what they leave behind.
+  The wind never makes it smaller: it carries each lobe on at about four fifths of the wind at its
+  own height (the sea's log wind profile), so the wall's tops run on ahead of its feet and it
+  leans over downwind, and draws each lobe out along the wind as it ages.
+  **Float slams:** planing across a chop, the floats strike its crests every few metres: she hops
+  clear a moment and slams back, and each return throws its burst. Sized by the chop
+  (`FlightEnv.chop`, `sea_chop_at`: the wind, and a sixth of it in a harbour's basin) and how fast
+  she planes (a light chop only jostles her; hops from about a moderate breeze), none in a calm,
+  fading as she nears flying speed; the player's aircraft and the fighters only; a kick,
+  not a contact load, so it costs no damage (`src/flight.jo` `_float_slams`, tests/float_slam_test.jo).
   The bank is one continuous wall: each float side's lobes are chained in the order they are
   thrown, and neighbours are joined by low **bridging lobes** seated on the water, sized from both
   ends, so there are no gaps while every lobe grows and shrinks on its own. Lobes vary in
@@ -3335,7 +3355,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   Tárrega's Adelita, Fauré's Berceuse) arranged for the small band (piano, violin, guitar,
   mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
   distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
-  the violin plays softer. Each evening starts one number further on, so every piece comes round.
+  the violin plays softer. A song (`MusicPiece.sung`: Schubert's Ave Maria) is hers alone over the
+  pianist, the violin's line of the score not played, at the hotel one evening in three and on the
+  radio's classical round (`src/singer.jo`). Each evening starts one number further on, so every piece comes round.
   The players are townspeople, and a number begins only when they are in their places (see
   [The band's people](#the-bands-people)).
 - **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_band_position`, `singer_line`, `singer_render`,

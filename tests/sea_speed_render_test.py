@@ -9,7 +9,8 @@ are taken apart into plane waves (a 2D Fourier transform); how far each one's ph
 to frame is how fast that part of the picture travels. For every band of wavelengths that carries
 real moving contrast, the contrast-weighted speed may not pass 1.3 times the speed of a real wave of
 that length in that depth of water, c = sqrt(g L / 2 pi * tanh(2 pi d / L)). And the harbour is
-calmer than the open sea: next to none of the long swell's moving contrast, and a slower picture.
+calmer than the open sea: next to none of the long swell's moving contrast, and a picture that
+drifts at well under the open sea's speed (its waves stand against the quays: sea.jo sea_band_travel).
 The sea the floats ride has the same check without a picture: tests/sea_speed_test.jo.
 """
 import math
@@ -115,7 +116,9 @@ def main():
         quay_long, open_long = results["Velyavasia's quay", 250][2], results['open sea', 250][2]
         assert quay_long <= 0.2 * open_long, f"the long swell's moving contrast at the quay {quay_long:.5f} against the open sea's {open_long:.5f}"
         quay, open_sea = results["Velyavasia's quay", 30], results['open sea', 30]
-        assert quay[1] <= open_sea[1], f'the quay\'s picture travels at {quay[1]:.2f} m/s, the open sea\'s at {open_sea[1]:.2f} m/s'
+        # (and it laps more than it runs: the quays and the mole throw most of each wave back, so
+        # the picture drifts well under the open sea's; 1.69 against 2.14 m/s before they did)
+        assert quay[1] <= 0.6 * open_sea[1], f'the quay\'s picture travels at {quay[1]:.2f} m/s, the open sea\'s at {open_sea[1]:.2f} m/s'
         assert quay[0] <= open_sea[0], f'the quay\'s moving contrast {quay[0]:.4f} against the open sea\'s {open_sea[0]:.4f}'
         print(f"Harbour: long swell contrast {quay_long:.5f} against the open sea's {open_long:.5f}; picture speed {quay[1]:.2f} against {open_sea[1]:.2f} m/s")
 
