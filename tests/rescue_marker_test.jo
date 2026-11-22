@@ -1,0 +1,120 @@
+use '../src/world.jo'
+use '../src/world_point.jo'
+use '../src/world_towns.jo'
+use '../src/settlements.jo'
+use '../src/geography.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+use '../src/flight.jo'
+use '../src/tweaks.jo'
+use '../src/combat.jo'
+use '../src/scenarios.jo'
+use '../src/pilot.jo'
+use '../src/flight_ground.jo'
+use '../src/war_scene.jo'
+use '../src/vessel_types.jo'
+use '../src/rescue_view.jo'
+use '../src/lead_marker.jo'
+use '../src/war_view.jo'
+use '../src/target_scene.jo'
+use '../src/shore.jo'
+import '../src/living_types.jo' as data
+import '../src/living_world.jo' as living
+
+# A survivor in the strait's squall: an Orenthian put down on the water, climbed out beside it.
+# Returns the scenario, the towns and the survivor's id.
+staged = (ally: bool = false) -> (ScenarioState,Town[],int):
+    global geography_enabled
+    assert(load_land(embed('../assets/terrain.bin')))
+    assert(load_geography(embed('../assets/world.bin')))
+    geography_enabled=true
+    towns=[loop st in SETTLEMENTS:build_town(st)]
+    init_world_towns(towns)
+    set_speed_scale(3.3);set_lift_scale(3.3);data.scale_airframes(3.3)
+    sc=build_scenario("strait",towns,build_craft_models())!
+    b=sc.battle;w=sc.world
+    me=combat_index(b,w.people[w.player].craft)
+    foe=-1
+    mine=b.actors[me].side
+    loop i in 0..b.actors.len():
+        if i!=me and ((ally and b.actors[i].side==mine) or (not ally and b.actors[i].side!=mine)) and foe<0:foe=i
+    loop i in 0..b.actors.len():
+        if i!=me and i!=foe:b.actors[i].present=false;b.actors[i].status=.escaped
+    b.actors[me].present=false
+    f=b.actors[foe]
+    spot=vec3(STRAIT_CENTER.x,0,STRAIT_CENTER.z+2500)
+    f.state=CraftState(position=spot+vec3(0,f32(f.spec.float_height),0),orientation=quat_euler(0,-1.1,0),fuel=f.state.fuel,on_water=true,water_age=1.0,damage=f.state.damage)
+    f.state.damage.parts[1].health=0.0;refresh_damage(f.spec,f.state)
+    f.status=.disabled;f.down_reported=true;f.pilot.mode=.ditching;f.gun.locked=true;f.pilot.formation=false
+    f.previous=f.state.position;f.previous_point=world_point(f.state.position)
+    b.actors[foe]=f
+    loop _ in 0..30:step_battle(b,flight_env(f64(b.tick)/60.0,spot),spot)
+    assert(b.actors[foe].ditched and b.descents.len()==1)
+    commit_war_scene(w,VesselFleet(),b)
+    id=-1
+    loop k,v in w.war.survivors:
+        if v.person==b.actors[foe].person:id=k
+    assert(id>=0)
+    sc.battle=b;sc.world=w
+    (sc,towns,id)
+
+
+# Every pointer, ring or mark the HUD would draw toward `id`'s person: the rescue marks (the views
+# the game caches each twenty frames), the claimed contracts' marks, the flight's marks, and the
+# Tab shortlist of aircraft.
+marks_toward = (r: RescueView, w: data.World, b: Battle, id: int, at: vec3, who: int) -> int:
+    n = 0
+    loop m in rescue_marks(r,at,w = w):
+        if m.id == id: n += 1
+    loop m in contract_marks(w,w.player,at):
+        if f64(length(m.pos-w.war.survivors[id].at)) < 60.0 and not m.label.starts_with("Land them"): n += 1
+    loop m in ally_marks(b,w.people[w.player].craft,at):
+        if f64(length(m.at-w.war.survivors[id].at)) < 60.0: n += 1
+    loop it in view_candidates(w,b,[],VesselFleet(),at,w.people[w.player].craft):
+        if it.kind == 0 and combat_index(b,it.id) >= 0 and b.actors[combat_index(b,it.id)].person == who: n += 1
+    n
+
+pick_up = (ally: bool):
+    sc,towns,id=staged(ally)
+    b=sc.battle;w=sc.world
+    who=w.war.survivors[id].person
+    swimmer=b.descents[0].position
+    k=sc.flyer.spec;s=sc.flyer.state
+    s=CraftState(position=swimmer+vec3(14,f32(k.float_height),0),fuel=s.fuel,on_water=true,water_age=1.0)
+    moor(s,s.position,0.0)
+    r=RescueView()
+    _ = rescue_scan(r,w,s.position)
+    # (the downed pilot is marked while he waits in the water)
+    assert(rescue_pickup_from(r,s)==id)
+    waiting = marks_toward(r,w,b,id,s.position,who)
+    print("marks toward him while he waits: {waiting}")
+    assert(waiting >= 1)
+    craft=w.people[w.player].craft
+    w.aircraft[craft].state=.taxi;w.aircraft[craft].pose.pos=s.position;w.aircraft[craft].pose.vel=s.velocity
+    assert(living.board_survivors(w,id,w.player)==1)
+    # (the game's views are cached between scans: until the next, the view still lists him, but
+    # asked against the world no mark or pointer is drawn toward him)
+    assert(marks_toward(r,w,b,id,s.position,who) == 0)
+    assert(rescue_marks(r,s.position,w = w).len() == 0)
+    rescue_forget(r,id)
+    assert(r.views.len() == 0)
+    # (taken aboard: the game commits the scene, and rescans a few times a second)
+    loop tick in 0..120:
+        step_battle(b,flight_env(f64(b.tick)/60.0,s.position),s.position)
+        if tick%20==0:
+            commit_war_scene(w,VesselFleet(),b)
+            _ = rescue_scan(r,w,s.position)
+    aboard = marks_toward(r,w,b,id,s.position,who)
+    print("marks toward him aboard: {aboard}, views {r.views.len()}")
+    assert(aboard == 0)
+    assert(rescue_marks(r,s.position).len() == 0 and rescue_marks(r,s.position,w = w).len() == 0)
+    # (and set down, resolved: an ordinary person, nothing to point to)
+    w.war.survivors[id].resolved = true
+    _ = rescue_scan(r,w,s.position)
+    assert(r.views.len() == 0 and marks_toward(r,w,b,id,s.position,who) == 0)
+
+test "a downed foe taken aboard is marked no more":
+    pick_up(false)
+
+test "a downed ally taken aboard is marked no more":
+    pick_up(true)

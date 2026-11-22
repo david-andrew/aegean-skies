@@ -22,10 +22,10 @@ The receiver starts muted. While aboard, with no panel or text field taking inpu
   receiver reaches full scale first.
 
 A card names the station, or the volume, for a moment after each change. Every bulletin on the
-older stations is keyed in **Morse**, with its paper slip (Morse subtitles), as it always was. The
+older stations is keyed in **Morse**, with its subtitle card (Morse subtitles), as it always was. The
 announcer is extra: two spoken services (the Aegean Home Service and the Meltemi Weather Wireless,
 below) read their news and weather aloud, and no Morse is keyed or subtitled while one speaks (the
-slip is blank). The full English copy remains available to the UI. Choir is wordless.
+subtitle is blank). The full English copy remains available to the UI. Choir is wordless.
 
 ## Stations and programme clock
 
