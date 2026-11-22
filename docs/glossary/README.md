@@ -1975,7 +1975,11 @@ On the rivers branch until it lands.
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
   or a pale olive among the rest. The steps between the painted values are never crisper than
-  a pixel and a half, so they do not sparkle in motion. Nothing arrives: far off the wood is the ground's paint; nearer
+  a pixel and a half, so they do not sparkle in motion. Far off a wood has relief: the sheet
+  stands half as tall again and the masses up to 2.7 times, a far mass is lit as one body, and
+  past the crowns' reach the masses cast shadows on the sheet and on one another
+  (`billow_shadow`). A far dome is a cone; its ring swells out to the dome's shape as the eye
+  nears. Nothing arrives: far off the wood is the ground's paint; nearer
   the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
   80 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
@@ -4046,8 +4050,17 @@ No image: the tiers differ in budgets more than in any single view.
   level of detail.
 - **Code:** `src/terrain_lod.jo select_terrain`, `src/world_terrain.jo` (`prepare_world_terrain`,
   `world_drawn_lod`, `world_prepare_contact`); `docs/world-renderer-design.md`.
-- **Rules:** `tools/lod_pop_check.jo` measures the drawn ground and the woods' domes frame by
-  frame on three paths, in screen pixels, and fails on any step; it runs on the pages workflow.
+  What a tile's vertices carry morphs with them: the height, the normal, and the fields' colour,
+  the orchards' cover, the canopy's rise and the cliff map's stations, which each tile holds on
+  the next coarser level's grid as well (`world_working_far`, `world_cover`, `world_cliff_far`:
+  exactly what its parent draws), so nothing changes at a split or a merge. A value that is all
+  thresholds (the canopy's rise) is baked and morphed itself, not worked out at each vertex
+  from morphed values: between a tile's vertices that is not what its parent drew. Tiles about to split have their children made ahead (`world_prefetch_tiles`).
+- **Rules:** `tools/lod_pop_check.jo` measures the drawn ground (its height, the light on its
+  normals, its fields, orchards and cliffs, the canopy sheet's rise and its painted crowns'
+  octave) and the woods' domes (their tops and their sides) frame by frame on four paths and fails on any step, and on a patch moving or changing its shade
+  quickly; it runs on the pages workflow. Anything new a terrain vertex carries must morph
+  between levels the same way (never read at the vertex's own sample whatever the level drawn).
 
 ### Canonical surface
 
