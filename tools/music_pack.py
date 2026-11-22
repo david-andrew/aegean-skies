@@ -7,7 +7,7 @@ from bisect import bisect_right
 from collections import defaultdict, deque
 import json, math, struct, zlib
 import mido
-from music_performance import score_clock, interpret, apply_performance_map
+from music_performance import score_clock, interpret, apply_performance_map, SCHUBERT_SCALE
 from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
@@ -138,6 +138,10 @@ PIECES = [
  # The title's music (src/title_music.jo), not on the radio: the opening of Part III, from rehearsal
  # 155 to the bar before 158, in our own transcription of every part (daphnis_lever below).
  ('daphnis-lever-du-jour', 'Daphnis et Chloe: Lever du jour', 'Maurice Ravel', 'Title'),
+ # Schubert's Ave Maria (Ellens dritter Gesang, D. 839), voice and piano: the tune on the violin
+ # (the singer's line), the piano as written; the whole song, its three strophes as printed. On the
+ # classical station's round and, one evening in three, in the hotel's set.
+ ('schubert-ave-maria', 'Ave Maria (Ellens dritter Gesang)', 'Franz Schubert', 'Voice of Kalyra'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -358,6 +362,7 @@ MOOD = {
  'greek-nystaxan-ta-matakia-mou': ('tender', 'a Greek song from the 1877 collection'),
  'greek-ena-poulaki': ('tender', 'a Greek song from the 1877 collection'),
  'greek-astrapsen-i-anatoli': ('tender', 'a Greek song from the 1877 collection'),
+ 'schubert-ave-maria': ('tender', "Ellen's prayer to the Virgin: very slow, sustained over rocking arpeggios, hushed"),
  'daphnis-lever-du-jour': ('dreamy', 'daybreak: brooks murmuring in flutes, clarinets and harps, birdsong, the theme rising to full light'),
 }
 
@@ -636,6 +641,12 @@ def arrange(name,notes):
   elif name in ('va-pensiero','melita') or (name=='lohengrin-chorus' and track<4):
    # The voices (exported as piano or clarinet) sung by the choir.
    ins=CHOIR
+  elif name=='schubert-ave-maria':
+   # The singer's line (the score's voice, exported as a pan flute) on the violin; the piano as
+   # written. The score's own tempo mark (a placeholder 24 to the quarter) is replaced by the
+   # played one (music_performance.SCHUBERT_SCALE), so every time is scaled to it.
+   start*=SCHUBERT_SCALE;dur*=SCHUBERT_SCALE
+   if track==1:ins=STRINGS
   elif name=='santa-lucia' and track==0:
    # The boatman's song on the mandolin, over the piano.
    ins=BOUZOUKI

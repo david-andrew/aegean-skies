@@ -23,6 +23,8 @@ CONFIG = {
  'gymnopedie': (3,1.0,4,{1},0,.12,0,0),
  'gymnopedie-orchestra': (3,1.0,4,{1},0,.12,0,0),
  'ave-maria': (4,60/66,4,{1},.05,.16,.26,0),
+ # Schubert's Ave Maria: "Sehr langsam", the voice on its own track (the violin's line)
+ 'schubert-ave-maria': (4,60/44,4,{1},.05,.16,.26,0),
  # Clair de lune's rubato, dynamics, pedal and voicing are its own annotation (clair-de-lune-performance.json)
  'clair-de-lune': (4.5,1.0,4,{1},0,0,0,0),
  'adelita': (3,1.0,4,{1},.06,.15,.24,0),
@@ -131,6 +133,10 @@ CONFIG = {
  'greek-astrapsen-i-anatoli': (2,.5,4,{0},0.05,0.14,0.22,0),
 }
 
+# Schubert's Ave Maria: Mutopia's MIDI carries a placeholder tempo (the quarter note 2.5 s); the
+# reading played is a quarter of 60/44 s (44 to the minute: "Sehr langsam", a bar of about 5.5 s).
+SCHUBERT_SCALE = (60/44)/2.5
+
 class BeatMap:
  def __init__(self, points, meter=4, pickup=0):
   self.points=points;self.times=[p[0] for p in points];self.beats=[p[1] for p in points]
@@ -151,7 +157,7 @@ def score_clock(path,name):
    tick+=msg.time
    if msg.type=='set_tempo':tempo[tick]=msg.tempo
    if msg.type=='time_signature' and tick==0:meter=msg.numerator*4/msg.denominator
- scale=60/116 if name=='magnetic' else 1
+ scale=60/116 if name=='magnetic' else SCHUBERT_SCALE if name=='schubert-ave-maria' else 1
  points=[];seconds=0;previous=0;speed=.5
  for tick,val in sorted(tempo.items()):
   seconds+=(tick-previous)/m.ticks_per_beat*speed

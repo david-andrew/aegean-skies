@@ -109,7 +109,8 @@ Where the current pieces are heard, and on which piano:
 | Bethena | radio, waltz | honky-tonk | yes (piano alone) |
 | Entry of the Gladiators, Ikariotikos | radio, march / island | honky-tonk | no piano |
 | Gymnopédie | the bar | honky-tonk | yes (the pianist alone) |
-| Ave Maria | the bar | honky-tonk | yes (under the singer) |
+| Ave Maria (Gounod) | the bar | honky-tonk | yes (under the singer) |
+| Ave Maria (Schubert, Ellens dritter Gesang) | radio, classical; the bar one evening in three | grand on the radio, honky-tonk at the bar | yes (under the singer at the bar) |
 | Clair de lune | the bar | honky-tonk | yes (the pianist alone) |
 | Adelita, Berceuse | the bar | honky-tonk | no piano |
 

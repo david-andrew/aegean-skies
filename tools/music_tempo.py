@@ -74,6 +74,12 @@ def quarter_map(path, stretch):
     return out
 
 
+# A piece whose arrangement scales the score's own tempo (the MIDI's seconds times this are the
+# seconds played, before the performance): Schubert's Ave Maria, whose MIDI carries a placeholder
+# tempo (tools/music_performance.py SCHUBERT_SCALE; no import here: this tool has no dependencies).
+SCORE_SCALE = {'schubert-ave-maria': (60 / 44) / 2.5}
+
+
 def pieces():
     """(name, source) for each catalogue piece, in MUSIC_PIECES order (from tools/music_pack.py)."""
     text = (ROOT / 'tools/music_pack.py').read_text()
@@ -98,7 +104,7 @@ def main():
         if not mid.exists() or 'duration_before' not in p:
             rows.append((f'    []', name))
             continue
-        stretch = p['duration_after'] / p['duration_before']
+        stretch = p['duration_after'] / p['duration_before'] * SCORE_SCALE.get(name, 1.0)
         steps = quarter_map(mid, stretch)
         rows.append(('    [' + ', '.join(f'vec2({a}, {q})' for a, q in steps) + ']', name))
     lines.append('\n'.join(f'{code}{"," if k + 1 < len(rows) else ""}  # {name}' for k, (code, name) in enumerate(rows)))
