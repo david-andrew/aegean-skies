@@ -140,12 +140,13 @@ blue discs that stay in every frame are **speed flecks**.
   4 m chop between 1 m and 0.45 m, and no long, fast swell runs through shallows or up a beach.
   And a harbour has no fetch for a sea to grow in: inside its basin (calm out past the docks,
   the buoy and the mole's end, fading to the open sea's full state 450 m further out) the three
-  long bands are gone, the 13 m one all but, and the short ones lap low (0.22 and 0.6 of their
+  long bands and the 13 m one are gone, and the short ones lap low (0.22 and 0.6 of their
   open-sea height). The ripples, glints and marks are as everywhere.
   **Lapping at the shore:** nearing a shore a wave slows (c = √(g/k·tanh kd), nothing at the
   waterline), so part of each band, swells and ripples alike, stands: it is drawn and ridden as a
-  forward wave (1+q)/2 high and its reflection (1−q)/2 running back, q = √(2d/λ), whose net drift
-  is the real wave's speed in that depth; at the waterline the water only laps in and out. Inside
+  forward wave (1+q)/2 high and its reflection (1−q)/2 running back (the two short swell bands
+  and the two longest ripples; the long bands are faded out there already, the short ripples slow), q = √(2d/λ) for the ripples and
+  √(4d/λ) for the swell bands, whose net drift is close to the real wave's speed in that depth; at the waterline the water only laps in and out. Inside
   a harbour's basin the quays and the mole throw 70% back as well, so the basin's water laps more
   than it runs. The seabed's caustic net stands with them over the last metre.
 - **Code:** `src/sea.jo` `sea_band_keep` and `sea_band_travel` (shader and CPU alike; `_fast`
