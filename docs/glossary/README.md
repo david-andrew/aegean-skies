@@ -2219,13 +2219,11 @@ On the rivers branch until it lands.
 
 ### Morse subtitles
 
-- **Aliases:** the Morse subtitle, the Morse strip (formerly a paper slip by the wireless).
-- **Definition:** what Morse says, shown as it is keyed, in the style of the allies' R/T lines in the
-  strait (the notice card: cream type on a dark rounded card, low and centred above the gauges,
-  stacked with the other notices): the message
-  in plain English ("Aegean Maritime Service: harbours open"), the letters as received smaller
-  beneath ("SEA PORT OPEN"), and the dots and dashes of the character being sent faintly after
-  them. A letter shows only once its last dot or dash has sounded, and a word's plain reading
+- **Aliases:** the Morse subtitle, the Morse strip, the slip, the paper slip.
+- **Definition:** what Morse says, shown as it is keyed: a slip of cream paper gone a little brown
+  (as the wireless's dial card) with the message in plain English ("Aegean Maritime Service:
+  harbours open"), the letters as received smaller beneath ("SEA PORT OPEN"), and the dots and
+  dashes of the character being sent inked after them. A letter shows only once its last dot or dash has sounded, and a word's plain reading
   once the gap after it has passed, so the subtitle is never ahead of the key (it is held a
   twentieth of a second behind the game's mix, for the sound device's own delay). Prosigns, Q codes and
   the operators' abbreviations are read out (CQ, DE, K, R, SOS, QTH, QRU ...), a call sign first
@@ -2234,8 +2232,11 @@ On the rivers branch until it lands.
   leaves the station, the signal goes or the set is switched off. It shows for the
   [wireless](#wireless)'s Morse bulletins, the short cues under the flight's words on the
   [R/T](#rt) (marked "R/T") and a [lamp](#signals-between-aircraft)'s word as it is flashed
-  (marked "Lamp"; a plain word, so shown as spelt and not read as code). The same place in the
-  cockpit and outside (it was fixed beside the wireless, which read as a menu). Settings → Accessibility → Morse subtitles, on
+  (marked "Lamp"; a plain word, so shown as spelt and not read as code). In the top right corner, to the left of the
+  clock and the purse and level with the top of their plate, in every view (the cockpit's panel
+  is no place for it: it read as a gauge); in the outside view it keeps clear of the compass, its
+  reading wrapping in the room left, and on a phone upright, where the compass and the buttons
+  fill the top, it stands just under the clock's plate, below the Full button. Settings → Accessibility → Morse subtitles, on
   unless switched off.
 - **Code:** `src/morse_subtitles.jo` (the reading and the following), `src/morse_strip.jo` (the
   card and what feeds it), `radio_keying` in `src/radio.jo`; `tests/morse_subtitles_test.jo`.
