@@ -148,7 +148,9 @@ blue discs that stay in every frame are **speed flecks**.
   and the two longest ripples; the long bands are faded out there already, the short ripples slow), q = √(2d/λ) for the ripples and
   √(4d/λ) for the swell bands, whose net drift is close to the real wave's speed in that depth; at the waterline the water only laps in and out. Inside
   a harbour's basin the quays and the mole throw 70% back as well, so the basin's water laps more
-  than it runs. The seabed's caustic net stands with them over the last metre.
+  than it runs. And over the shore's last stretch, the last three metres of water, the share
+  that runs on eases to nothing for every band (`sea_shore_still`): the short waves spend
+  themselves there, and what is left only laps. The seabed's caustic net stands with them.
 - **Code:** `src/sea.jo` `sea_band_keep` and `sea_band_travel` (shader and CPU alike; `_fast`
   forms in the shader), uniforms `swell_back`, `ripple_back`, `SEA_HARBOUR_REFLECT`; the caustic
   net `src/terrain.jo` `caustic_net`; `sea_calm` / `sea_calm_at`,
