@@ -1979,16 +1979,28 @@ On the rivers branch until it lands.
   stands half as tall again and the masses up to 2.7 times, a far mass is lit as one body, and
   past the crowns' reach the masses cast shadows on the sheet and on one another
   (`billow_shadow`). A far dome is a cone; its ring swells out to the dome's shape as the eye
-  nears. Nothing arrives: far off the wood is the ground's paint; nearer
-  the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
-  nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
-  80 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
+  nears. Nothing arrives: beyond 5.5 km the wood is the ground's paint; from there the
+  sheet rises out of the ground (to its full height by 4.5 km), still painted exactly as the
+  ground is (the ground's own painter) and cut by a pattern of crowns about six pixels wide, so
+  from over it nothing shows, and a wooded ridge's outline against the sky or the land behind
+  is crowns' tops and the gaps between them, not a line (the **far sheet**; it stands up to
+  three times the canopy's height, a few pixels, and only where the land is seen nearly
+  edge-on, which is where an outline can show: where the land faces the eye it lies sunk under
+  the ground, and being drawn after the ground costs nothing there); from 4 km to 3.4 km the sheet's own paint of
+  the crowns takes over by a dither; then each dome rises out of the sheet as the eye
+  nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
+  80 m), its top first. A far clump stands no more than half as tall again and is lit by the
+  mass it stands on, and a far mass's foot is painted as the sheet it stands in: tall little
+  cones, each with its own light, and a hard line round every mass were most of a far wood's
+  shimmer. The canopy's height follows the smooth field the stand is drawn from,
   so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
   mass or a clump stands only where the wood covers its middle, so a small wood is crowns on
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
   lifted there: their woods are small, and the ground's paint of the crowns is the floor).
 - **Code:** `src/canopy.jo` (`wood_cover`); `src/world_terrain.jo` (the sheet:
-  `world_shell_vertex`, `world_shell_fragment`, `canopy_floor`; the billows: `billow_make`,
+  `world_shell_vertex`, `world_shell_fragment`, `world_far_sheet_vertex`,
+  `world_far_sheet_fragment_at`, `canopy_floor`, `CANOPY_END`, `CANOPY_EDGE_ON`,
+  `CANOPY_PAINT_END`, `CANOPY_CUT`; the billows: `billow_make`,
   `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
   `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
   `src/terrain_lod.jo` for their stand cover).
@@ -2000,8 +2012,12 @@ On the rivers branch until it lands.
   (the laptop's GPU pays by the vertex: a far dome is a cone of six or eight sides). A frame
   gathers only the blocks of domes in view and in reach and draws each list in one call, the
   mostly hidden ones (masses, clumps, far crowns) with no discard so the GPU tests their depth
-  before shading them. The canopy is drawn before the ground, so the ground a wood hides is never shaded. The stand
-  cover, the canopy's rise and the land's aerial perspective are worked out per vertex.
+  before shading them. The canopy is drawn before the ground, so the ground a wood hides is never shaded. The
+  canopy's rise and the land's aerial perspective are carried per vertex. Work only one size of
+  dome needs, put behind a short branch in the shader every dome shares, is paid by every
+  dome's pixel (the laptop's GPU runs both sides of a short branch): the paint of a far mass's
+  foot cost 0.3 ms over a wood that way, and 0.03 ms in the masses' own shader
+  (`billow_mass_sh`).
 
 ### Far land layers
 
@@ -4051,9 +4067,15 @@ No image: the tiers differ in budgets more than in any single view.
 - **Code:** `src/terrain_lod.jo select_terrain`, `src/world_terrain.jo` (`prepare_world_terrain`,
   `world_drawn_lod`, `world_prepare_contact`); `docs/world-renderer-design.md`.
   What a tile's vertices carry morphs with them: the height, the normal, and the fields' colour,
-  the orchards' cover, the canopy's rise and the cliff map's stations, which each tile holds on
-  the next coarser level's grid as well (`world_working_far`, `world_cover`, `world_cliff_far`:
-  exactly what its parent draws), so nothing changes at a split or a merge. A value that is all
+  the orchards' cover, the canopy's rise and the cliff map's stations, which each tile holds as
+  the next coarser level has them as well, and the level after that (exactly what its parent
+  draws, and what a coarser neighbour draws along a shared edge), so nothing changes at a split
+  or a merge. Each of those three maps holds a sample's three values side by side
+  (`world_triples`, `world_morphed`), and a vertex reads across them by how many levels coarser
+  it is drawn: the texture's own filter gives the morphed value in one read. Read apart (more
+  textures, and an edge beside a coarser tile reading that tile's grid sample by sample) they
+  cost 0.06 ms of GPU on the laptop in every view. A tile is eleven atlas regions, 12.7 KB to
+  upload (4.6 KB before the maps morphed), and the five atlases are 13 MB of texture. A value that is all
   thresholds (the canopy's rise) is baked and morphed itself, not worked out at each vertex
   from morphed values: between a tile's vertices that is not what its parent drew. Tiles about to split have their children made ahead (`world_prefetch_tiles`).
 - **Rules:** `tools/lod_pop_check.jo` measures the drawn ground (its height, the light on its
