@@ -1618,9 +1618,13 @@ On the rivers branch until it lands.
 - **Definition:** the sun's disc, white high up. Low down it is graded, pale gold at its top to
   amber at its foot, and reddens as it sinks; flattened by the air and drawn up to 1.8 times larger
   near the horizon, its foot wavering in slices into a short mirage where it meets the water. In
-  thick air (the day's air) the change starts about 20 degrees up and comes on gradually, deep red
-  only near the horizon on a heavy-dust day; a reddened sun keeps a hot yellow-orange core grading
-  to a red limb and a warm glow about it in the air, so it reads as light, never a painted dot.
+  thick air (the day's air) the change starts about 20 degrees up and comes on gradually; a
+  reddened sun is an over-bright emitter, as the eye and a photograph see it: a small flat
+  near-white disc with all its colour in a saturated red ring about it, some one and a half
+  radii wide, and a soft glow beyond (plain to see at the game's normal view under about 5
+  degrees on any day of thick air; deepest in heavy dust), with a faint streak along the level.
+  Once any sun has set, a red glow stays on the horizon where it went down, fading over some
+  8 degrees.
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
   sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
   shape worked out on the CPU from the sun's height over the visible horizon).
@@ -1653,8 +1657,9 @@ On the rivers branch until it lands.
 - **Code:** `light_at`, `twilight_light` and its `TWILIGHT_*` keyframes in `src/look.jo`
   (`Light.afterglow`: strength, 1 / band height, the way to the sun; `Light.stars`). The band is
   its own strip of the sky dome round the horizon (`draw_glow_band` in `src/sky.jo`: 72 bearings
-  by 10 heights, colour and cover worked out per vertex, the pixels only passing them on), drawn
-  over the plain sky; the sea's glitter path toward it comes from the sea's own sheen and glints
+  by 13 heights up to the zenith, where it has faded to nothing so the strip has no top edge to
+  show, colour and cover worked out per vertex by `glow_band_colour`, the pixels only passing
+  them on; `tests/sky_seam_test.jo` sweeps the twilight sky for any step), drawn over the plain sky; the sea's glitter path toward it comes from the sea's own sheen and glints
   about a sun a little above the horizon on the real sun's bearing, once the real sun is down
   (`glow_sea_sun`, `glow_sea_share` in `src/look.jo`), its water's colour held at its dusk value.
   The same on every quality tier: any addition to the sky's or the sea's own shaders cost Intel
