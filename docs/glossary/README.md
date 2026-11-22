@@ -1946,10 +1946,14 @@ On the rivers branch until it lands.
   masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
   own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
   dark) and painted with the crowns' palette and leaf masses; near the eye a crown has its own
-  lobes, smaller domes again. Nothing arrives: far off the wood is the ground's paint; nearer
+  lobes, smaller domes again. Its light is grouped as a painter groups a wood's values: near,
+  every dome has its own light and deep hollows; from a few hundred metres a crown takes most
+  of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
+  or a pale olive among the rest. The steps between the painted values are never crisper than
+  a pixel and a half, so they do not sparkle in motion. Nothing arrives: far off the wood is the ground's paint; nearer
   the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
-  100 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
+  80 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
   so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
   mass or a clump stands only where the wood covers its middle, so a small wood is crowns on
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
