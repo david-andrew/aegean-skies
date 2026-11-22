@@ -196,7 +196,7 @@ a whole bulletin costs 79-102 ms native and 97-124 ms in Chromium spread over it
 embedded file adds 303 KB to the program.
 
 **Broadcast colour, heavier for a bulletin.** The announcer's studio and receiver run at
-`RADIO_SPEECH_WEAR` (0.5; `make_studio(wear)`, `make_radio_chain(seed, seconds, wear)`; 0 is the
+`RADIO_SPEECH_WEAR` (0.45; `make_studio(wear)`, `make_radio_chain(seed, seconds, wear)`; 0 is the
 original settings exactly): the microphone's band narrows (290-3400 Hz toward 530-2400 Hz) and
 the receiver's high-pass rises (150 toward 350 Hz) while its treble filters close (4300 Hz toward
 3650, speaker 4500 toward 3850); the carbon granule is driven harder and the transmitter's
