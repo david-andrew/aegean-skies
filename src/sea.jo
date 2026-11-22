@@ -73,9 +73,11 @@ struct SeaParams:
     coast_far_area: vec4 = vec4(0,0,0,0)
     coast_roll: vec4 = vec4(0,0,0,0)
     swell_phase: vec4[6]
+    swell_back: vec4[3]             # each swell band's reflected wave: cos, sin of twice its time phase, two bands a vec4 (sea_band_travel)
     swell_gain: vec4[2]             # each swell band's share for the wind (sea_state), bands 0-3 and 4-5; [1].z: 1 over the sea's stretch
     sea_storm: vec4 = vec4(0,0,2440,0) # storm 0..1, crest peaking (0..0.35), the swell's reach (m), its whole height (m)
     ripple_phase: vec4[5]
+    ripple_back: vec4[3]            # (the same for the five ripple bands)
     glint_facets: Texture = Texture()
     specular_sun: vec4 = vec4(0,1,0,1)  # real disc direction and visible fraction
     glint_phase: vec4
@@ -160,6 +162,23 @@ _swell = (p: vec2, t: f32, amp: f32, dist: f32, wd: vec2) -> vec3:
 sea_band_keep = (len: f32, depth: f32, calm: f32, harbour: f32) -> f32:
     smoothstep(len*0.11, len*0.25, depth)*mix(1.0, harbour, calm)
 
+# How much of a band still runs on, 0..1 (q): the rest stands, its reflection running back the
+# other way. Nearing a shore a wave slows, c = sqrt(g/k tanh(k d)), to nothing at the waterline:
+# there the water only laps in and out. The band is drawn and ridden as a forward wave of height
+# (1+q)/2 and a reflected one of (1-q)/2. Their net drift (the forward energy less the reflected,
+# 2q/(1+q^2) of the deep-water speed) is the real wave's speed in that depth when q is
+# sqrt(2d/L): within 3% under and 13% over it (tests/sea_speed_test.jo); whole from half a
+# length of water. Inside a harbour's basin the quays and the mole throw most of it back as well
+# (SEA_HARBOUR_REFLECT of it at calm 1). The drawn sea and swell_at both use this.
+const SEA_HARBOUR_REFLECT: f32 = 0.7
+sea_band_travel = (len: f32, depth: f32, calm: f32) -> f32:
+    sqrt(clamp(2.0*depth/len,0.0,1.0))*(1.0-SEA_HARBOUR_REFLECT*calm)
+
+# (in shaders) sea_band_travel for one band: x the depth over the sea's stretch, inv2 2/L for its
+# ordinary length (the same number; tests/sea_speed_test.jo holds the two together)
+sea_band_travel_fast = (x: f32, inv2: f32, calm: f32) -> f32:
+    sqrt(min(x*inv2,1.0))*(1.0-SEA_HARBOUR_REFLECT*calm)
+
 # (in shaders) how far inside the harbour's shelter a point is: 1 in its basin, 0 on the open sea.
 # Worked out at the sea's vertices and carried to the pixels (SeaOut.calm): it fades over 450 m.
 sea_calm = (local: vec2, u: SeaParams) -> f32:
@@ -225,7 +244,9 @@ sea_storm_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
 
 # Wave directions/frequencies and the anchor/time phase are reduced on the CPU.
 # Small local dot products retain sub-centimetre wave motion at every world corner.
-sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32,peak: f32 = 0.0) -> vec3:
+# (travel: the share that runs on, sea_band_travel; back: the cos and sin of twice the band's
+# time phase, so its reflection's phase is this one's plus that)
+sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32,peak: f32 = 0.0,travel: f32 = 1.0,back: vec2 = vec2(1,0)) -> vec3:
     fade=1.0-smoothstep(band.w*9.0,band.w*40.0,dist)
     phase=dot(band.xy,p)+band.z
     height=band.w*amp*fade
@@ -234,6 +255,8 @@ sea_swell_band = (p: vec2,band: vec4,amp: f32,dist: f32,peak: f32 = 0.0) -> vec3
     # wave, sea_wave_profile; peak 0 is the plain sine)
     f=vec2(sn,cs)
     if peak>0.0: f=vec2(sn+peak*(2.0*sn*sn-1.0),cs*(1.0+4.0*peak*sn))
+    # (near a shore: the forward wave's share, and its reflection running back)
+    if travel<1.0: f=f*(0.5+0.5*travel)+vec2(sn*back.x+cs*back.y,cs*back.x-sn*back.y)*(0.5-0.5*travel)
     slope=height*f.y
     vec3(height*f.x,slope*band.x,slope*band.y)
 
@@ -248,37 +271,59 @@ sea_swell = (p: vec2,u: SeaParams,dist: f32,storm_water: bool = false,depth: f32
     # all are whole and none is worked out: deeper than a quarter of the longest band and outside
     # any basin. Elsewhere the ramps without a division (sea_band_keep_fast): the depth over the
     # sea's stretch, against each band's ordinary length (1/(0.14 L) for 61, 37, 23, 13, 7.3, 4.1 m).
+    # And each band's share that still runs on (sea_band_travel): all of it from half its length
+    # of water, so past half the longest band and outside any basin, nothing to work out either.
     k0: f32 = 1.0; k1: f32 = 1.0; k2: f32 = 1.0; k3: f32 = 1.0; k4: f32 = 1.0; k5: f32 = 1.0
+    q0: f32 = 1.0; q1: f32 = 1.0; q2: f32 = 1.0; q3: f32 = 1.0; q4: f32 = 1.0; q5: f32 = 1.0
     x = depth*u.swell_gain[1].z
-    if x < 15.25 or calm > 0.0:
+    if x < 30.5 or calm > 0.0:
         k0 = sea_band_keep_fast(x,0.11709602,1.0,calm)
         k1 = sea_band_keep_fast(x,0.19305019,1.0,calm)
         k2 = sea_band_keep_fast(x,0.31055901,1.0,calm)
         k3 = sea_band_keep_fast(x,0.54945055,0.97,calm)
         k4 = sea_band_keep_fast(x,0.97847358,0.78,calm)
         k5 = sea_band_keep_fast(x,1.74216028,0.4,calm)
-    result += sea_swell_band(p,u.swell_phase[0],a*u.swell_gain[0].x*k0,dist,peak)
-    result += sea_swell_band(p,u.swell_phase[1],a*u.swell_gain[0].y*k1,dist,peak)
-    result += sea_swell_band(p,u.swell_phase[2],a*u.swell_gain[0].z*k2,dist,peak)
-    result += sea_swell_band(p,u.swell_phase[3],a*u.swell_gain[0].w*k3,dist,peak)
-    result += sea_swell_band(p,u.swell_phase[4],a*u.swell_gain[1].x*k4,dist,peak)
-    result += sea_swell_band(p,u.swell_phase[5],a*u.swell_gain[1].y*k5,dist,peak)
+        q0 = sea_band_travel_fast(x,0.03278689,calm)
+        q1 = sea_band_travel_fast(x,0.05405405,calm)
+        q2 = sea_band_travel_fast(x,0.08695652,calm)
+        q3 = sea_band_travel_fast(x,0.15384615,calm)
+        q4 = sea_band_travel_fast(x,0.27397260,calm)
+        q5 = sea_band_travel_fast(x,0.48780488,calm)
+    result += sea_swell_band(p,u.swell_phase[0],a*u.swell_gain[0].x*k0,dist,peak,q0,u.swell_back[0].xy)
+    result += sea_swell_band(p,u.swell_phase[1],a*u.swell_gain[0].y*k1,dist,peak,q1,u.swell_back[0].zw)
+    result += sea_swell_band(p,u.swell_phase[2],a*u.swell_gain[0].z*k2,dist,peak,q2,u.swell_back[1].xy)
+    result += sea_swell_band(p,u.swell_phase[3],a*u.swell_gain[0].w*k3,dist,peak,q3,u.swell_back[1].zw)
+    result += sea_swell_band(p,u.swell_phase[4],a*u.swell_gain[1].x*k4,dist,peak,q4,u.swell_back[2].xy)
+    result += sea_swell_band(p,u.swell_phase[5],a*u.swell_gain[1].y*k5,dist,peak,q5,u.swell_back[2].zw)
     result
 
-sea_ripple_band = (p: vec2,band: vec4,dist: f32) -> vec2:
+sea_ripple_band = (p: vec2,band: vec4,dist: f32,travel: f32 = 1.0,back: vec2 = vec2(1,0)) -> vec2:
     fade=1.0-smoothstep(band.w*14.0,band.w*60.0,dist)
+    phase=dot(band.xy,p)+band.z
+    c=cos(phase)
+    # (near a shore, as the swells: the forward ripple's share and its reflection, sea_band_travel)
+    if travel<1.0: c=c*(0.5+0.5*travel)+(c*back.x-sin(phase)*back.y)*(0.5-0.5*travel)
     # The vector already contains tau/wavelength; recover its direction with
     # multiplication, preserving the original wind magnitude without sqrt.
-    band.xy*(band.w*(0.07/6.28318530718)*cos(dot(band.xy,p)+band.z)*fade)
+    band.xy*(band.w*(0.07/6.28318530718)*c*fade)
 
-sea_ripples = (p: vec2,u: SeaParams,dist: f32) -> vec2:
+# (depth, calm: as sea_swell's; the ripples slow toward a shore and stand in a basin the same way,
+# whole from half their length of water: 1.55 m for the longest)
+sea_ripples = (p: vec2,u: SeaParams,dist: f32,depth: f32 = 1000.0,calm: f32 = 0.0) -> vec2:
     if dist>=186.0:return vec2(0,0)
+    q0: f32 = 1.0; q1: f32 = 1.0; q2: f32 = 1.0; q3: f32 = 1.0; q4: f32 = 1.0
+    if depth < 1.55 or calm > 0.0:
+        q0 = sea_band_travel_fast(depth,0.64516129,calm)
+        q1 = sea_band_travel_fast(depth,0.86956522,calm)
+        q2 = sea_band_travel_fast(depth,1.25,calm)
+        q3 = sea_band_travel_fast(depth,1.73913043,calm)
+        q4 = sea_band_travel_fast(depth,2.5,calm)
     result=vec2(0,0)
-    result += sea_ripple_band(p,u.ripple_phase[0],dist)
-    result += sea_ripple_band(p,u.ripple_phase[1],dist)
-    result += sea_ripple_band(p,u.ripple_phase[2],dist)
-    result += sea_ripple_band(p,u.ripple_phase[3],dist)
-    result += sea_ripple_band(p,u.ripple_phase[4],dist)
+    result += sea_ripple_band(p,u.ripple_phase[0],dist,q0,u.ripple_back[0].xy)
+    result += sea_ripple_band(p,u.ripple_phase[1],dist,q1,u.ripple_back[0].zw)
+    result += sea_ripple_band(p,u.ripple_phase[2],dist,q2,u.ripple_back[1].xy)
+    result += sea_ripple_band(p,u.ripple_phase[3],dist,q3,u.ripple_back[1].zw)
+    result += sea_ripple_band(p,u.ripple_phase[4],dist,q4,u.ripple_back[2].xy)
     result
 
 # fine ripples raised by the wind (their slope), shorter than the swells, filtered by distance
@@ -783,14 +828,25 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     if storm_water and not inland:
         shoal = sea_shoal(depth,u.sea_storm.x,u.sea_storm.w)
         s = s*shoal; sa = sa*shoal; sb = sb*shoal
-    rp = if fine_detail:sea_ripples(local+offa,u,dist)*rough else:vec2(0,0)
+    shore_depth = depth
+    surf_depth = depth
+    if refined and u.coast_near_area.w > 1.0:
+        contact = coast_height_lookup(u.coast_near,u.coast_far,u.coast_near_area,u.coast_far_area,local,u.coast_roll)
+        if contact.y > 0.99:
+            shore_depth = coast_shore_depth(depth,max(0.0,i.world.y-contact.x))
+            # (Surf's depth: the still sea over the ground, which does not ride the swell)
+            if surf: surf_depth = mix(depth,max(0.0,-contact.x),1.0-smoothstep(2.0,3.5,-contact.x))
+    # (the ripples slow and stand over the last metres to the waterline: there the shore's own
+    # finer depth, where the near coast has it)
+    ripple_depth = if inland: 1000.0 else: min(depth,shore_depth)
+    rp = if fine_detail:sea_ripples(local+offa,u,dist,ripple_depth,calm)*rough else:vec2(0,0)
     if fine_detail and u.rain > 0.01 and dist < 90.0:
         q = p*1.4
         cell = floor(q); f = fract(q)-vec2(0.5,0.5)
         age = fract(u.time*1.7+hash21(cell))
         ring = sin((length(f)-age*0.7)*45.0)*exp(-abs(length(f)-age*0.7)*25.0)*(1.0-age)
         rp += f*(ring*u.rain*0.12*(1.0-smoothstep(45.0,90.0,dist)))
-    if fine_detail and near > 0.0: rp = (rp * wa + sea_ripples(local+offb,u,dist) * (rough * wb)) * keep
+    if fine_detail and near > 0.0: rp = (rp * wa + sea_ripples(local+offb,u,dist,ripple_depth,calm) * (rough * wb)) * keep
     if fine_detail and inland and dist<186.0:
         d=normalize(i.current+vec2(0.00001,0));side=vec2(-d.y,d.x)
         along=dot(local,d);across=dot(local,side)
@@ -919,14 +975,6 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         mnh = max(dot(n, mhv), 0.0)
         msheen = pow(mnh, mix(90.0, 55.0, variance)) * 0.22 + pow(mnh, mix(600.0, 160.0, variance)) * 0.5
         c = c + vec3(0.78,0.84,0.95) * (msheen + mgl * 14.0) * u.moon.w * (1.0 - shd)*(1.0-u.rain*0.75)
-    shore_depth = depth
-    surf_depth = depth
-    if refined and u.coast_near_area.w > 1.0:
-        contact = coast_height_lookup(u.coast_near,u.coast_far,u.coast_near_area,u.coast_far_area,local,u.coast_roll)
-        if contact.y > 0.99:
-            shore_depth = coast_shore_depth(depth,max(0.0,i.world.y-contact.x))
-            # (Surf's depth: the still sea over the ground, which does not ride the swell)
-            if surf: surf_depth = mix(depth,max(0.0,-contact.x),1.0-smoothstep(2.0,3.5,-contact.x))
     # Both shore terms are identically zero beyond 3 m depth / 5 km range.
     # Do not run their noise and trigonometry over every offshore pixel.
     foam: f32 = 0.0
@@ -1445,10 +1493,18 @@ sea_phases = (p: mut SeaParams,t: f64):
         dx = f64(p.wind.x)*cos(a)-f64(p.wind.y)*sin(a)
         dz = f64(p.wind.x)*sin(a)+f64(p.wind.y)*cos(a)
         wave = vec2(f32(dx*frequency),f32(dz*frequency))
-        phase = f64(wave.x)*f64(p.origin.x)+f64(wave.y)*f64(p.origin.z)-t*sqrt(9.8*frequency)*(if k < 6: 1.0 else: 1.1)+(if k < 6: 0.0 else: f64(k-6)*1.7)
+        turn = t*sqrt(9.8*frequency)*(if k < 6: 1.0 else: 1.1)
+        phase = f64(wave.x)*f64(p.origin.x)+f64(wave.y)*f64(p.origin.z)-turn+(if k < 6: 0.0 else: f64(k-6)*1.7)
         band = vec4(wave,render_phase(phase,TAU),f32(wl))
-        if k < 6: p.swell_phase[k] = band
-        else: p.ripple_phase[k-6] = band
+        # (its reflection's phase is this one's plus twice the time's turn: sea_band_travel)
+        back = render_phase(2.0*turn,TAU)
+        bc = cos(back); bs = sin(back)
+        j = if k < 6: k else: k-6
+        v = if k < 6: p.swell_back[j/2] else: p.ripple_back[j/2]
+        if j%2 == 0: v.x = bc; v.y = bs
+        else: v.z = bc; v.w = bs
+        if k < 6: p.swell_phase[k] = band; p.swell_back[j/2] = v
+        else: p.ripple_phase[k-6] = band; p.ripple_back[j/2] = v
     sizes: f32[3] = [1.3,3.6,10.0]
     loop k in 0..3: p.mark_phase[k] = sea_cell_anchor(p.origin.xz,f64(sizes[k]))
     p.glint_phase = sea_cell_anchor(p.origin.xz,f64(f32(0.3)))
@@ -1570,9 +1626,16 @@ swell_at = (x: f64, z: f64, t: f64) -> vec3:
         dx = f64(wind_now.dir.x)*cos(a)-f64(wind_now.dir.y)*sin(a)
         dz = f64(wind_now.dir.x)*sin(a)+f64(wind_now.dir.y)*cos(a)
         wave = vec2(f32(dx*frequency),f32(dz*frequency))
-        phase = f64(wave.x)*x+f64(wave.y)*z-t*sqrt(9.8*frequency)
+        turn = t*sqrt(9.8*frequency)
+        phase = f64(wave.x)*x+f64(wave.y)*z-turn
         h = len*st.amp*st.gains[k]*f64(keep)
         f = sea_wave_profile(phase,st.peak)
+        # (near a shore part of it stands: the forward wave's share and its reflection, which runs
+        # back the other way, sea_band_travel)
+        q = f64(sea_band_travel(f32(len),depth,calm))
+        if q < 1.0:
+            back = phase+2.0*turn
+            f = vec2(f32(f64(f.x)*(0.5+0.5*q)+sin(back)*(0.5-0.5*q)),f32(f64(f.y)*(0.5+0.5*q)+cos(back)*(0.5-0.5*q)))
         result += vec3(f32(h*f64(f.x)),f32(h*f64(f.y)*f64(wave.x)),f32(h*f64(f.y)*f64(wave.y)))
     # (a storm's seas lose their height over shallow water, as the drawn sea's: sea_shoal)
     if st.storm > 0.0: result = result*sea_shoal(depth,f32(st.storm),f32(st.height))
