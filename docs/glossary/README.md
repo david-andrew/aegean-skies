@@ -1981,7 +1981,7 @@ On the rivers branch until it lands.
   (`billow_shadow`). A far dome is a cone; its ring swells out to the dome's shape as the eye
   nears. Nothing arrives: far off the wood is the ground's paint; nearer
   the sheet rises out of it (from 3.4 km), then each dome rises out of the sheet as the eye
-  nears (masses from 2.6 km, clumps from 1.3 km, crowns from 560 m, a crown's lobes from
+  nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
   80 m), its top first. The canopy's height follows the smooth field the stand is drawn from,
   so a wood's edge steps up through small crowns over tens of metres and is never a wall; a
   mass or a clump stands only where the wood covers its middle, so a small wood is crowns on

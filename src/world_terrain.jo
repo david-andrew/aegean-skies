@@ -37,11 +37,12 @@ const WORLD_ROOT_ORIGIN = -458752.0
 const WORLD_CACHE_SLOTS = 1024
 const WORLD_ATLAS_COLS = 32
 const WORLD_TILE_PIXELS = 17
-# (seven RGBA8 atlas regions a tile: its heights, materials, cliff stations and fields, and since
-# the fields, orchards and cliffs morph between levels, its fields and its cliff stations on the
-# next coarser level's grid and its orchards' cover and woods' wash: 8092 bytes, 4624 before;
-# the three more atlases are 3.6 MB of texture)
-const WORLD_TILE_UPLOAD_BYTES = WORLD_TILE_PIXELS*WORLD_TILE_PIXELS*4*7
+# (eleven RGBA8 atlas regions a tile: its heights and its materials, and since the fields, the
+# orchards and woods' wash, and the cliffs morph between levels, each of those three maps three
+# regions wide (world_triples: every sample beside its value one and two levels coarser):
+# 12716 bytes a tile, 8092 with those maps apart and 4624 before they morphed; the five
+# atlases are 13 MB of texture, 8 MB and 5 MB before)
+const WORLD_TILE_UPLOAD_BYTES = WORLD_TILE_PIXELS*WORLD_TILE_PIXELS*4*11
 const WORLD_GENERATE_LIMIT = 4
 const WORLD_CONTACT_GENERATE_LIMIT = 9
 
@@ -116,11 +117,9 @@ world_clock = 0.0
 world_heights: Texture
 world_materials: Texture
 world_keep_maps = false             # (a tile's uploaded fields, cover and cliff maps kept on the CPU too: tools/lod_pop_check.jo)
-world_cliff_map: Texture
-world_cliff_far: Texture            # each tile's cliff stations on the next coarser level's grid (world_cliff_coarser)
-world_working:Texture
-world_working_far:Texture          # each tile's fields on the next coarser level's grid (world_working_coarser)
-world_cover:Texture                # each tile's orchard cover (r) and canopy rise (b), and each on the next coarser level's grid (g, a)
+world_cliff_map: Texture            # each tile's cliff stations, each beside the two coarser levels' there (world_triples)
+world_working:Texture              # each tile's fields, the same way
+world_cover:Texture                # each tile's orchard cover (r) and canopy rise (g), the same way
 world_ground_sh: Shader
 
 world_tile_key = (x: int,z: int,level: int) -> int: level * 100000000 + x * 8192 + z
@@ -179,7 +178,24 @@ world_upload_tile = (t: Texture,img: Image,slot: int):
     flush()
     glBindTexture(GL_TEXTURE_2D,u32(t.id))
     glPixelStorei(GL_UNPACK_ALIGNMENT,1)
-    gl_tex_sub_image((slot%WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,(slot/WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,WORLD_TILE_PIXELS,WORLD_TILE_PIXELS,GL_RGBA,GL_UNSIGNED_BYTE,data(img.pixels),img.pixels.len())
+    # (a map of triples is three times as wide: world_triples)
+    gl_tex_sub_image((slot%WORLD_ATLAS_COLS)*img.width,(slot/WORLD_ATLAS_COLS)*WORLD_TILE_PIXELS,img.width,WORLD_TILE_PIXELS,GL_RGBA,GL_UNSIGNED_BYTE,data(img.pixels),img.pixels.len())
+
+# A tile's map with each sample's three values side by side: its own, the next coarser level's
+# there (world_working_coarser, world_cliff_coarser), and the level's after that. A vertex reads
+# across them by how far it is drawn toward the coarser levels, and the texture's own filter
+# gives the value morphed between two of them: one read, whatever the vertex. Read apart (three
+# textures, and a tile's edge beside a coarser tile reading that tile's grid sample by sample)
+# they were most of what the morphing cost: the laptop's GPU pays for every read a vertex
+# makes, and it works a tile's vertices in groups, each paying for whatever any one of them reads.
+world_triples = (own: u8[],coarser: u8[],coarsest: u8[]) -> Image:
+    out = image(WORLD_TILE_PIXELS*3,WORLD_TILE_PIXELS)
+    loop k in 0..WORLD_TILE_PIXELS*WORLD_TILE_PIXELS:
+        loop c in 0..4:
+            out.pixels[k*12+c] = own[k*4+c]
+            out.pixels[k*12+4+c] = coarser[k*4+c]
+            out.pixels[k*12+8+c] = coarsest[k*4+c]
+    out
 
 # A tile's samples are taken a row at a time, so a tile can be made over a few frames (the
 # coarser tile above it stands in meanwhile); the textures go up when the last row is done.
@@ -286,18 +302,39 @@ world_billow_has: int[][] = []
 # samples (the tile's even ones) as given, the others between them on that grid's triangles (as
 # world_coarse has the height). A tile's fields morph to these as the tile morphs to the coarser
 # level, where its parent draws exactly them: no change at a split or a merge.
-world_working_coarser = (given: u8[]) -> u8[]:
+world_working_coarser = (given: u8[],step: int = 2) -> u8[]:
     out = given
     loop j in 0..17:
         loop i in 0..17:
-            if i%2 == 0 and j%2 == 0: continue
-            ax = min(i-i%2,14); az = min(j-j%2,14)
-            fx = f32(i-ax)/2.0; fz = f32(j-az)/2.0
+            if i%step == 0 and j%step == 0: continue
+            ax = min(i-i%step,16-step); az = min(j-j%step,16-step)
+            fx = f32(i-ax)/f32(step); fz = f32(j-az)/f32(step)
             loop c in 0..4:
-                aa = f32(given[(az*17+ax)*4+c]); bb = f32(given[(az*17+ax+2)*4+c])
-                cc = f32(given[((az+2)*17+ax)*4+c]); dd = f32(given[((az+2)*17+ax+2)*4+c])
+                aa = f32(given[(az*17+ax)*4+c]); bb = f32(given[(az*17+ax+step)*4+c])
+                cc = f32(given[((az+step)*17+ax)*4+c]); dd = f32(given[((az+step)*17+ax+step)*4+c])
                 v = if fx+fz <= 1.0: aa+(bb-aa)*fx+(cc-aa)*fz else: dd+(cc-dd)*(1.0-fx)+(bb-dd)*(1.0-fz)
                 out[(j*17+i)*4+c] = u8(clamp(round(v),0.0,255.0))
+    out
+
+# A tile's cliff stations two levels coarser, at every sample: the next coarser level's
+# (world_cliff_coarser's image) at every fourth sample, between them on that grid's triangles,
+# as moments (a station's weighted height is in two bytes: mixed as one number).
+world_cliff_coarsest = (given: u8[]) -> u8[]:
+    out = given
+    loop j in 0..17:
+        loop i in 0..17:
+            if i%4 == 0 and j%4 == 0: continue
+            ax = min(i-i%4,12); az = min(j-j%4,12)
+            fx = f32(i-ax)/4.0; fz = f32(j-az)/4.0
+            at = (di: int,dj: int) -> vec3:
+                k = ((az+dj)*17+ax+di)*4
+                vec3(f32(given[k])+f32(given[k+1])*256.0,f32(given[k+2]),f32(given[k+3]))
+            aa = at(0,0); bb = at(4,0); cc = at(0,4); dd = at(4,4)
+            v = if fx+fz <= 1.0: aa+(bb-aa)*fx+(cc-aa)*fz else: dd+(cc-dd)*(1.0-fx)+(bb-dd)*(1.0-fz)
+            h = int(clamp(round(v.x),0.0,65535.0))
+            k = (j*17+i)*4
+            out[k] = u8(h & 255); out[k+1] = u8(h >> 8)
+            out[k+2] = u8(clamp(round(v.y),0.0,255.0)); out[k+3] = u8(clamp(round(v.z),0.0,255.0))
     out
 
 # The cliff map's stations on the next coarser level's grid, at every sample of a tile (as
@@ -351,19 +388,24 @@ world_tile_job_finish = (job: WorldTileJob,slot: int) -> WorldTile:
     global world_billows,world_billow_has
     far = job.working_far
     far.pixels = world_working_coarser(job.working_far.pixels)
-    world_upload_tile(world_working_far,far,slot)
     # (the orchards the same way: g, the cover on the next coarser level's grid)
     cover = job.cover
     coarser = world_working_coarser(job.cover.pixels)
     loop k in 0..289: cover.pixels[k*4+1] = coarser[k*4+1]; cover.pixels[k*4+3] = coarser[k*4+3]
-    world_upload_tile(world_cover,cover,slot)
+    # (its map: the orchards' cover and the canopy's rise at each sample (r, g), beside them
+    # one and two levels coarser)
+    cover_own: u8[] = [loop k in 0..289*4: u8(0)]
+    cover_far: u8[] = [loop k in 0..289*4: u8(0)]
+    loop k in 0..289:
+        cover_own[k*4] = cover.pixels[k*4]; cover_own[k*4+1] = cover.pixels[k*4+2]
+        cover_far[k*4] = cover.pixels[k*4+1]; cover_far[k*4+1] = cover.pixels[k*4+3]
+    world_upload_tile(world_cover,world_triples(cover_own,cover_far,world_working_coarser(cover_far,4)),slot)
     world_upload_tile(world_heights,job.h,slot)
     world_upload_tile(world_materials,job.m,slot)
     cliffs = cliff_map_image(job.cliff_stations,17,17,1<<job.level,job.values)
-    world_upload_tile(world_cliff_map,cliffs,slot)
     cliffs_far = world_cliff_coarser(job.cliff_stations,job.values,job.x,job.z,job.level)
-    world_upload_tile(world_cliff_far,cliffs_far,slot)
-    world_upload_tile(world_working,job.working,slot)
+    world_upload_tile(world_cliff_map,world_triples(cliffs.pixels,cliffs_far.pixels,world_cliff_coarsest(cliffs_far.pixels)),slot)
+    world_upload_tile(world_working,world_triples(job.working.pixels,far.pixels,world_working_coarser(far.pixels,4)),slot)
     tile=WorldTile(job.key,job.x,job.z,job.level,world_frame,world_clock,job.low,job.high,f64(job.level+1),false,job.values,job.material_bytes,world_tile_inland(job.x,job.z,job.level))
     tile.canal_city=world_tile_canal(job.x,job.z,job.level)
     tile.stand=job.stand; tile.rise=job.rise
@@ -647,92 +689,98 @@ world_balance = ():
 
 world_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> TerrainSample:
     if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return land_sample(u.heights,u.materials,base+p)
+    # (one level coarser, a vertex lies midway along an edge or the diagonal of that grid: two
+    # of its samples, not four. Most morphing vertices are these, and the laptop's GPU pays for
+    # every read.)
+    if step < 3.0:
+        o = vec2(fract(p.x*0.5)*2.0,-fract(p.y*0.5)*2.0)
+        return land_mix(land_sample(u.heights,u.materials,base+p-o),land_sample(u.heights,u.materials,base+p+o),0.5)
     a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
     f = (p-a)/step
-    aa = land_sample(u.heights,u.materials,base+a)
+    # (the triangle of that grid the vertex lies in: its two corners on the diagonal and the
+    # one at its right angle, three samples and not the cell's four)
+    lower = f.x+f.y <= 1.0
+    kk = land_sample(u.heights,u.materials,base+a+(if lower: vec2(0,0) else: vec2(step,step)))
     bb = land_sample(u.heights,u.materials,base+a+vec2(step,0))
     cc = land_sample(u.heights,u.materials,base+a+vec2(0,step))
-    dd = land_sample(u.heights,u.materials,base+a+vec2(step,step))
-    if f.x+f.y <= 1.0:
-        return TerrainSample(aa.h+f.x*(bb.h-aa.h)+f.y*(cc.h-aa.h),aa.normal+f.x*(bb.normal-aa.normal)+f.y*(cc.normal-aa.normal),aa.tint+f.x*(bb.tint-aa.tint)+f.y*(cc.tint-aa.tint))
-    TerrainSample(dd.h+(1.0-f.x)*(cc.h-dd.h)+(1.0-f.y)*(bb.h-dd.h),dd.normal+(1.0-f.x)*(cc.normal-dd.normal)+(1.0-f.y)*(bb.normal-dd.normal),dd.tint+(1.0-f.x)*(cc.tint-dd.tint)+(1.0-f.y)*(bb.tint-dd.tint))
+    wb = if lower: f.x else: 1.0-f.y
+    wc = if lower: f.y else: 1.0-f.x
+    TerrainSample(kk.h+wb*(bb.h-kk.h)+wc*(cc.h-kk.h),kk.normal+wb*(bb.normal-kk.normal)+wc*(cc.normal-kk.normal),kk.tint+wb*(bb.tint-kk.tint)+wc*(cc.tint-kk.tint))
+
+# A sample of a map of triples (world_triples) drawn k levels coarser (0 to 2): between its own
+# value and the next coarser level's there, or that and the level's after, by the texture's
+# filter; and the next coarser level's alone.
+world_morphed = (t: Texture,base: vec2,p: vec2,k: f32) -> vec4: sample_lod(t,vec2((base.x+p.x)*3.0+0.5+k,base.y+p.y+0.5)/vec2(texture_size(t)),0.0)
+world_coarser = (t: Texture,base: vec2,p: vec2) -> vec4: texel(t,ivec2(vec2((base.x+p.x)*3.0+1.0,base.y+p.y)))
 
 # The fields' colour and share at a vertex, morphed between levels with the ground they lie on
 # (read at each vertex's own sample whatever the level drawn, a tile's fields changed all at
 # once when it split or merged). level: how many levels coarser the vertex is drawn. Within a
 # level of the tile's own: its sample, toward the next coarser level's value there
-# (u.working_far, world_working_coarser: at the split or merge exactly what the parent draws).
-# Coarser still (a tile just come in, morphing from what was drawn before): between that
-# level's samples.
+# (beside it in the map, world_triples: at the split or merge exactly what the parent draws),
+# and on toward the level's after that (a tile's edge beside a coarser tile is drawn as that
+# tile is). More than two levels coarser (a tile just come in, morphing from what was drawn
+# before): between that level's samples of the map.
 world_working_at = (u: GroundParams,base: vec2,p: vec2,level: f32) -> vec4:
-    if level < 1.0:
-        own = texel(u.working_map,ivec2(base+p))
-        if level <= 0.0: return own
-        return mix(own,texel(u.working_far,ivec2(base+p)),level)
-    s = pow(2.0,floor(level))
-    w = world_working_coarse(u,base,p,s)
-    if fract(level) > 0.0: w = mix(w,world_working_coarse(u,base,p,min(s*2.0,16.0)),fract(level))
+    w = world_morphed(u.working_map,base,p,min(level,2.0))
+    if level > 2.0:
+        s = pow(2.0,floor(level))
+        w = mix(world_working_coarse(u,base,p,s),world_working_coarse(u,base,p,min(s*2.0,16.0)),fract(level))
     w
 # The cliff map's station at a vertex, morphed the same way, as the moments a triangle carries
-# (cliff_vertex_data): the tile's own, toward the next coarser level's there (u.cliff_far,
+# (cliff_vertex_data): the tile's own, toward the next coarser level's there (beside it,
 # world_cliff_coarser); coarser still, between that level's samples.
 world_cliff_moments = (station: vec4) -> vec3: vec3(dot(station.xy,vec2(255.0/64.0,65280.0/64.0)),station.z,station.w)
 world_cliff_at = (u: GroundParams,base: vec2,p: vec2,level: f32,y: f32) -> vec4:
-    m = vec3(0,0,0)
-    if level < 1.0:
-        m = world_cliff_moments(texel(u.cliff_map,ivec2(base+p)))
-        if level > 0.0: m = mix(m,world_cliff_moments(texel(u.cliff_far,ivec2(base+p))),level)
-    else:
+    # (a station's moments are sums of its bytes, so the filter's value between two stations is
+    # the moments between them)
+    m = world_cliff_moments(world_morphed(u.cliff_map,base,p,min(level,2.0)))
+    if level > 2.0:
         s = pow(2.0,floor(level))
-        m = world_cliff_coarse(u,base,p,s)
-        if fract(level) > 0.0: m = mix(m,world_cliff_coarse(u,base,p,min(s*2.0,16.0)),fract(level))
+        m = mix(world_cliff_coarse(u,base,p,s),world_cliff_coarse(u,base,p,min(s*2.0,16.0)),fract(level))
     possible = m.z > 0.0 or m.x > (y+2.0)*m.y
     vec4(m.x,m.y,m.z,if possible: 1.0 else: 0.0)
 world_cliff_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> vec3:
-    if step < 3.0 or (fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0): return world_cliff_moments(texel(u.cliff_far,ivec2(base+p)))
+    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return world_cliff_moments(world_coarser(u.cliff_map,base,p))
     a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
     f = (p-a)/step
-    bb = world_cliff_moments(texel(u.cliff_far,ivec2(base+a+vec2(step,0))))
-    cc = world_cliff_moments(texel(u.cliff_far,ivec2(base+a+vec2(0,step))))
+    bb = world_cliff_moments(world_coarser(u.cliff_map,base,a+vec2(step,0)))
+    cc = world_cliff_moments(world_coarser(u.cliff_map,base,a+vec2(0,step)))
     if f.x+f.y <= 1.0:
-        aa = world_cliff_moments(texel(u.cliff_far,ivec2(base+a)))
+        aa = world_cliff_moments(world_coarser(u.cliff_map,base,a))
         return aa+(bb-aa)*f.x+(cc-aa)*f.y
-    dd = world_cliff_moments(texel(u.cliff_far,ivec2(base+a+vec2(step,step))))
+    dd = world_cliff_moments(world_coarser(u.cliff_map,base,a+vec2(step,step)))
     dd+(cc-dd)*(1.0-f.x)+(bb-dd)*(1.0-f.y)
 
-# The orchards' cover (x) and the canopy's rise (y) at a vertex, morphed the same way
-# (u.cover_map: r and b the sample's, g and a on the next coarser level's grid).
+# The orchards' cover (x) and the canopy's rise (y) at a vertex, morphed the same way.
 world_cover_at = (u: GroundParams,base: vec2,p: vec2,level: f32) -> vec2:
-    if level < 1.0:
-        own = texel(u.cover_map,ivec2(base+p))
-        return mix(own.xz,own.yw,level)
-    s = pow(2.0,floor(level))
-    w = world_cover_coarse(u,base,p,s)
-    if fract(level) > 0.0: w = mix(w,world_cover_coarse(u,base,p,min(s*2.0,16.0)),fract(level))
+    w = world_morphed(u.cover_map,base,p,min(level,2.0)).xy
+    if level > 2.0:
+        s = pow(2.0,floor(level))
+        w = mix(world_cover_coarse(u,base,p,s),world_cover_coarse(u,base,p,min(s*2.0,16.0)),fract(level))
     w
 world_cover_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> vec2:
-    if step < 3.0 or (fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0): return texel(u.cover_map,ivec2(base+p)).yw
+    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return world_coarser(u.cover_map,base,p).xy
     a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
     f = (p-a)/step
-    bb = texel(u.cover_map,ivec2(base+a+vec2(step,0))).yw
-    cc = texel(u.cover_map,ivec2(base+a+vec2(0,step))).yw
+    bb = world_coarser(u.cover_map,base,a+vec2(step,0)).xy
+    cc = world_coarser(u.cover_map,base,a+vec2(0,step)).xy
     if f.x+f.y <= 1.0:
-        aa = texel(u.cover_map,ivec2(base+a)).yw
+        aa = world_coarser(u.cover_map,base,a).xy
         return aa+(bb-aa)*f.x+(cc-aa)*f.y
-    dd = texel(u.cover_map,ivec2(base+a+vec2(step,step))).yw
+    dd = world_coarser(u.cover_map,base,a+vec2(step,step)).xy
     dd+(cc-dd)*(1.0-f.x)+(bb-dd)*(1.0-f.y)
 
 world_working_coarse = (u: GroundParams,base: vec2,p: vec2,step: f32) -> vec4:
-    # (on the next coarser grid every sample already holds its value between that grid's own: one read)
-    if step < 3.0 or (fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0): return texel(u.working_far,ivec2(base+p))
+    if fract(p.x/step) == 0.0 and fract(p.y/step) == 0.0: return world_coarser(u.working_map,base,p)
     a = min(floor(p/step)*step,vec2(16.0-step,16.0-step))
     f = (p-a)/step
-    bb = texel(u.working_far,ivec2(base+a+vec2(step,0)))
-    cc = texel(u.working_far,ivec2(base+a+vec2(0,step)))
+    bb = world_coarser(u.working_map,base,a+vec2(step,0))
+    cc = world_coarser(u.working_map,base,a+vec2(0,step))
     if f.x+f.y <= 1.0:
-        aa = texel(u.working_far,ivec2(base+a))
+        aa = world_coarser(u.working_map,base,a)
         return aa+(bb-aa)*f.x+(cc-aa)*f.y
-    dd = texel(u.working_far,ivec2(base+a+vec2(step,step)))
+    dd = world_coarser(u.working_map,base,a+vec2(step,step))
     dd+(cc-dd)*(1.0-f.x)+(bb-dd)*(1.0-f.y)
 
 world_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> GroundOut:
@@ -906,7 +954,7 @@ draw_world_shells = (batches: WorldInstance[][],params: GroundParams):
 # eye a crown's own lobes, smaller domes again, growing out of it. They are real geometry: they
 # overlap one another from any angle, stand against the sky on a ridge and break the wood's
 # outline against the ground. No dome arrives: each rises out of the sheet as the eye nears (the
-# masses from 2.6 km, the clumps from 1.3 km, the crowns from 560 m, a crown's lobes from 80 m),
+# masses from 2.6 km, the clumps from 1.05 km, the crowns from 560 m, a crown's lobes from 80 m),
 # its top first, so the canopy swells up continuously out of the paint.
 # The domes are worked out once, as a terrain tile is made (billow_build, from the tile's own
 # samples of the ground and the stand cover: no tree lists); a frame gathers the domes of the
@@ -931,7 +979,7 @@ const BILLOW_LOBE_END = 80.0       # (beyond, a crown one dome: its lobes grow o
 const BILLOW_SHEET = 0.5           # (the sheet's height under grown masses, of the canopy's: their hollows' floor)
 
 billow_span = (tier: f32) -> f32: if tier < 0.5: 56.0 else: if tier < 1.5: 28.0 else: 14.0
-billow_reach = (tier: f32) -> f32: if tier < 0.5: 2600.0 else: if tier < 1.5: 1300.0 else: 560.0
+billow_reach = (tier: f32) -> f32: if tier < 0.5: 2600.0 else: if tier < 1.5: 1050.0 else: 560.0
 # Where the crowns begin to rise, at most: within the finest terrain tiles, which are where they
 # are made (billow_build), so a tile's split never brings crowns already risen (the finest tiles
 # reach to 448 m times the quality's terrain detail; a crown begins up to 18% farther out by its
@@ -1009,6 +1057,9 @@ billow_shadow = (q: vec2,rise: f32,sun: vec3,d: f32) -> f32:
 
 # How much taller the masses and clumps stand at a distance over the ground.
 billow_far = (d: f32) -> f32: 1.0+1.7*clamp((d-400.0)/1500.0,0.0,1.0)
+
+# The same for the clumps: half as tall again at most.
+billow_far_clump = (d: f32) -> f32: 1.0+0.5*clamp((d-500.0)/800.0,0.0,1.0)
 
 # How far a size's domes have swelled for the canopy's rise at a point: the crowns from the
 # wood's edge, the clumps and the masses under them only farther in, where the canopy has risen.
@@ -1147,7 +1198,10 @@ billow_make = (gx: f64,gz: f64,step: f64,nx: int,nz: int,ox: f64,oz: f64,size: f
                     # (where the canopy has risen all about its middle)
                     least = min(up,min(min(at(rise,x+w,z),at(rise,x-w,z)),min(at(rise,x,z+w),at(rise,x,z-w))))
                     made = billow_k(tier,least) > 0.0
-                    if made and t == 1: seat = vec2(billow_top(under[0],from[0],from[1],wide[0],0.0,c).y,0)
+                    if made and t == 1:
+                        seat = vec2(billow_top(under[0],from[0],from[1],wide[0],0.0,c).y,0)
+                        # (the slope of the mass it stands on, over 24 m: its light far off)
+                        lean = vec2(billow_top(under[0],from[0],from[1],wide[0],0.0,c+vec2(12,0)).y-billow_top(under[0],from[0],from[1],wide[0],0.0,c-vec2(12,0)).y,billow_top(under[0],from[0],from[1],wide[0],0.0,c+vec2(0,12)).y-billow_top(under[0],from[0],from[1],wide[0],0.0,c-vec2(0,12)).y)/24.0
                 if not made:
                     if t < 2: under[t].push(absent)
                     continue
@@ -1207,8 +1261,11 @@ billow_vertex = (v: BillowVertex,b: Billow,u: GroundParams) -> GroundOut:
     # nothing at a kilometre and a half, and it is there they must carry the wood's volume;
     # nearer they settle to their size under the crowns)
     far = billow_far(reach)
+    # (the clumps less: small and many, their tall far cones were most of a far wood's shimmer)
+    far_clump = billow_far_clump(reach)
     if tier > 0.5: base += b.seat.x*billow_emerge(0.0,reach,0.5)*far
-    if tier > 1.5: base += b.seat.y*billow_emerge(1.0,reach,0.5)*far
+    if tier > 1.5: base += b.seat.y*billow_emerge(1.0,reach,0.5)*far_clump
+    if tier > 0.5: far = far_clump
     tall = b.form.x*k
     high = (b.form.x+b.form.y)*e*(1.0+0.16*sin(2.0*th+sd.z*40.0)*ring)
     # (where a mass lies flat it goes well under the sheet: its ground and the canopy's rise
@@ -1284,7 +1341,7 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int) -> vec4:
     above = if tier > 1.5: i.air.y*(1.0-i.working.y) else: billow_emerge(tier+1.0,d,0.5)
     # (far off a mass is lit as one body, the crowns painted on it a faint texture: a clear lit
     # side and shaded side to every mass is a far wood's relief)
-    massy = (1.0-own)*clamp((d-500.0)/700.0,0.0,1.0)
+    massy = (if tier < 0.5: 1.0 else: 0.0)*clamp((d-500.0)/700.0,0.0,1.0)
     nn = normalize(body*mix(mix(0.9,1.4,own),1.5,massy)+crown*mix(0.8,0.25,max(max(own,above),massy)))
     # a dome painted as a crown is (src/crowns.jo crown_fs): a few big leaf masses, each with its
     # lit and its shadow side and a crease between; near, the leaf tufts in them, which dapple
@@ -1300,13 +1357,18 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int) -> vec4:
     seed = i.tint.x
     # (the masses about a crown's leaf masses in size whatever the dome's)
     kk = (0.08+0.03*fract(seed*3.7))*max(i.working.w/2.6,1.0)
-    if massed > 0.0:
+    # (a mass or a clump under the domes that have risen on it is the floor of their hollows,
+    # deep in shade and, past 150 m, a few pixels between the crowns: there its leaf masses
+    # fade as the crowns rise, and are then not read at all. Most of a wood's clumps are that
+    # floor, and their pixels were a third of the canopy's cost. Nearer, an eye over the canopy
+    # looks down into the hollows, and their floors keep their leaves)
+    shown = massed*(if own > 0.5: 1.0 else: 1.0-above*clamp((d-90.0)/60.0,0.0,1.0))
+    if shown > 0.0:
         tc4 = sample(u.pigment,face.xy*kk+vec2(seed*0.31,seed*0.57))
         dvec = tc4.xy*2.0-vec2(1,1)
         # (each leaf mass a rounded body of its own: a lit side and a shaded side by the sun, a
         # soft shade where it meets its neighbours; not a dark line round every one, which
         # reads as cracks)
-        shown = massed
         mass = mix(0.6,1.0-clamp((length(dvec)-0.3)/0.42,0.0,1.0)*0.7,shown)
         tn = normalize(nn*0.5+crown_face_axis(face.z,0)*dvec.x+crown_face_axis(face.z,1)*dvec.y)
         nn = normalize(mix(nn,tn,0.72*shown))
@@ -1392,7 +1454,8 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int) -> vec4:
     # (farther off a crown takes most of its light from the mass it stands on: the wood's values
     # grouped by its masses, lit side and shaded side, the crowns a texture on them)
     grouped = billow_grouped(d)
-    lightness = mix(lightness,i.orchard*0.7+lightness*0.3,grouped*own)
+    # (a clump too: far off it is a part of its mass, not a little lit cone of its own)
+    lightness = mix(lightness,i.orchard*0.7+lightness*0.3,grouped*(if tier > 0.5: 1.0 else: 0.0))
     # (and the shadows of the masses sunward of it, on a mass or a clump past the crowns' reach)
     cast = (1.0-own)*clamp((d-480.0)/260.0,0.0,1.0)*u.shell.y
     if cast > 0.0: cast *= billow_shadow(q,i.tile_level*0.385+(if tier < 0.5: 0.4 else: 0.22),u.sun_dir,d)
@@ -1409,24 +1472,36 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int) -> vec4:
     # (a crown its own green: the wood's range from a dark pine green to a lighter olive)
     tone = mix(fract(s.w*7.13),i.tint.z,own)
     col = mix(vec3(0.17,0.31,0.18),vec3(0.33,0.43,0.22),tone)*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
+    # (far off a mass's foot is painted as the sheet it stands in is (the same crowns, the same
+    # light): its outline against the sheet is then nowhere, and only its risen body reads. A
+    # hard line round every mass's foot crawled as the eye moved: half a far wood's shimmer)
+    if tier < 0.5:
+        foot = (1.0-smoothstep(0.02,0.45,up))*clamp((d-450.0)/200.0,0.0,1.0)
+        if foot > 0.0:
+            ns = normalize(crown+vec3(0,0.3,0))
+            ndl = mix(ndl,mix(dot(ns,u.sun_dir),dot(ns,u.canopy_light.xyz),u.canopy_light.w*0.6)-mix(0.3,0.1,grouped)-cast*0.55,foot)
+            occl = mix(occl,(0.28+0.66*s.z)*mix(0.5,0.78,grouped)*(1.0-0.45*cast),foot)
+            col = mix(col,mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),fract(s.w*7.13))*mix(1.08,0.75,clamp((stand-0.6)*2.5,0.0,1.0)*0.4),foot)
     # (and some crowns of another kind: one in eight a dark pine, one in ten a pale olive, so a
     # far wood is a texture of different trees, not one green)
     kind = fract(i.tint.x*13.7)
     col = mix(col,vec3(0.11,0.25,0.17),own*step(kind,0.125)*0.75)
     col = mix(col,vec3(0.37,0.45,0.23),own*step(0.9,kind)*0.7)
-    c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.3,1.0,clamp((spans-3.0)/12.0,0.0,1.0))*mix(mix(0.45,0.6,massy),1.0,clamp((300.0-d)/250.0,0.0,1.0)),fwidth(ndl+(occl-0.6)*0.6))
-    # (against the light, a dome's outline glows where the sun comes through its leaves; all
-    # round, a little of the sky's light on its edge: the form turning away)
-    view = normalize(i.world-u.cam)
-    turned = 1.0-abs(dot(body,view))
-    back = clamp(dot(view,normalize(u.sun_dir)),0.0,1.0)
-    c += col*u.sun*(0.55*back*back*turned*turned*turned*(0.4+0.6*open))+u.sky*(0.05*turned*turned*open)
-    # (a dome that stands on the ground, among the ground's own painted crowns (the old islands'
-    # small woods): the colour and the gentler light of that paint, so it is one of them stood
-    # up, not a brighter thing among them)
+    c = vec3(0,0,0)
     if on_ground:
+        # (a dome that stands on the ground, among the ground's own painted crowns (the old
+        # islands' small woods): the colour and the gentler light of that paint, so it is one
+        # of them stood up, not a brighter thing among them)
         paint = mix(mix(vec3(0.20,0.34,0.19),vec3(0.30,0.42,0.24),tone),vec3(0.11,0.27,0.17),clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
         c = mix(crown_palette(paint,ndl,occl,u.shade,u.sun,1.0),crown_palette(paint,0.2,0.75,u.shade,u.sun,1.0),0.55)*vec3(0.94,0.92,1.12)
+    else:
+        c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.3,1.0,clamp((spans-3.0)/12.0,0.0,1.0))*mix(mix(0.45,0.6,massy),1.0,clamp((300.0-d)/250.0,0.0,1.0)),fwidth(ndl+(occl-0.6)*0.6))
+        # (against the light, a dome's outline glows where the sun comes through its leaves; all
+        # round, a little of the sky's light on its edge: the form turning away)
+        view = normalize(i.world-u.cam)
+        turned = 1.0-abs(dot(body,view))
+        back = clamp(dot(view,normalize(u.sun_dir)),0.0,1.0)
+        c += col*u.sun*(0.55*back*back*turned*turned*turned*(0.4+0.6*open))+u.sky*(0.05*turned*turned*open)
     vec4(land_aerial_apply(c,i.river,u.haze)*paint_paper(i.pos.xy),1)
 
 billow_fragment = (i: GroundOut,u: GroundParams) -> vec4: billow_fragment_at(i,u,1)
@@ -1707,20 +1782,19 @@ world_fragment_at = (i: GroundOut,u: GroundParams,detail: int,wind_study: int = 
 
 init_world_terrain = ():
     reset_coast_selection()
-    global world_working_far,world_cover,world_cliff_far
+    global world_cover
     global world_tiles,world_heights,world_materials,world_working,world_cliff_map,world_ground_sh,world_balance_input,world_balance_output,world_balance_registry
     world_balance_input=[];world_balance_output=[];world_balance_registry={}
     if coast_grids.len() == 0: init_terrain()
     world_tiles = [loop i in 0..WORLD_CACHE_SLOTS: WorldTile()]
     world_heights = texture(image(32*17,32*17),true)
     world_materials = texture(image(32*17,32*17),true)
-    world_cliff_map = texture(image(32*17,32*17),true)
+    world_cliff_map = texture(image(32*51,32*17),true)
     set_mipmaps(world_cliff_map,false)
-    world_cliff_far = texture(image(32*17,32*17),true)
-    set_mipmaps(world_cliff_far,false)
-    world_working = texture(image(32*17,32*17),true)
-    world_working_far = texture(image(32*17,32*17),true)
-    world_cover = texture(image(32*17,32*17),true)
+    world_working = texture(image(32*51,32*17),true)
+    set_mipmaps(world_working,false)
+    world_cover = texture(image(32*51,32*17),true)
+    set_mipmaps(world_cover,false)
     world_ground_sh = make_shader(if render_quality.tier == 0: world_shader(shader(world_vertex, world_fragment_low), shader(world_vertex, world_fragment_low_log)) else: world_shader(shader(world_vertex, world_fragment), shader(world_vertex, world_fragment_log)))
 
 world_edge_state = (slot: int) -> (vec4,int):
@@ -1921,7 +1995,7 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
         world_arriving = hidden > 0
         world_arriving_bare = hidden > shown
     if world_warm_views.len() > 0: world_warm_pass()
-    world_prefetch_tiles()
+    if not foliage_off("prefetch"): world_prefetch_tiles()
     # A tile coming into the selection (a split, a merge, a tile made late, balancing) starts
     # from the detail drawn where it is the frame before, and morphs from it to its own over
     # WORLD_ENTER_SECONDS: the ground never steps. Where nothing was drawn (an arrival), it
@@ -2015,6 +2089,8 @@ draw_world_terrain = (L: Light,t: f64):
     coastal: CoastInstance[][] = [loop i in 0..COAST_LEVELS: []]
     planes = land_planes(vp)
     focal = f64(length(vec3(vp[0].y,vp[1].y,vp[2].y)))*f64(screen_height())*0.5/render_quality.terrain_error
+    # (timing only: AEGEAN_MAPS=mask, the maps the ground's vertices read)
+    maps_mask = to_int(env("AEGEAN_MAPS") ?? "") ?? 7
     loop selected_index in 0..world_selected.len():
         slot=world_selected[selected_index]
         node = world_tiles[slot]
@@ -2023,7 +2099,7 @@ draw_world_terrain = (L: Light,t: f64):
         ox,oz = world_tile_origin(node.x,node.z,node.level)
         if coast_enabled and node.level == 0 and node.lod == 0.0 and node.low < 192.0 and node.high > -10.0 and coast_patch_near(ox,oz,224.0,cam,focal):
             limits = vec4(if edges.x > 0.0: 0.0 else: 6.0,if edges.y > 0.0: 0.0 else: 6.0,if edges.z > 0.0: 0.0 else: 6.0,if edges.w > 0.0: 0.0 else: 6.0)
-        instance = WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),f32(node.maps)),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level)))
+        instance = WorldInstance(vec2(f32(ox-f64(origin.x)),f32(oz-f64(origin.z))),vec2(f32(slot%32*17),f32(slot/32*17)),vec4(f32(14.0*f64(1<<node.level)),f32(node.lod-f64(node.level)),f32(node.level),f32(node.maps & maps_mask)),edges-vec4(f32(node.level),f32(node.level),f32(node.level),f32(node.level)))
         # (the far canopy's shells: tiles reaching past the crowns, below the treeline; over the
         # coast's refined lowland too, the shells lifted off the plain tile, within a metre of it)
         size = 14.0*16.0*f64(1<<node.level)
@@ -2049,9 +2125,7 @@ draw_world_terrain = (L: Light,t: f64):
     params.land_palette = field_palette
     params = meadow_fill(params, origin)
     params.cliff_map=world_cliff_map
-    params.cliff_far=world_cliff_far
     params.working_map=world_working
-    params.working_far=world_working_far
     params.cover_map=world_cover
     params.river_map=river_material_texture()
     params.river_area=vec4(RIVER_BOUNDS.xy,RIVER_BOUNDS.zw-RIVER_BOUNDS.xy)
@@ -2094,5 +2168,13 @@ draw_world_terrain = (L: Light,t: f64):
                 draw_instanced(if params.meadow_c.w > 0.0: world_study_shader() else: world_ground_sh,grid,batches[i],params)
                 world_draws += 1; world_triangles += grid.index_count/3*batches[i].len()
     if startup_aegean_lod_stats != none and world_frame%60 == 1:
-        print("WORLD tiles={world_selected.len()} cache={world_cache.len()}/{WORLD_CACHE_SLOTS} generated={world_generated} upload={world_uploaded} draws={world_draws} triangles={world_triangles}")
+        with_maps: int[] = [loop k in 0..8: 0]
+        morphing = 0
+        loop slot in world_selected:
+            with_maps[world_tiles[slot].maps & 7] += 1
+            if world_tiles[slot].lod > f64(world_tiles[slot].level): morphing += 1
+        tenths: int[] = [loop k in 0..11: 0]
+        loop slot in world_selected: tenths[int(clamp((world_tiles[slot].lod-f64(world_tiles[slot].level))*10.0,0.0,10.0))] += 1
+        print("WORLD maps (tiles by which maps they read: bit 1 fields, 2 cover, 4 cliffs) {with_maps} morphing={morphing} by tenths of a level {tenths}")
+        print("WORLD tiles={world_selected.len()} cache={world_cache.len()}/{WORLD_CACHE_SLOTS} generated={world_generated} upload={world_uploaded} draws={world_draws} triangles={world_triangles} coast_triangles={coast_triangles}")
     zone_end()
