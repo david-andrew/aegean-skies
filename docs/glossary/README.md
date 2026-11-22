@@ -1995,7 +1995,7 @@ On the rivers branch until it lands.
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
   lifted there: their woods are small, and the ground's paint of the crowns is the floor).
 - **Code:** `src/canopy.jo` (`wood_cover`); `src/world_terrain.jo` (the sheet:
-  `world_shell_vertex`, `world_shell_fragment_at`, `canopy_floor`, `CANOPY_END`,
+  `world_shell_vertex`, `world_shell_fragment`, `world_far_sheet_fragment_at`, `canopy_floor`, `CANOPY_END`,
   `CANOPY_PAINT_END`, `CANOPY_CUT`; the billows: `billow_make`,
   `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
   `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
