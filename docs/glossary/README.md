@@ -3020,11 +3020,30 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   `bubble_box_edge`, `bubbles_apart` and `bubble_draw` in `src/panels.jo`, `draw_talk_bubbles`
   and the talk case of `draw_ui` in `aegean.jo`. `ctl_talk` in `src/controller.jo` is the
   controller's press in a talk on foot.
-- **Still panels:** the office's contract and a notice's terms (`conversation`), and every form:
-  the ledger, the notice board, the repair desk, the fuel pier, the map counter, the bills of
-  fare, tavli, the band's jar and requests.
+- **A question in a place:** anyone else who asks the pilot something is answered the same way
+  (`bubble_choice` in `aegean.jo`): the hotel's room (whoever keeps the desk, or whoever serves
+  at the table), a host's spare room, a ride asked for and the rider left in the second seat,
+  someone asking to join his table, the waiter's "Finished with this?", the band's front player
+  (a number asked for, a player missing), the jar's coins, tavli (the boy says who is free; the
+  one who sits down asks for what), the bath keeper, and the workshop's mechanic. The rider's
+  lines aloft are a bubble over the second seat. The keeper's word on an order is over whoever
+  serves (`draw_keeper_word`), not under the bill of fare. What the pilot answers is over his own
+  head a few seconds.
+- **The desk and its form:** at the workshop the mechanic says how the work stands, in spoken
+  forms (`desk_words` in `src/repair_desk.jo`: no lepta, no minute counts); "Let me see the work
+  list" opens the desk's sheet.
+- **Still forms:** what is read or filled in: the ledger, the notice board, a contract's and a
+  notice's papers (`conversation`), the repair desk's work list, the fuel pier, the map counter,
+  the bills of fare, the aircraft's work list, the barber's glass, the seat's bar of actions.
+- **Placement:** the fan keeps clear of the pilot himself as well as the speech bubbles and a
+  touch screen's buttons; it is beside him, or over his head, narrowed as it must be, before it
+  is ever under him (a phone held upright: over his head).
 - **Tests:** `tests/talk_bubbles_test.jo` and `tests/talk_bubbles_test.py` (the line arriving,
-  the fan's bubbles on the screen, the keys, the mouse, a controller, a question passing).
+  the fan's bubbles on the screen, the keys, the mouse, a controller, a question passing), and
+  `tests/talk_places_test.py` (each place: their words, the replies, an answer and what follows).
+- **Capture stages:** `AEGEAN_LEISURE=desk|rest|spare|ride-ask|ride-wait|company-ask|waiter-ask|
+  request|fetch|tip-panel|tavli-choose|remark`, `AEGEAN_CAPTURE_WORKSHOP=talk`, and
+  `AEGEAN_BATH_ARRIVE=141625 AEGEAN_FOOT_GO=60:The waters`.
 - **Capture:** `AEGEAN_TALK=1` opens a conversation with the nearest person at the start,
   `AEGEAN_TALK=idle` with the nearest who has nowhere to be (the pilot stood beside them), and
   `AEGEAN_TALK_FOLLOW=1` walks the pilot beside whoever he is talking with. With
