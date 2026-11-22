@@ -2,7 +2,8 @@
 """The score's quarter note through each catalogue piece, for showing a played note's written
 value (src/note_value.jo): src/music_tempo.jo, generated from data/music/source/<source>.mid (its
 tempo map) and data/music/performance.json (how much longer or shorter the performance is than the
-score). No dependencies: a small reader of standard MIDI files.
+score). A small reader of standard MIDI files; a piece with its own tempo map also needs
+tools/music_performance.py (mido).
 
   python3 tools/music_tempo.py            (writes src/music_tempo.jo)
 """
@@ -74,10 +75,19 @@ def quarter_map(path, stretch):
     return out
 
 
-# A piece whose arrangement scales the score's own tempo (the MIDI's seconds times this are the
-# seconds played, before the performance): Schubert's Ave Maria, whose MIDI carries a placeholder
-# tempo (tools/music_performance.py SCHUBERT_SCALE; no import here: this tool has no dependencies).
-SCORE_SCALE = {'schubert-ave-maria': (60 / 44) / 2.5}
+def played_quarter_map(name, stretch):
+    """A piece whose arrangement makes its own tempo map (Schubert's Ave Maria: a placeholder tempo
+    in its MIDI, and ritardandi; tools/music_performance.py schubert_points), as quarter_map's
+    steps. That module needs mido, so it is imported only for such a piece."""
+    sys.path.insert(0, str(ROOT / 'tools'))
+    from music_performance import schubert_points, SCHUBERT_END
+    out = []
+    for at, beat, q in schubert_points():
+        if beat > SCHUBERT_END:
+            break
+        if not out or abs(q * stretch - out[-1][1]) / out[-1][1] > 0.03:
+            out.append((round(at * stretch, 3), round(q * stretch, 4)))
+    return out
 
 
 def pieces():
@@ -104,8 +114,8 @@ def main():
         if not mid.exists() or 'duration_before' not in p:
             rows.append((f'    []', name))
             continue
-        stretch = p['duration_after'] / p['duration_before'] * SCORE_SCALE.get(name, 1.0)
-        steps = quarter_map(mid, stretch)
+        stretch = p['duration_after'] / p['duration_before']
+        steps = played_quarter_map(name, stretch) if name == 'schubert-ave-maria' else quarter_map(mid, stretch)
         rows.append(('    [' + ', '.join(f'vec2({a}, {q})' for a, q in steps) + ']', name))
     lines.append('\n'.join(f'{code}{"," if k + 1 < len(rows) else ""}  # {name}' for k, (code, name) in enumerate(rows)))
     lines.append(']')

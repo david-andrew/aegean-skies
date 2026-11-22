@@ -3331,7 +3331,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   Tárrega's Adelita, Fauré's Berceuse) arranged for the small band (piano, violin, guitar,
   mandolin), heard through the terrace's room (the facade's reflection, a short tail, air by
   distance; no radio filter). A singer (a harmonic formant voice) sings the Ave Maria's line while
-  the violin plays softer. Each evening starts one number further on, so every piece comes round.
+  the violin plays softer. A song (`MusicPiece.sung`: Schubert's Ave Maria) is hers alone over the
+  pianist, the violin's line of the score not played, at the hotel one evening in three and on the
+  radio's classical round (`src/singer.jo`). Each evening starts one number further on, so every piece comes round.
   The players are townspeople, and a number begins only when they are in their places (see
   [The band's people](#the-bands-people)).
 - **Code:** `src/bar_band.jo` (`BAR_SET`, `bar_band_position`, `singer_line`, `singer_render`,
