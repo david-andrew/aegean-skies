@@ -1,0 +1,182 @@
+# The singer: a procedural voice (harmonic formant synthesis with vowels, legato glides and a late
+# vibrato) that sings a piece's melody over its other parts: the hotel band's (src/bar_band.jo) and,
+# for a piece that is a song (MusicPiece.sung), the radio's (src/radio_synth.jo). Nothing recorded.
+
+use 'music_data.jo'
+use 'music_synth.jo'
+
+struct SungNote:
+    start: int                      # frames at MUSIC_RATE
+    end: int
+    pitch: f64                      # MIDI
+    vowel: int
+
+struct Singer:
+    notes: SungNote[]
+    next = 0
+    cursor = 0
+    phase = 0.0
+    pitch = 60.0                    # the sung pitch now (MIDI), gliding
+    env = 0.0
+    vib = 0.0
+    note_start = -100000
+    current = -1
+    f1 = 800.0
+    f2 = 1200.0
+    f3 = 2800.0
+    amps: f64[]
+    harmonics = 0
+    rng: u64 = 99
+    jitter = 0.0
+    breath = 0.0
+    sine: f64[]
+
+# the vowels she sings on (women's formants, Hz): ah, oh, eh, ah, oo-ish, ah
+VOWELS: vec3[] = [vec3(830, 1250, 2850), vec3(560, 950, 2700), vec3(620, 1750, 2800), vec3(780, 1150, 2800), vec3(450, 900, 2650), vec3(760, 1300, 2900)]
+
+# The tune's line: of the lead instrument's notes above its floor, the highest at each onset,
+# held until the next; folded into a comfortable mezzo range. Sung stretches only.
+singer_line_of = (events: MusicEvent[], instrument: int, floor: int, sung: vec2[]) -> SungNote[]:
+    lead: MusicEvent[]
+    loop e in events:
+        if e.instrument == instrument and e.pitch >= floor:
+            seconds = f64(e.start) / f64(MUSIC_RATE)
+            inside = false
+            loop w in sung:
+                if seconds >= f64(w.x) and seconds < f64(w.y): inside = true
+            if inside: lead.push(e)
+    lead.sort((e: MusicEvent): (e.start, -e.pitch))
+    picked: MusicEvent[]
+    loop e in lead:
+        if picked.len() > 0 and e.start - picked[picked.len() - 1].start < MUSIC_RATE / 40:
+            continue
+        picked.push(e)
+    if picked.len() == 0: return []
+    total = 0.0
+    loop e in picked: total += f64(e.pitch)
+    shift = 12.0 * round((67.0 - total / f64(picked.len())) / 12.0)
+    raw: SungNote[]
+    loop k in 0..picked.len():
+        e = picked[k]
+        p = f64(e.pitch) + shift
+        loop p > 79.0: p -= 12.0
+        loop p < 55.0: p += 12.0
+        end = e.start + max(e.duration, MUSIC_RATE / 10)
+        if k + 1 < picked.len(): end = min(end, picked[k + 1].start)
+        # (a rest shorter than a breath is sung through)
+        if k + 1 < picked.len() and picked[k + 1].start - end < MUSIC_RATE / 6: end = picked[k + 1].start
+        raw.push(SungNote(e.start, end, p, 0))
+    # A voice doesn't sing every ornament an accordion or a bouzouki plays: a quick note is folded
+    # into the longer one it decorates, and the syllables change on the notes that remain.
+    out: SungNote[]
+    shortest = MUSIC_RATE * 18 / 100
+    loop n in raw:
+        if out.len() > 0:
+            last = out[out.len() - 1]
+            joined = n.start - last.end < MUSIC_RATE / 20
+            if joined and n.end - n.start < shortest:
+                out[out.len() - 1].end = n.end
+                continue
+            if joined and last.end - last.start < shortest:
+                out[out.len() - 1] = SungNote(last.start, n.end, n.pitch, last.vowel)
+                continue
+        out.push(SungNote(n.start, n.end, n.pitch, out.len() % VOWELS.len()))
+    out
+
+make_singer = (notes: SungNote[]) -> Singer:
+    s = Singer(notes = notes)
+    s.sine = [loop i in 0..1024: sin(TAU * f64(i) / 1024.0)]
+    s.amps = fill(0.0, 48)
+    s
+
+singer_seek = (s: mut Singer, frame: int):
+    s.cursor = frame; s.next = 0; s.current = -1; s.env = 0.0
+    loop s.next < s.notes.len() and s.notes[s.next].end <= frame: s.next += 1
+
+_formant = (f: f64, centre: f64, width: f64) -> f64:
+    d = (f - centre) / (width * 0.5)
+    1.0 / (1.0 + d * d)
+
+_singer_spectrum = (s: mut Singer, hz: f64):
+    s.harmonics = clamp(int(5200.0 / max(hz, 60.0)), 1, s.amps.len())
+    # (high notes: the first formant rises with the voice, as singers open the vowel)
+    f1 = max(s.f1, hz * 1.08)
+    loop k in 0..s.harmonics:
+        f = hz * f64(k + 1)
+        g = 1.0 * _formant(f, f1, 120.0) + 0.55 * _formant(f, s.f2, 140.0) + 0.22 * _formant(f, s.f3, 200.0) + 0.07 * _formant(f, 3900.0, 280.0) + 0.004
+        # (the source falls away with frequency, and softly above four kilohertz)
+        s.amps[k] = g / pow(f64(k + 1), 0.95) / (1.0 + pow(f / 4200.0, 4.0))
+
+singer_render = (s: mut Singer, count: int) -> f64[]:
+    out = fill(0.0, count)
+    rate = f64(MUSIC_RATE)
+    glide = 1.0 - exp(-1.0 / (0.045 * rate))
+    attack = 1.0 - exp(-1.0 / (0.05 * rate))
+    release = 1.0 - exp(-1.0 / (0.11 * rate))
+    vowel_step = 1.0 - exp(-1.0 / (0.06 * rate))
+    loop i in 0..count:
+        frame = s.cursor + i
+        loop s.next < s.notes.len() and s.notes[s.next].start <= frame:
+            s.current = s.next
+            # (from silence she starts on the note; between notes she glides)
+            if s.env < 0.05: s.pitch = s.notes[s.next].pitch
+            s.note_start = frame
+            s.next += 1
+        on = s.current >= 0 and frame < s.notes[s.current].end
+        target = if s.current >= 0: s.notes[s.current].pitch else: s.pitch
+        s.pitch += (target - s.pitch) * glide
+        age = f64(frame - s.note_start) / rate
+        # a soft consonant at each new syllable: a dip in level and in the first formant
+        consonant = if on and age < 0.05: 0.55 + 0.45 * age / 0.05 else: 1.0
+        s.env += ((if on: 1.0 else: 0.0) * consonant - s.env) * (if on: attack else: release)
+        if s.env < 0.0005 and not on: continue
+        if s.current >= 0:
+            v = VOWELS[s.notes[s.current].vowel]
+            s.f1 += (f64(v.x) * (if age < 0.05: 0.7 else: 1.0) - s.f1) * vowel_step
+            s.f2 += (f64(v.y) - s.f2) * vowel_step
+            s.f3 += (f64(v.z) - s.f3) * vowel_step
+        # a late vibrato, and the small unsteadiness of a real voice
+        depth = 0.32 * clamp((age - 0.22) / 0.4, 0.0, 1.0)
+        s.vib += (5.3 + 0.4 * sin(f64(frame) / rate * 0.7)) / rate
+        s.rng = (s.rng * u64(6364136223846793005) + u64(1442695040888963407))
+        noise = f64((s.rng >> 33) & u64(0xffff)) / 32768.0 - 1.0
+        s.jitter += (noise * 0.06 - s.jitter) * 0.002
+        hz = 440.0 * pow(2.0, (s.pitch + depth * sin(TAU * s.vib) + s.jitter - 69.0) / 12.0)
+        if i % 32 == 0: _singer_spectrum(s, hz)
+        s.phase += hz / rate
+        s.phase -= floor(s.phase)
+        sum = 0.0
+        loop k in 0..s.harmonics:
+            p = s.phase * f64(k + 1)
+            j = int((p - floor(p)) * 1024.0) % 1024
+            sum += s.amps[k] * s.sine[j]
+        s.breath += (noise - s.breath) * 0.35
+        out[i] = (sum * 0.62 + s.breath * 0.02) * s.env
+    s.cursor += count
+    out
+
+# Is this piece a song a singer sings (MusicPiece.sung)?
+singer_sings = (piece: int) -> bool: piece >= 0 and piece < MUSIC_PIECES.len() and MUSIC_PIECES[piece].sung.len() > 0
+
+# A song's events without the tune's instrument in the stretches she sings (what is left is the piano
+# and the rest: the piece is her voice over them and not the violin as well; outside her stretches
+# whatever is played stays).
+singer_without_line = (events: MusicEvent[], piece: int) -> MusicEvent[]:
+    p = MUSIC_PIECES[piece]
+    kept: MusicEvent[]
+    loop e in events:
+        inside = false
+        if e.instrument == p.sung_lead and e.pitch >= p.sung_floor:
+            seconds = f64(e.start) / f64(MUSIC_RATE)
+            loop w in p.sung:
+                if seconds >= f64(w.x) and seconds < f64(w.y): inside = true
+        if not inside: kept.push(e)
+    kept
+
+# Her line for a song just loaded in the synth: the tune's notes in the sung stretches, sung; the
+# instrument's own notes there taken out of the synth's events (singer_without_line).
+singer_take_line = (s: mut MusicSynth, piece: int) -> Singer:
+    p = MUSIC_PIECES[piece]
+    notes = singer_line_of(s.events, p.sung_lead, p.sung_floor, p.sung)
+    s.events = singer_without_line(s.events, piece)
+    make_singer(notes)
