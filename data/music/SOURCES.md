@@ -19,6 +19,7 @@ Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are c
 | Bethena, a concert waltz | Joplin, 1905 | [Mutopia 463](https://www.mutopiaproject.org/ftp/JoplinS/bethena/), Magnus Lewis-Smith, original manuscript | Mutopia explicitly marks the transcription **Public Domain** |
 | Gymnopédie No. 1 | Erik Satie (1866–1925), 1888 | [Mutopia, SatieE/gymnopedie_1](https://www.mutopiaproject.org/ftp/SatieE/gymnopedie_1/), Evin Robertson, Dover edition | Mutopia explicitly marks the transcription **Public Domain** |
 | Ave Maria (Méditation sur le premier prélude de Bach) | Charles Gounod (1818–1893), 1853, on J. S. Bach's Prelude in C | [Mutopia, GounodC/AveMaria-PianoViolin](https://www.mutopiaproject.org/ftp/GounodC/AveMaria-PianoViolin/), Yann Leprince, Heugel 1856 | Mutopia explicitly marks the transcription **Public Domain** |
+| Ave Maria (Ellens dritter Gesang), D. 839, Op. 52 No. 6, voice and piano; one strophe, the tune on our violin | Franz Schubert (1797–1828), 1825 (published 1826) | [Mutopia 1054, SchubertF/D839](https://www.mutopiaproject.org/ftp/SchubertF/D839/SchubertF-D839_AveMaria/), Ph. Raynaud (Mutopia-2007/10/13-1054), C.F. Peters (Band I) edition (the record names no editor) | Mutopia explicitly marks the transcription **Public Domain** |
 | Suite bergamasque: Clair de lune | Claude Debussy (1862–1918), 1905 | [Mutopia, DebussyC/L75](https://www.mutopiaproject.org/ftp/DebussyC/L75/debussy_Ste_Bergamesq_Clair/), Keith OHara, Fromont 1905 | Mutopia explicitly marks the transcription **Public Domain** |
 | Adelita | Francisco Tárrega (1852–1909) | [Mutopia, TarregaF/adelita-duo](https://www.mutopiaproject.org/ftp/TarregaF/adelita-duo/), Jeffrey Olson's two-guitar arrangement, Antich y Tena | Mutopia explicitly marks the arrangement **Public Domain** |
 | Berceuse (Dolly, Op. 56) | Gabriel Fauré (1845–1924), 1894 | [Mutopia, FaureG/O56](https://www.mutopiaproject.org/ftp/FaureG/O56/faure_dolly_berceuse/), Mike Blackstock's flute-and-guitar adaptation, Hamelle | Mutopia explicitly marks the adaptation **Public Domain** |
@@ -152,7 +153,7 @@ CC0 designation and lists no copyright claims. `source/licences.json` preserves 
 source URLs, named uploaders, licence URLs and SHA-256 hashes of the exact shipped MIDI.
 The original Mutopia RDF permission records (two for the first radio pieces and five for the Hotel
 Ancora's evening set, fetched 13 November 2026; four for the wider repertoire, fetched 19 November
-2026) are included beside their MIDI files.
+2026; one for Schubert's Ave Maria, fetched 21 November 2026) are included beside their MIDI files.
 Dataset MIDI was converted, instrument assignments changed as described below, and only
 a small subset of metadata retained. This is not an endorsement by any source author.
 
@@ -194,6 +195,13 @@ a small subset of metadata retained. This is not an endorsement by any source au
     | Celesta | piano, very softly |
     | Three solo violins, in harmonics | strings |
     | Bass drum (one held stroke left from before 155) | not played |
+* Schubert's Ave Maria is the whole song as the Mutopia edition prints it: 43 bars, an introduction,
+  the three strophes of the German text (after Walter Scott's *The Lady of the Lake*; 312 voice notes; the piano
+  as printed, 2,023 notes) and the postlude, with no repeat cut and no note added. The edition's MIDI
+  carries a placeholder tempo (the quarter note 2.5 s, 24 to the minute, which makes the song 7 minutes);
+  it is played at 44 to the minute ("Sehr langsam", a bar of about 5.5 s, the song 4 minutes) with
+  the generic phrase rubato. The voice's line (exported as a pan flute) is played on our violin
+  (softened under the hotel's singer, who sings it); the piano is played as written.
 * Magnetic Rag is explicitly a **foxtrot arrangement of a rag**, not labelled an
   original foxtrot. All source piano pitches/rhythms are retained, at quarter=116;
   upper notes use clarinet, lower piano/bass, with light banjo doubling and a drum beat.
