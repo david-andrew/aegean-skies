@@ -4050,13 +4050,15 @@ No image: the tiers differ in budgets more than in any single view.
   level of detail.
 - **Code:** `src/terrain_lod.jo select_terrain`, `src/world_terrain.jo` (`prepare_world_terrain`,
   `world_drawn_lod`, `world_prepare_contact`); `docs/world-renderer-design.md`.
-  What a tile's vertices carry morphs with them: the height, the normal, and the fields' colour
-  and the orchards' cover, which each tile holds on the next coarser level's grid as well
-  (`world_working_far`, `world_cover`: exactly what its parent draws), so nothing changes at a
-  split or a merge. Tiles about to split have their children made ahead (`world_prefetch_tiles`).
+  What a tile's vertices carry morphs with them: the height, the normal, and the fields' colour,
+  the orchards' cover, the canopy's rise and the cliff map's stations, which each tile holds on
+  the next coarser level's grid as well (`world_working_far`, `world_cover`, `world_cliff_far`:
+  exactly what its parent draws), so nothing changes at a split or a merge. A value that is all
+  thresholds (the canopy's rise) is baked and morphed itself, not worked out at each vertex
+  from morphed values: between a tile's vertices that is not what its parent drew. Tiles about to split have their children made ahead (`world_prefetch_tiles`).
 - **Rules:** `tools/lod_pop_check.jo` measures the drawn ground (its height, the light on its
-  normals, its fields and orchards) and the woods' domes (their tops and their sides) frame by
-  frame on three paths and fails on any step, and on a patch moving or changing its shade
+  normals, its fields, orchards and cliffs, the canopy sheet's rise and its painted crowns'
+  octave) and the woods' domes (their tops and their sides) frame by frame on four paths and fails on any step, and on a patch moving or changing its shade
   quickly; it runs on the pages workflow. Anything new a terrain vertex carries must morph
   between levels the same way (never read at the vertex's own sample whatever the level drawn).
 
