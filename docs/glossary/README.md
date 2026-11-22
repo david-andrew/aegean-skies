@@ -366,7 +366,8 @@ blue discs that stay in every frame are **speed flecks**.
   **Float slams:** planing across a chop, the floats strike its crests every few metres: she hops
   clear a moment and slams back, and each return throws its burst. Sized by the chop
   (`FlightEnv.chop`, `sea_chop_at`: the wind, and a sixth of it in a harbour's basin) and how fast
-  she planes, none in a calm, fading as she nears flying speed; the player's aircraft only; a kick,
+  she planes (a light chop only jostles her; hops from about a moderate breeze), none in a calm,
+  fading as she nears flying speed; the player's aircraft and the fighters only; a kick,
   not a contact load, so it costs no damage (`src/flight.jo` `_float_slams`, tests/float_slam_test.jo).
   The bank is one continuous wall: each float side's lobes are chained in the order they are
   thrown, and neighbours are joined by low **bridging lobes** seated on the water, sized from both
