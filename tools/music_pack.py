@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 import json, math, struct, zlib
 import mido
 from music_performance import score_clock, interpret, apply_performance_map, schubert_points, BeatMap, SCHUBERT_MIDI_QUARTER
+from music_grace import regrace
 from expressive_timing import ExpressiveTiming, timing_map, warp, MOODS, mood_timing, mood_touch
 ROOT = Path(__file__).resolve().parents[1]
 RATE = 16000
@@ -703,6 +704,12 @@ def arrange(name,notes):
    out.append([i*beat,.12,36 if i%2==0 else 38,DRUMS,.25,.25,99])
  return sorted(out)
 
+# Pieces whose grace notes the generic reading must not touch: the opening solo and the title's
+# music are annotated or transcribed note for note as played.
+GRACE_SKIP = {'mahler-opening', 'daphnis-lever-du-jour'}
+# Mutopia's LilyPond 2.6 exports leave a grace note sounding through its main note.
+GRACE_OVERLAPPED = {'thunder-lightning'}
+
 def pack(notes, mix_levels=False, sections=None):
  events=[]
  extended=len(notes[0])>7 and not mix_levels
@@ -761,6 +768,11 @@ def main():
   notes,performance,sections=build(name)
   performances[name]=performance
   notes,balanced,record=balance_notes(name,notes)
+  # Grace notes played as grace notes (tools/music_grace.py). After the balance, which is keyed on the
+  # notes before it: a grace note keeps its part's balance.
+  if name not in GRACE_SKIP:
+   notes,grace=regrace(notes,overlapped=name in GRACE_OVERLAPPED,clock=score_clock(ROOT/'data/music/source'/f'{source_of(name)}.mid',name))
+   performance.update(grace_notes=grace)
   if name in SUNG:SUNG[name]['windows']=sung_windows(name,notes)
   if record['status']=='kept':performance.update(balance_db=BALANCE[name]['gains_db'])
   performance.update(part_balance=record)

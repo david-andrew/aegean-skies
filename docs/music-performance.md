@@ -290,3 +290,29 @@ gains are kept (`balance_db`). Shelves and gains are in `data/music/balance.json
 
 Rebuild: `MUSIC_BALANCE=0 python tools/music_pack.py && python tools/music_balance.py &&
 python tools/music_pack.py` (about a minute and a half; `--measure` re-measures the packed result).
+
+## Grace notes
+
+`tools/music_grace.py` plays the sources' small notes as grace notes; `tools/music_pack.py` applies it
+after the part balance (which is keyed on the notes before it), so a grace note keeps its part's
+balance and no piece needs re-levelling for it (the whole-piece loudness moved by 0.03 LU or less).
+
+The sources lose them in three ways, none in the packer (it keeps every note of a duration):
+MuseScore's export gives a short note ending where the main note begins; LilyPond's gives it a
+fixed 10 or 21 ticks whatever the tempo (27 ms at 120 to the minute: a click); LilyPond 2.6's
+(Mutopia's older pieces, such as Unter Donner und Blitz) keeps its written length and leaves it
+sounding through the main note. A grace note is found by its shape (a quick note, or a group of up
+to four, shorter than a tenth of a beat, ending where a longer note begins; not a run, not a
+written trill's alternation, not a 32nd-note rhythm figure), then:
+
+* an **acciaccatura** (a group, or before a short or distant note) is 40-70 ms, ends at the beat,
+  and the note before it gives up the time;
+* an **appoggiatura** (one quick note a step from a main note of 0.45 s or more) sounds on the
+  beat and takes a third of the main note (0.09-0.30 s); the main note ends where it was written to.
+
+The source does not say which the score meant; this is the player's rule of thumb. A grace note
+is played at 0.9 of its main note's level. The singer (src/singer.jo) sings a grace note into its
+note (the pitch for the first moments, then the glide) instead of folding it into the note before.
+
+Not covered: ornaments the exports do not carry at all (LilyPond's `\trill`, `\turn` and `\prall`
+are held notes in the MIDI), and written-out ornaments (they are played as written).
