@@ -1984,7 +1984,9 @@ On the rivers branch until it lands.
   ground is (the ground's own painter) and cut by a pattern of crowns about six pixels wide, so
   from over it nothing shows, and a wooded ridge's outline against the sky or the land behind
   is crowns' tops and the gaps between them, not a line (the **far sheet**; it stands up to
-  three times the canopy's height, a few pixels); from 4 km to 3.4 km the sheet's own paint of
+  three times the canopy's height, a few pixels, and only where the land is seen nearly
+  edge-on, which is where an outline can show: where the land faces the eye it lies sunk under
+  the ground, and being drawn after the ground costs nothing there); from 4 km to 3.4 km the sheet's own paint of
   the crowns takes over by a dither; then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
   80 m), its top first. A far clump stands no more than half as tall again and is lit by the
@@ -1996,7 +1998,8 @@ On the rivers branch until it lands.
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
   lifted there: their woods are small, and the ground's paint of the crowns is the floor).
 - **Code:** `src/canopy.jo` (`wood_cover`); `src/world_terrain.jo` (the sheet:
-  `world_shell_vertex`, `world_shell_fragment`, `world_far_sheet_fragment_at`, `canopy_floor`, `CANOPY_END`,
+  `world_shell_vertex`, `world_shell_fragment`, `world_far_sheet_vertex`,
+  `world_far_sheet_fragment_at`, `canopy_floor`, `CANOPY_END`, `CANOPY_EDGE_ON`,
   `CANOPY_PAINT_END`, `CANOPY_CUT`; the billows: `billow_make`,
   `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
   `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
