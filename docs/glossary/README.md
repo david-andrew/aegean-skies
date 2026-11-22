@@ -618,9 +618,9 @@ On the rivers branch until it lands.
   (the aircraft's record mirrors its livery and keeps the paint written out); a game saved before
   it loads as built, or in the period paint its record wore. The page has three standings
   (`PaintPageMode`): free, a [paint shop](#paint-shop)'s (a draft, priced), or closed (painting is
-  done at a paint shop). `paint_free_anywhere` in `aegean.jo` is the one switch between free and
-  price-and-time: the sandbox's "Paint the aircraft anywhere, at any time" (`sandbox.paint_anywhere`,
-  off unless the player turns it on).
+  done at a paint shop). The pause menu's Paint page is a debug tool and always paints, free
+  (`paint_free_anywhere` in `aegean.jo`; `AEGEAN_PAINT_AT_SHOPS` makes it the shop's page, for
+  captures).
 - **Code:** `src/aircraft_paint.jo` (`Paint` in `src/markings.jo`; `paint_livery`, `paint_build`,
   `paint_support`, `paint_changes`, `paint_from_spec`), `src/aircraft_paint_view.jo`
   (`paint_page`); `set_player_paint`, `paint_step`, `player_model` in `aegean.jo`;
@@ -4520,7 +4520,7 @@ No image: the tiers differ in budgets more than in any single view.
 
 - **Aliases:** sandbox settings, playing freely, cheats.
 - **Definition:** the Settings page's Sandbox section, each a separate switch, each off, kept with
-  the options: paint the aircraft anywhere at any time; any aircraft at any time (the Aircraft
+  the options: any aircraft at any time (the Aircraft
   page among the player's tabs); unlimited money (the purse then reads ¤∞, on the view and at
   the foot of every counter's panel); no damage; no fuel use; endless ammunition. The
   simulation runs as usual: a switch lifts only the player's own constraint.
@@ -4537,9 +4537,8 @@ No image: the tiers differ in budgets more than in any single view.
   `src/sandbox_world.jo` (`sandbox_money_step`), `src/damage.jo` `set_damage_shield`,
   `Options.sandbox`, `GameSession.purse`, `shown_pages` in `src/debugmenu.jo`; hooks in
   `aegean.jo` (`no_damage_now`, `purse_hold`); `tests/sandbox_test.jo`,
-  `tests/sandbox_settings_test.jo`. A paint shop asks `sandbox.paint_anywhere` before it charges
-  money or time.
-- **Capture:** `AEGEAN_SANDBOX="money,damage,fuel,aircraft,paint,ammunition"` (or `all`);
+  `tests/sandbox_settings_test.jo`.
+- **Capture:** `AEGEAN_SANDBOX="money,damage,fuel,aircraft,ammunition"` (or `all`);
   `AEGEAN_CAPTURE_PANEL=settings-sandbox`; `AEGEAN_SANDBOX_TRACE=1` prints the purse, the tank
   and the airframe each second.
 
