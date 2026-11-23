@@ -5,6 +5,7 @@ No soundtrack recordings, soundfonts, voice models or generated audio assets shi
 `tools/music_pack.py` converts the checked-in source MIDI to compact events; its only
 third-party build dependency is `mido`. It has no network access. Runtime needs neither
 Python nor MIDI software. The generated `.z` files and `src/music_data.jo` are checked in.
+The status of every piece considered for the game, in the catalogue or not, is in `docs/music-status.md`.
 
 ## Sources and permissions (checked 12 November 2026)
 
