@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from music_grace import find_graces, regrace, ACCIACCATURA_S, APPOGGIATURA_MIN, APPOGGIATURA_MAX
 from music_performance import BeatMap
 
-STR = 0
+STR = 6      # the piano
 CLOCK = BeatMap([(0.0, 0.0, 0.5)], 4)      # 120 to the minute: a beat is half a second
 
 
@@ -44,6 +44,20 @@ class GraceTests(unittest.TestCase):
         self.assertTrue(APPOGGIATURA_MIN <= grace[1] <= APPOGGIATURA_MAX)
         self.assertAlmostEqual(main[0], grace[0] + grace[1], places=6)
         self.assertAlmostEqual(main[0] + main[1], 2.6, places=6)       # the main note ends where it was written to end
+
+    def test_an_appoggiatura_takes_a_quarter_of_the_main_note(self):
+        notes = [note(0.0, 1.0, 70), note(1.0 - 0.05, 0.05, 77), note(1.0, 0.8, 75)]
+        out, _ = regrace(notes, clock=CLOCK)
+        grace = next(n for n in out if n[2] == 77)
+        self.assertAlmostEqual(grace[1], 0.2, places=6)
+
+    def test_a_violin_acciaccatura_is_longer_than_a_pianos(self):
+        def grace_length(ins):
+            notes = [[0.0, 1.0, 72, ins, .6, .6, 1], [1.0 - 0.027, 0.027, 76, ins, .6, .6, 1], [1.0, 0.25, 74, ins, .6, .6, 1], [1.25, 0.5, 72, ins, .6, .6, 1]]
+            out, _ = regrace(notes, clock=CLOCK)
+            return next(n for n in out if n[2] == 76)[1]
+        self.assertLessEqual(grace_length(6), ACCIACCATURA_S[1] + 1e-9)       # the piano
+        self.assertGreaterEqual(grace_length(0), 0.1)                         # the violin
 
     def test_a_run_of_written_notes_is_not_a_grace_note(self):
         # eight sixteenths, then a long note: a run, not a grace note

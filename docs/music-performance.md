@@ -306,13 +306,17 @@ to four, shorter than a tenth of a beat, ending where a longer note begins; not 
 written trill's alternation, not a 32nd-note rhythm figure), then:
 
 * an **acciaccatura** (a group, or before a short or distant note) is 40-70 ms, ends at the beat,
-  and the note before it gives up the time;
+  and the note before it gives up the time (longer on the instruments that take a while to speak a
+  pitch, measured with the synthesizer: violin 120 ms, clarinet 90 ms, accordion and banjo 75 ms);
+  a *sung* one is 120 ms or more, begins before the beat on its own pitch, and then glides;
 * an **appoggiatura** (one quick note a step from a main note of 0.45 s or more) sounds on the
-  beat and takes a third of the main note (0.09-0.30 s); the main note ends where it was written to.
+  beat and takes a quarter of the main note (0.09-0.30 s); the main note ends where it was written to.
 
 The source does not say which the score meant; this is the player's rule of thumb. A grace note
 is played at 0.9 of its main note's level. The singer (src/singer.jo) sings a grace note into its
-note (the pitch for the first moments, then the glide) instead of folding it into the note before.
+note instead of folding it into the note before: the voice needs longer than an instrument to speak
+a pitch, so it starts 120 ms or more before the beat, on the grace note's own pitch (no glide into
+it), holds it, then glides to the note.
 
 Not covered: ornaments the exports do not carry at all (LilyPond's `\trill`, `\turn` and `\prall`
 are held notes in the MIDI), and written-out ornaments (they are played as written).

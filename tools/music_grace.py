@@ -16,7 +16,7 @@ is leaned on (an appoggiatura, on the beat); anything else is crushed in before 
 
 * acciaccatura: a quick note (ACCIACCATURA_S, 40-70 ms) ending where the main note begins, so it
   sounds just before the beat; the note it follows is cut short to make room.
-* appoggiatura: sounds on the beat and takes its time from the start of the main note (a third of
+* appoggiatura: sounds on the beat and takes its time from the start of the main note (a quarter of
   the main note's length, between APPOGGIATURA_MIN and APPOGGIATURA_MAX seconds); the main note
   ends where it was written to end.
 
@@ -38,8 +38,14 @@ MAIN_RATIO = 2.2          # the main note is this many times its length (or more
 MAIN_MIN_S = 0.10
 ACCIACCATURA_S = (0.040, 0.070)
 GROUP_NOTE_S = (0.032, 0.048)   # each note of a grace group
+# An instrument whose note takes a while to speak a pitch (measured with the synthesizer: a grace
+# note's pitch is held about as long as the note lasts for a piano, harp, brass, flute, oboe,
+# bassoon and plucked strings at 55 ms, but not for the violin (nothing at 55 ms, 50 ms at 90) or
+# much for the clarinet, accordion and banjo): an acciaccatura on one of them is longer.
+# (instrument number from music_pack: STRINGS 0, CLARINET 4, ACCORDION 9, BANJO 10)
+SLOW_START_S = {0: 0.12, 4: 0.09, 9: 0.075, 10: 0.075}
 APPOGGIATURA_MIN, APPOGGIATURA_MAX = 0.09, 0.30
-APPOGGIATURA_SHARE = 0.30
+APPOGGIATURA_SHARE = 0.25
 APPOGGIATURA_MAIN_MIN = 0.45   # the main note is at least this long (seconds) to be leaned on
 GRACE_GAIN = 0.9                # of the main note's level (clear, not forward)
 
@@ -158,9 +164,11 @@ def regrace(notes, overlapped=False, clock=None):
             if count == 1:
                 total = min(max(out[group[0]][DUR] if ACCIACCATURA_S[0] <= out[group[0]][DUR] <= ACCIACCATURA_S[1] else 0.055,
                                 ACCIACCATURA_S[0]), ACCIACCATURA_S[1])
-                total = min(total, m[DUR] * 0.4)
+                total = min(max(total, SLOW_START_S.get(out[group[0]][INS], 0.0)), m[DUR] * 0.4)
             else:
                 total = min(GROUP_NOTE_S[1] * count, max(GROUP_NOTE_S[0] * count, 0.1), m[DUR] * 0.4)
+                slow = SLOW_START_S.get(out[group[0]][INS], 0.0)
+                total = min(max(total, slow * (1 + 0.5 * (count - 1))), 0.25, m[DUR] * 0.4)
             each = total / count
             at = main_start - total
             # the note it follows gives up the time
