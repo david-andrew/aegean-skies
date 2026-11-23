@@ -1,0 +1,242 @@
+use 'render_space.jo'
+use 'depth_space.jo'
+use 'cloud_depth.jo'
+use 'look.jo'
+use 'canopy.jo'
+# ---------------- the land's outline, drawn on the screen ----------------
+# Wherever wooded land ends against the sky, the water or farther land, its line on the screen
+# is crowns' tops and the gaps between them, at any distance: a wood's height past the reach of
+# its canopy's geometry (src/world_terrain.jo) shows only there, and a few metres of trees are a
+# few pixels of outline. Nothing is placed in the world and there is no distance where it
+# begins or ends: a crown is drawn as tall as its metres are pixels at the land's own depth, so
+# it is under a pixel by 20 km, and it is the land's own colour, which the air has already
+# taken.
+# Two passes, both from the scene's depth, after the opaque scene and the water and before the
+# clouds (with the cloud shadows' passes: the scene's render pass is split once for all):
+# 1. the lines, into a picture of their own an eighth the size (it reads the scene's colour, which a
+#    pass drawn into the scene cannot): where the land's line runs within reach, the land's
+#    colour just under it and how wooded it is there. The ground and the canopy's sheet leave
+#    that in the scene's alpha (one less it: src/terrain.jo ground_surface, from the stand
+#    cover the ground paints its far woods by; world_shell_fragment), so only wooded ground has
+#    an outline: not an aircraft, a town or a cloud, and not a wood within 1.8 km, where its
+#    canopy's domes are its outline (it comes in from there to 2.6 km, as the domes go).
+# 2. the crowns, onto the scene: a pixel near a line looks down the screen (as the world's up
+#    runs on it) for the land's line under it, finds the land's point there from its depth, and
+#    is covered if a crown standing there reaches it; a crown's top covers its last pixel by the
+#    part it reaches. Only the picture's 32-pixel blocks with a line in them are drawn at all
+#    (each block's vertices look the lines up: a pass over every pixel, to throw nearly all of
+#    them away, was 0.45 ms on the laptop).
+# The crowns are a pattern fixed to the world, so they stay on the land as the eye moves: a
+# profile along the land's line, about six pixels a crown at the line's depth, each size passing
+# into the next. It goes by where the land's point lies ACROSS the eye's ray only (along one of
+# 64 fixed bearings, the two nearest the ray's mixed): a line seen edge-on is a pixel hundreds
+# of metres deep, so the depth says where its point is along the ray to no better than that
+# from one frame to the next, and a pattern that went by it too crawled.
+# A cloud behind a ridge is drawn over the ridge's crowns (the clouds go by the scene's depth,
+# which has none of them): against a cloud the line is plain.
+const SILHOUETTE_HEIGHT = 36.0      # (m: how far a wood's tallest crowns stand over the land's line: half as tall again as its trees, as the canopy's far masses stand, so a wood reads at a distance)
+const SILHOUETTE_REACH = 8          # (pixels: the tallest a crown is drawn)
+const SILHOUETTE_CROWN = 6.0        # (pixels: about how wide a crown is drawn, whatever the distance)
+const SILHOUETTE_STEP = 0.7         # (the land's line: where the land is nearer than what is over it by this ratio)
+
+struct SilhouetteVertex:
+    corner: vec2
+
+struct SilhouetteOut:
+    pos: vec4
+    ndc: vec2
+
+struct SilhouetteLineParams:
+    scene: Texture                  # the scene's colour; alpha: one less how wooded the land is
+    depth: Texture
+    depth_ab: vec2
+    up: vec2                        # a pixel of the scene up the screen as the world's up runs on it (uv)
+
+struct SilhouetteParams:
+    lines: Texture                  # pass 1's picture: the land's colour by how wooded it is, and how wooded
+    depth: Texture
+    depth_ab: vec2
+    up: vec2
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    origin: vec3
+    pixel: f32                      # the metres a pixel covers, per metre of distance
+    height: f32                     # (m) SILHOUETTE_HEIGHT, less as the eye looks down on the land
+    block: vec2                     # a block's size (uv)
+    texel: vec2                     # a pixel of the lines' picture (uv)
+    haze: vec3
+    fog: f32
+
+# (a block of the picture: its lower left corner, uv)
+struct SilhouetteBlock:
+    at: vec2
+
+# (how far a pixel's surface is; a pixel of sky: very far)
+silhouette_distance = (raw: f32,ab: vec2) -> f32: if world_has_depth(raw,ab): world_depth_decode(raw,ab) else: 1000000000.0
+
+silhouette_line_vs = (v: SilhouetteVertex,u: SilhouetteLineParams) -> SilhouetteOut:
+    ndc = v.corner*2.0-vec2(1,1)
+    SilhouetteOut(vec4(ndc,0,1),ndc)
+
+silhouette_line_fs = (i: SilhouetteOut,u: SilhouetteLineParams) -> vec4:
+    uv = i.ndc*0.5+vec2(0.5,0.5)
+    # (four probes first, from three pixels over this one to thirteen under it: most of the
+    # picture has no line near. A pixel of this picture is eight of the scene's each way, and a
+    # crown reaches eight over its line: with these the crowns' pass, which reads this picture
+    # between its pixels, has the line in at least the nearer of the two it reads between)
+    a = silhouette_distance(sample(u.depth,uv+u.up*3.0).x,u.depth_ab)
+    b = silhouette_distance(sample(u.depth,uv-u.up*3.0).x,u.depth_ab)
+    c = silhouette_distance(sample(u.depth,uv-u.up*8.0).x,u.depth_ab)
+    d = silhouette_distance(sample(u.depth,uv-u.up*13.0).x,u.depth_ab)
+    if b >= a*SILHOUETTE_STEP and c >= b*SILHOUETTE_STEP and d >= c*SILHOUETTE_STEP: return vec4(0,0,0,0)
+    # (the first line going down)
+    over = a
+    at: f32 = -100.0
+    loop k in 1..17:
+        z = silhouette_distance(sample(u.depth,uv+u.up*(3.0-f32(k))).x,u.depth_ab)
+        if at < -50.0 and z < over*SILHOUETTE_STEP: at = 3.0-f32(k)
+        over = z
+    if at < -50.0: return vec4(0,0,0,0)
+    # (the land two pixels inside its line)
+    land = sample(u.scene,uv+u.up*(at-2.0))
+    wood = 1.0-land.w
+    vec4(land.xyz*wood,wood)
+
+# (a block is drawn if any of the lines' picture under it, or within a pixel of that about it,
+# holds a line: nine filtered reads at the corners between its pixels, two apart, see them all)
+silhouette_vs = (v: SilhouetteVertex,b: SilhouetteBlock,u: SilhouetteParams) -> SilhouetteOut:
+    held: f32 = 0.0
+    loop j in 0..3:
+        loop k in 0..3:
+            held += sample_lod(u.lines,b.at+vec2(f32(k),f32(j))*2.0*u.texel,0.0).w
+    ndc = (b.at+v.corner*u.block)*2.0-vec2(1,1)
+    if held <= 0.0: return SilhouetteOut(vec4(2,2,2,1),ndc)
+    SilhouetteOut(vec4(ndc,0,1),ndc)
+
+# The crowns' profile along a line: value noise of one coordinate (seed: which profile).
+silhouette_profile = (s: f32,seed: f32) -> f32:
+    i = floor(s)
+    f = s-i
+    mix(hash21(vec2(i,seed)),hash21(vec2(i+1.0,seed)),f*f*(3.0-2.0*f))
+
+# The profile at a point (absolute xz) for one of the 64 fixed bearings (k: around the compass,
+# evenly by x/(|x|+|z|), which needs no arc tangent): by where the point lies across that bearing.
+silhouette_across = (q: vec2,k: f32,size: f32,seed: f32) -> f32:
+    a = fract(k/64.0)*4.0-1.0
+    w = if a < 1.0: a else: 2.0-a
+    along = normalize(vec2(w,(if a < 1.0: 1.0 else: -1.0)*(1.0-abs(w))))
+    silhouette_profile(dot(q,vec2(along.y,0.0-along.x))/size+k*17.31,seed+k*3.7)
+
+silhouette_fs = (i: SilhouetteOut,u: SilhouetteParams) -> vec4:
+    uv = i.ndc*0.5+vec2(0.5,0.5)
+    m = sample(u.lines,uv)
+    if m.w < 0.03: discard()
+    # (the lines under this pixel, within a crown's reach: the one whose crowns could cover the
+    # most of it, a near ridge's before a far one's)
+    over = silhouette_distance(sample(u.depth,uv).x,u.depth_ab)
+    under: f32 = 0.0
+    far: f32 = 0.0
+    best: f32 = 0.0
+    loop k in 1..SILHOUETTE_REACH+1:
+        z = silhouette_distance(sample(u.depth,uv-u.up*f32(k)).x,u.depth_ab)
+        if z < over*SILHOUETTE_STEP:
+            reach = u.height/(z*u.pixel)-f32(k-1)
+            if reach > best: best = reach; under = f32(k); far = z
+        over = z
+    if best <= 0.0: discard()
+    # (the land's point at its line there)
+    ray = normalize((u.rays*vec4(i.ndc-u.up*(2.0*under),1,0)).xyz)
+    p = u.cam+ray*(far/max(dot(ray,u.forward),0.0001))
+    q = p.xz+u.origin.xz
+    # (the ray's bearing among the 64, and how far on toward the next)
+    flat = ray.xz/max(abs(ray.x)+abs(ray.z),0.000001)
+    turn = (if flat.y >= 0.0: flat.x+1.0 else: 3.0-flat.x)*16.0
+    k0 = floor(turn)
+    # (the crowns: the profile at the size that is SILHOUETTE_CROWN pixels there, passing into the next size)
+    metres = far*u.pixel
+    level = log2(max(metres*SILHOUETTE_CROWN/6.0,1.0))
+    lf = floor(level)
+    size = 3.0*pow(2.0,lf)
+    n0 = mix(silhouette_across(q,k0,size,lf*11.3),silhouette_across(q,k0,size*2.0,lf*11.3+11.3),level-lf)
+    n1 = mix(silhouette_across(q,k0+1.0,size,lf*11.3),silhouette_across(q,k0+1.0,size*2.0,lf*11.3+11.3),level-lf)
+    n = mix(n0,n1,turn-k0)
+    # (a wood's line stands whole, two fifths of its height, and its crowns over that)
+    crown = 0.4+0.6*clamp((n-0.36)*4.0,0.0,1.0)
+    # (how wooded: read between a pixel of the lines' picture that holds the line and one that
+    # does not it is as little as half what it is, so a third of a closed wood counts as the whole)
+    high = min(u.height*clamp(m.w*3.0,0.0,1.0)*crown/metres,f32(SILHOUETTE_REACH))
+    cover = clamp(high-(under-1.0),0.0,1.0)
+    if cover < 0.02: discard()
+    # (the land's own colour, a fifth darker under the air between: crowns against the light.
+    # The land's colour has the air in it already; the darkening is of what the air lets through)
+    land = m.xyz/m.w
+    air = land_aerial_terms(p,u.cam,u.fog)
+    vec4(land-max(land-mix(u.haze*vec3(0.54,0.84,0.98),u.haze,air.y)*(1.0-air.x),vec3(0,0,0))*0.2,cover)
+
+silhouette_line_sh = Shader()
+silhouette_sh = Shader()
+silhouette_quad = Mesh()
+silhouette_blocks: InstanceBuffer[SilhouetteBlock]
+silhouette_blocked = ivec2(0,0)     # (the lines' picture the blocks were laid out for)
+silhouette_lines = RenderTarget()
+silhouette_ready = false
+# (timing only: AEGEAN_OUTLINE=0, none drawn; AEGEAN_OUTLINE=lines, the lines found and no crowns drawn)
+silhouette_off = (env("AEGEAN_OUTLINE") ?? "") == "0"
+silhouette_lines_only = (env("AEGEAN_OUTLINE") ?? "") == "lines"
+silhouette_up = vec2(0,0)
+silhouette_height: f32 = 0.0
+
+# 1. The lines, into their own picture: beside the cloud shadows' factor pass.
+silhouette_line_pass = (chart: vec3,vp: mat4):
+    global silhouette_line_sh,silhouette_sh,silhouette_quad,silhouette_lines,silhouette_ready,silhouette_up,silhouette_height,silhouette_blocks,silhouette_blocked
+    silhouette_ready = false
+    if silhouette_off or not __post_active or scene_depth().id == 0: return
+    # (the world's up on the screen: its part across the picture and up it; looking down on the
+    # land there is no outline to stand crowns on, and they shrink to nothing)
+    right = vec3(vp[0].x,vp[1].x,vp[2].x); upward = vec3(vp[0].y,vp[1].y,vp[2].y)
+    stands = vec2(right.y/max(length(right),0.000001),upward.y/max(length(upward),0.000001))
+    upright = length(stands)
+    silhouette_height = f32(SILHOUETTE_HEIGHT)*clamp((upright-0.35)/0.3,0.0,1.0)
+    if silhouette_height <= 0.0: return
+    sw = scene_depth().width; sh = scene_depth().height
+    silhouette_up = stands/upright/vec2(f32(sw),f32(sh))
+    if silhouette_sh.prog == 0:
+        silhouette_line_sh = make_shader(shader(silhouette_line_vs,silhouette_line_fs))
+        silhouette_sh = make_shader(shader(silhouette_vs,silhouette_fs))
+        silhouette_quad = mesh([SilhouetteVertex(vec2(0,0)),SilhouetteVertex(vec2(1,0)),SilhouetteVertex(vec2(0,1)),SilhouetteVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
+    zone("outline lines")
+    w = max(1,sw/8); h = max(1,sh/8)
+    if silhouette_lines.texture.width != w or silhouette_lines.texture.height != h:
+        if silhouette_lines.fbo != 0: free_render_target(silhouette_lines)
+        tex = texture(image(w,h),true)
+        set_mipmaps(tex,false)
+        fbo = gl_create_framebuffer()
+        glBindFramebuffer(GL_FRAMEBUFFER,u32(fbo))
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,u32(tex.id),0)
+        silhouette_lines = RenderTarget(tex,fbo,0)
+    if silhouette_blocked.x != w or silhouette_blocked.y != h:
+        # (blocks of 4 x 4 of the lines' pixels, 32 x 32 of the scene's)
+        blocks: SilhouetteBlock[] = []
+        loop j in 0..(h+3)/4:
+            loop k in 0..(w+3)/4: blocks.push(SilhouetteBlock(vec2(f32(k*4)/f32(w),f32(j*4)/f32(h))))
+        if silhouette_blocked.x == 0: silhouette_blocks = instance_buffer(blocks) else: set_instances(silhouette_blocks,blocks)
+        silhouette_blocked = ivec2(w,h)
+    cull(.none); blend(.none); depth_test(.off); depth_write(false)
+    glBindFramebuffer(GL_FRAMEBUFFER,u32(silhouette_lines.fbo))
+    glViewport(0,0,i32(w),i32(h))
+    draw(silhouette_line_sh,silhouette_quad,SilhouetteLineParams(__scene_rt.texture,scene_depth(),world_depth_params(),silhouette_up))
+    silhouette_ready = true
+    zone_end()
+
+# 2. The crowns, onto the scene: in the composite framebuffer, before the shadows and the clouds.
+silhouette_draw = (chart: vec3,vp: mat4,haze: vec3,fog: f32):
+    if not silhouette_ready or silhouette_lines_only: return
+    zone("outline")
+    rays = render_rays(vp)
+    upward = vec3(vp[0].y,vp[1].y,vp[2].y)
+    pixel = 2.0/(length(upward)*f32(scene_depth().height))
+    w = f32(silhouette_lines.texture.width); h = f32(silhouette_lines.texture.height)
+    blend(.alpha)
+    draw_instanced(silhouette_sh,silhouette_quad,silhouette_blocks,SilhouetteParams(silhouette_lines.texture,scene_depth(),world_depth_params(),silhouette_up,rays,render_eye(chart),normalize(rays[2].xyz),chart,pixel,silhouette_height,vec2(4.0/w,4.0/h),vec2(1.0/w,1.0/h),haze,fog))
+    zone_end()
