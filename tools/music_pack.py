@@ -143,6 +143,10 @@ PIECES = [
  # (the singer's line), the piano as written; the whole song, its three strophes as printed. On the
  # classical station's round and, one evening in three, in the hotel's set.
  ('schubert-ave-maria', 'Ave Maria (Ellens dritter Gesang)', 'Franz Schubert', 'Voice of Kalyra'),
+ # The New World Symphony's other two movements (mike320's full-orchestra transcriptions, the
+ # Largo's companions on the concert hall's programme).
+ ('new-world-scherzo', 'Symphony No. 9 "From the New World": Scherzo', 'Antonin Dvorak', 'Kalyra Concert Hall'),
+ ('new-world-finale', 'Symphony No. 9 "From the New World": Allegro con fuoco', 'Antonin Dvorak', 'Kalyra Concert Hall'),
 ]
 
 # An arrangement's own high shelf (dB per instrument number above hz): the orchestral
@@ -174,7 +178,7 @@ HALL = {'adagietto', 'mahler-opening', 'gymnopedie-orchestra', 'new-world-largo'
         'beethoven-fifth-finale', 'pathetique-finale', 'rachmaninoff-third', 'meistersinger-prelude', 'liebestod', 'valkyries',
         'traumerei', 'brandenburg-two', 'pange-lingua', 'brahms-first-finale',
         'coriolan', 'egmont', 'emperor-allegro', 'emperor-adagio', 'ninth-first', 'ninth-finale', 'rejouissance', 'handel-oboe', 'mahler-fifth-storm', 'mahler-ninth-rondo', 'clarinet-allegro', 'mozart-forty-finale', 'jupiter', 'tchaikovsky-fourth-finale', 'verdi-sanctus', 'ballade-two', 'chopin-berceuse', 'fantaisie-impromptu', 'nocturne-fsharp', 'polonaise-csharp',
-        'bassoon-andante', 'flute-andante', 'horn-concerto-two', 'fantasia-d-minor', 'mozart-twentyfive', 'mozart-twentyfive-andante', 'nachtmusik-rondo', 'clarinet-quintet-larghetto', 'beethoven-fifth-andante', 'brahms-intermezzo', 'midsummer-intermezzo'}
+        'bassoon-andante', 'flute-andante', 'horn-concerto-two', 'fantasia-d-minor', 'mozart-twentyfive', 'mozart-twentyfive-andante', 'nachtmusik-rondo', 'clarinet-quintet-larghetto', 'beethoven-fifth-andante', 'brahms-intermezzo', 'midsummer-intermezzo', 'new-world-scherzo', 'new-world-finale'}
 
 # Pieces that are another arrangement of one source score (data/music/source/<source>.mid).
 SOURCE = {'gymnopedie-orchestra': 'gymnopedie', 'daphnis-lever-du-jour': 'daphnis-155-24'}
@@ -385,6 +389,8 @@ MOOD = {
  'greek-astrapsen-i-anatoli': ('tender', 'a Greek song from the 1877 collection'),
  'schubert-ave-maria': ('tender', "Ellen's prayer to the Virgin: very slow, sustained over rocking arpeggios, hushed"),
  'daphnis-lever-du-jour': ('dreamy', 'daybreak: brooks murmuring in flutes, clarinets and harps, birdsong, the theme rising to full light'),
+ 'new-world-scherzo': ('dance-like', "the scherzo's wild dance in three, its lilting trio between: light, quick, the pulse held"),
+ 'new-world-finale': ('stately', "the finale's brass theme and its return of the earlier movements' themes: driving, broad, the pulse held"),
 }
 
 # Pieces played in their mood through the expressive-timing system (generic rubato off in CONFIG);
@@ -648,7 +654,13 @@ def greek_song(name, notes):
 
 SCHUBERT_CLOCK=BeatMap(schubert_points(),4)
 
+# Tracks the synthesizer has no voice for, left out (as the Daphnis' bass drum): the Scherzo's
+# triangle (exported on the celesta's program, it would sound as a violin at A5) and the Finale's
+# one crash cymbal stroke (it would sound as a tom).
+DROPPED_TRACKS = {'new-world-scherzo': {11}, 'new-world-finale': {13}}
+
 def arrange(name,notes):
+ if name in DROPPED_TRACKS:notes=[n for n in notes if n[6] not in DROPPED_TRACKS[name]]
  if name=='gymnopedie-orchestra':return gymnopedie_orchestra(notes)
  if name.startswith('greek-'):return greek_song(name,notes)
  if name=='daphnis-lever-du-jour':return daphnis_lever(notes)

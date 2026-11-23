@@ -25,6 +25,8 @@ The status of every piece considered for the game, in the catalogue or not, is i
 | Adelita | Francisco Tárrega (1852–1909) | [Mutopia, TarregaF/adelita-duo](https://www.mutopiaproject.org/ftp/TarregaF/adelita-duo/), Jeffrey Olson's two-guitar arrangement, Antich y Tena | Mutopia explicitly marks the arrangement **Public Domain** |
 | Berceuse (Dolly, Op. 56) | Gabriel Fauré (1845–1924), 1894 | [Mutopia, FaureG/O56](https://www.mutopiaproject.org/ftp/FaureG/O56/faure_dolly_berceuse/), Mike Blackstock's flute-and-guitar adaptation, Hamelle | Mutopia explicitly marks the adaptation **Public Domain** |
 | Symphony No. 9 "From the New World", II: Largo | Antonín Dvořák (1841–1904), 1894 | [julian9284, score 4285886](https://musescore.com/julian9284/scores/4285886) | CC0 1.0 |
+| Symphony No. 9 "From the New World", III: Scherzo (Molto vivace) | Dvořák, 1894 | [mike320, score 1509886](https://musescore.com/user/6105546/scores/1509886) | Public Domain Mark 1.0 (the uploader's mark on MuseScore; PDMX records no licence conflict) |
+| Symphony No. 9 "From the New World", IV: Allegro con fuoco | Dvořák, 1894 | [mike320, score 1509896](https://musescore.com/user/6105546/scores/1509896) | Public Domain Mark 1.0 (the uploader's mark on MuseScore; PDMX records no licence conflict) |
 | Symphony No. 7, II: Allegretto | Ludwig van Beethoven (1770–1827), 1816 | [alexander, score 949716](https://musescore.com/user/15685/scores/949716) | CC0 1.0 |
 | Eine kleine Nachtmusik, I: Allegro | Wolfgang Amadeus Mozart (1756–1791), 1827 | [madmax82, score 2225101](https://musescore.com/user/1817676/scores/2225101) | CC0 1.0 |
 | Clarinet Concerto K. 622, II: Adagio | Mozart, 1801 | [NekMib_, score 5486316](https://musescore.com/user/16850931/scores/5486316) | CC0 1.0 |
@@ -223,6 +225,9 @@ a small subset of metadata retained. This is not an endorsement by any source au
   the cello's low notes an octave down on the bass; the voices of *Va, pensiero*, *Melita* and the
   *Lohengrin* chorus (exported as piano or clarinet parts) are sung by the choir; *Santa Lucia*'s
   voice is played on the mandolin; *Funiculì, funiculà*'s two violins become mandolin and guitar.
+  The New World's Scherzo and Finale leave out the one percussion part the synthesizer has no voice
+  for (the Scherzo's triangle, the Finale's single crash cymbal stroke); trombones and the bass
+  trombone play on the brass timbre.
   Each piece is played at one level, measured to sit at the hand-set pieces' loudness
   (`tools/music_level.py`, `levels.json`). On the radio, a station plays its style's pieces one
   after another, each from its start (`src/radio_synth.jo` radio_pool).

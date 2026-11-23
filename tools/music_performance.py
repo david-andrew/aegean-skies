@@ -121,6 +121,9 @@ CONFIG = {
  'beethoven-fifth-andante': (4,.5,4,{8},0.04,0.12,0.18,0),
  'brahms-intermezzo': (4,.5,4,{1},0.06,0.15,0.24,0),
  'midsummer-intermezzo': (4,.5,4,{6},0.06,0.15,0.24,0),
+ # The New World's Scherzo (3/4, a quarter 0.25 s; the first violins) and Finale (the first violins)
+ 'new-world-scherzo': (3,.25,4,{12},.02,.10,.12,0),
+ 'new-world-finale': (4,.5,4,{14},.04,.12,.18,0),
  'greek-sta-giannina': (3,.5,4,{0},0.025,0.12,0.15,0),
  'greek-ta-matakia-sou-ta-mavra': (2,.5,4,{0},0.025,0.12,0.15,0),
  'greek-san-pethano-sto-karavi': (3,.5,4,{0},0.025,0.12,0.15,0),
