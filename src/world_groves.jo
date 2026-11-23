@@ -24,6 +24,8 @@ use 'settlement_purpose.jo'
 struct WoodsDraw:
     edge: f64
     buffer: InstanceBuffer[CrownClump]
+    first: int
+    count: int
     fade: f32
 
 struct WorldGrove:
@@ -32,10 +34,15 @@ struct WorldGrove:
     roads: int
     places: int
     grove: Grove
-    crowns: InstanceBuffer[CrownClump]
-    wood: InstanceBuffer[Instance3D]
-    woods_buffer: InstanceBuffer[CrownClump]   # (the woods' one clump a crown: to WOODS_END)
-    woods_near_buffer: InstanceBuffer[CrownClump]   # (their near clumps: to about 80 m)
+    inst_buf: InstanceBuffer[Instance3D]? = none    # packed [kinds 0..PLANT_KINDS, wood]
+    wood_first: int = 0
+    wood_count: int = 0
+    crown_buf: InstanceBuffer[CrownClump]? = none   # packed [trees, woods_far, woods_near]
+    trees_count: int = 0
+    woods_far_first: int = 0
+    woods_far_count: int = 0
+    woods_near_first: int = 0
+    woods_near_count: int = 0
     born: f64 = -100.0             # (when its trees and its woods were made: they fade in)
     woods_born: f64 = -100.0
     # (the woods' crowns, made a few rows of the canopy's cells a frame after the trees: wood_step)
@@ -103,9 +110,7 @@ _world_grove_fill = (node: WorldTile) -> int:
         if world_groves[k].key == node.key: found = k; break
     if found >= 0: pass
     else if world_groves.len() < WORLD_GROVE_SLOTS:
-        empty: Instance3D[]
-        no_crowns: CrownClump[]
-        world_groves.push(WorldGrove(grove=Grove(vec2(0,0),160.0,[loop k in 0..PLANT_KINDS: instance_buffer(empty)]),crowns=instance_buffer(no_crowns),wood=instance_buffer(empty),woods_buffer=instance_buffer(no_crowns),woods_near_buffer=instance_buffer(no_crowns)))
+        world_groves.push(WorldGrove(grove=Grove(vec2(0,0),160.0)))
         found = world_groves.len()-1
     else:
         oldest = world_frame
@@ -131,11 +136,22 @@ _world_grove_fill = (node: WorldTile) -> int:
     walk_publish("worldgrove:{found}",solids)
     g = world_groves[found]
     clumps,wood = crowns_of_lists(lists)
-    loop k in 0..PLANT_KINDS: set_instances(g.grove.kinds[k],lists[k])
-    set_instances(g.crowns,clumps); set_instances(g.wood,wood)
-    g.trees = clumps; g.woods = []
-    no_woods: CrownClump[]
-    set_instances(g.woods_buffer,no_woods); set_instances(g.woods_near_buffer,no_woods)
+    inst_all: Instance3D[]
+    firsts: int[]; counts: int[]
+    loop k in 0..PLANT_KINDS:
+        firsts.push(inst_all.len()); counts.push(lists[k].len()); inst_all.extend(lists[k])
+    g.wood_first = inst_all.len(); g.wood_count = wood.len(); inst_all.extend(wood)
+    if let b = g.inst_buf:
+        mb = b; set_instances(mb, inst_all); g.inst_buf = mb
+    else if inst_all.len() > 0:
+        g.inst_buf = instance_buffer(inst_all)
+    g.grove.shared = g.inst_buf; g.grove.first = firsts; g.grove.counts = counts
+    if let cb = g.crown_buf:
+        mcb = cb; set_instances(mcb, clumps); g.crown_buf = mcb
+    else if clumps.len() > 0:
+        g.crown_buf = instance_buffer(clumps)
+    g.trees = clumps; g.trees_count = clumps.len()
+    g.woods = []; g.woods_far_first = 0; g.woods_far_count = 0; g.woods_near_first = 0; g.woods_near_count = 0
     g.born = time(); g.woods_born = -100.0
     g.stand = stand0; g.rise = rise0; g.ground = ground0
     g.woods_next = -1
@@ -243,12 +259,10 @@ draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
         return
     zone("world groves")
     visible: Grove[]
-    visible_crowns: InstanceBuffer[CrownClump][]
-    visible_fades: f32[]
+    visible_crowns: CrownSlice[]
     woods_lists: WoodsDraw[]
     now = time()
     visible_slots: int[]
-    visible_wood: InstanceBuffer[Instance3D][]
     wanted: WorldTile[]
     loop tile_slot in world_selected:
         # Published domains already pass the terrain frustum test.
@@ -261,15 +275,8 @@ draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
             if found < 0: continue
             world_grove_generated += 1
         g = world_groves[found]; g.used = world_frame; world_groves[found] = g
-        loop kind in g.grove.kinds: world_grove_count += kind.count
+        loop c in g.grove.counts: world_grove_count += c
         visible.push(g.grove)
-        visible_crowns.push(g.crowns); visible_wood.push(g.wood)
-        visible_fades.push(f32(clamp((now-g.born)/0.6,0.0,1.0)))
-        # (the woods' buffers only for tiles within their bands' reach)
-        edge = max(f64(length(cam.xz-g.grove.center))-160.0,0.0)
-        wf = f32(clamp((now-g.woods_born)/0.6,0.0,1.0))
-        if edge < WOODS_END+f64(CROWN_FADE)*2.0: woods_lists.push(WoodsDraw(edge,g.woods_buffer,wf))
-        if edge < 150.0+f64(CROWN_FADE): woods_lists.push(WoodsDraw(edge-1.0,g.woods_near_buffer,wf))
         visible_slots.push(found)
     world_grove_visible = visible.len()
     # (then the coming view's, with what is left of the frame's one)
@@ -280,14 +287,27 @@ draw_world_groves = (meshes: Mesh[],L: Light,t: f64):
     zone_end()
     draw_groves(meshes,visible,L,t)
     zone("crowns")
+    # (gather crown slices after wood_step so newly completed woods show immediately)
+    loop slot in visible_slots:
+        g = world_groves[slot]
+        if let cb = g.crown_buf:
+            fade = f32(clamp((now-g.born)/0.6,0.0,1.0))
+            if g.trees_count > 0: visible_crowns.push(CrownSlice(cb,0,g.trees_count,fade))
+            # (the woods' buffers only for tiles within their bands' reach)
+            edge = max(f64(length(cam.xz-g.grove.center))-160.0,0.0)
+            wf = f32(clamp((now-g.woods_born)/0.6,0.0,1.0))
+            if edge < WOODS_END+f64(CROWN_FADE)*2.0 and g.woods_far_count > 0: woods_lists.push(WoodsDraw(edge,cb,g.woods_far_first,g.woods_far_count,wf))
+            if edge < 150.0+f64(CROWN_FADE) and g.woods_near_count > 0: woods_lists.push(WoodsDraw(edge-1.0,cb,g.woods_near_first,g.woods_near_count,wf))
     # (the woods nearest first: their crowns hide the farther ones' before those are shaded)
     woods_lists.sort((w: WoodsDraw) -> f64: w.edge)
-    loop w in woods_lists: visible_crowns.push(w.buffer); visible_fades.push(w.fade)
-    draw_crowns(visible_crowns,visible_fades,crown_params(L,t,render_quality.grove_distance))
+    loop w in woods_lists: visible_crowns.push(CrownSlice(w.buffer,w.first,w.count,w.fade))
+    draw_crown_slices(visible_crowns,crown_params(L,t,render_quality.grove_distance))
     limb = crown_limb()
     p = obj_params(L,t)
-    loop w in visible_wood:
-        if w.count > 0: draw_instanced(crown_limb_sh,limb,w,p)
+    loop slot in visible_slots:
+        g = world_groves[slot]
+        if g.wood_count > 0:
+            if let ib = g.inst_buf: draw_instanced(crown_limb_sh,limb,ib,p,g.wood_first,g.wood_count)
     zone_end()
     zone_end()
 
@@ -416,7 +436,15 @@ wood_step = (visible: int[],until: f64):
                 far: CrownClump[] = [loop c in g.woods: if c.color.w > 3.5 and c.color.w < 4.5: c]
                 loop c in g.woods:
                     if c.color.w > 4.5 and c.color.w < 5.5: near.push(c)
-                set_instances(g.woods_buffer,far); set_instances(g.woods_near_buffer,near)
+                combined: CrownClump[] = []
+                combined.extend(g.trees)
+                g.trees_count = g.trees.len()
+                g.woods_far_first = combined.len(); g.woods_far_count = far.len(); combined.extend(far)
+                g.woods_near_first = combined.len(); g.woods_near_count = near.len(); combined.extend(near)
+                if let cb = g.crown_buf:
+                    mcb = cb; set_instances(mcb, combined); g.crown_buf = mcb
+                else if combined.len() > 0:
+                    g.crown_buf = instance_buffer(combined)
                 g.woods_born = time()
         world_groves[k] = g
         if time() >= until: return
