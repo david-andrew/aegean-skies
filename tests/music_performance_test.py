@@ -27,11 +27,12 @@ class Performance(unittest.TestCase):
  def test_solo_call_extended_events_round_trip(self):
   from music_pack import opening,pack
   notes=opening();blob,end,events=pack(notes);raw=zlib.decompress(blob,wbits=-15)
-  self.assertEqual(raw[:4],b'MUS2');self.assertEqual(len(raw),16+24*14)
-  self.assertEqual(struct.unpack_from('<I',raw,4)[0],24)
+  self.assertEqual(raw[:4],b'MUS2');self.assertEqual(len(raw),16+len(events)*14)
+  self.assertEqual(struct.unpack_from('<I',raw,4)[0],len(events))
   for i,n in enumerate(events):self.assertEqual(struct.unpack_from('<IIBBBBBB',raw,16+i*14),n)
-  self.assertEqual(events[15][2],64);self.assertEqual(events[-1][2],73)
-  self.assertLess(end/16000,20)
+  # the solo call first (to bar 8), then the orchestra's transcription to bar 28
+  self.assertEqual(events[15][2],64);self.assertEqual(events[23][2],73)
+  self.assertTrue(50<end/16000<75)
  def test_annotated_clock_keeps_effort_separate_from_mix(self):
   from music_pack import pack
   notes=[[0,1,60,7,.5,.6,0],[1,1,64,0,.6,.5,2]]
