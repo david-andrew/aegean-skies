@@ -146,6 +146,105 @@ crown_tuft_sheet = () -> Image:
             img.set(x,y,vec4(clamp(best.x*0.5+0.5,0.0,1.0),clamp(best.y*0.5+0.5,0.0,1.0),clamp(bd*CROWN_TUFT_FAR,0.0,1.0),n))
     img
 
+# Seamless 3D octahedral tuft sphere (made once at start, procedural): 140 organic 3D tuft
+# centres distributed across the unit sphere (Fibonacci lattice + jitter + repulsion). Every
+# texel stores the 3D offset from its unit direction to the nearest tuft centre (rgb, scaled by
+# CROWN_OCT_MAX) and the exact 3D chord distance (a). Continuous across every octahedral fold:
+# zero cube-face seams and 100% object-space camera-invariant.
+const CROWN_OCT_PIXELS = 256
+const CROWN_OCT_TUFTS = 160
+const CROWN_OCT_MAX = 0.34
+const CROWN_OCT_ROUND = 0.155
+crown_oct_tex: Texture = Texture()
+
+crown_oct_encode = (n: vec3) -> vec2:
+    inv = 1.0/max(abs(n.x)+abs(n.y)+abs(n.z),0.00001)
+    p = n.xz*inv
+    if n.y < 0.0:
+        sx = if p.x >= 0.0: 1.0 else: -1.0
+        sz = if p.y >= 0.0: 1.0 else: -1.0
+        p = vec2((1.0-abs(p.y))*sx,(1.0-abs(p.x))*sz)
+    (p*0.5+vec2(0.5,0.5))*(f32(CROWN_OCT_PIXELS-1)/f32(CROWN_OCT_PIXELS))+vec2(0.5/f32(CROWN_OCT_PIXELS),0.5/f32(CROWN_OCT_PIXELS))
+
+crown_oct_decode = (p: vec2) -> vec3:
+    y = 1.0-abs(p.x)-abs(p.y)
+    ox = p.x; oz = p.y
+    if y < 0.0:
+        sx = if p.x >= 0.0: 1.0 else: -1.0
+        sz = if p.y >= 0.0: 1.0 else: -1.0
+        ox = (1.0-abs(p.y))*sx
+        oz = (1.0-abs(p.x))*sz
+    normalize(vec3(ox,y,oz))
+
+crown_oct_sheet = () -> Image:
+    pts: vec3[] = []
+    loop k in 0..CROWN_OCT_TUFTS:
+        y = 1.0-(2.0*f32(k)+1.0)/f32(CROWN_OCT_TUFTS)
+        rr = sqrt(max(1.0-y*y,0.0))
+        a = f32(k)*2.39996323
+        j1 = (hash21(vec2(f32(k)*3.1,17.3))-0.5)*0.16
+        j2 = (hash21(vec2(f32(k)*7.7,53.1))-0.5)*0.16
+        j3 = (hash21(vec2(f32(k)*11.3,91.7))-0.5)*0.16
+        pts.push(normalize(vec3(cos(a)*rr,y,sin(a)*rr)+vec3(j1,j2,j3)))
+    # two brief repulsion passes so tufts stay organic yet evenly spaced (no colliding centres)
+    loop rep in 0..2:
+        loop i in 0..CROWN_OCT_TUFTS:
+            acc = vec3(0,0,0)
+            pi = pts[i]
+            loop j in 0..CROWN_OCT_TUFTS:
+                if i == j: continue
+                dv = pi-pts[j]
+                dd = dot(dv,dv)
+                if dd < 0.085 and dd > 0.00001:
+                    dist = sqrt(dd)
+                    acc += dv*((0.29-dist)/dist*0.25)
+            pts[i] = normalize(pi+acc)
+    img = image(CROWN_OCT_PIXELS,CROWN_OCT_PIXELS)
+    inv_span = 2.0/f32(CROWN_OCT_PIXELS-1)
+    loop y in 0..CROWN_OCT_PIXELS:
+        v = f32(y)*inv_span-1.0
+        loop x in 0..CROWN_OCT_PIXELS:
+            u = f32(x)*inv_span-1.0
+            d = crown_oct_decode(vec2(u,v))
+            bd2: f32 = 99.0; bd: f32 = 9.9
+            best = vec3(0,1,0)
+            loop k in 0..CROWN_OCT_TUFTS:
+                c = pts[k]
+                if abs(c.y-d.y) >= bd: continue
+                dv = c-d
+                dd2 = dot(dv,dv)
+                if dd2 < bd2: bd2 = dd2; bd = sqrt(dd2); best = dv
+            img.set(x,y,vec4(clamp(best.x/CROWN_OCT_MAX*0.5+0.5,0.0,1.0),clamp(best.y/CROWN_OCT_MAX*0.5+0.5,0.0,1.0),clamp(best.z/CROWN_OCT_MAX*0.5+0.5,0.0,1.0),clamp(bd/CROWN_OCT_MAX,0.0,1.0)))
+    img
+
+# Lookup nearest 3D tuft centre (xyz, unit vector in clump space) and clean 3D chord distance (w)
+# for a clump-space unit direction d, rotated deterministically by the clump's yaw (ca, sa) and yflip.
+# On a 1-texel bilinear Voronoi bisector between two tufts, the interpolated offset vector shrinks
+# below the stored distance (length(delta) < far*0.85): there we keep the stored distance and flag
+# it negative so rim probes never spawn false bisector spikes.
+crown_oct_lookup = (tex: Texture,d: vec3,ca: f32,sa: f32,yflip: f32) -> vec4:
+    dr = vec3(d.x*ca-d.z*sa,d.y*yflip,d.x*sa+d.z*ca)
+    t = sample(tex,crown_oct_encode(dr))
+    delta = (t.xyz*2.0-vec3(1,1,1))*CROWN_OCT_MAX
+    far_tex = t.w*CROWN_OCT_MAX
+    dlen = length(delta)
+    cr = normalize(dr+delta)
+    cy = cr.y*yflip
+    cw = vec3(cr.x*ca+cr.z*sa,cy,-cr.x*sa+cr.z*ca)
+    # Away from Voronoi bisectors, length(d - cw) is the exact analytic 3D circle distance
+    # (zero octahedral-diagonal staircase). On bisectors, negate to reject false rim probes.
+    if dlen < far_tex*0.85: return vec4(cw,-far_tex)
+    vec4(cw,length(d-cw))
+
+# Smooth 3D object-space macro-lump radius for a clump (zero texture reads, zero seams, 100%
+# fixed to the clump's 3D directions).
+crown_macro = (d: vec3,seed: f32) -> f32:
+    s1 = seed*19.3
+    s2 = seed*37.7
+    w1 = sin(d.x*3.1+s1)*cos(d.z*2.9+s2)
+    w2 = sin(d.y*3.3+d.x*1.7-s2)*cos(d.z*2.5-d.y*2.1+s1)
+    0.86+0.075*w1+0.045*w2
+
 # A direction's place on its dominant cube side: (u, v, side 0 x / 1 y / 2 z); u and v along
 # that side's world axes (crown_face_axis), so a texture read there turns with the clump.
 crown_face = (n: vec3) -> vec3:
@@ -193,7 +292,7 @@ crown_vs = (v: CrownVertex,c: CrownClump,u: CrownParams) -> CrownOut:
     if share <= 0.0: p = centre      # (a band out of its range: no fragments)
     CrownOut(u.view_proj*vec4(p,1),p,centre,range,land_aerial_terms(centre,u.cam,u.fog),vec4(r,c.shape.x,c.shape.z,c.shape.w),vec4(c.tree.xyz-u.origin,c.tree.w),vec4(c.color.xyz,share))
 
-crown_fs = (i: CrownOut,u: CrownParams) -> vec4:
+crown_shade = (i: CrownOut,u: CrownParams,log_depth: bool) -> vec4:
     # (the band's share of the pixels, and a grove's arrival: faded in over its first moments)
     dith = crown_dither(i.pos.xy)
     if dith < i.range.x or dith >= i.range.y or fract(dith*7.31+0.37) >= u.opts.y: discard()
@@ -203,105 +302,120 @@ crown_fs = (i: CrownOut,u: CrownParams) -> vec4:
     # the view ray in the clump's unit space (the ellipsoid there a unit sphere)
     inv = vec3(1.0,1.0/squash,1.0)/r
     o = (u.cam-i.centre)*inv
-    dv = (i.world-u.cam)*inv
-    dd = dot(dv,dv)
-    tc = -dot(o,dv)/dd
-    q = o+dv*tc
+    v = normalize((i.world-u.cam)*inv)
+    tc = -dot(o,v)
+    q = o+v*tc
     b2 = dot(q,q)
+    if b2 >= 1.1664: discard()       # (outside 1.08^2 bounding sphere)
     # how many pixels the clump spans: the leaf detail fades as it shrinks
     foot = max(length(vec3(fwidth(i.world.x),fwidth(i.world.y),fwidth(i.world.z))),0.0001)
     px = r/foot
     detail = clamp((px-6.0)/18.0,0.0,1.0)*u.opts.x
-    # its outline: a few big scallops (the leaf masses' own), fixed to the clump, crisp: dithered
-    # over one pixel
-    rim_dir = q/sqrt(max(b2,0.000001))
-    lump = sample(u.tufts,crown_face(rim_dir).xy*0.18+vec2(seed*0.73,seed*0.37)).w
-    rl = 0.82+0.34*lump*(0.45+0.55*clamp(px/10.0,0.0,1.0))
-    # (a near crown, one whose leaf tufts are pixels enough to hold a line: lit in a few flat
-    # bands, crown_banded below)
     band = clamp((px-14.0)/20.0,0.0,1.0)*u.opts.x
-    # (the leaf tufts: about ten across a clump)
-    k = 0.08+0.03*fract(seed*3.7)
-    cell = 1.0/(f32(CROWN_TUFT_CELLS)*k*3.2)
-    if band > 0.0:
-        # (its outline a chain of the same round tufts: the tufts whose centres lie along the
-        # outline, each standing out of the body as a ball does, a round arc)
-        rim_far = sample(u.tufts,crown_face(rim_dir).xy*(k*3.2)+vec2(seed*0.83,seed*0.19)).z/CROWN_TUFT_FAR
-        rl = mix(rl,0.84+0.12*lump+sqrt(max(CROWN_TUFT_ROUND*CROWN_TUFT_ROUND-rim_far*rim_far,0.0))*cell*0.62,band)
-    if (rl-sqrt(b2))*px < dith-0.5: discard()
-    t = tc-sqrt(max(rl*rl-b2,0.0)/dd)
-    h = o+dv*t
-    hn = h/rl
-    world = u.cam+(i.world-u.cam)*t
-    # the clump's own rounded normal, leaned toward the whole crown's
+    mdetail = clamp((px-2.5)/6.0,0.0,1.0)*u.opts.x
+    # Fixed 3D macro-lump base clump intersection (100% object-space, zero camera dependence)
+    t0 = tc-sqrt(max(0.7396-b2,0.0))
+    rb = crown_macro(normalize(o+v*t0),seed)
+    if b2 < rb*rb:
+        rb = crown_macro(normalize(o+v*(tc-sqrt(rb*rb-b2))),seed)
+    b_len = sqrt(max(b2,0.0))
+    base_margin = rb-b_len
+    t_base: f32 = if b2 < rb*rb: tc-sqrt(rb*rb-b2) else: 1000000.0
+    # Per-clump fixed 3D orientation into the seamless octahedral tuft sphere
+    ang = seed*TAU
+    ca = cos(ang); sa = sin(ang)
+    yflip: f32 = if fract(seed*7.31) > 0.5: -1.0 else: 1.0
+    t_hit = t_base
+    hit_tuft = false
+    c_hit = vec3(0,1,0)
+    far: f32 = 0.0
+    best_margin = base_margin
+    # Near crowns: protruding 3D rigid leaf-tuft spheres around the silhouette so rim tufts
+    # stay anchored in 3D space as the camera orbits (zero rolling, zero boiling)
+    if band > 0.0 and b_len > rb-0.18:
+        rt = CROWN_OCT_ROUND*band
+        # Probe 1: limb plane q
+        s1 = crown_oct_lookup(u.tufts,q/max(b_len,0.0001),ca,sa,yflip)
+        m1: f32 = -9.0; t1: f32 = 1000000.0
+        if s1.w >= 0.0:
+            p1 = s1.xyz*crown_macro(s1.xyz,seed)
+            oc1 = o-p1; bv1 = dot(oc1,v)
+            perp1 = sqrt(max(dot(oc1,oc1)-bv1*bv1,0.0))
+            m1 = rt-perp1
+            t1 = -bv1-sqrt(max(rt*rt-perp1*perp1,0.0))
+        # Probe 2: front shoulder half-way from bounding sphere entry to limb plane
+        p_front = o+v*(tc-0.48*sqrt(max(1.1664-b2,0.0)))
+        s2 = crown_oct_lookup(u.tufts,normalize(p_front),ca,sa,yflip)
+        m2: f32 = -9.0; t2: f32 = 1000000.0
+        if s2.w >= 0.0:
+            p2 = s2.xyz*crown_macro(s2.xyz,seed)
+            oc2 = o-p2; bv2 = dot(oc2,v)
+            perp2 = sqrt(max(dot(oc2,oc2)-bv2*bv2,0.0))
+            m2 = rt-perp2
+            t2 = -bv2-sqrt(max(rt*rt-perp2*perp2,0.0))
+        best_margin = max(base_margin,max(m1,m2))
+        if best_margin*px < dith-0.5: discard()
+        tol = -0.5/max(px,1.0)
+        if m1 > tol and t1 < t_hit: t_hit = t1; hit_tuft = true; c_hit = s1.xyz
+        if m2 > tol and t2 < t_hit: t_hit = t2; hit_tuft = true; c_hit = s2.xyz
+        if t_hit > 999999.0: t_hit = tc
+    else:
+        if best_margin*px < dith-0.5: discard()
+        if t_hit > 999999.0: t_hit = tc
+    h = o+v*t_hit
+    hn = normalize(h)
+    world = i.centre+vec3(h.x,h.y*squash,h.z)*r
+    # Exact ray-traced 3D surface depth: eliminates billboard card slicing between overlapping clumps
+    clip = u.view_proj*vec4(world,1.0)
+    if log_depth: set_depth(world_depth_encode(max(clip.w,0.001))) else: set_depth(clamp(clip.z/max(clip.w,0.001),0.0,1.0))
+    # the clump's own rounded normal, leaned toward the whole crown's (100% object-space)
     n = normalize(vec3(hn.x,hn.y/squash,hn.z))
     crown = world-i.tree.xyz
     cn = if dot(crown,crown) > 0.0001: normalize(crown) else: vec3(0,1,0)
     n = normalize(n*0.62+cn*0.38+vec3(0,0.1,0))
-    # leaf masses, as a painter lays a crown in: a few big rounded masses (a metre or two), each
-    # bulging into its own lit side and shadow side, a dark crease between them, the outline
-    # scalloped by them; and small dabs of light on the lit masses (a finer read of the same sheet)
     mass: f32 = 0.6
     leaf: f32 = 0.5
-    dab: f32 = 0.0
-    # (the big masses hold on down to a few pixels a clump, so a middle-distance crown is still a
-    # cluster of lit and shaded masses, not a flat dot; the leaf tufts and dabs only near)
-    mdetail = clamp((px-2.5)/6.0,0.0,1.0)*u.opts.x
+    inside: f32 = 1.0
     sun = normalize(u.sun_dir)
-    tuft_shift = vec2(0,0)
-    inside: f32 = 0.0
-    if mdetail > 0.0:
-        face = crown_face(hn)
-        # (two or three big masses to a clump: they decide the light and the shadow; not a crown's
-        # that is all in flat bands, whose light is its whole form's: nothing read for it there)
+    light_dir = mix(sun,u.light.xyz,u.light.w*0.6)
+    if not hit_tuft and mdetail > 0.0:
+        st = crown_oct_lookup(u.tufts,hn,ca,sa,yflip)
+        c_hit = st.xyz
+        far = abs(st.w)
+        # Smooth 3D tuft bump normal & crevice occlusion for middle distance (fades as bands come in)
         if band < 1.0:
-            tc4 = sample(u.tufts,face.xy*k+vec2(seed*0.31,seed*0.57))
-            dvec = tc4.xy*2.0-vec2(1,1)
-            dist = length(dvec)
-            mass = 1.0-clamp((dist-0.4)/0.3,0.0,1.0)*0.6
-            tn = normalize(n*0.5+(crown_face_axis(face.z,0)*dvec.x+crown_face_axis(face.z,1)*dvec.y)*1.0)
-            n = normalize(mix(n,tn,0.58*mdetail*(1.0-band)))
-            mass = mix(0.6,mass,mdetail)
+            delta = hn-c_hit
+            mass = mix(0.6,1.0-clamp((far-0.08)/0.14,0.0,1.0)*0.55,mdetail*(1.0-band))
+            tn = normalize(n*0.55+delta*3.8)
+            n = normalize(mix(n,tn,0.52*mdetail*(1.0-band)))
         if detail > 0.0:
-            # (the leaf tufts within them, three times smaller: the outline's scallops, the creases,
-            # and the broken edge where light gives way to shadow)
-            t2 = sample(u.tufts,face.xy*(k*3.2)+vec2(seed*0.83,seed*0.19))
-            d2 = t2.z/CROWN_TUFT_FAR
-            leaf = mix(0.5,1.0-clamp((d2-0.3)/0.4,0.0,1.0),detail)
-            edge = b2/(rl*rl)
-            # (a near crown's outline is its round tufts', above: no leaves bitten from it)
-            if edge > 0.6 and leaf < (edge-0.6)*2.2*(1.0-band)*detail-0.1*dith: discard()
-            # (few, small and irregular: the brightest tuft cores in patches of the sheet's
-            # smooth noise)
-            dab = step(0.66,t2.w)*clamp((leaf-0.65)*5.0,0.0,1.0)*detail*(1.0-band)
-            # (a near crown's tufts, each lit as one: the light at its centre)
-            if band > 0.0:
-                tuft_shift = crown_tuft_shift(hn,face,t2.xy*2.0-vec2(1,1),cell,mix(sun,u.light.xyz,u.light.w*0.6))
-                inside = crown_tuft_in(t2.z,cell*px)
-    lit = mix(dot(n,sun),dot(n,u.light.xyz),u.light.w*0.6)
-    ndl = lit+(leaf-0.5)*0.4
-    # (the light that reaches it: the clump's place in the crown, its underside, the creases)
+            leaf = mix(0.5,1.0-clamp((far-0.07)/0.14,0.0,1.0),detail)
+            inside = clamp((CROWN_OCT_ROUND-far)*px+0.5,0.0,1.0)
+    lit = dot(n,light_dir)
+    ndl = lit+(leaf-0.5)*0.35
     up = clamp(hn.y*0.5+0.5,0.0,1.0)
     occl = i.clump.w*(0.55+0.45*up)*(0.6+0.4*mass)*(0.85+0.15*leaf)
     if band > 0.0:
-        # (0.62: the clump's own form's share of its normal, above)
-        ndl = mix(ndl,crown_banded(lit,lit+0.62*tuft_shift.x,inside),band)
-        occl = mix(occl,i.clump.w*(0.5+0.5*clamp(up+0.5*tuft_shift.y*inside,0.0,1.0)),band)
-    # three painted values with crisp steps: a cool blue-green shadow, the leaf's middle tone, a
-    # warm yellow-green light
-    # (the leaf colour a little greyed, so the three values keep a narrow saturation range: the
-    # light a warm olive-yellow, the shadow a cool, deep blue-green)
+        # Exact 3D tuft-centre light (zero cube seams, zero first-order approximation drift)
+        rb_c = crown_macro(c_hit,seed)
+        world_c = i.centre+vec3(c_hit.x,c_hit.y*squash,c_hit.z)*(r*rb_c)
+        nc = normalize(vec3(c_hit.x,c_hit.y/squash,c_hit.z))
+        cc = world_c-i.tree.xyz
+        ccn = if dot(cc,cc) > 0.0001: normalize(cc) else: vec3(0,1,0)
+        n_tuft = normalize(nc*0.62+ccn*0.38+vec3(0,0.1,0))
+        tuft_lit = dot(n_tuft,light_dir)
+        ndl = mix(ndl,crown_banded(lit,tuft_lit,inside),band)
+        tuft_up = clamp(mix(hn.y,c_hit.y,inside)*0.5+0.5,0.0,1.0)
+        occl = mix(occl,i.clump.w*(0.5+0.5*tuft_up),band)
     base = i.color.xyz
     c = crown_palette(base,ndl,occl,u.shade,u.sun,1.0,fwidth(ndl+(occl-0.6)*0.6),band)
-    s2 = clamp((ndl+(occl-0.6)*0.5-0.46)*12.0+0.5,0.0,1.0)*clamp(occl*1.6,0.0,1.0)
-    # (dabs of pale light on the lit masses; leaves against the sun glow at the rim)
-    # (dabs: the lit tufts just past the light's edge, where the leaves turn to the sun)
-    rim = clamp(1.0-abs(ndl-0.64)*6.0,0.0,1.0)*clamp((occl-0.55)*5.0,0.0,1.0)
-    c = mix(c,vec3(0.80,0.76,0.52)*u.sun,dab*s2*rim*0.75)
+    # subtle backlight only on non-banded views (keeps flat bands crisp and camera-invariant)
     view = normalize(u.cam-world)
     back = clamp(-dot(view,sun),0.0,1.0)
-    c += base*u.sun*(0.25*back*back*clamp(1.0-abs(dot(n,view)),0.0,1.0)*detail)
+    c += base*u.sun*(0.22*back*back*clamp(1.0-abs(dot(n,view)),0.0,1.0)*detail*(1.0-band*0.7))
     vec4(land_aerial_apply(c,i.air,u.haze)*paint_paper(i.pos.xy),1)
+
+crown_fs = (i: CrownOut,u: CrownParams) -> vec4: crown_shade(i,u,false)
 
 # The painted crowns' three values, shared by every foliage shader (the crowns at every band,
 # the woods' crowns, the far canopy's shells): a cool deep blue-green shadow, the leaf's middle
@@ -367,10 +481,8 @@ crown_limb_fs_log = (i: ObjOut,u: ObjParams) -> vec4:
     set_depth(world_depth_encode(1.0/i.pos.w))
     crown_limb_fs(i,u)
 
-# (the log-depth path's: the card's depth written, as every world fragment there)
-crown_fs_log = (i: CrownOut,u: CrownParams) -> vec4:
-    set_depth(world_depth_encode(1.0/i.pos.w))
-    crown_fs(i,u)
+# (the log-depth path's: exact ray-traced ellipsoid depth encoded logarithmically)
+crown_fs_log = (i: CrownOut,u: CrownParams) -> vec4: crown_shade(i,u,true)
 
 crown_sh: Shader
 crown_limb_sh: Shader
@@ -378,13 +490,16 @@ crown_card: Mesh
 crown_ready = false
 
 crown_init = ():
-    global crown_sh,crown_card,crown_ready,crown_limb_sh,crown_tuft_tex
+    global crown_sh,crown_card,crown_ready,crown_limb_sh,crown_tuft_tex,crown_oct_tex
     if crown_ready: return
     crown_sh = make_shader(world_shader(shader(crown_vs,crown_fs),shader(crown_vs,crown_fs_log)),false)
     crown_limb_sh = make_shader(world_shader(shader(obj_far_vs,crown_limb_fs),shader(obj_far_vs,crown_limb_fs_log)),false)
     crown_tuft_tex = texture(crown_tuft_sheet(),true)
     set_repeat(crown_tuft_tex,true)
     set_mipmaps(crown_tuft_tex,true)
+    crown_oct_tex = texture(crown_oct_sheet(),true)
+    set_repeat(crown_oct_tex,false)
+    set_mipmaps(crown_oct_tex,false)
     crown_card = mesh([CrownVertex(vec2(-1,-1)),CrownVertex(vec2(1,-1)),CrownVertex(vec2(-1,1)),CrownVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
     crown_ready = true
 
@@ -393,7 +508,7 @@ crown_params = (L: Light,t: f64,far_end: f64) -> CrownParams:
     origin = render_origin(scene_camera())
     phase = t*(1.1+0.15*f64(wind_now.speed))+f64(origin.x)*0.05+f64(origin.z)*0.04
     CrownParams(render_view_proj(origin),render_eye(origin),L.sun_dir,L.sun,L.shade,air_down(L.haze,f64(scene_camera().y),tweaks.brighter_ocean),f32(L.fog_density),origin,canopy_light(L.sun_dir),
-        vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),render_phase(phase,TAU)),vec4(f32(CROWN_NEAR_END),f32(CROWN_MID_END),f32(CROWN_FADE),f32(far_end)),vec4(if foliage_off("tufts"): 0.0 else: 1.0,1,f32(WOODS_END),0),crown_tuft_tex)
+        vec4(wind_now.dir.x,wind_now.dir.y,f32(wind_now.speed),render_phase(phase,TAU)),vec4(f32(CROWN_NEAR_END),f32(CROWN_MID_END),f32(CROWN_FADE),f32(far_end)),vec4(if foliage_off("tufts"): 0.0 else: 1.0,1,f32(WOODS_END),0),crown_oct_tex)
 
 # (timing only: AEGEAN_FOLIAGE_OFF="shells,woods,tufts" leaves those parts out)
 foliage_off_list = env("AEGEAN_FOLIAGE_OFF") ?? ""
