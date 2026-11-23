@@ -1,5 +1,7 @@
 # Procedural music performance
 
+The status of every piece, its treatment and where it is heard: [music-status.md](music-status.md).
+
 `tools/music_pack.py` builds note events from the licensed sources. Its deterministic
 interpretation pass is in `tools/music_performance.py`. It changes performance, never
 pitch content or the source MIDI. All tracks share a monotone tempo map, so a cadence
