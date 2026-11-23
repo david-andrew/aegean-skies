@@ -20,7 +20,7 @@ on that unmerged branch so far.
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
-- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
+- **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
@@ -1979,15 +1979,10 @@ On the rivers branch until it lands.
   stands half as tall again and the masses up to 2.7 times, a far mass is lit as one body, and
   past the crowns' reach the masses cast shadows on the sheet and on one another
   (`billow_shadow`). A far dome is a cone; its ring swells out to the dome's shape as the eye
-  nears. Nothing arrives: beyond 5.5 km the wood is the ground's paint; from there the
-  sheet rises out of the ground (to its full height by 4.5 km), still painted exactly as the
-  ground is (the ground's own painter) and cut by a pattern of crowns about six pixels wide, so
-  from over it nothing shows, and a wooded ridge's outline against the sky or the land behind
-  is crowns' tops and the gaps between them, not a line (the **far sheet**; it stands up to
-  three times the canopy's height, a few pixels, and only where the land is seen nearly
-  edge-on, which is where an outline can show: where the land faces the eye it lies sunk under
-  the ground, and being drawn after the ground costs nothing there); from 4 km to 3.4 km the sheet's own paint of
-  the crowns takes over by a dither; then each dome rises out of the sheet as the eye
+  nears. Nothing arrives: far off the wood is the ground's paint, and its height shows only
+  in its outline, drawn on the screen ([Land's outline](#lands-outline)); nearer the sheet
+  rises out of the ground (from 3.4 km, its own paint of the crowns taking over by a dither),
+  then each dome rises out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
   80 m), its top first. A far clump stands no more than half as tall again and is lit by the
   mass it stands on, and a far mass's foot is painted as the sheet it stands in: tall little
@@ -1998,9 +1993,7 @@ On the rivers branch until it lands.
   the sheet. The old islands' woods are the same domes standing on the ground (no sheet is
   lifted there: their woods are small, and the ground's paint of the crowns is the floor).
 - **Code:** `src/canopy.jo` (`wood_cover`); `src/world_terrain.jo` (the sheet:
-  `world_shell_vertex`, `world_shell_fragment`, `world_far_sheet_vertex`,
-  `world_far_sheet_fragment_at`, `canopy_floor`, `CANOPY_END`, `CANOPY_EDGE_ON`,
-  `CANOPY_PAINT_END`, `CANOPY_CUT`; the billows: `billow_make`,
+  `world_shell_vertex`, `world_shell_fragment`, `canopy_floor`; the billows: `billow_make`,
   `billow_top`, `billow_vertex`, `billow_fragment`, `billow_mesh`, `billow_gather`,
   `draw_world_billows`; the old islands: `island_billow_gather`, and `island_working` in
   `src/terrain_lod.jo` for their stand cover).
@@ -2018,6 +2011,34 @@ On the rivers branch until it lands.
   dome's pixel (the laptop's GPU runs both sides of a short branch): the paint of a far mass's
   foot cost 0.3 ms over a wood that way, and 0.03 ms in the masses' own shader
   (`billow_mass_sh`).
+
+### Land's outline
+
+- **Aliases:** the outline, the silhouette, ridge crowns, the screen-space outline.
+- **Definition:** wherever wooded land ends on the screen against the sky, the water or
+  farther land, its line is crowns' tops and the gaps between them, at any distance: a crown
+  is drawn as tall as its metres (36 at most) are pixels at the line's own depth, so about five
+  pixels at 4 km and under one by 20 km, in the land's own colour (which the air has already
+  taken), a fifth darker. Nothing is placed in the world and no distance begins or ends it,
+  except that it comes in from 1.8 km to 2.6 km, as the canopy's domes, which are a near
+  wood's outline, go.
+- **Code:** `src/silhouette.jo` (`silhouette_line_pass`, `silhouette_draw`, called from
+  `draw_cloud_volumes` beside the cloud shadows' passes); the ground and the canopy's sheet
+  leave how wooded the land is in the scene's alpha (`ground_surface` in `src/terrain.jo`,
+  `world_shell_fragment`).
+- **Rules:** two passes from the scene's depth, after the opaque scene and the water and before
+  the clouds. The first, into a picture an eighth the size, finds the land's lines (land nearer
+  than what is over it by three tenths) and keeps the land's colour and woodedness just under
+  each. The second draws the crowns onto the scene, only in the 32-pixel blocks that hold a
+  line (a pass over every pixel cost 0.45 ms on the laptop). The crowns are a profile fixed to
+  the world that goes only by where the land's point lies across the eye's ray (along one of 64
+  fixed bearings): a line seen edge-on is a pixel hundreds of metres deep, and a pattern that
+  went by the depth along the ray crawled. A crown's top covers its last pixel by the part it
+  reaches. The terrain's draws turn blending off themselves, since the ground's alpha is no
+  longer one (the field map's redraw left blending on). A cloud behind a ridge is drawn over
+  the ridge's crowns; the software renderer draws no outline, so `tools/outline_check.jo`
+  (`tests/outline_test.py`: the outline is there, no crown over ten pixels, the same crowns
+  from two eyes six metres apart) runs on a real GPU only.
 
 ### Far land layers
 

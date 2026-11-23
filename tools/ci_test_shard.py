@@ -30,6 +30,7 @@ RELEASE = {"tests/sky_test.jo", "tests/nature_test.jo"}
 # never run in CI: they need a real GPU (the depth prepass differs under software rendering: the
 # test passes on the desktop, and gives 0 hidden-bed pixels under SLOPPY_SOFTWARE=1)
 GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)",
+            "tests/outline_test.py": "needs a real GPU (under software rendering the land's outline draws nothing)",
             "tests/playtest_situations_test.py": "needs a real GPU (the strait's battle runs some 300 frames in 14 min under software rendering; the tow over 30 min)"}
 # run only when CI_SLOW=1 (workflow_dispatch with slow: true): the whole game, software-rendered
 SLOW = {
