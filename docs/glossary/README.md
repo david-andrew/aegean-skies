@@ -1982,9 +1982,9 @@ On the rivers branch until it lands.
   masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
   own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
   dark) and painted with the crowns' palette and leaf masses; near the eye a crown has its own
-  lobes, smaller domes again, cut round and leafy (a lobe's five-sided mesh stands a quarter
-  outside the rounded body it is cut to), and is lit in flat bands as one body
-  ([Crowns](#crowns), banded). Its light is grouped as a painter groups a wood's values: near,
+  lobes, smaller domes again, cut round and leafy (to a rounded body inside each lobe's
+  five-sided mesh), and is lit in flat bands as one body ([Crowns](#crowns), banded), in the
+  near crowns' own two shaders (`billow_near_sh`, `billow_near_solid_sh`). Its light is grouped as a painter groups a wood's values: near,
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
   or a pale olive among the rest. The steps between the painted values are never crisper than
