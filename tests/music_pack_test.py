@@ -24,7 +24,9 @@ class MusicPackTests(unittest.TestCase):
   self.assertEqual(gm(47),TIMPANI);self.assertEqual(gm(0,True),DRUMS)
   self.assertEqual(gm(0),PIANO)
   ns=opening();self.assertEqual([n[2] for n in ns[:4]],[61]*4)
-  self.assertEqual(max(n[2] for n in ns),73)
+  # the solo call (its approved performance, track 0) to bar 8; the transcription's parts after it
+  self.assertEqual(max(n[2] for n in ns if n[6]==0),73);self.assertEqual(sum(n[6]==0 for n in ns),24)
+  self.assertTrue(all(n[0]>15 for n in ns if n[6]!=0))
   # The call's pickups are sixteenth-note triplets (a sixth of a beat each, as performed), not a
   # triplet filling the beat: the long note they lead to arrives well inside the first beat.
   beat=60/88

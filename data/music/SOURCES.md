@@ -12,7 +12,7 @@ The status of every piece considered for the game, in the catalogue or not, is i
 | Piece | Composition | Note transcription / arrangement | Permission for the sequence |
 |---|---|---|---|
 | Symphony No. 5, IV: Adagietto | Gustav Mahler (1860–1911), 1904 | [mooing, score 4230156](https://musescore.com/user/1397281/scores/4230156); harp, two violins, viola, cello, bass | CC0 1.0 |
-| Symphony No. 5, I: opening trumpet call | Mahler, 1904 | Our concert-pitch transcription of the pickup and eight bars on printed p. 3 of [Peters plate 9015, Sibley Music Library](https://hdl.handle.net/1802/15744) | Public-domain 1904 score; new transcription dedicated to CC0 1.0 |
+| Symphony No. 5, I: Trauermarsch, the opening (bars 1–28) | Mahler, 1904 | Our concert-pitch transcription of every part, from the pickup to the second beat of bar 28 (printed pp. 3–6), of [Peters plate 9015, Sibley Music Library](https://hdl.handle.net/1802/15744): `mahler-opening-score.txt` | Public-domain 1904 score; new transcription dedicated to CC0 1.0 |
 | Magnetic Rag | Scott Joplin (1868–1917), 1914 | [Mutopia 441](https://www.mutopiaproject.org/ftp/JoplinS/magnetic/), Kurt Holtrop, original edition | Mutopia explicitly marks the transcription **Public Domain** |
 | El Choclo | Ángel Villoldo (1861–1919), 1903 | [bbuyukkarhan, piano score 5885692](https://musescore.com/user/33429668/scores/5885692) | CC0 1.0 |
 | Entry of the Gladiators, marching-band excerpt | Julius Fučík (1872–1916), 1897 | Eric Russ / imwoaheric, [score 5733627](https://musescore.com/user/34335505/scores/5733627), “Stands Tune” | CC0 1.0, including the modern arrangement |
@@ -166,13 +166,28 @@ a small subset of metadata retained. This is not an endorsement by any source au
   at note boundaries. Harp and all five string sections remain separate. This is the
   whole imported movement, not a repeated invented phrase. MIDI is a transcription,
   not a critical edition; the converter does not interpret printed expression marks.
-* The first-movement sample is **only the opening solo call**, not the whole movement
-  or its orchestral entry. Written B-flat trumpet pitches are transposed down a tone.
-  The score says “In gemessenem Schritt. Streng. Wie ein Kondukt.” The pickups are
-  sixteenth-note triplets. The fourth long note is E4 concert pitch; the final tied
-  C-sharp5 is one continuous note. Earlier versions used overly broad pickups and
-  incorrectly retriggered that tie. Coarse timing and three-point effort contours in
-  `opening-performance.json` now annotate this solo excerpt explicitly.
+* The first-movement excerpt is the movement's opening, the pickup to the second beat of bar 28:
+  the solo trumpet's call (bars 1–12), the full orchestra's entry at bar 13, the dominant at
+  rehearsal 1 and the Pesante's chromatic descent, ending where it lands on the C-sharp minor
+  six-four and the first step of the funeral procession (the trombones' "schwer" chords, the
+  tam-tam), before the strings' march theme (bar 35). Every part is our own reading of the Peters
+  full score (plate 9015, the same Sibley scan), at sounding pitch: trumpets in B down a tone,
+  horns in F down a fifth (their bass-clef notes in the old notation), clarinets in A down a minor
+  third, contrabassoon and basses down an octave. The score says “In gemessenem Schritt. Streng.
+  Wie ein Kondukt.” The solo's pickups are sixteenth-note triplets; the fourth long note is E4
+  concert pitch; the tied C-sharp5 is one continuous note. Bars 1–8 of the solo keep the approved
+  timing and three-point effort contours of `opening-performance.json`; from bar 8 the
+  transcription (`mahler-opening-score.txt`, bar by bar per part) is played as arranged
+  (`mahler_score` in `tools/music_pack.py`), a minim of about 58, broader from the Pesante.
+  - Transcribed, not printed: trills are written out against the next note of the C-sharp minor
+    scale; drum and timpani rolls as strokes every sixteenth of a second; string tremolo as held
+    notes; pizzicato on the harp (violins, violas) and the plucked bass (cellos, basses). The
+    motif's triplets (the solo's pickups, and every part's echo of them) are played as fleetingly
+    as the solo plays its own. Three trombones are one desk of chords.
+  - Uncertain readings (best reading kept): inner voicings of the wind and string chords in bars
+    13–19 (the harmony is sure: A, D over F-sharp, D-sharp, G-sharp), the second horns' and the
+    third and fourth trumpets' triplet notes in bars 14–16 and 20–22, the horns' and bassoons'
+    notes in bars 24–27, the trumpets' high note in bar 26 and the trombones' chords in bar 27.
 * The title's music is the opening of Part III of *Daphnis et Chloé* (Lever du jour), rehearsal
   155 to the bar before 158: 19 bars, 73.2 s at the score's crotchet = 50, ending where the
   theme's first statement has sunk away (158 begins the next phrase). Every part of the full
