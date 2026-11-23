@@ -1953,9 +1953,26 @@ On the rivers branch until it lands.
   limbs; farther, the same tree as a few merged clumps with the same outline, colour and light;
   farther still, one crown. Each tree crosses between sets at its own distance. Inside a wood
   there are none: the wood is its canopy (below), and no trunk stands in it.
-- **Code:** `src/crowns.jo` (`crown_vs`, `crown_fs`, the species' generators, `crown_wood`,
-  `crown_tuft_sheet`); placed by `src/world_groves.jo` (`crowns_of_lists`, `wood_row`,
-  `wood_step`).
+  **Banded:** a near crown is lit in three flat bands, a bright yellow-green cap where it faces
+  the sun, a middle green, and a deep blue-green body, quite dark, that is the whole side turned
+  from the sun, about half of what is seen; nothing is shaded inside a band. The line between
+  two bands is a chain of round leaf tufts, each about a tenth of the crown across: a tuft is
+  wholly in one band, by the light at its own centre, and is cut round (`crown_banded`,
+  `crown_tuft_in`), so the lighter band's tufts stand out into the darker one, each a clean
+  round bite. The crown's outline is a chain of the same tufts, each standing out of the body
+  as a ball does. A round tuft is cut from the tufts' sheet's distance to the nearest tuft's
+  centre, which is smooth from one tuft to the next (the sheet's offsets are not: read across
+  the line where two tufts meet they give a false centre). The three colours are cleaner and
+  further apart than a far crown's (`crown_palette`'s `flat`). The bands come in by how many
+  pixels a clump covers (from 14 to 34 across its radius), which is when a tuft is pixels enough
+  to hold a line, so there is no distance where the look changes; a step between bands is never
+  crisper than a pixel and a half. The woods' canopy's own crowns take the bands where they
+  have their lobes (within 80 m), each crown lit as one body and its lobes cut round, their
+  outlines the same round tufts.
+- **Code:** `src/crowns.jo` (`crown_vs`, `crown_fs`, `crown_banded`, `crown_tuft_in`,
+  `crown_tuft_shift`, `crown_palette`, the
+  species' generators, `crown_wood`, `crown_tuft_sheet`); placed by `src/world_groves.jo`
+  (`crowns_of_lists`, `wood_row`, `wood_step`).
 - **Rules:** the margin's crowns are made a millisecond's rows a frame (never one tile's whole
   making in a frame). The old islands' single trees are still the grove meshes; none stands
   inside a wood there either (`island_rise_at`).
@@ -1971,7 +1988,9 @@ On the rivers branch until it lands.
   masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
   own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
   dark) and painted with the crowns' palette and leaf masses; near the eye a crown has its own
-  lobes, smaller domes again. Its light is grouped as a painter groups a wood's values: near,
+  lobes, smaller domes again, cut round and leafy (to a rounded body inside each lobe's
+  five-sided mesh), and is lit in flat bands as one body ([Crowns](#crowns), banded), in the
+  near crowns' own two shaders (`billow_near_sh`, `billow_near_solid_sh`). Its light is grouped as a painter groups a wood's values: near,
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
   or a pale olive among the rest. The steps between the painted values are never crisper than
