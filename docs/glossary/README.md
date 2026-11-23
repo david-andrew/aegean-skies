@@ -1953,9 +1953,20 @@ On the rivers branch until it lands.
   limbs; farther, the same tree as a few merged clumps with the same outline, colour and light;
   farther still, one crown. Each tree crosses between sets at its own distance. Inside a wood
   there are none: the wood is its canopy (below), and no trunk stands in it.
-- **Code:** `src/crowns.jo` (`crown_vs`, `crown_fs`, the species' generators, `crown_wood`,
-  `crown_tuft_sheet`); placed by `src/world_groves.jo` (`crowns_of_lists`, `wood_row`,
-  `wood_step`).
+  **Banded:** a near crown is lit in three flat bands, a bright yellow-green cap where it faces
+  the sun, a middle green, and a deep blue-green body where it turns from it, with nothing
+  shaded inside a band, and the line between two bands is leafy: the leaf tufts along it
+  stand into the lighter band, each a small rounded bite a twelfth of the crown across, as they
+  bite its outline. The bands are by the clump's smooth rounded form (`crown_banded`), and the
+  three colours are cleaner and further apart than a far crown's (`crown_palette`'s `flat`).
+  They come in by how many pixels a clump covers (from 14 to 34 across its radius), which is
+  when a tuft is pixels enough to hold a line, so there is no distance where the look changes;
+  a step between bands is never crisper than a pixel and a half. The woods' canopy's own
+  crowns take the bands where they have their lobes (within 80 m), each crown lit as one body
+  and its lobes cut round.
+- **Code:** `src/crowns.jo` (`crown_vs`, `crown_fs`, `crown_banded`, `crown_palette`, the
+  species' generators, `crown_wood`, `crown_tuft_sheet`); placed by `src/world_groves.jo`
+  (`crowns_of_lists`, `wood_row`, `wood_step`).
 - **Rules:** the margin's crowns are made a millisecond's rows a frame (never one tile's whole
   making in a frame). The old islands' single trees are still the grove meshes; none stands
   inside a wood there either (`island_rise_at`).
@@ -1971,7 +1982,9 @@ On the rivers branch until it lands.
   masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
   own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
   dark) and painted with the crowns' palette and leaf masses; near the eye a crown has its own
-  lobes, smaller domes again. Its light is grouped as a painter groups a wood's values: near,
+  lobes, smaller domes again, cut round and leafy (a lobe's five-sided mesh stands a quarter
+  outside the rounded body it is cut to), and is lit in flat bands as one body
+  ([Crowns](#crowns), banded). Its light is grouped as a painter groups a wood's values: near,
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
   or a pale olive among the rest. The steps between the painted values are never crisper than
