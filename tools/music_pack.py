@@ -16,7 +16,7 @@ RATE = 16000
 STRINGS, BRASS, FLUTE, OBOE, CLARINET, BASSOON, PIANO, HARP, BOUZOUKI, ACCORDION, BANJO, TIMPANI, DRUMS, BASS, CHOIR, TRUMPET = range(16)
 PIECES = [
  ('adagietto', 'Symphony No. 5: Adagietto', 'Gustav Mahler', 'Voice of Kalyra'),
- ('mahler-opening', 'Symphony No. 5: opening call (excerpt)', 'Gustav Mahler', 'Voice of Kalyra'),
+ ('mahler-opening', 'Symphony No. 5: Funeral March (opening)', 'Gustav Mahler', 'Voice of Kalyra'),
  ('magnetic', 'Magnetic Rag (foxtrot arrangement)', 'Scott Joplin', 'Blue Lantern'),
  ('el-choclo', 'El Choclo', 'Angel Villoldo', 'Night Gull / Blue Lantern'),
  ('gladiators', 'Entry of the Gladiators (excerpt)', 'Julius Fucik; arr. Eric Russ', 'Orenthia National'),
@@ -160,8 +160,10 @@ def usual_piano(station):
 
 # Each piece's level in the mix (src/music_synth.jo applies it to the whole piece, keeping the
 # score's own dynamics): the first thirteen were set by ear; the rest measured to sit at the same
-# loudness (tools/music_level.py, BS.1770 over the whole piece). Missing: 1.0.
-LEVEL = {'adagietto': .70, 'mahler-opening': .90, 'magnetic': .40, 'el-choclo': .70, 'gladiators': .22,
+# loudness (tools/music_level.py, BS.1770 over the whole piece). Missing: 1.0. The Mahler opening,
+# set by ear as the solo call (.90, -28.0 LUFS on music_level's meter), now runs on into the full
+# orchestra: its level brings the whole excerpt back to that loudness (-20.3 LUFS at .90).
+LEVEL = {'adagietto': .70, 'mahler-opening': .37, 'magnetic': .40, 'el-choclo': .70, 'gladiators': .22,
          'ikariotikos': 1.2, 'bethena': .55, 'gymnopedie': 1.40, 'ave-maria': .60, 'clair-de-lune': .38,
          'adelita': .85, 'berceuse': .30, 'gymnopedie-orchestra': .70}
 LEVEL.update(json.loads((ROOT/'data/music/levels.json').read_text()) if (ROOT/'data/music/levels.json').exists() else {})
@@ -195,7 +197,7 @@ NAMES = ['strings','brass','flute','oboe','clarinet','bassoon','piano','harp','b
 # balance, never changed by it.
 HAND_SET_BALANCE = {
  'adagietto': "the annotated performance's section levels (adagietto-performance.json), approved by ear",
- 'mahler-opening': 'the solo call: effort targets per note (opening-performance.json), approved by ear',
+ 'mahler-opening': "the solo call's effort targets per note (opening-performance.json, approved by ear) and the arranger's own level per part (mahler-opening-score.txt)",
  'clair-de-lune': "the annotated performance's voicing (clair-de-lune-performance.json), approved by ear",
  'gymnopedie': 'the gentle touch: a soft mean velocity per voice (GENTLE), set by ear',
  'gymnopedie-orchestra': "the arranger's own levels (gymnopedie_orchestra), the tune set over the rest by ear",
@@ -271,7 +273,7 @@ def balance_notes(name, notes):
 # Each piece's mood (tools/expressive_timing.py MOODS), classified by hand, with the reason.
 MOOD = {
  'adagietto': ('tender', "Mahler's wordless love letter: very slow strings and harp, intimate rather than grieving"),
- 'mahler-opening': ('stately', "the trumpet's call opening a funeral march: measured, ceremonial, strictly paced"),
+ 'mahler-opening': ('stately', "the trumpet's call and the orchestra's outburst opening a funeral march: measured, ceremonial, strictly paced"),
  'magnetic': ('jaunty', "a rag in foxtrot dress: syncopation over a steady oom-pah that must not drag"),
  'el-choclo': ('dance-like', "a tango for dancing: clipped, rhythmic, the pulse held"),
  'gladiators': ('triumphant', "a circus march: brass fanfare and drive"),
@@ -468,10 +470,106 @@ def read_midi(path):
  return result
 
 def opening():
- # The opening solo has six pickups, each a sixteenth-note triplet, not a
- # full-quarter triplet. Tied notes continue through bar lines without retriggering.
+ # The solo's pickup and bars 1-8 are the approved performance (opening-performance.json): six
+ # pickups, each a fleeting sixteenth-note triplet; tied notes continue through bar lines without
+ # retriggering. The rest, to the second beat of bar 28, every part, is our transcription of the
+ # Peters full score (mahler-opening-score.txt), played by mahler_score below.
  targets=json.loads((ROOT/'data/music/opening-performance.json').read_text())
- return [[n['start'],n['duration'],n['pitch'],15,n['effort'][0],n['effort'][2],0,n['effort'][1],.40] for n in targets]
+ solo=[[n['start'],n['duration'],n['pitch'],TRUMPET,n['effort'][0],n['effort'][2],0,n['effort'][1],.40] for n in targets]
+ return sorted(solo+mahler_score(ROOT/'data/music/mahler-opening-score.txt'))
+
+# The opening's clock: bar downbeats of the approved solo (bars 1-7), then a steady minim of about 58
+# ("In gemessenem Schritt. Streng."), broader from the Pesante (bar 23) as the tutti sinks away.
+MAHLER_DOWNBEATS = [0.0, .302, 2.454, 4.734, 6.80, 8.864, 10.947, 13.031]
+MAHLER_BAR = {**{b: 2.08 for b in range(7, 23)}, 23: 2.6, 24: 2.5, 25: 2.5, 26: 2.5, 27: 2.4, 28: 2.4}
+MAHLER_LEVEL = {'pp': .22, 'p': .32, 'mp': .42, 'mf': .52, 'f': .62, 'ff': .78, 'sf': .70, 'fp': .62}
+# The key's scale (C-sharp minor, both sevenths): a trill's upper note is the next note of it.
+MAHLER_SCALE = {1, 3, 4, 6, 8, 9, 11, 0}
+TRIPLET_NOTE = .105                  # each note of the motif's quick triplet, as the solo plays it
+
+def mahler_pitch(name):
+ letter=name[0];rest=name[1:];acc=0
+ while rest and rest[0] in '#bx':acc+={'#':1,'b':-1,'x':2}[rest[0]];rest=rest[1:]
+ return 12*(int(rest)+1)+'C D EF G A B'.index(letter)+acc
+
+def mahler_score(path):
+ """Notes [start, duration, pitch, instrument, gain, end gain, track, peak gain, peak fraction] from
+ the transcription (its format is described at its head)."""
+ ins_of={n:i for i,n in enumerate(['STRINGS','BRASS','FLUTE','OBOE','CLARINET','BASSOON','PIANO','HARP','BOUZOUKI','ACCORDION','BANJO','TIMPANI','DRUMS','BASS','CHOIR','TRUMPET'])}
+ starts=list(MAHLER_DOWNBEATS)
+ while len(starts)<=29:starts.append(starts[-1]+MAHLER_BAR[len(starts)-1])
+ def at(bar,q):return starts[bar]+q*(starts[bar+1]-starts[bar])/4
+ parts={};order=[];lines=[]
+ for line in path.read_text().splitlines():
+  line=line.strip()
+  if line.startswith('#'):continue
+  if not line:continue
+  if line.startswith('part '):
+   _,name,ins,level,*pizz=line.split();parts[name]=(ins_of[ins],float(level),ins_of[pizz[0]] if pizz else None);order.append(name)
+  else:lines.append(line)
+ out=[];state={}
+ def emit(name,t0,t1,pitches,g0,g1,track,trill=False,roll=False,pizz=False):
+  ins,level,pizz_ins=parts[name]
+  if pizz:ins=pizz_ins;t1=t0+min(t1-t0,.6)
+  share=level/math.sqrt(len(pitches))
+  for p in pitches:
+   if roll:
+    # a roll: strokes every 1/16 s, its level moving from start to end
+    k=0;n=max(1,int((t1-t0)/.0625))
+    while k<n:
+     x=k/n;g=(g0+(g1-g0)*x)*share*.55;out.append([t0+k*.0625,.06,p,ins,g,g,track,g,.4]);k+=1
+    continue
+   if trill:
+    upper=next(p+k for k in (1,2) if (p+k)%12 in MAHLER_SCALE);k=0;t=t0;step=.075
+    while t<t1-1e-6:
+     x=(t-t0)/max(1e-6,t1-t0);g=(g0+(g1-g0)*x)*share
+     out.append([t,min(step,t1-t),p if k%2==0 else upper,ins,g,g,track,g,.4]);t+=step;k+=1
+    continue
+   out.append([t0,t1-t0,p,ins,g0*share,g1*share,track,(g0+g1)/2*share if g1!=g0 else g0*share,.4])
+ tied={}
+ for line in lines:
+  head,body=line.split(':',1);name,bars=head.split()
+  a,b=(int(x) for x in bars.split('-')) if '-' in bars else (int(bars),int(bars))
+  track=order.index(name)+1
+  for bar in range(a,b+1):
+   q=0.0
+   for tok in body.split():
+    attrs=[]
+    if ':' in tok.split(')')[-1]:tok,att=tok.rsplit(':',1);attrs=att.split(',')
+    st=state.setdefault(name,dict(level=.62,pizz=False))
+    for x in attrs:
+     if x in MAHLER_LEVEL:st['level']=MAHLER_LEVEL[x]
+     if x=='pizz':st['pizz']=True
+     if x=='arco':st['pizz']=False
+    g=st['level'];g1=g*(.45 if '>' in attrs else 1.3 if '<' in attrs else 1.0)
+    if 'fp' in attrs:g1=MAHLER_LEVEL['p']
+    if tok.startswith('T('):
+     # the quick triplet: three short notes into the next beat
+     notes=tok[2:-1].split(',');end=at(bar,q+1)
+     for i,c in enumerate(notes):
+      emit(name,end-TRIPLET_NOTE*(3-i),end-TRIPLET_NOTE*(2-i)-.01,[mahler_pitch(x) for x in c.split('+')],g*.85,g*.85,track,pizz=st['pizz'])
+     q+=1;continue
+    if tok.startswith(('Q(','F(')):
+     inner,d=tok[2:].split(')/');d=float(d);notes=inner.split(',');t0=at(bar,q);t1=at(bar,q+d)
+     for i,c in enumerate(notes):
+      if tok[0]=='Q':s0=t0+(t1-t0)*i/3;s1=t0+(t1-t0)*(i+1)/3
+      else:s0=t0+.2*i;s1=t0+.2*(i+1) if i<2 else t1     # fleeting, the last held to the beat
+      emit(name,s0,s1-.01,[mahler_pitch(x) for x in c.split('+')],g,g,track,pizz=st['pizz'])
+     q+=d;continue
+    assert tok.count('/')==1,(name,bar,tok)
+    p,d=tok.split('/');tie=d.endswith('~');d=float(d.rstrip('~'))
+    if p!='r':
+     t0=at(bar,q);t1=at(bar,q+d);pitches=[int(x) if x.isdigit() else mahler_pitch(x) for x in p.split('+')]
+     if name in tied:
+      t0,g,held=tied.pop(name)
+      if held is not None:g1=held
+     if tie:tied[name]=(t0,g,g1 if g1!=g else None)
+     else:
+      gap=.0 if 'tr' in attrs or 'roll' in attrs or st['pizz'] else min(.06,(t1-t0)*.08)
+      emit(name,t0,t1-gap,pitches,g,g1,track,trill='tr' in attrs,roll='roll' in attrs,pizz=st['pizz'])
+    q+=d
+   assert abs(q-(4 if bar>0 else 1))<1e-6 or (bar==28 and abs(q-2)<1e-6),(name,bar,q)
+ return out
 
 def gentle_touch(notes, means, spread=.35):
  # A gentler hand on the piano: every key pressed softly. Each voice (the tune, the right hand's
@@ -735,7 +833,7 @@ def build(name):
  recorded of the performance, the score desks of a sectioned piece or None)."""
  notes=opening() if name=='mahler-opening' else read_midi(ROOT/'data/music/source'/f'{source_of(name)}.mid')
  if name=='mahler-opening':
-  performance=dict(phrases=6,source='solo-call timing and effort targets',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event')
+  performance=dict(phrases=6,source='solo-call timing and effort targets (pickup to bar 8); our full-score transcription to bar 28 (mahler-opening-score.txt), played as arranged',duration_after=max(n[0]+n[1] for n in notes),pickup='sixteenth-note triplets',tied_notes='single continuous event',bars='pickup and bars 1-27, and bar 28 to its second beat')
  elif name in AS_ARRANGED:
   written=max(n[0]+n[1] for n in notes)
   notes=arrange(name,notes)

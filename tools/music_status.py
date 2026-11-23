@@ -343,7 +343,7 @@ def build():
 
     # --- the catalogue rows
     piece_info = []
-    manual = {'mahler-opening': 'Symphony No. 5, I: opening trumpet call', 'magnetic': 'Magnetic Rag', 'bethena': 'Bethena, a concert waltz'}
+    manual = {'mahler-opening': 'Symphony No. 5, I: Trauermarsch, the opening (bars 1–28)', 'magnetic': 'Magnetic Rag', 'bethena': 'Bethena, a concert waltz'}
     for i, e in enumerate(cat):
         pid = e['id']
         n = notes['pieces'].get(pid, {})
@@ -387,7 +387,7 @@ def build():
         if pid in tables['ANNOTATED']:
             treat.append(f'annotated performance ({tables["ANNOTATED"] and "data/music/" + {"adagietto": "adagietto-performance.json", "clair-de-lune": "clair-de-lune-performance.json"}[pid]})')
         elif pid == 'mahler-opening':
-            treat.append('annotated solo (data/music/opening-performance.json)')
+            treat.append('annotated solo to bar 8 (data/music/opening-performance.json), then our full-score transcription played as arranged (data/music/mahler-opening-score.txt)')
         elif pid in tables['AS_ARRANGED']:
             treat.append('played as arranged: no interpretation pass')
         elif pid in tables['APPLY_MOOD']:
