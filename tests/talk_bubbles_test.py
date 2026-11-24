@@ -31,7 +31,8 @@ def run(work, name, frames, script, **extra):
                # (someone with nowhere to be, forty minutes into the day, who stands for the talk:
                # tests/talk_hold_test.py has the ones who walk on)
                AEGEAN_TALK="idle", AEGEAN_CAPTURE_MINUTES="40",
-               SLOPPY_SCREENSHOT=str(Path(work) / f"{name}.png"), **extra)
+               SLOPPY_SCREENSHOT=str(Path(work) / f"{name}.png"))
+    env.update(extra)
     out = subprocess.run(["sloppy", "--release", "tools/panel_probe.jo"], cwd=ROOT, env=env,
                          capture_output=True, text=True, timeout=1200)
     assert out.returncode == 0, f"{name}: exit {out.returncode}\n{out.stderr[-3000:]}"
@@ -101,11 +102,18 @@ def main():
             assert not (x < theirs[0] + theirs[2] and theirs[0] < x + w and y < theirs[1] + theirs[3] and theirs[1] < y + h), f"bubble {i} over their line"
             for j, (x2, y2, w2, h2) in enumerate(got[:i]):
                 assert not (x < x2 + w2 and x2 < x + w and y < y2 + h2 and y2 < y + h), f"bubbles {i} and {j} overlap"
+        # (the menu stays pinned from its first visible frame through fading replies too)
+        first_menu = next(f for f in sorted(talk) if boxes(talk[f]))
+        pinned = boxes(talk[first_menu])
+        for f in range(first_menu, whole + 60 * 11):
+            if f in talk and boxes(talk[f]) and int(talk[f]["options"]) == options:
+                assert boxes(talk[f]) == pinned, f"frame {f}: menu moved from {pinned} to {boxes(talk[f])}"
         # (their question unanswered: its answers gone some twelve seconds on, the subjects still
-        # there, and their line with them)
+        # there, and their line with them; the menu stays pinned at the same top edge)
         late = talk[whole + 60 * 14]
         assert 0 < int(late["options"]) < options, f"the answers stayed: {late['options']} of {options}"
         assert late["person"] == "true" and probe[whole + 60 * 14]["ui"] == "talk"
+        assert abs(boxes(late)[0][1] - pinned[0][1]) < 1.0, f"menu top jumped when replies expired: {pinned[0]} -> {boxes(late)[0]}"
         print(f"left alone: {chars} characters in {seconds:.1f} s, then {options} things to say; the answers faded, {late['options']} left")
         at = whole + 30
 
@@ -162,6 +170,42 @@ def main():
         assert said is not None and talk[said]["words"] != "", "A said nothing"
         assert probe[at + 296]["ui"] == "talk" and probe[at + 306]["ui"] == "none", "B did not end it"
         print("a controller: the d-pad reached a reply, a bumper turned the set, A said it, B left")
+
+        # ---- moving scene: speaker walking, pilot walking, camera rotating -> menu never moves
+        # (AEGEAN_TALK=1 opens a talk with someone who soon gets a load and walks off; we also walk
+        # and rotate the camera with Q and D while the reply fan is open)
+        move_script = "1:mouse=5x5 300:q+ 480:q- 360:d+ 450:d-"
+        probe, talk = run(work, "moving", 720, move_script, AEGEAN_TALK="1", AEGEAN_TALK_FOLLOW="1", AEGEAN_CAPTURE_MINUTES="0")
+        # Check every contiguous open run of the menu (same option count and set): zero drift after first frame.
+        open_runs = 0
+        run_boxes = None
+        run_opts = None
+        run_set = None
+        run_bubbles = set()
+        for f in sorted(talk):
+            t = talk[f]
+            b = boxes(t)
+            if not b:
+                if run_boxes is not None:
+                    open_runs += 1
+                    run_boxes = None
+                continue
+            opts, cur_set = t["options"], t["set"]
+            run_bubbles.add(t["bubble"])
+            if run_boxes is None or opts != run_opts or cur_set != run_set:
+                if run_boxes is not None:
+                    # (if options or set changed while still open, top edge must remain pinned)
+                    assert abs(b[0][1] - run_boxes[0][1]) < 1.0, f"moving frame {f}: menu top jumped {run_boxes[0]} -> {b[0]}"
+                run_boxes = b
+                run_opts = opts
+                run_set = cur_set
+            else:
+                assert b == run_boxes, f"moving frame {f}: menu moved after first frame: {run_boxes} -> {b}"
+        if run_boxes is not None:
+            open_runs += 1
+        assert open_runs >= 1, "moving scene never opened a talk menu"
+        assert len(run_bubbles) >= 5, f"moving scene speaker bubble did not actually move ({len(run_bubbles)} positions)"
+        print(f"moving scene: {open_runs} open menu span(s), speaker bubble moved across {len(run_bubbles)} positions, menu stayed steady")
     print("ok")
 
 

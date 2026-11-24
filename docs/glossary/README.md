@@ -3148,10 +3148,18 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   each worded as he would say it (the subject "the weather" reads "How's the weather looking?").
   The one chosen becomes his own speech bubble; their answer begins a moment after.
 - **The fan:** four at a time, with Goodbye under every set. More than four: two small arrows
-  and "2 / 3" turn the sets. It comes once their line is whole. It stands on the side of his head
-  away from the other speaker, clear of both speech bubbles, the clock and a touch screen's
-  buttons; on a cramped screen its lines break shorter until it fits; on a phone held upright
-  it goes under his head.
+  and "2 / 3" turn the sets. It comes once their line is whole. On its first visible frame it picks
+  the side of his head away from the other speaker, clear of both speech bubbles, the clock and a
+  touch screen's buttons (narrowing on a cramped screen; over his head on a phone held upright),
+  and pins that placement (`ReplyPin`, `reply_pin_clamp`) while open, shifting only if it would go
+  off screen.
+- **Contextual replies and lodging:** lines that invite a response (walking along, warnings,
+  invitations, busy workers, thanks, deed questions, introductions, apologies, compliments,
+  secrets, missing boats, friend referrals, lodging offers) put understated replies first with real
+  world effects, followed by general topics. `"Where can I stay the night?"` (`TalkTopic.lodging`)
+  is always available and answered from the living world: hotel name, price and directions when the
+  town has one; an impression-gated spare-room offer ("You can stay with us") leading into the
+  family stay; or a pointer to a local resident who takes lodgers.
 - **Keys:** 1 to 4 say the set's reply, 0 or Escape is goodbye, Tab the next set (Shift+Tab the
   one before); a click or tap on a bubble says it. A controller's d-pad steps through the set and
   A says the one reached, the bumpers turn the sets, B is goodbye; its stick is still his feet.
@@ -3207,7 +3215,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   a job, work to get to, the church bell, bed, someone waiting) keeps walking, at 0.8 of their
   pace, and he can walk along.
 - **Come along:** when a stander's day gives them somewhere to be, they say so ("This won't
-  carry itself. Come along.") and set off, the talk still open. Their boat takes them alone,
+  carry itself. Come along.") and set off, the talk still open. Answering `"All right."` or
+  `"Lead on."` keeps them walking (`talk_still_going`) and walks the pilot alongside (`talk_walk_along`);
+  answering `"Another time."` lets them go on alone. Their boat takes them alone,
   with a parting word. The same part of the day given a new spot to stand on is no call, nor the
   first plan of a world just begun; someone at work at their post stands.
 - **The lease:** the scene's walkers (the daily walkers, the far people, porters under a load)
@@ -3772,12 +3782,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the box's outline for everything (for measuring what the shape costs). It goes
   by where the camera looks, not where he faces: a ray from the camera through the middle of the
   screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
-  then the nearest one. His own body never counts. A click uses it, whether the mouse is locked to
-  the view or not; a click on nothing takes the mouse for the view. There is no pointer on foot.
-  On a touch screen the same thing is lit, showing what a tap there would do, and a tap on any
-  thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
-  at with the mouse free, and a small label over the thing says what it does
-  (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
+  then the nearest one. His own body never counts. Space or a click uses it, whether the mouse is
+  locked to the view or not; a click on nothing takes the mouse for the view. There is no pointer
+  on foot. On a touch screen the same thing is lit, showing what a tap there would do, and a tap on
+  any thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
+  at with the mouse free (and Space uses what is highlighted), and a small label over the thing says
+  what it does (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
   works in the rooms of a stay and at a table too.
@@ -3867,10 +3877,13 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   - **The window:** he stands at it and the view goes out over the harbour. Clicking it again, or
     Escape, brings him back to the chair.
   - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
-  - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Enter or A
-    to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
+  - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Space, Enter
+    or A to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
     vertices, cut from the baked room). A small label over it says what it does now (`room_label`:
     "Sleep", "Lie down", "Get up", "Sit", "Look out", "Back inside", "Leave").
+  - **Finding a bed:** asking `"Where can I stay the night?"` in any town answers with the local
+    hotel (name, price and directions), a believable impression-gated spare-room offer ("You can
+    stay with us") that leads straight into the family stay, or a local resident who takes lodgers.
   - **The view:** it turns all the way round by a drag, a finger or the right stick, so the door
     can be behind. On a phone held upright it is wider. The pilot isn't drawn while he passes
     within a metre of the eye. One small corner line lists the keys; with a pointer or a finger,
