@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS = ROOT / "tools" / "ci_test_weights.json"
 # files run with --release (their loops are too slow in a debug build; the same ones pages.yml
 # runs with --release)
-RELEASE = {"tests/sky_test.jo", "tests/nature_test.jo"}
+RELEASE = {"tests/sky_test.jo", "tests/nature_test.jo", "tests/town_plants_test.jo"}
 # never run in CI: they need a real GPU (the depth prepass differs under software rendering: the
 # test passes on the desktop, and gives 0 hidden-bed pixels under SLOPPY_SOFTWARE=1)
 GPU_ONLY = {"tests/river_depth_render_test.py": "needs a real GPU (software rendering has no hidden-bed pixels)",

@@ -1,0 +1,841 @@
+# Offline plant-placement audit across every legacy, generated and canal town.
+# Shared by tools/town_plants_audit.jo (full report) and tests/town_plants_test.jo (CI gate).
+use 'world.jo'
+use 'terrain_data.jo'
+use 'geography.jo'
+use 'world_source.jo'
+use 'settlements.jo'
+use 'settlement_ports.jo'
+use 'objects.jo'
+use 'plants.jo'
+use 'world_groves.jo'
+use 'world_terrain.jo'
+use 'terrain_lod.jo'
+use 'canopy.jo'
+use 'crowns.jo'
+use 'river_data.jo'
+use 'river_field.jo'
+use 'river_banks.jo'
+use 'lake_data.jo'
+use 'lake_field.jo'
+use 'lake_banks.jo'
+use 'lake_ports.jo'
+use 'landing_access.jo'
+use 'landing_stairs.jo'
+use 'stairways.jo'
+use 'grass.jo'
+use 'town_sites.jo'
+use 'town_details.jo'
+use 'town_architecture.jo'
+use 'world_towns.jo'
+use 'working_land_render.jo'
+use 'working_land_contact.jo'
+use 'settlement_purpose.jo'
+use 'thermal_sites.jo'
+use 'thermal_paths_data.jo'
+use 'canal_geometry.jo'
+use 'canal_city.jo'
+use 'airfields.jo'
+use 'water_field.jo'
+use 'walk_shapes.jo'
+use 'town_exclusions.jo'
+use 'fields.jo'
+use 'paint.jo'
+
+struct PlantFinding:
+    place: int
+    name: str
+    kind: str       # grove_pine, grove_cypress, grove_bush, grove_olive, grove_oleander, grove_prickly, wood_margin, canopy_billow, river_poplar, river_plane, river_reed, river_oleander, lake_poplar, lake_plane, lake_reed, lake_stream, grass, town_prop, close_plant, working_olive, working_vine, canal_tree, thermal_tree, legacy_town_tree
+    zone: str       # dock_path, street_square, building_door, water_mooring
+    at: vec3
+    detail: str
+
+struct AuditSegment:
+    a: vec2
+    b: vec2
+    half_width: f64
+    zone: str       # dock_path, street_square
+    label: str
+
+struct AuditCircle:
+    center: vec2
+    radius: f64
+    zone: str
+    label: str
+
+struct AuditBox:
+    center: vec2
+    right: vec2
+    front: vec2
+    half_x: f64
+    half_z: f64
+    zone: str
+    label: str
+
+struct TownAuditZones:
+    place: int
+    name: str
+    center: vec2
+    radius: f64
+    lo: vec2
+    hi: vec2
+    segments: AuditSegment[]
+    circles: AuditCircle[]
+    boxes: AuditBox[]
+    lanes: TownLane[]
+    sites: TownSite[] = []
+    seg_bins: {int: int[]} = {}
+    box_bins: {int: int[]} = {}
+    circle_bins: {int: int[]} = {}
+
+_audit_bin = (x: f64, z: f64) -> int: (int(floor(x / 32.0)) + 16384) * 32768 + (int(floor(z / 32.0)) + 16384)
+
+_index_audit_zones = (z: mut TownAuditZones):
+    z.seg_bins = {}; z.box_bins = {}; z.circle_bins = {}
+    loop i in 0..z.circles.len():
+        c = z.circles[i]
+        rad = c.radius + 12.0
+        x0 = int(floor((f64(c.center.x) - rad) / 32.0))
+        x1 = int(floor((f64(c.center.x) + rad) / 32.0))
+        z0 = int(floor((f64(c.center.y) - rad) / 32.0))
+        z1 = int(floor((f64(c.center.y) + rad) / 32.0))
+        loop bz in z0..z1+1:
+            loop bx in x0..x1+1:
+                key = (bx + 16384) * 32768 + (bz + 16384)
+                list = z.circle_bins.get(key, []); list.push(i); z.circle_bins[key] = list
+    loop i in 0..z.segments.len():
+        s = z.segments[i]
+        pad = s.half_width + 12.0
+        x0 = int(floor((f64(min(s.a.x, s.b.x)) - pad) / 32.0))
+        x1 = int(floor((f64(max(s.a.x, s.b.x)) + pad) / 32.0))
+        z0 = int(floor((f64(min(s.a.y, s.b.y)) - pad) / 32.0))
+        z1 = int(floor((f64(max(s.a.y, s.b.y)) + pad) / 32.0))
+        loop bz in z0..z1+1:
+            loop bx in x0..x1+1:
+                key = (bx + 16384) * 32768 + (bz + 16384)
+                list = z.seg_bins.get(key, []); list.push(i); z.seg_bins[key] = list
+    loop i in 0..z.boxes.len():
+        b = z.boxes[i]
+        rad = sqrt(b.half_x * b.half_x + b.half_z * b.half_z) + 12.0
+        x0 = int(floor((f64(b.center.x) - rad) / 32.0))
+        x1 = int(floor((f64(b.center.x) + rad) / 32.0))
+        z0 = int(floor((f64(b.center.y) - rad) / 32.0))
+        z1 = int(floor((f64(b.center.y) + rad) / 32.0))
+        loop bz in z0..z1+1:
+            loop bx in x0..x1+1:
+                key = (bx + 16384) * 32768 + (bz + 16384)
+                list = z.box_bins.get(key, []); list.push(i); z.box_bins[key] = list
+
+_seg_dist = (p: vec2, a: vec2, b: vec2) -> f64:
+    d = b - a
+    dd = f64(dot(d, d))
+    if dd < 0.000001: return f64(length(p - a))
+    u = clamp(f64(dot(p - a, d)) / dd, 0.0, 1.0)
+    f64(length(p - (a + d * f32(u))))
+
+_box_dist = (p: vec2, box: AuditBox) -> f64:
+    d = p - box.center
+    dx = max(0.0, abs(f64(dot(d, box.right))) - box.half_x)
+    dz = max(0.0, abs(f64(dot(d, box.front))) - box.half_z)
+    sqrt(dx * dx + dz * dz)
+
+_zones_expand = (z: mut TownAuditZones, p: vec2, pad: f64):
+    z.lo = min(z.lo, p - vec2(f32(pad), f32(pad)))
+    z.hi = max(z.hi, p + vec2(f32(pad), f32(pad)))
+
+_add_seg = (z: mut TownAuditZones, a: vec2, b: vec2, width: f64, zone: str, label: str):
+    if length(b - a) < 0.05: return
+    z.segments.push(AuditSegment(a, b, width * 0.5, zone, label))
+    _zones_expand(z, a, width * 0.5 + 16.0)
+    _zones_expand(z, b, width * 0.5 + 16.0)
+
+_add_poly = (z: mut TownAuditZones, pts: vec3[], width: f64, zone: str, label: str):
+    loop k in 1..pts.len(): _add_seg(z, pts[k-1].xz, pts[k].xz, width, zone, label)
+
+_add_circle = (z: mut TownAuditZones, c: vec2, radius: f64, zone: str, label: str):
+    z.circles.push(AuditCircle(c, radius, zone, label))
+    _zones_expand(z, c, radius + 16.0)
+
+_add_site_box = (z: mut TownAuditZones, s: TownSite, label: str):
+    r = site_right(s); f = site_front(s)
+    z.boxes.push(AuditBox(s.at.xz, r, f, s.width * 0.5, s.depth * 0.5, "building_door", label))
+    _zones_expand(z, s.at.xz, max(s.width, s.depth) + 16.0)
+    if s.chapel:
+        tw = site_tower(s)
+        z.boxes.push(AuditBox(tw.at.xz, r, f, tw.width * 0.5, tw.depth * 0.5, "building_door", label + " tower"))
+    # Doorway and front entry steps
+    e = site_entry(s)
+    _add_seg(z, e.front, e.outside, e.width, "building_door", label + " doorway")
+    _add_circle(z, e.outside + f * 1.2, 1.4, "building_door", label + " door apron")
+
+# Collect every walkable path, dock approach, quay, stair, street, square, building,
+# doorway and mooring for one settlement.
+build_town_audit_zones = (towns: Town[], s: WorldSettlement) -> TownAuditZones:
+    z = TownAuditZones(s.id, s.name, s.center.xz, s.radius, s.center.xz - vec2(f32(s.radius + 40.0), f32(s.radius + 40.0)), s.center.xz + vec2(f32(s.radius + 40.0), f32(s.radius + 40.0)))
+    if s.legacy >= 0:
+        tw = towns[s.legacy]
+        tangent = vec2(-tw.out.y, tw.out.x)
+        # Quays & dock walk
+        loop q in tw.quays:
+            _add_seg(z, q.a, q.b, f64(q.width), "dock_path", "legacy dock")
+        loop stair in tw.stairs:
+            _add_poly(z, stair, STAIR_WIDTH, "dock_path", "cliff stair")
+        # Board & store
+        board = town_board_spot(tw)
+        _add_circle(z, board.xz, 2.0, "dock_path", "notice board")
+        store = town_store_spot(tw, tw.center - vec3(tw.out.x, 0, tw.out.y) * 8.0 + vec3(tangent.x, 0, tangent.y) + vec3(0, f32(QUAY_TOP) - tw.center.y, 0))
+        _add_circle(z, store.xz, 2.0, "dock_path", "harbour store")
+        # Direct walk from quay root into nearest house / town centre (when no cliff stair)
+        if tw.stairs.len() == 0 and tw.houses.len() > 0:
+            near = tw.houses[0].xz
+            loop h in tw.houses:
+                if length(h.xz - tw.center.xz) < length(near - tw.center.xz): near = h.xz
+            if tw.quays.len() > 0: _add_seg(z, tw.quays[0].a, near + tw.out * 8.0, 4.0, "dock_path", "dock to town path")
+        # Moorings
+        loop d in tw.docks:
+            _add_circle(z, d.xz, 9.0, "water_mooring", "mooring berth")
+        # Buildings, frontages, lanes, outside stairs
+        loop site in tw.sites:
+            _add_site_box(z, site, "legacy building")
+            if let roof = site_roof_entry(site, tw.sites):
+                _add_seg(z, roof.outside, roof.front, roof.width, "street_square", "roof stair")
+        lanes = site_lanes(tw.sites)
+        z.lanes.extend(lanes)
+        loop lane in lanes: _add_seg(z, lane.a, lane.b, lane.width, "street_square", "town lane")
+        loop k in 0..tw.houses.len():
+            front = tw.houses[k].xz + tw.out * 8.0
+            _add_seg(z, front - tangent * 6.0, front + tangent * 6.0, 2.4, "street_square", "house frontage")
+            z.lanes.push(TownLane(front - tangent * 6.0, front + tangent * 6.0, 2.0))
+            if k > 0:
+                prev = tw.houses[k-1].xz + tw.out * 8.0
+                if length(prev - front) < 25.0:
+                    _add_seg(z, prev, front, 2.4, "street_square", "frontage link")
+                    z.lanes.push(TownLane(prev, front, 2.0))
+        _index_audit_zones(z)
+        return z
+
+    if s.id == CANAL_CITY_ID:
+        # Neravessa: canal banks, promenades, bridges, solids, workshop yard & moorings
+        loop bank in canal_banks:
+            mid_a = bank.a + bank.out * f32(bank.terrace * 0.5)
+            mid_b = bank.b + bank.out * f32(bank.terrace * 0.5)
+            _add_seg(z, mid_a, mid_b, bank.terrace, "dock_path", "canal promenade")
+        loop bridge in CANAL_BRIDGES:
+            idx = CANAL_BEGIN + bridge.local
+            a = RIVER_NODES[idx]; b = RIVER_NODES[idx + 1]
+            dir = normalize(b.xy - a.xy); side = vec2(-dir.y, dir.x)
+            span = f64(a.w) + canal_bridge_reach(bridge)
+            _add_seg(z, a.xy - side * f32(span), a.xy + side * f32(span), canal_bridge_half(bridge) * 2.0, "dock_path", "canal bridge")
+        loop solid in canal_solids:
+            if solid.kind != 1 and solid.kind != 5 and solid.kind != 6 and solid.kind != 9 and solid.kind != 10 and solid.kind != 12 and solid.kind != 13 and solid.kind != 14 and solid.kind != 15 and solid.kind != 16: continue
+            ax = vec2(f32(cos(solid.heading)), f32(sin(solid.heading)))
+            perp = vec2(f32(-sin(solid.heading)), f32(cos(solid.heading)))
+            z.boxes.push(AuditBox(solid.center.xz, ax, perp, f64(solid.half.x), f64(solid.half.z), "building_door", "canal block"))
+            _zones_expand(z, solid.center.xz, f64(max(solid.half.x, solid.half.z)) + 16.0)
+        _add_circle(z, canal_workshop.xz, 18.0, "dock_path", "canal workshop")
+        _add_circle(z, canal_launch.xz, 12.0, "water_mooring", "canal launch mooring")
+        _index_audit_zones(z)
+        return z
+
+    # Generated settlement
+    tangent = vec2(-s.out.y, s.out.x)
+    yaw = atan2(f64(s.out.x), f64(s.out.y))
+
+    # Town square & landmarks
+    sq = place_square(s)
+    if s.kind != .farm:
+        z.boxes.push(AuditBox(s.center.xz, tangent, -s.out, sq.half_width, sq.depth * 0.5, "street_square", "town square"))
+        landmark = s.center.xz - s.out * 26.0
+        scale = if s.kind == .capital: 1.6 else: 1.0
+        if s.kind == .lighthouse:
+            _add_site_box(z, TownSite(place_point(landmark), yaw, 6, 6, 24, 0), "lighthouse")
+        else:
+            _add_site_box(z, TownSite(place_point(landmark), yaw, 9 * scale, 14 * scale, 12 * scale, 0, chapel=true), "square church")
+    if s.size >= 100:
+        hill = place_to_world(s, s.old)
+        z.boxes.push(AuditBox(hill, tangent, -s.out, 24.0, 16.0, "street_square", "old quarter square"))
+        scale = if s.kind == .capital: 2.1 else: 1.25
+        _add_site_box(z, TownSite(place_point(hill), yaw, 9 * scale, 14 * scale, 12 * scale, 0, chapel=true), "hill church")
+    if s.kind == .monastery:
+        loop k in 0..4:
+            mc = s.center.xz + tangent * f32(-27 + k * 18) - s.out * 46.0
+            _add_site_box(z, TownSite(place_point(mc), yaw, 16, 10, 7, s.seed + k), "cloister")
+
+    # Town streets
+    if s.size > 1:
+        paved_streets = place_street_plan(s)
+        loop st in paved_streets:
+            mid = (st.a + st.b) * 0.5
+            if not place_inside(s, mid): continue
+            if s.harbor.len() > 0 and not s.remote_harbor and mid.y < -35.0: continue
+            _add_seg(z, place_to_world(s, st.a), place_to_world(s, st.b), st.width, "street_square", "town street")
+
+    # Houses, lanes, farm walls/paths
+    loop lot in place_lots(s):
+        if let parcel = place_ground_lot(s, lot):
+            site = site_from_parcel(parcel)
+            z.sites.push(site)
+            _add_site_box(z, site, "house")
+            if site.rural == 2:
+                # Farm walls & yard paths
+                if let yard = site_farm_yard(site):
+                    b = yard
+                    gate = f32(site_farm_gate(site, true)); backgate = f32(site_farm_gate(site, false))
+                    side = site.width * 0.5 + 3.5; turn = site.depth * 0.5 + 2.7
+                    _add_seg(z, site_point(site, gate, b.w + 5), site_point(site, gate, turn), 2.4, "street_square", "farm gate path")
+                    _add_seg(z, site_point(site, gate, turn), site_point(site, backgate, turn), 2.4, "street_square", "farm forecourt")
+                    _add_seg(z, site_point(site, backgate, turn), site_point(site, backgate, site.depth * 0.5 + 0.6), 2.4, "street_square", "farm door path")
+                    _add_seg(z, site_point(site, side, -site.depth * 0.5 - 2), site_point(site, side, b.y + 2), 2.2, "street_square", "farm side path")
+                    _add_seg(z, site_point(site, side, b.y + 2), site_point(site, backgate, b.y + 2), 2.2, "street_square", "farm back path")
+                    _add_seg(z, site_point(site, backgate, b.y + 2), site_point(site, backgate, b.y - 4), 2.2, "street_square", "farm rear gate")
+                    loop wall in site_farm_walls(site):
+                        _add_seg(z, site_point(site, wall.a.x, wall.a.y), site_point(site, wall.b.x, wall.b.y), wall.width + 0.6, "building_door", "farm wall")
+
+    # Port / dock / landing
+    if s.harbor.len() > 0:
+        port = settlement_port(s)
+        loop q in port.quays:
+            _add_seg(z, q.a.xz, q.b.xz, q.width, "dock_path", if q.street: "port street" else: if q.profile: "pier ramp" else: "pier/dock")
+        loop route in port.routes:
+            _add_poly(z, route, 3.2, "dock_path", "port walk route")
+        _add_circle(z, port.board.xz, 2.0, "dock_path", "port notice board")
+        loop b in port.buildings:
+            _add_site_box(z, TownSite(b.at, yaw, b.width, b.depth, b.height, s.seed, service=true, door_y=f64(b.door.y)), "port " + b.kind)
+            _add_circle(z, b.door.xz, 2.0, "building_door", "port building door")
+        loop m in s.harbor:
+            _add_circle(z, m.at.xz, 9.0, "water_mooring", "mooring berth")
+            _add_circle(z, m.buoy.xz, 8.0, "water_mooring", "mooring buoy")
+        if s.remote_harbor:
+            landing = landing_access(s.id)
+            _add_seg(z, landing.root.xz, landing.tip.xz, 5.0, "dock_path", "landing jetty")
+            _add_poly(z, landing.route, max(landing.width, 2.4), "dock_path", "landing dock path")
+            if lake_town(s.id):
+                # Dressed stone shore edge beside jetty
+                root = port.quays[0].a.xz
+                _add_seg(z, root - tangent * 32.0, root + tangent * 32.0, 4.0, "dock_path", "lake stone shore")
+
+    # Working facility (press/mill/shed)
+    if let fac = working_facility(s):
+        _add_site_box(z, working_building(s, fac), "working facility")
+
+    # Thermal baths attached to this place
+    ti = thermal_site(s.id)
+    if ti >= 0:
+        site = THERMAL_SITES[ti]
+        c = f32(cos(site.yaw)); sn = f32(sin(site.yaw))
+        rx = vec2(c, -sn); rz = vec2(sn, c)
+        loop t in THERMAL_TERRACES:
+            mid = (t.low + t.high) * 0.5; half = (t.high - t.low) * 0.5
+            wc = thermal_world(site, vec3(mid.x, 0, mid.y)).xz
+            z.boxes.push(AuditBox(wc, rx, rz, f64(half.x), f64(half.y), "street_square", "thermal terrace"))
+            _zones_expand(z, wc, f64(max(half.x, half.y)) + 16.0)
+        loop st in thermal_stairs(site):
+            a = thermal_world(site, vec3(f32(st.x), 0, f32(st.z0))).xz
+            b = thermal_world(site, vec3(f32(st.x), 0, f32(st.z1))).xz
+            _add_seg(z, a, b, st.width, "street_square", "thermal stair")
+        if s.id in THERMAL_PATHS:
+            _add_poly(z, THERMAL_PATHS[s.id], 2.4, "street_square", "thermal path")
+
+    # Country roads / feeder trails / landing spurs clipped to this town's bounding box
+    town_lo = z.lo; town_hi = z.hi
+    z.lanes = grass_road_lanes(s.center.xz, max(s.radius + 100.0, f64(length(town_hi - town_lo)) * 0.6))
+    seen_roads: {int: bool} = {}
+    bx0 = int(floor(f64(town_lo.x) / 2048.0)); bx1 = int(floor(f64(town_hi.x) / 2048.0))
+    bz0 = int(floor(f64(town_lo.y) / 2048.0)); bz1 = int(floor(f64(town_hi.y) / 2048.0))
+    loop bz in bz0..bz1+1:
+        loop bx in bx0..bx1+1:
+            key = (bx + 256) * 512 + bz + 256
+            loop rid in settlement_road_bins.get(key, []):
+                if rid in seen_roads: continue
+                seen_roads[rid] = true
+                road = settlement_roads[rid]
+                loop k in 1..road.points.len():
+                    a = road.points[k-1].xz; b = road.points[k].xz
+                    # Clip segment [a, b] against [town_lo, town_hi] so long roads never bloat the town AABB
+                    d = b - a; t0 = 0.0; t1 = 1.0; ok = true
+                    loop axis in 0..2:
+                        av = if axis == 0: f64(a.x) else: f64(a.y)
+                        dv = if axis == 0: f64(d.x) else: f64(d.y)
+                        lo_v = if axis == 0: f64(town_lo.x) else: f64(town_lo.y)
+                        hi_v = if axis == 0: f64(town_hi.x) else: f64(town_hi.y)
+                        if abs(dv) < 0.00001:
+                            if av < lo_v or av > hi_v: ok = false; break
+                        else:
+                            u = (lo_v - av) / dv; v = (hi_v - av) / dv
+                            t0 = max(t0, min(u, v)); t1 = min(t1, max(u, v))
+                            if t0 > t1: ok = false; break
+                    if not ok: continue
+                    ca = a + d * f32(t0); cb = a + d * f32(t1)
+                    if length(cb - ca) < 0.1: continue
+                    rzone = if road.a == road.b and road.a == s.id and s.remote_harbor: "dock_path" else: "street_square"
+                    z.segments.push(AuditSegment(ca, cb, max(road.width, 2.4) * 0.5, rzone, if rzone == "dock_path": "landing road" else: "country road"))
+    _index_audit_zones(z)
+    z
+
+# Classify a plant at `at` with physical radius `radius` against `zones`.
+# intentional: 0 = wild/scattered plant (never allowed in any zone),
+#              1 = intentional town square / courtyard / promenade tree/prop (allowed in square/promenade, forbidden in buildings/doors/roads/quays/water),
+#              2 = house-front / garden plant (allowed near house wall/garden, forbidden inside buildings/doors/streets/quays/water),
+#              3 = waterline reed (allowed in shallow water away from jetties/quays/boat sheds/moorings/roads/bridges).
+classify_plant = (towns: Town[], zones: TownAuditZones, at: vec3, radius: f64, intentional: int) -> (str, str):
+    p = at.xz
+    # Quick AABB reject
+    if p.x < zones.lo.x - 12.0 or p.x > zones.hi.x + 12.0 or p.y < zones.lo.y - 12.0 or p.y > zones.hi.y + 12.0:
+        return ("", "")
+
+    # 1. Water / mooring / floating checks
+    water = water_at(f64(p.x), f64(p.y))
+    level = if water.wet: water.level else: 0.0
+    g = if abs(f64(p.x)) < LEGACY_RESERVE and abs(f64(p.y)) < LEGACY_RESERVE: surface_height(f64(p.x), f64(p.y)) else: world_source_surface(f64(p.x), f64(p.y))
+    wh = walk_height_from_surface(towns, f64(p.x), f64(p.y), g)
+
+    if intentional != 3:
+        eff_g = if intentional == 1: max(g, wh) else: g
+        if water.wet or eff_g < level + 0.05:
+            return ("water_mooring", "in/over water (ground {eff_g:.1f} m, water {level:.1f} m)")
+        if intentional == 0 and abs(f64(at.y) - g) > 1.2 and wh <= g + 0.3:
+            return ("water_mooring", "floating/buried ({f64(at.y) - g:.1f} m off ground)")
+        if intentional == 0 and wh > g + 0.35:
+            return ("dock_path", "growing through raised deck/dock/stair (+{wh - g:.1f} m)")
+    else:
+        # Reeds: never on raised deck/jetty/dock/bridge
+        if wh > g + 0.35:
+            return ("dock_path", "reed growing through jetty/dock/stair (+{wh - g:.1f} m)")
+
+    bkey = _audit_bin(f64(p.x), f64(p.y))
+    near_circles = zones.circle_bins.get(bkey, [])
+    near_boxes = zones.box_bins.get(bkey, [])
+    near_segs = zones.seg_bins.get(bkey, [])
+    loop ci in near_circles:
+        c = zones.circles[ci]
+        d = f64(length(p - c.center))
+        if c.zone == "water_mooring":
+            if d < c.radius + radius: return ("water_mooring", "inside {c.label} ({d:.1f} m)")
+        else if c.zone == "dock_path":
+            if d < c.radius + radius: return ("dock_path", "blocking {c.label} ({d:.1f} m)")
+        else if c.zone == "building_door":
+            if intentional != 2 or d < c.radius:
+                if d < c.radius + (if intentional == 0: radius else: 0.2):
+                    return ("building_door", "blocking {c.label} ({d:.1f} m)")
+
+    # 2. Buildings & doorways (via 32 m spatial bin)
+    loop bi in near_boxes:
+        box = zones.boxes[bi]
+        if box.zone == "building_door":
+            d = _box_dist(p, box)
+            margin = if intentional == 0: radius else: if intentional == 2: -0.05 else: 0.4
+            if d < margin:
+                return ("building_door", "inside/touching {box.label} (dist {d:.1f} m)")
+
+    # 3. Dock paths, quays, piers, ramps, stairs, landing paths
+    loop si in near_segs:
+        seg = zones.segments[si]
+        if seg.zone != "dock_path": continue
+        if intentional == 1 and seg.label == "canal promenade": continue
+        d = _seg_dist(p, seg.a, seg.b)
+        margin = seg.half_width + (if intentional == 0: radius else: if intentional == 3: 1.5 else: 0.5)
+        if d < margin:
+            return ("dock_path", "on {seg.label} ({d:.1f} m from centreline, half-width {seg.half_width:.1f} m)")
+
+    # 4. Streets, squares, lanes, roads
+    if intentional != 3:
+        loop si in near_segs:
+            seg = zones.segments[si]
+            if seg.zone != "street_square": continue
+            # Potted house-front plants sit on the house side of a frontage/lane; only flag if in middle of road/lane/stair
+            if intentional == 2 and (seg.label == "house frontage" or seg.label == "frontage link" or seg.label == "town lane"): continue
+            d = _seg_dist(p, seg.a, seg.b)
+            margin = seg.half_width + (if intentional == 0: radius else: 0.2)
+            if d < margin:
+                return ("street_square", "on {seg.label} ({d:.1f} m from centreline, half-width {seg.half_width:.1f} m)")
+        if intentional == 0:
+            loop bi in near_boxes:
+                box = zones.boxes[bi]
+                if box.zone != "street_square": continue
+                d = _box_dist(p, box)
+                if d < radius:
+                    return ("street_square", "in {box.label} (dist {d:.1f} m)")
+
+    ("", "")
+
+# Cache 224 m world tile grids (stand, rise, ground) so adjacent towns share them.
+struct AuditTileGrid:
+    stand: f32[]
+    rise: f32[]
+    ground: f32[]
+
+_audit_tile_cache: {int: AuditTileGrid} = {}
+_audit_tile_grid = (tx: int, tz: int) -> AuditTileGrid:
+    global _audit_tile_cache
+    key = world_tile_key(tx, tz, 0)
+    if let g = _audit_tile_cache.get(key): return g
+    ox, oz = world_tile_origin(tx, tz, 0)
+    stand: f32[]; rise: f32[]; ground: f32[]
+    loop j in 0..17:
+        loop i in 0..17:
+            x = ox + f64(i) * 14.0; z = oz + f64(j) * 14.0
+            c = wood_cover_at(x, z)
+            stand.push(c.x); rise.push(c.y)
+            ground.push(f32(world_source_surface(x, z)))
+    g = AuditTileGrid(stand, rise, ground)
+    if _audit_tile_cache.len() > 2048: _audit_tile_cache.clear()
+    _audit_tile_cache[key] = g
+    g
+
+# Cache legacy island stand/rise from terrain_lod.bin (pure CPU, no GPU textures).
+struct LegacyIslandCover:
+    x0: f64
+    z0: f64
+    nx: int
+    nz: int
+    heights: f32[]
+    stand: f32[]
+    rise: f32[]
+
+_legacy_covers: LegacyIslandCover[] = []
+init_legacy_covers = (lod_bytes: u8[]):
+    global _legacy_covers
+    if _legacy_covers.len() > 0: return
+    ts = decode_render_land(lod_bytes)
+    loop k in 0..ts.len():
+        t = ts[k]; isl = ISLANDS[k]
+        x0 = f64(isl.center.x) - mesh_extent(isl) + f64(t.ix) * MESH_STEP
+        z0 = f64(isl.center.y) - mesh_extent(isl) + f64(t.iz) * MESH_STEP
+        heights: f32[]; stand: f32[]; rise: f32[]
+        loop j in 0..t.nz:
+            loop i in 0..t.nx:
+                a = (j * t.nx + i) * 8
+                y = f32(render_height(t, i, j))
+                heights.push(y)
+                if y < 0.6: stand.push(0.0); rise.push(0.0); continue
+                nxz = vec2(f32(t.pixels[a + 4]), f32(t.pixels[a + 5])) / 255.0 * 2.0 - vec2(1, 1)
+                n = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.001)), nxz.y)
+                p = vec2(f32(x0 + f64(i) * MESH_STEP), f32(z0 + f64(j) * MESH_STEP))
+                slope = length(n.xz) / max(n.y, 0.1)
+                stands = clamp(grove_pine_cover(f32(t.pixels[a + 6]) / 255.0, slope, y) * 7.0, 0.0, 1.0)
+                orchard = orchard_cover(p, y, slope)
+                share: f32 = 0.0
+                if field_share(1.0 - n.y, y, stands) > 0.01:
+                    w = field_colour(vec4(0,0,0,0), p, y, 1.0 - n.y, stands, orchard, f32(MESH_STEP), field_warp_cpu(p), field_palette)
+                    share = w.w
+                cover = wood_cover(n, y, f32(t.pixels[a + 3]) / 255.0 * 2.0 - 1.0, f32(t.pixels[a + 6]) / 255.0, f32(t.pixels[a + 7]) / 255.0, paint_sheet_wash(fract(p / 320.0) * 16.0), share, orchard, false)
+                stand.push(cover.x); rise.push(cover.y)
+        _legacy_covers.push(LegacyIslandCover(x0, z0, t.nx, t.nz, heights, stand, rise))
+
+_legacy_rise_at = (x: f64, z: f64) -> f32:
+    loop c in _legacy_covers:
+        fx = (x - c.x0) / MESH_STEP; fz = (z - c.z0) / MESH_STEP
+        if fx < 0.0 or fz < 0.0 or fx >= f64(c.nx - 1) or fz >= f64(c.nz - 1): continue
+        i = int(fx); j = int(fz); u = f32(fx - f64(i)); v = f32(fz - f64(j))
+        return mix(mix(c.rise[j * c.nx + i], c.rise[j * c.nx + i + 1], u), mix(c.rise[(j + 1) * c.nx + i], c.rise[(j + 1) * c.nx + i + 1], u), v)
+    0.0
+
+GROVE_KIND_NAMES = ["grove_pine", "grove_cypress", "grove_bush", "grove_olive", "grove_oleander", "grove_prickly"]
+GROVE_RADII = [1.8, 1.2, 1.5, 1.6, 1.2, 1.0]
+
+# Sample grass on the exact 1 m world grid along every forbidden segment, circle and box.
+_audit_grass_cell = (towns: Town[], zones: TownAuditZones, checked: mut {int: bool}, out: mut PlantFinding[], ix: int, iz: int):
+    key = (ix + 1048576) * 2097152 + (iz + 1048576)
+    if key in checked: return
+    checked[key] = true
+    x = f64(ix); z = f64(iz)
+    p = vec2(f32(x), f32(z))
+    if not grass_lane_clear(p, zones.lanes): return
+    cov = grass_cover(towns, x, z)
+    if cov < 0.001: return
+    h = if abs(x) < LEGACY_RESERVE and abs(z) < LEGACY_RESERVE: surface_height(x, z) else: world_source_surface(x, z)
+    zone, detail = classify_plant(towns, zones, vec3(f32(x), f32(h), f32(z)), 0.75, 0)
+    if zone != "":
+        out.push(PlantFinding(zones.place, zones.name, "grass", zone, vec3(f32(x), f32(h), f32(z)), detail))
+
+_audit_grass_town = (towns: Town[], zones: TownAuditZones, out: mut PlantFinding[]):
+    checked: {int: bool} = {}
+    big = zones.boxes.len() > 200
+    loop seg in zones.segments:
+        # Walk along the segment and across its width so long diagonal roads stay O(length)
+        d = seg.b - seg.a; len = f64(length(d))
+        if len < 0.05: continue
+        dir = d / f32(len); perp = vec2(-dir.y, dir.x)
+        step = if seg.label == "canal promenade": 4 else: if big and seg.zone != "dock_path": 2 else: 1
+        steps = max(1, int(ceil(len / f64(step))))
+        half_steps = int(ceil((seg.half_width + 1.0) / f64(step)))
+        loop s in 0..steps+1:
+            base = seg.a + dir * f32(min(len, f64(s * step)))
+            loop w in -half_steps..half_steps+1:
+                q = base + perp * f32(w * step)
+                _audit_grass_cell(towns, zones, checked, out, int(floor(f64(q.x) + 0.5)), int(floor(f64(q.y) + 0.5)))
+
+    loop box in zones.boxes:
+        if box.zone == "street_square" and box.label == "town square":
+            step = if big: 3 else: 2
+            nx = int(ceil(box.half_x)); nz = int(ceil(box.half_z))
+            j = -nz
+            loop j <= nz:
+                i = -nx
+                loop i <= nx:
+                    q = box.center + box.right * f32(i) + box.front * f32(j)
+                    _audit_grass_cell(towns, zones, checked, out, int(floor(f64(q.x) + 0.5)), int(floor(f64(q.y) + 0.5)))
+                    i += step
+                j += step
+        else if box.zone == "building_door":
+            step = if box.label == "canal block": 6 else: if big: 4 else: 2
+            nx = int(ceil(box.half_x)); nz = int(ceil(box.half_z))
+            j = -nz
+            loop j <= nz:
+                i = -nx
+                loop i <= nx:
+                    q = box.center + box.right * f32(i) + box.front * f32(j)
+                    _audit_grass_cell(towns, zones, checked, out, int(floor(f64(q.x) + 0.5)), int(floor(f64(q.y) + 0.5)))
+                    i += step
+                j += step
+
+_audit_river_cache: {int: RiverBankBatch} = {}
+_audit_river_batch = (grp: int) -> RiverBankBatch:
+    global _audit_river_cache
+    if let b = _audit_river_cache.get(grp): return b
+    b = build_river_bank(grp)
+    _audit_river_cache[grp] = b
+    b
+
+struct AuditLakeCache:
+    trees: RiverBankInstance[][]
+    stream_trees: RiverBankInstance[][]
+    reeds: vec3[]
+
+_audit_lake_cache: {int: AuditLakeCache} = {}
+_audit_lake_plan = (lid: int) -> AuditLakeCache:
+    global _audit_lake_cache
+    if let c = _audit_lake_cache.get(lid): return c
+    t, st, r = lake_bank_plan(lid)
+    c = AuditLakeCache(t, st, r)
+    _audit_lake_cache[lid] = c
+    c
+
+_tile_touches_zones = (zones: TownAuditZones, ox: f64, oz: f64) -> bool:
+    bx0 = int(floor((ox - 16.0) / 32.0)); bx1 = int(floor((ox + 240.0) / 32.0))
+    bz0 = int(floor((oz - 16.0) / 32.0)); bz1 = int(floor((oz + 240.0) / 32.0))
+    loop bz in bz0..bz1+1:
+        loop bx in bx0..bx1+1:
+            key = (bx + 16384) * 32768 + (bz + 16384)
+            if key in zones.seg_bins or key in zones.box_bins or key in zones.circle_bins: return true
+    false
+
+# Audit a single settlement across every plant kind.
+audit_town_plants = (towns: Town[], s: WorldSettlement, check_grass: bool = true) -> PlantFinding[]:
+    out: PlantFinding[]
+    zones = build_town_audit_zones(towns, s)
+
+    record = (kind: str, at: vec3, radius: f64, intentional: int):
+        zone, detail = classify_plant(towns, zones, at, radius, intentional)
+        if zone != "":
+            out.push(PlantFinding(s.id, s.name, kind, zone, at, detail))
+
+    if s.legacy >= 0:
+        # 1. Legacy island groves
+        isl = SETTLEMENTS[s.legacy].island
+        lists = legacy_grove_lists(isl, towns)
+        loop k in 0..lists.len():
+            loop inst in lists[k]:
+                at = inst.model[3].xyz
+                # Respect island_rise_at filter just like build_grove does when terrain_tiles is loaded
+                if _legacy_rise_at(f64(at.x), f64(at.z)) >= 0.12: continue
+                record(GROVE_KIND_NAMES[k], at, GROVE_RADII[k], 0)
+        # 2. Legacy island canopy billows
+        if isl < _legacy_covers.len():
+            cov = _legacy_covers[isl]
+            px0 = floor((f64(zones.lo.x) - cov.x0) / 448.0) * 448.0 + cov.x0
+            pz0 = floor((f64(zones.lo.y) - cov.z0) / 448.0) * 448.0 + cov.z0
+            px1 = f64(zones.hi.x); pz1 = f64(zones.hi.y)
+            pz = pz0
+            loop pz <= pz1:
+                px = px0
+                loop px <= px1:
+                    blists = billow_make(cov.x0, cov.z0, MESH_STEP, cov.nx, cov.nz, px, pz, 448.0, 2, 2, 0.0, false, cov.heights, cov.stand, cov.rise, [[], []])
+                    loop list in blists:
+                        loop b in list:
+                            record("canopy_billow", b.at.xyz, f64(b.at.w) * 0.5, 0)
+                    px += 448.0
+                pz += 448.0
+        # 3. Legacy detail props (foliage kinds: 2 pergola, 4 flowers, 10/20/21 tree, 13 terrace, 17 cemetery)
+        job = legacy_detail_job(towns[s.legacy], s.legacy)
+        loop k in [2, 4, 10, 13, 17, 20, 21]:
+            loop inst in job.district.props[k]:
+                at = inst.model[3].xyz
+                intent = if k == 4: 2 else: 1
+                rad = if k == 4: 0.4 else: if k == 2: 2.0 else: 1.0
+                record("town_prop", at, rad, intent)
+        # 4. Close-kit plants for legacy sites
+        tw = towns[s.legacy]
+        loop site in tw.sites:
+            parts: Instance3D[][] = [loop k in 0..ARCH_COUNT: []]
+            props: Instance3D[][] = [loop k in 0..TOWN_PROP_COUNT: []]
+            paths: Vertex3D[]
+            arch_site(parts, props, site, true, vec3(0,0,0))
+            arch_courtyard(parts, props, paths, site, tw.sites, vec3(0,0,0))
+            loop inst in parts[9]: record("close_plant", inst.model[3].xyz, 0.4, 2)
+            loop inst in props[4]: record("close_plant", inst.model[3].xyz, 0.4, 2)
+            loop inst in props[2]: record("close_plant", inst.model[3].xyz, 2.0, 1)
+    else:
+        # 1. New-world groves, wood margin crowns, and canopy billows across overlapping 224 m tiles
+        tx0 = int(floor((f64(zones.lo.x) - 16.0 - WORLD_ROOT_ORIGIN) / 224.0))
+        tx1 = int(floor((f64(zones.hi.x) + 16.0 - WORLD_ROOT_ORIGIN) / 224.0))
+        tz0 = int(floor((f64(zones.lo.y) - 16.0 - WORLD_ROOT_ORIGIN) / 224.0))
+        tz1 = int(floor((f64(zones.hi.y) + 16.0 - WORLD_ROOT_ORIGIN) / 224.0))
+        loop tz in tz0..tz1+1:
+            loop tx in tx0..tx1+1:
+                ox, oz = world_tile_origin(tx, tz, 0)
+                if not _tile_touches_zones(zones, ox, oz): continue
+                grid = _audit_tile_grid(tx, tz)
+                lists = world_grove_lists(tx, tz, 1.0)
+                loop k in 0..lists.len():
+                    loop inst in lists[k]:
+                        at = inst.model[3].xyz
+                        if wood_grid_at(grid.rise, ox, oz, f64(at.x), f64(at.z)) >= 0.12: continue
+                        record(GROVE_KIND_NAMES[k], at, GROVE_RADII[k], 0)
+                # Woods' margin crowns (crown_wood)
+                has_stand = false
+                loop v in grid.stand:
+                    if v > 0.05: has_stand = true; break
+                if has_stand:
+                    first_cz = int(floor(oz / CANOPY_CELL))
+                    last_cz = int(ceil((oz + 224.0) / CANOPY_CELL))
+                    clumps: CrownClump[]
+                    loop cz in first_cz..last_cz:
+                        wood_row(clumps, grid.stand, grid.rise, grid.ground, ox, oz, cz)
+                    loop c in clumps:
+                        if c.color.w > 3.5:
+                            root = vec3(c.tree.x, f32(world_source_surface(f64(c.tree.x), f64(c.tree.z))), c.tree.z)
+                            record("wood_margin", root, max(1.2, f64(c.tree.w) * 0.6), 0)
+                    # Canopy crown billows (tier 2)
+                    has_rise = false
+                    loop v in grid.rise:
+                        if v > 0.01: has_rise = true; break
+                    if has_rise:
+                        blists = billow_make(ox, oz, 14.0, 17, 17, ox, oz, 224.0, 2, 2, 1.0, true, grid.ground, grid.stand, grid.rise, [[], []])
+                        loop list in blists:
+                            loop b in list:
+                                record("canopy_billow", b.at.xyz, f64(b.at.w) * 0.5, 0)
+
+        # 2. River bank plants overlapping this town
+        if zones.hi.x >= RIVER_BOUNDS.x - 200.0 and zones.lo.x <= RIVER_BOUNDS.z + 200.0 and zones.hi.y >= RIVER_BOUNDS.y - 200.0 and zones.lo.y <= RIVER_BOUNDS.w + 200.0:
+            ngroups = (RIVER_NODES.len() - 2) / 4 + 1
+            loop grp in 0..ngroups:
+                c = RIVER_NODES[min(grp * 4 + 2, RIVER_NODES.len() - 1)]
+                if c.x < zones.lo.x - 1600.0 or c.x > zones.hi.x + 1600.0 or c.y < zones.lo.y - 1600.0 or c.y > zones.hi.y + 1600.0: continue
+                batch = _audit_river_batch(grp)
+                rnames = ["river_poplar", "river_plane", "river_reed", "river_oleander"]
+                rrads = [1.5, 2.0, 0.3, 1.2]
+                loop rk in 0..4:
+                    loop inst in batch.kinds[rk]:
+                        wp = batch.center + inst.position
+                        record(rnames[rk], wp, rrads[rk], if rk == 2: 3 else: 0)
+
+        # 3. Lake bank plants overlapping this town
+        loop lid in 0..SETTLEMENT_LAKES.len():
+            lake = SETTLEMENT_LAKES[lid]
+            if f64(length(lake.center - zones.center)) > f64(lake.nx) * lake.step + zones.radius + 1500.0: continue
+            center = vec3(lake.center.x, 0, lake.center.y)
+            lplan = _audit_lake_plan(lid)
+            loop k in 0..2:
+                kind = if k == 0: "lake_poplar" else: "lake_plane"
+                rad = if k == 0: 1.5 else: 2.0
+                loop inst in lplan.trees[k]: record(kind, center + inst.position, rad, 0)
+                loop inst in lplan.stream_trees[k]: record("lake_stream", center + inst.position, rad, 0)
+            loop rr in lplan.reeds: record("lake_reed", rr, 1.0, 3)
+
+        # 4. Working-land olives & vines
+        if working_plots_cached(s).len() > 0:
+            loop plot in working_plots_cached(s):
+                if plot.crop != 2 and plot.crop != 3: continue
+                side = vec2(-plot.axis.y, plot.axis.x)
+                loop row in 0..5:
+                    loop col in 0..6:
+                        p = plot.center + plot.axis * (f32(col) * 12.0 - 30.0) + side * (f32(row) * 10.0 - 20.0)
+                        h = place_ground(p)
+                        if h < 4.0 or water_at(f64(p.x), f64(p.y)).wet or settlement_on_road(p) or length(settlement_avoid_buildings(p) - p) > 0.1 or town_plant_excluded(p, 2.0): continue
+                        record(if plot.crop == 3: "working_olive" else: "working_vine", vec3(p.x, f32(h), p.y), if plot.crop == 3: 1.5 else: 0.9, 0)
+
+        # 5. Town district props & close-kit plants (skip Neravessa which has its own canal trees)
+        if s.id == CANAL_CITY_ID:
+            loop bank in canal_banks:
+                if bank.front != 0: continue
+                arm = bank.local < 0
+                seed = abs(bank.local * 3 + (if bank.sign > 0.0: 1 else: 0)) + (if arm: int(abs(bank.a.x)) else: 0)
+                if arm and canal_hash(seed) % 3 != 0: continue
+                mid = (bank.a + bank.b) * 0.5 + bank.out * 4.2
+                if not canal_tree_clear(mid, bank.terrace): continue
+                record("canal_tree", vec3(mid.x, f32(bank.street), mid.y), 1.0, 1)
+        else:
+            tangent = vec2(-s.out.y, s.out.x)
+            # Square props
+            sq = place_square(s)
+            loop prop in sq.props:
+                if prop.kind == 2 or prop.kind == 4 or prop.kind == 10 or prop.kind == 13 or prop.kind == 17:
+                    p = place_to_world(s, prop.local)
+                    h = place_ground(p)
+                    prad = if prop.kind == 4: 0.4 else: if prop.kind == 2: 2.0 else: if prop.kind == 13 or prop.kind == 17: 2.5 else: 1.0
+                    pmode = if prop.kind == 4: 2 else: 1
+                    if h >= 0.4 and town_prop_clear(p, prad, pmode):
+                        record("town_prop", vec3(p.x, f32(h), p.y), prad, pmode)
+            # Cemetery & hill tree & farm olive terraces
+            if s.kind != .farm and s.kind != .lighthouse:
+                cp = s.center.xz - s.out * 34.0 + tangent * 15.0
+                ch = place_ground(cp)
+                if ch >= 0.4 and town_prop_clear(cp, 2.5, 1): record("town_prop", vec3(cp.x, f32(ch), cp.y), 2.5, 1)
+            else if s.kind == .farm:
+                loop off in [18.0, 27.0]:
+                    tp = s.center.xz - s.out * f32(off)
+                    th = place_ground(tp)
+                    if th >= 0.4 and town_prop_clear(tp, 2.5, 1): record("town_prop", vec3(tp.x, f32(th), tp.y), 2.5, 1)
+            if s.size >= 100:
+                hill = place_to_world(s, s.old)
+                hp = hill + tangent * 18.0 - s.out * 4.0
+                hh = place_ground(hp)
+                if hh >= 0.4 and town_prop_clear(hp, 1.0, 1): record("town_prop", vec3(hp.x, f32(hh), hp.y), 1.0, 1)
+            # Outer district terrace (world_towns.jo:229-233)
+            oz_idx = int(s.radius / TOWN_DISTRICT) - 1
+            outer_c = s.center.xz + tangent * f32(0.5 * TOWN_DISTRICT) - s.out * f32((f64(oz_idx) + 0.5) * TOWN_DISTRICT)
+            if place_flat(outer_c, 12.0, 0.3):
+                tp = outer_c + tangent * 25.0
+                th = place_ground(tp)
+                if th >= 0.4 and town_prop_clear(tp, 2.5, 1): record("town_prop", vec3(tp.x, f32(th), tp.y), 2.5, 1)
+
+            # Lot props & close-kit plants (reusing zones.sites)
+            sites = zones.sites
+            loop p in sites:
+                front_dir = vec2(f32(sin(p.yaw)), f32(cos(p.yaw)))
+                right = vec2(front_dir.y, -front_dir.x)
+                front = p.at.xz + front_dir * f32(p.depth * 0.5 + 1.5)
+                if p.seed % 4 == 0:
+                    fp = front + right * 3.0; fh = place_ground(fp)
+                    if fh >= 0.4 and town_prop_clear(fp, 0.4, 2): record("town_prop", vec3(fp.x, f32(fh), fp.y), 0.4, 2)
+                if p.seed % 13 == 0:
+                    pp = p.at.xz + right * 9.0; ph = place_ground(pp)
+                    if ph >= 0.4 and town_prop_clear(pp, 2.0, 1): record("town_prop", vec3(pp.x, f32(ph), pp.y), 2.0, 1)
+            # Close-kit plants (sampled on all sites for small/medium towns, every 4th for capitals to stay fast)
+            stride = if sites.len() > 200: 4 else: 1
+            loop idx in 0..sites.len():
+                if idx % stride != 0: continue
+                site = sites[idx]
+                flower = site_point(site, site.width * 0.35, site.depth * 0.5 + 0.75)
+                fh = place_ground(flower)
+                if fh >= 0.4 and town_prop_clear(flower, 0.35, 2): record("close_plant", vec3(flower.x, f32(fh), flower.y), 0.35, 2)
+                if site.rural == 2:
+                    loop x in [-site.width * 0.5 - 4.0, site.width * 0.5 + 10.0]:
+                        loop row in 0..3:
+                            z_off = -site.depth * 0.5 - 6.0 + f64(row) * 5.0
+                            at = site_point(site, x, z_off); ah = place_ground(at)
+                            if town_prop_clear(at, 1.0, 2): record("close_plant", vec3(at.x, f32(ah), at.y), 1.0, 2)
+
+        # 6. Thermal bath trees
+        ti = thermal_site(s.id)
+        if ti >= 0:
+            ts = THERMAL_SITES[ti]
+            loop tree in [vec3(-21,0,-11),vec3(21,0,-12),vec3(-25,0,10),vec3(23,0,15),vec3(-10,0,20)]:
+                wp = thermal_world(ts, tree)
+                wh = world_source_surface(f64(wp.x), f64(wp.z))
+                record("thermal_tree", vec3(wp.x, f32(wh), wp.z), 1.2, 1)
+
+    # Grass blades check
+    if check_grass: _audit_grass_town(towns, zones, out)
+    out
