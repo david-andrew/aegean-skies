@@ -2079,14 +2079,13 @@ On the rivers branch until it lands.
   stands half as tall again and the masses gently up to 1.75 times (dissolving both mass and clump
   feet seamlessly into the hillside canopy sheet so slopes never break into stacked horizontal discs),
   both the sheet and far masses sample
-  `u.canopy` with explicit `sample_lod` capped at integer octave 2 (9–36 m clusters advancing from
-  480 m, matching `canopy_far_relief` at the 3.4–4.0 km handover with zero octave checkerboard flicker), and
+  `u.canopy` with hardware mipmapping across a smooth non-dithered octave crossfade (18 m to 36 m clusters over
+  550–1,450 m, aligned with `canopy_far_relief` at the 3.4–4.0 km handover with zero screen-space IGN dither holes or grazing-ridge aliasing), gate canopy rise against farmed fields (`1 - working.w * 1.35`) so coarse morphing tiles never draw canopy over open farmland, and
   past the crowns' reach the masses cast shadows on the sheet and on one another
-  (`billow_shadow`, fading smoothly to 3.1 km). A far dome is a cone; its ring swells out to the dome's shape as the eye
+  (`billow_shadow`, fading cleanly out over 2.8–3.7 km before the 4 km handover). A far dome is a cone; its ring swells out to the dome's shape as the eye
   nears. Nothing arrives: far off the wood is the ground's paint, and its height shows only
   in its outline, drawn on the screen ([Land's outline](#lands-outline)); nearer the sheet
-  rises out of the ground (from 3.4 km, its own paint of the crowns taking over by interleaved
-  gradient noise with `sample_lod` so hillsides never show halftone bands), then each dome rises
+  rises out of the ground (from 3.4 km, solid without IGN dither holes), then each dome rises
   out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
   120 m), its top first. A far clump stands no more than half as tall again and is lit by the
@@ -2132,13 +2131,16 @@ On the rivers branch until it lands.
   leave how wooded the land is in the scene's alpha (`ground_surface` in `src/terrain.jo`,
   `world_shell_fragment`).
 - **Rules:** two passes from the scene's depth, after the opaque scene and the water and before
-  the clouds. The first, into a picture an eighth the size, finds the land's lines (land nearer
-  than what is over it by three tenths) and keeps the land's colour and woodedness just under
-  each. The second draws the crowns onto the scene, only in the 32-pixel blocks that hold a
-  line (a pass over every pixel cost 0.45 ms on the laptop). The crowns are a profile fixed to
-  the world that goes only by where the land's point lies across the eye's ray (along one of 64
-  fixed bearings): a line seen edge-on is a pixel hundreds of metres deep, and a pattern that
-  went by the depth along the ray crawled. A crown's top covers its last pixel by the part it
+  the clouds. The first, into a picture an eighth the size, finds the land's lines (land beyond
+  `SILHOUETTE_NEAR` = 1.8 km nearer than what is over it by three tenths) and samples a 5-tap cross
+  inside the ridge (`at - 1`, `at - 2`, `at - 4`, `±2 px` along `side`) for the land's colour and
+  woodedness so sub-pixel edge shifts never blink an 8-pixel block on or off; far canopy billows
+  (`1.8–2.6 km`) match the sheet's woodedness alpha handover. The second draws the crowns onto the
+  scene, only in the 32-pixel blocks that hold a line (a pass over every pixel cost 0.45 ms on the
+  laptop), ignoring foreground objects closer than `SILHOUETTE_NEAR`. The crowns are a profile fixed
+  to the world that goes only by where the land's point lies across the eye's ray (along one of 64
+  fixed bearings): a line seen edge-on is a pixel hundreds of metres deep, and a pattern that went
+  by the depth along the ray crawled. A crown's top covers its last pixel by the part it
   reaches. The terrain's draws turn blending off themselves, since the ground's alpha is no
   longer one (the field map's redraw left blending on). A cloud behind a ridge is drawn over
   the ridge's crowns; at the default half-scale software render it draws nothing (`tools/outline_check.jo` / `tests/outline_test.py` runs on a real GPU), while `SLOPPY_SOFT_SCALE=1` runs the full pass on GPU-less runners (`tests/temporal_stability_test.py`).
