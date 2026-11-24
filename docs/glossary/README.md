@@ -2586,8 +2586,8 @@ On the rivers branch until it lands.
   - **A spot:** low land above the water and under four metres high, with the sea within twenty
     metres. Not a quay or a pier (the land itself must be above the sea, with nothing built up
     over it), and not a town (no house within a dozen metres) (`picnic_spot_at`).
-  - **Spreading the blanket:** with the basket along, tap or click the sand there. With the mouse,
-    a small label says "Spread the blanket", or F where he stands. He walks over, the striped
+  - **Spreading the blanket:** with the basket along, press Space looking at the sand there (or tap
+    it on a touch screen). Looking at the sand, a small label says "Spread the blanket", or F where he stands. He walks over, the striped
     blanket unrolls, he sits down by degrees facing the sea, and the basket, bread, olives and
     bottle are set out.
   - **Sitting:** the afternoon goes by unhurried, about a minute of the world's clock a second. A
@@ -3747,9 +3747,9 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 
 ### Things to tap
 
-- **Aliases:** clicking the thing itself, walking over to it, the look highlight, the gleam.
+- **Aliases:** using the thing itself, walking over to it, the look highlight, the gleam.
 - **Definition:** the game's standing preference is the thing in the world over a button or a card.
-  On foot, these are tapped, or looked at and clicked, instead of their cards:
+  On foot, these are looked at and used with Space (or tapped on touch input), instead of their cards:
   - one's own aircraft at her mooring: the cockpit ("Climb aboard"), and the engine ("Work on her");
   - the pilot's table and the bar's stool ("Sit", "Sit at the bar");
   - the hotel's desk ("Ask for a room") and the barber's chair ("A shave");
@@ -3764,8 +3764,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   only from the same side of the bar room's walls (`way_clear`), except the desk, which stands at
   its door. The keys work as ever. A card whose thing is on the screen isn't shown
   (`shown_offers`), unless a pad is in use, whose buttons go by the cards' order.
-- **Seated:** at a table or the bar, the band's stand and the jar are tapped or clicked the same
-  way, and so are the board and the paper at the coffee house (`seat_things`). They are no longer
+- **Seated:** at a table or the bar, the band's stand and the jar are highlighted with the mouse and
+  used with Space (or tapped on touch input), and so are the board and the paper at the coffee house (`seat_things`). They are no longer
   buttons on the table's bar, but their keys T, P, S and B still work.
 - **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
   round it and a faint band of light passing slowly down over it, with a few flecks in it like a
@@ -3786,11 +3786,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   the box's outline for everything (for measuring what the shape costs). It goes
   by where the camera looks, not where he faces: a ray from the camera through the middle of the
   screen, or a thing within about three and a half degrees of it, the one nearest the ray first,
-  then the nearest one. His own body never counts. Space or a click uses it, whether the mouse is
-  locked to the view or not; a click on nothing takes the mouse for the view. There is no pointer
-  on foot. On a touch screen the same thing is lit, showing what a tap there would do, and a tap on
-  any thing still goes to it. Seated, the band's stand, the jar, the board and the paper are pointed
-  at with the mouse free (and Space uses what is highlighted), and a small label over the thing says
+  then the nearest one. His own body never counts. Space uses it, whether the mouse is locked to the
+  view or not; a mouse click never interacts with things in the world (on foot it only takes the
+  mouse for the view). There is no pointer on foot. On touch input, a tap on any thing still goes to
+  it (gated on actual touches, not the platform), and on a touch screen the looked-at thing is lit
+  as well. Seated, the band's stand, the jar, the board and the paper are pointed at with the mouse
+  free and used with Space (or tapped on touch input), and a small label over the thing says
   what it does (`draw_thing_label`). A touch screen has no hover. When the view comes to rest, the things near
   and in view catch the light for a moment instead, and again every eight seconds while it stays
   still: a small four-pointed glint with no words (`gleam_step`, `gleam_now`, `draw_gleams`). This
@@ -3860,8 +3861,10 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     There is coffee in the morning (05:30 to 11:30).
   - **Time passes visibly**: the living world's clock runs a few minutes a frame, the light at the
     window turns, a small clock shows it, the lamp is lit after dark and out while asleep.
-- **By its things, not buttons:** there is no button bar in a room. One taps or clicks the thing
-  itself (`src/room_walk.jo`): the bed, the chair (at a family's, one's place at their table), the
+- **By its things, not buttons:** there is no button bar in a room. One highlights the thing itself
+  and presses Space (or uses the arrows / d-pad with Space, Enter or A, or taps it on touch input;
+  mouse clicks do not interact with room objects, and dragging still orbits the view)
+  (`src/room_walk.jo`): the bed, the chair (at a family's, one's place at their table), the
   hotel's French window, or the door.
   - **Getting there:** the pilot gets up out of the chair or the bed by degrees, walks round the
     furniture (`room_path`: straight when the floor is clear, else by the open floor), turns to
@@ -3873,12 +3876,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     (`room_bed_edge`; the figure's posture 7, lying back from sitting; `ROOM_LIE_SECONDS` for the
     three). Getting up is the same the other way.
   - **The bed:** lying down sleeps until morning of an evening or at night, else rests until the
-    evening (`room_sleep_until`). A tap or click on a thing wakes him, and once he's up he goes
+    evening (`room_sleep_until`). A touch tap on a thing wakes him, and once he's up he goes
     there. A key wakes him only (Back or Escape among them, never also the way out). He stays
-    lying until he's sent somewhere: the bed clicked again, or Back, gets him up in the room.
+    lying until he's sent somewhere: the bed used again, or Back, gets him up in the room.
   - **The night paid for:** the room is his until eleven the next morning. The desk then offers
     "go up to your room" (`hotel_room_paid`), not another night.
-  - **The window:** he stands at it and the view goes out over the harbour. Clicking it again, or
+  - **The window:** he stands at it and the view goes out over the harbour. Using it again, or
     Escape, brings him back to the chair.
   - **The door:** "Leave", or at a family's "Thank them and go". Escape goes there too.
   - **What is pointed at** (the mouse; or the arrow keys, Tab, or a pad's d-pad, with Space, Enter
@@ -4014,7 +4017,7 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   `src/leisure_view.jo`; `tests/table_service_test.jo`. A save keeps what is still coming (the
   waiter brings it again after a load).
 - **Going over to sit:** on foot, the pilot's table, the bar's stool and the coffee house's table
-  are tapped or clicked: he walks over and sits ([Things to tap](#things-to-tap)).
+  are used with Space (or tapped on touch input): he walks over and sits ([Things to tap](#things-to-tap)).
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
 
