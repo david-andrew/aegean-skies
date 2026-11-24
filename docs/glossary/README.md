@@ -2071,7 +2071,7 @@ On the rivers branch until it lands.
   use true-spherical sculpted 12-sided 3-ring domes (morphed seamlessly from the 8-sided 2-ring mesh
   across 250–190 m) with 5 protruding round 8-sided 3-ring lobes growing gently over 120–50 m while
   the core dome tucks slightly underneath, drawn solid with Early-Z (`billow_near_solid_sh`, zero
-  view-dependent edge re-cutting or hexagonal facets) and luminance-matched flat bands smoothly over 80–220 m ([Crowns](#crowns), banded). Its light is grouped as a painter groups a wood's values: near,
+  view-dependent edge re-cutting or hexagonal facets), luminance-matched flat bands smoothly over 80–220 m ([Crowns](#crowns), banded), and 3D object-space leaf-tuft cushion modelling with inner foliage pockets below 95 m. Clumps keep partial canopy-sheet texture down to 320 m so mid-range woods never expose bald smooth domes before crowns cover them. Its light is grouped as a painter groups a wood's values: near,
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
   or a warmer oak among the rest. The steps between the painted values are never crisper than
@@ -4232,12 +4232,12 @@ No image: the tiers differ in budgets more than in any single view.
   from morphed values: between a tile's vertices that is not what its parent drew. Tiles about to split have their children made ahead (`world_prefetch_tiles`).
 - **Rules:** `tools/lod_pop_check.jo` measures the drawn ground (its height, the light on its
   normals, its fields, orchards and cliffs, the canopy sheet's rise and its painted crowns'
-  octave) and the woods' domes (their tops and their sides) frame by frame on four paths and fails on any step, and on a patch moving or changing its shade
-  quickly; it runs on the pages workflow. Anything new a terrain vertex carries must morph
+  octave), far land beyond 2.6 km (vanished, hidden or stepped distant ranges), and the woods' domes (their tops and their sides) frame by frame on four flight paths plus close orbit and 360-degree pan paths (`AEGEAN_POP_ORBIT`, `tests/lod_pop_orbit_test.py`) and fails on any step, vanishing distant land, or patch moving or changing its shade
+  quickly; it runs on the pages workflow and every branch push. Anything new a terrain vertex carries must morph
   between levels the same way (never read at the vertex's own sample whatever the level drawn).
   `tools/terrain_crack_check.jo` (`tests/terrain_crack_test.py`, every push) draws the ground
-  alone, by the game's own shaders, at five frames along each of those paths over a colour
-  nothing paints, and fails on any hole through which the eye's ray meets land: the pop check
+  alone, by the game's own shaders, at five frames along each of those paths (including a 360-degree pan) over a colour
+  nothing paints, and fails on any hole through which the eye's ray meets land or any undrawable visible land tile: the pop check
   works on the CPU at the tiles' samples and cannot see a fault in the shader itself, or at
   the vertices a tile has between samples along an edge beside finer tiles (where a cheaper
   read of the coarser height once took the wrong samples: cracks, and every other test passed).
