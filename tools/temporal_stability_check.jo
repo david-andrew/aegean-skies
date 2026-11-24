@@ -1,0 +1,252 @@
+# Headless temporal-stability and flicker capture harness (used by tests/temporal_stability_test.py).
+# Renders six fixed-step camera scripts through the game's real terrain, canopy, crown, aircraft and
+# screen-space outline shaders, saving RGB frames (+ depth maps for 3D reprojection on flight_300,
+# outline-off references on chase_dusk and horizon_woods, and an aircraft mask on chase_dusk):
+#   still         - frozen camera & time over wooded hills (any pixel change is flicker)
+#   pan_150       - 360 deg pan at 150 m AGL over wooded hills (6 compass sectors x 4 slow steps)
+#   pan_800       - 360 deg pan at 800 m AGL over wooded hills (6 compass sectors x 4 slow steps)
+#   flight_300    - level flight at 300 m AGL over wooded/farmed land with live tile streaming
+#   chase_dusk    - chase camera with aircraft against a wooded ridge at dusk (19:00)
+#   horizon_woods - slow pan along a wooded land/sky skyline (screen-space outline & foliage border)
+# Runs headless on GPU or under SLOPPY_SOFTWARE=1 SLOPPY_SOFT_SCALE=1 (CI GPU-less runners).
+use '../src/geography.jo'
+use '../src/world.jo'
+use '../src/world_terrain.jo'
+use '../src/terrain_lod.jo'
+use '../src/terrain.jo'
+use '../src/render_space.jo'
+use '../src/depth_space.jo'
+use '../src/cloud_depth.jo'
+use '../src/look.jo'
+use '../src/coast_field.jo'
+use '../src/crowns.jo'
+use '../src/cloud_transparency.jo'
+use '../src/silhouette.jo'
+use '../src/objects.jo'
+use '../src/planes.jo'
+
+const W = 384
+const H = 216
+const FOV = 62.0
+
+struct DepthVertex:
+    corner: vec2
+
+struct DepthOut:
+    pos: vec4
+    uv: vec2
+
+struct DepthParams:
+    depth: Texture
+    depth_ab: vec2
+
+depth_dump_vs = (v: DepthVertex, u: DepthParams) -> DepthOut:
+    ndc = v.corner * 2.0 - vec2(1, 1)
+    DepthOut(vec4(ndc, 0, 1), v.corner)
+
+depth_dump_fs = (i: DepthOut, u: DepthParams) -> vec4:
+    raw = sample(u.depth, i.uv).x
+    if not world_has_depth(raw, u.depth_ab): return vec4(0, 0, 0, 1)
+    dist = world_depth_decode(raw, u.depth_ab)
+    enc = clamp(log2(1.0 + max(dist, 0.0)) / 20.0, 0.0, 1.0)
+    q = floor(enc * 65535.0 + 0.5)
+    hi = floor(q / 256.0) / 255.0
+    lo = (q - floor(q / 256.0) * 256.0) / 255.0
+    vec4(hi, lo, 1.0, 1.0)
+
+window("Temporal stability check", W, H)
+enable_world_depth()
+assert(load_land(embed('../assets/terrain.bin')))
+load_terrain(embed('../assets/terrain_lod.bin'))
+assert(load_geography(embed('../assets/world.bin')))
+geography_enabled = true
+init_world_terrain()
+init_objects()
+
+craft_kind = Craft.supermarine_s6b
+craft_model = build_craft(craft_kind, LIVERIES[DEFAULT_LIVERIES[int(craft_kind)]])
+
+depth_sh = Shader()
+depth_quad = Mesh()
+
+out_dir = env("AEGEAN_STABILITY_OUT") ?? ""
+assert(out_dir != "", "set AEGEAN_STABILITY_OUT to an output directory")
+only_clips = env("AEGEAN_STABILITY_CLIPS") ?? ""
+clip_wanted = (name: str) -> bool:
+    if only_clips == "": return true
+    loop w in split(only_clips, ","):
+        if w == name: return true
+    false
+
+struct Shot:
+    clip: str
+    index: int
+    group: int
+    eye: vec3
+    yaw: f64
+    pitch: f64
+    hour: f64
+    clock: f64
+    settle: bool
+    dump_depth: bool
+    with_plane: bool
+    with_off: bool
+
+shots: Shot[] = []
+
+ground_hills = max(new_land_height(-126400.0, -128700.0), 0.0)
+
+# (a) still: frozen camera and time over wooded hills
+if clip_wanted("still"):
+    loop k in 0..6:
+        shots.push(Shot("still", k, 0, vec3(-126400, 600, -128700), 0.985, -0.16, 12.0, 100.0, k == 0, false, false, false))
+
+# (b1) pan_150: slow 360 deg pan at 150 m AGL (6 compass sectors x 4 consecutive 1.2 deg steps)
+if clip_wanted("pan_150"):
+    idx = 0
+    loop s in 0..6:
+        base_yaw = f64(s) * PI / 3.0
+        loop j in 0..4:
+            shots.push(Shot("pan_150", idx, s, vec3(-126400, f32(ground_hills + 150.0), -128700), base_yaw + f64(j) * 0.021, -0.10, 12.0, 100.0 + f64(j) / 60.0, j == 0, false, false, false))
+            idx += 1
+
+# (b2) pan_800: slow 360 deg pan at 800 m AGL (6 compass sectors x 4 consecutive 1.2 deg steps)
+if clip_wanted("pan_800"):
+    idx = 0
+    loop s in 0..6:
+        base_yaw = f64(s) * PI / 3.0
+        loop j in 0..4:
+            shots.push(Shot("pan_800", idx, s, vec3(-126400, f32(ground_hills + 800.0), -128700), base_yaw + f64(j) * 0.021, -0.18, 12.0, 100.0 + f64(j) / 60.0, j == 0, false, false, false))
+            idx += 1
+
+# (c) flight_300: level flight at 300 m AGL over land with live tile streaming + depth dump
+if clip_wanted("flight_300"):
+    start_f = vec3(-126400, f32(ground_hills + 300.0), -128700)
+    vel_f = vec3(-46.0, 0.0, -30.5)
+    loop k in 0..16:
+        dt = f64(k) / 30.0
+        shots.push(Shot("flight_300", k, 0, start_f + vel_f * f32(dt), 0.985, -0.14, 12.0, 100.0 + dt, k == 0, true, false, false))
+
+# (d) chase_dusk: chase camera with aircraft against a wooded hill ridge at dusk (~19:00)
+if clip_wanted("chase_dusk"):
+    loop k in 0..8:
+        dt = f64(k) / 30.0
+        yaw_c = -1.5708 + f64(k) * 0.008
+        eye_c = vec3(-119500.0 + f32(dt * 45.0), 800.0, -135000.0 + f32(dt * 12.0))
+        shots.push(Shot("chase_dusk", k, 0, eye_c, yaw_c, 0.075, 19.0, 100.0 + dt, k == 0, false, true, true))
+
+# (e) horizon_woods: slow pan along a wooded mountain skyline against the sky
+if clip_wanted("horizon_woods"):
+    loop k in 0..16:
+        yaw_h = -1.66 + f64(k) * 0.012
+        shots.push(Shot("horizon_woods", k, 0, vec3(-119500, 800, -135000), yaw_h, 0.075, 10.0, 100.0 + f64(k) / 60.0, k == 0, false, false, true))
+
+forward_of = (yaw: f64, pitch: f64) -> vec3:
+    vec3(f32(-sin(yaw) * cos(pitch)), f32(sin(pitch)), f32(-cos(yaw) * cos(pitch)))
+
+draw_plane_at = (eye: vec3, fwd: vec3, yaw: f64, L: Light, clock: f64):
+    # Place the aircraft 13.5 m ahead of the chase camera, slightly down so its wings and fuselage
+    # cross directly in front of the distant wooded hill ridge.
+    pos = eye + fwd * 13.5 - vec3(0, 0.35, 0)
+    at = translation(pos) * rotation_y(yaw)
+    loop part in craft_model.parts:
+        draw(obj_sh, part.mesh, obj_params(L, clock, at * part.frame))
+
+render_view = (s: Shot, out_path: str, outline_enabled: bool, plane_mask_only: bool, depth_path: str):
+    global silhouette_off, depth_sh, depth_quad
+    fwd = forward_of(s.yaw, s.pitch)
+    L = light_at(s.hour)
+    if plane_mask_only:
+        clear(vec4(0, 0, 0, 1))
+        hide_sky()
+        sun(L.sun_dir, L.sun, 0.0)
+        fog(vec3(0, 0, 0), 0.0, 0.0012)
+        post_effects(0.0, 1.0, 0.0, 1.0, scene_depth = true)
+        camera3d(s.eye, s.eye + fwd, FOV, 0.3, world_far(f64(s.eye.y)))
+        draw_custom((): draw_plane_at(s.eye, fwd, s.yaw, L, s.clock))
+        _ = save_png(out_path, screenshot())
+        return
+    silhouette_off = not outline_enabled
+    sky_bg = vec4(L.sky_horizon.x, L.sky_horizon.y, L.sky_horizon.z, 1.0)
+    clear(sky_bg)
+    hide_sky()
+    sun(L.sun_dir, L.sun, 0.0)
+    fog(L.haze, L.fog_density, 0.0012)
+    post_effects(0.0, 1.0, 0.0, 1.0, scene_depth = true)
+    camera3d(s.eye, s.eye + fwd, FOV, 0.3, world_far(f64(s.eye.y)))
+    draw_custom(():
+        draw_world_terrain(L, s.clock)
+        if s.with_plane: draw_plane_at(s.eye, fwd, s.yaw, L, s.clock)
+    )
+    draw_cloud_layer([], L)
+    _ = save_png(out_path, screenshot())
+    if depth_path != "":
+        if depth_sh.prog == 0:
+            depth_sh = make_shader(shader(depth_dump_vs, depth_dump_fs))
+            depth_quad = mesh([DepthVertex(vec2(0, 0)), DepthVertex(vec2(1, 0)), DepthVertex(vec2(0, 1)), DepthVertex(vec2(1, 1))], [u32(0), u32(1), u32(2), u32(2), u32(1), u32(3)])
+        clear(vec4(0, 0, 0, 1))
+        hide_sky()
+        post_effects(0.0, 1.0, 0.0, 1.0, scene_depth = true)
+        camera3d(s.eye, s.eye + fwd, FOV, 0.3, world_far(f64(s.eye.y)))
+        draw_custom((): draw_world_terrain(L, s.clock))
+        draw_custom(():
+            if scene_depth().id != 0:
+                bind_cloud_composite()
+                glViewport(0, 0, i32(scene_depth().width), i32(scene_depth().height))
+                cull(.none); blend(.none); depth_test(.off); depth_write(false)
+                draw(depth_sh, depth_quad, DepthParams(scene_depth(), world_depth_params()))
+                __rebind_target()
+        , transparent = true)
+        _ = save_png(depth_path, screenshot())
+
+shot_idx = 0
+warmed = false
+last_clip = ""
+meta_lines: str[] = []
+
+update = (dt: f64):
+    return
+
+draw = ():
+    global shot_idx, warmed, last_clip, world_generate_seconds, world_generate_tiles
+    if not warmed:
+        s0 = shots[0]
+        fwd0 = forward_of(s0.yaw, s0.pitch)
+        vp0 = perspective(f32(FOV * PI / 180.0), f32(W) / f32(H), 0.3, world_far(f64(s0.eye.y))) * look_at(s0.eye, s0.eye + fwd0, vec3(0, 1, 0))
+        world_generate_tiles = 0
+        world_generate_seconds = 2.0
+        loop _ in 0..150: prepare_world_terrain(s0.eye, vp0, s0.clock)
+        render_view(s0, "{out_dir}/warmup.png", true, false, "")
+        warmed = true
+        return
+    if shot_idx >= shots.len():
+        # Write manifest for Python evaluator
+        body = "[\n" + join(meta_lines, ",\n") + "\n]\n"
+        _ = write_file("{out_dir}/manifest.json", body)
+        print("STABILITY CAPTURE DONE shots={shots.len()} size={W}x{H}")
+        exit(0)
+    s = shots[shot_idx]
+    fwd = forward_of(s.yaw, s.pitch)
+    vp = perspective(f32(FOV * PI / 180.0), f32(W) / f32(H), 0.3, world_far(f64(s.eye.y))) * look_at(s.eye, s.eye + fwd, vec3(0, 1, 0))
+    if s.settle or s.clip != last_clip:
+        world_generate_tiles = 0
+        world_generate_seconds = 2.0
+        loop _ in 0..150: prepare_world_terrain(s.eye, vp, s.clock)
+        if s.clip == "flight_300":
+            world_generate_tiles = 1
+    else:
+        prepare_world_terrain(s.eye, vp, s.clock)
+    last_clip = s.clip
+    pad = if s.index < 10: "00{s.index}" else: "0{s.index}"
+    f_path = "{out_dir}/{s.clip}-f{pad}.png"
+    d_path = if s.dump_depth: "{out_dir}/{s.clip}-d{pad}.png" else: ""
+    render_view(s, f_path, true, false, d_path)
+    if s.with_off:
+        render_view(s, "{out_dir}/{s.clip}-off{pad}.png", false, false, "")
+    if s.with_plane:
+        render_view(s, "{out_dir}/{s.clip}-mask{pad}.png", false, true, "")
+    hd = if s.dump_depth: "true" else: "false"
+    ho = if s.with_off: "true" else: "false"
+    hm = if s.with_plane: "true" else: "false"
+    meta_lines.push("  {{\"clip\":\"{s.clip}\",\"index\":{s.index},\"group\":{s.group},\"eye\":[{s.eye.x:.4},{s.eye.y:.4},{s.eye.z:.4}],\"yaw\":{s.yaw:.6},\"pitch\":{s.pitch:.6},\"fov\":{FOV},\"w\":{W},\"h\":{H},\"has_depth\":{hd},\"has_off\":{ho},\"has_mask\":{hm}}}")
+    shot_idx += 1

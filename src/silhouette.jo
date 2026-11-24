@@ -38,6 +38,7 @@ const SILHOUETTE_HEIGHT = 36.0      # (m: how far a wood's tallest crowns stand 
 const SILHOUETTE_REACH = 8          # (pixels: the tallest a crown is drawn)
 const SILHOUETTE_CROWN = 6.0        # (pixels: about how wide a crown is drawn, whatever the distance)
 const SILHOUETTE_STEP = 0.7         # (the land's line: where the land is nearer than what is over it by this ratio)
+const SILHOUETTE_NEAR = 1800.0      # (m: no wooded outline closer than this; matches terrain.jo / world_terrain.jo wooded ramp)
 
 struct SilhouetteVertex:
     corner: vec2
@@ -51,6 +52,7 @@ struct SilhouetteLineParams:
     depth: Texture
     depth_ab: vec2
     up: vec2                        # a pixel of the scene up the screen as the world's up runs on it (uv)
+    side: vec2                      # a pixel of the scene across the screen, perpendicular to up (uv)
 
 struct SilhouetteParams:
     lines: Texture                  # pass 1's picture: the land's colour by how wooded it is, and how wooded
@@ -90,18 +92,33 @@ silhouette_line_fs = (i: SilhouetteOut,u: SilhouetteLineParams) -> vec4:
     c = silhouette_distance(sample(u.depth,uv-u.up*8.0).x,u.depth_ab)
     d = silhouette_distance(sample(u.depth,uv-u.up*13.0).x,u.depth_ab)
     if b >= a*SILHOUETTE_STEP and c >= b*SILHOUETTE_STEP and d >= c*SILHOUETTE_STEP: return vec4(0,0,0,0)
-    # (the first line going down)
+    # (the first distant land line going down; skip foreground objects closer than SILHOUETTE_NEAR)
     over = a
     at: f32 = -100.0
     loop k in 1..17:
         z = silhouette_distance(sample(u.depth,uv+u.up*(3.0-f32(k))).x,u.depth_ab)
-        if at < -50.0 and z < over*SILHOUETTE_STEP: at = 3.0-f32(k)
+        if at < -50.0 and z >= SILHOUETTE_NEAR and z < over*SILHOUETTE_STEP: at = 3.0-f32(k)
         over = z
     if at < -50.0: return vec4(0,0,0,0)
-    # (the land two pixels inside its line)
-    land = sample(u.scene,uv+u.up*(at-2.0))
-    wood = 1.0-land.w
-    vec4(land.xyz*wood,wood)
+    # (the land inside its line: sample a small 5-tap cross just below the ridge so single-pixel
+    # canopy/billow alpha gaps or dither inside an 8x8 block never blink the whole block's outline)
+    base = uv+u.up*(at-2.0)
+    col_sum = vec3(0,0,0)
+    w_sum: f32 = 0.0
+    w_max: f32 = 0.0
+    l0 = sample(u.scene,base); w0 = 1.0-l0.w
+    col_sum += l0.xyz*w0; w_sum += w0; w_max = max(w_max,w0)
+    l1 = sample(u.scene,uv+u.up*(at-1.0)); w1 = 1.0-l1.w
+    col_sum += l1.xyz*w1; w_sum += w1; w_max = max(w_max,w1)
+    l2 = sample(u.scene,uv+u.up*(at-4.0)); w2 = 1.0-l2.w
+    col_sum += l2.xyz*w2; w_sum += w2; w_max = max(w_max,w2)
+    l3 = sample(u.scene,base-u.side*2.0); w3 = 1.0-l3.w
+    col_sum += l3.xyz*w3; w_sum += w3; w_max = max(w_max,w3)
+    l4 = sample(u.scene,base+u.side*2.0); w4 = 1.0-l4.w
+    col_sum += l4.xyz*w4; w_sum += w4; w_max = max(w_max,w4)
+    if w_sum <= 0.001: return vec4(0,0,0,0)
+    land_col = col_sum/w_sum
+    vec4(land_col*w_max,w_max)
 
 # (a block is drawn if any of the lines' picture under it, or within a pixel of that about it,
 # holds a line: nine filtered reads at the corners between its pixels, two apart, see them all)
@@ -133,14 +150,18 @@ silhouette_fs = (i: SilhouetteOut,u: SilhouetteParams) -> vec4:
     m = sample(u.lines,uv)
     if m.w < 0.03: discard()
     # (the lines under this pixel, within a crown's reach: the one whose crowns could cover the
-    # most of it, a near ridge's before a far one's)
-    over = silhouette_distance(sample(u.depth,uv).x,u.depth_ab)
+    # most of it, a near ridge's before a far one's. Ignore foreground surfaces closer than
+    # SILHOUETTE_NEAR so an aircraft, boat or near hill never triggers or gets painted over by a
+    # distant wooded ridge's outline.)
+    self_z = silhouette_distance(sample(u.depth,uv).x,u.depth_ab)
+    if self_z < SILHOUETTE_NEAR: discard()
+    over = self_z
     under: f32 = 0.0
     far: f32 = 0.0
     best: f32 = 0.0
     loop k in 1..SILHOUETTE_REACH+1:
         z = silhouette_distance(sample(u.depth,uv-u.up*f32(k)).x,u.depth_ab)
-        if z < over*SILHOUETTE_STEP:
+        if z >= SILHOUETTE_NEAR and z < over*SILHOUETTE_STEP and z < self_z*SILHOUETTE_STEP:
             reach = u.height/(z*u.pixel)-f32(k-1)
             if reach > best: best = reach; under = f32(k); far = z
         over = z
@@ -165,7 +186,7 @@ silhouette_fs = (i: SilhouetteOut,u: SilhouetteParams) -> vec4:
     crown = 0.4+0.6*clamp((n-0.36)*4.0,0.0,1.0)
     # (how wooded: read between a pixel of the lines' picture that holds the line and one that
     # does not it is as little as half what it is, so a third of a closed wood counts as the whole)
-    high = min(u.height*clamp(m.w*3.0,0.0,1.0)*crown/metres,f32(SILHOUETTE_REACH))
+    high = min(u.height*clamp(m.w*3.0,0.0,1.0)*clamp((far-SILHOUETTE_NEAR)/800.0,0.0,1.0)*crown/metres,f32(SILHOUETTE_REACH))
     cover = clamp(high-(under-1.0),0.0,1.0)
     if cover < 0.02: discard()
     # (the land's own colour, a fifth darker under the air between: crowns against the light.
@@ -185,11 +206,12 @@ silhouette_ready = false
 silhouette_off = (env("AEGEAN_OUTLINE") ?? "") == "0"
 silhouette_lines_only = (env("AEGEAN_OUTLINE") ?? "") == "lines"
 silhouette_up = vec2(0,0)
+silhouette_side = vec2(0,0)
 silhouette_height: f32 = 0.0
 
 # 1. The lines, into their own picture: beside the cloud shadows' factor pass.
 silhouette_line_pass = (chart: vec3,vp: mat4):
-    global silhouette_line_sh,silhouette_sh,silhouette_quad,silhouette_lines,silhouette_ready,silhouette_up,silhouette_height,silhouette_blocks,silhouette_blocked
+    global silhouette_line_sh,silhouette_sh,silhouette_quad,silhouette_lines,silhouette_ready,silhouette_up,silhouette_side,silhouette_height,silhouette_blocks,silhouette_blocked
     silhouette_ready = false
     if silhouette_off or not __post_active or scene_depth().id == 0: return
     # (the world's up on the screen: its part across the picture and up it; looking down on the
@@ -200,7 +222,9 @@ silhouette_line_pass = (chart: vec3,vp: mat4):
     silhouette_height = f32(SILHOUETTE_HEIGHT)*clamp((upright-0.35)/0.3,0.0,1.0)
     if silhouette_height <= 0.0: return
     sw = scene_depth().width; sh = scene_depth().height
-    silhouette_up = stands/upright/vec2(f32(sw),f32(sh))
+    up_dir = stands/upright
+    silhouette_up = up_dir/vec2(f32(sw),f32(sh))
+    silhouette_side = vec2(up_dir.y,0.0-up_dir.x)/vec2(f32(sw),f32(sh))
     if silhouette_sh.prog == 0:
         silhouette_line_sh = make_shader(shader(silhouette_line_vs,silhouette_line_fs))
         silhouette_sh = make_shader(shader(silhouette_vs,silhouette_fs))
@@ -225,7 +249,7 @@ silhouette_line_pass = (chart: vec3,vp: mat4):
     cull(.none); blend(.none); depth_test(.off); depth_write(false)
     glBindFramebuffer(GL_FRAMEBUFFER,u32(silhouette_lines.fbo))
     glViewport(0,0,i32(w),i32(h))
-    draw(silhouette_line_sh,silhouette_quad,SilhouetteLineParams(__scene_rt.texture,scene_depth(),world_depth_params(),silhouette_up))
+    draw(silhouette_line_sh,silhouette_quad,SilhouetteLineParams(__scene_rt.texture,scene_depth(),world_depth_params(),silhouette_up,silhouette_side))
     silhouette_ready = true
     zone_end()
 
