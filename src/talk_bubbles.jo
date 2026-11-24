@@ -166,3 +166,224 @@ reply_pin_clamp = (pin: mut ReplyPin, box_w: f64, box_h: f64, sw: f64, sh: f64, 
     if pin.left < margin or pin.left > max_x: pin.left = clamp(pin.left, margin, max_x)
     if pin.top < margin or pin.top > max_y: pin.top = clamp(pin.top, margin, max_y)
     (pin.left, pin.top, pin.right)
+
+# ---------------- speech bubbles keeping clear of the pinned reply menu ----------------
+# While the reply fan stays pinned, a walking speaker's (or pilot's) speech bubble slides smoothly
+# around the menu to the nearest free side, never snapping and never sitting behind the menu.
+struct BubbleSlide:
+    active = false
+    displaced = false
+    x = 0.0
+    y = 0.0
+    side = -1                       # 0=above, 1=below, 2=left, 3=right, -1=natural
+    frame = -10
+    who = -1                        # speaker id (-2: the pilot)
+
+bubble_slide_clear = (s: mut BubbleSlide):
+    s = BubbleSlide()
+
+_bubble_clear_rect = (x: f64, y: f64, w: f64, h: f64, o: Rect, gap: f64, gap_above: f64) -> bool:
+    x + w + gap <= f64(o.x) or x >= f64(o.x + o.w) + gap or y + h + gap_above <= f64(o.y) or y >= f64(o.y + o.h) + gap
+
+# Whether the segment (x0,y0)->(x1,y1) enters the open interior (lx, rx) x (ty, by).
+_seg_enters_box = (x0: f64, y0: f64, x1: f64, y1: f64, lx: f64, ty: f64, rx: f64, by: f64) -> bool:
+    eps = 0.25
+    ilx = lx + eps; irx = rx - eps; ity = ty + eps; iby = by - eps
+    if ilx >= irx or ity >= iby: return false
+    dx = x1 - x0; dy = y1 - y0
+    t0 = 0.0; t1 = 1.0
+    # x slab
+    if abs(dx) < 1.0e-9:
+        if x0 <= ilx or x0 >= irx: return false
+    else:
+        a = (ilx - x0) / dx; b = (irx - x0) / dx
+        if a > b:
+            tmp = a; a = b; b = tmp
+        t0 = max(t0, a); t1 = min(t1, b)
+        if t0 >= t1: return false
+    # y slab
+    if abs(dy) < 1.0e-9:
+        if y0 <= ity or y0 >= iby: return false
+    else:
+        a = (ity - y0) / dy; b = (iby - y0) / dy
+        if a > b:
+            tmp = a; a = b; b = tmp
+        t0 = max(t0, a); t1 = min(t1, b)
+        if t0 >= t1: return false
+    t1 > t0 + 1.0e-6
+
+_menu_side = (x: f64, y: f64, lx: f64, rx: f64, ty: f64, by: f64) -> int:
+    if y <= ty + 0.5: return 0
+    if y >= by - 0.5: return 1
+    if x <= lx + 0.5: return 2
+    if x >= rx - 0.5: return 3
+    -1
+
+# Nearest on-screen position for a bubble of size (w, h) naturally at (nx, ny) that stays clear of
+# `menu` (and `other`, when present). Returns `(x, y, side)` where `side` is 0..3 or -1 if already
+# clear at its natural spot. `prev_side` adds mild hysteresis so a bubble near a corner diagonal
+# does not jitter between two equally close sides.
+bubble_avoid_target = (nx: f64, ny: f64, w: f64, h: f64, menu: Rect, other: Rect?, sw: f64, sh: f64, gap: f64 = 8.0, gap_above: f64 = 14.0, prev_side: int = -1, margin: f64 = 8.0) -> (f64, f64, int):
+    min_x = margin; max_x = max(margin, sw - w - margin)
+    min_y = margin; max_y = max(margin, sh - h - margin)
+    bx = clamp(nx, min_x, max_x); by = clamp(ny, min_y, max_y)
+    menu_ok = _bubble_clear_rect(bx, by, w, h, menu, gap, gap_above)
+    other_ok = if let o = other: _bubble_clear_rect(bx, by, w, h, o, gap, gap_above) else: true
+    if menu_ok and other_ok: return (bx, by, -1)
+    lx = f64(menu.x) - w - gap
+    rx = f64(menu.x + menu.w) + gap
+    ty = f64(menu.y) - h - gap_above
+    by_m = f64(menu.y + menu.h) + gap
+    cands: (f64, f64)[] = [(bx, ty), (bx, by_m), (lx, by), (rx, by)]
+    # (corner spots on the menu's perimeter, helpful when an edge projection hits `other`)
+    cands.push((lx, ty)); cands.push((rx, ty)); cands.push((lx, by_m)); cands.push((rx, by_m))
+    if let o = other:
+        olx = f64(o.x) - w - gap
+        orx = f64(o.x + o.w) + gap
+        oty = f64(o.y) - h - gap_above
+        oby = f64(o.y + o.h) + gap
+        cands.push((bx, oty)); cands.push((bx, oby)); cands.push((olx, by)); cands.push((orx, by))
+        # (sliding along each side of the menu just past `other`)
+        cands.push((olx, ty)); cands.push((orx, ty)); cands.push((bx, min(ty, oty)))
+        cands.push((olx, by_m)); cands.push((orx, by_m)); cands.push((bx, max(by_m, oby)))
+        cands.push((lx, oty)); cands.push((lx, oby))
+        cands.push((rx, oty)); cands.push((rx, oby))
+    best_x = bx; best_y = by; best_side = -1; best_cost = 1.0e12
+    # Pass 0: clear of menu and other; Pass 1: clear of menu only; Pass 2: tight gap (2 px) clear of menu.
+    loop pass_k in 0..3:
+        g = if pass_k == 2: 2.0 else: gap
+        ga = if pass_k == 2: 2.0 else: gap_above
+        plx = f64(menu.x) - w - g; prx = f64(menu.x + menu.w) + g
+        pty = f64(menu.y) - h - ga; pby = f64(menu.y + menu.h) + g
+        tries = if pass_k == 2: [(bx, pty), (bx, pby), (plx, by), (prx, by), (plx, pty), (prx, pty), (plx, pby), (prx, pby)] else: cands
+        loop c in tries:
+            cx = c.0; cy = c.1
+            if cx < min_x - 0.01 or cx > max_x + 0.01 or cy < min_y - 0.01 or cy > max_y + 0.01: continue
+            cx = clamp(cx, min_x, max_x); cy = clamp(cy, min_y, max_y)
+            if not _bubble_clear_rect(cx, cy, w, h, menu, g - 0.01, ga - 0.01): continue
+            if pass_k == 0:
+                if let o = other:
+                    if not _bubble_clear_rect(cx, cy, w, h, o, gap - 0.01, gap_above - 0.01): continue
+            sd = _menu_side(cx, cy, plx, prx, pty, pby)
+            dx = cx - bx; dy = cy - by
+            cost = sqrt(dx * dx + dy * dy)
+            if prev_side >= 0 and sd == prev_side: cost -= 18.0
+            if cost < best_cost:
+                best_cost = cost; best_x = cx; best_y = cy; best_side = sd
+        if best_cost < 1.0e11: break
+    (best_x, best_y, best_side)
+
+# Advance a speech bubble smoothly toward its clear position around `menu` (and `other`, when
+# given). Moves along the menu's perimeter when switching sides so the bubble never cuts across
+# the open menu, and glides back to its natural spot once the menu clears or closes.
+bubble_slide_step = (s: mut BubbleSlide, nx: f64, ny: f64, w: f64, h: f64, menu: Rect?, other: Rect?, sw: f64, sh: f64, dt: f64, frame: int, who: int, gap: f64 = 8.0, gap_above: f64 = 14.0, margin: f64 = 8.0) -> (f64, f64):
+    min_x = margin; max_x = max(margin, sw - w - margin)
+    min_y = margin; max_y = max(margin, sh - h - margin)
+    bx = clamp(nx, min_x, max_x); by = clamp(ny, min_y, max_y)
+    tx = bx; ty = by; t_side = -1
+    if let m = menu:
+        got = bubble_avoid_target(bx, by, w, h, m, other, sw, sh, gap, gap_above, s.side, margin)
+        tx = got.0; ty = got.1; t_side = got.2
+    fresh = not s.active or s.who != who or frame > s.frame + 1
+    if fresh:
+        s = BubbleSlide(true, t_side >= 0, tx, ty, t_side, frame, who)
+        return (tx, ty)
+    crosses_menu = false
+    if let m = menu:
+        crosses_menu = _seg_enters_box(s.x, s.y, tx, ty, f64(m.x) - w - gap, f64(m.y) - h - gap_above, f64(m.x + m.w) + gap, f64(m.y + m.h) + gap)
+    if not s.displaced and t_side < 0 and not crosses_menu:
+        s.x = tx; s.y = ty; s.side = -1; s.frame = frame; s.who = who
+        return (tx, ty)
+    step_dt = clamp(dt, 1.0 / 120.0, 0.1)
+    alpha = 1.0 - exp(-step_dt * 14.0)
+    max_step = 1200.0 * step_dt
+    cx = s.x; cy = s.y
+    if let m = menu:
+        lx = f64(m.x) - w - gap
+        rx = f64(m.x + m.w) + gap
+        ty_m = f64(m.y) - h - gap_above
+        by_m = f64(m.y + m.h) + gap
+        # (if the previous box is now inside the menu — e.g. text grew taller — step out first)
+        if not _bubble_clear_rect(cx, cy, w, h, m, gap - 0.01, gap_above - 0.01):
+            out = bubble_avoid_target(cx, cy, w, h, m, none, sw, sh, gap, gap_above, s.side, margin)
+            cx = out.0; cy = out.1
+        if _seg_enters_box(cx, cy, tx, ty, lx, ty_m, rx, by_m):
+            # (exact shortest on-screen path around the menu's 4 corners: 1-corner or 2-corner polyline)
+            corners = [(lx, ty_m), (rx, ty_m), (lx, by_m), (rx, by_m)]
+            on_scr = [loop c in corners: c.0 >= min_x - 0.01 and c.0 <= max_x + 0.01 and c.1 >= min_y - 0.01 and c.1 <= max_y + 0.01]
+            best_len = 1.0e12; best_n = 0
+            w1 = (tx, ty); w2 = (tx, ty)
+            # (1-corner paths: cur -> c[i] -> target)
+            loop i in 0..4:
+                if not on_scr[i]: continue
+                ci = corners[i]
+                if _seg_enters_box(cx, cy, ci.0, ci.1, lx, ty_m, rx, by_m): continue
+                if _seg_enters_box(ci.0, ci.1, tx, ty, lx, ty_m, rx, by_m): continue
+                l = sqrt((ci.0 - cx) * (ci.0 - cx) + (ci.1 - cy) * (ci.1 - cy)) + sqrt((tx - ci.0) * (tx - ci.0) + (ty - ci.1) * (ty - ci.1))
+                if l < best_len:
+                    best_len = l; best_n = 1; w1 = ci
+            # (2-corner paths for opposite sides: cur -> c[i] -> c[j] -> target)
+            loop i in 0..4:
+                if not on_scr[i]: continue
+                ci = corners[i]
+                if _seg_enters_box(cx, cy, ci.0, ci.1, lx, ty_m, rx, by_m): continue
+                d1 = sqrt((ci.0 - cx) * (ci.0 - cx) + (ci.1 - cy) * (ci.1 - cy))
+                loop j in 0..4:
+                    if j == i or not on_scr[j]: continue
+                    cj = corners[j]
+                    if _seg_enters_box(ci.0, ci.1, cj.0, cj.1, lx, ty_m, rx, by_m): continue
+                    if _seg_enters_box(cj.0, cj.1, tx, ty, lx, ty_m, rx, by_m): continue
+                    l = d1 + sqrt((cj.0 - ci.0) * (cj.0 - ci.0) + (cj.1 - ci.1) * (cj.1 - ci.1)) + sqrt((tx - cj.0) * (tx - cj.0) + (ty - cj.1) * (ty - cj.1))
+                    if l < best_len:
+                        best_len = l; best_n = 2; w1 = ci; w2 = cj
+            if best_n > 0:
+                pts: (f64, f64)[] = if best_n == 1: [w1, (tx, ty)] else: [w1, w2, (tx, ty)]
+                rem = min(best_len * alpha, max_step)
+                loop pt in pts:
+                    if rem <= 1.0e-4: break
+                    seg = sqrt((pt.0 - cx) * (pt.0 - cx) + (pt.1 - cy) * (pt.1 - cy))
+                    if seg <= 1.0e-4: continue
+                    if rem < seg:
+                        cx = cx + (pt.0 - cx) * (rem / seg)
+                        cy = cy + (pt.1 - cy) * (rem / seg)
+                        rem = 0.0
+                    else:
+                        cx = pt.0; cy = pt.1
+                        rem -= seg
+            else:
+                dd = sqrt((tx - cx) * (tx - cx) + (ty - cy) * (ty - cy))
+                if dd > 0.01:
+                    move = min(dd * alpha, max_step)
+                    cx = cx + (tx - cx) * (move / dd)
+                    cy = cy + (ty - cy) * (move / dd)
+        else:
+            dd = sqrt((tx - cx) * (tx - cx) + (ty - cy) * (ty - cy))
+            if dd > 0.01:
+                move = min(dd * alpha, max_step)
+                cx = cx + (tx - cx) * (move / dd)
+                cy = cy + (ty - cy) * (move / dd)
+        cx = clamp(cx, min_x, max_x); cy = clamp(cy, min_y, max_y)
+        # (hard guarantee: never end a frame overlapping the open menu)
+        if not _bubble_clear_rect(cx, cy, w, h, m, gap - 0.01, gap_above - 0.01):
+            out = bubble_avoid_target(cx, cy, w, h, m, other, sw, sh, gap, gap_above, t_side, margin)
+            cx = out.0; cy = out.1
+        # (and keep the companion bubble uncovered if the slide crossed it)
+        if let o = other:
+            if not _bubble_clear_rect(cx, cy, w, h, o, gap - 0.01, gap_above - 0.01):
+                out = bubble_avoid_target(cx, cy, w, h, m, other, sw, sh, gap, gap_above, t_side, margin)
+                cx = out.0; cy = out.1
+    else:
+        dd = sqrt((tx - cx) * (tx - cx) + (ty - cy) * (ty - cy))
+        if dd > 0.01:
+            move = min(dd * alpha, max_step)
+            cx = cx + (tx - cx) * (move / dd)
+            cy = cy + (ty - cy) * (move / dd)
+        cx = clamp(cx, min_x, max_x); cy = clamp(cy, min_y, max_y)
+    dist_nat = sqrt((cx - bx) * (cx - bx) + (cy - by) * (cy - by))
+    if t_side < 0 and dist_nat < 0.75:
+        cx = bx; cy = by
+        s.displaced = false
+    else:
+        s.displaced = t_side >= 0 or dist_nat >= 0.75
+    s.active = true; s.x = cx; s.y = cy; s.side = t_side; s.frame = frame; s.who = who
+    (cx, cy)

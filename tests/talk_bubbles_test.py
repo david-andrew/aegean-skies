@@ -64,6 +64,22 @@ def bubble(t):
     return tuple(float(v) for v in t["bubble"].split(","))
 
 
+def own_bubble(t):
+    return tuple(float(v) for v in t["own"].split(","))
+
+
+def rects_overlap(a, b):
+    return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+
+
+def menu_bounds(bs):
+    x0 = min(r[0] for r in bs)
+    y0 = min(r[1] for r in bs)
+    x1 = max(r[0] + r[2] for r in bs)
+    y1 = max(r[1] + r[3] for r in bs)
+    return (x0, y0, x1 - x0, y1 - y0)
+
+
 def said_by(talk, frame, within=4):
     return next((f for f in range(frame, frame + within + 1) if f in talk and talk[f]["words"] != talk[frame - 1]["words"]), None)
 
@@ -171,7 +187,8 @@ def main():
         assert probe[at + 296]["ui"] == "talk" and probe[at + 306]["ui"] == "none", "B did not end it"
         print("a controller: the d-pad reached a reply, a bumper turned the set, A said it, B left")
 
-        # ---- moving scene: speaker walking, pilot walking, camera rotating -> menu never moves
+        # ---- moving scene: speaker walking, pilot walking, camera rotating -> menu never moves,
+        # and neither the speaker's nor the pilot's speech bubble ever overlaps the open menu
         # (AEGEAN_TALK=1 opens a talk with someone who soon gets a load and walks off; we also walk
         # and rotate the camera with Q and D while the reply fan is open)
         move_script = "1:mouse=5x5 300:q+ 480:q- 360:d+ 450:d-"
@@ -192,6 +209,14 @@ def main():
                 continue
             opts, cur_set = t["options"], t["set"]
             run_bubbles.add(t["bubble"])
+            # (neither speaker's nor pilot's bubble may be covered by the open menu)
+            mb = menu_bounds(b)
+            if t["person"] == "true":
+                th = bubble(t)
+                assert not rects_overlap(th, mb), f"moving frame {f}: speaker bubble {th} overlapped menu {mb}"
+            if t["pilot"] == "true":
+                ow = own_bubble(t)
+                assert not rects_overlap(ow, mb), f"moving frame {f}: pilot bubble {ow} overlapped menu {mb}"
             if run_boxes is None or opts != run_opts or cur_set != run_set:
                 if run_boxes is not None:
                     # (if options or set changed while still open, top edge must remain pinned)
@@ -205,7 +230,43 @@ def main():
             open_runs += 1
         assert open_runs >= 1, "moving scene never opened a talk menu"
         assert len(run_bubbles) >= 5, f"moving scene speaker bubble did not actually move ({len(run_bubbles)} positions)"
-        print(f"moving scene: {open_runs} open menu span(s), speaker bubble moved across {len(run_bubbles)} positions, menu stayed steady")
+        print(f"moving scene: {open_runs} open menu span(s), speaker bubble moved across {len(run_bubbles)} positions, menu stayed steady and bubbles clear")
+
+        # ---- walk-with-me scene: pilot answers "Lead on." and walks alongside as both bubbles pass
+        # behind the pinned menu -> menu stays pinned, neither bubble ever overlaps the menu or each other
+        called = next(f for f in sorted(talk) if talk[f]["walking"] == "true")
+        ready_walk = next(f for f in sorted(talk) if f > called + 20 and talk[f]["ready"] == "true" and boxes(talk[f]))
+        press_at = ready_walk + 30
+        probe, talk = run(work, "walk-clear", press_at + 380, "1:mouse=5x5 " + key(press_at, "n1"), AEGEAN_TALK="1", AEGEAN_CAPTURE_MINUTES="0")
+        checked_both = 0
+        checked_speaker = 0
+        run_boxes = None
+        run_opts = None
+        run_set = None
+        for f in sorted(talk):
+            t = talk[f]
+            b = boxes(t)
+            if not b:
+                run_boxes = None
+                continue
+            opts, cur_set = t["options"], t["set"]
+            if run_boxes is None or opts != run_opts or cur_set != run_set:
+                run_boxes = b; run_opts = opts; run_set = cur_set
+            else:
+                assert b == run_boxes, f"walk-clear frame {f}: menu moved {run_boxes} -> {b}"
+            mb = menu_bounds(b)
+            if t["person"] == "true":
+                th = bubble(t)
+                checked_speaker += 1
+                assert not rects_overlap(th, mb), f"walk-clear frame {f}: speaker bubble {th} overlapped menu {mb}"
+            if t["pilot"] == "true":
+                ow = own_bubble(t)
+                assert not rects_overlap(ow, mb), f"walk-clear frame {f}: pilot bubble {ow} overlapped menu {mb}"
+                if t["person"] == "true":
+                    checked_both += 1
+                    assert not rects_overlap(ow, bubble(t)), f"walk-clear frame {f}: pilot bubble {ow} overlapped speaker bubble {bubble(t)}"
+        assert checked_speaker >= 100 and checked_both >= 20, f"walk-clear did not cover enough frames (speaker={checked_speaker}, both={checked_both})"
+        print(f"walk-clear scene: {checked_speaker} menu frames ({checked_both} with both bubbles) — zero overlap, menu pinned")
     print("ok")
 
 

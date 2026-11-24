@@ -3154,7 +3154,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   the side of his head away from the other speaker, clear of both speech bubbles, the clock and a
   touch screen's buttons (narrowing on a cramped screen; over his head on a phone held upright),
   and pins that placement (`ReplyPin`, `reply_pin_clamp`) while open, shifting only if it would go
-  off screen.
+  off screen. While the fan is open, the speaker's and pilot's speech bubbles slide smoothly around
+  it to the nearest free side (`BubbleSlide`, `bubble_slide_step`) so the pinned menu never covers
+  them.
 - **Contextual replies and lodging:** lines that invite a response (walking along, warnings,
   invitations, busy workers, thanks, deed questions, introductions, apologies, compliments,
   secrets, missing boats, friend referrals, lodging offers) put understated replies first with real
