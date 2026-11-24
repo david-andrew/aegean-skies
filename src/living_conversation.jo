@@ -15,6 +15,7 @@ use 'living_content.jo'
 use 'living_place_context.jo'
 use 'living_far_context.jo'
 use 'living_far_news.jo'
+use 'reputation.jo'
 use 'reputation_talk.jo'
 use 'errand_words.jo'
 import 'living_seed.jo' as acquaintances
@@ -71,6 +72,7 @@ conversation_topics = (w: World, speaker: int, listener: int) -> TalkOption[]:
         if o.debtor == speaker and (o.state == .open or o.state == .blocked) and o.due_minute <= w.minute+360 and (o.kind == .debt or o.kind == .rent or o.kind == .delivery or o.kind == .repair): troubled = true
     if troubled: topics.push(TalkOption(.troubles,"Ask how things stand"))
     if local_minute(w.minute)>=1050 and local_minute(w.minute)<1320 and speaker in w.daily_life and (w.daily_life[speaker].venue == .square or w.daily_life[speaker].venue == .cafe): topics.push(TalkOption(.music,"The evening and the music"))
+    topics.push(TalkOption(.lodging,"Where to stay"))
     topics.push(TalkOption(.farewell,"Take your leave"))
     topics
 
@@ -291,6 +293,106 @@ own_trade_candidates = (w: World, speaker: int) -> SpeechCandidate[]:
         return _bank(lines,"own-trade:shop",TIER_PERSONAL)
     _bank(["I only buy what the house needs."],"own-trade:house",TIER_PERSONAL-30)
 
+# Who in `place` is known for putting travellers up (a real resident living there, not the
+# speaker or listener, excluding patrol/pirates).
+_lodger_host = (w: World, place: int, speaker: int, listener: int) -> int:
+    best = -1; best_score = -100000
+    loop q in w.people:
+        if q.id == speaker or q.id == listener or q.id == w.player: continue
+        if q.occupation == .patrol or q.occupation == .pirate or q.occupation == .player: continue
+        qhome = if q.far_home >= 0: q.far_home else: q.home
+        qhere = if q.far_home >= 0: (if q.far_place >= 0: q.far_place else: q.far_home) else: q.place
+        if qhome != place: continue
+        score = q.traits.sociability
+        if qhere == place and q.trip < 0: score += 300
+        if rep_would_host(w,q.id): score += 400
+        if q.occupation == .merchant or q.occupation == .priest or q.occupation == .teacher or q.occupation == .oil_presser or q.occupation == .miller: score += 150
+        if score > best_score: best_score = score; best = q.id
+    best
+
+_local_innkeeper = (w: World, place: int) -> int:
+    loop q in w.people:
+        if q.occupation != .innkeeper and q.occupation != .hotelier: continue
+        qhome = if q.far_home >= 0: q.far_home else: q.home
+        if qhome == place: return q.id
+    -1
+
+# Where the pilot can stay the night: hotel name, price and directions when the town has one;
+# a believable impression-gated spare-room offer ("You can stay with us") from a local resident
+# (not every time); or a pointer to someone in town who takes lodgers.
+lodging_candidates = (w: World, speaker: int, listener: int, voice: VoiceKind) -> SpeechCandidate[]:
+    p = w.people[speaker]
+    place = person_place(w,speaker)
+    home = if p.far_home >= 0: p.far_home else: p.home
+    town = life_place_name(w,place)
+    v = rep_view(w,speaker)
+    rel = w.relationship_index.get(RelationshipKey(speaker,listener),-1)
+    affinity = if rel >= 0: w.relationships[rel].affinity else: 0
+    grievance = if rel >= 0: w.relationships[rel].grievance else: 0
+    helped = false
+    if rel >= 0:
+        loop m in w.relationships[rel].memories:
+            if (m.kind == .rescue or m.kind == .delivery) and (m.reason.actor == listener or m.reason.beneficiary == speaker): helped = true
+    grateful = rep_would_host(w,speaker) or (grievance <= 100 and affinity >= 0 and (affinity >= 60 or helped))
+    warm_impression = grievance == 0 and ((v.known and v.regard >= 120 and v.lean.warmth >= 40) or (v.met >= 2 and v.regard >= 80) or affinity >= 30)
+    cold = grievance > 250 or (v.known and v.regard <= REP_COLD)
+    thermal = place == 141625 or place == 131459
+    innkeeper = _local_innkeeper(w,place)
+    has_hotel = place == 0 or place == 4 or thermal or innkeeper >= 0
+    # 1. Speaking directly to the hotel/inn keeper.
+    if (p.occupation == .innkeeper or p.occupation == .hotelier) and home == place:
+        if place == 0:
+            lines = if cold: ["There's a room at the Ancora if you pay up front. Six phoinikes."] else: ["Right here at the Hotel Ancora. A room on the sea side is six phoinikes the night.","We've a room free upstairs at the Ancora; six phoinikes the night."]
+            out = _bank(lines,"lodging:keeper:{place}",TIER_PERSONAL+20)
+            loop k in 0..out.len(): out[k].ask = question(.hotel_offer,out[k].text)
+            return out
+        if place == 4:
+            return _bank(["Right here at the Hotel Selene. Six phoinikes the night, overlooking the water.","We keep rooms upstairs at the Selene; six phoinikes the night."],"lodging:keeper:{place}",TIER_PERSONAL+20)
+        if thermal:
+            return _bank(["We have rooms up above the hot springs, eight phoinikes the night.","Stay above the bathhouse; eight phoinikes the night, and the springs are warm."],"lodging:keeper:{place}",TIER_PERSONAL+20)
+        return _bank(["We keep a spare room above the taproom, six phoinikes the night."],"lodging:keeper:{place}",TIER_PERSONAL+20)
+    # 2. Cold or bad impression: curt refusal, never a spare room.
+    if cold:
+        if place == 0: return _bank(["Try the Hotel Ancora on the stone pier. Six phoinikes. Don't ask me."],"lodging:cold:{place}",TIER_PERSONAL)
+        if place == 4: return _bank(["The Hotel Selene's right above the harbour. Six phoinikes."],"lodging:cold:{place}",TIER_PERSONAL)
+        if thermal: return _bank(["The bathhouse inn up above the springs takes eight phoinikes. Try there."],"lodging:cold:{place}",TIER_PERSONAL)
+        return _bank(["Not at mine. Try down by the harbour.","Sleep in your aircraft; I've no room for you."],"lodging:cold:{place}",TIER_PERSONAL)
+    result: SpeechCandidate[]
+    # 3. Believable impression-gated spare room offer (not every time, deterministic per day).
+    can_host = home == place and p.trip < 0 and p.occupation != .patrol and p.occupation != .pirate and p.occupation != .innkeeper and p.occupation != .hotelier and (grateful or warm_impression)
+    if can_host:
+        chance = if grateful: (if has_hotel: 550 else: 780) else: (if has_hotel: 250 else: 480)
+        if p.traits.sociability >= 650 or voice == .warm or voice == .devout or voice == .elder: chance += 120
+        else if voice == .guarded or voice == .brisk: chance -= 150
+        roll = draw1000000(w.seed,194,speaker,day_index(w.minute))%1000
+        if roll < chance:
+            offer_lines = if helped or rep_would_host(w,speaker): ["You can stay with us. After what you've done, the spare room is yours.","Stay with us tonight. The room at the back is made up."] else: if place == 0: ["There's the Hotel Ancora on the pier, or you can stay with us tonight if you like."] else: if place == 4: ["There's the Hotel Selene above the harbour, or you can stay with us tonight."] else: ["No hotel here, but you can stay with us tonight. The back room is free.","You can stay with us. We've a spare bed under the window."]
+            offers = _bank(offer_lines,"lodging:offer:{place}:{day_index(w.minute)}",TIER_PERSONAL+20)
+            loop k in 0..offers.len(): offers[k].ask = question(.lodging_offer,offers[k].text)
+            result += offers
+    # 4. Town has a hotel or inn: name, price, and directions.
+    if place == 0:
+        result += _bank(["Try the Hotel Ancora, out on the stone pier off the waterfront. Sofia charges six phoinikes a night.","Hotel Ancora's your best bet, out on the stone pier by the harbour. Six phoinikes the night.","Sofia Marinou keeps rooms at the Hotel Ancora on the stone pier. Six phoinikes."],"lodging:hotel:0",TIER_PERSONAL)
+    else if place == 4:
+        result += _bank(["The Hotel Selene's right above the harbour. Lucia charges six phoinikes a night.","Try the Hotel Selene overlooking the water. Ask Lucia at reception; six phoinikes."],"lodging:hotel:4",TIER_PERSONAL)
+    else if thermal:
+        result += _bank(["The bathhouse inn up above the hot springs has rooms. Eight phoinikes the night.","Try the inn above the springs; eight phoinikes a night, and the water's warm."],"lodging:hotel:thermal",TIER_PERSONAL)
+    else if innkeeper >= 0:
+        keeper = talk_name(w,innkeeper)
+        result += _bank(["{keeper} keeps rooms at the inn near the harbour. About six phoinikes a night."],"lodging:hotel:{place}",TIER_PERSONAL)
+    else:
+        # 5. Town without a hotel: point to someone who takes lodgers.
+        host = _lodger_host(w,place,speaker,listener)
+        if host >= 0:
+            who = talk_name(w,host); spot = role_spot(w,host)
+            lines = if spot != "": ["No hotel in {town}. Ask {who} {spot}; they sometimes take a lodger.","There's no inn here. Try {who}, {spot}; they've a spare room now and then."] else: ["No hotel in {town}. Ask about town for {who}; they sometimes put travellers up.","There's no inn here. Try {who}; they've a spare room for a quiet guest."]
+            result += _bank(lines,"lodging:lodger:{place}:{host}",TIER_PERSONAL)
+        else if place == 5:
+            result += _bank(["No hotel in Kryfo Cove. Most pilots sleep aboard or try across the water at Porto Vecchio."],"lodging:none:5",TIER_PERSONAL)
+        else:
+            result += _bank(["No hotel in {town}, I'm afraid. You'd have to sleep aboard or fly on before dark."],"lodging:none:{place}",TIER_PERSONAL)
+    result
+
 conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTopic, private: bool = false) -> SpeechCandidate[]:
     p = w.people[speaker]; voice = voice_of(w,speaker)
     count = w.speech.get(speaker,SpeechLedger()).acquaintance.get(listener,0)
@@ -306,7 +408,7 @@ conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTop
                 break
     result: SpeechCandidate[]
     used_openers:{str:bool}
-    if p.far_home>=0 and topic!=.greeting and topic!=.farewell and topic!=.weather:
+    if p.far_home>=0 and topic!=.greeting and topic!=.farewell and topic!=.weather and topic!=.lodging:
         far = far_speech_candidates(w,speaker,listener,topic)
         loop k in 0..far.len(): far[k].text = fresh_opener_cached(w,speaker,listener,cap_first(far[k].text),used_openers)
         return far
@@ -389,6 +491,7 @@ conversation_candidates = (w: World, speaker: int, listener: int, topic: TalkTop
                         result.push(c)
         .home: result = context_day(w,speaker,voice,listener)
         .music: result = context_music(w,speaker)
+        .lodging: result = lodging_candidates(w,speaker,listener,voice)
         .farewell: result = context_farewell(w,speaker,listener,voice)
     if topic == .home or topic == .people:
         loop child in w.households:
@@ -587,6 +690,10 @@ _guarded_answer_conversation = (w: mut World, speaker: int, listener: int, reply
         turn.effect = "note_weather"
     else if detail.kind == .missing_boat and reply == .reassure:
         turn.effect = "note_boat"; turn.effect_note = detail.echo
+    else if detail.kind == .lodging_offer and reply == .reassure:
+        turn.effect = "stay_family"
+    else if detail.kind == .hotel_offer and reply == .reassure:
+        turn.effect = "hotel_desk"
     # Use the same no-repeat journal as spoken topics, without changing any money or promises.
     existing = w.speech[speaker]
     existing.recent = [loop line in existing.recent: if w.minute-line.minute < SPEECH_RECENT_MINUTES: line]
