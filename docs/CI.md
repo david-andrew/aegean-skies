@@ -4,7 +4,7 @@ Two workflows run on GitHub Actions (`.github/workflows/`):
 
 | Workflow | Runs on | Does |
 | --- | --- | --- |
-| `pages.yml` | push to `main`, manual | guard, geography/terrain/sea/flight checks, builds and deploys the web page |
+| `pages.yml` | push to `main`, manual | guard, geography/terrain/sea/flight checks, builds the web page, gives it its site head (description, link-card tags, icons, manifest: `tools/site_head.py`, `tools/site_icons.py`, the picture `docs/site-preview.png`, drawn by `tools/site_preview.sh` on a GPU) and deploys it |
 | `tests.yml` | push to any `t3/**` branch, manual | guard, then the whole test suite in 6 parallel jobs; never on `main` |
 | `captures.yml` | manual only (`tools/ci_capture.py`) | builds the game once, runs a list of headless screenshot captures in parallel jobs, uploads the PNGs, logs and optional MP4s |
 

@@ -9,7 +9,8 @@ import {readFileSync, statSync, createReadStream} from 'node:fs';
 import {dirname, basename, join, resolve, normalize, extname, sep} from 'node:path';
 
 const TYPES = {'.html': 'text/html; charset=utf-8', '.wasm': 'application/wasm', '.js': 'text/javascript',
-  '.json': 'application/json', '.png': 'image/png', '.bin': 'application/octet-stream', '.css': 'text/css'};
+  '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json', '.bin': 'application/octet-stream', '.css': 'text/css'};
 
 // true when the page's program is a separate file beside it (`--wasm-file`)
 export const separateModule = (page) =>
