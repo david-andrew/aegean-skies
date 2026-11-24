@@ -2147,13 +2147,14 @@ On the rivers branch until it lands.
 
 ### Far land layers
 
-- **Definition:** the far land's aerial perspective, painted in layers: the land keeps its own
-  colour a long way (about two thirds at 5 km, half at 10, a quarter at 20), each farther ridge a
-  step paler and bluer, turning to the haze only far off. Valleys hold extra air, so a far ridge's
-  foot is paler than its crest. **Painted layers** (on by default; Tweaks › Look to compare, `AEGEAN_PAINTED_LAYERS=0` turns
-  them off) reckons the air at bands twice as far apart each time (1, 2, 4 ... 32 km) in air two
-  and a half times as thick, with a crisp edge between them, so the land parts into painted layers
-  by distance even on rounded hills; the trees' crowns and the woods' canopy step with the ground.
+- **Definition:** the far land's aerial perspective, stratified by terrain elevation and smooth
+  distance: the land keeps its own colour a long way (about two thirds at 5 km, half at 10, a
+  quarter at 20), turning toward a Mediterranean cerulean-teal before meeting the horizon haze far
+  off. Low valleys hold extra air (`LAND_MIST=0.68`, thinning upward at `LAND_MIST_FALL=0.0028` per
+  metre over a smooth `1.2–7.5 km` onset), so a far ridge's foot is paler than its crest and nearer
+  ridges stand out cleanly against farther ranges without circular distance bands on flat or gently
+  sloped land. **Painted layers** (off by default; Tweaks › Look to compare, `AEGEAN_PAINTED_LAYERS=1`
+  turns them on) is an optional trial that quantises distance into 1, 2, 4 … 32 km bands.
 - **Code:** `land_aerial` in `src/canopy.jo` (`LAND_FADE`, `LAND_MIST`; `land_step_scale` and
   `GroundParams.land_steps` for the layers; `land_aerial_terms` per vertex for the crowns and
   the woods' canopy). Other objects use look.jo `aerial`; foliage that should layer with the ground
@@ -2186,7 +2187,7 @@ On the rivers branch until it lands.
   so even at noon each lump has a lit side and a shaded side. The far land itself is shaded by a
   **land light** (the same held-low sun, weighted in; medium and high), so slopes turned from the
   sun band darker, and takes the **land aerial**: with distance, scaled to the eye's height, it
-  turns toward a rich Mediterranean cerulean-teal (`LAND_FADE=16500`, `LAND_MIST=0.48`, slower
+  turns toward a rich Mediterranean cerulean-teal (`LAND_FADE=16500`, `LAND_MIST=0.68`, slower
   horizon-haze turnover `exp(-optical*0.35)`) before the shared haze takes it far off, so far
   ridges read as saturated layered blue silhouettes under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
