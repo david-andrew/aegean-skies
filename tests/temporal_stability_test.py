@@ -491,13 +491,14 @@ def evaluate_clip(clip, items, cap_dir, worst_dir):
                             g_max = e
                     else:
                         has_bg_ridge = False
+                        # At 19:00 dusk, a wooded hill-over-hill ridge step in `b` can be 5-7 RGB levels.
                         for dy in range(1, 9):
                             yy = y + dy
                             if yy >= h or on_plane[yy * w + x]:
                                 break
                             oo = (yy * w + x) * 3
                             oo_up = ((yy - 1) * w + x) * 3
-                            if max(abs(b[oo] - b[oo_up]), abs(b[oo + 1] - b[oo_up + 1]), abs(b[oo + 2] - b[oo_up + 2])) > 10:
+                            if max(abs(b[oo] - b[oo_up]), abs(b[oo + 1] - b[oo_up + 1]), abs(b[oo + 2] - b[oo_up + 2])) > 5:
                                 has_bg_ridge = True
                                 break
                         if not has_bg_ridge:

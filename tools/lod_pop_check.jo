@@ -55,6 +55,19 @@ if let path = env("AEGEAN_POP_PATH"):
     glide = vec3(f32(to_float(w[3]) ?? 0.0),f32(to_float(w[4]) ?? 0.0),f32(to_float(w[5]) ?? 0.0))
     yaw = f32(to_float(w[6]) ?? 0.0); pitch = f32(to_float(w[7]) ?? 0.0)
 forward = vec3(-sin(yaw)*cos(pitch),sin(pitch),-cos(yaw)*cos(pitch))
+# AEGEAN_POP_ORBIT="cx cy cz radius secs [pitch]": orbit around (cx,cy,cz) (or 360 pan if radius<=0)
+orbit_mode = false
+orbit_center = vec3(0,0,0)
+orbit_radius: f32 = 0.0
+orbit_secs: f64 = 24.0
+orbit_pitch: f32 = -0.08
+if let orb = env("AEGEAN_POP_ORBIT"):
+    w = split(orb," ")
+    orbit_mode = true
+    orbit_center = vec3(f32(to_float(w[0]) ?? 0.0),f32(to_float(w[1]) ?? 0.0),f32(to_float(w[2]) ?? 0.0))
+    orbit_radius = f32(to_float(w[3]) ?? 28.0)
+    orbit_secs = to_float(w[4]) ?? 24.0
+    if w.len() >= 6: orbit_pitch = f32(to_float(w[5]) ?? -0.08)
 
 # The drawn ground height at a world point in a selected tile (slot), as the GPU draws it: the
 # tile's vertices morphed (world_vertex: toward the coarser grid by the tile's lod fraction), the
@@ -185,10 +198,24 @@ total_ground = 0; total_domes = 0; worst: f32 = 0.0
 # (how fast the ground's morphs move a point: the largest step, and the points stepping over half a pixel a frame)
 ground_fastest: f32 = 0.0; ground_fast = 0
 seen_ground = 0; seen_domes = 0
+# (far-land stability beyond 2.6 km: catches disappearing, flickering, or height-popping distant land)
+last_far_ground: {int:f32} = {}
+last_far_pos: {int:vec3} = {}
+far_hidden = 0; far_vanish = 0; far_pops = 0; far_fastest: f32 = 0.0
 loop frame in 0..frames:
+    t_now = f64(frame)/60.0
     eye = start+glide*(f32(frame)/60.0)
     vp = perspective(62.0*PI/180.0,1280.0/720.0,0.3,world_far(f64(eye.y)))*look_at(eye,eye+forward,vec3(0,1,0))
-    prepare_world_terrain(eye,vp,f64(frame)/60.0)
+    if orbit_mode:
+        ang = f32(t_now/orbit_secs*TAU)
+        if orbit_radius > 0.0:
+            eye = vec3(orbit_center.x+cos(ang)*orbit_radius,orbit_center.y,orbit_center.z+sin(ang)*orbit_radius)
+            vp = perspective(62.0*PI/180.0,1280.0/720.0,0.3,world_far(f64(eye.y)))*look_at(eye,orbit_center,vec3(0,1,0))
+        else:
+            eye = orbit_center
+            ofwd = vec3(-sin(ang)*cos(orbit_pitch),sin(orbit_pitch),-cos(ang)*cos(orbit_pitch))
+            vp = perspective(62.0*PI/180.0,1280.0/720.0,0.3,world_far(f64(eye.y)))*look_at(eye,eye+ofwd*1000.0,vec3(0,1,0))
+    prepare_world_terrain(eye,vp,t_now)
     made_tiles += world_generated
     if world_view_missing > 0: waiting_frames += 1; waiting_most = max(waiting_most,world_view_missing)
     if frame < first-1: continue
@@ -235,6 +262,33 @@ loop frame in 0..frames:
                                 q = vec2(f32(x),f32(z))
                                 octave[int(x)*1000003+int(z)] = floor(lv)+(if unmorphed: (if fract(lv) > hash21(floor(q/(CANOPY_CELL*pow(2.0,floor(lv)+1.0)))): 1.0 else: 0.0) else: canopy_octave_turn(q,lv))
                         if debug: from[int(x)*1000003+int(z)] = vec3(f32(t.level),f32(t.lod),f32(length(vec2(f32(x),f32(z))-eye.xz)))
+                    break
+    far_ground: {int:f32} = {}
+    far_pos: {int:vec3} = {}
+    # (far-land stability beyond 2.6 km: catches disappearing, flickering, or height-popping distant land)
+    if frame >= first:
+        loop idx in 0..world_selected.len():
+            if idx < world_selected_visible.len() and not world_selected_visible[idx]: continue
+            t = world_tiles[world_selected[idx]]
+            if t.high > 0.0 and not world_tile_drawable(t,eye): far_hidden += 1
+    far_span = 36000
+    far_step = 1792
+    loop fj in -far_span/far_step..far_span/far_step+1:
+        loop fi in -far_span/far_step..far_span/far_step+1:
+            fx = f64(int(floor(eye.x/f32(far_step)))*far_step+fi*far_step)
+            fz = f64(int(floor(eye.z/f32(far_step)))*far_step+fj*far_step)
+            if abs(fx-f64(eye.x)) < 2600.0 and abs(fz-f64(eye.z)) < 2600.0: continue
+            fcx = int(floor((fx-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN)); fcz = int(floor((fz-WORLD_ROOT_ORIGIN)/WORLD_TILE_SPAN))
+            loop level in 0..WORLD_ROOT_LEVEL+1:
+                if let slot = by_key.get(world_tile_key(fcx >> level,fcz >> level,level)):
+                    t = world_tiles[slot]
+                    if t.high <= 0.0 or not world_tile_drawable(t,eye): break
+                    h = drawn_at(t,fx,fz)
+                    p3 = vec3(f32(fx),h,f32(fz))
+                    if h > 0.5 and on_screen(vp,p3):
+                        fk = int(fx)*1000003+int(fz)
+                        far_ground[fk] = h
+                        far_pos[fk] = p3
                     break
     # (the domes the frame gathers, as draw_world_terrain gathers them)
     billow_gather_start()
@@ -330,6 +384,24 @@ loop frame in 0..frames:
                 if debug:
                     info = last_info[key]
                     print("    frame {frame}: dome {key} gone {gone:.2} px ({was.y:.2} m out); size {info.x:.0} made at {info.y:.2} s, from a level {info.z:.0} tile, list {info.w:.0}; {length(vec2(was.z,was.w)-eye.xz):.0} m away")
+        loop fk in far_ground.keys():
+            if let fwas = last_far_ground.get(fk):
+                fstep = px(abs(far_ground[fk]-fwas),length(far_pos[fk]-eye))
+                far_fastest = max(far_fastest,fstep)
+                if fstep > STEP_PX:
+                    far_pops += 1; big = max(big,fstep)
+                    if debug and dbg_n < 8:
+                        dbg_n += 1
+                        print("    frame {frame}: far point {fk} stepped {fstep:.2} px at {length(far_pos[fk]-eye):.0} m")
+        loop fk in last_far_ground.keys():
+            if not (fk in far_ground):
+                lp = last_far_pos[fk]
+                dx = abs(lp.x-eye.x); dz = abs(lp.z-eye.z)
+                if lp.y > 15.0 and (dx >= 2700.0 or dz >= 2700.0) and dx < f32(far_span-far_step) and dz < f32(far_span-far_step) and on_screen(vp,lp,0.88):
+                    far_vanish += 1
+                    if debug and dbg_n < 8:
+                        dbg_n += 1
+                        print("    frame {frame}: far point {fk} vanished at {length(lp-eye):.0} m (y={lp.y:.1})")
         if g+dn > 0: pops.push((frame,g,dn,big))
         total_ground += g; total_domes += dn; worst = max(worst,big)
         seen_ground += ground.len(); seen_domes += domes.len()
@@ -347,8 +419,10 @@ loop frame in 0..frames:
         then_ground = ground; then_shade = shade; windows += 1
     last_shade = shade; last_paint = paint; last_grove = grove; last_sheet = sheet; last_wall = wall; last_octave = octave
     last_ground = ground; last_domes = domes; last_from = from; last_vp = vp; last_info = dome_info; last_fullness = fullness
+    last_far_ground = far_ground; last_far_pos = far_pos
 pops.sort((p: (int,int,int,f32)) -> f32: -(f32(p.1+p.2)))
 print("LOD POP seen a frame: {seen_ground/max(frames-first,1)} ground points, {seen_domes/max(frames-first,1)} domes")
+print("LOD POP far land: hidden_tile_frames={far_hidden} vanished={far_vanish} pops={far_pops} fastest={far_fastest:.2}px")
 print("LOD POP ground morphs: fastest {ground_fastest:.2} px a frame, {ground_fast} point-frames over half a pixel")
 print("LOD POP patches: in half a second, the ground moved at most {slow_px:.2} px ({slow_px_n} points over 1.5 px), its shade {slow_shade:.3} ({slow_shade_n} over 0.08; the largest at frames {slow_px_at} and {slow_shade_at}, {slow_shade_d:.0} m away); in a frame, its shade {shade_step:.3} ({shade_step_n} over 0.03); {windows} windows")
 print("LOD POP paint: in a frame, the fields' colour stepped at most {paint_step:.3} ({paint_step_n} point-frames over 0.03; the largest at frame {paint_at})")
@@ -363,6 +437,7 @@ loop k in 0..min(pops.len(),12):
     p = pops[k]
     print("  frame {p.0}: ground {p.1} dome {p.2} largest {p.3:.2} px")
 assert(total_ground == 0 and total_domes == 0,"level-of-detail pops along the glide")
+assert(far_hidden == 0 and far_vanish == 0 and far_pops == 0,"far land vanished or popped")
 # (the ground's patches: what a tile's vertices carry to its pixels, the light on their normals,
 # the fields' colour and the orchards' cover, may not step when the tile splits, merges or
 # morphs; nor may a patch move or change its shade quickly: in steady flight the fields and

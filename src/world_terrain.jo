@@ -84,6 +84,7 @@ struct WorldInstance:
 world_tiles: WorldTile[]
 world_cache: {int:int} = {}
 world_selected: int[]
+world_selected_visible: bool[]
 world_contact_slots: int[]
 world_contact_rect = vec4(0,0,0,0)
 world_frame = 0
@@ -160,6 +161,17 @@ world_distance = (x: f64,z: f64,size: f64,cam: vec3) -> f64:
 world_tile_visible = (x: f64,z: f64,size: f64,cam: vec3,planes: vec4[]) -> bool:
     center = vec3(f32(x+size*0.5),1475,f32(z+size*0.5))
     radius = sqrt(size*size*0.5+1535.0*1535.0) + f64(length(center.xz-cam.xz))*size/EARTH_RADIUS + size*size/EARTH_RADIUS + 1.0
+    c = render_world(center,cam)
+    loop p in planes:
+        if f64(dot(p.xyz,c)+p.w) < -radius: return false
+    true
+
+# Wider frustum guard band for pre-building off-screen siblings of split parents before camera
+# rotation brings them onto the screen edge (never gates visibility or drawing).
+world_tile_guard = (x: f64,z: f64,size: f64,cam: vec3,planes: vec4[]) -> bool:
+    center = vec3(f32(x+size*0.5),1475,f32(z+size*0.5))
+    d = f64(length(center.xz-cam.xz))
+    radius = sqrt(size*size*0.5+1535.0*1535.0) + d*size/EARTH_RADIUS + size*size/EARTH_RADIUS + d*0.55 + size*0.75 + 1.0
     c = render_world(center,cam)
     loop p in planes:
         if f64(dot(p.xyz,c)+p.w) < -radius: return false
@@ -274,17 +286,17 @@ world_tile_job_rows = (job: mut WorldTileJob,until: f64) -> bool:
             wash = 0.5+(vnoise(vec2(f32(wx),f32(wz))*0.006)-0.5)*0.8
             work = field_colour(work,vec2(f32(wx),f32(wz)),hy,1.0-normal.y,stands,orchard,f32(cell),field_warp_cpu(vec2(f32(wx),f32(wz))),field_palette)
             job.working.set(i,j,work)
-            # (and as the next coarser level bakes this sample, which is one of its own: only a
-            # level-1 tile's differ, its parent's samples being wider apart than a field)
+            # (and as the next coarser level bakes this sample, which is one of its own: levels 1
+            # and 2 differ from their parents as field_bake box-filters level 2 and averages 3+)
             work_far = work
             if i%2 == 0 and j%2 == 0:
-                if job.level == 1: work_far = field_colour(landuse,vec2(f32(wx),f32(wz)),hy,1.0-normal.y,stands,orchard,f32(cell*2.0),field_warp_cpu(vec2(f32(wx),f32(wz))),field_palette)
+                if job.level == 1 or job.level == 2: work_far = field_colour(landuse,vec2(f32(wx),f32(wz)),hy,1.0-normal.y,stands,orchard,f32(cell*2.0),field_warp_cpu(vec2(f32(wx),f32(wz))),field_palette)
                 job.working_far.set(i,j,work_far)
             # (the woods' stand cover, as the ground paints it, and the canopy's rise: for the
             # canopy's domes over the tile, and whether the canopy covers it at all)
             covered = wood_cover(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),wash,work.w,orchard,true)
             bare = 1.0-smoothstep(1700.0,2300.0,hy)
-            rise_far = if job.level == 1 and i%2 == 0 and j%2 == 0: wood_cover(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),wash,work_far.w,orchard,true).y else: covered.y
+            rise_far = if (job.level == 1 or job.level == 2) and i%2 == 0 and j%2 == 0: wood_cover(normal,hy,f32(ridge),f32(fbm(wx*0.004+3.3,wz*0.004,3)),f32(noise(wx*0.0011-3.3,wz*0.0011)),wash,work_far.w,orchard,true).y else: covered.y
             if y < 0.6 or water_at(wx,wz).wet or ((covered.x > 0.0 or covered.y > 0.0 or rise_far > 0.0) and town_plant_excluded(vec2(f32(wx),f32(wz)),2.0)):
                 covered = vec2(0,0); rise_far = 0.0
             else if (covered.y > 0.0 or rise_far > 0.0) and town_plant_excluded(vec2(f32(wx),f32(wz)),min(max(11.0,cell*0.85),13.5)):
@@ -571,18 +583,37 @@ world_tile_drawable = (node: WorldTile,cam: vec3) -> bool:
     if node.level <= 6 or node.low >= 0.0 or node.high <= 0.0: return true
     x,z = world_tile_origin(node.x,node.z,node.level)
     size = world_tile_size(node.level)
-    world_distance(x,z,size,cam) >= size*world_tile_detail(node)
+    need = size*world_tile_detail(node)
+    # Keep an already-drawn distant coast tile visible across the split threshold while its
+    # finer children stream so approaching a far coast never blinks it out for a frame.
+    if node.key in world_last_lods and world_distance(x,z,size,cam) >= need*0.85: return true
+    world_distance(x,z,size,cam) >= need
 
-world_visit = (x: int,z: int,level: int,cam: vec3,planes: vec4[]):
-    global world_selected
+world_visit = (x: int,z: int,level: int,cam: vec3,planes: vec4[],visible_only: bool = false):
+    global world_selected,world_surround,world_guard,world_sibling_guard
     ox,oz = world_tile_origin(x,z,level); size = world_tile_size(level)
-    if not world_possible_land(ox,oz,size) or not world_tile_visible(ox,oz,size,cam,planes): return
-    slot = world_request_tile(x,z,level)
+    if not world_possible_land(ox,oz,size): return
+    vis = world_tile_visible(ox,oz,size,cam,planes)
+    if visible_only and not vis: return
+    slot = -1
+    if vis:
+        slot = world_request_tile(x,z,level)
+    else:
+        key = world_tile_key(x,z,level)
+        if key in world_cache:
+            slot = world_cache[key]
+            world_tiles[slot].used = world_frame
+        else:
+            if not world_warming:
+                if world_tile_guard(ox,oz,size,cam,planes) and level >= 4: world_guard.push(WorldAhead(world_distance(ox,oz,size,cam),x,z,level))
+                else if level >= 5: world_surround.push(WorldAhead(world_distance(ox,oz,size,cam),x,z,level))
+            return
     if slot < 0: return
     distance = world_distance(ox,oz,size,cam)
     if level > 0 and distance < size*world_tile_detail(world_tiles[slot]):
-        ready = true
-        children: (int,int)[]
+        vis_ready = true
+        ready_vis: (int,int)[]
+        ready_off: (int,int)[]
         # Visit the camera's nearest quadrant first, so a teleport or landing
         # spends its bounded generation budget on nearby contact tiles first.
         first = (if f64(cam.x) >= ox+size*0.5: 1 else: 0) + (if f64(cam.z) >= oz+size*0.5: 2 else: 0)
@@ -590,12 +621,36 @@ world_visit = (x: int,z: int,level: int,cam: vec3,planes: vec4[]):
             quadrant = order xor first
             cx = x*2+(quadrant%2); cz = z*2+(quadrant/2)
             px,pz = world_tile_origin(cx,cz,level-1)
-            if not world_possible_land(px,pz,size*0.5) or not world_tile_visible(px,pz,size*0.5,cam,planes): continue
-            children.push((cx,cz))
-            if world_request_tile(cx,cz,level-1) < 0: ready = false
-        if ready:
-            loop child in children: world_visit(child.0,child.1,level-1,cam,planes)
+            if not world_possible_land(px,pz,size*0.5): continue
+            cvis = world_tile_visible(px,pz,size*0.5,cam,planes)
+            if visible_only and not cvis: continue
+            if cvis:
+                if world_request_tile(cx,cz,level-1) >= 0: ready_vis.push((cx,cz)) else: vis_ready = false
+            else:
+                ckey = world_tile_key(cx,cz,level-1)
+                if ckey in world_cache:
+                    world_tiles[world_cache[ckey]].used = world_frame
+                    ready_off.push((cx,cz))
+                else if not world_warming:
+                    if vis and level-1 >= 3:
+                        world_sibling_guard.push(WorldAhead(world_distance(px,pz,size*0.5,cam),cx,cz,level-1))
+                    else if level-1 >= 4 and world_tile_guard(px,pz,size*0.5,cam,planes):
+                        world_guard.push(WorldAhead(world_distance(px,pz,size*0.5,cam),cx,cz,level-1))
+                    else if level-1 >= 5:
+                        world_surround.push(WorldAhead(world_distance(px,pz,size*0.5,cam),cx,cz,level-1))
+        # Descend when all visible children are ready, OR when an undrawable coarse parent
+        # (level >= 7 mixed coast) was already split on the previous frame (had drawn descendants),
+        # so a new sibling entering the frustum edge never erases already-drawn far mountains.
+        # Off-screen tiles stay warm in the cache via traversal but never enter world_selected.
+        if not vis:
+            loop child in ready_off: world_visit(child.0,child.1,level-1,cam,planes,visible_only)
             return
+        if vis_ready or (not world_tile_drawable(world_tiles[slot],cam) and ready_vis.len() > 0 and (world_tiles[slot].key in world_last_ancestors)):
+            loop child in ready_vis: world_visit(child.0,child.1,level-1,cam,planes,visible_only)
+            loop child in ready_off: world_visit(child.0,child.1,level-1,cam,planes,visible_only)
+            return
+    else if not vis:
+        return
     else if level > 0 and not world_warming and distance < size*world_tile_detail(world_tiles[slot])*WORLD_PREFETCH:
         # (its children will be drawn soon: made ahead, once nothing the view needs is waiting,
         # so they are there when it splits and start from its own shape (world_prefetch_tiles))
@@ -605,11 +660,11 @@ world_visit = (x: int,z: int,level: int,cam: vec3,planes: vec4[]):
             if world_possible_land(px,pz,size*0.5) and world_tile_visible(px,pz,size*0.5,cam,planes): world_prefetch.push(WorldAhead(world_distance(px,pz,size*0.5,cam),cx,cz,level-1))
     world_selected.push(slot)
 
-# The tiles to make ahead of need: the children of tiles within WORLD_PREFETCH of splitting, the
-# nearest first, one at a time in the frame's ordinary slice and only while the view itself has
-# every tile it needs. A tile that arrives after its parent should have split has to morph in
-# from the parent's shape in view (prepare_world_terrain); made ahead, it is there at the split,
-# where its shape is the parent's and nothing moves.
+# The tiles to make ahead of need: first direct off-screen siblings of already-split visible
+# parents on the leading side of camera rotation (so turning never flips a split parent's
+# vis_ready to false and collapses already-drawn children), then guard-band tiles ahead of the
+# turn, then the rest of the 360-degree surround (coarsest first), then children of tiles within
+# WORLD_PREFETCH of splitting (nearest first).
 const WORLD_PREFETCH = 1.3
 struct WorldAhead:
     away: f64
@@ -617,14 +672,82 @@ struct WorldAhead:
     z: int
     level: int
 world_prefetch: WorldAhead[] = []
+world_sibling_guard: WorldAhead[] = []
+world_guard: WorldAhead[] = []
+world_surround: WorldAhead[] = []
+world_sibling_next: WorldAhead[] = []
+world_guard_next: WorldAhead[] = []
+world_last_fwd = vec3(0,0,0)
+
+world_guard_ahead_score = (a: WorldAhead,cam: vec3,turn: vec3) -> f64:
+    ox,oz = world_tile_origin(a.x,a.z,a.level); size = world_tile_size(a.level)
+    dx = ox+size*0.5-f64(cam.x); dz = oz+size*0.5-f64(cam.z)
+    d = sqrt(dx*dx+dz*dz)+1.0
+    lead = (dx*f64(turn.x)+dz*f64(turn.z))/d
+    # Leading side of the turn first, then coarsest level first, then nearest.
+    (if lead > -0.15: -1e12 else: 0.0) - f64(a.level)*1e9 + a.away
+
+world_guard_prebuild = (cam: vec3,turn: vec3,turning: bool):
+    global world_sibling_next,world_guard_next,world_view_missing,world_next_level
+    global world_want_key,world_want_level,world_want_distance,world_want_warm
+    if not turning or world_arriving or world_warm_views.len() > 0 or (world_sibling_next.len() == 0 and world_guard_next.len() == 0):
+        world_sibling_next = []; world_guard_next = []; return
+    # When the camera is rotating, pre-build one off-screen tile on the leading side before
+    # world_visit spends the frame's slice on fine tiles: direct siblings of split parents first
+    # (any level >= saved_next), then coarse guard-band tiles (level >= max(saved_next, 3)).
+    wk = world_want_key; wl = world_want_level; wd = world_want_distance; ww = world_want_warm
+    saved_next = world_next_level
+    saved_miss = world_view_missing
+    world_next_level = -1
+    built = false
+    if world_sibling_next.len() > 0:
+        world_sibling_next.sort((a: WorldAhead) -> f64: world_guard_ahead_score(a,cam,turn))
+        loop a in world_sibling_next:
+            if saved_next >= 0 and a.level < saved_next: continue
+            if world_request_tile(a.x,a.z,a.level) >= 0: built = true; break
+            if world_generated >= world_generate_budget or _world_slice_spent(): break
+    if not built and world_guard_next.len() > 0 and world_generated < world_generate_budget and not _world_slice_spent():
+        world_guard_next.sort((a: WorldAhead) -> f64: world_guard_ahead_score(a,cam,turn))
+        min_lvl = max(saved_next,3)
+        loop a in world_guard_next:
+            if a.level < min_lvl: continue
+            if world_request_tile(a.x,a.z,a.level) >= 0: break
+            if world_generated >= world_generate_budget or _world_slice_spent(): break
+    world_want_key = wk; world_want_level = wl; world_want_distance = wd; world_want_warm = ww
+    world_next_level = saved_next
+    world_view_missing = saved_miss
+    world_sibling_next = []
+    world_guard_next = []
+
 world_prefetch_tiles = ():
-    global world_prefetch,world_view_missing
-    if world_view_missing > 0 or world_warm_views.len() > 0: world_prefetch = []; return
+    global world_prefetch,world_sibling_guard,world_guard,world_surround,world_sibling_next,world_guard_next,world_view_missing
+    global world_want_key,world_want_level,world_want_distance,world_want_warm
+    if world_warm_views.len() > 0: world_prefetch = []; world_sibling_guard = []; world_guard = []; world_surround = []; world_sibling_next = []; world_guard_next = []; return
+    wk = world_want_key; wl = world_want_level; wd = world_want_distance; ww = world_want_warm
+    if world_view_missing > 0:
+        world_sibling_next = if not world_arriving: world_sibling_guard else: []
+        world_guard_next = if not world_arriving: world_guard else: []
+        world_prefetch = []; world_sibling_guard = []; world_guard = []; world_surround = []; return
+    world_sibling_next = []
+    world_guard_next = []
+    if world_sibling_guard.len() > 0:
+        world_sibling_guard.sort((a: WorldAhead) -> f64: -f64(a.level)*1e9+a.away)
+        loop a in world_sibling_guard: _ = world_request_tile(a.x,a.z,a.level)
+    if world_guard.len() > 0:
+        world_guard.sort((a: WorldAhead) -> f64: -f64(a.level)*1e9+a.away)
+        loop a in world_guard: _ = world_request_tile(a.x,a.z,a.level)
+    if world_surround.len() > 0:
+        world_surround.sort((a: WorldAhead) -> f64: -f64(a.level)*1e9+a.away)
+        loop a in world_surround: _ = world_request_tile(a.x,a.z,a.level)
     world_prefetch.sort((a: WorldAhead) -> f64: a.away)
     loop a in world_prefetch: _ = world_request_tile(a.x,a.z,a.level)
     # (what is made ahead is not missing from the view)
+    world_want_key = wk; world_want_level = wl; world_want_distance = wd; world_want_warm = ww
     world_view_missing = 0
     world_prefetch = []
+    world_sibling_guard = []
+    world_guard = []
+    world_surround = []
 
 # Integer base-cell rectangles make adjacency independent of f32 world position.
 world_rect = (t: WorldTile) -> (int,int,int): (t.x*(1<<t.level),t.z*(1<<t.level),1<<t.level)
@@ -676,6 +799,11 @@ world_balance = ():
                     if let k = at.get(world_tile_key(cx >> level,cz >> level,level)):
                         ib = k; break
                 if ib < 0 or (best >= 0 and ib >= best): continue
+                # Never collapse already-drawable fine tiles to match an undrawable coarse coast
+                # ancestor (level >= 7 mixed coast skipped by draw_world_terrain): it has no mesh
+                # seam to balance, and folding drawable neighbors into it erases visible land.
+                nb = world_tiles[world_selected[ib]]
+                if not world_tile_drawable(nb,world_want_cam): continue
                 level = tl[ib]-1
                 if not (world_tile_key(tx[ia] >> (level-tl[ia]),tz[ia] >> (level-tl[ia]),level) in world_cache): continue
                 best = ib
@@ -876,8 +1004,10 @@ world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> G
     # the canopy has risen at all the stand is closed, the more the higher)
     # (the ground's own values stay as they are: far off the sheet is painted as the ground is)
     d = length(o.world-u.cam)
-    # (lifted a little even where it has sunk, so the canopy never fights the ground it lies on)
-    lift = canopy_floor(absolute.xz,o.relief_normal.x,d)
+    # (lifted a little even where it has sunk, so the canopy never fights the ground it lies on;
+    # suppress lift over farmed land so coarse morphing tiles never lift green canopy over fields)
+    farm_clear = clamp(1.0-o.working.w*1.35,0.0,1.0)
+    lift = canopy_floor(absolute.xz,o.relief_normal.x*farm_clear,d)
     lifted = o.world+vec3(0,lift,0)
     curved = lifted
     curved.y -= world_drop(lifted.xz-u.cam.xz)
@@ -887,10 +1017,7 @@ world_shell_vertex = (v: TerrainVertex,inst: WorldInstance,u: GroundParams) -> G
 
 # The painted crowns on the canopy are the crown sheet at the octave the distance asks for
 # (level: log2 of the distance over 250 m; crowns, then the clumps they gather in, then their
-# masses). Each coarse cell changes to the next octave at its own distance (its draw), and how
-# far it has turned (0 this octave, 1 the next) rises over a sixth of an octave: its pixels go
-# over by the shared dither, a few at a time. Changed all at once, a 70 m patch of a far wood
-# took another pattern and another outline in one frame.
+# masses). Kept for lod_pop_check; live rendering uses continuous non-dithered octave blends.
 canopy_octave_turn = (q: vec2,level: f32) -> f32:
     lf = floor(level)
     clamp((fract(level)-hash21(floor(q/(CANOPY_CELL*pow(2.0,lf+1.0))))*0.84)*6.0,0.0,1.0)
@@ -898,26 +1025,34 @@ canopy_octave_turn = (q: vec2,level: f32) -> f32:
 world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     if u.shell.w < 0.0: discard()
     # (the canopy's rise, baked per sample and morphed between levels with the ground
-    # (world_cover_at); the stand cover there, for its shading: where the canopy has risen at
-    # all the stand is closed, the more the higher)
-    rise = i.relief_normal.x
+    # (world_cover_at), gated against farmed fields just like terrain.jo so coarse/morphing
+    # tiles never smear square green canopy patches across open farmland)
+    rise = i.relief_normal.x*clamp(1.0-i.working.w*1.35,0.0,1.0)
     stand = 0.62+0.33*rise
     d = length(i.world-u.cam)
     q = i.world.xz+u.origin.xz
     span = f32(CANOPY_CELLS)*CANOPY_CELL
     # (the sheet is the floor under the canopy's domes: none where no crown stands, past the
-    # wood's edge, where the ground's own paint of the crowns is the canopy)
-    if rise < 0.04: discard()
-    # (far off, the canopy hands over to the ground's paint of the same crowns by interleaved
-    # gradient noise rather than periodic Bayer, so hillsides never show halftone bands)
-    ign = fract(52.9829189*fract(dot(i.pos.xy,vec2(0.06711056,0.00583715))))
-    if ign >= clamp((CANOPY_GROW_FAR+600.0-d)/600.0,0.0,1.0): discard()
-    # the crowns: fine 9..36 m furry canopy clusters capped to exact integer octave 2 (zero IGN
-    # checkerboard beyond ~1.9 km, matching canopy_far_relief's 36 m scale).
-    level = clamp(log2(max(d/480.0,1.0)),0.0,2.0)
-    lf = floor(level)
-    l0 = lf+(if fract(ign+0.5) < canopy_octave_turn(q,level): 1.0 else: 0.0)
-    s = sample_lod(u.canopy,q/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61),clamp(d*0.00040,0.25,1.25))
+    # wood's edge, or past the far handover — solid with zero screen-space IGN dither holes so
+    # distant wooded ridges and skylines never flicker or boil)
+    if rise < 0.04 or d > CANOPY_GROW_FAR+600.0: discard()
+    # Smooth continuous non-dithered blend from 18 m (near/mid) to 36 m (far, aligned with
+    # canopy_far_relief) using hardware mipmapping (safe now that pixel-wise IGN octave flips
+    # are gone) so grazing wooded ridges at 1.5..4 km filter cleanly without moire shimmer.
+    oct_t = clamp((d-550.0)/900.0,0.0,1.0)
+    s = vec4(0.5,0.5,0.8,0.5)
+    s_tone: f32 = 0.5
+    if oct_t <= 0.0:
+        s = sample(u.canopy,q/(span*2.0)+vec2(0.37,0.61))
+        s_tone = fract(s.w*7.13)
+    else if oct_t >= 1.0:
+        s = sample(u.canopy,q/(span*4.0)+vec2(0.74,1.22))
+        s_tone = fract(s.w*7.13)
+    else:
+        s1 = sample(u.canopy,q/(span*2.0)+vec2(0.37,0.61))
+        s2 = sample(u.canopy,q/(span*4.0)+vec2(0.74,1.22))
+        s = mix(s1,s2,oct_t)
+        s_tone = mix(fract(s1.w*7.13),fract(s2.w*7.13),oct_t)
     # its edge scalloped by the crowns along it
     if rise+(s.z-0.55)*0.1 < 0.07: discard()
     # light: each crown's rounded relief carried on the hillside's true slope so sunlit and shaded
@@ -929,13 +1064,13 @@ world_shell_fragment = (i: GroundOut,u: GroundParams) -> vec4:
     floor = max(billow_emerge(0.0,d,0.5)*clamp((rise-0.3)*4.0,0.0,1.0),billow_emerge(2.0,d,0.5)*clamp((rise-0.06)*10.0,0.0,1.0))
     # (farther off the hollows are a pixel or two between the crowns: less deep, grouped with them)
     grouped = billow_grouped(d)
-    # (and past the crowns' reach the masses' cast shadows lie on it: active all the way to the
-    # sheet's far handover so relief stays continuous from 4 km down to 500 m)
-    cast = clamp((d-480.0)/260.0,0.0,1.0)*u.shell.y
+    # (and past the crowns' reach the masses' cast shadows lie on it, fading cleanly out before
+    # the 4 km ground handover so there is no dark contour ring where the sheet ends)
+    cast = clamp((d-480.0)/260.0,0.0,1.0)*clamp((3700.0-d)/900.0,0.0,1.0)*u.shell.y
     if cast > 0.0: cast *= billow_shadow(q,rise,u.sun_dir,d)
     ndl = mix(dot(nn,u.sun_dir),dot(nn,u.canopy_light.xyz),u.canopy_light.w*0.65)-floor*mix(0.32,0.10,grouped)-cast*0.42
     occl = (0.18+0.68*s.z+0.08*clamp((stand-CANOPY_EDGE)*4.0,0.0,1.0))*mix(1.0,mix(0.42,0.78,grouped),floor)*(1.0-0.36*cast)
-    col = mix(vec3(0.12,0.28,0.20),vec3(0.24,0.38,0.22),fract(s.w*7.13))*mix(1.06,0.78,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
+    col = mix(vec3(0.12,0.28,0.20),vec3(0.24,0.38,0.22),s_tone)*mix(1.06,0.78,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
     c = crown_palette(col,ndl,occl,u.shade,u.sun,mix(0.68,1.0,clamp((300.0-d)/250.0,0.0,1.0)),fwidth(ndl+(occl-0.6)*0.6))
     # (the land's aerial perspective, the ground's own as its vertices carry it. Alpha: one
     # less how wooded the land is for the outline drawn on the screen (src/silhouette.jo), as
@@ -1368,25 +1503,35 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int,masses: int = 0,
     # shader every dome shares, the laptop's GPU ran those short branches for a crown's pixel too)
     own = if banded == 1: 1.0 else: if tier > 1.5: 1.0 else: 0.0
     s = vec4(0.5,0.5,0.8,0.5)
+    s_tone: f32 = 0.5
     if banded == 0 and own < 0.5:
-        level = clamp(log2(max(d/480.0,1.0)),0.0,2.0)
-        lf = floor(level)
-        ign = fract(52.9829189*fract(dot(i.pos.xy,vec2(0.06711056,0.00583715))))
-        l0 = lf+(if ign < canopy_octave_turn(q,level): 1.0 else: 0.0)
-        s = sample_lod(u.canopy,q/(span*pow(2.0,l0))+vec2(l0*0.37,l0*0.61),clamp(d*0.00040,0.25,1.25))
+        oct_t = clamp((d-550.0)/900.0,0.0,1.0)
+        if oct_t <= 0.0:
+            s = sample(u.canopy,q/(span*2.0)+vec2(0.37,0.61))
+            s_tone = fract(s.w*7.13)
+        else if oct_t >= 1.0:
+            s = sample(u.canopy,q/(span*4.0)+vec2(0.74,1.22))
+            s_tone = fract(s.w*7.13)
+        else:
+            s1 = sample(u.canopy,q/(span*2.0)+vec2(0.37,0.61))
+            s2 = sample(u.canopy,q/(span*4.0)+vec2(0.74,1.22))
+            s = mix(s1,s2,oct_t)
+            s_tone = mix(fract(s1.w*7.13),fract(s2.w*7.13),oct_t)
     near = clamp((170.0-d)/70.0,0.0,1.0)
     body = normalize(i.normal)
     up = i.wall_sun
     # (what stands on this dome, once risen, hides it: it is then the floor of their hollows, the
-    # crowns painted on it given way to the real ones; so is a near crown's dome under its lobes)
-    above = if banded == 1 or tier > 1.5: i.air.y*(1.0-i.working.y) else: billow_emerge(tier+1.0,d,0.5)
+    # crowns painted on it given way to the real ones; so is a near crown's dome under its lobes.
+    # For clumps, gate on 320 m where crowns actually cover them on every tier and keep partial
+    # canopy-sheet texture so clumps never read as smooth bald domes at 200..550 m.)
+    above = if banded == 1 or tier > 1.5: i.air.y*(1.0-i.working.y) else: if tier > 0.5: billow_risen(320.0,d) else: billow_emerge(1.0,d,0.5)
     if banded == 0 and own < 0.5 and above > 0.0:
-        s = mix(s,vec4(0.5,0.5,0.65,0.5),clamp(above*1.2,0.0,1.0))
+        s = mix(s,vec4(0.5,0.5,0.65,0.5),clamp(above*0.42,0.0,0.42))
     crown = vec3((s.x*2.0-1.0)*1.95,0.40+0.60*s.z,(s.y*2.0-1.0)*1.95)
     # (masses and clumps carry rich continuous furry canopy-sheet relief across their entire body
     # so 500..2600 m slopes read as plush 3D forest carpet instead of individual 28/56 m discs)
     massy = if banded == 1: 0.0 else: (if tier < 0.5: 1.0 else: 0.0)*clamp((d-500.0)/700.0,0.0,1.0)
-    nn = normalize(body*mix(mix(0.85,1.35,own),0.90,massy)+crown*mix(1.05,0.88,massy)*(1.0-max(own,above)*0.78))
+    nn = normalize(body*mix(mix(0.85,1.35,own),0.90,massy)+crown*mix(1.05,0.88,massy)*(1.0-max(own,above*0.5)*0.78))
     # Seamless 3D object-space leaf tufts (crown_oct_tex, zero cube-face seams, camera-invariant):
     # only compiled into near/cut crown shaders (banded == 1); far solid domes skip it completely.
     mass: f32 = 0.65
@@ -1451,11 +1596,13 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int,masses: int = 0,
         nc = normalize(vec3(c_tuft.x,max(c_tuft.y,0.0)+0.2,c_tuft.z))
         whole = dot(nb,light)
         tuft_whole = dot(nc,light)
-        inside = clamp((CROWN_OCT_ROUND*0.84-tuft_far)*spans+0.5,0.0,1.0)
-        # Painterly three-band leaf-tuft shading: crisp sunlit leaf-cluster caps and scalloped
-        # mid/shadow transitions locked in 3D object space (zero view-dependent boil).
-        b_behind = (whole-0.12)*1.56-0.22
-        b_tuft = (tuft_whole-0.12)*1.56+0.12
+        inside = clamp((CROWN_OCT_ROUND*0.92-tuft_far)*spans+0.5,0.0,1.0)
+        # Painterly three-band leaf-tuft shading: crisp sunlit leaf-cluster caps, 3D tuft pillow
+        # modelling, and inner foliage pockets between tufts up close (< 95 m), reusing whole and
+        # tuft_whole with zero extra registers or texture reads (locked in 3D object space).
+        close = clamp((95.0-d)/55.0,0.0,1.0)*band
+        b_behind = (whole-0.12)*1.56-0.22-0.24*close
+        b_tuft = (tuft_whole-0.12)*1.56+0.12+clamp((whole-tuft_whole)*1.3,-0.18,0.18)*close
         lightness = mix(lightness,b_behind+inside*max(b_tuft-b_behind,0.0),band)
     # (and the shadows of the masses sunward of it, on a mass or a clump past the crowns' reach)
     cast = if banded == 1: 0.0 else: (1.0-own)*clamp((d-480.0)/260.0,0.0,1.0)*u.shell.y
@@ -1466,7 +1613,7 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int,masses: int = 0,
     open = mix(0.76+0.24*clamp(up*1.3,0.0,1.0),clamp(up*1.5-0.1,0.0,1.0),own)
     occl = (mix(0.20,0.40,grouped)+mix(0.80,0.60,grouped)*open)*mix(0.28+0.72*s.z,0.84+0.16*s.z,own)*(0.78+0.22*mass)*1.08*mix(mix(1.0,0.9+0.1*tuft,near)*(0.80+0.20*i.working.x),0.92,band)*(1.0-mix(0.56,0.24,grouped)*above*(1.0-band))*(1.0-0.32*cast)
     # (a crown its own green: deep Mediterranean emerald-pine to warm sunlit oak-olive)
-    tone = mix(mix(fract(s.w*7.13),0.5,clamp(above*1.2,0.0,1.0)),i.tint.z,own)
+    tone = mix(mix(s_tone,0.5,clamp(above*1.2,0.0,1.0)),i.tint.z,own)
     col = mix(vec3(0.12,0.28,0.20),vec3(0.24,0.38,0.22),tone)*mix(1.06,0.78,clamp((stand-0.6)*2.5,0.0,1.0)*0.4)
     # (masses and clumps dissolve their feet seamlessly into the canopy sheet's relief so no hard
     # disc edge ever reads on a hillside)
@@ -1476,7 +1623,7 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int,masses: int = 0,
             ns = normalize(body*0.82+crown*0.58)
             ndl = mix(ndl,mix(dot(ns,u.sun_dir),dot(ns,u.canopy_light.xyz),u.canopy_light.w*0.65)-mix(0.24,0.10,grouped)-cast*0.40,foot)
             occl = mix(occl,(0.20+0.70*s.z)*mix(0.48,0.78,grouped)*(1.0-0.36*cast),foot)
-            col = mix(col,mix(vec3(0.12,0.28,0.20),vec3(0.24,0.38,0.22),fract(s.w*7.13))*mix(1.06,0.78,clamp((stand-0.6)*2.5,0.0,1.0)*0.4),foot)
+            col = mix(col,mix(vec3(0.12,0.28,0.20),vec3(0.24,0.38,0.22),s_tone)*mix(1.06,0.78,clamp((stand-0.6)*2.5,0.0,1.0)*0.4),foot)
     # (and some crowns of another kind: dark blue-green pines/cypresses and occasional warm oaks)
     kind = fract(i.tint.x*13.7)
     col = mix(col,vec3(0.08,0.22,0.18),own*step(kind,0.14)*0.78)
@@ -1499,7 +1646,8 @@ billow_fragment_at = (i: GroundOut,u: GroundParams,cutting: int,masses: int = 0,
         turned = 1.0-abs(dot(body,view))
         back = clamp(dot(view,normalize(u.sun_dir)),0.0,1.0)
         c += col*u.sun*(0.38*back*back*turned*turned*turned*(0.4+0.6*open))+u.sky*(0.04*turned*turned*open)
-    vec4(land_aerial_apply(c,i.river,u.haze)*paint_paper(i.pos.xy),1)
+    wood_alpha = if on_ground: 1.0 else: 1.0-clamp((d-1800.0)/800.0,0.0,1.0)
+    vec4(land_aerial_apply(c,i.river,u.haze)*paint_paper(i.pos.xy),wood_alpha)
 
 billow_fragment = (i: GroundOut,u: GroundParams) -> vec4: billow_fragment_at(i,u,1)
 billow_fragment_solid = (i: GroundOut,u: GroundParams) -> vec4: billow_fragment_at(i,u,0)
@@ -1625,7 +1773,9 @@ billow_held = (lists: Billow[][]) -> int[]: [loop k in 0..lists.len(): if lists[
 billow_gather_view = (cam: vec3,planes: vec4[]):
     seen: {int:bool} = {}
     reach = f64(billow_reach(0.0))+50.0
-    loop slot in world_selected:
+    loop idx in 0..world_selected.len():
+        if idx < world_selected_visible.len() and not world_selected_visible[idx]: continue
+        slot = world_selected[idx]
         node = world_tiles[slot]
         if node.level > 5: continue
         # (a drawn tile beyond every dome's reach: nothing to gather)
@@ -1991,27 +2141,42 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     global world_generate_made
     world_generate_made = 0
     if world_generate_tiles > 0: world_generate_until = 1e30
-    global world_next_level,world_want_key,world_want_level,world_want_cam,world_want_warm,world_view_missing
-    world_next_level = if world_arriving or world_want_warm: world_want_level else: -1
+    global world_next_level,world_want_key,world_want_level,world_want_cam,world_want_warm,world_view_missing,world_last_fwd
+    fwd_raw = vec3(vp[0].w,vp[1].w,vp[2].w)
+    fwd = if length(fwd_raw) > 1e-6: normalize(fwd_raw) else: vec3(0,0,0)
+    turn = if length(world_last_fwd) > 0.5: fwd-world_last_fwd else: vec3(0,0,0)
+    turning = length(world_last_fwd) > 0.5 and length(turn) > 0.0005
+    world_last_fwd = fwd
+    # Build coarse missing tiles coarsest-first during arrival, view warming, camera rotation
+    # (level >= 4), or undrawable coast ancestors (level >= 7). During straight flight, stream
+    # nearest-first so near L0..L2 tiles under the aircraft never starve behind horizon tiles.
+    world_next_level = if world_arriving or world_want_warm or (turning and world_want_level >= 4) or world_want_level >= 7: world_want_level else: -1
     world_want_key = -1; world_want_level = -1; world_want_cam = cam; world_want_warm = false; world_view_missing = 0
     world_prepare_contact(cam,contact_burst)
     if contact_burst: world_prefetch_contact(cam)
+    if not foliage_off("prefetch"): world_guard_prebuild(cam,turn,turning)
     planes = land_planes(vp)
     world_selected = []
-    global world_prefetch
+    global world_prefetch,world_sibling_guard,world_guard,world_surround,world_selected_visible
     world_prefetch = []
+    world_sibling_guard = []
+    world_guard = []
+    world_surround = []
     world_visit(0,0,WORLD_ROOT_LEVEL,cam,planes)
     world_balance_cached()
     # Preserve these exact tiles even if balancing selected a coarse ancestor.
     loop slot in world_contact_slots:
         if not (slot in world_selected):world_selected.push(slot)
+    world_selected_visible = [loop slot in world_selected: world_tile_visible(world_tile_origin(world_tiles[slot].x,world_tiles[slot].z,world_tiles[slot].level).0,world_tile_origin(world_tiles[slot].x,world_tiles[slot].z,world_tiles[slot].level).1,world_tile_size(world_tiles[slot].level),cam,planes)]
     global world_arriving,world_arriving_bare
     # (arriving while land chosen cannot be drawn and tiles asked for are still to be made: a
     # view with nothing left to make gains nothing from the larger slice)
     world_arriving = false; world_arriving_bare = false
     if world_view_missing > 0:
         hidden = 0; shown = 0
-        loop slot in world_selected:
+        loop idx in 0..world_selected.len():
+            if not world_selected_visible[idx]: continue
+            slot = world_selected[idx]
             if world_tiles[slot].high > 0.0:
                 if world_tile_drawable(world_tiles[slot],cam): shown += 1 else: hidden += 1
         world_arriving = hidden > 0
@@ -2022,10 +2187,11 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
     # from the detail drawn where it is the frame before, and morphs from it to its own over
     # WORLD_ENTER_SECONDS: the ground never steps. Where nothing was drawn (an arrival), it
     # starts a level coarser, as the ground grows in.
-    global world_last_lods,world_last_eye
+    global world_last_lods,world_last_ancestors,world_last_eye
     lods: {int:f64} = {}
+    ancestors: {int:bool} = {}
     # (a cut or a jump: what was drawn before is elsewhere; the land arrives as it always has)
-    if length(cam-world_last_eye) > 400.0: world_last_lods = {}
+    if length(cam-world_last_eye) > 400.0: world_last_lods = {}; world_last_ancestors = {}
     world_last_eye = cam
     loop slot in world_selected:
         node = world_tiles[slot]
@@ -2044,11 +2210,15 @@ prepare_world_terrain = (cam: vec3,vp: mat4,t: f64,contact_burst: bool = true):
         if node.level == 0 and distance < size*1.5 and node.start >= f64(node.level)+1.0: from = 0.0
         node.lod = if slot in world_contact_slots: 0.0 else: f64(node.level)+max(transition,from)
         lods[node.key] = node.lod
+        loop up in 1..WORLD_ROOT_LEVEL-node.level+1:
+            ancestors[world_tile_key(node.x >> up,node.z >> up,node.level+up)] = true
         world_tiles[slot] = node
     world_last_lods = lods
+    world_last_ancestors = ancestors
 
 const WORLD_ENTER_SECONDS = 1.0
 world_last_lods: {int:f64} = {}
+world_last_ancestors: {int:bool} = {}
 world_last_eye = vec3(1e9,0,0)
 
 # The detail drawn the frame before where a tile is (a lod): its own if it was drawn, else an
@@ -2066,7 +2236,9 @@ world_drawn_lod = (node: WorldTile) -> f64:
             loop i in 0..n:
                 if let lod = world_last_lods.get(world_tile_key((node.x << down)+i,(node.z << down)+j,node.level-down)): finest = min(finest,lod)
         if finest < 1e8: return max(finest,f64(node.level))
-    f64(node.level)+1.0
+    # Nothing was drawn at this footprint on the previous frame (first sight from off-screen or
+    # arrival): start at the tile's own detail so panning into view never morphs from +1 level.
+    f64(node.level)
 
 world_warm_pass = ():
     global world_selected,world_warming,world_want_main,world_warm_missing,world_warm_ready,world_want_cam,world_generate_until,world_warm_selected,world_warm_eyes
@@ -2086,7 +2258,7 @@ world_warm_pass = ():
         aspect = if v.aspect > 0.0: v.aspect else: f64(max(screen_width(),1))/f64(max(screen_height(),1))
         vp = perspective(v.fov*PI/180.0,aspect,0.3,world_far(f64(v.eye.y)))*look_at(v.eye,v.look,vec3(0,1,0))
         world_selected = []
-        world_visit(0,0,WORLD_ROOT_LEVEL,v.eye,land_planes(vp))
+        world_visit(0,0,WORLD_ROOT_LEVEL,v.eye,land_planes(vp),true)
         loop slot in world_selected:
             world_warm_selected.push(slot); world_warm_eyes.push(v.eye)
     world_warming = false
@@ -2118,6 +2290,7 @@ draw_world_terrain = (L: Light,t: f64):
     # (timing only: AEGEAN_MAPS=mask, the maps the ground's vertices read)
     maps_mask = to_int(env("AEGEAN_MAPS") ?? "") ?? 7
     loop selected_index in 0..world_selected.len():
+        if selected_index < world_selected_visible.len() and not world_selected_visible[selected_index]: continue
         slot=world_selected[selected_index]
         node = world_tiles[slot]
         if not world_tile_drawable(node,cam): continue
