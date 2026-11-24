@@ -97,8 +97,9 @@ are the pause menu's (`game_rows` over the same cached headers) and it uses the 
 - With nothing saved there is only New game (and the quiet Situations). Until the slots have been
   read the screen says "Reading saved games..."; a load says "Loading slot N...".
 
-**Sound.** The Adagietto plays as if from a cockpit radio: through the receiver chain with station
-levelling (the pause menu's music player, `MusicAudition`); it leads. Under it on a low pass only a
+**Sound.** Dvořák's *New World* Largo (`src/title_music.jo`) plays whole as if from a cockpit
+radio: through the receiver chain with station levelling (the pause menu's music player,
+`MusicAudition`) and a post-receiver dynamics curve, looping after a 4 s silent pause; it leads. Under it on a low pass only a
 very faint bed of engine and rushing air, about 20 dB down, faded in and out with the shot; a
 race's engines (the engine hearing's own, with Doppler, at an `EngineSource.gain` of 0.04) are
 barely there. In a browser

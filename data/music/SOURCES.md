@@ -24,7 +24,7 @@ The status of every piece considered for the game, in the catalogue or not, is i
 | Suite bergamasque: Clair de lune | Claude Debussy (1862–1918), 1905 | [Mutopia, DebussyC/L75](https://www.mutopiaproject.org/ftp/DebussyC/L75/debussy_Ste_Bergamesq_Clair/), Keith OHara, Fromont 1905 | Mutopia explicitly marks the transcription **Public Domain** |
 | Adelita | Francisco Tárrega (1852–1909) | [Mutopia, TarregaF/adelita-duo](https://www.mutopiaproject.org/ftp/TarregaF/adelita-duo/), Jeffrey Olson's two-guitar arrangement, Antich y Tena | Mutopia explicitly marks the arrangement **Public Domain** |
 | Berceuse (Dolly, Op. 56) | Gabriel Fauré (1845–1924), 1894 | [Mutopia, FaureG/O56](https://www.mutopiaproject.org/ftp/FaureG/O56/faure_dolly_berceuse/), Mike Blackstock's flute-and-guitar adaptation, Hamelle | Mutopia explicitly marks the adaptation **Public Domain** |
-| Symphony No. 9 "From the New World", II: Largo | Antonín Dvořák (1841–1904), 1894 | [julian9284, score 4285886](https://musescore.com/julian9284/scores/4285886) | CC0 1.0 |
+| Symphony No. 9 "From the New World", II: Largo (also the title's music) | Antonín Dvořák (1841–1904), 1894 | [julian9284, score 4285886](https://musescore.com/julian9284/scores/4285886) | CC0 1.0 |
 | Symphony No. 9 "From the New World", III: Scherzo (Molto vivace) | Dvořák, 1894 | [mike320, score 1509886](https://musescore.com/user/6105546/scores/1509886) | Public Domain Mark 1.0 (the uploader's mark on MuseScore; PDMX records no licence conflict) |
 | Symphony No. 9 "From the New World", IV: Allegro con fuoco | Dvořák, 1894 | [mike320, score 1509896](https://musescore.com/user/6105546/scores/1509896) | Public Domain Mark 1.0 (the uploader's mark on MuseScore; PDMX records no licence conflict) |
 | Symphony No. 7, II: Allegretto | Ludwig van Beethoven (1770–1827), 1816 | [alexander, score 949716](https://musescore.com/user/15685/scores/949716) | CC0 1.0 |
@@ -40,7 +40,7 @@ The status of every piece considered for the game, in the catalogue or not, is i
 | Lohengrin: Bridal Chorus (choir and piano) | Richard Wagner (1813–1883), 1850 | [Nicolas, score 43724](https://musescore.com/nicolas/scores/43724); the voices sung by our choir | CC0 1.0 |
 | Hungarian Dance No. 1 (piano) | Johannes Brahms (1833–1897), 1869 | [ÐÑÐ·ÑÐºÐ°Ð½Ñ, score 1386646](https://musescore.com/user/1580161/scores/1386646) | CC0 1.0 |
 | Daphnis et Chloé: Introduction (Part I, a reduction) | Maurice Ravel (1875–1937), 1912 | [Derek Benton, score 5888526](https://musescore.com/user/6053266/scores/5888526) | CC0 1.0 |
-| Daphnis et Chloé, Part III: Lever du jour, rehearsal 155 to the bar before 158 (19 bars), the title's music | Ravel, 1912; full score, Durand, 1913 | Our concert-pitch transcription of every part from printed pp. 184–193 of the [Durand 1913 full score](https://archive.org/details/imslp-et-chlo-ravel-maurice) (archive.org's mirror of IMSLP): `source/daphnis-155-24.musicxml` and `.mid` | Public-domain 1913 score; new transcription dedicated to CC0 1.0 |
+| Daphnis et Chloé, Part III: Lever du jour, rehearsal 155 to the bar before 158 (19 bars) | Ravel, 1912; full score, Durand, 1913 | Our concert-pitch transcription of every part from printed pp. 184–193 of the [Durand 1913 full score](https://archive.org/details/imslp-et-chlo-ravel-maurice) (archive.org's mirror of IMSLP): `source/daphnis-155-24.musicxml` and `.mid` | Public-domain 1913 score; new transcription dedicated to CC0 1.0 |
 | Boléro | Ravel, 1929 | [darkblue865, score 5173477](https://musescore.com/user/15856401/scores/5173477) | CC0 1.0 |
 | The Barber of Seville: Overture | Gioachino Rossini (1792–1868), 1816 | [mike320, score 2540876](https://musescore.com/user/6105546/scores/2540876) | CC0 1.0 |
 | Carmen: Prelude (piano four hands) | Georges Bizet (1838–1875), 1875 | [Noah Godard, score 255426](https://musescore.com/user/125838/scores/255426) | CC0 1.0 |
@@ -188,9 +188,9 @@ a small subset of metadata retained. This is not an endorsement by any source au
     13–19 (the harmony is sure: A, D over F-sharp, D-sharp, G-sharp), the second horns' and the
     third and fourth trumpets' triplet notes in bars 14–16 and 20–22, the horns' and bassoons'
     notes in bars 24–27, the trumpets' high note in bar 26 and the trombones' chords in bar 27.
-* The title's music is the opening of Part III of *Daphnis et Chloé* (Lever du jour), rehearsal
-  155 to the bar before 158: 19 bars, 73.2 s at the score's crotchet = 50, ending where the
-  theme's first statement has sunk away (158 begins the next phrase). Every part of the full
+* *Daphnis et Chloé* (Part III: Lever du jour), rehearsal 155 to the bar before 158: 19 bars,
+  73.2 s at the score's crotchet = 50, ending where the theme's first statement has sunk away (158
+  begins the next phrase; formerly the title's music, kept in the catalogue). Every part of the full
   score is transcribed at sounding pitch (clarinets in A and E-flat, bass clarinet, horns in F,
   alto flute, cor anglais, contrabassoon, contrabasses and celesta are written as they sound).
   The earlier catalogue piece under this name was the ballet's *Introduction* in a reduction; it
