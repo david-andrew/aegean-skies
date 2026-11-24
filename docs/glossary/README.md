@@ -1956,9 +1956,9 @@ On the rivers branch until it lands.
   limbs; farther, the same tree as a few merged clumps with the same outline, colour and light;
   farther still, one crown. Each tree crosses between sets at its own distance. Inside a wood
   there are none: the wood is its canopy (below), and no trunk stands in it.
-  **Banded:** a near crown is lit in three flat bands, a bright yellow-green cap where it faces
-  the sun, a middle green, and a deep blue-green body, quite dark, that is the whole side turned
-  from the sun, about half of what is seen; nothing is shaded inside a band. The line between
+  **Banded:** a near crown is lit in three flat bands, a sunlit warm-emerald cap where it faces
+  the sun, a lush Mediterranean emerald middle tone, and a deep cool pine/blue-green shadow body
+  that is the whole side turned from the sun, about half of what is seen; nothing is shaded inside a band. The line between
   two bands is a chain of round leaf tufts, each about a tenth of the crown across: a tuft is
   wholly in one band, by the light at its own 3D centre, and is cut round (`crown_banded`,
   `crown_oct_fast`), so the lighter band's tufts stand out into the darker one, each a clean
@@ -1988,20 +1988,24 @@ On the rivers branch until it lands.
   one another. Over the woods' stand cover (the same green the ground paints: `wood_cover`) lies
   the **sheet**, the terrain lifted to the floor of the canopy's hollows; on it stand the
   **billows**, real low domes in three sizes, each riding the one under it: the wood's broad
-  masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
-  own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
-  dark) and painted with the crowns' palette and 3D octahedral leaf tufts; near and mid-range crowns
+  masses (56 m apart), the clumps on them (28 m) and the interlocking crowns on those (14 m,
+  contiguous inside closed woods with occasional taller pine/cypress accents), every dome its
+  own size, height and lobed outline, lit with hillside-conforming normals (`b.lie.xy` in
+  `billow_vertex`) and painted with the crowns' deep emerald/pine palette and 3D octahedral leaf tufts;
+  near and mid-range crowns
   use true-spherical sculpted 12-sided 3-ring domes (morphed seamlessly from the 8-sided 2-ring mesh
-  across 250–190 m) with 5 protruding round 10-sided 3-ring lobes growing gently over 120–50 m while
+  across 250–190 m) with 5 protruding round 8-sided 3-ring lobes growing gently over 120–50 m while
   the core dome tucks slightly underneath, drawn solid with Early-Z (`billow_near_solid_sh`, zero
   view-dependent edge re-cutting or hexagonal facets) and luminance-matched flat bands smoothly over 80–220 m ([Crowns](#crowns), banded). Its light is grouped as a painter groups a wood's values: near,
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
-  or a pale olive among the rest. The steps between the painted values are never crisper than
+  or a warmer oak among the rest. The steps between the painted values are never crisper than
   a pixel and a half, so they do not sparkle in motion. Far off a wood has relief: the sheet
-  stands half as tall again and the masses up to 2.7 times, both the sheet and far masses sample
-  `u.canopy` with explicit `sample_lod` capped at integer octave 2 (36 m clusters, matching
-  `canopy_far_relief` at the 3.4–4.0 km handover with zero octave checkerboard flicker), and
+  stands half as tall again and the masses gently up to 1.75 times (dissolving both mass and clump
+  feet seamlessly into the hillside canopy sheet so slopes never break into stacked horizontal discs),
+  both the sheet and far masses sample
+  `u.canopy` with explicit `sample_lod` capped at integer octave 2 (9–36 m clusters advancing from
+  480 m, matching `canopy_far_relief` at the 3.4–4.0 km handover with zero octave checkerboard flicker), and
   past the crowns' reach the masses cast shadows on the sheet and on one another
   (`billow_shadow`, fading smoothly to 3.1 km). A far dome is a cone; its ring swells out to the dome's shape as the eye
   nears. Nothing arrives: far off the wood is the ground's paint, and its height shows only
@@ -2099,16 +2103,17 @@ On the rivers branch until it lands.
   past their reach.
   Far off, a single world-fixed 36 m cluster fetch (`canopy_far_relief`, exact UV phase and scale
   aligned with `world_shell_fragment` octave 2) sampled with explicit clamped `sample_lod`
-  (mip 0.35..1.35) keeps directional dome normals crisp instead of mip-averaging
-  to flat grey, and tints warm sunlit crests and cool shaded hollows (`canopy_relief_tint`)
+  (mip 0.20..1.35) keeps directional dome normals crisp instead of mip-averaging
+  to flat grey, and tints lush sunlit emerald crests and cool pine-shaded hollows (`canopy_relief_tint`)
   identically across low, medium and high tiers so woods at 1–15 km and 4,000 m altitude read as a
   contiguous, furry 3D canopy carpet matching the canopy sheet handover. Every cluster is modelled
   by the **canopy light**, the sun's bearing held low at every hour,
   so even at noon each lump has a lit side and a shaded side. The far land itself is shaded by a
   **land light** (the same held-low sun, weighted in; medium and high), so slopes turned from the
   sun band darker, and takes the **land aerial**: with distance, scaled to the eye's height, it
-  turns toward a deep teal-blue (land in shadow, never a fog) before the shared haze takes it at
-  the horizon, so far ridges read as blue silhouettes a value step under the sky.
+  turns toward a rich Mediterranean cerulean-teal (`LAND_FADE=16500`, `LAND_MIST=0.48`, slower
+  horizon-haze turnover `exp(-optical*0.35)`) before the shared haze takes it far off, so far
+  ridges read as saturated layered blue silhouettes under the sky.
 - **Code:** `src/canopy.jo` (`grove_layout`, `grove_chances`, `grove_sibling`, `grove_keep`,
   `grove_kind_at`, `grove_field`, `grove_crown`, `canopy_sheet_pixel`, `canopy_paint`,
   `canopy_paint_low`, `canopy_far_relief`, `canopy_relief_tint`, `canopy_light`, `land_light`,
