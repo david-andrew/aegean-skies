@@ -1623,81 +1623,97 @@ On the rivers branch until it lands.
 
 - **Definition:** the light while the sun is low or touching the water, composed of four separate
   layers: the [sun disc](#sun-disc), its near-sun aureole, the wider twilight sky and glow band,
-  and the sea's reflected colour and glitter path. Each day draws one of ten
-  [sunset palettes](#sunset-palettes) from the [day's air](#days-air) and the weather, keeping the
-  existing orange-and-red sunset as the `red` baseline preset (dusky violet-blue sky overhead, rose
-  belt round the horizon, deep orange band on the sun's side, deep blue-violet sea with orange
-  glitter). Clouds take a light provisional shade tint (`Light.sunset_shade`) alongside the
-  low-sun light; hands over to the [afterglow](#afterglow) by about 18:30.
+  and the sea's reflected colour and glitter path. Each day draws one of twelve
+  [sunset palettes](#sunset-palettes) and a per-evening vividness (muted to bold) from the
+  [day's air](#days-air) and the weather, keeping the existing orange-and-red sunset verbatim as
+  the bold end of the `red` preset (dusky violet-blue sky overhead, rose belt round the horizon,
+  deep orange band on the sun's side, deep blue-violet sea with orange glitter). Clouds take a
+  light provisional shade tint (`Light.sunset_shade`) alongside the low-sun light; hands over to
+  the [afterglow](#afterglow) by about 18:30.
 - **Code:** the sunset keys (sun height 0 and 0.15) of `TWILIGHT_*` and `Light` palette fields
-  (`glow_low`, `glow_high`, `glow_belt`, `glow_sea`, `glint_sun`, `sunset_warm`, `sunset_shade`) in
-  `src/look.jo`; `sunset_light` and `sunset_palette_kind` in `src/day_air.jo`; `draw_glow_band` and
-  `sky_color` in `src/sky.jo`; `SeaParams.glint_sun` in `src/sea.jo`; provisional
-  `Light.sunset_shade` in `src/cloud_volume.jo`.
+  (`glow_low`, `glow_high`, `glow_belt`, `glow_sea`, `glint_sun`, `sunset_warm`, `sunset_shade`,
+  `sunset_vivid`, `aureole_scale`, `corona`) in `src/look.jo`; `sunset_light`,
+  `sunset_palette_kind`, `sunset_vividness`, `aureole_size_kind`, `bishops_ring_kind` and
+  `corona_kind` in `src/day_air.jo`; `draw_glow_band` and `sky_color` in `src/sky.jo`;
+  `SeaParams.glint_sun` in `src/sea.jo`; provisional `Light.sunset_shade` in `src/cloud_volume.jo`.
 - **Capture:** `AEGEAN_VIEW="-30000 50 36000 1.5708 0.06 17.85"` (at sea, looking west);
-  `AEGEAN_SUNSET=<name>` forces a palette; the World page of the pause menu lets you force a sunset
-  palette, the day's air, and a horizon flash live.
+  `AEGEAN_SUNSET=<name>`, `AEGEAN_SUNSET_VIVID=0..1|muted|medium|bold`,
+  `AEGEAN_SKY_AIR=<name>`, `AEGEAN_AUREOLE=tight|normal|broad|wide`,
+  `AEGEAN_FLASH=none|green|blue|violet`, `AEGEAN_BISHOPS_RING=off|subtle|strong`,
+  `AEGEAN_CORONA=off|faint|clear`; the World page of the pause menu exposes all seven controls
+  live while paused (each with an `Auto` mode showing what the day chose).
 
 ### Sunset palettes
 
-- **Definition:** ten atmospheric sunset colour families grounded in observed Earth atmospheric
+- **Definition:** twelve atmospheric sunset colour families grounded in observed Earth atmospheric
   optics, chosen deterministically from the day's number, the [day's air](#days-air) and the
-  weather (~85% routine, ~14% episodic dust or smoke, ~1% exceptional aerosol events):
-  - **Routine:** **amber** (clear maritime: ivory → pale yellow → gold → amber, a dry clear day
-    need not end in scarlet), **red** (existing baseline: cream-white core, strong red aureole,
-    orange-scarlet sky and orange glitter), **peach** (humid/coastal haze: cream → peach → coral
-    with a softer, broader aureole).
-  - **Episodic dust and smoke:** **copper** (Saharan dust: muted copper/rust/crimson in a
-    buff-veiled sky, dimmer and never neon), **rose** (regional smoke: coral → rose → burgundy
-    disc with a muted non-pink sky).
+  weather (~85% routine, ~14% episodic dust or smoke, ~1% exceptional aerosol events), each with a
+  continuous per-evening **vividness** spectrum from toned-down/muted (`0`) to original-red bold
+  (`1`) interspersed across evenings (clearer air leaning bolder, rain and cloud cover damping
+  smoothly):
+  - **Routine:** **amber** (clear maritime: ivory → pale yellow → gold → amber, crisp bright disc
+    clearly separated from a golden-amber glow), **red** (existing baseline verbatim at bold end;
+    softer orange-scarlet at muted end), **peach** (humid/coastal haze: cream → peach → salmon →
+    coral with a softer, broader aureole).
+  - **Episodic dust and smoke:** **crimson** (hazy/dust deep extinction: scarlet → flat readable
+    crimson → wine burgundy), **copper** (Saharan dust: copper → rust → dark reddish-brown in heavy
+    dust; burnished copper at bold end, never neon), **rose** (regional smoke: coral → pale red →
+    rose → burgundy disc with a muted non-pink opposite sky).
   - **Exceptional volcanic twilight (persisting for ~3 days):** **magenta** (warm-white or
-    pale-rose disc with a magenta-led glow that persists after sunset), **lilac** (warm cream disc
-    with a cool lilac halo over a warm horizon strip, strengthening after sunset).
-  - **Very rare aged smoke (persisting for ~2 days):** **blue**, **purple**, and **green**
-    (attenuated cool discs — blue/indigo, lavender/purple, blue-green/pale green — dimmer than
-    ordinary suns, with restrained smoke-veiled skies and matching subdued glitter).
-- **Code:** `SunsetPalette`, `sunset_palette_kind`, `sunset_effective_air`, `sunset_light` in
-  `src/day_air.jo`; disc and aureole looks in `src/sky.jo` (`sun_disc_look`); debug-menu controls on
-  the World page of `src/debugmenu.jo`.
-- **Capture:** `AEGEAN_SUNSET=amber|red|peach|copper|rose|magenta|lilac|blue|purple|green`.
+    pale-rose disc at both muted and bold ends, with rose/pink/magenta carried by the wider glow
+    and twilight sky, persisting after sunset), **lilac** (warm cream disc with a cool aureole /
+    lilac halo over a warm horizon strip, strengthening after sunset).
+  - **Very rare aged smoke (persisting for ~2 days):** **blue** (cool aureole → blue → indigo),
+    **purple** (lavender → purple), **cyan** (blue-green / cyan-mint), and **green** (pale green →
+    jade-emerald) with matching smoky skies and glitter.
+- **Code:** `SunsetPalette`, `sunset_palette_kind`, `sunset_effective_air`, `sunset_vividness`,
+  `aureole_size_kind`, `sunset_light` in `src/day_air.jo`; disc, aureole and corona looks in
+  `src/sky.jo` (`sun_disc_look`); debug-menu controls on the World page of `src/debugmenu.jo`.
+- **Capture:** `AEGEAN_SUNSET=amber|red|peach|crimson|copper|rose|magenta|lilac|blue|purple|cyan|green`
+  and `AEGEAN_SUNSET_VIVID=0..1|muted|medium|bold`.
 
 ### Sun disc
 
 - **Definition:** the sun's disc and its near-sun aureole, white high up. Low down its disc colour,
-  aureole colour, aureole width and brightness follow the active [sunset palette](#sunset-palettes)
-  as separate layers: brilliant ivory-gold-amber in clear maritime air, the baseline over-bright
-  cream-white emitter in a tight red aureole on `red` hazy/dusty days, dimmer flat muted
-  copper/crimson or rose/burgundy discs in dust and smoke, warm-white/cream discs inside magenta or
-  lilac volcanic glows, and rare attenuated blue, purple or green discs in aged smoke. Flattened by
-  the air and drawn larger near the horizon, its foot wavering in slices into a short mirage where
-  it meets the water. Once it has set, a palette-matched horizon glow stays where it went down,
-  fading over some 8 degrees (persisting longer on volcanic `magenta` and `lilac` evenings).
+  aureole colour, aureole spread (`tight`, `normal`, `broad`, `wide`), vividness and optional faint
+  mist diffraction corona (<5 degrees, violet-blue inside to warm-red outside) follow the active
+  [sunset palette](#sunset-palettes) as separate layers: brilliant ivory-gold-amber in clear
+  maritime air, the baseline over-bright cream-white emitter in a red aureole on bold `red`
+  hazy/dusty days, flat readable crimson, copper/rust/dark-brown or rose/burgundy discs in dust and
+  smoke, warm-white/cream discs inside magenta or lilac volcanic glows, and rare blue, purple,
+  blue-green or green discs in aged smoke. Flattened by the air and drawn larger near the horizon,
+  its foot wavering in slices into a short mirage where it meets the water. Once it has set, a
+  palette-matched horizon glow stays where it went down, fading over some 8 degrees (persisting
+  longer on volcanic `magenta` and `lilac` evenings).
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
-  sky and the glow band (its colours, aureole, size, shape and optional
+  sky and the glow band (its colours, aureole, size, shape, corona and optional
   [horizon flash](#horizon-flash) worked out on the CPU from the sun's height over the visible
   horizon).
 
 ### Horizon flash
 
-- **Aliases:** green flash, rare blue flash.
+- **Aliases:** green flash, rare blue flash, violet flash.
 - **Definition:** a brief, rare atmospheric-refraction flash on the very last upper sliver of the
-  setting sun at a clear sea horizon (green, and much more rarely blue in washed/meltemi air).
-  Starts as a thin dispersion rim along the top edge and flashes across the final sliver as it
-  crosses the water line, vanishing the instant the sun drops below the horizon; never recolours
-  the whole sun.
+  setting sun at a clear sea horizon (yellow-green → emerald green, much more rarely blue, and very
+  rarely a violet tip in washed/meltemi air). Starts as a thin dispersion rim along the top edge
+  and flashes across the final sliver as it crosses the water line, vanishing the instant the sun
+  drops below the horizon; never recolours the whole sun.
 - **Code:** `HorizonFlash` and `horizon_flash_kind` in `src/day_air.jo` (gated independently on
   clear/washed air and low rain, deck, fog and storm); `_horizon_flash_of` and `sun_disc_fs` in
   `src/sky.jo`.
-- **Capture:** `AEGEAN_FLASH=none|green|blue` (or the World page of the pause menu), with a clear
-  horizon just as the upper limb sets (e.g. `hour` ~18.08–18.10 at 50 m).
+- **Capture:** `AEGEAN_FLASH=none|green|blue|violet` (or the World page of the pause menu), with a
+  clear horizon just as the upper limb sets (e.g. `hour` ~18.04 at 50 m).
 
 ### Bishop's ring
 
 - **Definition:** a very broad, subdued high-altitude volcanic aerosol ring around the low sun
   (pale whitish-blue inner region to ~22 degrees, dusty reddish-brown outer band around 26–34
-  degrees), drawn only on exceptional volcanic (`magenta` and `lilac`) days.
-- **Code:** `Light.bishops_ring` (`src/day_air.jo`) and `draw_bishops_ring` / `build_bishops_ring`
-  (`src/sky.jo`: a small vertex-coloured dome annulus, skipped on all ordinary days).
+  degrees), drawn automatically on exceptional volcanic (`magenta` and `lilac`) days and
+  controllable independently on the World debug page (`Off`, `Subtle`, `Strong`).
+- **Code:** `BishopsRingMode`, `bishops_ring_kind`, `Light.bishops_ring` (`src/day_air.jo`) and
+  `draw_bishops_ring` / `build_bishops_ring` (`src/sky.jo`: a small vertex-coloured dome annulus,
+  skipped when off).
+- **Capture:** `AEGEAN_BISHOPS_RING=off|subtle|strong`.
 
 ### Day's air
 
@@ -1705,20 +1721,24 @@ On the rivers branch until it lands.
   [sunset palettes](#sunset-palettes) and veils the sky.
   One kind a day, the same for everyone, from the day's number, nudged by the weather where the
   eye is (rain or a deck overhead: humid; a clearing wind: clear or washed). **Clear** is clear
-  maritime air (usually amber or baseline red). **Hazy**: summer haze, the disc warming from about
-  15 degrees up and the glow band broader (often red, peach or smoky rose). **Dusty** (Saharan
-  dust): the whole sky milky all day, a pale buff-grey veil from the horizon well up past the sun
-  with the blue weak and only overhead, no bright glare round the sun, a flatter, warmer light
-  (often muted copper/crimson). **Heavy dust**: about one day in 25, thicker veil and dimmer wine-red
-  or copper sun. **Humid**: damp coastal air with a softer, broader peach/coral glow. **Washed**
-  (after rain, a clean wind): crisp air, the disc ivory-gold almost to the water, the band narrower,
-  and the only air where a rare blue [horizon flash](#horizon-flash) occurs naturally.
+  maritime air (usually amber or baseline red; leans bolder). **Hazy**: summer haze, the disc
+  warming from about 15 degrees up and the glow band broader (often red, peach, crimson or smoky
+  rose). **Dusty** (Saharan dust): the whole sky milky all day, a pale buff-grey veil from the
+  horizon well up past the sun with the blue weak and only overhead, no bright glare round the sun,
+  a flatter, warmer light (often copper, crimson or dusty red). **Heavy dust**: about one day in
+  25, thicker veil and dimmer dark reddish-brown, crimson or copper sun. **Humid**: damp coastal
+  air with a softer, broader peach/coral glow and occasional faint mist corona. **Washed** (after
+  rain, a clean wind): crisp air, the disc ivory-gold almost to the water, the band narrower, leans
+  bolder, and the only air where a rare blue or violet [horizon flash](#horizon-flash) occurs
+  naturally.
 - **Code:** `src/day_air.jo` (`day_air_kind`, `day_air_light`, `sunset_light`, worked out on the
-  CPU into the frame's Light; `Light.turbidity` and `Light.sunset_kind` for the disc, `Light.glare`
-  scales the sky's glare and sea glint gain, `sun_disc_look` in `src/sky.jo`).
-  `AEGEAN_SKY_AIR=clear|hazy|dusty|heavy|humid|washed` fixes the air, `AEGEAN_SUNSET=<name>` fixes
-  the sunset palette, and `AEGEAN_FLASH=none|green|blue` fixes the horizon flash; all three are also
-  controls on the pause menu's World page.
+  CPU into the frame's Light; `Light.turbidity`, `Light.sunset_kind`, `Light.sunset_vivid`,
+  `Light.aureole_scale`, `Light.corona` for the disc, `Light.glare` scales the sky's glare and sea
+  glint gain, `sun_disc_look` in `src/sky.jo`).
+  `AEGEAN_SKY_AIR=clear|hazy|dusty|heavy|humid|washed`, `AEGEAN_SUNSET=<name>`,
+  `AEGEAN_SUNSET_VIVID=0..1|muted|medium|bold`, `AEGEAN_AUREOLE=tight|normal|broad|wide`,
+  `AEGEAN_FLASH=none|green|blue|violet`, `AEGEAN_BISHOPS_RING=off|subtle|strong` and
+  `AEGEAN_CORONA=off|faint|clear` mirror the controls on the pause menu's World page.
 
 ### Afterglow
 
