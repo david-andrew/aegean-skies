@@ -1946,9 +1946,10 @@ On the rivers branch until it lands.
   shows: the isolated trees, the orchards' and the groves', and the scattered crowns and scrub
   of a wood's thin margin, outside its canopy. A clump is one camera-facing card whose shader
   casts the view ray at a lumpy ellipsoid of leaves: its macro-lumps (`crown_macro_r`, zero-trig
-  3D spherical harmonics) and leaf tufts come from a seamless 128x128 3D octahedral tuft sphere
-  (`crown_oct_tex`, 160 repulsed Fibonacci centres) read in clump-rotated 3D space so tufts and
-  bands stay fixed to the tree as the camera orbits, lit by its own rounded normal leaned toward
+  3D spherical harmonics) and leaf tufts come from a seamless 128x128 nearest-filtered 3D octahedral
+  tuft sphere (`crown_oct_tex`, 96 repulsed Fibonacci unit centres) read in clump-rotated 3D space
+  (orientation precomputed per clump in `crown_vs`) so tufts and bands stay fixed to the tree as the
+  camera orbits, lit by its own rounded normal leaned toward
   the whole crown's, darker in its core, underside and the gaps between tufts, the outline dithered
   over a pixel and a half. A
   tree (umbrella pine, cypress, olive, plane, maquis bush) is a near set of clumps on a trunk and
@@ -1961,15 +1962,16 @@ On the rivers branch until it lands.
   two bands is a chain of round leaf tufts, each about a tenth of the crown across: a tuft is
   wholly in one band, by the light at its own 3D centre, and is cut round (`crown_banded`,
   `crown_oct_fast`), so the lighter band's tufts stand out into the darker one, each a clean
-  round bite. The crown's outline is a chain of rigid protruding 3D tuft spheres anchored on the
-  clump's surface (bisector-rejected so bilinear seams never spike). The three colours stay aligned
+  round bite. The crown's outline intersects the true 3D implicit tuft surface along a three-point
+  front-to-back chord on the outer rim shell so protruding 3D leaf bumps rotate rigidly around the
+  tree without bubbling, and near multi-clump groves write exact ray-traced depth (`crown_depth_sh`)
+  while mid/far groves keep hardware Early-Z (`crown_sh`). The three colours stay aligned
   in mean brightness and hue with mid/far crowns (`crown_palette`'s `flat`) so there is no colour
   join across distance. The bands come in by how many
   pixels a clump covers (from 14 to 34 across its radius), which is when a tuft is pixels enough
   to hold a line, so there is no distance where the look changes; a step between bands is never
-  crisper than a pixel and a half. The woods' canopy's own crowns take the bands smoothly over
-  60–200 m (decoupled from lobe growth), each crown lit as one body and its lobes cut round, their
-  outlines the same 3D round tufts.
+  crisper than a pixel and a half. The woods' canopy's own crowns take luminance-matched bands
+  smoothly over 80–220 m (decoupled from lobe growth), painted onto solid sculpted 3D domes.
 - **Code:** `src/crowns.jo` (`crown_vs`, `crown_fs`, `crown_shade`, `crown_oct_sheet`,
   `crown_oct_fast`, `crown_macro_r`, `crown_banded`, `crown_palette`, the
   species' generators, `crown_wood`); placed by `src/world_groves.jo`
@@ -1988,26 +1990,27 @@ On the rivers branch until it lands.
   **billows**, real low domes in three sizes, each riding the one under it: the wood's broad
   masses (56 m apart), the clumps on them (28 m) and the crowns on those (14 m), every dome its
   own size, height and lobed outline, lit as its own rounded body (top lit, foot in the hollow
-  dark) and painted with the crowns' palette and 3D octahedral leaf tufts; near the eye a crown has
-  its own sealed lobes, smaller domes again, cut round and leafy strictly inside each lobe's
-  inflated five-sided mesh while the tucked core dome beneath stays Early-Z solid (`billow_near_solid_sh`),
-  and mid-range crowns inflate and cut strictly inside their eight-sided domes (`billow_near_sh`),
-  lit in flat bands smoothly over 60–200 m ([Crowns](#crowns), banded) with no join at the lobe
-  boundary (90 m). Its light is grouped as a painter groups a wood's values: near,
+  dark) and painted with the crowns' palette and 3D octahedral leaf tufts; near and mid-range crowns
+  use true-spherical sculpted 12-sided 3-ring domes (morphed seamlessly from the 8-sided 2-ring mesh
+  across 250–190 m) with 5 protruding round 10-sided 3-ring lobes growing gently over 120–50 m while
+  the core dome tucks slightly underneath, drawn solid with Early-Z (`billow_near_solid_sh`, zero
+  view-dependent edge re-cutting or hexagonal facets) and luminance-matched flat bands smoothly over 80–220 m ([Crowns](#crowns), banded). Its light is grouped as a painter groups a wood's values: near,
   every dome has its own light and deep hollows; from a few hundred metres a crown takes most
   of its light from the mass it stands on and the hollows are shallow, a few crowns a dark pine
   or a pale olive among the rest. The steps between the painted values are never crisper than
   a pixel and a half, so they do not sparkle in motion. Far off a wood has relief: the sheet
-  stands half as tall again and the masses up to 2.7 times, a far mass is lit as one body, and
+  stands half as tall again and the masses up to 2.7 times, both the sheet and far masses sample
+  `u.canopy` with explicit `sample_lod` capped at integer octave 2 (36 m clusters, matching
+  `canopy_far_relief` at the 3.4–4.0 km handover with zero octave checkerboard flicker), and
   past the crowns' reach the masses cast shadows on the sheet and on one another
-  (`billow_shadow`). A far dome is a cone; its ring swells out to the dome's shape as the eye
+  (`billow_shadow`, fading smoothly to 3.1 km). A far dome is a cone; its ring swells out to the dome's shape as the eye
   nears. Nothing arrives: far off the wood is the ground's paint, and its height shows only
   in its outline, drawn on the screen ([Land's outline](#lands-outline)); nearer the sheet
   rises out of the ground (from 3.4 km, its own paint of the crowns taking over by interleaved
   gradient noise with `sample_lod` so hillsides never show halftone bands), then each dome rises
   out of the sheet as the eye
   nears (masses from 2.6 km, clumps from 1.05 km, crowns from 560 m, a crown's lobes from
-  90 m), its top first. A far clump stands no more than half as tall again and is lit by the
+  120 m), its top first. A far clump stands no more than half as tall again and is lit by the
   mass it stands on, and a far mass's foot is painted as the sheet it stands in: tall little
   cones, each with its own light, and a hard line round every mass were most of a far wood's
   shimmer. The canopy's height follows the smooth field the stand is drawn from,
@@ -2094,8 +2097,9 @@ On the rivers branch until it lands.
   wrapped painted ramp (its terminator shifted crown to crown), with a short sunward shadow; on
   low its light is painted into its colour and the trees are the meshes alone, with their mean
   past their reach.
-  Far off, a single world-fixed 45 m cluster fetch (`canopy_far_relief`) sampled with explicit
-  clamped `sample_lod` (mip 0.25..1.4) keeps directional dome normals crisp instead of mip-averaging
+  Far off, a single world-fixed 36 m cluster fetch (`canopy_far_relief`, exact UV phase and scale
+  aligned with `world_shell_fragment` octave 2) sampled with explicit clamped `sample_lod`
+  (mip 0.35..1.35) keeps directional dome normals crisp instead of mip-averaging
   to flat grey, and tints warm sunlit crests and cool shaded hollows (`canopy_relief_tint`)
   identically across low, medium and high tiers so woods at 1–15 km and 4,000 m altitude read as a
   contiguous, furry 3D canopy carpet matching the canopy sheet handover. Every cluster is modelled
