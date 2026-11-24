@@ -19,7 +19,7 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sun disc](#sun-disc) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
@@ -1621,49 +1621,104 @@ On the rivers branch until it lands.
 
 ### Sunset
 
-- **Definition:** the light while the sun is low or touching the water: a dusky violet-blue sky
-  overhead, rose lower down and round the whole horizon, and a deep orange band low on the sun's
-  side (hottest at the horizon toward the sun, the rest of the horizon a pink belt). The sea goes a
-  deep blue-violet under it, the orange carried by its glitter. Clouds take the light from below:
-  their bases go gold, edges toward the sun lit through, shaded sides rose-violet, and the sides
-  away from the sun orange. Hands over to the afterglow by about 18:30.
-- **Code:** the sunset keys (sun height 0 and 0.15) of `TWILIGHT_*` in `src/look.jo`, with
-  `Light.sunset` (how much the sun on the water reddens the glow band, `draw_glow_band` in
-  `src/sky.jo`); the clouds' sunset shade (`VOLUME_SUNSET_SHADE`) and low-sun light in
-  `src/cloud_volume.jo` (`cloud_paint`).
-- **Capture:** `AEGEAN_VIEW="-30000 50 36000 1.5708 0.06 17.85"` (at sea, looking west).
+- **Definition:** the light while the sun is low or touching the water, composed of four separate
+  layers: the [sun disc](#sun-disc), its near-sun aureole, the wider twilight sky and glow band,
+  and the sea's reflected colour and glitter path. Each day draws one of ten
+  [sunset palettes](#sunset-palettes) from the [day's air](#days-air) and the weather, keeping the
+  existing orange-and-red sunset as the `red` baseline preset (dusky violet-blue sky overhead, rose
+  belt round the horizon, deep orange band on the sun's side, deep blue-violet sea with orange
+  glitter). Clouds take a light provisional shade tint (`Light.sunset_shade`) alongside the
+  low-sun light; hands over to the [afterglow](#afterglow) by about 18:30.
+- **Code:** the sunset keys (sun height 0 and 0.15) of `TWILIGHT_*` and `Light` palette fields
+  (`glow_low`, `glow_high`, `glow_belt`, `glow_sea`, `glint_sun`, `sunset_warm`, `sunset_shade`) in
+  `src/look.jo`; `sunset_light` and `sunset_palette_kind` in `src/day_air.jo`; `draw_glow_band` and
+  `sky_color` in `src/sky.jo`; `SeaParams.glint_sun` in `src/sea.jo`; provisional
+  `Light.sunset_shade` in `src/cloud_volume.jo`.
+- **Capture:** `AEGEAN_VIEW="-30000 50 36000 1.5708 0.06 17.85"` (at sea, looking west);
+  `AEGEAN_SUNSET=<name>` forces a palette; the World page of the pause menu lets you force a sunset
+  palette, the day's air, and a horizon flash live.
+
+### Sunset palettes
+
+- **Definition:** ten atmospheric sunset colour families grounded in observed Earth atmospheric
+  optics, chosen deterministically from the day's number, the [day's air](#days-air) and the
+  weather (~85% routine, ~14% episodic dust or smoke, ~1% exceptional aerosol events):
+  - **Routine:** **amber** (clear maritime: ivory → pale yellow → gold → amber, a dry clear day
+    need not end in scarlet), **red** (existing baseline: cream-white core, strong red aureole,
+    orange-scarlet sky and orange glitter), **peach** (humid/coastal haze: cream → peach → coral
+    with a softer, broader aureole).
+  - **Episodic dust and smoke:** **copper** (Saharan dust: muted copper/rust/crimson in a
+    buff-veiled sky, dimmer and never neon), **rose** (regional smoke: coral → rose → burgundy
+    disc with a muted non-pink sky).
+  - **Exceptional volcanic twilight (persisting for ~3 days):** **magenta** (warm-white or
+    pale-rose disc with a magenta-led glow that persists after sunset), **lilac** (warm cream disc
+    with a cool lilac halo over a warm horizon strip, strengthening after sunset).
+  - **Very rare aged smoke (persisting for ~2 days):** **blue**, **purple**, and **green**
+    (attenuated cool discs — blue/indigo, lavender/purple, blue-green/pale green — dimmer than
+    ordinary suns, with restrained smoke-veiled skies and matching subdued glitter).
+- **Code:** `SunsetPalette`, `sunset_palette_kind`, `sunset_effective_air`, `sunset_light` in
+  `src/day_air.jo`; disc and aureole looks in `src/sky.jo` (`sun_disc_look`); debug-menu controls on
+  the World page of `src/debugmenu.jo`.
+- **Capture:** `AEGEAN_SUNSET=amber|red|peach|copper|rose|magenta|lilac|blue|purple|green`.
 
 ### Sun disc
 
-- **Definition:** the sun's disc, white high up. Low down it is graded, pale gold at its top to
-  amber at its foot, and reddens as it sinks; flattened by the air and drawn up to 1.8 times larger
-  near the horizon, its foot wavering in slices into a short mirage where it meets the water. In
-  thick air (the day's air) the change starts about 20 degrees up and comes on gradually; a
-  reddened sun is an over-bright emitter, as the eye and a photograph see it: a small flat
-  near-white disc with all its colour in a saturated red ring about it, some one and a half
-  radii wide, and a soft glow beyond (plain to see at the game's normal view under about 5
-  degrees on any day of thick air; deepest in heavy dust), with a faint streak along the level.
-  Once any sun has set, a red glow stays on the horizon where it went down, fading over some
-  8 degrees.
+- **Definition:** the sun's disc and its near-sun aureole, white high up. Low down its disc colour,
+  aureole colour, aureole width and brightness follow the active [sunset palette](#sunset-palettes)
+  as separate layers: brilliant ivory-gold-amber in clear maritime air, the baseline over-bright
+  cream-white emitter in a tight red aureole on `red` hazy/dusty days, dimmer flat muted
+  copper/crimson or rose/burgundy discs in dust and smoke, warm-white/cream discs inside magenta or
+  lilac volcanic glows, and rare attenuated blue, purple or green discs in aged smoke. Flattened by
+  the air and drawn larger near the horizon, its foot wavering in slices into a short mirage where
+  it meets the water. Once it has set, a palette-matched horizon glow stays where it went down,
+  fading over some 8 degrees (persisting longer on volcanic `magenta` and `lilac` evenings).
 - **Code:** `draw_sun_disc` and `sun_disc_look` in `src/sky.jo`: a small billboard drawn over the
-  sky and the glow band (the sky's own shader keeps only the sun's glow; its colours, size and
-  shape worked out on the CPU from the sun's height over the visible horizon).
+  sky and the glow band (its colours, aureole, size, shape and optional
+  [horizon flash](#horizon-flash) worked out on the CPU from the sun's height over the visible
+  horizon).
+
+### Horizon flash
+
+- **Aliases:** green flash, rare blue flash.
+- **Definition:** a brief, rare atmospheric-refraction flash on the very last upper sliver of the
+  setting sun at a clear sea horizon (green, and much more rarely blue in washed/meltemi air).
+  Starts as a thin dispersion rim along the top edge and flashes across the final sliver as it
+  crosses the water line, vanishing the instant the sun drops below the horizon; never recolours
+  the whole sun.
+- **Code:** `HorizonFlash` and `horizon_flash_kind` in `src/day_air.jo` (gated independently on
+  clear/washed air and low rain, deck, fog and storm); `_horizon_flash_of` and `sun_disc_fs` in
+  `src/sky.jo`.
+- **Capture:** `AEGEAN_FLASH=none|green|blue` (or the World page of the pause menu), with a clear
+  horizon just as the upper limb sets (e.g. `hour` ~18.08–18.10 at 50 m).
+
+### Bishop's ring
+
+- **Definition:** a very broad, subdued high-altitude volcanic aerosol ring around the low sun
+  (pale whitish-blue inner region to ~22 degrees, dusty reddish-brown outer band around 26–34
+  degrees), drawn only on exceptional volcanic (`magenta` and `lilac`) days.
+- **Code:** `Light.bishops_ring` (`src/day_air.jo`) and `draw_bishops_ring` / `build_bishops_ring`
+  (`src/sky.jo`: a small vertex-coloured dome annulus, skipped on all ordinary days).
 
 ### Day's air
 
-- **Definition:** how clear or thick the low air is on a given day, which colours the sunset.
+- **Definition:** how clear or thick the low air is on a given day, which feeds the
+  [sunset palettes](#sunset-palettes) and veils the sky.
   One kind a day, the same for everyone, from the day's number, nudged by the weather where the
-  eye is (rain or a deck overhead: humid; a clearing wind: clear or washed). **Clear** is the
-  baseline sunset. **Hazy**: the disc orange from about 15 degrees up, the glow band broader.
-  **Dusty** (Saharan dust): the whole sky milky all day, a pale buff-grey veil from the horizon
-  well up past the sun with the blue weak and only overhead, no bright glare round the sun, a
-  flatter, warmer light; the disc orange to red from about 20 degrees, a little dimmer and
-  softer-edged, the band broad and red. **Hazy** days the same, less.
-  **Humid**: a softer, pinker glow, the disc orange from about 12 degrees. **Washed** (after
-  rain, a clean wind): crisp air, the disc yellow almost to the water, the band narrower.
-- **Code:** `src/day_air.jo` (`day_air_kind`, `day_air_light`, worked out on the CPU into the
-  frame's Light; `Light.turbidity` for the disc, `Light.glare` scales the sky's glare, `sun_disc_look` in `src/sky.jo`).
-  `AEGEAN_SKY_AIR=clear|hazy|dusty|humid|washed` fixes the kind for captures.
+  eye is (rain or a deck overhead: humid; a clearing wind: clear or washed). **Clear** is clear
+  maritime air (usually amber or baseline red). **Hazy**: summer haze, the disc warming from about
+  15 degrees up and the glow band broader (often red, peach or smoky rose). **Dusty** (Saharan
+  dust): the whole sky milky all day, a pale buff-grey veil from the horizon well up past the sun
+  with the blue weak and only overhead, no bright glare round the sun, a flatter, warmer light
+  (often muted copper/crimson). **Heavy dust**: about one day in 25, thicker veil and dimmer wine-red
+  or copper sun. **Humid**: damp coastal air with a softer, broader peach/coral glow. **Washed**
+  (after rain, a clean wind): crisp air, the disc ivory-gold almost to the water, the band narrower,
+  and the only air where a rare blue [horizon flash](#horizon-flash) occurs naturally.
+- **Code:** `src/day_air.jo` (`day_air_kind`, `day_air_light`, `sunset_light`, worked out on the
+  CPU into the frame's Light; `Light.turbidity` and `Light.sunset_kind` for the disc, `Light.glare`
+  scales the sky's glare and sea glint gain, `sun_disc_look` in `src/sky.jo`).
+  `AEGEAN_SKY_AIR=clear|hazy|dusty|heavy|humid|washed` fixes the air, `AEGEAN_SUNSET=<name>` fixes
+  the sunset palette, and `AEGEAN_FLASH=none|green|blue` fixes the horizon flash; all three are also
+  controls on the pause menu's World page.
 
 ### Afterglow
 
