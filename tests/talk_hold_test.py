@@ -139,6 +139,16 @@ def main():
         for f in range(called + 240, end):
             assert probe[f]["ui"] == "talk" and float(talk[f]["gap"]) < 5.0 and talk[f]["clarity"] == "1.00", f"frame {f}: {talk.get(f)}"
         print(f"walking along: {far:.0f} m together, {float(talk[end]['gap']):.1f} m apart, still talking")
+
+        # ---- answering "All right." to "Come along." walks the pilot alongside automatically
+        ready_after = next((f for f in sorted(talk) if f > called + 20 and talk[f]["ready"] == "true" and talk[f]["boxes"] != ""), called + 120)
+        probe, who, talk = run(work, "reply-walk", called + 840, key(ready_after + 10, "n1"), AEGEAN_TALK="1")
+        end2 = called + 780
+        far2 = moved(who[end2], start)
+        went2 = moved(who[end2], start, "me_")
+        assert far2 > 4.0 and went2 > far2 - 6.0, f"reply walk-along: they went {far2:.1f} m and pilot went {went2:.1f} m"
+        assert probe[end2]["ui"] == "talk" and float(talk[end2]["gap"]) < 5.0, f"frame {end2}: {talk.get(end2)}"
+        print(f"answered walk-along: said '{talk[ready_after + 15]['words'].replace('_', ' ')}', walked {went2:.1f} m together ({float(talk[end2]['gap']):.1f} m apart)")
     print("ok")
 
 
