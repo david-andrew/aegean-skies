@@ -272,7 +272,7 @@ the touch and its tone are untouched) and records them in `data/music/performanc
 without gains; `tests/music_part_balance_test.py` fails until it is balanced again.
 
 Pieces balanced by hand (`music_pack.HAND_SET_BALANCE`: the Adagietto, the trumpet call, Clair de
-lune, both Gymnopédies, and the title's music) are measured and reported, never changed; nor are
+lune, both Gymnopédies, and Ravel's *Lever du jour*) are measured and reported, never changed; nor are
 the four pieces that already had a balance in `performance.json` (`balance_db`, per instrument,
 from `tools/music_balance.py`: the Magnetic Rag, El Choclo, Ave Maria, Adelita). `--calibrate` prints what they
 measure and what the balance would have asked of them (under 2.5 dB for each part).

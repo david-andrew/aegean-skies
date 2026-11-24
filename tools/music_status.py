@@ -611,7 +611,8 @@ def build():
     out('')
     out('### The title music, and everything else')
     out('')
-    out(f'- **Title music:** {linked_title(title, cat)} (src/title_music.jo): 19 bars, about 77 s, with a gain curve after the receiver.')
+    title_s = cat[title]['frames'] / RATE
+    out(f'- **Title music:** {linked_title(title, cat)} (src/title_music.jo): whole movement ({int(title_s // 60)}:{int(title_s % 60):02d}), looping with a silent pause after the close, with a gain curve after the receiver.')
     out('- **Café Aman** is a radio station (1360 kHz, 21:00–05:00 local), not a place in the game: plucked strings, tangos round midnight.')
     out('- **Street musicians** play a generated plucked phrase (src/street_phrase.jo: a scale, a theme and its variations on a bouzouki part), not a catalogue piece; only the nearest musician is heard (src/life_audio.jo).')
     out('- **Scenarios:** no scenario cue uses a catalogue piece (the only users of `MUSIC_PIECES` are the radio, the hotel band, the title and the debug menu\'s audition list).')

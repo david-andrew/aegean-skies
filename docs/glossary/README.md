@@ -3296,8 +3296,9 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   one, or a **race**: two Falcos, flown by the real flight model, overtake, bank hard round an
   air-race pylon and pull away); **high at sunset** above the clouds; a **town and its waterfront** (a low
   run along the harbour front from just offshore, a slow golden-hour arc, or along Neravessa's
-  canals). Each shot sets its own hour and fair weather. The Adagietto plays as from a cockpit
-  radio and leads; aircraft sounds are a faint bed about 20 dB under it.
+  canals). Each shot sets its own hour and fair weather. Dvořák's *New World* Largo plays whole
+  as from a cockpit radio, looping after a quiet pause, and leads; aircraft sounds are a faint bed
+  about 20 dB under it.
 - **Code:** `src/title_shots.jo` (`title_next_shot`, `title_view`); `aegean.jo` (`title_cut`,
   `title_sound`, the free camera it flies).
 - **Rules:** never rain; never the same kind twice running; banks of 7 degrees at most, except the
