@@ -1,0 +1,420 @@
+# Authoritative spatial exclusion zones for plants inside and beside towns.
+# Shared by groves, woods/canopy billows, river/lake banks, grass, working land,
+# and town foliage props so no plant blocks a dock path, street, square, stair,
+# doorway, building, or mooring while keeping gardens, courtyards, and hillsides lush.
+use 'world.jo'
+use 'geography.jo'
+use 'world_source.jo'
+use 'settlements.jo'
+use 'settlement_ports.jo'
+use 'lake_ports.jo'
+use 'landing_access.jo'
+use 'landing_stairs.jo'
+use 'stairways.jo'
+use 'canal_geometry.jo'
+use 'river_data.jo'
+use 'water_field.jo'
+use 'town_sites.jo'
+use 'thermal_sites.jo'
+use 'thermal_paths_data.jo'
+use 'airfields.jo'
+use 'settlement_purpose.jo'
+use 'working_land_contact.jo'
+
+struct ExclSeg:
+    a: vec2
+    b: vec2
+    half_width: f64
+    kind: int        # 0 = dock/quay/stair/bridge/promenade, 1 = street/lane/path, 2 = building/doorway/wall, 3 = canal promenade
+
+struct ExclBox:
+    center: vec2
+    right: vec2
+    front: vec2
+    half_x: f64
+    half_z: f64
+    kind: int        # 0 = building, 1 = square/terrace
+
+struct ExclCircle:
+    center: vec2
+    radius: f64
+    kind: int        # 0 = dock/board/store/workshop, 1 = building door apron, 2 = water mooring
+
+struct TownExclCache:
+    id: int
+    lo: vec2
+    hi: vec2
+    segs: ExclSeg[]
+    boxes: ExclBox[]
+    circles: ExclCircle[]
+    seg_bins: {int: int[]}
+    box_bins: {int: int[]}
+    circle_bins: {int: int[]}
+
+const EXCL_BIN_SIZE = 32.0
+_excl_bin = (x: f64, z: f64) -> int: (int(floor(x / EXCL_BIN_SIZE)) + 16384) * 32768 + (int(floor(z / EXCL_BIN_SIZE)) + 16384)
+
+_excl_seg_dist = (p: vec2, a: vec2, b: vec2) -> f64:
+    d = b - a
+    dd = f64(dot(d, d))
+    if dd < 0.000001: return f64(length(p - a))
+    u = clamp(f64(dot(p - a, d)) / dd, 0.0, 1.0)
+    f64(length(p - (a + d * f32(u))))
+
+_excl_box_dist = (p: vec2, b: ExclBox) -> f64:
+    d = p - b.center
+    dx = max(0.0, abs(f64(dot(d, b.right))) - b.half_x)
+    dz = max(0.0, abs(f64(dot(d, b.front))) - b.half_z)
+    sqrt(dx * dx + dz * dz)
+
+_excl_expand = (c: mut TownExclCache, p: vec2, pad: f64):
+    c.lo = min(c.lo, p - vec2(f32(pad), f32(pad)))
+    c.hi = max(c.hi, p + vec2(f32(pad), f32(pad)))
+
+_excl_add_seg = (c: mut TownExclCache, a: vec2, b: vec2, width: f64, kind: int):
+    if length(b - a) < 0.05: return
+    c.segs.push(ExclSeg(a, b, width * 0.5, kind))
+    _excl_expand(c, a, width * 0.5 + 16.0)
+    _excl_expand(c, b, width * 0.5 + 16.0)
+
+_excl_add_poly = (c: mut TownExclCache, pts: vec3[], width: f64, kind: int):
+    loop k in 1..pts.len(): _excl_add_seg(c, pts[k - 1].xz, pts[k].xz, width, kind)
+
+_excl_add_box = (c: mut TownExclCache, center: vec2, right: vec2, front: vec2, half_x: f64, half_z: f64, kind: int):
+    c.boxes.push(ExclBox(center, right, front, half_x, half_z, kind))
+    _excl_expand(c, center, sqrt(half_x * half_x + half_z * half_z) + 16.0)
+
+_excl_add_circle = (c: mut TownExclCache, center: vec2, radius: f64, kind: int):
+    c.circles.push(ExclCircle(center, radius, kind))
+    _excl_expand(c, center, radius + 16.0)
+
+_excl_add_site = (c: mut TownExclCache, s: TownSite):
+    r = site_right(s); f = site_front(s)
+    _excl_add_box(c, s.at.xz, r, f, s.width * 0.5, s.depth * 0.5, 0)
+    if s.chapel:
+        tw = site_tower(s)
+        _excl_add_box(c, tw.at.xz, r, f, tw.width * 0.5, tw.depth * 0.5, 0)
+    e = site_entry(s)
+    _excl_add_seg(c, e.front, e.outside, e.width, 2)
+    _excl_add_circle(c, e.outside + f * 1.2, 1.4, 1)
+
+_excl_index = (c: mut TownExclCache):
+    c.seg_bins = {}; c.box_bins = {}; c.circle_bins = {}
+    loop i in 0..c.circles.len():
+        ci = c.circles[i]; rad = ci.radius + 14.0
+        x0 = int(floor((f64(ci.center.x) - rad) / EXCL_BIN_SIZE)); x1 = int(floor((f64(ci.center.x) + rad) / EXCL_BIN_SIZE))
+        z0 = int(floor((f64(ci.center.y) - rad) / EXCL_BIN_SIZE)); z1 = int(floor((f64(ci.center.y) + rad) / EXCL_BIN_SIZE))
+        loop bz in z0..z1 + 1:
+            loop bx in x0..x1 + 1:
+                key = (bx + 16384) * 32768 + (bz + 16384)
+                list = c.circle_bins.get(key, []); list.push(i); c.circle_bins[key] = list
+    loop i in 0..c.segs.len():
+        s = c.segs[i]; pad = s.half_width + 14.0
+        x0 = int(floor((f64(min(s.a.x, s.b.x)) - pad) / EXCL_BIN_SIZE)); x1 = int(floor((f64(max(s.a.x, s.b.x)) + pad) / EXCL_BIN_SIZE))
+        z0 = int(floor((f64(min(s.a.y, s.b.y)) - pad) / EXCL_BIN_SIZE)); z1 = int(floor((f64(max(s.a.y, s.b.y)) + pad) / EXCL_BIN_SIZE))
+        loop bz in z0..z1 + 1:
+            loop bx in x0..x1 + 1:
+                key = (bx + 16384) * 32768 + (bz + 16384)
+                list = c.seg_bins.get(key, []); list.push(i); c.seg_bins[key] = list
+    loop i in 0..c.boxes.len():
+        b = c.boxes[i]; rad = sqrt(b.half_x * b.half_x + b.half_z * b.half_z) + 14.0
+        x0 = int(floor((f64(b.center.x) - rad) / EXCL_BIN_SIZE)); x1 = int(floor((f64(b.center.x) + rad) / EXCL_BIN_SIZE))
+        z0 = int(floor((f64(b.center.y) - rad) / EXCL_BIN_SIZE)); z1 = int(floor((f64(b.center.y) + rad) / EXCL_BIN_SIZE))
+        loop bz in z0..z1 + 1:
+            loop bx in x0..x1 + 1:
+                key = (bx + 16384) * 32768 + (bz + 16384)
+                list = c.box_bins.get(key, []); list.push(i); c.box_bins[key] = list
+
+# Legacy towns register their built geometry here when build_town runs (no circular import on objects.jo).
+legacy_excl_caches: {str: TownExclCache} = {}
+legacy_excl_list: TownExclCache[] = []
+
+register_legacy_town_excl = (name: str, center: vec2, out: vec2, quay_a: vec2[], quay_b: vec2[], quay_w: f64[], stairs: vec3[][], houses: vec3[], sites: TownSite[], docks: vec3[], board: vec2, store: vec2):
+    global legacy_excl_caches, legacy_excl_list
+    c = TownExclCache(-1, center - vec2(40, 40), center + vec2(40, 40), [], [], [], {}, {}, {})
+    tangent = vec2(-out.y, out.x)
+    loop k in 0..quay_a.len(): _excl_add_seg(c, quay_a[k], quay_b[k], quay_w[k], 0)
+    loop stair in stairs: _excl_add_poly(c, stair, STAIR_WIDTH, 0)
+    _excl_add_circle(c, board, 2.0, 0)
+    _excl_add_circle(c, store, 2.0, 0)
+    if stairs.len() == 0 and houses.len() > 0 and quay_a.len() > 0:
+        near = houses[0].xz
+        loop h in houses:
+            if length(h.xz - center) < length(near - center): near = h.xz
+        _excl_add_seg(c, quay_a[0], near + out * 8.0, 4.0, 0)
+    loop d in docks: _excl_add_circle(c, d.xz, 9.0, 2)
+    loop site in sites:
+        _excl_add_site(c, site)
+        if let roof = site_roof_entry(site, sites):
+            _excl_add_seg(c, roof.outside, roof.front, roof.width, 1)
+    loop lane in site_lanes(sites): _excl_add_seg(c, lane.a, lane.b, lane.width, 4)
+    loop k in 0..houses.len():
+        front = houses[k].xz + out * 8.0
+        _excl_add_seg(c, front - tangent * 6.0, front + tangent * 6.0, 2.4, 4)
+        if k > 0:
+            prev = houses[k - 1].xz + out * 8.0
+            if length(prev - front) < 25.0: _excl_add_seg(c, prev, front, 2.4, 4)
+    _excl_index(c)
+    legacy_excl_caches[name] = c
+    legacy_excl_list = []
+    loop k in legacy_excl_caches.keys(): legacy_excl_list.push(legacy_excl_caches[k])
+
+# Bounded FIFO cache for generated settlements + Neravessa.
+const TOWN_EXCL_CACHE_LIMIT = 96
+town_excl_cache: {int: TownExclCache} = {}
+town_excl_order: int[] = []
+
+_build_town_excl = (s: WorldSettlement) -> TownExclCache:
+    c = TownExclCache(s.id, s.center.xz - vec2(f32(s.radius + 40.0), f32(s.radius + 40.0)), s.center.xz + vec2(f32(s.radius + 40.0), f32(s.radius + 40.0)), [], [], [], {}, {}, {})
+    if s.id == CANAL_CITY_ID:
+        loop bank in canal_banks:
+            mid_a = bank.a + bank.out * f32(bank.terrace * 0.5)
+            mid_b = bank.b + bank.out * f32(bank.terrace * 0.5)
+            _excl_add_seg(c, mid_a, mid_b, bank.terrace, 3)
+        loop bridge in CANAL_BRIDGES:
+            idx = CANAL_BEGIN + bridge.local
+            a = RIVER_NODES[idx]; b = RIVER_NODES[idx + 1]
+            dir = normalize(b.xy - a.xy); side = vec2(-dir.y, dir.x)
+            span = f64(a.w) + canal_bridge_reach(bridge)
+            _excl_add_seg(c, a.xy - side * f32(span), a.xy + side * f32(span), canal_bridge_half(bridge) * 2.0, 0)
+        loop solid in canal_solids:
+            if solid.kind == 11: continue
+            ax = vec2(f32(cos(solid.heading)), f32(sin(solid.heading)))
+            perp = vec2(f32(-sin(solid.heading)), f32(cos(solid.heading)))
+            is_bldg = solid.kind == 1 or solid.kind == 5 or solid.kind == 6 or solid.kind == 9 or solid.kind == 10 or solid.kind == 12 or solid.kind == 13 or solid.kind == 14 or solid.kind == 15 or solid.kind == 16
+            _excl_add_box(c, solid.center.xz, ax, perp, f64(solid.half.x), f64(solid.half.z), if is_bldg: 0 else: 2)
+        _excl_add_circle(c, canal_workshop.xz, 18.0, 0)
+        _excl_add_circle(c, canal_launch.xz, 12.0, 2)
+        _excl_index(c)
+        return c
+
+    tangent = vec2(-s.out.y, s.out.x)
+    yaw = atan2(f64(s.out.x), f64(s.out.y))
+
+    sq = place_square(s)
+    if s.kind != .farm:
+        _excl_add_box(c, s.center.xz, tangent, -s.out, sq.half_width, sq.depth * 0.5, 1)
+        landmark = s.center.xz - s.out * 26.0
+        scale = if s.kind == .capital: 1.6 else: 1.0
+        if s.kind == .lighthouse: _excl_add_site(c, TownSite(place_point(landmark), yaw, 6, 6, 24, 0))
+        else: _excl_add_site(c, TownSite(place_point(landmark), yaw, 9 * scale, 14 * scale, 12 * scale, 0, chapel = true))
+    if s.size >= 100:
+        hill = place_to_world(s, s.old)
+        _excl_add_box(c, hill, tangent, -s.out, 24.0, 16.0, 1)
+        scale = if s.kind == .capital: 2.1 else: 1.25
+        _excl_add_site(c, TownSite(place_point(hill), yaw, 9 * scale, 14 * scale, 12 * scale, 0, chapel = true))
+    if s.kind == .monastery:
+        loop k in 0..4:
+            mc = s.center.xz + tangent * f32(-27 + k * 18) - s.out * 46.0
+            _excl_add_site(c, TownSite(place_point(mc), yaw, 16, 10, 7, s.seed + k))
+
+    if s.size > 1:
+        loop st in place_street_plan(s):
+            mid = (st.a + st.b) * 0.5
+            if not place_inside(s, mid): continue
+            if s.harbor.len() > 0 and not s.remote_harbor and mid.y < -35.0: continue
+            _excl_add_seg(c, place_to_world(s, st.a), place_to_world(s, st.b), st.width, 1)
+
+    loop lot in place_lots(s):
+        if let parcel = place_ground_lot(s, lot):
+            site = site_from_parcel(parcel)
+            _excl_add_site(c, site)
+            if site.rural == 2:
+                if let yard = site_farm_yard(site):
+                    b = yard
+                    gate = f32(site_farm_gate(site, true)); backgate = f32(site_farm_gate(site, false))
+                    side = site.width * 0.5 + 3.5; turn = site.depth * 0.5 + 2.7
+                    _excl_add_seg(c, site_point(site, gate, b.w + 5), site_point(site, gate, turn), 2.4, 1)
+                    _excl_add_seg(c, site_point(site, gate, turn), site_point(site, backgate, turn), 2.4, 1)
+                    _excl_add_seg(c, site_point(site, backgate, turn), site_point(site, backgate, site.depth * 0.5 + 0.6), 2.4, 1)
+                    _excl_add_seg(c, site_point(site, side, -site.depth * 0.5 - 2), site_point(site, side, b.y + 2), 2.2, 1)
+                    _excl_add_seg(c, site_point(site, side, b.y + 2), site_point(site, backgate, b.y + 2), 2.2, 1)
+                    _excl_add_seg(c, site_point(site, backgate, b.y + 2), site_point(site, backgate, b.y - 4), 2.2, 1)
+                    loop wall in site_farm_walls(site):
+                        _excl_add_seg(c, site_point(site, wall.a.x, wall.a.y), site_point(site, wall.b.x, wall.b.y), wall.width + 0.6, 2)
+
+    if s.harbor.len() > 0:
+        port = settlement_port(s)
+        loop q in port.quays: _excl_add_seg(c, q.a.xz, q.b.xz, q.width, 0)
+        loop route in port.routes: _excl_add_poly(c, route, 3.2, 0)
+        _excl_add_circle(c, port.board.xz, 2.0, 0)
+        loop b in port.buildings:
+            _excl_add_site(c, TownSite(b.at, yaw, b.width, b.depth, b.height, s.seed, service = true, door_y = f64(b.door.y)))
+            _excl_add_circle(c, b.door.xz, 2.0, 1)
+        loop m in s.harbor:
+            _excl_add_circle(c, m.at.xz, 9.0, 2)
+            _excl_add_circle(c, m.buoy.xz, 8.0, 2)
+        if s.remote_harbor:
+            landing = landing_access(s.id)
+            _excl_add_seg(c, landing.root.xz, landing.tip.xz, 5.0, 0)
+            _excl_add_poly(c, landing.route, max(landing.width, 2.4), 0)
+            if lake_town(s.id):
+                root = port.quays[0].a.xz
+                _excl_add_seg(c, root - tangent * 32.0, root + tangent * 32.0, 4.0, 0)
+
+    if let fac = working_facility(s):
+        _excl_add_site(c, working_building(s, fac))
+
+    ti = thermal_site(s.id)
+    if ti >= 0:
+        site = THERMAL_SITES[ti]
+        cs = f32(cos(site.yaw)); sn = f32(sin(site.yaw))
+        rx = vec2(cs, -sn); rz = vec2(sn, cs)
+        loop t in THERMAL_TERRACES:
+            mid = (t.low + t.high) * 0.5; half = (t.high - t.low) * 0.5
+            wc = thermal_world(site, vec3(mid.x, 0, mid.y)).xz
+            _excl_add_box(c, wc, rx, rz, f64(half.x), f64(half.y), 1)
+        loop st in thermal_stairs(site):
+            a = thermal_world(site, vec3(f32(st.x), 0, f32(st.z0))).xz
+            b = thermal_world(site, vec3(f32(st.x), 0, f32(st.z1))).xz
+            _excl_add_seg(c, a, b, st.width, 1)
+        if s.id in THERMAL_PATHS: _excl_add_poly(c, THERMAL_PATHS[s.id], 2.4, 1)
+
+    _excl_index(c)
+    c
+
+_town_excl_for = (s: WorldSettlement) -> TownExclCache:
+    global town_excl_cache, town_excl_order
+    if let existing = town_excl_cache.get(s.id): return existing
+    built = _build_town_excl(s)
+    if town_excl_order.len() >= TOWN_EXCL_CACHE_LIMIT:
+        old_id = town_excl_order[0]
+        town_excl_order = town_excl_order[1..town_excl_order.len()]
+        if old_id in town_excl_cache: town_excl_cache.remove(old_id)
+    town_excl_order.push(s.id)
+    town_excl_cache[s.id] = built
+    built
+
+# Test a single cached town against `p` with clearance `margin`.
+# mode: 0 = wild plant (forbids everything),
+#       1 = intentional square/promenade prop (allows square boxes & canal promenade, forbids buildings/doors/docks/bridges/streets/moorings),
+#       2 = house-front / garden prop (allows house frontage lanes, forbids buildings/doors/docks/streets/moorings),
+#       3 = waterline reed (forbids docks/quays/promenades/bridges/moorings/buildings/doors; allows open bank away from them).
+_excl_hits_cache = (c: TownExclCache, p: vec2, margin: f64, mode: int) -> bool:
+    pad = margin + 4.0
+    if p.x < c.lo.x - f32(pad) or p.x > c.hi.x + f32(pad) or p.y < c.lo.y - f32(pad) or p.y > c.hi.y + f32(pad): return false
+    bkey = _excl_bin(f64(p.x), f64(p.y))
+    loop ci in c.circle_bins.get(bkey, []):
+        cr = c.circles[ci]
+        d = f64(length(p - cr.center))
+        if cr.kind == 2:
+            if d < cr.radius + margin: return true
+        else if cr.kind == 0:
+            if d < cr.radius + margin: return true
+        else:
+            if mode != 2 or d < cr.radius:
+                if d < cr.radius + (if mode == 0: margin else: 0.25): return true
+    loop bi in c.box_bins.get(bkey, []):
+        box = c.boxes[bi]
+        if box.kind == 0:
+            m = if mode == 0: margin else: if mode == 2: 0.05 else: 0.45
+            if _excl_box_dist(p, box) < m: return true
+        else if box.kind == 2:
+            if mode == 0 or mode == 3:
+                if _excl_box_dist(p, box) < margin: return true
+        else if mode == 0:
+            if _excl_box_dist(p, box) < margin: return true
+    loop si in c.seg_bins.get(bkey, []):
+        seg = c.segs[si]
+        if seg.kind == 0:
+            m = seg.half_width + (if mode == 0: margin else: if mode == 3: 1.6 else: 0.55)
+            if _excl_seg_dist(p, seg.a, seg.b) < m: return true
+        else if seg.kind == 3:
+            if mode == 1: continue
+            m = seg.half_width + (if mode == 0: margin else: if mode == 3: 1.6 else: 0.55)
+            if _excl_seg_dist(p, seg.a, seg.b) < m: return true
+        else if seg.kind == 2:
+            m = seg.half_width + (if mode == 0: margin else: 0.25)
+            if _excl_seg_dist(p, seg.a, seg.b) < m: return true
+        else if mode != 3:
+            if mode == 2 and seg.kind == 4: continue
+            m = seg.half_width + (if mode == 0: margin else: 0.25)
+            if _excl_seg_dist(p, seg.a, seg.b) < m: return true
+    false
+
+# Country road check with explicit plant clearance (never narrower than settlement_on_road when mode == 0).
+town_on_road_margin = (p: vec2, clearance: f64) -> bool:
+    loop id in settlement_road_bins.get(road_bin(p), []):
+        road = settlement_roads[id]
+        limit = max(road.width * 0.5, 1.2) + clearance
+        loop k in 0..road.points.len() - 1:
+            a = road.points[k].xz; b = road.points[k + 1].xz; d = b - a
+            u = clamp(dot(p - a, d) / max(dot(d, d), 0.0001), 0.0, 1.0)
+            if f64(length(p - a - d * u)) < limit: return true
+    false
+
+# Master check for wild/scattered plants (groves, wood margin crowns, canopy billows,
+# grass, working olives/vines, river/lake trees).
+town_plant_excluded = (p: vec2, clearance: f64 = 0.8) -> bool:
+    if thermal_paved(p) or working_paved(p) or airfield_clear(p): return true
+    if town_on_road_margin(p, clearance): return true
+    if abs(f64(p.x)) < LEGACY_RESERVE and abs(f64(p.y)) < LEGACY_RESERVE:
+        loop lc in legacy_excl_list:
+            if _excl_hits_cache(lc, p, clearance, 0): return true
+        return false
+    if canal_near(vec3(p.x, 0, p.y)) and CANAL_CITY_ID in settlement_by_id:
+        cs = world_settlements[settlement_by_id[CANAL_CITY_ID]]
+        if _excl_hits_cache(_town_excl_for(cs), p, clearance, 0): return true
+    loop index in settlement_bins.get(geography_bin(f64(p.x), f64(p.y)), []):
+        s = world_settlements[index]
+        if s.legacy >= 0 or s.id == CANAL_CITY_ID: continue
+        reach = s.radius + 340.0 + clearance
+        if s.harbor.len() > 0: reach = max(reach, port_span(s) + 380.0 + clearance)
+        near = f64(length(p - s.center.xz)) <= reach
+        if not near and s.remote_harbor and s.harbor.len() > 0:
+            near = f64(length(p - s.harbor[0].quay_a)) <= 720.0 + clearance or f64(length(p - s.center.xz)) <= f64(length(s.harbor[0].quay_a - s.center.xz)) + 280.0 + clearance
+        if not near: continue
+        if _excl_hits_cache(_town_excl_for(s), p, clearance, 0): return true
+    false
+
+# Waterline reed exclusion (keeps reeds off canal banks/promenades/bridges, lake/sea jetties,
+# stone shores, moorings, boat sheds, and roads, while keeping wild river/lake banks reedy).
+town_reed_excluded = (p: vec2, clearance: f64 = 1.6) -> bool:
+    if town_on_road_margin(p, clearance): return true
+    if canal_near(vec3(p.x, 0, p.y)) and CANAL_CITY_ID in settlement_by_id:
+        cs = world_settlements[settlement_by_id[CANAL_CITY_ID]]
+        if _excl_hits_cache(_town_excl_for(cs), p, clearance, 3): return true
+    loop index in settlement_bins.get(geography_bin(f64(p.x), f64(p.y)), []):
+        s = world_settlements[index]
+        if s.legacy >= 0 or s.id == CANAL_CITY_ID: continue
+        reach = s.radius + 340.0 + clearance
+        if s.harbor.len() > 0: reach = max(reach, port_span(s) + 380.0 + clearance)
+        near = f64(length(p - s.center.xz)) <= reach
+        if not near and s.remote_harbor and s.harbor.len() > 0:
+            near = f64(length(p - s.harbor[0].quay_a)) <= 720.0 + clearance or f64(length(p - s.center.xz)) <= f64(length(s.harbor[0].quay_a - s.center.xz)) + 280.0 + clearance
+        if not near: continue
+        if _excl_hits_cache(_town_excl_for(s), p, clearance, 3): return true
+    false
+
+# Guard for intentional town foliage props & close-kit plants (mode 1 = square/promenade/tree/pergola, mode 2 = house-front flower).
+town_prop_clear = (p: vec2, radius: f64, mode: int) -> bool:
+    if water_at(f64(p.x), f64(p.y)).wet: return false
+    if place_ground(p) < 0.4: return false
+    if town_on_road_margin(p, radius + 0.25): return false
+    if abs(f64(p.x)) < LEGACY_RESERVE and abs(f64(p.y)) < LEGACY_RESERVE:
+        loop lc in legacy_excl_list:
+            if _excl_hits_cache(lc, p, radius, mode): return false
+        return true
+    if canal_near(vec3(p.x, 0, p.y)) and CANAL_CITY_ID in settlement_by_id:
+        cs = world_settlements[settlement_by_id[CANAL_CITY_ID]]
+        if _excl_hits_cache(_town_excl_for(cs), p, radius, mode): return false
+    loop index in settlement_bins.get(geography_bin(f64(p.x), f64(p.y)), []):
+        s = world_settlements[index]
+        if s.legacy >= 0 or s.id == CANAL_CITY_ID: continue
+        reach = s.radius + 340.0 + radius
+        if s.harbor.len() > 0: reach = max(reach, port_span(s) + 380.0 + radius)
+        near = f64(length(p - s.center.xz)) <= reach
+        if not near and s.remote_harbor and s.harbor.len() > 0:
+            near = f64(length(p - s.harbor[0].quay_a)) <= 720.0 + radius or f64(length(p - s.center.xz)) <= f64(length(s.harbor[0].quay_a - s.center.xz)) + 280.0 + radius
+        if not near: continue
+        if _excl_hits_cache(_town_excl_for(s), p, radius, mode): return false
+    true
+
+# Guard for Neravessa canal promenade trees (allowed on wide stone promenades, forbidden in water, bridges, buildings, workshop, moorings).
+canal_tree_clear = (p: vec2, terrace: f64) -> bool:
+    if terrace < 5.2: return false
+    if water_at(f64(p.x), f64(p.y)).wet: return false
+    if CANAL_CITY_ID in settlement_by_id:
+        cs = world_settlements[settlement_by_id[CANAL_CITY_ID]]
+        if _excl_hits_cache(_town_excl_for(cs), p, 1.0, 1): return false
+    true
