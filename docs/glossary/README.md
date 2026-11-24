@@ -3888,9 +3888,32 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
     or A to use it) is drawn again a shade brighter (`hotel_things`, `family_things`: each thing's own
     vertices, cut from the baked room). A small label over it says what it does now (`room_label`:
     "Sleep", "Lie down", "Get up", "Sit", "Look out", "Back inside", "Leave").
-  - **Finding a bed:** asking `"Where can I stay the night?"` in any town answers with the local
-    hotel (name, price and directions), a believable impression-gated spare-room offer ("You can
-    stay with us") that leads straight into the family stay, or a local resident who takes lodgers.
+  - **Finding a bed (no warping):** asking `"Where can I stay the night?"` in any town answers with
+    the local hotel (name, price and directions), a believable impression-gated spare-room offer
+    ("You can stay with us"), or a local resident who takes lodgers. Accepting a hotel room (at the
+    desk, at a table, or from Sofia anywhere) or a family's spare room books or records the
+    invitation (`hotel_room_until`, `FamilyInvite`) **without** teleporting the pilot. Instead, the
+    stay begins only when the pilot walks to the hotel door (`"Your room"`) or the host's door
+    (`"<Name>'s door"`) and uses it himself (Space or F).
+  - **Showing and pointing the way (`src/wayfinding.jo`):** whenever a person answers about
+    lodgings or the pilot asks `"Where is...?"` in conversation, they respond in one of three
+    grounded ways (`choose_way_mode`):
+    - **Walk you there** (`WayMode.guide`): if the place is 5–95 m away, a walking route exists,
+      they are free, and they like you well enough (or just offered their spare room / booked your
+      room), they say `"Come, I'll show you."` and lead the pilot along the town's paths
+      (`scene_guide` in `src/scene_hold.jo` / `src/crowd_motion.jo`, paired with `talk_walk_along`),
+      stopping at the door with a short line and a brief highlight.
+    - **Point it out** (`WayMode.point`): if the place is within line of sight (`way_visible`,
+      checked against house footprints and terrain up to 160 m), they turn toward it, raise their
+      right arm to point (`Folk.pointing`), give understated directions from the real 3D bearing
+      and slope, and light the door or building with a brief diegetic soft highlight and subtle
+      glint (`WayMark` in `draw_foot_label`, no floating map icons).
+    - **Words only** (`WayMode.words`): if out of sight or far away, they give verbal directions
+      only (compass bearing, terrain slope, walk length), with no arm point or highlight.
+    - **Askable places (`town_way_places`):** depending on what exists in the town: the hotel/inn,
+      the café, the church, the mechanic's workshop, the harbour office, the market, the fuel pier,
+      the landing, the square, the hot springs (in thermal towns), and local people's places (the
+      speaker's own place, an invited host's door, and notable locals).
   - **The view:** it turns all the way round by a drag, a finger or the right stick, so the door
     can be behind. On a phone held upright it is wider. The pilot isn't drawn while he passes
     within a metre of the eye. One small corner line lists the keys; with a pointer or a finger,
