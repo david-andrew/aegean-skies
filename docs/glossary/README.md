@@ -2141,9 +2141,7 @@ On the rivers branch until it lands.
   went by the depth along the ray crawled. A crown's top covers its last pixel by the part it
   reaches. The terrain's draws turn blending off themselves, since the ground's alpha is no
   longer one (the field map's redraw left blending on). A cloud behind a ridge is drawn over
-  the ridge's crowns; the software renderer draws no outline, so `tools/outline_check.jo`
-  (`tests/outline_test.py`: the outline is there, no crown over ten pixels, the same crowns
-  from two eyes six metres apart) runs on a real GPU only.
+  the ridge's crowns; at the default half-scale software render it draws nothing (`tools/outline_check.jo` / `tests/outline_test.py` runs on a real GPU), while `SLOPPY_SOFT_SCALE=1` runs the full pass on GPU-less runners (`tests/temporal_stability_test.py`).
 
 ### Far land layers
 

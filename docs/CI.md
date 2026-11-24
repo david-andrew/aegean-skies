@@ -18,6 +18,8 @@ every `tests/*.jo` file as its own `sloppy test <file>` run (and every `tests/*_
 time, headless (`SLOPPY_SOFTWARE=1 SLOPPY_NO_AUDIO=1 SLOPPY_THREADS=1`, no display). Files are dealt
 to shards by measured seconds in `tools/ci_test_weights.json`; after adding or slowing tests,
 refresh it from the `weights` artifact of a finished run (a new file counts as the median).
+`tests/temporal_stability_test.py` (`tools/temporal_stability_check.jo`, `tests/baselines/temporal_stability.json`, see [docs/validation/temporal-stability.md](validation/temporal-stability.md)) runs in CI under `SLOPPY_SOFTWARE=1 SLOPPY_SOFT_SCALE=1` to catch flicker, ground morphing, horizon outline shimmer and aircraft ghosting without needing a GPU.
+
 Each job's summary page lists its failing files with the last 80 lines of their output; the
 shard-0 summary lists what is not run in CI:
 
