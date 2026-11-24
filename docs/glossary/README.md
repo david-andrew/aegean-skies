@@ -4995,6 +4995,7 @@ SLOPPY_WINDOW=1280x720 SLOPPY_FRAMES=<n> SLOPPY_SCREENSHOT=<out.png> sloppy --re
 | `AEGEAN_TALK=1` | talk to the nearest person |
 | `AEGEAN_CAPTURE_DOGFIGHT='ahead across up'` | after a battle scenario loads, the nearest hostile placed crossing ahead (lead marker captures) |
 | `AEGEAN_CRAFT_VIEW='yaw pitch distance'` | the free camera on the player's aircraft from that side (radians round from its nose and up, metres): moored with `AEGEAN_CRAFT`, or a few frames into `AEGEAN_FLYING` |
+| `AEGEAN_CAPTURE_CLEAN=1` | the world alone in play: none of the screen's text, clock, purse or panels drawn over it (the site's link-card picture, `tools/site_preview.sh`) |
 | `AEGEAN_CAPTURE_ORBIT='distance yaw pitch'` | the close orbit camera about the aircraft (applies after `AEGEAN_SCENARIO`) |
 | `AEGEAN_CAPTURE_DOGFIGHT_PILOT=1` | in a battle, the dogfight brain flies the player's aircraft (chase-camera ride into the melee) |
 | `AEGEAN_CAPTURE_STRAIT_AFTER=rescue\|home\|arrive` | after the strait: a foe in the water ahead and the player landing beside them (F taken for the player); the flight forming up for home with the player in its slot; that flight near its base, landing in turn |
