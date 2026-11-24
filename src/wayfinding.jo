@@ -1,0 +1,216 @@
+# Showing and pointing the way: pure wayfinding, landmark catalog, line-of-sight visibility,
+# understated spoken directions, pointing gesture envelope, diegetic landmark highlight timing,
+# and accepted family lodging invitations (no teleporting into rooms).
+use 'living_types.jo'
+use 'life_types.jo'
+use 'town_sites.jo'
+use 'town_visibility.jo'
+
+enum WayMode: none, guide, point, words
+
+# One physical place in a town that can be asked about, pointed out, or walked to.
+struct WayPlace:
+    key = ""                        # "hotel", "cafe", "church", "workshop", "harbour", "market", "fuel", "landing", "square", "springs", "home:<id>", "person:<id>"
+    label = ""                      # short name: "Hotel Ancora", "the cafe", "the church", ...
+    ask = ""                        # how the pilot asks: "Where is the cafe?", ...
+    pos: vec3 = vec3(0, 0, 0)       # world position of the door or landmark
+    half: vec3 = vec3(0.9, 0, 0.9)  # box half-extents for the diegetic soft highlight
+    up = 2.4                        # box height for the diegetic soft highlight
+    person = -1                     # optional associated person id (home or workplace)
+    is_hotel = false                # true for the hotel door
+    is_spare = false                # true for an invited family's door
+    hint = ""                       # optional short landmark cue ("on the stone pier", "under the awning", ...)
+
+# Who is currently pointing an arm toward a place in the world (non-saved scene state).
+struct WayPointing:
+    person = -1
+    target: vec3 = vec3(0, 0, 0)
+    since = -100.0
+    until = -100.0
+    pitch = 0.0
+
+# A brief diegetic soft highlight and gleam on a pointed-out door or building (no map icons).
+struct WayMark:
+    active = false
+    key = ""
+    label = ""
+    pos: vec3 = vec3(0, 0, 0)
+    half: vec3 = vec3(0.9, 0, 0.9)
+    up = 2.4
+    since = -100.0
+    until = -100.0
+
+# An accepted invitation to a resident's spare room: valid until eleven the next morning;
+# the stay begins only when the pilot walks to the door and uses it himself.
+struct FamilyInvite:
+    host = -1
+    place = -1
+    door: vec3 = vec3(0, 0, 0)
+    until = -1
+
+const WAY_GUIDE_MIN_METRES = 5.0
+const WAY_GUIDE_MAX_METRES = 95.0
+const WAY_POINT_MAX_METRES = 160.0
+const WAY_POINT_SECONDS = 3.8
+const WAY_MARK_SECONDS = 14.0
+
+way_point_begin = (person: int, from: vec3, target: vec3, now: f64) -> WayPointing:
+    d = target - from
+    horiz = max(f64(length(d.xz)), 0.5)
+    pitch = clamp(atan2(f64(d.y) - 0.2, horiz), -0.25, 0.38)
+    WayPointing(person, target, now, now + WAY_POINT_SECONDS, pitch)
+
+# 0..1 smooth arm-pointing envelope: raised over 0.35 s, held, lowered gently over the last 0.7 s.
+way_point_strength = (wp: WayPointing, person: int, now: f64) -> f64:
+    if wp.person < 0 or wp.person != person or now < wp.since or now >= wp.until: return 0.0
+    rise = clamp((now - wp.since) / 0.35, 0.0, 1.0)
+    fall = clamp((wp.until - now) / 0.7, 0.0, 1.0)
+    s = min(rise, fall)
+    s * s * (3.0 - 2.0 * s)
+
+way_mark_begin = (place: WayPlace, now: f64) -> WayMark:
+    WayMark(true, place.key, place.label, place.pos, place.half, place.up, now, now + WAY_MARK_SECONDS)
+
+# 0..1 soft highlight strength: rises in 0.25 s, fades softly over the last 2.5 s.
+way_mark_strength = (m: WayMark, now: f64) -> f64:
+    if not m.active or now < m.since or now >= m.until: return 0.0
+    rise = clamp((now - m.since) / 0.25, 0.0, 1.0)
+    fall = clamp((m.until - now) / 2.5, 0.0, 1.0)
+    min(rise, fall)
+
+# Whether a townsperson guides the pilot there, points it out, or gives directions in words only.
+choose_way_mode = (dist: f64, visible: bool, free: bool, warm: bool, can_route: bool) -> WayMode:
+    if dist > WAY_GUIDE_MIN_METRES and dist <= WAY_GUIDE_MAX_METRES and free and warm and can_route: return .guide
+    if visible and dist <= WAY_POINT_MAX_METRES: return .point
+    .words
+
+# True when `to` is within sight from `from`: within range, unobstructed by intervening house
+# footprints (town_wall_hit), and not hidden behind rising ground.
+way_visible = (sites: TownSite[], from: vec3, to: vec3, up: f64, ground_at: (f64, f64) -> f64) -> bool:
+    dist = f64(length(to.xz - from.xz))
+    if dist > WAY_POINT_MAX_METRES: return false
+    if dist < 2.5: return true
+    eye = from + vec3(0, 1.65, 0)
+    aim = to + vec3(0, f32(clamp(up * 0.75, 1.2, 2.6)), 0)
+    loop s in sites:
+        if s.chapel or s.service: continue
+        reach = max(s.width, s.depth) * 0.65 + 2.2
+        if f64(length(s.at.xz - to.xz)) < reach: continue
+        if f64(length(s.at.xz - from.xz)) < max(s.width, s.depth) * 0.55 + 1.0: continue
+        if town_wall_hit(s, eye, aim): return false
+    # Check intermediate terrain along the sightline so a ridge or cliff hides what lies behind it.
+    steps = 6
+    loop k in 1..steps:
+        u = f64(k) / f64(steps)
+        p = mix(eye, aim, f32(u))
+        g = ground_at(f64(p.x), f64(p.z))
+        if g > f64(p.y) + 0.65: return false
+    true
+
+# A grounded architectural cue for a house near `at`, deterministic from its TownSite seed.
+way_site_cue = (sites: TownSite[], at: vec3) -> str:
+    best = -1; bd = 1e9
+    loop k in 0..sites.len():
+        s = sites[k]
+        if s.chapel or s.service: continue
+        reach = max(s.width, s.depth) * 0.75 + 3.5
+        d = f64(length(s.at.xz - at.xz))
+        if d < reach and d < bd: bd = d; best = k
+    if best < 0: return ""
+    s = sites[best]
+    cues = ["the blue door", "the green door", "the pale shuttered house", "the ochre front", "the painted door", "the whitewashed house"]
+    cues[abs(s.seed) % cues.len()]
+
+_way_compass = (dx: f64, dz: f64) -> str:
+    # World +x is east, -z is north (or standard atan2(dx, -dz) compass rose).
+    ang = atan2(dx, -dz)
+    names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+    names[(int(round(ang / (PI / 4.0))) + 8) % 8]
+
+_way_side_phrase = (pilot_yaw: f64, dx: f64, dz: f64) -> str:
+    # Pilot forward in aegean.jo is (sin(yaw), cos(yaw)); world up is (0, 1, 0).
+    # Screen-right is cross(up, forward)? No: cross(forward, up) = (-cos(yaw), 0, sin(yaw)).
+    # Check: yaw=0 -> forward=(0,0,1), up=(0,1,0); looking along +z with y up, +x is to your LEFT and -x is to your RIGHT!
+    # Verify: cross((0,0,1), (0,1,0)) = (-1,0,0) = RIGHT!
+    fwd_x = sin(pilot_yaw); fwd_z = cos(pilot_yaw)
+    right_x = -cos(pilot_yaw); right_z = sin(pilot_yaw)
+    l = max(sqrt(dx * dx + dz * dz), 0.001)
+    ux = dx / l; uz = dz / l
+    f = ux * fwd_x + uz * fwd_z
+    r = ux * right_x + uz * right_z
+    if f > 0.92: return "straight ahead"
+    if f < -0.78: return "back behind you"
+    if r > 0.28: return if f > 0.25: "ahead on your right" else: "over on your right"
+    if r < -0.28: return if f > 0.25: "ahead on your left" else: "over on your left"
+    "just over there"
+
+# Understated spoken directions from `from` to `place`, using real 3D bearing, slope, distance,
+# seaward/inland orientation, and optional architectural cue.
+way_direction_words = (from: vec3, pilot_yaw: f64, place: WayPlace, town_out: vec2, visible: bool, seed: int = 0) -> str:
+    d = place.pos - from
+    dist = f64(length(d.xz))
+    dy = f64(d.y)
+    if dist < 5.0:
+        if place.is_hotel: return "Right here — the door is just beside us."
+        if place.is_spare: return "Here we are — this is the door."
+        return "You're practically standing at {place.label}."
+    side = _way_side_phrase(pilot_yaw, f64(d.x), f64(d.z))
+    out_len = max(f64(length(town_out)), 0.001)
+    ox = f64(town_out.x) / out_len; oz = f64(town_out.y) / out_len
+    seaward = (f64(d.x) * ox + f64(d.z) * oz) / max(dist, 0.001)
+    slope = if dy > 2.2: "up the steps" else: if dy > 0.9: "up the lane" else: if dy < -1.8: "down by the water" else: if seaward > 0.45: "down toward the water" else: if seaward < -0.45: "inland" else: "along the waterfront"
+    cue = if place.hint != "": ", {place.hint}" else: ""
+    if visible:
+        if dist < 24.0:
+            if dy > 1.8: return "Right over there — {slope}, {side}{cue}."
+            return "Just {side}{cue}."
+        openers = ["Over there — ", "Look {side} — ", "That way — "]
+        op = openers[abs(seed) % openers.len()]
+        if op.starts_with("Look "): return "Look {side} — {slope}{cue}."
+        return "{op}{slope}, {side}{cue}."
+    # Out of sight: verbal directions only (compass + walk length + terrain direction).
+    compass = _way_compass(f64(d.x), f64(d.z))
+    walk = if dist < 65.0: "a short walk" else: if dist < 140.0: "about a minute's walk" else: "a few minutes' walk"
+    if place.key == "fuel" or place.key == "landing":
+        return "You can't see it from here. Follow the waterfront to the {compass}, {walk}{cue}."
+    if seaward < -0.35:
+        return "Out of sight from here. Head {slope} to the {compass}, {walk}{cue}."
+    if seaward > 0.35:
+        return "You can't see it from here. Head {slope} to the {compass}, {walk}{cue}."
+    "You can't see it from here. Go {slope} to the {compass}, {walk}{cue}."
+
+# Short understated invitation when the speaker offers to walk the pilot there.
+way_guide_line = (person: int, place: WayPlace) -> str:
+    if place.is_spare:
+        lines = ["Come, I'll show you the door.", "Come along home, then.", "Follow me — it's just up here."]
+        return lines[abs(person) % lines.len()]
+    if place.is_hotel:
+        lines = ["Come, I'll walk you to the door.", "Come along, I'll show you the way."]
+        return lines[abs(person) % lines.len()]
+    lines = ["Come, I'll show you.", "Come along — it's not far.", "Follow me, I'll take you there."]
+    lines[abs(person) % lines.len()]
+
+# Short line when the guide stops at the door or landmark.
+way_arrive_line = (person: int, place: WayPlace) -> str:
+    if place.is_spare:
+        lines = ["Here we are — the door's open.", "This is ours. Go on in when you're ready."]
+        return lines[abs(person) % lines.len()]
+    if place.is_hotel:
+        lines = ["Here's the door. Your room is upstairs.", "There you are — step through when you're ready."]
+        return lines[abs(person) % lines.len()]
+    lines = ["Here we are — {place.label}.", "There you are — {place.label}."]
+    lines[abs(person) % lines.len()]
+
+# Whether a person is willing to drop what they are doing and walk the pilot to a landmark.
+# Lodging offers (own spare room or hotel room just booked) count as willing unless cold.
+way_person_warm = (w: World, speaker: int, listener: int, lodging_invite: bool = false) -> bool:
+    rel = w.relationship_index.get(RelationshipKey(speaker, listener), -1)
+    aff = if rel >= 0: w.relationships[rel].affinity else: 0
+    grievance = if rel >= 0: w.relationships[rel].grievance else: 0
+    if grievance > 200: return false
+    if lodging_invite: return true
+    if aff >= 35: return true
+    if speaker in w.rep.opinions:
+        op = w.rep.opinions[speaker]
+        if op.met >= 2 and op.lean.warmth >= 40: return true
+    false

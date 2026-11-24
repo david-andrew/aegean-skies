@@ -278,6 +278,8 @@ use 'src/walk_shapes.jo'
 use 'src/walk_unstick.jo'
 use 'src/music_data.jo'
 use 'src/build_label.jo'
+use 'src/town_sites.jo'
+use 'src/wayfinding.jo'
 import 'src/cargo_scene.jo' as cargo_scene
 import 'src/cargo_view.jo' as cargo_view
 import 'src/life_view.jo' as life_view
@@ -754,10 +756,15 @@ pilot_reply_frame = ():
 # Out of earshot (TALK_END_METRES) it is over, with a word called after. Run after the frame's
 # play, as pilot_reply_frame is.
 talk_hold_frame = (dt: f64):
-    global talk_hold, talk_walk_along, ui, ui_line, ui_turn, me
+    global talk_hold, talk_walk_along, ui, ui_line, ui_turn, me, way_pointing, way_mark, talk_way_menu, way_guide_place
+    loop mut fk in folks:
+        fk.pointing = way_point_strength(way_pointing, fk.person, t)
+        fk.point_pitch = if fk.pointing > 0.0: way_pointing.pitch else: 0.0
     talking = ui == .talk and ui_folk >= 0 and ui_folk < folks.len()
     if not talking:
         talk_walk_along = false
+        talk_way_menu = false
+        scene_guide_stop()
         if talk_hold.person < 0: return
         # (gone from under the talk, aboard their boat: a word after them, as a parting is)
         if ui == .talk and talk_hold.person < living_world.people.len():
@@ -771,14 +778,31 @@ talk_hold_frame = (dt: f64):
     if talk_hold.person != f.person:
         talk_hold = talk_hold_begin(living_world, f.person)
         talk_walk_along = false
+        talk_way_menu = false
+        scene_guide_stop()
+        way_pointing = WayPointing()
         # (the mouse let go, to point at what he can say: Q and E and the right button turn the view)
         _ = mouse_lock(false)
     seated_with = company.stage == .sitting and company.who == ui_folk
-    if talk_hold.walking:
+    # (guiding the pilot to a door or landmark: arrived at the door, stop, turn and point it out)
+    if scene_guide_arrived(f.person):
+        scene_guide_stop()
+        talk_walk_along = false
+        talk_hold = talk_hold_begin(living_world, f.person)
+        scene_walk_free(); scene_hold(f.person, me.pos, f.posture == 0 and not f.performing and not seated_with)
+        ui_line = way_arrive_line(f.person, way_guide_place)
+        way_pointing = way_point_begin(f.person, f.pos, way_guide_place.pos, t)
+        way_mark = way_mark_begin(way_guide_place, t)
+    if scene_guiding(f.person):
+        talk_hold.walking = true
+        scene_release(); scene_walk_with(f.person)
+    else if talk_hold.walking:
         scene_release(); scene_walk_with(f.person)
     else:
-        # (someone seated, at a fixture or playing keeps the way that faces them)
-        scene_walk_free(); scene_hold(f.person, me.pos, f.posture == 0 and not f.performing and not seated_with)
+        # (someone seated, at a fixture or playing keeps the way that faces them; while pointing
+        # out a landmark they turn toward it so the gesture reads clearly)
+        face_at = if way_pointing.person == f.person and t < way_pointing.until: way_pointing.target else: me.pos
+        scene_walk_free(); scene_hold(f.person, face_at, f.posture == 0 and not f.performing and not seated_with)
     if paused: return
     # (stood still, he turns to them)
     if me.mode == .walking and leisure.sitting == "" and not stay.active and me.stride < 0.08:
@@ -791,7 +815,7 @@ talk_hold_frame = (dt: f64):
             talk_hold.walking = true; talk_hold.call = call
             ui_line = talk_walk_line(call, f.person, talk_waiting_name(living_world, f.person))
             if call != .boat: ui_turn.replies = living.set_talk_prompt(living_world, f.person, living_world.player, .walk_along, ui_line)
-    else if not (if talk_walk_along: talk_still_going(living_world, f.person) else: talk_on_the_way(living_world, f.person)) and living_world.people[f.person].far_home < 0:
+    else if not scene_guiding(f.person) and not scene_guide_arrived(f.person) and not (if talk_walk_along: talk_still_going(living_world, f.person) else: talk_on_the_way(living_world, f.person)) and living_world.people[f.person].far_home < 0:
         # (there, or the errand done: they stand for the talk again)
         talk_walk_along = false
         talk_hold = talk_hold_begin(living_world, f.person)
@@ -799,7 +823,203 @@ talk_hold_frame = (dt: f64):
     if f64(length(f.pos.xz - me.pos.xz)) > TALK_END_METRES:
         line = talk_far_line(talk_hold.walking, f.person)
         say_toast("{living_world.people[f.person].name}: {line}", line)
+        scene_guide_stop()
         ui = .none
+
+# ---------------- showing and pointing the way (src/wayfinding.jo) ----------------
+family_invite = FamilyInvite()
+way_pointing = WayPointing()
+way_mark = WayMark()
+talk_way_menu = false
+way_guide_place = WayPlace()
+way_last_mode: WayMode = .none
+talk_option_labels: str[] = []
+
+family_invite_valid = () -> bool: family_invite.host >= 0 and family_invite.until > living_world.minute
+
+host_home_door = (host: int) -> (bool, int, vec3):
+    w = living_world
+    if host < 0 or host >= w.people.len(): return (false, -1, vec3(0, 0, 0))
+    p = w.people[host]
+    home_place = if p.far_home >= 0: p.far_home else: p.home
+    home = if p.far_home < 0: choose_life_venue(w, p.home, .home, host) else: none
+    if home == none and p.far_home >= 0 and p.far_home in w.place_contexts:
+        homes = [loop v in w.place_contexts[p.far_home].venues: if v.kind == .home: v]
+        if homes.len() > 0: home = homes[host % homes.len()]
+        else: home = lt.LifeVenue(p.far_home, "far-home:{host}", .home, p.pose.pos, vec3(0, 0, -1))
+    if home == none: return (false, home_place, vec3(0, 0, 0))
+    v = home!
+    at = vec3(v.pos.x, f32(walk_height(towns, f64(v.pos.x), f64(v.pos.z))), v.pos.z)
+    (true, home_place, at)
+
+town_sites_for = (place: int) -> TownSite[]: if place >= 0 and place < towns.len(): towns[place].sites else: []
+town_out_for = (place: int) -> vec2: if place >= 0 and place < towns.len(): towns[place].out else: vec2(0, 1)
+
+_venue_pos_for = (place: int, kind: social.VenueKind, skip_terrace: bool = false) -> vec3?:
+    loop v in living_world.life_venues:
+        if v.place == place and v.kind == kind:
+            if skip_terrace and v.key.ends_with(social.TERRACE_VENUE_SUFFIX): continue
+            return vec3(v.pos.x, f32(walk_height(towns, f64(v.pos.x), f64(v.pos.z))), v.pos.z)
+    if place in living_world.place_contexts:
+        loop v in living_world.place_contexts[place].venues:
+            if v.kind == kind: return vec3(v.pos.x, f32(walk_height(towns, f64(v.pos.x), f64(v.pos.z))), v.pos.z)
+    none
+
+hotel_way_place = (place: int) -> WayPlace?:
+    if place == 0 and hotel.ok:
+        return WayPlace("hotel", "the Hotel Ancora", "Where is the Hotel Ancora?", hotel.desk, vec3(0.9, 0, 0.9), 2.6, hotel_place.keeper, is_hotel = true, hint = "out on the stone pier")
+    if place == 4:
+        if let p = _venue_pos_for(place, .shelter):
+            return WayPlace("hotel", "the Hotel Selene", "Where is the Hotel Selene?", p, vec3(1.2, 0, 1.2), 3.0, -1, is_hotel = true, hint = "above the harbour")
+    ts = thermal_site(place)
+    if ts >= 0:
+        inn = thermal_inn(THERMAL_SITES[ts])
+        return WayPlace("hotel", "the bathhouse inn", "Where is the bathhouse inn?", inn, vec3(1.4, 0, 1.4), 3.0, -1, is_hotel = true, hint = "above the hot springs")
+    loop p in living_world.people:
+        if p.home == place and (p.occupation == .innkeeper or p.occupation == .hotelier):
+            h = host_home_door(p.id)
+            if h.0: return WayPlace("hotel", "the inn", "Where is the inn?", h.2, vec3(1.1, 0, 1.1), 2.6, p.id, is_hotel = true, hint = way_site_cue(town_sites_for(place), h.2))
+    none
+
+host_home_way_place = (host: int, is_spare: bool = false) -> WayPlace?:
+    h = host_home_door(host)
+    if not h.0: return none
+    first = split(living_world.people[host].name, " ")[0]
+    cue = way_site_cue(town_sites_for(h.1), h.2)
+    WayPlace("home:{host}", "{first}'s place", "Where is {first}'s place?", h.2, vec3(0.85, 0, 0.85), 2.4, host, is_spare = is_spare, hint = cue)
+
+# Every physical landmark and notable local person's place the pilot can ask about in `place`.
+town_way_places = (place: int, speaker: int) -> WayPlace[]:
+    out: WayPlace[]
+    if place < 0: return out
+    sites = town_sites_for(place)
+    if let hp = hotel_way_place(place): out.push(hp)
+    # Cafe / coffee house
+    if place == 0 and coffee.ok:
+        at = vec3(coffee.table.x, f32(walk_height(towns, f64(coffee.table.x), f64(coffee.table.z))), coffee.table.z)
+        out.push(WayPlace("cafe", "the cafe", "Where is the cafe?", at, vec3(1.6, 0, 1.6), 2.6, hint = "under the awning"))
+    else if let cp = _venue_pos_for(place, .cafe, skip_terrace = true):
+        out.push(WayPlace("cafe", "the cafe", "Where is the cafe?", cp, vec3(1.5, 0, 1.5), 2.6, hint = way_site_cue(sites, cp)))
+    # Church
+    if let ch = _venue_pos_for(place, .church):
+        out.push(WayPlace("church", "the church", "Where is the church?", ch, vec3(2.2, 0, 2.2), 4.2, hint = "by the bell gable"))
+    else if place < towns.len() and towns[place].chapels.len() > 0:
+        cp = towns[place].chapels[0]
+        out.push(WayPlace("church", "the church", "Where is the church?", cp, vec3(2.2, 0, 2.2), 4.2, hint = "by the bell gable"))
+    # Mechanic / workshop
+    shed_hit = false
+    loop shed in paint_sheds:
+        if shed.place == place:
+            out.push(WayPlace("workshop", "the mechanic's", "Where is the mechanic's?", shed.stand, vec3(2.2, 0, 2.2), 2.8, hint = "at the workshop by the water"))
+            shed_hit = true
+            break
+    if not shed_hit:
+        if let wp = _venue_pos_for(place, .workshop):
+            out.push(WayPlace("workshop", "the mechanic's", "Where is the mechanic's?", wp, vec3(1.5, 0, 1.5), 2.6, hint = way_site_cue(sites, wp)))
+    # Harbour office / notice board
+    if place < board_spots.len():
+        bp = board_spots[place]
+        out.push(WayPlace("harbour", "the harbour office", "Where is the harbour office?", bp, vec3(1.2, 0, 1.2), 2.4, hint = "by the notice board"))
+    else if let qp = _venue_pos_for(place, .quay):
+        out.push(WayPlace("harbour", "the harbour office", "Where is the harbour office?", qp, vec3(1.4, 0, 1.4), 2.4, hint = "down on the waterfront"))
+    # Market / warehouse
+    if let mp = _venue_pos_for(place, .market):
+        out.push(WayPlace("market", "the market", "Where is the market?", mp, vec3(1.8, 0, 1.8), 2.8, hint = way_site_cue(sites, mp)))
+    # Fuel pier
+    town_c = if place < towns.len(): towns[place].center else: if place in living_world.place_contexts: living_world.place_contexts[place].center else: me.pos
+    if let fp = refuel.fuel_pier_at(living_world, town_c, 2500.0):
+        at = vec3(fp.dock.x, f32(walk_height(towns, f64(fp.dock.x), f64(fp.dock.z))), fp.dock.z)
+        out.push(WayPlace("fuel", "the fuel pier", "Where is the fuel pier?", at, vec3(2.0, 0, 2.0), 2.8, hint = "by the fuel tanks"))
+    # Landing / docks
+    if place < towns.len() and towns[place].docks.len() > 0:
+        dk = towns[place].docks[0]
+        at = vec3(dk.x, f32(walk_height(towns, f64(dk.x), f64(dk.z))), dk.z)
+        out.push(WayPlace("landing", "the landing", "Where is the landing?", at, vec3(2.2, 0, 2.2), 2.2, hint = "out on the main pier"))
+    # Square
+    if let sq = _venue_pos_for(place, .square):
+        out.push(WayPlace("square", "the square", "Where is the square?", sq, vec3(2.0, 0, 2.0), 2.4))
+    # Hot springs (thermal towns)
+    ts = thermal_site(place)
+    if ts >= 0:
+        kp = bath_keeper_at(THERMAL_SITES[ts])
+        out.push(WayPlace("springs", "the hot springs", "Where are the hot springs?", kp, vec3(1.8, 0, 1.8), 2.6, hint = "by the bathhouse"))
+    # Notable local people's places (invited host, speaker's home, or up to 2 local residents)
+    added_people: int[] = []
+    if family_invite_valid() and family_invite.place == place:
+        if let fwp = host_home_way_place(family_invite.host, is_spare = true):
+            out.push(fwp); added_people.push(family_invite.host)
+    if speaker >= 0 and not added_people.contains(speaker):
+        sp = living_world.people[speaker]
+        if (sp.home == place or sp.far_home == place) and sp.occupation != .patrol and sp.occupation != .pirate:
+            if let swp = host_home_way_place(speaker):
+                out.push(WayPlace(swp.key, "your place", "Where is your place?", swp.pos, swp.half, swp.up, speaker, hint = swp.hint))
+                added_people.push(speaker)
+    loop p in living_world.people:
+        if added_people.len() >= 3: break
+        if p.id == living_world.player or p.id == speaker or added_people.contains(p.id): continue
+        if p.home != place or p.occupation == .patrol or p.occupation == .pirate: continue
+        if p.occupation == .innkeeper or p.occupation == .hotelier or p.occupation == .mechanic or p.occupation == .merchant:
+            if let pwp = host_home_way_place(p.id):
+                out.push(pwp); added_people.push(p.id)
+    out
+
+way_is_free = (folk_k: int) -> bool:
+    if folk_k < 0 or folk_k >= folks.len(): return false
+    f = folks[folk_k]
+    if f.posture != 0 or f.performing or f.carrying or f.cycling: return false
+    if company.stage == .sitting and company.who == folk_k: return false
+    if living_world.people[f.person].far_home < 0 and not life_free(living_world, f.person): return false
+    talk_errand(living_world, f.person) == .none
+
+way_point_only = (folk_k: int, wp: WayPlace):
+    global way_pointing, way_mark
+    if folk_k < 0 or folk_k >= folks.len(): return
+    f = folks[folk_k]
+    if f64(length(wp.pos.xz - f.pos.xz)) < 5.0: return
+    if way_visible(town_sites_for(f.place), f.pos, wp.pos, wp.up, (x: f64, z: f64) -> f64: walk_height(towns, x, z)):
+        way_pointing = way_point_begin(f.person, f.pos, wp.pos, t)
+        way_mark = way_mark_begin(wp, t)
+
+way_show_place = (folk_k: int, wp: WayPlace, allow_guide: bool = true, lodging_invite: bool = false, prefix: str = "") -> WayMode:
+    global way_pointing, way_mark, way_guide_place, way_last_mode, talk_hold, talk_walk_along, ui_line
+    if folk_k < 0 or folk_k >= folks.len(): return .none
+    f = folks[folk_k]
+    dist = f64(length(wp.pos.xz - f.pos.xz))
+    sites = town_sites_for(f.place)
+    vis = way_visible(sites, f.pos, wp.pos, wp.up, (x: f64, z: f64) -> f64: walk_height(towns, x, z))
+    free = allow_guide and way_is_free(folk_k)
+    warm = way_person_warm(living_world, f.person, living_world.player, lodging_invite)
+    route: vec3[] = []
+    if dist > WAY_GUIDE_MIN_METRES and dist <= WAY_GUIDE_MAX_METRES and free and warm:
+        dest = if wp.is_hotel and hotel.ok: hotel.desk - hotel.table_z * 1.1 else: wp.pos
+        cand = cargo_scene.cargo_walk_path(towns, f.pos, dest)
+        if cand.len() >= 2 and f64(length(cand[cand.len() - 1].xz - dest.xz)) < 4.5: route = cand
+    mode = choose_way_mode(dist, vis, free, warm, route.len() >= 2)
+    way_last_mode = mode
+    match mode:
+        .guide:
+            scene_guide_start(f.person, wp.pos, route)
+            way_guide_place = wp
+            talk_hold.walking = true
+            talk_walk_along = true
+            scene_release(); scene_walk_with(f.person)
+            way_pointing = WayPointing()
+            line = way_guide_line(f.person, wp)
+            ui_line = if prefix != "": "{prefix} {line}" else: line
+        .point:
+            scene_guide_stop()
+            way_pointing = way_point_begin(f.person, f.pos, wp.pos, t)
+            way_mark = way_mark_begin(wp, t)
+            line = way_direction_words(f.pos, me.yaw, wp, town_out_for(f.place), true, f.person)
+            ui_line = if prefix != "": "{prefix} {line}" else: line
+        .words:
+            scene_guide_stop()
+            way_pointing = WayPointing()
+            way_mark = WayMark()
+            line = way_direction_words(f.pos, me.yaw, wp, town_out_for(f.place), false, f.person)
+            ui_line = if prefix != "": "{prefix} {line}" else: line
+        _: pass
+    mode
 
 pilot_talk_frame = ():
     global flight_on, flight_storm, flight_rain, flight_wind, flight_from
@@ -1052,7 +1272,11 @@ hotel_free_chair = (p: vec3, reach: f64) -> (int, int):
 
 # what one can do here, on foot (the card says it; F does it)
 leisure_prompt = () -> str:
-    if me.mode != .walking or holding_cargo() >= 0 or not hotel.ok: return ""
+    if me.mode != .walking or holding_cargo() >= 0: return ""
+    if family_invite_valid() and f64(length(me.pos - family_invite.door)) < 4.5:
+        first = split(living_world.people[family_invite.host].name, " ")[0]
+        return "F  go in to {first}'s spare room"
+    if not hotel.ok: return ""
     if hotel_free_chair(me.pos, 2.4).0 >= 0: return "F  sit at a table on the terrace"
     if f64(length(me.pos - hotel.seat)) < 2.4: return if room_point_inside(hotel, hotel.seat): "F  sit at a table" else: "F  sit at a table on the terrace"
     if f64(length(me.pos - hotel.counter)) < 2.4: return "F  order at the bar"
@@ -1091,6 +1315,12 @@ leisure_act = ():
     else if said.contains("order at the bar"):
         leisure_sit("bar")
         leisure_open_menu("bar")
+    else if said.contains("spare room"):
+        if family_invite_valid():
+            if not stay_begin_family(family_invite.host):
+                name = living_world.people[family_invite.host].name
+                log_note(notebook, "Rested in the spare room at {name}'s.", clock_text(living_world, living_world.minute))
+                leisure_skip(rest_minutes(living_world, 420), "Asleep in the spare room at {split(name, " ")[0]}'s")
     else if said.contains("your room"): stay_begin_hotel()
     else if said.contains("desk"):
         ui = .leisure; leisure_ui = 2; leisure_at = "hotel"; leisure_line = ""
@@ -1144,7 +1374,7 @@ foot_things_kept: FootThing[] = []
 foot_things = () -> FootThing[]:
     global foot_things_frame, foot_things_kept
     if foot_things_frame != frame_number():
-        foot_things_kept = [loop th in _foot_things_now(): if th.act == "aboard" or th.act == "tinker" or th.sub == "desk" or th.sub == "your room" or way_clear(me.pos, th.stand): th]
+        foot_things_kept = [loop th in _foot_things_now(): if th.act == "aboard" or th.act == "tinker" or th.sub == "desk" or th.sub == "your room" or th.sub == "spare room" or way_clear(me.pos, th.stand): th]
         foot_things_frame = frame_number()
     foot_things_kept
 
@@ -1159,7 +1389,7 @@ _foot_things_now = () -> FootThing[]:
         out.push(FootThing("aboard", "", "", if paint_job.active: "In the paint shop" else: "Climb aboard", c - vec3(0.75, 1.3, 1.1), c + vec3(0.75, 0.45, 1.1), p, origin = p, rot = q))
         e = m.prop_at; r = f32(min(m.prop_radius, 1.1))
         out.push(FootThing("tinker", "", "", "Work on her", e - vec3(r, r, 0.7), e + vec3(r, r, 0.7), p, origin = p, rot = q))
-    if hotel.ok and f64(length(me.pos - hotel.counter)) < 45.0:
+    if hotel.ok and (f64(length(me.pos - hotel.counter)) < 45.0 or f64(length(me.pos - hotel.desk)) < 45.0):
         # (any table on the terrace: a tap on it walks him to its nearest free chair; inside for the
         # rain, his own table there)
         if bar_room.level == 2:
@@ -1199,6 +1429,10 @@ _foot_things_now = () -> FootThing[]:
     loop shed in paint_sheds:
         if f64(length(shed.stand - me.pos)) < 45.0:
             out.push(_thing("", "", "paint-shop", "The paint shop", shed.bench - vec3(0, 0.9, 0), vec3(2.5, 0, 0.55), 2.3, shed.stand))
+    # (an accepted family spare-room invitation: walk up to their door and use it)
+    if family_invite_valid() and f64(length(me.pos - family_invite.door)) < 45.0:
+        first = split(living_world.people[family_invite.host].name, " ")[0]
+        out.push(_thing("leisure", "spare room", "", "{first}'s door", family_invite.door, vec3(0.85, 0, 0.85), 2.4, _step_out(family_invite.door, 1.0)))
     # (the people about: over to them, and talk)
     loop k in 0..folks.len():
         f = folks[k]
@@ -1344,11 +1578,11 @@ _look_hash = (x: f64) -> f64: fract(sin(x * 12.9898 + 78.233) * 43758.5453)
 # the look's line width unit, in the screen's own pixels (a 2D unit, larger on a phone, as the box's)
 look_unit = () -> f64: f64(__screen_px_h()) / f64(max(screen_height(), 1)) * min(readable(1.0), 1.5)
 
-draw_look = (th: FootThing, age: f64):
+draw_look = (th: FootThing, age: f64, strength: f64 = 1.0):
     h = thing_outline(th)
     if h.len() < 3: return
     s = min(readable(1.0), 1.5)
-    fade = clamp(age / 0.18, 0.0, 1.0)
+    fade = clamp(age / 0.18, 0.0, 1.0) * clamp(strength, 0.0, 1.0)
     # (the band: across the slant, from just above the outline to just below it)
     n = normalize(vec2(0.32, 1.0))
     m0 = 1e9; m1 = -1e9
@@ -1525,6 +1759,19 @@ picnic_ground_hover = () -> bool:
     false
 
 draw_foot_label = ():
+    # (a landmark or door just pointed out by a townsperson: brief diegetic soft highlight and
+    # subtle glint in the world, no floating map icons)
+    global way_mark
+    if way_mark.active and (t >= way_mark.until or stay.active or (t - way_mark.since > 2.5 and f64(length(me.pos.xz - way_mark.pos.xz)) < 2.2)):
+        way_mark = WayMark()
+    if way_mark.active and me.mode == .walking and not stay.active and not paused and not show_chart and not notebook.open and (ui == .none or ui == .talk):
+        ms = way_mark_strength(way_mark, t)
+        if ms > 0.01:
+            mth = _thing("", "", "", way_mark.label, way_mark.pos, way_mark.half, way_mark.up, way_mark.pos)
+            draw_look(mth, t - way_mark.since, ms)
+            if let sp = world_to_screen(thing_top(mth)):
+                if f64(sp.x) > 0.0 and f64(sp.x) < f64(screen_width()) and f64(sp.y) > 0.0 and f64(sp.y) < f64(screen_height()):
+                    _glint(sp, ms * (0.55 + 0.35 * sin((t - way_mark.since) * 3.0)), 1.3)
     # (the thing the view looks at, lit, no words: on a touch screen too, what a tap there does)
     if ui == .none and foot_hover >= 0 and me.mode == .walking:
         things = foot_things()
@@ -2862,7 +3109,8 @@ stay_yaw = (local: f64) -> f64:
     atan2(f64(fz.x), f64(fz.z)) + local
 
 stay_begin_hotel = ():
-    global stay, ui, leisure_ui, stay_look_turn
+    global stay, ui, leisure_ui, stay_look_turn, way_mark
+    way_mark = WayMark()
     stay_look_turn = ViewTurn()
     global table_bar_area
     table_bar_area = Rect(0, 0, 0, 0)
@@ -2873,7 +3121,8 @@ stay_begin_hotel = ():
 
 # The family's own house (their home in the living world): false when it isn't in the scene.
 stay_begin_family = (host: int) -> bool:
-    global stay, ui, leisure_ui, stay_host_fig, stay_figs, stay_look_turn
+    global stay, ui, leisure_ui, stay_host_fig, stay_figs, stay_look_turn, way_mark
+    way_mark = WayMark()
     stay_look_turn = ViewTurn()
     global table_bar_area
     table_bar_area = Rect(0, 0, 0, 0)
@@ -4566,10 +4815,13 @@ leisure_panel = ():
                 if o.ok:
                     if leisure.sitting != "": leisure_stand()
                     log_note(notebook, "Took a room at the {lp.name}, {phoenix_text(o.cents)}.", clock_text(w, w.minute))
-                    # (the night paid for: the room is his till eleven the next morning)
-                    global hotel_room_until
+                    # (the night paid for: the room is his till eleven the next morning; walk to
+                    # the hotel door and use it to go upstairs — never warp into the room)
+                    global hotel_room_until, way_mark
                     hotel_room_until = thermal_life.thermal_until(w.minute, 11)
-                    stay_begin_hotel()
+                    ui = .none
+                    if let hwp = hotel_way_place(lp.place): way_mark = way_mark_begin(hwp, t)
+                    say_toast("The room is yours upstairs — use the hotel door when you're ready.")
                 else: leisure_line = o.message
             else if r.choice == 1 or r.closed: _leisure_back()
         3:
@@ -4601,11 +4853,22 @@ leisure_panel = ():
             name = w.people[leisure_host].name
             r = bubble_choice("host", person_head(leisure_host), name, leisure_line, ["Go in with them", "Another time"], person_spoken_rate(leisure_host))
             if r.choice == 0:
-                if not stay_begin_family(leisure_host):
-                    # (no house of theirs in the scene: rest there all the same, the time passing on a card)
+                # (never warp into a family's house: record the invitation and show/point the way
+                # to their door, where the pilot enters himself)
+                global family_invite, way_mark
+                if let hwp = host_home_way_place(leisure_host, is_spare = true):
+                    hp = if w.people[leisure_host].far_home >= 0: w.people[leisure_host].far_home else: w.people[leisure_host].home
+                    family_invite = FamilyInvite(leisure_host, hp, hwp.pos, thermal_life.thermal_until(w.minute, 11))
+                    if ui_folk >= 0 and ui_folk < folks.len() and folks[ui_folk].person == leisure_host:
+                        ui = .talk
+                        _ = way_show_place(ui_folk, hwp, allow_guide = true, lodging_invite = true)
+                    else:
+                        ui = .none
+                        way_mark = way_mark_begin(hwp, t)
+                        say_toast("{split(name, " ")[0]}'s spare room is open to you tonight.")
+                else:
                     ui = .none
-                    log_note(notebook, "Rested in the spare room at {name}'s.", clock_text(w, w.minute))
-                    leisure_skip(rest_minutes(w, 420), "Asleep in the spare room at {split(name, " ")[0]}'s")
+                    say_toast("{split(name, " ")[0]}'s place isn't nearby just now.")
             else if r.choice == 1 or r.closed: ui = .none
         15: stay_frame()
         16:
@@ -13345,6 +13608,167 @@ update_frame = (dt: f64, saves: bool = true):
                 gap = f64(length(folks[j].pos.xz - me.pos.xz))
                 if folks[j].shown and folks[j].posture == 0 and gap < near and not talk_on_the_way(living_world, folks[j].person) and folks[j].place == town_here(me.pos):
                     near = gap; k0 = j
+        # (AEGEAN_TALK=sofia-dock|spare-guide|cafe-point|far-place: wayfinding test & capture stages)
+        if talk_mode == "sofia-dock":
+            k0 = -1
+            loop j in 0..folks.len():
+                if folks[j].person == hotel_place.keeper and folks[j].shown: k0 = j; break
+            if k0 >= 0:
+                # Put Sofia on the stone dock along the Hotel Ancora waterfront (~13 m from the
+                # hotel door) with a straight, clear walkable path and sightline to Hotel Ancora.
+                dock_at = hotel.desk - hotel.table_x * 13.0 - hotel.table_z * 1.1
+                dy = walk_height(towns, f64(dock_at.x), f64(dock_at.z))
+                if dy < 0.3: dock_at = hotel.desk - hotel.table_x * 10.0 - hotel.table_z * 1.1; dy = walk_height(towns, f64(dock_at.x), f64(dock_at.z))
+                if dy < 0.3: dock_at = towns[0].center; dy = walk_height(towns, f64(dock_at.x), f64(dock_at.z))
+                sp_pos = vec3(dock_at.x, f32(dy), dock_at.z)
+                living_world.people[folks[k0].person].pose.pos = sp_pos
+                folks[k0].pos = sp_pos; folks[k0].precise = world_point(sp_pos); folks[k0].published = sp_pos
+                if folks[k0].person in living_world.daily_life:
+                    living_world.daily_life[folks[k0].person].target = sp_pos
+                    living_world.daily_life[folks[k0].person].route = []
+                    living_world.daily_life[folks[k0].person].waypoint = 0
+                    living_world.daily_life[folks[k0].person].arrived = true
+                # Stand pilot slightly further down the dock facing Sofia and Hotel Ancora straight ahead.
+                to_hotel = normalize(vec3(hotel.desk.x - sp_pos.x, 0, hotel.desk.z - sp_pos.z))
+                p_at = sp_pos - to_hotel * 2.4
+                py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                if py < 0.3: p_at = sp_pos - to_hotel * 1.8; py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                me.pos = vec3(p_at.x, f32(py), p_at.z)
+                to_s = hotel.desk - me.pos
+                me.yaw = atan2(f64(to_s.x), f64(to_s.z))
+                follow.yaw = me.yaw + PI; follow.placed = false
+                living_world.people[living_world.player].place = 0
+                living_world.people[living_world.player].pose.pos = me.pos
+                global walker_point
+                walker_point = world_point(me.pos)
+        if talk_mode == "spare-guide":
+            k0 = -1
+            loop j in 0..folks.len():
+                fp = folks[j]
+                if not fp.shown or fp.place != 1 or fp.person <= 0 or fp.person == living_world.player: continue
+                pp = living_world.people[fp.person]
+                if pp.home != 1 or pp.occupation == .patrol or pp.occupation == .pirate: continue
+                hd = host_home_door(fp.person)
+                if not hd.0: continue
+                living_world.people[living_world.player].place = 1
+                living_world.people[living_world.player].pose.pos = pp.pose.pos + vec3(1, 0, 0)
+                living_world.rep.opinions[fp.person] = lt.RepOpinion(person = fp.person, met = 3, lean = lt.RepLean(warmth = 220, honour = 260, reliability = 220), minute = living_world.minute)
+                if living.talk_preview(living_world, fp.person, .lodging, living_world.player).question_kind != .lodging_offer: continue
+                # Find a walkable street spot 12..26 m (falling back to 55 m) from their door with a valid navmesh route.
+                best_spot = fp.pos; found_spot = false; best_dist = 1e9
+                if f64(length(fp.pos.xz - hd.2.xz)) >= 12.0 and f64(length(fp.pos.xz - hd.2.xz)) <= 26.0:
+                    rt_ = cargo_scene.cargo_walk_path(towns, fp.pos, hd.2)
+                    if rt_.len() >= 2 and f64(length(rt_[rt_.len() - 1].xz - hd.2.xz)) < 4.5:
+                        found_spot = true; best_dist = f64(length(fp.pos.xz - hd.2.xz))
+                if not found_spot:
+                    loop v in living_world.life_venues:
+                        if v.place != 1 or v.kind == .home: continue
+                        cand = vec3(v.pos.x, f32(walk_height(towns, f64(v.pos.x), f64(v.pos.z))), v.pos.z)
+                        d_h = f64(length(cand.xz - hd.2.xz))
+                        if d_h < 12.0 or d_h > 55.0 or d_h >= best_dist: continue
+                        rt_ = cargo_scene.cargo_walk_path(towns, cand, hd.2)
+                        if rt_.len() >= 2 and f64(length(rt_[rt_.len() - 1].xz - hd.2.xz)) < 4.5:
+                            best_spot = cand; found_spot = true; best_dist = d_h
+                            if best_dist <= 26.0: break
+                if not found_spot: continue
+                living_world.people[fp.person].pose.pos = best_spot
+                folks[j].pos = best_spot; folks[j].precise = world_point(best_spot); folks[j].published = best_spot
+                if fp.person in living_world.daily_life:
+                    living_world.daily_life[fp.person].target = best_spot
+                    living_world.daily_life[fp.person].route = []
+                    living_world.daily_life[fp.person].waypoint = 0
+                    living_world.daily_life[fp.person].arrived = true
+                to_door = normalize(vec3(hd.2.x - best_spot.x, 0, hd.2.z - best_spot.z))
+                p_at = best_spot - to_door * 2.2
+                py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                if py < 0.3: p_at = best_spot + vec3(-to_door.z, 0, to_door.x) * 2.0; py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                me.pos = vec3(p_at.x, f32(py), p_at.z)
+                to_s = best_spot - me.pos
+                me.yaw = atan2(f64(to_s.x), f64(to_s.z))
+                follow.yaw = me.yaw + PI + 0.35; follow.placed = false
+                living_world.people[living_world.player].place = 1
+                living_world.people[living_world.player].pose.pos = me.pos
+                global walker_point
+                walker_point = world_point(me.pos)
+                k0 = j; break
+        if talk_mode == "cafe-point":
+            k0 = -1
+            if coffee.ok:
+                cafe_at = vec3(coffee.table.x, f32(walk_height(towns, f64(coffee.table.x), f64(coffee.table.z))), coffee.table.z)
+                loop j in 0..folks.len():
+                    fp = folks[j]
+                    if not fp.shown or fp.place != 0 or fp.person <= 0 or fp.person == living_world.player or fp.person == hotel_place.keeper: continue
+                    if fp.posture != 0 or fp.performing: continue
+                    # Pick a spot 14..26 m in front of the cafe with clear line of sight.
+                    fwd = normalize(vec3(coffee.table_z.x, 0, coffee.table_z.z))
+                    sp_at = cafe_at + fwd * 16.0
+                    sy = walk_height(towns, f64(sp_at.x), f64(sp_at.z))
+                    if sy < 0.3 or not way_visible(towns[0].sites, vec3(sp_at.x, f32(sy), sp_at.z), cafe_at, 2.6, (x: f64, z: f64) -> f64: walk_height(towns, x, z)):
+                        sp_at = cafe_at - fwd * 16.0
+                        sy = walk_height(towns, f64(sp_at.x), f64(sp_at.z))
+                    if sy < 0.3: sp_at = cafe_at + vec3(towns[0].out.x, 0, towns[0].out.y) * 14.0; sy = walk_height(towns, f64(sp_at.x), f64(sp_at.z))
+                    sp_pos = vec3(sp_at.x, f32(sy), sp_at.z)
+                    living_world.people[fp.person].pose.pos = sp_pos
+                    folks[j].pos = sp_pos; folks[j].precise = world_point(sp_pos); folks[j].published = sp_pos
+                    if fp.person in living_world.daily_life:
+                        living_world.daily_life[fp.person].target = sp_pos
+                        living_world.daily_life[fp.person].route = []
+                        living_world.daily_life[fp.person].waypoint = 0
+                        living_world.daily_life[fp.person].arrived = true
+                    to_cafe = normalize(vec3(cafe_at.x - sp_pos.x, 0, cafe_at.z - sp_pos.z))
+                    p_at = sp_pos - to_cafe * 2.4 + vec3(-to_cafe.z, 0, to_cafe.x) * 1.1
+                    py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                    if py < 0.3: p_at = sp_pos - to_cafe * 2.2; py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                    me.pos = vec3(p_at.x, f32(py), p_at.z)
+                    to_s = sp_pos - me.pos
+                    me.yaw = atan2(f64(to_s.x), f64(to_s.z))
+                    follow.yaw = me.yaw + PI + 0.2; follow.placed = false
+                    living_world.people[living_world.player].place = 0
+                    living_world.people[living_world.player].pose.pos = me.pos
+                    global walker_point
+                    walker_point = world_point(me.pos)
+                    k0 = j; break
+        if talk_mode == "far-place":
+            k0 = -1
+            loop j in 0..folks.len():
+                fp = folks[j]
+                if not fp.shown or fp.place != 0 or fp.person <= 0 or fp.person == living_world.player or fp.person == hotel_place.keeper: continue
+                if fp.posture != 0 or fp.performing: continue
+                # Pick a walkable inland spot in Porto Vecchio where the fuel pier or hotel is
+                # genuinely out of sight behind town houses or beyond pointing range.
+                sp_pos = fp.pos; found_far = false
+                target_check = if let fpp = refuel.fuel_pier_at(living_world, towns[0].center, 2500.0): vec3(fpp.dock.x, f32(walk_height(towns, f64(fpp.dock.x), f64(fpp.dock.z))), fpp.dock.z) else: hotel.desk
+                loop v in living_world.life_venues:
+                    if v.place != 0 or (v.kind != .home and v.kind != .church and v.kind != .fields): continue
+                    cand = vec3(v.pos.x, f32(walk_height(towns, f64(v.pos.x), f64(v.pos.z))), v.pos.z)
+                    if cand.y < 0.5: continue
+                    if not way_visible(towns[0].sites, cand, target_check, 2.8, (x: f64, z: f64) -> f64: walk_height(towns, x, z)):
+                        sp_pos = cand; found_far = true; break
+                if not found_far:
+                    out_d = vec3(towns[0].out.x, 0, towns[0].out.y)
+                    sp_at = towns[0].center - out_d * 40.0
+                    sy = walk_height(towns, f64(sp_at.x), f64(sp_at.z))
+                    sp_pos = vec3(sp_at.x, f32(sy), sp_at.z)
+                living_world.people[fp.person].pose.pos = sp_pos
+                folks[j].pos = sp_pos; folks[j].precise = world_point(sp_pos); folks[j].published = sp_pos
+                if fp.person in living_world.daily_life:
+                    living_world.daily_life[fp.person].target = sp_pos
+                    living_world.daily_life[fp.person].route = []
+                    living_world.daily_life[fp.person].waypoint = 0
+                    living_world.daily_life[fp.person].arrived = true
+                out_d = vec3(towns[0].out.x, 0, towns[0].out.y)
+                p_at = sp_pos + out_d * 2.3
+                py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                if py < 0.3: p_at = sp_pos - out_d * 2.3; py = walk_height(towns, f64(p_at.x), f64(p_at.z))
+                me.pos = vec3(p_at.x, f32(py), p_at.z)
+                to_s = sp_pos - me.pos
+                me.yaw = atan2(f64(to_s.x), f64(to_s.z))
+                follow.yaw = me.yaw + PI + 0.3; follow.placed = false
+                living_world.people[living_world.player].place = 0
+                living_world.people[living_world.player].pose.pos = me.pos
+                global walker_point
+                walker_point = world_point(me.pos)
+                k0 = j; break
         # (AEGEAN_TALK=kalamos: a resident in Kalamos, a town without a hotel; AEGEAN_TALK=spare:
         # a grateful resident in Kalamos who offers their spare room when asked about lodging)
         if talk_mode == "kalamos" or talk_mode == "spare":
@@ -15749,6 +16173,39 @@ draw_ui = ():
             sit_offer = can_ask_to_sit(ui_folk)
             sit_k = answers.len() - ntop - work_k
             if sit_offer: answers.push("Mind if I sit?")
+            # (asking where a place in town is: a sub-menu of the town's landmarks and people's
+            # places in the same reply bubbles; Back or Esc returns to the conversation)
+            global talk_way_menu
+            if talk_way_menu:
+                wps = town_way_places(f.place, f.person)
+                if wps.len() == 0:
+                    talk_way_menu = false
+                else:
+                    heard = spoken_peek("talk", ui_line)
+                    says = [loop wp in wps: wp.ask]
+                    their_x = -1.0
+                    if let at = world_to_screen(folk_view_position(f) + vec3(0, 1.5, 0)): their_x = f64(at.x)
+                    mine = me.pos + vec3(0, if leisure.sitting != "": 1.2 else: 1.65, 0)
+                    keep_off: Rect[] = if frame_number() <= talk_bubble_frame + 1: [talk_bubble_rect] else: []
+                    if frame_number() <= talk_own_frame + 1: keep_off.push(talk_own_rect)
+                    loop b in touch_controls(): keep_off.push(b)
+                    keep_off.push(Rect(f64(screen_width()) - 150.0, 0, 150, 100))
+                    strength = [loop k in 0..says.len(): 1.0]
+                    global talk_options, talk_option_labels
+                    talk_options = says.len()
+                    talk_option_labels = says
+                    c = reply_bubbles(fonts, mine, says, "Back.", said_fade(heard), heard.ready, their_x, keep_off, strength, pin_key = "talk:{f.person}")
+                    if vpressed(.escape) or ctl_talk(.escape): c = says.len()
+                    if c >= 0 and c < wps.len():
+                        wp = wps[c]
+                        global talk_bubbles
+                        talk_bubbles_pilot(talk_bubbles, wp.ask, t)
+                        talk_way_menu = false
+                        ui_turn.replies = []
+                        _ = way_show_place(ui_folk, wp, allow_guide = true, lodging_invite = wp.is_spare or (wp.is_hotel and hotel_room_paid()))
+                    else if c >= says.len():
+                        talk_way_menu = false
+                    return
             # (a bucket: theirs brought back, or the loan of it asked)
             carried_k = fish_carried(fish)
             bucket_back = carried_k >= 0 and fish.buckets[carried_k].owner == f.person
@@ -15757,6 +16214,9 @@ draw_ui = ():
             bucket_k = answers.len() - ntop - work_k
             if bucket_back: answers.push("I've brought your bucket back.")
             else if bucket_ask: answers.push("Could I borrow a bucket?")
+            way_offer = not ui_turn.exhausted and town_way_places(f.place, f.person).len() > 0
+            way_k = answers.len() - ntop - work_k
+            if way_offer: answers.push("Where is...?")
             answers.push("Goodbye.")
             # (no panel: what he can say is in small bubbles beside his head, each as he would
             # say it; their line is over their own head, draw_talk_bubbles. They come once the
@@ -15775,8 +16235,9 @@ draw_ui = ():
             since = if talk_bubbles.whole_at >= 0.0: t - talk_bubbles.whole_at else: 0.0
             strength = [loop k in 0..says.len(): (if k >= nerr and k < nrep: reply_strength(since) else: 1.0)]
             if nrep > nerr and since > REPLY_WAIT: ui_turn.replies = []
-            global talk_options
+            global talk_options, talk_option_labels
             talk_options = says.len()
+            talk_option_labels = says
             c = reply_bubbles(fonts, mine, says, "Goodbye.", said_fade(heard), heard.ready, their_x, keep_off, strength, pin_key = "talk:{f.person}")
             if vpressed(.escape) or ctl_talk(.escape): c = answers.len() - 1
             # (what the pilot says, over his head: the answer as worded, the subject as a question,
@@ -15787,7 +16248,7 @@ draw_ui = ():
                 if c < offers.len() and offer_choices[c] == .porter: words = "I'll take it. A porter for the loading, please."
                 else if c < offers.len() and offer_choices[c] == .automatic: words = "I'll take it."
                 else if c >= nrep and c < ntop: words = pilot_asks(topics[c - nrep].topic)
-                talk_bubbles_pilot(talk_bubbles, words, t)
+                if not (way_offer and c == ntop + work_k + way_k): talk_bubbles_pilot(talk_bubbles, words, t)
             if c >= 0 and c < offers.len():
                 id = offers[c]
                 choice = offer_choices[c]
@@ -15824,18 +16285,47 @@ draw_ui = ():
                     who_b = if ui_turn.effect_note != "": ui_turn.effect_note else: "a missing"
                     log_note(notebook, "{p.name} is waiting for word of {who_b}'s boat.", clock_text(living_world, living_world.minute))
                 else if ui_turn.effect == "stay_family":
-                    if not stay_begin_family(f.person):
-                        ui = .none
-                        log_note(notebook, "Rested in the spare room at {p.name}'s.", clock_text(living_world, living_world.minute))
-                        leisure_skip(rest_minutes(living_world, 420), "Asleep in the spare room at {split(p.name, " ")[0]}'s")
+                    # (never warp into a family's house: record the invitation and walk or point
+                    # the pilot to their door, where he enters himself)
+                    global family_invite
+                    if let hwp = host_home_way_place(f.person, is_spare = true):
+                        hp = if p.far_home >= 0: p.far_home else: p.home
+                        family_invite = FamilyInvite(f.person, hp, hwp.pos, thermal_life.thermal_until(living_world.minute, 11))
+                        _ = way_show_place(ui_folk, hwp, allow_guide = true, lodging_invite = true)
                 else if ui_turn.effect == "hotel_desk":
-                    if hotel_room_paid(): stay_begin_hotel()
+                    # (booking and paying can happen right in the conversation, but the pilot walks
+                    # to the hotel door and uses it himself — never warping into the room)
+                    hwp_opt = hotel_way_place(f.place)
+                    if hotel_room_paid():
+                        if let hwp = hwp_opt:
+                            _ = way_show_place(ui_folk, hwp, allow_guide = true, lodging_invite = true, prefix = "Your room is already waiting upstairs.")
                     else if leisure_open(living_world, hotel_place):
-                        global leisure_ui, leisure_at, leisure_line
-                        leisure_at = "hotel"; leisure_line = ""; ui = .leisure; leisure_ui = 2
+                        o = leisure_take_room(living_world, hotel_place)
+                        if o.ok:
+                            global hotel_room_until
+                            hotel_room_until = thermal_life.thermal_until(living_world.minute, 11)
+                            log_note(notebook, "Took a room at the {hotel_place.name}, {phoenix_text(o.cents)}.", clock_text(living_world, living_world.minute))
+                            if let hwp = hwp_opt:
+                                _ = way_show_place(ui_folk, hwp, allow_guide = true, lodging_invite = true, prefix = "All settled — {talk_words.say_money(o.cents)} for the night.")
+                        else: ui_line = o.message
+                    else: ui_line = "The desk is shut just now; come back when we open."
+                else if ui_turn.effect == "show_person":
+                    if let fid = to_int(ui_turn.effect_note):
+                        found_pos = false
+                        loop fk in folks:
+                            if fk.person == fid and fk.shown and fk.place == f.place:
+                                pwp = WayPlace("person:{fid}", split(living_world.people[fid].name, " ")[0], "", fk.pos, vec3(0.5, 0, 0.5), 1.9, fid)
+                                way_point_only(ui_folk, pwp)
+                                found_pos = true; break
+                        if not found_pos:
+                            if let pwp = host_home_way_place(fid): way_point_only(ui_folk, pwp)
             else if c >= nrep and c < ntop:
                 ui_turn = living.talk(living_world, f.person, topics[c - nrep].topic, living_world.player)
                 ui_line = turn_text(ui_turn)
+                if topics[c - nrep].topic == .lodging:
+                    low_l = lower(ui_line)
+                    if ui_turn.question_kind == .hotel_offer or "ancora" in low_l or "selene" in low_l or "bathhouse inn" in low_l:
+                        if let hwp = hotel_way_place(f.place): way_point_only(ui_folk, hwp)
                 if topics[c - nrep].topic == .news:
                     ui_news += 1
                     # (what they've heard: now and then, something going on he could look into)
@@ -15892,6 +16382,8 @@ draw_ui = ():
                   leisure_line = spare_room_words(living_world, f.person)
                   ui = .leisure
                   leisure_ui = 4
+              else if way_offer and c == way_k:
+                  talk_way_menu = true
               else if c >= 0:
                   # (a parting word, left hanging over the quay as one walks off)
                   bye = living.talk(living_world, f.person, .farewell, living_world.player)
