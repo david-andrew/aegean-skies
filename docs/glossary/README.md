@@ -2856,7 +2856,7 @@ On the rivers branch until it lands.
   `ambient_pose`, `ambient_hold`, `ambient_near`, `ambient_draw`, `ambient_density`);
   `src/crowd_figures.jo` (`CrowdLook`, `crowd_look`, `crowd_figure`, `crowd_parts`, `draw_crowd`);
   `crowd_name`, `crowd_meet`, `crowd_hold_step`, `crowd_check_met` in `aegean.jo`.
-- **Rules:** 24 looks a town (`AMBIENT_LOOKS`), each a full figure built once
+- **Rules:** 16 looks a town (`AMBIENT_LOOKS`), each a full figure built once
   (a few tenths of a millisecond, under the layout's frame budget) and worn by a few people; each
   look's parts drawn in one instanced call (`obj_inst_sh`) for all who wear it, within 150 m,
   posed by the same arithmetic as `draw_figure`. The one the view is on is drawn alone through
