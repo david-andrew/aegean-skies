@@ -1,0 +1,90 @@
+use '../src/living_types.jo'
+use '../src/living_seed.jo'
+use '../src/living_sim.jo'
+use '../src/living_save.jo'
+use '../src/living_save_codec.jo'
+use '../src/living_checks.jo'
+use '../src/game_session.jo'
+use '../src/war_checkpoint.jo'
+use '../src/vessel_types.jo'
+use '../src/combat.jo'
+use '../src/pilot.jo'
+use '../src/traffic.jo'
+use '../src/living_scene.jo'
+use '../src/world_point.jo'
+
+# Clock runs at half the old rate: 240 ticks (4 real seconds) per game minute,
+# 4 real minutes per game hour, 96 real minutes per game day. Older saves made
+# under 120 ticks/minute migrate cleanly on load.
+
+test "clock rate is half the old rate and travel minutes match":
+    assert(TICKS_PER_MINUTE == 240)
+    assert(SECONDS_PER_GAME_MINUTE == 4)
+    assert(physical_seconds(TICKS_PER_MINUTE) == 4.0)
+    assert(physical_seconds(TICKS_PER_MINUTE * 60) == 240.0)
+    assert(physical_seconds(TICKS_PER_MINUTE * 1440) == 5760.0)
+    # 12 km at 60 m/s = 200 real seconds = 50 game minutes at 4 real s/game min.
+    assert(route_minutes(12000.0, 60) == 50)
+    w = build_world(u64(7))
+    advance_minutes(w, 10)
+    assert(w.minute == 10 and w.tick == 2400)
+    assert(invariant_errors(w).len() == 0)
+
+test "older 120-tick saves migrate cleanly across binary, text, session and war checkpoint":
+    w = build_world(u64(42))
+    advance_minutes(w, 30)
+    c = w.people[w.player].craft
+    w.aircraft[c].model_index = 0
+    flyer = make_flyer(.gull, 0, [], w.aircraft[c].pose.pos, 0)
+    flyer.state.fuel = f64(w.aircraft[c].fuel_ml) / 1000.0
+    flyer.state.position = w.aircraft[c].pose.pos
+    adapter = SceneAdapter()
+    bind_living_player(flyer, w, adapter)
+    session = GameSession(flyer=flyer, player_position=w.people[w.player].pose.pos, player_point=world_point(w.people[w.player].pose.pos), world_time=120.0, accumulator=0.004)
+    game = capture_game(w, PresentationState(last_hail_tick=w.tick - 60), session, [], adapter, VesselFleet(), Battle(), 123, SaveSummary(minute=w.minute, place_name="Porto Vecchio"))
+    assert(game is SaveGame)
+    # Rewrite the saved snapshot back onto the legacy 120 ticks/minute clock (minute 30 -> tick 3630).
+    old = game
+    old_tick = old.world.minute * OLD_TICKS_PER_MINUTE + 30
+    shift = old.world.tick - old_tick
+    old.world.tick = old_tick
+    loop i in 0..old.world.people.len():
+        if old.world.people[i].last_command_tick >= 0: old.world.people[i].last_command_tick -= shift
+    loop i in 0..old.world.aircraft.len():
+        if old.world.aircraft[i].last_scene_tick >= 0: old.world.aircraft[i].last_scene_tick -= shift
+        if old.world.aircraft[i].scene_extension_tick >= 0: old.world.aircraft[i].scene_extension_tick -= shift
+    loop id in old.world.trips.keys():
+        old.world.trips[id].departed_tick -= shift
+        old.world.trips[id].last_tick -= shift
+        old.world.trips[id].eta_tick -= shift
+    loop id in old.world.daily_life.keys():
+        old.world.daily_life[id].last_tick -= shift
+    loop i in 0..old.world.households.len():
+        old.world.households[i].last_tick -= shift
+    loop id in old.world.cargo_sources.keys():
+        if old.world.cargo_sources[id].born_tick >= 0: old.world.cargo_sources[id].born_tick /= 2
+    old.world.war.scene_tick = old_tick
+    old.world.war.scene_checkpoint = to_text(WarSceneCheckpoint(tick=old_tick, fleet=VesselFleet(), battle=Battle()))
+    old.presentation.last_hail_tick = old_tick - 60
+    old_session = from_text[GameSession](old.session)
+    assert(old_session is GameSession)
+    old_session.tick = old_tick
+    old.session = to_text(old_session)
+    # Round-trip through both schema-3 binary and schema-2 packed text saves.
+    bin_pair = pack_binary_living_save(old)
+    restored_bin = unpack_binary_living_save(bin_pair.0, bin_pair.1)
+    assert(restored_bin != none)
+    rb = restored_bin!
+    assert(rb.world.minute == 30 and rb.world.tick == 30 * TICKS_PER_MINUTE + 60)
+    assert(validate_save_world(rb.world) == "")
+    assert(invariant_errors(rb.world).len() == 0)
+    rs = read_game_session(rb)
+    assert(rs is GameSession and rs.tick == rb.world.tick)
+    fleet = VesselFleet(); battle = Battle()
+    assert(restore_war_scene(rb.world, fleet, battle))
+    advance_minutes(rb.world, 15)
+    assert(rb.world.minute == 45 and invariant_errors(rb.world).len() == 0)
+    packed_txt = pack_living_save(old)
+    restored_txt = unpack_living_save(packed_txt)
+    assert(restored_txt != none and restored_txt!.world.tick == rb.world.tick - 15 * TICKS_PER_MINUTE)
+    assert(validate_save_world(restored_txt!.world) == "")
