@@ -6,7 +6,7 @@ It runs in CI (`.github/workflows/tests.yml` via `tools/ci_test_shard.py`, under
 
 ## Camera scripts
 
-All nine scripts render fixed-step camera sequences at `384x216` through the game's real terrain, canopy, crown, aircraft, sea, caustic, town-light and screen-space outline shaders:
+All ten scripts render fixed-step camera sequences at `384x216` through the game's real terrain, canopy, crown, aircraft, sea, caustic, town-light and screen-space outline shaders:
 
 | Clip | Frames | What it tests |
 | --- | ---: | --- |
@@ -19,6 +19,7 @@ All nine scripts render fixed-step camera sequences at `384x216` through the gam
 | `horizon_woods` | 16 | Slow pan along a wooded land/sky skyline, outline on vs off |
 | `night_approach` | 28 | Slow night approach from 40 km into Kalyrassa harbour across 7 distance bands (town lights glow → cluster → window/lamp hand-over) |
 | `caustics_beach` | 14 | 20 m hover over sunlit Leuke Beach (6 frames) + 30 m slow flyover along the shallows with 3D depth reprojection (8 frames) |
+| `pan_4000` | 24 | Slow 360° pan at 4 km over a mainland coast near Kalyrassa (6 sectors × 4 steps of 1.2°) with the far sea and the sea drawn: the near sea's hand-over to the far sea, the horizon's edge and its air, and the far land |
 
 ## Metrics
 

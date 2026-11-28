@@ -652,7 +652,7 @@ def main():
         by_clip.setdefault(it['clip'], []).append(it)
 
     results = {}
-    for clip in ('still', 'pan_150', 'pan_800', 'flight_300', 'chase_dusk', 'horizon_woods', 'night_approach', 'caustics_beach', 'approach_woods'):
+    for clip in ('still', 'pan_150', 'pan_800', 'flight_300', 'chase_dusk', 'horizon_woods', 'night_approach', 'caustics_beach', 'approach_woods', 'pan_4000'):
         if clip in by_clip:
             results[clip] = evaluate_clip(clip, by_clip[clip], cap_dir, worst_dir)
 
