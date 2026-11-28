@@ -6,25 +6,28 @@
 #   aviation cockpit threshold ~ 1e-6 lx per ICAO Annex 3) together with 1930s visual night
 #   pilotage manuals (U.S. CAA Practical Air Navigation, Thoburn C. Lyon; P.V.H. Weems, Air
 #   Navigation; FAA Airplane Flying Handbook, Night Operations): on a clear night, 1930s city
-#   lights and their low glow read 30-50+ statute miles (~50-75 km, limited by terrain and Earth
-#   curvature), medium towns 20-30 miles (~35-50 km), and small villages as a faint handful of
-#   points to ~15-25 miles (~25-40 km). Haze, dust, fog and rain steepen extinction and veil far
+#   lights and their sky-glow read 30-50+ statute miles (~50-75 km, limited by terrain and Earth
+#   curvature), medium towns 15-30 miles (~25-50 km), and small villages as a faint handful of
+#   points to ~10-20 miles (~15-30 km). Haze, dust, fog and rain steepen extinction and veil far
 #   lights while subtly widening the soft scatter halo of nearby ones.
 #
 # Design:
 #   - One procedural light layout per settlement, built lazily from the settlement's real extent
 #     (legacy Town houses/quays, regional place_inside dry land + old quarter + port piers, or
 #     Neravessa's canal banks and lagoon) and real terrain elevation. No graphics tiers.
-#   - Three smoothly handing-over layers in one additive instanced draw:
-#       0: waterfront/quay lamps and lighthouses (small bright core + halo, kept into the harbour)
-#       1: residential quarter clusters (warm pools on the land, contracting smoothly into the
-#          individual lit building windows between 2.4 km and 350 m)
-#       2: broad soft city/town glow (for cities and towns, fading smoothly out between 3.5 km
-#          and 600 m as the town resolves into individual windows and lamps)
-#   - Second tiny additive instanced draw for coastal harbour reflections on water: curved strips
-#     lying on y = 0.25 m extending from the shoreline toward the camera, hardware depth-clipped
-#     against quays, headlands and islands, strongest on calm sea and broken up by wind/rain.
-#   - Daytime cost: zero (early return when sun_y > 0.11). No texture fetches in either fragment
+#   - Coarse 16x16 spatial grid (40 km cells) built once per settlement generation so open-sea
+#     frames with no town in view visit zero settlements, emit zero GPU draws or zones (~0 ms).
+#   - Four smoothly handing-over layers in one additive instanced draw:
+#       0 (TL_LAMP):    waterfront/quay lamps and lighthouses (crisp core + halo into harbour)
+#       1 (TL_CLUSTER): warm residential quarter pools (contracting smoothly into lit windows)
+#       2 (TL_HALO):    broad town/city warm glow patch sized to the settlement's real extent
+#       3 (TL_SKYGLOW): faint warm sky-glow dome over cities (and softly over towns) illuminating
+#                       low air & cloud bases so a city's glow reads softly even past a ridge
+#   - Second tiny additive instanced draw for narrow vertical broken reflection streaks under
+#     individual shore lights: curved 4-segment water-level (y = 0.25 m) strips hardware depth-
+#     clipped by piers/quays/headlands; long and broken on calm/gentle swell, shorter and more
+#     scattered when windy, and gone in rough sea.
+#   - Daytime cost: zero (early return when sun_y >= 0.115). No texture fetches in either fragment
 #     shader; strictly WebGL2-safe attributes, varyings and uniform counts.
 use 'world.jo'
 use 'geography.jo'
@@ -42,9 +45,13 @@ use 'depth_space.jo'
 const TL_LAMP = 0
 const TL_CLUSTER = 1
 const TL_HALO = 2
+const TL_SKYGLOW = 3
 
 const TL_SUN_CUTOFF = 0.115         # sun_y above which no town lights are lit (zero daytime cost)
-const TL_MAX_RANGE = 78000.0        # outer query cap (metres)
+const TL_MAX_RANGE = 86000.0        # outer query cap (metres)
+const TL_GRID_N = 16                # 16x16 coarse spatial grid (40 km cells covering +-320 km)
+const TL_GRID_HALF = 320000.0
+const TL_CELL_SIZE = 40000.0
 
 struct TownLightNode:
     x: f64
@@ -52,11 +59,11 @@ struct TownLightNode:
     y_near: f64                     # true fine terrain + lift (used close up)
     y_far: f64                      # max(fine, macro) + lift (avoids coarse far-terrain burial)
     radius: f32                     # world radius (metres)
-    min_ang: f32                    # minimum angular radius (radians) to prevent sub-pixel shimmer
+    min_ang: f32                    # minimum angular radius (radians) so far towns stay readable
     strength: f32                   # base luminous weight
     tint: vec3                      # warm incandescent / oil-lamp RGB tint
     phase: f32                      # 0..1 staggered dusk turn-on phase
-    kind: int                       # TL_LAMP, TL_CLUSTER, TL_HALO
+    kind: int                       # TL_LAMP, TL_CLUSTER, TL_HALO, TL_SKYGLOW
     near_lo: f32                    # distance (m) where near fade reaches 0
     near_hi: f32                    # distance (m) where near fade reaches 1
 
@@ -65,11 +72,11 @@ struct TownReflNode:
     z: f64
     out_x: f32                      # unit seaward direction
     out_z: f32
-    half_width: f32                 # half-width along the waterfront (metres)
-    reach: f32                      # maximum seaward reflection stretch (metres)
+    half_width: f32                 # narrow half-width of one vertical light streak (metres)
+    reach: f32                      # maximum seaward reflection stretch on calm water (metres)
     strength: f32                   # base reflection brightness
     tint: vec3                      # warm amber-gold reflection tint
-    phase: f32                      # dusk turn-on phase
+    phase: f32                      # dusk turn-on phase & independent ripple seed
     omni: bool = false              # true on sheltered canal/lagoon water (visible from any azimuth)
 
 struct TownLightSet:
@@ -79,10 +86,10 @@ struct TownLightSet:
     nodes: TownLightNode[]
     refls: TownReflNode[]
 
-# GPU instance layouts (kept minimal for WebGL2 / Adreno 650 / Intel UHD 620)
+# GPU instance layouts (minimal for WebGL2 / Adreno 650 / Intel UHD 620)
 struct TownLightInst:
     pos_half: vec4                  # xyz: curved local position (depth-biased), w: billboard half-size (m)
-    world_y: vec4                   # xyz: un-biased local world position (for behind_sea), w: profile kind (0..2)
+    world_y: vec4                   # xyz: un-biased local world position (for behind_sea), w: profile kind (0..3)
     color: vec4                     # xyz: pre-scaled linear warm RGB, w: 1.0
 
 struct TownLightParams:
@@ -98,7 +105,7 @@ struct TownLightOut:
     color: vec4                     # xyz: RGB, w: profile kind
 
 struct TownReflInst:
-    anchor: vec4                    # xyz: local shoreline anchor (y=0.25), w: half-width (m)
+    anchor: vec4                    # xz: local shoreline anchor, y: per-streak ripple seed (rad), w: half-width (m)
     axis: vec4                      # xy: unit stretch dir on XZ, z: length (m), w: shimmer amp (0..1)
     color: vec4                     # xyz: pre-scaled warm RGB, w: bias (m)
 
@@ -106,13 +113,13 @@ struct TownReflParams:
     vp: mat4
     cam: vec3
     time: f32
-    origin: vec3
+    rough: f32                      # sea roughness 0 (glassy calm) .. 1 (windy/choppy)
     warp_a: vec4
     warp_b: vec4
 
 struct TownReflOut:
     pos: vec4
-    world: vec3
+    world: vec3                     # xyz: local water point (y carries per-streak seed for fs)
     uv: vec2
     color: vec4                     # xyz: RGB, w: shimmer amp
 
@@ -137,15 +144,23 @@ town_light_fs = (i: TownLightOut, u: TownLightParams) -> vec4:
     core: f32 = 0.0
     if kind < 0.5:
         # Crisp lamp / lighthouse: bright warm-white core with soft golden aureole.
-        core = exp(-r2 * 26.0)
-        gain = (core * 1.15 + exp(-r2 * 5.2) * 0.34) * edge
+        core = exp(-r2 * 22.0)
+        gain = (core * 1.25 + exp(-r2 * 4.5) * 0.42) * edge
     else if kind < 1.5:
-        # Town quarter / village cluster: soft warm pool with a brighter heart.
-        core = exp(-r2 * 14.0)
-        gain = (core * 0.72 + exp(-r2 * 3.8) * 0.44) * edge
+        # Town quarter / village cluster: soft warm pool with a bright heart.
+        core = exp(-r2 * 12.0)
+        gain = (core * 0.80 + exp(-r2 * 3.4) * 0.52) * edge
+    else if kind < 2.5:
+        # Broad warm ground glow blob sized to the town's footprint.
+        gain = exp(-r2 * 3.0) * edge
     else:
-        # Broad atmospheric city/town glow: ultra-soft Gaussian bloom.
-        gain = exp(-r2 * 3.4) * edge
+        # Faint warm sky-glow dome rising over a city or town (scattered on low air & cloud bases).
+        # u.up is guaranteed world-upward (+p.y = sky), so fade cleanly below the horizon base.
+        # Steep Gaussian + wide outer taper keeps the dome completely free of any outer ring.
+        dome = exp(-p.x * p.x * 4.2 - p.y * p.y * 5.2)
+        up_mask = smoothstep(-0.72, 0.22, p.y)
+        sky_edge = 1.0 - smoothstep(0.48, 1.0, r)
+        gain = dome * up_mask * sky_edge
     # Slightly whiter-gold in the brightest heart of a lamp or dense core (over-bright emitter feel).
     col = mix(i.color.xyz, i.color.xyz * vec3(1.06, 1.12, 1.24), core * 0.45)
     vec4(col * gain, 1.0)
@@ -159,39 +174,49 @@ town_refl_vs = (v: Vertex3D, inst: TownReflInst, u: TownReflParams) -> TownReflO
     sy = v.uv.y * inst.axis.z
     dir = inst.axis.xy
     side = vec2(-dir.y, dir.x)
-    # Widen gently as the reflection column stretches toward the observer.
-    spread = 1.0 + v.uv.y * 0.35
+    # Narrow vertical column gently widening seaward (more lateral scatter when windy).
+    spread = 1.0 + v.uv.y * (0.30 + u.rough * 0.95)
     xz = inst.anchor.xz + dir * sy + side * (sx * spread)
-    world = vec3(xz.x, inst.anchor.y, xz.y)
+    world = vec3(xz.x, 0.25, xz.y)
     curved = render_warped(world, u.cam, u.warp_a, u.warp_b)
     to_cam = u.cam - curved
     len = max(length(to_cam), 1.0)
     biased = curved + to_cam * (min(inst.color.w, len * 0.1) / len)
-    TownReflOut(u.vp * vec4(biased, 1), world, v.uv, vec4(inst.color.xyz, inst.axis.w))
+    # Pass water XZ + per-streak seed in world.y (behind_sea checks XZ & water elevation 0.25).
+    TownReflOut(u.vp * vec4(biased, 1), vec3(xz.x, inst.anchor.y, xz.y), v.uv, vec4(inst.color.xyz, inst.axis.w))
 
 town_refl_fs = (i: TownReflOut, u: TownReflParams) -> vec4:
-    if behind_sea(i.world, u.cam): discard()
+    if behind_sea(vec3(i.world.x, 0.25, i.world.z), u.cam): discard()
     u_x = i.uv.x * 2.0 - 1.0
     v_y = i.uv.y
-    # Smooth transverse Gaussian and shoreline-to-seaward exponential taper; strictly 0 at all edges.
-    across = exp(-u_x * u_x * 3.4) * (1.0 - smoothstep(0.72, 1.0, abs(u_x)))
-    along = smoothstep(0.0, 0.09, v_y) * exp(-v_y * 2.55) * (1.0 - smoothstep(0.80, 1.0, v_y))
-    # Gentle broken horizontal ripple shimmer on water (radial toward camera = horizontal bars,
-    # never a diagonal grid), damped smoothly with distance for zero far flicker.
+    seed = i.world.y
+    rough = u.rough
+    # Radial distance from camera = strictly horizontal wave crests perpendicular to view ray.
     rad = length(i.world.xz - u.cam.xz)
-    wob = sin(u_x * 4.2 + u.time * 0.45) * 1.1 + cos(u_x * 2.1 - u.time * 0.32) * 0.7
-    w1 = sin(rad * 0.34 + wob + u.time * 1.45)
-    w2 = sin(rad * 0.73 - wob * 0.65 - u.time * 1.05)
-    w3 = sin(rad * 1.41 + u_x * 2.7 + u.time * 2.10)
-    ripple = clamp(0.50 + 0.28 * w1 + 0.16 * w2 + 0.08 * w3, 0.0, 1.0)
-    shimmer = mix(1.0, 0.48 + 0.88 * ripple * ripple, i.color.w)
+    # Sideways wave-tilt wobble along the vertical reflection streak (stronger when windy).
+    lat_wob = sin(rad * 0.31 + seed * 3.7 + u.time * 1.15) * (0.16 + 0.36 * rough) + sin(rad * 0.71 - seed * 2.3 - u.time * 0.85) * (0.10 + 0.24 * rough)
+    ux = u_x - lat_wob
+    # Tight vertical column profile, scattering wider in wind; strictly zero at strip edges.
+    across = exp(-ux * ux * mix(7.2, 3.8, rough)) * (1.0 - smoothstep(0.76, 1.0, abs(u_x)))
+    # Sharp broken horizontal wave-facet dashes along the vertical streak (dark troughs between glints).
+    w1 = sin(rad * 0.62 + seed * 5.1 + u.time * 1.65)
+    w2 = sin(rad * 1.37 - seed * 2.9 - u.time * 1.25 + u_x * 1.7)
+    w3 = sin(rad * 2.63 + seed * 7.3 + u.time * 2.30 - u_x * 2.2)
+    wave = 0.50 + 0.30 * w1 + 0.14 * w2 + 0.06 * w3
+    # Gentle swell: long crisp broken dashes; windy: sparser scattered glints.
+    broken = smoothstep(mix(0.24, 0.54, rough), mix(0.76, 0.90, rough), wave)
+    # Subtle soft mirror core near shoreline on very calm water, breaking into glints seaward.
+    shore_sheen = (1.0 - rough) * 0.16 * (1.0 - smoothstep(0.0, 0.42, v_y))
+    shimmer = mix(0.55, shore_sheen + broken * 1.55, i.color.w)
+    # Long taper on gentle swell, shortening rapidly in wind; zero at strip ends.
+    along = smoothstep(0.0, 0.04, v_y) * exp(-v_y * mix(1.65, 3.40, rough)) * (1.0 - smoothstep(0.82, 1.0, v_y))
     vec4(i.color.xyz * (across * along * shimmer), 1.0)
 
 town_refl_fs_log = (i: TownReflOut, u: TownReflParams) -> vec4:
     set_depth(world_depth_encode(1.0 / i.pos.w))
     town_refl_fs(i, u)
 
-# ---------------- persistent GPU resources & settlement cache ----------------
+# ---------------- persistent GPU resources & spatial grid cache ----------------
 
 town_light_sh: Shader
 town_refl_sh: Shader
@@ -203,6 +228,11 @@ town_lights_ready = false
 
 town_lights_gen = -1
 town_lights_cache: TownLightSet[]
+tl_grid: int[][]
+tl_cx: f64[]
+tl_cz: f64[]
+tl_max_r: f64[]
+tl_reach: f64[]
 
 # Build a 4-segment strip along v in [0, 1] so curved reflections hug Earth's spherical sea.
 _build_refl_strip = () -> Mesh:
@@ -238,7 +268,7 @@ warm_up_town_lights = ():
     when TARGET == "wasm":
         origin = render_origin(scene_camera()); vp = render_view_proj(origin); cam = render_eye(origin)
         draw_instanced(town_light_sh, town_light_mesh, [TownLightInst(vec4(0, 0, 0, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0))], TownLightParams(vp, cam, vec3(1, 0, 0), vec3(0, 1, 0)))
-        draw_instanced(town_refl_sh, town_refl_mesh, [TownReflInst(vec4(0, 0, 0, 0), vec4(0, 1, 0, 0), vec4(0, 0, 0, 0))], TownReflParams(vp, cam, 0.0, origin, vec4(0, 0, 0, 1), vec4(0, 0, 0, 0)))
+        draw_instanced(town_refl_sh, town_refl_mesh, [TownReflInst(vec4(0, 0, 0, 0), vec4(0, 1, 0, 0), vec4(0, 0, 0, 0))], TownReflParams(vp, cam, 0.0, 0.0, vec4(0, 0, 0, 1), vec4(0, 0, 0, 0)))
 
 # ---------------- pure physical helpers (also unit-tested) ----------------
 
@@ -246,20 +276,20 @@ _tl_rand = (a: int, b: int) -> f64:
     f64(place_hash(a, b) % 10000) / 10000.0
 
 # Clear-night maximum visibility range (metres) by settlement class, grounded in Allard's Law
-# and 1930s visual night pilotage (cities ~70 km, ports/markets ~50 km, lighthouses ~45 km,
-# villages ~40 km, isolated farms/chapels ~18 km).
+# and 1930s visual night pilotage (cities ~65-80 km, ports/markets ~50-56 km, lighthouses ~48 km,
+# villages ~30-38 km, isolated farms/chapels ~18 km).
 town_light_range = (s: WorldSettlement) -> f64:
-    if s.kind == .capital or s.id == CANAL_CITY_ID: return 74000.0
-    if s.kind == .port or s.kind == .market: return 52000.0
-    if s.kind == .lighthouse: return 46000.0
+    if s.kind == .capital or s.id == CANAL_CITY_ID: return 82000.0
+    if s.kind == .port or s.kind == .market: return 56000.0
+    if s.kind == .lighthouse: return 48000.0
     if s.kind == .fishing or s.kind == .hill or s.kind == .hamlet or s.kind == .monastery:
         if s.size <= 4: return 22000.0
-        return 42000.0
+        return 38000.0
     18000.0
 
 # Staggered dusk turn-on (0 in daylight .. 1 at night) aligned with objects.jo obj_finish_light.
 # Quay/street lamps light earliest around sunset; residential windows/clusters follow through
-# civil and early nautical twilight; broad city sky-glow blooms as the twilight sky darkens.
+# civil and early nautical twilight; broad town halo & city sky-glow bloom as the sky darkens.
 town_light_dusk = (sun_y: f64, phase: f64, kind: int) -> f64:
     if sun_y >= TL_SUN_CUTOFF: return 0.0
     if kind == TL_LAMP:
@@ -268,6 +298,10 @@ town_light_dusk = (sun_y: f64, phase: f64, kind: int) -> f64:
     if kind == TL_CLUSTER:
         onset = mix(0.055, -0.125, phase)
         return 1.0 - smoothstep(onset - 0.055, onset + 0.055, sun_y)
+    if kind == TL_SKYGLOW:
+        # Sky-glow dome over a city only becomes legible once civil twilight deepens.
+        if sun_y >= 0.02: return 0.0
+        return 1.0 - smoothstep(-0.24, 0.01, sun_y)
     # Broad city/town glow: follows overall lit window share and rises cleanly as sky darkens.
     lit_share = 1.0 - smoothstep(-0.16, 0.04, sun_y)
     sky_dark = 0.28 + 0.72 * (1.0 - smoothstep(-0.28, -0.01, sun_y))
@@ -281,27 +315,34 @@ town_light_extinction = (d: f64, cam_y: f64, node_y: f64, fog_density: f64, turb
     dh = abs(max(node_y, 0.0) - max(cam_y, 0.0)) * 0.0012
     mean_air = exp(-low * 0.0012) * (if dh < 0.01: 1.0 - dh * 0.5 else: (1.0 - exp(-dh)) / dh)
     height_scale = 0.18 + 0.82 * mean_air
-    turb_mult = 1.0 + max(turbidity, 0.0) * 2.15 + min(turbidity, 0.0) * 0.35
-    # Luminous sources carry roughly 2.6x further than daytime contrast visibility (Allard vs Koschmieder).
-    sigma = fog_density * 0.38 * turb_mult + extra_rain * 0.00018 + extra_fog * 0.00052
+    turb_mult = 1.0 + max(turbidity, 0.0) * 3.4 + min(turbidity, 0.0) * 0.35
+    # Luminous sources on a clear Mediterranean night carry ~4x further than daytime contrast haze,
+    # while haze (turbidity), rain and marine fog steepen extinction sharply.
+    sigma = fog_density * 0.24 * turb_mult + extra_rain * 0.00022 + extra_fog * 0.00056
     tau = max(d - 60.0, 0.0) * sigma * height_scale
     trans = exp(-tau) * (1.0 - clamp(deck_block, 0.0, 0.94))
     (trans, tau)
 
-# Calm-sea factor for harbour water reflections (1.0 glassy calm .. 0.10 gale/storm).
+# Calm-sea factor for harbour water reflections:
+#   1.0 glassy calm / gentle swell -> fades in moderate wind -> 0.0 (gone) in rough sea / gale.
 town_light_calm = (wind_speed: f64, rain: f64 = 0.0) -> f64:
-    clamp(1.0 - smoothstep(2.0, 14.0, wind_speed), 0.10, 1.0) * (1.0 - clamp(rain, 0.0, 1.0) * 0.72)
+    clamp(1.0 - smoothstep(1.5, 11.5, wind_speed), 0.0, 1.0) * (1.0 - clamp(rain, 0.0, 1.0) * 0.85)
+
+# Sea roughness factor for reflection streak shortening and sideways scatter (0 calm .. 1 windy/rough).
+town_light_roughness = (wind_speed: f64, rain: f64 = 0.0) -> f64:
+    clamp(smoothstep(1.5, 10.0, wind_speed) + clamp(rain, 0.0, 1.0) * 0.45, 0.0, 1.0)
 
 # Warm incandescent / oil-lamp tint with atmospheric reddening through optical depth tau.
 _tl_warm_tint = (seed: int, kind: int) -> vec3:
     u = f32(_tl_rand(seed, 41))
-    if kind == TL_LAMP: return mix(vec3(1.0, 0.80, 0.44), vec3(1.0, 0.88, 0.58), u)
-    if kind == TL_HALO: return vec3(1.0, 0.60, 0.26)
-    mix(vec3(1.0, 0.66, 0.30), vec3(1.0, 0.77, 0.43), u)
+    if kind == TL_LAMP: return mix(vec3(1.0, 0.82, 0.46), vec3(1.0, 0.90, 0.62), u)
+    if kind == TL_HALO: return vec3(1.0, 0.62, 0.27)
+    if kind == TL_SKYGLOW: return vec3(1.0, 0.58, 0.26)
+    mix(vec3(1.0, 0.68, 0.32), vec3(1.0, 0.79, 0.45), u)
 
 _tl_redden = (tint: vec3, tau: f64) -> vec3:
     t = clamp(tau, 0.0, 6.0)
-    tint * vec3(1.0, f32(exp(-0.16 * t)), f32(exp(-0.38 * t)))
+    tint * vec3(1.0, f32(exp(-0.14 * t)), f32(exp(-0.34 * t)))
 
 # ---------------- settlement light layout builder ----------------
 
@@ -315,10 +356,12 @@ _tl_push_node = (out: mut TownLightSet, x: f64, z: f64, y_near: f64, y_far: f64,
     out.max_height = max(out.max_height, max(y_near, y_far) + radius)
 
 _tl_add_legacy = (out: mut TownLightSet, s: WorldSettlement, tw: Town):
-    seed = s.seed + 700
+    seed = s.seed
     is_port = s.kind == .port
     is_hotel = s.size == 1 and s.name == "Hotel Selene"
-    # 1. Quay / waterfront lamps along the real quays (same spacing as add_lamp in objects.jo)
+    # 1. Quay / harbour lamps + matching narrow vertical water-reflection streaks under each lamp
+    sea_out = normalize(tw.out)
+    refl_added = 0
     loop qi in 0..tw.quays.len():
         q = tw.quays[qi]
         dq = q.b - q.a; ql = f64(length(dq))
@@ -328,23 +371,20 @@ _tl_add_legacy = (out: mut TownLightSet, s: WorldSettlement, tw: Town):
         loop k < ql - 4.0:
             lp = q.a + dq * f32(k / ql)
             ph = _tl_rand(seed + qi * 31, idx)
-            _tl_push_node(out, f64(lp.x), f64(lp.y), QUAY_TOP + 3.6, QUAY_TOP + 4.5, 3.0, 0.0024, if is_port: 0.95 else: 0.78, _tl_warm_tint(seed + idx, TL_LAMP), ph, TL_LAMP, 12.0, 55.0)
+            _tl_push_node(out, f64(lp.x), f64(lp.y), QUAY_TOP + 3.6, QUAY_TOP + 4.5, 3.2, 0.0034, if is_port: 1.15 else: 0.95, _tl_warm_tint(seed + idx, TL_LAMP), ph, TL_LAMP, 12.0, 55.0)
+            if refl_added < (if is_port: 12 else: 4):
+                rp = lp + sea_out * 14.0
+                hw = (if is_port: 4.5 else: 3.5) + 2.2 * _tl_rand(seed + qi * 17, idx + 3)
+                reach = (if is_port: 820.0 else: 460.0) * (0.80 + 0.35 * _tl_rand(seed + 13, idx))
+                str_ = (if is_port: 0.78 else: 0.56) * (0.78 + 0.38 * _tl_rand(seed + 29, idx))
+                out.refls.push(TownReflNode(f64(rp.x), f64(rp.y), sea_out.x, sea_out.y, f32(hw), f32(reach), f32(str_), _tl_warm_tint(seed + idx, TL_LAMP), f32(ph), false))
+                refl_added += 1
             k += 26.0
             idx += 1
-    # 2. Waterfront calm-sea reflection strips off the main harbour
-    sea_out = normalize(tw.out)
-    tangent = vec2(-sea_out.y, sea_out.x)
-    if is_port:
-        loop k in -1..2:
-            p = tw.center.xz + tangent * f32(f64(k) * 58.0) + sea_out * 22.0
-            out.refls.push(TownReflNode(f64(p.x), f64(p.y), sea_out.x, sea_out.y, 48.0, 960.0, 0.54, vec3(1.0, 0.64, 0.26), f32(_tl_rand(seed, 50 + k)), false))
-    else if is_hotel:
+    if refl_added == 0 and (is_hotel or s.size >= 8):
         p = tw.center.xz + sea_out * 18.0
-        out.refls.push(TownReflNode(f64(p.x), f64(p.y), sea_out.x, sea_out.y, 22.0, 360.0, 0.34, vec3(1.0, 0.68, 0.30), 0.15, false))
-    else if s.size >= 8:
-        p = tw.center.xz + sea_out * 18.0
-        out.refls.push(TownReflNode(f64(p.x), f64(p.y), sea_out.x, sea_out.y, 30.0, 520.0, 0.32, vec3(1.0, 0.63, 0.26), 0.25, false))
-    # 3. House clusters from actual built house coordinates
+        out.refls.push(TownReflNode(f64(p.x), f64(p.y), sea_out.x, sea_out.y, 4.5, 420.0, 0.55, vec3(1.0, 0.72, 0.34), 0.15, false))
+    # 2. House clusters from actual built house coordinates
     nh = tw.houses.len()
     if nh > 0:
         target = if is_port: 18 else: if nh >= 12: 6 else: nh
@@ -357,19 +397,20 @@ _tl_add_legacy = (out: mut TownLightSet, s: WorldSettlement, tw: Town):
             if k % step != 0 and placed < target: continue
             if placed >= target + 2: continue
             h_f, h_m = _tl_height(hp.xz, true)
-            r = if is_port: 36.0 else: if is_hotel: 12.0 else: 18.0
-            ang = if is_port: 0.0032 else: 0.0025
-            str_ = if is_port: 0.62 else: if is_hotel: 0.72 else: 0.60
-            lo = if is_port: 480.0 else: if is_hotel: 40.0 else: 260.0
+            r = if is_port: 38.0 else: if is_hotel: 12.0 else: 18.0
+            ang = if is_port: 0.0046 else: 0.0038
+            str_ = if is_port: 0.78 else: if is_hotel: 0.85 else: 0.78
+            lo = if is_port: 500.0 else: if is_hotel: 40.0 else: 280.0
             hi = if is_port: 2400.0 else: if is_hotel: 400.0 else: 1500.0
             _tl_push_node(out, f64(hp.x), f64(hp.z), max(h_f, 1.5) + 6.5, max(h_m, 1.5) + 8.5, r, ang, str_, _tl_warm_tint(seed + k * 7, TL_CLUSTER), _tl_rand(seed + 9, k), TL_CLUSTER, lo, hi)
             placed += 1
-        # Broad warm glow halo sized to the town's actual centroid & extent (ports only, tiny warmth for medium villages)
+        # Broad warm glow halo + subtle town sky-glow dome (ports only)
         cx = sum_x / f64(nh); cz = sum_z / f64(nh); cy = sum_y / f64(nh)
         if is_port:
-            _tl_push_node(out, cx, cz, cy + 28.0, cy + 34.0, 170.0, 0.0056, 0.28, _tl_warm_tint(seed, TL_HALO), 0.35, TL_HALO, 700.0, 3400.0)
+            _tl_push_node(out, cx, cz, cy + 32.0, cy + 40.0, 185.0, 0.0110, 0.36, _tl_warm_tint(seed, TL_HALO), 0.35, TL_HALO, 700.0, 3400.0)
+            _tl_push_node(out, cx, cz, cy + 140.0, cy + 150.0, 460.0, 0.0210, 0.12, _tl_warm_tint(seed, TL_SKYGLOW), 0.40, TL_SKYGLOW, 1100.0, 4400.0)
         else if nh >= 14:
-            _tl_push_node(out, cx, cz, cy + 16.0, cy + 20.0, 75.0, 0.0036, 0.12, _tl_warm_tint(seed, TL_HALO), 0.45, TL_HALO, 420.0, 2200.0)
+            _tl_push_node(out, cx, cz, cy + 16.0, cy + 20.0, 78.0, 0.0064, 0.20, _tl_warm_tint(seed, TL_HALO), 0.45, TL_HALO, 420.0, 2200.0)
 
 _tl_add_canal_city = (out: mut TownLightSet, s: WorldSettlement):
     seed = s.seed
@@ -386,74 +427,80 @@ _tl_add_canal_city = (out: mut TownLightSet, s: WorldSettlement):
             p = a.xy + side * f32(sign * w_half)
             h_f, h_m = _tl_height(p, false)
             y_b = max(h_f, 5.0) + 7.0
-            _tl_push_node(out, f64(p.x), f64(p.y), y_b, max(h_m, 5.0) + 10.0, 58.0, 0.0034, 0.56, _tl_warm_tint(seed + st * 11 + int(sign * 3.0), TL_CLUSTER), _tl_rand(seed, st * 4 + (if sign > 0.0: 1 else: 0)), TL_CLUSTER, 350.0, 2200.0)
-            # Outer city blocks behind the front rows (every 6th station)
+            _tl_push_node(out, f64(p.x), f64(p.y), y_b, max(h_m, 5.0) + 10.0, 62.0, 0.0050, 0.72, _tl_warm_tint(seed + st * 11 + int(sign * 3.0), TL_CLUSTER), _tl_rand(seed, st * 4 + (if sign > 0.0: 1 else: 0)), TL_CLUSTER, 550.0, 2600.0)
             if st % 6 == 0:
                 q = a.xy + side * f32(sign * (w_half + 150.0))
                 hf2, hm2 = _tl_height(q, false)
                 if hf2 > 2.0:
-                    _tl_push_node(out, f64(q.x), f64(q.y), hf2 + 8.0, hm2 + 12.0, 95.0, 0.0036, 0.36, _tl_warm_tint(seed + st * 17 + int(sign * 5.0), TL_CLUSTER), _tl_rand(seed + 13, st * 2 + (if sign > 0.0: 1 else: 0)), TL_CLUSTER, 400.0, 2500.0)
-        # Water reflections along the wider canal basin (44..53) and lagoon (58..64)
-        if (st >= 44 and st <= 53 and st % 6 == 0) or (st >= 58 and st <= 64 and st % 3 == 0):
-            out.refls.push(TownReflNode(f64(a.x), f64(a.y), dir.x, dir.y, 48.0, 380.0, 0.28, vec3(1.0, 0.65, 0.28), 0.2, true))
+                    _tl_push_node(out, f64(q.x), f64(q.y), hf2 + 8.0, hm2 + 12.0, 98.0, 0.0052, 0.48, _tl_warm_tint(seed + st * 17 + int(sign * 5.0), TL_CLUSTER), _tl_rand(seed + 13, st * 2 + (if sign > 0.0: 1 else: 0)), TL_CLUSTER, 620.0, 2800.0)
+        # Narrow vertical water reflection streaks along the wider canal basin (44..53) and lagoon (58..64)
+        if (st >= 44 and st <= 53 and st % 3 == 0) or (st >= 58 and st <= 64 and st % 2 == 0):
+            out.refls.push(TownReflNode(f64(a.x), f64(a.y), dir.x, dir.y, 7.5, 420.0, 0.65, vec3(1.0, 0.70, 0.32), f32(_tl_rand(seed + 37, st)), true))
         count += 1
     if count > 0:
-        # Three broad city glow lobes along Neravessa's canal corridor
         loop st in [18, 38, 56]:
             if CANAL_BEGIN + st < RIVER_NODES.len():
                 n = RIVER_NODES[CANAL_BEGIN + st]
                 hf, hm = _tl_height(n.xy, false)
-                _tl_push_node(out, f64(n.x), f64(n.y), max(hf, 6.0) + 48.0, max(hm, 6.0) + 56.0, 360.0, 0.0062, 0.24, _tl_warm_tint(seed + st, TL_HALO), 0.3, TL_HALO, 650.0, 3600.0)
+                _tl_push_node(out, f64(n.x), f64(n.y), max(hf, 6.0) + 52.0, max(hm, 6.0) + 62.0, 420.0, 0.0145, 0.34, _tl_warm_tint(seed + st, TL_HALO), 0.3, TL_HALO, 850.0, 4000.0)
+        if CANAL_BEGIN + 38 < RIVER_NODES.len():
+            n = RIVER_NODES[CANAL_BEGIN + 38]
+            hf, hm = _tl_height(n.xy, false)
+            _tl_push_node(out, f64(n.x), f64(n.y), max(hf, 6.0) + 300.0, max(hm, 6.0) + 320.0, 1750.0, 0.0350, 0.21, _tl_warm_tint(seed + 5, TL_SKYGLOW), 0.35, TL_SKYGLOW, 1400.0, 5200.0)
 
 _tl_add_generated = (out: mut TownLightSet, s: WorldSettlement):
     seed = s.seed
     coastal = s.harbor.len() > 0 and not s.remote_harbor
 
-    # Isolated lighthouse: crisp elevated beacon lantern + calm seaward reflection
+    # Isolated lighthouse: crisp elevated beacon lantern + narrow seaward reflection streak
     if s.kind == .lighthouse:
         lp = s.center.xz - s.out * 26.0
         hf, hm = _tl_height(lp, false)
-        _tl_push_node(out, f64(lp.x), f64(lp.y), hf + 15.6, hm + 16.5, 4.2, 0.0036, 1.35, vec3(1.0, 0.92, 0.72), 0.05, TL_LAMP, 10.0, 45.0)
+        _tl_push_node(out, f64(lp.x), f64(lp.y), hf + 15.6, hm + 16.5, 4.5, 0.0044, 1.55, vec3(1.0, 0.92, 0.72), 0.05, TL_LAMP, 10.0, 45.0)
         sp = s.center.xz + s.out * 36.0
-        out.refls.push(TownReflNode(f64(sp.x), f64(sp.y), s.out.x, s.out.y, 18.0, 520.0, 0.26, vec3(1.0, 0.84, 0.56), 0.05, false))
+        out.refls.push(TownReflNode(f64(sp.x), f64(sp.y), s.out.x, s.out.y, 4.5, 700.0, 0.74, vec3(1.0, 0.86, 0.58), 0.05, false))
         return
 
-    # Isolated farmstead or chapel: 1-2 faint warm domestic lights
+    # Isolated farmstead or chapel: 1 faint warm domestic light
     if s.kind == .farm or s.kind == .chapel or s.size <= 2:
         hf, hm = _tl_height(s.center.xz, false)
-        _tl_push_node(out, f64(s.center.x), f64(s.center.z), hf + 4.5, hm + 6.5, 10.0, 0.0018, 0.42, _tl_warm_tint(seed, TL_CLUSTER), _tl_rand(seed, 3), TL_CLUSTER, 120.0, 800.0)
+        _tl_push_node(out, f64(s.center.x), f64(s.center.z), hf + 4.5, hm + 6.5, 10.0, 0.0024, 0.55, _tl_warm_tint(seed, TL_CLUSTER), _tl_rand(seed, 3), TL_CLUSTER, 120.0, 800.0)
         return
 
-    # 1. Harbour waterfront lamps + calm-sea reflections for coastal settlements
+    # 1. Harbour waterfront lamps + narrow vertical water reflection streaks directly under shore lights
     if coastal:
         span = port_span(s)
-        lamp_n = if s.kind == .capital: 11 else: if s.kind == .port: 5 else: 2
+        lamp_n = if s.kind == .capital: 14 else: if s.kind == .port: 7 else: 3
         loop k in 0..lamp_n:
             u = if lamp_n <= 1: 0.0 else: (f64(k) / f64(lamp_n - 1) - 0.5) * 2.0
-            # Waterfront promenade along the port's actual span
             wp = place_to_world(s, vec2(f32(u * span * 0.92), -14.0))
             hf, hm = _tl_height(wp, false)
-            _tl_push_node(out, f64(wp.x), f64(wp.y), max(hf, 2.4) + 4.2, max(hm, 2.4) + 6.5, if s.kind == .capital: 5.5 else: 3.6, if s.kind == .capital: 0.0028 else: 0.0026, if s.kind == .capital: 1.05 else: if s.kind == .port: 0.95 else: 0.92, _tl_warm_tint(seed + k * 5, TL_LAMP), _tl_rand(seed + 19, k), TL_LAMP, 14.0, 60.0)
-        # Main pier tip lamp
+            ph = _tl_rand(seed + 19, k)
+            tint = _tl_warm_tint(seed + k * 5, TL_LAMP)
+            _tl_push_node(out, f64(wp.x), f64(wp.y), max(hf, 2.4) + 4.2, max(hm, 2.4) + 6.5, if s.kind == .capital: 5.5 else: 3.8, if s.kind == .capital: 0.0040 else: 0.0038, if s.kind == .capital: 1.20 else: if s.kind == .port: 1.15 else: 1.25, tint, ph, TL_LAMP, 14.0, 60.0)
+        # Main pier tip lamp + its own narrow vertical reflection streak
         pier_tip = s.harbor[0].quay_b
-        _tl_push_node(out, f64(pier_tip.x), f64(pier_tip.y), s.harbor[0].deck + 3.8, s.harbor[0].deck + 5.5, 3.6, 0.0026, 1.05, vec3(1.0, 0.78, 0.42), 0.08, TL_LAMP, 12.0, 50.0)
-        # Sea reflection strips extending seaward from the real waterfront
-        refl_n = if s.kind == .capital: 5 else: if s.kind == .port: 3 else: 1
+        _tl_push_node(out, f64(pier_tip.x), f64(pier_tip.y), s.harbor[0].deck + 3.8, s.harbor[0].deck + 5.5, 3.8, 0.0036, 1.20, vec3(1.0, 0.80, 0.44), 0.08, TL_LAMP, 12.0, 50.0)
+        pt_rp = pier_tip + s.out * 12.0
+        out.refls.push(TownReflNode(f64(pt_rp.x), f64(pt_rp.y), s.out.x, s.out.y, 4.5, if s.kind == .capital: 1150.0 else: 650.0, 0.86, vec3(1.0, 0.78, 0.40), 0.08, false))
+        # Individual narrow vertical reflection streaks lined up under shore lamps & waterfront houses
+        refl_n = if s.kind == .capital: 22 else: if s.kind == .port: 10 else: 4
         loop k in 0..refl_n:
             u = if refl_n <= 1: 0.0 else: (f64(k) / f64(refl_n - 1) - 0.5) * 2.0
-            # Place anchor slightly seaward of the shoreline so it starts on open water
-            rp = place_to_world(s, vec2(f32(u * span * 0.85), -68.0)) + s.out * (if s.kind == .capital: 75.0 else: 32.0)
-            hw = if s.kind == .capital: 155.0 else: if s.kind == .port: 64.0 else: 28.0
-            reach = if s.kind == .capital: 1950.0 else: if s.kind == .port: 980.0 else: 480.0
-            str_ = if s.kind == .capital: 0.56 else: if s.kind == .port: 0.46 else: 0.28
-            out.refls.push(TownReflNode(f64(rp.x), f64(rp.y), s.out.x, s.out.y, f32(hw), f32(reach), f32(str_), vec3(1.0, 0.62, 0.25), f32(_tl_rand(seed + 71, k)), false))
+            jitter = (_tl_rand(seed + 83, k) - 0.5) * (if refl_n > 1: 1.3 / f64(refl_n) else: 0.0)
+            # Anchor just seaward of the seawall so each vertical column begins cleanly on water
+            rp = place_to_world(s, vec2(f32((u + jitter) * span * 0.94), -52.0)) + s.out * (if s.kind == .capital: 38.0 else: 18.0)
+            r_var = _tl_rand(seed + 71, k)
+            hw = (if s.kind == .capital: 5.5 + 4.2 * r_var else: if s.kind == .port: 4.0 + 3.0 * r_var else: 2.8 + 1.8 * r_var)
+            reach = (if s.kind == .capital: 1350.0 else: if s.kind == .port: 900.0 else: 480.0) * (0.72 + 0.48 * _tl_rand(seed + 97, k))
+            str_ = (if s.kind == .capital: 0.88 else: if s.kind == .port: 0.78 else: 0.58) * (0.70 + 0.50 * _tl_rand(seed + 109, k))
+            out.refls.push(TownReflNode(f64(rp.x), f64(rp.y), s.out.x, s.out.y, f32(hw), f32(reach), f32(str_), _tl_warm_tint(seed + k * 7, TL_LAMP), f32(r_var), false))
     else if s.remote_harbor and s.harbor.len() > 0:
-        # Lake / cove landing separate from the town square: a pair of dock lanterns + calm reflection
         h0 = s.harbor[0]
-        _tl_push_node(out, f64(h0.quay_b.x), f64(h0.quay_b.y), h0.deck + 3.6, h0.deck + 5.0, 2.8, 0.0022, 0.75, _tl_warm_tint(seed + 3, TL_LAMP), 0.12, TL_LAMP, 12.0, 50.0)
+        _tl_push_node(out, f64(h0.quay_b.x), f64(h0.quay_b.y), h0.deck + 3.6, h0.deck + 5.0, 3.0, 0.0032, 0.95, _tl_warm_tint(seed + 3, TL_LAMP), 0.12, TL_LAMP, 12.0, 50.0)
         dir = normalize(h0.quay_b - h0.quay_a)
-        rp = h0.quay_b + dir * 18.0
-        out.refls.push(TownReflNode(f64(rp.x), f64(rp.y), dir.x, dir.y, 18.0, 260.0, 0.20, vec3(1.0, 0.65, 0.28), 0.15, true))
+        rp = h0.quay_b + dir * 14.0
+        out.refls.push(TownReflNode(f64(rp.x), f64(rp.y), dir.x, dir.y, 4.0, 340.0, 0.55, vec3(1.0, 0.72, 0.32), 0.15, true))
 
     # 2. Residential / town-extent clusters sampled directly inside place_inside(s, q)
     if s.kind == .capital:
@@ -475,28 +522,29 @@ _tl_add_generated = (out: mut TownLightSet, s: WorldSettlement):
                 hf, hm = _tl_height(wp, false)
                 if hf < 1.8 or hf > 850.0: continue
                 edge = f64(length(q)) / s.radius
-                # Denser/brighter near waterfront & old quarter, sparser toward suburbs (matches place_lot)
                 near_old = 1.0 - smoothstep(120.0, 520.0, f64(length(q - s.old)))
                 near_front = if coastal: 1.0 - smoothstep(80.0, 420.0, abs(f64(q.y))) else: 0.0
                 dens = clamp(1.0 - max(edge - 0.55, 0.0) * 1.4, 0.35, 1.0)
-                str_ = (0.36 + 0.28 * dens + 0.22 * max(near_old, near_front))
-                rad = 95.0 + 35.0 * dens
+                str_ = (0.46 + 0.36 * dens + 0.28 * max(near_old, near_front))
+                rad = 100.0 + 38.0 * dens
                 ph = _tl_rand(seed + 101, idx) * (1.0 - 0.35 * max(near_old, near_front))
-                _tl_push_node(out, f64(wp.x), f64(wp.y), hf + 8.5, hm + 13.0, rad, 0.0038, str_, _tl_warm_tint(seed + idx * 13, TL_CLUSTER), ph, TL_CLUSTER, 680.0, 3000.0)
+                _tl_push_node(out, f64(wp.x), f64(wp.y), hf + 8.5, hm + 13.0, rad, 0.0054, str_, _tl_warm_tint(seed + idx * 13, TL_CLUSTER), ph, TL_CLUSTER, 680.0, 3000.0)
                 sum_x += f64(wp.x); sum_z += f64(wp.y); sum_y += hf; cnt += 1
-        # Broad warm glow lobes following the capital's real waterfront + old-quarter + core extent
+        # Broad warm city glow lobes + elevated atmospheric sky-glow dome (visible even past a ridge)
         if cnt > 0:
             cx = sum_x / f64(cnt); cz = sum_z / f64(cnt); cy = sum_y / f64(cnt)
-            _tl_push_node(out, cx, cz, cy + 55.0, cy + 68.0, s.radius * 0.62, 0.0072, 0.25, _tl_warm_tint(seed, TL_HALO), 0.35, TL_HALO, 900.0, 4200.0)
+            _tl_push_node(out, cx, cz, cy + 58.0, cy + 72.0, s.radius * 0.66, 0.0165, 0.36, _tl_warm_tint(seed, TL_HALO), 0.35, TL_HALO, 900.0, 4200.0)
             old_w = place_to_world(s, s.old)
             ohf, ohm = _tl_height(old_w, false)
-            _tl_push_node(out, f64(old_w.x), f64(old_w.y), ohf + 46.0, ohm + 56.0, s.radius * 0.44, 0.0058, 0.21, _tl_warm_tint(seed + 2, TL_HALO), 0.25, TL_HALO, 850.0, 3800.0)
+            _tl_push_node(out, f64(old_w.x), f64(old_w.y), ohf + 48.0, ohm + 58.0, s.radius * 0.48, 0.0125, 0.28, _tl_warm_tint(seed + 2, TL_HALO), 0.25, TL_HALO, 850.0, 3800.0)
             if coastal:
                 wf = place_to_world(s, vec2(0, 60))
                 whf, whm = _tl_height(wf, false)
-                _tl_push_node(out, f64(wf.x), f64(wf.y), whf + 38.0, whm + 48.0, s.radius * 0.48, 0.0062, 0.21, vec3(1.0, 0.66, 0.30), 0.18, TL_HALO, 850.0, 3800.0)
+                _tl_push_node(out, f64(wf.x), f64(wf.y), whf + 40.0, whm + 50.0, s.radius * 0.52, 0.0135, 0.28, vec3(1.0, 0.66, 0.30), 0.18, TL_HALO, 850.0, 3800.0)
+            # Faint warm sky-glow dome over the capital (illuminates low air & cloud bases, shows over ridges)
+            _tl_push_node(out, cx, cz, cy + 320.0, cy + 360.0, s.radius * 2.00, 0.0430, 0.24, _tl_warm_tint(seed + 7, TL_SKYGLOW), 0.35, TL_SKYGLOW, 1300.0, 5000.0)
     else if s.kind == .port or s.kind == .market:
-        # Medium town (~100-180 houses, radius 210-270 m): ~14-18 clusters following real footprint
+        # Medium town (~100-180 houses, radius 210-270 m): clearly visible at 15-20 km, soft sky dome
         step = 105.0
         n_grid = int(ceil(s.radius / step))
         idx = 0
@@ -515,14 +563,15 @@ _tl_add_generated = (out: mut TownLightSet, s: WorldSettlement):
                 if hf < 1.8 or hf > 850.0: continue
                 edge = f64(length(q)) / s.radius
                 dens = clamp(1.0 - max(edge - 0.45, 0.0) * 1.2, 0.4, 1.0)
-                _tl_push_node(out, f64(wp.x), f64(wp.y), hf + 7.0, hm + 10.5, 44.0 + 18.0 * dens, 0.0033, 0.46 + 0.24 * dens, _tl_warm_tint(seed + idx * 9, TL_CLUSTER), _tl_rand(seed + 131, idx), TL_CLUSTER, 520.0, 2600.0)
+                _tl_push_node(out, f64(wp.x), f64(wp.y), hf + 7.0, hm + 10.5, 48.0 + 20.0 * dens, 0.0046, 0.62 + 0.28 * dens, _tl_warm_tint(seed + idx * 9, TL_CLUSTER), _tl_rand(seed + 131, idx), TL_CLUSTER, 520.0, 2600.0)
                 sum_x += f64(wp.x); sum_z += f64(wp.y); sum_y += hf; cnt += 1
         if cnt > 0:
             cx = sum_x / f64(cnt); cz = sum_z / f64(cnt); cy = sum_y / f64(cnt)
-            _tl_push_node(out, cx, cz, cy + 30.0, cy + 38.0, s.radius * 0.85, 0.0056, 0.26, _tl_warm_tint(seed, TL_HALO), 0.35, TL_HALO, 750.0, 3600.0)
+            _tl_push_node(out, cx, cz, cy + 32.0, cy + 40.0, s.radius * 0.92, 0.0115, 0.36, _tl_warm_tint(seed, TL_HALO), 0.35, TL_HALO, 750.0, 3600.0)
+            _tl_push_node(out, cx, cz, cy + 150.0, cy + 165.0, s.radius * 2.10, 0.0225, 0.13, _tl_warm_tint(seed + 7, TL_SKYGLOW), 0.40, TL_SKYGLOW, 1100.0, 4400.0)
     else:
         # Village (fishing, hill, hamlet, monastery: 14-28 houses, radius 85-115 m):
-        # Reads as a faint few points following the real houses, never a broad city blob.
+        # Small but clearly findable warm cluster of points at 8-10 km, never a broad city dome.
         pts = if s.size >= 24: 6 else: if s.size >= 16: 5 else: 4
         placed = 0
         sum_x = 0.0; sum_z = 0.0; sum_y = 0.0
@@ -537,16 +586,15 @@ _tl_add_generated = (out: mut TownLightSet, s: WorldSettlement):
             if water_at(f64(wp.x), f64(wp.y)).wet: continue
             hf, hm = _tl_height(wp, false)
             if hf < 1.8 or hf > 1200.0: continue
-            _tl_push_node(out, f64(wp.x), f64(wp.y), hf + 5.5, hm + 8.5, 16.0 + 6.0 * _tl_rand(seed, k + 31), 0.0025, 0.58 + 0.20 * _tl_rand(seed, k + 47), _tl_warm_tint(seed + k * 11, TL_CLUSTER), _tl_rand(seed + 17, k), TL_CLUSTER, 280.0, 1600.0)
+            _tl_push_node(out, f64(wp.x), f64(wp.y), hf + 5.5, hm + 8.5, 18.0 + 7.0 * _tl_rand(seed, k + 31), 0.0039, 0.84 + 0.26 * _tl_rand(seed, k + 47), _tl_warm_tint(seed + k * 11, TL_CLUSTER), _tl_rand(seed + 17, k), TL_CLUSTER, 280.0, 1600.0)
             sum_x += f64(wp.x); sum_z += f64(wp.y); sum_y += hf; placed += 1
         if placed == 0:
             hf, hm = _tl_height(s.center.xz, false)
-            _tl_push_node(out, f64(s.center.x), f64(s.center.z), hf + 5.5, hm + 8.5, 18.0, 0.0025, 0.62, _tl_warm_tint(seed, TL_CLUSTER), 0.35, TL_CLUSTER, 280.0, 1600.0)
+            _tl_push_node(out, f64(s.center.x), f64(s.center.z), hf + 5.5, hm + 8.5, 20.0, 0.0039, 0.90, _tl_warm_tint(seed, TL_CLUSTER), 0.35, TL_CLUSTER, 280.0, 1600.0)
             sum_x = f64(s.center.x); sum_z = f64(s.center.z); sum_y = hf; placed = 1
-        # Very faint, tight local warmth around the village square only
         if s.size >= 16:
             cx = sum_x / f64(placed); cz = sum_z / f64(placed); cy = sum_y / f64(placed)
-            _tl_push_node(out, cx, cz, cy + 14.0, cy + 18.0, s.radius * 0.58, 0.0034, 0.12, _tl_warm_tint(seed, TL_HALO), 0.48, TL_HALO, 420.0, 2100.0)
+            _tl_push_node(out, cx, cz, cy + 15.0, cy + 20.0, s.radius * 0.65, 0.0068, 0.22, _tl_warm_tint(seed, TL_HALO), 0.48, TL_HALO, 420.0, 2100.0)
 
 town_lights_for_settlement = (s: WorldSettlement, towns: Town[]) -> TownLightSet:
     out = TownLightSet(ready = true, max_range = town_light_range(s), max_height = f64(s.center.y) + 20.0)
@@ -558,13 +606,24 @@ town_lights_for_settlement = (s: WorldSettlement, towns: Town[]) -> TownLightSet
         _tl_add_generated(out, s)
     out
 
+_tl_cell_coord = (v: f64) -> int:
+    clamp(int(floor((v + TL_GRID_HALF) / TL_CELL_SIZE)), 0, TL_GRID_N - 1)
+
 _ensure_town_lights_cache = ():
-    global town_lights_gen, town_lights_cache
-    if town_lights_gen != settlement_generation:
-        town_lights_gen = settlement_generation
-        town_lights_cache = []
-    loop town_lights_cache.len() < world_settlements.len():
-        town_lights_cache.push(TownLightSet())
+    global town_lights_gen, town_lights_cache, tl_grid, tl_cx, tl_cz, tl_max_r, tl_reach
+    if town_lights_gen == settlement_generation and town_lights_cache.len() == world_settlements.len(): return
+    town_lights_gen = settlement_generation
+    n = world_settlements.len()
+    town_lights_cache = [loop _ in 0..n: TownLightSet()]
+    tl_grid = [loop _ in 0..(TL_GRID_N * TL_GRID_N): []]
+    tl_cx = []; tl_cz = []; tl_max_r = []; tl_reach = []
+    loop i in 0..n:
+        s = world_settlements[i]
+        cx = f64(s.center.x); cz = f64(s.center.z)
+        mr = town_light_range(s)
+        tl_cx.push(cx); tl_cz.push(cz); tl_max_r.push(mr); tl_reach.push(mr + s.radius + 1500.0)
+        gx = _tl_cell_coord(cx); gz = _tl_cell_coord(cz)
+        tl_grid[gz * TL_GRID_N + gx].push(i)
 
 # ---------------- per-frame gather & draw ----------------
 
@@ -573,8 +632,7 @@ _tl_horizon_dist = (cam_y: f64, feat_y: f64) -> f64:
     h1 = max(cam_y, 1.0); h2 = max(feat_y, 1.0)
     sqrt(h1 * (2.0 * EARTH_RADIUS + h1)) + sqrt(h2 * (2.0 * EARTH_RADIUS + h2))
 
-# Check if a settlement at delta (dx, dz) from camera is roughly inside the forward view hemisphere
-# (generous margin for wide FOV and broad city radii).
+# Check if a settlement at delta (dx, dz) from camera is roughly inside the forward view hemisphere.
 _tl_in_view = (dx: f64, dz: f64, dist: f64, radius: f64, fwd_x: f64, fwd_z: f64) -> bool:
     if dist < radius + 2500.0: return true
     (dx * fwd_x + dz * fwd_z) / dist > -0.25
@@ -588,44 +646,75 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
     _ensure_town_lights_cache()
 
     cam = scene_camera()
-    origin = render_origin(cam)
-    local_cam = render_eye(origin)
-    warp = render_anchor(scene_warp_a, origin)
+    cam_x = f64(cam.x); cam_y = f64(cam.y); cam_z = f64(cam.z)
 
-    # Camera horizontal forward direction for cheap settlement-level frustum culling
+    # Camera horizontal forward direction for cheap cell- and settlement-level frustum culling
     cam_fwd = normalize(__cam_target - __cam_pos)
     fwd_len = sqrt(f64(cam_fwd.x * cam_fwd.x + cam_fwd.z * cam_fwd.z))
     fwd_x = if fwd_len > 0.05: f64(cam_fwd.x) / fwd_len else: 0.0
     fwd_z = if fwd_len > 0.05: f64(cam_fwd.z) / fwd_len else: -1.0
     check_fwd = fwd_len > 0.25
 
-    cam_y = f64(cam.y)
+    # Fast coarse-grid query: over open sea with no town in forward cells, exits in ~0.002 ms
+    # without touching origin/weather/buffers or emitting any GPU zone or draw call.
+    gx0 = _tl_cell_coord(cam_x - TL_MAX_RANGE)
+    gx1 = _tl_cell_coord(cam_x + TL_MAX_RANGE)
+    gz0 = _tl_cell_coord(cam_z - TL_MAX_RANGE)
+    gz1 = _tl_cell_coord(cam_z + TL_MAX_RANGE)
+
+    candidates: int[]
+    loop gz in gz0..gz1 + 1:
+        cell_cz = (f64(gz) + 0.5) * TL_CELL_SIZE - TL_GRID_HALF
+        row = gz * TL_GRID_N
+        loop gx in gx0..gx1 + 1:
+            bucket = tl_grid[row + gx]
+            if bucket.len() == 0: continue
+            if check_fwd:
+                cell_cx = (f64(gx) + 0.5) * TL_CELL_SIZE - TL_GRID_HALF
+                cdx = cell_cx - cam_x; cdz = cell_cz - cam_z
+                # Reject grid cell if even its nearest corner lies well behind the camera
+                if cdx * fwd_x + cdz * fwd_z < -TL_CELL_SIZE * 0.9: continue
+            loop idx in bucket:
+                dx_s = tl_cx[idx] - cam_x
+                dz_s = tl_cz[idx] - cam_z
+                reach_s = tl_reach[idx]
+                dist2 = dx_s * dx_s + dz_s * dz_s
+                if dist2 > reach_s * reach_s: continue
+                if check_fwd:
+                    dist_s = sqrt(dist2)
+                    if not _tl_in_view(dx_s, dz_s, dist_s, world_settlements[idx].radius + 1200.0, fwd_x, fwd_z): continue
+                candidates.push(idx)
+
+    if candidates.len() == 0: return
+
+    origin = render_origin(cam)
+    local_cam = render_eye(origin)
+    warp = render_anchor(scene_warp_a, origin)
+
     fog_d = L.fog_density
     turb = f64(L.turbidity)
+    rain_here = if weather_active: f64(weather_here.rain) else: 0.0
     # Haze/mist subtly expands the soft atmospheric aureole around bright lights while extinction dims them.
-    veil = clamp(max(turb, 0.0) * 0.45 + (if weather_active: f64(weather_here.fog) * 0.6 + f64(weather_here.rain) * 0.35 else: 0.0), 0.0, 1.0)
-    calm = town_light_calm(wind_now.speed, if weather_active: f64(weather_here.rain) else: 0.0)
+    veil = clamp(max(turb, 0.0) * 0.45 + (if weather_active: f64(weather_here.fog) * 0.6 + rain_here * 0.35 else: 0.0), 0.0, 1.0)
+    calm = town_light_calm(wind_now.speed, rain_here)
+    rough = town_light_roughness(wind_now.speed, rain_here)
 
     lights_out: TownLightInst[]
     refls_out: TownReflInst[]
 
-    loop idx in 0..world_settlements.len():
+    loop idx in candidates:
         s = world_settlements[idx]
-        max_r = town_light_range(s)
-        dx_s = f64(s.center.x) - f64(cam.x)
-        dz_s = f64(s.center.z) - f64(cam.z)
-        dist2 = dx_s * dx_s + dz_s * dz_s
-        reach_s = max_r + s.radius + 1500.0
-        if dist2 > reach_s * reach_s: continue
-        dist_s = sqrt(dist2)
-        if check_fwd and not _tl_in_view(dx_s, dz_s, dist_s, s.radius + 1200.0, fwd_x, fwd_z): continue
+        max_r = tl_max_r[idx]
+        dx_s = tl_cx[idx] - cam_x
+        dz_s = tl_cz[idx] - cam_z
+        dist_s = sqrt(dx_s * dx_s + dz_s * dz_s)
 
         if not town_lights_cache[idx].ready:
             town_lights_cache[idx] = town_lights_for_settlement(s, towns)
         ls = town_lights_cache[idx]
 
         # Skip settlements completely below the spherical Earth horizon
-        if dist_s > _tl_horizon_dist(cam_y, ls.max_height + 200.0) + s.radius + 1500.0: continue
+        if dist_s > _tl_horizon_dist(cam_y, ls.max_height + 260.0) + s.radius + 1500.0: continue
 
         # Path weather attenuation (rain/fog/overcast deck between camera and town)
         extra_rain = 0.0; extra_fog = 0.0; deck_block = 0.0
@@ -633,11 +722,9 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
             at_town = weather_at_point(vec3(s.center.x, 15.0, s.center.z))
             mid_p = vec3((cam.x + s.center.x) * 0.5, 15.0, (cam.z + s.center.z) * 0.5)
             at_mid = weather_at_point(mid_p)
-            # weather_light only folds camera-side sea fog into L.fog_density below ~220 m altitude;
-            # account for the marine fog bank covering coastal towns even when viewing from higher up.
             cam_fog_folded = 1.0 - smoothstep(50.0, 220.0, cam_y)
             fog_layer_frac = clamp(240.0 / max(cam_y, 240.0), 0.42, 1.0)
-            extra_rain = max(0.0, (f64(at_town.rain) + f64(at_mid.rain)) * 0.5 - f64(weather_here.rain) * 0.5)
+            extra_rain = max(0.0, (f64(at_town.rain) + f64(at_mid.rain)) * 0.5 - rain_here * 0.5)
             extra_fog = max(0.0, (f64(at_town.fog) + f64(at_mid.fog)) * 0.5 - f64(weather_here.fog) * cam_fog_folded * 0.5) * fog_layer_frac
             ceil_h = f64(at_town.ceiling) + 250.0
             if cam_y > ceil_h and f64(s.center.y) < ceil_h:
@@ -647,7 +734,7 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
         outer_fade = 1.0 - smoothstep(max_r * 0.72, max_r, dist_s)
         if outer_fade <= 0.002: continue
 
-        # 1. Light nodes (lamps, clusters, broad town/city halos)
+        # 1. Light nodes (lamps, clusters, broad town/city halos, elevated sky-glow dome)
         loop node in ls.nodes:
             dusk = town_light_dusk(sun_y, f64(node.phase), node.kind)
             if dusk <= 0.002: continue
@@ -661,7 +748,6 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
             d = sqrt(d_horiz * d_horiz + dy * dy)
             if d < 1.0 or d > max_r + 1200.0: continue
 
-            # Smooth near hand-over fade (zero close up where individual windows/lamps take over)
             near_w = smoothstep(f64(node.near_lo), f64(node.near_hi), d)
             if near_w <= 0.002: continue
 
@@ -669,20 +755,21 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
             if trans <= 0.003: continue
 
             # Smooth C-infinity angular floor: half = sqrt(r_world^2 + (d * min_ang)^2)
-            # Contracting gently as clusters hand over to windows; halo widens subtly in haze.
+            # Guarantees far towns stay a readable multi-pixel glow/cluster instead of vanishing.
             r_w = f64(node.radius)
             if node.kind == TL_CLUSTER:
                 r_w *= mix(0.62, 1.0, near_w)
-            else if node.kind == TL_HALO:
+            else if node.kind == TL_HALO or node.kind == TL_SKYGLOW:
                 r_w *= 1.0 + 0.35 * veil
-            min_r = d * f64(node.min_ang) * (if node.kind == TL_HALO: 1.0 + 0.25 * veil else: 1.0)
+            min_r = d * f64(node.min_ang) * (if node.kind == TL_HALO or node.kind == TL_SKYGLOW: 1.0 + 0.25 * veil else: 1.0)
             half = sqrt(r_w * r_w + min_r * min_r)
 
-            # Flux conservation when unresolved (d*min_ang > r_world): naturally separates cities,
-            # towns and villages at 25-40 km without hard cutoffs or kinks.
-            flux = pow(r_w / max(half, 0.001), if node.kind == TL_LAMP: 0.72 else: if node.kind == TL_CLUSTER: 1.05 else: 0.65)
-            # In mist/haze, peak brightness drops slightly further as light scatters into the wider halo.
-            scatter_dim = 1.0 - veil * (if node.kind == TL_HALO: 0.15 else: 0.28)
+            # Gentle flux conservation when unresolved: keeps cities obvious at 25-40 km,
+            # towns clear at 15-20 km, villages readable at 8-10 km without kinks or popping.
+            flux_p = if node.kind == TL_LAMP: 0.45 else: if node.kind == TL_CLUSTER: 0.55 else: if node.kind == TL_HALO: 0.40 else: 0.35
+            flux = pow(r_w / max(half, 0.001), flux_p)
+            # In mild haze/cloud air, the elevated sky-glow spreads subtly while dimming with extinction.
+            scatter_dim = 1.0 - veil * (if node.kind == TL_SKYGLOW: 0.10 else: if node.kind == TL_HALO: 0.16 else: 0.26)
             lum = f64(node.strength) * dusk * near_w * outer_fade * trans * flux * scatter_dim
             if lum <= 0.004: continue
 
@@ -692,18 +779,21 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
             # the town's own slope while keeping ridges, headlands and islands cleanly occluding.
             to_c = local_cam - curved
             to_len = max(f64(length(to_c)), 1.0)
-            bias_max = if node.kind == TL_HALO: 150.0 else: 85.0
-            bias_k = if node.kind == TL_HALO: 0.011 else: 0.0075
+            bias_max = if node.kind == TL_SKYGLOW: 180.0 else: if node.kind == TL_HALO: 145.0 else: 85.0
+            bias_k = if node.kind == TL_SKYGLOW: 0.012 else: if node.kind == TL_HALO: 0.011 else: 0.0075
             bias = min(clamp(d * bias_k, 1.5, bias_max), to_len * 0.14)
             biased = curved + to_c * f32(bias / to_len)
 
             col = _tl_redden(node.tint, tau) * f32(lum)
             lights_out.push(TownLightInst(vec4(biased, f32(half)), vec4(world_local, f32(node.kind)), vec4(col, 1.0)))
 
-        # 2. Harbour calm-sea reflection strips
-        if calm > 0.02 and dist_s < min(max_r, 42000.0):
-            refl_outer = 1.0 - smoothstep(26000.0, 40000.0, dist_s)
+        # 2. Narrow vertical harbour water-reflection streaks (long & broken on gentle swell,
+        #    shorter & more scattered when windy, gone in rough sea)
+        if calm > 0.01 and dist_s < min(max_r, 32000.0):
+            refl_outer = 1.0 - smoothstep(18000.0, 30000.0, dist_s)
             if refl_outer > 0.005:
+                scatter_w = mix(1.0, 1.85, rough)
+                wind_len = mix(1.0, 0.34, rough)
                 loop rf in ls.refls:
                     dusk = town_light_dusk(sun_y, f64(rf.phase), TL_LAMP)
                     if dusk <= 0.005: continue
@@ -712,40 +802,48 @@ draw_town_lights = (towns: Town[], L: Light, t: f64):
                     dx = f64(local_cam.x) - rx
                     dz = f64(local_cam.z) - rz
                     dh = sqrt(dx * dx + dz * dz)
-                    if dh < 30.0 or dh > 40000.0: continue
-                    # Reflection lies on the seaward side toward the observer
+                    if dh < 25.0 or dh > 30000.0: continue
                     tx = dx / dh; tz = dz / dh
                     side_w = if rf.omni: 1.0 else: smoothstep(-0.15, 0.25, tx * f64(rf.out_x) + tz * f64(rf.out_z))
                     if side_w <= 0.005: continue
-                    # Fresnel & grazing boost: reflections read stronger at low/medium glide angles
                     elev = atan2(max(cam_y, 1.0), dh)
-                    grazing = 0.45 + 0.55 * (1.0 - smoothstep(0.06, 0.65, elev))
+                    grazing = 0.45 + 0.55 * (1.0 - smoothstep(0.05, 0.60, elev))
                     trans, tau = town_light_extinction(dh, cam_y, 0.5, fog_d, turb, extra_rain, extra_fog, deck_block)
                     lum = f64(rf.strength) * dusk * calm * side_w * grazing * refl_outer * trans
                     if lum <= 0.005: continue
 
-                    hw = max(f64(rf.half_width), dh * 0.0048)
-                    stretch = clamp(dh * 0.22, 55.0, min(dh * 0.48, f64(rf.reach)))
-                    shimmer_amp = (1.0 - smoothstep(2500.0, 12000.0, dh)) * (0.35 + 0.65 * calm)
-                    bias = clamp(dh * 0.0025, 0.4, 22.0)
-                    col = _tl_redden(rf.tint, tau * 1.1) * f32(lum)
-                    refls_out.push(TownReflInst(vec4(f32(rx), 0.25, f32(rz), f32(hw)), vec4(f32(tx), f32(tz), f32(stretch), f32(shimmer_amp)), vec4(col, f32(bias))))
+                    # Narrow individual vertical streak width (widens slightly in wind, minimum angular floor far out)
+                    hw = max(f64(rf.half_width) * scatter_w, dh * 0.0022)
+                    # Long vertical stretch on gentle swell, markedly shorter in wind
+                    stretch = clamp(dh * 0.38 * wind_len, 45.0 * wind_len, min(dh * 0.62, f64(rf.reach) * wind_len))
+                    shimmer_amp = (1.0 - smoothstep(2800.0, 11000.0, dh))
+                    bias = clamp(dh * 0.0020, 0.35, 18.0)
+                    seed_rad = f32(f64(rf.phase) * TAU)
+                    col = _tl_redden(rf.tint, tau * 1.05) * f32(lum)
+                    refls_out.push(TownReflInst(vec4(f32(rx), seed_rad, f32(rz), f32(hw)), vec4(f32(tx), f32(tz), f32(stretch), f32(shimmer_amp)), vec4(col, f32(bias))))
 
     if lights_out.len() == 0 and refls_out.len() == 0: return
 
-    # Upload to persistent instance buffers (v0.44 safe) and submit additive draws
+    # Upload to persistent instance buffers (v0.44 safe) and submit additive draws inside a
+    # conditional GPU zone (zero GPU queries/stalls when nothing is drawn over open sea or in daytime).
     l_count = lights_out.len()
     r_count = refls_out.len()
     if l_count > 0: set_instances(town_light_buf, lights_out)
     if r_count > 0: set_instances(town_refl_buf, refls_out)
 
     draw_custom(():
+        zone("town lights")
         vp = render_view_proj(origin)
         if r_count > 0:
             cull(.none)
-            draw_instanced(town_refl_sh, town_refl_mesh, town_refl_buf, TownReflParams(vp, local_cam, f32(t), origin, warp, scene_warp_b), 0, r_count)
+            draw_instanced(town_refl_sh, town_refl_mesh, town_refl_buf, TownReflParams(vp, local_cam, f32(t), f32(rough), warp, scene_warp_b), 0, r_count)
         if l_count > 0:
             cull(.none)
             rays = render_rays(vp)
-            draw_instanced(town_light_sh, town_light_mesh, town_light_buf, TownLightParams(vp, local_cam, normalize(rays[0].xyz), normalize(rays[1].xyz)), 0, l_count)
+            right_v = normalize(rays[0].xyz)
+            up_v = normalize(rays[1].xyz)
+            # Guarantee +p.y points skyward identically on Vulkan, Software and WebGL2
+            if up_v.y < 0.0: up_v = -up_v
+            draw_instanced(town_light_sh, town_light_mesh, town_light_buf, TownLightParams(vp, local_cam, right_v, up_v), 0, l_count)
+        zone_end()
     , additive = true)

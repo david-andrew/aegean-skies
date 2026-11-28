@@ -2936,9 +2936,12 @@ On the rivers branch until it lands.
   street lamps up close to a warm glow blob visible across the sea well past where town geometry is
   drawn. Every settlement (legacy towns and all `world_settlements`) builds a compact procedural
   light layout matching its real extent, harbour curve and hilltop tiers: point lamps (`TL_LAMP`),
-  warm district clusters (`TL_CLUSTER`), a broad town haze halo (`TL_HALO`) and, for coastal towns
-  and harbours, curved water-level reflection strips along the waterfront that strengthen on calm
-  sea and break up in wind. Visibility follows Allard's law for 1930s coastal night navigation
+  warm district clusters (`TL_CLUSTER`), a broad town glow blob (`TL_HALO`), an elevated faint warm
+  sky-glow dome (`TL_SKYGLOW`) over cities and towns (visible softly even past a ridge), and, for
+  coastal harbours, narrow vertical broken reflection streaks under shore lights that stretch long
+  on gentle swell, shorten and scatter in wind, and disappear in rough sea. A coarse spatial grid
+  keeps open-sea frames with no town in view near zero cost. Visibility follows Allard's law for
+  1930s coastal night navigation
   (Middleton, *Vision Through the Atmosphere*; U.S. CAA *Practical Air Navigation*, Thoburn C. Lyon):
   on a clear night, major cities read out to ~55–65 km, port towns ~38–48 km, and small fishing
   villages ~24–32 km as a faint handful of points; haze (`L.turbidity`), fog (`L.fog_density`),
