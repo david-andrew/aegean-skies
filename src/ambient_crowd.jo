@@ -33,7 +33,7 @@ const AMBIENT_TOWN_REACH = 450.0    # a town is peopled while the camera is this
 const AMBIENT_MIN_SIZE = 150        # ports and capitals
 const AMBIENT_STEP_BUDGET = 0.0015  # seconds of layout a frame while a town comes near
 
-enum AmbientKind: sit, stroll, pair, vendor
+enum AmbientKind: sit, stroll, pair, vendor, stand    # (stand: Neravessa's people at the water, canal_people)
 
 struct AmbientFigure:
     kind: AmbientKind
@@ -81,9 +81,11 @@ struct AmbientTown:
     done = false
     seed = 0
     country = 0                     # (whose clothes they wear)
+    canal = false                   # (Neravessa: its people are where the canal's pieces put them)
+    canal_taken = 0                 # (how many of canal_people are among the figures)
     looks: CrowdLook[]
     figs: Figure[]                  # (the looks' figures, built one at a time as the town comes near)
-    met_checked = false             # (the world's people already met among them: aegean.jo)
+    met_checked = -1                # (how many of them were looked through for the world's people already met: aegean.jo)
 
 ambient_stall_mesh: Mesh
 ambient_spare: Figure[] = []        # (the last town's looks, their buffers reused for the next)
@@ -180,6 +182,11 @@ ambient_layout = (index: int) -> AmbientTown:
     town = AmbientTown(settlement = index, capital = s.kind == .capital, country = s.country)
     seed = s.seed
     town.looks = [loop k in 0..AMBIENT_LOOKS: crowd_look(seed, k, s.country)]
+    if s.id == CANAL_CITY_ID:
+        # (Neravessa's own plan: its people stand where its promenades, bridges and market put
+        # them, taken in as those pieces are built, ambient_canal_step)
+        town.canal = true; town.seed = seed; town.out = s.out; town.tangent = vec2(-s.out.y, s.out.x)
+        return town
     tangent = vec2(-s.out.y, s.out.x)
     yaw0 = atan2(f64(s.out.x), f64(s.out.y))
     plan = place_square(s)
@@ -248,6 +255,9 @@ ambient_layout_step = (town: mut AmbientTown, budget: f64, pace: bool = true):
     # (the looks first, one a step: each a few tenths of a millisecond)
     loop town.figs.len() < town.looks.len() and time() - start < budget:
         town.figs.push(crowd_figure(town.looks[town.figs.len()], _amb_spare()))
+    if town.canal:
+        ambient_canal_step(town)
+        return
     loop not town.done and time() - start < budget:
         if town.pairs_left > 0 and town.pair_spots.len() > 0:
             spot = town.pair_spots[0]
@@ -299,6 +309,18 @@ ambient_layout_step = (town: mut AmbientTown, budget: f64, pace: bool = true):
                 n = town.figures.len() + 1
                 town.figures.push(AmbientFigure(.stroll, int(_amb_hash(town.seed, n * 3) * f64(AMBIENT_LOOKS)) % AMBIENT_LOOKS, vec3(0, 0, 0), 0.0, path = index, start = _amb_hash(town.seed, n * 11) * path.length * 2.0, speed = 0.9 + _amb_hash(town.seed, n * 13) * 0.6, rank = _amb_hash(town.seed, n * 5 + 1), ident = int(_amb_hash(town.seed, n * 17 + 5) * 16777216.0)))
         town.build_k = -1
+
+# Neravessa's people as the canal's pieces put them (canal_people grows as they are built): taken
+# in, published as solids, and done once the looks are built.
+ambient_canal_step = (town: mut AmbientTown):
+    if town.canal_taken < canal_people.len():
+        loop k in town.canal_taken..canal_people.len():
+            c = canal_people[k]
+            n = town.figures.len() + 1
+            town.figures.push(AmbientFigure(.stand, int(_amb_hash(town.seed, n * 3) * f64(AMBIENT_LOOKS)) % AMBIENT_LOOKS, c.xyz, f64(c.w), rank = _amb_hash(town.seed, n * 5 + 1) * 0.3, talk = _amb_hash(town.seed, n * 7 + 2) * 9.0, ident = int(_amb_hash(town.seed, n * 17 + 5) * 16777216.0)))
+        town.canal_taken = canal_people.len()
+        ambient_publish(town)
+    town.done = town.figs.len() == town.looks.len()
 
 # (a figure's buffers from the last town's looks, to be dressed anew)
 _amb_spare = () -> Figure?:
@@ -357,8 +379,11 @@ _ambient_update = (cam: vec3):
     if cam.y > 250.0: return       # (from the air: keep what's laid, lay out nothing new)
     loop k in 0..world_settlements.len():
         s = world_settlements[k]
-        if s.legacy >= 0 or s.size < AMBIENT_MIN_SIZE: continue
+        canal = s.id == CANAL_CITY_ID
+        if s.legacy >= 0 or (s.size < AMBIENT_MIN_SIZE and not canal): continue
         d = f64(length(s.center.xz - cam.xz))
+        # (Neravessa's people are along its whole canal: peopled anywhere within the city)
+        if canal and d < s.radius: d = min(d, AMBIENT_TOWN_REACH - 1.0)
         if d < bd:
             bd = d; best = k
     if best < 0:
@@ -371,7 +396,7 @@ _ambient_update = (cam: vec3):
         _amb_retire(ambient_town)
         ambient_town = ambient_layout(best)
         return
-    ambient_layout_step(ambient_town, AMBIENT_STEP_BUDGET)
+    if not ambient_town.done or (ambient_town.canal and ambient_town.canal_taken < canal_people.len()): ambient_layout_step(ambient_town, AMBIENT_STEP_BUDGET)
 
 ambient_walk_subjects = (people:mut WalkSubject[],observer:WorldPoint,t:f64,hour:f64):
     if ambient_town.settlement<0:return
@@ -414,9 +439,9 @@ ambient_pose = (k: int, t: f64) -> CrowdPose:
         if f.held >= 0.0: p.yaw = f.hold_yaw; p.stride = 0.0
     else if f.kind == .sit: p.posture = 1
     else:
-        # (talking: a hand raised now and then, eased up and down)
+        # (talking: a hand raised now and then, eased up and down; those at the water just look)
         w = (t + f.talk) % 9.0
-        p.gesture = if w < 2.2: sin(w / 2.2 * PI) * (0.8 + 0.2 * sin(t * 5.0 + f.talk)) else: 0.0
+        p.gesture = if w < 2.2 and f.kind != .stand: sin(w / 2.2 * PI) * (0.8 + 0.2 * sin(t * 5.0 + f.talk)) else: 0.0
         if f.holding: p.yaw = f.hold_yaw; p.gesture = 0.0
     p
 
