@@ -1,0 +1,594 @@
+# Eclipses of the Sun and the Moon: the real ones over the map from the world's start (7 June 1926;
+# eclipse_table.jo, written by tools/eclipse_ephemeris.py), and any phase of one set up at once by
+# the debug page or AEGEAN_ECLIPSE, anywhere.
+#
+# A solar eclipse is the Moon's offset from the Sun at a moment and a place on the map (in the
+# Sun's radii, x to the right facing the Sun, y up) and the Moon's radius over the Sun's: from those
+# the share of the Sun covered, the last sliver, totality. Since the offset depends on the place,
+# the umbra and the penumbra fall on the map at their real places and race over it at their real
+# speeds (eclipse_shadow_multiply draws them over the land and the sea). eclipse_light turns the
+# frame's light: the Sun bitten (sky.jo), the light dimming and cooling, and in totality a deep
+# blue-violet sky, sunset all round the horizon, the corona, the planets and the brightest stars.
+# A lunar eclipse is the Moon's offset from the Earth's shadow: dimmed in the penumbra, copper red
+# in the umbra (night_sky.jo), and the stars come out about it.
+#
+# Totality lasts a few minutes of the world's clock, a few seconds at its pace; near greatest the
+# eclipse's own time runs ECLIPSE_STRETCH times slower (AEGEAN_ECLIPSE_STRETCH=1: as the sky ran),
+# the contacts kept within a quarter of an hour of their real times.
+#
+# Never on the title screen nor in a new world's first days (day_air.jo EARLY_WORLD_DAYS), except
+# when forced.
+
+use 'eclipse_table.jo'
+use 'look.jo'
+use 'celestial.jo'
+use 'day_air.jo'
+use 'render_space.jo'
+use 'depth_space.jo'
+
+const ECLIPSE_MOON_KM = 384400.0
+const ECLIPSE_BLEND_MINUTES = 60.0     # the Moon eases between the sky's path and an eclipse's over this
+
+ECLIPSE_STRETCH = clamp(to_float(env("AEGEAN_ECLIPSE_STRETCH") ?? "") ?? 6.0, 1.0, 30.0)
+const ECLIPSE_STRETCH_MINUTES = 3.0    # how wide the slow stretch about greatest is
+
+# what an eclipse is doing at a moment and a place
+struct Eclipse:
+    on: bool = false
+    solar: bool = true
+    offset: vec2 = vec2(0, 0)          # solar: the Moon from the Sun (the Sun's radii); lunar: the Moon from the shadow (the Moon's radii)
+    k: f32 = 1.0                       # solar: the Moon's radius over the Sun's; lunar: the umbra's radius (Moon radii)
+    pen: f32 = 0.0                     # lunar: the penumbra's radius (Moon radii)
+    covered: f32 = 0.0                 # solar: the share of the Sun covered; lunar: the share of the Moon in the umbra
+    sliver: f32 = 2.0                  # solar: the widest part of the Sun left (the Sun's radii; 0 or less in totality)
+    blend: f32 = 1.0                   # how far the Moon follows the eclipse rather than the sky's path (0..1)
+    seed: int = 0
+    row: int = -1                      # the table's row (-1: forced)
+    minutes: f64 = 0.0                 # the eclipse's own minutes from greatest at the eye (stretched)
+    stretch: f32 = 1.0                 # how much slower its time runs now
+
+# ---------------- forcing (debug) ----------------
+# A forced eclipse is made about the eye: its greatest at the eye `minutes` from the moment it was
+# set, central there (the umbra over the eye) unless `miss` (the Sun's or the shadow's radii) moves
+# its track aside. kind: 0 off, 1 solar total, 2 solar annular, 3 lunar, 4 a real row replayed here.
+struct EclipseForce:
+    kind: int = 0
+    at: f64 = 0.0                      # the world minute of its greatest
+    x: f64 = 0.0                       # where it is central (km on the map)
+    z: f64 = 0.0
+    miss: f64 = 0.0
+    row: int = -1
+
+eclipse_forced = EclipseForce()
+
+ECLIPSE_PHASES = ["first", "partial", "deep", "crescent", "beads", "ring", "total", "third", "after", "last", "annular", "lunar-penumbral", "lunar-partial", "lunar-total", "lunar-leaving"]
+ECLIPSE_PHASE_NAMES = ["First contact", "Partial (half)", "Deep partial (90%)", "Thin crescent (98%)", "Baily's beads", "Diamond ring", "Totality", "Third contact (beads)", "Partial after (60%)", "Last contact", "Annular", "Lunar: penumbral", "Lunar: partial", "Lunar: total", "Lunar: leaving the umbra"]
+
+# the forced solar eclipse's geometry (a central one, the Moon crossing the Sun from right to left
+# and a little downward, as it does from the Aegean): its speed in the Sun's radii an hour
+const FORCE_SOLAR_SPEED = 1.5
+const FORCE_LUNAR_SPEED = 1.9
+FORCE_SOLAR_DIR = normalize(vec2(-1.0, -0.22))
+FORCE_LUNAR_DIR = normalize(vec2(-1.0, 0.18))
+const FORCE_K_TOTAL = 1.03
+const FORCE_K_ANNULAR = 0.95
+const FORCE_UMBRA = 2.72
+const FORCE_PENUMBRA = 4.75
+
+# the share of disc 1 (radius r1) covered by disc 2 (radius r2), centres d apart
+disc_overlap = (d: f64, r1: f64, r2: f64) -> f64:
+    if d >= r1 + r2: return 0.0
+    if d <= abs(r2 - r1): return if r2 >= r1: 1.0 else: (r2 * r2) / (r1 * r1)
+    a1 = acos(clamp((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1), -1.0, 1.0))
+    a2 = acos(clamp((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2), -1.0, 1.0))
+    (r1 * r1 * (a1 - sin(2.0 * a1) * 0.5) + r2 * r2 * (a2 - sin(2.0 * a2) * 0.5)) / (PI * r1 * r1)
+
+# the separation (Sun radii) at which a central eclipse of radius ratio k covers `share` of the Sun
+_sep_for_cover = (share: f64, k: f64) -> f64:
+    lo = 0.0; hi = 1.0 + k
+    loop i in 0..40:
+        mid = (lo + hi) * 0.5
+        if disc_overlap(mid, 1.0, k) > share: lo = mid else: hi = mid
+    (lo + hi) * 0.5
+
+# Force a phase (ECLIPSE_PHASES) about the eye at world minute `now`.
+eclipse_force_phase = (phase: str, now: f64, x_km: f64, z_km: f64):
+    global eclipse_forced
+    k = FORCE_K_TOTAL
+    kind = 1
+    sep = 0.0
+    sign = -1.0                        # before greatest
+    match phase:
+        "first": sep = 1.0 + k - 0.01
+        "partial": sep = _sep_for_cover(0.5, k)
+        "deep": sep = _sep_for_cover(0.9, k)
+        "crescent": sep = _sep_for_cover(0.98, k)
+        "beads": sep = k - 1.0 + 0.006
+        "ring": sep = k - 1.0 + 0.016
+        "total": sep = 0.0
+        "third": sep = k - 1.0 + 0.006; sign = 1.0
+        "after": sep = _sep_for_cover(0.6, k); sign = 1.0
+        "last": sep = 1.0 + k - 0.01; sign = 1.0
+        "annular": kind = 2; sep = 0.0
+        "lunar-penumbral": kind = 3; sep = FORCE_PENUMBRA - 0.5
+        "lunar-partial": kind = 3; sep = FORCE_UMBRA
+        "lunar-total": kind = 3; sep = 0.0
+        "lunar-leaving": kind = 3; sep = FORCE_UMBRA - 0.6; sign = 1.0
+        _:
+            eclipse_forced = EclipseForce()
+            return
+    speed = if kind == 3: FORCE_LUNAR_SPEED else: FORCE_SOLAR_SPEED
+    # (the eclipse's own minutes from greatest, then the world's: the stretch about greatest)
+    tau = sign * sep / speed * 60.0
+    eclipse_forced = EclipseForce(kind, now - eclipse_unstretch(tau), x_km, z_km, 0.0, -1)
+
+# Replay a real row here: its greatest at the eye `minutes` from now (its own geometry and track,
+# moved so its central line, or its best view, passes over the eye).
+eclipse_force_row = (row: int, minutes: f64, now: f64, x_km: f64, z_km: f64):
+    global eclipse_forced
+    if row < 0 or row >= ECLIPSE_ROWS.len():
+        eclipse_forced = EclipseForce()
+        return
+    r = ECLIPSE_ROWS[row]
+    if not r.solar:
+        eclipse_forced = EclipseForce(4, now + minutes - 0.0, x_km, z_km, 0.0, row)
+        return
+    # (the row's best place on the map and its time there)
+    best = eclipse_row_best(r)
+    eclipse_forced = EclipseForce(4, now + eclipse_unstretch(minutes) - best.z * 60.0, x_km - f64(best.x), z_km - f64(best.y), 0.0, row)
+
+eclipse_force_off = ():
+    global eclipse_forced
+    eclipse_forced = EclipseForce()
+
+eclipse_is_forced = () -> bool: eclipse_forced.kind != 0
+
+# AEGEAN_ECLIPSE=<phase> (ECLIPSE_PHASES) forces that phase about the start's eye; AEGEAN_ECLIPSE=row:<n>[:<minutes>]
+# replays the table's row n with its greatest that many minutes from the start (0); AEGEAN_ECLIPSE_AT="x,z" (km)
+# puts it elsewhere on the map.
+eclipse_env = env("AEGEAN_ECLIPSE") ?? ""
+eclipse_env_pending = eclipse_env != ""
+
+# (called once the world's minute and the eye are known)
+eclipse_env_apply = (now: f64, x_km: f64, z_km: f64):
+    global eclipse_env_pending
+    if not eclipse_env_pending: return
+    eclipse_env_pending = false
+    x = x_km; z = z_km
+    if let at = env("AEGEAN_ECLIPSE_AT"):
+        parts = split(at, ",")
+        if parts.len() == 2:
+            x = to_float(parts[0]) ?? x
+            z = to_float(parts[1]) ?? z
+    if starts_with(eclipse_env, "row:"):
+        parts = split(eclipse_env, ":")
+        n = to_int(parts[1]) ?? -1
+        m = if parts.len() > 2: to_float(parts[2]) ?? 0.0 else: 0.0
+        eclipse_force_row(n, m, now, x, z)
+    else: eclipse_force_phase(eclipse_env, now, x, z)
+
+# ---------------- the stretch about greatest ----------------
+# world minutes from greatest t = tau + (s - 1) c tanh(tau / c): near greatest the eclipse's own
+# minutes (tau) pass s times slower; far from it they keep pace, shifted by (s - 1) c.
+eclipse_unstretch = (tau: f64) -> f64:
+    c = ECLIPSE_STRETCH_MINUTES
+    tau + (ECLIPSE_STRETCH - 1.0) * c * tanh(tau / c)
+
+eclipse_stretch_of = (t: f64) -> f64:
+    c = ECLIPSE_STRETCH_MINUTES
+    s = ECLIPSE_STRETCH
+    if s <= 1.0001: return t
+    tau = t / s
+    loop i in 0..12:
+        th = tanh(tau / c)
+        f = tau + (s - 1.0) * c * th - t
+        tau -= f / (1.0 + (s - 1.0) * (1.0 - th * th))
+    tau
+
+# ---------------- the table's rows ----------------
+
+# (in hours from the row's reference, the place in km) the Moon's offset from the Sun (solar)
+_row_solar = (r: EclipseRow, t: f64, x_km: f64, z_km: f64) -> vec2:
+    x = x_km / 100.0; z = z_km / 100.0
+    f = [1.0, t, t * t, t * t * t, t * t * t * t, x, z, x * t, z * t, x * t * t, z * t * t, x * x, z * z, x * z]
+    ox = 0.0; oy = 0.0
+    loop i in 0..14:
+        ox += r.cx[i] * f[i]
+        oy += r.cy[i] * f[i]
+    vec2(f32(ox), f32(oy))
+
+_row_lunar = (r: EclipseRow, t: f64) -> vec2:
+    vec2(f32(r.cx[0] + r.cx[1] * t + r.cx[2] * t * t), f32(r.cy[0] + r.cy[1] * t + r.cy[2] * t * t))
+
+# the hours from the row's reference at which the Moon passes nearest the Sun from (x, z)
+eclipse_row_greatest = (r: EclipseRow, x_km: f64, z_km: f64) -> f64:
+    h = r.span / 60.0
+    lo = -h; hi = h
+    loop i in 0..48:
+        a = lo + (hi - lo) / 3.0; b = hi - (hi - lo) / 3.0
+        if r.solar:
+            if length(_row_solar(r, a, x_km, z_km)) < length(_row_solar(r, b, x_km, z_km)): hi = b else: lo = a
+        else:
+            if length(_row_lunar(r, a)) < length(_row_lunar(r, b)): hi = b else: lo = a
+    (lo + hi) * 0.5
+
+# the row's best view on the map: (x, z) km and (z) the hours from its reference
+eclipse_row_best = (r: EclipseRow) -> vec3:
+    best = vec3(0, 0, 0); least = 1e9
+    loop i in 0..11:
+        loop j in 0..9:
+            x = -250.0 + 50.0 * f64(i); z = -200.0 + 50.0 * f64(j)
+            t = eclipse_row_greatest(r, x, z)
+            d = f64(length(_row_solar(r, t, x, z)))
+            if d < least:
+                least = d
+                best = vec3(f32(x), f32(z), f32(t))
+    best
+
+# ---------------- what an eclipse is doing ----------------
+
+_solar_state = (e: Eclipse, offset: vec2, k: f64) -> Eclipse:
+    out = e
+    out.on = true; out.solar = true
+    out.offset = offset; out.k = f32(k)
+    sep = f64(length(offset))
+    out.covered = f32(disc_overlap(sep, 1.0, k))
+    out.sliver = f32(sep + 1.0 - k)
+    out
+
+_lunar_state = (e: Eclipse, offset: vec2, umb: f64, pen: f64) -> Eclipse:
+    out = e
+    out.on = true; out.solar = false
+    out.offset = offset; out.k = f32(umb); out.pen = f32(pen)
+    out.covered = f32(disc_overlap(f64(length(offset)), 1.0, umb))
+    out
+
+# The forced eclipse's geometry for a solar one: the Moon's offset at the eclipse's own hours `th`
+# from greatest, at (x, z) km, the Sun's direction sun: the parallax of the Moon (its distance),
+# so the shadow's track and its speed over the ground follow the Sun's height as the real ones do.
+_forced_solar = (f: EclipseForce, th: f64, x_km: f64, z_km: f64, sun: vec3) -> vec2:
+    s = normalize(sun)
+    right = normalize(cross(s, vec3(0, 1, 0)) + vec3(0.00001, 0, 0))
+    up = cross(right, s)
+    dx = f32(x_km - f.x); dz = f32(z_km - f.z)
+    g = f32(1.0 / (ECLIPSE_MOON_KM * f64(SUN_DISC_RADIUS)))
+    along = FORCE_SOLAR_DIR * f32(th * FORCE_SOLAR_SPEED)
+    side = vec2(-FORCE_SOLAR_DIR.y, FORCE_SOLAR_DIR.x) * f32(f.miss)
+    along + side - vec2(right.x * dx + right.z * dz, up.x * dx + up.z * dz) * g
+
+# The eclipse at world minute `minute` seen from (x, z) km under the Sun's direction `sun`: the eye's
+# own (which sets the stretch) is `eye_x`, `eye_z`. allowed: false on the title screen and in a new
+# world's first days (forcing still wins).
+eclipse_at = (minute: f64, x_km: f64, z_km: f64, sun: vec3, allowed: bool = true, eye_x: f64 = 0.0, eye_z: f64 = 0.0, eye: bool = true) -> Eclipse:
+    e = Eclipse()
+    ex = if eye: x_km else: eye_x
+    ez = if eye: z_km else: eye_z
+    f = eclipse_forced
+    if f.kind == 1 or f.kind == 2:
+        tau = eclipse_stretch_of(minute - f.at)
+        e.minutes = tau; e.row = -1; e.seed = 4711
+        e.stretch = f32(_stretch_now(minute - f.at))
+        if abs(tau) > (2.2 / FORCE_SOLAR_SPEED) * 60.0: return Eclipse()
+        return _solar_state(e, _forced_solar(f, tau / 60.0, x_km, z_km, sun), if f.kind == 2: FORCE_K_ANNULAR else: FORCE_K_TOTAL)
+    if f.kind == 3:
+        tau = minute - f.at
+        e.minutes = tau; e.seed = 2203
+        if abs(tau) > (FORCE_PENUMBRA + 1.3) / FORCE_LUNAR_SPEED * 60.0: return Eclipse()
+        return _lunar_state(e, FORCE_LUNAR_DIR * f32(tau / 60.0 * FORCE_LUNAR_SPEED), FORCE_UMBRA, FORCE_PENUMBRA)
+    if f.kind == 4:
+        r = ECLIPSE_ROWS[f.row]
+        e.row = f.row; e.seed = r.seed
+        if r.solar:
+            # (the row's own clock and map, moved: its reference at f.at, its best place at (f.x, f.z) from ours)
+            g = eclipse_row_greatest(r, ex - f.x, ez - f.z)
+            t = f.at + g * 60.0
+            tau = eclipse_stretch_of(minute - t)
+            e.minutes = tau
+            e.stretch = f32(_stretch_now(minute - t))
+            th = g + tau / 60.0
+            if abs(th) > r.span / 60.0: return Eclipse()
+            return _solar_state(e, _row_solar(r, th, x_km - f.x, z_km - f.z), r.k)
+        tau = minute - f.at
+        e.minutes = tau
+        if abs(tau) > r.span: return Eclipse()
+        return _lunar_state(e, _row_lunar(r, tau / 60.0), r.k, r.pen)
+    if not allowed: return e
+    loop i in 0..ECLIPSE_ROWS.len():
+        r = ECLIPSE_ROWS[i]
+        reach = r.span + (ECLIPSE_STRETCH - 1.0) * ECLIPSE_STRETCH_MINUTES + ECLIPSE_BLEND_MINUTES
+        if abs(minute - r.minute) > reach: continue
+        e.row = i; e.seed = r.seed
+        if r.solar:
+            g = eclipse_row_greatest(r, ex, ez)
+            t = r.minute + g * 60.0
+            tau = eclipse_stretch_of(minute - t)
+            e.minutes = tau
+            e.stretch = f32(_stretch_now(minute - t))
+            th = g + tau / 60.0
+            h = r.span / 60.0
+            e.blend = f32(1.0 - smoothstep(h, h + ECLIPSE_BLEND_MINUTES / 60.0, abs(th)))
+            out = _solar_state(e, _row_solar(r, clamp(th, -h, h), x_km, z_km), r.k)
+            if abs(th) > h:
+                out.covered = 0.0
+                out.sliver = 2.0
+            return out
+        th = (minute - r.minute) / 60.0
+        h = r.span / 60.0
+        e.minutes = th * 60.0
+        e.blend = f32(1.0 - smoothstep(h, h + ECLIPSE_BLEND_MINUTES / 60.0, abs(th)))
+        out = _lunar_state(e, _row_lunar(r, clamp(th, -h, h)), r.k, r.pen)
+        if abs(th) > h: out.covered = 0.0
+        return out
+    e
+
+# how many times slower the eclipse's time runs at world minutes t from greatest
+_stretch_now = (t: f64) -> f64:
+    tau = eclipse_stretch_of(t)
+    th = tanh(tau / ECLIPSE_STRETCH_MINUTES)
+    1.0 + (ECLIPSE_STRETCH - 1.0) * (1.0 - th * th)
+
+# The world's minute as a fraction, from its whole minute and the clock's hour (hours run smoothly
+# between the world's ticks).
+eclipse_minute = (minute: int, hour: f64, local_minute: int) -> f64:
+    base = f64(minute - local_minute)
+    frac = hour * 60.0
+    if frac - f64(local_minute) > 720.0: frac -= 1440.0
+    if frac - f64(local_minute) < -720.0: frac += 1440.0
+    base + frac
+
+# whether real eclipses may show: not on the title screen nor in a new world's first days
+eclipse_allowed = (minute: f64, title_open: bool, world_start_minute: int = 0) -> bool:
+    if title_open: return false
+    minute >= f64(world_start_minute) + f64(EARLY_WORLD_DAYS) * 1440.0
+
+# The next real eclipse after world minute `minute`: its row, or -1.
+eclipse_next_row = (minute: f64) -> int:
+    loop i in 0..ECLIPSE_ROWS.len():
+        if ECLIPSE_ROWS[i].minute + ECLIPSE_ROWS[i].span > minute: return i
+    -1
+
+# The debug page's line: what an eclipse is doing now, or the next real one.
+eclipse_debug_status = (e: Eclipse, minute: f64) -> str:
+    if e.on and (e.covered > 0.0 or not e.solar):
+        what = if e.solar: (if e.sliver <= 0.0: "totality" else: "{e.covered * 100.0:.0}% of the Sun") else: (if e.covered >= 0.999: "the Moon in the umbra" else: "{e.covered * 100.0:.0}% of the Moon in the umbra")
+        return "{what}, {e.minutes:+.0} min" + (if e.row >= 0: " ({split(ECLIPSE_ROWS[e.row].label, ",")[0]})" else: "")
+    n = eclipse_next_row(minute)
+    if n < 0: return "none (no more in the table)"
+    "none; next {split(ECLIPSE_ROWS[n].label, ",")[0]}"
+
+# ---------------- the light ----------------
+
+# How bright the day looks for the share of the Sun left: the eye makes little of a half-covered
+# Sun, much of the last few percent; in totality only the light from beyond the shadow is left.
+eclipse_brightness = (left: f64) -> f64: max(pow(clamp(left, 0.0, 1.0), 0.36), 0.0) * 0.985 + 0.015
+
+# totality's light (0..1): the corona comes out at the diamond ring and is full at second contact
+eclipse_totality = (e: Eclipse) -> f64:
+    if not e.on or not e.solar or e.k < 1.0: return 0.0
+    smoothstep(0.03, -0.003, f64(e.sliver))
+
+eclipse_ring = (e: Eclipse) -> f64:
+    if not e.on or not e.solar or e.k < 1.0: return 0.0
+    g = f64(e.sliver)
+    if g <= -0.002: return 0.0
+    smoothstep(0.035, 0.006, g) * smoothstep(-0.002, 0.001, g)
+
+eclipse_beads = (e: Eclipse) -> f64:
+    if not e.on or not e.solar or e.k < 1.0: return 0.0
+    g = f64(e.sliver)
+    smoothstep(0.012, 0.004, g) * smoothstep(-0.0015, 0.0015, g)
+
+# the Moon's direction in an eclipse: from the Sun (solar) or the Earth's shadow (lunar), turned by
+# its offset in the frame the sky's discs are drawn in
+eclipse_moon_dir = (e: Eclipse, sun_dir: vec3) -> vec3:
+    c = if e.solar: normalize(sun_dir) else: -normalize(sun_dir)
+    right = normalize(cross(c, vec3(0, 1, 0)) + vec3(0.00001, 0, 0))
+    up = cross(right, c)
+    scale = if e.solar: SUN_DISC_RADIUS else: MOON_DISC_RADIUS
+    normalize(c + (right * e.offset.x + up * e.offset.y) * scale)
+
+# totality's sky: a deep blue-violet overhead, the horizon all round lit like a sunset from beyond
+# the shadow
+const TOTALITY_TOP = vec3(0.045, 0.06, 0.17)
+const TOTALITY_HORIZON = vec3(0.5, 0.38, 0.36)
+const TOTALITY_HAZE = vec3(0.17, 0.15, 0.2)
+const TOTALITY_SHADE = vec3(0.05, 0.06, 0.12)
+const TOTALITY_SEA = vec3(0.015, 0.03, 0.07)
+const TOTALITY_SHALLOW = vec3(0.03, 0.07, 0.1)
+
+# The frame's light in an eclipse: the eye's own share of it.
+eclipse_light = (L: Light, e: Eclipse) -> Light:
+    if not e.on: return L
+    out = L
+    if e.blend < 1.0 or not e.on:
+        out.moon_dir = normalize(mix(L.moon_dir, eclipse_moon_dir(e, L.sun_dir), e.blend))
+    else: out.moon_dir = eclipse_moon_dir(e, L.sun_dir)
+    if not e.solar:
+        if e.blend <= 0.0: return out
+        out.lunar_eclipse = true
+        out.eclipse = vec4(e.offset.x, e.offset.y, e.k, e.pen)
+        out.eclipse_look = vec4(e.covered, f32(e.seed % 1000) / 37.0, 0, 1)
+        return out
+    if e.covered <= 0.0: return out
+    out.eclipse = vec4(e.offset.x, e.offset.y, e.k, e.covered)
+    tot = eclipse_totality(e)
+    out.eclipse_look = vec4(f32(tot), f32(e.seed % 1000) / 37.0, f32(eclipse_ring(e)), f32(eclipse_beads(e)))
+    left = 1.0 - f64(e.covered)
+    b = eclipse_brightness(left)
+    # (only a Sun up makes a difference to the day's light)
+    up = smoothstep(-0.05, 0.03, f64(normalize(L.sun_dir).y))
+    dark = f32((1.0 - b) * up)
+    # (the light dims and cools: the last crescent is the Sun's limb, and the sky's blue is what is left)
+    cool = mix(vec3(1, 1, 1), vec3(0.82, 0.9, 1.08), f32(smoothstep(0.3, 0.95, f64(e.covered)) * up))
+    out.sun = L.sun * cool * f32(mix(1.0, b, up))
+    out.glare = L.glare * f32(mix(1.0, b * b, up))
+    deep = f32(pow(f64(dark), 1.6))
+    out.sky_top = mix(L.sky_top, TOTALITY_TOP, deep)
+    out.sky_horizon = mix(L.sky_horizon * cool, TOTALITY_HORIZON, deep)
+    out.haze = mix(L.haze * cool, TOTALITY_HAZE, deep)
+    out.shade = mix(L.shade, TOTALITY_SHADE, deep)
+    out.sea_deep = mix(L.sea_deep, TOTALITY_SEA, deep)
+    out.sea_shallow = mix(L.sea_shallow, TOTALITY_SHALLOW, deep)
+    # (sunset all round the horizon: twilight's band, warm on every side, from deep partial to totality)
+    ring = f32(smoothstep(0.55, 1.0, f64(dark)))
+    if ring > 0.001:
+        g = L.afterglow
+        toward = if g.x > 0.0: vec2(g.z, g.w) else: normalize(vec2(L.sun_dir.x, L.sun_dir.z) + vec2(0.00001, 0))
+        out.afterglow = vec4(max(g.x, 0.95 * ring), if g.x > 0.0: mix(g.y, 1.0 / 0.11, ring) else: 1.0 / 0.11, toward.x, toward.y)
+        out.glow_low = mix(L.glow_low, vec3(0.98, 0.58, 0.3), ring)
+        out.glow_high = mix(L.glow_high, vec3(0.62, 0.5, 0.58), ring)
+        out.glow_belt = mix(L.glow_belt, vec3(0.92, 0.52, 0.32), ring)
+    out
+
+# the eye's darkness for the night's air (night_sky.jo): 0 none .. 1 totality
+eclipse_dark = (L: Light) -> f64:
+    if L.lunar_eclipse or L.eclipse.z <= 0.0: return 0.0
+    (1.0 - eclipse_brightness(1.0 - f64(L.eclipse.w))) * smoothstep(-0.05, 0.03, f64(normalize(L.sun_dir).y))
+
+# the Moon's own light left in a lunar eclipse (1 none .. about 0.03 deep in the umbra)
+eclipse_moon_light = (L: Light) -> f64:
+    if not L.lunar_eclipse: return 1.0
+    sep = f64(length(vec2(L.eclipse.x, L.eclipse.y)))
+    umb = f64(L.eclipse.z); pen = f64(L.eclipse.w)
+    inside = disc_overlap(sep, 1.0, pen)
+    penumbral = 1.0 - 0.55 * inside * clamp((pen + 1.0 - sep) / (pen - umb + 2.0), 0.0, 1.0)
+    umbral = disc_overlap(sep, 1.0, umb)
+    penumbral * (1.0 - 0.97 * umbral)
+
+# ---------------- the shadow on the land and the sea ----------------
+# Over the scene as a screen-space pass (in the cloud composite, after the aircraft's shadows): each
+# pixel's place in the world from the scene's depth, the Moon's offset there (the time's polynomial
+# collapsed on the CPU into a quadratic in the place), and how much darker or lighter it is there
+# than at the eye, whose share the frame's light already carries. The sky's pixels take it from the
+# low air along their ray, so the umbra is a dark wall on the horizon as it comes, and from inside
+# it the far air beyond its edge glows.
+struct EclipseShadowVertex:
+    corner: vec2
+
+struct EclipseShadowParams:
+    depth: Texture
+    rays: mat4
+    cam: vec3
+    forward: vec3
+    depth_ab: vec2
+    origin: vec2                    # the chart's world x, z (m)
+    o: vec4                         # xy the offset at the map's origin, zw its rate east (per 100 km)
+    q1: vec4                        # xy its rate south, zw the east-east term
+    q2: vec4                        # xy the south-south term, zw the east-south term
+    k: vec4                         # x the Moon's radius over the Sun's, y the eye's brightness, z the Sun's height, w strength
+
+struct EclipseShadowOut:
+    pos: vec4
+    ndc: vec2
+
+eclipse_shadow_vs = (v: EclipseShadowVertex, u: EclipseShadowParams) -> EclipseShadowOut:
+    ndc = v.corner * 2.0 - vec2(1, 1)
+    EclipseShadowOut(vec4(ndc, 0, 1), ndc)
+
+# (in shaders) the share of the Sun covered, centres d apart, the Moon's radius k (the Sun's 1)
+eclipse_cover_gpu = (d: f32, k: f32) -> f32:
+    if d >= 1.0 + k: return 0.0
+    if d <= abs(k - 1.0): return if k >= 1.0: 1.0 else: k * k
+    a1 = acos(clamp((d * d + 1.0 - k * k) / (2.0 * d), -1.0, 1.0))
+    a2 = acos(clamp((d * d + k * k - 1.0) / (2.0 * d * k), -1.0, 1.0))
+    (a1 - sin(2.0 * a1) * 0.5 + k * k * (a2 - sin(2.0 * a2) * 0.5)) / 3.14159265
+
+eclipse_shadow_fs = (i: EclipseShadowOut, u: EclipseShadowParams) -> vec4:
+    raw = sample(u.depth, i.ndc * 0.5 + vec2(0.5, 0.5)).x
+    ray = normalize((u.rays * vec4(i.ndc, 1, 0)).xyz)
+    t: f32 = -1.0
+    if world_has_depth(raw, u.depth_ab): t = world_depth_decode(raw, u.depth_ab) / max(dot(ray, u.forward), 0.0001)
+    sea = sea_intersection(ray, u.cam.y)
+    if sea > 0.0 and (t < 0.0 or sea < t - 3.0): t = sea
+    # (the sky: the low air along the ray, weaker the higher it looks)
+    weight: f32 = 1.0
+    if t < 0.0:
+        up = max(ray.y, 0.004)
+        t = min(1800.0 / up, 160000.0)
+        weight = exp(-up * 9.0)
+    p = u.cam + ray * t
+    wx = (p.x + u.origin.x) / 100000.0
+    wz = (p.z + u.origin.y) / 100000.0
+    off = u.o.xy + u.o.zw * wx + u.q1.xy * wz + u.q1.zw * wx * wx + u.q2.xy * wz * wz + u.q2.zw * wx * wz
+    covered = eclipse_cover_gpu(length(off), u.k.x)
+    left = 1.0 - covered
+    b = max(pow(max(left, 0.0), 0.36), 0.0) * 0.985 + 0.015
+    ratio = b / max(u.k.y, 0.015)
+    # (darker than at the eye: multiplied down, cool, never quite black; lighter: the warm light
+    # from beyond the shadow added)
+    if ratio < 1.0:
+        f = mix(1.0, max(ratio, 0.07), weight * u.k.w)
+        return vec4(vec3(0.004, 0.008, 0.02) * (1.0 - f), 1.0 - f)
+    lift = min((ratio - 1.0) * 0.08, 0.5) * weight * u.k.w
+    vec4(vec3(0.9, 0.62, 0.42) * lift * 0.5, 0.0)
+
+eclipse_shadow_sh = Shader()
+eclipse_shadow_quad = Mesh()
+
+# the eclipse the frame draws (set each frame by the game: eclipse_frame_set)
+eclipse_frame = Eclipse()
+eclipse_frame_minute = 0.0
+eclipse_frame_sun = vec3(0, 1, 0)
+
+eclipse_frame_set = (e: Eclipse, minute: f64, sun: vec3):
+    global eclipse_frame, eclipse_frame_minute, eclipse_frame_sun
+    eclipse_frame = e
+    eclipse_frame_minute = minute
+    eclipse_frame_sun = sun
+
+# The quadratic in the place (x east, z south, per 100 km) of the Moon's offset at this moment:
+# o.xy at the origin, o.zw east, q1.xy south, q1.zw east-east, q2.xy south-south, q2.zw east-south.
+eclipse_place_terms = (e: Eclipse, minute: f64, sun: vec3) -> (vec4, vec4, vec4):
+    f = eclipse_forced
+    if e.row < 0:
+        o = _forced_solar(f, e.minutes / 60.0, 0.0, 0.0, sun)
+        ex = _forced_solar(f, e.minutes / 60.0, 100.0, 0.0, sun) - o
+        ez = _forced_solar(f, e.minutes / 60.0, 0.0, 100.0, sun) - o
+        return (vec4(o.x, o.y, ex.x, ex.y), vec4(ez.x, ez.y, 0, 0), vec4(0, 0, 0, 0))
+    r = ECLIPSE_ROWS[e.row]
+    dx = if f.kind == 4: f.x else: 0.0
+    dz = if f.kind == 4: f.z else: 0.0
+    # (the row's own hours at this moment: from the eye's greatest and the eclipse's own minutes)
+    g = eclipse_row_greatest(r, eclipse_eye_x - dx, eclipse_eye_z - dz)
+    th = g + e.minutes / 60.0
+    t = th
+    cx = r.cx; cy = r.cy
+    # (offset = A + B x + C z + xx, zz, xz terms, with x and z measured from the row's origin)
+    ax = cx[0] + cx[1] * t + cx[2] * t * t + cx[3] * t * t * t + cx[4] * t * t * t * t
+    ay = cy[0] + cy[1] * t + cy[2] * t * t + cy[3] * t * t * t + cy[4] * t * t * t * t
+    bx = cx[5] + cx[7] * t + cx[9] * t * t; by = cy[5] + cy[7] * t + cy[9] * t * t
+    zx = cx[6] + cx[8] * t + cx[10] * t * t; zy = cy[6] + cy[8] * t + cy[10] * t * t
+    # (moved by (dx, dz) km: x' = x - dx)
+    sx = dx / 100.0; sz = dz / 100.0
+    o = vec2(f32(ax - bx * sx - zx * sz + cx[11] * sx * sx + cx[12] * sz * sz + cx[13] * sx * sz), f32(ay - by * sx - zy * sz + cy[11] * sx * sx + cy[12] * sz * sz + cy[13] * sx * sz))
+    ex = vec2(f32(bx - 2.0 * cx[11] * sx - cx[13] * sz), f32(by - 2.0 * cy[11] * sx - cy[13] * sz))
+    ez = vec2(f32(zx - 2.0 * cx[12] * sz - cx[13] * sx), f32(zy - 2.0 * cy[12] * sz - cy[13] * sx))
+    (vec4(o.x, o.y, ex.x, ex.y), vec4(ez.x, ez.y, f32(cx[11]), f32(cy[11])), vec4(f32(cx[12]), f32(cy[12]), f32(cx[13]), f32(cy[13])))
+
+eclipse_eye_x = 0.0
+eclipse_eye_z = 0.0
+eclipse_eye_set = (x_km: f64, z_km: f64):
+    global eclipse_eye_x, eclipse_eye_z
+    eclipse_eye_x = x_km; eclipse_eye_z = z_km
+
+# Multiply the umbra and the penumbra into the scene (the cloud composite's framebuffer, as the
+# aircraft's shadows are). Nothing to do without a solar eclipse over the map.
+eclipse_shadow_multiply = (chart: vec3, vp: mat4):
+    global eclipse_shadow_sh, eclipse_shadow_quad
+    e = eclipse_frame
+    if not e.on or not e.solar or scene_depth().id == 0: return
+    s = normalize(eclipse_frame_sun)
+    strength = smoothstep(-0.03, 0.04, f64(s.y))
+    if strength <= 0.0: return
+    eye_b = eclipse_brightness(1.0 - f64(e.covered))
+    (o, q1, q2) = eclipse_place_terms(e, eclipse_frame_minute, s)
+    # (none of the map darker or lighter than the eye by more than a hair: nothing to draw)
+    if e.covered <= 0.0 and length(vec2(o.x, o.y)) > 2.0 + e.k + 4.0 * (length(vec2(o.z, o.w)) + length(vec2(q1.x, q1.y))): return
+    zone("eclipse shadow")
+    if eclipse_shadow_sh.prog == 0: eclipse_shadow_sh = make_shader(shader(eclipse_shadow_vs, eclipse_shadow_fs))
+    if eclipse_shadow_quad.count == 0 and eclipse_shadow_quad.index_count == 0:
+        eclipse_shadow_quad = mesh([EclipseShadowVertex(vec2(0, 0)), EclipseShadowVertex(vec2(1, 0)), EclipseShadowVertex(vec2(0, 1)), EclipseShadowVertex(vec2(1, 1))], [u32(0), u32(1), u32(2), u32(2), u32(1), u32(3)])
+    rays = render_rays(vp)
+    blend(.premultiplied)
+    draw(eclipse_shadow_sh, eclipse_shadow_quad, EclipseShadowParams(scene_depth(), rays, render_eye(chart), normalize(rays[2].xyz), world_depth_params(), vec2(chart.x, chart.z), o, q1, q2, vec4(e.k, f32(eye_b), s.y, f32(strength))))
+    zone_end()
