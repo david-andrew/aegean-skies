@@ -19,7 +19,7 @@ how stories come out of it. It is a working document; the code is the final word
 
 ## Time and scale
 
-- The world clock: one game hour is two real minutes (a day is 48 minutes), set in one constant.
+- The world clock: one game hour is four real minutes (a day is 96 minutes), set in one constant.
 - The archipelago is about 16 km across: nine islands to start, four or five with settlements.
   A seaplane cruises at about 55-70 m/s, so the far side is three or four minutes away.
 - Seasons and years are not modeled at first.

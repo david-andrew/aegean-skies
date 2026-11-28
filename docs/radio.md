@@ -61,7 +61,7 @@ approved (data/music/SOURCES.md), they play the existing pieces by style.
 For the first six stations, at each half hour the first five game minutes carry news, the next five carry a state editorial,
 advert or pirate quiz, and the remainder carry music. Maritime alternates weather observations
 and shipping notices every fifteen game minutes. The clock is the **saved living-world clock**:
-minute zero is 09:30, with two real seconds per game minute. Cosmetic debug sky-hour changes do
+minute zero is 09:30, with four real seconds per game minute. Cosmetic debug sky-hour changes do
 not advance the broadcast schedule. Tuning in joins a continuing world-time score.
 
 Transmitters are fictional locations, not declarations of national capitals. The game positions
