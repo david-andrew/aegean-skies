@@ -58,7 +58,7 @@ household mortality and full supply-chain manufacturing are not modeled.
 
 ## Scene ownership
 
-The shared clock runs at 60 physical ticks/second and 120 ticks/game minute. Coarse decisions
+The shared clock runs at 60 physical ticks/second and 240 ticks/game minute. Coarse decisions
 run per game minute; frame callbacks step only leased bodies. `far_transport_scene` materializes
 an existing economic ship as an external `Vessel`; the vessel integrator does not move it again.
 The scene adapter advances that ship's saved journey interval with a physical hull guard. Folding

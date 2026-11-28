@@ -1,0 +1,152 @@
+# Flight trim: pitch, aileron (roll) and rudder (yaw) trim for keyboard, mouse-modifier and
+# controller flying. Pure state and input stepping; mouse-steer ignores it and keeps working as now.
+#
+# - Tap a key (or flick the controller trim stick): moves one notch (TRIM_NOTCH).
+# - Hold a key (past TRIM_HOLD_DELAY) or hold the stick over: moves slowly and continuously.
+# - Reset zeroes all three axes.
+# - Holding the mouse-trim key and moving the mouse trims pitch (Y) and roll (X) directly.
+
+const TRIM_NOTCH = 0.025            # 40 notches each side (-1..1), fine enough for level cruise at any speed
+const TRIM_HOLD_DELAY = 0.28        # seconds held before continuous motion begins
+const TRIM_HOLD_RATE = 0.30         # units per second while held (~3.3 s from neutral to full)
+const TRIM_MOUSE_SCALE = 0.0022     # trim units per pixel of mouse movement while mouse-trim key is held
+const TRIM_SHOW_SECONDS = 2.6       # how long the on-screen trim indicator lingers after the last change
+const TRIM_FADE_IN = 0.14
+const TRIM_FADE_OUT = 0.85
+
+struct TrimState:
+    pitch = 0.0                     # -1..1 (positive nose up)
+    roll = 0.0                      # -1..1 (positive right wing down)
+    yaw = 0.0                       # -1..1 (positive nose right)
+    # Per-axis hold state (0 pitch, 1 roll, 2 yaw)
+    pitch_dir = 0
+    pitch_held = 0.0
+    roll_dir = 0
+    roll_held = 0.0
+    yaw_dir = 0
+    yaw_held = 0.0
+    # Controller stick edge detection so a flick moves one notch and a hold moves continuously
+    pad_pitch_dir = 0
+    pad_pitch_held = 0.0
+    pad_roll_dir = 0
+    pad_roll_held = 0.0
+    pad_yaw_dir = 0
+    pad_yaw_held = 0.0
+    # On-screen indicator timer (counts down to 0) and fade-in age
+    show = 0.0
+    shown_age = 0.0
+
+_trim_snap = (v: f64) -> f64:
+    c = clamp(v, -1.0, 1.0)
+    if abs(c) < 0.0005: 0.0 else: c
+
+_trim_key_axis = (val: f64, dir_was: int, held_was: f64, pos_pressed: bool, neg_pressed: bool, pos_down: bool, neg_down: bool, dt: f64) -> (f64, int, f64, bool):
+    v = val
+    changed = false
+    dir = (if pos_down: 1 else: 0) - (if neg_down: 1 else: 0)
+    if pos_pressed and not neg_down:
+        v = _trim_snap(v + TRIM_NOTCH)
+        changed = true
+        return (v, 1, 0.0, changed)
+    if neg_pressed and not pos_down:
+        v = _trim_snap(v - TRIM_NOTCH)
+        changed = true
+        return (v, -1, 0.0, changed)
+    if dir == 0: return (v, 0, 0.0, false)
+    held = if dir == dir_was: held_was + dt else: 0.0
+    if held > TRIM_HOLD_DELAY:
+        step_dt = min(dt, held - TRIM_HOLD_DELAY)
+        next = _trim_snap(v + f64(dir) * TRIM_HOLD_RATE * step_dt)
+        if abs(next - v) > 1e-9: changed = true
+        v = next
+    (v, dir, held, changed)
+
+_trim_pad_axis = (val: f64, dir_was: int, held_was: f64, axis: f64, dt: f64) -> (f64, int, f64, bool):
+    v = val
+    changed = false
+    dir = if axis > 0.15: 1 else: if axis < -0.15: -1 else: 0
+    if dir == 0: return (v, 0, 0.0, false)
+    if dir != dir_was:
+        # Flick: one notch right away
+        v = _trim_snap(v + f64(dir) * TRIM_NOTCH)
+        return (v, dir, 0.0, true)
+    held = held_was + dt
+    if held > TRIM_HOLD_DELAY:
+        step_dt = min(dt, held - TRIM_HOLD_DELAY)
+        # Scale continuous rate by how far the stick is pushed
+        mag = clamp((abs(axis) - 0.15) / 0.85, 0.15, 1.0)
+        next = _trim_snap(v + f64(dir) * TRIM_HOLD_RATE * mag * step_dt)
+        if abs(next - v) > 1e-9: changed = true
+        v = next
+    (v, dir, held, changed)
+
+trim_reset = (t: mut TrimState):
+    t.pitch = 0.0; t.roll = 0.0; t.yaw = 0.0
+    t.pitch_dir = 0; t.pitch_held = 0.0
+    t.roll_dir = 0; t.roll_held = 0.0
+    t.yaw_dir = 0; t.yaw_held = 0.0
+    t.pad_pitch_dir = 0; t.pad_pitch_held = 0.0
+    t.pad_roll_dir = 0; t.pad_roll_held = 0.0
+    t.pad_yaw_dir = 0; t.pad_yaw_held = 0.0
+    t.show = TRIM_SHOW_SECONDS
+    if t.shown_age <= 0.0: t.shown_age = 0.001
+
+# One frame of trim input. Returns true if any axis changed or reset was pressed.
+# pitch_pos = nose up (K), pitch_neg = nose down (I)
+# roll_pos = right wing down (O), roll_neg = left wing down (U)
+# yaw_pos = nose right (N), yaw_neg = nose left (B)
+# mouse_trim = true while holding the mouse-trim modifier (L); mouse_delta is raw mouse delta (x right, y down)
+trim_step = (t: mut TrimState, dt: f64,
+    p_up_p: bool, p_dn_p: bool, p_up_d: bool, p_dn_d: bool,
+    r_rt_p: bool, r_lt_p: bool, r_rt_d: bool, r_lt_d: bool,
+    y_rt_p: bool, y_lt_p: bool, y_rt_d: bool, y_lt_d: bool,
+    reset_p: bool,
+    mouse_trim: bool = false, md: vec2 = vec2(0, 0),
+    pad_pitch: f64 = 0.0, pad_roll: f64 = 0.0, pad_yaw: f64 = 0.0) -> bool:
+    changed = false
+    if reset_p:
+        trim_reset(t)
+        changed = true
+    else:
+        p = _trim_key_axis(t.pitch, t.pitch_dir, t.pitch_held, p_up_p, p_dn_p, p_up_d, p_dn_d, dt)
+        t.pitch = p.0; t.pitch_dir = p.1; t.pitch_held = p.2; if p.3: changed = true
+        r = _trim_key_axis(t.roll, t.roll_dir, t.roll_held, r_rt_p, r_lt_p, r_rt_d, r_lt_d, dt)
+        t.roll = r.0; t.roll_dir = r.1; t.roll_held = r.2; if r.3: changed = true
+        y = _trim_key_axis(t.yaw, t.yaw_dir, t.yaw_held, y_rt_p, y_lt_p, y_rt_d, y_lt_d, dt)
+        t.yaw = y.0; t.yaw_dir = y.1; t.yaw_held = y.2; if y.3: changed = true
+
+        pp = _trim_pad_axis(t.pitch, t.pad_pitch_dir, t.pad_pitch_held, pad_pitch, dt)
+        t.pitch = pp.0; t.pad_pitch_dir = pp.1; t.pad_pitch_held = pp.2; if pp.3: changed = true
+        pr = _trim_pad_axis(t.roll, t.pad_roll_dir, t.pad_roll_held, pad_roll, dt)
+        t.roll = pr.0; t.pad_roll_dir = pr.1; t.pad_roll_held = pr.2; if pr.3: changed = true
+        py = _trim_pad_axis(t.yaw, t.pad_yaw_dir, t.pad_yaw_held, pad_yaw, dt)
+        t.yaw = py.0; t.pad_yaw_dir = py.1; t.pad_yaw_held = py.2; if py.3: changed = true
+
+        if mouse_trim:
+            # Pulling mouse back (+y) trims nose up (+pitch); moving right (+x) trims right wing down (+roll)
+            if abs(f64(md.y)) > 0.01:
+                next_p = _trim_snap(t.pitch + f64(md.y) * TRIM_MOUSE_SCALE)
+                if abs(next_p - t.pitch) > 1e-9: changed = true
+                t.pitch = next_p
+            if abs(f64(md.x)) > 0.01:
+                next_r = _trim_snap(t.roll + f64(md.x) * TRIM_MOUSE_SCALE)
+                if abs(next_r - t.roll) > 1e-9: changed = true
+                t.roll = next_r
+    if changed or mouse_trim:
+        if t.show <= 0.0: t.shown_age = 0.0
+        t.show = TRIM_SHOW_SECONDS
+    if t.show > 0.0:
+        t.shown_age += dt
+        if not changed and not mouse_trim: t.show = max(0.0, t.show - dt)
+    else:
+        t.shown_age = 0.0
+    changed
+
+# Indicator opacity (0..1): fades in briskly when changing and fades out cleanly once settled.
+trim_indicator_alpha = (t: TrimState) -> f64:
+    if t.show <= 0.0: return 0.0
+    fi = smoothstep(0.0, TRIM_FADE_IN, t.shown_age)
+    fo = smoothstep(0.0, TRIM_FADE_OUT, t.show)
+    clamp(fi * fo, 0.0, 1.0)
+
+trim_notches = (v: f64) -> int: int(round(v / TRIM_NOTCH))

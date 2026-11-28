@@ -1,0 +1,195 @@
+# The pilot's radio habit (the Character option "Your pilot works the wireless", on by default):
+# when the player has not touched the wireless on a flight, the pilot switches it on some time
+# after take-off and picks among stations he likes (a small, stable preference per pilot from his
+# seed/name), sometimes changing station on long flights or if the station goes off air or fades.
+# Any player change to the wireless stops the habit for the rest of the flight. It never runs
+# during important radio calls (help, tows, wingmen, R/T, battle radio).
+# Pure module: knows neither World nor UI; tests drive it directly.
+use 'radio.jo'
+
+const PILOT_RADIO_MIN_RECEPTION = 0.12
+const PILOT_RADIO_FADE_RECEPTION = 0.06
+const PILOT_RADIO_ON_MIN = 22.0             # seconds airborne before the pilot switches it on
+const PILOT_RADIO_ON_MAX = 48.0
+const PILOT_RADIO_RETUNE_MIN = 240.0        # seconds before changing station on a long flight (4-7 min)
+const PILOT_RADIO_RETUNE_MAX = 420.0
+const PILOT_RADIO_FADE_WAIT = 14.0          # seconds of off-air / weak signal before retuning
+const PILOT_RADIO_FAST_ON = 3.0             # fast timing for captures/debugging
+const PILOT_RADIO_FAST_RETUNE = 12.0
+
+enum PilotRadioEvent: none, switched_on, changed_station
+
+struct PilotRadioAction:
+    event: PilotRadioEvent = .none
+    station = -1
+    khz = 0.0
+
+struct PilotRadio:
+    seed: u64 = u64(0)
+    pilot_name = ""
+    flight_id = 0
+    was_airborne = false
+    airborne_time = 0.0
+    ground_time = 0.0
+    player_touched = false
+    pilot_active = false                    # true once the pilot switched the wireless on this flight
+    current_station = -1
+    last_change_time = 0.0
+    fade_time = 0.0
+    switch_on_delay = 32.0
+    retune_delay = 300.0
+    retunes = 0
+    fast = false
+
+_pr_hash = (seed: u64, salt: u64, text: str = "") -> u64:
+    h = (seed xor (salt * u64(0x9e3779b97f4a7c15))) xor u64(0x517cc1b727220a95)
+    loop b in text.bytes():
+        h = (h xor u64(b)) * u64(0x100000001b3)
+    h = (h xor (h >> 30)) * u64(0xbf58476d1ce4e5b9)
+    h = (h xor (h >> 27)) * u64(0x94d049bb133111eb)
+    h xor (h >> 31)
+
+_pr_unit = (seed: u64, salt: u64, text: str = "") -> f64:
+    f64(_pr_hash(seed, salt, text) & u64(0xffffff)) / f64(0x1000000)
+
+# Stable, small favourite-station list (4 stations) for a pilot, derived deterministically from
+# world seed and pilot name. Prefers broadcast/music/regional stations (excludes pure Morse
+# shipping station 4 from the favourite pool so the pilot tunes to music or home broadcasts).
+pilot_radio_favourites = (seed: u64, pilot_name: str = "") -> int[]:
+    pool = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    # Deterministic Fisher-Yates shuffle of a copy using the pilot's identity hash
+    order: int[]
+    loop id in pool: order.push(id)
+    loop i in 0..4:
+        rem = order.len() - i
+        pick = i + int(_pr_hash(seed, u64(101 + i * 37), pilot_name) % u64(rem))
+        tmp = order[i]; order[i] = order[pick]; order[pick] = tmp
+    [order[0], order[1], order[2], order[3]]
+
+_schedule_delays = (pr: mut PilotRadio):
+    if pr.fast:
+        pr.switch_on_delay = PILOT_RADIO_FAST_ON
+        pr.retune_delay = PILOT_RADIO_FAST_RETUNE
+    else:
+        u1 = _pr_unit(pr.seed, u64(311 + pr.flight_id * 17), pr.pilot_name)
+        u2 = _pr_unit(pr.seed, u64(523 + pr.flight_id * 29 + pr.retunes * 7), pr.pilot_name)
+        pr.switch_on_delay = PILOT_RADIO_ON_MIN + (PILOT_RADIO_ON_MAX - PILOT_RADIO_ON_MIN) * u1
+        pr.retune_delay = PILOT_RADIO_RETUNE_MIN + (PILOT_RADIO_RETUNE_MAX - PILOT_RADIO_RETUNE_MIN) * u2
+
+pilot_radio_init = (seed: u64, pilot_name: str = "", fast: bool = false) -> PilotRadio:
+    pr = PilotRadio(seed = seed, pilot_name = pilot_name, fast = fast)
+    _schedule_delays(pr)
+    pr
+
+# Any player change to the wireless silences the pilot's habit for the rest of this flight.
+pilot_radio_player_touched = (pr: mut PilotRadio):
+    pr.player_touched = true
+    pr.pilot_active = false
+
+# End of flight (landed/moored or stepped ashore): prepare a fresh flight state.
+pilot_radio_reset_flight = (pr: mut PilotRadio):
+    if pr.was_airborne: pr.flight_id += 1
+    pr.was_airborne = false
+    pr.airborne_time = 0.0
+    pr.ground_time = 0.0
+    pr.player_touched = false
+    pr.pilot_active = false
+    pr.current_station = -1
+    pr.last_change_time = 0.0
+    pr.fade_time = 0.0
+    pr.retunes = 0
+    _schedule_delays(pr)
+
+# Pick a station the pilot likes that is currently on air and receivable (skipping `avoid` when
+# changing station if another liked option is available). Returns station index or -1.
+pilot_radio_pick = (pr: PilotRadio, stations: RadioStation[], minute: int, pos: vec3, avoid: int = -1, salt: int = 0) -> int:
+    local_hour = f64(radio_local_minute(minute)) / 60.0
+    favs = pilot_radio_favourites(pr.seed, pr.pilot_name)
+    good: int[]
+    loop id in favs:
+        if id == avoid or id < 0 or id >= stations.len(): continue
+        if not radio_on_air(id, minute): continue
+        if radio_reception(stations[id], stations[id].khz, pos, local_hour) >= PILOT_RADIO_MIN_RECEPTION:
+            good.push(id)
+    if good.len() > 0:
+        idx = int(_pr_hash(pr.seed, u64(701 + pr.flight_id * 31 + salt * 13), pr.pilot_name) % u64(good.len()))
+        return good[idx]
+    # Fallback: strongest on-air non-shipping station in reach (never static)
+    best = -1; best_sig = PILOT_RADIO_MIN_RECEPTION
+    loop st in stations:
+        if st.id == avoid or st.id == 4: continue
+        if not radio_on_air(st.id, minute): continue
+        sig = radio_reception(st, st.khz, pos, local_hour)
+        if sig > best_sig:
+            best_sig = sig; best = st.id
+    best
+
+# Step the pilot's radio habit once per frame.
+# - `enabled`: Options.pilot_radio
+# - `aboard`: player is in the aircraft
+# - `airborne`: aircraft is flying (not moored, not on water, not on ground)
+# - `busy`: important radio call active (help, tows, wingmen, R/T, battle radio, distress)
+# - `radio_muted`: current cockpit_radio.muted state
+# - `radio_khz`: current cockpit_radio.khz
+pilot_radio_step = (pr: mut PilotRadio, dt: f64, enabled: bool, aboard: bool, airborne: bool, busy: bool, radio_muted: bool, radio_khz: f64, stations: RadioStation[], minute: int, pos: vec3) -> PilotRadioAction:
+    if not aboard:
+        if pr.was_airborne or pr.player_touched or pr.pilot_active:
+            pilot_radio_reset_flight(pr)
+        return PilotRadioAction()
+    if not airborne:
+        pr.airborne_time = 0.0
+        pr.fade_time = 0.0
+        if pr.was_airborne:
+            pr.ground_time += dt
+            if pr.ground_time >= 2.0:
+                pilot_radio_reset_flight(pr)
+        return PilotRadioAction()
+    pr.was_airborne = true
+    pr.ground_time = 0.0
+    pr.airborne_time += dt
+    if not enabled or pr.player_touched or busy:
+        return PilotRadioAction()
+    # 1. Switch on after calm flight if the wireless is still off and the player hasn't touched it
+    if not pr.pilot_active:
+        if not radio_muted:
+            # Already on from before takeoff (e.g. player/capture left it on): respect it and stay silent
+            pr.player_touched = true
+            return PilotRadioAction()
+        if pr.airborne_time >= pr.switch_on_delay:
+            pick = pilot_radio_pick(pr, stations, minute, pos, -1, 0)
+            if pick >= 0:
+                pr.pilot_active = true
+                pr.current_station = pick
+                pr.last_change_time = pr.airborne_time
+                pr.fade_time = 0.0
+                return PilotRadioAction(.switched_on, pick, stations[pick].khz)
+        return PilotRadioAction()
+    # 2. Already switched on by the pilot: check if current station went off air / faded, or long flight retune
+    if radio_muted:
+        # Something turned it off without calling player_touched; stay silent
+        pr.player_touched = true
+        pr.pilot_active = false
+        return PilotRadioAction()
+    local_hour = f64(radio_local_minute(minute)) / 60.0
+    lost = false
+    if pr.current_station >= 0 and pr.current_station < stations.len():
+        st = stations[pr.current_station]
+        if not radio_on_air(st.id, minute) or radio_reception(st, radio_khz, pos, local_hour) < PILOT_RADIO_FADE_RECEPTION:
+            pr.fade_time += dt
+            if pr.fade_time >= (if pr.fast: 2.0 else: PILOT_RADIO_FADE_WAIT): lost = true
+        else:
+            pr.fade_time = 0.0
+    long_due = pr.airborne_time - pr.last_change_time >= pr.retune_delay
+    if lost or long_due:
+        next_st = pilot_radio_pick(pr, stations, minute, pos, pr.current_station, pr.retunes + 1)
+        if next_st >= 0 and next_st != pr.current_station:
+            pr.current_station = next_st
+            pr.last_change_time = pr.airborne_time
+            pr.fade_time = 0.0
+            pr.retunes += 1
+            _schedule_delays(pr)
+            return PilotRadioAction(.changed_station, next_st, stations[next_st].khz)
+        # If no alternative station is reachable right now, postpone the next check
+        pr.last_change_time = pr.airborne_time
+        pr.fade_time = 0.0
+    PilotRadioAction()

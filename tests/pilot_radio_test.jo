@@ -1,0 +1,123 @@
+# Tests for the pilot's radio habit (src/pilot_radio.jo):
+# - switches on after take-off and picks from the pilot's small, stable favourite list
+# - changes station on long flights and when a station goes off air or fades out
+# - any player change to the wireless stops the habit for the rest of the flight
+# - resets cleanly for the next flight after landing/mooring or stepping ashore
+# - never interrupts important radio calls (help, tows, wingmen, R/T, battle radio)
+# - respects the player setting (Options.pilot_radio)
+use '../src/radio.jo'
+use '../src/pilot_radio.jo'
+use '../src/options.jo'
+
+const DT = 1.0 / 60.0
+const DAY_MINUTE = 120              # 11:30 local (09:30 + 120): most daytime stations on air
+const HOME_POS = vec3(0, 400, 0)
+
+test "each pilot has a small stable list of liked stations and picks from it after take-off":
+    stations = radio_stations()
+    fav_a = pilot_radio_favourites(u64(42), "Marco")
+    fav_a2 = pilot_radio_favourites(u64(42), "Marco")
+    fav_b = pilot_radio_favourites(u64(99), "Niko")
+    assert(fav_a.len() == 4 and fav_a == fav_a2)
+    assert(fav_a != fav_b)
+    assert(not (4 in fav_a) and not (4 in fav_b))  # never picks pure Morse shipping as a favourite
+
+    pr = pilot_radio_init(u64(42), "Marco")
+    # On the water before take-off: stays silent
+    loop i in 0..60 * 60:
+        act = pilot_radio_step(pr, DT, true, true, false, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+        assert(act.event == .none)
+    # Airborne: switches on after switch_on_delay (22..48 s) and picks a liked, on-air, receivable station
+    fired = PilotRadioAction()
+    fired_at = -1.0
+    loop i in 0..60 * 60:
+        act = pilot_radio_step(pr, DT, true, true, true, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+        if act.event != .none:
+            fired = act; fired_at = pr.airborne_time; break
+    assert(fired.event == .switched_on, "{fired.event}")
+    assert(fired_at >= PILOT_RADIO_ON_MIN - 0.1 and fired_at <= PILOT_RADIO_ON_MAX + 0.1, "fired at {fired_at}s")
+    assert(fired.station in fav_a, "station {fired.station} not in {fav_a}")
+    assert(radio_on_air(fired.station, DAY_MINUTE))
+    assert(abs(fired.khz - stations[fired.station].khz) < 0.01)
+
+test "long flights occasionally change station and off-air or faded stations are retuned":
+    stations = radio_stations()
+    pr = pilot_radio_init(u64(7), "Elena")
+    muted = true; khz = 1100.0; first_st = -1; second_st = -1
+    # Fly for 10 minutes airborne: should switch on once, then change to another station later
+    loop i in 0..60 * 600:
+        act = pilot_radio_step(pr, DT, true, true, true, false, muted, khz, stations, DAY_MINUTE, HOME_POS)
+        if act.event == .switched_on:
+            first_st = act.station; muted = false; khz = act.khz
+        else if act.event == .changed_station:
+            second_st = act.station; khz = act.khz; break
+    assert(first_st >= 0 and second_st >= 0 and second_st != first_st, "first={first_st} second={second_st}")
+
+    # Faded / off-air station retunes promptly once out of range
+    pr2 = pilot_radio_init(u64(13), "Kostas", fast = true)
+    muted = true; khz = 1100.0; st1 = -1; st2 = -1
+    loop i in 0..60 * 5:
+        act = pilot_radio_step(pr2, DT, true, true, true, false, muted, khz, stations, DAY_MINUTE, HOME_POS)
+        if act.event == .switched_on:
+            st1 = act.station; muted = false; khz = act.khz; break
+    assert(st1 >= 0)
+    # Find an hour when st1 is off air (if it keeps broadcast hours) and verify the pilot retunes
+    pr2.retune_delay = 999.0
+    found_off = -1
+    loop h in 0..24:
+        m = h * 60
+        if not radio_on_air(st1, m): found_off = m; break
+    if found_off >= 0:
+        loop i in 0..60 * 5:
+            act = pilot_radio_step(pr2, DT, true, true, true, false, muted, khz, stations, found_off, HOME_POS)
+            if act.event == .changed_station:
+                st2 = act.station; break
+        assert(st2 >= 0 and st2 != st1 and radio_on_air(st2, found_off))
+
+test "any player radio change stops the habit for the rest of the flight and resets next flight":
+    stations = radio_stations()
+    pr = pilot_radio_init(u64(42), "Marco", fast = true)
+    # Player touches the radio before the pilot switches it on (e.g. tunes or mutes it)
+    loop i in 0..60: _ = pilot_radio_step(pr, DT, true, true, true, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+    pilot_radio_player_touched(pr)
+    # Pilot must stay completely silent for the entire rest of this flight
+    loop i in 0..60 * 60:
+        act = pilot_radio_step(pr, DT, true, true, true, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+        assert(act.event == .none)
+    # Land and remain on water > 2 s -> new flight resets player_touched
+    loop i in 0..60 * 3:
+        _ = pilot_radio_step(pr, DT, true, true, false, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+    assert(not pr.player_touched)
+    # On the next flight, the pilot switches it on again
+    switched = false
+    loop i in 0..60 * 10:
+        act = pilot_radio_step(pr, DT, true, true, true, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+        if act.event == .switched_on: switched = true; break
+    assert(switched)
+    # If the player then changes the station or turns it off, the pilot stops changing it for this flight
+    pilot_radio_player_touched(pr)
+    loop i in 0..60 * 60:
+        act = pilot_radio_step(pr, DT, true, true, true, false, false, 620.0, stations, DAY_MINUTE, HOME_POS)
+        assert(act.event == .none)
+
+test "never interrupts important radio calls and respects the pilot_radio setting":
+    stations = radio_stations()
+    # Setting off: never touches the radio
+    pr_off = pilot_radio_init(u64(42), "Marco", fast = true)
+    loop i in 0..60 * 30:
+        act = pilot_radio_step(pr_off, DT, false, true, true, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+        assert(act.event == .none)
+    # Busy (help / tow / wingmen / R/T / battle radio): never switches on or retunes while busy
+    pr_busy = pilot_radio_init(u64(42), "Marco", fast = true)
+    loop i in 0..60 * 20:
+        act = pilot_radio_step(pr_busy, DT, true, true, true, true, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+        assert(act.event == .none)
+    # Once the call clears, the pilot may switch it on cleanly
+    act_after = pilot_radio_step(pr_busy, DT, true, true, true, false, true, 1100.0, stations, DAY_MINUTE, HOME_POS)
+    assert(act_after.event == .switched_on)
+    # While busy after switching on, never retunes either
+    loop i in 0..60 * 30:
+        act = pilot_radio_step(pr_busy, DT, true, true, true, true, false, act_after.khz, stations, DAY_MINUTE, HOME_POS)
+        assert(act.event == .none)
+    # Default Options has pilot_radio = true
+    assert(Options().pilot_radio)
