@@ -218,7 +218,8 @@ blue discs that stay in every frame are **speed flecks**.
   waterline. Above the waterline, hulls' undersides and chines within ~2 m of the sea catch soft
   reflected upward caustics.
 - **Code:** `src/coast_pattern.jo` (`coast_caustic_edge`, stored in the unused alpha channel of
-  `coast-pattern-v2.png`: a seamless 8×8 periodic curved exact-bisector Voronoi distance field);
+  `coast-pattern-v3.png`: a seamless 8×8 periodic domain-warped curved caustic distance field with
+  pinched 3-way knots);
   `src/caustics.jo` (`caustic_strength`, `caustic_uniforms`, `caustic_seabed`, `caustic_hull`);
   called from `src/terrain.jo` (`ground_surface`, `draw_coast_batches`, vertex cloud shadow gated
   on submerged vertices in `coast_vs`, omitted from `coast_vs_low`), `src/objects.jo` (`hull_light`,
