@@ -43,7 +43,15 @@ def main():
         assert "tip" not in seen, seen
         pills = last["pills"].split("|")
         assert pills.count("Drink") + pills.count("Eat") == 3, pills
-        assert "Read" in pills and "Wait_an_hour" not in pills and any(p.startswith("Wait") for p in pills), pills
+        assert "Read" in pills and "Wait_an_hour" in pills and ("Put_it_down" in pills or "Get_up" in pills), pills
+        # (the buttons never overlap one another)
+        rs = [tuple(float(v) for v in r.split(",")) for r in last["rects"].split(";") if r]
+        shown = [r for r in rs if r[2] > 0]
+        assert len(shown) == len(pills), (shown, pills)
+        for i in range(len(shown)):
+            for j in range(i + 1, len(shown)):
+                a, b = shown[i], shown[j]
+                assert not (a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]), (a, b)
         assert last["looked"] != "-", last
         assert not any(u["ui"] == "leisure" and u["leisure"] not in ("0",) for u in ui), "a panel opened by itself"
         # (the band asked from the stool: he calls across, their answer comes, he stays sat)
