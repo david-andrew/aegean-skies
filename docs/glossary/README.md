@@ -15,7 +15,7 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Shore caustics](#shore-caustics) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
@@ -198,11 +198,39 @@ blue discs that stay in every frame are **speed flecks**.
   sheltered coves. The sandy seabed shows through with a faint caustic shimmer.
 - **Code:** `src/sea.jo sea_shallow_mix(depth, shelter)` (the weight) and `sea_shallow_ramp` (the
   colour) in `sea_material`; the seabed (pale sand tinted by the water above it, scattered weed
-  beds and stones, the drifting caustic network) in `src/terrain.jo ground_surface`.
+  beds and stones) in `src/terrain.jo ground_surface`, and [shore caustics](#shore-caustics) in
+  `src/caustics.jo`.
 - **Rules:** the shallow/deep weight and the shallows' own depth ramp (`sea_shallow_ramp`: clear
   aqua over the sand, turquoise, teal; no green in the water itself) may change. Add no texture,
   sampler, varying or world record for it, and never touch the deep sea's flecks, marks or glints
   (`docs/painted-materials.md`).
+
+### Shore caustics
+
+- **Aliases:** seabed caustics, shallow-water caustics, caustic net, hull bounce caustics.
+- **Definition:** sunlit cellular light networks focused by the rippled water surface onto shallow
+  seabed sand, submerged coastal rocks, and the undersides of boats, ships and seaplane hulls near
+  the waterline. Tight, crisp bright filaments and luminous 3-way cusp nodes around slightly darker
+  cells in 0.3–1 m of water grow larger and blur smoothly into softer dappled pools by 3–4 m,
+  drifting and warping with the wave field offshore and slowing to a standing shimmer at the
+  shoreline. Under a low sun the network stretches along the sun's bearing and fades; it vanishes in
+  shade, under cloud cover or cloud shadow, and at night, and never appears on dry sand or above the
+  waterline. Above the waterline, hulls' undersides and chines within ~2 m of the sea catch soft
+  reflected upward caustics.
+- **Code:** `src/coast_pattern.jo` (`coast_caustic_edge`, stored in the unused alpha channel of
+  `coast-pattern-v2.png`: a seamless 8×8 periodic curved exact-bisector Voronoi distance field);
+  `src/caustics.jo` (`caustic_strength`, `caustic_uniforms`, `caustic_seabed`, `caustic_hull`);
+  called from `src/terrain.jo` (`ground_surface`, `draw_coast_batches`, vertex cloud shadow gated
+  on submerged vertices in `coast_vs`, omitted from `coast_vs_low`), `src/objects.jo` (`hull_light`,
+  `hull_sh`, `draw_hull_with` for boats and near-water seaplanes so `obj_sh`/`obj_inst_sh` stay
+  untouched), and `src/vessel_view.jo` (`vessel_near_fragment`).
+- **Rules:** reuse `coast_pattern`'s alpha channel (no extra texture unit or VRAM); keep low-tier
+  terrain and `obj_sh`/`obj_inst_sh` untouched (`coast_vs_low`, `canopy_detail > 0`, dedicated
+  `hull_sh`); band-limit filament widths analytically by pixel footprint so a slow flyover at
+  20–30 m never shimmers (`tests/temporal_stability_test.py` `caustics_beach`,
+  `tests/caustics_test.jo`).
+- **Capture:** `AEGEAN_VIEW="5421.8 20.0 5085.9 0.871 -0.58 13.0" AEGEAN_WEATHER=fair` (Leuke
+  Beach), `tools/coast_capture.jo COAST_SITE=beach COAST_RANGE=50 COAST_RUN=1`.
 
 ### Deep sea from height
 
