@@ -13,8 +13,9 @@
 # in the umbra (night_sky.jo), and the stars come out about it.
 #
 # Totality lasts a few minutes of the world's clock, a few seconds at its pace; near greatest the
-# eclipse's own time runs ECLIPSE_STRETCH times slower (AEGEAN_ECLIPSE_STRETCH=1: as the sky ran),
-# the contacts kept within a quarter of an hour of their real times.
+# eclipse's own time runs ECLIPSE_STRETCH times slower, set from the clock's rate so totality lasts
+# about half a minute of real time (AEGEAN_ECLIPSE_STRETCH=1: as the sky ran), the contacts kept
+# within a quarter of an hour of their real times.
 #
 # Never on the title screen nor in a new world's first days (day_air.jo EARLY_WORLD_DAYS), except
 # when forced.
@@ -29,7 +30,16 @@ use 'depth_space.jo'
 const ECLIPSE_MOON_KM = 384400.0
 const ECLIPSE_BLEND_MINUTES = 60.0     # the Moon eases between the sky's path and an eclipse's over this
 
-ECLIPSE_STRETCH = clamp(to_float(env("AEGEAN_ECLIPSE_STRETCH") ?? "") ?? 6.0, 1.0, 30.0)
+# (the stretch aims at about ECLIPSE_TOTALITY_SECONDS of real time in totality whatever the world's
+# clock rate: eclipse_set_clock reads the rate; AEGEAN_ECLIPSE_STRETCH=<s> fixes it instead)
+const ECLIPSE_TOTALITY_SECONDS = 30.0
+const ECLIPSE_TYPICAL_TOTALITY = 2.5   # world minutes of a typical totality, unstretched
+eclipse_stretch_env: f64? = to_float(env("AEGEAN_ECLIPSE_STRETCH") ?? "")
+ECLIPSE_STRETCH = clamp(eclipse_stretch_env ?? 6.0, 1.0, 30.0)
+eclipse_set_clock = (world_minutes_per_second: f64):
+    global ECLIPSE_STRETCH
+    if eclipse_stretch_env != none: return
+    ECLIPSE_STRETCH = clamp(ECLIPSE_TOTALITY_SECONDS * world_minutes_per_second / ECLIPSE_TYPICAL_TOTALITY, 1.0, 30.0)
 const ECLIPSE_STRETCH_MINUTES = 3.0    # how wide the slow stretch about greatest is
 
 # what an eclipse is doing at a moment and a place
@@ -384,7 +394,7 @@ eclipse_moon_dir = (e: Eclipse, sun_dir: vec3) -> vec3:
     c = if e.solar: normalize(sun_dir) else: -normalize(sun_dir)
     right = normalize(cross(c, vec3(0, 1, 0)) + vec3(0.00001, 0, 0))
     up = cross(right, c)
-    scale = if e.solar: SUN_DISC_RADIUS else: MOON_DISC_RADIUS
+    scale = if e.solar: sun_disc_radius() else: moon_disc_radius()
     normalize(c + (right * e.offset.x + up * e.offset.y) * scale)
 
 # totality's sky: a deep blue-violet overhead, the horizon all round lit like a sunset from beyond
@@ -475,7 +485,8 @@ struct EclipseShadowParams:
     o: vec4                         # xy the offset at the map's origin, zw its rate east (per 100 km)
     q1: vec4                        # xy its rate south, zw the east-east term
     q2: vec4                        # xy the south-south term, zw the east-south term
-    k: vec4                         # x the Moon's radius over the Sun's, y the eye's brightness, z the Sun's height, w strength
+    k: vec4                         # x the reach of the brightness table (Sun radii), y the eye's brightness, z the eye's height (m), w strength
+    curve: Texture                  # the day's brightness by the Moon's distance from the Sun (eclipse_curve), stored as its square root
 
 struct EclipseShadowOut:
     pos: vec4
@@ -500,23 +511,24 @@ eclipse_shadow_fs = (i: EclipseShadowOut, u: EclipseShadowParams) -> vec4:
     if world_has_depth(raw, u.depth_ab): t = world_depth_decode(raw, u.depth_ab) / max(dot(ray, u.forward), 0.0001)
     sea = sea_intersection(ray, u.cam.y)
     if sea > 0.0 and (t < 0.0 or sea < t - 3.0): t = sea
-    # (the sky: the low air along the ray, weaker the higher it looks)
+    p = u.cam + ray * max(t, 0.0)
+    # (the sky: the low air out toward the horizon in the ray's bearing, fading quickly with height,
+    # so the umbra stands as a wall on the horizon and nothing floats above it)
     weight: f32 = 1.0
     if t < 0.0:
-        up = max(ray.y, 0.004)
-        t = min(1800.0 / up, 160000.0)
-        weight = exp(-up * 40.0)
-    p = u.cam + ray * t
+        flat = ray.xz / max(length(ray.xz), 0.0001)
+        reach = clamp(sqrt(2.0 * 6371000.0 * max(u.k.z, 1.0)) + 15000.0, 15000.0, 160000.0)
+        p = vec3(u.cam.x + flat.x * reach, 0.0, u.cam.z + flat.y * reach)
+        weight = exp(-max(ray.y, 0.0) * 40.0)
     wx = (p.x + u.origin.x) / 100000.0
     wz = (p.z + u.origin.y) / 100000.0
     off = u.o.xy + u.o.zw * wx + u.q1.xy * wz + u.q1.zw * wx * wx + u.q2.xy * wz * wz + u.q2.zw * wx * wz
-    # (three looks at slightly different Moon radii: the umbra's edge soft over some kilometres, as
-    # the real one is in the low air, not a cut line)
-    d = length(off)
-    covered = (eclipse_cover_gpu(d, u.k.x - 0.012) + eclipse_cover_gpu(d, u.k.x - 0.004) + eclipse_cover_gpu(d, u.k.x + 0.004)) / 3.0
-    left = 1.0 - covered
-    b = max(pow(max(left, 0.0), 0.36), 0.0) * 0.985 + 0.015
+    at = length(off) / u.k.x
+    if at >= 1.0 and u.k.y > 0.999: discard()
+    root = if at >= 1.0: 1.0 else: sample(u.curve, vec2(at * 0.984 + 0.008, 0.5)).x
+    b = root * root
     ratio = b / max(u.k.y, 0.015)
+    if abs(ratio - 1.0) < 0.004: discard()
     # (darker than at the eye: multiplied down, cool, never quite black; lighter: the warm light
     # from beyond the shadow added)
     if ratio < 1.0:
@@ -525,8 +537,29 @@ eclipse_shadow_fs = (i: EclipseShadowOut, u: EclipseShadowParams) -> vec4:
     lift = min((ratio - 1.0) * 0.08, 0.5) * weight * u.k.w
     vec4(vec3(0.9, 0.62, 0.42) * lift * 0.5, 0.0)
 
+# AEGEAN_ECLIPSE_SHADOW=0 leaves the pass out (cost comparisons)
+eclipse_shadow_enabled = env("AEGEAN_ECLIPSE_SHADOW") != "0"
+# AEGEAN_ECLIPSE_SHADOW_REPEAT=n draws the pass n times (measuring its cost above the frame's noise)
+eclipse_shadow_repeat = max(1, to_int(env("AEGEAN_ECLIPSE_SHADOW_REPEAT") ?? "1") ?? 1)
 eclipse_shadow_sh = Shader()
 eclipse_shadow_quad = Mesh()
+eclipse_curve_tex = Texture(0, 0, 0)
+eclipse_curve_k = -1.0
+const ECLIPSE_CURVE_TEXELS = 128
+
+# The day's brightness by the Moon's distance from the Sun's centre (0 .. 1 + k + a margin), for
+# the shadow pass to look up: three Moon radii a hair apart averaged, so the umbra's edge is soft
+# over some kilometres as the real one is in the low air. Made once an eclipse (it depends on k).
+eclipse_curve_reach = (k: f64) -> f64: 1.0 + k + 0.03
+eclipse_curve_image = (k: f64) -> Image:
+    img = image(ECLIPSE_CURVE_TEXELS, 1)
+    reach = eclipse_curve_reach(k)
+    loop i in 0..ECLIPSE_CURVE_TEXELS:
+        d = (f64(i) + 0.5) / f64(ECLIPSE_CURVE_TEXELS) * reach
+        c = (disc_overlap(d, 1.0, k - 0.012) + disc_overlap(d, 1.0, k - 0.004) + disc_overlap(d, 1.0, k + 0.004)) / 3.0
+        r = f32(sqrt(eclipse_brightness(1.0 - c)))
+        img.set(i, 0, vec4(r, r, r, 1))
+    img
 
 # the eclipse the frame draws (set each frame by the game: eclipse_frame_set)
 eclipse_frame = Eclipse()
@@ -579,7 +612,7 @@ eclipse_eye_set = (x_km: f64, z_km: f64):
 eclipse_shadow_multiply = (chart: vec3, vp: mat4):
     global eclipse_shadow_sh, eclipse_shadow_quad
     e = eclipse_frame
-    if not e.on or not e.solar or scene_depth().id == 0: return
+    if not e.on or not e.solar or scene_depth().id == 0 or not eclipse_shadow_enabled: return
     s = normalize(eclipse_frame_sun)
     strength = smoothstep(-0.03, 0.04, f64(s.y))
     if strength <= 0.0: return
@@ -591,7 +624,16 @@ eclipse_shadow_multiply = (chart: vec3, vp: mat4):
     if eclipse_shadow_sh.prog == 0: eclipse_shadow_sh = make_shader(shader(eclipse_shadow_vs, eclipse_shadow_fs))
     if eclipse_shadow_quad.count == 0 and eclipse_shadow_quad.index_count == 0:
         eclipse_shadow_quad = mesh([EclipseShadowVertex(vec2(0, 0)), EclipseShadowVertex(vec2(1, 0)), EclipseShadowVertex(vec2(0, 1)), EclipseShadowVertex(vec2(1, 1))], [u32(0), u32(1), u32(2), u32(2), u32(1), u32(3)])
+    global eclipse_curve_tex, eclipse_curve_k
+    if abs(f64(e.k) - eclipse_curve_k) > 0.00001:
+        img = eclipse_curve_image(f64(e.k))
+        if eclipse_curve_tex.id == 0:
+            eclipse_curve_tex = texture(img, true)
+            set_mipmaps(eclipse_curve_tex, false)
+        else: update_texture(eclipse_curve_tex, img)
+        eclipse_curve_k = f64(e.k)
     rays = render_rays(vp)
+    eye = render_eye(chart)
     blend(.premultiplied)
-    draw(eclipse_shadow_sh, eclipse_shadow_quad, EclipseShadowParams(scene_depth(), rays, render_eye(chart), normalize(rays[2].xyz), world_depth_params(), vec2(chart.x, chart.z), o, q1, q2, vec4(e.k, f32(eye_b), s.y, f32(strength))))
+    loop rep in 0..eclipse_shadow_repeat: draw(eclipse_shadow_sh, eclipse_shadow_quad, EclipseShadowParams(scene_depth(), rays, eye, normalize(rays[2].xyz), world_depth_params(), vec2(chart.x, chart.z), o, q1, q2, vec4(f32(eclipse_curve_reach(f64(e.k))), f32(eye_b), eye.y, f32(strength)), eclipse_curve_tex))
     zone_end()

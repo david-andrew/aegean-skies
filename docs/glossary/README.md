@@ -1682,7 +1682,8 @@ On the rivers branch until it lands.
   hazy/dusty days, flat readable crimson, copper/rust/dark-brown or rose/burgundy discs in dust and
   smoke, warm-white/cream discs inside magenta or lilac volcanic glows, and rare blue, purple,
   blue-green or green discs in aged smoke. The disc is its real size, 0.53 degrees across
-  (`SUN_DISC_RADIUS`); the aureole, glow and corona about it keep the reach they were painted with
+  (`SUN_DISC_RADIUS`; the size drawn is one setting, `SKY_DISC_DEGREES` in `src/celestial.jo`, also
+  `AEGEAN_SKY_DISC=<degrees>` and the World debug page's "Sun and Moon" row, with the Moon in proportion); the aureole, glow and corona about it keep the reach they were painted with
   at the old 3-degree disc (`SKY_DISC_RADIUS` units), so the sunsets' light is as it was. Flattened
   by the air and drawn larger near the horizon,
   its foot wavering in slices into a short mirage where it meets the water. Once it has set, a
@@ -1864,9 +1865,10 @@ On the rivers branch until it lands.
   **diamond ring**, then **totality**: the black Moon in its [corona](#eclipse-corona), a deep
   blue-violet sky, sunset all round the horizon (twilight's band warm on every side), the planets
   and the brightest stars out by day, the gulls come down to the water. Then the same in reverse.
-  Totality lasts minutes of the world's clock; near greatest the eclipse's own time runs six times
-  slower (`ECLIPSE_STRETCH`, `AEGEAN_ECLIPSE_STRETCH=1` for the sky's own pace), the contacts kept
-  within a quarter of an hour of their real times. People talk of one in the days before and after
+  Totality lasts minutes of the world's clock; near greatest the eclipse's own time runs slower,
+  set from the clock's rate so totality lasts about half a minute of real time whatever the rate
+  (`ECLIPSE_STRETCH`, `eclipse_set_clock`; `AEGEAN_ECLIPSE_STRETCH=1` for the sky's own pace), the
+  contacts kept within a quarter of an hour of their real times. People talk of one in the days before and after
   (the weather topic), only when it is worth remarking.
 - **First impressions:** never on the title screen nor in a new world's first five days
   (`EARLY_WORLD_DAYS`), unless forced; the first real one comes weeks later anyway.
@@ -1899,7 +1901,10 @@ On the rivers branch until it lands.
   sun). From outside it is a dark oval with soft edges and a dark wall of air on the horizon as it
   comes; from inside, the far air beyond its edge glows.
 - **Code:** `eclipse_shadow_multiply` in `src/eclipse.jo`, a screen-space pass in the cloud
-  composite after the aircraft's shadows (nothing drawn without a solar eclipse over the map).
+  composite after the aircraft's shadows (nothing drawn without a solar eclipse over the map): one
+  depth read and one look into a small table of the day's brightness by the Moon's distance
+  (`eclipse_curve_image`) a pixel. `AEGEAN_ECLIPSE_SHADOW=0` leaves it out,
+  `AEGEAN_ECLIPSE_SHADOW_REPEAT=n` draws it n times (to measure it).
 
 ### Lunar eclipse
 
