@@ -6,7 +6,7 @@ It runs in CI (`.github/workflows/tests.yml` via `tools/ci_test_shard.py`, under
 
 ## Camera scripts
 
-All seven scripts render fixed-step camera sequences at `384x216` through the game's real terrain, canopy, crown, aircraft and screen-space outline shaders:
+All nine scripts render fixed-step camera sequences at `384x216` through the game's real terrain, canopy, crown, aircraft, sea, caustic, town-light and screen-space outline shaders:
 
 | Clip | Frames | What it tests |
 | --- | ---: | --- |
@@ -17,6 +17,8 @@ All seven scripts render fixed-step camera sequences at `384x216` through the ga
 | `approach_woods` | 16 | Straight-in wooded-hill approach across 4 handover bands (2600 m, 950 m, 540 m, 175 m) with live tile streaming and 3D depth dumps |
 | `chase_dusk` | 8 | Chase camera with the Supermarine S.6B against a wooded ridge at dusk (19:00), outline on vs off + plane mask |
 | `horizon_woods` | 16 | Slow pan along a wooded land/sky skyline, outline on vs off |
+| `night_approach` | 28 | Slow night approach from 40 km into Kalyrassa harbour across 7 distance bands (town lights glow → cluster → window/lamp hand-over) |
+| `caustics_beach` | 14 | 20 m hover over sunlit Leuke Beach (6 frames) + 30 m slow flyover along the shallows with 3D depth reprojection (8 frames) |
 
 ## Metrics
 

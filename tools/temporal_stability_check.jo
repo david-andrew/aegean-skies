@@ -1,13 +1,17 @@
 # Headless temporal-stability and flicker capture harness (used by tests/temporal_stability_test.py).
-# Renders six fixed-step camera scripts through the game's real terrain, canopy, crown, aircraft and
-# screen-space outline shaders, saving RGB frames (+ depth maps for 3D reprojection on flight_300,
-# outline-off references on chase_dusk and horizon_woods, and an aircraft mask on chase_dusk):
-#   still         - frozen camera & time over wooded hills (any pixel change is flicker)
-#   pan_150       - 360 deg pan at 150 m AGL over wooded hills (6 compass sectors x 4 slow steps)
-#   pan_800       - 360 deg pan at 800 m AGL over wooded hills (6 compass sectors x 4 slow steps)
-#   flight_300    - level flight at 300 m AGL over wooded/farmed land with live tile streaming
-#   chase_dusk    - chase camera with aircraft against a wooded ridge at dusk (19:00)
-#   horizon_woods - slow pan along a wooded land/sky skyline (screen-space outline & foliage border)
+# Renders nine fixed-step camera scripts through the game's real terrain, canopy, crown, aircraft,
+# sea, caustic, town-light and screen-space outline shaders, saving RGB frames (+ depth maps for 3D
+# reprojection on flight_300, night_approach, caustics_beach and approach_woods, outline-off
+# references on chase_dusk and horizon_woods, and an aircraft mask on chase_dusk):
+#   still          - frozen camera & time over wooded hills (any pixel change is flicker)
+#   pan_150        - 360 deg pan at 150 m AGL over wooded hills (6 compass sectors x 4 slow steps)
+#   pan_800        - 360 deg pan at 800 m AGL over wooded hills (6 compass sectors x 4 slow steps)
+#   flight_300     - level flight at 300 m AGL over wooded/farmed land with live tile streaming
+#   chase_dusk     - chase camera with aircraft against a wooded ridge at dusk (19:00)
+#   horizon_woods  - slow pan along a wooded land/sky skyline (screen-space outline & foliage border)
+#   night_approach - slow night approach from 40 km into Kalyrassa harbour (town lights hand-over)
+#   caustics_beach - 20 m hover over sunlit Leuke Beach + 30 m slow flyover along the shallows
+#   approach_woods - straight-in wooded-hill approach across 4 handover bands with live tile streaming
 # Runs headless on GPU or under SLOPPY_SOFTWARE=1 SLOPPY_SOFT_SCALE=1 (CI GPU-less runners).
 use '../src/geography.jo'
 use '../src/world.jo'
@@ -24,6 +28,10 @@ use '../src/cloud_transparency.jo'
 use '../src/silhouette.jo'
 use '../src/objects.jo'
 use '../src/planes.jo'
+use '../src/settlements.jo'
+use '../src/world_towns.jo'
+use '../src/town_lights.jo'
+use '../src/sea.jo'
 
 const W = 384
 const H = 216
@@ -62,6 +70,13 @@ assert(load_geography(embed('../assets/world.bin')))
 geography_enabled = true
 init_world_terrain()
 init_objects()
+init_sea()
+init_world_towns([])
+finish_settlement_registry()
+init_town_lights()
+depth_tex = build_depth_texture()
+sea_mesh = build_sea_mesh()
+wind_now.speed = 2.0
 
 craft_kind = Craft.supermarine_s6b
 craft_model = build_craft(craft_kind, LIVERIES[DEFAULT_LIVERIES[int(craft_kind)]])
@@ -91,6 +106,15 @@ struct Shot:
     dump_depth: bool
     with_plane: bool
     with_off: bool
+    with_towns: bool = false
+    with_sea: bool = false
+
+caustics_ready = false
+init_caustics_scene = ():
+    global caustics_ready
+    if caustics_ready: return
+    init_terrain()
+    caustics_ready = true
 
 shots: Shot[] = []
 
@@ -141,7 +165,48 @@ if clip_wanted("horizon_woods"):
         yaw_h = -1.66 + f64(k) * 0.012
         shots.push(Shot("horizon_woods", k, 0, vec3(-119500, 800, -135000), yaw_h, 0.075, 10.0, 100.0 + f64(k) / 60.0, k == 0, false, false, true))
 
-# (f) approach_woods: straight-in approach over a wooded hill across all 4 handover bands
+# (f) night_approach: slow approach from 40 km into Kalyrassa harbour on a clear calm night,
+# spanning the full glow -> cluster -> window/lamp hand-over across 7 distance bands.
+if clip_wanted("night_approach"):
+    kx = -117964.0; ky = 6.3; kz = -84901.0
+    dx = 0.9747; dz = 0.2233
+    bands: (f64, f64, f64)[] = [
+        (40000.0, 850.0, 60.0),
+        (20000.0, 600.0, 55.0),
+        (10000.0, 400.0, 50.0),
+        (3200.0,  240.0, 45.0),
+        (1500.0,  160.0, 40.0),
+        (700.0,   100.0, 35.0),
+        (350.0,   65.0,  30.0),
+    ]
+    idx = 0
+    loop b in 0..bands.len():
+        dist_m, alt_m, speed_ms = bands[b]
+        drop = (dist_m * dist_m) / (2.0 * EARTH_RADIUS)
+        ex0 = kx + dx * dist_m; ez0 = kz + dz * dist_m
+        vx = kx - ex0; vy = (ky - drop + 25.0) - alt_m; vz = kz - ez0
+        yaw_n = atan2(-vx, -vz)
+        pitch_n = atan2(vy, sqrt(vx * vx + vz * vz)) + 0.03
+        loop j in 0..4:
+            dt = f64(j) / 30.0
+            dm = dist_m - speed_ms * dt
+            ex = kx + dx * dm; ez = kz + dz * dm
+            shots.push(Shot("night_approach", idx, b, vec3(f32(ex), f32(alt_m), f32(ez)), yaw_n, pitch_n, 22.0, 100.0 + dt, j == 0, true, false, false, true, false))
+            idx += 1
+
+# (g) caustics_beach: hover at 20 m over sunlit Leuke Beach, then a slow 30 m flyover along the shallows
+if clip_wanted("caustics_beach"):
+    init_caustics_scene()
+    # Group 0: hovering at 20 m over sunlit beach (6 frames at 15 Hz)
+    loop k in 0..6:
+        shots.push(Shot("caustics_beach", k, 0, vec3(5421.8, 20.0, 5085.9), 0.871, -0.58, 13.0, 12.0 + f64(k) / 15.0, k == 0, false, false, false, false, true))
+    # Group 1: slow flyover at 30 m parallel to the shoreline (8 frames at 15 Hz, 12 m/s, 3D depth reprojection)
+    loop k in 0..8:
+        dt = f64(k) / 15.0
+        eye_b = vec3(5432.9, 30.0, 5089.8) + vec3(-0.6442, 0.0, 0.7648) * f32(dt * 12.0)
+        shots.push(Shot("caustics_beach", 6 + k, 1, eye_b, 0.871, -0.54, 13.0, 14.0 + dt, k == 0, true, false, false, false, true))
+
+# (h) approach_woods: straight-in approach over a wooded hill across all 4 handover bands
 # (2600m sheet->masses, 950m masses->clumps, 540m clumps->crowns, 175m cut/banded->lobes)
 # with live tile streaming + 3D depth dumps (placed last with strictly monotonic per-group clocks
 # so cached domes/tiles never see clock go backwards across groups or clips).
@@ -157,9 +222,8 @@ if clip_wanted("approach_woods"):
         loop j in 0..4:
             dist_a = starts_a[g] - f64(j) * steps_a[g]
             eye_a = target_a - fwd_a * f32(dist_a)
-            shots.push(Shot("approach_woods", idx, g, eye_a, yaw_a, pitch_a, 10.5, 120.0 + f64(g) * 10.0 + f64(j) / 15.0, j == 0, true, false, false))
+            shots.push(Shot("approach_woods", idx, g, eye_a, yaw_a, pitch_a, 10.5, 120.0 + f64(g) * 10.0 + f64(j) / 15.0, j == 0, true, false, false, false, false))
             idx += 1
-
 forward_of = (yaw: f64, pitch: f64) -> vec3:
     vec3(f32(-sin(yaw) * cos(pitch)), f32(sin(pitch)), f32(-cos(yaw) * cos(pitch)))
 
@@ -194,10 +258,17 @@ render_view = (s: Shot, out_path: str, outline_enabled: bool, plane_mask_only: b
     post_effects(0.0, 1.0, 0.0, 1.0, scene_depth = true)
     camera3d(s.eye, s.eye + fwd, FOV, 0.3, world_far(f64(s.eye.y)))
     draw_custom(():
+        if s.with_sea: draw_ground(L, s.clock)
+        if s.with_towns: draw_far_sea(depth_tex, L, s.clock, wind_now)
         draw_world_terrain(L, s.clock)
+        if s.with_towns: draw_world_towns([], L, s.clock)
         if s.with_plane: draw_plane_at(s.eye, fwd, s.yaw, L, s.clock)
     )
+    if s.with_towns or s.with_sea:
+        draw_custom((): draw_sea(sea_mesh, depth_tex, L, s.clock, wind_now), transparent = true)
     draw_cloud_layer([], L)
+    if s.with_towns:
+        draw_town_lights([], L, s.clock)
     _ = save_png(out_path, screenshot())
     if depth_path != "":
         if depth_sh.prog == 0:
@@ -207,7 +278,11 @@ render_view = (s: Shot, out_path: str, outline_enabled: bool, plane_mask_only: b
         hide_sky()
         post_effects(0.0, 1.0, 0.0, 1.0, scene_depth = true)
         camera3d(s.eye, s.eye + fwd, FOV, 0.3, world_far(f64(s.eye.y)))
-        draw_custom((): draw_world_terrain(L, s.clock))
+        draw_custom(():
+            if s.with_sea: draw_ground(L, s.clock)
+            draw_world_terrain(L, s.clock)
+            if s.with_towns: draw_world_towns([], L, s.clock)
+        )
         draw_custom(():
             if scene_depth().id != 0:
                 bind_cloud_composite()
@@ -258,10 +333,17 @@ draw = ():
             prepare_world_terrain(s.eye, vp, s.clock)
         else:
             loop _ in 0..150: prepare_world_terrain(s.eye, vp, s.clock)
+        if s.with_towns:
+            global town_build_until
+            loop _ in 0..60:
+                town_build_until = time() + 0.5
+                prepare_world_towns(s.eye)
+                if world_towns_settled() and world_town_far_job.index < 0: break
         if s.clip == "flight_300" or s.clip == "approach_woods":
             world_generate_tiles = 1
     else:
         prepare_world_terrain(s.eye, vp, s.clock)
+        if s.with_towns: prepare_town_view([], s.eye)
     last_clip = s.clip
     pad = if s.index < 10: "00{s.index}" else: "0{s.index}"
     f_path = "{out_dir}/{s.clip}-f{pad}.png"

@@ -1,0 +1,258 @@
+# The house behind the service (the Hotel Ancora's): what is ordered is made before it is brought,
+# and what comes back is dealt with, all of it in the open. A dish is cooked in the kitchen and put
+# out on the hatch's sill by the cook; a drink is poured by the barkeep at the counter's end with a
+# glass from the shelf. The waiter takes what is ready from the pass to its table, the pilot's or a
+# patron's, three to a tray. Empties come back on his tray and are set down at the pass: glasses on
+# the counter's end, where the barkeep fetches them to the sink, washes them, sets them to drain,
+# dries them and puts them back on the shelf; plates on the hatch's sill, where the kitchen takes
+# them in. Nothing appears on a table or goes from one without someone carrying it. Pure: the game
+# says where the tables and the pass are, and draws the people and the things.
+
+use 'leisure_menu.jo'
+use 'leisure.jo'
+use 'table_service.jo'
+
+# A table the house serves: the pilot's (-1), the one he got up from (-2), a patron's (0..).
+struct HouseTable:
+    id = 0
+    spots: ServiceSpots
+    served: Served[]
+    clear_all = false               # (nobody there now: everything on it is cleared)
+    asks = false                    # (the waiter asks about something long untouched: the pilot's)
+
+# Something being made, or made and waiting at the pass, and the table it is for.
+struct Making:
+    s: Served
+    to = -1
+    left = 0.0                      # (seconds still to make it)
+
+struct Scullery:
+    making: Making[]
+    ready: Making[]                 # made: drinks on the counter's end, dishes on the hatch's sill
+    dirty: Served[]                 # empty glasses (cups, bottles) set down on the counter's end
+    plates: Served[]                # empty plates and bowls on the hatch's sill, for the kitchen
+    hands: Served[]                 # (in the barkeep's hands: being washed, or dried)
+    drainer: Served[]               # washed, draining on the counter's back
+    shelf = 10                      # clean glasses on the shelf
+    cook_take = 0.0                 # (seconds to the kitchen's hand taking in the next plate)
+    cook_seen = 0.0                 # (seconds the cook is still at the hatch: drawn while > 0)
+    pouring = 0.0                   # (seconds the barkeep has been pouring the drink in hand)
+
+const SHELF_SLOTS = 14
+const SHELF_STEP = 0.2              # (between glasses on the shelf)
+const WASH_SECONDS = 3.5            # a glass washed at the sink
+const DRY_SECONDS = 2.5             # dried with the cloth
+const SHELVE_SECONDS = 0.8          # put on the shelf
+const COOK_TAKE = 4.0               # the kitchen takes a plate in from the sill
+const COOK_SHOWN = 1.6              # (how long the cook is seen at the hatch each time)
+
+# Where the bar's work is done (world; the game moves them inside with the bar room).
+struct HouseSpots:
+    counter_end: vec3               # the counter's end, on its top: ready drinks and empties stand here
+    sill: vec3                      # the kitchen hatch's sill
+    hatch_face: vec3                # (the hatch's way out of the wall, for the cook and for setting down)
+    sink: vec3                      # where the barkeep stands to wash (behind the counter)
+    drainer: vec3                   # on the counter's back edge, the first washed glass's place
+    shelf: vec3                     # the first clean glass's place on the shelf
+    along: vec3                     # (the counter's and the shelf's way along, a unit)
+    rest: vec3                      # where the barkeep leans when there is nothing to do
+
+# is it a plate or a bowl (to the kitchen), or something to wash at the bar
+house_is_plate = (s: Served) -> bool: s.item.food or s.item.serve == .plate or s.item.serve == .bowl
+
+# An order for table `to`: into the making, how long it takes by what it is and how busy it is.
+house_order = (sc: mut Scullery, s: Served, to: int, crowd: int, scale: f64 = 1.0):
+    sc.making.push(Making(s, to, prep_seconds(s.item, crowd) * max(0.0, scale)))
+
+# How many are being made or waiting for table `to` (for "it's coming").
+house_owed = (sc: Scullery, to: int) -> int:
+    n = 0
+    loop m in sc.making:
+        if m.to == to: n += 1
+    loop m in sc.ready:
+        if m.to == to: n += 1
+    n
+
+# The kitchen and the bar's making: dishes cook whatever the barkeep is doing; a drink is poured
+# only while he is free to pour it (`pouring_free`), one at a time, a glass from the shelf. The
+# kitchen's hand takes in the plates on the sill, one at a time.
+house_kitchen_step = (sc: mut Scullery, dt: f64, pouring_free: bool):
+    sc.cook_seen = max(0.0, sc.cook_seen - dt)
+    poured = false
+    i = 0
+    loop i < sc.making.len():
+        m = sc.making[i]
+        if house_is_plate(m.s):
+            sc.making[i].left = m.left - dt
+        else if pouring_free and not poured:
+            # (the first drink in line is the one in his hands)
+            sc.making[i].left = m.left - dt
+            poured = true
+        if sc.making[i].left <= 0.0:
+            if house_is_plate(m.s): sc.cook_seen = COOK_SHOWN
+            else: sc.shelf = max(0, sc.shelf - 1)
+            sc.ready.push(sc.making[i])
+            sc.making.remove_at(i)
+            continue
+        i += 1
+    sc.pouring = if poured: sc.pouring + dt else: 0.0
+    if sc.plates.len() > 0:
+        sc.cook_take -= dt
+        if sc.cook_take <= 0.0:
+            sc.plates.remove_at(0)
+            sc.cook_take = COOK_TAKE
+            sc.cook_seen = COOK_SHOWN
+    else: sc.cook_take = COOK_TAKE
+
+# Whether the barkeep has a drink to pour (he stands at the counter's end with it).
+house_pouring = (sc: Scullery) -> bool:
+    loop m in sc.making:
+        if not house_is_plate(m.s): return true
+    false
+
+# What a waiter set down at the pass goes where it belongs: glasses to the counter's end, plates
+# to the hatch's sill.
+house_take_dropped = (sc: mut Scullery, wt: mut Waiter):
+    loop s in wt.dropped:
+        e = s
+        e.held = false
+        if house_is_plate(e): sc.plates.push(e) else: sc.dirty.push(e)
+    wt.dropped = []
+
+_table_index = (tables: HouseTable[], id: int) -> int:
+    loop k in 0..tables.len():
+        if tables[k].id == id: return k
+    -1
+
+house_table_work = (t: HouseTable) -> bool:
+    loop s in t.served:
+        if not s.held and s.amount <= 0.0 and s.empty_for >= EMPTY_WAIT: return true
+        if t.clear_all and not s.held: return true
+    t.asks and waiter_ask_ready(t.served) >= 0
+
+# One step of a waiter who serves several tables from one pass (the terrace's, or the barkeep at
+# the bar): at the pass with nothing in hand, he takes what is ready for one table (the pilot's
+# first), or goes to a table with something to clear; then that trip as table_service has it.
+# Returns the index of the table he worked this step (-1 none).
+house_waiter_step = (wt: mut Waiter, sc: mut Scullery, tables: mut HouseTable[], dt: f64, height: (f64, f64) -> f64) -> int:
+    if wt.stage == 0 and wt.pending.len() == 0 and wt.tray.len() == 0:
+        chosen = -1
+        found = false
+        # (what is ready: the pilot's table first, then the others in turn)
+        loop turn in 0..2:
+            if found: break
+            loop t in tables:
+                if found: break
+                if (turn == 0) != (t.id == -1): continue
+                loop m in sc.ready:
+                    if m.to == t.id:
+                        chosen = t.id; found = true
+        if found:
+            i = 0
+            taken = 0
+            loop i < sc.ready.len():
+                if sc.ready[i].to == chosen and taken < 3:
+                    waiter_order(wt, sc.ready[i].s)
+                    sc.ready.remove_at(i)
+                    taken += 1
+                    continue
+                i += 1
+        else:
+            loop t in tables:
+                if not found and house_table_work(t):
+                    chosen = t.id; found = true
+        if found: wt.table = chosen
+    k = _table_index(tables, wt.table)
+    if k < 0:
+        # (the table went while he was on his way: what he carries goes back to the pass)
+        if wt.stage == 1 or wt.stage == 2 or wt.stage == 4 or wt.stage == 5 or wt.stage == 6 or wt.stage == 7:
+            wt.stage = 3; wt.clock = 0.0; wt.asking = -1
+        if wt.stage == 3 or wt.stage == 8:
+            spare = ServiceSpots(wt.pos, wt.pos, wt.pos, vec3(1, 0, 0), vec3(0, 0, 1))
+            if tables.len() > 0: spare = tables[0].spots
+            none_served: Served[]
+            waiter_step(wt, spare, none_served, dt, height)
+        house_take_dropped(sc, wt)
+        return -1
+    wt.clear_all = tables[k].clear_all
+    wt.asks = tables[k].asks
+    waiter_step(wt, tables[k].spots, tables[k].served, dt, height)
+    house_take_dropped(sc, wt)
+    k
+
+# ---------------- the barkeep's own work ----------------
+# Stages (on his Waiter, from 10): 10 to the counter's end for the empties, 11 to the sink,
+# 12 washing, 13 drying, 14 to the shelf, 15 putting it up, 16 back to his rest. Done whenever he
+# isn't serving (`free`), a glass at a time; an order coming in waits for the glass in hand.
+
+const BK_REACH = 0.9                # (the counter's end from the sink: he reaches across)
+
+house_barkeep_step = (bk: mut Waiter, sc: mut Scullery, hs: HouseSpots, dt: f64, free: bool, height: (f64, f64) -> f64):
+    if not bk.ready:
+        bk.pos = hs.rest; bk.ready = true
+    if bk.stage < 10 and bk.stage != 0: return
+    if not free and bk.stage == 0: return
+    bk.clock += dt
+    # (where he stands to put a glass up: along the bar from the sink, level with the next slot)
+    slot = hs.shelf + hs.along * f32(SHELF_STEP * f64(min(sc.shelf, SHELF_SLOTS - 1)))
+    shelf_at = hs.sink + hs.along * dot(slot - hs.sink, hs.along)
+    match bk.stage:
+        0:
+            bk.phase = 0.0
+            # (a drink to pour: at the counter's end with it)
+            if house_pouring(sc):
+                waiter_walk_to(bk, hs.sink, dt)
+            else if sc.hands.len() > 0 or sc.dirty.len() > 0 or sc.drainer.len() > 0:
+                bk.stage = 11; bk.clock = 0.0
+            else:
+                waiter_walk_to(bk, hs.rest, dt)
+        11:
+            if waiter_walk_to(bk, hs.sink, dt):
+                bk.clock = 0.0
+                # (an empty off the counter's end into his hands, or a washed glass off the drainer)
+                if sc.hands.len() == 0 and sc.dirty.len() > 0:
+                    sc.hands.push(sc.dirty[0]); sc.dirty.remove_at(0)
+                    bk.stage = 12
+                else if sc.hands.len() > 0:
+                    bk.stage = if sc.hands[0].amount < 0.0: 13 else: 12
+                else if sc.drainer.len() > 0:
+                    g = sc.drainer[0]
+                    g.amount = -1.0             # (washed: drying now)
+                    sc.hands.push(g); sc.drainer.remove_at(0)
+                    bk.stage = 13
+                else: bk.stage = 16
+        12:
+            if bk.clock >= WASH_SECONDS:
+                bk.clock = 0.0
+                if sc.hands.len() > 0:
+                    sc.drainer.push(sc.hands[0]); sc.hands.remove_at(0)
+                # (the next empty first; when there are none, the drying; a drink to pour first of all)
+                bk.stage = if free and not house_pouring(sc): 11 else: 0
+        13:
+            if bk.clock >= DRY_SECONDS:
+                bk.clock = 0.0; bk.stage = 14
+        14:
+            if waiter_walk_to(bk, shelf_at, dt):
+                bk.clock = 0.0; bk.stage = 15
+        15:
+            if bk.clock >= SHELVE_SECONDS:
+                bk.clock = 0.0
+                if sc.hands.len() > 0:
+                    sc.hands.remove_at(0)
+                    sc.shelf = min(SHELF_SLOTS, sc.shelf + 1)
+                bk.stage = if free and not house_pouring(sc) and (sc.dirty.len() > 0 or sc.drainer.len() > 0): 11 else: 16
+        16:
+            if waiter_walk_to(bk, hs.rest, dt) or not free or house_pouring(sc):
+                bk.stage = 0; bk.clock = 0.0
+        else: bk.stage = 0
+    bk.pos = vec3(bk.pos.x, f32(height(f64(bk.pos.x), f64(bk.pos.z))), bk.pos.z)
+
+# what the barkeep is doing, for drawing his arms: 0 nothing, 1 pouring, 2 washing, 3 drying, 4 shelving
+house_barkeep_doing = (bk: Waiter, sc: Scullery, hs: HouseSpots) -> int:
+    match bk.stage:
+        12: 2
+        13: 3
+        15: 4
+        0:
+            if house_pouring(sc) and f64(length(vec2(bk.pos.x - hs.sink.x, bk.pos.z - hs.sink.z))) < 0.2: 1 else: 0
+        else: 0

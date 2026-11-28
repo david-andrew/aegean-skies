@@ -25,12 +25,33 @@ struct Waiter:
     ready = false                   # (placed at the pass once the venue is known)
     clear_all = false               # (the pilot has gone: everything left is cleared, not only empties)
     asking = -1                     # (the spot of the thing he is asking about)
+    prep: f64[]                     # (seconds each pending thing still needs in the kitchen or at the bar)
+    dropped: Served[]               # (what he has just put down at the pass, back from a table: the
+                                    # house's scullery takes it, src/house_service.jo)
+    table = -1                      # (the table this trip is for: -1 the pilot's; see house_service)
+    asks = true                     # (whether he asks "Finished with this?" at this table)
 
 const WAITER_SPEED = 1.25           # m/s
 const SET_DOWN = 0.7                # seconds to set one thing down (or pick one up)
 const EMPTY_WAIT = 45.0             # seconds an empty glass or plate stands before he comes for it
 const ASK_AFTER = 150.0             # seconds a thing with some left stands untouched before he asks
 const NOT_YET = 240.0               # (told "not yet": as long again before he asks about it again)
+
+# How long a thing takes to make once ordered (seconds of play): a beer or a glass of wine is
+# poured in moments, a cocktail shaken, coffee brewed; bread and olives are cut and plated, a
+# dish cooked. More at the tables (`crowd` the patrons in) means longer, up to half again.
+prep_seconds = (d: MenuItem, crowd: int = 0) -> f64:
+    base = if d.food:
+        if d.serve == .bowl: 95.0 else: if d.cents <= 150: 45.0 else: 140.0
+    else:
+        match d.serve:
+            .bottle: 14.0
+            .mug, .wine_glass, .tall_glass: 18.0
+            .small_glass, .tumbler: 22.0
+            .coupe, .flute: 40.0
+            .cup, .pot: 55.0
+            else: 25.0
+    base * (1.0 + 0.07 * f64(clamp(crowd, 0, 7)))
 
 struct ServiceSpots:
     station: vec3                   # where the waiter waits (the bar, the door)
@@ -57,8 +78,17 @@ _walk_to = (wt: mut Waiter, goal: vec3, dt: f64) -> bool:
     false
 
 # An order goes to the pass: the waiter takes it out when he is free.
-waiter_order = (wt: mut Waiter, s: Served):
+waiter_order = (wt: mut Waiter, s: Served, prep: f64 = 0.0):
     wt.pending.push(s)
+    wt.prep.push(prep)
+
+# the pending things that are made (their prep done), at most `most`, from the front
+_ready_count = (wt: Waiter, most: int) -> int:
+    n = 0
+    loop k in 0..wt.pending.len():
+        if n < most and (k >= wt.prep.len() or wt.prep[k] <= 0.0): n += 1
+        else: break
+    n
 
 # One step of the waiter's round. Things he sets down are added to `served`; empties he picks up
 # are taken from it. `now` is the world's clock in seconds (for how long an empty has stood).
@@ -66,18 +96,22 @@ waiter_step = (wt: mut Waiter, sp: ServiceSpots, served: mut Served[], dt: f64, 
     if not wt.ready:
         wt.pos = sp.station; wt.ready = true
     wt.clock += dt
+    # (what is still being made gets on: the kitchen and the bar don't wait for him)
+    loop k in 0..wt.prep.len(): wt.prep[k] = max(0.0, wt.prep[k] - dt)
+    loop wt.prep.len() < wt.pending.len(): wt.prep.push(0.0)
     match wt.stage:
         0:
             wt.phase = 0.0
-            if wt.pending.len() > 0:
-                # (out with up to three things on the tray)
-                n = min(3, wt.pending.len())
+            n = _ready_count(wt, 3)
+            if n > 0:
+                # (out with up to three things on the tray, as they are made)
                 wt.tray = wt.pending[0..n]
                 wt.pending = wt.pending[n..wt.pending.len()]
+                wt.prep = wt.prep[n..wt.prep.len()]
                 wt.stage = 1; wt.clock = 0.0
             else if _empty_ready(served) or (wt.clear_all and _any_left(served)):
                 wt.stage = 4; wt.clock = 0.0
-            else if not wt.clear_all and waiter_ask_ready(served) >= 0:
+            else if not wt.clear_all and wt.asks and waiter_ask_ready(served) >= 0:
                 wt.asking = waiter_ask_ready(served)
                 wt.stage = 6; wt.clock = 0.0
         1:
@@ -101,7 +135,17 @@ waiter_step = (wt: mut Waiter, sp: ServiceSpots, served: mut Served[], dt: f64, 
                     wt.stage = 3
         3:
             if _walk_to(wt, sp.station, dt):
-                wt.tray = []; wt.stage = 0; wt.clock = 0.0
+                # (back at the pass: what he brought back is set down there, one thing at a time,
+                # for the bar to wash or the kitchen to take in; nothing is just gone)
+                wt.stage = if wt.tray.len() > 0: 8 else: 0
+                wt.clock = 0.0
+        8:
+            if wt.clock >= SET_DOWN * 0.6:
+                wt.clock = 0.0
+                if wt.tray.len() > 0:
+                    wt.dropped.push(wt.tray[0])
+                    wt.tray.remove_at(0)
+                if wt.tray.len() == 0: wt.stage = 0
         4:
             if _walk_to(wt, sp.serve, dt):
                 wt.stage = 5; wt.clock = 0.0
@@ -118,7 +162,9 @@ waiter_step = (wt: mut Waiter, sp: ServiceSpots, served: mut Served[], dt: f64, 
             # (asking: he waits for the answer, waiter_answer; if the pilot has gone, it's cleared)
             if wt.clear_all:
                 wt.stage = 5; wt.clock = 0.0; wt.asking = -1
-        else: wt.stage = 0
+        else:
+            # (from 10 on he is about the bar's own work: src/house_service.jo)
+            if wt.stage < 10: wt.stage = 0
     wt.pos = vec3(wt.pos.x, f32(height(f64(wt.pos.x), f64(wt.pos.z))), wt.pos.z)
 
 # Empties that have stood long enough for the waiter to come for them.
@@ -254,3 +300,6 @@ take_label = (s: Served) -> str:
     name = if s.item.name.len() > 22: s.item.name[0..21] + "." else: s.item.name
     # (its plain name: the button's bar shows how much is left)
     name
+
+# (walking him toward a point; true once there: for the house's own rounds)
+waiter_walk_to = (wt: mut Waiter, goal: vec3, dt: f64) -> bool: _walk_to(wt, goal, dt)

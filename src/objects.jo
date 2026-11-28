@@ -29,6 +29,8 @@ use 'paint.jo'
 use 'weather_scene.jo'
 use 'plants.jo'
 use 'render_space.jo'
+use 'coast_pattern.jo'
+use 'caustics.jo'
 
 # ---------------- the painted light for vertex-colored things ----------------
 
@@ -57,6 +59,14 @@ struct ObjParams:
     pigment_phase: vec4 = vec4(0,0,0,0)
     sway_phase: vec4 = vec4(0,0,0,0)
     plaster_bounce: vec3 = vec3(0,0,0)   # paint.jo paint_plaster_bounce for this frame's sun
+
+struct HullParams:
+    obj: ObjParams
+    caustics: Texture = Texture()
+    caustic_a: vec4 = vec4(0,0,0,0)
+    caustic_b: vec4 = vec4(0,0,0,0)
+    caustic_c: vec4 = vec4(0,0,0,0)
+    caustic_d: vec4 = vec4(0,0,0,0)
 
 struct ObjOut:
     pos: vec4
@@ -96,8 +106,19 @@ obj_finish_light = (color: vec3,i: ObjOut,u: ObjParams,n: vec3) -> vec4:
     # (alpha below 1 marks what glows after dark: lamps, lit windows)
     if i.color.w < 0.9:
         # (by the sun's height, not its brightness: a rainy morning is dim, but nobody lights lamps)
-        night = 1.0 - smoothstep(-0.04, 0.1, normalize(u.sun_dir).y)
-        c = mix(c, vec3(1.0, 0.72, 0.38) * (1.6 + 0.4 * i.color.w), night)
+        # People light lamps gradually through dusk (lamps along streets/quays first, then house
+        # windows staggered across evening). Cell hash mod 64 is invariant across 1024 m chart snaps.
+        sy = normalize(u.sun_dir).y
+        if sy < 0.11:
+            cell = floor(i.world.xz * 0.25) + floor(i.world.y * 0.25) * vec2(17.0, 31.0)
+            h1 = _wall_hash(cell)
+            h2 = fract(h1 * 17.31)
+            is_lamp = step(0.65, i.color.w)
+            onset = mix(mix(0.06, -0.14, h1), mix(0.085, -0.015, h1), is_lamp)
+            band = mix(0.022, 0.026, is_lamp)
+            night = 1.0 - smoothstep(onset - band, onset + band, sy)
+            warm = mix(vec3(1.0, 0.67, 0.31), vec3(1.0, 0.78, 0.46), h2)
+            c = mix(c, warm * (1.6 + 0.4 * i.color.w), night)
     vec4(aerial(c, i.world, u.cam, u.haze, u.fog)*paint_paper(i.pos.xy), 1.0)
 
 # Smooth value noise 0..1 on a grid repeating every 64 cells (so a world position's pattern holds
@@ -248,6 +269,33 @@ obj_light = (i: ObjOut,u: ObjParams) -> vec4:
         c += i.color.xyz*u.sun*(rim*0.16)
     obj_finish_light(c,i,u,n)
 
+# Dedicated hull lighting (boats, ships, floating seaplanes): omits building/foliage/roof branches
+# and adds water-surface caustics on hull undersides near the waterline without adding register
+# pressure to obj_sh / obj_inst_sh (groves, towns, folk).
+hull_light = (i: ObjOut, u: ObjParams, caustics: Texture, ca: vec4, cb: vec4, cc: vec4, cd: vec4) -> vec4:
+    n = normalize(i.normal)
+    ndl = dot(n,normalize(u.sun_dir))
+    c = obj_base_light(i,u,n,ndl)
+    paint_near = 1.0-smoothstep(120.0,300.0,length(i.world-u.cam))
+    if paint_near > 0.0:
+        uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0+u.pigment_phase.xy
+        wash = sample(u.pigment,uv).w-0.5
+        resolved = (1.0-smoothstep(0.04,0.14,max(fwidth(uv.x),fwidth(uv.y))))*paint_near
+        c *= 1.0+wash*0.28*resolved
+    if u.flex.w > 0.0:
+        view = normalize(u.cam-i.world)
+        rim = smoothstep(0.72,0.94,1.0-max(dot(n,view),0.0))*smoothstep(-0.15,0.25,ndl)
+        c += i.color.xyz*u.sun*(rim*0.16)
+    if i.world.y > -3.5 and i.world.y < 2.2 and ca.x > 0.005:
+        c = caustic_hull(c, caustics, i.world, n, u.cam, ndl, u.sun, ca, cb, cc, cd)
+    obj_finish_light(c,i,u,n)
+
+hull_vs = (v: Vertex3D, u: HullParams) -> ObjOut: obj_vs(v, u.obj)
+hull_fs = (i: ObjOut, u: HullParams) -> vec4: hull_light(i, u.obj, u.caustics, u.caustic_a, u.caustic_b, u.caustic_c, u.caustic_d)
+hull_fs_log = (i: ObjOut, u: HullParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    hull_fs(i, u)
+
 obj_vs = (v: Vertex3D, u: ObjParams) -> ObjOut:
     p = v.pos
     if u.flex.w > 0.0:
@@ -305,6 +353,7 @@ obj_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_light(i, u)
 obj_sh: Shader
 obj_inst_sh: Shader
 obj_far_sh: Shader
+hull_sh: Shader
 
 obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0), anchor: WorldPoint? = none) -> ObjParams:
     p = ObjParams(scene_view_proj(), model, tint, scene_camera(), L.sun_dir, L.sun, L.sky_top, L.shade, air_down(L.haze, f64(scene_camera().y), tweaks.brighter_ocean), f32(L.fog_density), f32(t), f32(sway),
@@ -324,6 +373,16 @@ obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1,
     p.sway_phase = vec4(render_phase(phase,TAU),render_phase(phase*0.8,TAU),render_phase(grass_phase,TAU),0)
     p.pigment = paint_surface()
     p
+
+hull_from = (p: ObjParams, L: Light, t: f64) -> HullParams:
+    ca, cb, cc, cd = caustic_uniforms(L.sun_dir, t, p.origin, L.glare)
+    HullParams(p, coast_pattern_texture, ca, cb, cc, cd)
+
+draw_hull_with = (mesh: Mesh, p: ObjParams, L: Light, t: f64):
+    if render_quality.tier > 0 and coast_pattern_texture.id != 0:
+        draw(hull_sh, mesh, hull_from(p, L, t))
+    else:
+        draw(obj_sh, mesh, p)
 
 # ---------------- building blocks ----------------
 
@@ -1216,11 +1275,12 @@ draw_towns = (towns: Town[], L: Light, t: f64, part: int = 0):
 
 # (the GPU programs: made once the window is open)
 init_objects = ():
-    global obj_sh, obj_inst_sh, obj_far_sh
-    # (the curved world's replace these three at the start: they link only where drawn)
+    global obj_sh, obj_inst_sh, obj_far_sh, hull_sh
+    # (the curved world's replace these at the start: they link only where drawn)
     obj_sh = make_shader(world_shader(shader(obj_vs, obj_fs), shader(obj_vs, obj_fs_log)),false)
     obj_inst_sh = make_shader(world_shader(shader(obj_vs_inst, obj_fs), shader(obj_vs_inst, obj_fs_log)),false)
     obj_far_sh = make_shader(world_shader(shader(obj_far_vs, obj_far_fs), shader(obj_far_vs, obj_far_fs_log)),false)
+    hull_sh = make_shader(world_shader(shader(hull_vs, hull_fs), shader(hull_vs, hull_fs_log)),false)
 
 # ---------------- walking ----------------
 
