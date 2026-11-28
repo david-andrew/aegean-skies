@@ -85,6 +85,12 @@ obj_surface = (v: Vertex3D, sway: f32 = 0.0) -> vec3:
     material = if v.uv.x == 183.0: 4.0 else: if v.uv.x == 182.0: 3.0 else: if v.uv.x >= 180.0 and v.uv.x <= 181.0: 2.0 else: if (sway > 0.0 or v.uv.x == 173.0) and v.color.y > v.color.x*1.15: 1.0 else: 0.0
     vec3(v.uv.x-180.0,v.uv.y,material)
 
+obj_base_light_plain = (i: ObjOut,u: ObjParams,n: vec3,ndl: f32) -> vec3:
+    lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,0.015))
+    light = mix(u.shade*1.12+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
+    light = light + vec3(0.03, 0.06, 0.08) * min(u.sun,vec3(1,1,1)) * clamp(-n.y, 0.0, 1.0)
+    i.color.xyz * light
+
 obj_base_light = (i: ObjOut,u: ObjParams,n: vec3,ndl: f32) -> vec3:
     lit = paint_ramp(ndl,max(fwidth(ndl)*0.65,0.015))
     light = mix(u.shade*1.12+vec3(0.06,0.07,0.09)*min(u.sun,vec3(1,1,1)),u.sun*vec3(1.02,1.0,0.94),lit)
@@ -95,6 +101,15 @@ obj_base_light = (i: ObjOut,u: ObjParams,n: vec3,ndl: f32) -> vec3:
     # a little light from below, off the sea
     light = light + vec3(0.03, 0.06, 0.08) * min(u.sun,vec3(1,1,1)) * clamp(-n.y, 0.0, 1.0)
     i.color.xyz * light
+
+obj_finish_light_plain = (color: vec3,i: ObjOut,u: ObjParams,n: vec3) -> vec4:
+    c = color
+    if u.wet > 0.001:
+        wet = u.wet*smoothstep(0.2,0.8,n.y)
+        view = normalize(u.cam-i.world)
+        sheen = pow(max(dot(reflect(-view,n),normalize(u.sun_dir)),0.0),42.0)
+        c = c*(1.0-wet*0.24)+mix(u.sky,u.haze,0.5)*(wet*0.12)+u.sun*(wet*sheen*0.35)
+    vec4(aerial(c, i.world, u.cam, u.haze, u.fog)*paint_paper(i.pos.xy), 1.0)
 
 obj_finish_light = (color: vec3,i: ObjOut,u: ObjParams,n: vec3) -> vec4:
     c = color
@@ -339,10 +354,67 @@ obj_far_fs_log = (i: ObjOut, u: ObjParams) -> vec4:
     set_depth(world_depth_encode(1.0 / i.pos.w))
     obj_far_fs(i, u)
 
+# Streamlined instanced lighting (groves, olive rows, crowd figures, pylons, distant aircraft):
+# omits architecture (plaster/weather/roof/paving/masonry/recess), airframe flex, and night-lamp
+# branches that instanced meshes never carry, cutting register pressure on both desktop and mobile.
+obj_inst_light = (i: ObjOut,u: ObjParams) -> vec4:
+    n = normalize(i.normal)
+    ndl = dot(n,normalize(u.sun_dir))
+    c = obj_base_light_plain(i,u,n,ndl)
+    paint_near = 1.0-smoothstep(120.0,300.0,length(i.world-u.cam))
+    if paint_near > 0.0:
+        uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0+u.pigment_phase.xy
+        foliage = i.surface.z > 0.5 and i.surface.z < 1.5
+        if foliage: uv = i.world.xz/12.0+u.pigment_phase.zw+vec2(i.world.y*0.08,0)
+        pigment = sample(u.pigment,uv)
+        wash = pigment.w-0.5
+        resolved = (1.0-smoothstep(0.04,0.14,max(fwidth(uv.x),fwidth(uv.y))))*paint_near
+        roof = step(i.color.y*1.4,i.color.x)*step(i.color.z*1.3,i.color.x)
+        c *= 1.0+wash*(0.28+roof*0.45)*resolved
+        if foliage:
+            leaf = pigment.xyz*2.0-vec3(1,1,1)
+            dap = paint_ramp(dot(leaf,normalize(u.sun_dir)),0.18)
+            c *= mix(vec3(1,1,1),vec3(mix(0.88,1.12,dap))*vec3(1.04,1.0,0.95),resolved)
+    obj_finish_light_plain(c,i,u,n)
+
+# Streamlined interior room lighting for the baked bar room (<30 m, fog=0, wet=0, no architecture tags).
+bar_room_light = (i: ObjOut,u: ObjParams) -> vec4:
+    n = normalize(i.normal)
+    ndl = dot(n,normalize(u.sun_dir))
+    c = obj_base_light_plain(i,u,n,ndl)
+    uv = (i.world.xz+vec2(i.world.y*0.7,i.world.y*0.43))/18.0+u.pigment_phase.xy
+    wash = sample(u.pigment,uv).w-0.5
+    resolved = 1.0-smoothstep(0.04,0.14,max(fwidth(uv.x),fwidth(uv.y)))
+    roof = step(i.color.y*1.4,i.color.x)*step(i.color.z*1.3,i.color.x)
+    c *= 1.0+wash*(0.28+roof*0.45)*resolved
+    if i.color.w < 0.9:
+        sy = normalize(u.sun_dir).y
+        if sy < 0.11:
+            cell = floor(i.world.xz * 0.25) + floor(i.world.y * 0.25) * vec2(17.0, 31.0)
+            h1 = _wall_hash(cell)
+            h2 = fract(h1 * 17.31)
+            is_lamp = step(0.65, i.color.w)
+            onset = mix(mix(0.06, -0.14, h1), mix(0.085, -0.015, h1), is_lamp)
+            band = mix(0.022, 0.026, is_lamp)
+            night = 1.0 - smoothstep(onset - band, onset + band, sy)
+            warm = mix(vec3(1.0, 0.67, 0.31), vec3(1.0, 0.78, 0.46), h2)
+            c = mix(c, warm * (1.6 + 0.4 * i.color.w), night)
+    vec4(c * paint_paper(i.pos.xy), 1.0)
+
 obj_far_fs = (i: ObjOut, u: ObjParams) -> vec4:
     n = normalize(i.normal)
-    c = obj_base_light(i,u,n,dot(n,normalize(u.sun_dir)))
-    obj_finish_light(c,i,u,n)
+    c = obj_base_light_plain(i,u,n,dot(n,normalize(u.sun_dir)))
+    obj_finish_light_plain(c,i,u,n)
+
+obj_inst_fs_log = (i: ObjOut, u: ObjParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    obj_inst_fs(i, u)
+obj_inst_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_inst_light(i, u)
+
+bar_room_fs_log = (i: ObjOut, u: ObjParams) -> vec4:
+    set_depth(world_depth_encode(1.0 / i.pos.w))
+    bar_room_fs(i, u)
+bar_room_fs = (i: ObjOut, u: ObjParams) -> vec4: bar_room_light(i, u)
 
 obj_fs_log = (i: ObjOut, u: ObjParams) -> vec4:
     set_depth(world_depth_encode(1.0 / i.pos.w))
@@ -351,8 +423,10 @@ obj_fs_log = (i: ObjOut, u: ObjParams) -> vec4:
 obj_fs = (i: ObjOut, u: ObjParams) -> vec4: obj_light(i, u)
 
 obj_sh: Shader
+obj_horizon_sh: Shader
 obj_inst_sh: Shader
 obj_far_sh: Shader
+bar_room_sh: Shader
 hull_sh: Shader
 
 obj_params = (L: Light, t: f64, model: mat4 = mat4(), tint: vec4 = vec4(1, 1, 1, 1), sway: f64 = 0.0, flex: vec4 = vec4(0, 0, 0, 0), anchor: WorldPoint? = none) -> ObjParams:
@@ -1245,6 +1319,7 @@ draw_groves = (meshes: Mesh[], groves: Grove[], L: Light, t: f64):
     cam = scene_camera()
     p = obj_params(L, t, sway = 1.0)
     planes = land_planes(scene_view_proj())
+    cull(.back)
     loop g in groves:
         if f64(length(cam.xz - g.center)) > g.reach + render_quality.tree_distance: continue
         if g.bounds.w > 0:
@@ -1262,6 +1337,7 @@ draw_groves = (meshes: Mesh[], groves: Grove[], L: Light, t: f64):
         else:
             loop k in 0..g.kinds.len():
                 if g.kinds[k].count > 0: draw_instanced(if still: obj_far_sh else: obj_inst_sh,if distant: grove_far_meshes[k] else: meshes[k],g.kinds[k],p)
+    cull(.none)
     zone_end()
 
 # (`part` 1: only the towns near enough for their full mesh; 2: only the far ones; 0: all)
@@ -1271,15 +1347,17 @@ draw_towns = (towns: Town[], L: Light, t: f64, part: int = 0):
         distance = length(scene_camera()-tw.center)
         if distance > 14000.0: continue
         if (part == 1 and distance > 1800.0) or (part == 2 and distance <= 1800.0): continue
-        draw(obj_sh,if distance > 1800.0 and tw.far_mesh.count > 0: tw.far_mesh else: tw.mesh,p)
+        draw(if distance > 13000.0: obj_horizon_sh else: obj_sh,if distance > 1800.0 and tw.far_mesh.count > 0: tw.far_mesh else: tw.mesh,p)
 
 # (the GPU programs: made once the window is open)
 init_objects = ():
-    global obj_sh, obj_inst_sh, obj_far_sh, hull_sh
+    global obj_sh, obj_horizon_sh, obj_inst_sh, obj_far_sh, bar_room_sh, hull_sh
     # (the curved world's replace these at the start: they link only where drawn)
     obj_sh = make_shader(world_shader(shader(obj_vs, obj_fs), shader(obj_vs, obj_fs_log)),false)
-    obj_inst_sh = make_shader(world_shader(shader(obj_vs_inst, obj_fs), shader(obj_vs_inst, obj_fs_log)),false)
+    obj_horizon_sh = obj_sh
+    obj_inst_sh = make_shader(world_shader(shader(obj_vs_inst, obj_inst_fs), shader(obj_vs_inst, obj_inst_fs_log)),false)
     obj_far_sh = make_shader(world_shader(shader(obj_far_vs, obj_far_fs), shader(obj_far_vs, obj_far_fs_log)),false)
+    bar_room_sh = make_shader(world_shader(shader(obj_vs, bar_room_fs), shader(obj_vs, bar_room_fs_log)),false)
     hull_sh = make_shader(world_shader(shader(hull_vs, hull_fs), shader(hull_vs, hull_fs_log)),false)
 
 # ---------------- walking ----------------
