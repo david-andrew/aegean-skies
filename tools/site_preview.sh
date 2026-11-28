@@ -4,9 +4,10 @@
 # and hour and none of the screen's text over it (AEGEAN_CAPTURE_CLEAN). Nothing drawn or generated
 # elsewhere.
 #
-#   tools/site_preview.sh docs/site-preview.png
+#   tools/site_preview.sh site/web/preview.png
 #
-# The committed docs/site-preview.png is what the Pages build publishes: it was drawn on the GPU
+# The committed site/web/preview.png is what the Pages build publishes (via aegean.jo's build block
+# `page_files = "site/web"`): it was drawn on the GPU
 # (headless Vulkan; the bakes are needed, as for any run of the game), because CI's software
 # renderer draws this view's low sun and its clouds wrongly (white and coloured blocks over the
 # sun). SITE_PREVIEW_SOFTWARE=1 uses the software renderer to compare. Redraw it with this script
