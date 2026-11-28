@@ -2859,7 +2859,8 @@ On the rivers branch until it lands.
   `crowd_name`, `crowd_meet`, `crowd_hold_step`, `crowd_check_met` in `aegean.jo`.
 - **Rules:** 16 looks a town (`AMBIENT_LOOKS`), each a full figure built once
   (a few tenths of a millisecond, under the layout's frame budget) and worn by a few people; each
-  look's parts drawn in one instanced call (`obj_inst_sh`) for all who wear it, within 150 m,
+  look's body (torso and head as one mesh), legs and arms drawn in one instanced call each
+  (`obj_inst_sh`) for all who wear it, within 150 m,
   posed by the same arithmetic as `draw_figure`. The one the view is on is drawn alone through
   `draw_figure` so its outline is taken. Laid out once per town as it comes within 450 m, a loop a
   frame (no arrival hitch); a spot that touches a building is refused, and a walk that runs into
