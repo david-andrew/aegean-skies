@@ -1,0 +1,233 @@
+# Shallow-water caustics on the seabed, underwater rocks, and hulls' undersides near the surface.
+#
+# Uses the seamless periodic exact-bisector Voronoi distance field stored in coast_pattern.w
+# (no extra texture unit or VRAM). Two non-commensurate, wave-warped cellular octaves crossfade
+# with optical water depth (0.5 m tight crisp filaments -> 3-4 m broader blurred cells), lap in
+# place near the shoreline while drifting with the swell deeper out, stretch and fade under a
+# low sun, vanish in shade, cloud cover, cloud shadow and night, and analytically band-limit by
+# pixel footprint so a slow flyover at 20-30 m stays free of shimmer.
+use 'look.jo'
+use 'weather_scene.jo'
+use 'render_space.jo'
+use 'coast_pattern.jo'
+use 'cloud_shadow_map.jo'
+
+# Tile spans in metres for the two Voronoi caustic octaves (8 cells per tile in coast_pattern.w):
+#   SPAN1 = 5.0 m  -> ~0.625 m cells (shallow 0.3-1.8 m, crisp thin filaments)
+#   SPAN2 = 15.0 m -> ~1.875 m cells, rotated 37 deg (deep 1.5-4.5 m broad blurred cells + swell drift)
+const CAUSTIC_SPAN1 = 5.0
+const CAUSTIC_SPAN2 = 15.0
+
+# Cumulative f64 wave-train drift offsets (world metres), advanced smoothly with wind_now when
+# time steps normally and reset deterministically when time jumps or freezes (e.g. still clips).
+caustic_drift1 = vec2(0, 0)
+caustic_drift2 = vec2(0, 0)
+caustic_last_t = -1e9
+caustic_glare: f32 = 1.0
+caustic_cache_t = -1e9
+caustic_cache_origin = vec3(1e20, 0, 1e20)
+caustic_cache_sun = vec3(0, 0, 0)
+caustic_cache_glare: f32 = -1.0
+caustic_cache_a = vec4(0, 0, 0, 0)
+caustic_cache_b = vec4(0, 0, 0, 0)
+caustic_cache_c = vec4(0, 0, 0, 0)
+caustic_cache_d = vec4(0, 0, 0, 0)
+
+caustic_set_glare = (g: f32):
+    global caustic_glare
+    caustic_glare = clamp(g, 0.0, 1.0)
+
+caustic_wrap1 = (x: f64) -> f32: f32(x - floor(x))
+
+# Direct-sunlight caustic strength (0..1):
+# - 0 at night and twilight (sun below ~2 deg)
+# - Smooth Snell/Fresnel transmittance ramp through low sun (faded yet legible at golden hour)
+# - Smoothly extinguished by overcast deck, rain, fog, and storm cover
+caustic_strength = (sun_dir: vec3, glare: f32 = 1.0) -> f32:
+    s = normalize(sun_dir)
+    sy = f64(s.y)
+    if sy <= 0.03: return 0.0
+    elev = smoothstep(0.035, 0.32, sy) * (0.38 + 0.62 * smoothstep(0.08, 0.50, sy))
+    cover = 0.0
+    if weather_active:
+        a = weather_here
+        cover = clamp(f64(a.deck) * 0.95 + f64(a.rain) * 0.85 + f64(a.fog) * 0.85 + f64(a.storm) * 0.9, 0.0, 1.0)
+    clear = 1.0 - smoothstep(0.15, 0.72, cover)
+    f32(elev * clear * f64(clamp(glare, 0.0, 1.0)))
+
+# Linear low-sun stretch operator matching the shader: compresses along sun azimuth so cells
+# elongate along the sun direction at low elevation. Applied in f64 to the render origin so
+# origin snaps never jump caustic UVs even hundreds of kilometres from world (0, 0).
+caustic_stretch_f64 = (p: vec2, sun_dir: vec3) -> (f64, f64):
+    s = normalize(sun_dir)
+    sl = sqrt(f64(s.x) * f64(s.x) + f64(s.z) * f64(s.z))
+    sx = if sl > 0.001: f64(s.x) / sl else: 1.0
+    sz = if sl > 0.001: f64(s.z) / sl else: 0.0
+    compress = mix(0.42, 1.0, smoothstep(0.06, 0.55, f64(s.y)))
+    proj = (f64(p.x) * sx + f64(p.y) * sz) * (1.0 - compress)
+    (f64(p.x) - sx * proj, f64(p.y) - sz * proj)
+
+# Compute the four per-frame caustic uniforms for a draw at `origin` (all sun-refraction,
+# azimuth-stretch, and f64 render-origin phase math precomputed once on CPU):
+#   a = (strength, inv_refr_y, refract_shift_x, refract_shift_z)
+#   b = (uv1_off_x, uv1_off_y, uv2_off_x, uv2_off_y)
+#   c = (sun_az_x, sun_az_z, 1.0 - compress, wind_amp)
+#   d = (wind_dir_x, wind_dir_z, wave_phase1, wave_phase2)
+caustic_uniforms = (sun_dir: vec3, t: f64, origin: vec3, glare: f32 = 1.0) -> (vec4, vec4, vec4, vec4):
+    global caustic_drift1, caustic_drift2, caustic_last_t
+    global caustic_cache_t, caustic_cache_origin, caustic_cache_sun, caustic_cache_glare
+    global caustic_cache_a, caustic_cache_b, caustic_cache_c, caustic_cache_d
+    str_val = caustic_strength(sun_dir, glare)
+    if t == caustic_cache_t and origin == caustic_cache_origin and sun_dir == caustic_cache_sun and str_val == caustic_cache_glare:
+        return (caustic_cache_a, caustic_cache_b, caustic_cache_c, caustic_cache_d)
+    wd = if length(wind_now.dir) > 0.01: normalize(wind_now.dir) else: vec2(0.8, 0.6)
+    ws = wind_now.speed
+    # Cross-shore wave-train direction (~125 deg from wind) so shallow ripples lap across the swell
+    wd_cross = vec2(wd.x * -0.5736 - wd.y * 0.8192, wd.x * 0.8192 + wd.y * -0.5736)
+    wd_swell = vec2(wd.x * 0.9397 - wd.y * 0.3420, wd.x * 0.3420 + wd.y * 0.9397)
+    sp = 0.72 + 0.55 * smoothstep(0.5, 10.0, ws)
+    dt = t - caustic_last_t
+    if dt > 0.0 and dt < 1.0:
+        caustic_drift1 += wd_cross * f32(dt * 0.58 * sp)
+        caustic_drift2 += wd_swell * f32(dt * 1.42 * sp)
+        caustic_drift1 = vec2(f32(f64(caustic_drift1.x) - floor(f64(caustic_drift1.x) / 1024.0) * 1024.0), f32(f64(caustic_drift1.y) - floor(f64(caustic_drift1.y) / 1024.0) * 1024.0))
+        caustic_drift2 = vec2(f32(f64(caustic_drift2.x) - floor(f64(caustic_drift2.x) / 1024.0) * 1024.0), f32(f64(caustic_drift2.y) - floor(f64(caustic_drift2.y) / 1024.0) * 1024.0))
+    else if dt != 0.0:
+        # Deterministic closed-form initialization when time jumps (captures, still clips, resets).
+        caustic_drift1 = wd_cross * f32(t * 0.58 * sp - floor(t * 0.58 * sp / 1024.0) * 1024.0)
+        caustic_drift2 = wd_swell * f32(t * 1.42 * sp - floor(t * 1.42 * sp / 1024.0) * 1024.0)
+    caustic_last_t = t
+
+    sd = normalize(sun_dir)
+    # Snell refraction (n_air/n_water = 0.75) precomputed once per frame
+    rx = f64(sd.x) * 0.75
+    rz = f64(sd.z) * 0.75
+    refr_y = sqrt(max(1.0 - rx * rx - rz * rz, 0.18))
+    inv_refr_y = f32(1.0 / refr_y)
+    refr_shift_x = f32(rx / refr_y)
+    refr_shift_z = f32(rz / refr_y)
+
+    # Low-sun azimuth stretch parameters
+    sl = sqrt(f64(sd.x) * f64(sd.x) + f64(sd.z) * f64(sd.z))
+    sx = if sl > 0.001: f64(sd.x) / sl else: 1.0
+    sz = if sl > 0.001: f64(sd.z) / sl else: 0.0
+    compress = mix(0.42, 1.0, smoothstep(0.06, 0.55, f64(sd.y)))
+    one_minus_comp = f32(1.0 - compress)
+
+    ox, oz = caustic_stretch_f64(origin.xz, sun_dir)
+    # Layer 1: world axes, span 5.0 m
+    u1x = caustic_wrap1((ox - f64(caustic_drift1.x)) / CAUSTIC_SPAN1)
+    u1y = caustic_wrap1((oz - f64(caustic_drift1.y)) / CAUSTIC_SPAN1)
+    # Layer 2: rotated 37 deg (0.79863551, 0.60181502), span 15.0 m
+    r2x = ox * 0.79863551 - oz * 0.60181502
+    r2y = ox * 0.60181502 + oz * 0.79863551
+    d2x = f64(caustic_drift2.x) * 0.79863551 - f64(caustic_drift2.y) * 0.60181502
+    d2y = f64(caustic_drift2.x) * 0.60181502 + f64(caustic_drift2.y) * 0.79863551
+    u2x = caustic_wrap1((r2x - d2x) / CAUSTIC_SPAN2)
+    u2y = caustic_wrap1((r2y - d2y) / CAUSTIC_SPAN2)
+
+    # Wave-field warp phases matching sea.jo's 4.1 m swell and 2.3 m cross-ripple angular speeds
+    wd2x = f64(wd.x) * 0.78801075 - f64(wd.y) * 0.61566148
+    wd2y = f64(wd.x) * 0.61566148 + f64(wd.y) * 0.78801075
+    k1 = TAU / 4.1
+    k2 = TAU / 2.3
+    om1 = sqrt(9.8 * k1)
+    om2 = sqrt(9.8 * k2) * 1.1
+    ph1 = render_phase(t * om1 - (f64(origin.x) * f64(wd.x) + f64(origin.z) * f64(wd.y)) * k1, TAU)
+    ph2 = render_phase(t * om2 - (f64(origin.x) * wd2x + f64(origin.z) * wd2y) * k2, TAU)
+    wind_amp = f32(0.45 + 0.75 * smoothstep(0.5, 10.0, ws))
+
+    caustic_cache_t = t; caustic_cache_origin = origin; caustic_cache_sun = sun_dir; caustic_cache_glare = str_val
+    caustic_cache_a = vec4(str_val, inv_refr_y, refr_shift_x, refr_shift_z)
+    caustic_cache_b = vec4(u1x, u1y, u2x, u2y)
+    caustic_cache_c = vec4(f32(sx), f32(sz), one_minus_comp, wind_amp)
+    caustic_cache_d = vec4(wd.x, wd.y, ph1, ph2)
+    (caustic_cache_a, caustic_cache_b, caustic_cache_c, caustic_cache_d)
+
+# (in shaders) Shallow-water seabed & underwater-rock caustics.
+# Two world-locked Voronoi octaves (half the samples of the old crossing-drift net), zero sqrt,
+# zero normalize, zero divisions: keeps coast_fs well under Intel UHD 620's SIMD16 register limit.
+caustic_seabed = (col: vec3, pattern: Texture, local: vec3, footprint: f32, lit: f32, sun_lost: f32, ca: vec4, cb: vec4, cc: vec4, cd: vec4) -> vec3:
+    depth = -local.y
+    direct = smoothstep(0.10, 0.58, lit) * (1.0 - smoothstep(0.15, 0.75, sun_lost)) * ca.x
+    opt_d = depth * ca.y
+    mask = direct * smoothstep(0.03, 0.24, depth) * (1.0 - smoothstep(1.8, 5.6, opt_d))
+    if mask <= 0.002: return col
+
+    # Snell projection to water surface + low-sun azimuth stretch (CPU-precomputed vectors)
+    p = local.xz + ca.zw * depth
+    ps = p - cc.xy * (dot(p, cc.xy) * cc.z)
+
+    # Wave-field refraction warp (4.1 m swell + 2.3 m cross-ripple) so the caustic network
+    # breathes, bends and laps with the waves rather than scrolling rigidly.
+    wd = cd.xy
+    wd2 = vec2(wd.x * 0.78801075 - wd.y * 0.61566148, wd.x * 0.61566148 + wd.y * 0.78801075)
+    s1 = sin(dot(local.xz, wd) * 1.5324842 - cd.z)
+    s2 = sin(dot(local.xz, wd2) * 2.7318197 - cd.w)
+    w_amp = cc.w * clamp(depth * 0.45, 0.16, 1.15)
+    q1 = ps + (wd * s1 * 0.30 + wd2 * s2 * 0.21) * w_amp
+    q2_in = ps + (wd2 * s1 * 0.24 - wd * s2 * 0.22) * w_amp
+
+    # Two curved Voronoi octaves from coast_pattern.w: fine ~0.625 m (shallow) & broad ~1.875 m (deep)
+    e1 = sample(pattern, q1 * 0.2 + cb.xy).w
+    q2 = vec2(q2_in.x * 0.79863551 - q2_in.y * 0.60181502, q2_in.x * 0.60181502 + q2_in.y * 0.79863551)
+    e2 = sample(pattern, q2 * 0.06666667 + cb.zw).w
+
+    # Depth-dependent optical blur + analytic pixel-footprint band-limiting (zero divisions)
+    deep_mix = smoothstep(0.65, 2.75, opt_d)
+    w1 = mix(0.062, 0.26, smoothstep(0.25, 2.2, opt_d)) + footprint * 2.4
+    w2 = mix(0.16, 0.50, smoothstep(0.8, 4.0, opt_d)) + footprint * 1.1
+    aa1 = 1.0 - smoothstep(0.08, 0.28, footprint)
+    aa2 = 1.0 - smoothstep(0.18, 0.44, footprint)
+
+    f1 = (1.0 - smoothstep(0.0, w1, e1)) * aa1
+    r1 = f1 * f1 * (0.65 + 0.55 * (1.0 - smoothstep(0.0, w1 * 0.42, e1)))
+    f2 = (1.0 - smoothstep(0.0, w2, e2)) * aa2
+    r2 = f2 * (0.48 + 0.52 * f2)
+
+    net_shallow = r1 * (0.68 + 0.55 * f2) + f1 * f2 * 0.32
+    net_deep = r2 * (0.72 + 0.45 * f1) + r1 * 0.14
+    net = mix(net_shallow, net_deep, deep_mix)
+
+    # Subtle darkening inside polygonal cells makes bright thin filaments & 3-way cusp nodes pop
+    trough = mix(smoothstep(0.16, 0.66, e1) * aa1, smoothstep(0.22, 0.74, e2) * aa2, deep_mix)
+    gain = mix(0.76, 0.50, deep_mix)
+    tint = mix(vec3(1.06, 1.02, 0.88), vec3(0.76, 0.99, 0.97), smoothstep(0.5, 3.2, depth))
+    col * (1.0 - trough * 0.13 * mask) + col * tint * (net * gain * mask)
+
+# (in shaders) Water-surface caustics on hulls' undersides near the waterline:
+# - Above waterline (0..1.9 m): reflected upward ripples onto shaded/flared undersides (n.y < 0.28).
+# - Below waterline (-3.2..0 m): transmitted refracted caustics on submerged hull bottoms.
+caustic_hull = (col: vec3, pattern: Texture, local: vec3, n: vec3, cam: vec3, ndl: f32, sun: vec3, ca: vec4, cb: vec4, cc: vec4, cd: vec4) -> vec3:
+    dist = length(local - cam)
+    dfade = 1.0 - smoothstep(32.0, 72.0, dist)
+    if dfade <= 0.002: return col
+    weight: f32 = 0.0
+    p = local.xz
+    if local.y >= 0.0:
+        under = clamp(0.28 - n.y, 0.0, 1.0)
+        hfade = (1.0 - smoothstep(0.20, 1.85, local.y)) * smoothstep(-0.02, 0.05, local.y)
+        weight = under * hfade * 0.64
+        p = local.xz + local.y * (n.xz * 0.55 - cc.xy * 0.30)
+    else:
+        depth = -local.y
+        sub = smoothstep(0.02, 0.22, depth) * (1.0 - smoothstep(1.6, 3.2, depth)) * smoothstep(-0.20, 0.42, ndl)
+        weight = sub * 0.68
+        p = local.xz + ca.zw * depth
+    mask = weight * dfade * ca.x
+    if mask <= 0.002: return col
+
+    wd = cd.xy
+    s1 = sin(dot(local.xz, wd) * 1.5324842 - cd.z)
+    q = p + wd * (s1 * 0.16 * cc.w)
+    e1 = sample(pattern, q * 0.2 + cb.xy).w
+    q2 = vec2(q.x * 0.79863551 - q.y * 0.60181502, q.x * 0.60181502 + q.y * 0.79863551)
+    e2 = sample(pattern, q2 * 0.06666667 + cb.zw).w
+
+    aa = 1.0 - smoothstep(18.0, 56.0, dist)
+    w = mix(0.13, 0.34, smoothstep(8.0, 48.0, dist))
+    f1 = 1.0 - smoothstep(0.0, w, e1)
+    f2 = 1.0 - smoothstep(0.0, w * 1.35, e2)
+    net = (f1 * f1 * (0.64 + 0.66 * f2) + f2 * 0.22 + f1 * f2 * 0.35) * aa
+    bounce = (col * 0.75 + vec3(0.08, 0.11, 0.11)) * vec3(0.76, 0.98, 0.96) * min(sun, vec3(1.15, 1.10, 1.02))
+    col + bounce * (net * mask)
