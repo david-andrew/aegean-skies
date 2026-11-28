@@ -6,7 +6,7 @@ It runs in CI (`.github/workflows/tests.yml` via `tools/ci_test_shard.py`, under
 
 ## Camera scripts
 
-All eight scripts render fixed-step camera sequences at `384x216` through the game's real terrain, canopy, crown, aircraft, sea, caustic, town-light and screen-space outline shaders:
+All nine scripts render fixed-step camera sequences at `384x216` through the game's real terrain, canopy, crown, aircraft, sea, caustic, town-light and screen-space outline shaders:
 
 | Clip | Frames | What it tests |
 | --- | ---: | --- |
@@ -14,6 +14,7 @@ All eight scripts render fixed-step camera sequences at `384x216` through the ga
 | `pan_150` | 24 | Slow 360° pan at 150 m AGL (6 compass sectors × 4 steps of 1.2°) over wooded hills |
 | `pan_800` | 24 | Slow 360° pan at 800 m AGL (6 compass sectors × 4 steps of 1.2°) over wooded hills |
 | `flight_300` | 16 | Level flight at 300 m AGL with live tile streaming (`world_generate_tiles = 1`) and 3D depth dumps |
+| `approach_woods` | 16 | Straight-in wooded-hill approach across 4 handover bands (2600 m, 950 m, 540 m, 175 m) with live tile streaming and 3D depth dumps |
 | `chase_dusk` | 8 | Chase camera with the Supermarine S.6B against a wooded ridge at dusk (19:00), outline on vs off + plane mask |
 | `horizon_woods` | 16 | Slow pan along a wooded land/sky skyline, outline on vs off |
 | `night_approach` | 28 | Slow night approach from 40 km into Kalyrassa harbour across 7 distance bands (town lights glow → cluster → window/lamp hand-over) |
@@ -21,7 +22,7 @@ All eight scripts render fixed-step camera sequences at `384x216` through the ga
 
 ## Metrics
 
-- **`flicker_mean` / `flicker_pct`**: for every consecutive triplet `(t-1, t, t+1)`, frames `t-1` and `t+1` are warped into frame `t`'s camera (pure projective rotation for pans/horizon; 3D depth reprojection for `flight_300`). Per-pixel temporal sign-change oscillation `min(|d1|, |d2|)` when `(I_t - I_{t-1}) * (I_{t+1} - I_t) < 0` isolates high-frequency shimmer from smooth motion. `flicker_pct` is the share of valid pixels oscillating by `> 6` RGB levels.
+- **`flicker_mean` / `flicker_pct`**: for every consecutive triplet `(t-1, t, t+1)`, frames `t-1` and `t+1` are warped into frame `t`'s camera (pure projective rotation for pans/horizon; 3D depth reprojection for `flight_300` and `approach_woods`). Per-pixel temporal sign-change oscillation `min(|d1|, |d2|)` when `(I_t - I_{t-1}) * (I_{t+1} - I_t) < 0` isolates high-frequency shimmer from smooth motion. `flicker_pct` is the share of valid pixels oscillating by `> 6` RGB levels.
 - **`reproj_mae` / `reproj_pct`**: mean absolute error and `% > 12` RGB levels between the warped previous frame and the current frame (catches LOD pops, tile snaps and ground morphing).
 - **`still_max_diff`** (`still`): maximum RGB difference between any two consecutive frames with camera and time frozen (must be `0`).
 - **`horizon_jitter_px` / `horizon_step_px`** (`horizon_woods`): column-by-column skyline profile tracked across reprojected frames; `horizon_jitter_px` measures sign-flipping vertical jitter in pixels and `horizon_step_px` measures mean per-step skyline shift.
