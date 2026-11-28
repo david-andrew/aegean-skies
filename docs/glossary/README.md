@@ -19,10 +19,10 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Solar eclipse](#solar-eclipse) · [Eclipse corona](#eclipse-corona) · [Umbra](#umbra) · [Lunar eclipse](#lunar-eclipse) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
-- **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
+- **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights) · [Lunar eclipse](#lunar-eclipse)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
@@ -1681,7 +1681,10 @@ On the rivers branch until it lands.
   maritime air, the baseline over-bright cream-white emitter in a red aureole on bold `red`
   hazy/dusty days, flat readable crimson, copper/rust/dark-brown or rose/burgundy discs in dust and
   smoke, warm-white/cream discs inside magenta or lilac volcanic glows, and rare blue, purple,
-  blue-green or green discs in aged smoke. Flattened by the air and drawn larger near the horizon,
+  blue-green or green discs in aged smoke. The disc is its real size, 0.53 degrees across
+  (`SUN_DISC_RADIUS`); the aureole, glow and corona about it keep the reach they were painted with
+  at the old 3-degree disc (`SKY_DISC_RADIUS` units), so the sunsets' light is as it was. Flattened
+  by the air and drawn larger near the horizon,
   its foot wavering in slices into a short mirage where it meets the water. Once it has set, a
   palette-matched horizon glow stays where it went down, fading over some 8 degrees (persisting
   longer on volcanic `magenta` and `lilac` evenings).
@@ -1775,11 +1778,14 @@ On the rivers branch until it lands.
 ### Moon
 
 - **Definition:** a sphere lit by the actual sun direction, never a painted phase mask, its disc
-  the same apparent size as the sun's. By day it is seen through the sky in front of it: its lit
+  its real size, 0.52 degrees across (`MOON_DISC_RADIUS`; the sun's is 0.53). Its age and its height
+  above or below the sun's path keep the real calendar from the world's start, 7 June 1926 (new
+  moon on the 10th, full on the 25th: `moon_elongation_latitude`), so its eclipses come on their
+  real dates. By day it is seen through the sky in front of it: its lit
   side a pale, faintly blue wash low in contrast against the blue, its dark side only sky. From a
   little before sunset it comes out as a light (fully by about 18:35): an over-bright emitter as
   the eye and a photograph see it, the lit face burnt out near white (amber when it is low, cool
-  white high up) with only a hint of the maria, the dark side faint with earthshine.
+  white high up) with only a faint hint of the maria, the dark side very faint with earthshine.
 - **Moon glow:** the tight saturated glow hugging the lit limb (at the disc's middle when full,
   toward the lit side for a crescent), covering the sky with its own colour as the sun's bloom
   does. Weak for a thin crescent.
@@ -1837,13 +1843,72 @@ On the rivers branch until it lands.
 - **Definition:** Venus, Jupiter, Mars and Saturn as calendar-driven points of light (a simple
   ephemeris from the game's start date, 7 June 1926: Venus is a morning star that summer), hidden
   by clouds in front of them. Drawn as the brightest stars are, steady: Venus brilliant white and
-  Jupiter cream-gold, the brightest things in the sky after the Moon, each with a wide halo and a
-  long glint; Mars red, Saturn pale gold.
+  Jupiter cream-gold, the brightest things in the sky after the Moon, brighter in the core but
+  drawn no larger than Mars at its brightest (`PLANET_SIZE_CAP`), their halos no brighter to the
+  eye than Mars's red one; Mars red, Saturn pale gold.
 - **Code:** `sky_planets` in `src/celestial.jo`; `PLANET_TINTS`, `planet_magnitude`,
   `night_planet_vertices` in `src/night_sky.jo`; `tools/sky_frames.jo` with
   `SKY_TARGET=moon|venus|jupiter|mars|saturn`, `SKY_DAY`, `SKY_HOUR`.
 
 ![The moon on day 7, and Saturn as a planet light (t3/splash-2, tools/sky_frames.jo)](img/moon-planets.png)
+
+### Solar eclipse
+
+- **Definition:** the Moon passing before the Sun on the real dates it did over the map, from the
+  world's start to 1960 (the total eclipse of 19 June 1936 crosses the map from south-west to
+  north-east, over the home islands, a little before six in the morning with the sun 5 degrees up;
+  partials on 29 June 1927, 21 August 1933, 9 July 1945 and others). Its phases: **first contact**,
+  the **bitten Sun** (the Moon's disc taking its bite in the same flattened disc space), the light
+  dimming and cooling as the share covered grows (the eye makes little of half, much of the last
+  few percent), **Baily's beads** where the Moon's ragged limb breaks the last sliver, the
+  **diamond ring**, then **totality**: the black Moon in its [corona](#eclipse-corona), a deep
+  blue-violet sky, sunset all round the horizon (twilight's band warm on every side), the planets
+  and the brightest stars out by day, the gulls come down to the water. Then the same in reverse.
+  Totality lasts minutes of the world's clock; near greatest the eclipse's own time runs six times
+  slower (`ECLIPSE_STRETCH`, `AEGEAN_ECLIPSE_STRETCH=1` for the sky's own pace), the contacts kept
+  within a quarter of an hour of their real times. People talk of one in the days before and after
+  (the weather topic), only when it is worth remarking.
+- **First impressions:** never on the title screen nor in a new world's first five days
+  (`EARLY_WORLD_DAYS`), unless forced; the first real one comes weeks later anyway.
+- **Debug:** the World page's **Eclipse** row: every phase at once about the eye (first contact,
+  half, 90%, 98%, beads, diamond ring, totality, third contact, after, last contact, annular, and
+  the lunar ones), or the next real eclipse replayed here; it shows what one is doing now or the
+  next real one's date. `AEGEAN_ECLIPSE=<phase>` (`ECLIPSE_PHASES`) or `AEGEAN_ECLIPSE=row:<n>[:<minutes>]`,
+  `AEGEAN_ECLIPSE_AT="x,z"` (km) elsewhere on the map. `tools/eclipse_view.jo` (`ECL_PHASE`,
+  `ECL_FOV`, `ECL_HOUR`, `ECL_ROW`) for the sky alone.
+- **Code:** `tools/eclipse_ephemeris.py` (the main terms of the lunar theory and the Sun's orbit,
+  topocentric, the map placed at 38.3 N 25.2 E; `--check` compares with well-known modern eclipses)
+  writes `src/eclipse_table.jo`; `eclipse_at`, `eclipse_light`, `eclipse_force_phase` in
+  `src/eclipse.jo`; the disc in `sun_disc_fs` (`src/sky.jo`); `eclipse_talk_lines` in
+  `src/eclipse_talk.jo`; `birds_settle` in `src/birds.jo`.
+
+### Eclipse corona
+
+- **Definition:** the Sun's corona standing about the black Moon in totality, procedural: a bright
+  inner corona falling off steeply, fine radial streamers all round bending a little with height,
+  a few broad helmet streamers near its equator narrowing into long faint rays out to some 15 solar
+  radii, short plumes at its poles and a pearly glow in the air about it. Each eclipse's seed turns
+  its axis and places its streamers, so no two are alike. It comes out at the diamond ring.
+- **Code:** `corona_light` in `src/sky.jo`.
+
+### Umbra
+
+- **Definition:** the Moon's shadow on the land and the sea in a solar eclipse: the share of the Sun
+  covered worked out at every pixel's place in the world, so the umbra and the penumbra fall at
+  their real places and race over the map at their real speeds (stretched long and fast with a low
+  sun). From outside it is a dark oval with soft edges and a dark wall of air on the horizon as it
+  comes; from inside, the far air beyond its edge glows.
+- **Code:** `eclipse_shadow_multiply` in `src/eclipse.jo`, a screen-space pass in the cloud
+  composite after the aircraft's shadows (nothing drawn without a solar eclipse over the map).
+
+### Lunar eclipse
+
+- **Definition:** the full Moon passing through the Earth's shadow on the real dates it did, seen
+  from the map (8 December 1927, 2 April 1931, 16 July 1935 and many more): dimming in the
+  penumbra, then copper red in the umbra, darker toward the shadow's middle, with a faint blue-grey
+  fringe at its edge; its glow and aureole fade, and the stars come out about it. Longer than a
+  solar one: totality up to an hour and three-quarters of the world's clock.
+- **Code:** the moon disc's `shadow` in `src/night_sky.jo`; `eclipse_moon_light` in `src/eclipse.jo`.
 
 ### Painted terminator
 
