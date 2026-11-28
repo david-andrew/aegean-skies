@@ -24,7 +24,7 @@ on that unmerged branch so far.
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Town lights](#town-lights) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Pilot's wireless](#pilots-wireless) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic) · [The house behind the service](#the-house-behind-the-service) · [Seated look and buttons](#seated-look-and-buttons) · [Going in out of the rain](#going-in-out-of-the-rain)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Part balance](#part-balance) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Spoken service](#spoken-service) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -3268,7 +3268,7 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   list" opens the desk's sheet.
 - **Still forms:** what is read or filled in: the ledger, the notice board, a contract's and a
   notice's papers (`conversation`), the repair desk's work list, the fuel pier, the map counter,
-  the bills of fare, the aircraft's work list, the barber's glass, the seat's bar of actions.
+  the bills of fare, the aircraft's work list, the barber's glass.
 - **Placement:** the fan keeps clear of the pilot himself as well as the speech bubbles and a
   touch screen's buttons; it is beside him, or over his head, narrowed as it must be, before it
   is ever under him (a phone held upright: over his head).
@@ -3838,9 +3838,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   only from the same side of the bar room's walls (`way_clear`), except the desk, which stands at
   its door. The keys work as ever. A card whose thing is on the screen isn't shown
   (`shown_offers`), unless a pad is in use, whose buttons go by the cards' order.
-- **Seated:** at a table or the bar, the band's stand and the jar are highlighted with the mouse and
-  used with Space (or tapped on touch input), and so are the board and the paper at the coffee house (`seat_things`). They are no longer
-  buttons on the table's bar, but their keys T, P, S and B still work.
+- **Seated:** at a table or the bar the look works as on foot, and a few things have buttons beside
+  them: [Seated look and buttons](#seated-look-and-buttons). The jar is walked over to.
 - **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
   round it and a faint band of light passing slowly down over it, with a few flecks in it like a
   bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). The line
@@ -4074,9 +4073,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Table service
 
 - **Aliases:** the waiter, the tray, drinking at one's own pace, holding a drink.
-- **Definition:** what is ordered is paid at once and brought: the hotel's waiter from the end of
-  the bar on a tray (three things a trip), the barkeep across the counter to one on a stool at the
-  bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
+- **Definition:** what is ordered is paid at once, made, and brought: a dish takes the kitchen a
+  minute or two (`prep_seconds`: bread and olives 45 s, soup 95 s, a grilled dish 140 s), a drink
+  is poured by the barkeep at the counter's end (a beer 18 s, a cocktail 40 s, coffee 55 s), longer
+  when the tables are full; the hotel's waiter takes it from the pass on a tray (three things a
+  trip), the barkeep across the counter to one on a stool at the bar, the coffee house's boy from
+  the door. See [The house behind the service](#the-house-behind-the-service). Each thing goes on a free spot; empties stay until
   the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
   finished. Something with some left is never taken while the pilot sits; after it has stood
   untouched a good while (`ASK_AFTER`, 150 s) the waiter comes and asks "Finished with this?"
@@ -4089,10 +4091,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was. Each
   thing's button on the table's bar is a bar too, filled as far as there is still of it; its
   label is the thing's plain name.
-- **Left on the table:** getting up leaves what was served where it stood. Sitting at the same
-  table again before it is cleared finds it there to carry on with. Some while after the pilot
-  has gone (`AEGEAN_LEFT_WAIT`, 40 s by default) a second waiter (`clear_waiter`) walks out, puts
-  the lot on his tray and carries it back.
+- **Left on the table:** getting up leaves what was served where it stood, and what was still
+  coming is brought to it there. Sitting at the same table again before it is cleared finds it
+  there to carry on with. Some while after the pilot has gone (`AEGEAN_LEFT_WAIT`, 40 s by
+  default) the house's waiter comes in his round, puts the lot on his tray and carries it back to
+  the pass (at the coffee house, its boy). Nothing goes from a table without him.
+- **Seated, no panel:** see [Seated look and buttons](#seated-look-and-buttons).
 - **Seated view:** at a table or on a bar stool (`hotel.stools`, the figure raised `STOOL_LIFT`),
   the camera turns about the pilot as the taxiing orbit does: a drag of either mouse button begun
   off the table's bar, the right stick, a finger; the wheel or a pinch for nearer and farther
@@ -4117,6 +4121,73 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   are used with Space (or tapped on touch input): he walks over and sits ([Things to tap](#things-to-tap)).
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
+
+### The house behind the service
+
+- **Aliases:** the kitchen hatch, the pass, the washing up, the scullery, the patrons' tables.
+- **Definition:** at the Hotel Ancora nothing reaches a table or leaves one without someone
+  carrying it. A dish is cooked in the kitchen and put out on the sill of the kitchen's hatch (in
+  the sea wall by the counter's end; in the bar room, in the back wall by the counter's other end),
+  the cook's white sleeves seen putting it there; a drink is poured by the barkeep at the counter's
+  end, in a glass taken from the shelf of clean glasses under the back bar. The waiter, waiting at
+  the pass between the two, takes what is ready to its table, the pilot's first, three to a tray.
+  Empties come back on his tray and are set down at the pass, one at a time: glasses on the
+  counter's end, plates and bowls on the hatch's sill. The barkeep, whenever he isn't serving or
+  pouring, fetches the glasses to his sink, washes each, sets it on the drainer on the counter's
+  back, dries it with his cloth and puts it up on the shelf; the cook's hands take the plates in
+  from the sill. The patrons at the four tables order too (a glass, now and then a plate), eat and
+  drink at their own pace, and are cleared like the pilot; a table they leave is cleared after.
+  A table the pilot left earlier and hasn't been cleared is still cleared, in turn.
+- **Code:** `src/house_service.jo` (`Scullery`, `Making`, `HouseTable`, `house_order`,
+  `house_kitchen_step`, `house_waiter_step`, `house_barkeep_step`, `house_take_dropped`);
+  `prep_seconds`, `Waiter.prep`, `Waiter.dropped` and the waiter's stage 8 in
+  `src/table_service.jo`; `house_step`, `patrons_step`, `house_spots`, `draw_house_things`,
+  `draw_barkeep`, `build_hatch` in `aegean.jo`; `tests/house_service_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=serve|bar-serve|bar-empties|serve-patrons` (a `TABLE` trace of
+  the waiter, the barkeep and the scullery every 20 frames), `AEGEAN_SERVE_CAM=yaw,distance,pitch`,
+  `AEGEAN_PREP_SCALE` (how long making takes, times).
+
+### Seated look and buttons
+
+- **Aliases:** no table bar, buttons beside their things, the seated look.
+- **Definition:** sitting at a table or on a stool there is no panel. The look works as on foot:
+  what the view's middle (or a mouse that has just moved) is on is lit, with a small label over it,
+  and Space uses it (a tap, on a touch screen): each dish or glass (taken up; held, sipped or
+  eaten from), the menu card standing on the table or the counter (the bill of fare), the people
+  about (talk, the pilot staying sat), whoever serves (called over: "Yes?", with the menu, a room
+  for the night, the catch grilled, nothing), the band's stand (the pilot calls across, "Could you
+  play something for me?", and the band's front player answers from the stand with the numbers:
+  he stays sat; one who wants can get up and walk over). A few things have a button beside them,
+  in the talk replies' pill with its key in a dark badge, a short leader line to the thing: each
+  dish or glass ("Eat"/"Drink", 1 to 6, filled as far as there is still of it, held to eat or
+  drink; the one in hand follows the hand), the menu card ("Read", M), and the pilot's own ("Wait
+  an hour", W; "Get up" or "Put it down", Esc). Getting up is only ever chosen. The tip jar is not
+  used from a seat.
+- **Code:** `seat_things`, `seat_frame`, `seat_use`, `server_frame` (leisure stage 23),
+  `menu_card_at`, `build_menu_card` in `aegean.jo`; `seat_pills`, `SeatPill` in
+  `src/leisure_view.jo`; `tests/seated_look_test.py`.
+- **Capture:** `AEGEAN_LEISURE=seat|seat-bar`; `AEGEAN_SEAT_TRACE=1` (a `SEATTHINGS` line: what
+  can be looked at, the buttons; `SEATUI`), `AEGEAN_SEAT_USE=<frame>:<what>` (`song`, `server`,
+  `menu`, `talk:`, `dish:`), `AEGEAN_SEAT_PILLS=0` hides the buttons.
+
+### Going in out of the rain
+
+- **Aliases:** the hotel going in, the band carrying in, the count-in.
+- **Definition:** rain coming on at the Hotel Ancora with its terrace in use and in view moves
+  nobody by a cut. The diners get up, pick up what is in front of them and walk in at the sea door
+  to the same table in the [bar room](#bar-room); the band plays to the next breath in the music
+  (the widest gap between notes beginning in the next fourteen seconds, `bar_phrase_break`), stops,
+  and carries its instruments in to the room's stand; once all are in, the hotel's places move
+  inside and the band goes on from the first note after that breath, on its downbeat. One sat
+  at his table outside stays there in the rain until he gets up (his table's places stay out).
+  A count-in before they go on (four soft knocks of a bow's wood on the violin) is a sound awaiting
+  the user's ok: off unless `AEGEAN_COUNT_IN=1`.
+- **Code:** `RainMove`, `rain_move_step`, `rain_move_place`, `draw_band_going_in`, `make_count_in`
+  in `aegean.jo`; `band_hold`, `band_resume`, `band_paused` (`BandState.paused_at`, `held`) in
+  `src/band_life.jo`; `bar_phrase_break` in `src/bar_band.jo`; `room_settle(.., keep_table)` in
+  `src/bar_room.jo`; `tests/band_life_test.jo`, `tests/bar_phrase_test.jo`.
+- **Capture:** `AEGEAN_RAIN_AT=<seconds>` (dry until then, rain after: a `RAIN` trace), with
+  `AEGEAN_LEISURE=terrace` at an evening hour; `AEGEAN_COUNT_IN_WAV=<path>` writes the count-in.
 
 ### Bill of fare
 
