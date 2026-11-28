@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Flight trim](#flight-trim) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Town lights](#town-lights) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Pilot's wireless](#pilots-wireless) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
@@ -2947,6 +2947,42 @@ On the rivers branch until it lands.
 - **Rules:** the targets (walls C* <= 14 with an accent in five to eight; roof pitches 12 apart in
   L* or more; a home town that spans five tiers and 55 m up its slope; a landmark per fifteen
   houses) are tests, judged as the midday sun lights the paints.
+
+### Town lights
+
+- **Aliases:** night town lights, distant town glow, harbour reflections at night.
+- **Definition:** how settlements read from the air at dusk and night, from individual windows and
+  street lamps up close to a warm glow blob visible across the sea well past where town geometry is
+  drawn. Every settlement (legacy towns and all `world_settlements`) builds a compact procedural
+  light layout matching its real extent, harbour curve and hilltop tiers: point lamps (`TL_LAMP`),
+  warm district clusters (`TL_CLUSTER`), a broad town glow blob (`TL_HALO`), an elevated faint warm
+  sky-glow dome (`TL_SKYGLOW`) over cities and towns (visible softly even past a ridge), and, for
+  coastal harbours, narrow vertical broken reflection streaks under shore lights that stretch long
+  on gentle swell, shorten and scatter in wind, and disappear in rough sea. A coarse spatial grid
+  keeps open-sea frames with no town in view near zero cost. Visibility follows Allard's law for
+  1930s coastal night navigation
+  (Middleton, *Vision Through the Atmosphere*; U.S. CAA *Practical Air Navigation*, Thoburn C. Lyon):
+  on a clear night, major cities read out to ~55–65 km, port towns ~38–48 km, and small fishing
+  villages ~24–32 km as a faint handful of points; haze (`L.turbidity`), fog (`L.fog_density`),
+  path rain/fog and overcast dim them smoothly. At dusk, individual windows and street lamps
+  (both in `obj_finish_light` and in the distant layers) come on gradually on a deterministic
+  staggered schedule (street lamps slightly ahead of household windows) rather than switching on
+  together. Every billboard and reflection strip is depth-tested against terrain (so ridges and
+  headlands occlude lights behind them) and drops cleanly below the curved-world sea horizon;
+  apparent angular sizes use a $C^\infty$ floor with flux conservation so a slow approach from
+  40 km to the harbour hands over to close windows with zero popping.
+- **Code:** `src/town_lights.jo` (`init_town_lights`, `warm_up_town_lights`, `draw_town_lights`,
+  `town_light_dusk_ramp`, `town_light_extinction`, `town_light_calm_factor`,
+  `town_light_build_settlement`); staggered dusk windows/lamps in `src/objects.jo`
+  (`obj_finish_light`) and far proxy lit panes in `src/town_regional_mesh.jo` (`region_house`);
+  hooked in `aegean.jo`; unit tests in `tests/town_lights_test.jo`; temporal gate `night_approach`
+  clip in `tools/temporal_stability_check.jo` and `tests/temporal_stability_test.py`.
+- **Rules:** no graphics tiers (same light visibility and reflection rules on every quality level);
+  keep all drawn `Mesh` and `InstanceBuffer` in persistent globals for Sloppy v0.44 compatibility;
+  no popping on a slow 40 km-to-harbour approach (guarded by `night_approach` in
+  `tests/temporal_stability_test.py`).
+- **Capture:** `AEGEAN_VIEW` at `hour=22.0` (clear night) or `17.90`–`18.35` (dusk),
+  `AEGEAN_SKY_AIR=clear|hazy`, `AEGEAN_WEATHER=calm|meltemi|rain|fog`.
 
 ### Wardrobe
 

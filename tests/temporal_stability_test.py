@@ -535,6 +535,17 @@ def evaluate_clip(clip, items, cap_dir, worst_dir):
     if clip == 'chase_dusk':
         metrics['plane_ghost_px'] = int(plane_ghost_px)
         metrics['plane_ghost_max'] = int(plane_ghost_max)
+    if clip == 'night_approach':
+        # Floor check: warm town-light pixels (red clearly above blue and dark night sky) must be visible
+        warm_sum = 0
+        for im in frames:
+            raw = im.tobytes()
+            cnt = 0
+            for o in range(0, len(raw), 3):
+                if raw[o] > 36 and raw[o] > raw[o + 2] + 12:
+                    cnt += 1
+            warm_sum += cnt
+        metrics['night_light_pixels_mean'] = round(warm_sum / max(len(frames), 1), 1)
     return metrics
 
 
@@ -563,6 +574,8 @@ def make_thresholds(results):
         if clip == 'chase_dusk':
             t['plane_ghost_px'] = max(4, int(m['plane_ghost_px']) + 4)
             t['plane_ghost_max'] = max(12, int(m['plane_ghost_max']) + 8)
+        if clip == 'night_approach':
+            t['min_night_light_pixels'] = max(25.0, round(m['night_light_pixels_mean'] * 0.4, 1))
         out[clip] = t
     return out
 
@@ -639,7 +652,7 @@ def main():
         by_clip.setdefault(it['clip'], []).append(it)
 
     results = {}
-    for clip in ('still', 'pan_150', 'pan_800', 'flight_300', 'chase_dusk', 'horizon_woods'):
+    for clip in ('still', 'pan_150', 'pan_800', 'flight_300', 'chase_dusk', 'horizon_woods', 'night_approach'):
         if clip in by_clip:
             results[clip] = evaluate_clip(clip, by_clip[clip], cap_dir, worst_dir)
 
@@ -663,8 +676,9 @@ def main():
     for clip, m in results.items():
         lim = thresholds.get(clip, {})
         for k, v in m.items():
-            if k == 'outline_pixels_mean':
-                lo = lim.get('min_outline_pixels')
+            if k in ('outline_pixels_mean', 'night_light_pixels_mean'):
+                lo_key = 'min_outline_pixels' if k == 'outline_pixels_mean' else 'min_night_light_pixels'
+                lo = lim.get(lo_key)
                 if lo is not None:
                     ok = v >= lo
                     status = 'OK' if ok else 'FAIL'
