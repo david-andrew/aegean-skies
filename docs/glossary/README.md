@@ -19,7 +19,7 @@ on that unmerged branch so far.
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Flight trim](#flight-trim) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
-- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
+- **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Horizon air](#horizon-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
 - **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Town lights](#town-lights) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading) · [Met in the crowd](#met-in-the-crowd) · [Regional dress](#regional-dress)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
@@ -73,7 +73,9 @@ on that unmerged branch so far.
   three pixels high on the screen, so a glint never shrinks to one hard pixel. Close to the camera
   (beside the floats on a take-off or landing run) they are small, flat white ovals and crescents
   lying on the water. Together they form the **glitter path**: the band of glints and soft sheen
-  on the water along the light's bearing.
+  on the water along the light's bearing. The soft sheen is added after the haze, which veils it as
+  `seen^0.4` where it veils the water's colour by `seen`: near, where the air hides little, as
+  before; far off, under a low sun, the path carries on toward the horizon.
 - **Code:** `src/sea.jo _glints` (`GLINT_ACCEPT`, `SeaParams.glint_pixel`), with
   `sea_glint_possible` (a cheap early reject) and `sea_glint_anchor`; used in `sea_material`.
   `tools/glint_view.jo` shows the glitter for a chosen light height, eye and look.
@@ -182,7 +184,10 @@ blue discs that stay in every frame are **speed flecks**.
   `sea_storm_of`, `sea_wave_profile`, `sea_shoal`, `sea_storm_foam` (its noise from the tile
   `sea_storm_noise_image`), `sea_storm_light`; uniforms `swell_gain`, `sea_storm`, `storm_noise`.
   The storm water is its own shader variant (`storm_water`, `sea_storm_shaders`), made the
-  first time a storm is up; an ordinary sea draws the ordinary program. Floats:
+  first time a storm is up; an ordinary sea draws the ordinary program. The far sea past the
+  near rings has its storm variant too (`far_sea_storm_sh`), or the two met in a hard ring from
+  height; past 1.2-3.5 km the foam's patches are placed by an untiled noise, since the tile's
+  repeat (16 cells, about 1 km by 400 m) showed from height as a grid. Floats:
   `FlightEnv.swell_rate`, `swell_slope_share` (`src/flight.jo`, set in `src/pilot.jo`); the
   chase camera lifts over crests between it and the aircraft (`Flyer.storm_lift`).
 - **Rules:** the CPU swell and the drawn swell stay identical, ordinary and storm
@@ -237,8 +242,8 @@ blue discs that stay in every frame are **speed flecks**.
 
 - **Aliases:** the navy sea; its opposite is "Brighter ocean" (the Tweaks checkbox).
 - **Definition:** the open sea's deep-water colour darkens toward navy as the eye climbs (none below
-  60 m, full by 700 m), and the haze over the sea darkens a little with it, so the sea's horizon
-  band sits below the sky's. The shallows band, clear bays and the low-level sea keep their
+  60 m, full by 700 m), and the haze over the sea darkens a little with it for a steep look down
+  (toward the horizon it gives way to the sky's own air: [horizon air](#horizon-air)). The shallows band, clear bays and the low-level sea keep their
   luminous teal; the speed flecks, glints and crest strokes are drawn over the body as before.
 - **Code:** `sea_from_height` in `src/sea.jo` (`DEEP_SEA_NAVY`): `SeaParams.deep` and `.haze` set on
   the CPU for the sea and the far sea only (lakes and rivers keep theirs); no shader work. The
@@ -1787,6 +1792,26 @@ On the rivers branch until it lands.
   `AEGEAN_SUNSET_VIVID=0..1|muted|medium|bold`, `AEGEAN_AUREOLE=tight|normal|broad|wide`,
   `AEGEAN_FLASH=none|green|blue|violet`, `AEGEAN_BISHOPS_RING=off|subtle|strong` and
   `AEGEAN_CORONA=off|faint|clear` mirror the controls on the pause menu's World page.
+
+### Horizon air
+
+- **Aliases:** the far edge, the horizon band.
+- **Definition:** from height, the sea and the land are veiled by slightly darker air than the
+  sky's ([deep sea from height](#deep-sea-from-height)) while one looks steeply down; toward the
+  horizon the line of sight runs through the same air as the sky's just above it, so in the last
+  degrees below the horizon that darker air gives way to the sky's own colour there: its haze,
+  turned toward its top on the side away from a low sun, with the sun's glow and warmth round it.
+  The far sea and the far land meet the sky in one soft band of air, never a dark band under a
+  hard step, and distant ranges fade into it. The horizon's own edge is covered by how much of each
+  pixel lies below it, so a tilted horizon stays a smooth line.
+- **Code:** `air_tangent` and `horizon_glow` in `src/sky_air.jo` (the falloff below the tangent is
+  the sky's own haze band, `exp(-18 y)`, mirrored); `SeaParams.haze_tangent`/`horizon_*` in
+  `src/sea.jo` and `GroundParams.haze_tangent`/`horizon_*` with `ground_haze` in `src/terrain.jo`
+  (the world terrain sets them; the old islands' ground, always close, does not); the edge's
+  coverage in `far_sea_at`; `sea_intersection` in `src/render_space.jo` works in units of the eye's
+  sphere so the edge does not come in f32 steps from height.
+- **Capture:** `AEGEAN_VIEW="0 4000 -2000 3.1416 -0.25 12"` (and hour 18 for golden hour);
+  `tests/temporal_stability_test.py` clip `pan_4000`.
 
 ### Afterglow
 
