@@ -2851,7 +2851,8 @@ On the rivers branch until it lands.
   like anyone in town, labelled by the name they will give. They stop and turn to the pilot as he
   comes; when he reaches them they become one of the world's people where they stand
   ([Met in the crowd](#met-in-the-crowd)) and the talk begins as with anyone else (small talk,
-  replies, "Where is...?"). Someone sat at a table or on a bench is not offered (no getting up yet).
+  replies, "Where is...?"). Someone sat at a table or on a bench gets up as they are met (the seated
+  pose eased out over 0.9 s, a step forward of the seat: `Folk.rising`, `RISE_SECONDS`).
 - **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
   `ambient_pose`, `ambient_hold`, `ambient_near`, `ambient_draw`, `ambient_density`);
   `src/crowd_figures.jo` (`CrowdLook`, `crowd_look`, `crowd_figure`, `crowd_parts`, `draw_crowd`);
@@ -2861,13 +2862,18 @@ On the rivers branch until it lands.
   look's parts drawn in one instanced call (`obj_inst_sh`) for all who wear it, within 150 m,
   posed by the same arithmetic as `draw_figure`. The one the view is on is drawn alone through
   `draw_figure` so its outline is taken. Laid out once per town as it comes within 450 m, a loop a
-  frame (no arrival hitch); spots and loops that touch a building are refused; those who stand or
-  sit are walking solids, strollers are not. An air meeting's spectators on the quay are drawn the
+  frame (no arrival hitch); a spot that touches a building is refused, and a walk that runs into
+  something keeps its longest clear stretch (there and back); a collision cell is built when the
+  layout is let ask for one, so a pair straddling two cells is laid out without the pilot walking
+  there; the quays' walks are added once the harbour has been built for drawing
+  (`quays_pending`). Those who stand or sit are walking solids, strollers are not. An air meeting's spectators on the quay are drawn the
   same way (`src/air_meet_view.jo`, a dozen looks of the host town).
 - **Capture:** `AEGEAN_AT='-117963.77 -84900.62 0' AEGEAN_HOUR=17 AEGEAN_CAPTURE_LIFE=1`
   (Kalyrassa's square); Saryanyra's square `AEGEAN_VIEW="190716.3 10.5 -21860.6 -0.542 -0.08 17.5"`;
   walking up to one and talking: `AEGEAN_AT="190721.5 -21869.2 -0.54" AEGEAN_HOUR=17.5
-  AEGEAN_FOOT_GO=240:crowd`. `SHOT` lines report `crowd N`, the number drawn.
+  AEGEAN_FOOT_GO=240:crowd` (`crowd-sit`: the nearest of them sat down). `SHOT` lines report
+  `crowd N`, the number drawn; `AEGEAN_CROWD_TRACE=1` prints the crowd, its draw calls and its
+  walks every two seconds (`AEGEAN_CROWD_DUMP=<frame>`: everyone's place at that frame).
 
 ### Met in the crowd
 
