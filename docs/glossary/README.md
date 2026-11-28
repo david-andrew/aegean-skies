@@ -21,7 +21,7 @@ on that unmerged branch so far.
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Met in the crowd](#met-in-the-crowd) · [Regional dress](#regional-dress) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
 - **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
@@ -2838,20 +2838,54 @@ On the rivers branch until it lands.
 ### Ambient crowd
 
 - **Aliases:** unnamed townsfolk, the crowd, passers-by.
-- **Definition:** unnamed people in a big town (ports and capitals): sitting at the square's
-  benches and café tables, talking in pairs, a vendor or two at striped market stalls in market
-  hours, strolling round the square, along the waterfront and up the main streets. Pure
-  presentation: no simulation, identity, money or saving; named residents ([Townsfolk](#townsfolk))
-  are unchanged. Fullest in the morning and for the evening walk, thin in the afternoon heat,
-  next to nobody at night; low and medium quality show about 35% and 50% of the high tier.
+- **Definition:** the unnamed people of a big far town (ports and capitals, not the legacy towns):
+  sitting at the square's benches and café tables, talking in pairs, a vendor behind a striped
+  market stall in market hours with a customer in front of it, strolling round the square, along
+  the waterfront and up the main streets. They look like everyone else: the world's figures
+  ([Townsfolk](#townsfolk): faces, hats, the same smooth walk), in their country's clothes
+  ([Regional dress](#regional-dress)). Their places come from the clock; no simulation, money or
+  saving while they stay unnamed. Fullest in the morning and for the evening walk, thin in the
+  afternoon heat, next to nobody at night; low and medium quality show about 35% and 50% of the
+  high tier.
+- **Meeting one:** anyone standing or walking can be looked at and walked over to (Space, a tap)
+  like anyone in town, labelled by the name they will give. They stop and turn to the pilot as he
+  comes; when he reaches them they become one of the world's people where they stand
+  ([Met in the crowd](#met-in-the-crowd)) and the talk begins as with anyone else (small talk,
+  replies, "Where is...?"). Someone sat at a table or on a bench is not offered (no getting up yet).
 - **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
-  `ambient_draw`, `ambient_density`); called from `aegean.jo update_frame` and `draw_world`.
-- **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
-  and pose through the town shader, within 150 m; laid out once per town as it comes within
-  450 m, a loop a frame (no arrival hitch); spots and loops that touch a building are refused;
-  those who stand or sit are walking solids, strollers are not.
+  `ambient_pose`, `ambient_hold`, `ambient_near`, `ambient_draw`, `ambient_density`);
+  `src/crowd_figures.jo` (`CrowdLook`, `crowd_look`, `crowd_figure`, `crowd_parts`, `draw_crowd`);
+  `crowd_name`, `crowd_meet`, `crowd_hold_step`, `crowd_check_met` in `aegean.jo`.
+- **Rules:** 24 looks a town (`AMBIENT_LOOKS`), each a full figure built once
+  (a few tenths of a millisecond, under the layout's frame budget) and worn by a few people; each
+  look's parts drawn in one instanced call (`obj_inst_sh`) for all who wear it, within 150 m,
+  posed by the same arithmetic as `draw_figure`. The one the view is on is drawn alone through
+  `draw_figure` so its outline is taken. Laid out once per town as it comes within 450 m, a loop a
+  frame (no arrival hitch); spots and loops that touch a building are refused; those who stand or
+  sit are walking solids, strollers are not. An air meeting's spectators on the quay are drawn the
+  same way (`src/air_meet_view.jo`, a dozen looks of the host town).
 - **Capture:** `AEGEAN_AT='-117963.77 -84900.62 0' AEGEAN_HOUR=17 AEGEAN_CAPTURE_LIFE=1`
-  (Kalyrassa's square); `SHOT` lines report `crowd N`, the number drawn.
+  (Kalyrassa's square); Saryanyra's square `AEGEAN_VIEW="190716.3 10.5 -21860.6 -0.542 -0.08 17.5"`;
+  walking up to one and talking: `AEGEAN_AT="190721.5 -21869.2 -0.54" AEGEAN_HOUR=17.5
+  AEGEAN_FOOT_GO=240:crowd`. `SHOT` lines report `crowd N`, the number drawn.
+
+### Met in the crowd
+
+- **Definition:** someone of a far town's [ambient crowd](#ambient-crowd) whom the pilot walks up
+  to becomes a named resident ([Far people](#far-people)) where they stand: taken from the town's
+  own cohort of their country with their share of its households' purse like any resident, with
+  the name, age, looks and trade they were drawn with (a shopkeeper, a fisherman or fish-market
+  woman, a clerk: far roles keeper, sailor, clerk, which no other promotion uses, so they never
+  take one of the three working residents' places). Their day takes them on at the next hour.
+  Met again after the town's crowd is laid out anew, they are left out of the crowd (they are
+  about the town as themselves).
+- **Code:** `FarMet`, `far_met_name`, `met_far_person` in `src/living_far_people.jo`;
+  `far_met_role`, `FAR_MAX_MET` (24 a town) in `src/living_far_types.jo`; `far_scene_admit` in
+  `src/far_scene.jo`; `handed_figures`, `add_folk_now` in `src/townsfolk.jo`;
+  `tests/crowd_met_test.jo`.
+- **Rules:** nothing about them changes as they are met: the figure they were drawn in is handed
+  over as it is. A town with no one of their country left to give, or with `FAR_MAX_MET` met,
+  leaves them one of the crowd. A woman's name for a woman (`person_woman` reads it back).
 
 ### Action cards
 
@@ -2898,6 +2932,31 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_AT='461.50 -6325.68 -0.891'` (a Porto Vecchio house behind the pilot).
 
 ---
+
+### Regional dress
+
+- **Aliases:** Orenthian dress, the country's clothes.
+- **Definition:** the people of Orenthia (the eastern mainland: low white terraces, domed chapels,
+  blue signs, see [Regional character](#regional-character)) wear their own country's clothes,
+  as the coast towns of the eastern Aegean and the Levant did in the 1920s-30s, built from the
+  same garments as the [wardrobe](#wardrobe)'s. Three directions are put to the user:
+  - **Sash and waistcoat** (the default): a collarless shirt, a dark waistcoat and a broad cloth
+    sash (deep red, madder brown, indigo, olive, saffron) wound round the waist over loose
+    trousers, a brimless felt cap or a flat cap; the women in long skirts with a long apron and a
+    large white headscarf; the old in black.
+  - **White and indigo**: faded indigo cotton jackets and trousers over white shirts, wide straw
+    hats, a rust-red sash now and then; the women in indigo or white with white aprons and
+    kerchiefs, like the terraces and the signs.
+  - **Town best**: the port's best in a modernising country: dark three-piece suits, ties, felt
+    hats and flat caps; the women in long dark dresses with a cloche or a dark headscarf.
+  The flyers, the patrol, the priest, the nurse and the mechanic's overalls are the same
+  everywhere. Kalyra and the archipelago dress as the wardrobe has it.
+- **Code:** `orenthian_outfit`, `regional_dress`, `set_regional_dress` in `src/wardrobe.jo`
+  (`outfit_for`'s `country`); `person_outfit` in `src/townsfolk.jo` (by citizenship); the
+  trousered sash and the brimless cap (hat kind 10) in `src/folk.jo`; `tests/crowd_met_test.jo`.
+- **Option:** a debug switch until the user chooses: `AEGEAN_REGION_DRESS=sash|indigo|town`, or
+  the pause menu's World page, "Orenthian dress" (the crowd and the Orenthians about are dressed
+  anew in place).
 
 ### Town look
 
