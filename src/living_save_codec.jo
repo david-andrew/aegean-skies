@@ -23,6 +23,71 @@ pack_living_save = (game: SaveGame) -> PackedLivingSave:
     text=to_text(game.world)
     PackedLivingSave(generation=game.generation,terrain_key=game.terrain_key,world_bytes=text.len(),world_hash=hash(text),world_deflate=base64_encode(deflate(bytes(text))),presentation=game.presentation,summary=game.summary,session_deflate=if game.session=="": "" else: base64_encode(deflate(bytes(game.session))),session_bytes=game.session.len(),session_hash=hash(game.session))
 
+# Migrate an older save recorded under the old clock rate (120 ticks/game minute) to the current
+# TICKS_PER_MINUTE (240): preserves minute/day calendar identity for historical records and exact
+# remaining physical-second durations for active trips, journeys, encounters and scene checkpoints.
+migrate_world_clock = (w: mut World, presentation: mut PresentationState) -> int:
+    if w.minute <= 0 or w.tick < 0: return 0
+    if w.tick / TICKS_PER_MINUTE == w.minute: return 0
+    if w.tick / OLD_TICKS_PER_MINUTE != w.minute: return 0
+    ratio = TICKS_PER_MINUTE / OLD_TICKS_PER_MINUTE
+    old_tick = w.tick
+    rem = old_tick % OLD_TICKS_PER_MINUTE
+    new_tick = w.minute * TICKS_PER_MINUTE + rem * ratio
+    delta = new_tick - old_tick
+    w.tick = new_tick
+    loop id in w.cargo_sources.keys():
+        if w.cargo_sources[id].born_tick >= 0: w.cargo_sources[id].born_tick *= ratio
+    loop i in 0..w.ledger.recent.len():
+        if w.ledger.recent[i].tick >= 0: w.ledger.recent[i].tick *= ratio
+    loop i in 0..w.people.len():
+        if w.people[i].last_command_tick >= 0: w.people[i].last_command_tick += delta
+    loop i in 0..w.aircraft.len():
+        if w.aircraft[i].last_scene_tick >= 0: w.aircraft[i].last_scene_tick += delta
+        if w.aircraft[i].scene_extension_tick >= 0: w.aircraft[i].scene_extension_tick += delta
+    loop id in w.trips.keys():
+        w.trips[id].departed_tick += delta
+        w.trips[id].last_tick += delta
+        w.trips[id].eta_tick += delta
+    loop id in w.carriage.keys():
+        w.carriage[id].last_tick += delta
+        if w.carriage[id].retry_tick >= 0: w.carriage[id].retry_tick += delta
+    loop id in w.encounters.keys():
+        w.encounters[id].started_tick += delta
+        w.encounters[id].deadline_tick += delta
+        if w.encounters[id].last_burn_tick >= 0: w.encounters[id].last_burn_tick += delta
+    loop id in w.daily_life.keys():
+        w.daily_life[id].last_tick += delta
+    loop i in 0..w.households.len():
+        w.households[i].last_tick += delta
+    if w.band.start >= 0: w.band.start += delta
+    if w.band.ends >= 0: w.band.ends += delta
+    if w.band.rest_until >= 0: w.band.rest_until += delta
+    loop i in 0..w.band.up.len():
+        if w.band.up[i] >= 0: w.band.up[i] += delta
+    loop i in 0..w.band.packing_until.len():
+        if w.band.packing_until[i] >= 0: w.band.packing_until[i] += delta
+    loop id in w.far.people.keys():
+        w.far.people[id].last_tick += delta
+    loop i in 0..w.far.vehicles.len():
+        if w.far.vehicles[i].scene_tick >= 0: w.far.vehicles[i].scene_tick += delta
+    loop id in w.far.journeys.keys():
+        w.far.journeys[id].departed_tick += delta
+        w.far.journeys[id].last_tick += delta
+        if w.far.journeys[id].hold_until_tick >= 0: w.far.journeys[id].hold_until_tick += delta
+    loop id in w.far.commissions.keys():
+        w.far.commissions[id].last_tick += delta
+    if w.war.scene_tick >= 0: w.war.scene_tick += delta
+    loop id in w.war.contacts.keys():
+        loop s in 0..2:
+            if w.war.contacts[id].next_shot_tick[s] >= 0: w.war.contacts[id].next_shot_tick[s] += delta
+    loop id in w.war.survivors.keys():
+        if w.war.survivors[id].pickup_tick >= 0: w.war.survivors[id].pickup_tick += delta
+    loop id in w.war.missions.keys():
+        w.war.missions[id].last_tick += delta
+    if presentation.last_hail_tick >= 0: presentation.last_hail_tick += delta
+    delta
+
 unpack_living_save = (packed: PackedLivingSave) -> SaveGame?:
     if not packed.valid or packed.schema!=2 or packed.encoding!=1 or packed.cargo_version!=1 or packed.world_bytes<1 or packed.world_bytes>64000000 or packed.world_deflate.len()>16000000: return none
     encoded=base64_decode(packed.world_deflate) ?? return none
@@ -33,7 +98,9 @@ unpack_living_save = (packed: PackedLivingSave) -> SaveGame?:
     world=from_text[World](text)
     if world is TextError: return none
     session=unpack_save_session(packed.session_deflate,packed.session_bytes,packed.session_hash) ?? return none
-    SaveGame(schema=2,valid=true,generation=packed.generation,terrain_key=packed.terrain_key,world=world,presentation=packed.presentation,session=session,summary=packed.summary)
+    pres=packed.presentation
+    _=migrate_world_clock(world,pres)
+    SaveGame(schema=2,valid=true,generation=packed.generation,terrain_key=packed.terrain_key,world=world,presentation=pres,session=session,summary=packed.summary)
 
 # save_data preserves bytes, including NULs, on both native files and browser storage.
 # Its web backend already base64-encodes them. Keep the compressed body in a separate
@@ -70,7 +137,9 @@ unpack_binary_living_save = (header: BinaryLivingSave, body: str) -> SaveGame?:
     world=if header.encoding==4: world_from_bytes(raw) else: from_text[World](text)
     if world is TextError: return none
     session=unpack_save_session(header.session_deflate,header.session_bytes,header.session_hash) ?? return none
-    SaveGame(schema=3,valid=true,generation=header.generation,terrain_key=header.terrain_key,world=world,presentation=header.presentation,session=session,summary=header.summary)
+    pres=header.presentation
+    _=migrate_world_clock(world,pres)
+    SaveGame(schema=3,valid=true,generation=header.generation,terrain_key=header.terrain_key,world=world,presentation=pres,session=session,summary=header.summary)
 
 # Opaque graphics-independent session extension, bounded and checked independently of World.
 unpack_save_session = (packed: str, count: int, digest: u64) -> str?:
