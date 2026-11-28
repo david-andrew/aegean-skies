@@ -2150,7 +2150,7 @@ On the rivers branch until it lands.
 - **Definition:** the far land's aerial perspective, stratified by terrain elevation and smooth
   distance: the land keeps its own colour a long way (about two thirds at 5 km, half at 10, a
   quarter at 20), turning toward a Mediterranean cerulean-teal before meeting the horizon haze far
-  off. Low valleys hold extra air (`LAND_MIST=0.68`, thinning upward at `LAND_MIST_FALL=0.0028` per
+  off. Low valleys hold extra air (`LAND_MIST=0.78`, thinning upward at `LAND_MIST_FALL=0.0023` per
   metre over a smooth `1.2–7.5 km` onset), so a far ridge's foot is paler than its crest and nearer
   ridges stand out cleanly against farther ranges without circular distance bands on flat or gently
   sloped land. **Painted layers** (off by default; Tweaks › Look to compare, `AEGEAN_PAINTED_LAYERS=1`
