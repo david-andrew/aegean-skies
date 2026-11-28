@@ -14,7 +14,7 @@ All seven scripts render fixed-step camera sequences at `384x216` through the ga
 | `pan_150` | 24 | Slow 360° pan at 150 m AGL (6 compass sectors × 4 steps of 1.2°) over wooded hills |
 | `pan_800` | 24 | Slow 360° pan at 800 m AGL (6 compass sectors × 4 steps of 1.2°) over wooded hills |
 | `flight_300` | 16 | Level flight at 300 m AGL with live tile streaming (`world_generate_tiles = 1`) and 3D depth dumps |
-| `approach_woods` | 16 | Straight-in wooded-hill approach across 4 handover bands (2600 m, 950 m, 500 m, 175 m) with live tile streaming and 3D depth dumps |
+| `approach_woods` | 16 | Straight-in wooded-hill approach across 4 handover bands (2600 m, 950 m, 540 m, 175 m) with live tile streaming and 3D depth dumps |
 | `chase_dusk` | 8 | Chase camera with the Supermarine S.6B against a wooded ridge at dusk (19:00), outline on vs off + plane mask |
 | `horizon_woods` | 16 | Slow pan along a wooded land/sky skyline, outline on vs off |
 
