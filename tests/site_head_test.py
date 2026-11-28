@@ -1,134 +1,318 @@
-"""The web page's site head (tools/site_head.py) and icons (tools/site_icons.py).
-Run: python3 tests/site_head_test.py   Needs Pillow; no Sloppy.
-Also run on the real build in .github/workflows/pages.yml (`site_head.py site --check`).
+#!/usr/bin/env python3
+"""Check the web page's site head (site/head.html) and page files (site/web/).
+
+Sloppy 0.45.0 builds the page directly from aegean.jo's `build:` block (`head = "site/head.html"`,
+`page_files = "site/web"`): the head file's tags go after `<title>` (dropping the default `data:,`
+icon because the head has `rel="icon"`), and every file under `site/web` is copied beside the page.
+
+Run:
+  python3 tests/site_head_test.py                  unit test (builds a minimal wasm page with
+                                                   aegean.jo's head and page_files and checks it)
+  python3 tests/site_head_test.py --check DIR      validate an already built site directory
+                                                   (used on the real build in pages.yml)
 """
+import argparse
 import json
 import os
+import re
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
-import site_head  # noqa: E402
-
-# the head `sloppy build --target wasm` writes (v0.44.0), and the start of its body
-PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Aegean Skies</title>
-<link rel="icon" href="data:,">
-<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,viewport-fit=cover">
-<style>html,body{margin:0;height:100%;background:#111;color:#ddd;font:14px monospace}</style>
-</head><body><canvas id="sloppy-canvas" tabindex="1" width="0" height="0"></canvas><div id="log"></div>
-<script type="application/wasm" id="sloppy-wasm" data-src="index.wasm?v=3c52b0dcfc73"></script>
-<script>
-"use strict";
-const x = "<link rel=\\"icon\\" href=\\"data:,\\">";
-</script>
-</body></html>
-"""
+BASE_URL = "https://david-andrew.github.io/aegean-skies/"
+TITLE = "Aegean Skies"
+DESCRIPTION = "A seaplane game set over the Aegean in the 1920s–30s, playable in the browser."
+IMAGE_ALT = "A biplane seaplane flying over a calm sea beside a hilly coast and a harbour town as the sun sets."
+THEME = "#111111"
+PREVIEW = "preview.png"
+PREVIEW_SIZE = (1200, 630)
+PREVIEW_MAX_BYTES = 1_000_000
+ICON_FILES = {
+    "favicon.svg": None,
+    "favicon.ico": None,
+    "apple-touch-icon.png": (180, 180),
+    "icon-192.png": (192, 192),
+    "icon-512.png": (512, 512),
+}
 
 
-def site_dir(tmp, page=PAGE):
-    d = Path(tmp)
-    (d / "index.html").write_text(page, "utf-8")
-    subprocess.run([sys.executable, str(ROOT / "tools/site_icons.py"), str(d)], check=True)
-    from PIL import Image
-    Image.new("RGB", site_head.PREVIEW_SIZE, (40, 90, 120)).save(d / "preview.png")
-    return d
+def png_size(path):
+    data = Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError(f"{path}: not a PNG")
+    return struct.unpack(">II", data[16:24])
 
 
-class SiteHead(unittest.TestCase):
-    def test_rewrite_keeps_the_build_and_adds_the_tags(self):
-        out = site_head.rewrite(PAGE)
-        self.assertEqual(site_head.check_text(out), [])
-        for kept in ('<meta charset="utf-8">', "<title>Aegean Skies</title>", 'name="viewport"', "<style>html,body",
-                     '<script type="application/wasm" id="sloppy-wasm"', 'const x = "<link rel=\\"icon\\" href=\\"data:,\\">";'):
-            self.assertIn(kept, out)
-        self.assertNotIn('<link rel="icon" href="data:,">\n', out)
-        self.assertTrue(out.startswith("<!doctype html>"))
-        self.assertEqual(out[out.index("</head>"):], PAGE[PAGE.index("</head>"):])
+class _Head(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.metas, self.links, self.title = [], [], ""
+        self._in_title, self.in_head = False, False
 
-    def test_idempotent(self):
-        once = site_head.rewrite(PAGE)
-        self.assertEqual(site_head.rewrite(once), once)
-        self.assertEqual(once.count(site_head.BEGIN), 1)
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "head":
+            self.in_head = True
+        if not self.in_head:
+            return
+        if tag == "meta":
+            self.metas.append(a)
+        elif tag == "link":
+            self.links.append(a)
+        elif tag == "title":
+            self._in_title = True
 
-    def test_other_base_url_replaces_the_block(self):
-        once = site_head.rewrite(PAGE)
-        other = site_head.rewrite(once, "https://example.org/g/")
-        self.assertEqual(site_head.check_text(other, "https://example.org/g/"), [])
-        self.assertNotIn("david-andrew", other)
+    def handle_endtag(self, tag):
+        if tag == "head":
+            self.in_head = False
+        if tag == "title":
+            self._in_title = False
 
-    def test_fails_when_the_head_is_not_the_expected_one(self):
-        for bad in (PAGE.replace('<link rel="icon" href="data:,">\n', ""),
-                    PAGE.replace('<link rel="icon" href="data:,">', '<link rel="icon" href="data:,"><link rel="icon" href="data:,">'),
-                    PAGE.replace("<title>Aegean Skies</title>", "<title>Other</title>"),
-                    PAGE.replace("<head>", "<body>").replace("</head>", ""),
-                    "<html></html>"):
-            with self.assertRaises(site_head.SiteError):
-                site_head.rewrite(bad)
-        with self.assertRaises(site_head.SiteError):
-            site_head.rewrite(site_head.rewrite(PAGE).replace(site_head.END, ""))
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+
+
+def parse_head(text):
+    p = _Head()
+    p.feed(text)
+    return p
+
+
+def check_text(text, base_url=BASE_URL):
+    """Return a list of problems with a built page's head and runtime scripts."""
+    p = parse_head(text)
+    problems = []
+    meta = {}
+    for m in p.metas:
+        key = m.get("name") or m.get("property")
+        if key:
+            if key in meta:
+                problems.append(f"duplicate meta {key}")
+            meta[key] = m.get("content", "")
+    want = {
+        "description": DESCRIPTION,
+        "theme-color": THEME,
+        "og:type": "website",
+        "og:site_name": TITLE,
+        "og:title": TITLE,
+        "og:description": DESCRIPTION,
+        "og:url": base_url,
+        "og:image": base_url + PREVIEW,
+        "og:image:type": "image/png",
+        "og:image:width": str(PREVIEW_SIZE[0]),
+        "og:image:height": str(PREVIEW_SIZE[1]),
+        "og:image:alt": IMAGE_ALT,
+        "twitter:card": "summary_large_image",
+        "twitter:title": TITLE,
+        "twitter:description": DESCRIPTION,
+        "twitter:image": base_url + PREVIEW,
+        "twitter:image:alt": IMAGE_ALT,
+    }
+    for k, v in want.items():
+        if meta.get(k) != v:
+            problems.append(f"meta {k}: {meta.get(k)!r}, wanted {v!r}")
+    for k in ("og:url", "og:image", "twitter:image"):
+        if not meta.get(k, "").startswith("https://"):
+            problems.append(f"meta {k} is not an absolute https URL")
+    if len(meta.get("description", "")) > 160:
+        problems.append("description is over 160 characters")
+    if p.title != TITLE:
+        problems.append(f"title is {p.title!r}")
+    if not any(m.get("charset") for m in p.metas):
+        problems.append("charset meta lost")
+    if not any(m.get("name") == "viewport" for m in p.metas):
+        problems.append("viewport meta lost")
+    rel = {}
+    for l in p.links:
+        rel.setdefault(l.get("rel"), []).append(l)
+    if any(l.get("href") == "data:," for l in p.links):
+        problems.append("the empty data:, icon is still there")
+    for r, n in (("canonical", 1), ("icon", 2), ("apple-touch-icon", 1), ("manifest", 1)):
+        if len(rel.get(r, [])) != n:
+            problems.append(f"{len(rel.get(r, []))} link rel={r}, wanted {n}")
+    if rel.get("canonical") and rel["canonical"][0].get("href") != base_url:
+        problems.append("canonical is not the page's URL")
+    if "<title>" in text and 'name="description"' in text:
+        if text.index("<title>") > text.index('name="description"'):
+            problems.append("head tags did not appear after <title>")
+    if "<script" not in text or 'id="sloppy-wasm"' not in text:
+        problems.append("the runtime's script tags are missing")
+    return problems
+
+
+def check_files(site, text=None, base_url=BASE_URL):
+    """Return a list of problems with the files beside the built page."""
+    site = Path(site)
+    problems = []
+
+    # Every relative href referenced in <head>, plus og:image/twitter:image under base_url
+    if text is not None:
+        p = parse_head(text)
+        for l in p.links:
+            href = l.get("href", "")
+            if not href or href.startswith(("http://", "https://", "data:")):
+                continue
+            f = site / href
+            if not f.is_file() or f.stat().st_size == 0:
+                problems.append(f"referenced link file {href!r} is missing beside the page")
+        for m in p.metas:
+            key = m.get("name") or m.get("property")
+            if key in ("og:image", "twitter:image"):
+                val = m.get("content", "")
+                if val.startswith(base_url):
+                    rel_path = val[len(base_url):]
+                    f = site / rel_path
+                    if not f.is_file() or f.stat().st_size == 0:
+                        problems.append(f"referenced {key} file {rel_path!r} is missing beside the page")
+
+    for name, size in ICON_FILES.items():
+        f = site / name
+        if not f.is_file() or f.stat().st_size == 0:
+            problems.append(f"{name} is missing")
+        elif size:
+            try:
+                got = png_size(f)
+                if got != size:
+                    problems.append(f"{name} is {got}, wanted {size}")
+            except ValueError as e:
+                problems.append(str(e))
+        elif name == "favicon.svg":
+            if "<svg" not in f.read_text("utf-8"):
+                problems.append("favicon.svg does not contain <svg")
+        elif name == "favicon.ico":
+            from PIL import Image
+            with Image.open(f) as ico:
+                if ico.info.get("sizes") != {(16, 16), (32, 32), (48, 48)}:
+                    problems.append(f"favicon.ico sizes {ico.info.get('sizes')!r}, wanted 16/32/48")
+
+    f = site / PREVIEW
+    if not f.is_file():
+        problems.append(f"{PREVIEW} is missing")
+    else:
+        try:
+            got = png_size(f)
+            if got != PREVIEW_SIZE:
+                problems.append(f"{PREVIEW} is {got}, wanted {PREVIEW_SIZE}")
+        except ValueError as e:
+            problems.append(str(e))
+        if f.stat().st_size > PREVIEW_MAX_BYTES:
+            problems.append(f"{PREVIEW} is {f.stat().st_size} bytes, over {PREVIEW_MAX_BYTES}")
+
+    mf = site / "site.webmanifest"
+    if not mf.is_file():
+        problems.append("site.webmanifest is missing")
+    else:
+        try:
+            m = json.loads(mf.read_text("utf-8"))
+        except ValueError as e:
+            problems.append(f"site.webmanifest is invalid JSON: {e}")
+            return problems
+        for k in ("name", "short_name", "description", "start_url", "scope", "display",
+                  "background_color", "theme_color", "icons"):
+            if k not in m:
+                problems.append(f"manifest lacks {k}")
+        for icon in m.get("icons", []):
+            src = icon.get("src", "")
+            if not src or not (site / src).is_file():
+                problems.append(f"manifest names {src!r}, which is missing")
+        if {i.get("sizes") for i in m.get("icons", [])} < {"192x192", "512x512"}:
+            problems.append("manifest lacks the 192 and 512 icons")
+    return problems
+
+
+def check_site(site, base_url=BASE_URL):
+    site = Path(site)
+    index = site / "index.html"
+    if not index.is_file():
+        return [f"{index} is missing"]
+    text = index.read_text("utf-8")
+    return check_text(text, base_url) + check_files(site, text=text, base_url=base_url)
+
+
+class SiteHeadTest(unittest.TestCase):
+    def test_aegean_build_block_wires_head_and_page_files(self):
+        src = (ROOT / "aegean.jo").read_text("utf-8")
+        m = re.search(r"^build:\n((?:    .*\n)+)", src, re.M)
+        self.assertIsNotNone(m, "aegean.jo has no build: block")
+        block = m.group(1)
+        self.assertIn('name = "Aegean Skies"', block)
+        self.assertIn('head = "site/head.html"', block)
+        self.assertIn('page_files = "site/web"', block)
+        self.assertTrue((ROOT / "site/head.html").is_file())
+        self.assertTrue((ROOT / "site/web").is_dir())
 
     def test_description_is_one_plain_sentence(self):
-        d = site_head.DESCRIPTION
-        self.assertLessEqual(len(d), 160)
-        self.assertEqual(d.count("."), 1)
-        self.assertTrue(d.endswith("."))
+        self.assertLessEqual(len(DESCRIPTION), 160)
+        self.assertEqual(DESCRIPTION.count("."), 1)
+        self.assertTrue(DESCRIPTION.endswith("."))
 
-    def test_checker_catches_a_changed_tag(self):
-        out = site_head.rewrite(PAGE).replace('content="summary_large_image"', 'content="summary"')
-        self.assertTrue(any("twitter:card" in p for p in site_head.check_text(out)))
+    def test_favicon_svg_matches_site_icons(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import site_icons  # noqa: E402
+        self.assertEqual((ROOT / "site/web/favicon.svg").read_text("utf-8"), site_icons.svg(True))
 
-    def test_manifest(self):
-        m = site_head.manifest()
-        self.assertEqual(m["background_color"], "#111111")
-        self.assertIn(m["display"], ("fullscreen", "standalone"))
-        self.assertEqual({i["sizes"] for i in m["icons"]}, {"192x192", "512x512"})
-        json.dumps(m)
-
-
-class WholeSite(unittest.TestCase):
-    def test_script_writes_everything_and_check_passes(self):
+    def test_wasm_build_embeds_head_and_copies_page_files(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
-            d = site_dir(tmp)
-            script = str(ROOT / "tools/site_head.py")
-            self.assertEqual(subprocess.run([sys.executable, script, str(d)]).returncode, 0)
-            first = (d / "index.html").read_text("utf-8")
-            self.assertEqual(subprocess.run([sys.executable, script, str(d)]).returncode, 0)
-            self.assertEqual((d / "index.html").read_text("utf-8"), first)
-            self.assertEqual(subprocess.run([sys.executable, script, str(d), "--check"]).returncode, 0)
-            self.assertEqual(site_head.check_files(d), [])
-            from PIL import Image
-            with Image.open(d / "favicon.ico") as ico:
-                self.assertEqual(ico.info["sizes"], {(16, 16), (32, 32), (48, 48)})
-            for name, size in (("apple-touch-icon.png", 180), ("icon-192.png", 192), ("icon-512.png", 512)):
-                with Image.open(d / name) as im:
-                    self.assertEqual(im.size, (size, size))
-            self.assertIn("<svg", (d / "favicon.svg").read_text())
+            tmp = Path(tmp)
+            # Minimal program using the repo's exact site/head.html and site/web directory
+            prog = tmp / "probe.jo"
+            head_path = (ROOT / "site/head.html").as_posix()
+            web_path = (ROOT / "site/web").as_posix()
+            prog.write_text(
+                f'build:\n'
+                f'    name = "{TITLE}"\n'
+                f'    head = "{head_path}"\n'
+                f'    page_files = "{web_path}"\n'
+                f'print("ok")\n',
+                "utf-8",
+            )
+            out = tmp / "out"
+            out.mkdir()
+            r = subprocess.run(
+                ["sloppy", "build", str(prog), "--target", "wasm", "--wasm-file", "-o", str(out / "index.html")],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((out / "index.wasm").is_file())
+            self.assertEqual(check_site(out), [])
 
-    def test_missing_or_wrong_files_fail_without_changing_the_page(self):
-        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
-            d = site_dir(tmp)
-            (d / "icon-192.png").unlink()
-            self.assertEqual(subprocess.run([sys.executable, str(ROOT / "tools/site_head.py"), str(d)],
-                                            stderr=subprocess.DEVNULL).returncode, 1)
-            self.assertEqual((d / "index.html").read_text("utf-8"), PAGE)
-        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
-            d = site_dir(tmp)
-            from PIL import Image
-            Image.new("RGB", (600, 315)).save(d / "preview.png")
-            self.assertEqual(subprocess.run([sys.executable, str(ROOT / "tools/site_head.py"), str(d)],
-                                            stderr=subprocess.DEVNULL).returncode, 1)
+            # Mutated checks fail as expected
+            page = (out / "index.html").read_text("utf-8")
+            bad_card = page.replace('content="summary_large_image"', 'content="summary"')
+            self.assertTrue(any("twitter:card" in p for p in check_text(bad_card)))
+            bad_icon = page.replace("</head>", '<link rel="icon" href="data:,"></head>')
+            self.assertTrue(any("data:," in p for p in check_text(bad_icon)))
+            bad_og = page.replace(BASE_URL + PREVIEW, PREVIEW)
+            self.assertTrue(any("og:image" in p for p in check_text(bad_og)))
 
-    def test_unrewritten_page_fails_the_check(self):
-        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
-            d = site_dir(tmp)
-            self.assertEqual(subprocess.run([sys.executable, str(ROOT / "tools/site_head.py"), str(d), "--check"],
-                                            stderr=subprocess.DEVNULL).returncode, 1)
+            (out / "icon-192.png").unlink()
+            self.assertTrue(any("icon-192.png" in p for p in check_site(out)))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--check", metavar="SITE_DIR", help="check an already built web site directory")
+    ap.add_argument("--base-url", default=BASE_URL)
+    a, rest = ap.parse_known_args(argv)
+    if a.check:
+        problems = check_site(a.check, a.base_url)
+        if problems:
+            print(f"site_head_test: {'; '.join(problems)}", file=sys.stderr)
+            return 1
+        print(f"site_head_test: {Path(a.check) / 'index.html'} ok")
+        return 0
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(SiteHeadTest)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    return 0 if result.wasSuccessful() else 1
 
 
 if __name__ == "__main__":
-    unittest.main()
+    sys.exit(main())
