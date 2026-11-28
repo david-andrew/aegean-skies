@@ -1,0 +1,196 @@
+# Flight trim tests: notches, continuous hold, reset, mouse-trim, gamepad binding,
+# mouse-steer isolation, and hands-off trimmed level flight for 60 s across speeds.
+import '../src/flight.jo' as fl
+import '../src/flight_v2.jo' as v2
+import '../src/tweaks.jo' as tw
+import '../src/planes.jo' as planes
+use '../src/trim.jo'
+use '../src/controller.jo'
+use '../src/touch.jo'
+use '../src/pilot.jo'
+use '../src/options.jo'
+
+const K = 3.3
+const DT = 1.0 / 60.0
+
+_setup_v2 = ():
+    fl.set_speed_scale(K); fl.set_lift_scale(K)
+    tw.set_tweaks(tw.Tweaks(flight_model = 1))
+    v2.set_fdm2_tuning(v2.Fdm2Tuning())
+
+_reset_flight = ():
+    fl.set_speed_scale(1.0); fl.set_lift_scale(3.3)
+    tw.set_tweaks(tw.Tweaks())
+
+_spec = (kind: planes.Craft) -> fl.CraftSpec:
+    k = fl.craft_spec(kind, planes.build_craft(kind, planes.LIVERIES[0]).contacts)
+    k.player = true
+    k
+
+_air = (k: fl.CraftSpec, alt_drawn: f64, v_true: f64, throttle: f64) -> fl.CraftState:
+    s = fl.CraftState(position = vec3(0, f32(alt_drawn), 0), velocity = vec3(0, 0, f32(-v_true * K)), fuel = k.fuel_capacity, water_age = 1.0)
+    s.orientation = quat_euler(fl.trim_aoa(k, v_true), 0, 0)
+    s.throttle = throttle; s.rpm = throttle
+    s
+
+# Compute the exact pitch trim setting for a target true airspeed in v2: v_trim = v_cruise * exp(-trim * 0.45)
+_trim_for_speed = (k: fl.CraftSpec, v_true: f64) -> f64:
+    p = v2.fdm2_params(k)
+    clamp(-log(max(v_true, 1.0) / max(p.v_cruise, 1.0)) / 0.45, -1.0, 1.0)
+
+test "tap moves one notch, hold moves smoothly and continuously, reset zeroes all axes and fades":
+    t = TrimState()
+    assert(trim_indicator_alpha(t) == 0.0)
+    # Single tap nose up (K) moves exactly one notch
+    assert(trim_step(t, DT, true, false, true, false, false, false, false, false, false, false, false, false, false))
+    assert(abs(t.pitch - TRIM_NOTCH) < 1e-9 and trim_notches(t.pitch) == 1)
+    assert(t.show == TRIM_SHOW_SECONDS)
+    # Release
+    _ = trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false)
+    assert(abs(t.pitch - TRIM_NOTCH) < 1e-9)
+    # Tap nose down twice -> -1 notch
+    assert(trim_step(t, DT, false, true, false, true, false, false, false, false, false, false, false, false, false))
+    assert(t.pitch == 0.0)
+    assert(trim_step(t, DT, false, true, false, true, false, false, false, false, false, false, false, false, false))
+    assert(abs(t.pitch + TRIM_NOTCH) < 1e-9 and trim_notches(t.pitch) == -1)
+    # Hold nose up past TRIM_HOLD_DELAY -> moves continuously
+    _ = trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false)
+    _ = trim_step(t, DT, true, false, true, false, false, false, false, false, false, false, false, false, false)
+    after_tap = t.pitch
+    loop i in 0..60:
+        _ = trim_step(t, DT, false, false, true, false, false, false, false, false, false, false, false, false, false)
+    assert(t.pitch > after_tap + 0.15 and t.pitch < after_tap + 0.35, "continuous hold moved {t.pitch - after_tap}")
+    # Roll and rudder taps
+    assert(trim_step(t, DT, false, false, false, false, true, false, true, false, false, true, false, true, false))
+    assert(abs(t.roll - TRIM_NOTCH) < 1e-9 and abs(t.yaw + TRIM_NOTCH) < 1e-9)
+    # Reset zeroes all three axes
+    assert(trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, true))
+    assert(t.pitch == 0.0 and t.roll == 0.0 and t.yaw == 0.0)
+    # Indicator fades in, then fades completely out after TRIM_SHOW_SECONDS idle
+    loop i in 0..10: _ = trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false)
+    assert(trim_indicator_alpha(t) > 0.8)
+    loop i in 0..200: _ = trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false)
+    assert(trim_indicator_alpha(t) == 0.0)
+
+test "mouse trim adjusts pitch and roll smoothly without steering":
+    t = TrimState()
+    assert(trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false, true, vec2(25.0, 50.0)))
+    assert(t.pitch > 0.05 and t.roll > 0.02 and t.show == TRIM_SHOW_SECONDS)
+    assert(trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, true))
+    assert(t.pitch == 0.0 and t.roll == 0.0)
+
+test "gamepad right stick trims pitch and roll, R3 resets, and Radio hold keeps right stick for wireless":
+    controller_clear()
+    cfg = ControlsConfig(pad_aims = false)
+    # Flick right stick back (ry = 0.8) -> 1 notch nose-up trim
+    b = fill(false, 15)
+    _ = controller_inject(SynthDevice(name = "Trim pad", standard = true, axes = [0.0, 0.0, 0.0, 0.8, 0.0, 0.0], buttons = b))
+    update_controller(0, DT, cfg)
+    assert(ctl.trim_pitch > 0.3 and ctl.look == vec2(0, 0))
+    t = TrimState()
+    assert(trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false, false, vec2(0, 0), ctl.trim_pitch, ctl.trim_roll, ctl.trim_yaw))
+    assert(abs(t.pitch - TRIM_NOTCH) < 1e-9)
+    # Hold right stick over -> smooth continuous trim
+    loop i in 0..60:
+        update_controller(0, DT, cfg)
+        _ = trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, false, false, vec2(0, 0), ctl.trim_pitch, ctl.trim_roll, ctl.trim_yaw)
+    assert(t.pitch > TRIM_NOTCH + 0.08)
+    # Press R3 -> triggers .n0 -> resets trim
+    b[int(PadButton.rstick)] = true
+    _ = controller_inject(SynthDevice(name = "Trim pad", standard = true, axes = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], buttons = b))
+    update_controller(0, DT, cfg)
+    assert(vpressed(.n0))
+    assert(trim_step(t, DT, false, false, false, false, false, false, false, false, false, false, false, false, vpressed(.n0), false, vec2(0, 0), ctl.trim_pitch, ctl.trim_roll, ctl.trim_yaw))
+    assert(t.pitch == 0.0)
+    # When Radio button is bound and held, right stick drives radio_look instead of trim
+    cfg.pad.buttons[ACT_RADIO] = Bind(kind = 1, index = int(PadButton.home))
+    b2 = fill(false, 15); b2[int(PadButton.home)] = true
+    _ = controller_inject(SynthDevice(name = "Trim pad", standard = true, axes = [0.0, 0.0, 0.8, -0.8, 0.0, 0.0], buttons = b2))
+    update_controller(0, DT, cfg)
+    assert(ctl.trim_pitch == 0.0 and ctl.trim_roll == 0.0 and ctl.radio_look.y < -0.3)
+    controller_clear()
+
+test "trimmed hands-off flight holds altitude within tolerance for 60 s at multiple speeds":
+    _setup_v2()
+    loop kind in [planes.Craft.gull, planes.Craft.heron, planes.Craft.corsair, planes.Craft.falco]:
+        k = _spec(kind)
+        loop frac in [0.78, 1.0, 1.15]:
+            v_true = clamp(k.cruise_speed / K * frac, k.stall_speed * 1.4, k.max_speed / K * 0.96)
+            thr = v2.fdm2_cruise_throttle(k, v_true)
+            tm = _trim_for_speed(k, v_true)
+            s = _air(k, 1000.0, v_true, thr)
+            # Settle for 3 s, then verify altitude holds tightly for a full 60 s hands-off
+            loop i in 0..60 * 3:
+                fl.step(k, s, fl.Controls(throttle = thr, trim = tm, trim_on = true), fl.FlightEnv(), DT)
+            y0 = f64(s.position.y); lo = y0; hi = y0
+            loop i in 0..60 * 60:
+                fl.step(k, s, fl.Controls(throttle = thr, trim = tm, trim_on = true), fl.FlightEnv(), DT)
+                lo = min(lo, f64(s.position.y)); hi = max(hi, f64(s.position.y))
+            span = hi - lo
+            print("trimmed {kind} frac={frac:.2} v={v_true:.1} trim={tm:.2}: y0={y0:.1} range={lo:.1}..{hi:.1} span={span:.2} m")
+            assert(span < 20.0 and not s.stalled and not s.crashed, "{kind} frac={frac} drifted {span} m")
+    # Also verify notch-rounded trim holds altitude cleanly for 60 s on the Gull at slow, cruise, fast
+    k = _spec(.gull)
+    loop frac in [0.78, 1.0, 1.15]:
+        v_true = k.cruise_speed / K * frac
+        thr = v2.fdm2_cruise_throttle(k, v_true)
+        tm = round(_trim_for_speed(k, v_true) / TRIM_NOTCH) * TRIM_NOTCH
+        s = _air(k, 1000.0, v_true, thr)
+        loop i in 0..60 * 3:
+            fl.step(k, s, fl.Controls(throttle = thr, trim = tm, trim_on = true), fl.FlightEnv(), DT)
+        y0 = f64(s.position.y); lo = y0; hi = y0
+        loop i in 0..60 * 60:
+            fl.step(k, s, fl.Controls(throttle = thr, trim = tm, trim_on = true), fl.FlightEnv(), DT)
+            lo = min(lo, f64(s.position.y)); hi = max(hi, f64(s.position.y))
+        print("notch-trimmed gull frac={frac:.2} notches={trim_notches(tm)}: span={hi - lo:.2} m")
+        assert(hi - lo < 25.0 and not s.stalled, "notch-trimmed gull frac={frac} drifted {hi - lo} m")
+    _reset_flight()
+
+test "positive pitch trim climbs and negative pitch trim descends from cruise, roll and rudder trim act":
+    _setup_v2()
+    k = _spec(.gull)
+    v_true = k.cruise_speed / K
+    thr = v2.fdm2_cruise_throttle(k, v_true)
+    # Nose-up trim climbs smoothly without stalling
+    s_up = _air(k, 1000.0, v_true, thr + 0.12)
+    loop i in 0..60 * 15:
+        fl.step(k, s_up, fl.Controls(throttle = thr + 0.12, trim = 0.35, trim_on = true), fl.FlightEnv(), DT)
+    assert(f64(s_up.position.y) > 1030.0 and not s_up.stalled, "nose-up trim y={s_up.position.y}")
+    # Nose-down trim descends smoothly
+    s_dn = _air(k, 1000.0, v_true, max(thr - 0.12, 0.2))
+    loop i in 0..60 * 15:
+        fl.step(k, s_dn, fl.Controls(throttle = max(thr - 0.12, 0.2), trim = -0.35, trim_on = true), fl.FlightEnv(), DT)
+    assert(f64(s_dn.position.y) < 970.0 and not s_dn.stalled, "nose-down trim y={s_dn.position.y}")
+    # Roll trim rolls the wings steadily to starboard
+    s_roll = _air(k, 1000.0, v_true, thr)
+    loop i in 0..60 * 2:
+        fl.step(k, s_roll, fl.Controls(throttle = thr, roll_trim = 0.4, trim_on = true), fl.FlightEnv(), DT)
+    rt = quat_rotate(s_roll.orientation, vec3(1, 0, 0))
+    assert(f64(rt.y) < -0.1, "roll trim right wing down: rt.y={rt.y}")
+    # Rudder trim yaws nose right (heading increases)
+    s_yaw = _air(k, 1000.0, v_true, thr)
+    h0 = fl.heading(s_yaw)
+    loop i in 0..60 * 3:
+        fl.step(k, s_yaw, fl.Controls(throttle = thr, yaw_trim = 0.5, trim_on = true), fl.FlightEnv(), DT)
+    assert(fl.angle_delta(fl.heading(s_yaw), h0) > 0.02, "rudder trim heading delta={fl.angle_delta(fl.heading(s_yaw), h0)}")
+    _reset_flight()
+
+test "mouse-steer ignores trim and keeps working as before":
+    _setup_v2()
+    controller_clear()
+    model = planes.build_craft(.gull, planes.LIVERIES[0])
+    f = make_flyer(.gull, 0, model.contacts, vec3(0, 1000, 0), 0.0)
+    v = f.spec.cruise_speed / K
+    f.state = _air(f.spec, 1000.0, v, 0.6)
+    f.throttle = 0.6
+    f.trim_state.pitch = 0.5; f.trim_state.roll = 0.4; f.trim_state.yaw = -0.3
+    options.mouse_steers = true
+    # Moving mouse engages mouse-steer and zeros trim on the emitted Controls
+    c = key_controls(f, DT, vec2(10.0, 0.0))
+    assert(f.mouse_mode and not c.trim_on and c.trim == 0.0 and c.roll_trim == 0.0 and c.yaw_trim == 0.0)
+    # Direct mode (mouse_steers = false) applies trim_state onto Controls
+    options.mouse_steers = false
+    c2 = key_controls(f, DT)
+    assert(not f.mouse_mode and c2.trim_on and c2.trim == 0.5 and c2.roll_trim == 0.4 and c2.yaw_trim == -0.3)
+    options.mouse_steers = true
+    _reset_flight()
