@@ -35,6 +35,7 @@ struct CraftShadowCaster:
     strength: f32                   # 0..1: how dark
     bottom: f32                     # its lowest point's height (render space y)
     soft: f32                       # penumbra (m)
+    reach: f32 = 12.0               # horizontal half-span (m) for tight screen bounds
 
 # How dark and how soft a shadow is for the caster's height above what is under it (m) and the
 # sun's height (sin of its elevation).
@@ -73,11 +74,11 @@ craft_shadow_covers = (pos: vec3, reach: f64) -> bool:
 
 # One aircraft: its mesh placed by `model` (world), how high it is above what lies under it, and
 # its lowest point's height (world y).
-craft_shadow_add = (model: mat4, mesh: Mesh, height: f64, bottom: f64, sun_y: f64):
+craft_shadow_add = (model: mat4, mesh: Mesh, height: f64, bottom: f64, sun_y: f64, reach: f64 = 12.0):
     global craft_shadow_casters
     a = craft_shadow_strength(height, sun_y)
     if a < 0.01: return
-    craft_shadow_casters.push(CraftShadowCaster(render_model(model, craft_shadow_origin), mesh, f32(a), f32(bottom - f64(craft_shadow_origin.y)), f32(craft_shadow_soft(height))))
+    craft_shadow_casters.push(CraftShadowCaster(render_model(model, craft_shadow_origin), mesh, f32(a), f32(bottom - f64(craft_shadow_origin.y)), f32(craft_shadow_soft(height)), f32(reach)))
 
 # A model's reach (m: how far its shadow can spread from its centre) and its lowest point below its
 # origin (m, negative), from its flat shadow parts and its float or hull contacts.
@@ -224,29 +225,60 @@ craft_shadow_multiply = (chart: vec3, vp: mat4):
     if craft_shadow_sh.prog == 0: craft_shadow_sh = make_shader(shader(craft_shadow_vs,craft_shadow_fs))
     if craft_shadow_quad.count == 0 and craft_shadow_quad.index_count == 0:
         craft_shadow_quad = mesh([CraftShadowVertex(vec2(0,0)),CraftShadowVertex(vec2(1,0)),CraftShadowVertex(vec2(0,1)),CraftShadowVertex(vec2(1,1))],[u32(0),u32(1),u32(2),u32(2),u32(1),u32(3)])
-    # (the mask's square, at sea level and up to the casters, on screen: only those pixels drawn)
+    # Tight mask-space bounds over the actual casters, projected and clipped against the near plane
+    # so nearby aircraft never force a full-screen multiply pass over empty pixels.
     offset = craft_shadow_origin-chart
     center = craft_shadow_center+offset.xz
     half = f32(CRAFT_SHADOW_HALF)
-    lo = vec2(1,1); hi = vec2(-1,-1); behind = false
-    loop corner in 0..8:
-        x = center.x+(if corner & 1 == 0: -half else: half)
-        z = center.y+(if corner & 2 == 0: -half else: half)
-        y: f32 = if corner & 4 == 0: -2.0 else: f32(craft_shadow_base)+40.0
-        w = vec3(x,0,z)+vec3(craft_shadow_k.x*y,y,craft_shadow_k.y*y)
-        clip = vp*vec4(w,1)
-        if clip.w <= 0.05: behind = true
-        else:
-            n = clip.xy/clip.w
-            lo = min(lo,n); hi = max(hi,n)
-    rect = if behind: vec4(-1,-1,1,1) else: vec4(max(lo.x,-1.0),max(lo.y,-1.0),min(hi.x,1.0),min(hi.y,1.0))
+    texel = f32(CRAFT_SHADOW_HALF*2.0/f64(craft_shadow_res_for(render_quality.tier)))
+    m_lo = vec2(half,half); m_hi = vec2(-half,-half)
+    y_hi: f32 = -1e9
+    loop c in craft_shadow_casters:
+        p = c.model[3].xyz
+        mc = p.xz-craft_shadow_k*p.y-craft_shadow_center
+        r = c.reach+2.0
+        pad = vec2(r*(1.0+abs(craft_shadow_k.x)),r*(1.0+abs(craft_shadow_k.y)))+vec2(c.soft+texel*2.0,c.soft+texel*2.0)
+        m_lo = min(m_lo,mc-pad); m_hi = max(m_hi,mc+pad)
+        y_hi = max(y_hi,c.bottom+offset.y+0.5)
+    m_lo = max(m_lo,vec2(-half,-half)); m_hi = min(m_hi,vec2(half,half))
+    if m_lo.x >= m_hi.x or m_lo.y >= m_hi.y:
+        zone_end()
+        return
+    y_lo = min(f32(-3.0)-chart.y,y_hi-0.5)
+    eye = render_eye(chart)
+    em = eye.xz-craft_shadow_k*eye.y-center
+    rect = vec4(-1,-1,1,1)
+    if not (eye.y >= y_lo-1.0 and eye.y <= y_hi+1.0 and em.x >= m_lo.x-1.0 and em.x <= m_hi.x+1.0 and em.y >= m_lo.y-1.0 and em.y <= m_hi.y+1.0):
+        clips: vec4[]
+        lo = vec2(1,1); hi = vec2(-1,-1)
+        loop corner in 0..8:
+            mx = if corner & 1 == 0: m_lo.x else: m_hi.x
+            mz = if corner & 2 == 0: m_lo.y else: m_hi.y
+            y = if corner & 4 == 0: y_lo else: y_hi
+            w = vec3(center.x+mx+craft_shadow_k.x*y,y,center.y+mz+craft_shadow_k.y*y)
+            clip = vp*vec4(w,1)
+            clips.push(clip)
+            if clip.w > 0.05:
+                n = clip.xy/clip.w
+                lo = min(lo,n); hi = max(hi,n)
+        loop a in 0..8:
+            loop bit in [1,2,4]:
+                if (a & bit) != 0: continue
+                b = a | bit
+                ca = clips[a]; cb = clips[b]
+                if (ca.w > 0.05) != (cb.w > 0.05):
+                    tt = (0.05-ca.w)/(cb.w-ca.w)
+                    q = ca+(cb-ca)*tt
+                    n = q.xy/q.w
+                    lo = min(lo,n); hi = max(hi,n)
+        rect = vec4(max(lo.x,-1.0),max(lo.y,-1.0),min(hi.x,1.0),min(hi.y,1.0))
     if rect.x >= rect.z or rect.y >= rect.w:
         zone_end()
         return
     blend(.multiply)
     rays = render_rays(vp)
-    draw(craft_shadow_sh,craft_shadow_quad,CraftShadowParams(craft_shadow_target.texture,scene_depth(),rays,render_eye(chart),normalize(rays[2].xyz),world_depth_params(),
-        craft_shadow_k,center,half,f32(CRAFT_SHADOW_HALF*2.0/f64(craft_shadow_res_for(render_quality.tier))),f32(craft_shadow_base)-offset.y,rect))
+    draw(craft_shadow_sh,craft_shadow_quad,CraftShadowParams(craft_shadow_target.texture,scene_depth(),rays,eye,normalize(rays[2].xyz),world_depth_params(),
+        craft_shadow_k,center,half,texel,f32(craft_shadow_base)-offset.y,rect))
     # (the cloud composite that follows blends premultiplied)
     blend(.premultiplied)
     zone_end()

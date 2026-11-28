@@ -744,22 +744,32 @@ volume_edge_weight = (depth: Texture, uv: vec2, size: vec2, ab: vec2) -> f32:
     weight
 
 volume_composite_fs = (i: VolumeCompositeOut, u: VolumeCompositeParams) -> vec4:
-    center = volume_view_depth(sample(u.depth, i.uv).x, u.depth_ab)
     pixel = i.uv * u.size - vec2(0.5, 0.5)
     base = floor(pixel); f = fract(pixel)
+    uv0 = (base + vec2(0.5, 0.5)) / u.size
+    uv1 = (base + vec2(1.5, 0.5)) / u.size
+    uv2 = (base + vec2(0.5, 1.5)) / u.size
+    uv3 = (base + vec2(1.5, 1.5)) / u.size
+    t0 = sample(u.color, uv0)
+    t1 = sample(u.color, uv1)
+    t2 = sample(u.color, uv2)
+    t3 = sample(u.color, uv3)
+    # Empty low-res neighborhood with no sun shafts contributes vec4(0): discard before
+    # sampling scene depth and skip framebuffer read-modify-write blending.
+    if u.shaft_gain <= 0.0 and dot(t0 + t1 + t2 + t3, vec4(1, 1, 1, 1)) <= 0.0: discard()
+    center = volume_view_depth(sample(u.depth, i.uv).x, u.depth_ab)
     color = vec4(0, 0, 0, 0); weight: f32 = 0.0
     blend = vec4(0, 0, 0, 0); blend_weight: f32 = 0.0
     low: f32 = 1000.0; high: f32 = -1000.0
     loop k in 0..4:
-        corner = vec2(f32(k % 2), f32(k / 2))
-        uv = (base + corner + vec2(0.5, 0.5)) / u.size
+        uv = if k == 0: uv0 else: if k == 1: uv1 else: if k == 2: uv2 else: uv3
+        tap = if k == 0: t0 else: if k == 1: t1 else: if k == 2: t2 else: t3
         depth = volume_view_depth(sample(u.depth, uv).x, u.depth_ab)
         delta = abs(depth - center) / max(8.0, center * 0.025)
         bilinear = (if k % 2 == 0: 1.0 - f.x else: f.x) * (if k / 2 == 0: 1.0 - f.y else: f.y)
         # Reject cloud/sky samples across an opaque silhouette. An unresolved
         # isolated pixel is resolved by the full-resolution edge pass.
         w = bilinear / (1.0 + delta * delta * delta * delta)
-        tap = sample(u.color, uv)
         color += tap * w; weight += w
         # The sea or land behind a cloud, seen at a grazing angle (under a deck, the side of a
         # storm, looking down from height), changes depth steeply from one reduced-resolution row
@@ -880,12 +890,27 @@ volume_bounds = (v: CloudVolume, cam: vec3, vp: mat4) -> vec4:
     high = v.extent * (CLOUD_MAX+cloud_growth_padding(v.growth)) + vec3(0, pad, 0)
     center = render_world(v.center, cam)
     yaw = vec2(cos(v.heading), sin(v.heading))
+    cl = cloud_to_local(cam - center, yaw)
+    if cl.x >= low.x and cl.x <= high.x and cl.y >= low.y and cl.y <= high.y and cl.z >= low.z and cl.z <= high.z:
+        return vec4(-1, -1, 1, 1)
+    clips: vec4[]
     loop corner in 0..8:
         p = center + cloud_to_world(vec3(if corner & 1 == 0: low.x else: high.x, if corner & 2 == 0: low.y else: high.y, if corner & 4 == 0: low.z else: high.z), yaw)
         clip = vp * vec4(p, 1)
-        if clip.w <= 0.01: return vec4(-1, -1, 1, 1)
-        q = clip.xy / clip.w
-        lo = min(lo, q); hi = max(hi, q)
+        clips.push(clip)
+        if clip.w > 0.01:
+            q = clip.xy / clip.w
+            lo = min(lo, q); hi = max(hi, q)
+    loop a in 0..8:
+        loop bit in [1, 2, 4]:
+            if (a & bit) != 0: continue
+            b = a | bit
+            ca = clips[a]; cb = clips[b]
+            if (ca.w > 0.01) != (cb.w > 0.01):
+                tt = (0.01 - ca.w) / (cb.w - ca.w)
+                c = ca + (cb - ca) * tt
+                q = c.xy / c.w
+                lo = min(lo, q); hi = max(hi, q)
     vec4(max(lo, vec2(-1, -1)), min(hi, vec2(1, 1)))
 
 draw_cloud_volumes = (clouds: CloudVolume[], L: Light):
