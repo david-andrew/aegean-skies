@@ -214,6 +214,7 @@ use 'src/markings.jo'
 use 'src/note_cue.jo'
 use 'src/note_value.jo'
 use 'src/table_service.jo'
+use 'src/house_service.jo'
 use 'src/company.jo'
 use 'src/reputation.jo'
 use 'src/reputation_talk.jo'
@@ -1046,7 +1047,17 @@ tell_lead = (person: int) -> str:
 _lead_now = (chance: f64) -> bool: env("AEGEAN_LEADS") == "always" or random(0.0, 1.0) < chance
 
 company_greeted = false          # (their first word said: one who has heard of him says so first)
-waiter = Waiter()                # (whoever brings what is ordered: the hotel's waiter, the barkeep, the coffee house's boy)
+waiter = Waiter()                # (whoever brings what is ordered where the pilot sits: the coffee house's boy; at the
+                                 # hotel a copy of the house's waiter or barkeep, kept in step: pilot_server_sync)
+house_waiter = Waiter()          # (the Hotel Ancora's waiter: every table on the terrace or in the room, src/house_service.jo)
+barkeep = Waiter()               # (its barkeep: the bar's stools, pouring, washing up)
+house_sc = Scullery()            # (what the kitchen and the bar are making, and the washing up)
+patron_tables: HouseTable[] = [] # (the patrons' tables, 0..3: what is on each)
+spare_tables: HouseTable[] = []  # (tables the pilot left earlier, still to be cleared: 10..)
+patron_wait: f64[] = [0.0, 0.0, 0.0, 0.0]  # (seconds until each table orders again)
+patron_empty: f64[] = [0.0, 0.0, 0.0, 0.0] # (seconds each table has stood with nobody at it)
+house_level = -1                 # (the room level the staff's places are for)
+prep_scale = to_float(env("AEGEAN_PREP_SCALE") ?? "1") ?? 1.0   # (captures: how long making takes, times)
 taking = Taking()                # (the pilot and what is in front of him)
 table_input = TableBarResult()   # (the table's keys and buttons, last frame)
 table_put = false                # (Esc with something in hand: put it down)
@@ -1202,13 +1213,17 @@ leisure_sit = (key: str):
     company = company_plan(key == "bar", random(0.0, 1.0), random(0.0, 1.0), t, rep_welcome(living_world, rep_town_of_place(living_world, leisure_place(key).place)))
     if let at = env("AEGEAN_COMPANY"): company.due = t + (to_float(at) ?? 2.0)
     leisure.sitting = key; leisure.served = []; leisure.coming = []
-    waiter = Waiter(); taking = Taking()
-    # (back at the table before it was cleared: everything as it was left; a guest's table only
-    # if it is the same table)
+    taking = Taking()
+    if key == "coffee": waiter = Waiter()
+    # (back at the table before it was cleared: everything as it was left, and what was on its
+    # way to it comes here; a guest's table only if it is the same table)
     global left_table, left_key, clear_waiter
-    if left_key == key and left_table.len() > 0 and length(left_spots.table - service_spots(key).table) < 0.5:
+    if left_key == key and (left_table.len() > 0 or house_owed(house_sc, -2) > 0) and length(left_spots.table - service_spots(key).table) < 0.5:
         leisure.served = left_table
-        left_table = []; left_key = ""; clear_waiter = Waiter()
+        left_table = []; left_key = ""
+        if key == "coffee": clear_waiter = Waiter()
+        else: house_retarget(-2, -1)
+    pilot_server_sync()
     leisure_at = key; leisure_spent = 0; leisure_had = []
     ui = .leisure; leisure_ui = 0
     mouse_lock(false)
@@ -1222,11 +1237,16 @@ leisure_stand = ():
     if leisure.sitting == "bar": me.pos = vec3(me.pos.x, f32(walk_height(towns, f64(me.pos.x), f64(me.pos.z))), me.pos.z)
     # (what is on the table stays there, as it is, until someone comes to clear it; what was in
     # hand goes back down first)
-    global left_table, left_key, left_spots, left_at, clear_waiter
-    if leisure.served.len() > 0:
+    global left_table, left_key, left_spots, left_at, clear_waiter, spare_tables
+    owed = hotel_key(leisure.sitting) and house_owed(house_sc, -1) > 0
+    if leisure.served.len() > 0 or owed:
+        # (a table left before, not yet cleared, is still cleared: by the house's waiter, in turn)
+        if hotel_key(left_key) and left_table.len() > 0:
+            spare_tables.push(HouseTable(10 + spare_tables.len(), left_spots, left_table, clear_all = true))
         left_table = [loop s in leisure.served: Served(s.item, s.minute, s.seat, amount = s.amount, empty_for = s.empty_for, still = s.still)]
         left_key = leisure.sitting; left_spots = service_spots(leisure.sitting); left_at = t
-        clear_waiter = Waiter()
+        if left_key == "coffee": clear_waiter = Waiter()
+        else: house_retarget(-1, -2)
     leisure.sitting = ""; leisure.served = []; leisure.coming = []
     set_life_reserved_seat(none)
     waiter = Waiter(); taking = Taking()
@@ -1442,18 +1462,40 @@ _foot_things_now = () -> FootThing[]:
         out.push(th)
     out
 
-# Sitting at a table or the bar: the band's stand, the tip jar, the board and the paper.
+# Sitting at a table or the bar, what can be looked at and used (Space, or a tap), as on foot:
+# each dish and glass in front of him, the menu card, the people about (company, a neighbour,
+# whoever is at the next tables), whoever serves, the band's stand; the board and the paper at the
+# coffee house. (The jar is walked over to: one gets up to tip.)
 seat_things = () -> FootThing[]:
     out: FootThing[]
     key = leisure.sitting
     if key == "" or ui != .leisure or leisure_ui != 0: return out
+    sp = service_spots(key)
+    loop k in 0..leisure.served.len():
+        s = leisure.served[k]
+        if s.held: continue
+        out.push(_thing("", "", "dish:{k}", take_label(s), table_spot(sp, s.seat), vec3(0.07, 0, 0.07), 0.16, me.pos))
+    out.push(_thing("", "", "menu", if key == "coffee": "Read the board" else: "Read the menu", menu_card_at(key), vec3(0.07, 0, 0.07), 0.13, me.pos))
     if key == "coffee":
         out.push(_thing("", "", "tavli", "A game of tavli", coffee_board_at(), vec3(0.28, 0, 0.22), 0.12, coffee.seat))
         out.push(_thing("", "", "paper", if leisure.paper_day == lt.day_index(living_world.minute): "Read the paper" else: "Buy the paper", coffee_paper_at(), vec3(0.2, 0, 0.16), 0.08, coffee.seat))
-        return out
-    if leisure_open(living_world, hotel_place): out.push(_thing("", "", "song", "Ask for a song", hotel.stage, vec3(1.6, 0, 1.6), 2.4, hotel.stage))
-    if band_evening(living_world) or living_world.band.index >= 0: out.push(_thing("", "", "tip", "Tip the band", band_jar_at(hotel) - vec3(0, 0.05, 0), vec3(0.2, 0, 0.2), 0.45, band_jar_at(hotel)))
+    if hotel_key(key):
+        srv = if key == "bar": barkeep else: house_waiter
+        if srv.ready and f64(length(srv.pos - me.pos)) < 16.0: out.push(_thing("", "", "server", server_name()[4..server_name().len()].upper()[0..1] + server_name()[5..server_name().len()], srv.pos, vec3(0.3, 0, 0.3), 1.8, srv.pos))
+    loop k in 0..folks.len():
+        f = folks[k]
+        if not f.shown or f64(length(f.pos - me.pos)) > 10.0 or f64(length(f.pos - me.pos)) < 0.3: continue
+        th = _thing("", "", "talk:{k}", split(living_world.people[f.person].name, " ")[0], f.pos, vec3(0.3, 0, 0.3), if f.posture == 1: 1.35 else: 1.8, f.pos)
+        th.folk = k
+        out.push(th)
+    if hotel_key(key) and leisure_open(living_world, hotel_place): out.push(_thing("", "", "song", "Ask for a song", hotel.stage, vec3(1.6, 0, 1.6), 2.4, hotel.stage))
     out
+
+# where the menu card stands, at each place (a small folded card on the table, or the counter)
+menu_card_at = (key: str) -> vec3:
+    sp = service_spots(key)
+    if key == "bar": return sp.table + sp.ax * 0.5 + sp.az * 0.12
+    sp.table - sp.ax * 0.05 + sp.az * 0.38
 
 # what a point on the screen is on, of those (-1 nothing); the nearest thing first
 # (a thing far off is a small mark for a finger: its box grows a little with distance, a centimetre
@@ -1775,13 +1817,17 @@ draw_foot_label = ():
         things = foot_things()
         # (by its own shape, where it has a mesh of its own; else its box's outline)
         if foot_hover < things.len() and not draw_look_outline(t - foot_hover_since, look_unit()): draw_look(things[foot_hover], t - foot_hover_since)
+    # (seated: the same, and a small label over it saying what Space does)
+    if seat_hover >= 0 and ui == .leisure and leisure_ui == 0 and leisure.sitting != "":
+        things = seat_things()
+        if seat_hover < things.len():
+            th = things[seat_hover]
+            if th.folk < 0 or not draw_look_outline(t - seat_hover_since, look_unit()): draw_look(th, t - seat_hover_since)
+            draw_thing_label(th)
     if pad.on: return
     if ui == .none and foot_hover < 0 and picnic_ground_hover():
         if let g = ground_under(foot_aim()):
             draw_thing_label(FootThing("", "", "", "Spread the blanket", g, g, g))
-    if seat_hover >= 0:
-        things = seat_things()
-        if seat_hover < things.len(): draw_thing_label(things[seat_hover])
 
 # time passing: the screen darkens, the scene's people and craft are folded back into the world,
 # the world's clock runs on in steps, and the screen comes back
@@ -3895,11 +3941,11 @@ seat_drag_input = () -> (vec2, bool):
     global seat_drag
     if pad.on:
         # (a touch screen: the fingers only; its mouse follows the first finger and would count twice)
-        off_bar = not contains(table_bar_area, pad.drag_at)
+        off_bar = not contains(table_bar_area, pad.drag_at) and not seat_on_pill(pad.drag_at)
         d = if pad.two: pad.orbit else: if off_bar: pad.aim else: vec2(0, 0)
         return (d, false)
     pressed = mouse_pressed(.left) or mouse_pressed(.right)
-    if mouse_pressed(.left): seat_drag = not contains(table_bar_area, mouse_pos())
+    if mouse_pressed(.left): seat_drag = not contains(table_bar_area, mouse_pos()) and not seat_on_pill(mouse_pos())
     if not mouse_down(.left): seat_drag = false
     d = if mouse_down(.right) or seat_drag: mouse_delta() else: vec2(0, 0)
     (d, pressed)
@@ -4563,23 +4609,225 @@ pilot_hand = (pose: ArmPose) -> vec3:
 
 pilot_posture = () -> int: if leisure.sitting != "": 1 else: 0
 
+# ---------------- the house: kitchen, bar, waiter and barkeep ----------------
+# (src/house_service.jo: what is ordered is made, then carried out; what comes back is washed or
+# taken in at the hatch. The house's waiter serves the pilot's table and the patrons'; the barkeep
+# the bar's stools, and pours and washes up.)
+
+hotel_key = (key: str) -> bool: key == "hotel" or key == "guest" or key == "bar"
+
+# Where the bar's work is done now: on the terrace, or in the bar room (its counter's other end).
+house_spots = () -> HouseSpots:
+    top = DECK + 1.145
+    if bar_room.level == 2:
+        f = hotel.frame
+        return HouseSpots(transform_point(f, vec3(2.45, f32(top), 8.05)), transform_point(f, vec3(0.9, f32(DECK + 1.1), 6.5)), transform_point(f, vec3(0.9, f32(DECK + 1.32), 6.33)), transform_point(f, vec3(2.95, f32(DECK), 7.05)), transform_point(f, vec3(3.45, f32(top), 7.78)), transform_point(f, vec3(2.75, f32(DECK + 1.045), 6.5)), normalize((f * vec4(1, 0, 0, 0)).xyz), hotel.bar_rest)
+    f = hotel.frame
+    HouseSpots(transform_point(f, vec3(3.72, f32(top), 20.05)), transform_point(f, vec3(5.45, f32(DECK + 1.1), 18.2)), transform_point(f, vec3(5.45, f32(DECK + 1.32), 18.03)), transform_point(f, vec3(3.25, f32(DECK), 19.05)), transform_point(f, vec3(2.75, f32(top), 19.78)), transform_point(f, vec3(1.95, f32(DECK + 0.83), 18.2)), normalize((f * vec4(1, 0, 0, 0)).xyz), hotel.bar_rest)
+
+# A patron table's places now (its top, where the waiter stands, its axes), terrace or room.
+patron_spots = (k: int) -> ServiceSpots:
+    top = hotel_table_top(hotel, k)
+    if bar_room.level == 2: top = top + (hotel.frame * vec4(ROOM_TABLES[k] - TERRACE_TABLES[k], 0)).xyz
+    ax = normalize((hotel.frame * vec4(1, 0, 0, 0)).xyz); az = normalize((hotel.frame * vec4(0, 0, 1, 0)).xyz)
+    serve = top + ax * 0.7 - az * 0.95
+    ServiceSpots(hotel.waiter_pass, vec3(serve.x, f32(walk_height(towns, f64(serve.x), f64(serve.z))), serve.z), top, ax, az)
+
+# How many are seated at a patron table now (the world's people at its chairs).
+patron_count = (k: int) -> int:
+    c = patron_spots(k).table
+    n = 0
+    loop f in folks:
+        if f.shown and f.posture == 1 and f64(length(vec2(f.pos.x - c.x, f.pos.z - c.z))) < 1.7: n += 1
+    n
+
+# (the patrons' usual: a glass of something, now and then a plate)
+PATRON_ORDERS = ["House white", "Ouzo, the house's", "Fix", "Greek coffee, medium sweet", "House white", "Meze plate", "Bread and olives"]
+
+_house_item = (name: str) -> MenuItem:
+    loop d in hotel_menu:
+        if d.name == name: return d
+    hotel_menu[0]
+
+# The patrons' tables: who sits orders a while after sitting down and again after finishing; what
+# is in front of them goes down as they eat and drink; a table they have left is cleared.
+patrons_step = (dt: f64, open: bool):
+    global patron_tables, patron_wait, patron_empty
+    if patron_tables.len() == 0:
+        patron_tables = [loop k in 0..4: HouseTable(k, patron_spots(k))]
+        loop k in 0..4: patron_wait[k] = random(20.0, 70.0)
+    pilot_top = if hotel_key(leisure.sitting) and leisure.sitting != "bar": service_spots(leisure.sitting).table else: vec3(1e6, 0, 0)
+    loop k in 0..4:
+        patron_tables[k].spots = patron_spots(k)
+        # (the pilot's own table, if he sits at this one: it is his)
+        if f64(length(patron_tables[k].spots.table - pilot_top)) < 0.6: continue
+        n = if open: patron_count(k) else: 0
+        patron_empty[k] = if n == 0: patron_empty[k] + dt else: 0.0
+        patron_tables[k].clear_all = patron_empty[k] > 20.0
+        loop i in 0..patron_tables[k].served.len():
+            sv = patron_tables[k].served[i]
+            if sv.amount > 0.0 and n > 0: patron_tables[k].served[i].amount = max(0.0, sv.amount - dt / (take_seconds(sv.item) * 9.0))
+            if patron_tables[k].served[i].amount <= 0.0: patron_tables[k].served[i].empty_for = sv.empty_for + dt
+        if n == 0: continue
+        left = 0
+        loop sv in patron_tables[k].served:
+            if sv.amount > 0.0: left += 1
+        if left == 0 and house_owed(house_sc, k) == 0:
+            patron_wait[k] -= dt
+            if patron_wait[k] <= 0.0:
+                loop i in 0..min(n, 3):
+                    d = _house_item(PATRON_ORDERS[int(random(0.0, f64(PATRON_ORDERS.len()) - 0.001))])
+                    house_order(house_sc, Served(d, living_world.minute, i * 2), k, house_crowd(), prep_scale)
+                patron_wait[k] = random(150.0, 360.0)
+
+# the patrons in (for how long things take)
+house_crowd = () -> int:
+    n = 0
+    loop k in 0..patron_tables.len(): n += patron_count(k)
+    n
+
+# The orders and trips of one who was the pilot's table's go to the table he left (and back when he
+# sits there again): what is on its way still comes, and stays there.
+house_retarget = (from: int, to: int):
+    global house_sc, house_waiter, barkeep
+    loop k in 0..house_sc.making.len():
+        if house_sc.making[k].to == from: house_sc.making[k].to = to
+    loop k in 0..house_sc.ready.len():
+        if house_sc.ready[k].to == from: house_sc.ready[k].to = to
+    if house_waiter.table == from: house_waiter.table = to
+    if barkeep.table == from: barkeep.table = to
+
+# the copy of whoever serves the pilot, for what reads it (where his head is, what he is asking)
+pilot_server_sync = ():
+    global waiter
+    if leisure.sitting == "bar": waiter = barkeep
+    else if leisure.sitting == "hotel" or leisure.sitting == "guest": waiter = house_waiter
+
+# The pilot's answer to "Finished with this?" goes to whoever asked.
+server_answer = (yes: bool):
+    global waiter, house_waiter, barkeep
+    if leisure.sitting == "bar": waiter_answer(barkeep, leisure.served, yes)
+    else if leisure.sitting == "hotel" or leisure.sitting == "guest": waiter_answer(house_waiter, leisure.served, yes)
+    else: waiter_answer(waiter, leisure.served, yes)
+    pilot_server_sync()
+
+# What the pilot has ordered and not yet had (for the save: it is ordered again after a load).
+pilot_owed = () -> Served[]:
+    out: Served[]
+    if hotel_key(leisure.sitting):
+        loop m in house_sc.making:
+            if m.to == -1: out.push(m.s)
+        loop m in house_sc.ready:
+            if m.to == -1: out.push(m.s)
+        srv = if leisure.sitting == "bar": barkeep else: house_waiter
+        if srv.table == -1:
+            loop s in srv.pending: out.push(s)
+            if srv.stage <= 2:
+                loop s in srv.tray: out.push(s)
+        return out
+    loop s in waiter.pending: out.push(s)
+    loop s in waiter.tray:
+        if s.amount > 0.0 and waiter.stage <= 2: out.push(s)
+    out
+
+# One frame of the house: the kitchen and the bar's making, the waiter's rounds of all the tables,
+# the barkeep's (the bar's stools, and the washing up when there is nothing to serve).
+house_step = (dt: f64):
+    global house_sc, house_waiter, barkeep, left_table, left_key, house_level, served_look_until
+    if not hotel.ok: return
+    open = leisure_open(living_world, hotel_place)
+    near = f64(length(scene_camera() - hotel.counter)) < 160.0 or hotel_key(leisure.sitting) or hotel_key(left_key)
+    if not near: return
+    hs = house_spots()
+    # (the room's places moved, out of sight: the staff are at the new places)
+    if house_level != bar_room.level:
+        house_level = bar_room.level
+        house_waiter.ready = false; barkeep.ready = false
+        if house_waiter.stage != 0 and house_waiter.stage < 10: house_waiter.stage = 3
+        barkeep.stage = 0
+    if not house_waiter.ready:
+        house_waiter.pos = hotel.waiter_pass; house_waiter.ready = true
+    if not barkeep.ready:
+        barkeep.pos = hs.rest; barkeep.ready = true
+    patrons_step(dt, open)
+    height = (x: f64, z: f64) -> f64: walk_height(towns, x, z)
+    key = leisure.sitting
+    # (the waiter's tables: the pilot's, the one he left, the patrons')
+    wt_tables: HouseTable[]
+    if key == "hotel" or key == "guest": wt_tables.push(HouseTable(-1, service_spots(key), leisure.served, asks = true))
+    if left_key == "hotel" or left_key == "guest": wt_tables.push(HouseTable(-2, left_spots, left_table, clear_all = t - left_at >= left_wait))
+    loop pt in patron_tables: wt_tables.push(pt)
+    loop st in spare_tables: wt_tables.push(st)
+    was = house_waiter.stage
+    worked = house_waiter_step(house_waiter, house_sc, wt_tables, dt, height)
+    if worked >= 0 and wt_tables[worked].id == -1 and house_waiter.stage == 2 and was != 2 and house_waiter.tray.len() > 0: served_look_until = t + SET_DOWN * f64(house_waiter.tray.len()) + 1.4
+    # (the barkeep's: the stool the pilot sits on, or left)
+    bk_tables: HouseTable[]
+    if key == "bar":
+        bsp = service_spots("bar"); bsp.station = hs.sink
+        bk_tables.push(HouseTable(-1, bsp, leisure.served, asks = true))
+    if left_key == "bar":
+        lsp = left_spots; lsp.station = hs.sink
+        bk_tables.push(HouseTable(-2, lsp, left_table, clear_all = t - left_at >= left_wait))
+    bk_work = false
+    loop bt in bk_tables:
+        if house_table_work(bt): bk_work = true
+        loop m in house_sc.ready:
+            if m.to == bt.id: bk_work = true
+    if barkeep.stage < 10 and (barkeep.stage != 0 or bk_work):
+        bw = house_waiter_step(barkeep, house_sc, bk_tables, dt, height)
+        if bw >= 0 and bk_tables[bw].id == -1 and barkeep.stage == 2: served_look_until = max(served_look_until, t + 1.5)
+    else:
+        house_take_dropped(house_sc, barkeep)
+        house_barkeep_step(barkeep, house_sc, hs, dt, not bk_work, height)
+    pour_free = barkeep.stage == 0 and f64(length(vec2(barkeep.pos.x - hs.sink.x, barkeep.pos.z - hs.sink.z))) < 0.3
+    house_kitchen_step(house_sc, dt, pour_free)
+    # (what the tables hold now, back where it is kept)
+    loop i in 0..wt_tables.len():
+        id = wt_tables[i].id
+        if id == -1: leisure.served = wt_tables[i].served
+        else if id == -2: left_table = wt_tables[i].served
+        else if id >= 0 and id < patron_tables.len(): patron_tables[id].served = wt_tables[i].served
+        else if id >= 10:
+            loop j in 0..spare_tables.len():
+                if spare_tables[j].id == id: spare_tables[j].served = wt_tables[i].served
+    # (a spare table cleared and not being worked: done with)
+    sj = 0
+    loop sj < spare_tables.len():
+        if spare_tables[sj].served.len() == 0 and house_waiter.table != spare_tables[sj].id: spare_tables.remove_at(sj)
+        else: sj += 1
+    loop bt in bk_tables:
+        if bt.id == -1: leisure.served = bt.served
+        else if bt.id == -2: left_table = bt.served
+    # (the table left, cleared and nothing more coming to it: done with)
+    if left_key != "" and left_key != "coffee" and left_table.len() == 0 and house_owed(house_sc, -2) == 0 and house_waiter.table != -2 and barkeep.table != -2:
+        left_key = ""
+    pilot_server_sync()
+
 # One frame of service and of taking one's time: the waiter's round, and what the keys and the
 # buttons asked for at the table.
 service_step = (dt: f64):
     global waiter, taking, served_look_until, table_put, table_input, left_table, left_key, clear_waiter, ui, leisure_ui
-    # (a table the pilot left: some while after, whoever serves there comes and clears it all,
+    if not service_frozen: house_step(dt)
+    # (the coffee house's table the pilot left: some while after, the boy comes and clears it all,
     # carrying it back on the tray; then it's done)
-    if left_key != "" and left_key != leisure.sitting and not service_frozen:
+    if left_key == "coffee" and leisure.sitting != "coffee" and not service_frozen:
         clear_waiter.clear_all = t - left_at >= left_wait
         waiter_step(clear_waiter, left_spots, left_table, dt, (x: f64, z: f64) -> f64: walk_height(towns, x, z))
+        clear_waiter.dropped = []
         if left_table.len() == 0 and clear_waiter.stage == 0:
             left_key = ""; clear_waiter = Waiter()
     if leisure.sitting == "" or service_frozen: return
-    loop s in leisure.coming: waiter_order(waiter, s)
-    leisure.coming = []
-    was = waiter.stage
-    waiter_step(waiter, service_spots(leisure.sitting), leisure.served, dt, (x: f64, z: f64) -> f64: walk_height(towns, x, z))
-    if waiter.stage == 2 and was != 2 and waiter.tray.len() > 0: served_look_until = t + SET_DOWN * f64(waiter.tray.len()) + 1.4
+    if hotel_key(leisure.sitting):
+        loop s in leisure.coming: house_order(house_sc, s, -1, house_crowd(), prep_scale)
+        leisure.coming = []
+    else:
+        loop s in leisure.coming: waiter_order(waiter, s, prep_seconds(s.item) * 0.7 * prep_scale)
+        leisure.coming = []
+        was = waiter.stage
+        waiter_step(waiter, service_spots(leisure.sitting), leisure.served, dt, (x: f64, z: f64) -> f64: walk_height(towns, x, z))
+        waiter.dropped = []
+        if waiter.stage == 2 and was != 2 and waiter.tray.len() > 0: served_look_until = t + SET_DOWN * f64(waiter.tray.len()) + 1.4
     # (things may have come and gone under the held one: find it again)
     taking.held = -1
     loop k in 0..leisure.served.len():
@@ -4590,25 +4838,127 @@ service_step = (dt: f64):
     take_step(taking, leisure.served, dt, pressed, down, table_put)
     table_input = TableBarResult(); table_put = false
     # ("Finished with this?": asked at the table, answered on the panel)
-    if waiter.stage == 7 and ui == .leisure and leisure_ui == 0: leisure_ui = 19
+    if waiter.stage == 7 and waiter.table == -1 and ui == .leisure and leisure_ui == 0: leisure_ui = 19
+
+# the kitchen's hatch (in the hotel's frame, its face at z = 0, out along +z): a dark opening in a
+# wood frame with a sill; and the cook's arms, out over the sill
+build_hatch = () -> Mesh:
+    vs: Vertex3D[]
+    frame = rgb(0.3, 0.2, 0.12)
+    add_box(vs, vec3(0, 0.28, 0.012), vec3(0.72, 0.56, 0.02), rgb(0.06, 0.045, 0.035))
+    loop sx in [-1.0, 1.0]: add_box(vs, vec3(f32(sx * 0.4), 0.28, 0.035), vec3(0.08, 0.66, 0.07), frame)
+    add_box(vs, vec3(0, 0.6, 0.035), vec3(0.88, 0.08, 0.07), frame)
+    add_box(vs, vec3(0, -0.02, 0.12), vec3(0.9, 0.05, 0.26), rgb(0.55, 0.42, 0.29))
+    custom_mesh(vs)
+build_cook_arms = () -> Mesh:
+    vs: Vertex3D[]
+    loop sx in [-1.0, 1.0]:
+        add_box(vs, vec3(f32(sx * 0.13), 0.0, 0.17), vec3(0.085, 0.085, 0.34), rgb(0.93, 0.92, 0.88))
+        add_box(vs, vec3(f32(sx * 0.13), -0.005, 0.37), vec3(0.07, 0.06, 0.09), rgb(0.78, 0.58, 0.44))
+    custom_mesh(vs)
+build_glass_shelf = () -> Mesh:
+    vs: Vertex3D[]
+    add_box(vs, vec3(1.3, -0.025, 0), vec3(2.9, 0.05, 0.26), rgb(0.3, 0.19, 0.11))
+    custom_mesh(vs)
+hatch_mesh = build_hatch()
+cook_arms_mesh = build_cook_arms()
+glass_shelf_mesh = build_glass_shelf()
+_shelf_glass = MenuItem("Glass", "Glass", "Glass", serve = .tumbler)
+
+# The kitchen hatch, the shelf of clean glasses, and the things standing at the pass, the sink and
+# the drainer; the cook's arms at the hatch while he puts out or takes in.
+draw_house_things = (L: Light):
+    if not hotel.ok or f64(length(scene_camera() - hotel.counter)) > 70.0: return
+    hs = house_spots()
+    inside = bar_room.level == 2
+    hz = (hotel.frame * vec4(0, 0, 1, 0)).xyz
+    yaw = atan2(f64(hz.x), f64(hz.z))
+    face = translation(hs.hatch_face - vec3(0, 0.3, 0)) * rotation_y(yaw)
+    if not inside or f64(length(scene_camera() - hotel.counter)) < 40.0:
+        draw(obj_sh, hatch_mesh, obj_params(L, t, face))
+        if not inside: draw(obj_sh, glass_shelf_mesh, obj_params(L, t, translation(hs.shelf) * rotation_y(yaw)))
+    if house_sc.cook_seen > 0.0:
+        out = clamp(min(house_sc.cook_seen, COOK_SHOWN - house_sc.cook_seen) * 4.0, 0.0, 1.0)
+        draw(obj_sh, cook_arms_mesh, obj_params(L, t, face * translation(vec3(0, 0.12, f32(-0.3 + 0.3 * out)))))
+    up = vec3(0, 1, 0)
+    side = hs.along
+    toward = normalize(cross(side, up))
+    # (clean glasses on the shelf, upturned in a row)
+    loop k in 0..house_sc.shelf:
+        p = hs.shelf + side * f32(SHELF_STEP * f64(k))
+        draw_serving(serve_parts, Served(_shelf_glass, 0, 0, amount = 0.0), translation(p) * scaling(1.1), L, t)
+    # (empties on the counter's end; ready drinks beside them, nearer the waiter; plates on the sill)
+    loop k in 0..house_sc.dirty.len():
+        p = hs.counter_end - side * f32(0.16 * f64(k % 4)) + toward * f32(0.12 * f64(k / 4))
+        draw_serving(serve_parts, house_sc.dirty[k], translation(p) * rotation_y(f64(k) * 1.7) * scaling(1.2), L, t)
+    nd = 0; np = 0
+    loop m in house_sc.ready:
+        if house_is_plate(m.s):
+            p = hs.sill + side * f32(-0.22 + 0.22 * f64(np % 3)) + vec3(0, 0, 0)
+            draw_serving(serve_parts, m.s, translation(p) * rotation_y(f64(np)) * scaling(1.2), L, t)
+            np += 1
+        else:
+            p = hs.counter_end + side * f32(0.18 + 0.15 * f64(nd)) - toward * 0.1
+            draw_serving(serve_parts, m.s, translation(p) * scaling(1.2), L, t)
+            nd += 1
+    loop k in 0..house_sc.plates.len():
+        p = hs.sill + side * f32(0.22 - 0.2 * f64(k % 3)) + vec3(0, f32(0.02 * f64(k / 3)), 0)
+        draw_serving(serve_parts, house_sc.plates[k], translation(p) * rotation_y(f64(k) * 2.1) * scaling(1.2), L, t)
+    loop k in 0..house_sc.drainer.len():
+        p = hs.drainer - side * f32(0.15 * f64(k))
+        draw_serving(serve_parts, house_sc.drainer[k], translation(p) * scaling(1.2), L, t)
+
+# the barkeep: at his rest, walking along behind the counter, pouring, washing, drying, putting up
+draw_barkeep = (L: Light):
+    hs = house_spots()
+    doing = house_barkeep_doing(barkeep, house_sc, hs)
+    walking = f64(barkeep.phase) > 0.0 and (barkeep.stage == 11 or barkeep.stage == 14 or barkeep.stage == 16 or barkeep.stage == 1 or barkeep.stage == 3 or barkeep.stage == 4)
+    yaw = barkeep.yaw
+    if not walking and (barkeep.stage == 0 or barkeep.stage >= 12): yaw = if barkeep.stage == 15: hotel.bar_yaw else: hotel.bar_yaw + PI
+    if barkeep.stage < 10 and barkeep.stage != 0:
+        _draw_server(barkeep, "bar", WALK_BARKEEP, L)
+        return
+    arms = vec2(-9.0, -9.0)
+    if doing == 1: arms = vec2(1.1, f32(0.9 + 0.1 * sin(t * 2.0)))
+    else if doing == 2: arms = vec2(f32(0.75 + 0.12 * sin(t * 7.0)), f32(0.75 + 0.12 * sin(t * 7.0 + 2.0)))
+    else if doing == 3: arms = vec2(f32(1.0 + 0.15 * sin(t * 5.0)), f32(1.05 + 0.15 * sin(t * 5.0 + 1.5)))
+    else if doing == 4: arms = vec2(-9.0, 1.6)
+    draw_figure(barkeep_fig, barkeep.pos, yaw, barkeep.phase, if walking: 1.0 else: 0.0, L, t, arms = arms)
+    # (what is in his hands: the glass being washed or dried, or the drink he is pouring)
+    has = false
+    held = Served(_shelf_glass, 0, 0, amount = 0.0)
+    if house_sc.hands.len() > 0 and (doing == 2 or doing == 3 or doing == 4 or barkeep.stage == 14):
+        held = house_sc.hands[0]; has = true
+    if doing == 1:
+        loop m in house_sc.making:
+            if not has and not house_is_plate(m.s):
+                held = Served(m.s.item, 0, 0, amount = clamp(1.0 - m.left / max(1.0, prep_seconds(m.s.item)), 0.05, 1.0)); has = true
+    if has:
+        fwd = vec3(f32(sin(yaw)), 0, f32(cos(yaw)))
+        p = barkeep.pos + vec3(0, f32(if doing == 4: 1.35 else: if doing == 2: 0.92 else: 1.05), 0) + fwd * 0.32
+        if held.amount < 0.0: held.amount = 0.0
+        draw_serving(serve_parts, held, translation(p) * rotation_y(yaw) * scaling(1.2), L, t)
 
 draw_service = (L: Light):
     if not hotel.ok: return
     key = leisure.sitting
-    clearing = left_key != "" and left_key != key and clear_waiter.ready
+    clearing = left_key == "coffee" and key != "coffee" and clear_waiter.ready
     near_hotel = f64(length(scene_camera() - hotel.counter)) < 80.0
-    if near_hotel and leisure_open(living_world, hotel_place):
-        # (the hotel's people at their places when they are not the ones serving, or clearing)
-        terrace_clearing = clearing and (left_key == "hotel" or left_key == "guest")
-        if key != "bar" and not (clearing and left_key == "bar"): draw_figure(barkeep_fig, hotel.bar_rest, hotel.bar_yaw + PI, 0.0, 0.0, L, t)
-        if key != "hotel" and key != "guest" and not terrace_clearing:
-            d = hotel.waiter_serve - hotel.waiter_pass
-            draw_figure(waiter_fig, hotel.waiter_pass, atan2(f64(d.x), f64(d.z)), 0.0, 0.0, L, t)
+    if near_hotel and (leisure_open(living_world, hotel_place) or hotel_key(key) or hotel_key(left_key) or house_waiter.stage != 0):
+        # (the hotel's people, at their work: the waiter on his rounds, the barkeep behind the bar)
+        if house_waiter.ready: _draw_server(house_waiter, "hotel", WALK_SERVER, L)
+        if barkeep.ready: draw_barkeep(L)
+        draw_house_things(L)
+        # (what is on the patrons' tables)
+        loop st in spare_tables:
+            loop sv in st.served: draw_serving(serve_parts, sv, translation(table_spot(st.spots, sv.seat)) * rotation_y(f64(sv.seat) * 1.3) * scaling(1.2), L, t)
+        loop pt in patron_tables:
+            loop sv in pt.served: draw_serving(serve_parts, sv, translation(table_spot(pt.spots, sv.seat)) * rotation_y(f64(sv.seat) * 1.3) * scaling(1.2), L, t)
     if clearing: _draw_server(clear_waiter, left_key, WALK_CLEAR_SERVER, L)
-    if key != "" and waiter.ready: _draw_server(waiter, key, WALK_SERVER, L)
+    if key == "coffee" and waiter.ready: _draw_server(waiter, key, WALK_CLEAR_SERVER, L)
 
 server_walk_subject = (wt:Waiter,id:int) -> WalkSubject:
-    walking=wt.stage==1 or wt.stage==3 or wt.stage==4 or wt.stage==6
+    walking=wt.stage==1 or wt.stage==3 or wt.stage==4 or wt.stage==6 or wt.stage==11 or wt.stage==14 or wt.stage==16
     WalkSubject(id,world_point(wt.pos),wt.yaw,if walking:1.35 else:0.0,phase=wt.phase)
 
 # whoever serves at a place, walking, setting down or carrying away, with the tray and what is on it
@@ -4640,7 +4990,24 @@ draw_waiter_ask = ():
     head = waiter.pos + vec3(0, 1.75, 0)
     speech_bubble(fonts, head, if leisure.sitting == "coffee": "The boy" else: if leisure.sitting == "bar": "The barkeep" else: "The waiter", "Finished with this?", f64(length(head - scene_camera())))
 
+# the menu card: a small folded card standing on the table
+build_menu_card = () -> Mesh:
+    vs: Vertex3D[]
+    loop sx in [-1.0, 1.0]: add_box(vs, vec3(0, 0.05, f32(sx * 0.018)), vec3(0.1, 0.105, 0.004), rgb(0.95, 0.92, 0.84), rotation_x(sx * 0.32))
+    add_box(vs, vec3(0, 0.07, 0.03), vec3(0.07, 0.006, 0.002), rgb(0.55, 0.3, 0.2), rotation_x(0.32))
+    custom_mesh(vs)
+menu_card_mesh = build_menu_card()
+
 draw_table_things = (L: Light):
+    # (the menu cards: on the pilot's table and on the counter by his stool; the coffee house's)
+    if hotel.ok and f64(length(scene_camera() - hotel.counter)) < 60.0:
+        loop key in ["hotel", "bar"]:
+            if leisure.sitting == "guest" and key == "hotel": continue
+            c = menu_card_at(key); sp = service_spots(key)
+            draw(obj_sh, menu_card_mesh, obj_params(L, t, translation(c) * rotation_y(atan2(f64(sp.ax.x), f64(sp.ax.z)))))
+    if leisure.sitting == "guest" or leisure.sitting == "coffee":
+        c = menu_card_at(leisure.sitting); sp = service_spots(leisure.sitting)
+        draw(obj_sh, menu_card_mesh, obj_params(L, t, translation(c) * rotation_y(atan2(f64(sp.ax.x), f64(sp.ax.z)))))
     # (what was left on a table the pilot got up from, as it was left)
     if left_key != "" and left_key != leisure.sitting:
         loop s in left_table:
@@ -4691,6 +5058,147 @@ _leisure_back = ():
     leisure_ui = 0
     if leisure.sitting == "": ui = .none
 
+# ---------------- seated: no panel ----------------
+# What the view looks at is lit and used with Space (or tapped), as on foot (seat_things); a few
+# things have a button beside them (seat_pills): each dish or glass (held to drink or eat), the menu
+# card, and the pilot's own (wait, get up). Keys: 1..6 a dish, M the menu, W wait, Esc put down or
+# get up, K talk to company; T and P the board and the paper at the coffee house.
+seat_pill_rects: Rect[] = []
+seat_hover_since = 0.0
+seat_mouse_moved = -100.0           # (when the mouse last moved: it points at things a while after)
+seat_mouse_was = vec2(0, 0)
+seat_sip = false                    # (Space took up a dish and is still held: drinking, eating)
+seat_pills_on = true                # (captures can hide them)
+
+seat_on_pill = (p: vec2) -> bool:
+    loop r in seat_pill_rects:
+        if contains(r, p): return true
+    false
+
+_screen_of = (p: vec3) -> vec2?:
+    if let sp = world_to_screen(p):
+        if f64(sp.x) > -20.0 and f64(sp.x) < f64(screen_width()) + 20.0 and f64(sp.y) > -20.0 and f64(sp.y) < f64(screen_height()) + 20.0: return sp
+    none
+
+# Using a seated thing (Space on it, or a tap): a dish taken up, the card read, someone talked to,
+# whoever serves called over, the band asked across the room.
+seat_use = (th: FootThing):
+    global ui, leisure_ui, leisure_line, pilot_word, pilot_word_until, table_input, seat_sip
+    key = leisure.sitting
+    if th.then.starts_with("dish:"):
+        table_input.item = to_int(th.then[5..th.then.len()]) ?? -1
+        seat_sip = vdown(.space)
+    else if th.then == "menu": leisure_open_menu(key)
+    else if th.then.starts_with("talk:"):
+        k = to_int(th.then[5..th.then.len()]) ?? -1
+        if k >= 0 and k < folks.len(): _leisure_talk(k)
+    else if th.then == "server":
+        leisure_ui = 23; leisure_line = ""
+        pilot_word = if key == "bar": "Barkeep?" else: "Excuse me?"
+        pilot_word_until = t + 2.0
+    else if th.then == "song":
+        # (called across the room: the band's front player answers from the stand; he stays sat)
+        pilot_word = "Could you play something for me?"; pilot_word_until = t + 2.5
+        run_then("song")
+    else: run_then(th.then)
+
+seat_frame = (key: str):
+    global seat_hover, seat_hover_since, seat_pill_rects, seat_mouse_moved, seat_mouse_was, table_input, table_put, seat_sip, leisure_ui
+    w = living_world
+    lp = leisure_place(key)
+    st = seat_things()
+    # (what is looked at: the thing under a mouse that has just moved, else the screen's middle)
+    m = mouse_pos()
+    if f64(length(m - seat_mouse_was)) > 2.0: seat_mouse_moved = t
+    seat_mouse_was = m
+    looked = -1
+    if not pad.on and t - seat_mouse_moved < 2.5 and not seat_on_pill(m) and not mouse_down(.left) and not mouse_down(.right): looked = foot_pick(st, m)
+    if looked < 0: looked = foot_look(st)
+    if looked != seat_hover:
+        seat_hover_since = t
+        if look_trace: eprint("LOOK {frame_number()} seat {if looked >= 0: st[looked].label else: "-"}")
+    seat_hover = looked
+    # (the buttons, each beside its thing)
+    sp = service_spots(key)
+    pills: SeatPill[]
+    kinds: int[]                    # (what each pill is: a dish's index, or -1 the menu, -2 wait, -3 get up)
+    held_k = -1
+    loop k in 0..leisure.served.len():
+        s = leisure.served[k]
+        at = table_spot(sp, s.seat) + vec3(0, 0.1, 0)
+        if s.held:
+            held_k = k
+            if let pose = pilot_arm_pose(): at = pilot_hand(pose)
+        if let p = _screen_of(at):
+            pills.push(SeatPill(p, if s.item.food: "Eat" else: "Drink", "{k + 1}", fill = s.amount, ring = s.held)); kinds.push(k)
+    if let p = _screen_of(menu_card_at(key) + vec3(0, 0.1, 0)):
+        pills.push(SeatPill(p, "Read", "M", quiet = true)); kinds.push(-1)
+    side = vec3(f32(cos(me.yaw)), 0, f32(-sin(me.yaw)))
+    if let p = _screen_of(me.pos + vec3(0, 1.05, 0) + side * 0.25):
+        pills.push(SeatPill(p, "Wait an hour", "W", quiet = true, side = 1)); kinds.push(-2)
+    if let p = _screen_of(me.pos + vec3(0, 0.75, 0) + side * 0.25):
+        pills.push(SeatPill(p, if held_k >= 0: "Put it down" else: "Get up", "Esc", quiet = true, side = 1)); kinds.push(-3)
+    r = SeatPillResult()
+    keep: Rect[]
+    loop b in touch_controls(): keep.push(b)
+    keep.push(Rect(f64(screen_width()) - 150.0, 0, 150, 100))
+    if seat_pills_on: r = seat_pills(fonts, pills, keep)
+    seat_pill_rects = r.rects
+    action = 0                      # (1 menu, 2 wait, 3 get up or put down)
+    if r.pressed >= 0:
+        kp = kinds[r.pressed]
+        if kp >= 0: table_input.item = kp
+        else: action = -kp
+    if r.down >= 0 and kinds[r.down] >= 0 and kinds[r.down] == held_k: table_input.down = true
+    keys: Key[] = [.n1, .n2, .n3, .n4, .n5, .n6]
+    loop k in 0..min(keys.len(), leisure.served.len()):
+        if key_pressed(keys[k]): table_input.item = k
+        if (k == held_k or table_input.item == k) and key_down(keys[k]): table_input.down = true
+    if r.down >= 0 and kinds[r.down] >= 0 and table_input.item == kinds[r.down]: table_input.down = true
+    if seat_sip and vdown(.space): table_input.down = true
+    else: seat_sip = false
+    # (Space uses what is looked at; a tap off the buttons, the thing tapped)
+    chose = -1
+    if vpressed(.space) and seat_hover >= 0: chose = seat_hover
+    if pad.tapped and not seat_on_pill(pad.tap_at): chose = foot_pick(st, pad.tap_at)
+    if chose >= 0 and chose < st.len(): seat_use(st[chose])
+    else if key_pressed(.m): action = 1
+    else if key_pressed(.w): action = 2
+    else if key == "coffee" and key_pressed(.t): run_then("tavli")
+    else if key == "coffee" and key_pressed(.p): run_then("paper")
+    else if hotel_key(key) and leisure_open(w, hotel_place) and key_pressed(.s): run_then("song")
+    else if hotel_key(key) and key_pressed(.r) and lp.room_cents > 0: leisure_ui = 23
+    else if key_pressed(.k):
+        k_talk = if company.stage == .sitting and company.who >= 0 and company.who < folks.len(): company.who else: nearest_folk(folks, me.pos, 7.0)
+        if k_talk >= 0: _leisure_talk(k_talk)
+    if vpressed(.escape): action = 3
+    if action == 1: leisure_open_menu(key)
+    else if action == 2: leisure_skip(60, "An hour passes at {lp.name}.")
+    else if action == 3:
+        if taking.held >= 0: table_put = true
+        else: leisure_stand()
+
+# Whoever serves, called over to the table: what one can ask of them.
+server_frame = ():
+    global leisure_ui, leisure_at, leisure_line
+    key = leisure.sitting
+    if key == "":
+        leisure_ui = 0
+        return
+    lp = leisure_place(key)
+    asks = ["The menu, please"]
+    if lp.room_cents > 0 and key != "coffee": asks.push("A room for the night?")
+    if key != "coffee" and fish_count(fish) > 0: asks.push("Could the kitchen grill my catch?")
+    asks.push("Nothing, thanks")
+    r = bubble_choice("server", server_head(), server_name()[4..server_name().len()], "Yes?", asks)
+    if r.choice < 0 and not r.closed: return
+    pick = if r.choice >= 0 and r.choice < asks.len(): asks[r.choice] else: ""
+    leisure_ui = 0
+    if pick == "The menu, please": leisure_open_menu(key)
+    else if pick == "A room for the night?":
+        leisure_ui = 2; leisure_at = key; leisure_line = ""
+    else if pick.starts_with("Could the kitchen"): grill_catch()
+
 # the leisure panels (ui == .leisure)
 leisure_panel = ():
     global ui, leisure_ui, leisure_at, leisure_line
@@ -4701,55 +5209,7 @@ leisure_panel = ():
             if key == "":
                 ui = .none
                 return
-            lp = leisure_place(key)
-            hotelish = key != "coffee"
-            actions = ["See the menu", "Wait an hour"]
-            letters = ["M", "W"]
-            if hotelish and fish_count(fish) > 0:
-                actions.push("Have your catch grilled"); letters.push("G")
-            # (the board and the paper on the table, the band's stand and its jar, are used with
-            # Space or tapped themselves (seat_things); their keys, T, P, S and B, work as ever)
-            if lp.room_cents > 0:
-                actions.push("Take a room"); letters.push("R")
-            # (whoever has sat down with the pilot, first; else whoever is near)
-            k_talk = if company.stage == .sitting and company.who >= 0 and company.who < folks.len(): company.who else: nearest_folk(folks, me.pos, 7.0)
-            if k_talk >= 0:
-                actions.push("Talk to {split(w.people[folks[k_talk].person].name, " ")[0]}"); letters.push("K")
-            actions.push("Get up"); letters.push("Esc")
-            things = [loop s in leisure.served: take_label(s)]
-            global table_input, table_put, table_bar_area
-            r = table_bar(fonts, if key == "bar": "At the bar, {lp.name}" else: lp.name, if hotelish: band_words() else: "", things, taking.held, actions, letters, [loop s in leisure.served: s.amount])
-            table_input = r
-            table_bar_area = r.area
-            global seat_hover
-            st = seat_things()
-            seat_hover = if not pad.on and not contains(r.area, mouse_pos()): foot_pick(st, mouse_pos()) else: -1
-            chose = -1
-            if vpressed(.space) and seat_hover >= 0: chose = seat_hover
-            if pad.tapped and not contains(r.area, pad.tap_at): chose = foot_pick(st, pad.tap_at)
-            if chose >= 0: run_then(st[chose].then)
-            # (the keyboard's own keys: a touch screen's Pause button is a P too)
-            else if key == "coffee" and key_pressed(.t): run_then("tavli")
-            else if key == "coffee" and key_pressed(.p): run_then("paper")
-            else if hotelish and leisure_open(w, hotel_place) and key_pressed(.s): run_then("song")
-            else if hotelish and (band_evening(w) or w.band.index >= 0) and key_pressed(.b): run_then("tip")
-            if vpressed(.escape):
-                if taking.held >= 0: table_put = true
-                else: r.action = actions.len() - 1
-            pick = if r.action >= 0: actions[r.action] else: ""
-            if pick == "See the menu": leisure_open_menu(key)
-            else if pick == "Wait an hour": leisure_skip(60, "An hour passes at {lp.name}.")
-            else if pick == "Play tavli": tavli_open_choice()
-            else if pick == "Have your catch grilled": grill_catch()
-            else if pick == "Read the paper" or pick == "Buy the paper": paper_open()
-            else if pick == "Tip the band":
-                leisure_ui = 20; leisure_line = ""
-            else if pick == "Ask for a song":
-                leisure_ui = 8; leisure_line = ""
-            else if pick == "Take a room":
-                leisure_ui = 2; leisure_at = key; leisure_line = ""
-            else if pick.starts_with("Talk to"): _leisure_talk(k_talk)
-            else if pick == "Get up": leisure_stand()
+            seat_frame(key)
         1:
             lp = leisure_place(leisure_at)
             items = leisure_items(leisure_at)
@@ -4881,6 +5341,7 @@ leisure_panel = ():
             else if r.choice == 1 or r.closed:
                 ui = .none; leisure_ui = 0
             if r.choice >= 0 or r.closed: ride_asker = -1
+        23: server_frame()
         19:
             # (the waiter, asking whether the pilot has finished with something that has some left)
             about = waiter_asking_about(waiter, leisure.served)
@@ -4889,8 +5350,8 @@ leisure_panel = ():
                 return
             # (his question is over his head, draw_waiter_ask; the answers beside the pilot)
             r = bubble_choice("waiter", waiter.pos + vec3(0, 1.75, 0), "", "", ["Yes, thank you", "Not yet"])
-            if r.choice == 0: waiter_answer(waiter, leisure.served, true)
-            else if r.choice == 1 or r.closed: waiter_answer(waiter, leisure.served, false)
+            if r.choice == 0: server_answer(true)
+            else if r.choice == 1 or r.closed: server_answer(false)
             if r.choice >= 0 or r.closed: leisure_ui = 0
         18:
             # (stepping ashore with someone in the second seat, before they have flown)
@@ -5340,6 +5801,23 @@ leisure_capture_step = ():
             served_look_until = 1e9
             leisure.served[if stage == "eat": 0 else: 2].held = true
             loop k in 0..30: service_step(0.05)
+    if stage == "serve" or stage == "bar-serve" or stage == "bar-empties" or stage == "serve-patrons":
+        # (ordering and being served, the house's making and carrying out; empties taken back,
+        # washed, dried and shelved: a TABLE trace every 20 frames)
+        key = if stage.starts_with("bar"): "bar" else: "hotel"
+        leisure_sit(key)
+        global table_script
+        table_script = "trace:0"
+        if stage == "bar-empties":
+            loop name in ["Ouzo, the house's", "House white", "Meze plate"]:
+                d = pick(name)
+                leisure.served.push(Served(d, living_world.minute, leisure.served.len() * 2, amount = 0.0, empty_for = 60.0))
+        else if stage != "serve-patrons":
+            loop name in ["Meze plate", "Ouzo, the house's", "Fix"]: _leisure_order(key, pick(name))
+        if let cam = env("AEGEAN_SERVE_CAM"):
+            v = [loop x in split(cam, ","): to_float(x) ?? 0.0]
+            if v.len() >= 3:
+                follow.yaw = me.yaw + PI + v[0]; follow.distance = v[1]; follow.pitch = v[2]
     if stage == "search":
         leisure_open_book("hotel")
         menu_view.fresh = false
@@ -6536,9 +7014,13 @@ update_walk_around = (dt:f64):
         walk_offer(people,WalkSubject(WALK_RIDE,world_point(ride.pos),ride.yaw,1.35,phase=ride.phase),observer)
     if rider.stage==.walking and not tender_way_on:
         walk_offer(people,WalkSubject(WALK_RESCUED,world_point(rider.pos),rider.yaw,1.35,phase=rider.phase),observer)
-    if waiter.ready and leisure.sitting!="":
-        walk_offer(people,server_walk_subject(waiter,WALK_SERVER),observer)
-    if clear_waiter.ready and left_key!="" and left_key!=leisure.sitting:
+    if house_waiter.ready and hotel.ok and f64(length(scene_camera()-hotel.counter))<80.0:
+        walk_offer(people,server_walk_subject(house_waiter,WALK_SERVER),observer)
+    if barkeep.ready and hotel.ok and f64(length(scene_camera()-hotel.counter))<80.0:
+        walk_offer(people,server_walk_subject(barkeep,WALK_BARKEEP),observer)
+    if waiter.ready and leisure.sitting=="coffee":
+        walk_offer(people,server_walk_subject(waiter,WALK_CLEAR_SERVER),observer)
+    else if clear_waiter.ready and left_key=="coffee" and left_key!=leisure.sitting:
         walk_offer(people,server_walk_subject(clear_waiter,WALK_CLEAR_SERVER),observer)
     ambient_walk_subjects(people,observer,t,hour)
     life_view.child_walk_subjects(people,living_world,life_meshes,observer,t)
@@ -7570,9 +8052,7 @@ capture_running_game = () -> lt.SaveGame | save_types.LivingSaveError:
 # (he brings it again after a load), and nothing is in hand
 leisure_kept = () -> LeisureState:
     out = leisure
-    loop s in waiter.pending: out.coming.push(s)
-    loop s in waiter.tray:
-        if s.amount > 0.0 and waiter.stage <= 2: out.coming.push(s)
+    loop s in pilot_owed(): out.coming.push(s)
     loop k in 0..out.served.len(): out.served[k].held = false
     out
 
@@ -7607,11 +8087,12 @@ situation_arrival = (me_index: int):
 # aboard, the waiter and the table, work on the aircraft, stargazing, a handover being signed for):
 # none of it is saved, and none of it may outlive a load or a new situation.
 reset_scene_moments = ():
-    global stay, ride, rider, waiter, clear_waiter, company, taking, left_table, job, gaze
+    global stay, ride, rider, waiter, clear_waiter, company, taking, left_table, job, gaze, house_waiter, barkeep, house_sc, patron_tables, spare_tables
     global handover_job, handover_by, handover_paid_before, situation_safe_since
     global tender_xfer, tender_way_on
     situation_safe_since = -1.0
     stay = Stay(); ride = Joyride(); rider = RescuedRider(); waiter = Waiter(); clear_waiter = Waiter()
+    house_waiter = Waiter(); barkeep = Waiter(); house_sc = Scullery(); patron_tables = []; spare_tables = []
     company = Company(); taking = Taking(); left_table = []; job = PlaneJob(); gaze = Gaze()
     handover_job = -1; handover_by = -1; handover_paid_before = 0
     tender_xfer = TenderTransfer(); tender_way_on = false
@@ -13973,6 +14454,9 @@ update_frame = (dt: f64, saves: bool = true):
         look_craft = lt_.act == "aboard" or lt_.act == "tinker"
         look_keeper = lt_.then == "bath-keeper"
         if lt_.sub == "coffee" and (lt_.then == "tavli" or lt_.then == "paper"): look_coffee = lt_.then
+    if ui == .leisure and leisure_ui == 0 and leisure.sitting != "" and seat_hover >= 0:
+        sts = seat_things()
+        if seat_hover < sts.len(): look_folk = sts[seat_hover].folk
     if looked != foot_hover:
         foot_hover_since = t
         # (captures: what the view comes to look at, frame by frame)
@@ -15825,7 +16309,7 @@ draw = ():
                 me.pos = me.pos + vec3(f32(-sin(me.yaw)), 0, f32(-cos(me.yaw))) * 2.0
                 follow.yaw = me.yaw + PI + 1.4; follow.distance = 5.0; follow.pitch = 0.45
             if kv[0] == "sit": leisure_sit("hotel")
-    if table_script != "" and frame_number() % 20 == 0: print("TABLE f{frame_number()} sitting {leisure.sitting} served {[loop s in leisure.served: s.amount]} left {left_key} {[loop s in left_table: s.amount]} clearer {clear_waiter.stage} tray {clear_waiter.tray.len()} waiter {waiter.stage} ui {leisure_ui}")
+    if table_script != "" and frame_number() % 20 == 0: print("TABLE f{frame_number()} sitting {leisure.sitting} served {[loop s in leisure.served: s.amount]} left {left_key} {[loop s in left_table: s.amount]} waiter {house_waiter.stage} table {house_waiter.table} tray {house_waiter.tray.len()} barkeep {barkeep.stage} making {house_sc.making.len()} ready {house_sc.ready.len()} dirty {house_sc.dirty.len()} hands {house_sc.hands.len()} drainer {house_sc.drainer.len()} shelf {house_sc.shelf} plates {house_sc.plates.len()} pilot-waiter {waiter.stage} ui {leisure_ui}")
     if env("AEGEAN_SEAT_TRACE") != none and frame_number() % 5 == 0: print("SEAT f{frame_number()} yaw {follow.yaw:.3} pitch {follow.pitch:.3} look {stay_look_turn.yaw:.3} {stay_look_turn.pitch:.3}")
     if let f = env("AEGEAN_RIDE_TRACE"):
         if frame_number() % 30 == 0: print("RIDE f{frame_number()} stage {ride.stage} mode {me.mode} ui {ui}/{leisure_ui} line {ride.line} d {length(me.pos - pc.state.position):.1} place {living_world.people[living_world.player].place} dest {ride.dest} cash {player_cents()}")
