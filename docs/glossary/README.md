@@ -15,16 +15,16 @@ on that unmerged branch so far.
 
 **Terms at a glance**
 
-- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
+- **Sea and water:** [Speed flecks](#speed-flecks) · [Sun glints and the glitter path](#sun-glints-and-the-glitter-path) · [Crest strokes](#crest-strokes) · [Whitecaps](#whitecaps) · [Swell](#swell) · [Storm sea](#storm-sea) · [Shallows band](#shallows-band) · [Shore caustics](#shore-caustics) · [Cliff beds and lip](#cliff-beds-and-lip) · [Deep sea from height](#deep-sea-from-height) · [Shore foam](#shore-foam) · [Surf](#surf) · [Rain rings](#rain-rings)
 - **Water effects:** [Splash bodies](#splash-bodies) · [Spray curtains](#spray-curtains) · [Bow sheets](#bow-sheets) · [Spray banks](#spray-banks) · [Splash streaks](#splash-streaks) · [Skim spray](#skim-spray) · [Spindrift](#spindrift) · [Wake](#wake)
 - **Rivers and canals:** [River ribbon](#river-ribbon) · [Confluence](#confluence) · [Opaque river prepass](#opaque-river-prepass) · [Bank plants](#bank-plants) · [Riparian ground](#riparian-ground) · [Chart rivers](#chart-rivers) · [Canal cut](#canal-cut) · [Canal basin](#canal-basin) · [Canal crossings](#canal-crossings) · [Canal mirror](#canal-mirror) · [Canal blocks](#canal-blocks)
 - **Aircraft:** [Prop disc](#prop-disc) · [Prop arcs](#prop-arcs) · [Arc precession](#arc-precession) · [Idle blades](#idle-blades) · [Vapour wisps](#vapour-wisps) · [Buffet](#buffet) · [Floats, hull and step](#floats-hull-and-step) · [Planing](#planing) · [Hydrofoil take-off](#hydrofoil-take-off) · [Contra-rotating and push-pull props](#contra-rotating-and-push-pull-props) · [Prop torque](#prop-torque) · [Aircraft shadow](#aircraft-shadow) · [Speed scale](#speed-scale) · [Chaotic stalls](#chaotic-stalls) · [Flight model v2](#flight-model-v2) · [Sky Barons port](#sky-barons-port) · [Departure resistance](#departure-resistance) · [Flight trim](#flight-trim) · [Altimeter hands](#altimeter-hands) · [Navigation lights](#navigation-lights) · [Schneider racers](#schneider-racers) · [Race classes](#race-classes) · [Sponsons](#sponsons) · [Push-pull pair](#push-pull-pair) · [Big boats](#big-boats) · [One speed rule](#one-speed-rule) · [Wing-strut streamers](#wing-strut-streamers) · [Paint page](#paint-page) · [Paint by part](#paint-by-part) · [Decals](#decals) · [Paint shop](#paint-shop) · [Pilots' liveries](#pilots-liveries) · [Markings](#markings) · [Velos and Fairey IIIF](#velos-and-fairey-iiif) · [Cockpit arrangements and cabins](#cockpit-arrangements-and-cabins) · [Cockpit lamp and luminous dials](#cockpit-lamp-and-luminous-dials)
 - **Sky:** [Cloud body](#cloud-body) · [Cloud forms](#cloud-forms) · [Cumulus field](#cumulus-field) · [Tower growth](#tower-growth) · [Cloud relief](#cloud-relief) · [Cloud shadows](#cloud-shadows) · [Overcast deck](#overcast-deck) · [Deck climb](#deck-climb) · [Anvil](#anvil) · [Storm system](#storm-system) · [Storm sighting](#storm-sighting) · [Storm sound](#storm-sound) · [Weather fixtures](#weather-fixtures) · [Sunset](#sunset) · [Sunset palettes](#sunset-palettes) · [Sun disc](#sun-disc) · [Horizon flash](#horizon-flash) · [Bishop's ring](#bishops-ring) · [Day's air](#days-air) · [Afterglow](#afterglow) · [Warm bounce](#warm-bounce) · [Moon](#moon) · [Planet lights](#planet-lights) · [Painted terminator](#painted-terminator) · [Shadow masses](#shadow-masses) · [Cloud bank and tower](#cloud-bank-and-tower) · [Brushwork](#brushwork) · [Lightning](#lightning) · [Rain shafts](#rain-shafts) · [Storm turbulence](#storm-turbulence) · [Windscreen rain](#windscreen-rain) · [Inside a cloud](#inside-a-cloud)
 - **Ground and vegetation:** [Grass blades](#grass-blades) · [Prop wash on grass](#prop-wash-on-grass) · [Grass frontier](#grass-frontier) · [Ground tint](#ground-tint) · [Wind sheen](#wind-sheen) · [Wind study grass (trial)](#wind-study-grass-trial) · [Terrain stripes (historical bug)](#terrain-stripes-historical-bug) · [Coast refinement](#coast-refinement) · [Vegetation kinds and groves](#vegetation-kinds-and-groves) · [Far canopy](#far-canopy) · [Crowns](#crowns) · [Woods' canopy](#woods-canopy) · [Land's outline](#lands-outline) · [Far land layers](#far-land-layers) · [Farmland](#farmland) · [Grass egg](#grass-egg)
-- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Town lights](#town-lights) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading)
+- **Towns and people:** [Quay (code) and dock (player)](#quay-code-and-dock-player) · [Offshore mooring](#offshore-mooring) · [Harbour launch](#harbour-launch) · [Fuel lighter](#fuel-lighter) · [Legacy towns](#legacy-towns) · [Close kit](#close-kit) · [Frontage](#frontage) · [Plinth](#plinth) · [Hill house](#hill-house) · [Regional character](#regional-character) · [Farmstead](#farmstead) · [Paving](#paving) · [Townsfolk](#townsfolk) · [Wardrobe](#wardrobe) · [Town look](#town-look) · [Town lights](#town-lights) · [Wildlife](#wildlife) · [Dolphins](#dolphins) · [Pilot's scarf](#pilots-scarf) · [Camera wall check](#camera-wall-check) · [Path desk](#path-desk) · [Ambient crowd](#ambient-crowd) · [Action cards](#action-cards) · [Readable type](#readable-type) · [Wading](#wading) · [Met in the crowd](#met-in-the-crowd) · [Regional dress](#regional-dress)
 - **Night sky:** [Moon](#moon) · [Night's air](#nights-air) · [Stars](#stars) · [Milky Way](#milky-way) · [Planet lights](#planet-lights)
 - **Living world:** [Far people](#far-people) · [Notices](#notices) · [Dock handover](#dock-handover) · [Provenance](#provenance) · [Phoenix (money)](#phoenix-money) · [Standing](#standing) · [The pilot's name](#the-pilots-name) · [Small talk](#small-talk) · [Pilot's wireless](#pilots-wireless) · [Spoken lines](#spoken-lines) · [Talk bubbles](#talk-bubbles) · [Talk hold](#talk-hold) · [Leads](#leads) · [The club's table](#the-clubs-table) · [Errands of the islands](#errands-of-the-islands) · [A boat adrift](#a-boat-adrift) · [Contracts](#contracts) · [Battle cards](#battle-cards) · [Voices](#voices) · [Openers and tiered topics](#openers-and-tiered-topics) · [Rotating far checks](#rotating-far-checks) · [Spread minute](#spread-minute)
-- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic)
+- **Leisure:** [Leisure places](#leisure-places) · [Hotel Ancora](#hotel-ancora) · [Bar room](#bar-room) · [Lantern light](#lantern-light) · [Bar set and singer](#bar-set-and-singer) · [The band's people](#the-bands-people) · [Live source](#live-source) · [Plane work](#plane-work) · [Time skip](#time-skip) · [Tipsy sway](#tipsy-sway) · [Tavli](#tavli) · [Tip jar](#tip-jar) · [Band request](#band-request) · [The paper](#the-paper) · [Dock fishing](#dock-fishing) · [Venue piano](#venue-piano) · [Workshop repair desk](#workshop-repair-desk) · [Table service](#table-service) · [Bill of fare](#bill-of-fare) · [The barber](#the-barber) · [Swimming](#swimming) · [Stargazing](#stargazing) · [Rising notes](#rising-notes) · [Note value](#note-value) · [Company](#company) · [A night under a roof](#a-night-under-a-roof) · [A new pilot's welcome](#a-new-pilots-welcome) · [Pleasure flight](#pleasure-flight) · [Things to tap](#things-to-tap) · [A picnic](#a-picnic) · [The house behind the service](#the-house-behind-the-service) · [Seated look and buttons](#seated-look-and-buttons) · [Going in out of the rain](#going-in-out-of-the-rain)
 - **Rendering and engine:** [Render chart](#render-chart) · [Reversed depth](#reversed-depth) · [Log depth](#log-depth) · [Z-fighting](#z-fighting) · [Near clipping](#near-clipping) · [Crisp-text split](#crisp-text-split) · [Quality tiers](#quality-tiers) · [Terrain LOD and contact tiles](#terrain-lod-and-contact-tiles) · [Canonical surface](#canonical-surface) · [WebGL2 compatibility proxy](#webgl2-compatibility-proxy) · [Drawn vessel pose](#drawn-vessel-pose)
 - **Audio:** [Receiver chain](#receiver-chain) · [Station levelling](#station-levelling) · [Part balance](#part-balance) · [Crackle](#crackle) · [Programme clock](#programme-clock) · [Announcer](#announcer) · [Spoken service](#spoken-service) · [Diphone trajectory](#diphone-trajectory) · [Broadcast colour](#broadcast-colour) · [Ambience](#ambience) · [Crowd bed](#crowd-bed) · [River sound](#river-sound) · [Birdsong](#birdsong) · [Uneven events](#uneven-events) · [Note events](#note-events) · [Musicians at play](#musicians-at-play)
 - **Process:** [Redfox](#redfox) · [Bench lock and bench ledger](#bench-lock-and-bench-ledger) · [Pinned base](#pinned-base) · [Sample gate](#sample-gate) · [Known failures](#known-failures) · [Test tiers](#test-tiers) · [Judging round](#judging-round) · [Tweaks and trials](#tweaks-and-trials) · [Game page and Saved card](#game-page-and-saved-card) · [Spread save](#spread-save) · [Coordinator](#coordinator)
@@ -198,11 +198,40 @@ blue discs that stay in every frame are **speed flecks**.
   sheltered coves. The sandy seabed shows through with a faint caustic shimmer.
 - **Code:** `src/sea.jo sea_shallow_mix(depth, shelter)` (the weight) and `sea_shallow_ramp` (the
   colour) in `sea_material`; the seabed (pale sand tinted by the water above it, scattered weed
-  beds and stones, the drifting caustic network) in `src/terrain.jo ground_surface`.
+  beds and stones) in `src/terrain.jo ground_surface`, and [shore caustics](#shore-caustics) in
+  `src/caustics.jo`.
 - **Rules:** the shallow/deep weight and the shallows' own depth ramp (`sea_shallow_ramp`: clear
   aqua over the sand, turquoise, teal; no green in the water itself) may change. Add no texture,
   sampler, varying or world record for it, and never touch the deep sea's flecks, marks or glints
   (`docs/painted-materials.md`).
+
+### Shore caustics
+
+- **Aliases:** seabed caustics, shallow-water caustics, caustic net, hull bounce caustics.
+- **Definition:** sunlit cellular light networks focused by the rippled water surface onto shallow
+  seabed sand, submerged coastal rocks, and the undersides of boats, ships and seaplane hulls near
+  the waterline. Tight, crisp bright filaments and luminous 3-way cusp nodes around slightly darker
+  cells in 0.3–1 m of water grow larger and blur smoothly into softer dappled pools by 3–4 m,
+  drifting and warping with the wave field offshore and slowing to a standing shimmer at the
+  shoreline. Under a low sun the network stretches along the sun's bearing and fades; it vanishes in
+  shade, under cloud cover or cloud shadow, and at night, and never appears on dry sand or above the
+  waterline. Above the waterline, hulls' undersides and chines within ~2 m of the sea catch soft
+  reflected upward caustics.
+- **Code:** `src/coast_pattern.jo` (`coast_caustic_edge`, stored in the unused alpha channel of
+  `coast-pattern-v3.png`: a seamless 8×8 periodic domain-warped curved caustic distance field with
+  pinched 3-way knots);
+  `src/caustics.jo` (`caustic_strength`, `caustic_uniforms`, `caustic_seabed`, `caustic_hull`);
+  called from `src/terrain.jo` (`ground_surface`, `draw_coast_batches`, vertex cloud shadow gated
+  on submerged vertices in `coast_vs`, omitted from `coast_vs_low`), `src/objects.jo` (`hull_light`,
+  `hull_sh`, `draw_hull_with` for boats and near-water seaplanes so `obj_sh`/`obj_inst_sh` stay
+  untouched), and `src/vessel_view.jo` (`vessel_near_fragment`).
+- **Rules:** reuse `coast_pattern`'s alpha channel (no extra texture unit or VRAM); keep low-tier
+  terrain and `obj_sh`/`obj_inst_sh` untouched (`coast_vs_low`, `canopy_detail > 0`, dedicated
+  `hull_sh`); band-limit filament widths analytically by pixel footprint so a slow flyover at
+  20–30 m never shimmers (`tests/temporal_stability_test.py` `caustics_beach`,
+  `tests/caustics_test.jo`).
+- **Capture:** `AEGEAN_VIEW="5421.8 20.0 5085.9 0.871 -0.58 13.0" AEGEAN_WEATHER=fair` (Leuke
+  Beach), `tools/coast_capture.jo COAST_SITE=beach COAST_RANGE=50 COAST_RUN=1`.
 
 ### Deep sea from height
 
@@ -2902,20 +2931,61 @@ On the rivers branch until it lands.
 ### Ambient crowd
 
 - **Aliases:** unnamed townsfolk, the crowd, passers-by.
-- **Definition:** unnamed people in a big town (ports and capitals): sitting at the square's
-  benches and café tables, talking in pairs, a vendor or two at striped market stalls in market
-  hours, strolling round the square, along the waterfront and up the main streets. Pure
-  presentation: no simulation, identity, money or saving; named residents ([Townsfolk](#townsfolk))
-  are unchanged. Fullest in the morning and for the evening walk, thin in the afternoon heat,
-  next to nobody at night; low and medium quality show about 35% and 50% of the high tier.
+- **Definition:** the unnamed people of a big far town (ports and capitals, not the legacy towns):
+  sitting at the square's benches and café tables, talking in pairs, a vendor behind a striped
+  market stall in market hours with a customer in front of it, strolling round the square, along
+  the waterfront and up the main streets. They look like everyone else: the world's figures
+  ([Townsfolk](#townsfolk): faces, hats, the same smooth walk), in their country's clothes
+  ([Regional dress](#regional-dress)). Their places come from the clock; no simulation, money or
+  saving while they stay unnamed. Fullest in the morning and for the evening walk, thin in the
+  afternoon heat, next to nobody at night; low and medium quality show about 35% and 50% of the
+  high tier.
+- **Meeting one:** anyone standing or walking can be looked at and walked over to (Space, a tap)
+  like anyone in town, labelled by the name they will give. They stop and turn to the pilot as he
+  comes; when he reaches them they become one of the world's people where they stand
+  ([Met in the crowd](#met-in-the-crowd)) and the talk begins as with anyone else (small talk,
+  replies, "Where is...?"). Someone sat at a table or on a bench gets up as they are met (the seated
+  pose eased out over 0.9 s, a step forward of the seat: `Folk.rising`, `RISE_SECONDS`).
 - **Code:** `src/ambient_crowd.jo` (`ambient_layout`, `ambient_layout_step`, `ambient_update`,
-  `ambient_draw`, `ambient_density`); called from `aegean.jo update_frame` and `draw_world`.
-- **Rules:** baked whole figures (6 outfits × 5 poses) drawn with one instanced call per outfit
-  and pose through the town shader, within 150 m; laid out once per town as it comes within
-  450 m, a loop a frame (no arrival hitch); spots and loops that touch a building are refused;
-  those who stand or sit are walking solids, strollers are not.
+  `ambient_pose`, `ambient_hold`, `ambient_near`, `ambient_draw`, `ambient_density`);
+  `src/crowd_figures.jo` (`CrowdLook`, `crowd_look`, `crowd_figure`, `crowd_parts`, `draw_crowd`);
+  `crowd_name`, `crowd_meet`, `crowd_hold_step`, `crowd_check_met` in `aegean.jo`.
+- **Rules:** 16 looks a town (`AMBIENT_LOOKS`), each a full figure built once
+  (a few tenths of a millisecond, under the layout's frame budget) and worn by a few people; each
+  look's body (torso and head as one mesh), legs and arms drawn in one instanced call each
+  (`obj_inst_sh`) for all who wear it, within 150 m,
+  posed by the same arithmetic as `draw_figure`. The one the view is on is drawn alone through
+  `draw_figure` so its outline is taken. Laid out once per town as it comes within 450 m, a loop a
+  frame (no arrival hitch); a spot that touches a building is refused, and a walk that runs into
+  something keeps its longest clear stretch (there and back); a collision cell is built when the
+  layout is let ask for one, so a pair straddling two cells is laid out without the pilot walking
+  there; the quays' walks are added once the harbour has been built for drawing
+  (`quays_pending`). Those who stand or sit are walking solids, strollers are not. An air meeting's spectators on the quay are drawn the
+  same way (`src/air_meet_view.jo`, a dozen looks of the host town).
 - **Capture:** `AEGEAN_AT='-117963.77 -84900.62 0' AEGEAN_HOUR=17 AEGEAN_CAPTURE_LIFE=1`
-  (Kalyrassa's square); `SHOT` lines report `crowd N`, the number drawn.
+  (Kalyrassa's square); Saryanyra's square `AEGEAN_VIEW="190716.3 10.5 -21860.6 -0.542 -0.08 17.5"`;
+  walking up to one and talking: `AEGEAN_AT="190721.5 -21869.2 -0.54" AEGEAN_HOUR=17.5
+  AEGEAN_FOOT_GO=240:crowd` (`crowd-sit`: the nearest of them sat down). `SHOT` lines report
+  `crowd N`, the number drawn; `AEGEAN_CROWD_TRACE=1` prints the crowd, its draw calls and its
+  walks every two seconds (`AEGEAN_CROWD_DUMP=<frame>`: everyone's place at that frame).
+
+### Met in the crowd
+
+- **Definition:** someone of a far town's [ambient crowd](#ambient-crowd) whom the pilot walks up
+  to becomes a named resident ([Far people](#far-people)) where they stand: taken from the town's
+  own cohort of their country with their share of its households' purse like any resident, with
+  the name, age, looks and trade they were drawn with (a shopkeeper, a fisherman or fish-market
+  woman, a clerk: far roles keeper, sailor, clerk, which no other promotion uses, so they never
+  take one of the three working residents' places). Their day takes them on at the next hour.
+  Met again after the town's crowd is laid out anew, they are left out of the crowd (they are
+  about the town as themselves).
+- **Code:** `FarMet`, `far_met_name`, `met_far_person` in `src/living_far_people.jo`;
+  `far_met_role`, `FAR_MAX_MET` (24 a town) in `src/living_far_types.jo`; `far_scene_admit` in
+  `src/far_scene.jo`; `handed_figures`, `add_folk_now` in `src/townsfolk.jo`;
+  `tests/crowd_met_test.jo`.
+- **Rules:** nothing about them changes as they are met: the figure they were drawn in is handed
+  over as it is. A town with no one of their country left to give, or with `FAR_MAX_MET` met,
+  leaves them one of the crowd. A woman's name for a woman (`person_woman` reads it back).
 
 ### Action cards
 
@@ -2962,6 +3032,31 @@ On the rivers branch until it lands.
 - **Capture:** `AEGEAN_AT='461.50 -6325.68 -0.891'` (a Porto Vecchio house behind the pilot).
 
 ---
+
+### Regional dress
+
+- **Aliases:** Orenthian dress, the country's clothes.
+- **Definition:** the people of Orenthia (the eastern mainland: low white terraces, domed chapels,
+  blue signs, see [Regional character](#regional-character)) wear their own country's clothes,
+  as the coast towns of the eastern Aegean and the Levant did in the 1920s-30s, built from the
+  same garments as the [wardrobe](#wardrobe)'s. Three directions are put to the user:
+  - **Sash and waistcoat** (the default): a collarless shirt, a dark waistcoat and a broad cloth
+    sash (deep red, madder brown, indigo, olive, saffron) wound round the waist over loose
+    trousers, a brimless felt cap or a flat cap; the women in long skirts with a long apron and a
+    large white headscarf; the old in black.
+  - **White and indigo**: faded indigo cotton jackets and trousers over white shirts, wide straw
+    hats, a rust-red sash now and then; the women in indigo or white with white aprons and
+    kerchiefs, like the terraces and the signs.
+  - **Town best**: the port's best in a modernising country: dark three-piece suits, ties, felt
+    hats and flat caps; the women in long dark dresses with a cloche or a dark headscarf.
+  The flyers, the patrol, the priest, the nurse and the mechanic's overalls are the same
+  everywhere. Kalyra and the archipelago dress as the wardrobe has it.
+- **Code:** `orenthian_outfit`, `regional_dress`, `set_regional_dress` in `src/wardrobe.jo`
+  (`outfit_for`'s `country`); `person_outfit` in `src/townsfolk.jo` (by citizenship); the
+  trousered sash and the brimless cap (hat kind 10) in `src/folk.jo`; `tests/crowd_met_test.jo`.
+- **Option:** a debug switch until the user chooses: `AEGEAN_REGION_DRESS=sash|indigo|town`, or
+  the pause menu's World page, "Orenthian dress" (the crowd and the Orenthians about are dressed
+  anew in place).
 
 ### Town look
 
@@ -3313,7 +3408,7 @@ open home-board jobs exist at that minute, and none did when the glossary's imag
   list" opens the desk's sheet.
 - **Still forms:** what is read or filled in: the ledger, the notice board, a contract's and a
   notice's papers (`conversation`), the repair desk's work list, the fuel pier, the map counter,
-  the bills of fare, the aircraft's work list, the barber's glass, the seat's bar of actions.
+  the bills of fare, the aircraft's work list, the barber's glass.
 - **Placement:** the fan keeps clear of the pilot himself as well as the speech bubbles and a
   touch screen's buttons; it is beside him, or over his head, narrowed as it must be, before it
   is ever under him (a phone held upright: over his head).
@@ -3883,9 +3978,8 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   only from the same side of the bar room's walls (`way_clear`), except the desk, which stands at
   its door. The keys work as ever. A card whose thing is on the screen isn't shown
   (`shown_offers`), unless a pad is in use, whose buttons go by the cards' order.
-- **Seated:** at a table or the bar, the band's stand and the jar are highlighted with the mouse and
-  used with Space (or tapped on touch input), and so are the board and the paper at the coffee house (`seat_things`). They are no longer
-  buttons on the table's bar, but their keys T, P, S and B still work.
+- **Seated:** at a table or the bar the look works as on foot, and a few things have buttons beside
+  them: [Seated look and buttons](#seated-look-and-buttons). The jar is walked over to.
 - **Looked at:** on foot, the thing the view looks at is lit, with no words: a thin white line
   round it and a faint band of light passing slowly down over it, with a few flecks in it like a
   bar of static over a paused screen, then from the top again (`foot_look`, `draw_look`). The line
@@ -4119,9 +4213,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
 ### Table service
 
 - **Aliases:** the waiter, the tray, drinking at one's own pace, holding a drink.
-- **Definition:** what is ordered is paid at once and brought: the hotel's waiter from the end of
-  the bar on a tray (three things a trip), the barkeep across the counter to one on a stool at the
-  bar, the coffee house's boy from the door. Each thing goes on a free spot; empties stay until
+- **Definition:** what is ordered is paid at once, made, and brought: a dish takes the kitchen a
+  minute or two (`prep_seconds`: bread and olives 45 s, soup 95 s, a grilled dish 140 s), a drink
+  is poured by the barkeep at the counter's end (a beer 18 s, a cocktail 40 s, coffee 55 s), longer
+  when the tables are full; the hotel's waiter takes it from the pass on a tray (three things a
+  trip), the barkeep across the counter to one on a stool at the bar, the coffee house's boy from
+  the door. See [The house behind the service](#the-house-behind-the-service). Each thing goes on a free spot; empties stay until
   the waiter has seen them stand a while (45 s) and comes for them, never one in hand or not
   finished. Something with some left is never taken while the pilot sits; after it has stood
   untouched a good while (`ASK_AFTER`, 150 s) the waiter comes and asks "Finished with this?"
@@ -4134,10 +4231,12 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   china has a blue band so a plate reads on the white cloth. The tipsy sway is as it was. Each
   thing's button on the table's bar is a bar too, filled as far as there is still of it; its
   label is the thing's plain name.
-- **Left on the table:** getting up leaves what was served where it stood. Sitting at the same
-  table again before it is cleared finds it there to carry on with. Some while after the pilot
-  has gone (`AEGEAN_LEFT_WAIT`, 40 s by default) a second waiter (`clear_waiter`) walks out, puts
-  the lot on his tray and carries it back.
+- **Left on the table:** getting up leaves what was served where it stood, and what was still
+  coming is brought to it there. Sitting at the same table again before it is cleared finds it
+  there to carry on with. Some while after the pilot has gone (`AEGEAN_LEFT_WAIT`, 40 s by
+  default) the house's waiter comes in his round, puts the lot on his tray and carries it back to
+  the pass (at the coffee house, its boy). Nothing goes from a table without him.
+- **Seated, no panel:** see [Seated look and buttons](#seated-look-and-buttons).
 - **Seated view:** at a table or on a bar stool (`hotel.stools`, the figure raised `STOOL_LIFT`),
   the camera turns about the pilot as the taxiing orbit does: a drag of either mouse button begun
   off the table's bar, the right stick, a finger; the wheel or a pinch for nearer and farther
@@ -4162,6 +4261,73 @@ of it. There are no needs meters and no penalties, ever (`docs/leisure.md`).
   are used with Space (or tapped on touch input): he walks over and sits ([Things to tap](#things-to-tap)).
 - **Capture:** `AEGEAN_LEISURE=deliver|drink|held|eat|bar-drink|empties|table-leave|table-back|table-clear|table-empty|table-ask`
   (the last five print a `TABLE` trace).
+
+### The house behind the service
+
+- **Aliases:** the kitchen hatch, the pass, the washing up, the scullery, the patrons' tables.
+- **Definition:** at the Hotel Ancora nothing reaches a table or leaves one without someone
+  carrying it. A dish is cooked in the kitchen and put out on the sill of the kitchen's hatch (in
+  the sea wall by the counter's end; in the bar room, in the back wall by the counter's other end),
+  the cook's white sleeves seen putting it there; a drink is poured by the barkeep at the counter's
+  end, in a glass taken from the shelf of clean glasses under the back bar. The waiter, waiting at
+  the pass between the two, takes what is ready to its table, the pilot's first, three to a tray.
+  Empties come back on his tray and are set down at the pass, one at a time: glasses on the
+  counter's end, plates and bowls on the hatch's sill. The barkeep, whenever he isn't serving or
+  pouring, fetches the glasses to his sink, washes each, sets it on the drainer on the counter's
+  back, dries it with his cloth and puts it up on the shelf; the cook's hands take the plates in
+  from the sill. The patrons at the four tables order too (a glass, now and then a plate), eat and
+  drink at their own pace, and are cleared like the pilot; a table they leave is cleared after.
+  A table the pilot left earlier and hasn't been cleared is still cleared, in turn.
+- **Code:** `src/house_service.jo` (`Scullery`, `Making`, `HouseTable`, `house_order`,
+  `house_kitchen_step`, `house_waiter_step`, `house_barkeep_step`, `house_take_dropped`);
+  `prep_seconds`, `Waiter.prep`, `Waiter.dropped` and the waiter's stage 8 in
+  `src/table_service.jo`; `house_step`, `patrons_step`, `house_spots`, `draw_house_things`,
+  `draw_barkeep`, `build_hatch` in `aegean.jo`; `tests/house_service_test.jo`.
+- **Capture:** `AEGEAN_LEISURE=serve|bar-serve|bar-empties|serve-patrons` (a `TABLE` trace of
+  the waiter, the barkeep and the scullery every 20 frames), `AEGEAN_SERVE_CAM=yaw,distance,pitch`,
+  `AEGEAN_PREP_SCALE` (how long making takes, times).
+
+### Seated look and buttons
+
+- **Aliases:** no table bar, buttons beside their things, the seated look.
+- **Definition:** sitting at a table or on a stool there is no panel. The look works as on foot:
+  what the view's middle (or a mouse that has just moved) is on is lit, with a small label over it,
+  and Space uses it (a tap, on a touch screen): each dish or glass (taken up; held, sipped or
+  eaten from), the menu card standing on the table or the counter (the bill of fare), the people
+  about (talk, the pilot staying sat), whoever serves (called over: "Yes?", with the menu, a room
+  for the night, the catch grilled, nothing), the band's stand (the pilot calls across, "Could you
+  play something for me?", and the band's front player answers from the stand with the numbers:
+  he stays sat; one who wants can get up and walk over). A few things have a button beside them,
+  in the talk replies' pill with its key in a dark badge, a short leader line to the thing: each
+  dish or glass ("Eat"/"Drink", 1 to 6, filled as far as there is still of it, held to eat or
+  drink; the one in hand follows the hand), the menu card ("Read", M), and the pilot's own ("Wait
+  an hour", W; "Get up" or "Put it down", Esc). Getting up is only ever chosen. The tip jar is not
+  used from a seat.
+- **Code:** `seat_things`, `seat_frame`, `seat_use`, `server_frame` (leisure stage 23),
+  `menu_card_at`, `build_menu_card` in `aegean.jo`; `seat_pills`, `SeatPill` in
+  `src/leisure_view.jo`; `tests/seated_look_test.py`.
+- **Capture:** `AEGEAN_LEISURE=seat|seat-bar`; `AEGEAN_SEAT_TRACE=1` (a `SEATTHINGS` line: what
+  can be looked at, the buttons; `SEATUI`), `AEGEAN_SEAT_USE=<frame>:<what>` (`song`, `server`,
+  `menu`, `talk:`, `dish:`), `AEGEAN_SEAT_PILLS=0` hides the buttons.
+
+### Going in out of the rain
+
+- **Aliases:** the hotel going in, the band carrying in, the count-in.
+- **Definition:** rain coming on at the Hotel Ancora with its terrace in use and in view moves
+  nobody by a cut. The diners get up, pick up what is in front of them and walk in at the sea door
+  to the same table in the [bar room](#bar-room); the band plays to the next breath in the music
+  (the widest gap between notes beginning in the next fourteen seconds, `bar_phrase_break`), stops,
+  and carries its instruments in to the room's stand; once all are in, the hotel's places move
+  inside and the band goes on from the first note after that breath, on its downbeat. One sat
+  at his table outside stays there in the rain until he gets up (his table's places stay out).
+  A count-in before they go on (four soft knocks of a bow's wood on the violin) is a sound awaiting
+  the user's ok: off unless `AEGEAN_COUNT_IN=1`.
+- **Code:** `RainMove`, `rain_move_step`, `rain_move_place`, `draw_band_going_in`, `make_count_in`
+  in `aegean.jo`; `band_hold`, `band_resume`, `band_paused` (`BandState.paused_at`, `held`) in
+  `src/band_life.jo`; `bar_phrase_break` in `src/bar_band.jo`; `room_settle(.., keep_table)` in
+  `src/bar_room.jo`; `tests/band_life_test.jo`, `tests/bar_phrase_test.jo`.
+- **Capture:** `AEGEAN_RAIN_AT=<seconds>` (dry until then, rain after: a `RAIN` trace), with
+  `AEGEAN_LEISURE=terrace` at an evening hour; `AEGEAN_COUNT_IN_WAV=<path>` writes the count-in.
 
 ### Bill of fare
 

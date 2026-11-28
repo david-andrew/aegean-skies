@@ -24,18 +24,102 @@ coast_periodic_noise = (p: vec2) -> f32:
         sum += (mix(mix(hash21(a),hash21(b),u.x),mix(hash21(c),hash21(d),u.x),u.y)*2.0-1.0)*amps[k]
     sum
 
+const CAUSTIC_CELLS = 8
+
+coast_caustic_smin = (a: f32, b: f32, k: f32) -> f32:
+    h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
+    mix(b, a, h) - k * h * (1.0 - h)
+
+coast_caustic_noise = (p: vec2, period: int, seed: f32) -> f32:
+    fx = floor(p.x); fy = floor(p.y)
+    tx = p.x - fx; ty = p.y - fy
+    ux = tx * tx * (3.0 - 2.0 * tx); uy = ty * ty * (3.0 - 2.0 * ty)
+    ix0 = int(fx) & (period - 1); iy0 = int(fy) & (period - 1)
+    ix1 = (ix0 + 1) & (period - 1); iy1 = (iy0 + 1) & (period - 1)
+    a = hash21(vec2(f32(ix0) + seed, f32(iy0) + seed * 1.7))
+    b = hash21(vec2(f32(ix1) + seed, f32(iy0) + seed * 1.7))
+    c = hash21(vec2(f32(ix0) + seed, f32(iy1) + seed * 1.7))
+    d = hash21(vec2(f32(ix1) + seed, f32(iy1) + seed * 1.7))
+    mix(mix(a, b, ux), mix(c, d, ux), uy)
+
+# Seamless periodic curved caustic distance field on an 8x8 torus (64 texels/cell):
+# multi-octave periodic curl-like domain warp eliminates straight polygon walls, rounded smin
+# junctions pinch into bright 3-way knots (0 at knots, ~0.03-0.08 varying along curved filaments,
+# ~0.85+ in cell interiors).
+coast_caustic_edge = (p_in: vec2, sx: f32[], sy: f32[]) -> f32:
+    k1 = f32(TAU / 4.0)
+    k2 = f32(TAU / 2.0)
+    k3 = f32(TAU)
+    wx = (0.28 * sin(p_in.y * k1 + 0.4)
+        + 0.16 * cos((p_in.x + p_in.y) * k1 - 0.7)
+        + 0.15 * sin(p_in.y * k2 - 1.2 + 0.35 * cos(p_in.x * k1))
+        + 0.08 * cos((p_in.x - p_in.y) * k2 + 0.9)
+        + 0.05 * sin(p_in.y * k3 + p_in.x * k2 * 0.5))
+    wy = (0.28 * cos(p_in.x * k1 - 0.3)
+        + 0.16 * sin((p_in.x - p_in.y) * k1 + 1.1)
+        + 0.15 * cos(p_in.x * k2 + 0.8 + 0.35 * sin(p_in.y * k1))
+        + 0.08 * sin((p_in.x + p_in.y) * k2 - 0.6)
+        + 0.05 * cos(p_in.x * k3 - p_in.y * k2 * 0.5))
+    p = vec2(p_in.x + wx, p_in.y + wy)
+    cx0 = int(floor(p.x)); cy0 = int(floor(p.y))
+    best_d2: f32 = 1e9
+    best_rx: f32 = 0.0; best_ry: f32 = 0.0
+    best_ix = 0; best_iy = 0
+    loop oy in -1..2:
+        loop ox in -1..2:
+            ix = (cx0 + ox) & (CAUSTIC_CELLS - 1)
+            iy = (cy0 + oy) & (CAUSTIC_CELLS - 1)
+            idx = iy * CAUSTIC_CELLS + ix
+            rx = f32(cx0 + ox) + sx[idx] - p.x
+            ry = f32(cy0 + oy) + sy[idx] - p.y
+            d2 = rx * rx + ry * ry
+            if d2 < best_d2:
+                best_d2 = d2; best_rx = rx; best_ry = ry; best_ix = ox; best_iy = oy
+    d1: f32 = 1.0
+    d2_min: f32 = 1.0
+    edge: f32 = 1.0
+    loop oy in -1..2:
+        loop ox in -1..2:
+            if ox == best_ix and oy == best_iy: continue
+            ix = (cx0 + ox) & (CAUSTIC_CELLS - 1)
+            iy = (cy0 + oy) & (CAUSTIC_CELLS - 1)
+            idx = iy * CAUSTIC_CELLS + ix
+            rx = f32(cx0 + ox) + sx[idx] - p.x
+            ry = f32(cy0 + oy) + sy[idx] - p.y
+            dx = rx - best_rx; dy = ry - best_ry
+            len = sqrt(max(dx * dx + dy * dy, 1e-8))
+            d = (0.5 * (best_rx + rx) * dx + 0.5 * (best_ry + ry) * dy) / len
+            if d < d1:
+                d2_min = d1; d1 = d
+            else if d < d2_min:
+                d2_min = d
+            edge = coast_caustic_smin(edge, d, 0.09)
+    edge = max(edge, 0.0)
+    knot = 1.0 - smoothstep(0.02, 0.24, d2_min)
+    v = coast_caustic_noise(p_in * 2.0, CAUSTIC_CELLS * 2, 31.0) * 0.65 + coast_caustic_noise(p_in, CAUSTIC_CELLS, 79.0) * 0.35
+    width_var = mix(0.68, 1.55, smoothstep(0.18, 0.82, v))
+    d_mod = edge * mix(width_var, 0.42, knot) + 0.018 * (1.0 - knot)
+    clamp(d_mod * 1.75, 0.0, 1.0)
+
 build_coast_pattern = () -> Image:
     img = image(COAST_PATTERN_N,COAST_PATTERN_N)
+    sx: f32[]; sy: f32[]
+    loop cy in 0..CAUSTIC_CELLS:
+        loop cx in 0..CAUSTIC_CELLS:
+            sx.push(0.14 + 0.72 * hash21(vec2(f32(cx) + 13.0, f32(cy) + 41.0)))
+            sy.push(0.14 + 0.72 * hash21(vec2(f32(cx) + 73.0, f32(cy) + 19.0)))
+    cell_scale = f32(CAUSTIC_CELLS) / f32(COAST_PATTERN_N)
     loop j in 0..COAST_PATTERN_N:
         loop i in 0..COAST_PATTERN_N:
             p = vec2(f32(i),f32(j))*COAST_PATTERN_TEXEL
             value = vec3(coast_periodic_noise(p),coast_periodic_noise(p+vec2(113,47)),coast_periodic_noise(p+vec2(29,157)))
-            img.set(i,j,vec4(value/2.02+vec3(0.5,0.5,0.5),1))
+            w = coast_caustic_edge(vec2((f32(i) + 0.5) * cell_scale, (f32(j) + 0.5) * cell_scale), sx, sy)
+            img.set(i,j,vec4(value/2.02+vec3(0.5,0.5,0.5),w))
     img
 
-# (baked by tools/bake.jo as assets/baked/coast-pattern-v1.png, the same RGBA8 bytes; made here
+# (baked by tools/bake.jo as assets/baked/coast-pattern-v3.png, the same RGBA8 bytes; made here
 # when there is no bake. Raise the version in the name when the pattern's code changes.)
-const COAST_PATTERN_BAKE = "coast-pattern-v1.png"
+const COAST_PATTERN_BAKE = "coast-pattern-v3.png"
 load_coast_pattern = () -> Image:
     if let bytes = baked_asset(COAST_PATTERN_BAKE):
         loaded = load_png(bytes)
