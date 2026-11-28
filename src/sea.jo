@@ -104,7 +104,7 @@ struct SeaParams:
     surf_ships: vec4[8]              # (surf.jo surf_ship_uniforms: the nearest ships' white water)
     surf_box: vec4 = vec4(0,0,0,0)   # (and the box round all of it, render-local xz min and max)
     harbour: vec4 = vec4(0,0,-2,-1)  # the harbour's shelter (sea_calm): render-local x, z, calm inside this radius, open sea from this one
-    haze_tangent: vec3 = vec3(-1,0,0) # the sky's air at the horizon (sky_air.jo air_tangent): the far sea's haze nears it; x < 0 none
+    haze_tangent: vec3 = vec3(0,0,0) # the sky's air at the horizon (sky_air.jo air_tangent): the far sea's haze nears it (sea_params sets it)
     horizon_dir: vec4 = vec4(0,1,0,0) # (and the sky's sun terms there: sky_air.jo horizon_glow)
     horizon_sun: vec3 = vec3(0,0,0)
     horizon_warm: vec3 = vec3(0,0,0)
@@ -119,6 +119,7 @@ struct SeaOut:
     water_flow:vec2=vec2(0,0)
     sun_lost:f32=0.0                # cloud shadow (per vertex): no glints or sheen there
     calm:f32=0.0                    # the harbour's shelter (per vertex, sea_calm): it fades over 450 m
+    air:vec3=vec3(0,0,0)            # the haze over it (per vertex: sky_air.jo air_tangent; the open sea's only)
 
 struct SeaDepthOut:
     pos:vec4
@@ -131,6 +132,7 @@ struct SeaDepthOut:
     water_flow:vec2=vec2(0,0)
     sun_lost:f32=0.0
     calm:f32=0.0
+    air:vec3=vec3(0,0,0)
 
 # the swells: height and slope (dh/dx, dh/dz) at a point, running mostly with the wind. Each
 # fades out where it is too short for the pixels to show it (dist: from the camera).
@@ -251,16 +253,19 @@ sea_vs_of = (v: SeaVertex, u: SeaParams, storm_water: bool) -> SeaOut:
     clip=u.view_proj * vec4(render_warped(w,u.cam,u.warp_a,u.warp_b),1)
     # (the colour's shadow is the screen pass's, cloud_shadow.jo; only the sun's
     # reflections need the water's own knowledge, and coarsely)
-    SeaOut(clip,w,sun_lost=cloud_shadow_vertex(u.cloud_shadow,u.cloud_area,u.cloud_slope,vec3(w.x,0,w.z)),calm=calm)
+    # (the haze toward the horizon from height, smooth over kilometres: worked out here, not for
+    # each pixel, which cost the laptop's GPU a millisecond over a low sea)
+    air = air_tangent(u.haze,u.haze_tangent,w,u.cam,u.sky_top,u.horizon_dir,u.horizon_sun,u.horizon_warm)
+    SeaOut(clip,w,sun_lost=cloud_shadow_vertex(u.cloud_shadow,u.cloud_area,u.cloud_slope,vec3(w.x,0,w.z)),calm=calm,air=air)
 
 sea_vs = (v: SeaVertex, u: SeaParams) -> SeaOut: sea_vs_of(v,u,false)
 sea_storm_vs = (v: SeaVertex, u: SeaParams) -> SeaOut: sea_vs_of(v,u,true)
 sea_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
     i=sea_vs(v,u)
-    SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost,calm=i.calm)
+    SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost,calm=i.calm,air=i.air)
 sea_storm_depth_vs=(v:SeaVertex,u:SeaParams)->SeaDepthOut:
     i=sea_storm_vs(v,u)
-    SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost,calm=i.calm)
+    SeaDepthOut(i.pos,i.world,i.pos,sun_lost=i.sun_lost,calm=i.calm,air=i.air)
 
 
 # Wave directions/frequencies and the anchor/time phase are reduced on the CPU.
@@ -747,11 +752,11 @@ sea_depth_hidden=(clip:vec4,u:SeaParams)->bool:
 sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     set_depth(world_depth_encode(1.0 / i.pos.w))
-    sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm),u)
+    sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm,air=i.air),u)
 coast_sea_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     set_depth(world_depth_encode(1.0 / i.pos.w))
-    coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm),u)
+    coast_sea_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm,air=i.air),u)
 
 # What a walled canal's water mirrors along rd: the dark stone wall, the trees and facades behind
 # the parapet, or the sky over them (each wall a vertical plane at the canal's half width).
@@ -983,11 +988,13 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         if k == 0: gl = g
         else if k == 1: gl = gl*detail_wa+g*detail_wb
         else: mgl = g
-    sun_k = day * (1.0 - shd)*(1.0-u.rain*0.75)*(1.0-i.sun_lost)*(1.0-0.85*storm)
-    c = c + u.glint_sun * (gl * u.glint_gain) * sun_k
-    # (the sheen is added after the haze, below: the sun's path on the water is bright enough to
-    # carry through more of it than the water's own colour does)
-    sheen_c = u.glint_sun * sheen * sun_k
+    # (the sun's sheen through the haze: as it always was near, where the air hides little, and
+    # far off a glitter path that carries on toward the horizon under a low sun instead of
+    # drowning in the haze with the water: the haze below leaves seen of it, seen^0.4 of the
+    # sheen, so the sheen goes in at seen^-0.6. Folded in here rather than added after the haze,
+    # so no colour is kept live through the rest: on Intel GPUs that cost)
+    seen = max(aerial_seen(i.world, u.cam, u.fog), 0.000001)
+    c = c + u.glint_sun * (sheen * pow(seen, -0.6) + gl * u.glint_gain) * day * (1.0 - shd)*(1.0-u.rain*0.75)*(1.0-i.sun_lost)*(1.0-0.85*storm)
     if moon_on:
         mnh = max(dot(n, mhv), 0.0)
         msheen = pow(mnh, mix(90.0, 55.0, variance)) * 0.22 + pow(mnh, mix(600.0, 160.0, variance)) * 0.5
@@ -1052,14 +1059,8 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
         a = mix(a,clear_alpha,clear_bay)
     if inland:
         a=clamp(smoothstep(0.0,u.inland_opacity_depth,depth)+fres*0.4+foam+gl*day,0.0,1.0)
-    haze = u.haze
-    if not inland and u.haze_tangent.x >= 0.0: haze = air_tangent(u.haze,u.haze_tangent,i.world,u.cam,u.sky_top,u.horizon_dir,u.horizon_sun,u.horizon_warm)
-    seen = aerial_seen(i.world, u.cam, u.fog)
+    haze = if inland: u.haze else: i.air
     c = mix(c, haze, clamp(1.0 - seen, 0.0, 1.0))
-    # (the sun's sheen through the haze: as it always was near, where the air hides little, and
-    # far off a glitter path that carries on toward the horizon under a low sun instead of
-    # drowning in the haze with the water: seen^0.4 for the haze's seen)
-    c = c + sheen_c * pow(seen, 0.4)
     vec4(c, a)
 
 sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false)
@@ -1070,12 +1071,12 @@ coast_sea_surf_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true,surf
 sea_surf_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     set_depth(world_depth_encode(1.0 / i.pos.w))
-    sea_surf_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm),u)
+    sea_surf_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm,air=i.air),u)
 coast_sea_surf_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     set_depth(world_depth_encode(1.0 / i.pos.w))
     set_depth(world_depth_encode(1.0 / i.pos.w))
-    coast_sea_surf_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm),u)
+    coast_sea_surf_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm,air=i.air),u)
 sea_surf_sh: Shader
 coast_sea_surf_sh: Shader
 sea_surf_ready = false
@@ -1090,11 +1091,11 @@ coast_sea_storm_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true,sto
 sea_storm_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     set_depth(world_depth_encode(1.0 / i.pos.w))
-    sea_storm_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm),u)
+    sea_storm_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm,air=i.air),u)
 coast_sea_storm_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
     set_depth(world_depth_encode(1.0 / i.pos.w))
-    coast_sea_storm_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm),u)
+    coast_sea_storm_fs(SeaOut(i.pos,i.world,i.current,i.water_depth,i.water_chart,i.bank_impact,i.water_flow,i.sun_lost,i.calm,air=i.air),u)
 # (the storm sea's programs, made the first time a storm is up)
 sea_storm_sh: Shader
 coast_sea_storm_sh: Shader
@@ -1147,7 +1148,7 @@ far_sea_at = (i: FarSeaOut, u: SeaParams, storm_water: bool) -> vec4:
     world = vec3(u.cam.x + dir.x * dist, 0, u.cam.z + dir.z * dist)
     # The identical sea material at its actual surface point, not a sky tint; a storm's
     # sea its own (the near sea's program), so there is no ring where the two meet.
-    c = sea_material(SeaOut(i.pos, world), u, false, storm_water=storm_water)
+    c = sea_material(SeaOut(i.pos, world, air=air_tangent(u.haze,u.haze_tangent,world,u.cam,u.sky_top,u.horizon_dir,u.horizon_sun,u.horizon_warm)), u, false, storm_water=storm_water)
     vec4(c.xyz, c.w * cover)
 far_sea_fs = (i: FarSeaOut, u: SeaParams) -> vec4: far_sea_at(i, u, false)
 far_sea_storm_fs = (i: FarSeaOut, u: SeaParams) -> vec4: far_sea_at(i, u, true)
