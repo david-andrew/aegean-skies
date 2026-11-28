@@ -2785,7 +2785,7 @@ On the rivers branch until it lands.
 - **Aliases:** folk, the people.
 - **Definition:** the visible people in towns: each is a living-world person, dressed by trade
   and placed at their routine. A seeded share of grown men wear mustaches. Town cats live
-  alongside them.
+  alongside them ([cat bonds](#cat-bonds), [the pilot's cat](#the-pilots-cat)).
 - **Code:** `src/townsfolk.jo` (`sync_folk`, `update_folk`, `draw_folk`, `dress_of`),
   `src/folk.jo:81 build_figure`, `mustache_of`; cats in `src/cats.jo`, `src/cat_bonds.jo`.
 - **Rules:** a person's living-world pose is authoritative; never move decorative duplicates
@@ -2793,6 +2793,51 @@ On the rivers branch until it lands.
 - **Capture:** `tools/folkview.jo`; `tools/faceview.jo` (`FACEVIEW=pilot|follow|folk|cats`).
 
 ![Townsfolk in a row on a quay (tools/folkview.jo)](img/townsfolk.png)
+
+### Cat bonds
+
+- **Aliases:** town cats, the cat's fondness, a cat that knows you, temper (bold, easy, wary).
+- **Definition:** what each town cat (known by its spot, `cat_key`) remembers of the player.
+  Fondness 0..100 grows with meals (22, only when hungry: eight hours after the last) and strokes
+  (9, less when stroked often within the hour), held to the cat's **temper**'s most in a day (bold
+  40, easy 30, wary 18), and fades a point every six hours apart. The **stages**: a *stranger*
+  (a wary one keeps out of reach and will only come to food held out; a bold one comes over to
+  sniff); a cat that *recognises* the player (fondness 60 and met on two days, three for a wary
+  one; kept until it fades under 35): it comes over when he comes back to its town, rubs round
+  his legs, follows a little way and waits on the quay by the moored aircraft; and the cat that
+  has *adopted* him ([the pilot's cat](#the-pilots-cat)): fondness 95 and met on five days (easy
+  six, wary eight), at most one at a time.
+- **Code:** `src/cat_bonds.jo` (`cat_stage`, `_cat_add`, `cat_would_adopt`, `cat_shy`),
+  `CatBond` in `src/living_types.jo`; the town cats' behaviour in `src/cats.jo` `_town_step`.
+- **Rules:** trust takes days, never one sitting. Saved in `PresentationState.cat_bonds`; a bond
+  faded to nothing is dropped on save, never the pilot's own cat's.
+- **Capture:** `AEGEAN_PET_CAPTURE=wary|greet` (with `AEGEAN_CAT_CAPTURE_INDEX`).
+
+### The pilot's cat
+
+- **Aliases:** the adopted cat, his cat, the pet cat, the cat in the cockpit.
+- **Definition:** the one town cat that has adopted the player (`PresentationState.cat`,
+  `CatCompanion`). With him (`CAT_WITH`) it follows him on land at a cat's pace along his own
+  footsteps (trotting to catch up, now and then a sniff, a sit, a stretch or a wash), waits at his
+  last step outside where it isn't welcome (the bar room, unless the keeper there has looked after
+  it), hops aboard after him from where he went aboard (by the float or the deck when it is far),
+  rides low on his right in the cockpit (swaying to the seat's g, crouching through bumps, loops and
+  hard pulls), hops off after him when he goes ashore, curls up on the bed when he stays the night,
+  and goes in his jacket if he bales out. Left with someone he knows (`CAT_KEPT`: an innkeeper,
+  people who'd put him up) it keeps by their door until he fetches it; left in a town
+  (`CAT_ROAMING`: he flew without it, or left it with G) it keeps to a doorstep there and is with
+  him again when he comes back. It doesn't fade with him or kept; alone it stays his for a week
+  or so (until under 70), then goes its own ways. People notice it in talk and ask its name.
+- **Code:** `src/cats.jo` (`_pet_step`, `_follow`, `_ride_step`, `_leap`, `pet_hand_over`,
+  `pet_collect`, `draw_pet_aboard`, `draw_stay_cat`), `src/cat_bonds.jo` (the companion's rules);
+  glue in `aegean.jo` (`cat_step`, `cat_craft_now`, `cat_seat_local`, `cat_talk_answers`,
+  `cat_danger_word`, `cat_debug`).
+- **Rules:** it walks or leaps everywhere it goes, or is carried; it never appears in the aircraft
+  or vanishes from it. Nothing harms it: before a fight (the strait's battle, the patrol at war) a
+  friend near, or the pilot himself, says to leave it ashore. The debug page's World tab has the
+  cat row (the nearest cat's stage, temper and hunger; a cat spawned; his own put aboard, named,
+  left with the nearest person, fetched, left in the town, a week apart).
+- **Capture:** `AEGEAN_PET_CAPTURE=follow|ride|keeper`.
 
 ### Wildlife
 
