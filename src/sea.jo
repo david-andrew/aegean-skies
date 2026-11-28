@@ -1042,10 +1042,130 @@ sea_material = (i: SeaOut, u: SeaParams, refined: bool,inland:bool=false,fine_de
     c = aerial(c, i.world, u.cam, u.haze, u.fog)
     vec4(c, a)
 
-sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false)
+# Mid-range non-storm swells (dist >= 620 m on sea_mesh): bands 3..5 (wavelengths 13, 7.3, 4.1 m)
+# have already faded to exactly zero by 520 m, so only bands 0..2 need evaluation and no shore
+# reflection (SEA_TRAVEL_BANDS >= 4) or Stokes peaking is active.
+sea_swell_mid = (p: vec2,u: SeaParams,dist: f32,depth: f32,calm: f32) -> vec3:
+    if dist>=u.sea_storm.z:return vec3(0,0,0)
+    a=u.wind.w
+    k0: f32 = 1.0; k1: f32 = 1.0; k2: f32 = 1.0
+    x = depth*u.swell_gain[1].z
+    if x < 15.25 or calm > 0.0:
+        k0 = sea_band_keep_fast(x,0.11709602,1.0,calm)
+        k1 = sea_band_keep_fast(x,0.19305019,1.0,calm)
+        k2 = sea_band_keep_fast(x,0.31055901,1.0,calm)
+    result = sea_swell_band(p,u.swell_phase[0],a*u.swell_gain[0].x*k0,dist)
+    result += sea_swell_band(p,u.swell_phase[1],a*u.swell_gain[0].y*k1,dist)
+    result += sea_swell_band(p,u.swell_phase[2],a*u.swell_gain[0].z*k2,dist)
+    result
+
+# Mid-range open sea shader for sea_mesh (r >= 620 m, non-storm, non-inland): compiles out
+# near-only ripples, rain rings, flow crossfade, speed flecks, short swell bands, coast height
+# refinement, inland/canal branches, and storm branches without touching coast_sea_sh.
+sea_mid_material = (i: SeaOut, u: SeaParams, surf: bool = false) -> vec4:
+    local = i.world.xz
+    p = local+u.origin.xz
+    dist = length(i.world - u.cam)
+    uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
+    dm = sample(u.depth, uv)
+    shelter = dm.y
+    depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
+    if u.expanded > 0.5 and (abs(p.x) >= 12000.0 or abs(p.y) >= 12000.0):
+        shelter = 0.0
+        depth = if abs(p.x) < 250000.0 and abs(p.y) < 200000.0: sample(u.world_depth, p / vec2(500000,400000) + vec2(0.5,0.5)).x * 60.0 else: 60.0
+        near_uv = (p-u.local_area.xy)/max(u.local_area.z,1.0)+vec2(0.5,0.5)
+        edge_dist = max(abs(near_uv.x-0.5),abs(near_uv.y-0.5))
+        if u.local_area.w > 0.5 and edge_dist < 0.5:
+            depth = mix(depth,sample(u.local_depth,near_uv).x*60.0,1.0-smoothstep(0.45,0.49,edge_dist))
+            shelter = sample(u.local_depth,near_uv).y*(1.0-smoothstep(0.45,0.49,edge_dist))
+    wd = u.wind.xy
+    ws = u.wind.z
+    g = if dist >= 12000.0: 0.5 else: mix(gust(p, u.drift), 0.5, smoothstep(2500.0, 12000.0, dist))
+    rough = clamp(0.1 + ws / 12.0 * (0.45 + 0.9 * g), 0.0, 1.5)
+    s = sea_swell_mid(local,u,dist,depth,i.calm)
+    n = render_normal(normalize(vec3(-s.y, 1.0, -s.z)), i.world, u.cam)
+    vdir = normalize(u.cam - render_world(i.world, u.cam))
+    l = normalize(u.sun_dir)
+    sh = 1.0 - smoothstep(0.5, 26.0, depth)
+    clear_bay = shelter*(1.0-smoothstep(8.0,20.0,depth))*(1.0-u.rain*0.7)
+    shallow = sea_shallow_ramp(depth,clear_bay,u.shallow)
+    body = mix(u.deep, shallow, sea_shallow_mix(depth,shelter))
+    body = body * (1.0 - 0.3 * g * clamp(ws / 8.0, 0.0, 1.0))
+    ndl = max(dot(n, l), 0.0)
+    c = body * (mix(u.sun, vec3(1, 1, 1), 0.45) * (0.7 + 0.3 * ndl) + u.sky_top * 0.25)
+    fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, vdir), 0.0), 5.0)
+    rd = reflect(-vdir, n)
+    skyc = mix(u.sky_horizon, u.sky_top, clamp(rd.y * 1.4, 0.0, 1.0))
+    low = 1.0 - smoothstep(0.1, 0.45, l.y)
+    c = mix(c, skyc, clamp(fres * (0.6 + 0.3 * low) * (1.0 - 0.3 * g), 0.0, 1.0))
+    if dist < 660.0 or (u.rain > 0.02 and dist < 1920.0):
+        wet_crests = smoothstep(0.02,0.28,u.rain)
+        crest_fade = mix(1.0-smoothstep(180.0,650.0,dist),1.0-smoothstep(700.0,1900.0,dist),wet_crests)
+        sfade = crest_fade*(1.0-sh*0.8)
+        crest_amp = u.sea_storm.w/145.0*(1.0-wet_crests*smoothstep(400.0,1800.0,dist)*0.5)
+        st = _crest_strokes(p, s, u.time, wd, ws, crest_amp, dist, wet_crests) * sfade * clamp(0.45 + ws / 10.0, 0.0, 1.0) * smoothstep(0.1,2.0,ws)
+        c = mix(c, mix(skyc, vec3(1, 1, 1), 0.55) * (u.sun * 0.85 + u.sky_top * 0.25), st * 0.85)
+    shd: f32 = 0.0
+    if u.shade_n > 0.0:
+        shd = _shadowed(local, u, 0.08 + dist * 0.0015)
+        c = mix(c, c * 0.42 + vec3(0.0, 0.02, 0.05), shd)
+    sun_l = u.specular_sun.xyz
+    hv = normalize(sun_l + vdir)
+    nh = max(dot(n, hv), 0.0)
+    day = u.specular_sun.w
+    variance = smoothstep(300.0, 3000.0, dist) * clamp(u.wind.w * 80.0, 0.0, 1.0)
+    sheen = pow(nh, mix(90.0, 55.0, variance)) * 0.22 + pow(nh, mix(600.0, 160.0, variance)) * 0.5
+    moon_on = u.moon.w > 0.0
+    ml = normalize(u.moon.xyz)
+    mhv = normalize(ml + vdir)
+    sun_glint = day > 0.0 and sea_glint_possible(n,vdir,sun_l,hv,rough)
+    moon_glint = moon_on and sea_glint_possible(n,vdir,ml,mhv,rough)
+    gl: f32 = 0.0
+    mgl: f32 = 0.0
+    loop k in 0..(if moon_glint: 2 else: 1):
+        if k == 0 and not sun_glint: continue
+        gv = _glints(local,n,vdir,if k == 1: ml else: sun_l,dist,u.time,rough,u)
+        if k == 0: gl = gv
+        else: mgl = gv
+    c = c + u.glint_sun * (sheen + gl * u.glint_gain) * day * (1.0 - shd)*(1.0-u.rain*0.75)*(1.0-i.sun_lost)
+    if moon_on:
+        mnh = max(dot(n, mhv), 0.0)
+        msheen = pow(mnh, mix(90.0, 55.0, variance)) * 0.22 + pow(mnh, mix(600.0, 160.0, variance)) * 0.5
+        c = c + vec3(0.78,0.84,0.95) * (msheen + mgl * 14.0) * u.moon.w * (1.0 - shd)*(1.0-u.rain*0.75)
+    foam: f32 = 0.0
+    surf_pix: f32 = 0.0; surf_dw: f32 = 0.0
+    if surf and u.surf.z <= 0.5:
+        surf_pix = min(fwidth(p.x),fwidth(p.y)); surf_dw = fwidth(depth)
+    surf_w: f32 = 0.0
+    if surf and u.surf.z <= 0.5:
+        surf_w = 1.0-smoothstep(1005.0,1500.0,dist)
+        if surf_w > 0.0 and depth < 3.0:
+            foam = surf_sea_foam(p,u.time,depth,surf_dw,u.surf.y,dist,surf_pix,depth,surf_dw,false)*surf_w
+    if surf_w < 1.0 and depth < 3.0 and dist < 5000.0:
+        fn = (vnoise(p*0.55+vec2(u.time*0.35,-u.time*0.22))-0.5)*1.4+sin(p.x*1.7+p.y*1.1-u.time*1.1)*0.25
+        wash = 0.6+max(s.x,0.0)*0.8+0.35*sin(u.time*1.4+vnoise(p*0.04)*6.0)
+        edge = 1.0-smoothstep(0.12,wash+0.7+0.45*fn,depth)
+        breaker = (1.0-smoothstep(0.15,0.65,abs(depth-wash-0.6)))*clamp(ws/10.0,0.15,0.85)
+        foam = max(foam,clamp(edge*(0.75+0.35*fn)+breaker*(0.5+0.5*fn),0.0,1.0)*(1.0-smoothstep(1500.0,5000.0,dist))*(1.0-surf_w))
+    if surf and u.surf.w > 0.5 and dist < 1500.0 and local.x > u.surf_box.x and local.y > u.surf_box.y and local.x < u.surf_box.z and local.y < u.surf_box.w:
+        loop k in 0..4:
+            if f32(k) < u.surf.w: foam = max(foam,surf_ship_foam(local,p,u.time,u.surf_ships[k*2],u.surf_ships[k*2+1],u.surf.y,dist,surf_pix,false))
+    if surf:
+        lum = dot(u.sun, vec3(0.3, 0.5, 0.2))
+        c = mix(c, vec3(0.85, 0.90, 0.93) * min(lum * 0.8 + 0.2, 1.05), foam)
+    else: c = mix(c, vec3(0.97, 0.98, 1.0) * (u.sun * 0.8 + u.sky_top * 0.3), foam * 0.85)
+    a = clamp(1.0-exp(-depth*0.42)*0.9+fres*0.4+foam+gl*day,0.0,1.0)
+    if clear_bay > 0.005:
+        absorption = mix(0.12,0.055,clear_bay)
+        clear_alpha = clamp(1.0-exp(-depth*absorption)*(1.0-fres*0.85)*0.95+foam+gl*day+u.rain*0.12,0.0,1.0)
+        a = mix(a,clear_alpha,clear_bay)
+    c = aerial(c, i.world, u.cam, u.haze, u.fog)
+    vec4(c, a)
+
+sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_mid_material(i,u,false)
 coast_sea_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true)
 # (Surf's variants, made the first time it is needed; off, the sea is the plain shaders)
-sea_surf_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,false,surf=true)
+sea_surf_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_mid_material(i,u,true)
 coast_sea_surf_fs = (i: SeaOut,u: SeaParams) -> vec4: sea_material(i,u,true,surf=true)
 sea_surf_depth_fs=(i:SeaDepthOut,u:SeaParams)->vec4:
     if sea_depth_hidden(i.clip,u):discard()
@@ -1113,8 +1233,61 @@ far_sea_fs = (i: FarSeaOut, u: SeaParams) -> vec4:
     dist = sea_intersection(dir, u.cam.y)
     if dist < 14000.0: discard()
     world = vec3(u.cam.x + dir.x * dist, 0, u.cam.z + dir.z * dist)
-    # The identical sea material at its actual surface point, not a sky tint.
-    sea_fs(SeaOut(i.pos, world), u)
+    # Exact far-range specialization of sea_material (dist >= 14 km): swells, ripples, gusts,
+    # crests, flecks, shadows, and shore foam are all identically zero here.
+    local = world.xz
+    p = local + u.origin.xz
+    uv = (p + vec2(DEPTH_EXTENT * 0.5, DEPTH_EXTENT * 0.5)) / DEPTH_EXTENT
+    dm = sample(u.depth, uv)
+    shelter = dm.y
+    depth = if uv.x > 0.0 and uv.x < 1.0 and uv.y > 0.0 and uv.y < 1.0: dm.x * 60.0 else: 60.0
+    if u.expanded > 0.5 and (abs(p.x) >= 12000.0 or abs(p.y) >= 12000.0):
+        shelter = 0.0
+        depth = if abs(p.x) < 250000.0 and abs(p.y) < 200000.0: sample(u.world_depth, p / vec2(500000,400000) + vec2(0.5,0.5)).x * 60.0 else: 60.0
+        near_uv = (p-u.local_area.xy)/max(u.local_area.z,1.0)+vec2(0.5,0.5)
+        edge_dist = max(abs(near_uv.x-0.5),abs(near_uv.y-0.5))
+        if u.local_area.w > 0.5 and edge_dist < 0.5:
+            depth = mix(depth,sample(u.local_depth,near_uv).x*60.0,1.0-smoothstep(0.45,0.49,edge_dist))
+            shelter = sample(u.local_depth,near_uv).y*(1.0-smoothstep(0.45,0.49,edge_dist))
+    ws = u.wind.z
+    rough = clamp(0.1 + ws / 12.0 * 0.9, 0.0, 1.5)
+    n = render_normal(vec3(0, 1, 0), world, u.cam)
+    vdir = normalize(u.cam - render_world(world, u.cam))
+    l = normalize(u.sun_dir)
+    clear_bay = shelter*(1.0-smoothstep(8.0,20.0,depth))*(1.0-u.rain*0.7)
+    body = mix(u.deep, sea_shallow_ramp(depth,clear_bay,u.shallow), sea_shallow_mix(depth,shelter))
+    body = body * (1.0 - 0.15 * clamp(ws / 8.0, 0.0, 1.0))
+    ndl = max(dot(n, l), 0.0)
+    c = body * (mix(u.sun, vec3(1, 1, 1), 0.45) * (0.7 + 0.3 * ndl) + u.sky_top * 0.25)
+    fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, vdir), 0.0), 5.0)
+    rd = reflect(-vdir, n)
+    skyc = mix(u.sky_horizon, u.sky_top, clamp(rd.y * 1.4, 0.0, 1.0))
+    low = 1.0 - smoothstep(0.1, 0.45, l.y)
+    c = mix(c, skyc, clamp(fres * (0.6 + 0.3 * low) * 0.85, 0.0, 1.0))
+    sun_l = u.specular_sun.xyz
+    hv = normalize(sun_l + vdir)
+    nh = max(dot(n, hv), 0.0)
+    day = u.specular_sun.w
+    variance = clamp(u.wind.w * 80.0, 0.0, 1.0)
+    sheen = pow(nh, mix(90.0, 55.0, variance)) * 0.22 + pow(nh, mix(600.0, 160.0, variance)) * 0.5
+    moon_on = u.moon.w > 0.0
+    ml = normalize(u.moon.xyz)
+    mhv = normalize(ml + vdir)
+    sun_glint = day > 0.0 and sea_glint_possible(n,vdir,sun_l,hv,rough)
+    moon_glint = moon_on and sea_glint_possible(n,vdir,ml,mhv,rough)
+    gl: f32 = 0.0
+    mgl: f32 = 0.0
+    loop k in 0..(if moon_glint: 2 else: 1):
+        if k == 0 and not sun_glint: continue
+        gv = _glints(local,n,vdir,if k == 1: ml else: sun_l,dist,u.time,rough,u)
+        if k == 0: gl = gv
+        else: mgl = gv
+    c = c + u.glint_sun * (sheen + gl * u.glint_gain) * day * (1.0 - u.rain * 0.75)
+    if moon_on:
+        mnh = max(dot(n, mhv), 0.0)
+        msheen = pow(mnh, mix(90.0, 55.0, variance)) * 0.22 + pow(mnh, mix(600.0, 160.0, variance)) * 0.5
+        c = c + vec3(0.78,0.84,0.95) * (msheen + mgl * 14.0) * u.moon.w * (1.0 - u.rain * 0.75)
+    vec4(aerial(c, world, u.cam, u.haze, u.fog), 1.0)
 
 
 # rings around the camera: fine near it, coarse far out
@@ -1561,7 +1734,7 @@ draw_sea = (m: Mesh, depth: Texture, L: Light, t: f64, w: Wind, cam_vel: vec3 = 
         sea_surf_shaders()
         plain = sea_surf_sh; coast = coast_sea_surf_sh
     draw(plain, m, p)
-    draw(if coast_height_valid: coast else: plain,sea_near_mesh,p)
+    draw(coast,sea_near_mesh,p)
     cull(.none)
     depth_write(false)
     zone_end()
